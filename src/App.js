@@ -131,12 +131,6 @@ const FlockApp = () => {
   const [userXP, setUserXP] = useState(280);
   const [userLevel, setUserLevel] = useState(3);
   const [streak] = useState(5);
-  const [achievements] = useState([
-    { id: 1, name: 'First Flock', icon: '🎉', unlocked: true },
-    { id: 2, name: 'Social Butterfly', icon: '🦋', unlocked: true },
-    { id: 3, name: 'Night Owl', icon: '🦉', unlocked: false },
-    { id: 4, name: 'Safety Champion', icon: '🛡️', unlocked: true },
-  ]);
 
   const addXP = useCallback((amount) => {
     setUserXP(prev => {
@@ -184,7 +178,6 @@ const FlockApp = () => {
   const [showAddEvent, setShowAddEvent] = useState(false);
   const [newEventTitle, setNewEventTitle] = useState('');
   const [newEventVenue, setNewEventVenue] = useState('');
-  const [newEventTime, setNewEventTime] = useState('7:00 PM');
 
   // Stories
   const stories = [
@@ -245,25 +238,15 @@ const FlockApp = () => {
   const [profileBio, setProfileBio] = useState('Love exploring new places!');
   const [profilePic, setProfilePic] = useState(null);
   const [showPicModal, setShowPicModal] = useState(false);
-  const [interests, setInterests] = useState(['Live Music', 'Sports', 'Food']);
-  const [newInterest, setNewInterest] = useState('');
   const [trustedContacts, setTrustedContacts] = useState(['Mom', 'Dad']);
   const [newContactName, setNewContactName] = useState('');
-  const [cards, setCards] = useState([{ id: 1, brand: 'Visa', last4: '4242' }]);
-  const [cardNum, setCardNum] = useState('');
-  const [cardExp, setCardExp] = useState('');
-  const [cardCvc, setCardCvc] = useState('');
-  const [showAddCard, setShowAddCard] = useState(false);
   const [safetyOn, setSafetyOn] = useState(true);
 
   // Modals
   const [showSOS, setShowSOS] = useState(false);
   const [showCheckin, setShowCheckin] = useState(false);
-  const [showConfetti, setShowConfetti] = useState(false);
 
   const allFriends = ['Alex', 'Sam', 'Jordan', 'Taylor', 'Morgan', 'Chris', 'Emma', 'Mike'];
-  const allInterestsList = ['Live Music', 'Sports', 'Food', 'Gaming', 'Fitness', 'Art', 'Movies', 'Travel'];
-  const timeOptions = ['12 PM', '1 PM', '2 PM', '3 PM', '4 PM', '5 PM', '6 PM', '7 PM', '8 PM', '9 PM', '10 PM', '11 PM'];
 
   const allVenues = useMemo(() => [
     { id: 1, name: "Joe's Pizza", type: "Italian", category: "Food", x: 25, y: 30, crowd: 45, best: "Now", stars: 4.5, addr: '456 Oak Ave', price: '$', trending: false },
@@ -792,8 +775,7 @@ const FlockApp = () => {
         addEventToCalendar(flockName, venueName, new Date(), flockTime, colors.navy);
         setFlockName(''); setFlockFriends([]); setFlockCashPool(false); setSelectedVenueForCreate(null);
         setIsLoading(false); setCurrentScreen('main');
-        setShowConfetti(true); setTimeout(() => setShowConfetti(false), 3000);
-        addXP(50); showToast(`🎉 "${newFlock.name}" created!`);
+        addXP(50); showToast(`"${newFlock.name}" created!`);
       }, 800);
     };
 
@@ -1312,7 +1294,7 @@ const FlockApp = () => {
               </div>
               <div style={{ display: 'flex', gap: '8px' }}>
                 <button onClick={() => { setShowAddEvent(false); setNewEventTitle(''); setNewEventVenue(''); }} style={{ flex: 1, padding: '10px', borderRadius: '10px', border: '1px solid #d1d5db', backgroundColor: 'white', fontWeight: '600', fontSize: '13px', cursor: 'pointer' }}>Cancel</button>
-                <button onClick={() => { if (newEventTitle.trim()) { addEventToCalendar(newEventTitle, newEventVenue || 'TBD', selectedDate, newEventTime, colors.navy); setNewEventTitle(''); setNewEventVenue(''); setShowAddEvent(false); }}} style={{ flex: 1, padding: '10px', borderRadius: '10px', border: 'none', background: `linear-gradient(90deg, ${colors.navy}, ${colors.navyMid})`, color: 'white', fontWeight: 'bold', fontSize: '13px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px' }}>{Icons.check('white', 14)} Add</button>
+                <button onClick={() => { if (newEventTitle.trim()) { addEventToCalendar(newEventTitle, newEventVenue || 'TBD', selectedDate, '7:00 PM', colors.navy); setNewEventTitle(''); setNewEventVenue(''); setShowAddEvent(false); }}} style={{ flex: 1, padding: '10px', borderRadius: '10px', border: 'none', background: `linear-gradient(90deg, ${colors.navy}, ${colors.navyMid})`, color: 'white', fontWeight: 'bold', fontSize: '13px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px' }}>{Icons.check('white', 14)} Add</button>
               </div>
             </div>
           )}
