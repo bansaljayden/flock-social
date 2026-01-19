@@ -1,4 +1,15 @@
 import React, { useState, useCallback, useEffect, useRef, useMemo } from 'react';
+import {
+  calculateSubscriptionRevenue,
+  calculateTransactionRevenue,
+  calculateTotalMonthlyRevenue,
+  calculateAnnualRevenue,
+  calculateMonthlyProfit,
+  calculateRevenuePerVenue,
+  calculateBreakEven,
+  formatCurrency,
+  calculateProfitMargin
+} from './lib/finance';
 
 // Brand Colors
 const colors = {
@@ -441,6 +452,7 @@ const FlockApp = () => {
       explore: <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="3 6 9 3 15 6 21 3 21 18 15 21 9 18 3 21"></polygon><line x1="9" y1="3" x2="9" y2="18"></line><line x1="15" y1="6" x2="15" y2="21"></line></svg>,
       calendar: <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg>,
       chat: <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>,
+      revenue: <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="1" x2="12" y2="23"></line><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"></path></svg>,
       profile: <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg>,
     };
     return icons[id] || null;
@@ -454,12 +466,13 @@ const FlockApp = () => {
         { id: 'explore', label: 'Explore' },
         { id: 'calendar', label: 'Calendar' },
         { id: 'chat', label: 'Chat' },
+        { id: 'revenue', label: 'Revenue' },
         { id: 'profile', label: 'Profile' },
       ].map(t => (
         <button key={t.id} onClick={() => { setCurrentTab(t.id); setCurrentScreen('main'); setProfileScreen('main'); setActiveVenue(null); setShowConnectPanel(false); }}
-          style={{ ...styles.navItem, backgroundColor: currentTab === t.id ? colors.cream : 'transparent', transition: 'all 0.2s' }}>
+          style={{ ...styles.navItem, backgroundColor: currentTab === t.id ? colors.cream : 'transparent', transition: 'all 0.2s', padding: '6px 4px' }}>
           <NavIcon id={t.id} active={currentTab === t.id} />
-          <span style={{ fontSize: '10px', fontWeight: '600', color: currentTab === t.id ? colors.navy : '#9ca3af', marginTop: '2px' }}>{t.label}</span>
+          <span style={{ fontSize: '9px', fontWeight: '600', color: currentTab === t.id ? colors.navy : '#9ca3af', marginTop: '2px' }}>{t.label}</span>
         </button>
       ))}
     </div>
@@ -1687,6 +1700,261 @@ const FlockApp = () => {
     );
   };
 
+  // REVENUE SIMULATOR SCREEN
+  const RevenueScreen = () => {
+    // Revenue simulator state
+    const [numVenues, setNumVenues] = useState(20);
+    const [subscriptionPrice, setSubscriptionPrice] = useState(50);
+    const [eventsPerVenue, setEventsPerVenue] = useState(12);
+    const [avgSpend, setAvgSpend] = useState(120);
+    const [takeRate, setTakeRate] = useState(2.5);
+    const [operatingCosts, setOperatingCosts] = useState(2000);
+
+    // Calculate all metrics
+    const subscriptionRevenue = calculateSubscriptionRevenue(numVenues, subscriptionPrice);
+    const transactionRevenue = calculateTransactionRevenue(numVenues, eventsPerVenue, avgSpend, takeRate);
+    const totalMonthlyRevenue = calculateTotalMonthlyRevenue(subscriptionRevenue, transactionRevenue);
+    const annualRevenue = calculateAnnualRevenue(totalMonthlyRevenue);
+    const monthlyProfit = calculateMonthlyProfit(totalMonthlyRevenue, operatingCosts);
+    const revenuePerVenue = calculateRevenuePerVenue(totalMonthlyRevenue, numVenues);
+    const breakEvenVenues = calculateBreakEven(operatingCosts, subscriptionPrice, eventsPerVenue, avgSpend, takeRate);
+    const profitMargin = calculateProfitMargin(monthlyProfit, totalMonthlyRevenue);
+    const isProfitable = monthlyProfit >= 0;
+    const isAboveBreakEven = numVenues >= breakEvenVenues;
+
+    // Input field style
+    const inputStyle = {
+      width: '100%',
+      padding: '10px 12px',
+      borderRadius: '8px',
+      border: `1px solid ${colors.creamDark}`,
+      fontSize: '14px',
+      fontWeight: '600',
+      color: colors.navy,
+      backgroundColor: 'white',
+      outline: 'none',
+      boxSizing: 'border-box',
+    };
+
+    const labelStyle = {
+      fontSize: '11px',
+      fontWeight: '700',
+      color: colors.navy,
+      marginBottom: '4px',
+      display: 'block',
+    };
+
+    const helperStyle = {
+      fontSize: '9px',
+      color: '#9ca3af',
+      marginTop: '2px',
+    };
+
+    const cardStyle = {
+      backgroundColor: 'white',
+      borderRadius: '12px',
+      padding: '12px',
+      marginBottom: '10px',
+      boxShadow: '0 1px 3px rgba(0,0,0,0.05)',
+    };
+
+    return (
+      <div key="revenue-screen-container" style={{ display: 'flex', flexDirection: 'column', height: '100%', backgroundColor: colors.cream }}>
+        {/* Header */}
+        <div style={{ padding: '16px', background: `linear-gradient(135deg, ${colors.navy}, ${colors.navyMid})`, flexShrink: 0 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+            {Icons.dollar('white', 24)}
+            <div>
+              <h1 style={{ fontSize: '18px', fontWeight: '900', color: 'white', margin: 0 }}>Revenue Simulator</h1>
+              <p style={{ fontSize: '10px', color: 'rgba(255,255,255,0.7)', margin: 0 }}>Model your business financials</p>
+            </div>
+          </div>
+        </div>
+
+        {/* Content - Two Column Layout */}
+        <div style={{ flex: 1, overflowY: 'auto', padding: '12px' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+
+            {/* LEFT COLUMN - INPUTS */}
+            <div>
+              <h3 style={{ fontSize: '12px', fontWeight: '800', color: colors.navy, margin: '0 0 10px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Inputs</h3>
+
+              {/* Number of Venues */}
+              <div style={{ marginBottom: '12px' }}>
+                <label style={labelStyle}>Number of Venues</label>
+                <input
+                  type="number"
+                  value={numVenues}
+                  onChange={(e) => setNumVenues(Math.max(0, parseInt(e.target.value) || 0))}
+                  style={inputStyle}
+                  min="0"
+                />
+                <p style={helperStyle}>Venues subscribed to Flock</p>
+              </div>
+
+              {/* Subscription Price */}
+              <div style={{ marginBottom: '12px' }}>
+                <label style={labelStyle}>Monthly Subscription</label>
+                <div style={{ position: 'relative' }}>
+                  <span style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: '#9ca3af', fontWeight: '600' }}>$</span>
+                  <input
+                    type="number"
+                    value={subscriptionPrice}
+                    onChange={(e) => setSubscriptionPrice(Math.max(0, parseInt(e.target.value) || 0))}
+                    style={{ ...inputStyle, paddingLeft: '28px' }}
+                    min="0"
+                  />
+                </div>
+                <p style={helperStyle}>Monthly fee per venue</p>
+              </div>
+
+              {/* Events Per Venue */}
+              <div style={{ marginBottom: '12px' }}>
+                <label style={labelStyle}>Events Per Venue/Month</label>
+                <input
+                  type="number"
+                  value={eventsPerVenue}
+                  onChange={(e) => setEventsPerVenue(Math.max(0, parseInt(e.target.value) || 0))}
+                  style={inputStyle}
+                  min="0"
+                />
+                <p style={helperStyle}>Avg bookings per venue</p>
+              </div>
+
+              {/* Average Spend */}
+              <div style={{ marginBottom: '12px' }}>
+                <label style={labelStyle}>Avg Group Spend</label>
+                <div style={{ position: 'relative' }}>
+                  <span style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: '#9ca3af', fontWeight: '600' }}>$</span>
+                  <input
+                    type="number"
+                    value={avgSpend}
+                    onChange={(e) => setAvgSpend(Math.max(0, parseInt(e.target.value) || 0))}
+                    style={{ ...inputStyle, paddingLeft: '28px' }}
+                    min="0"
+                  />
+                </div>
+                <p style={helperStyle}>Per event transaction</p>
+              </div>
+
+              {/* Take Rate */}
+              <div style={{ marginBottom: '12px' }}>
+                <label style={labelStyle}>Transaction Take Rate</label>
+                <div style={{ position: 'relative' }}>
+                  <input
+                    type="number"
+                    value={takeRate}
+                    onChange={(e) => setTakeRate(Math.max(0, parseFloat(e.target.value) || 0))}
+                    style={{ ...inputStyle, paddingRight: '28px' }}
+                    min="0"
+                    step="0.1"
+                  />
+                  <span style={{ position: 'absolute', right: '12px', top: '50%', transform: 'translateY(-50%)', color: '#9ca3af', fontWeight: '600' }}>%</span>
+                </div>
+                <p style={helperStyle}>% of each transaction</p>
+              </div>
+
+              {/* Operating Costs */}
+              <div style={{ marginBottom: '12px' }}>
+                <label style={labelStyle}>Monthly Operating Costs</label>
+                <div style={{ position: 'relative' }}>
+                  <span style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: '#9ca3af', fontWeight: '600' }}>$</span>
+                  <input
+                    type="number"
+                    value={operatingCosts}
+                    onChange={(e) => setOperatingCosts(Math.max(0, parseInt(e.target.value) || 0))}
+                    style={{ ...inputStyle, paddingLeft: '28px' }}
+                    min="0"
+                  />
+                </div>
+                <p style={helperStyle}>Fixed monthly expenses</p>
+              </div>
+            </div>
+
+            {/* RIGHT COLUMN - OUTPUTS */}
+            <div>
+              <h3 style={{ fontSize: '12px', fontWeight: '800', color: colors.navy, margin: '0 0 10px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Results</h3>
+
+              {/* Revenue Breakdown */}
+              <div style={cardStyle}>
+                <h4 style={{ fontSize: '10px', fontWeight: '700', color: '#6b7280', margin: '0 0 8px', textTransform: 'uppercase' }}>Revenue Breakdown</h4>
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
+                  <span style={{ fontSize: '11px', color: '#6b7280' }}>Subscriptions</span>
+                  <span style={{ fontSize: '11px', fontWeight: '600', color: colors.navy }}>{formatCurrency(subscriptionRevenue)}</span>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px' }}>
+                  <span style={{ fontSize: '11px', color: '#6b7280' }}>Transactions</span>
+                  <span style={{ fontSize: '11px', fontWeight: '600', color: colors.navy }}>{formatCurrency(transactionRevenue)}</span>
+                </div>
+                <div style={{ borderTop: `1px solid ${colors.creamDark}`, paddingTop: '8px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <span style={{ fontSize: '12px', fontWeight: '700', color: colors.navy }}>Monthly Total</span>
+                    <span style={{ fontSize: '18px', fontWeight: '900', color: colors.navy }}>{formatCurrency(totalMonthlyRevenue)}</span>
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '4px' }}>
+                    <span style={{ fontSize: '10px', color: '#6b7280' }}>Annual (ARR)</span>
+                    <span style={{ fontSize: '12px', fontWeight: '700', color: colors.navyMid }}>{formatCurrency(annualRevenue)}</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Profitability */}
+              <div style={{ ...cardStyle, background: isProfitable ? 'linear-gradient(135deg, #d1fae5, #a7f3d0)' : 'linear-gradient(135deg, #fee2e2, #fecaca)' }}>
+                <h4 style={{ fontSize: '10px', fontWeight: '700', color: isProfitable ? '#047857' : '#b91c1c', margin: '0 0 8px', textTransform: 'uppercase' }}>
+                  {isProfitable ? 'Profitable' : 'Not Profitable'}
+                </h4>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <span style={{ fontSize: '11px', color: isProfitable ? '#065f46' : '#991b1b' }}>Monthly Profit</span>
+                  <span style={{ fontSize: '16px', fontWeight: '900', color: isProfitable ? '#047857' : '#b91c1c' }}>
+                    {monthlyProfit >= 0 ? '+' : ''}{formatCurrency(monthlyProfit)}
+                  </span>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '4px' }}>
+                  <span style={{ fontSize: '10px', color: isProfitable ? '#065f46' : '#991b1b' }}>Profit Margin</span>
+                  <span style={{ fontSize: '12px', fontWeight: '700', color: isProfitable ? '#047857' : '#b91c1c' }}>
+                    {profitMargin.toFixed(1)}%
+                  </span>
+                </div>
+              </div>
+
+              {/* Unit Economics */}
+              <div style={cardStyle}>
+                <h4 style={{ fontSize: '10px', fontWeight: '700', color: '#6b7280', margin: '0 0 8px', textTransform: 'uppercase' }}>Unit Economics</h4>
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
+                  <span style={{ fontSize: '11px', color: '#6b7280' }}>Revenue/Venue</span>
+                  <span style={{ fontSize: '11px', fontWeight: '600', color: colors.navy }}>{formatCurrency(revenuePerVenue)}/mo</span>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px' }}>
+                  <span style={{ fontSize: '11px', color: '#6b7280' }}>Break-Even Point</span>
+                  <span style={{ fontSize: '11px', fontWeight: '600', color: colors.navy }}>{breakEvenVenues} venues</span>
+                </div>
+                <div style={{ padding: '8px', borderRadius: '8px', backgroundColor: isAboveBreakEven ? '#d1fae5' : '#fef3c7', textAlign: 'center' }}>
+                  <span style={{ fontSize: '10px', fontWeight: '700', color: isAboveBreakEven ? '#047857' : '#b45309' }}>
+                    {isAboveBreakEven
+                      ? `${numVenues - breakEvenVenues} venues above break-even`
+                      : `Need ${breakEvenVenues - numVenues} more venues`}
+                  </span>
+                </div>
+              </div>
+
+              {/* Business Model Info */}
+              <div style={{ ...cardStyle, backgroundColor: colors.cream, border: `1px solid ${colors.creamDark}` }}>
+                <h4 style={{ fontSize: '10px', fontWeight: '700', color: colors.navy, margin: '0 0 6px' }}>Business Model</h4>
+                <p style={{ fontSize: '9px', color: '#6b7280', margin: 0, lineHeight: '1.4' }}>
+                  Flock generates revenue through <strong>venue subscriptions</strong> (recurring, predictable)
+                  and <strong>transaction fees</strong> (scales with activity). This dual-revenue model provides
+                  stability while capturing upside from platform growth.
+                </p>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <BottomNav />
+      </div>
+    );
+  };
+
   // RENDER - Call functions directly instead of JSX to prevent component recreation
   const renderScreen = () => {
     if (currentScreen === 'create') return CreateScreen();
@@ -1697,6 +1965,7 @@ const FlockApp = () => {
       case 'explore': return ExploreScreen();
       case 'calendar': return CalendarScreen();
       case 'chat': return ChatListScreen();
+      case 'revenue': return <RevenueScreen />;
       case 'profile': return ProfileScreen();
       default: return HomeScreen();
     }
