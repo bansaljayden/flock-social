@@ -258,23 +258,21 @@ const FlockApp = () => {
   const [showCheckin, setShowCheckin] = useState(false);
 
   // Admin Mode (for Revenue Simulator access)
-  const [isAdminMode, setIsAdminMode] = useState(false);
   const [showAdminPrompt, setShowAdminPrompt] = useState(false);
   const [adminPassword, setAdminPassword] = useState('');
 
   // Venue Dashboard (for venue owners)
-  const [isVenueOwner, setIsVenueOwner] = useState(false);
   const [venueTier, setVenueTier] = useState('free'); // 'free', 'premium', 'pro'
 
-  // Check URL for admin mode on mount
+  // Check URL for admin/venue mode on mount
   useEffect(() => {
     const urlParams = new URLSearchParams(window.location.search);
     if (urlParams.get('admin') === 'true') {
-      setIsAdminMode(true);
+      setCurrentScreen('adminRevenue');
     }
     if (urlParams.get('venue') === 'true') {
-      setIsVenueOwner(true);
       setVenueTier(urlParams.get('tier') || 'free');
+      setCurrentScreen('venueDashboard');
     }
   }, []);
 
@@ -592,7 +590,6 @@ const FlockApp = () => {
           <button onClick={() => { setShowAdminPrompt(false); setAdminPassword(''); }} style={{ flex: 1, padding: '12px', borderRadius: '12px', border: '1px solid #d1d5db', backgroundColor: 'white', fontWeight: '600', cursor: 'pointer' }}>Cancel</button>
           <button onClick={() => {
             if (adminPassword === 'flock2026') {
-              setIsAdminMode(true);
               setShowAdminPrompt(false);
               setAdminPassword('');
               setCurrentScreen('adminRevenue');
