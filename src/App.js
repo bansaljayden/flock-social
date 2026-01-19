@@ -1050,7 +1050,8 @@ const FlockApp = () => {
     setCurrentTab('home');
   };
 
-  // Easter egg - tap counter
+  // Easter egg - tap counter (state used via callback in setEasterEggTaps)
+  // eslint-disable-next-line no-unused-vars
   const [easterEggTaps, setEasterEggTaps] = useState(0);
 
   // WELCOME SCREEN - Mode Selection
