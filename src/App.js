@@ -123,6 +123,10 @@ const styles = {
 };
 
 const FlockApp = () => {
+  // User Mode Selection
+  const [userMode, setUserMode] = useState(() => localStorage.getItem('flockUserMode') || null);
+  const [showModeSelection, setShowModeSelection] = useState(!localStorage.getItem('flockUserMode'));
+
   // Navigation
   const [currentTab, setCurrentTab] = useState('home');
   const [currentScreen, setCurrentScreen] = useState('main');
@@ -162,22 +166,6 @@ const FlockApp = () => {
   const [aiInput, setAiInput] = useState('');
   const [aiTyping, setAiTyping] = useState(false);
   const [showAiAssistant, setShowAiAssistant] = useState(false);
-
-  const sendAiMessage = useCallback(() => {
-    if (!aiInput.trim()) return;
-    const userMsg = aiInput.trim().toLowerCase();
-    setAiMessages(prev => [...prev, { role: 'user', text: aiInput }]);
-    setAiInput('');
-    setAiTyping(true);
-    setTimeout(() => {
-      let response = "I can help you find venues, check crowds, or plan events!";
-      if (userMsg.includes('busy') || userMsg.includes('crowd')) response = "The Blue Heron Bar is at 55% capacity. Club Nova is quiet at 40%!";
-      else if (userMsg.includes('recommend')) response = "Try The Jazz Room tonight! Live jazz at 9 PM. 🎵";
-      else if (userMsg.includes('food')) response = "Joe's Pizza has great late-night slices (4.5 stars)!";
-      setAiMessages(prev => [...prev, { role: 'assistant', text: response }]);
-      setAiTyping(false);
-    }, 1500);
-  }, [aiInput]);
 
   // Calendar
   const [calendarMonth, setCalendarMonth] = useState(new Date());
@@ -236,11 +224,28 @@ const FlockApp = () => {
   const [showChatPool, setShowChatPool] = useState(false);
   const [chatPoolAmount, setChatPoolAmount] = useState(20);
   const chatEndRef = useRef(null);
+  const aiInputRef = useRef(null);
   const [isTyping, setIsTyping] = useState(false);
   const [chatSearch, setChatSearch] = useState('');
   const [showChatSearch, setShowChatSearch] = useState(false);
   const [replyingTo, setReplyingTo] = useState(null);
   const [showReactionPicker, setShowReactionPicker] = useState(null);
+
+  // Direct Messages
+  const [directMessages, setDirectMessages] = useState([
+    { id: 'dm-1', friendName: 'Alex', avatar: '🎸', messages: [
+      { id: 1, sender: 'Alex', text: 'Hey! You coming out tonight?', time: '6:30 PM' },
+      { id: 2, sender: 'You', text: 'Yeah definitely! Where are you thinking?', time: '6:32 PM' },
+      { id: 3, sender: 'Alex', text: 'Blue Heron sounds good. Sarah might come too', time: '6:33 PM' },
+    ], lastActive: '2m ago', isOnline: true, unread: 2 },
+    { id: 'dm-2', friendName: 'Sarah', avatar: '🎂', messages: [
+      { id: 1, sender: 'Sarah', text: 'Thanks for the birthday wishes! 🎉', time: '2:00 PM' },
+      { id: 2, sender: 'You', text: 'Of course! Can\'t wait to celebrate Saturday!', time: '2:15 PM' },
+    ], lastActive: '1h ago', isOnline: false, unread: 0 },
+  ]);
+  const [selectedDmId, setSelectedDmId] = useState(null);
+  const [showNewDmModal, setShowNewDmModal] = useState(false);
+  const [dmSearchText, setDmSearchText] = useState('');
 
   // Profile
   const [profileScreen, setProfileScreen] = useState('main');
@@ -253,6 +258,18 @@ const FlockApp = () => {
   const [newContactName, setNewContactName] = useState('');
   const [safetyOn, setSafetyOn] = useState(true);
 
+  // Interests
+  const [userInterests, setUserInterests] = useState(['Live Music', 'Cocktails', 'Nightlife']);
+  const [newInterest, setNewInterest] = useState('');
+  const suggestedInterests = ['Sports', 'Food', 'Dancing', 'Karaoke', 'Comedy', 'Art', 'Wine', 'Beer', 'Trivia', 'Pool', 'Darts', 'Gaming'];
+
+  // Payment Methods
+  const [paymentMethods, setPaymentMethods] = useState([
+    { id: 1, brand: 'Visa', last4: '4242', expiry: '12/26', isDefault: true },
+  ]);
+  const [showAddCard, setShowAddCard] = useState(false);
+  const [newCard, setNewCard] = useState({ number: '', expiry: '', cvv: '', name: '' });
+
   // Modals
   const [showSOS, setShowSOS] = useState(false);
   const [showCheckin, setShowCheckin] = useState(false);
@@ -263,6 +280,8 @@ const FlockApp = () => {
 
   // Venue Dashboard (for venue owners)
   const [venueTier, setVenueTier] = useState('free'); // 'free', 'premium', 'pro'
+  const [venueTab, setVenueTab] = useState('analytics'); // Lifted to App level to persist across re-renders
+  const [adminTab, setAdminTab] = useState('revenue'); // Lifted to App level to persist across re-renders
 
   // Check URL for admin/venue mode on mount
   useEffect(() => {
@@ -276,7 +295,14 @@ const FlockApp = () => {
     }
   }, []);
 
-  const allFriends = ['Alex', 'Sam', 'Jordan', 'Taylor', 'Morgan', 'Chris', 'Emma', 'Mike'];
+  // Focus AI input when modal opens
+  useEffect(() => {
+    if (showAiAssistant && aiInputRef.current) {
+      setTimeout(() => aiInputRef.current?.focus(), 100);
+    }
+  }, [showAiAssistant]);
+
+  const allFriends = useMemo(() => ['Alex', 'Sam', 'Jordan', 'Taylor', 'Morgan', 'Chris', 'Emma', 'Mike'], []);
 
   const allVenues = useMemo(() => [
     { id: 1, name: "Joe's Pizza", type: "Italian", category: "Food", x: 25, y: 30, crowd: 45, best: "Now", stars: 4.5, addr: '456 Oak Ave', price: '$', trending: false },
@@ -307,7 +333,7 @@ const FlockApp = () => {
 
   const addEventToCalendar = useCallback((title, venue, date, time, color) => {
     setCalendarEvents(prev => [...prev, { id: Date.now(), title, venue, date: typeof date === 'string' ? date : formatDateStr(date), time, color: color || colors.navy, members: 1 }]);
-    showToast('📅 Added to calendar!');
+    showToast('Added to calendar!');
   }, [showToast]);
 
   const addMessageToFlock = useCallback((flockId, message) => {
@@ -326,8 +352,121 @@ const FlockApp = () => {
       return f;
     }));
     addXP(20);
-    showToast('💰 Payment sent!');
+    showToast('Payment sent!');
   }, [addXP, showToast]);
+
+  // AI Response Generation - Smart contextual responses
+  const generateAiResponse = useCallback((userMsg, venueList, flockList, friendsList) => {
+    const msg = userMsg.toLowerCase();
+    const findVenue = (name) => venueList.find(v => v.name.toLowerCase().includes(name.toLowerCase()));
+    const busyVenues = venueList.filter(v => v.crowd >= 70).sort((a, b) => b.crowd - a.crowd);
+    const quietVenues = venueList.filter(v => v.crowd < 50).sort((a, b) => a.crowd - b.crowd);
+
+    // VENUE QUESTIONS - Busy/Crowded
+    if (msg.includes('busy') || msg.includes('crowded') || msg.includes('packed') || msg.includes('crowd')) {
+      if (busyVenues.length > 0) {
+        const busy = busyVenues[0];
+        const quiet = quietVenues[0];
+        return { text: `🔥 ${busy.name} is at ${busy.crowd}% capacity right now - it's poppin'! ${quiet ? `Try ${quiet.name} instead - only ${quiet.crowd}% full and highly rated (${quiet.stars}⭐)!` : ''}`, confidence: 94 };
+      }
+      return { text: "Things are pretty chill everywhere right now. Perfect time to grab a spot at your favorite venue! 🎯", confidence: 85 };
+    }
+
+    // VENUE QUESTIONS - Recommendations
+    if (msg.includes('where should i go') || msg.includes('recommend') || msg.includes('suggestion') || msg.includes('what venue') || msg.includes('where to go')) {
+      const topRated = venueList.filter(v => v.stars >= 4.5).sort((a, b) => b.stars - a.stars)[0];
+      const trending = venueList.find(v => v.trending);
+      if (trending) {
+        return { text: `Based on tonight's vibe, I recommend ${trending.name}! It's trending right now 📈. ${topRated && topRated.name !== trending.name ? `Or try ${topRated.name} - ${topRated.stars}⭐ rating!` : ''}`, confidence: 91 };
+      }
+      if (topRated) {
+        return { text: `I'd recommend ${topRated.name} - it has a ${topRated.stars}⭐ rating and the crowd level is perfect at ${topRated.crowd}%! Great ${topRated.type} spot. 🎯`, confidence: 89 };
+      }
+    }
+
+    // PLANNING QUESTIONS
+    if (msg.includes('plan') || msg.includes('organize') || msg.includes('coordinate') || msg.includes('create') || msg.includes('start a flock') || msg.includes('make a flock')) {
+      const upcomingFlock = flockList.find(f => f.status === 'voting');
+      return { text: `I can help you create a Flock! 🐦 Would you like me to suggest some friends and venues? ${upcomingFlock ? `BTW, you have "${upcomingFlock.name}" coming up - still need votes!` : 'Tap "Start Flock" below to get started!'}`, confidence: 95 };
+    }
+
+    // FOOD QUESTIONS
+    if (msg.includes('food') || msg.includes('eat') || msg.includes('hungry') || msg.includes('restaurant') || msg.includes('pizza') || msg.includes('taco')) {
+      const foodVenues = venueList.filter(v => v.category === 'Food').sort((a, b) => b.stars - a.stars);
+      if (foodVenues.length > 0) {
+        const top = foodVenues[0];
+        return { text: `Hungry? 🍕 ${top.name} is your best bet - ${top.stars}⭐ rating and ${top.price} pricing. They're at ${top.crowd}% capacity so you won't wait long!`, confidence: 92 };
+      }
+    }
+
+    // NIGHTLIFE QUESTIONS
+    if (msg.includes('bar') || msg.includes('drink') || msg.includes('nightlife') || msg.includes('club') || msg.includes('party')) {
+      const nightlife = venueList.filter(v => v.category === 'Nightlife').sort((a, b) => b.stars - a.stars);
+      if (nightlife.length > 0) {
+        const top = nightlife[0];
+        return { text: `Ready to party? 🍸 ${top.name} is the move - ${top.stars}⭐ rating! Currently at ${top.crowd}% capacity. Best time to go: ${top.best}`, confidence: 90 };
+      }
+    }
+
+    // SPECIFIC VENUE QUESTIONS
+    const venueNames = ['blue heron', 'club nova', 'jazz room', 'pizza', 'taco', 'diner', 'sports bar'];
+    for (const name of venueNames) {
+      if (msg.includes(name)) {
+        const venue = findVenue(name);
+        if (venue) {
+          return { text: `📍 ${venue.name}: Currently ${venue.crowd}% full. ${venue.crowd > 70 ? 'Pretty busy!' : venue.crowd > 40 ? 'Good vibe going.' : 'Nice and chill.'} Rating: ${venue.stars}⭐. Best time: ${venue.best}. Address: ${venue.addr}`, confidence: 96 };
+        }
+      }
+    }
+
+    // FRIEND QUESTIONS
+    if (msg.includes('friend') || msg.includes('who') || friendsList.some(f => msg.includes(f.toLowerCase()))) {
+      const mentionedFriend = friendsList.find(f => msg.includes(f.toLowerCase()));
+      if (mentionedFriend) {
+        const randomVenue = venueList[Math.floor(Math.random() * venueList.length)];
+        return { text: `${mentionedFriend} was last seen heading to ${randomVenue.name}! Want me to help you create a Flock to meet up? 👋`, confidence: 78 };
+      }
+      return { text: `Your friends are out and about! I see ${friendsList.slice(0, 3).join(', ')} are active. Want to start a Flock with them? 🐦`, confidence: 82 };
+    }
+
+    // TIME/SCHEDULE QUESTIONS
+    if (msg.includes('time') || msg.includes('when') || msg.includes('schedule') || msg.includes('tonight') || msg.includes('best time')) {
+      const bestVenue = venueList.find(v => v.best === 'Now') || venueList[0];
+      return { text: `⏰ Right now is a great time for ${bestVenue.name}! Most venues peak around 10-11 PM on weekends. I'd suggest heading out in the next hour to beat the rush.`, confidence: 87 };
+    }
+
+    // HELP QUESTIONS
+    if (msg.includes('help') || msg.includes('how do') || msg.includes('how does') || msg.includes('what can you')) {
+      return { text: "I can help you with:\n🔍 Finding venues - \"What's busy?\"\n📍 Recommendations - \"Where should I go?\"\n🐦 Planning - \"Help me create a Flock\"\n👥 Friends - \"Where is Alex?\"\n⏰ Timing - \"Best time to go out?\"\n\nJust ask! 😊", confidence: 100 };
+    }
+
+    // GREETING
+    if (msg.includes('hi') || msg.includes('hello') || msg.includes('hey') || msg.includes('sup') || msg === 'yo') {
+      return { text: "Hey there! 👋 Ready to plan an awesome night out? I can help you find the perfect spot, check crowd levels, or coordinate with friends. What are you looking for tonight?", confidence: 100 };
+    }
+
+    // THANKS
+    if (msg.includes('thank') || msg.includes('thanks') || msg.includes('awesome') || msg.includes('great') || msg.includes('perfect')) {
+      return { text: "You got it! 🎉 Let me know if you need anything else. Have an amazing time tonight!", confidence: 100 };
+    }
+
+    // DEFAULT
+    return { text: "I'm not 100% sure what you're looking for, but I can help with venue recommendations, crowd levels, planning flocks, or finding friends. Try asking \"What's busy right now?\" or \"Where should I go tonight?\" 🤔", confidence: 65 };
+  }, []);
+
+  const sendAiMessage = useCallback(() => {
+    if (!aiInput.trim()) return;
+    const userMessage = aiInput.trim();
+    setAiMessages(prev => [...prev, { role: 'user', text: userMessage }]);
+    setAiInput('');
+    setAiTyping(true);
+    setTimeout(() => {
+      const response = generateAiResponse(userMessage, allVenues, flocks, allFriends);
+      setAiMessages(prev => [...prev, { role: 'assistant', text: response.text, confidence: response.confidence }]);
+      setAiTyping(false);
+      if (aiInputRef.current) aiInputRef.current.focus();
+    }, 1200 + Math.random() * 800);
+  }, [aiInput, generateAiResponse, allVenues, flocks, allFriends]);
 
   // Auto-scroll chat to bottom when messages change
   const selectedFlock = flocks.find(f => f.id === selectedFlockId) || flocks[0];
@@ -409,6 +548,33 @@ const FlockApp = () => {
     repeat: (color = 'currentColor', size = 18) => <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="17 1 21 5 17 9"></polyline><path d="M3 11V9a4 4 0 0 1 4-4h14"></path><polyline points="7 23 3 19 7 15"></polyline><path d="M21 13v2a4 4 0 0 1-4 4H3"></path></svg>,
     zap: (color = '#F59E0B', size = 18) => <svg width={size} height={size} viewBox="0 0 24 24" fill={color} stroke={color} strokeWidth="1" strokeLinecap="round" strokeLinejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg>,
     activity: (color = 'currentColor', size = 18) => <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline></svg>,
+    building: (color = 'currentColor', size = 18) => <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="4" y="2" width="16" height="20" rx="2" ry="2"></rect><path d="M9 22v-4h6v4"></path><path d="M8 6h.01"></path><path d="M16 6h.01"></path><path d="M8 10h.01"></path><path d="M16 10h.01"></path><path d="M8 14h.01"></path><path d="M16 14h.01"></path></svg>,
+    briefcase: (color = 'currentColor', size = 18) => <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="2" y="7" width="20" height="14" rx="2" ry="2"></rect><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"></path></svg>,
+    creditCard: (color = 'currentColor', size = 18) => <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="1" y="4" width="22" height="16" rx="2" ry="2"></rect><line x1="1" y1="10" x2="23" y2="10"></line></svg>,
+    target: (color = 'currentColor', size = 18) => <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"></circle><circle cx="12" cy="12" r="6"></circle><circle cx="12" cy="12" r="2"></circle></svg>,
+    star: (color = 'currentColor', size = 18) => <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"></polygon></svg>,
+    starFilled: (color = '#F59E0B', size = 18) => <svg width={size} height={size} viewBox="0 0 24 24" fill={color} stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"></polygon></svg>,
+    messageSquare: (color = 'currentColor', size = 18) => <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>,
+    tag: (color = 'currentColor', size = 18) => <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"></path><line x1="7" y1="7" x2="7.01" y2="7"></line></svg>,
+    gift: (color = 'currentColor', size = 18) => <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 12 20 22 4 22 4 12"></polyline><rect x="2" y="7" width="20" height="5"></rect><line x1="12" y1="22" x2="12" y2="7"></line><path d="M12 7H7.5a2.5 2.5 0 0 1 0-5C11 2 12 7 12 7z"></path><path d="M12 7h4.5a2.5 2.5 0 0 0 0-5C13 2 12 7 12 7z"></path></svg>,
+    barChart: (color = 'currentColor', size = 18) => <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="20" x2="12" y2="10"></line><line x1="18" y1="20" x2="18" y2="4"></line><line x1="6" y1="20" x2="6" y2="16"></line></svg>,
+    pieChart: (color = 'currentColor', size = 18) => <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21.21 15.89A10 10 0 1 1 8 2.83"></path><path d="M22 12A10 10 0 0 0 12 2v10z"></path></svg>,
+    edit: (color = 'currentColor', size = 18) => <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>,
+    trash: (color = 'currentColor', size = 18) => <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>,
+    lock: (color = 'currentColor', size = 18) => <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>,
+    map: (color = 'currentColor', size = 18) => <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="1 6 1 22 8 18 16 22 23 18 23 2 16 6 8 2 1 6"></polygon><line x1="8" y1="2" x2="8" y2="18"></line><line x1="16" y1="6" x2="16" y2="22"></line></svg>,
+    globe: (color = 'currentColor', size = 18) => <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="2" y1="12" x2="22" y2="12"></line><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path></svg>,
+    download: (color = 'currentColor', size = 18) => <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>,
+    award: (color = 'currentColor', size = 18) => <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="8" r="7"></circle><polyline points="8.21 13.89 7 23 12 20 17 23 15.79 13.88"></polyline></svg>,
+    checkCircle: (color = 'currentColor', size = 18) => <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline></svg>,
+    alertCircle: (color = 'currentColor', size = 18) => <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></svg>,
+    mail: (color = 'currentColor', size = 18) => <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"></path><polyline points="22,6 12,13 2,6"></polyline></svg>,
+    phone: (color = 'currentColor', size = 18) => <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"></path></svg>,
+    upload: (color = 'currentColor', size = 18) => <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg>,
+    filter: (color = 'currentColor', size = 18) => <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"></polygon></svg>,
+    layers: (color = 'currentColor', size = 18) => <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="12 2 2 7 12 12 22 7 12 2"></polygon><polyline points="2 17 12 22 22 17"></polyline><polyline points="2 12 12 17 22 12"></polyline></svg>,
+    eye: (color = 'currentColor', size = 18) => <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0z"></path><path d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"></path></svg>,
+    chevronRight: (color = 'currentColor', size = 18) => <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 5l7 7-7 7"></path></svg>,
   };
 
   // Add reaction to message
@@ -441,7 +607,7 @@ const FlockApp = () => {
     const file = e.target.files?.[0];
     if (file) {
       const reader = new FileReader();
-      reader.onload = () => { setProfilePic(reader.result); setShowPicModal(false); showToast('📷 Photo uploaded!'); addXP(10); };
+      reader.onload = () => { setProfilePic(reader.result); setShowPicModal(false); showToast('Photo uploaded!'); addXP(10); };
       reader.readAsDataURL(file);
     }
   }, [showToast, addXP]);
@@ -452,7 +618,7 @@ const FlockApp = () => {
     const seed = Math.random().toString(36).substring(7);
     setProfilePic(`https://api.dicebear.com/7.x/${style}/svg?seed=${seed}`);
     setShowPicModal(false);
-    showToast('🤖 AI Avatar generated!');
+    showToast('AI Avatar generated!');
     addXP(10);
   }, [showToast, addXP]);
 
@@ -477,24 +643,29 @@ const FlockApp = () => {
     return icons[id] || null;
   };
 
-  // Bottom Navigation (Regular users - no Revenue tab)
-  const BottomNav = () => (
-    <div style={{ ...styles.bottomNav, boxShadow: '0 -4px 20px rgba(0,0,0,0.05)' }}>
-      {[
-        { id: 'home', label: 'Home' },
-        { id: 'explore', label: 'Explore' },
-        { id: 'calendar', label: 'Calendar' },
-        { id: 'chat', label: 'Chat' },
-        { id: 'profile', label: 'Profile' },
-      ].map(t => (
-        <button key={t.id} onClick={() => { setCurrentTab(t.id); setCurrentScreen('main'); setProfileScreen('main'); setActiveVenue(null); setShowConnectPanel(false); }}
-          style={{ ...styles.navItem, backgroundColor: currentTab === t.id ? colors.cream : 'transparent', transition: 'all 0.2s' }}>
-          <NavIcon id={t.id} active={currentTab === t.id} />
-          <span style={{ fontSize: '10px', fontWeight: '600', color: currentTab === t.id ? colors.navy : '#9ca3af', marginTop: '2px' }}>{t.label}</span>
-        </button>
-      ))}
-    </div>
-  );
+  // Bottom Navigation (Regular users only - hidden in admin/venue modes)
+  const BottomNav = () => {
+    // Hide bottom nav for admin and venue modes
+    if (userMode === 'admin' || userMode === 'venue') return null;
+
+    return (
+      <div style={{ ...styles.bottomNav, boxShadow: '0 -4px 20px rgba(0,0,0,0.05)' }}>
+        {[
+          { id: 'home', label: 'Home' },
+          { id: 'explore', label: 'Explore' },
+          { id: 'calendar', label: 'Calendar' },
+          { id: 'chat', label: 'Chat' },
+          { id: 'profile', label: 'Profile' },
+        ].map(t => (
+          <button key={t.id} onClick={() => { setCurrentTab(t.id); setCurrentScreen('main'); setProfileScreen('main'); setActiveVenue(null); setShowConnectPanel(false); }}
+            style={{ ...styles.navItem, backgroundColor: currentTab === t.id ? colors.cream : 'transparent', transition: 'all 0.2s' }}>
+            <NavIcon id={t.id} active={currentTab === t.id} />
+            <span style={{ fontSize: '10px', fontWeight: '600', color: currentTab === t.id ? colors.navy : '#9ca3af', marginTop: '2px' }}>{t.label}</span>
+          </button>
+        ))}
+      </div>
+    );
+  };
 
   // Safety Button
   const SafetyButton = () => safetyOn && currentScreen === 'main' && (
@@ -568,8 +739,24 @@ const FlockApp = () => {
     </div>
   );
 
-  // Admin Password Modal
-  const AdminPromptModal = () => showAdminPrompt && (
+  // Handler for admin password submission
+  const handleAdminModeSelect = () => {
+    if (adminPassword === 'flock2026') {
+      localStorage.setItem('flockUserMode', 'admin');
+      setUserMode('admin');
+      setShowModeSelection(false);
+      setShowAdminPrompt(false);
+      setAdminPassword('');
+      setCurrentScreen('adminRevenue');
+      showToast('Admin access granted');
+    } else {
+      showToast('Incorrect password', 'error');
+      setAdminPassword('');
+    }
+  };
+
+  // Admin Password Modal - Inline JSX (not a component to prevent focus loss)
+  const adminPromptModal = showAdminPrompt && (
     <div style={{ position: 'absolute', inset: 0, backgroundColor: 'rgba(0,0,0,0.8)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 50, padding: '16px' }}>
       <div style={{ backgroundColor: 'white', borderRadius: '24px', padding: '20px', width: '100%', maxWidth: '280px' }}>
         <div style={{ textAlign: 'center', marginBottom: '16px' }}>
@@ -583,43 +770,158 @@ const FlockApp = () => {
           type="password"
           value={adminPassword}
           onChange={(e) => setAdminPassword(e.target.value)}
+          onKeyDown={(e) => e.key === 'Enter' && handleAdminModeSelect()}
           placeholder="Password"
           style={{ width: '100%', padding: '12px', borderRadius: '12px', border: `1px solid ${colors.creamDark}`, fontSize: '14px', marginBottom: '12px', boxSizing: 'border-box' }}
         />
         <div style={{ display: 'flex', gap: '8px' }}>
           <button onClick={() => { setShowAdminPrompt(false); setAdminPassword(''); }} style={{ flex: 1, padding: '12px', borderRadius: '12px', border: '1px solid #d1d5db', backgroundColor: 'white', fontWeight: '600', cursor: 'pointer' }}>Cancel</button>
-          <button onClick={() => {
-            if (adminPassword === 'flock2026') {
-              setShowAdminPrompt(false);
-              setAdminPassword('');
-              setCurrentScreen('adminRevenue');
-              showToast('Admin access granted');
-            } else {
-              showToast('Incorrect password', 'error');
-              setAdminPassword('');
-            }
-          }} style={{ flex: 1, padding: '12px', borderRadius: '12px', border: 'none', background: `linear-gradient(90deg, ${colors.navy}, ${colors.navyMid})`, color: 'white', fontWeight: '600', cursor: 'pointer' }}>Access</button>
+          <button onClick={handleAdminModeSelect} style={{ flex: 1, padding: '12px', borderRadius: '12px', border: 'none', background: `linear-gradient(90deg, ${colors.navy}, ${colors.navyMid})`, color: 'white', fontWeight: '600', cursor: 'pointer' }}>Access</button>
         </div>
       </div>
     </div>
   );
 
-  // AI Assistant Modal
-  const AIAssistantModal = () => {
-    const suggestedQuestions = [
-      { text: "What's busy right now?", icon: Icons.activity },
-      { text: "Best time for Club Nova?", icon: Icons.clock },
-      { text: "Recommend a bar", icon: Icons.cocktail },
-      { text: "Food near me", icon: Icons.pizza },
-    ];
+  // New DM Modal - Friend Selector
+  const NewDmModal = () => {
+    const friendAvatars = { 'Alex': '🎸', 'Sam': '🎮', 'Jordan': '⚽', 'Taylor': '🍸', 'Morgan': '📚', 'Chris': '🎬', 'Emma': '🎨', 'Mike': '🎮' };
+    const friendsWithoutDm = allFriends.filter(f => !directMessages.find(dm => dm.friendName === f));
+    const filteredFriends = friendsWithoutDm.filter(f => !dmSearchText || f.toLowerCase().includes(dmSearchText.toLowerCase()));
 
-    const quickActions = [
-      { label: 'Find Venue', icon: Icons.compass, action: () => { setShowAiAssistant(false); setCurrentTab('explore'); } },
-      { label: 'Start Flock', icon: Icons.users, action: () => { setShowAiAssistant(false); setCurrentScreen('create'); } },
-      { label: 'Check Calendar', icon: Icons.calendar, action: () => { setShowAiAssistant(false); setCurrentTab('calendar'); } },
-    ];
+    const startNewDm = (friendName) => {
+      const newDm = {
+        id: `dm-${Date.now()}`,
+        friendName,
+        avatar: friendAvatars[friendName] || '👤',
+        messages: [],
+        lastActive: 'Just now',
+        isOnline: Math.random() > 0.5,
+        unread: 0
+      };
+      setDirectMessages(prev => [newDm, ...prev]);
+      setSelectedDmId(newDm.id);
+      setShowNewDmModal(false);
+      setDmSearchText('');
+      setCurrentScreen('dmDetail');
+    };
 
-    return showAiAssistant && (
+    return showNewDmModal && (
+      <div style={{ position: 'absolute', inset: 0, backgroundColor: 'rgba(0,0,0,0.8)', display: 'flex', alignItems: 'flex-end', zIndex: 50 }}>
+        <div style={{ backgroundColor: 'white', borderRadius: '24px 24px 0 0', width: '100%', height: '70%', display: 'flex', flexDirection: 'column' }}>
+          <div style={{ padding: '16px', borderBottom: '1px solid #eee', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <div>
+              <h2 style={{ fontSize: '18px', fontWeight: '900', color: colors.navy, margin: 0 }}>New Message</h2>
+              <p style={{ fontSize: '11px', color: '#6b7280', margin: 0 }}>Select a friend to message</p>
+            </div>
+            <button onClick={() => { setShowNewDmModal(false); setDmSearchText(''); }} style={{ width: '32px', height: '32px', borderRadius: '16px', border: 'none', backgroundColor: colors.cream, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              {Icons.x(colors.navy, 16)}
+            </button>
+          </div>
+          <div style={{ padding: '12px' }}>
+            <input type="text" value={dmSearchText} onChange={(e) => setDmSearchText(e.target.value)} placeholder="Search friends..." style={{ width: '100%', padding: '12px 16px', borderRadius: '12px', border: `1px solid ${colors.creamDark}`, fontSize: '14px', outline: 'none', boxSizing: 'border-box' }} autoComplete="off" />
+          </div>
+          <div style={{ flex: 1, overflowY: 'auto', padding: '0 12px 12px' }}>
+            {filteredFriends.length === 0 ? (
+              <div style={{ textAlign: 'center', padding: '24px', color: '#6b7280' }}>
+                <p style={{ fontSize: '13px', margin: 0 }}>{dmSearchText ? 'No friends found' : 'All friends have active chats'}</p>
+              </div>
+            ) : (
+              filteredFriends.map(friend => (
+                <button key={friend} onClick={() => startNewDm(friend)} style={{ width: '100%', textAlign: 'left', padding: '12px', borderRadius: '12px', border: 'none', backgroundColor: 'transparent', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '4px' }}>
+                  <div style={{ width: '44px', height: '44px', borderRadius: '22px', background: 'linear-gradient(135deg, #4F46E5, #7C3AED)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '20px' }}>
+                    {friendAvatars[friend] || '👤'}
+                  </div>
+                  <div style={{ flex: 1 }}>
+                    <h3 style={{ fontSize: '15px', fontWeight: '600', color: colors.navy, margin: 0 }}>{friend}</h3>
+                    <p style={{ fontSize: '11px', color: '#6b7280', margin: 0 }}>Tap to start chatting</p>
+                  </div>
+                  <span style={{ fontSize: '16px', color: '#9ca3af' }}>›</span>
+                </button>
+              ))
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  // DM Detail Screen - Inline JSX to prevent focus loss on input
+  const selectedDm = directMessages.find(d => d.id === selectedDmId);
+
+  const sendDmMessage = () => {
+    if (!chatInput.trim() || !selectedDm) return;
+    const newMsg = { id: Date.now(), sender: 'You', text: chatInput.trim(), time: new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) };
+    setDirectMessages(prev => prev.map(d => d.id === selectedDmId ? { ...d, messages: [...d.messages, newMsg], lastActive: 'Just now' } : d));
+    setChatInput('');
+    // Simulate reply
+    const friendName = selectedDm.friendName;
+    setTimeout(() => {
+      const replies = ["Sounds good!", "Yeah for sure!", "Can't wait!", "Haha nice!", "Let's do it!", "See you there!", "Perfect!"];
+      const replyMsg = { id: Date.now() + 1, sender: friendName, text: replies[Math.floor(Math.random() * replies.length)], time: new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) };
+      setDirectMessages(prev => prev.map(d => d.id === selectedDmId ? { ...d, messages: [...d.messages, replyMsg] } : d));
+    }, 1500 + Math.random() * 1000);
+  };
+
+  const dmDetailScreen = currentScreen === 'dmDetail' && selectedDm && (
+    <div key="dm-detail-screen" style={{ display: 'flex', flexDirection: 'column', height: '100%', backgroundColor: 'white' }}>
+      <div style={{ padding: '12px', display: 'flex', alignItems: 'center', gap: '10px', background: 'linear-gradient(135deg, #4F46E5, #7C3AED)', flexShrink: 0 }}>
+        <button onClick={() => { setCurrentScreen('main'); setChatInput(''); }} style={{ background: 'none', border: 'none', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.arrowLeft('white', 20)}</button>
+        <div style={{ width: '36px', height: '36px', borderRadius: '18px', backgroundColor: 'rgba(255,255,255,0.2)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '18px' }}>{selectedDm.avatar}</div>
+        <div style={{ flex: 1 }}>
+          <h2 style={{ fontWeight: 'bold', color: 'white', fontSize: '15px', margin: 0 }}>{selectedDm.friendName}</h2>
+          <p style={{ fontSize: '10px', color: 'rgba(255,255,255,0.7)', margin: 0 }}>{selectedDm.isOnline ? <span style={{ color: '#86EFAC' }}>Online</span> : selectedDm.lastActive}</p>
+        </div>
+      </div>
+
+      <div style={{ flex: 1, padding: '16px', overflowY: 'auto', background: `linear-gradient(180deg, ${colors.cream} 0%, rgba(245,240,230,0.8) 100%)` }}>
+        {selectedDm.messages.length === 0 ? (
+          <div style={{ textAlign: 'center', padding: '40px 20px' }}>
+            <div style={{ width: '60px', height: '60px', borderRadius: '30px', background: 'linear-gradient(135deg, #4F46E5, #7C3AED)', margin: '0 auto 12px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '28px' }}>{selectedDm.avatar}</div>
+            <h3 style={{ fontSize: '16px', fontWeight: '700', color: colors.navy, margin: '0 0 4px' }}>Chat with {selectedDm.friendName}</h3>
+            <p style={{ fontSize: '12px', color: '#6b7280', margin: 0 }}>Say hi to start the conversation!</p>
+          </div>
+        ) : (
+          selectedDm.messages.map((m) => (
+            <div key={m.id} style={{ display: 'flex', gap: '10px', marginBottom: '12px', flexDirection: m.sender === 'You' ? 'row-reverse' : 'row' }}>
+              <div style={{ width: '32px', height: '32px', borderRadius: '16px', background: m.sender === 'You' ? `linear-gradient(135deg, ${colors.navy}, ${colors.navyMid})` : 'linear-gradient(135deg, #4F46E5, #7C3AED)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: m.sender === 'You' ? '11px' : '14px', color: 'white', fontWeight: '700', flexShrink: 0 }}>
+                {m.sender === 'You' ? 'Y' : selectedDm.avatar}
+              </div>
+              <div style={{ maxWidth: '75%' }}>
+                <div style={{ borderRadius: '16px', padding: '10px 14px', fontSize: '13px', backgroundColor: m.sender === 'You' ? colors.navy : 'white', color: m.sender === 'You' ? 'white' : colors.navy, borderTopRightRadius: m.sender === 'You' ? '4px' : '16px', borderTopLeftRadius: m.sender === 'You' ? '16px' : '4px', boxShadow: '0 1px 3px rgba(0,0,0,0.1)' }}>
+                  {m.text}
+                </div>
+                <p style={{ fontSize: '9px', color: '#9ca3af', margin: '4px 4px 0', textAlign: m.sender === 'You' ? 'right' : 'left' }}>{m.time}</p>
+              </div>
+            </div>
+          ))
+        )}
+      </div>
+
+      <div style={{ padding: '10px 12px', borderTop: '1px solid #eee', backgroundColor: 'white' }}>
+        <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+          <input type="text" value={chatInput} onChange={(e) => setChatInput(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && sendDmMessage()} placeholder={`Message ${selectedDm.friendName}...`} style={{ flex: 1, padding: '12px 16px', borderRadius: '24px', backgroundColor: '#f3f4f6', border: '1px solid rgba(0,0,0,0.05)', fontSize: '13px', outline: 'none' }} autoComplete="off" />
+          <button onClick={sendDmMessage} disabled={!chatInput.trim()} style={{ width: '42px', height: '42px', borderRadius: '21px', border: 'none', background: chatInput.trim() ? 'linear-gradient(135deg, #4F46E5, #7C3AED)' : '#e5e7eb', color: 'white', cursor: chatInput.trim() ? 'pointer' : 'default', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.send('white', 18)}</button>
+        </div>
+      </div>
+    </div>
+  );
+
+  // AI Assistant Modal - Data
+  const aiSuggestedQuestions = [
+    { text: "What's busy right now?", icon: Icons.activity },
+    { text: "Best time for Club Nova?", icon: Icons.clock },
+    { text: "Recommend a bar", icon: Icons.cocktail },
+    { text: "Food near me", icon: Icons.pizza },
+  ];
+
+  const aiQuickActions = [
+    { label: 'Find Venue', icon: Icons.compass, action: () => { setShowAiAssistant(false); setCurrentTab('explore'); } },
+    { label: 'Start Flock', icon: Icons.users, action: () => { setShowAiAssistant(false); setCurrentScreen('create'); } },
+    { label: 'Check Calendar', icon: Icons.calendar, action: () => { setShowAiAssistant(false); setCurrentTab('calendar'); } },
+  ];
+
+  // AI Assistant Modal - Inline JSX (not a component to prevent focus loss)
+  const aiAssistantModal = showAiAssistant && (
       <div style={{ position: 'absolute', inset: 0, backgroundColor: 'rgba(0,0,0,0.8)', display: 'flex', alignItems: 'flex-end', zIndex: 50 }}>
         <div style={{ backgroundColor: 'white', borderRadius: '24px 24px 0 0', width: '100%', height: '80%', display: 'flex', flexDirection: 'column' }}>
           {/* Header with animated AI avatar */}
@@ -644,7 +946,7 @@ const FlockApp = () => {
 
           {/* Quick Actions */}
           <div style={{ padding: '10px 12px', backgroundColor: '#f9fafb', borderBottom: '1px solid #eee', display: 'flex', gap: '8px' }}>
-            {quickActions.map((action, i) => (
+            {aiQuickActions.map((action, i) => (
               <button key={i} onClick={action.action} style={{ flex: 1, padding: '8px', borderRadius: '10px', border: '1px solid rgba(13,40,71,0.1)', backgroundColor: 'white', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '4px' }}>
                 {action.icon(colors.navy, 16)}
                 <span style={{ fontSize: '9px', fontWeight: '600', color: colors.navy }}>{action.label}</span>
@@ -702,7 +1004,7 @@ const FlockApp = () => {
             <div style={{ padding: '8px 12px', borderTop: '1px solid #eee', backgroundColor: '#f9fafb' }}>
               <p style={{ fontSize: '9px', fontWeight: '600', color: '#6b7280', marginBottom: '6px', textTransform: 'uppercase' }}>Try asking</p>
               <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
-                {suggestedQuestions.map((q, i) => (
+                {aiSuggestedQuestions.map((q, i) => (
                   <button key={i} onClick={() => { setAiInput(q.text); }} style={{ padding: '6px 10px', borderRadius: '16px', border: '1px solid rgba(13,40,71,0.15)', backgroundColor: 'white', cursor: 'pointer', fontSize: '11px', color: colors.navy, fontWeight: '500', display: 'flex', alignItems: 'center', gap: '4px' }}>
                     {q.icon(colors.navy, 12)}
                     {q.text}
@@ -715,14 +1017,91 @@ const FlockApp = () => {
           {/* Input */}
           <div style={{ padding: '10px 12px', borderTop: '1px solid #eee', backgroundColor: 'white' }}>
             <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-              <input key="ai-input" id="ai-input" type="text" value={aiInput} onChange={(e) => setAiInput(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && sendAiMessage()} placeholder="Ask me anything..." style={{ flex: 1, padding: '12px 16px', borderRadius: '24px', backgroundColor: '#f3f4f6', border: '1px solid rgba(0,0,0,0.05)', fontSize: '13px', outline: 'none', fontWeight: '500' }} autoComplete="off" />
+              <input ref={aiInputRef} type="text" value={aiInput} onChange={(e) => setAiInput(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && sendAiMessage()} placeholder="Ask me anything..." style={{ flex: 1, padding: '12px 16px', borderRadius: '24px', backgroundColor: '#f3f4f6', border: '1px solid rgba(0,0,0,0.05)', fontSize: '13px', outline: 'none', fontWeight: '500' }} autoComplete="off" />
               <button onClick={sendAiMessage} disabled={!aiInput.trim()} style={{ width: '42px', height: '42px', borderRadius: '21px', border: 'none', background: aiInput.trim() ? `linear-gradient(135deg, ${colors.navy}, ${colors.navyMid})` : '#e5e7eb', color: 'white', cursor: aiInput.trim() ? 'pointer' : 'default', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: aiInput.trim() ? '0 4px 12px rgba(13,40,71,0.3)' : 'none', transition: 'all 0.2s' }}>{Icons.send('white', 18)}</button>
             </div>
           </div>
         </div>
       </div>
-    );
+  );
+
+  // Mode Selection Handler
+  const selectMode = (mode) => {
+    if (mode === 'admin') {
+      setShowAdminPrompt(true);
+    } else {
+      localStorage.setItem('flockUserMode', mode);
+      setUserMode(mode);
+      setShowModeSelection(false);
+      if (mode === 'venue') {
+        setCurrentScreen('venueDashboard');
+      }
+    }
   };
+
+  const switchMode = () => {
+    localStorage.removeItem('flockUserMode');
+    setUserMode(null);
+    setShowModeSelection(true);
+    setCurrentScreen('main');
+    setCurrentTab('home');
+  };
+
+  // WELCOME SCREEN - Mode Selection
+  const WelcomeScreen = () => (
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', backgroundColor: colors.cream, padding: '20px', boxSizing: 'border-box' }}>
+      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center' }}>
+        {/* Logo */}
+        <div style={{ width: '80px', height: '80px', borderRadius: '24px', background: `linear-gradient(135deg, ${colors.navy}, ${colors.navyMid})`, display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: '20px', boxShadow: '0 8px 32px rgba(13,40,71,0.3)' }}>
+          {Icons.users('white', 40)}
+        </div>
+        <h1 style={{ fontSize: '28px', fontWeight: '900', color: colors.navy, margin: '0 0 8px', textAlign: 'center' }}>Welcome to Flock!</h1>
+        <p style={{ fontSize: '14px', color: '#6b7280', margin: '0 0 32px', textAlign: 'center' }}>How are you using the app today?</p>
+
+        {/* Mode Cards */}
+        <div style={{ width: '100%', maxWidth: '320px' }}>
+          {/* User Mode */}
+          <button onClick={() => selectMode('user')} style={{ width: '100%', padding: '20px', borderRadius: '16px', border: 'none', background: 'white', marginBottom: '12px', cursor: 'pointer', textAlign: 'left', boxShadow: '0 4px 12px rgba(0,0,0,0.08)', display: 'flex', alignItems: 'center', gap: '16px', transition: 'transform 0.2s, box-shadow 0.2s' }}>
+            <div style={{ width: '56px', height: '56px', borderRadius: '16px', background: `linear-gradient(135deg, ${colors.navy}, ${colors.navyMid})`, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              {Icons.users('white', 28)}
+            </div>
+            <div style={{ flex: 1 }}>
+              <h3 style={{ fontSize: '16px', fontWeight: '800', color: colors.navy, margin: '0 0 4px' }}>I'm a User</h3>
+              <p style={{ fontSize: '12px', color: '#6b7280', margin: 0 }}>Plan nights out with friends</p>
+            </div>
+            <span style={{ fontSize: '20px', color: colors.navy }}>›</span>
+          </button>
+
+          {/* Venue Owner Mode */}
+          <button onClick={() => selectMode('venue')} style={{ width: '100%', padding: '20px', borderRadius: '16px', border: 'none', background: 'white', marginBottom: '12px', cursor: 'pointer', textAlign: 'left', boxShadow: '0 4px 12px rgba(0,0,0,0.08)', display: 'flex', alignItems: 'center', gap: '16px', transition: 'transform 0.2s, box-shadow 0.2s' }}>
+            <div style={{ width: '56px', height: '56px', borderRadius: '16px', background: 'linear-gradient(135deg, #7C3AED, #5B21B6)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              {Icons.building('white', 28)}
+            </div>
+            <div style={{ flex: 1 }}>
+              <h3 style={{ fontSize: '16px', fontWeight: '800', color: colors.navy, margin: '0 0 4px' }}>I'm a Venue Owner</h3>
+              <p style={{ fontSize: '12px', color: '#6b7280', margin: 0 }}>Manage my venue analytics</p>
+            </div>
+            <span style={{ fontSize: '20px', color: colors.navy }}>›</span>
+          </button>
+
+          {/* Admin Mode */}
+          <button onClick={() => selectMode('admin')} style={{ width: '100%', padding: '20px', borderRadius: '16px', border: 'none', background: 'white', marginBottom: '12px', cursor: 'pointer', textAlign: 'left', boxShadow: '0 4px 12px rgba(0,0,0,0.08)', display: 'flex', alignItems: 'center', gap: '16px', transition: 'transform 0.2s, box-shadow 0.2s' }}>
+            <div style={{ width: '56px', height: '56px', borderRadius: '16px', background: 'linear-gradient(135deg, #059669, #047857)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              {Icons.briefcase('white', 28)}
+            </div>
+            <div style={{ flex: 1 }}>
+              <h3 style={{ fontSize: '16px', fontWeight: '800', color: colors.navy, margin: '0 0 4px' }}>I'm an Admin</h3>
+              <p style={{ fontSize: '12px', color: '#6b7280', margin: 0 }}>View business metrics</p>
+            </div>
+            <span style={{ fontSize: '9px', color: '#9ca3af', backgroundColor: '#f3f4f6', padding: '2px 6px', borderRadius: '4px' }}>Password</span>
+          </button>
+        </div>
+      </div>
+
+      {/* Footer */}
+      <p style={{ fontSize: '11px', color: '#9ca3af', textAlign: 'center', margin: 0 }}>You can change this later in Settings</p>
+    </div>
+  );
 
   // HOME SCREEN
   const HomeScreen = () => (
@@ -784,7 +1163,7 @@ const FlockApp = () => {
 
         {/* Activity */}
         <div style={styles.card}>
-          <h3 style={{ fontSize: '12px', fontWeight: 'bold', color: colors.navy, margin: '0 0 8px' }}>🔔 Activity</h3>
+          <h3 style={{ fontSize: '12px', fontWeight: 'bold', color: colors.navy, margin: '0 0 8px', display: 'flex', alignItems: 'center', gap: '6px' }}>{Icons.bell(colors.navy, 14)} Activity</h3>
           {activityFeed.map(a => (
             <div key={a.id} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 0', borderBottom: '1px solid #f3f4f6' }}>
               <span>{a.icon}</span>
@@ -1390,60 +1769,107 @@ const FlockApp = () => {
   };
 
   // CHAT LIST SCREEN
-  const ChatListScreen = () => (
-    <div key="chat-list-screen-container" style={{ display: 'flex', flexDirection: 'column', height: '100%', backgroundColor: colors.cream }}>
-      <div style={{ padding: '16px', background: `linear-gradient(135deg, ${colors.navy}, ${colors.navyMid})`, flexShrink: 0 }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <div>
-            <h1 style={{ fontSize: '20px', fontWeight: '900', color: 'white', margin: 0 }}>Messages</h1>
-            <p style={{ fontSize: '10px', color: 'rgba(255,255,255,0.6)', margin: 0 }}>{flocks.length} conversations</p>
+  const ChatListScreen = () => {
+    const totalConversations = flocks.length + directMessages.length;
+    const allChats = [
+      ...directMessages.map(dm => ({ ...dm, type: 'dm', sortTime: dm.messages[dm.messages.length - 1]?.time })),
+      ...flocks.map(f => ({ ...f, type: 'flock', sortTime: f.messages[f.messages.length - 1]?.time }))
+    ].filter(c => !chatSearch || (c.type === 'dm' ? c.friendName : c.name).toLowerCase().includes(chatSearch.toLowerCase()));
+
+    return (
+      <div key="chat-list-screen-container" style={{ display: 'flex', flexDirection: 'column', height: '100%', backgroundColor: colors.cream }}>
+        <div style={{ padding: '16px', background: `linear-gradient(135deg, ${colors.navy}, ${colors.navyMid})`, flexShrink: 0 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <div>
+              <h1 style={{ fontSize: '20px', fontWeight: '900', color: 'white', margin: 0 }}>Messages</h1>
+              <p style={{ fontSize: '10px', color: 'rgba(255,255,255,0.6)', margin: 0 }}>{totalConversations} conversations</p>
+            </div>
+            <div style={{ display: 'flex', gap: '8px' }}>
+              <button onClick={() => setShowNewDmModal(true)} style={{ width: '36px', height: '36px', borderRadius: '18px', border: 'none', backgroundColor: colors.cream, color: colors.navy, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                {Icons.plus(colors.navy, 18)}
+              </button>
+              <button onClick={() => setShowChatSearch(!showChatSearch)} style={{ width: '36px', height: '36px', borderRadius: '18px', border: 'none', backgroundColor: 'rgba(255,255,255,0.2)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                {Icons.search('white', 18)}
+              </button>
+            </div>
           </div>
-          <button onClick={() => setShowChatSearch(!showChatSearch)} style={{ width: '36px', height: '36px', borderRadius: '18px', border: 'none', backgroundColor: 'rgba(255,255,255,0.2)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-            {Icons.search('white', 18)}
-          </button>
+          {showChatSearch && (
+            <div style={{ marginTop: '12px' }}>
+              <input type="text" value={chatSearch} onChange={(e) => setChatSearch(e.target.value)} placeholder="Search conversations..." style={{ width: '100%', padding: '10px 14px', borderRadius: '20px', border: 'none', fontSize: '13px', outline: 'none', backgroundColor: 'rgba(255,255,255,0.95)' }} autoComplete="off" />
+            </div>
+          )}
         </div>
-        {showChatSearch && (
-          <div style={{ marginTop: '12px' }}>
-            <input key="chat-search" id="chat-search" type="text" value={chatSearch} onChange={(e) => setChatSearch(e.target.value)} placeholder="Search conversations..." style={{ width: '100%', padding: '10px 14px', borderRadius: '20px', border: 'none', fontSize: '13px', outline: 'none', backgroundColor: 'rgba(255,255,255,0.95)' }} autoComplete="off" />
-          </div>
-        )}
+        <div style={{ flex: 1, padding: '12px', overflowY: 'auto' }}>
+          {/* Direct Messages */}
+          {allChats.filter(c => c.type === 'dm').map((dm) => {
+            const lastMsg = dm.messages[dm.messages.length - 1];
+            return (
+              <button key={dm.id} onClick={() => { setSelectedDmId(dm.id); setCurrentScreen('dmDetail'); setDirectMessages(prev => prev.map(d => d.id === dm.id ? { ...d, unread: 0 } : d)); }} style={{ width: '100%', textAlign: 'left', ...styles.card, border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '12px', position: 'relative' }}>
+                <div style={{ position: 'relative' }}>
+                  <div style={{ width: '48px', height: '48px', borderRadius: '24px', background: 'linear-gradient(135deg, #4F46E5, #7C3AED)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '22px' }}>
+                    {dm.avatar}
+                  </div>
+                  {dm.isOnline && <div style={{ position: 'absolute', bottom: '-2px', right: '-2px', width: '14px', height: '14px', borderRadius: '7px', backgroundColor: '#22C55E', border: '2px solid white' }} />}
+                </div>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <h3 style={{ fontSize: '14px', fontWeight: dm.unread ? '800' : '600', color: colors.navy, margin: 0 }}>{dm.friendName}</h3>
+                    <span style={{ fontSize: '10px', color: dm.isOnline ? '#22C55E' : '#9ca3af', fontWeight: dm.unread ? '600' : '400' }}>{dm.isOnline ? 'Online' : dm.lastActive}</span>
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                    {lastMsg?.sender === 'You' && <span style={{ flexShrink: 0 }}>{Icons.checkDouble('#22C55E', 12)}</span>}
+                    <p style={{ fontSize: '12px', color: dm.unread ? colors.navy : '#6b7280', fontWeight: dm.unread ? '500' : '400', margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{lastMsg?.sender === 'You' ? 'You: ' : ''}{lastMsg?.text}</p>
+                  </div>
+                </div>
+                {dm.unread > 0 && (
+                  <div style={{ width: '22px', height: '22px', borderRadius: '11px', background: 'linear-gradient(135deg, #EF4444, #DC2626)', color: 'white', fontSize: '11px', fontWeight: '700', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                    {dm.unread}
+                  </div>
+                )}
+              </button>
+            );
+          })}
+
+          {/* Group Flocks */}
+          {allChats.filter(c => c.type === 'flock').map((f, idx) => {
+            const unreadCount = idx === 0 ? 3 : idx === 1 ? 1 : 0;
+            const isOnline = idx < 2;
+            const lastMsg = f.messages[f.messages.length - 1];
+            return (
+              <button key={f.id} onClick={() => { setSelectedFlockId(f.id); setCurrentScreen('chatDetail'); simulateTyping(); }} style={{ width: '100%', textAlign: 'left', ...styles.card, border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '12px', position: 'relative' }}>
+                <div style={{ position: 'relative' }}>
+                  <div style={{ width: '48px', height: '48px', borderRadius: '14px', background: `linear-gradient(135deg, ${colors.navy}, ${colors.navyMid})`, display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 2px 8px rgba(13,40,71,0.2)' }}>
+                    {Icons.users('white', 22)}
+                  </div>
+                  {isOnline && <div style={{ position: 'absolute', bottom: '-2px', right: '-2px', width: '14px', height: '14px', borderRadius: '7px', backgroundColor: '#22C55E', border: '2px solid white' }} />}
+                </div>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                      <h3 style={{ fontSize: '14px', fontWeight: unreadCount ? '800' : '600', color: colors.navy, margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{f.name}</h3>
+                      <span style={{ fontSize: '9px', color: '#9ca3af', backgroundColor: '#f3f4f6', padding: '2px 6px', borderRadius: '8px' }}>Group</span>
+                    </div>
+                    <span style={{ fontSize: '10px', color: unreadCount ? colors.navy : '#9ca3af', fontWeight: unreadCount ? '600' : '400' }}>{getRelativeTime(lastMsg?.time)}</span>
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                    {lastMsg?.sender === 'You' && <span style={{ flexShrink: 0 }}>{Icons.checkDouble('#22C55E', 12)}</span>}
+                    <p style={{ fontSize: '12px', color: unreadCount ? colors.navy : '#6b7280', fontWeight: unreadCount ? '500' : '400', margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{lastMsg?.sender === 'You' ? 'You: ' : `${lastMsg?.sender}: `}{lastMsg?.text}</p>
+                  </div>
+                </div>
+                {unreadCount > 0 && (
+                  <div style={{ width: '22px', height: '22px', borderRadius: '11px', background: `linear-gradient(135deg, ${colors.navy}, ${colors.navyMid})`, color: 'white', fontSize: '11px', fontWeight: '700', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                    {unreadCount}
+                  </div>
+                )}
+              </button>
+            );
+          })}
+        </div>
+        <SafetyButton />
+        <BottomNav />
       </div>
-      <div style={{ flex: 1, padding: '12px', overflowY: 'auto' }}>
-        {flocks.filter(f => !chatSearch || f.name.toLowerCase().includes(chatSearch.toLowerCase())).map((f, idx) => {
-          const unreadCount = idx === 0 ? 3 : idx === 1 ? 1 : 0;
-          const isOnline = idx < 2;
-          const lastMsg = f.messages[f.messages.length - 1];
-          return (
-            <button key={f.id} onClick={() => { setSelectedFlockId(f.id); setCurrentScreen('chatDetail'); simulateTyping(); }} style={{ width: '100%', textAlign: 'left', ...styles.card, border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '12px', position: 'relative' }}>
-              <div style={{ position: 'relative' }}>
-                <div style={{ width: '48px', height: '48px', borderRadius: '14px', background: `linear-gradient(135deg, ${colors.navy}, ${colors.navyMid})`, display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 2px 8px rgba(13,40,71,0.2)' }}>
-                  {Icons.users('white', 22)}
-                </div>
-                {isOnline && <div style={{ position: 'absolute', bottom: '-2px', right: '-2px', width: '14px', height: '14px', borderRadius: '7px', backgroundColor: '#22C55E', border: '2px solid white' }} />}
-              </div>
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <h3 style={{ fontSize: '14px', fontWeight: unreadCount ? '800' : '600', color: colors.navy, margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{f.name}</h3>
-                  <span style={{ fontSize: '10px', color: unreadCount ? colors.navy : '#9ca3af', fontWeight: unreadCount ? '600' : '400' }}>{getRelativeTime(lastMsg?.time)}</span>
-                </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                  {lastMsg?.sender === 'You' && <span style={{ flexShrink: 0 }}>{Icons.checkDouble('#22C55E', 12)}</span>}
-                  <p style={{ fontSize: '12px', color: unreadCount ? colors.navy : '#6b7280', fontWeight: unreadCount ? '500' : '400', margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{lastMsg?.sender === 'You' ? '' : `${lastMsg?.sender}: `}{lastMsg?.text}</p>
-                </div>
-              </div>
-              {unreadCount > 0 && (
-                <div style={{ width: '22px', height: '22px', borderRadius: '11px', background: `linear-gradient(135deg, ${colors.navy}, ${colors.navyMid})`, color: 'white', fontSize: '11px', fontWeight: '700', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                  {unreadCount}
-                </div>
-              )}
-            </button>
-          );
-        })}
-      </div>
-      <SafetyButton />
-      <BottomNav />
-    </div>
-  );
+    );
+  };
 
   // CHAT DETAIL SCREEN - No hooks inside, uses parent's ref and callback
   const ChatDetailScreen = () => {
@@ -1539,7 +1965,7 @@ const FlockApp = () => {
           <div style={{ position: 'absolute', inset: 0, backgroundColor: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'flex-end', zIndex: 50 }}>
             <div style={{ backgroundColor: 'white', borderRadius: '16px 16px 0 0', padding: '16px', width: '100%' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-                <h2 style={{ fontSize: '18px', fontWeight: '900', color: colors.navy, margin: 0 }}>💰 Cash Pool</h2>
+                <h2 style={{ fontSize: '18px', fontWeight: '900', color: colors.navy, margin: 0 }}>Cash Pool</h2>
                 <button onClick={() => setShowChatPool(false)} style={{ width: '32px', height: '32px', borderRadius: '16px', backgroundColor: '#f3f4f6', border: 'none', cursor: 'pointer' }}>✕</button>
               </div>
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '12px', marginBottom: '12px' }}>
@@ -1577,7 +2003,7 @@ const FlockApp = () => {
               <h1 style={{ fontWeight: '900', color: 'white', fontSize: '14px', margin: 0 }}>{flock.name}</h1>
               <p style={{ fontSize: '10px', color: 'rgba(255,255,255,0.6)', margin: 0 }}>{flock.host} • {flock.time}</p>
             </div>
-            <button onClick={() => addEventToCalendar(flock.name, flock.venue, new Date(), '9 PM')} style={{ width: '32px', height: '32px', borderRadius: '16px', border: 'none', backgroundColor: 'rgba(255,255,255,0.2)', color: 'white', cursor: 'pointer', fontSize: '14px' }}>📅</button>
+            <button onClick={() => addEventToCalendar(flock.name, flock.venue, new Date(), '9 PM')} style={{ width: '32px', height: '32px', borderRadius: '16px', border: 'none', backgroundColor: 'rgba(255,255,255,0.2)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.calendar('white', 16)}</button>
           </div>
           <div style={{ display: 'flex' }}>
             {flock.members.slice(0, 5).map((m, i) => (
@@ -1591,7 +2017,7 @@ const FlockApp = () => {
           {flock.cashPool && (
             <div style={styles.card}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
-                <h3 style={{ fontSize: '12px', fontWeight: 'bold', color: colors.navy, margin: 0 }}>💰 Cash Pool</h3>
+                <h3 style={{ fontSize: '12px', fontWeight: 'bold', color: colors.navy, margin: 0 }}>Cash Pool</h3>
                 <span style={{ fontSize: '10px', padding: '2px 8px', borderRadius: '10px', fontWeight: '500', backgroundColor: flock.cashPool.collected >= flock.cashPool.target ? '#d1fae5' : '#fef3c7', color: flock.cashPool.collected >= flock.cashPool.target ? '#047857' : '#b45309' }}>
                   ${flock.cashPool.collected}/${flock.cashPool.target}
                 </span>
@@ -1607,7 +2033,7 @@ const FlockApp = () => {
             </div>
           )}
 
-          <h2 style={{ fontSize: '12px', fontWeight: 'bold', color: colors.navy, margin: '0 0 8px' }}>🗳 Vote</h2>
+          <h2 style={{ fontSize: '12px', fontWeight: 'bold', color: colors.navy, margin: '0 0 8px' }}>Vote</h2>
           {flock.votes.map(v => (
             <button key={v.venue} onClick={() => handleVote(v.venue)} style={{ width: '100%', textAlign: 'left', ...styles.card, border: 'none', cursor: 'pointer', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <div>
@@ -1622,13 +2048,13 @@ const FlockApp = () => {
           ))}
 
           <button onClick={() => setCurrentScreen('chatDetail')} style={{ width: '100%', textAlign: 'left', ...styles.card, border: 'none', cursor: 'pointer', marginTop: '12px' }}>
-            <h2 style={{ fontSize: '12px', fontWeight: 'bold', color: colors.navy, margin: '0 0 4px' }}>💬 Chat</h2>
+            <h2 style={{ fontSize: '12px', fontWeight: 'bold', color: colors.navy, margin: '0 0 4px' }}>Chat</h2>
             <p style={{ fontSize: '11px', color: '#6b7280', margin: 0 }}>{flock.messages[flock.messages.length - 1]?.sender}: {flock.messages[flock.messages.length - 1]?.text}</p>
           </button>
         </div>
 
         <div style={{ padding: '12px', backgroundColor: 'white', borderTop: '1px solid #eee', flexShrink: 0 }}>
-          <button onClick={() => showToast('📍 Location shared!')} style={styles.gradientButton}>Share Location 📍</button>
+          <button onClick={() => showToast('Location shared!')} style={{ ...styles.gradientButton, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}>{Icons.mapPin('white', 16)} Share Location</button>
         </div>
       </div>
     );
@@ -1648,7 +2074,7 @@ const FlockApp = () => {
               <div>
                 <div style={{ display: 'flex', justifyContent: 'center', marginBottom: '16px' }}>
                   <button onClick={() => setShowPicModal(true)} style={{ width: '80px', height: '80px', borderRadius: '40px', background: `linear-gradient(135deg, ${colors.navy}, ${colors.navyMid})`, border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden' }}>
-                    {profilePic ? <img src={profilePic} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : <span style={{ fontSize: '32px' }}>👤</span>}
+                    {profilePic ? <img src={profilePic} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : Icons.user(colors.navy, 32)}
                   </button>
                 </div>
                 <div style={{ marginBottom: '12px' }}>
@@ -1691,6 +2117,90 @@ const FlockApp = () => {
                 </div>
               </div>
             )}
+            {profileScreen === 'interests' && (
+              <div>
+                <div style={styles.card}>
+                  <h3 style={{ fontWeight: 'bold', fontSize: '14px', color: colors.navy, margin: '0 0 12px' }}>Your Interests</h3>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginBottom: '12px' }}>
+                    {userInterests.map(interest => (
+                      <div key={interest} style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '6px 12px', borderRadius: '20px', background: `linear-gradient(90deg, ${colors.navy}, ${colors.navyMid})`, color: 'white', fontSize: '12px', fontWeight: '600' }}>
+                        {interest}
+                        <button onClick={() => { setUserInterests(userInterests.filter(i => i !== interest)); showToast('Removed'); }} style={{ background: 'none', border: 'none', color: 'rgba(255,255,255,0.7)', cursor: 'pointer', padding: 0, display: 'flex' }}>{Icons.x('rgba(255,255,255,0.7)', 14)}</button>
+                      </div>
+                    ))}
+                  </div>
+                  <div style={{ display: 'flex', gap: '8px' }}>
+                    <input type="text" value={newInterest} onChange={(e) => setNewInterest(e.target.value)} placeholder="Add custom interest..." style={{ ...styles.input, flex: 1 }} autoComplete="off" />
+                    <button onClick={() => { if (newInterest.trim() && !userInterests.includes(newInterest.trim())) { setUserInterests([...userInterests, newInterest.trim()]); setNewInterest(''); showToast('✅ Added!'); }}} style={{ padding: '0 16px', borderRadius: '8px', border: 'none', background: `linear-gradient(90deg, ${colors.navy}, ${colors.navyMid})`, color: 'white', fontWeight: 'bold', fontSize: '14px', cursor: 'pointer' }}>Add</button>
+                  </div>
+                </div>
+                <div style={styles.card}>
+                  <h3 style={{ fontWeight: 'bold', fontSize: '14px', color: colors.navy, margin: '0 0 12px' }}>Suggested Interests</h3>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
+                    {suggestedInterests.filter(s => !userInterests.includes(s)).map(interest => (
+                      <button key={interest} onClick={() => { setUserInterests([...userInterests, interest]); showToast('✅ Added!'); }} style={{ padding: '6px 12px', borderRadius: '20px', border: `1px solid ${colors.creamDark}`, backgroundColor: 'white', color: colors.navy, fontSize: '12px', fontWeight: '500', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                        {Icons.plus(colors.navy, 12)} {interest}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            )}
+            {profileScreen === 'payment' && (
+              <div>
+                <div style={styles.card}>
+                  <h3 style={{ fontWeight: 'bold', fontSize: '14px', color: colors.navy, margin: '0 0 12px' }}>Saved Cards</h3>
+                  {paymentMethods.length === 0 ? (
+                    <p style={{ fontSize: '13px', color: '#6b7280', textAlign: 'center', padding: '16px 0' }}>No payment methods saved</p>
+                  ) : (
+                    paymentMethods.map(card => (
+                      <div key={card.id} style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '12px', borderRadius: '12px', backgroundColor: colors.cream, marginBottom: '8px' }}>
+                        <div style={{ width: '44px', height: '28px', borderRadius: '4px', background: card.brand === 'Visa' ? 'linear-gradient(135deg, #1A1F71, #2E3691)' : 'linear-gradient(135deg, #EB001B, #F79E1B)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', fontSize: '10px', fontWeight: 'bold' }}>
+                          {card.brand}
+                        </div>
+                        <div style={{ flex: 1 }}>
+                          <p style={{ fontSize: '14px', fontWeight: '600', color: colors.navy, margin: 0 }}>•••• {card.last4}</p>
+                          <p style={{ fontSize: '11px', color: '#6b7280', margin: 0 }}>Expires {card.expiry}</p>
+                        </div>
+                        {card.isDefault && <span style={{ fontSize: '9px', fontWeight: '600', color: '#22C55E', backgroundColor: '#DCFCE7', padding: '2px 6px', borderRadius: '4px' }}>Default</span>}
+                        <button onClick={() => { setPaymentMethods(paymentMethods.filter(c => c.id !== card.id)); showToast('Card removed'); }} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '4px' }}>{Icons.x('#9ca3af', 16)}</button>
+                      </div>
+                    ))
+                  )}
+                  {!showAddCard ? (
+                    <button onClick={() => setShowAddCard(true)} style={{ width: '100%', padding: '12px', borderRadius: '12px', border: `2px dashed ${colors.creamDark}`, backgroundColor: 'transparent', color: colors.navy, fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', marginTop: '8px' }}>
+                      {Icons.plus(colors.navy, 16)} Add New Card
+                    </button>
+                  ) : (
+                    <div style={{ marginTop: '12px', padding: '16px', borderRadius: '12px', backgroundColor: colors.cream }}>
+                      <h4 style={{ fontSize: '13px', fontWeight: '700', color: colors.navy, margin: '0 0 12px' }}>Add New Card</h4>
+                      <div style={{ marginBottom: '10px' }}>
+                        <label style={{ display: 'block', fontSize: '11px', fontWeight: '600', color: '#6b7280', marginBottom: '4px' }}>Card Number</label>
+                        <input type="text" value={newCard.number} onChange={(e) => { const v = e.target.value.replace(/\D/g, '').slice(0, 16); const formatted = v.replace(/(\d{4})/g, '$1 ').trim(); setNewCard({ ...newCard, number: formatted }); }} placeholder="1234 5678 9012 3456" style={{ ...styles.input, letterSpacing: '1px' }} autoComplete="off" />
+                      </div>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', marginBottom: '10px' }}>
+                        <div>
+                          <label style={{ display: 'block', fontSize: '11px', fontWeight: '600', color: '#6b7280', marginBottom: '4px' }}>Expiry</label>
+                          <input type="text" value={newCard.expiry} onChange={(e) => { let v = e.target.value.replace(/\D/g, '').slice(0, 4); if (v.length > 2) v = v.slice(0, 2) + '/' + v.slice(2); setNewCard({ ...newCard, expiry: v }); }} placeholder="MM/YY" style={styles.input} autoComplete="off" />
+                        </div>
+                        <div>
+                          <label style={{ display: 'block', fontSize: '11px', fontWeight: '600', color: '#6b7280', marginBottom: '4px' }}>CVV</label>
+                          <input type="text" value={newCard.cvv} onChange={(e) => setNewCard({ ...newCard, cvv: e.target.value.replace(/\D/g, '').slice(0, 3) })} placeholder="123" style={styles.input} autoComplete="off" />
+                        </div>
+                      </div>
+                      <div style={{ marginBottom: '12px' }}>
+                        <label style={{ display: 'block', fontSize: '11px', fontWeight: '600', color: '#6b7280', marginBottom: '4px' }}>Cardholder Name</label>
+                        <input type="text" value={newCard.name} onChange={(e) => setNewCard({ ...newCard, name: e.target.value })} placeholder="John Doe" style={styles.input} autoComplete="off" />
+                      </div>
+                      <div style={{ display: 'flex', gap: '8px' }}>
+                        <button onClick={() => { setShowAddCard(false); setNewCard({ number: '', expiry: '', cvv: '', name: '' }); }} style={{ flex: 1, padding: '12px', borderRadius: '8px', border: '1px solid #d1d5db', backgroundColor: 'white', fontWeight: '600', cursor: 'pointer' }}>Cancel</button>
+                        <button onClick={() => { if (newCard.number.length >= 19 && newCard.expiry.length === 5 && newCard.cvv.length === 3 && newCard.name.trim()) { const brand = newCard.number.startsWith('4') ? 'Visa' : 'MC'; setPaymentMethods([...paymentMethods, { id: Date.now(), brand, last4: newCard.number.slice(-4), expiry: newCard.expiry, isDefault: paymentMethods.length === 0 }]); setNewCard({ number: '', expiry: '', cvv: '', name: '' }); setShowAddCard(false); showToast('✅ Card added!'); } else { showToast('Please fill all fields', 'error'); }}} style={{ flex: 1, padding: '12px', borderRadius: '8px', border: 'none', background: `linear-gradient(90deg, ${colors.navy}, ${colors.navyMid})`, color: 'white', fontWeight: '600', cursor: 'pointer' }}>Add Card</button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
           </div>
           <div style={{ padding: '12px', backgroundColor: 'white', borderTop: '1px solid #eee', flexShrink: 0 }}>
             <button onClick={() => { showToast('✅ Saved!'); setProfileScreen('main'); }} style={styles.gradientButton}>Save</button>
@@ -1703,7 +2213,7 @@ const FlockApp = () => {
       <div key="profile-main-container" style={{ display: 'flex', flexDirection: 'column', height: '100%', backgroundColor: colors.cream }}>
         <div style={{ padding: '20px', textAlign: 'center', background: `linear-gradient(135deg, ${colors.navy} 0%, ${colors.navyLight} 50%, ${colors.navyMid} 100%)`, flexShrink: 0 }}>
           <button onClick={() => setShowPicModal(true)} style={{ width: '80px', height: '80px', borderRadius: '40px', margin: '0 auto 8px', backgroundColor: 'rgba(255,255,255,0.2)', border: '4px solid rgba(255,255,255,0.3)', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', cursor: 'pointer' }}>
-            {profilePic ? <img src={profilePic} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : <span style={{ fontSize: '32px' }}>👤</span>}
+            {profilePic ? <img src={profilePic} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : Icons.user(colors.navy, 32)}
           </button>
           <h1 style={{ fontSize: '20px', fontWeight: '900', color: 'white', margin: 0 }}>{profileName}</h1>
           <p style={{ fontSize: '12px', color: 'rgba(255,255,255,0.6)', margin: 0 }}>@{profileHandle}</p>
@@ -1720,9 +2230,9 @@ const FlockApp = () => {
 
         <div style={{ flex: 1, padding: '12px', overflowY: 'auto', marginTop: '-8px' }}>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '6px', marginBottom: '12px' }}>
-            {[{ l: 'Flocks', v: flocks.length }, { l: 'Friends', v: 48 }, { l: 'Streak', v: `${streak}🔥` }, { l: 'Events', v: calendarEvents.length }].map(s => (
+            {[{ l: 'Flocks', v: flocks.length }, { l: 'Friends', v: 48 }, { l: 'Streak', v: streak, hasIcon: true }, { l: 'Events', v: calendarEvents.length }].map(s => (
               <div key={s.l} style={{ backgroundColor: 'white', borderRadius: '12px', padding: '8px', textAlign: 'center', boxShadow: '0 1px 3px rgba(0,0,0,0.1)' }}>
-                <p style={{ fontSize: '18px', fontWeight: '900', color: colors.navy, margin: 0 }}>{s.v}</p>
+                <p style={{ fontSize: '18px', fontWeight: '900', color: colors.navy, margin: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px' }}>{s.v}{s.hasIcon && Icons.flame('#F59E0B', 16)}</p>
                 <p style={{ fontSize: '9px', color: '#6b7280', margin: 0 }}>{s.l}</p>
               </div>
             ))}
@@ -1730,15 +2240,15 @@ const FlockApp = () => {
 
           <div style={{ backgroundColor: 'white', borderRadius: '12px', boxShadow: '0 1px 3px rgba(0,0,0,0.1)', overflow: 'hidden' }}>
             {[
-              { l: 'Edit Profile', s: 'edit', i: '👤' },
-              { l: 'Interests', s: 'interests', i: '🎯' },
-              { l: 'Safety', s: 'safety', i: '🛡️' },
-              { l: 'Payment', s: 'payment', i: '💳' },
+              { l: 'Edit Profile', s: 'edit', icon: Icons.edit },
+              { l: 'Interests', s: 'interests', icon: Icons.target },
+              { l: 'Safety', s: 'safety', icon: Icons.shield },
+              { l: 'Payment', s: 'payment', icon: Icons.creditCard },
             ].map(m => (
               <button key={m.s} onClick={() => setProfileScreen(m.s)} style={{ width: '100%', padding: '12px', textAlign: 'left', borderBottom: '1px solid #f3f4f6', display: 'flex', alignItems: 'center', gap: '12px', backgroundColor: 'white', border: 'none', cursor: 'pointer' }}>
-                <span style={{ fontSize: '18px' }}>{m.i}</span>
+                <div style={{ width: '32px', height: '32px', borderRadius: '8px', backgroundColor: colors.cream, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{m.icon(colors.navy, 18)}</div>
                 <span style={{ flex: 1, fontWeight: '600', fontSize: '14px', color: colors.navy }}>{m.l}</span>
-                <span style={{ color: '#9ca3af' }}>→</span>
+                <span style={{ color: '#9ca3af' }}>›</span>
               </button>
             ))}
             <button onClick={() => showToast('Logged out!')} style={{ width: '100%', padding: '12px', textAlign: 'left', display: 'flex', alignItems: 'center', gap: '12px', backgroundColor: 'white', border: 'none', cursor: 'pointer', color: colors.red }}>
@@ -1788,6 +2298,29 @@ const FlockApp = () => {
           >
             {Icons.home('#9ca3af', 12)} Venue Dashboard
           </button>
+
+          {/* Switch Mode Button */}
+          {userMode && (
+            <button
+              onClick={switchMode}
+              style={{
+                marginTop: '8px',
+                padding: '8px 12px',
+                borderRadius: '8px',
+                border: '1px solid #EF4444',
+                backgroundColor: 'rgba(239,68,68,0.1)',
+                color: '#EF4444',
+                fontSize: '10px',
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '4px',
+                justifyContent: 'center'
+              }}
+            >
+              {Icons.repeat('#EF4444', 12)} Switch Mode (Current: {userMode === 'user' ? 'User' : userMode === 'venue' ? 'Venue' : 'Admin'})
+            </button>
+          )}
         </div>
 
         <SafetyButton />
@@ -1798,9 +2331,120 @@ const FlockApp = () => {
 
   // VENUE DASHBOARD SCREEN (For Venue Owners)
   const VenueDashboard = () => {
+    // venueTab state is now at App level to persist across re-renders
+    const [showUpgradeModal, setShowUpgradeModal] = useState(false);
+
+    // Promotion state
+    const [promotions, setPromotions] = useState([
+      { id: 1, title: 'Happy Hour Special', desc: '50% off drinks', time: '5-7 PM', days: 'Mon-Fri', views: 234, claims: 89 },
+      { id: 2, title: 'Late Night Bites', desc: '$5 appetizers', time: '10PM-Close', days: 'Daily', views: 156, claims: 45 }
+    ]);
+    const [showPromoModal, setShowPromoModal] = useState(false);
+    const [editingPromo, setEditingPromo] = useState(null);
+    const [promoForm, setPromoForm] = useState({ title: '', desc: '', time: 'Happy Hour', days: 'Daily' });
+
+    // Event state
+    const [venueEventsList, setVenueEventsList] = useState([
+      { id: 1, title: 'Live Jazz Night', date: 'Jan 24', time: '9:00 PM', rsvps: 45, capacity: 60 },
+      { id: 2, title: 'Trivia Tuesday', date: 'Jan 21', time: '7:00 PM', rsvps: 28, capacity: 40 }
+    ]);
+    const [showEventModal, setShowEventModal] = useState(false);
+    const [editingEvent, setEditingEvent] = useState(null);
+    const [eventForm, setEventForm] = useState({ title: '', date: '', time: '', capacity: '' });
+
+    // Incoming flocks
+    const incomingFlocks = [
+      { id: 1, name: "Alex's Birthday Party", time: 'Saturday 8 PM', members: 12, status: 'confirmed' },
+      { id: 2, name: 'Friday Night Out', time: 'Friday 10 PM', members: 6, status: 'pending' }
+    ];
+
+    // Reviews (read-only)
+    const reviews = [
+      { id: 1, user: 'Sarah M.', rating: 5, text: 'Great atmosphere and amazing cocktails!', date: '2 days ago', replied: true },
+      { id: 2, user: 'Mike J.', rating: 4, text: 'Good drinks, bit crowded on weekends.', date: '1 week ago', replied: false },
+      { id: 3, user: 'Emma L.', rating: 5, text: 'Perfect spot for our flock meetup! Staff was super friendly.', date: '2 weeks ago', replied: true }
+    ];
+
+    // Settings state
+    const [venueInfo, setVenueInfo] = useState({ name: 'The Blue Heron Bar', address: '123 Main St, Easton PA', phone: '(610) 555-0123' });
+    const [editingVenueInfo, setEditingVenueInfo] = useState(false);
+    const [operatingHours, setOperatingHours] = useState([
+      { days: 'Mon-Thu', open: '4:00 PM', close: '12:00 AM' },
+      { days: 'Fri-Sat', open: '4:00 PM', close: '2:00 AM' },
+      { days: 'Sunday', open: '12:00 PM', close: '10:00 PM' }
+    ]);
+    const [showHoursModal, setShowHoursModal] = useState(false);
+    const [notifications, setNotifications] = useState({ bookings: true, reviews: true, weekly: false });
+
+    // Deal posting state (for quick deals on analytics tab)
     const [dealDescription, setDealDescription] = useState('');
     const [dealTimeSlot, setDealTimeSlot] = useState('Happy Hour');
-    const [showUpgradeModal, setShowUpgradeModal] = useState(false);
+
+    const venueTabs = [
+      { id: 'analytics', label: 'Analytics', icon: Icons.barChart },
+      { id: 'promotions', label: 'Promos', icon: Icons.gift },
+      { id: 'events', label: 'Events', icon: Icons.calendar },
+      { id: 'reviews', label: 'Reviews', icon: Icons.star },
+      { id: 'settings', label: 'Settings', icon: Icons.settings }
+    ];
+
+    // Promotion handlers
+    const openPromoModal = (promo = null) => {
+      if (promo) {
+        setEditingPromo(promo);
+        setPromoForm({ title: promo.title, desc: promo.desc, time: promo.time, days: promo.days });
+      } else {
+        setEditingPromo(null);
+        setPromoForm({ title: '', desc: '', time: 'Happy Hour', days: 'Daily' });
+      }
+      setShowPromoModal(true);
+    };
+
+    const savePromo = () => {
+      if (!promoForm.title.trim()) return;
+      if (editingPromo) {
+        setPromotions(prev => prev.map(p => p.id === editingPromo.id ? { ...p, ...promoForm } : p));
+        showToast('Promotion updated!');
+      } else {
+        setPromotions(prev => [...prev, { id: Date.now(), ...promoForm, views: 0, claims: 0 }]);
+        showToast('Promotion created!');
+      }
+      setShowPromoModal(false);
+    };
+
+    const deletePromo = (id) => {
+      setPromotions(prev => prev.filter(p => p.id !== id));
+      showToast('Promotion deleted');
+    };
+
+    // Event handlers
+    const openEventModal = (event = null) => {
+      if (event) {
+        setEditingEvent(event);
+        setEventForm({ title: event.title, date: event.date, time: event.time, capacity: event.capacity.toString() });
+      } else {
+        setEditingEvent(null);
+        setEventForm({ title: '', date: '', time: '', capacity: '' });
+      }
+      setShowEventModal(true);
+    };
+
+    const saveEvent = () => {
+      if (!eventForm.title.trim()) return;
+      if (editingEvent) {
+        setVenueEventsList(prev => prev.map(e => e.id === editingEvent.id ? { ...e, ...eventForm, capacity: parseInt(eventForm.capacity) || 50 } : e));
+        showToast('Event updated!');
+      } else {
+        setVenueEventsList(prev => [...prev, { id: Date.now(), ...eventForm, capacity: parseInt(eventForm.capacity) || 50, rsvps: 0 }]);
+        showToast('Event created!');
+      }
+      setShowEventModal(false);
+    };
+
+    const deleteEvent = (id) => {
+      setVenueEventsList(prev => prev.filter(e => e.id !== id));
+      showToast('Event deleted');
+    };
 
     // Mock venue data
     const venueData = {
@@ -1848,7 +2492,7 @@ const FlockApp = () => {
         {/* Header */}
         <div style={{ padding: '16px', background: `linear-gradient(135deg, ${colors.navy}, ${colors.navyMid})`, flexShrink: 0 }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-            <button onClick={() => setCurrentScreen('main')} style={{ width: '32px', height: '32px', borderRadius: '16px', border: 'none', backgroundColor: 'rgba(255,255,255,0.2)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <button onClick={switchMode} style={{ width: '32px', height: '32px', borderRadius: '16px', border: 'none', backgroundColor: 'rgba(255,255,255,0.2)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
               {Icons.arrowLeft('white', 16)}
             </button>
             <span style={{ ...tierBadge[venueData.tier], padding: '4px 10px', borderRadius: '12px', fontSize: '10px', fontWeight: '700', backgroundColor: tierBadge[venueData.tier].bg, color: tierBadge[venueData.tier].color }}>
@@ -1866,8 +2510,21 @@ const FlockApp = () => {
           </div>
         </div>
 
+        {/* Tab Navigation */}
+        <div style={{ display: 'flex', backgroundColor: 'white', borderBottom: '1px solid #e5e7eb', flexShrink: 0 }}>
+          {venueTabs.map(tab => (
+            <button key={tab.id} onClick={() => setVenueTab(tab.id)} style={{ flex: 1, padding: '10px 4px', border: 'none', backgroundColor: 'transparent', cursor: 'pointer', borderBottom: venueTab === tab.id ? `2px solid ${colors.navy}` : '2px solid transparent', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '2px' }}>
+              {tab.icon(venueTab === tab.id ? colors.navy : '#9ca3af', 16)}
+              <span style={{ fontSize: '9px', fontWeight: venueTab === tab.id ? '700' : '500', color: venueTab === tab.id ? colors.navy : '#9ca3af' }}>{tab.label}</span>
+            </button>
+          ))}
+        </div>
+
         {/* Content */}
         <div style={{ flex: 1, overflowY: 'auto', padding: '12px' }}>
+
+          {/* ANALYTICS TAB */}
+          {venueTab === 'analytics' && (<>
           {/* Key Metrics */}
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '8px', marginBottom: '12px' }}>
             <div style={{ backgroundColor: 'white', borderRadius: '12px', padding: '12px', boxShadow: '0 1px 3px rgba(0,0,0,0.05)' }}>
@@ -1960,6 +2617,284 @@ const FlockApp = () => {
               {Icons.sparkles('white', 18)} Upgrade to {venueTier === 'free' ? 'Premium' : 'Pro'}
             </button>
           )}
+          </>)}
+
+          {/* PROMOTIONS TAB */}
+          {venueTab === 'promotions' && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+              {/* Create New Promotion Button */}
+              <button onClick={() => openPromoModal()} style={{ width: '100%', padding: '14px', borderRadius: '12px', border: 'none', background: `linear-gradient(90deg, ${colors.navy}, ${colors.navyMid})`, color: 'white', fontWeight: '700', fontSize: '14px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
+                {Icons.plus('white', 18)} Create New Promotion
+              </button>
+
+              {/* Active Promotions */}
+              <div style={{ backgroundColor: 'white', borderRadius: '12px', padding: '12px', boxShadow: '0 1px 3px rgba(0,0,0,0.05)' }}>
+                <h3 style={{ fontSize: '12px', fontWeight: '700', color: colors.navy, margin: '0 0 10px' }}>Active Promotions ({promotions.length})</h3>
+                {promotions.length === 0 ? (
+                  <p style={{ fontSize: '11px', color: '#9ca3af', textAlign: 'center', padding: '20px' }}>No promotions yet. Create your first one!</p>
+                ) : promotions.map(promo => (
+                  <div key={promo.id} style={{ padding: '10px', backgroundColor: colors.cream, borderRadius: '8px', marginBottom: '8px' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                      <div style={{ flex: 1 }}>
+                        <h4 style={{ fontSize: '13px', fontWeight: '700', color: colors.navy, margin: 0 }}>{promo.title}</h4>
+                        <p style={{ fontSize: '11px', color: '#6b7280', margin: '2px 0' }}>{promo.desc}</p>
+                        <p style={{ fontSize: '10px', color: '#9ca3af', margin: 0 }}>{promo.time} - {promo.days}</p>
+                      </div>
+                      <div style={{ display: 'flex', gap: '6px' }}>
+                        <button onClick={() => openPromoModal(promo)} style={{ padding: '6px', borderRadius: '6px', border: 'none', backgroundColor: 'white', cursor: 'pointer' }}>{Icons.edit(colors.navy, 14)}</button>
+                        <button onClick={() => deletePromo(promo.id)} style={{ padding: '6px', borderRadius: '6px', border: 'none', backgroundColor: 'white', cursor: 'pointer' }}>{Icons.trash(colors.red, 14)}</button>
+                      </div>
+                    </div>
+                    <div style={{ display: 'flex', gap: '12px', marginTop: '8px' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                        {Icons.eye('#6b7280', 12)}
+                        <span style={{ fontSize: '10px', color: '#6b7280' }}>{promo.views} views</span>
+                      </div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                        {Icons.checkCircle(colors.teal, 12)}
+                        <span style={{ fontSize: '10px', color: '#6b7280' }}>{promo.claims} claims</span>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Promotion Tips */}
+              <div style={{ backgroundColor: colors.cream, borderRadius: '12px', padding: '12px', border: `1px dashed ${colors.creamDark}` }}>
+                <h4 style={{ fontSize: '11px', fontWeight: '700', color: colors.navy, margin: '0 0 6px', display: 'flex', alignItems: 'center', gap: '4px' }}>{Icons.sparkles(colors.amber, 12)} Pro Tips</h4>
+                <ul style={{ margin: 0, paddingLeft: '16px', fontSize: '10px', color: '#6b7280' }}>
+                  <li>Happy Hour promos get 3x more engagement</li>
+                  <li>Add specific discounts for better conversion</li>
+                  <li>Weekend promos should be posted by Thursday</li>
+                </ul>
+              </div>
+            </div>
+          )}
+
+          {/* EVENTS TAB */}
+          {venueTab === 'events' && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+              {/* Create Event Button */}
+              <button onClick={() => openEventModal()} style={{ width: '100%', padding: '14px', borderRadius: '12px', border: 'none', background: `linear-gradient(90deg, ${colors.navy}, ${colors.navyMid})`, color: 'white', fontWeight: '700', fontSize: '14px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
+                {Icons.plus('white', 18)} Create New Event
+              </button>
+
+              {/* Incoming Flocks */}
+              <div style={{ backgroundColor: 'white', borderRadius: '12px', padding: '12px', boxShadow: '0 1px 3px rgba(0,0,0,0.05)' }}>
+                <h3 style={{ fontSize: '12px', fontWeight: '700', color: colors.navy, margin: '0 0 10px', display: 'flex', alignItems: 'center', gap: '6px' }}>{Icons.users(colors.teal, 14)} Incoming Flocks</h3>
+                {incomingFlocks.length > 0 ? incomingFlocks.map(flock => (
+                  <div key={flock.id} style={{ padding: '10px', backgroundColor: colors.cream, borderRadius: '8px', marginBottom: '8px' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <div>
+                        <h4 style={{ fontSize: '13px', fontWeight: '700', color: colors.navy, margin: 0 }}>{flock.name}</h4>
+                        <p style={{ fontSize: '10px', color: '#6b7280', margin: '2px 0' }}>{flock.members} members - {flock.time}</p>
+                      </div>
+                      <span style={{ padding: '4px 8px', borderRadius: '12px', backgroundColor: flock.status === 'confirmed' ? colors.teal : colors.amber, color: 'white', fontSize: '9px', fontWeight: '600' }}>
+                        {flock.status === 'confirmed' ? 'Confirmed' : 'Pending'}
+                      </span>
+                    </div>
+                  </div>
+                )) : <p style={{ fontSize: '11px', color: '#9ca3af', textAlign: 'center', padding: '20px' }}>No incoming flocks scheduled</p>}
+              </div>
+
+              {/* Your Events */}
+              <div style={{ backgroundColor: 'white', borderRadius: '12px', padding: '12px', boxShadow: '0 1px 3px rgba(0,0,0,0.05)' }}>
+                <h3 style={{ fontSize: '12px', fontWeight: '700', color: colors.navy, margin: '0 0 10px', display: 'flex', alignItems: 'center', gap: '6px' }}>{Icons.calendar(colors.navy, 14)} Your Events ({venueEventsList.length})</h3>
+                {venueEventsList.length === 0 ? (
+                  <p style={{ fontSize: '11px', color: '#9ca3af', textAlign: 'center', padding: '20px' }}>No events yet. Create your first one!</p>
+                ) : venueEventsList.map(event => (
+                  <div key={event.id} style={{ padding: '10px', backgroundColor: colors.cream, borderRadius: '8px', marginBottom: '8px' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                      <div style={{ flex: 1 }}>
+                        <h4 style={{ fontSize: '13px', fontWeight: '700', color: colors.navy, margin: 0 }}>{event.title}</h4>
+                        <p style={{ fontSize: '10px', color: '#6b7280', margin: '2px 0' }}>{event.date} at {event.time}</p>
+                        <p style={{ fontSize: '10px', color: '#9ca3af', margin: 0 }}>{event.rsvps}/{event.capacity} RSVPs</p>
+                      </div>
+                      <div style={{ display: 'flex', gap: '6px' }}>
+                        <button onClick={() => openEventModal(event)} style={{ padding: '6px', borderRadius: '6px', border: 'none', backgroundColor: 'white', cursor: 'pointer' }}>{Icons.edit(colors.navy, 14)}</button>
+                        <button onClick={() => deleteEvent(event.id)} style={{ padding: '6px', borderRadius: '6px', border: 'none', backgroundColor: 'white', cursor: 'pointer' }}>{Icons.trash(colors.red, 14)}</button>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Event Calendar Preview */}
+              <div style={{ backgroundColor: 'white', borderRadius: '12px', padding: '12px', boxShadow: '0 1px 3px rgba(0,0,0,0.05)' }}>
+                <h3 style={{ fontSize: '12px', fontWeight: '700', color: colors.navy, margin: '0 0 10px' }}>This Week</h3>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: '4px', textAlign: 'center' }}>
+                  {['S', 'M', 'T', 'W', 'T', 'F', 'S'].map((d, i) => (
+                    <div key={i} style={{ fontSize: '9px', fontWeight: '600', color: '#9ca3af', padding: '4px' }}>{d}</div>
+                  ))}
+                  {[19, 20, 21, 22, 23, 24, 25].map((day, i) => (
+                    <div key={day} style={{ padding: '8px 4px', borderRadius: '6px', backgroundColor: i === 5 || i === 6 ? colors.navy : 'transparent', color: i === 5 || i === 6 ? 'white' : colors.navy, fontSize: '11px', fontWeight: '600' }}>
+                      {day}
+                      {(i === 5 || i === 6) && <div style={{ width: '4px', height: '4px', borderRadius: '2px', backgroundColor: colors.amber, margin: '2px auto 0' }} />}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* REVIEWS TAB */}
+          {venueTab === 'reviews' && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+              {/* Rating Overview */}
+              <div style={{ backgroundColor: 'white', borderRadius: '12px', padding: '12px', boxShadow: '0 1px 3px rgba(0,0,0,0.05)' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+                  <div style={{ textAlign: 'center' }}>
+                    <p style={{ fontSize: '32px', fontWeight: '900', color: colors.navy, margin: 0 }}>4.7</p>
+                    <div style={{ display: 'flex', gap: '2px', justifyContent: 'center', margin: '4px 0' }}>
+                      {[1, 2, 3, 4, 5].map(s => s <= 4 ? Icons.starFilled(colors.amber, 14) : Icons.star(colors.amber, 14))}
+                    </div>
+                    <p style={{ fontSize: '10px', color: '#6b7280', margin: 0 }}>156 reviews</p>
+                  </div>
+                  <div style={{ flex: 1 }}>
+                    {[5, 4, 3, 2, 1].map(rating => (
+                      <div key={rating} style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '4px' }}>
+                        <span style={{ fontSize: '10px', color: '#6b7280', width: '12px' }}>{rating}</span>
+                        <div style={{ flex: 1, height: '6px', backgroundColor: colors.cream, borderRadius: '3px', overflow: 'hidden' }}>
+                          <div style={{ height: '100%', width: `${rating === 5 ? 60 : rating === 4 ? 25 : rating === 3 ? 10 : rating === 2 ? 3 : 2}%`, backgroundColor: colors.amber, borderRadius: '3px' }} />
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              {/* Recent Reviews */}
+              <div style={{ backgroundColor: 'white', borderRadius: '12px', padding: '12px', boxShadow: '0 1px 3px rgba(0,0,0,0.05)' }}>
+                <h3 style={{ fontSize: '12px', fontWeight: '700', color: colors.navy, margin: '0 0 10px' }}>Recent Reviews</h3>
+                {reviews.map(review => (
+                  <div key={review.id} style={{ padding: '10px', backgroundColor: colors.cream, borderRadius: '8px', marginBottom: '8px' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <div style={{ width: '32px', height: '32px', borderRadius: '16px', backgroundColor: colors.navy, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', fontSize: '12px', fontWeight: '700' }}>
+                          {review.user.charAt(0)}
+                        </div>
+                        <div>
+                          <p style={{ fontSize: '12px', fontWeight: '600', color: colors.navy, margin: 0 }}>{review.user}</p>
+                          <div style={{ display: 'flex', gap: '1px' }}>
+                            {[1, 2, 3, 4, 5].map(s => s <= review.rating ? Icons.starFilled(colors.amber, 10) : Icons.star('#d1d5db', 10))}
+                          </div>
+                        </div>
+                      </div>
+                      <span style={{ fontSize: '9px', color: '#9ca3af' }}>{review.date}</span>
+                    </div>
+                    <p style={{ fontSize: '11px', color: '#4b5563', margin: '8px 0 0', lineHeight: '1.4' }}>{review.text}</p>
+                    {!review.replied && (
+                      <button onClick={() => showToast('Reply sent!')} style={{ marginTop: '8px', padding: '6px 10px', borderRadius: '6px', border: `1px solid ${colors.navy}`, backgroundColor: 'white', color: colors.navy, fontSize: '10px', fontWeight: '500', cursor: 'pointer' }}>
+                        Reply
+                      </button>
+                    )}
+                    {review.replied && <p style={{ fontSize: '10px', color: colors.teal, margin: '8px 0 0', display: 'flex', alignItems: 'center', gap: '4px' }}>{Icons.checkCircle(colors.teal, 12)} Replied</p>}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* SETTINGS TAB */}
+          {venueTab === 'settings' && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+              {/* Venue Info */}
+              <div style={{ backgroundColor: 'white', borderRadius: '12px', padding: '12px', boxShadow: '0 1px 3px rgba(0,0,0,0.05)' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
+                  <h3 style={{ fontSize: '12px', fontWeight: '700', color: colors.navy, margin: 0, display: 'flex', alignItems: 'center', gap: '6px' }}>{Icons.building(colors.navy, 14)} Venue Information</h3>
+                  {!editingVenueInfo ? (
+                    <button onClick={() => setEditingVenueInfo(true)} style={{ padding: '4px 8px', borderRadius: '6px', border: 'none', backgroundColor: colors.cream, color: colors.navy, fontSize: '10px', fontWeight: '500', cursor: 'pointer' }}>Edit</button>
+                  ) : (
+                    <button onClick={() => { setEditingVenueInfo(false); showToast('Info saved!'); }} style={{ padding: '4px 8px', borderRadius: '6px', border: 'none', backgroundColor: colors.teal, color: 'white', fontSize: '10px', fontWeight: '500', cursor: 'pointer' }}>Save</button>
+                  )}
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                  <div>
+                    <label style={{ fontSize: '10px', fontWeight: '600', color: '#6b7280', display: 'block', marginBottom: '4px' }}>Venue Name</label>
+                    <input type="text" value={venueInfo.name} onChange={(e) => setVenueInfo({...venueInfo, name: e.target.value})} disabled={!editingVenueInfo} style={{ width: '100%', padding: '8px', borderRadius: '6px', border: `1px solid ${editingVenueInfo ? colors.navy : colors.creamDark}`, fontSize: '12px', boxSizing: 'border-box', backgroundColor: editingVenueInfo ? 'white' : colors.cream }} />
+                  </div>
+                  <div>
+                    <label style={{ fontSize: '10px', fontWeight: '600', color: '#6b7280', display: 'block', marginBottom: '4px' }}>Address</label>
+                    <input type="text" value={venueInfo.address} onChange={(e) => setVenueInfo({...venueInfo, address: e.target.value})} disabled={!editingVenueInfo} style={{ width: '100%', padding: '8px', borderRadius: '6px', border: `1px solid ${editingVenueInfo ? colors.navy : colors.creamDark}`, fontSize: '12px', boxSizing: 'border-box', backgroundColor: editingVenueInfo ? 'white' : colors.cream }} />
+                  </div>
+                  <div>
+                    <label style={{ fontSize: '10px', fontWeight: '600', color: '#6b7280', display: 'block', marginBottom: '4px' }}>Phone</label>
+                    <input type="text" value={venueInfo.phone} onChange={(e) => setVenueInfo({...venueInfo, phone: e.target.value})} disabled={!editingVenueInfo} style={{ width: '100%', padding: '8px', borderRadius: '6px', border: `1px solid ${editingVenueInfo ? colors.navy : colors.creamDark}`, fontSize: '12px', boxSizing: 'border-box', backgroundColor: editingVenueInfo ? 'white' : colors.cream }} />
+                  </div>
+                </div>
+              </div>
+
+              {/* Operating Hours */}
+              <div style={{ backgroundColor: 'white', borderRadius: '12px', padding: '12px', boxShadow: '0 1px 3px rgba(0,0,0,0.05)' }}>
+                <h3 style={{ fontSize: '12px', fontWeight: '700', color: colors.navy, margin: '0 0 10px', display: 'flex', alignItems: 'center', gap: '6px' }}>{Icons.clock(colors.navy, 14)} Operating Hours</h3>
+                {operatingHours.map((slot, i) => (
+                  <div key={slot.days} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 0', borderBottom: i < operatingHours.length - 1 ? `1px solid ${colors.cream}` : 'none' }}>
+                    <span style={{ fontSize: '11px', fontWeight: '500', color: colors.navy }}>{slot.days}</span>
+                    <span style={{ fontSize: '11px', color: '#6b7280' }}>{slot.open} - {slot.close}</span>
+                  </div>
+                ))}
+                <button onClick={() => setShowHoursModal(true)} style={{ marginTop: '8px', width: '100%', padding: '8px', borderRadius: '6px', border: `1px solid ${colors.creamDark}`, backgroundColor: 'white', color: colors.navy, fontSize: '11px', fontWeight: '500', cursor: 'pointer' }}>
+                  Edit Hours
+                </button>
+              </div>
+
+              {/* Notification Settings */}
+              <div style={{ backgroundColor: 'white', borderRadius: '12px', padding: '12px', boxShadow: '0 1px 3px rgba(0,0,0,0.05)' }}>
+                <h3 style={{ fontSize: '12px', fontWeight: '700', color: colors.navy, margin: '0 0 10px', display: 'flex', alignItems: 'center', gap: '6px' }}>{Icons.bell(colors.navy, 14)} Notifications</h3>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 0', borderBottom: `1px solid ${colors.cream}` }}>
+                  <div>
+                    <p style={{ fontSize: '11px', fontWeight: '500', color: colors.navy, margin: 0 }}>New bookings</p>
+                    <p style={{ fontSize: '9px', color: '#9ca3af', margin: 0 }}>Get notified when a flock books</p>
+                  </div>
+                  <div onClick={() => { setNotifications({...notifications, bookings: !notifications.bookings}); showToast(notifications.bookings ? 'Disabled' : 'Enabled'); }} style={{ width: '36px', height: '20px', borderRadius: '10px', backgroundColor: notifications.bookings ? colors.teal : '#d1d5db', cursor: 'pointer', position: 'relative' }}>
+                    <div style={{ position: 'absolute', top: '2px', left: notifications.bookings ? '18px' : '2px', width: '16px', height: '16px', borderRadius: '8px', backgroundColor: 'white', transition: 'left 0.2s' }} />
+                  </div>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 0', borderBottom: `1px solid ${colors.cream}` }}>
+                  <div>
+                    <p style={{ fontSize: '11px', fontWeight: '500', color: colors.navy, margin: 0 }}>New reviews</p>
+                    <p style={{ fontSize: '9px', color: '#9ca3af', margin: 0 }}>Alerts for customer reviews</p>
+                  </div>
+                  <div onClick={() => { setNotifications({...notifications, reviews: !notifications.reviews}); showToast(notifications.reviews ? 'Disabled' : 'Enabled'); }} style={{ width: '36px', height: '20px', borderRadius: '10px', backgroundColor: notifications.reviews ? colors.teal : '#d1d5db', cursor: 'pointer', position: 'relative' }}>
+                    <div style={{ position: 'absolute', top: '2px', left: notifications.reviews ? '18px' : '2px', width: '16px', height: '16px', borderRadius: '8px', backgroundColor: 'white', transition: 'left 0.2s' }} />
+                  </div>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 0' }}>
+                  <div>
+                    <p style={{ fontSize: '11px', fontWeight: '500', color: colors.navy, margin: 0 }}>Weekly reports</p>
+                    <p style={{ fontSize: '9px', color: '#9ca3af', margin: 0 }}>Performance summary emails</p>
+                  </div>
+                  <div onClick={() => { setNotifications({...notifications, weekly: !notifications.weekly}); showToast(notifications.weekly ? 'Disabled' : 'Enabled'); }} style={{ width: '36px', height: '20px', borderRadius: '10px', backgroundColor: notifications.weekly ? colors.teal : '#d1d5db', cursor: 'pointer', position: 'relative' }}>
+                    <div style={{ position: 'absolute', top: '2px', left: notifications.weekly ? '18px' : '2px', width: '16px', height: '16px', borderRadius: '8px', backgroundColor: 'white', transition: 'left 0.2s' }} />
+                  </div>
+                </div>
+              </div>
+
+              {/* Subscription */}
+              <div style={{ backgroundColor: 'white', borderRadius: '12px', padding: '12px', boxShadow: '0 1px 3px rgba(0,0,0,0.05)' }}>
+                <h3 style={{ fontSize: '12px', fontWeight: '700', color: colors.navy, margin: '0 0 10px', display: 'flex', alignItems: 'center', gap: '6px' }}>{Icons.creditCard(colors.navy, 14)} Subscription</h3>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px', backgroundColor: colors.cream, borderRadius: '8px' }}>
+                  <div>
+                    <p style={{ fontSize: '12px', fontWeight: '700', color: colors.navy, margin: 0 }}>{tierBadge[venueData.tier].label} Plan</p>
+                    <p style={{ fontSize: '10px', color: '#6b7280', margin: 0 }}>{venueTier === 'free' ? 'Free forever' : venueTier === 'premium' ? '$35/month' : '$75/month'}</p>
+                  </div>
+                  {venueTier !== 'pro' && (
+                    <button onClick={() => setShowUpgradeModal(true)} style={{ padding: '6px 12px', borderRadius: '6px', border: 'none', background: 'linear-gradient(90deg, #7c3aed, #a78bfa)', color: 'white', fontSize: '10px', fontWeight: '600', cursor: 'pointer' }}>
+                      Upgrade
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {/* Danger Zone */}
+              <div style={{ backgroundColor: '#fef2f2', borderRadius: '12px', padding: '12px', border: '1px solid #fecaca' }}>
+                <h3 style={{ fontSize: '12px', fontWeight: '700', color: colors.red, margin: '0 0 10px', display: 'flex', alignItems: 'center', gap: '6px' }}>{Icons.alertCircle(colors.red, 14)} Danger Zone</h3>
+                <button onClick={() => showToast('Contact support to deactivate')} style={{ width: '100%', padding: '8px', borderRadius: '6px', border: `1px solid ${colors.red}`, backgroundColor: 'white', color: colors.red, fontSize: '11px', fontWeight: '500', cursor: 'pointer' }}>
+                  Deactivate Venue Listing
+                </button>
+              </div>
+            </div>
+          )}
 
           {/* Upgrade Modal */}
           {showUpgradeModal && (
@@ -2007,13 +2942,174 @@ const FlockApp = () => {
               </div>
             </div>
           )}
+
+          {/* Promotion Modal */}
+          {showPromoModal && (
+            <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.8)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 50, padding: '16px' }}>
+              <div style={{ backgroundColor: 'white', borderRadius: '24px', padding: '20px', width: '100%', maxWidth: '320px' }}>
+                <h2 style={{ fontSize: '18px', fontWeight: '900', color: colors.navy, margin: '0 0 16px', textAlign: 'center' }}>
+                  {editingPromo ? 'Edit Promotion' : 'New Promotion'}
+                </h2>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                  <div>
+                    <label style={{ fontSize: '11px', fontWeight: '600', color: '#6b7280', display: 'block', marginBottom: '4px' }}>Title</label>
+                    <input type="text" value={promoForm.title} onChange={(e) => setPromoForm({...promoForm, title: e.target.value})} placeholder="e.g., Half-Price Apps" style={{ width: '100%', padding: '10px', borderRadius: '8px', border: `1px solid ${colors.creamDark}`, fontSize: '13px', boxSizing: 'border-box' }} />
+                  </div>
+                  <div>
+                    <label style={{ fontSize: '11px', fontWeight: '600', color: '#6b7280', display: 'block', marginBottom: '4px' }}>Description</label>
+                    <input type="text" value={promoForm.desc} onChange={(e) => setPromoForm({...promoForm, desc: e.target.value})} placeholder="e.g., 50% off all appetizers" style={{ width: '100%', padding: '10px', borderRadius: '8px', border: `1px solid ${colors.creamDark}`, fontSize: '13px', boxSizing: 'border-box' }} />
+                  </div>
+                  <div>
+                    <label style={{ fontSize: '11px', fontWeight: '600', color: '#6b7280', display: 'block', marginBottom: '4px' }}>Time Slot</label>
+                    <select value={promoForm.time} onChange={(e) => setPromoForm({...promoForm, time: e.target.value})} style={{ width: '100%', padding: '10px', borderRadius: '8px', border: `1px solid ${colors.creamDark}`, fontSize: '13px', boxSizing: 'border-box', backgroundColor: 'white' }}>
+                      <option value="Happy Hour">Happy Hour (4-7pm)</option>
+                      <option value="Late Night">Late Night (10pm-close)</option>
+                      <option value="Weekend Brunch">Weekend Brunch (10am-2pm)</option>
+                      <option value="All Day">All Day</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label style={{ fontSize: '11px', fontWeight: '600', color: '#6b7280', display: 'block', marginBottom: '4px' }}>Days Active</label>
+                    <select value={promoForm.days} onChange={(e) => setPromoForm({...promoForm, days: e.target.value})} style={{ width: '100%', padding: '10px', borderRadius: '8px', border: `1px solid ${colors.creamDark}`, fontSize: '13px', boxSizing: 'border-box', backgroundColor: 'white' }}>
+                      <option value="Daily">Daily</option>
+                      <option value="Weekdays">Weekdays</option>
+                      <option value="Weekends">Weekends</option>
+                      <option value="Mon-Fri">Mon-Fri</option>
+                      <option value="Fri-Sun">Fri-Sun</option>
+                    </select>
+                  </div>
+                </div>
+                <div style={{ display: 'flex', gap: '10px', marginTop: '20px' }}>
+                  <button onClick={() => { setShowPromoModal(false); setEditingPromo(null); setPromoForm({ title: '', desc: '', time: 'Happy Hour', days: 'Daily' }); }} style={{ flex: 1, padding: '12px', borderRadius: '8px', border: '1px solid #d1d5db', backgroundColor: 'white', color: '#6b7280', fontWeight: '600', cursor: 'pointer' }}>Cancel</button>
+                  <button onClick={savePromo} disabled={!promoForm.title || !promoForm.desc} style={{ flex: 1, padding: '12px', borderRadius: '8px', border: 'none', backgroundColor: promoForm.title && promoForm.desc ? colors.navy : '#d1d5db', color: 'white', fontWeight: '600', cursor: promoForm.title && promoForm.desc ? 'pointer' : 'not-allowed' }}>
+                    {editingPromo ? 'Save Changes' : 'Create'}
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Event Modal */}
+          {showEventModal && (
+            <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.8)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 50, padding: '16px' }}>
+              <div style={{ backgroundColor: 'white', borderRadius: '24px', padding: '20px', width: '100%', maxWidth: '320px' }}>
+                <h2 style={{ fontSize: '18px', fontWeight: '900', color: colors.navy, margin: '0 0 16px', textAlign: 'center' }}>
+                  {editingEvent ? 'Edit Event' : 'New Event'}
+                </h2>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                  <div>
+                    <label style={{ fontSize: '11px', fontWeight: '600', color: '#6b7280', display: 'block', marginBottom: '4px' }}>Event Title</label>
+                    <input type="text" value={eventForm.title} onChange={(e) => setEventForm({...eventForm, title: e.target.value})} placeholder="e.g., Live Jazz Night" style={{ width: '100%', padding: '10px', borderRadius: '8px', border: `1px solid ${colors.creamDark}`, fontSize: '13px', boxSizing: 'border-box' }} />
+                  </div>
+                  <div style={{ display: 'flex', gap: '10px' }}>
+                    <div style={{ flex: 1 }}>
+                      <label style={{ fontSize: '11px', fontWeight: '600', color: '#6b7280', display: 'block', marginBottom: '4px' }}>Date</label>
+                      <input type="text" value={eventForm.date} onChange={(e) => setEventForm({...eventForm, date: e.target.value})} placeholder="Jan 25" style={{ width: '100%', padding: '10px', borderRadius: '8px', border: `1px solid ${colors.creamDark}`, fontSize: '13px', boxSizing: 'border-box' }} />
+                    </div>
+                    <div style={{ flex: 1 }}>
+                      <label style={{ fontSize: '11px', fontWeight: '600', color: '#6b7280', display: 'block', marginBottom: '4px' }}>Time</label>
+                      <input type="text" value={eventForm.time} onChange={(e) => setEventForm({...eventForm, time: e.target.value})} placeholder="8:00 PM" style={{ width: '100%', padding: '10px', borderRadius: '8px', border: `1px solid ${colors.creamDark}`, fontSize: '13px', boxSizing: 'border-box' }} />
+                    </div>
+                  </div>
+                  <div>
+                    <label style={{ fontSize: '11px', fontWeight: '600', color: '#6b7280', display: 'block', marginBottom: '4px' }}>Capacity</label>
+                    <input type="number" value={eventForm.capacity} onChange={(e) => setEventForm({...eventForm, capacity: e.target.value})} placeholder="50" style={{ width: '100%', padding: '10px', borderRadius: '8px', border: `1px solid ${colors.creamDark}`, fontSize: '13px', boxSizing: 'border-box' }} />
+                  </div>
+                </div>
+                <div style={{ display: 'flex', gap: '10px', marginTop: '20px' }}>
+                  <button onClick={() => { setShowEventModal(false); setEditingEvent(null); setEventForm({ title: '', date: '', time: '', capacity: '' }); }} style={{ flex: 1, padding: '12px', borderRadius: '8px', border: '1px solid #d1d5db', backgroundColor: 'white', color: '#6b7280', fontWeight: '600', cursor: 'pointer' }}>Cancel</button>
+                  <button onClick={saveEvent} disabled={!eventForm.title || !eventForm.date || !eventForm.time} style={{ flex: 1, padding: '12px', borderRadius: '8px', border: 'none', backgroundColor: eventForm.title && eventForm.date && eventForm.time ? colors.navy : '#d1d5db', color: 'white', fontWeight: '600', cursor: eventForm.title && eventForm.date && eventForm.time ? 'pointer' : 'not-allowed' }}>
+                    {editingEvent ? 'Save Changes' : 'Create'}
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Hours Modal */}
+          {showHoursModal && (
+            <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.8)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 50, padding: '16px' }}>
+              <div style={{ backgroundColor: 'white', borderRadius: '24px', padding: '20px', width: '100%', maxWidth: '340px', maxHeight: '80%', overflowY: 'auto' }}>
+                <h2 style={{ fontSize: '18px', fontWeight: '900', color: colors.navy, margin: '0 0 16px', textAlign: 'center' }}>Edit Operating Hours</h2>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                  {operatingHours.map((slot, index) => (
+                    <div key={slot.days} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '8px', backgroundColor: colors.cream, borderRadius: '8px' }}>
+                      <span style={{ fontSize: '11px', fontWeight: '600', color: colors.navy, width: '70px' }}>{slot.days}</span>
+                      <select value={slot.open} onChange={(e) => { const updated = [...operatingHours]; updated[index].open = e.target.value; setOperatingHours(updated); }} style={{ flex: 1, padding: '6px', borderRadius: '6px', border: `1px solid ${colors.creamDark}`, fontSize: '11px', backgroundColor: 'white' }}>
+                        <option value="11:00 AM">11:00 AM</option>
+                        <option value="12:00 PM">12:00 PM</option>
+                        <option value="2:00 PM">2:00 PM</option>
+                        <option value="4:00 PM">4:00 PM</option>
+                        <option value="5:00 PM">5:00 PM</option>
+                      </select>
+                      <span style={{ fontSize: '11px', color: '#6b7280' }}>to</span>
+                      <select value={slot.close} onChange={(e) => { const updated = [...operatingHours]; updated[index].close = e.target.value; setOperatingHours(updated); }} style={{ flex: 1, padding: '6px', borderRadius: '6px', border: `1px solid ${colors.creamDark}`, fontSize: '11px', backgroundColor: 'white' }}>
+                        <option value="10:00 PM">10:00 PM</option>
+                        <option value="11:00 PM">11:00 PM</option>
+                        <option value="12:00 AM">12:00 AM</option>
+                        <option value="1:00 AM">1:00 AM</option>
+                        <option value="2:00 AM">2:00 AM</option>
+                      </select>
+                    </div>
+                  ))}
+                </div>
+                <div style={{ display: 'flex', gap: '10px', marginTop: '20px' }}>
+                  <button onClick={() => setShowHoursModal(false)} style={{ flex: 1, padding: '12px', borderRadius: '8px', border: '1px solid #d1d5db', backgroundColor: 'white', color: '#6b7280', fontWeight: '600', cursor: 'pointer' }}>Cancel</button>
+                  <button onClick={() => { setShowHoursModal(false); showToast('Hours updated!'); }} style={{ flex: 1, padding: '12px', borderRadius: '8px', border: 'none', backgroundColor: colors.navy, color: 'white', fontWeight: '600', cursor: 'pointer' }}>Save Hours</button>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       </div>
     );
   };
 
-  // REVENUE SIMULATOR SCREEN
+  // ADMIN DASHBOARD SCREEN
   const RevenueScreen = () => {
+    // adminTab state is now at App level to persist across re-renders
+
+    // Admin tabs definition
+    const adminTabs = [
+      { id: 'revenue', label: 'Revenue', icon: Icons.dollar },
+      { id: 'users', label: 'Users', icon: Icons.users },
+      { id: 'venues', label: 'Venues', icon: Icons.building },
+      { id: 'cities', label: 'Cities', icon: Icons.map },
+      { id: 'transactions', label: 'Txns', icon: Icons.creditCard },
+      { id: 'projections', label: 'Project', icon: Icons.barChart }
+    ];
+
+    // Mock data for admin dashboard
+    const adminUsers = [
+      { id: 1, name: 'Emma Wilson', email: 'emma@email.com', joined: 'Jan 15', flocks: 8, status: 'active' },
+      { id: 2, name: 'Jake Martinez', email: 'jake@email.com', joined: 'Jan 12', flocks: 5, status: 'active' },
+      { id: 3, name: 'Sarah Chen', email: 'sarah@email.com', joined: 'Jan 10', flocks: 12, status: 'active' },
+      { id: 4, name: 'Mike Johnson', email: 'mike@email.com', joined: 'Jan 8', flocks: 3, status: 'inactive' },
+      { id: 5, name: 'Lisa Park', email: 'lisa@email.com', joined: 'Jan 5', flocks: 7, status: 'active' },
+    ];
+
+    const adminVenues = [
+      { id: 1, name: "The Blue Heron", tier: 'pro', city: 'Easton', revenue: 2340, rating: 4.8 },
+      { id: 2, name: "Porters Pub", tier: 'premium', city: 'Bethlehem', revenue: 1890, rating: 4.6 },
+      { id: 3, name: "The Bookstore Speakeasy", tier: 'free', city: 'Bethlehem', revenue: 450, rating: 4.2 },
+      { id: 4, name: "Shakers Bar", tier: 'premium', city: 'Allentown', revenue: 1560, rating: 4.5 },
+      { id: 5, name: "Two Rivers Brewing", tier: 'pro', city: 'Easton', revenue: 2100, rating: 4.9 },
+    ];
+
+    const adminCities = [
+      { name: 'Easton', users: 850, venues: 28, revenue: 14200, growth: 18 },
+      { name: 'Bethlehem', users: 1120, venues: 35, revenue: 16800, growth: 15 },
+      { name: 'Allentown', users: 680, venues: 22, revenue: 9400, growth: 12 },
+    ];
+
+    const adminTransactions = [
+      { id: 'TXN-001', date: 'Jan 19', venue: 'The Blue Heron', amount: 245, type: 'booking', status: 'completed' },
+      { id: 'TXN-002', date: 'Jan 19', venue: 'Porters Pub', amount: 180, type: 'subscription', status: 'completed' },
+      { id: 'TXN-003', date: 'Jan 18', venue: 'Shakers Bar', amount: 320, type: 'booking', status: 'pending' },
+      { id: 'TXN-004', date: 'Jan 18', venue: 'The Bookstore Speakeasy', amount: 75, type: 'subscription', status: 'completed' },
+      { id: 'TXN-005', date: 'Jan 17', venue: 'Two Rivers Brewing', amount: 410, type: 'booking', status: 'completed' },
+    ];
+
     // Revenue simulator state
     const [numVenues, setNumVenues] = useState(20);
     const [subscriptionPrice, setSubscriptionPrice] = useState(50);
@@ -2075,19 +3171,32 @@ const FlockApp = () => {
         {/* Header */}
         <div style={{ padding: '16px', background: `linear-gradient(135deg, ${colors.navy}, ${colors.navyMid})`, flexShrink: 0 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-            <button onClick={() => setCurrentScreen('main')} style={{ width: '32px', height: '32px', borderRadius: '16px', border: 'none', backgroundColor: 'rgba(255,255,255,0.2)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <button onClick={switchMode} style={{ width: '32px', height: '32px', borderRadius: '16px', border: 'none', backgroundColor: 'rgba(255,255,255,0.2)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
               {Icons.arrowLeft('white', 16)}
             </button>
-            {Icons.dollar('white', 24)}
+            {Icons.briefcase('white', 24)}
             <div>
-              <h1 style={{ fontSize: '18px', fontWeight: '900', color: 'white', margin: 0 }}>Revenue Simulator</h1>
-              <p style={{ fontSize: '10px', color: 'rgba(255,255,255,0.7)', margin: 0 }}>Admin Mode - Model your business financials</p>
+              <h1 style={{ fontSize: '18px', fontWeight: '900', color: 'white', margin: 0 }}>Admin Dashboard</h1>
+              <p style={{ fontSize: '10px', color: 'rgba(255,255,255,0.7)', margin: 0 }}>Manage your Flock platform</p>
             </div>
           </div>
         </div>
 
-        {/* Content - Two Column Layout */}
+        {/* Tab Navigation */}
+        <div style={{ display: 'flex', backgroundColor: 'white', borderBottom: '1px solid #e5e7eb', flexShrink: 0, padding: '8px 4px', gap: '4px' }}>
+          {adminTabs.map(tab => (
+            <button key={tab.id} onClick={() => setAdminTab(tab.id)} style={{ flex: 1, padding: '12px 4px', border: 'none', backgroundColor: adminTab === tab.id ? colors.navy : colors.cream, borderRadius: '10px', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '4px', transition: 'all 0.2s' }}>
+              {tab.icon(adminTab === tab.id ? 'white' : colors.navy, 18)}
+              <span style={{ fontSize: '10px', fontWeight: '700', color: adminTab === tab.id ? 'white' : colors.navy }}>{tab.label}</span>
+            </button>
+          ))}
+        </div>
+
+        {/* Content */}
         <div style={{ flex: 1, overflowY: 'auto', padding: '12px' }}>
+
+          {/* REVENUE TAB */}
+          {adminTab === 'revenue' && (<>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
 
             {/* LEFT COLUMN - INPUTS */}
@@ -2263,19 +3372,328 @@ const FlockApp = () => {
               </div>
             </div>
           </div>
-        </div>
+          </>)}
 
-        <BottomNav />
+          {/* USERS TAB */}
+          {adminTab === 'users' && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+              {/* User Stats */}
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '8px' }}>
+                <div style={{ backgroundColor: 'white', borderRadius: '12px', padding: '12px', textAlign: 'center', boxShadow: '0 1px 3px rgba(0,0,0,0.05)' }}>
+                  <p style={{ fontSize: '24px', fontWeight: '900', color: colors.navy, margin: 0 }}>3,200</p>
+                  <p style={{ fontSize: '9px', color: '#6b7280', margin: 0 }}>Total Users</p>
+                </div>
+                <div style={{ backgroundColor: 'white', borderRadius: '12px', padding: '12px', textAlign: 'center', boxShadow: '0 1px 3px rgba(0,0,0,0.05)' }}>
+                  <p style={{ fontSize: '24px', fontWeight: '900', color: colors.teal, margin: 0 }}>2,850</p>
+                  <p style={{ fontSize: '9px', color: '#6b7280', margin: 0 }}>Active</p>
+                </div>
+                <div style={{ backgroundColor: 'white', borderRadius: '12px', padding: '12px', textAlign: 'center', boxShadow: '0 1px 3px rgba(0,0,0,0.05)' }}>
+                  <p style={{ fontSize: '24px', fontWeight: '900', color: colors.amber, margin: 0 }}>+156</p>
+                  <p style={{ fontSize: '9px', color: '#6b7280', margin: 0 }}>This Week</p>
+                </div>
+              </div>
+
+              {/* User Growth Chart */}
+              <div style={{ backgroundColor: 'white', borderRadius: '12px', padding: '12px', boxShadow: '0 1px 3px rgba(0,0,0,0.05)' }}>
+                <h3 style={{ fontSize: '12px', fontWeight: '700', color: colors.navy, margin: '0 0 10px' }}>User Growth (Last 7 Days)</h3>
+                <div style={{ display: 'flex', gap: '4px', alignItems: 'flex-end', height: '60px' }}>
+                  {[45, 52, 38, 65, 78, 92, 110].map((val, i) => (
+                    <div key={i} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+                      <div style={{ width: '100%', height: `${val * 0.5}px`, backgroundColor: colors.navy, borderRadius: '4px 4px 0 0', minHeight: '4px' }} />
+                      <span style={{ fontSize: '8px', color: '#9ca3af', marginTop: '4px' }}>{['S', 'M', 'T', 'W', 'T', 'F', 'S'][i]}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Recent Users */}
+              <div style={{ backgroundColor: 'white', borderRadius: '12px', padding: '12px', boxShadow: '0 1px 3px rgba(0,0,0,0.05)' }}>
+                <h3 style={{ fontSize: '12px', fontWeight: '700', color: colors.navy, margin: '0 0 10px' }}>Recent Users</h3>
+                {adminUsers.map(user => (
+                  <div key={user.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 0', borderBottom: `1px solid ${colors.cream}` }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <div style={{ width: '32px', height: '32px', borderRadius: '16px', backgroundColor: colors.navy, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', fontSize: '12px', fontWeight: '700' }}>
+                        {user.name.charAt(0)}
+                      </div>
+                      <div>
+                        <p style={{ fontSize: '12px', fontWeight: '600', color: colors.navy, margin: 0 }}>{user.name}</p>
+                        <p style={{ fontSize: '9px', color: '#9ca3af', margin: 0 }}>{user.email}</p>
+                      </div>
+                    </div>
+                    <div style={{ textAlign: 'right' }}>
+                      <span style={{ padding: '2px 6px', borderRadius: '8px', backgroundColor: user.status === 'active' ? '#d1fae5' : '#fef3c7', color: user.status === 'active' ? '#047857' : '#b45309', fontSize: '9px', fontWeight: '600' }}>
+                        {user.status}
+                      </span>
+                      <p style={{ fontSize: '9px', color: '#9ca3af', margin: '4px 0 0' }}>{user.flocks} flocks</p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* VENUES TAB */}
+          {adminTab === 'venues' && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+              {/* Venue Stats */}
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '8px' }}>
+                <div style={{ backgroundColor: 'white', borderRadius: '12px', padding: '12px', textAlign: 'center', boxShadow: '0 1px 3px rgba(0,0,0,0.05)' }}>
+                  <p style={{ fontSize: '24px', fontWeight: '900', color: colors.navy, margin: 0 }}>117</p>
+                  <p style={{ fontSize: '9px', color: '#6b7280', margin: 0 }}>Total Venues</p>
+                </div>
+                <div style={{ backgroundColor: 'white', borderRadius: '12px', padding: '12px', textAlign: 'center', boxShadow: '0 1px 3px rgba(0,0,0,0.05)' }}>
+                  <p style={{ fontSize: '24px', fontWeight: '900', color: '#7c3aed', margin: 0 }}>28</p>
+                  <p style={{ fontSize: '9px', color: '#6b7280', margin: 0 }}>Pro Tier</p>
+                </div>
+                <div style={{ backgroundColor: 'white', borderRadius: '12px', padding: '12px', textAlign: 'center', boxShadow: '0 1px 3px rgba(0,0,0,0.05)' }}>
+                  <p style={{ fontSize: '24px', fontWeight: '900', color: '#b45309', margin: 0 }}>45</p>
+                  <p style={{ fontSize: '9px', color: '#6b7280', margin: 0 }}>Premium</p>
+                </div>
+              </div>
+
+              {/* Tier Distribution */}
+              <div style={{ backgroundColor: 'white', borderRadius: '12px', padding: '12px', boxShadow: '0 1px 3px rgba(0,0,0,0.05)' }}>
+                <h3 style={{ fontSize: '12px', fontWeight: '700', color: colors.navy, margin: '0 0 10px' }}>Tier Distribution</h3>
+                <div style={{ display: 'flex', height: '12px', borderRadius: '6px', overflow: 'hidden' }}>
+                  <div style={{ width: '24%', backgroundColor: '#7c3aed' }} title="Pro" />
+                  <div style={{ width: '38%', backgroundColor: '#b45309' }} title="Premium" />
+                  <div style={{ width: '38%', backgroundColor: '#9ca3af' }} title="Free" />
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '8px' }}>
+                  <span style={{ fontSize: '9px', color: '#7c3aed', fontWeight: '600' }}>Pro 24%</span>
+                  <span style={{ fontSize: '9px', color: '#b45309', fontWeight: '600' }}>Premium 38%</span>
+                  <span style={{ fontSize: '9px', color: '#9ca3af', fontWeight: '600' }}>Free 38%</span>
+                </div>
+              </div>
+
+              {/* Venue List */}
+              <div style={{ backgroundColor: 'white', borderRadius: '12px', padding: '12px', boxShadow: '0 1px 3px rgba(0,0,0,0.05)' }}>
+                <h3 style={{ fontSize: '12px', fontWeight: '700', color: colors.navy, margin: '0 0 10px' }}>Top Venues</h3>
+                {adminVenues.map(venue => (
+                  <div key={venue.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 0', borderBottom: `1px solid ${colors.cream}` }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <div style={{ width: '32px', height: '32px', borderRadius: '8px', backgroundColor: venue.tier === 'pro' ? '#7c3aed' : venue.tier === 'premium' ? '#b45309' : colors.navy, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                        {Icons.building('white', 16)}
+                      </div>
+                      <div>
+                        <p style={{ fontSize: '12px', fontWeight: '600', color: colors.navy, margin: 0 }}>{venue.name}</p>
+                        <p style={{ fontSize: '9px', color: '#9ca3af', margin: 0 }}>{venue.city} • {venue.rating} {Icons.starFilled(colors.amber, 10)}</p>
+                      </div>
+                    </div>
+                    <div style={{ textAlign: 'right' }}>
+                      <p style={{ fontSize: '12px', fontWeight: '700', color: colors.navy, margin: 0 }}>${venue.revenue}</p>
+                      <span style={{ padding: '2px 6px', borderRadius: '8px', backgroundColor: venue.tier === 'pro' ? '#faf5ff' : venue.tier === 'premium' ? '#fffbeb' : colors.cream, color: venue.tier === 'pro' ? '#7c3aed' : venue.tier === 'premium' ? '#b45309' : '#6b7280', fontSize: '9px', fontWeight: '600' }}>
+                        {venue.tier}
+                      </span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* CITIES TAB */}
+          {adminTab === 'cities' && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+              {/* City Overview */}
+              <div style={{ backgroundColor: 'white', borderRadius: '12px', padding: '12px', boxShadow: '0 1px 3px rgba(0,0,0,0.05)' }}>
+                <h3 style={{ fontSize: '12px', fontWeight: '700', color: colors.navy, margin: '0 0 10px', display: 'flex', alignItems: 'center', gap: '6px' }}>{Icons.map(colors.navy, 14)} Market Overview</h3>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
+                  <div style={{ backgroundColor: colors.cream, borderRadius: '8px', padding: '10px', textAlign: 'center' }}>
+                    <p style={{ fontSize: '20px', fontWeight: '900', color: colors.navy, margin: 0 }}>4</p>
+                    <p style={{ fontSize: '9px', color: '#6b7280', margin: 0 }}>Active Cities</p>
+                  </div>
+                  <div style={{ backgroundColor: colors.cream, borderRadius: '8px', padding: '10px', textAlign: 'center' }}>
+                    <p style={{ fontSize: '20px', fontWeight: '900', color: colors.teal, margin: 0 }}>$44.8K</p>
+                    <p style={{ fontSize: '9px', color: '#6b7280', margin: 0 }}>Total Revenue</p>
+                  </div>
+                </div>
+              </div>
+
+              {/* City Performance */}
+              <div style={{ backgroundColor: 'white', borderRadius: '12px', padding: '12px', boxShadow: '0 1px 3px rgba(0,0,0,0.05)' }}>
+                <h3 style={{ fontSize: '12px', fontWeight: '700', color: colors.navy, margin: '0 0 10px' }}>City Performance</h3>
+                {adminCities.map((city, i) => (
+                  <div key={city.name} style={{ padding: '10px 0', borderBottom: i < adminCities.length - 1 ? `1px solid ${colors.cream}` : 'none' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+                      <div>
+                        <p style={{ fontSize: '13px', fontWeight: '700', color: colors.navy, margin: 0 }}>{city.name}</p>
+                        <p style={{ fontSize: '9px', color: '#9ca3af', margin: 0 }}>{city.users} users • {city.venues} venues</p>
+                      </div>
+                      <div style={{ textAlign: 'right' }}>
+                        <p style={{ fontSize: '12px', fontWeight: '700', color: colors.navy, margin: 0 }}>${(city.revenue / 1000).toFixed(1)}K</p>
+                        <span style={{ fontSize: '9px', color: colors.teal, fontWeight: '600' }}>+{city.growth}%</span>
+                      </div>
+                    </div>
+                    <div style={{ height: '6px', backgroundColor: colors.cream, borderRadius: '3px', overflow: 'hidden' }}>
+                      <div style={{ height: '100%', width: `${(city.revenue / 18500) * 100}%`, backgroundColor: colors.navy, borderRadius: '3px' }} />
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Expansion Opportunities */}
+              <div style={{ backgroundColor: colors.cream, borderRadius: '12px', padding: '12px', border: `1px dashed ${colors.creamDark}` }}>
+                <h4 style={{ fontSize: '11px', fontWeight: '700', color: colors.navy, margin: '0 0 6px', display: 'flex', alignItems: 'center', gap: '4px' }}>{Icons.globe(colors.teal, 12)} Expansion Targets</h4>
+                <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+                  {['Denver', 'Phoenix', 'Nashville', 'Atlanta'].map(city => (
+                    <span key={city} style={{ padding: '4px 10px', borderRadius: '12px', backgroundColor: 'white', fontSize: '10px', fontWeight: '500', color: colors.navy }}>
+                      {city}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* TRANSACTIONS TAB */}
+          {adminTab === 'transactions' && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+              {/* Transaction Stats */}
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '8px' }}>
+                <div style={{ backgroundColor: 'white', borderRadius: '12px', padding: '12px', boxShadow: '0 1px 3px rgba(0,0,0,0.05)' }}>
+                  <p style={{ fontSize: '9px', color: '#6b7280', margin: '0 0 4px', textTransform: 'uppercase' }}>Today's Volume</p>
+                  <p style={{ fontSize: '20px', fontWeight: '900', color: colors.navy, margin: 0 }}>$3,240</p>
+                  <span style={{ fontSize: '10px', color: colors.teal }}>+18% vs yesterday</span>
+                </div>
+                <div style={{ backgroundColor: 'white', borderRadius: '12px', padding: '12px', boxShadow: '0 1px 3px rgba(0,0,0,0.05)' }}>
+                  <p style={{ fontSize: '9px', color: '#6b7280', margin: '0 0 4px', textTransform: 'uppercase' }}>This Month</p>
+                  <p style={{ fontSize: '20px', fontWeight: '900', color: colors.navy, margin: 0 }}>$48.2K</p>
+                  <span style={{ fontSize: '10px', color: colors.teal }}>+12% vs last month</span>
+                </div>
+              </div>
+
+              {/* Transaction Type Breakdown */}
+              <div style={{ backgroundColor: 'white', borderRadius: '12px', padding: '12px', boxShadow: '0 1px 3px rgba(0,0,0,0.05)' }}>
+                <h3 style={{ fontSize: '12px', fontWeight: '700', color: colors.navy, margin: '0 0 10px' }}>By Type</h3>
+                <div style={{ display: 'flex', gap: '12px' }}>
+                  <div style={{ flex: 1, textAlign: 'center', padding: '10px', backgroundColor: colors.cream, borderRadius: '8px' }}>
+                    <p style={{ fontSize: '16px', fontWeight: '900', color: colors.navy, margin: 0 }}>68%</p>
+                    <p style={{ fontSize: '9px', color: '#6b7280', margin: '4px 0 0' }}>Bookings</p>
+                  </div>
+                  <div style={{ flex: 1, textAlign: 'center', padding: '10px', backgroundColor: colors.cream, borderRadius: '8px' }}>
+                    <p style={{ fontSize: '16px', fontWeight: '900', color: colors.navy, margin: 0 }}>32%</p>
+                    <p style={{ fontSize: '9px', color: '#6b7280', margin: '4px 0 0' }}>Subscriptions</p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Recent Transactions */}
+              <div style={{ backgroundColor: 'white', borderRadius: '12px', padding: '12px', boxShadow: '0 1px 3px rgba(0,0,0,0.05)' }}>
+                <h3 style={{ fontSize: '12px', fontWeight: '700', color: colors.navy, margin: '0 0 10px' }}>Recent Transactions</h3>
+                {adminTransactions.map(txn => (
+                  <div key={txn.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 0', borderBottom: `1px solid ${colors.cream}` }}>
+                    <div>
+                      <p style={{ fontSize: '11px', fontWeight: '600', color: colors.navy, margin: 0 }}>{txn.venue}</p>
+                      <p style={{ fontSize: '9px', color: '#9ca3af', margin: 0 }}>{txn.id} • {txn.date}</p>
+                    </div>
+                    <div style={{ textAlign: 'right' }}>
+                      <p style={{ fontSize: '12px', fontWeight: '700', color: colors.navy, margin: 0 }}>${txn.amount}</p>
+                      <div style={{ display: 'flex', gap: '4px', alignItems: 'center', justifyContent: 'flex-end' }}>
+                        <span style={{ padding: '2px 6px', borderRadius: '8px', backgroundColor: txn.type === 'booking' ? '#dbeafe' : '#fce7f3', color: txn.type === 'booking' ? '#1d4ed8' : '#be185d', fontSize: '8px', fontWeight: '600' }}>
+                          {txn.type}
+                        </span>
+                        <span style={{ width: '6px', height: '6px', borderRadius: '3px', backgroundColor: txn.status === 'completed' ? colors.teal : colors.amber }} />
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* PROJECTIONS TAB */}
+          {adminTab === 'projections' && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+              {/* Growth Projections */}
+              <div style={{ backgroundColor: 'white', borderRadius: '12px', padding: '12px', boxShadow: '0 1px 3px rgba(0,0,0,0.05)' }}>
+                <h3 style={{ fontSize: '12px', fontWeight: '700', color: colors.navy, margin: '0 0 10px', display: 'flex', alignItems: 'center', gap: '6px' }}>{Icons.barChart(colors.navy, 14)} 12-Month Projection</h3>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '6px', marginBottom: '12px' }}>
+                  {['Q1', 'Q2', 'Q3', 'Q4'].map((q, i) => (
+                    <div key={q} style={{ textAlign: 'center' }}>
+                      <div style={{ height: `${40 + i * 20}px`, backgroundColor: colors.navy, borderRadius: '4px', marginBottom: '4px', opacity: 0.3 + i * 0.2 }} />
+                      <p style={{ fontSize: '10px', fontWeight: '600', color: colors.navy, margin: 0 }}>{q}</p>
+                      <p style={{ fontSize: '9px', color: '#6b7280', margin: 0 }}>${[52, 78, 112, 156][i]}K</p>
+                    </div>
+                  ))}
+                </div>
+                <div style={{ padding: '8px', backgroundColor: '#d1fae5', borderRadius: '8px', textAlign: 'center' }}>
+                  <p style={{ fontSize: '10px', fontWeight: '700', color: '#047857', margin: 0 }}>Projected ARR: $624K (+200% YoY)</p>
+                </div>
+              </div>
+
+              {/* Key Metrics Forecast */}
+              <div style={{ backgroundColor: 'white', borderRadius: '12px', padding: '12px', boxShadow: '0 1px 3px rgba(0,0,0,0.05)' }}>
+                <h3 style={{ fontSize: '12px', fontWeight: '700', color: colors.navy, margin: '0 0 10px' }}>EOY Targets</h3>
+                {[
+                  { metric: 'Total Users', current: '3,200', target: '15,000', progress: 21 },
+                  { metric: 'Active Venues', current: '117', target: '500', progress: 23 },
+                  { metric: 'Cities', current: '4', target: '12', progress: 33 },
+                  { metric: 'Monthly Revenue', current: '$18K', target: '$52K', progress: 35 },
+                ].map(item => (
+                  <div key={item.metric} style={{ marginBottom: '10px' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
+                      <span style={{ fontSize: '11px', fontWeight: '500', color: colors.navy }}>{item.metric}</span>
+                      <span style={{ fontSize: '10px', color: '#6b7280' }}>{item.current} / {item.target}</span>
+                    </div>
+                    <div style={{ height: '6px', backgroundColor: colors.cream, borderRadius: '3px', overflow: 'hidden' }}>
+                      <div style={{ height: '100%', width: `${item.progress}%`, backgroundColor: colors.teal, borderRadius: '3px' }} />
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Growth Levers */}
+              <div style={{ backgroundColor: 'white', borderRadius: '12px', padding: '12px', boxShadow: '0 1px 3px rgba(0,0,0,0.05)' }}>
+                <h3 style={{ fontSize: '12px', fontWeight: '700', color: colors.navy, margin: '0 0 10px' }}>Growth Levers</h3>
+                {[
+                  { lever: 'Venue Acquisition', impact: 'High', effort: 'Medium', icon: Icons.building },
+                  { lever: 'User Referrals', impact: 'High', effort: 'Low', icon: Icons.users },
+                  { lever: 'City Expansion', impact: 'Very High', effort: 'High', icon: Icons.globe },
+                  { lever: 'Premium Upsells', impact: 'Medium', effort: 'Low', icon: Icons.sparkles },
+                ].map(item => (
+                  <div key={item.lever} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 0', borderBottom: `1px solid ${colors.cream}` }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      {item.icon(colors.navy, 14)}
+                      <span style={{ fontSize: '11px', fontWeight: '500', color: colors.navy }}>{item.lever}</span>
+                    </div>
+                    <div style={{ display: 'flex', gap: '6px' }}>
+                      <span style={{ padding: '2px 6px', borderRadius: '8px', backgroundColor: item.impact === 'Very High' ? '#d1fae5' : item.impact === 'High' ? '#dbeafe' : '#fef3c7', color: item.impact === 'Very High' ? '#047857' : item.impact === 'High' ? '#1d4ed8' : '#b45309', fontSize: '8px', fontWeight: '600' }}>
+                        {item.impact}
+                      </span>
+                      <span style={{ padding: '2px 6px', borderRadius: '8px', backgroundColor: colors.cream, color: '#6b7280', fontSize: '8px', fontWeight: '500' }}>
+                        {item.effort}
+                      </span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Strategic Notes */}
+              <div style={{ backgroundColor: colors.cream, borderRadius: '12px', padding: '12px', border: `1px dashed ${colors.creamDark}` }}>
+                <h4 style={{ fontSize: '11px', fontWeight: '700', color: colors.navy, margin: '0 0 6px', display: 'flex', alignItems: 'center', gap: '4px' }}>{Icons.sparkles(colors.amber, 12)} Key Insights</h4>
+                <ul style={{ margin: 0, paddingLeft: '16px', fontSize: '10px', color: '#6b7280' }}>
+                  <li>Austin market nearing saturation - prioritize Dallas/Houston</li>
+                  <li>Pro tier conversion at 24% - above industry average</li>
+                  <li>User acquisition cost trending down 15% MoM</li>
+                </ul>
+              </div>
+            </div>
+          )}
+        </div>
       </div>
     );
   };
 
   // RENDER - Call functions directly instead of JSX to prevent component recreation
   const renderScreen = () => {
+    // Show welcome screen for mode selection
+    if (showModeSelection) return <WelcomeScreen />;
     if (currentScreen === 'create') return CreateScreen();
     if (currentScreen === 'join') return JoinScreen();
     if (currentScreen === 'detail') return FlockDetailScreen();
     if (currentScreen === 'chatDetail') return ChatDetailScreen();
+    if (currentScreen === 'dmDetail') return dmDetailScreen;
     if (currentScreen === 'venueDashboard') return <VenueDashboard />;
     if (currentScreen === 'adminRevenue') return <RevenueScreen />;
     switch (currentTab) {
@@ -2301,8 +3719,9 @@ const FlockApp = () => {
       <SOSModal />
       <CheckinModal />
       <ProfilePicModal />
-      <AIAssistantModal />
-      <AdminPromptModal />
+      {aiAssistantModal}
+      {adminPromptModal}
+      <NewDmModal />
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap');
         @keyframes pulse {
