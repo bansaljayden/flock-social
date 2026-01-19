@@ -257,6 +257,27 @@ const FlockApp = () => {
   const [showSOS, setShowSOS] = useState(false);
   const [showCheckin, setShowCheckin] = useState(false);
 
+  // Admin Mode (for Revenue Simulator access)
+  const [isAdminMode, setIsAdminMode] = useState(false);
+  const [showAdminPrompt, setShowAdminPrompt] = useState(false);
+  const [adminPassword, setAdminPassword] = useState('');
+
+  // Venue Dashboard (for venue owners)
+  const [isVenueOwner, setIsVenueOwner] = useState(false);
+  const [venueTier, setVenueTier] = useState('free'); // 'free', 'premium', 'pro'
+
+  // Check URL for admin mode on mount
+  useEffect(() => {
+    const urlParams = new URLSearchParams(window.location.search);
+    if (urlParams.get('admin') === 'true') {
+      setIsAdminMode(true);
+    }
+    if (urlParams.get('venue') === 'true') {
+      setIsVenueOwner(true);
+      setVenueTier(urlParams.get('tier') || 'free');
+    }
+  }, []);
+
   const allFriends = ['Alex', 'Sam', 'Jordan', 'Taylor', 'Morgan', 'Chris', 'Emma', 'Mike'];
 
   const allVenues = useMemo(() => [
@@ -458,7 +479,7 @@ const FlockApp = () => {
     return icons[id] || null;
   };
 
-  // Bottom Navigation
+  // Bottom Navigation (Regular users - no Revenue tab)
   const BottomNav = () => (
     <div style={{ ...styles.bottomNav, boxShadow: '0 -4px 20px rgba(0,0,0,0.05)' }}>
       {[
@@ -466,13 +487,12 @@ const FlockApp = () => {
         { id: 'explore', label: 'Explore' },
         { id: 'calendar', label: 'Calendar' },
         { id: 'chat', label: 'Chat' },
-        { id: 'revenue', label: 'Revenue' },
         { id: 'profile', label: 'Profile' },
       ].map(t => (
         <button key={t.id} onClick={() => { setCurrentTab(t.id); setCurrentScreen('main'); setProfileScreen('main'); setActiveVenue(null); setShowConnectPanel(false); }}
-          style={{ ...styles.navItem, backgroundColor: currentTab === t.id ? colors.cream : 'transparent', transition: 'all 0.2s', padding: '6px 4px' }}>
+          style={{ ...styles.navItem, backgroundColor: currentTab === t.id ? colors.cream : 'transparent', transition: 'all 0.2s' }}>
           <NavIcon id={t.id} active={currentTab === t.id} />
-          <span style={{ fontSize: '9px', fontWeight: '600', color: currentTab === t.id ? colors.navy : '#9ca3af', marginTop: '2px' }}>{t.label}</span>
+          <span style={{ fontSize: '10px', fontWeight: '600', color: currentTab === t.id ? colors.navy : '#9ca3af', marginTop: '2px' }}>{t.label}</span>
         </button>
       ))}
     </div>
@@ -545,6 +565,43 @@ const FlockApp = () => {
           </label>
           <button onClick={generateAIAvatar} style={{ ...styles.gradientButton, background: 'white', color: colors.navy, border: `2px solid ${colors.navy}`, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}>{Icons.robot(colors.navy, 16)} Generate AI Avatar</button>
           <button onClick={() => setShowPicModal(false)} style={{ background: 'none', border: 'none', color: '#9ca3af', padding: '8px', cursor: 'pointer' }}>Cancel</button>
+        </div>
+      </div>
+    </div>
+  );
+
+  // Admin Password Modal
+  const AdminPromptModal = () => showAdminPrompt && (
+    <div style={{ position: 'absolute', inset: 0, backgroundColor: 'rgba(0,0,0,0.8)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 50, padding: '16px' }}>
+      <div style={{ backgroundColor: 'white', borderRadius: '24px', padding: '20px', width: '100%', maxWidth: '280px' }}>
+        <div style={{ textAlign: 'center', marginBottom: '16px' }}>
+          <div style={{ width: '48px', height: '48px', borderRadius: '24px', backgroundColor: colors.cream, display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 8px' }}>
+            {Icons.shield(colors.navy, 24)}
+          </div>
+          <h2 style={{ fontSize: '18px', fontWeight: '900', color: colors.navy, margin: 0 }}>Admin Access</h2>
+          <p style={{ fontSize: '12px', color: '#6b7280', margin: '4px 0 0' }}>Enter password to continue</p>
+        </div>
+        <input
+          type="password"
+          value={adminPassword}
+          onChange={(e) => setAdminPassword(e.target.value)}
+          placeholder="Password"
+          style={{ width: '100%', padding: '12px', borderRadius: '12px', border: `1px solid ${colors.creamDark}`, fontSize: '14px', marginBottom: '12px', boxSizing: 'border-box' }}
+        />
+        <div style={{ display: 'flex', gap: '8px' }}>
+          <button onClick={() => { setShowAdminPrompt(false); setAdminPassword(''); }} style={{ flex: 1, padding: '12px', borderRadius: '12px', border: '1px solid #d1d5db', backgroundColor: 'white', fontWeight: '600', cursor: 'pointer' }}>Cancel</button>
+          <button onClick={() => {
+            if (adminPassword === 'flock2026') {
+              setIsAdminMode(true);
+              setShowAdminPrompt(false);
+              setAdminPassword('');
+              setCurrentScreen('adminRevenue');
+              showToast('Admin access granted');
+            } else {
+              showToast('Incorrect password', 'error');
+              setAdminPassword('');
+            }
+          }} style={{ flex: 1, padding: '12px', borderRadius: '12px', border: 'none', background: `linear-gradient(90deg, ${colors.navy}, ${colors.navyMid})`, color: 'white', fontWeight: '600', cursor: 'pointer' }}>Access</button>
         </div>
       </div>
     </div>
@@ -1687,15 +1744,273 @@ const FlockApp = () => {
                 <span style={{ color: '#9ca3af' }}>→</span>
               </button>
             ))}
-            <button onClick={() => showToast('👋 Logged out!')} style={{ width: '100%', padding: '12px', textAlign: 'left', display: 'flex', alignItems: 'center', gap: '12px', backgroundColor: 'white', border: 'none', cursor: 'pointer', color: colors.red }}>
-              <span style={{ fontSize: '18px' }}>🚪</span>
+            <button onClick={() => showToast('Logged out!')} style={{ width: '100%', padding: '12px', textAlign: 'left', display: 'flex', alignItems: 'center', gap: '12px', backgroundColor: 'white', border: 'none', cursor: 'pointer', color: colors.red }}>
+              {Icons.logout(colors.red, 18)}
               <span style={{ fontWeight: '600', fontSize: '14px' }}>Log Out</span>
             </button>
           </div>
+
+          {/* Admin Access Button - Small and subtle at bottom */}
+          <button
+            onClick={() => setShowAdminPrompt(true)}
+            style={{
+              marginTop: '16px',
+              padding: '8px 12px',
+              borderRadius: '8px',
+              border: `1px dashed ${colors.creamDark}`,
+              backgroundColor: 'transparent',
+              color: '#9ca3af',
+              fontSize: '10px',
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '4px',
+              justifyContent: 'center'
+            }}
+          >
+            {Icons.settings('#9ca3af', 12)} Admin
+          </button>
+
+          {/* Venue Owner Access Button */}
+          <button
+            onClick={() => setCurrentScreen('venueDashboard')}
+            style={{
+              marginTop: '8px',
+              padding: '8px 12px',
+              borderRadius: '8px',
+              border: `1px dashed ${colors.creamDark}`,
+              backgroundColor: 'transparent',
+              color: '#9ca3af',
+              fontSize: '10px',
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '4px',
+              justifyContent: 'center'
+            }}
+          >
+            {Icons.home('#9ca3af', 12)} Venue Dashboard
+          </button>
         </div>
 
         <SafetyButton />
         <BottomNav />
+      </div>
+    );
+  };
+
+  // VENUE DASHBOARD SCREEN (For Venue Owners)
+  const VenueDashboard = () => {
+    const [dealDescription, setDealDescription] = useState('');
+    const [dealTimeSlot, setDealTimeSlot] = useState('Happy Hour');
+    const [showUpgradeModal, setShowUpgradeModal] = useState(false);
+
+    // Mock venue data
+    const venueData = {
+      name: "The Blue Heron Bar",
+      logo: null,
+      tier: venueTier,
+      todayCheckins: 47,
+      weekTraffic: 312,
+      crowdForecast: 78,
+      peakHours: [
+        { hour: '6pm', value: 30 },
+        { hour: '7pm', value: 45 },
+        { hour: '8pm', value: 65 },
+        { hour: '9pm', value: 85 },
+        { hour: '10pm', value: 95 },
+        { hour: '11pm', value: 80 },
+        { hour: '12am', value: 55 },
+      ],
+      topInterests: ['Live Music', 'Cocktails', 'Sports'],
+      repeatRate: 34,
+      demographics: { '21-25': 35, '26-30': 40, '31-35': 15, '36+': 10 },
+    };
+
+    const tierBadge = {
+      free: { label: 'Free', color: '#6b7280', bg: '#f3f4f6' },
+      premium: { label: 'Premium', color: '#b45309', bg: '#fef3c7' },
+      pro: { label: 'Pro', color: '#7c3aed', bg: '#ede9fe' },
+    };
+
+    const features = {
+      free: ['Basic listing', 'Venue info', 'User reviews'],
+      premium: ['Enhanced visibility', 'Post deals', 'Event promotion', 'Basic analytics'],
+      pro: ['Everything in Premium', 'Detailed insights', 'Push notifications', 'AI recommendations'],
+    };
+
+    const isFeatureLocked = (feature) => {
+      if (venueTier === 'pro') return false;
+      if (venueTier === 'premium' && ['Post deals', 'Event promotion', 'Basic analytics', 'Enhanced visibility'].includes(feature)) return false;
+      if (['Basic listing', 'Venue info', 'User reviews'].includes(feature)) return false;
+      return true;
+    };
+
+    return (
+      <div key="venue-dashboard-container" style={{ display: 'flex', flexDirection: 'column', height: '100%', backgroundColor: colors.cream }}>
+        {/* Header */}
+        <div style={{ padding: '16px', background: `linear-gradient(135deg, ${colors.navy}, ${colors.navyMid})`, flexShrink: 0 }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <button onClick={() => setCurrentScreen('main')} style={{ width: '32px', height: '32px', borderRadius: '16px', border: 'none', backgroundColor: 'rgba(255,255,255,0.2)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              {Icons.arrowLeft('white', 16)}
+            </button>
+            <span style={{ ...tierBadge[venueData.tier], padding: '4px 10px', borderRadius: '12px', fontSize: '10px', fontWeight: '700', backgroundColor: tierBadge[venueData.tier].bg, color: tierBadge[venueData.tier].color }}>
+              {tierBadge[venueData.tier].label}
+            </span>
+          </div>
+          <div style={{ marginTop: '12px', display: 'flex', alignItems: 'center', gap: '12px' }}>
+            <div style={{ width: '48px', height: '48px', borderRadius: '12px', backgroundColor: 'rgba(255,255,255,0.2)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              {Icons.home('white', 24)}
+            </div>
+            <div>
+              <h1 style={{ fontSize: '18px', fontWeight: '900', color: 'white', margin: 0 }}>Welcome, {venueData.name}</h1>
+              <p style={{ fontSize: '10px', color: 'rgba(255,255,255,0.7)', margin: 0 }}>Venue Dashboard</p>
+            </div>
+          </div>
+        </div>
+
+        {/* Content */}
+        <div style={{ flex: 1, overflowY: 'auto', padding: '12px' }}>
+          {/* Key Metrics */}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '8px', marginBottom: '12px' }}>
+            <div style={{ backgroundColor: 'white', borderRadius: '12px', padding: '12px', boxShadow: '0 1px 3px rgba(0,0,0,0.05)' }}>
+              <p style={{ fontSize: '9px', color: '#6b7280', margin: 0, textTransform: 'uppercase' }}>Today's Check-ins</p>
+              <p style={{ fontSize: '24px', fontWeight: '900', color: colors.navy, margin: '4px 0 0' }}>{venueData.todayCheckins}</p>
+            </div>
+            <div style={{ backgroundColor: 'white', borderRadius: '12px', padding: '12px', boxShadow: '0 1px 3px rgba(0,0,0,0.05)' }}>
+              <p style={{ fontSize: '9px', color: '#6b7280', margin: 0, textTransform: 'uppercase' }}>This Week</p>
+              <p style={{ fontSize: '24px', fontWeight: '900', color: colors.navy, margin: '4px 0 0' }}>{venueData.weekTraffic}</p>
+            </div>
+            <div style={{ backgroundColor: 'white', borderRadius: '12px', padding: '12px', boxShadow: '0 1px 3px rgba(0,0,0,0.05)' }}>
+              <p style={{ fontSize: '9px', color: '#6b7280', margin: 0, textTransform: 'uppercase' }}>Crowd Forecast</p>
+              <p style={{ fontSize: '24px', fontWeight: '900', color: venueData.crowdForecast > 70 ? colors.red : colors.teal, margin: '4px 0 0' }}>{venueData.crowdForecast}%</p>
+            </div>
+            <div style={{ backgroundColor: 'white', borderRadius: '12px', padding: '12px', boxShadow: '0 1px 3px rgba(0,0,0,0.05)', position: 'relative' }}>
+              <p style={{ fontSize: '9px', color: '#6b7280', margin: 0, textTransform: 'uppercase' }}>Repeat Rate</p>
+              <p style={{ fontSize: '24px', fontWeight: '900', color: colors.navy, margin: '4px 0 0' }}>{venueData.repeatRate}%</p>
+              {isFeatureLocked('Detailed insights') && <div style={{ position: 'absolute', inset: 0, backgroundColor: 'rgba(255,255,255,0.8)', borderRadius: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.shield('#9ca3af', 20)}</div>}
+            </div>
+          </div>
+
+          {/* Demographics */}
+          <div style={{ backgroundColor: 'white', borderRadius: '12px', padding: '12px', marginBottom: '12px', boxShadow: '0 1px 3px rgba(0,0,0,0.05)', position: 'relative' }}>
+            <h3 style={{ fontSize: '12px', fontWeight: '700', color: colors.navy, margin: '0 0 10px' }}>Customer Demographics</h3>
+            <div style={{ display: 'flex', gap: '4px', alignItems: 'flex-end', height: '60px' }}>
+              {Object.entries(venueData.demographics).map(([age, pct]) => (
+                <div key={age} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+                  <div style={{ width: '100%', height: `${pct * 0.6}px`, backgroundColor: colors.navy, borderRadius: '4px 4px 0 0' }} />
+                  <span style={{ fontSize: '8px', color: '#6b7280', marginTop: '4px' }}>{age}</span>
+                  <span style={{ fontSize: '9px', fontWeight: '600', color: colors.navy }}>{pct}%</span>
+                </div>
+              ))}
+            </div>
+            {isFeatureLocked('Detailed insights') && <div style={{ position: 'absolute', inset: 0, backgroundColor: 'rgba(255,255,255,0.9)', borderRadius: '12px', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>{Icons.shield('#9ca3af', 24)}<span style={{ fontSize: '10px', color: '#6b7280', marginTop: '4px' }}>Pro Feature</span></div>}
+          </div>
+
+          {/* Post a Deal */}
+          <div style={{ backgroundColor: 'white', borderRadius: '12px', padding: '12px', marginBottom: '12px', boxShadow: '0 1px 3px rgba(0,0,0,0.05)', position: 'relative' }}>
+            <h3 style={{ fontSize: '12px', fontWeight: '700', color: colors.navy, margin: '0 0 10px', display: 'flex', alignItems: 'center', gap: '6px' }}>{Icons.zap(colors.amber, 14)} Post a Deal</h3>
+            <input
+              type="text"
+              value={dealDescription}
+              onChange={(e) => setDealDescription(e.target.value)}
+              placeholder="e.g., 2-for-1 drinks until 8pm"
+              style={{ width: '100%', padding: '10px', borderRadius: '8px', border: `1px solid ${colors.creamDark}`, fontSize: '12px', marginBottom: '8px', boxSizing: 'border-box' }}
+              disabled={isFeatureLocked('Post deals')}
+            />
+            <div style={{ display: 'flex', gap: '6px', marginBottom: '8px' }}>
+              {['Happy Hour', 'Late Night', 'Weekend', 'All Day'].map(slot => (
+                <button key={slot} onClick={() => setDealTimeSlot(slot)} style={{ padding: '6px 10px', borderRadius: '16px', border: `1px solid ${dealTimeSlot === slot ? colors.navy : colors.creamDark}`, backgroundColor: dealTimeSlot === slot ? colors.navy : 'white', color: dealTimeSlot === slot ? 'white' : colors.navy, fontSize: '10px', fontWeight: '500', cursor: 'pointer' }} disabled={isFeatureLocked('Post deals')}>
+                  {slot}
+                </button>
+              ))}
+            </div>
+            <button onClick={() => { showToast('Deal posted!'); setDealDescription(''); }} style={{ width: '100%', padding: '10px', borderRadius: '8px', border: 'none', background: `linear-gradient(90deg, ${colors.navy}, ${colors.navyMid})`, color: 'white', fontWeight: '600', fontSize: '12px', cursor: 'pointer' }} disabled={isFeatureLocked('Post deals') || !dealDescription.trim()}>
+              Post Deal
+            </button>
+            {isFeatureLocked('Post deals') && <div style={{ position: 'absolute', inset: 0, backgroundColor: 'rgba(255,255,255,0.9)', borderRadius: '12px', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>{Icons.shield('#9ca3af', 24)}<span style={{ fontSize: '10px', color: '#6b7280', marginTop: '4px' }}>Premium Feature</span></div>}
+          </div>
+
+          {/* Peak Hours */}
+          <div style={{ backgroundColor: 'white', borderRadius: '12px', padding: '12px', marginBottom: '12px', boxShadow: '0 1px 3px rgba(0,0,0,0.05)', position: 'relative' }}>
+            <h3 style={{ fontSize: '12px', fontWeight: '700', color: colors.navy, margin: '0 0 10px' }}>Peak Hours (Tonight)</h3>
+            <div style={{ display: 'flex', gap: '4px', alignItems: 'flex-end', height: '50px' }}>
+              {venueData.peakHours.map((h, i) => (
+                <div key={i} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+                  <div style={{ width: '100%', height: `${h.value * 0.5}px`, backgroundColor: h.value > 80 ? colors.red : h.value > 50 ? colors.amber : colors.teal, borderRadius: '2px', transition: 'all 0.3s' }} />
+                  <span style={{ fontSize: '8px', color: '#6b7280', marginTop: '4px' }}>{h.hour}</span>
+                </div>
+              ))}
+            </div>
+            {isFeatureLocked('Basic analytics') && <div style={{ position: 'absolute', inset: 0, backgroundColor: 'rgba(255,255,255,0.9)', borderRadius: '12px', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>{Icons.shield('#9ca3af', 24)}<span style={{ fontSize: '10px', color: '#6b7280', marginTop: '4px' }}>Premium Feature</span></div>}
+          </div>
+
+          {/* Top Interests */}
+          <div style={{ backgroundColor: 'white', borderRadius: '12px', padding: '12px', marginBottom: '12px', boxShadow: '0 1px 3px rgba(0,0,0,0.05)' }}>
+            <h3 style={{ fontSize: '12px', fontWeight: '700', color: colors.navy, margin: '0 0 10px' }}>Top Visitor Interests</h3>
+            <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+              {venueData.topInterests.map(interest => (
+                <span key={interest} style={{ padding: '6px 12px', borderRadius: '16px', backgroundColor: colors.cream, fontSize: '11px', fontWeight: '500', color: colors.navy }}>
+                  {interest}
+                </span>
+              ))}
+            </div>
+          </div>
+
+          {/* Upgrade Button (if not Pro) */}
+          {venueTier !== 'pro' && (
+            <button onClick={() => setShowUpgradeModal(true)} style={{ width: '100%', padding: '14px', borderRadius: '12px', border: 'none', background: 'linear-gradient(135deg, #7c3aed, #a78bfa)', color: 'white', fontWeight: '700', fontSize: '14px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', boxShadow: '0 4px 12px rgba(124,58,237,0.3)' }}>
+              {Icons.sparkles('white', 18)} Upgrade to {venueTier === 'free' ? 'Premium' : 'Pro'}
+            </button>
+          )}
+
+          {/* Upgrade Modal */}
+          {showUpgradeModal && (
+            <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.8)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 50, padding: '16px' }}>
+              <div style={{ backgroundColor: 'white', borderRadius: '24px', padding: '20px', width: '100%', maxWidth: '320px', maxHeight: '80%', overflowY: 'auto' }}>
+                <h2 style={{ fontSize: '18px', fontWeight: '900', color: colors.navy, margin: '0 0 16px', textAlign: 'center' }}>Choose Your Plan</h2>
+
+                {/* Free Tier */}
+                <div style={{ border: `2px solid ${venueTier === 'free' ? colors.navy : colors.creamDark}`, borderRadius: '12px', padding: '12px', marginBottom: '10px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                    <span style={{ fontWeight: '700', color: colors.navy }}>Free</span>
+                    <span style={{ fontWeight: '900', color: colors.navy }}>$0/mo</span>
+                  </div>
+                  <ul style={{ margin: 0, paddingLeft: '16px', fontSize: '11px', color: '#6b7280' }}>
+                    {features.free.map(f => <li key={f} style={{ marginBottom: '2px' }}>{f}</li>)}
+                  </ul>
+                  {venueTier === 'free' && <span style={{ display: 'block', textAlign: 'center', fontSize: '10px', color: colors.teal, fontWeight: '600', marginTop: '8px' }}>Current Plan</span>}
+                </div>
+
+                {/* Premium Tier */}
+                <div style={{ border: `2px solid ${venueTier === 'premium' ? '#b45309' : colors.creamDark}`, borderRadius: '12px', padding: '12px', marginBottom: '10px', backgroundColor: venueTier === 'premium' ? '#fffbeb' : 'white' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                    <span style={{ fontWeight: '700', color: '#b45309' }}>Premium</span>
+                    <span style={{ fontWeight: '900', color: '#b45309' }}>$35/mo</span>
+                  </div>
+                  <ul style={{ margin: 0, paddingLeft: '16px', fontSize: '11px', color: '#6b7280' }}>
+                    {features.premium.map(f => <li key={f} style={{ marginBottom: '2px' }}>{f}</li>)}
+                  </ul>
+                  {venueTier === 'premium' ? <span style={{ display: 'block', textAlign: 'center', fontSize: '10px', color: '#b45309', fontWeight: '600', marginTop: '8px' }}>Current Plan</span> : venueTier === 'free' && <button onClick={() => { setVenueTier('premium'); setShowUpgradeModal(false); showToast('Upgraded to Premium!'); }} style={{ width: '100%', padding: '8px', borderRadius: '8px', border: 'none', backgroundColor: '#b45309', color: 'white', fontWeight: '600', fontSize: '12px', cursor: 'pointer', marginTop: '8px' }}>Upgrade</button>}
+                </div>
+
+                {/* Pro Tier */}
+                <div style={{ border: '2px solid #7c3aed', borderRadius: '12px', padding: '12px', marginBottom: '16px', backgroundColor: '#faf5ff' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                    <span style={{ fontWeight: '700', color: '#7c3aed' }}>Pro</span>
+                    <span style={{ fontWeight: '900', color: '#7c3aed' }}>$75/mo</span>
+                  </div>
+                  <ul style={{ margin: 0, paddingLeft: '16px', fontSize: '11px', color: '#6b7280' }}>
+                    {features.pro.map(f => <li key={f} style={{ marginBottom: '2px' }}>{f}</li>)}
+                  </ul>
+                  <button onClick={() => { setVenueTier('pro'); setShowUpgradeModal(false); showToast('Upgraded to Pro!'); }} style={{ width: '100%', padding: '8px', borderRadius: '8px', border: 'none', background: 'linear-gradient(90deg, #7c3aed, #a78bfa)', color: 'white', fontWeight: '600', fontSize: '12px', cursor: 'pointer', marginTop: '8px' }}>Upgrade to Pro</button>
+                </div>
+
+                <button onClick={() => setShowUpgradeModal(false)} style={{ width: '100%', padding: '10px', borderRadius: '8px', border: '1px solid #d1d5db', backgroundColor: 'white', color: '#6b7280', fontWeight: '500', cursor: 'pointer' }}>Cancel</button>
+              </div>
+            </div>
+          )}
+        </div>
       </div>
     );
   };
@@ -1763,10 +2078,13 @@ const FlockApp = () => {
         {/* Header */}
         <div style={{ padding: '16px', background: `linear-gradient(135deg, ${colors.navy}, ${colors.navyMid})`, flexShrink: 0 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+            <button onClick={() => setCurrentScreen('main')} style={{ width: '32px', height: '32px', borderRadius: '16px', border: 'none', backgroundColor: 'rgba(255,255,255,0.2)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              {Icons.arrowLeft('white', 16)}
+            </button>
             {Icons.dollar('white', 24)}
             <div>
               <h1 style={{ fontSize: '18px', fontWeight: '900', color: 'white', margin: 0 }}>Revenue Simulator</h1>
-              <p style={{ fontSize: '10px', color: 'rgba(255,255,255,0.7)', margin: 0 }}>Model your business financials</p>
+              <p style={{ fontSize: '10px', color: 'rgba(255,255,255,0.7)', margin: 0 }}>Admin Mode - Model your business financials</p>
             </div>
           </div>
         </div>
@@ -1961,11 +2279,12 @@ const FlockApp = () => {
     if (currentScreen === 'join') return JoinScreen();
     if (currentScreen === 'detail') return FlockDetailScreen();
     if (currentScreen === 'chatDetail') return ChatDetailScreen();
+    if (currentScreen === 'venueDashboard') return <VenueDashboard />;
+    if (currentScreen === 'adminRevenue') return <RevenueScreen />;
     switch (currentTab) {
       case 'explore': return ExploreScreen();
       case 'calendar': return CalendarScreen();
       case 'chat': return ChatListScreen();
-      case 'revenue': return <RevenueScreen />;
       case 'profile': return ProfileScreen();
       default: return HomeScreen();
     }
@@ -1986,6 +2305,7 @@ const FlockApp = () => {
       <CheckinModal />
       <ProfilePicModal />
       <AIAssistantModal />
+      <AdminPromptModal />
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap');
         @keyframes pulse {
