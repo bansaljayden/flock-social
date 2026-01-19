@@ -161,7 +161,7 @@ const FlockApp = () => {
 
   // AI Assistant
   const [aiMessages, setAiMessages] = useState([
-    { role: 'assistant', text: "Hey! I'm your Flock AI. Ask me about venues, crowds, or help planning! 🎉" }
+    { role: 'assistant', text: "Yo! I'm Birdie, your flock's personal wingman. Need help finding a nest to land at tonight? Or just wanna know where the party's at? I gotchu. 🐦" }
   ]);
   const [aiInput, setAiInput] = useState('');
   const [aiTyping, setAiTyping] = useState(false);
@@ -171,8 +171,8 @@ const FlockApp = () => {
   const [calendarMonth, setCalendarMonth] = useState(new Date());
   const [selectedDate, setSelectedDate] = useState(new Date());
   const [calendarEvents, setCalendarEvents] = useState([
-    { id: 1, title: 'Friday Night Downtown', date: '2025-01-17', time: '9:00 PM', venue: 'The Blue Heron Bar', color: colors.navy, members: 4 },
-    { id: 2, title: "Sarah's Birthday", date: '2025-01-18', time: '8:00 PM', venue: 'Club Nova', color: colors.navyMid, members: 6 },
+    { id: 1, title: 'Friday Night Downtown', date: '2025-01-17', time: '9:17 PM', venue: 'Blue Heron Bar', color: colors.navy, members: 4 },
+    { id: 2, title: "Sarah's Birthday Extravaganza", date: '2025-01-18', time: '7:45 PM', venue: 'The Bookstore Speakeasy', color: colors.navyMid, members: 7 },
   ]);
   const [showAddEvent, setShowAddEvent] = useState(false);
   const [newEventTitle, setNewEventTitle] = useState('');
@@ -195,9 +195,9 @@ const FlockApp = () => {
 
   // Flocks
   const [flocks, setFlocks] = useState([
-    { id: 1, name: "Friday Night Downtown", host: "Alex", members: ['Alex', 'Sam', 'Jordan', 'Taylor'], time: "Tonight 9 PM", status: "voting", venue: "The Blue Heron Bar", cashPool: { target: 80, collected: 60, perPerson: 20, paid: ['Alex', 'Sam', 'Jordan'] }, votes: [{ venue: "The Blue Heron Bar", type: "Cocktail Bar", voters: ['Alex', 'Sam'] }, { venue: "Club Nova", type: "Nightclub", voters: ['Jordan'] }], messages: [{ id: 1, sender: 'Alex', time: '5:00 PM', text: "Ready for tonight? 🎉", reactions: ['🔥'] }] },
-    { id: 2, name: "Sarah's Birthday", host: "Sarah", members: ['Sarah', 'You', 'Mike', 'Emma'], time: "Saturday 8 PM", status: "confirmed", venue: "Club Nova", cashPool: { target: 80, collected: 80, perPerson: 20, paid: ['Sarah', 'You', 'Mike', 'Emma'] }, votes: [], messages: [{ id: 1, sender: 'Sarah', time: '2:00 PM', text: "Can't wait! 🎂", reactions: ['❤️'] }] },
-    { id: 3, name: "Game Day", host: "Chris", members: ['Chris', 'You', 'Dave'], time: "Sunday 4 PM", status: "voting", venue: "Sports Bar & Grill", cashPool: null, votes: [{ venue: "Sports Bar & Grill", type: "Sports Bar", voters: ['Chris', 'Dave'] }], messages: [{ id: 1, sender: 'Chris', time: '10:00 AM', text: "Big game! 🏈", reactions: [] }] }
+    { id: 1, name: "Friday Night Downtown", host: "Alex", members: ['Alex', 'Sam', 'Jordan', 'Taylor'], time: "Tonight 9:17 PM", status: "voting", venue: "Blue Heron Bar", cashPool: { target: 80, collected: 63, perPerson: 20, paid: ['Alex', 'Sam', 'Jordan'] }, votes: [{ venue: "Blue Heron Bar", type: "Cocktail Bar", voters: ['Alex', 'Sam'] }, { venue: "The Bookstore Speakeasy", type: "Hidden Bar", voters: ['Jordan'] }], messages: [{ id: 1, sender: 'Alex', time: '4:47 PM', text: "we're still doing this right?? 🎉", reactions: ['🔥'] }] },
+    { id: 2, name: "Sarah's Birthday Extravaganza", host: "Sarah", members: ['Sarah', 'You', 'Mike', 'Emma', 'Jordan', 'Taylor', 'Chris'], time: "Saturday 7:45 PM", status: "confirmed", venue: "The Bookstore Speakeasy", cashPool: { target: 140, collected: 140, perPerson: 20, paid: ['Sarah', 'You', 'Mike', 'Emma', 'Jordan', 'Taylor', 'Chris'] }, votes: [], messages: [{ id: 1, sender: 'Sarah', time: '2:23 PM', text: "omg I'm so excited!! 🎂", reactions: ['❤️', '🎉'] }] },
+    { id: 3, name: "Sunday Funday", host: "Chris", members: ['Chris', 'You', 'Dave'], time: "Sunday 3:30 PM", status: "voting", venue: "Porters Pub", cashPool: null, votes: [{ venue: "Porters Pub", type: "Sports Bar", voters: ['Chris', 'Dave'] }], messages: [{ id: 1, sender: 'Chris', time: '11:12 AM', text: "Eagles game!! 🏈 who's in", reactions: [] }] }
   ]);
 
   // Create Flock form
@@ -234,14 +234,14 @@ const FlockApp = () => {
   // Direct Messages
   const [directMessages, setDirectMessages] = useState([
     { id: 'dm-1', friendName: 'Alex', avatar: '🎸', messages: [
-      { id: 1, sender: 'Alex', text: 'Hey! You coming out tonight?', time: '6:30 PM' },
-      { id: 2, sender: 'You', text: 'Yeah definitely! Where are you thinking?', time: '6:32 PM' },
-      { id: 3, sender: 'Alex', text: 'Blue Heron sounds good. Sarah might come too', time: '6:33 PM' },
-    ], lastActive: '2m ago', isOnline: true, unread: 2 },
+      { id: 1, sender: 'Alex', text: 'yo you coming out tonight or what', time: '6:34 PM' },
+      { id: 2, sender: 'You', text: 'ya for sure! where we thinking', time: '6:37 PM' },
+      { id: 3, sender: 'Alex', text: 'Blue Heron? Sarah said shes down', time: '6:38 PM' },
+    ], lastActive: '3m ago', isOnline: true, unread: 2 },
     { id: 'dm-2', friendName: 'Sarah', avatar: '🎂', messages: [
-      { id: 1, sender: 'Sarah', text: 'Thanks for the birthday wishes! 🎉', time: '2:00 PM' },
-      { id: 2, sender: 'You', text: 'Of course! Can\'t wait to celebrate Saturday!', time: '2:15 PM' },
-    ], lastActive: '1h ago', isOnline: false, unread: 0 },
+      { id: 1, sender: 'Sarah', text: 'thanks for the bday wishes!! 🎉', time: '2:13 PM' },
+      { id: 2, sender: 'You', text: 'ofc!! cant wait for saturday', time: '2:27 PM' },
+    ], lastActive: '47m ago', isOnline: false, unread: 0 },
   ]);
   const [selectedDmId, setSelectedDmId] = useState(null);
   const [showNewDmModal, setShowNewDmModal] = useState(false);
@@ -305,14 +305,14 @@ const FlockApp = () => {
   const allFriends = useMemo(() => ['Alex', 'Sam', 'Jordan', 'Taylor', 'Morgan', 'Chris', 'Emma', 'Mike'], []);
 
   const allVenues = useMemo(() => [
-    { id: 1, name: "Joe's Pizza", type: "Italian", category: "Food", x: 25, y: 30, crowd: 45, best: "Now", stars: 4.5, addr: '456 Oak Ave', price: '$', trending: false },
-    { id: 2, name: "Taco Cantina", type: "Mexican", category: "Food", x: 48, y: 55, crowd: 30, best: "8:30 PM", stars: 4.2, addr: '789 Elm St', price: '$', trending: false },
-    { id: 3, name: "The Diner", type: "American", category: "Food", x: 70, y: 38, crowd: 65, best: "Now", stars: 4.0, addr: '321 Pine Rd', price: '$$', trending: false },
-    { id: 4, name: "Blue Heron Bar", type: "Cocktail Bar", category: "Nightlife", x: 30, y: 45, crowd: 55, best: "8:30 PM", stars: 4.7, addr: '123 Main St', price: '$$', trending: true },
-    { id: 5, name: "Club Nova", type: "Nightclub", category: "Nightlife", x: 45, y: 62, crowd: 40, best: "10 PM", stars: 4.3, addr: '555 Party Ln', price: '$$$', trending: true },
-    { id: 6, name: "Rooftop Lounge", type: "Lounge", category: "Nightlife", x: 38, y: 28, crowd: 70, best: "Now", stars: 4.8, addr: '999 Sky Dr', price: '$$$', trending: true },
-    { id: 7, name: "The Jazz Room", type: "Jazz Club", category: "Live Music", x: 58, y: 35, crowd: 50, best: "9 PM", stars: 4.6, addr: '222 Music Blvd', price: '$$', trending: false },
-    { id: 8, name: "Sports Bar & Grill", type: "Sports Bar", category: "Sports", x: 75, y: 25, crowd: 85, best: "Game time", stars: 4.1, addr: '444 Game Way', price: '$$', trending: false },
+    { id: 1, name: "Apollo Grill", type: "Italian", category: "Food", x: 25, y: 30, crowd: 47, best: "Now-ish", stars: 4.6, addr: '85 W Broad St, Bethlehem', price: '$', trending: false },
+    { id: 2, name: "Tulum", type: "Mexican", category: "Food", x: 48, y: 55, crowd: 33, best: "8:47 PM", stars: 4.3, addr: '21 E 4th St, Bethlehem', price: '$$', trending: false },
+    { id: 3, name: "The Dime", type: "American", category: "Food", x: 70, y: 38, crowd: 62, best: "Right now", stars: 4.1, addr: '27 Bank St, Easton', price: '$$', trending: false },
+    { id: 4, name: "Blue Heron Bar", type: "Cocktail Bar", category: "Nightlife", x: 30, y: 45, crowd: 58, best: "8:30ish", stars: 4.7, addr: '123 N 3rd St, Easton', price: '$$', trending: true },
+    { id: 5, name: "The Bookstore Speakeasy", type: "Hidden Bar", category: "Nightlife", x: 45, y: 62, crowd: 41, best: "10 PM+", stars: 4.4, addr: '336 Adams St, Bethlehem', price: '$$$', trending: true },
+    { id: 6, name: "Rooftop @ The Grand", type: "Lounge", category: "Nightlife", x: 38, y: 28, crowd: 73, best: "Sunset!", stars: 4.8, addr: '45 N 3rd St, Easton', price: '$$$', trending: true },
+    { id: 7, name: "Godfrey Daniels", type: "Live Music", category: "Live Music", x: 58, y: 35, crowd: 51, best: "9 PM", stars: 4.7, addr: '7 E 4th St, Bethlehem', price: '$$', trending: false },
+    { id: 8, name: "Porters Pub", type: "Sports Bar", category: "Sports", x: 75, y: 25, crowd: 87, best: "Game time!", stars: 4.2, addr: '700 Northampton St, Easton', price: '$$', trending: false },
   ], []);
 
   const getFilteredVenues = useCallback(() => {
@@ -355,7 +355,7 @@ const FlockApp = () => {
     showToast('Payment sent!');
   }, [addXP, showToast]);
 
-  // AI Response Generation - Smart contextual responses
+  // AI Response Generation - Birdie's personality: helpful wingman, slightly sarcastic, uses bird puns
   const generateAiResponse = useCallback((userMsg, venueList, flockList, friendsList) => {
     const msg = userMsg.toLowerCase();
     const findVenue = (name) => venueList.find(v => v.name.toLowerCase().includes(name.toLowerCase()));
@@ -363,31 +363,31 @@ const FlockApp = () => {
     const quietVenues = venueList.filter(v => v.crowd < 50).sort((a, b) => a.crowd - b.crowd);
 
     // VENUE QUESTIONS - Busy/Crowded
-    if (msg.includes('busy') || msg.includes('crowded') || msg.includes('packed') || msg.includes('crowd')) {
+    if (msg.includes('busy') || msg.includes('crowded') || msg.includes('packed') || msg.includes('crowd') || msg.includes('poppin')) {
       if (busyVenues.length > 0) {
         const busy = busyVenues[0];
         const quiet = quietVenues[0];
-        return { text: `🔥 ${busy.name} is at ${busy.crowd}% capacity right now - it's poppin'! ${quiet ? `Try ${quiet.name} instead - only ${quiet.crowd}% full and highly rated (${quiet.stars}⭐)!` : ''}`, confidence: 94 };
+        return { text: `Okay so ${busy.name} is absolutely PACKED rn (${busy.crowd}% full, yikes). ${quiet ? `If you don't wanna fight for a spot, ${quiet.name} is way chiller at ${quiet.crowd}%. Just sayin'.` : 'Everywhere else is pretty reasonable tho.'}`, confidence: 94 };
       }
-      return { text: "Things are pretty chill everywhere right now. Perfect time to grab a spot at your favorite venue! 🎯", confidence: 85 };
+      return { text: "Honestly? It's kinda dead out there rn. Good news: you can basically walk into anywhere. Bad news: might be a little too quiet for your vibe? 🤷", confidence: 85 };
     }
 
     // VENUE QUESTIONS - Recommendations
-    if (msg.includes('where should i go') || msg.includes('recommend') || msg.includes('suggestion') || msg.includes('what venue') || msg.includes('where to go')) {
+    if (msg.includes('where should') || msg.includes('recommend') || msg.includes('suggestion') || msg.includes('what venue') || msg.includes('where to go') || msg.includes('pick')) {
       const topRated = venueList.filter(v => v.stars >= 4.5).sort((a, b) => b.stars - a.stars)[0];
       const trending = venueList.find(v => v.trending);
       if (trending) {
-        return { text: `Based on tonight's vibe, I recommend ${trending.name}! It's trending right now 📈. ${topRated && topRated.name !== trending.name ? `Or try ${topRated.name} - ${topRated.stars}⭐ rating!` : ''}`, confidence: 91 };
+        return { text: `Alright, here's my hot take: ${trending.name} is where everyone's flocking tonight 📈 (pun intended). ${topRated && topRated.name !== trending.name ? `But honestly ${topRated.name} has better vibes (${topRated.stars}⭐) if you're not into crowds.` : ''}`, confidence: 91 };
       }
       if (topRated) {
-        return { text: `I'd recommend ${topRated.name} - it has a ${topRated.stars}⭐ rating and the crowd level is perfect at ${topRated.crowd}%! Great ${topRated.type} spot. 🎯`, confidence: 89 };
+        return { text: `Look, you can't go wrong with ${topRated.name}. ${topRated.stars}⭐ rating, ${topRated.crowd}% full, solid ${topRated.type} vibes. Trust your wingman on this one. 🐦`, confidence: 89 };
       }
     }
 
     // PLANNING QUESTIONS
-    if (msg.includes('plan') || msg.includes('organize') || msg.includes('coordinate') || msg.includes('create') || msg.includes('start a flock') || msg.includes('make a flock')) {
+    if (msg.includes('plan') || msg.includes('organize') || msg.includes('coordinate') || msg.includes('create') || msg.includes('start a flock') || msg.includes('make a flock') || msg.includes('rally')) {
       const upcomingFlock = flockList.find(f => f.status === 'voting');
-      return { text: `I can help you create a Flock! 🐦 Would you like me to suggest some friends and venues? ${upcomingFlock ? `BTW, you have "${upcomingFlock.name}" coming up - still need votes!` : 'Tap "Start Flock" below to get started!'}`, confidence: 95 };
+      return { text: `Ooh love that energy! Let's get the flock together 🐦 ${upcomingFlock ? `Wait actually - "${upcomingFlock.name}" still needs votes. Maybe handle that first?` : 'Hit "Rally the Flock" below and I\'ll help you round up the crew!'}`, confidence: 95 };
     }
 
     // FOOD QUESTIONS
@@ -395,7 +395,7 @@ const FlockApp = () => {
       const foodVenues = venueList.filter(v => v.category === 'Food').sort((a, b) => b.stars - a.stars);
       if (foodVenues.length > 0) {
         const top = foodVenues[0];
-        return { text: `Hungry? 🍕 ${top.name} is your best bet - ${top.stars}⭐ rating and ${top.price} pricing. They're at ${top.crowd}% capacity so you won't wait long!`, confidence: 92 };
+        return { text: `Ugh same, I could eat. ${top.name} tho - ${top.stars}⭐, ${top.price} prices, and only ${top.crowd}% full so you won't die waiting. You're welcome. 🍕`, confidence: 92 };
       }
     }
 
@@ -404,17 +404,18 @@ const FlockApp = () => {
       const nightlife = venueList.filter(v => v.category === 'Nightlife').sort((a, b) => b.stars - a.stars);
       if (nightlife.length > 0) {
         const top = nightlife[0];
-        return { text: `Ready to party? 🍸 ${top.name} is the move - ${top.stars}⭐ rating! Currently at ${top.crowd}% capacity. Best time to go: ${top.best}`, confidence: 90 };
+        return { text: `Now we're talking! 🍸 ${top.name} is where I'd send you - ${top.stars}⭐ vibes, currently at ${top.crowd}%. Pro tip: show up around ${top.best} for the sweet spot.`, confidence: 90 };
       }
     }
 
     // SPECIFIC VENUE QUESTIONS
-    const venueNames = ['blue heron', 'club nova', 'jazz room', 'pizza', 'taco', 'diner', 'sports bar'];
+    const venueNames = ['blue heron', 'bookstore', 'godfrey', 'apollo', 'tulum', 'dime', 'rooftop', 'porters'];
     for (const name of venueNames) {
       if (msg.includes(name)) {
         const venue = findVenue(name);
         if (venue) {
-          return { text: `📍 ${venue.name}: Currently ${venue.crowd}% full. ${venue.crowd > 70 ? 'Pretty busy!' : venue.crowd > 40 ? 'Good vibe going.' : 'Nice and chill.'} Rating: ${venue.stars}⭐. Best time: ${venue.best}. Address: ${venue.addr}`, confidence: 96 };
+          const crowdComment = venue.crowd > 70 ? 'It\'s a zoo in there rn.' : venue.crowd > 40 ? 'Solid crowd, good energy.' : 'Pretty chill actually.';
+          return { text: `${venue.name}? Good choice. ${crowdComment} (${venue.crowd}% full). ${venue.stars}⭐ rating. Best time to swoop in: ${venue.best}. It's at ${venue.addr} btw.`, confidence: 96 };
         }
       }
     }
@@ -424,34 +425,36 @@ const FlockApp = () => {
       const mentionedFriend = friendsList.find(f => msg.includes(f.toLowerCase()));
       if (mentionedFriend) {
         const randomVenue = venueList[Math.floor(Math.random() * venueList.length)];
-        return { text: `${mentionedFriend} was last seen heading to ${randomVenue.name}! Want me to help you create a Flock to meet up? 👋`, confidence: 78 };
+        return { text: `Word on the street is ${mentionedFriend} was spotted near ${randomVenue.name}. Want me to help you track down the rest of the flock? 👀`, confidence: 78 };
       }
-      return { text: `Your friends are out and about! I see ${friendsList.slice(0, 3).join(', ')} are active. Want to start a Flock with them? 🐦`, confidence: 82 };
+      return { text: `Your crew's scattered all over: ${friendsList.slice(0, 3).join(', ')} are out doing their thing. Time to get everyone in formation? 🐦`, confidence: 82 };
     }
 
     // TIME/SCHEDULE QUESTIONS
     if (msg.includes('time') || msg.includes('when') || msg.includes('schedule') || msg.includes('tonight') || msg.includes('best time')) {
-      const bestVenue = venueList.find(v => v.best === 'Now') || venueList[0];
-      return { text: `⏰ Right now is a great time for ${bestVenue.name}! Most venues peak around 10-11 PM on weekends. I'd suggest heading out in the next hour to beat the rush.`, confidence: 87 };
+      const bestVenue = venueList.find(v => v.best.includes('Now')) || venueList[0];
+      return { text: `Honestly? ${bestVenue.name} is peaking right now. But if you're planning ahead, most spots get good around 9-10ish. Get there early unless you like waiting. Which... I don't.`, confidence: 87 };
     }
 
     // HELP QUESTIONS
     if (msg.includes('help') || msg.includes('how do') || msg.includes('how does') || msg.includes('what can you')) {
-      return { text: "I can help you with:\n🔍 Finding venues - \"What's busy?\"\n📍 Recommendations - \"Where should I go?\"\n🐦 Planning - \"Help me create a Flock\"\n👥 Friends - \"Where is Alex?\"\n⏰ Timing - \"Best time to go out?\"\n\nJust ask! 😊", confidence: 100 };
+      return { text: "I gotchu! Here's what I'm good at:\n\n🔍 \"What's poppin?\" - crowd intel\n📍 \"Pick a bar for us\" - recommendations\n🐦 \"Rally the flock\" - planning stuff\n👀 \"Where's Alex at?\" - friend stalking (lovingly)\n⏰ \"When's the move?\" - timing tips\n\nBasically I'm your going-out concierge. Ask away!", confidence: 100 };
     }
 
     // GREETING
     if (msg.includes('hi') || msg.includes('hello') || msg.includes('hey') || msg.includes('sup') || msg === 'yo') {
-      return { text: "Hey there! 👋 Ready to plan an awesome night out? I can help you find the perfect spot, check crowd levels, or coordinate with friends. What are you looking for tonight?", confidence: 100 };
+      const greetings = ["Ayy what's good!", "Hey hey! Ready to fly?", "Sup! What's the move tonight?"];
+      return { text: `${greetings[Math.floor(Math.random() * greetings.length)]} 🐦 I can help you find spots, check crowds, or round up the crew. What're we working with?`, confidence: 100 };
     }
 
     // THANKS
     if (msg.includes('thank') || msg.includes('thanks') || msg.includes('awesome') || msg.includes('great') || msg.includes('perfect')) {
-      return { text: "You got it! 🎉 Let me know if you need anything else. Have an amazing time tonight!", confidence: 100 };
+      const responses = ["Anytime! That's what wingmen are for 🐦", "You got it! Go have fun, report back!", "No prob! Don't do anything I wouldn't do (which is... not much lol)"];
+      return { text: responses[Math.floor(Math.random() * responses.length)], confidence: 100 };
     }
 
-    // DEFAULT
-    return { text: "I'm not 100% sure what you're looking for, but I can help with venue recommendations, crowd levels, planning flocks, or finding friends. Try asking \"What's busy right now?\" or \"Where should I go tonight?\" 🤔", confidence: 65 };
+    // DEFAULT - more personality
+    return { text: "Hmm not sure what you're asking but I'm pretty good at: finding spots, checking if places are packed, and helping rally your crew. Try something like \"where should we go?\" or \"what's busy rn?\" 🤔", confidence: 65 };
   }, []);
 
   const sendAiMessage = useCallback(() => {
@@ -651,11 +654,11 @@ const FlockApp = () => {
     return (
       <div style={{ ...styles.bottomNav, boxShadow: '0 -4px 20px rgba(0,0,0,0.05)' }}>
         {[
-          { id: 'home', label: 'Home' },
-          { id: 'explore', label: 'Explore' },
-          { id: 'calendar', label: 'Calendar' },
-          { id: 'chat', label: 'Chat' },
-          { id: 'profile', label: 'Profile' },
+          { id: 'home', label: 'Nest' },
+          { id: 'explore', label: 'Discover' },
+          { id: 'calendar', label: 'Plans' },
+          { id: 'chat', label: 'Messages' },
+          { id: 'profile', label: 'You' },
         ].map(t => (
           <button key={t.id} onClick={() => { setCurrentTab(t.id); setCurrentScreen('main'); setProfileScreen('main'); setActiveVenue(null); setShowConnectPanel(false); }}
             style={{ ...styles.navItem, backgroundColor: currentTab === t.id ? colors.cream : 'transparent', transition: 'all 0.2s' }}>
@@ -818,7 +821,7 @@ const FlockApp = () => {
             </button>
           </div>
           <div style={{ padding: '12px' }}>
-            <input type="text" value={dmSearchText} onChange={(e) => setDmSearchText(e.target.value)} placeholder="Search friends..." style={{ width: '100%', padding: '12px 16px', borderRadius: '12px', border: `1px solid ${colors.creamDark}`, fontSize: '14px', outline: 'none', boxSizing: 'border-box' }} autoComplete="off" />
+            <input type="text" value={dmSearchText} onChange={(e) => setDmSearchText(e.target.value)} placeholder="Find your people..." style={{ width: '100%', padding: '12px 16px', borderRadius: '12px', border: `1px solid ${colors.creamDark}`, fontSize: '14px', outline: 'none', boxSizing: 'border-box' }} autoComplete="off" />
           </div>
           <div style={{ flex: 1, overflowY: 'auto', padding: '0 12px 12px' }}>
             {filteredFriends.length === 0 ? (
@@ -908,16 +911,16 @@ const FlockApp = () => {
 
   // AI Assistant Modal - Data
   const aiSuggestedQuestions = [
-    { text: "What's busy right now?", icon: Icons.activity },
-    { text: "Best time for Club Nova?", icon: Icons.clock },
-    { text: "Recommend a bar", icon: Icons.cocktail },
-    { text: "Food near me", icon: Icons.pizza },
+    { text: "Where's poppin rn?", icon: Icons.activity },
+    { text: "When should we hit Blue Heron?", icon: Icons.clock },
+    { text: "Pick a bar for us", icon: Icons.cocktail },
+    { text: "I'm hungry tho", icon: Icons.pizza },
   ];
 
   const aiQuickActions = [
-    { label: 'Find Venue', icon: Icons.compass, action: () => { setShowAiAssistant(false); setCurrentTab('explore'); } },
-    { label: 'Start Flock', icon: Icons.users, action: () => { setShowAiAssistant(false); setCurrentScreen('create'); } },
-    { label: 'Check Calendar', icon: Icons.calendar, action: () => { setShowAiAssistant(false); setCurrentTab('calendar'); } },
+    { label: 'Scout Spots', icon: Icons.compass, action: () => { setShowAiAssistant(false); setCurrentTab('explore'); } },
+    { label: 'Rally the Flock', icon: Icons.users, action: () => { setShowAiAssistant(false); setCurrentScreen('create'); } },
+    { label: 'Check Plans', icon: Icons.calendar, action: () => { setShowAiAssistant(false); setCurrentTab('calendar'); } },
   ];
 
   // AI Assistant Modal - Inline JSX (not a component to prevent focus loss)
@@ -934,10 +937,10 @@ const FlockApp = () => {
                 <div style={{ position: 'absolute', bottom: '-2px', right: '-2px', width: '14px', height: '14px', borderRadius: '7px', backgroundColor: '#22C55E', border: '2px solid white', animation: 'pulse 2s ease-in-out infinite' }} />
               </div>
               <div>
-                <h2 style={{ fontSize: '15px', fontWeight: 'bold', color: 'white', margin: 0 }}>Flock AI</h2>
+                <h2 style={{ fontSize: '15px', fontWeight: 'bold', color: 'white', margin: 0 }}>Birdie</h2>
                 <p style={{ fontSize: '10px', color: 'rgba(255,255,255,0.7)', margin: 0, display: 'flex', alignItems: 'center', gap: '4px' }}>
                   {Icons.sparkles('rgba(255,255,255,0.7)', 10)}
-                  <span>Powered by AI</span>
+                  <span>your personal wingman</span>
                 </p>
               </div>
             </div>
@@ -961,8 +964,8 @@ const FlockApp = () => {
                 <div style={{ width: '60px', height: '60px', borderRadius: '30px', background: 'linear-gradient(135deg, #4F46E5, #7C3AED)', margin: '0 auto 12px', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 8px 24px rgba(79,70,229,0.3)' }}>
                   {Icons.robot('white', 30)}
                 </div>
-                <h3 style={{ fontSize: '16px', fontWeight: '700', color: colors.navy, margin: '0 0 4px' }}>How can I help?</h3>
-                <p style={{ fontSize: '11px', color: '#6b7280', margin: 0 }}>Ask me about venues, crowds, or planning!</p>
+                <h3 style={{ fontSize: '16px', fontWeight: '700', color: colors.navy, margin: '0 0 4px' }}>What's the move?</h3>
+                <p style={{ fontSize: '11px', color: '#6b7280', margin: 0 }}>I know every spot in the valley. Try me.</p>
               </div>
             )}
 
@@ -1017,7 +1020,7 @@ const FlockApp = () => {
           {/* Input */}
           <div style={{ padding: '10px 12px', borderTop: '1px solid #eee', backgroundColor: 'white' }}>
             <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-              <input ref={aiInputRef} type="text" value={aiInput} onChange={(e) => setAiInput(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && sendAiMessage()} placeholder="Ask me anything..." style={{ flex: 1, padding: '12px 16px', borderRadius: '24px', backgroundColor: '#f3f4f6', border: '1px solid rgba(0,0,0,0.05)', fontSize: '13px', outline: 'none', fontWeight: '500' }} autoComplete="off" />
+              <input ref={aiInputRef} type="text" value={aiInput} onChange={(e) => setAiInput(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && sendAiMessage()} placeholder="What's the move?" style={{ flex: 1, padding: '12px 16px', borderRadius: '24px', backgroundColor: '#f3f4f6', border: '1px solid rgba(0,0,0,0.05)', fontSize: '13px', outline: 'none', fontWeight: '500' }} autoComplete="off" />
               <button onClick={sendAiMessage} disabled={!aiInput.trim()} style={{ width: '42px', height: '42px', borderRadius: '21px', border: 'none', background: aiInput.trim() ? `linear-gradient(135deg, ${colors.navy}, ${colors.navyMid})` : '#e5e7eb', color: 'white', cursor: aiInput.trim() ? 'pointer' : 'default', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: aiInput.trim() ? '0 4px 12px rgba(13,40,71,0.3)' : 'none', transition: 'all 0.2s' }}>{Icons.send('white', 18)}</button>
             </div>
           </div>
@@ -1047,16 +1050,32 @@ const FlockApp = () => {
     setCurrentTab('home');
   };
 
+  // Easter egg - tap counter
+  const [easterEggTaps, setEasterEggTaps] = useState(0);
+
   // WELCOME SCREEN - Mode Selection
   const WelcomeScreen = () => (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', backgroundColor: colors.cream, padding: '20px', boxSizing: 'border-box' }}>
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center' }}>
-        {/* Logo */}
-        <div style={{ width: '80px', height: '80px', borderRadius: '24px', background: `linear-gradient(135deg, ${colors.navy}, ${colors.navyMid})`, display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: '20px', boxShadow: '0 8px 32px rgba(13,40,71,0.3)' }}>
+        {/* Logo - with Easter egg */}
+        <div
+          onClick={() => {
+            setEasterEggTaps(prev => {
+              const newCount = prev + 1;
+              if (newCount === 7) {
+                showToast("🐦 You found the secret bird! You're officially part of the flock now.");
+                return 0;
+              }
+              if (newCount === 5) showToast("Keep tapping...");
+              return newCount;
+            });
+          }}
+          style={{ width: '80px', height: '80px', borderRadius: '24px', background: `linear-gradient(135deg, ${colors.navy}, ${colors.navyMid})`, display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: '16px', boxShadow: '0 8px 32px rgba(13,40,71,0.3)', cursor: 'pointer', transition: 'transform 0.2s' }}
+        >
           {Icons.users('white', 40)}
         </div>
-        <h1 style={{ fontSize: '28px', fontWeight: '900', color: colors.navy, margin: '0 0 8px', textAlign: 'center' }}>Welcome to Flock!</h1>
-        <p style={{ fontSize: '14px', color: '#6b7280', margin: '0 0 32px', textAlign: 'center' }}>How are you using the app today?</p>
+        <h1 style={{ fontSize: '28px', fontWeight: '900', color: colors.navy, margin: '0 0 4px', textAlign: 'center' }}>Flock</h1>
+        <p style={{ fontSize: '13px', color: colors.navyMid, margin: '0 0 28px', textAlign: 'center', fontWeight: '500', fontStyle: 'italic' }}>where plans actually happen</p>
 
         {/* Mode Cards */}
         <div style={{ width: '100%', maxWidth: '320px' }}>
@@ -1066,8 +1085,8 @@ const FlockApp = () => {
               {Icons.users('white', 28)}
             </div>
             <div style={{ flex: 1 }}>
-              <h3 style={{ fontSize: '16px', fontWeight: '800', color: colors.navy, margin: '0 0 4px' }}>I'm a User</h3>
-              <p style={{ fontSize: '12px', color: '#6b7280', margin: 0 }}>Plan nights out with friends</p>
+              <h3 style={{ fontSize: '16px', fontWeight: '800', color: colors.navy, margin: '0 0 4px' }}>Let's Go Out</h3>
+              <p style={{ fontSize: '12px', color: '#6b7280', margin: 0 }}>Rally the crew, find spots, make plans</p>
             </div>
             <span style={{ fontSize: '20px', color: colors.navy }}>›</span>
           </button>
@@ -1078,8 +1097,8 @@ const FlockApp = () => {
               {Icons.building('white', 28)}
             </div>
             <div style={{ flex: 1 }}>
-              <h3 style={{ fontSize: '16px', fontWeight: '800', color: colors.navy, margin: '0 0 4px' }}>I'm a Venue Owner</h3>
-              <p style={{ fontSize: '12px', color: '#6b7280', margin: 0 }}>Manage my venue analytics</p>
+              <h3 style={{ fontSize: '16px', fontWeight: '800', color: colors.navy, margin: '0 0 4px' }}>I Run a Spot</h3>
+              <p style={{ fontSize: '12px', color: '#6b7280', margin: 0 }}>See who's heading your way</p>
             </div>
             <span style={{ fontSize: '20px', color: colors.navy }}>›</span>
           </button>
@@ -1090,16 +1109,16 @@ const FlockApp = () => {
               {Icons.briefcase('white', 28)}
             </div>
             <div style={{ flex: 1 }}>
-              <h3 style={{ fontSize: '16px', fontWeight: '800', color: colors.navy, margin: '0 0 4px' }}>I'm an Admin</h3>
-              <p style={{ fontSize: '12px', color: '#6b7280', margin: 0 }}>View business metrics</p>
+              <h3 style={{ fontSize: '16px', fontWeight: '800', color: colors.navy, margin: '0 0 4px' }}>Big Bird Mode</h3>
+              <p style={{ fontSize: '12px', color: '#6b7280', margin: 0 }}>Platform analytics & revenue</p>
             </div>
-            <span style={{ fontSize: '9px', color: '#9ca3af', backgroundColor: '#f3f4f6', padding: '2px 6px', borderRadius: '4px' }}>Password</span>
+            <span style={{ fontSize: '9px', color: '#9ca3af', backgroundColor: '#f3f4f6', padding: '2px 6px', borderRadius: '4px' }}>Locked</span>
           </button>
         </div>
       </div>
 
       {/* Footer */}
-      <p style={{ fontSize: '11px', color: '#9ca3af', textAlign: 'center', margin: 0 }}>You can change this later in Settings</p>
+      <p style={{ fontSize: '11px', color: '#9ca3af', textAlign: 'center', margin: 0 }}>You can switch modes anytime in your profile</p>
     </div>
   );
 
@@ -1121,20 +1140,20 @@ const FlockApp = () => {
           </button>
         </div>
 
-        {/* Stats */}
+        {/* Stats - intentionally varied sizes */}
         <div style={{ display: 'flex', gap: '8px' }}>
-          <div style={{ flex: 1, borderRadius: '12px', padding: '10px', backgroundColor: 'rgba(255,255,255,0.1)' }}>
-            <p style={{ fontSize: '9px', color: 'rgba(255,255,255,0.6)', margin: 0, textTransform: 'uppercase', letterSpacing: '0.5px' }}>Active</p>
-            <p style={{ fontSize: '18px', fontWeight: '900', color: 'white', margin: '2px 0 0' }}>{flocks.length} <span style={{ fontSize: '11px', fontWeight: '500' }}>Flocks</span></p>
+          <div style={{ flex: 1.1, borderRadius: '14px', padding: '12px 10px', backgroundColor: 'rgba(255,255,255,0.12)' }}>
+            <p style={{ fontSize: '8px', color: 'rgba(255,255,255,0.5)', margin: 0, textTransform: 'uppercase', letterSpacing: '1px' }}>Going Out</p>
+            <p style={{ fontSize: '22px', fontWeight: '900', color: 'white', margin: '4px 0 0' }}>{flocks.length}</p>
+          </div>
+          <div style={{ flex: 0.9, borderRadius: '10px', padding: '10px 8px', backgroundColor: 'rgba(255,255,255,0.08)' }}>
+            <p style={{ fontSize: '9px', color: 'rgba(255,255,255,0.6)', margin: 0 }}>On Fire</p>
+            <p style={{ fontSize: '16px', fontWeight: '800', color: 'white', margin: '2px 0 0', display: 'flex', alignItems: 'center', gap: '4px' }}>{Icons.flame('#F59E0B', 16)} {streak}</p>
           </div>
           <div style={{ flex: 1, borderRadius: '12px', padding: '10px', backgroundColor: 'rgba(255,255,255,0.1)' }}>
-            <p style={{ fontSize: '9px', color: 'rgba(255,255,255,0.6)', margin: 0, textTransform: 'uppercase', letterSpacing: '0.5px' }}>Streak</p>
-            <p style={{ fontSize: '18px', fontWeight: '900', color: 'white', margin: '2px 0 0', display: 'flex', alignItems: 'center', gap: '4px' }}>{Icons.flame('#F59E0B', 18)} {streak}</p>
-          </div>
-          <div style={{ flex: 1, borderRadius: '12px', padding: '10px', backgroundColor: 'rgba(255,255,255,0.1)' }}>
-            <p style={{ fontSize: '9px', color: 'rgba(255,255,255,0.6)', margin: 0, textTransform: 'uppercase', letterSpacing: '0.5px' }}>XP</p>
-            <p style={{ fontSize: '18px', fontWeight: '900', color: 'white', margin: '2px 0 0' }}>{userXP}</p>
-            <div style={{ width: '100%', height: '4px', backgroundColor: 'rgba(255,255,255,0.2)', borderRadius: '2px', marginTop: '4px' }}>
+            <p style={{ fontSize: '8px', color: 'rgba(255,255,255,0.5)', margin: 0, textTransform: 'uppercase' }}>XP</p>
+            <p style={{ fontSize: '17px', fontWeight: '700', color: 'white', margin: '2px 0 0' }}>{userXP}</p>
+            <div style={{ width: '100%', height: '3px', backgroundColor: 'rgba(255,255,255,0.2)', borderRadius: '2px', marginTop: '4px' }}>
               <div style={{ height: '100%', width: `${userXP % 100}%`, backgroundColor: colors.amber, borderRadius: '2px' }} />
             </div>
           </div>
@@ -1157,13 +1176,13 @@ const FlockApp = () => {
 
         {/* Action Buttons */}
         <div style={{ display: 'flex', gap: '8px', marginBottom: '12px' }}>
-          <button onClick={() => setCurrentScreen('create')} style={{ flex: 1, padding: '12px', borderRadius: '12px', border: 'none', background: `linear-gradient(90deg, ${colors.navy}, ${colors.navyMid})`, color: 'white', fontWeight: 'bold', fontSize: '14px', cursor: 'pointer' }}>+ Start Flock</button>
-          <button onClick={() => setCurrentScreen('join')} style={{ flex: 1, padding: '12px', borderRadius: '12px', border: `2px solid ${colors.navy}`, backgroundColor: 'white', color: colors.navy, fontWeight: 'bold', fontSize: '14px', cursor: 'pointer' }}>Join Flock</button>
+          <button onClick={() => setCurrentScreen('create')} style={{ flex: 1.2, padding: '14px', borderRadius: '14px', border: 'none', background: `linear-gradient(135deg, ${colors.navy}, ${colors.navyMid})`, color: 'white', fontWeight: '800', fontSize: '14px', cursor: 'pointer', boxShadow: '0 4px 12px rgba(13,40,71,0.25)' }}>+ Rally Crew</button>
+          <button onClick={() => setCurrentScreen('join')} style={{ flex: 0.8, padding: '12px', borderRadius: '12px', border: `2px solid ${colors.navy}`, backgroundColor: 'white', color: colors.navy, fontWeight: '600', fontSize: '13px', cursor: 'pointer' }}>Got a Code?</button>
         </div>
 
         {/* Activity */}
         <div style={styles.card}>
-          <h3 style={{ fontSize: '12px', fontWeight: 'bold', color: colors.navy, margin: '0 0 8px', display: 'flex', alignItems: 'center', gap: '6px' }}>{Icons.bell(colors.navy, 14)} Activity</h3>
+          <h3 style={{ fontSize: '12px', fontWeight: 'bold', color: colors.navy, margin: '0 0 8px', display: 'flex', alignItems: 'center', gap: '6px' }}>{Icons.bell(colors.navy, 14)} What's Happening</h3>
           {activityFeed.map(a => (
             <div key={a.id} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 0', borderBottom: '1px solid #f3f4f6' }}>
               <span>{a.icon}</span>
@@ -1174,32 +1193,33 @@ const FlockApp = () => {
         </div>
 
         {/* Flocks */}
-        <h2 style={{ fontSize: '12px', fontWeight: 'bold', color: colors.navy, margin: '0 0 8px' }}>Your Flocks</h2>
-        {flocks.map(f => (
-          <button key={f.id} onClick={() => { setSelectedFlockId(f.id); setCurrentScreen('detail'); }} style={{ width: '100%', textAlign: 'left', ...styles.card, border: 'none', cursor: 'pointer' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '6px' }}>
+        <h2 style={{ fontSize: '12px', fontWeight: 'bold', color: colors.navy, margin: '0 0 8px' }}>Your Crew</h2>
+        {flocks.map((f, idx) => (
+          <button key={f.id} onClick={() => { setSelectedFlockId(f.id); setCurrentScreen('detail'); }} style={{ width: '100%', textAlign: 'left', ...styles.card, border: 'none', cursor: 'pointer', padding: idx === 0 ? '18px' : '12px', marginBottom: idx === 0 ? '14px' : '10px', borderLeft: idx === 0 ? `4px solid ${colors.teal}` : 'none' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: idx === 0 ? '10px' : '6px' }}>
               <div>
-                <h3 style={{ fontSize: '14px', fontWeight: 'bold', color: colors.navy, margin: 0 }}>{f.name}</h3>
-                <p style={{ fontSize: '10px', color: '#6b7280', margin: '2px 0 0', display: 'flex', alignItems: 'center', gap: '3px' }}>{Icons.mapPin('#6b7280', 10)} {f.venue}</p>
+                <h3 style={{ fontSize: idx === 0 ? '16px' : '14px', fontWeight: idx === 0 ? '800' : 'bold', color: colors.navy, margin: 0 }}>{f.name}</h3>
+                <p style={{ fontSize: idx === 0 ? '11px' : '10px', color: '#6b7280', margin: '2px 0 0', display: 'flex', alignItems: 'center', gap: '3px' }}>{Icons.mapPin('#6b7280', idx === 0 ? 12 : 10)} {f.venue}</p>
               </div>
-              <span style={{ fontSize: '10px', padding: '2px 8px', borderRadius: '10px', fontWeight: '600', backgroundColor: f.status === 'voting' ? '#fef3c7' : '#d1fae5', color: f.status === 'voting' ? '#b45309' : '#047857' }}>
-                <span style={{ display: 'flex', alignItems: 'center', gap: '3px' }}>{f.status === 'voting' ? Icons.vote('#b45309', 10) : Icons.check('#047857', 10)} {f.status === 'voting' ? 'Voting' : 'Set'}</span>
+              <span style={{ fontSize: '10px', padding: idx === 0 ? '4px 10px' : '2px 8px', borderRadius: '10px', fontWeight: '600', backgroundColor: f.status === 'voting' ? '#fef3c7' : '#d1fae5', color: f.status === 'voting' ? '#b45309' : '#047857' }}>
+                <span style={{ display: 'flex', alignItems: 'center', gap: '3px' }}>{f.status === 'voting' ? Icons.vote('#b45309', 10) : Icons.check('#047857', 10)} {f.status === 'voting' ? 'Needs Votes' : 'Locked In'}</span>
               </span>
             </div>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <div style={{ display: 'flex' }}>
-                {f.members.slice(0, 4).map((m, j) => (
-                  <div key={j} style={{ width: '24px', height: '24px', borderRadius: '12px', border: '2px solid white', backgroundColor: colors.navyMid, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '9px', fontWeight: 'bold', color: 'white', marginLeft: j > 0 ? '-6px' : 0 }}>{m[0]}</div>
+                {f.members.slice(0, idx === 0 ? 5 : 4).map((m, j) => (
+                  <div key={j} style={{ width: idx === 0 ? '28px' : '24px', height: idx === 0 ? '28px' : '24px', borderRadius: '50%', border: '2px solid white', backgroundColor: colors.navyMid, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: idx === 0 ? '10px' : '9px', fontWeight: 'bold', color: 'white', marginLeft: j > 0 ? '-6px' : 0 }}>{m[0]}</div>
                 ))}
+                {idx === 0 && f.members.length > 5 && <div style={{ width: '28px', height: '28px', borderRadius: '50%', border: '2px solid white', backgroundColor: colors.cream, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '9px', fontWeight: 'bold', color: colors.navy, marginLeft: '-6px' }}>+{f.members.length - 5}</div>}
               </div>
-              <span style={{ fontSize: '10px', fontWeight: '600', padding: '2px 8px', borderRadius: '10px', backgroundColor: colors.cream, color: colors.navy }}>{f.time}</span>
+              <span style={{ fontSize: idx === 0 ? '11px' : '10px', fontWeight: '600', padding: '2px 8px', borderRadius: '10px', backgroundColor: colors.cream, color: colors.navy }}>{f.time}</span>
             </div>
           </button>
         ))}
 
         {/* Safety Check-in */}
-        <button onClick={() => setShowCheckin(true)} style={{ width: '100%', marginTop: '8px', padding: '12px', borderRadius: '12px', border: `2px dashed ${colors.teal}`, backgroundColor: 'transparent', color: colors.teal, fontWeight: 'bold', fontSize: '14px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
-          {Icons.shield(colors.teal, 14)} Safety Check-in
+        <button onClick={() => setShowCheckin(true)} style={{ width: '100%', marginTop: '8px', padding: '14px', borderRadius: '14px', border: `2px dashed ${colors.teal}`, backgroundColor: 'rgba(20,184,166,0.05)', color: colors.teal, fontWeight: '700', fontSize: '13px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
+          {Icons.shield(colors.teal, 16)} Let Your People Know You're Good
         </button>
       </div>
 
@@ -1229,7 +1249,7 @@ const FlockApp = () => {
       <div key="create-screen-container" style={{ display: 'flex', flexDirection: 'column', height: '100%', backgroundColor: 'white' }}>
         <div style={{ padding: '12px', display: 'flex', alignItems: 'center', gap: '8px', borderBottom: '1px solid #eee', backgroundColor: colors.cream, flexShrink: 0 }}>
           <button onClick={() => { setCurrentScreen('main'); setFlockName(''); setFlockFriends([]); setSelectedVenueForCreate(null); }} style={{ width: '32px', height: '32px', borderRadius: '16px', border: 'none', backgroundColor: 'transparent', color: colors.navy, fontSize: '18px', cursor: 'pointer' }}>←</button>
-          <h1 style={{ fontSize: '18px', fontWeight: '900', color: colors.navy, margin: 0 }}>Start a Flock</h1>
+          <h1 style={{ fontSize: '18px', fontWeight: '900', color: colors.navy, margin: 0 }}>Rally Your Crew</h1>
         </div>
 
         <div style={{ flex: 1, padding: '16px', overflowY: 'auto', backgroundColor: colors.cream }}>
@@ -1308,7 +1328,7 @@ const FlockApp = () => {
 
         <div style={{ padding: '12px', backgroundColor: 'white', borderTop: '1px solid #eee', flexShrink: 0 }}>
           <button onClick={handleCreate} disabled={isLoading} style={{ ...styles.gradientButton, opacity: isLoading ? 0.5 : 1 }}>
-            {isLoading ? <><span style={{ display: 'inline-flex', animation: 'spin 1s linear infinite' }}>{Icons.activity('white', 16)}</span> Creating...</> : <>{Icons.users('white', 16)} Create Flock</>}
+            {isLoading ? <><span style={{ display: 'inline-flex', animation: 'spin 1s linear infinite' }}>{Icons.activity('white', 16)}</span> Gathering...</> : <>{Icons.users('white', 16)} Let's Flock!</>}
           </button>
         </div>
       </div>
@@ -1320,11 +1340,11 @@ const FlockApp = () => {
     <div key="join-screen-container" style={{ display: 'flex', flexDirection: 'column', height: '100%', backgroundColor: 'white' }}>
       <div style={{ padding: '12px', display: 'flex', alignItems: 'center', gap: '8px', borderBottom: '1px solid #eee', backgroundColor: colors.cream, flexShrink: 0 }}>
         <button onClick={() => { setCurrentScreen('main'); setJoinCode(''); }} style={{ width: '32px', height: '32px', borderRadius: '16px', border: 'none', backgroundColor: 'transparent', color: colors.navy, fontSize: '18px', cursor: 'pointer' }}>←</button>
-        <h1 style={{ fontSize: '18px', fontWeight: '900', color: colors.navy, margin: 0 }}>Join a Flock</h1>
+        <h1 style={{ fontSize: '18px', fontWeight: '900', color: colors.navy, margin: 0 }}>Hop In</h1>
       </div>
       <div style={{ flex: 1, padding: '16px', backgroundColor: colors.cream }}>
         <div style={{ marginBottom: '16px' }}>
-          <label style={{ display: 'block', fontSize: '12px', fontWeight: 'bold', color: colors.navy, marginBottom: '6px' }}>Enter Code</label>
+          <label style={{ display: 'block', fontSize: '12px', fontWeight: 'bold', color: colors.navy, marginBottom: '6px' }}>Got a Code?</label>
           <input key="join-code-input" id="join-code-input" type="text" value={joinCode} onChange={(e) => setJoinCode(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 6))} placeholder="ABC123" maxLength={6} style={{ ...styles.input, fontSize: '20px', textAlign: 'center', letterSpacing: '8px', textTransform: 'uppercase' }} autoComplete="off" />
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px', margin: '24px 0' }}>
@@ -1335,7 +1355,7 @@ const FlockApp = () => {
         <button onClick={() => showToast('Camera opening...')} style={{ width: '100%', padding: '12px', borderRadius: '12px', border: `2px solid ${colors.creamDark}`, backgroundColor: 'white', color: colors.navy, fontWeight: '500', fontSize: '14px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>{Icons.camera(colors.navy, 16)} Scan QR</button>
       </div>
       <div style={{ padding: '12px', backgroundColor: 'white', borderTop: '1px solid #eee', flexShrink: 0 }}>
-        <button onClick={() => { if (joinCode.length === 6) { showToast('✅ Joined!'); addXP(20); setJoinCode(''); setCurrentScreen('main'); } else { showToast('Enter valid code', 'error'); }}} style={styles.gradientButton}>Join Flock</button>
+        <button onClick={() => { if (joinCode.length === 6) { showToast('✅ You\'re in!'); addXP(20); setJoinCode(''); setCurrentScreen('main'); } else { showToast('Need a valid code', 'error'); }}} style={styles.gradientButton}>I'm In!</button>
       </div>
     </div>
   );
@@ -1352,7 +1372,7 @@ const FlockApp = () => {
 
       <div style={{ padding: '8px', display: 'flex', alignItems: 'center', gap: '8px', backgroundColor: 'white', boxShadow: '0 2px 4px rgba(0,0,0,0.1)', zIndex: 20, flexShrink: 0 }}>
         <div style={{ flex: 1, position: 'relative' }}>
-          <input key="search-input" id="search-input" type="text" value={searchText} onChange={(e) => setSearchText(e.target.value)} placeholder="Search venues..." style={{ width: '100%', padding: '10px 10px 10px 32px', borderRadius: '20px', backgroundColor: '#f3f4f6', border: 'none', fontSize: '12px', outline: 'none', boxSizing: 'border-box' }} autoComplete="off" />
+          <input key="search-input" id="search-input" type="text" value={searchText} onChange={(e) => setSearchText(e.target.value)} placeholder="Find a spot..." style={{ width: '100%', padding: '10px 10px 10px 32px', borderRadius: '20px', backgroundColor: '#f3f4f6', border: 'none', fontSize: '12px', outline: 'none', boxSizing: 'border-box' }} autoComplete="off" />
           <span style={{ position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)' }}>{Icons.search('#9ca3af', 14)}</span>
         </div>
         <button onClick={() => setShowConnectPanel(true)} style={{ width: '36px', height: '36px', borderRadius: '18px', border: 'none', background: `linear-gradient(135deg, ${colors.navy}, ${colors.navyMid})`, color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.users('white', 18)}</button>
@@ -1418,7 +1438,7 @@ const FlockApp = () => {
         {showConnectPanel && (
           <div style={{ position: 'absolute', left: '8px', right: '8px', top: '8px', backgroundColor: 'white', borderRadius: '12px', boxShadow: '0 4px 20px rgba(0,0,0,0.2)', zIndex: 40, maxHeight: '65%', overflow: 'auto' }}>
             <div style={{ padding: '12px', borderBottom: '1px solid #eee', display: 'flex', justifyContent: 'space-between', alignItems: 'center', position: 'sticky', top: 0, backgroundColor: 'white', borderRadius: '12px 12px 0 0' }}>
-              <h2 style={{ fontSize: '14px', fontWeight: '900', color: colors.navy, margin: 0, display: 'flex', alignItems: 'center', gap: '6px' }}>{Icons.users(colors.navy, 16)} Find Your Flock</h2>
+              <h2 style={{ fontSize: '14px', fontWeight: '900', color: colors.navy, margin: 0, display: 'flex', alignItems: 'center', gap: '6px' }}>{Icons.users(colors.navy, 16)} Find Your People</h2>
               <button onClick={() => setShowConnectPanel(false)} style={{ width: '24px', height: '24px', borderRadius: '12px', backgroundColor: '#f3f4f6', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.x('#6b7280', 14)}</button>
             </div>
             <div style={{ padding: '12px' }}>
@@ -1522,7 +1542,7 @@ const FlockApp = () => {
 
                 {/* Similar Venues */}
                 <div>
-                  <p style={{ fontSize: '9px', fontWeight: '600', color: '#6b7280', marginBottom: '6px', textTransform: 'uppercase' }}>Less Crowded Nearby</p>
+                  <p style={{ fontSize: '9px', fontWeight: '600', color: '#6b7280', marginBottom: '6px', textTransform: 'uppercase' }}>Quieter Options</p>
                   <div style={{ display: 'flex', gap: '6px' }}>
                     {allVenues.filter(v => v.id !== activeVenue.id && v.category === activeVenue.category).slice(0, 2).map(v => (
                       <button key={v.id} onClick={() => setActiveVenue(v)} style={{ flex: 1, padding: '6px', backgroundColor: 'white', border: '1px solid rgba(0,0,0,0.08)', borderRadius: '8px', cursor: 'pointer', textAlign: 'left' }}>
@@ -1541,7 +1561,7 @@ const FlockApp = () => {
                 {pickingVenueForCreate ? (
                   <button onClick={() => { setSelectedVenueForCreate(activeVenue); setActiveVenue(null); setPickingVenueForCreate(false); setCurrentScreen('create'); showToast('Selected!'); }} style={{ flex: 1, padding: '10px', borderRadius: '8px', border: 'none', backgroundColor: colors.teal, color: 'white', fontWeight: 'bold', fontSize: '12px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px' }}>{Icons.check('white', 14)} Select</button>
                 ) : (
-                  <button onClick={() => { setSelectedVenueForCreate(activeVenue); setActiveVenue(null); setCurrentScreen('create'); }} style={{ flex: 1, padding: '10px', borderRadius: '8px', border: 'none', background: `linear-gradient(90deg, ${colors.navy}, ${colors.navyMid})`, color: 'white', fontWeight: 'bold', fontSize: '12px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px' }}>{Icons.users('white', 14)} Flock Here</button>
+                  <button onClick={() => { setSelectedVenueForCreate(activeVenue); setActiveVenue(null); setCurrentScreen('create'); }} style={{ flex: 1, padding: '10px', borderRadius: '8px', border: 'none', background: `linear-gradient(90deg, ${colors.navy}, ${colors.navyMid})`, color: 'white', fontWeight: 'bold', fontSize: '12px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px' }}>{Icons.users('white', 14)} Rally Here</button>
                 )}
                 <button onClick={() => addEventToCalendar(`Visit ${activeVenue.name}`, activeVenue.name, new Date(), '8 PM', getCategoryColor(activeVenue.category))} style={{ width: '40px', height: '40px', borderRadius: '8px', border: `2px solid ${colors.creamDark}`, backgroundColor: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.calendar(colors.navy, 18)}</button>
                 <button onClick={() => showToast('Calling venue...')} style={{ width: '40px', height: '40px', borderRadius: '8px', border: `2px solid ${colors.creamDark}`, backgroundColor: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.wave(colors.navy, 18)}</button>
@@ -1953,7 +1973,7 @@ const FlockApp = () => {
 
         <div style={{ padding: '10px 12px', backgroundColor: 'rgba(255,255,255,0.98)', backdropFilter: 'blur(10px)', WebkitBackdropFilter: 'blur(10px)', borderTop: '1px solid rgba(0,0,0,0.05)', display: 'flex', gap: '8px', alignItems: 'center', flexShrink: 0, boxShadow: '0 -4px 20px rgba(0,0,0,0.03)' }}>
           <button onClick={() => showToast('Opening camera...')} style={{ width: '36px', height: '36px', borderRadius: '18px', border: 'none', backgroundColor: 'rgba(13,40,71,0.08)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.image('#6b7280', 18)}</button>
-          <input key="chat-input" id="chat-input" type="text" value={chatInput} onChange={(e) => setChatInput(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && sendChatMessage()} placeholder={replyingTo ? 'Reply...' : 'Type a message...'} style={{ flex: 1, padding: '11px 16px', borderRadius: '22px', backgroundColor: 'rgba(243,244,246,0.9)', border: '1px solid rgba(0,0,0,0.05)', fontSize: '14px', outline: 'none', fontWeight: '500' }} autoComplete="off" />
+          <input key="chat-input" id="chat-input" type="text" value={chatInput} onChange={(e) => setChatInput(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && sendChatMessage()} placeholder={replyingTo ? 'Reply...' : 'Say something...'} style={{ flex: 1, padding: '11px 16px', borderRadius: '22px', backgroundColor: 'rgba(243,244,246,0.9)', border: '1px solid rgba(0,0,0,0.05)', fontSize: '14px', outline: 'none', fontWeight: '500' }} autoComplete="off" />
           {chatInput ? (
             <button onClick={sendChatMessage} style={{ width: '40px', height: '40px', borderRadius: '20px', border: 'none', background: `linear-gradient(135deg, ${colors.navy}, ${colors.navyMid})`, color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 3px 10px rgba(13,40,71,0.25)' }}>{Icons.send('white', 17)}</button>
           ) : (
@@ -2111,7 +2131,7 @@ const FlockApp = () => {
                     </div>
                   ))}
                   <div style={{ display: 'flex', gap: '8px', marginTop: '12px' }}>
-                    <input key="new-contact" id="new-contact" type="text" value={newContactName} onChange={(e) => setNewContactName(e.target.value)} placeholder="Add contact..." style={{ ...styles.input, flex: 1 }} autoComplete="off" />
+                    <input key="new-contact" id="new-contact" type="text" value={newContactName} onChange={(e) => setNewContactName(e.target.value)} placeholder="Who's got your back?" style={{ ...styles.input, flex: 1 }} autoComplete="off" />
                     <button onClick={() => { if (newContactName.trim()) { setTrustedContacts([...trustedContacts, newContactName.trim()]); showToast('✅ Added!'); setNewContactName(''); }}} style={{ padding: '0 16px', borderRadius: '8px', border: 'none', background: `linear-gradient(90deg, ${colors.navy}, ${colors.navyMid})`, color: 'white', fontWeight: 'bold', fontSize: '14px', cursor: 'pointer' }}>Add</button>
                   </div>
                 </div>
@@ -2130,7 +2150,7 @@ const FlockApp = () => {
                     ))}
                   </div>
                   <div style={{ display: 'flex', gap: '8px' }}>
-                    <input type="text" value={newInterest} onChange={(e) => setNewInterest(e.target.value)} placeholder="Add custom interest..." style={{ ...styles.input, flex: 1 }} autoComplete="off" />
+                    <input type="text" value={newInterest} onChange={(e) => setNewInterest(e.target.value)} placeholder="What else you into?" style={{ ...styles.input, flex: 1 }} autoComplete="off" />
                     <button onClick={() => { if (newInterest.trim() && !userInterests.includes(newInterest.trim())) { setUserInterests([...userInterests, newInterest.trim()]); setNewInterest(''); showToast('✅ Added!'); }}} style={{ padding: '0 16px', borderRadius: '8px', border: 'none', background: `linear-gradient(90deg, ${colors.navy}, ${colors.navyMid})`, color: 'white', fontWeight: 'bold', fontSize: '14px', cursor: 'pointer' }}>Add</button>
                   </div>
                 </div>
@@ -2381,11 +2401,11 @@ const FlockApp = () => {
     const [dealTimeSlot, setDealTimeSlot] = useState('Happy Hour');
 
     const venueTabs = [
-      { id: 'analytics', label: 'Analytics', icon: Icons.barChart },
-      { id: 'promotions', label: 'Promos', icon: Icons.gift },
-      { id: 'events', label: 'Events', icon: Icons.calendar },
-      { id: 'reviews', label: 'Reviews', icon: Icons.star },
-      { id: 'settings', label: 'Settings', icon: Icons.settings }
+      { id: 'analytics', label: 'The Numbers', icon: Icons.barChart },
+      { id: 'promotions', label: 'Deals', icon: Icons.gift },
+      { id: 'events', label: 'Happenings', icon: Icons.calendar },
+      { id: 'reviews', label: 'Buzz', icon: Icons.star },
+      { id: 'settings', label: 'Your Stuff', icon: Icons.settings }
     ];
 
     // Promotion handlers
@@ -2624,14 +2644,14 @@ const FlockApp = () => {
             <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
               {/* Create New Promotion Button */}
               <button onClick={() => openPromoModal()} style={{ width: '100%', padding: '14px', borderRadius: '12px', border: 'none', background: `linear-gradient(90deg, ${colors.navy}, ${colors.navyMid})`, color: 'white', fontWeight: '700', fontSize: '14px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
-                {Icons.plus('white', 18)} Create New Promotion
+                {Icons.plus('white', 18)} Drop a Deal
               </button>
 
               {/* Active Promotions */}
               <div style={{ backgroundColor: 'white', borderRadius: '12px', padding: '12px', boxShadow: '0 1px 3px rgba(0,0,0,0.05)' }}>
                 <h3 style={{ fontSize: '12px', fontWeight: '700', color: colors.navy, margin: '0 0 10px' }}>Active Promotions ({promotions.length})</h3>
                 {promotions.length === 0 ? (
-                  <p style={{ fontSize: '11px', color: '#9ca3af', textAlign: 'center', padding: '20px' }}>No promotions yet. Create your first one!</p>
+                  <p style={{ fontSize: '11px', color: '#9ca3af', textAlign: 'center', padding: '20px' }}>Nothing cooking yet... drop your first deal!</p>
                 ) : promotions.map(promo => (
                   <div key={promo.id} style={{ padding: '10px', backgroundColor: colors.cream, borderRadius: '8px', marginBottom: '8px' }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
@@ -2676,7 +2696,7 @@ const FlockApp = () => {
             <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
               {/* Create Event Button */}
               <button onClick={() => openEventModal()} style={{ width: '100%', padding: '14px', borderRadius: '12px', border: 'none', background: `linear-gradient(90deg, ${colors.navy}, ${colors.navyMid})`, color: 'white', fontWeight: '700', fontSize: '14px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
-                {Icons.plus('white', 18)} Create New Event
+                {Icons.plus('white', 18)} Plan Something Fun
               </button>
 
               {/* Incoming Flocks */}
@@ -2701,7 +2721,7 @@ const FlockApp = () => {
               <div style={{ backgroundColor: 'white', borderRadius: '12px', padding: '12px', boxShadow: '0 1px 3px rgba(0,0,0,0.05)' }}>
                 <h3 style={{ fontSize: '12px', fontWeight: '700', color: colors.navy, margin: '0 0 10px', display: 'flex', alignItems: 'center', gap: '6px' }}>{Icons.calendar(colors.navy, 14)} Your Events ({venueEventsList.length})</h3>
                 {venueEventsList.length === 0 ? (
-                  <p style={{ fontSize: '11px', color: '#9ca3af', textAlign: 'center', padding: '20px' }}>No events yet. Create your first one!</p>
+                  <p style={{ fontSize: '11px', color: '#9ca3af', textAlign: 'center', padding: '20px' }}>Calendar's looking empty... spice it up!</p>
                 ) : venueEventsList.map(event => (
                   <div key={event.id} style={{ padding: '10px', backgroundColor: colors.cream, borderRadius: '8px', marginBottom: '8px' }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
@@ -3081,33 +3101,33 @@ const FlockApp = () => {
 
     // Mock data for admin dashboard
     const adminUsers = [
-      { id: 1, name: 'Emma Wilson', email: 'emma@email.com', joined: 'Jan 15', flocks: 8, status: 'active' },
-      { id: 2, name: 'Jake Martinez', email: 'jake@email.com', joined: 'Jan 12', flocks: 5, status: 'active' },
-      { id: 3, name: 'Sarah Chen', email: 'sarah@email.com', joined: 'Jan 10', flocks: 12, status: 'active' },
-      { id: 4, name: 'Mike Johnson', email: 'mike@email.com', joined: 'Jan 8', flocks: 3, status: 'inactive' },
-      { id: 5, name: 'Lisa Park', email: 'lisa@email.com', joined: 'Jan 5', flocks: 7, status: 'active' },
+      { id: 1, name: 'Emma Wilson', email: 'emma@email.com', joined: 'Jan 15', flocks: 11, status: 'active' },
+      { id: 2, name: 'Jake Martinez', email: 'jake@email.com', joined: 'Jan 12', flocks: 4, status: 'active' },
+      { id: 3, name: 'Sarah Chen', email: 'sarah@email.com', joined: 'Jan 10', flocks: 17, status: 'active' },
+      { id: 4, name: 'Mike Johnson', email: 'mike@email.com', joined: 'Jan 8', flocks: 2, status: 'inactive' },
+      { id: 5, name: 'Lisa Park', email: 'lisa@email.com', joined: 'Jan 5', flocks: 9, status: 'active' },
     ];
 
     const adminVenues = [
-      { id: 1, name: "The Blue Heron", tier: 'pro', city: 'Easton', revenue: 2340, rating: 4.8 },
-      { id: 2, name: "Porters Pub", tier: 'premium', city: 'Bethlehem', revenue: 1890, rating: 4.6 },
-      { id: 3, name: "The Bookstore Speakeasy", tier: 'free', city: 'Bethlehem', revenue: 450, rating: 4.2 },
-      { id: 4, name: "Shakers Bar", tier: 'premium', city: 'Allentown', revenue: 1560, rating: 4.5 },
-      { id: 5, name: "Two Rivers Brewing", tier: 'pro', city: 'Easton', revenue: 2100, rating: 4.9 },
+      { id: 1, name: "Blue Heron Bar", tier: 'pro', city: 'Easton', revenue: 2847, rating: 4.7 },
+      { id: 2, name: "Porters Pub", tier: 'premium', city: 'Easton', revenue: 1923, rating: 4.6 },
+      { id: 3, name: "The Bookstore Speakeasy", tier: 'free', city: 'Bethlehem', revenue: 487, rating: 4.4 },
+      { id: 4, name: "Godfrey Daniels", tier: 'premium', city: 'Bethlehem', revenue: 1634, rating: 4.7 },
+      { id: 5, name: "Rooftop @ The Grand", tier: 'pro', city: 'Easton', revenue: 2156, rating: 4.8 },
     ];
 
     const adminCities = [
-      { name: 'Easton', users: 850, venues: 28, revenue: 14200, growth: 18 },
-      { name: 'Bethlehem', users: 1120, venues: 35, revenue: 16800, growth: 15 },
-      { name: 'Allentown', users: 680, venues: 22, revenue: 9400, growth: 12 },
+      { name: 'Easton', users: 847, venues: 31, revenue: 14823, growth: 17 },
+      { name: 'Bethlehem', users: 1089, venues: 38, revenue: 16247, growth: 14 },
+      { name: 'Allentown', users: 623, venues: 19, revenue: 8934, growth: 11 },
     ];
 
     const adminTransactions = [
-      { id: 'TXN-001', date: 'Jan 19', venue: 'The Blue Heron', amount: 245, type: 'booking', status: 'completed' },
-      { id: 'TXN-002', date: 'Jan 19', venue: 'Porters Pub', amount: 180, type: 'subscription', status: 'completed' },
-      { id: 'TXN-003', date: 'Jan 18', venue: 'Shakers Bar', amount: 320, type: 'booking', status: 'pending' },
-      { id: 'TXN-004', date: 'Jan 18', venue: 'The Bookstore Speakeasy', amount: 75, type: 'subscription', status: 'completed' },
-      { id: 'TXN-005', date: 'Jan 17', venue: 'Two Rivers Brewing', amount: 410, type: 'booking', status: 'completed' },
+      { id: 'TXN-4821', date: 'Jan 19', venue: 'Blue Heron Bar', amount: 247, type: 'booking', status: 'completed' },
+      { id: 'TXN-4820', date: 'Jan 19', venue: 'Porters Pub', amount: 175, type: 'subscription', status: 'completed' },
+      { id: 'TXN-4819', date: 'Jan 18', venue: 'Godfrey Daniels', amount: 318, type: 'booking', status: 'pending' },
+      { id: 'TXN-4818', date: 'Jan 18', venue: 'The Bookstore Speakeasy', amount: 75, type: 'subscription', status: 'completed' },
+      { id: 'TXN-4817', date: 'Jan 17', venue: 'Rooftop @ The Grand', amount: 423, type: 'booking', status: 'completed' },
     ];
 
     // Revenue simulator state
