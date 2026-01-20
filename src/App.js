@@ -122,6 +122,41 @@ const styles = {
   },
 };
 
+// Flock Logo Component - Three birds in formation with FLOCK text
+const FlockLogo = ({ size = 'large', showText = true, color = colors.navy }) => {
+  const sizes = {
+    small: { birds: 24, text: 12, gap: 4 },
+    medium: { birds: 40, text: 18, gap: 6 },
+    large: { birds: 60, text: 24, gap: 8 },
+  };
+  const s = sizes[size] || sizes.large;
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: s.gap }}>
+      {/* Three birds in V formation */}
+      <svg width={s.birds} height={s.birds * 0.6} viewBox="0 0 60 36" fill="none">
+        {/* Left bird */}
+        <path d="M2 20 Q8 12 16 16 Q12 18 8 22 Q4 20 2 20Z" fill={color} />
+        {/* Center bird (slightly higher) */}
+        <path d="M24 8 Q32 0 42 6 Q36 10 30 14 Q26 10 24 8Z" fill={color} />
+        {/* Right bird */}
+        <path d="M44 20 Q52 12 58 16 Q54 18 50 22 Q46 20 44 20Z" fill={color} />
+      </svg>
+      {showText && (
+        <span style={{
+          fontSize: s.text,
+          fontWeight: '900',
+          color: color,
+          letterSpacing: '2px',
+          fontFamily: 'Inter, sans-serif'
+        }}>
+          FLOCK
+        </span>
+      )}
+    </div>
+  );
+};
+
 const FlockApp = () => {
   // User Mode Selection
   const [userMode, setUserMode] = useState(() => localStorage.getItem('flockUserMode') || null);
@@ -161,7 +196,7 @@ const FlockApp = () => {
 
   // AI Assistant
   const [aiMessages, setAiMessages] = useState([
-    { role: 'assistant', text: "Yo! I'm Birdie, your flock's personal wingman. Need help finding a nest to land at tonight? Or just wanna know where the party's at? I gotchu. 🐦" }
+    { role: 'assistant', text: "Hey! I'm your Flock assistant. I can help you find venues, check crowd levels, and coordinate plans with friends. What can I help you with?" }
   ]);
   const [aiInput, setAiInput] = useState('');
   const [aiTyping, setAiTyping] = useState(false);
@@ -355,7 +390,7 @@ const FlockApp = () => {
     showToast('Payment sent!');
   }, [addXP, showToast]);
 
-  // AI Response Generation - Birdie's personality: helpful wingman, slightly sarcastic, uses bird puns
+  // AI Response Generation - Professional but friendly assistant
   const generateAiResponse = useCallback((userMsg, venueList, flockList, friendsList) => {
     const msg = userMsg.toLowerCase();
     const findVenue = (name) => venueList.find(v => v.name.toLowerCase().includes(name.toLowerCase()));
@@ -367,9 +402,9 @@ const FlockApp = () => {
       if (busyVenues.length > 0) {
         const busy = busyVenues[0];
         const quiet = quietVenues[0];
-        return { text: `Okay so ${busy.name} is absolutely PACKED rn (${busy.crowd}% full, yikes). ${quiet ? `If you don't wanna fight for a spot, ${quiet.name} is way chiller at ${quiet.crowd}%. Just sayin'.` : 'Everywhere else is pretty reasonable tho.'}`, confidence: 94 };
+        return { text: `${busy.name} is currently at ${busy.crowd}% capacity - quite busy! ${quiet ? `If you'd prefer somewhere quieter, ${quiet.name} is only at ${quiet.crowd}%.` : 'Most other venues have moderate crowds.'}`, confidence: 94 };
       }
-      return { text: "Honestly? It's kinda dead out there rn. Good news: you can basically walk into anywhere. Bad news: might be a little too quiet for your vibe? 🤷", confidence: 85 };
+      return { text: "Most venues have light crowds right now - you should be able to get in anywhere without a wait.", confidence: 85 };
     }
 
     // VENUE QUESTIONS - Recommendations
@@ -377,17 +412,17 @@ const FlockApp = () => {
       const topRated = venueList.filter(v => v.stars >= 4.5).sort((a, b) => b.stars - a.stars)[0];
       const trending = venueList.find(v => v.trending);
       if (trending) {
-        return { text: `Alright, here's my hot take: ${trending.name} is where everyone's flocking tonight 📈 (pun intended). ${topRated && topRated.name !== trending.name ? `But honestly ${topRated.name} has better vibes (${topRated.stars}⭐) if you're not into crowds.` : ''}`, confidence: 91 };
+        return { text: `${trending.name} is trending tonight. ${topRated && topRated.name !== trending.name ? `Alternatively, ${topRated.name} has excellent reviews (${topRated.stars} stars) if you prefer a smaller crowd.` : ''}`, confidence: 91 };
       }
       if (topRated) {
-        return { text: `Look, you can't go wrong with ${topRated.name}. ${topRated.stars}⭐ rating, ${topRated.crowd}% full, solid ${topRated.type} vibes. Trust your wingman on this one. 🐦`, confidence: 89 };
+        return { text: `I'd recommend ${topRated.name} - it has a ${topRated.stars}-star rating, currently at ${topRated.crowd}% capacity. Great ${topRated.type} spot.`, confidence: 89 };
       }
     }
 
     // PLANNING QUESTIONS
     if (msg.includes('plan') || msg.includes('organize') || msg.includes('coordinate') || msg.includes('create') || msg.includes('start a flock') || msg.includes('make a flock') || msg.includes('rally')) {
       const upcomingFlock = flockList.find(f => f.status === 'voting');
-      return { text: `Ooh love that energy! Let's get the flock together 🐦 ${upcomingFlock ? `Wait actually - "${upcomingFlock.name}" still needs votes. Maybe handle that first?` : 'Hit "Rally the Flock" below and I\'ll help you round up the crew!'}`, confidence: 95 };
+      return { text: `Ready to coordinate plans! ${upcomingFlock ? `Note: "${upcomingFlock.name}" still needs votes from your group.` : 'Tap "Start a Flock" to create a new plan and invite friends.'}`, confidence: 95 };
     }
 
     // FOOD QUESTIONS
@@ -395,7 +430,7 @@ const FlockApp = () => {
       const foodVenues = venueList.filter(v => v.category === 'Food').sort((a, b) => b.stars - a.stars);
       if (foodVenues.length > 0) {
         const top = foodVenues[0];
-        return { text: `Ugh same, I could eat. ${top.name} tho - ${top.stars}⭐, ${top.price} prices, and only ${top.crowd}% full so you won't die waiting. You're welcome. 🍕`, confidence: 92 };
+        return { text: `For food, I'd suggest ${top.name} - ${top.stars} stars, ${top.price} price range, currently at ${top.crowd}% capacity.`, confidence: 92 };
       }
     }
 
@@ -404,7 +439,7 @@ const FlockApp = () => {
       const nightlife = venueList.filter(v => v.category === 'Nightlife').sort((a, b) => b.stars - a.stars);
       if (nightlife.length > 0) {
         const top = nightlife[0];
-        return { text: `Now we're talking! 🍸 ${top.name} is where I'd send you - ${top.stars}⭐ vibes, currently at ${top.crowd}%. Pro tip: show up around ${top.best} for the sweet spot.`, confidence: 90 };
+        return { text: `${top.name} is a great option - ${top.stars} stars, currently at ${top.crowd}% capacity. Best time to arrive: ${top.best}.`, confidence: 90 };
       }
     }
 
@@ -414,8 +449,8 @@ const FlockApp = () => {
       if (msg.includes(name)) {
         const venue = findVenue(name);
         if (venue) {
-          const crowdComment = venue.crowd > 70 ? 'It\'s a zoo in there rn.' : venue.crowd > 40 ? 'Solid crowd, good energy.' : 'Pretty chill actually.';
-          return { text: `${venue.name}? Good choice. ${crowdComment} (${venue.crowd}% full). ${venue.stars}⭐ rating. Best time to swoop in: ${venue.best}. It's at ${venue.addr} btw.`, confidence: 96 };
+          const crowdComment = venue.crowd > 70 ? 'Currently very busy.' : venue.crowd > 40 ? 'Moderate crowd.' : 'Light crowd right now.';
+          return { text: `${venue.name}: ${crowdComment} (${venue.crowd}% capacity). ${venue.stars} stars. Best time: ${venue.best}. Located at ${venue.addr}.`, confidence: 96 };
         }
       }
     }
@@ -425,36 +460,36 @@ const FlockApp = () => {
       const mentionedFriend = friendsList.find(f => msg.includes(f.toLowerCase()));
       if (mentionedFriend) {
         const randomVenue = venueList[Math.floor(Math.random() * venueList.length)];
-        return { text: `Word on the street is ${mentionedFriend} was spotted near ${randomVenue.name}. Want me to help you track down the rest of the flock? 👀`, confidence: 78 };
+        return { text: `${mentionedFriend} was last active near ${randomVenue.name}. Would you like to start a flock and invite them?`, confidence: 78 };
       }
-      return { text: `Your crew's scattered all over: ${friendsList.slice(0, 3).join(', ')} are out doing their thing. Time to get everyone in formation? 🐦`, confidence: 82 };
+      return { text: `Your friends: ${friendsList.slice(0, 3).join(', ')} are available. Would you like to start coordinating plans?`, confidence: 82 };
     }
 
     // TIME/SCHEDULE QUESTIONS
     if (msg.includes('time') || msg.includes('when') || msg.includes('schedule') || msg.includes('tonight') || msg.includes('best time')) {
       const bestVenue = venueList.find(v => v.best.includes('Now')) || venueList[0];
-      return { text: `Honestly? ${bestVenue.name} is peaking right now. But if you're planning ahead, most spots get good around 9-10ish. Get there early unless you like waiting. Which... I don't.`, confidence: 87 };
+      return { text: `${bestVenue.name} is ideal right now. Generally, most venues are best between 9-10 PM. Arriving earlier helps avoid wait times.`, confidence: 87 };
     }
 
     // HELP QUESTIONS
     if (msg.includes('help') || msg.includes('how do') || msg.includes('how does') || msg.includes('what can you')) {
-      return { text: "I gotchu! Here's what I'm good at:\n\n🔍 \"What's poppin?\" - crowd intel\n📍 \"Pick a bar for us\" - recommendations\n🐦 \"Rally the flock\" - planning stuff\n👀 \"Where's Alex at?\" - friend stalking (lovingly)\n⏰ \"When's the move?\" - timing tips\n\nBasically I'm your going-out concierge. Ask away!", confidence: 100 };
+      return { text: "I can help you with:\n\n• Check crowd levels at venues\n• Get venue recommendations\n• Coordinate plans with friends\n• Find the best time to arrive\n• See where friends are\n\nJust ask and I'll assist!", confidence: 100 };
     }
 
     // GREETING
     if (msg.includes('hi') || msg.includes('hello') || msg.includes('hey') || msg.includes('sup') || msg === 'yo') {
-      const greetings = ["Ayy what's good!", "Hey hey! Ready to fly?", "Sup! What's the move tonight?"];
-      return { text: `${greetings[Math.floor(Math.random() * greetings.length)]} 🐦 I can help you find spots, check crowds, or round up the crew. What're we working with?`, confidence: 100 };
+      const greetings = ["Hey there!", "Hello!", "Hi! How can I help?"];
+      return { text: `${greetings[Math.floor(Math.random() * greetings.length)]} I can help you find venues, check crowds, or coordinate plans with friends. What would you like to do?`, confidence: 100 };
     }
 
     // THANKS
     if (msg.includes('thank') || msg.includes('thanks') || msg.includes('awesome') || msg.includes('great') || msg.includes('perfect')) {
-      const responses = ["Anytime! That's what wingmen are for 🐦", "You got it! Go have fun, report back!", "No prob! Don't do anything I wouldn't do (which is... not much lol)"];
+      const responses = ["Happy to help!", "You're welcome! Have a great time.", "Glad I could assist!"];
       return { text: responses[Math.floor(Math.random() * responses.length)], confidence: 100 };
     }
 
-    // DEFAULT - more personality
-    return { text: "Hmm not sure what you're asking but I'm pretty good at: finding spots, checking if places are packed, and helping rally your crew. Try something like \"where should we go?\" or \"what's busy rn?\" 🤔", confidence: 65 };
+    // DEFAULT
+    return { text: "I'm not sure I understood that. I can help you with: finding venues, checking crowd levels, and coordinating plans with friends. Try asking \"where should we go?\" or \"how busy is it?\"", confidence: 65 };
   }, []);
 
   const sendAiMessage = useCallback(() => {
@@ -821,7 +856,7 @@ const FlockApp = () => {
             </button>
           </div>
           <div style={{ padding: '12px' }}>
-            <input type="text" value={dmSearchText} onChange={(e) => setDmSearchText(e.target.value)} placeholder="Find your people..." style={{ width: '100%', padding: '12px 16px', borderRadius: '12px', border: `1px solid ${colors.creamDark}`, fontSize: '14px', outline: 'none', boxSizing: 'border-box' }} autoComplete="off" />
+            <input type="text" value={dmSearchText} onChange={(e) => setDmSearchText(e.target.value)} placeholder="Search friends..." style={{ width: '100%', padding: '12px 16px', borderRadius: '12px', border: `1px solid ${colors.creamDark}`, fontSize: '14px', outline: 'none', boxSizing: 'border-box' }} autoComplete="off" />
           </div>
           <div style={{ flex: 1, overflowY: 'auto', padding: '0 12px 12px' }}>
             {filteredFriends.length === 0 ? (
@@ -964,8 +999,8 @@ const FlockApp = () => {
                 <div style={{ width: '60px', height: '60px', borderRadius: '30px', background: 'linear-gradient(135deg, #4F46E5, #7C3AED)', margin: '0 auto 12px', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 8px 24px rgba(79,70,229,0.3)' }}>
                   {Icons.robot('white', 30)}
                 </div>
-                <h3 style={{ fontSize: '16px', fontWeight: '700', color: colors.navy, margin: '0 0 4px' }}>What's the move?</h3>
-                <p style={{ fontSize: '11px', color: '#6b7280', margin: 0 }}>I know every spot in the valley. Try me.</p>
+                <h3 style={{ fontSize: '16px', fontWeight: '700', color: colors.navy, margin: '0 0 4px' }}>How can I help?</h3>
+                <p style={{ fontSize: '11px', color: '#6b7280', margin: 0 }}>Ask about venues, crowds, or plans.</p>
               </div>
             )}
 
@@ -1020,7 +1055,7 @@ const FlockApp = () => {
           {/* Input */}
           <div style={{ padding: '10px 12px', borderTop: '1px solid #eee', backgroundColor: 'white' }}>
             <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-              <input ref={aiInputRef} type="text" value={aiInput} onChange={(e) => setAiInput(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && sendAiMessage()} placeholder="What's the move?" style={{ flex: 1, padding: '12px 16px', borderRadius: '24px', backgroundColor: '#f3f4f6', border: '1px solid rgba(0,0,0,0.05)', fontSize: '13px', outline: 'none', fontWeight: '500' }} autoComplete="off" />
+              <input ref={aiInputRef} type="text" value={aiInput} onChange={(e) => setAiInput(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && sendAiMessage()} placeholder="Ask me anything..." style={{ flex: 1, padding: '12px 16px', borderRadius: '24px', backgroundColor: '#f3f4f6', border: '1px solid rgba(0,0,0,0.05)', fontSize: '13px', outline: 'none', fontWeight: '500' }} autoComplete="off" />
               <button onClick={sendAiMessage} disabled={!aiInput.trim()} style={{ width: '42px', height: '42px', borderRadius: '21px', border: 'none', background: aiInput.trim() ? `linear-gradient(135deg, ${colors.navy}, ${colors.navyMid})` : '#e5e7eb', color: 'white', cursor: aiInput.trim() ? 'pointer' : 'default', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: aiInput.trim() ? '0 4px 12px rgba(13,40,71,0.3)' : 'none', transition: 'all 0.2s' }}>{Icons.send('white', 18)}</button>
             </div>
           </div>
@@ -1058,25 +1093,24 @@ const FlockApp = () => {
   const WelcomeScreen = () => (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', backgroundColor: colors.cream, padding: '20px', boxSizing: 'border-box' }}>
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center' }}>
-        {/* Logo - with Easter egg */}
+        {/* Flock Logo - with Easter egg */}
         <div
           onClick={() => {
             setEasterEggTaps(prev => {
               const newCount = prev + 1;
               if (newCount === 7) {
-                showToast("🐦 You found the secret bird! You're officially part of the flock now.");
+                showToast("You found a secret! Welcome to the flock.");
                 return 0;
               }
               if (newCount === 5) showToast("Keep tapping...");
               return newCount;
             });
           }}
-          style={{ width: '80px', height: '80px', borderRadius: '24px', background: `linear-gradient(135deg, ${colors.navy}, ${colors.navyMid})`, display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: '16px', boxShadow: '0 8px 32px rgba(13,40,71,0.3)', cursor: 'pointer', transition: 'transform 0.2s' }}
+          style={{ marginBottom: '8px', cursor: 'pointer' }}
         >
-          {Icons.users('white', 40)}
+          <FlockLogo size="large" />
         </div>
-        <h1 style={{ fontSize: '28px', fontWeight: '900', color: colors.navy, margin: '0 0 4px', textAlign: 'center' }}>Flock</h1>
-        <p style={{ fontSize: '13px', color: colors.navyMid, margin: '0 0 28px', textAlign: 'center', fontWeight: '500', fontStyle: 'italic' }}>where plans actually happen</p>
+        <p style={{ fontSize: '13px', color: colors.navyMid, margin: '0 0 28px', textAlign: 'center', fontWeight: '500' }}>Social Coordination Simplified</p>
 
         {/* Mode Cards */}
         <div style={{ width: '100%', maxWidth: '320px' }}>
@@ -1086,8 +1120,8 @@ const FlockApp = () => {
               {Icons.users('white', 28)}
             </div>
             <div style={{ flex: 1 }}>
-              <h3 style={{ fontSize: '16px', fontWeight: '800', color: colors.navy, margin: '0 0 4px' }}>Let's Go Out</h3>
-              <p style={{ fontSize: '12px', color: '#6b7280', margin: 0 }}>Rally the crew, find spots, make plans</p>
+              <h3 style={{ fontSize: '16px', fontWeight: '800', color: colors.navy, margin: '0 0 4px' }}>I'm Going Out</h3>
+              <p style={{ fontSize: '12px', color: '#6b7280', margin: 0 }}>Coordinate with friends, find venues</p>
             </div>
             <span style={{ fontSize: '20px', color: colors.navy }}>›</span>
           </button>
@@ -1098,8 +1132,8 @@ const FlockApp = () => {
               {Icons.building('white', 28)}
             </div>
             <div style={{ flex: 1 }}>
-              <h3 style={{ fontSize: '16px', fontWeight: '800', color: colors.navy, margin: '0 0 4px' }}>I Run a Spot</h3>
-              <p style={{ fontSize: '12px', color: '#6b7280', margin: 0 }}>See who's heading your way</p>
+              <h3 style={{ fontSize: '16px', fontWeight: '800', color: colors.navy, margin: '0 0 4px' }}>Venue Dashboard</h3>
+              <p style={{ fontSize: '12px', color: '#6b7280', margin: 0 }}>Manage your venue, see traffic</p>
             </div>
             <span style={{ fontSize: '20px', color: colors.navy }}>›</span>
           </button>
@@ -1110,7 +1144,7 @@ const FlockApp = () => {
               {Icons.briefcase('white', 28)}
             </div>
             <div style={{ flex: 1 }}>
-              <h3 style={{ fontSize: '16px', fontWeight: '800', color: colors.navy, margin: '0 0 4px' }}>Big Bird Mode</h3>
+              <h3 style={{ fontSize: '16px', fontWeight: '800', color: colors.navy, margin: '0 0 4px' }}>Admin Dashboard</h3>
               <p style={{ fontSize: '12px', color: '#6b7280', margin: 0 }}>Platform analytics & revenue</p>
             </div>
             <span style={{ fontSize: '9px', color: '#9ca3af', backgroundColor: '#f3f4f6', padding: '2px 6px', borderRadius: '4px' }}>Locked</span>
@@ -1129,9 +1163,12 @@ const FlockApp = () => {
       {/* Header */}
       <div style={{ padding: '16px', paddingBottom: '20px', background: `linear-gradient(135deg, ${colors.navy} 0%, ${colors.navyLight} 50%, ${colors.navyMid} 100%)`, flexShrink: 0 }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
-          <div>
-            <p style={{ fontSize: '10px', color: 'rgba(255,255,255,0.6)', margin: 0, letterSpacing: '0.5px' }}>Good evening</p>
-            <h1 style={{ fontSize: '20px', fontWeight: '900', color: 'white', margin: 0, display: 'flex', alignItems: 'center', gap: '6px' }}>Hey, {profileName} {Icons.wave('white', 20)}</h1>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+            <FlockLogo size="small" showText={false} color="white" />
+            <div>
+              <p style={{ fontSize: '10px', color: 'rgba(255,255,255,0.6)', margin: 0, letterSpacing: '0.5px' }}>Good evening</p>
+              <h1 style={{ fontSize: '20px', fontWeight: '900', color: 'white', margin: 0 }}>Hey, {profileName}</h1>
+            </div>
           </div>
           <button onClick={() => setCurrentTab('profile')} style={{ position: 'relative', background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}>
             <div style={{ width: '40px', height: '40px', borderRadius: '20px', backgroundColor: 'rgba(255,255,255,0.2)', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden' }}>
@@ -1141,14 +1178,14 @@ const FlockApp = () => {
           </button>
         </div>
 
-        {/* Stats - intentionally varied sizes */}
+        {/* Stats */}
         <div style={{ display: 'flex', gap: '8px' }}>
           <div style={{ flex: 1.1, borderRadius: '14px', padding: '12px 10px', backgroundColor: 'rgba(255,255,255,0.12)' }}>
-            <p style={{ fontSize: '8px', color: 'rgba(255,255,255,0.5)', margin: 0, textTransform: 'uppercase', letterSpacing: '1px' }}>Going Out</p>
+            <p style={{ fontSize: '8px', color: 'rgba(255,255,255,0.5)', margin: 0, textTransform: 'uppercase', letterSpacing: '1px' }}>Active</p>
             <p style={{ fontSize: '22px', fontWeight: '900', color: 'white', margin: '4px 0 0' }}>{flocks.length}</p>
           </div>
           <div style={{ flex: 0.9, borderRadius: '10px', padding: '10px 8px', backgroundColor: 'rgba(255,255,255,0.08)' }}>
-            <p style={{ fontSize: '9px', color: 'rgba(255,255,255,0.6)', margin: 0 }}>On Fire</p>
+            <p style={{ fontSize: '9px', color: 'rgba(255,255,255,0.6)', margin: 0 }}>Streak</p>
             <p style={{ fontSize: '16px', fontWeight: '800', color: 'white', margin: '2px 0 0', display: 'flex', alignItems: 'center', gap: '4px' }}>{Icons.flame('#F59E0B', 16)} {streak}</p>
           </div>
           <div style={{ flex: 1, borderRadius: '12px', padding: '10px', backgroundColor: 'rgba(255,255,255,0.1)' }}>
@@ -1177,13 +1214,13 @@ const FlockApp = () => {
 
         {/* Action Buttons */}
         <div style={{ display: 'flex', gap: '8px', marginBottom: '12px' }}>
-          <button onClick={() => setCurrentScreen('create')} style={{ flex: 1.2, padding: '14px', borderRadius: '14px', border: 'none', background: `linear-gradient(135deg, ${colors.navy}, ${colors.navyMid})`, color: 'white', fontWeight: '800', fontSize: '14px', cursor: 'pointer', boxShadow: '0 4px 12px rgba(13,40,71,0.25)' }}>+ Rally Crew</button>
-          <button onClick={() => setCurrentScreen('join')} style={{ flex: 0.8, padding: '12px', borderRadius: '12px', border: `2px solid ${colors.navy}`, backgroundColor: 'white', color: colors.navy, fontWeight: '600', fontSize: '13px', cursor: 'pointer' }}>Got a Code?</button>
+          <button onClick={() => setCurrentScreen('create')} style={{ flex: 1.2, padding: '14px', borderRadius: '14px', border: 'none', background: `linear-gradient(135deg, ${colors.navy}, ${colors.navyMid})`, color: 'white', fontWeight: '800', fontSize: '14px', cursor: 'pointer', boxShadow: '0 4px 12px rgba(13,40,71,0.25)' }}>+ Start a Flock</button>
+          <button onClick={() => setCurrentScreen('join')} style={{ flex: 0.8, padding: '12px', borderRadius: '12px', border: `2px solid ${colors.navy}`, backgroundColor: 'white', color: colors.navy, fontWeight: '600', fontSize: '13px', cursor: 'pointer' }}>Join Flock</button>
         </div>
 
         {/* Activity */}
         <div style={styles.card}>
-          <h3 style={{ fontSize: '12px', fontWeight: 'bold', color: colors.navy, margin: '0 0 8px', display: 'flex', alignItems: 'center', gap: '6px' }}>{Icons.bell(colors.navy, 14)} What's Happening</h3>
+          <h3 style={{ fontSize: '12px', fontWeight: 'bold', color: colors.navy, margin: '0 0 8px', display: 'flex', alignItems: 'center', gap: '6px' }}>{Icons.bell(colors.navy, 14)} Activity</h3>
           {activityFeed.map(a => (
             <div key={a.id} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 0', borderBottom: '1px solid #f3f4f6' }}>
               <span>{a.icon}</span>
@@ -1194,7 +1231,7 @@ const FlockApp = () => {
         </div>
 
         {/* Flocks */}
-        <h2 style={{ fontSize: '12px', fontWeight: 'bold', color: colors.navy, margin: '0 0 8px' }}>Your Crew</h2>
+        <h2 style={{ fontSize: '12px', fontWeight: 'bold', color: colors.navy, margin: '0 0 8px' }}>Your Flocks</h2>
         {flocks.map((f, idx) => (
           <button key={f.id} onClick={() => { setSelectedFlockId(f.id); setCurrentScreen('detail'); }} style={{ width: '100%', textAlign: 'left', ...styles.card, border: 'none', cursor: 'pointer', padding: idx === 0 ? '18px' : '12px', marginBottom: idx === 0 ? '14px' : '10px', borderLeft: idx === 0 ? `4px solid ${colors.teal}` : 'none' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: idx === 0 ? '10px' : '6px' }}>
@@ -1220,7 +1257,7 @@ const FlockApp = () => {
 
         {/* Safety Check-in */}
         <button onClick={() => setShowCheckin(true)} style={{ width: '100%', marginTop: '8px', padding: '14px', borderRadius: '14px', border: `2px dashed ${colors.teal}`, backgroundColor: 'rgba(20,184,166,0.05)', color: colors.teal, fontWeight: '700', fontSize: '13px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
-          {Icons.shield(colors.teal, 16)} Let Your People Know You're Good
+          {Icons.shield(colors.teal, 16)} Safety Check-in
         </button>
       </div>
 
@@ -1250,7 +1287,7 @@ const FlockApp = () => {
       <div key="create-screen-container" style={{ display: 'flex', flexDirection: 'column', height: '100%', backgroundColor: 'white' }}>
         <div style={{ padding: '12px', display: 'flex', alignItems: 'center', gap: '8px', borderBottom: '1px solid #eee', backgroundColor: colors.cream, flexShrink: 0 }}>
           <button onClick={() => { setCurrentScreen('main'); setFlockName(''); setFlockFriends([]); setSelectedVenueForCreate(null); }} style={{ width: '32px', height: '32px', borderRadius: '16px', border: 'none', backgroundColor: 'transparent', color: colors.navy, fontSize: '18px', cursor: 'pointer' }}>←</button>
-          <h1 style={{ fontSize: '18px', fontWeight: '900', color: colors.navy, margin: 0 }}>Rally Your Crew</h1>
+          <h1 style={{ fontSize: '18px', fontWeight: '900', color: colors.navy, margin: 0 }}>Start a Flock</h1>
         </div>
 
         <div style={{ flex: 1, padding: '16px', overflowY: 'auto', backgroundColor: colors.cream }}>
@@ -1329,7 +1366,7 @@ const FlockApp = () => {
 
         <div style={{ padding: '12px', backgroundColor: 'white', borderTop: '1px solid #eee', flexShrink: 0 }}>
           <button onClick={handleCreate} disabled={isLoading} style={{ ...styles.gradientButton, opacity: isLoading ? 0.5 : 1 }}>
-            {isLoading ? <><span style={{ display: 'inline-flex', animation: 'spin 1s linear infinite' }}>{Icons.activity('white', 16)}</span> Gathering...</> : <>{Icons.users('white', 16)} Let's Flock!</>}
+            {isLoading ? <><span style={{ display: 'inline-flex', animation: 'spin 1s linear infinite' }}>{Icons.activity('white', 16)}</span> Creating...</> : <>{Icons.users('white', 16)} Create Flock</>}
           </button>
         </div>
       </div>
@@ -1341,11 +1378,11 @@ const FlockApp = () => {
     <div key="join-screen-container" style={{ display: 'flex', flexDirection: 'column', height: '100%', backgroundColor: 'white' }}>
       <div style={{ padding: '12px', display: 'flex', alignItems: 'center', gap: '8px', borderBottom: '1px solid #eee', backgroundColor: colors.cream, flexShrink: 0 }}>
         <button onClick={() => { setCurrentScreen('main'); setJoinCode(''); }} style={{ width: '32px', height: '32px', borderRadius: '16px', border: 'none', backgroundColor: 'transparent', color: colors.navy, fontSize: '18px', cursor: 'pointer' }}>←</button>
-        <h1 style={{ fontSize: '18px', fontWeight: '900', color: colors.navy, margin: 0 }}>Hop In</h1>
+        <h1 style={{ fontSize: '18px', fontWeight: '900', color: colors.navy, margin: 0 }}>Join a Flock</h1>
       </div>
       <div style={{ flex: 1, padding: '16px', backgroundColor: colors.cream }}>
         <div style={{ marginBottom: '16px' }}>
-          <label style={{ display: 'block', fontSize: '12px', fontWeight: 'bold', color: colors.navy, marginBottom: '6px' }}>Got a Code?</label>
+          <label style={{ display: 'block', fontSize: '12px', fontWeight: 'bold', color: colors.navy, marginBottom: '6px' }}>Enter Code</label>
           <input key="join-code-input" id="join-code-input" type="text" value={joinCode} onChange={(e) => setJoinCode(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 6))} placeholder="ABC123" maxLength={6} style={{ ...styles.input, fontSize: '20px', textAlign: 'center', letterSpacing: '8px', textTransform: 'uppercase' }} autoComplete="off" />
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px', margin: '24px 0' }}>
@@ -1356,7 +1393,7 @@ const FlockApp = () => {
         <button onClick={() => showToast('Camera opening...')} style={{ width: '100%', padding: '12px', borderRadius: '12px', border: `2px solid ${colors.creamDark}`, backgroundColor: 'white', color: colors.navy, fontWeight: '500', fontSize: '14px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>{Icons.camera(colors.navy, 16)} Scan QR</button>
       </div>
       <div style={{ padding: '12px', backgroundColor: 'white', borderTop: '1px solid #eee', flexShrink: 0 }}>
-        <button onClick={() => { if (joinCode.length === 6) { showToast('✅ You\'re in!'); addXP(20); setJoinCode(''); setCurrentScreen('main'); } else { showToast('Need a valid code', 'error'); }}} style={styles.gradientButton}>I'm In!</button>
+        <button onClick={() => { if (joinCode.length === 6) { showToast('Joined successfully!'); addXP(20); setJoinCode(''); setCurrentScreen('main'); } else { showToast('Enter a valid code', 'error'); }}} style={styles.gradientButton}>Join Flock</button>
       </div>
     </div>
   );
@@ -1373,7 +1410,7 @@ const FlockApp = () => {
 
       <div style={{ padding: '8px', display: 'flex', alignItems: 'center', gap: '8px', backgroundColor: 'white', boxShadow: '0 2px 4px rgba(0,0,0,0.1)', zIndex: 20, flexShrink: 0 }}>
         <div style={{ flex: 1, position: 'relative' }}>
-          <input key="search-input" id="search-input" type="text" value={searchText} onChange={(e) => setSearchText(e.target.value)} placeholder="Find a spot..." style={{ width: '100%', padding: '10px 10px 10px 32px', borderRadius: '20px', backgroundColor: '#f3f4f6', border: 'none', fontSize: '12px', outline: 'none', boxSizing: 'border-box' }} autoComplete="off" />
+          <input key="search-input" id="search-input" type="text" value={searchText} onChange={(e) => setSearchText(e.target.value)} placeholder="Search venues..." style={{ width: '100%', padding: '10px 10px 10px 32px', borderRadius: '20px', backgroundColor: '#f3f4f6', border: 'none', fontSize: '12px', outline: 'none', boxSizing: 'border-box' }} autoComplete="off" />
           <span style={{ position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)' }}>{Icons.search('#9ca3af', 14)}</span>
         </div>
         <button onClick={() => setShowConnectPanel(true)} style={{ width: '36px', height: '36px', borderRadius: '18px', border: 'none', background: `linear-gradient(135deg, ${colors.navy}, ${colors.navyMid})`, color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.users('white', 18)}</button>
@@ -1562,7 +1599,7 @@ const FlockApp = () => {
                 {pickingVenueForCreate ? (
                   <button onClick={() => { setSelectedVenueForCreate(activeVenue); setActiveVenue(null); setPickingVenueForCreate(false); setCurrentScreen('create'); showToast('Selected!'); }} style={{ flex: 1, padding: '10px', borderRadius: '8px', border: 'none', backgroundColor: colors.teal, color: 'white', fontWeight: 'bold', fontSize: '12px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px' }}>{Icons.check('white', 14)} Select</button>
                 ) : (
-                  <button onClick={() => { setSelectedVenueForCreate(activeVenue); setActiveVenue(null); setCurrentScreen('create'); }} style={{ flex: 1, padding: '10px', borderRadius: '8px', border: 'none', background: `linear-gradient(90deg, ${colors.navy}, ${colors.navyMid})`, color: 'white', fontWeight: 'bold', fontSize: '12px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px' }}>{Icons.users('white', 14)} Rally Here</button>
+                  <button onClick={() => { setSelectedVenueForCreate(activeVenue); setActiveVenue(null); setCurrentScreen('create'); }} style={{ flex: 1, padding: '10px', borderRadius: '8px', border: 'none', background: `linear-gradient(90deg, ${colors.navy}, ${colors.navyMid})`, color: 'white', fontWeight: 'bold', fontSize: '12px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px' }}>{Icons.users('white', 14)} Start Flock Here</button>
                 )}
                 <button onClick={() => addEventToCalendar(`Visit ${activeVenue.name}`, activeVenue.name, new Date(), '8 PM', getCategoryColor(activeVenue.category))} style={{ width: '40px', height: '40px', borderRadius: '8px', border: `2px solid ${colors.creamDark}`, backgroundColor: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.calendar(colors.navy, 18)}</button>
                 <button onClick={() => showToast('Calling venue...')} style={{ width: '40px', height: '40px', borderRadius: '8px', border: `2px solid ${colors.creamDark}`, backgroundColor: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.wave(colors.navy, 18)}</button>
@@ -1974,7 +2011,7 @@ const FlockApp = () => {
 
         <div style={{ padding: '10px 12px', backgroundColor: 'rgba(255,255,255,0.98)', backdropFilter: 'blur(10px)', WebkitBackdropFilter: 'blur(10px)', borderTop: '1px solid rgba(0,0,0,0.05)', display: 'flex', gap: '8px', alignItems: 'center', flexShrink: 0, boxShadow: '0 -4px 20px rgba(0,0,0,0.03)' }}>
           <button onClick={() => showToast('Opening camera...')} style={{ width: '36px', height: '36px', borderRadius: '18px', border: 'none', backgroundColor: 'rgba(13,40,71,0.08)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.image('#6b7280', 18)}</button>
-          <input key="chat-input" id="chat-input" type="text" value={chatInput} onChange={(e) => setChatInput(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && sendChatMessage()} placeholder={replyingTo ? 'Reply...' : 'Say something...'} style={{ flex: 1, padding: '11px 16px', borderRadius: '22px', backgroundColor: 'rgba(243,244,246,0.9)', border: '1px solid rgba(0,0,0,0.05)', fontSize: '14px', outline: 'none', fontWeight: '500' }} autoComplete="off" />
+          <input key="chat-input" id="chat-input" type="text" value={chatInput} onChange={(e) => setChatInput(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && sendChatMessage()} placeholder={replyingTo ? 'Reply...' : 'Type a message...'} style={{ flex: 1, padding: '11px 16px', borderRadius: '22px', backgroundColor: 'rgba(243,244,246,0.9)', border: '1px solid rgba(0,0,0,0.05)', fontSize: '14px', outline: 'none', fontWeight: '500' }} autoComplete="off" />
           {chatInput ? (
             <button onClick={sendChatMessage} style={{ width: '40px', height: '40px', borderRadius: '20px', border: 'none', background: `linear-gradient(135deg, ${colors.navy}, ${colors.navyMid})`, color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 3px 10px rgba(13,40,71,0.25)' }}>{Icons.send('white', 17)}</button>
           ) : (
@@ -2132,7 +2169,7 @@ const FlockApp = () => {
                     </div>
                   ))}
                   <div style={{ display: 'flex', gap: '8px', marginTop: '12px' }}>
-                    <input key="new-contact" id="new-contact" type="text" value={newContactName} onChange={(e) => setNewContactName(e.target.value)} placeholder="Who's got your back?" style={{ ...styles.input, flex: 1 }} autoComplete="off" />
+                    <input key="new-contact" id="new-contact" type="text" value={newContactName} onChange={(e) => setNewContactName(e.target.value)} placeholder="Add emergency contact..." style={{ ...styles.input, flex: 1 }} autoComplete="off" />
                     <button onClick={() => { if (newContactName.trim()) { setTrustedContacts([...trustedContacts, newContactName.trim()]); showToast('✅ Added!'); setNewContactName(''); }}} style={{ padding: '0 16px', borderRadius: '8px', border: 'none', background: `linear-gradient(90deg, ${colors.navy}, ${colors.navyMid})`, color: 'white', fontWeight: 'bold', fontSize: '14px', cursor: 'pointer' }}>Add</button>
                   </div>
                 </div>
@@ -2151,7 +2188,7 @@ const FlockApp = () => {
                     ))}
                   </div>
                   <div style={{ display: 'flex', gap: '8px' }}>
-                    <input type="text" value={newInterest} onChange={(e) => setNewInterest(e.target.value)} placeholder="What else you into?" style={{ ...styles.input, flex: 1 }} autoComplete="off" />
+                    <input type="text" value={newInterest} onChange={(e) => setNewInterest(e.target.value)} placeholder="Add an interest..." style={{ ...styles.input, flex: 1 }} autoComplete="off" />
                     <button onClick={() => { if (newInterest.trim() && !userInterests.includes(newInterest.trim())) { setUserInterests([...userInterests, newInterest.trim()]); setNewInterest(''); showToast('✅ Added!'); }}} style={{ padding: '0 16px', borderRadius: '8px', border: 'none', background: `linear-gradient(90deg, ${colors.navy}, ${colors.navyMid})`, color: 'white', fontWeight: 'bold', fontSize: '14px', cursor: 'pointer' }}>Add</button>
                   </div>
                 </div>
@@ -2402,11 +2439,11 @@ const FlockApp = () => {
     const [dealTimeSlot, setDealTimeSlot] = useState('Happy Hour');
 
     const venueTabs = [
-      { id: 'analytics', label: 'The Numbers', icon: Icons.barChart },
-      { id: 'promotions', label: 'Deals', icon: Icons.gift },
-      { id: 'events', label: 'Happenings', icon: Icons.calendar },
-      { id: 'reviews', label: 'Buzz', icon: Icons.star },
-      { id: 'settings', label: 'Your Stuff', icon: Icons.settings }
+      { id: 'analytics', label: 'Analytics', icon: Icons.barChart },
+      { id: 'promotions', label: 'Promotions', icon: Icons.gift },
+      { id: 'events', label: 'Events', icon: Icons.calendar },
+      { id: 'reviews', label: 'Reviews', icon: Icons.star },
+      { id: 'settings', label: 'Settings', icon: Icons.settings }
     ];
 
     // Promotion handlers
@@ -2645,14 +2682,14 @@ const FlockApp = () => {
             <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
               {/* Create New Promotion Button */}
               <button onClick={() => openPromoModal()} style={{ width: '100%', padding: '14px', borderRadius: '12px', border: 'none', background: `linear-gradient(90deg, ${colors.navy}, ${colors.navyMid})`, color: 'white', fontWeight: '700', fontSize: '14px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
-                {Icons.plus('white', 18)} Drop a Deal
+                {Icons.plus('white', 18)} Create Promotion
               </button>
 
               {/* Active Promotions */}
               <div style={{ backgroundColor: 'white', borderRadius: '12px', padding: '12px', boxShadow: '0 1px 3px rgba(0,0,0,0.05)' }}>
                 <h3 style={{ fontSize: '12px', fontWeight: '700', color: colors.navy, margin: '0 0 10px' }}>Active Promotions ({promotions.length})</h3>
                 {promotions.length === 0 ? (
-                  <p style={{ fontSize: '11px', color: '#9ca3af', textAlign: 'center', padding: '20px' }}>Nothing cooking yet... drop your first deal!</p>
+                  <p style={{ fontSize: '11px', color: '#9ca3af', textAlign: 'center', padding: '20px' }}>No promotions yet. Create your first one!</p>
                 ) : promotions.map(promo => (
                   <div key={promo.id} style={{ padding: '10px', backgroundColor: colors.cream, borderRadius: '8px', marginBottom: '8px' }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
@@ -2697,7 +2734,7 @@ const FlockApp = () => {
             <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
               {/* Create Event Button */}
               <button onClick={() => openEventModal()} style={{ width: '100%', padding: '14px', borderRadius: '12px', border: 'none', background: `linear-gradient(90deg, ${colors.navy}, ${colors.navyMid})`, color: 'white', fontWeight: '700', fontSize: '14px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
-                {Icons.plus('white', 18)} Plan Something Fun
+                {Icons.plus('white', 18)} Create Event
               </button>
 
               {/* Incoming Flocks */}
@@ -2722,7 +2759,7 @@ const FlockApp = () => {
               <div style={{ backgroundColor: 'white', borderRadius: '12px', padding: '12px', boxShadow: '0 1px 3px rgba(0,0,0,0.05)' }}>
                 <h3 style={{ fontSize: '12px', fontWeight: '700', color: colors.navy, margin: '0 0 10px', display: 'flex', alignItems: 'center', gap: '6px' }}>{Icons.calendar(colors.navy, 14)} Your Events ({venueEventsList.length})</h3>
                 {venueEventsList.length === 0 ? (
-                  <p style={{ fontSize: '11px', color: '#9ca3af', textAlign: 'center', padding: '20px' }}>Calendar's looking empty... spice it up!</p>
+                  <p style={{ fontSize: '11px', color: '#9ca3af', textAlign: 'center', padding: '20px' }}>No events yet. Create your first one!</p>
                 ) : venueEventsList.map(event => (
                   <div key={event.id} style={{ padding: '10px', backgroundColor: colors.cream, borderRadius: '8px', marginBottom: '8px' }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
