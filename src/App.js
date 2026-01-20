@@ -122,41 +122,6 @@ const styles = {
   },
 };
 
-// Flock Logo Component - Three birds in formation with FLOCK text
-const FlockLogo = ({ size = 'large', showText = true, color = colors.navy }) => {
-  const sizes = {
-    small: { birds: 24, text: 12, gap: 4 },
-    medium: { birds: 40, text: 18, gap: 6 },
-    large: { birds: 60, text: 24, gap: 8 },
-  };
-  const s = sizes[size] || sizes.large;
-
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: s.gap }}>
-      {/* Three birds in V formation */}
-      <svg width={s.birds} height={s.birds * 0.6} viewBox="0 0 60 36" fill="none">
-        {/* Left bird */}
-        <path d="M2 20 Q8 12 16 16 Q12 18 8 22 Q4 20 2 20Z" fill={color} />
-        {/* Center bird (slightly higher) */}
-        <path d="M24 8 Q32 0 42 6 Q36 10 30 14 Q26 10 24 8Z" fill={color} />
-        {/* Right bird */}
-        <path d="M44 20 Q52 12 58 16 Q54 18 50 22 Q46 20 44 20Z" fill={color} />
-      </svg>
-      {showText && (
-        <span style={{
-          fontSize: s.text,
-          fontWeight: '900',
-          color: color,
-          letterSpacing: '2px',
-          fontFamily: 'Inter, sans-serif'
-        }}>
-          FLOCK
-        </span>
-      )}
-    </div>
-  );
-};
-
 const FlockApp = () => {
   // User Mode Selection
   const [userMode, setUserMode] = useState(() => localStorage.getItem('flockUserMode') || null);
@@ -1093,7 +1058,7 @@ const FlockApp = () => {
   const WelcomeScreen = () => (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', backgroundColor: colors.cream, padding: '20px', boxSizing: 'border-box' }}>
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center' }}>
-        {/* Flock Logo - with Easter egg */}
+        {/* Logo */}
         <div
           onClick={() => {
             setEasterEggTaps(prev => {
@@ -1106,10 +1071,11 @@ const FlockApp = () => {
               return newCount;
             });
           }}
-          style={{ marginBottom: '8px', cursor: 'pointer' }}
+          style={{ width: '80px', height: '80px', borderRadius: '24px', background: `linear-gradient(135deg, ${colors.navy}, ${colors.navyMid})`, display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: '16px', boxShadow: '0 8px 32px rgba(13,40,71,0.3)', cursor: 'pointer' }}
         >
-          <FlockLogo size="large" />
+          {Icons.users('white', 40)}
         </div>
+        <h1 style={{ fontSize: '28px', fontWeight: '900', color: colors.navy, margin: '0 0 4px', textAlign: 'center' }}>Flock</h1>
         <p style={{ fontSize: '13px', color: colors.navyMid, margin: '0 0 28px', textAlign: 'center', fontWeight: '500' }}>Social Coordination Simplified</p>
 
         {/* Mode Cards */}
@@ -1163,12 +1129,9 @@ const FlockApp = () => {
       {/* Header */}
       <div style={{ padding: '16px', paddingBottom: '20px', background: `linear-gradient(135deg, ${colors.navy} 0%, ${colors.navyLight} 50%, ${colors.navyMid} 100%)`, flexShrink: 0 }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-            <FlockLogo size="small" showText={false} color="white" />
-            <div>
-              <p style={{ fontSize: '10px', color: 'rgba(255,255,255,0.6)', margin: 0, letterSpacing: '0.5px' }}>Good evening</p>
-              <h1 style={{ fontSize: '20px', fontWeight: '900', color: 'white', margin: 0 }}>Hey, {profileName}</h1>
-            </div>
+          <div>
+            <p style={{ fontSize: '10px', color: 'rgba(255,255,255,0.6)', margin: 0, letterSpacing: '0.5px' }}>Good evening</p>
+            <h1 style={{ fontSize: '20px', fontWeight: '900', color: 'white', margin: 0 }}>Hey, {profileName}</h1>
           </div>
           <button onClick={() => setCurrentTab('profile')} style={{ position: 'relative', background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}>
             <div style={{ width: '40px', height: '40px', borderRadius: '20px', backgroundColor: 'rgba(255,255,255,0.2)', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden' }}>
