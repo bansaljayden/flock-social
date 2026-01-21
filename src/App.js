@@ -127,6 +127,13 @@ const FlockApp = () => {
   const [userMode, setUserMode] = useState(() => localStorage.getItem('flockUserMode') || null);
   const [showModeSelection, setShowModeSelection] = useState(!localStorage.getItem('flockUserMode'));
 
+  // Onboarding
+  const [hasCompletedOnboarding, setHasCompletedOnboarding] = useState(() => localStorage.getItem('flockOnboardingComplete') === 'true');
+  const [onboardingStep, setOnboardingStep] = useState(0);
+  const [onboardingName, setOnboardingName] = useState('');
+  const [onboardingVibes, setOnboardingVibes] = useState([]);
+  const [onboardingAnimating, setOnboardingAnimating] = useState(false);
+
   // Navigation
   const [currentTab, setCurrentTab] = useState('home');
   const [currentScreen, setCurrentScreen] = useState('main');
@@ -146,6 +153,37 @@ const FlockApp = () => {
   const [userXP, setUserXP] = useState(280);
   const [userLevel, setUserLevel] = useState(3);
   const [streak] = useState(5);
+
+  // Animations
+  const [activeTabAnimation, setActiveTabAnimation] = useState(null);
+  const [scrollY, setScrollY] = useState(0);
+  const [swipeState, setSwipeState] = useState({ id: null, x: 0, startX: 0 });
+
+  const handleScroll = useCallback((e) => {
+    setScrollY(e.target.scrollTop);
+  }, []);
+
+  // Swipe gesture handlers
+  const handleTouchStart = useCallback((id, e) => {
+    setSwipeState({ id, x: 0, startX: e.touches[0].clientX });
+  }, []);
+
+  const handleTouchMove = useCallback((id, e) => {
+    if (swipeState.id !== id) return;
+    const diff = e.touches[0].clientX - swipeState.startX;
+    if (diff > 0) { // Only allow right swipe
+      setSwipeState(prev => ({ ...prev, x: Math.min(diff, 80) }));
+    }
+  }, [swipeState.id, swipeState.startX]);
+
+  const handleTouchEnd = useCallback((id, message, e) => {
+    if (swipeState.id !== id) return;
+    if (swipeState.x > 50) {
+      // Trigger reply
+      setReplyingTo(message);
+    }
+    setSwipeState({ id: null, x: 0, startX: 0 });
+  }, [swipeState.id, swipeState.x]);
 
   const addXP = useCallback((amount) => {
     setUserXP(prev => {
@@ -578,6 +616,15 @@ const FlockApp = () => {
     layers: (color = 'currentColor', size = 18) => <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="12 2 2 7 12 12 22 7 12 2"></polygon><polyline points="2 17 12 22 22 17"></polyline><polyline points="2 12 12 17 22 12"></polyline></svg>,
     eye: (color = 'currentColor', size = 18) => <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0z"></path><path d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"></path></svg>,
     chevronRight: (color = 'currentColor', size = 18) => <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 5l7 7-7 7"></path></svg>,
+    beer: (color = 'currentColor', size = 18) => <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 11h1a3 3 0 0 1 0 6h-1"></path><path d="M9 12v6"></path><path d="M13 12v6"></path><path d="M14 7.5c-1 0-1.44.5-3 .5s-2-.5-3-.5-1.72.5-2.5.5a2.5 2.5 0 0 1 0-5c.78 0 1.57.5 2.5.5S9.44 2.5 11 2.5s2 .5 3 .5 1.72-.5 2.5-.5a2.5 2.5 0 0 1 0 5c-.78 0-1.5-.5-2.5-.5Z"></path><path d="M5 8v12a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2V8"></path></svg>,
+    wine: (color = 'currentColor', size = 18) => <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M8 22h8"></path><path d="M12 11v11"></path><path d="M5 3l7 8 7-8"></path><path d="M5 3v5c0 2.4 2.8 5 7 5s7-2.6 7-5V3"></path></svg>,
+    laugh: (color = 'currentColor', size = 18) => <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"></circle><path d="M8 14s1.5 2 4 2 4-2 4-2"></path><line x1="9" y1="9" x2="9.01" y2="9"></line><line x1="15" y1="9" x2="15.01" y2="9"></line></svg>,
+    gamepad: (color = 'currentColor', size = 18) => <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="6" y1="12" x2="10" y2="12"></line><line x1="8" y1="10" x2="8" y2="14"></line><line x1="15" y1="13" x2="15.01" y2="13"></line><line x1="18" y1="11" x2="18.01" y2="11"></line><rect x="2" y="6" width="20" height="12" rx="2"></rect></svg>,
+    palette: (color = 'currentColor', size = 18) => <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="13.5" cy="6.5" r="1.5"></circle><circle cx="17.5" cy="10.5" r="1.5"></circle><circle cx="8.5" cy="7.5" r="1.5"></circle><circle cx="6.5" cy="12.5" r="1.5"></circle><path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.926 0 1.648-.746 1.648-1.688 0-.437-.18-.835-.437-1.125-.29-.289-.438-.652-.438-1.125a1.64 1.64 0 0 1 1.668-1.668h1.996c3.051 0 5.555-2.503 5.555-5.555C21.965 6.012 17.461 2 12 2z"></path></svg>,
+    coffee: (color = 'currentColor', size = 18) => <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 8h1a4 4 0 1 1 0 8h-1"></path><path d="M3 8h14v9a4 4 0 0 1-4 4H7a4 4 0 0 1-4-4Z"></path><line x1="6" y1="2" x2="6" y2="4"></line><line x1="10" y1="2" x2="10" y2="4"></line><line x1="14" y1="2" x2="14" y2="4"></line></svg>,
+    partyPopper: (color = 'currentColor', size = 18) => <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M5.8 11.3 2 22l10.7-3.79"></path><path d="M4 3h.01"></path><path d="M22 8h.01"></path><path d="M15 2h.01"></path><path d="M22 20h.01"></path><path d="m22 2-2.24.75a2.9 2.9 0 0 0-1.96 3.12v0c.1.86-.57 1.63-1.45 1.63h-.38c-.86 0-1.6.6-1.76 1.44L14 10"></path><path d="m22 13-.82-.33c-.86-.34-1.82.2-1.98 1.11v0c-.11.7-.72 1.22-1.43 1.22H17"></path><path d="m11 2 .33.82c.34.86-.2 1.82-1.11 1.98v0C9.52 4.9 9 5.52 9 6.23V7"></path><path d="M11 13c1.93 1.93 2.83 4.17 2 5-.83.83-3.07-.07-5-2-1.93-1.93-2.83-4.17-2-5 .83-.83 3.07.07 5 2Z"></path></svg>,
+    externalLink: (color = 'currentColor', size = 18) => <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path><polyline points="15 3 21 3 21 9"></polyline><line x1="10" y1="14" x2="21" y2="3"></line></svg>,
+    fileText: (color = 'currentColor', size = 18) => <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg>,
   };
 
   // Add reaction to message
@@ -651,6 +698,16 @@ const FlockApp = () => {
     // Hide bottom nav for admin and venue modes
     if (userMode === 'admin' || userMode === 'venue') return null;
 
+    const handleTabClick = (tabId) => {
+      setActiveTabAnimation(tabId);
+      setTimeout(() => setActiveTabAnimation(null), 400);
+      setCurrentTab(tabId);
+      setCurrentScreen('main');
+      setProfileScreen('main');
+      setActiveVenue(null);
+      setShowConnectPanel(false);
+    };
+
     return (
       <div style={{ ...styles.bottomNav, boxShadow: '0 -4px 20px rgba(0,0,0,0.05)' }}>
         {[
@@ -660,10 +717,12 @@ const FlockApp = () => {
           { id: 'chat', label: 'Messages' },
           { id: 'profile', label: 'You' },
         ].map(t => (
-          <button key={t.id} onClick={() => { setCurrentTab(t.id); setCurrentScreen('main'); setProfileScreen('main'); setActiveVenue(null); setShowConnectPanel(false); }}
+          <button key={t.id} onClick={() => handleTabClick(t.id)}
             style={{ ...styles.navItem, backgroundColor: currentTab === t.id ? colors.cream : 'transparent', transition: 'all 0.2s' }}>
-            <NavIcon id={t.id} active={currentTab === t.id} />
-            <span style={{ fontSize: '10px', fontWeight: '600', color: currentTab === t.id ? colors.navy : '#9ca3af', marginTop: '2px' }}>{t.label}</span>
+            <div className={activeTabAnimation === t.id ? 'tab-bounce' : ''} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+              <NavIcon id={t.id} active={currentTab === t.id} />
+              <span style={{ fontSize: '10px', fontWeight: '600', color: currentTab === t.id ? colors.navy : '#9ca3af', marginTop: '2px' }}>{t.label}</span>
+            </div>
           </button>
         ))}
       </div>
@@ -686,15 +745,18 @@ const FlockApp = () => {
 
   // Toast
   const Toast = () => toast && (
-    <div style={{ position: 'fixed', top: '40px', left: '50%', transform: 'translateX(-50%)', zIndex: 60, padding: '10px 20px', borderRadius: '20px', backgroundColor: toast.type === 'success' ? colors.teal : colors.red, color: 'white', fontSize: '14px', fontWeight: '600', boxShadow: '0 4px 12px rgba(0,0,0,0.2)' }}>
-      {toast.message}
+    <div style={{ position: 'fixed', top: '40px', left: '50%', transform: 'translateX(-50%)', zIndex: 60 }}>
+      <div className="toast-animate" style={{ padding: '12px 24px', borderRadius: '24px', backgroundColor: toast.type === 'success' ? colors.teal : colors.red, color: 'white', fontSize: '14px', fontWeight: '600', boxShadow: '0 8px 24px rgba(0,0,0,0.25)', backdropFilter: 'blur(10px)', whiteSpace: 'nowrap' }}>
+        {toast.message}
+      </div>
     </div>
   );
 
+
   // SOS Modal
   const SOSModal = () => showSOS && (
-    <div style={{ position: 'absolute', inset: 0, backgroundColor: 'rgba(0,0,0,0.8)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 50, padding: '16px' }}>
-      <div style={{ backgroundColor: 'white', borderRadius: '24px', padding: '20px', width: '100%', maxWidth: '280px' }}>
+    <div className="modal-backdrop" style={{ position: 'absolute', inset: 0, backgroundColor: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(8px)', WebkitBackdropFilter: 'blur(8px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 50, padding: '16px' }}>
+      <div className="modal-content" style={{ backgroundColor: 'white', borderRadius: '24px', padding: '20px', width: '100%', maxWidth: '280px' }}>
         <div style={{ textAlign: 'center', marginBottom: '16px' }}>
           <div style={{ width: '64px', height: '64px', borderRadius: '32px', backgroundColor: '#fee2e2', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 8px' }}>{Icons.bell(colors.red, 32)}</div>
           <h2 style={{ fontSize: '20px', fontWeight: '900', color: colors.navy, margin: 0 }}>Emergency</h2>
@@ -710,8 +772,8 @@ const FlockApp = () => {
 
   // Check-in Modal
   const CheckinModal = () => showCheckin && (
-    <div style={{ position: 'absolute', inset: 0, backgroundColor: 'rgba(0,0,0,0.8)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 50, padding: '16px' }}>
-      <div style={{ backgroundColor: 'white', borderRadius: '24px', padding: '20px', width: '100%', maxWidth: '280px' }}>
+    <div className="modal-backdrop" style={{ position: 'absolute', inset: 0, backgroundColor: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(8px)', WebkitBackdropFilter: 'blur(8px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 50, padding: '16px' }}>
+      <div className="modal-content" style={{ backgroundColor: 'white', borderRadius: '24px', padding: '20px', width: '100%', maxWidth: '280px' }}>
         <div style={{ textAlign: 'center', marginBottom: '16px' }}>
           <div style={{ width: '64px', height: '64px', borderRadius: '32px', backgroundColor: colors.cream, display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 8px' }}>{Icons.check(colors.teal, 32)}</div>
           <h2 style={{ fontSize: '20px', fontWeight: '900', color: colors.navy, margin: 0 }}>Check-in</h2>
@@ -876,7 +938,7 @@ const FlockApp = () => {
         </div>
       </div>
 
-      <div style={{ flex: 1, padding: '16px', overflowY: 'auto', background: `linear-gradient(180deg, ${colors.cream} 0%, rgba(245,240,230,0.8) 100%)` }}>
+      <div onScroll={() => document.activeElement?.blur()} style={{ flex: 1, padding: '16px', overflowY: 'auto', background: `linear-gradient(180deg, ${colors.cream} 0%, rgba(245,240,230,0.8) 100%)` }}>
         {selectedDm.messages.length === 0 ? (
           <div style={{ textAlign: 'center', padding: '40px 20px' }}>
             <div style={{ width: '60px', height: '60px', borderRadius: '30px', background: 'linear-gradient(135deg, #4F46E5, #7C3AED)', margin: '0 auto 12px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '28px' }}>{selectedDm.avatar}</div>
@@ -893,7 +955,7 @@ const FlockApp = () => {
                 <div style={{ borderRadius: '16px', padding: '10px 14px', fontSize: '13px', backgroundColor: m.sender === 'You' ? colors.navy : 'white', color: m.sender === 'You' ? 'white' : colors.navy, borderTopRightRadius: m.sender === 'You' ? '4px' : '16px', borderTopLeftRadius: m.sender === 'You' ? '16px' : '4px', boxShadow: '0 1px 3px rgba(0,0,0,0.1)' }}>
                   {m.text}
                 </div>
-                <p style={{ fontSize: '9px', color: '#9ca3af', margin: '4px 4px 0', textAlign: m.sender === 'You' ? 'right' : 'left' }}>{m.time}</p>
+                <p style={{ fontSize: '9px', color: '#9ca3af', margin: '4px 4px 0', textAlign: m.sender === 'You' ? 'right' : 'left' }}>{getRelativeTime(m.time)}</p>
               </div>
             </div>
           ))
@@ -1124,10 +1186,21 @@ const FlockApp = () => {
   );
 
   // HOME SCREEN
-  const HomeScreen = () => (
+  const HomeScreen = () => {
+    const headerScale = Math.max(1 - scrollY * 0.002, 0.95);
+
+    return (
     <div key="home-screen-container" style={{ display: 'flex', flexDirection: 'column', height: '100%', backgroundColor: colors.cream }}>
-      {/* Header */}
-      <div style={{ padding: '16px', paddingBottom: '20px', background: `linear-gradient(135deg, ${colors.navy} 0%, ${colors.navyLight} 50%, ${colors.navyMid} 100%)`, flexShrink: 0 }}>
+      {/* Header with Parallax */}
+      <div style={{
+        padding: '16px',
+        paddingBottom: '20px',
+        background: `linear-gradient(135deg, ${colors.navy} 0%, ${colors.navyLight} 50%, ${colors.navyMid} 100%)`,
+        flexShrink: 0,
+        transform: `scale(${headerScale})`,
+        transformOrigin: 'top center',
+        transition: 'transform 0.1s ease-out'
+      }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
           <div>
             <p style={{ fontSize: '10px', color: 'rgba(255,255,255,0.6)', margin: 0, letterSpacing: '0.5px' }}>Good evening</p>
@@ -1154,15 +1227,15 @@ const FlockApp = () => {
           <div style={{ flex: 1, borderRadius: '12px', padding: '10px', backgroundColor: 'rgba(255,255,255,0.1)' }}>
             <p style={{ fontSize: '8px', color: 'rgba(255,255,255,0.5)', margin: 0, textTransform: 'uppercase' }}>XP</p>
             <p style={{ fontSize: '17px', fontWeight: '700', color: 'white', margin: '2px 0 0' }}>{userXP}</p>
-            <div style={{ width: '100%', height: '3px', backgroundColor: 'rgba(255,255,255,0.2)', borderRadius: '2px', marginTop: '4px' }}>
-              <div style={{ height: '100%', width: `${userXP % 100}%`, backgroundColor: colors.amber, borderRadius: '2px' }} />
+            <div style={{ width: '100%', height: '4px', backgroundColor: 'rgba(255,255,255,0.2)', borderRadius: '2px', marginTop: '4px', overflow: 'hidden' }}>
+              <div style={{ height: '100%', width: `${userXP % 100}%`, backgroundColor: colors.amber, borderRadius: '2px', transition: 'width 0.8s cubic-bezier(0.34, 1.56, 0.64, 1)', boxShadow: '0 0 8px rgba(245,158,11,0.5)' }} />
             </div>
           </div>
         </div>
       </div>
 
       {/* Scrollable Content */}
-      <div style={{ flex: 1, padding: '12px', overflowY: 'auto', marginTop: '-8px' }}>
+      <div onScroll={handleScroll} style={{ flex: 1, padding: '12px', overflowY: 'auto', marginTop: '-8px' }}>
         {/* Stories */}
         <div style={{ display: 'flex', gap: '12px', marginBottom: '12px', overflowX: 'auto', paddingBottom: '4px' }}>
           {stories.map(s => (
@@ -1196,7 +1269,7 @@ const FlockApp = () => {
         {/* Flocks */}
         <h2 style={{ fontSize: '12px', fontWeight: 'bold', color: colors.navy, margin: '0 0 8px' }}>Your Flocks</h2>
         {flocks.map((f, idx) => (
-          <button key={f.id} onClick={() => { setSelectedFlockId(f.id); setCurrentScreen('detail'); }} style={{ width: '100%', textAlign: 'left', ...styles.card, border: 'none', cursor: 'pointer', padding: idx === 0 ? '18px' : '12px', marginBottom: idx === 0 ? '14px' : '10px', borderLeft: idx === 0 ? `4px solid ${colors.teal}` : 'none' }}>
+          <button key={f.id} className={`card-animate card-animate-${Math.min(idx + 1, 5)}`} onClick={() => { setSelectedFlockId(f.id); setCurrentScreen('detail'); }} style={{ width: '100%', textAlign: 'left', ...styles.card, border: 'none', cursor: 'pointer', padding: idx === 0 ? '18px' : '12px', marginBottom: idx === 0 ? '14px' : '10px', borderLeft: idx === 0 ? `4px solid ${colors.teal}` : 'none' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: idx === 0 ? '10px' : '6px' }}>
               <div>
                 <h3 style={{ fontSize: idx === 0 ? '16px' : '14px', fontWeight: idx === 0 ? '800' : 'bold', color: colors.navy, margin: 0 }}>{f.name}</h3>
@@ -1229,6 +1302,7 @@ const FlockApp = () => {
       <BottomNav />
     </div>
   );
+  };
 
   // CREATE SCREEN
   const CreateScreen = () => {
@@ -1909,9 +1983,29 @@ const FlockApp = () => {
           <button onClick={() => setShowChatPool(true)} style={{ width: '32px', height: '32px', borderRadius: '16px', border: 'none', backgroundColor: colors.cream, color: colors.navy, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.dollar(colors.navy, 16)}</button>
         </div>
 
-        <div style={{ flex: 1, padding: '16px', overflowY: 'auto', background: `linear-gradient(180deg, ${colors.cream} 0%, rgba(245,240,230,0.8) 100%)` }}>
+        <div onScroll={() => document.activeElement?.blur()} style={{ flex: 1, padding: '16px', overflowY: 'auto', background: `linear-gradient(180deg, ${colors.cream} 0%, rgba(245,240,230,0.8) 100%)` }}>
           {flock.messages.map((m, idx) => (
-            <div key={m.id} style={{ display: 'flex', gap: '10px', marginBottom: '16px', flexDirection: m.sender === 'You' ? 'row-reverse' : 'row', position: 'relative' }}>
+            <div
+              key={m.id}
+              onTouchStart={(e) => handleTouchStart(m.id, e)}
+              onTouchMove={(e) => handleTouchMove(m.id, e)}
+              onTouchEnd={(e) => handleTouchEnd(m.id, m, e)}
+              style={{
+                display: 'flex',
+                gap: '10px',
+                marginBottom: '16px',
+                flexDirection: m.sender === 'You' ? 'row-reverse' : 'row',
+                position: 'relative',
+                transform: swipeState.id === m.id ? `translateX(${swipeState.x}px)` : 'translateX(0)',
+                transition: swipeState.id === m.id ? 'none' : 'transform 0.2s ease-out'
+              }}
+            >
+              {/* Swipe hint icon */}
+              {swipeState.id === m.id && swipeState.x > 20 && (
+                <div style={{ position: 'absolute', left: '-30px', top: '50%', transform: 'translateY(-50%)', opacity: Math.min(swipeState.x / 50, 1) }}>
+                  {Icons.reply(colors.navy, 20)}
+                </div>
+              )}
               <div style={{ position: 'relative', flexShrink: 0 }}>
                 <div style={{ width: '34px', height: '34px', borderRadius: '17px', background: m.sender === 'You' ? `linear-gradient(135deg, ${colors.navy}, ${colors.navyMid})` : 'white', border: m.sender === 'You' ? 'none' : '2px solid rgba(13,40,71,0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '11px', fontWeight: '700', color: m.sender === 'You' ? 'white' : colors.navy, boxShadow: m.sender === 'You' ? '0 3px 10px rgba(13,40,71,0.25)' : '0 2px 6px rgba(0,0,0,0.06)' }}>
                   {m.sender[0]}
@@ -1940,20 +2034,20 @@ const FlockApp = () => {
                 )}
                 {m.reactions.length > 0 && (
                   <div style={{ display: 'flex', gap: '4px', marginTop: '6px' }}>
-                    {m.reactions.map((r, i) => <span key={i} style={{ fontSize: '14px', backgroundColor: 'white', borderRadius: '12px', padding: '3px 7px', boxShadow: '0 2px 6px rgba(0,0,0,0.08)', border: '1px solid rgba(0,0,0,0.05)' }}>{r}</span>)}
+                    {m.reactions.map((r, i) => <span key={i} className="reaction-pop" style={{ fontSize: '14px', backgroundColor: 'white', borderRadius: '12px', padding: '3px 7px', boxShadow: '0 2px 6px rgba(0,0,0,0.08)', border: '1px solid rgba(0,0,0,0.05)', display: 'inline-block' }}>{r}</span>)}
                   </div>
                 )}
               </div>
             </div>
           ))}
           {isTyping && (
-            <div style={{ display: 'flex', gap: '10px', marginBottom: '16px' }}>
+            <div style={{ display: 'flex', gap: '10px', marginBottom: '16px', animation: 'fadeIn 0.3s ease-out' }}>
               <div style={{ width: '34px', height: '34px', borderRadius: '17px', backgroundColor: 'white', border: '2px solid rgba(13,40,71,0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '11px', fontWeight: '700', color: colors.navy }}>A</div>
               <div style={{ padding: '12px 16px', backgroundColor: 'white', borderRadius: '18px', borderBottomLeftRadius: '4px', boxShadow: '0 2px 10px rgba(0,0,0,0.05)' }}>
-                <div style={{ display: 'flex', gap: '4px' }}>
-                  <div style={{ width: '8px', height: '8px', borderRadius: '4px', backgroundColor: '#9ca3af', animation: 'bounce 1.4s ease-in-out infinite' }} />
-                  <div style={{ width: '8px', height: '8px', borderRadius: '4px', backgroundColor: '#9ca3af', animation: 'bounce 1.4s ease-in-out 0.2s infinite' }} />
-                  <div style={{ width: '8px', height: '8px', borderRadius: '4px', backgroundColor: '#9ca3af', animation: 'bounce 1.4s ease-in-out 0.4s infinite' }} />
+                <div style={{ display: 'flex', gap: '5px', alignItems: 'center' }}>
+                  <div style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: colors.navy, animation: 'typingDot 1.4s ease-in-out infinite' }} />
+                  <div style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: colors.navy, animation: 'typingDot 1.4s ease-in-out 0.2s infinite' }} />
+                  <div style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: colors.navy, animation: 'typingDot 1.4s ease-in-out 0.4s infinite' }} />
                 </div>
               </div>
             </div>
@@ -2044,7 +2138,7 @@ const FlockApp = () => {
                 </span>
               </div>
               <div style={{ width: '100%', height: '8px', backgroundColor: '#e5e7eb', borderRadius: '4px', marginBottom: '8px', overflow: 'hidden' }}>
-                <div style={{ height: '100%', width: `${(flock.cashPool.collected / flock.cashPool.target) * 100}%`, background: `linear-gradient(90deg, ${colors.navy}, ${colors.navyMid})`, borderRadius: '4px' }} />
+                <div style={{ height: '100%', width: `${(flock.cashPool.collected / flock.cashPool.target) * 100}%`, background: `linear-gradient(90deg, ${colors.navy}, ${colors.navyMid})`, borderRadius: '4px', transition: 'width 0.8s cubic-bezier(0.34, 1.56, 0.64, 1)', boxShadow: flock.cashPool.collected >= flock.cashPool.target ? '0 0 12px rgba(13,40,71,0.4)' : 'none' }} />
               </div>
               {!flock.cashPool.paid.includes('You') ? (
                 <button onClick={() => makePoolPayment(selectedFlockId)} style={{ ...styles.gradientButton, padding: '8px' }}>Pay ${flock.cashPool.perPerson}</button>
@@ -2243,8 +2337,8 @@ const FlockApp = () => {
               <span style={{ color: 'rgba(255,255,255,0.6)', fontSize: '10px' }}>Level {userLevel}</span>
               <span style={{ color: 'white', fontWeight: 'bold', fontSize: '12px' }}>{userXP} XP</span>
             </div>
-            <div style={{ width: '100%', height: '6px', backgroundColor: 'rgba(255,255,255,0.2)', borderRadius: '3px' }}>
-              <div style={{ height: '100%', width: `${userXP % 100}%`, backgroundColor: colors.amber, borderRadius: '3px' }} />
+            <div style={{ width: '100%', height: '6px', backgroundColor: 'rgba(255,255,255,0.2)', borderRadius: '3px', overflow: 'hidden' }}>
+              <div style={{ height: '100%', width: `${userXP % 100}%`, backgroundColor: colors.amber, borderRadius: '3px', transition: 'width 0.8s cubic-bezier(0.34, 1.56, 0.64, 1)', boxShadow: '0 0 10px rgba(245,158,11,0.5)' }} />
             </div>
           </div>
         </div>
@@ -2342,6 +2436,80 @@ const FlockApp = () => {
               {Icons.repeat('#EF4444', 12)} Switch Mode (Current: {userMode === 'user' ? 'User' : userMode === 'venue' ? 'Venue' : 'Admin'})
             </button>
           )}
+
+          {/* Replay Onboarding Button */}
+          {userMode === 'user' && (
+            <button
+              onClick={() => {
+                localStorage.removeItem('flockOnboardingComplete');
+                setHasCompletedOnboarding(false);
+                setOnboardingStep(0);
+                setOnboardingName('');
+                setOnboardingVibes([]);
+              }}
+              style={{
+                marginTop: '8px',
+                padding: '8px 12px',
+                borderRadius: '8px',
+                border: `1px solid ${colors.teal}`,
+                backgroundColor: 'rgba(20,184,166,0.1)',
+                color: colors.teal,
+                fontSize: '10px',
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '4px',
+                justifyContent: 'center'
+              }}
+            >
+              {Icons.repeat(colors.teal, 12)} Replay Onboarding
+            </button>
+          )}
+
+          {/* Legal Links */}
+          <div style={{ marginTop: '24px', paddingTop: '16px', borderTop: `1px solid ${colors.creamDark}` }}>
+            <p style={{ fontSize: '10px', color: '#9ca3af', marginBottom: '12px', textAlign: 'center', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Legal</p>
+            <div style={{ display: 'flex', gap: '8px', justifyContent: 'center' }}>
+              <button
+                onClick={() => window.open('https://flock.app/terms', '_blank')}
+                style={{
+                  padding: '10px 16px',
+                  borderRadius: '10px',
+                  border: `1px solid ${colors.creamDark}`,
+                  backgroundColor: 'white',
+                  color: colors.navy,
+                  fontSize: '12px',
+                  fontWeight: '600',
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px'
+                }}
+              >
+                {Icons.fileText(colors.navy, 14)} Terms of Service
+              </button>
+              <button
+                onClick={() => window.open('https://flock.app/privacy', '_blank')}
+                style={{
+                  padding: '10px 16px',
+                  borderRadius: '10px',
+                  border: `1px solid ${colors.creamDark}`,
+                  backgroundColor: 'white',
+                  color: colors.navy,
+                  fontSize: '12px',
+                  fontWeight: '600',
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px'
+                }}
+              >
+                {Icons.shield(colors.navy, 14)} Privacy Policy
+              </button>
+            </div>
+            <p style={{ fontSize: '10px', color: '#9ca3af', marginTop: '16px', textAlign: 'center' }}>Flock v1.0.0</p>
+          </div>
+
         </div>
 
         <SafetyButton />
@@ -3706,10 +3874,326 @@ const FlockApp = () => {
     );
   };
 
+  // ONBOARDING SCREEN
+  const vibeOptions = [
+    { icon: Icons.cocktail, label: 'Cocktails' },
+    { icon: Icons.music, label: 'Live Music' },
+    { icon: Icons.beer, label: 'Beer & Brews' },
+    { icon: Icons.sports, label: 'Sports' },
+    { icon: Icons.partyPopper, label: 'Dancing' },
+    { icon: Icons.mic, label: 'Karaoke' },
+    { icon: Icons.laugh, label: 'Comedy' },
+    { icon: Icons.wine, label: 'Wine' },
+    { icon: Icons.gamepad, label: 'Gaming' },
+    { icon: Icons.palette, label: 'Art & Culture' },
+    { icon: Icons.pizza, label: 'Food' },
+    { icon: Icons.coffee, label: 'Chill Vibes' },
+  ];
+
+  const completeOnboarding = () => {
+    setOnboardingAnimating(true);
+    setTimeout(() => {
+      localStorage.setItem('flockOnboardingComplete', 'true');
+      if (onboardingName.trim()) {
+        setProfileName(onboardingName.trim());
+      }
+      if (onboardingVibes.length > 0) {
+        setUserInterests(onboardingVibes);
+      }
+      setHasCompletedOnboarding(true);
+      setOnboardingAnimating(false);
+      showToast(`Welcome to the flock, ${onboardingName || 'friend'}!`);
+    }, 1500);
+  };
+
+  const nextOnboardingStep = () => {
+    setOnboardingAnimating(true);
+    setTimeout(() => {
+      setOnboardingStep(prev => prev + 1);
+      setOnboardingAnimating(false);
+    }, 300);
+  };
+
+  const OnboardingScreen = () => (
+    <div style={{
+      display: 'flex',
+      flexDirection: 'column',
+      height: '100%',
+      background: `linear-gradient(180deg, ${colors.cream} 0%, white 100%)`,
+      overflow: 'hidden',
+      position: 'relative'
+    }}>
+      {/* Decorative background circles */}
+      <div style={{ position: 'absolute', top: '-100px', right: '-100px', width: '250px', height: '250px', borderRadius: '50%', background: `linear-gradient(135deg, ${colors.navy}10, ${colors.navyMid}05)`, pointerEvents: 'none' }} />
+      <div style={{ position: 'absolute', bottom: '-50px', left: '-50px', width: '150px', height: '150px', borderRadius: '50%', background: `linear-gradient(135deg, ${colors.teal}10, ${colors.teal}05)`, pointerEvents: 'none' }} />
+
+      {/* Progress indicator */}
+      <div style={{ padding: '24px 24px 0', flexShrink: 0, position: 'relative', zIndex: 1 }}>
+        <div style={{ display: 'flex', gap: '8px' }}>
+          {[0, 1, 2, 3].map(step => (
+            <div
+              key={step}
+              style={{
+                flex: 1,
+                height: '4px',
+                borderRadius: '4px',
+                backgroundColor: step <= onboardingStep ? colors.navy : 'rgba(13,40,71,0.1)',
+                transition: 'all 0.4s cubic-bezier(0.34, 1.56, 0.64, 1)',
+                transform: step <= onboardingStep ? 'scaleY(1.2)' : 'scaleY(1)'
+              }}
+            />
+          ))}
+        </div>
+        <p style={{ fontSize: '11px', color: '#9ca3af', marginTop: '8px', textAlign: 'center' }}>Step {onboardingStep + 1} of 4</p>
+      </div>
+
+      {/* Content */}
+      <div style={{
+        flex: 1,
+        display: 'flex',
+        flexDirection: 'column',
+        padding: '20px 24px 24px',
+        opacity: onboardingAnimating ? 0 : 1,
+        transform: onboardingAnimating ? 'translateX(20px)' : 'translateX(0)',
+        transition: 'opacity 0.3s, transform 0.3s',
+        position: 'relative',
+        zIndex: 1
+      }}>
+        {/* Step 0: Welcome */}
+        {onboardingStep === 0 && (
+          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', textAlign: 'center' }}>
+            <div style={{
+              width: '120px',
+              height: '120px',
+              borderRadius: '36px',
+              background: `linear-gradient(135deg, ${colors.navy} 0%, ${colors.navyMid} 100%)`,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              marginBottom: '32px',
+              boxShadow: '0 20px 60px rgba(13,40,71,0.35)',
+              position: 'relative'
+            }}>
+              {Icons.users('white', 56)}
+              <div style={{ position: 'absolute', top: '-8px', right: '-8px', width: '32px', height: '32px', borderRadius: '50%', backgroundColor: colors.teal, display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 4px 12px rgba(20,184,166,0.4)' }}>
+                {Icons.sparkles('white', 16)}
+              </div>
+            </div>
+            <h1 style={{ fontSize: '32px', fontWeight: '900', color: colors.navy, margin: '0 0 12px', letterSpacing: '-0.5px' }}>
+              Welcome to Flock
+            </h1>
+            <p style={{ fontSize: '16px', color: colors.navyMid, margin: '0 0 8px', lineHeight: 1.5, fontWeight: '500' }}>
+              Where plans come together.
+            </p>
+            <p style={{ fontSize: '14px', color: '#6b7280', margin: '0 0 48px', lineHeight: 1.6, maxWidth: '260px' }}>
+              Coordinate nights out, discover venues, and rally your crew in seconds.
+            </p>
+            <button
+              onClick={nextOnboardingStep}
+              style={{ ...styles.gradientButton, maxWidth: '280px', padding: '16px 32px', fontSize: '15px' }}
+            >
+              Get Started →
+            </button>
+          </div>
+        )}
+
+        {/* Step 1: Name */}
+        {onboardingStep === 1 && (
+          <div style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '16px', marginTop: '20px', marginBottom: '32px' }}>
+              <div style={{ width: '56px', height: '56px', borderRadius: '16px', background: `linear-gradient(135deg, ${colors.navy}, ${colors.navyMid})`, display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 8px 24px rgba(13,40,71,0.25)' }}>
+                {Icons.user('white', 28)}
+              </div>
+              <div>
+                <h1 style={{ fontSize: '24px', fontWeight: '900', color: colors.navy, margin: '0 0 4px' }}>
+                  What's your name?
+                </h1>
+                <p style={{ fontSize: '13px', color: '#6b7280', margin: 0 }}>
+                  This is how friends will see you
+                </p>
+              </div>
+            </div>
+            <div style={{ position: 'relative', marginBottom: '12px' }}>
+              <input
+                type="text"
+                value={onboardingName}
+                onChange={(e) => setOnboardingName(e.target.value)}
+                placeholder="Enter your name"
+                style={{
+                  ...styles.input,
+                  fontSize: '18px',
+                  padding: '20px 24px',
+                  paddingLeft: '56px',
+                  borderRadius: '16px',
+                  border: `2px solid ${onboardingName.trim() ? colors.navy : colors.creamDark}`,
+                  transition: 'border-color 0.2s'
+                }}
+                autoFocus
+              />
+              <div style={{ position: 'absolute', left: '18px', top: '50%', transform: 'translateY(-50%)' }}>
+                {Icons.edit(onboardingName.trim() ? colors.navy : '#9ca3af', 20)}
+              </div>
+            </div>
+            <p style={{ fontSize: '12px', color: '#9ca3af', margin: '0 0 auto', paddingLeft: '4px' }}>
+              You can change this anytime in settings
+            </p>
+            <button
+              onClick={nextOnboardingStep}
+              disabled={!onboardingName.trim()}
+              style={{
+                ...styles.gradientButton,
+                padding: '16px 32px',
+                fontSize: '15px',
+                opacity: onboardingName.trim() ? 1 : 0.5,
+                cursor: onboardingName.trim() ? 'pointer' : 'not-allowed'
+              }}
+            >
+              Continue →
+            </button>
+          </div>
+        )}
+
+        {/* Step 2: Vibes */}
+        {onboardingStep === 2 && (
+          <div style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '16px', marginTop: '12px', marginBottom: '24px' }}>
+              <div style={{ width: '56px', height: '56px', borderRadius: '16px', background: `linear-gradient(135deg, ${colors.teal}, #0d9488)`, display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 8px 24px rgba(20,184,166,0.3)' }}>
+                {Icons.heart('white', 28)}
+              </div>
+              <div>
+                <h1 style={{ fontSize: '24px', fontWeight: '900', color: colors.navy, margin: '0 0 4px' }}>
+                  What's your vibe?
+                </h1>
+                <p style={{ fontSize: '13px', color: '#6b7280', margin: 0 }}>
+                  Pick what you're into
+                </p>
+              </div>
+            </div>
+            <div style={{
+              display: 'grid',
+              gridTemplateColumns: 'repeat(2, 1fr)',
+              gap: '10px',
+              flex: 1,
+              overflow: 'auto',
+              alignContent: 'start',
+              marginBottom: '12px',
+              paddingRight: '4px'
+            }}>
+              {vibeOptions.map(vibe => {
+                const isSelected = onboardingVibes.includes(vibe.label);
+                return (
+                  <button
+                    key={vibe.label}
+                    onClick={() => {
+                      if (isSelected) {
+                        setOnboardingVibes(prev => prev.filter(v => v !== vibe.label));
+                      } else {
+                        setOnboardingVibes(prev => [...prev, vibe.label]);
+                      }
+                    }}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '8px',
+                      padding: '12px 16px',
+                      borderRadius: '100px',
+                      border: `2px solid ${isSelected ? colors.navy : colors.creamDark}`,
+                      backgroundColor: isSelected ? colors.navy : 'white',
+                      color: isSelected ? 'white' : colors.navy,
+                      fontSize: '14px',
+                      fontWeight: '600',
+                      cursor: 'pointer',
+                      transition: 'all 0.2s',
+                      transform: isSelected ? 'scale(1.02)' : 'scale(1)'
+                    }}
+                  >
+                    <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{vibe.icon(isSelected ? 'white' : colors.navy, 18)}</span>
+                    {vibe.label}
+                  </button>
+                );
+              })}
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', marginBottom: '12px' }}>
+              <div style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: onboardingVibes.length > 0 ? colors.teal : '#d1d5db' }} />
+              <p style={{ fontSize: '13px', color: onboardingVibes.length > 0 ? colors.teal : '#9ca3af', margin: 0, fontWeight: '600' }}>
+                {onboardingVibes.length === 0
+                  ? 'Select at least one'
+                  : `${onboardingVibes.length} selected`}
+              </p>
+            </div>
+            <button
+              onClick={nextOnboardingStep}
+              disabled={onboardingVibes.length === 0}
+              style={{
+                ...styles.gradientButton,
+                padding: '16px 32px',
+                fontSize: '15px',
+                opacity: onboardingVibes.length > 0 ? 1 : 0.5,
+                cursor: onboardingVibes.length > 0 ? 'pointer' : 'not-allowed'
+              }}
+            >
+              Continue →
+            </button>
+          </div>
+        )}
+
+        {/* Step 3: All set */}
+        {onboardingStep === 3 && (
+          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', textAlign: 'center' }}>
+            <div style={{ position: 'relative', marginBottom: '32px' }}>
+              <div style={{
+                width: '120px',
+                height: '120px',
+                borderRadius: '50%',
+                background: 'linear-gradient(135deg, #22C55E, #16A34A)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                boxShadow: '0 20px 60px rgba(34,197,94,0.35)'
+              }}>
+                {Icons.check('white', 56)}
+              </div>
+              <div style={{ position: 'absolute', top: '-4px', right: '-4px', width: '36px', height: '36px', borderRadius: '50%', backgroundColor: colors.amber, display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 4px 12px rgba(245,158,11,0.4)' }}>
+                {Icons.sparkles('white', 18)}
+              </div>
+            </div>
+            <h1 style={{ fontSize: '28px', fontWeight: '900', color: colors.navy, margin: '0 0 8px', letterSpacing: '-0.5px' }}>
+              You're all set, {onboardingName || 'friend'}!
+            </h1>
+            <p style={{ fontSize: '16px', color: colors.navyMid, margin: '0 0 12px', lineHeight: 1.5, fontWeight: '500' }}>
+              Time to find your flock.
+            </p>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', justifyContent: 'center', marginBottom: '32px', maxWidth: '280px' }}>
+              {onboardingVibes.slice(0, 4).map(vibe => (
+                <span key={vibe} style={{ padding: '6px 12px', borderRadius: '20px', backgroundColor: 'rgba(13,40,71,0.08)', color: colors.navy, fontSize: '12px', fontWeight: '600' }}>{vibe}</span>
+              ))}
+              {onboardingVibes.length > 4 && <span style={{ padding: '6px 12px', borderRadius: '20px', backgroundColor: 'rgba(13,40,71,0.08)', color: colors.navy, fontSize: '12px', fontWeight: '600' }}>+{onboardingVibes.length - 4} more</span>}
+            </div>
+            <button
+              onClick={completeOnboarding}
+              disabled={onboardingAnimating}
+              style={{
+                ...styles.gradientButton,
+                maxWidth: '280px',
+                padding: '16px 32px',
+                fontSize: '15px',
+                opacity: onboardingAnimating ? 0.7 : 1
+              }}
+            >
+              {onboardingAnimating ? 'Getting things ready...' : "Let's Flock →"}
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+
   // RENDER - Call functions directly instead of JSX to prevent component recreation
   const renderScreen = () => {
     // Show welcome screen for mode selection
     if (showModeSelection) return <WelcomeScreen />;
+    // Show onboarding for new users
+    if (userMode === 'user' && !hasCompletedOnboarding) return <OnboardingScreen />;
     if (currentScreen === 'create') return CreateScreen();
     if (currentScreen === 'join') return JoinScreen();
     if (currentScreen === 'detail') return FlockDetailScreen();
@@ -3765,6 +4249,120 @@ const FlockApp = () => {
           0%, 100% { box-shadow: 0 0 5px rgba(13,40,71,0.3); }
           50% { box-shadow: 0 0 20px rgba(13,40,71,0.5); }
         }
+        @keyframes tabBounce {
+          0% { transform: scale(1); }
+          25% { transform: scale(0.9); }
+          50% { transform: scale(1.15); }
+          75% { transform: scale(0.95); }
+          100% { transform: scale(1); }
+        }
+        @keyframes cardSlideIn {
+          from { opacity: 0; transform: translateY(20px) scale(0.95); }
+          to { opacity: 1; transform: translateY(0) scale(1); }
+        }
+        @keyframes buttonPress {
+          0% { transform: scale(1); }
+          50% { transform: scale(0.95); }
+          100% { transform: scale(1); }
+        }
+        @keyframes ripple {
+          0% { transform: scale(0); opacity: 0.5; }
+          100% { transform: scale(4); opacity: 0; }
+        }
+        @keyframes reactionPop {
+          0% { transform: scale(0); }
+          50% { transform: scale(1.4); }
+          75% { transform: scale(0.9); }
+          100% { transform: scale(1); }
+        }
+        @keyframes typingDot {
+          0%, 60%, 100% { transform: translateY(0); }
+          30% { transform: translateY(-6px); }
+        }
+        @keyframes toastSlideIn {
+          from { transform: translateY(-100%) scale(0.9); opacity: 0; }
+          to { transform: translateY(0) scale(1); opacity: 1; }
+        }
+        @keyframes toastSlideOut {
+          from { transform: translateY(0) scale(1); opacity: 1; }
+          to { transform: translateY(-100%) scale(0.9); opacity: 0; }
+        }
+        @keyframes modalBlurIn {
+          from { backdrop-filter: blur(0px); background-color: rgba(0,0,0,0); }
+          to { backdrop-filter: blur(8px); background-color: rgba(0,0,0,0.5); }
+        }
+        @keyframes modalSlideIn {
+          from { transform: translateY(50px) scale(0.95); opacity: 0; }
+          to { transform: translateY(0) scale(1); opacity: 1; }
+        }
+        @keyframes progressFill {
+          from { transform: scaleX(0); }
+          to { transform: scaleX(1); }
+        }
+        @keyframes screenSlideIn {
+          from { opacity: 0; transform: translateX(30px); }
+          to { opacity: 1; transform: translateX(0); }
+        }
+        @keyframes screenSlideOut {
+          from { opacity: 1; transform: translateX(0); }
+          to { opacity: 0; transform: translateX(-30px); }
+        }
+        @keyframes pullRefresh {
+          0% { transform: rotate(0deg); }
+          100% { transform: rotate(360deg); }
+        }
+        @keyframes swipeHint {
+          0%, 100% { transform: translateX(0); }
+          50% { transform: translateX(-10px); }
+        }
+        @keyframes levelUp {
+          0% { transform: scale(1); }
+          25% { transform: scale(1.2); }
+          50% { transform: scale(1); }
+          75% { transform: scale(1.1); }
+          100% { transform: scale(1); }
+        }
+        @keyframes shimmer {
+          0% { background-position: -200% 0; }
+          100% { background-position: 200% 0; }
+        }
+        @keyframes float {
+          0%, 100% { transform: translateY(0); }
+          50% { transform: translateY(-10px); }
+        }
+        .card-animate {
+          animation: cardSlideIn 0.4s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+        }
+        .card-animate-1 { animation-delay: 0.05s; opacity: 0; }
+        .card-animate-2 { animation-delay: 0.1s; opacity: 0; }
+        .card-animate-3 { animation-delay: 0.15s; opacity: 0; }
+        .card-animate-4 { animation-delay: 0.2s; opacity: 0; }
+        .card-animate-5 { animation-delay: 0.25s; opacity: 0; }
+        .screen-enter {
+          animation: screenSlideIn 0.3s ease-out forwards;
+        }
+        .tab-bounce {
+          animation: tabBounce 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
+        }
+        .reaction-pop {
+          animation: reactionPop 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
+        }
+        .toast-animate {
+          animation: toastSlideIn 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
+        }
+        .modal-backdrop {
+          animation: modalBlurIn 0.3s ease-out forwards;
+        }
+        .modal-content {
+          animation: modalSlideIn 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+        }
+        .btn-press:active {
+          animation: buttonPress 0.2s ease-out;
+        }
+        .progress-animate {
+          animation: progressFill 1s ease-out forwards;
+          transform-origin: left;
+        }
         * {
           box-sizing: border-box;
           -webkit-tap-highlight-color: transparent;
@@ -3779,8 +4377,14 @@ const FlockApp = () => {
           border-color: #0d2847 !important;
           box-shadow: 0 0 0 3px rgba(13,40,71,0.1) !important;
         }
+        button {
+          transition: transform 0.15s ease-out, box-shadow 0.15s ease-out;
+        }
         button:active {
-          transform: scale(0.98);
+          transform: scale(0.96);
+        }
+        button:hover {
+          transform: scale(1.02);
         }
         ::-webkit-scrollbar {
           width: 4px;
