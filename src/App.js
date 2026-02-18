@@ -96,18 +96,21 @@ const styles = {
     cursor: 'pointer',
     width: '100%',
     boxShadow: '0 4px 15px rgba(13,40,71,0.3), 0 2px 4px rgba(0,0,0,0.1)',
-    transition: 'transform 0.2s, box-shadow 0.2s',
+    transition: 'all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1)',
     letterSpacing: '0.3px',
+    position: 'relative',
+    overflow: 'hidden',
   },
   card: {
     backgroundColor: 'rgba(255,255,255,0.95)',
-    backdropFilter: 'blur(10px)',
-    WebkitBackdropFilter: 'blur(10px)',
-    borderRadius: '16px',
-    padding: '14px',
-    marginBottom: '10px',
-    boxShadow: '0 4px 20px rgba(13,40,71,0.08), 0 1px 3px rgba(0,0,0,0.05)',
-    border: '1px solid rgba(255,255,255,0.8)',
+    backdropFilter: 'blur(12px)',
+    WebkitBackdropFilter: 'blur(12px)',
+    borderRadius: '18px',
+    padding: '16px',
+    marginBottom: '12px',
+    boxShadow: '0 4px 24px rgba(13,40,71,0.08), 0 1px 3px rgba(0,0,0,0.04)',
+    border: '1px solid rgba(255,255,255,0.9)',
+    transition: 'all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1)',
   },
   input: {
     width: '100%',
@@ -117,8 +120,9 @@ const styles = {
     fontSize: '14px',
     outline: 'none',
     boxSizing: 'border-box',
-    transition: 'border-color 0.2s, box-shadow 0.2s',
-    backgroundColor: 'rgba(255,255,255,0.9)',
+    transition: 'all 0.25s cubic-bezier(0.34, 1.56, 0.64, 1)',
+    backgroundColor: 'rgba(255,255,255,0.95)',
+    fontWeight: '500',
   },
 };
 
@@ -264,10 +268,14 @@ const FlockApp = () => {
   const chatEndRef = useRef(null);
   const aiInputRef = useRef(null);
   const [isTyping, setIsTyping] = useState(false);
+  const [typingUser, setTypingUser] = useState('');
   const [chatSearch, setChatSearch] = useState('');
   const [showChatSearch, setShowChatSearch] = useState(false);
   const [replyingTo, setReplyingTo] = useState(null);
   const [showReactionPicker, setShowReactionPicker] = useState(null);
+  const [showVenueShareModal, setShowVenueShareModal] = useState(false);
+  const [pendingImage, setPendingImage] = useState(null);
+  const [showImagePreview, setShowImagePreview] = useState(false);
 
   // Direct Messages
   const [directMessages, setDirectMessages] = useState([
@@ -647,10 +655,68 @@ const FlockApp = () => {
     setShowReactionPicker(null);
   }, []);
 
-  // Simulate typing indicator
-  const simulateTyping = useCallback(() => {
+  // Simulate typing indicator with user name
+  const simulateTyping = useCallback((userName) => {
+    const names = userName || ['Alex', 'Sam', 'Jordan', 'Taylor'][Math.floor(Math.random() * 4)];
+    setTypingUser(names);
     setIsTyping(true);
     setTimeout(() => setIsTyping(false), 2000 + Math.random() * 2000);
+  }, []);
+
+  // Share venue to chat
+  const shareVenueToChat = useCallback((flockId, venue) => {
+    const venueMessage = {
+      id: Date.now(),
+      sender: 'You',
+      time: new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }),
+      text: '',
+      reactions: [],
+      venueCard: {
+        id: venue.id,
+        name: venue.name,
+        type: venue.type,
+        category: venue.category,
+        addr: venue.addr,
+        stars: venue.stars,
+        price: venue.price,
+        crowd: venue.crowd,
+        best: venue.best
+      }
+    };
+    addMessageToFlock(flockId, venueMessage);
+    setShowVenueShareModal(false);
+    showToast('Venue shared!');
+    addXP(5);
+  }, [addMessageToFlock, showToast, addXP]);
+
+  // Share image to chat
+  const shareImageToChat = useCallback((flockId) => {
+    if (!pendingImage) return;
+    const imageMessage = {
+      id: Date.now(),
+      sender: 'You',
+      time: new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }),
+      text: '',
+      reactions: [],
+      image: pendingImage
+    };
+    addMessageToFlock(flockId, imageMessage);
+    setPendingImage(null);
+    setShowImagePreview(false);
+    showToast('Image sent!');
+    addXP(5);
+  }, [pendingImage, addMessageToFlock, showToast, addXP]);
+
+  // Handle image selection
+  const handleChatImageSelect = useCallback(() => {
+    // Simulate selecting an image (in real app would open file picker)
+    const sampleImages = [
+      'https://images.unsplash.com/photo-1514933651103-005eec06c04b?w=400&h=300&fit=crop',
+      'https://images.unsplash.com/photo-1470337458703-46ad1756a187?w=400&h=300&fit=crop',
+      'https://images.unsplash.com/photo-1566417713940-fe7c737a9ef2?w=400&h=300&fit=crop',
+    ];
+    setPendingImage(sampleImages[Math.floor(Math.random() * sampleImages.length)]);
+    setShowImagePreview(true);
   }, []);
 
   const handlePhotoUpload = useCallback((e) => {
@@ -709,7 +775,15 @@ const FlockApp = () => {
     };
 
     return (
-      <div style={{ ...styles.bottomNav, boxShadow: '0 -4px 20px rgba(0,0,0,0.05)' }}>
+      <div style={{
+        ...styles.bottomNav,
+        boxShadow: '0 -4px 24px rgba(0,0,0,0.06)',
+        backdropFilter: 'blur(12px)',
+        WebkitBackdropFilter: 'blur(12px)',
+        backgroundColor: 'rgba(255,255,255,0.95)',
+        borderTop: '1px solid rgba(0,0,0,0.03)',
+        padding: '10px 8px 12px'
+      }}>
         {[
           { id: 'home', label: 'Nest' },
           { id: 'explore', label: 'Discover' },
@@ -718,10 +792,38 @@ const FlockApp = () => {
           { id: 'profile', label: 'You' },
         ].map(t => (
           <button key={t.id} onClick={() => handleTabClick(t.id)}
-            style={{ ...styles.navItem, backgroundColor: currentTab === t.id ? colors.cream : 'transparent', transition: 'all 0.2s' }}>
-            <div className={activeTabAnimation === t.id ? 'tab-bounce' : ''} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-              <NavIcon id={t.id} active={currentTab === t.id} />
-              <span style={{ fontSize: '10px', fontWeight: '600', color: currentTab === t.id ? colors.navy : '#9ca3af', marginTop: '2px' }}>{t.label}</span>
+            style={{
+              ...styles.navItem,
+              backgroundColor: currentTab === t.id ? colors.cream : 'transparent',
+              transition: 'all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1)',
+              transform: currentTab === t.id ? 'scale(1.05)' : 'scale(1)',
+              borderRadius: '14px',
+              padding: '8px 14px'
+            }}>
+            <div className={activeTabAnimation === t.id ? 'tab-bounce' : ''} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', transition: 'all 0.2s ease' }}>
+              <div style={{
+                transition: 'transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1)',
+                transform: currentTab === t.id ? 'scale(1.1)' : 'scale(1)'
+              }}>
+                <NavIcon id={t.id} active={currentTab === t.id} />
+              </div>
+              <span style={{
+                fontSize: '10px',
+                fontWeight: currentTab === t.id ? '700' : '500',
+                color: currentTab === t.id ? colors.navy : '#94a3b8',
+                marginTop: '3px',
+                transition: 'all 0.2s ease'
+              }}>{t.label}</span>
+              {currentTab === t.id && (
+                <div style={{
+                  width: '4px',
+                  height: '4px',
+                  borderRadius: '2px',
+                  backgroundColor: colors.navy,
+                  marginTop: '3px',
+                  animation: 'scaleBounceIn 0.3s cubic-bezier(0.34, 1.56, 0.64, 1)'
+                }} />
+              )}
             </div>
           </button>
         ))}
@@ -729,24 +831,86 @@ const FlockApp = () => {
     );
   };
 
-  // Safety Button
+  // Safety Button - Enhanced with pulse animation
   const SafetyButton = () => safetyOn && currentScreen === 'main' && (
-    <button onClick={() => setShowSOS(true)} style={{ position: 'absolute', bottom: '70px', right: '12px', width: '48px', height: '48px', borderRadius: '24px', border: 'none', background: `linear-gradient(135deg, ${colors.red}, #f97316)`, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', boxShadow: '0 4px 12px rgba(0,0,0,0.3)', zIndex: 20 }}>
-      {Icons.shield('white', 22)}
+    <button
+      onClick={() => setShowSOS(true)}
+      style={{
+        position: 'absolute',
+        bottom: '75px',
+        right: '12px',
+        width: '52px',
+        height: '52px',
+        borderRadius: '26px',
+        border: 'none',
+        background: `linear-gradient(135deg, ${colors.red}, #f97316)`,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        cursor: 'pointer',
+        boxShadow: '0 6px 20px rgba(239,68,68,0.4), 0 2px 6px rgba(0,0,0,0.1)',
+        zIndex: 20,
+        animation: 'breathe 3s ease-in-out infinite',
+        transition: 'all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1)'
+      }}
+    >
+      {Icons.shield('white', 24)}
     </button>
   );
 
-  // AI Button
+  // AI Button - Enhanced with floating animation
   const AIButton = () => currentScreen === 'main' && currentTab === 'home' && (
-    <button onClick={() => setShowAiAssistant(true)} style={{ position: 'absolute', bottom: '70px', left: '12px', width: '48px', height: '48px', borderRadius: '24px', border: 'none', background: `linear-gradient(135deg, ${colors.navy}, ${colors.navyMid})`, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', boxShadow: '0 4px 12px rgba(0,0,0,0.3)', zIndex: 20 }}>
-      {Icons.robot('white', 22)}
+    <button
+      onClick={() => setShowAiAssistant(true)}
+      style={{
+        position: 'absolute',
+        bottom: '75px',
+        left: '12px',
+        width: '52px',
+        height: '52px',
+        borderRadius: '26px',
+        border: 'none',
+        background: `linear-gradient(135deg, ${colors.navy}, ${colors.navyMid})`,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        cursor: 'pointer',
+        boxShadow: '0 6px 20px rgba(13,40,71,0.35), 0 2px 6px rgba(0,0,0,0.1)',
+        zIndex: 20,
+        animation: 'float 4s ease-in-out infinite',
+        transition: 'all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1)'
+      }}
+    >
+      <div style={{ animation: 'breathe 2s ease-in-out infinite' }}>
+        {Icons.robot('white', 24)}
+      </div>
     </button>
   );
 
-  // Toast
+  // Toast - Enhanced with better animations
   const Toast = () => toast && (
-    <div style={{ position: 'fixed', top: '40px', left: '50%', transform: 'translateX(-50%)', zIndex: 60 }}>
-      <div className="toast-animate" style={{ padding: '12px 24px', borderRadius: '24px', backgroundColor: toast.type === 'success' ? colors.teal : colors.red, color: 'white', fontSize: '14px', fontWeight: '600', boxShadow: '0 8px 24px rgba(0,0,0,0.25)', backdropFilter: 'blur(10px)', whiteSpace: 'nowrap' }}>
+    <div style={{ position: 'fixed', top: '50px', left: '50%', transform: 'translateX(-50%)', zIndex: 60 }}>
+      <div
+        className="toast-animate"
+        style={{
+          padding: '14px 28px',
+          borderRadius: '28px',
+          backgroundColor: toast.type === 'success' ? colors.teal : colors.red,
+          color: 'white',
+          fontSize: '14px',
+          fontWeight: '600',
+          boxShadow: toast.type === 'success'
+            ? '0 8px 30px rgba(20,184,166,0.35), 0 2px 8px rgba(0,0,0,0.1)'
+            : '0 8px 30px rgba(239,68,68,0.35), 0 2px 8px rgba(0,0,0,0.1)',
+          backdropFilter: 'blur(12px)',
+          WebkitBackdropFilter: 'blur(12px)',
+          whiteSpace: 'nowrap',
+          display: 'flex',
+          alignItems: 'center',
+          gap: '8px'
+        }}
+      >
+        {toast.type === 'success' ? Icons.checkCircle('white', 18) : Icons.alertCircle('white', 18)}
         {toast.message}
       </div>
     </div>
@@ -1249,9 +1413,47 @@ const FlockApp = () => {
         </div>
 
         {/* Action Buttons */}
-        <div style={{ display: 'flex', gap: '8px', marginBottom: '12px' }}>
-          <button onClick={() => setCurrentScreen('create')} style={{ flex: 1.2, padding: '14px', borderRadius: '14px', border: 'none', background: `linear-gradient(135deg, ${colors.navy}, ${colors.navyMid})`, color: 'white', fontWeight: '800', fontSize: '14px', cursor: 'pointer', boxShadow: '0 4px 12px rgba(13,40,71,0.25)' }}>+ Start a Flock</button>
-          <button onClick={() => setCurrentScreen('join')} style={{ flex: 0.8, padding: '12px', borderRadius: '12px', border: `2px solid ${colors.navy}`, backgroundColor: 'white', color: colors.navy, fontWeight: '600', fontSize: '13px', cursor: 'pointer' }}>Join Flock</button>
+        <div style={{ display: 'flex', gap: '10px', marginBottom: '14px' }}>
+          <button
+            onClick={() => setCurrentScreen('create')}
+            style={{
+              flex: 1.2,
+              padding: '16px',
+              borderRadius: '16px',
+              border: 'none',
+              background: `linear-gradient(135deg, ${colors.navy}, ${colors.navyMid})`,
+              color: 'white',
+              fontWeight: '800',
+              fontSize: '14px',
+              cursor: 'pointer',
+              boxShadow: '0 6px 20px rgba(13,40,71,0.3), 0 2px 4px rgba(0,0,0,0.1)',
+              transition: 'all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: '6px'
+            }}
+          >
+            {Icons.plus('white', 16)} Start a Flock
+          </button>
+          <button
+            onClick={() => setCurrentScreen('join')}
+            style={{
+              flex: 0.8,
+              padding: '14px',
+              borderRadius: '14px',
+              border: `2px solid ${colors.navy}`,
+              backgroundColor: 'white',
+              color: colors.navy,
+              fontWeight: '700',
+              fontSize: '13px',
+              cursor: 'pointer',
+              transition: 'all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1)',
+              boxShadow: '0 2px 8px rgba(13,40,71,0.08)'
+            }}
+          >
+            Join Flock
+          </button>
         </div>
 
         {/* Activity */}
@@ -1436,76 +1638,309 @@ const FlockApp = () => {
   );
 
   // EXPLORE SCREEN
+  // Track clicked/hovered pins for animations
+  const [hoveredPin, setHoveredPin] = useState(null);
+  const [clickedPin, setClickedPin] = useState(null);
+
   const ExploreScreen = () => (
     <div key="explore-screen-container" style={{ display: 'flex', flexDirection: 'column', height: '100%', backgroundColor: '#e5e7eb' }}>
       {pickingVenueForCreate && (
-        <div style={{ padding: '8px 12px', background: `linear-gradient(90deg, ${colors.navy}, ${colors.navyMid})`, display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
-          <span style={{ color: 'white', fontSize: '12px', fontWeight: '500', display: 'flex', alignItems: 'center', gap: '4px' }}>{Icons.mapPin('white', 12)} Tap venue to select</span>
-          <button onClick={() => { setPickingVenueForCreate(false); setCurrentScreen('create'); }} style={{ backgroundColor: 'rgba(255,255,255,0.2)', border: 'none', borderRadius: '10px', padding: '2px 8px', color: 'white', fontSize: '10px', cursor: 'pointer' }}>Cancel</button>
+        <div style={{ padding: '10px 14px', background: `linear-gradient(90deg, ${colors.navy}, ${colors.navyMid})`, display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0, boxShadow: '0 2px 8px rgba(13,40,71,0.3)' }}>
+          <span style={{ color: 'white', fontSize: '12px', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '6px' }}>{Icons.mapPin('white', 14)} Tap venue to select</span>
+          <button onClick={() => { setPickingVenueForCreate(false); setCurrentScreen('create'); }} style={{ backgroundColor: 'rgba(255,255,255,0.2)', border: 'none', borderRadius: '12px', padding: '4px 12px', color: 'white', fontSize: '11px', cursor: 'pointer', fontWeight: '500', transition: 'all 0.2s ease' }}>Cancel</button>
         </div>
       )}
 
-      <div style={{ padding: '8px', display: 'flex', alignItems: 'center', gap: '8px', backgroundColor: 'white', boxShadow: '0 2px 4px rgba(0,0,0,0.1)', zIndex: 20, flexShrink: 0 }}>
+      <div style={{ padding: '10px 12px', display: 'flex', alignItems: 'center', gap: '10px', backgroundColor: 'white', boxShadow: '0 2px 12px rgba(0,0,0,0.08)', zIndex: 20, flexShrink: 0 }}>
         <div style={{ flex: 1, position: 'relative' }}>
-          <input key="search-input" id="search-input" type="text" value={searchText} onChange={(e) => setSearchText(e.target.value)} placeholder="Search venues..." style={{ width: '100%', padding: '10px 10px 10px 32px', borderRadius: '20px', backgroundColor: '#f3f4f6', border: 'none', fontSize: '12px', outline: 'none', boxSizing: 'border-box' }} autoComplete="off" />
-          <span style={{ position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)' }}>{Icons.search('#9ca3af', 14)}</span>
+          <input key="search-input" id="search-input" type="text" value={searchText} onChange={(e) => setSearchText(e.target.value)} placeholder="Search venues..." style={{ width: '100%', padding: '12px 12px 12px 38px', borderRadius: '14px', backgroundColor: '#f8fafc', border: '1px solid #e2e8f0', fontSize: '13px', outline: 'none', boxSizing: 'border-box', transition: 'all 0.2s ease', fontWeight: '500' }} autoComplete="off" />
+          <span style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', transition: 'all 0.2s ease' }}>{Icons.search('#94a3b8', 16)}</span>
         </div>
-        <button onClick={() => setShowConnectPanel(true)} style={{ width: '36px', height: '36px', borderRadius: '18px', border: 'none', background: `linear-gradient(135deg, ${colors.navy}, ${colors.navyMid})`, color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.users('white', 18)}</button>
+        <button onClick={() => setShowConnectPanel(true)} style={{ width: '42px', height: '42px', borderRadius: '14px', border: 'none', background: `linear-gradient(135deg, ${colors.navy}, ${colors.navyMid})`, color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 4px 12px rgba(13,40,71,0.25)', transition: 'all 0.2s ease' }}>{Icons.users('white', 18)}</button>
       </div>
 
-      {/* Map */}
+      {/* Premium Map */}
       <div style={{ flex: 1, position: 'relative', overflow: 'hidden' }}>
-        <div style={{ position: 'absolute', inset: 0, background: '#e8ebe4' }}>
-          {/* Grid */}
+        <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(145deg, #f0f4f0 0%, #e8ece8 50%, #dfe3df 100%)' }}>
+          {/* Premium SVG Map with buildings, parks, and roads */}
           <svg style={{ position: 'absolute', inset: 0, width: '100%', height: '100%' }}>
             <defs>
-              <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
-                <path d="M 40 0 L 0 0 0 40" fill="none" stroke="#d0d0d0" strokeWidth="0.5"/>
+              {/* Grid pattern */}
+              <pattern id="mapGrid" width="50" height="50" patternUnits="userSpaceOnUse">
+                <path d="M 50 0 L 0 0 0 50" fill="none" stroke="rgba(0,0,0,0.03)" strokeWidth="1"/>
               </pattern>
+              {/* Building shadow gradient */}
+              <linearGradient id="buildingShadow" x1="0%" y1="0%" x2="100%" y2="100%">
+                <stop offset="0%" stopColor="rgba(0,0,0,0.08)"/>
+                <stop offset="100%" stopColor="rgba(0,0,0,0)"/>
+              </linearGradient>
+              {/* Water gradient */}
+              <linearGradient id="waterGradient" x1="0%" y1="0%" x2="0%" y2="100%">
+                <stop offset="0%" stopColor="#a8d4e6"/>
+                <stop offset="50%" stopColor="#7ec8e3"/>
+                <stop offset="100%" stopColor="#a8d4e6"/>
+              </linearGradient>
+              {/* Park gradient */}
+              <linearGradient id="parkGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+                <stop offset="0%" stopColor="#b8d4a8"/>
+                <stop offset="100%" stopColor="#9bc485"/>
+              </linearGradient>
+              {/* Road gradient */}
+              <linearGradient id="roadGradient" x1="0%" y1="0%" x2="0%" y2="100%">
+                <stop offset="0%" stopColor="#e5e5e5"/>
+                <stop offset="50%" stopColor="#d4d4d4"/>
+                <stop offset="100%" stopColor="#e5e5e5"/>
+              </linearGradient>
             </defs>
-            <rect width="100%" height="100%" fill="url(#grid)" />
-            <rect x="0" y="30%" width="100%" height="16" fill="#a0a0a0"/>
-            <rect x="0" y="60%" width="100%" height="20" fill="#909090"/>
-            <rect x="25%" y="0" width="14" height="100%" fill="#a0a0a0"/>
-            <rect x="65%" y="0" width="18" height="100%" fill="#909090"/>
+
+            {/* Base grid */}
+            <rect width="100%" height="100%" fill="url(#mapGrid)" />
+
+            {/* Water feature (river/lake) */}
+            <ellipse cx="85%" cy="75%" rx="60" ry="80" fill="url(#waterGradient)" opacity="0.7" />
+            <ellipse cx="90%" cy="85%" rx="40" ry="50" fill="url(#waterGradient)" opacity="0.6" />
+
+            {/* Parks/green spaces */}
+            <rect x="5%" y="10%" width="45" height="55" rx="8" fill="url(#parkGradient)" opacity="0.6" />
+            <circle cx="12%" cy="80%" r="30" fill="url(#parkGradient)" opacity="0.5" />
+            <ellipse cx="70%" cy="15%" rx="35" ry="25" fill="url(#parkGradient)" opacity="0.6" />
+
+            {/* Main roads with rounded ends */}
+            <rect x="0" y="28%" width="100%" height="22" rx="2" fill="url(#roadGradient)" />
+            <rect x="0" y="58%" width="100%" height="26" rx="2" fill="url(#roadGradient)" />
+            <rect x="23%" y="0" width="18" height="100%" rx="2" fill="url(#roadGradient)" />
+            <rect x="62%" y="0" width="22" height="100%" rx="2" fill="url(#roadGradient)" />
+
+            {/* Road center lines */}
+            <line x1="0" y1="39%" x2="100%" y2="39%" stroke="#fbbf24" strokeWidth="2" strokeDasharray="12 6" opacity="0.6"/>
+            <line x1="0" y1="71%" x2="100%" y2="71%" stroke="#fbbf24" strokeWidth="2" strokeDasharray="12 6" opacity="0.6"/>
+            <line x1="32%" y1="0" x2="32%" y2="100%" stroke="#fbbf24" strokeWidth="2" strokeDasharray="12 6" opacity="0.6"/>
+            <line x1="73%" y1="0" x2="73%" y2="100%" stroke="#fbbf24" strokeWidth="2" strokeDasharray="12 6" opacity="0.6"/>
+
+            {/* Building blocks */}
+            <rect x="8%" y="45%" width="35" height="28" rx="4" fill="#d1d5db" />
+            <rect x="8%" y="45%" width="35" height="5" rx="2" fill="#9ca3af" />
+
+            <rect x="45%" y="5%" width="50" height="35" rx="4" fill="#d1d5db" />
+            <rect x="45%" y="5%" width="50" height="6" rx="2" fill="#9ca3af" />
+
+            <rect x="78%" y="40%" width="40" height="45" rx="4" fill="#d1d5db" />
+            <rect x="78%" y="40%" width="40" height="7" rx="2" fill="#9ca3af" />
+
+            <rect x="38%" y="78%" width="55" height="30" rx="4" fill="#d1d5db" />
+            <rect x="38%" y="78%" width="55" height="5" rx="2" fill="#9ca3af" />
+
+            <rect x="5%" y="35%" width="25" height="20" rx="3" fill="#c4c9cf" />
+            <rect x="52%" y="45%" width="30" height="22" rx="3" fill="#c4c9cf" />
+
+            {/* Small decorative buildings */}
+            <rect x="15%" y="20%" width="18" height="14" rx="2" fill="#cdd1d6" />
+            <rect x="85%" y="18%" width="22" height="16" rx="2" fill="#cdd1d6" />
+            <rect x="42%" y="88%" width="20" height="12" rx="2" fill="#cdd1d6" />
           </svg>
 
-          {/* Enhanced Heatmap with multi-layer pulsing gradients */}
+          {/* Premium Heatmap with smooth gradients and animations */}
           {getFilteredVenues().map(v => {
             const intensity = v.crowd / 100;
             const baseColor = v.crowd > 70 ? '#EF4444' : v.crowd > 50 ? '#F59E0B' : v.crowd > 30 ? '#FBBF24' : '#10B981';
-            const innerSize = 40 + (intensity * 60);
-            const outerSize = 80 + (intensity * 100);
-            const pulseDelay = (v.id * 0.3) % 2;
+            const innerSize = 50 + (intensity * 70);
+            const middleSize = 80 + (intensity * 90);
+            const outerSize = 120 + (intensity * 110);
+            const pulseDelay = (v.id * 0.4) % 2.5;
             return (
-              <div key={`heat-${v.id}`} style={{ position: 'absolute', left: `${v.x}%`, top: `${v.y}%`, transform: 'translate(-50%, -50%)', pointerEvents: 'none' }}>
+              <div key={`heat-${v.id}`} style={{ position: 'absolute', left: `${v.x}%`, top: `${v.y}%`, transform: 'translate(-50%, -50%)', pointerEvents: 'none', zIndex: 1 }}>
+                {/* Outermost soft glow */}
+                <div style={{ position: 'absolute', left: '50%', top: '50%', width: `${outerSize * 1.3}px`, height: `${outerSize * 1.3}px`, transform: 'translate(-50%, -50%)', borderRadius: '50%', background: `radial-gradient(circle, ${baseColor}10 0%, ${baseColor}05 40%, transparent 70%)`, animation: `heatPulseOuter 4s ease-in-out infinite ${pulseDelay}s`, filter: 'blur(4px)' }} />
                 {/* Outer glow layer */}
-                <div style={{ position: 'absolute', left: '50%', top: '50%', width: `${outerSize}px`, height: `${outerSize}px`, transform: 'translate(-50%, -50%)', borderRadius: '50%', background: `radial-gradient(circle, ${baseColor}20 0%, ${baseColor}08 50%, transparent 70%)`, animation: `pulse 3s ease-in-out infinite ${pulseDelay}s` }} />
+                <div style={{ position: 'absolute', left: '50%', top: '50%', width: `${outerSize}px`, height: `${outerSize}px`, transform: 'translate(-50%, -50%)', borderRadius: '50%', background: `radial-gradient(circle, ${baseColor}18 0%, ${baseColor}08 45%, transparent 70%)`, animation: `heatPulseMiddle 3s ease-in-out infinite ${pulseDelay + 0.3}s` }} />
                 {/* Middle pulsing layer */}
-                <div style={{ position: 'absolute', left: '50%', top: '50%', width: `${innerSize * 1.5}px`, height: `${innerSize * 1.5}px`, transform: 'translate(-50%, -50%)', borderRadius: '50%', background: `radial-gradient(circle, ${baseColor}35 0%, ${baseColor}15 40%, transparent 70%)`, animation: `pulse 2s ease-in-out infinite ${pulseDelay + 0.5}s` }} />
+                <div style={{ position: 'absolute', left: '50%', top: '50%', width: `${middleSize}px`, height: `${middleSize}px`, transform: 'translate(-50%, -50%)', borderRadius: '50%', background: `radial-gradient(circle, ${baseColor}30 0%, ${baseColor}12 50%, transparent 75%)`, animation: `heatPulseInner 2.5s ease-in-out infinite ${pulseDelay + 0.6}s` }} />
                 {/* Inner bright core */}
-                <div style={{ position: 'absolute', left: '50%', top: '50%', width: `${innerSize}px`, height: `${innerSize}px`, transform: 'translate(-50%, -50%)', borderRadius: '50%', background: `radial-gradient(circle, ${baseColor}50 0%, ${baseColor}25 50%, transparent 80%)`, animation: `pulse 1.5s ease-in-out infinite ${pulseDelay + 0.2}s` }} />
+                <div style={{ position: 'absolute', left: '50%', top: '50%', width: `${innerSize}px`, height: `${innerSize}px`, transform: 'translate(-50%, -50%)', borderRadius: '50%', background: `radial-gradient(circle, ${baseColor}45 0%, ${baseColor}20 40%, transparent 80%)`, animation: `heatPulseCore 2s ease-in-out infinite ${pulseDelay + 0.2}s` }} />
+                {/* Center hotspot */}
+                <div style={{ position: 'absolute', left: '50%', top: '50%', width: `${innerSize * 0.4}px`, height: `${innerSize * 0.4}px`, transform: 'translate(-50%, -50%)', borderRadius: '50%', background: `radial-gradient(circle, ${baseColor}60 0%, ${baseColor}30 60%, transparent 100%)`, animation: `heatGlow 1.5s ease-in-out infinite ${pulseDelay}s` }} />
               </div>
             );
           })}
 
-          {/* Venue pins */}
-          {getFilteredVenues().map(v => (
-            <button key={v.id} onClick={() => setActiveVenue(v)} style={{ position: 'absolute', left: `${v.x}%`, top: `${v.y}%`, transform: 'translate(-50%, -100%)', background: 'none', border: 'none', cursor: 'pointer', zIndex: activeVenue?.id === v.id ? 30 : 10, transition: 'transform 0.2s' }}>
-              <div style={{ position: 'relative' }}>
-                <svg width="28" height="36" viewBox="0 0 24 32">
-                  <path d="M12 0C5.4 0 0 5.4 0 12c0 9 12 20 12 20s12-11 12-20c0-6.6-5.4-12-12-12z" fill={getCategoryColor(v.category)}/>
-                  <circle cx="12" cy="11" r="6" fill="white"/>
-                </svg>
-                <span style={{ position: 'absolute', top: '6px', left: '50%', transform: 'translateX(-50%)' }}>{v.category === 'Food' ? Icons.pizza(colors.food, 14) : v.category === 'Nightlife' ? Icons.cocktail(colors.nightlife, 14) : v.category === 'Live Music' ? Icons.music(colors.music, 14) : Icons.sports(colors.sports, 14)}</span>
-                {v.trending && <span style={{ position: 'absolute', top: '-4px', right: '-8px' }}>{Icons.flame('#F59E0B', 12)}</span>}
-              </div>
-            </button>
-          ))}
+          {/* Premium Venue Pins with hover effects and animations */}
+          {getFilteredVenues().map(v => {
+            const isHovered = hoveredPin === v.id;
+            const isClicked = clickedPin === v.id;
+            const isActive = activeVenue?.id === v.id;
+            const pinColor = getCategoryColor(v.category);
 
-          {/* User location */}
-          <div style={{ position: 'absolute', left: '50%', top: '50%', transform: 'translate(-50%, -50%)', zIndex: 20 }}>
-            <div style={{ width: '16px', height: '16px', borderRadius: '8px', backgroundColor: '#3b82f6', border: '3px solid white', boxShadow: '0 2px 4px rgba(0,0,0,0.3)' }} />
+            return (
+              <button
+                key={v.id}
+                onClick={() => {
+                  setClickedPin(v.id);
+                  setTimeout(() => setClickedPin(null), 300);
+                  setActiveVenue(v);
+                }}
+                onMouseEnter={() => setHoveredPin(v.id)}
+                onMouseLeave={() => setHoveredPin(null)}
+                style={{
+                  position: 'absolute',
+                  left: `${v.x}%`,
+                  top: `${v.y}%`,
+                  transform: `translate(-50%, -100%) ${isHovered ? 'scale(1.15) translateY(-4px)' : ''} ${isClicked ? 'scale(0.9)' : ''} ${isActive ? 'scale(1.2) translateY(-6px)' : ''}`,
+                  background: 'none',
+                  border: 'none',
+                  cursor: 'pointer',
+                  zIndex: isActive ? 20 : isHovered ? 15 : 10,
+                  transition: 'transform 0.25s cubic-bezier(0.34, 1.56, 0.64, 1), filter 0.2s ease',
+                  filter: isHovered || isActive ? 'drop-shadow(0 8px 16px rgba(0,0,0,0.25))' : 'drop-shadow(0 3px 6px rgba(0,0,0,0.15))'
+                }}
+              >
+                <div style={{ position: 'relative' }}>
+                  {/* Pin shadow */}
+                  <div style={{
+                    position: 'absolute',
+                    bottom: '-8px',
+                    left: '50%',
+                    transform: 'translateX(-50%)',
+                    width: '20px',
+                    height: '6px',
+                    background: 'radial-gradient(ellipse, rgba(0,0,0,0.3) 0%, transparent 70%)',
+                    opacity: isHovered || isActive ? 0.8 : 0.5,
+                    transition: 'opacity 0.2s ease'
+                  }} />
+
+                  {/* Main pin SVG with gradient */}
+                  <svg width="34" height="44" viewBox="0 0 24 32" style={{ filter: isActive ? 'brightness(1.1)' : 'none', transition: 'filter 0.2s ease' }}>
+                    <defs>
+                      <linearGradient id={`pinGrad-${v.id}`} x1="0%" y1="0%" x2="100%" y2="100%">
+                        <stop offset="0%" stopColor={pinColor} stopOpacity="1"/>
+                        <stop offset="100%" stopColor={pinColor} stopOpacity="0.8"/>
+                      </linearGradient>
+                      <filter id={`pinShadow-${v.id}`} x="-20%" y="-20%" width="140%" height="140%">
+                        <feDropShadow dx="0" dy="1" stdDeviation="1" floodOpacity="0.3"/>
+                      </filter>
+                    </defs>
+                    <path d="M12 0C5.4 0 0 5.4 0 12c0 9 12 20 12 20s12-11 12-20c0-6.6-5.4-12-12-12z" fill={`url(#pinGrad-${v.id})`} filter={`url(#pinShadow-${v.id})`}/>
+                    <path d="M12 1C6 1 1 6 1 12c0 4 4 10 11 19 7-9 11-15 11-19 0-6-5-11-11-11z" fill="rgba(255,255,255,0.15)" />
+                    <circle cx="12" cy="11" r="7" fill="white" />
+                    <circle cx="12" cy="11" r="6.5" fill="white" stroke="rgba(0,0,0,0.05)" strokeWidth="0.5"/>
+                  </svg>
+
+                  {/* Category icon */}
+                  <span style={{
+                    position: 'absolute',
+                    top: '7px',
+                    left: '50%',
+                    transform: 'translateX(-50%)',
+                    transition: 'transform 0.2s ease'
+                  }}>
+                    {v.category === 'Food' ? Icons.pizza(colors.food, 15) : v.category === 'Nightlife' ? Icons.cocktail(colors.nightlife, 15) : v.category === 'Live Music' ? Icons.music(colors.music, 15) : Icons.sports(colors.sports, 15)}
+                  </span>
+
+                  {/* Trending badge with animation */}
+                  {v.trending && (
+                    <span style={{
+                      position: 'absolute',
+                      top: '-6px',
+                      right: '-10px',
+                      animation: 'trendingBounce 2s ease-in-out infinite'
+                    }}>
+                      <div style={{
+                        background: 'linear-gradient(135deg, #FF6B35, #F7931E)',
+                        borderRadius: '50%',
+                        padding: '3px',
+                        boxShadow: '0 2px 6px rgba(247,147,30,0.4)'
+                      }}>
+                        {Icons.flame('white', 11)}
+                      </div>
+                    </span>
+                  )}
+
+                  {/* Crowd indicator ring */}
+                  {(isHovered || isActive) && (
+                    <div style={{
+                      position: 'absolute',
+                      top: '2px',
+                      left: '50%',
+                      transform: 'translateX(-50%)',
+                      width: '30px',
+                      height: '30px',
+                      borderRadius: '50%',
+                      border: `2px solid ${v.crowd > 70 ? colors.red : v.crowd > 40 ? colors.amber : colors.teal}`,
+                      opacity: 0.6,
+                      animation: 'pinRingPulse 1.5s ease-out infinite'
+                    }} />
+                  )}
+
+                  {/* Venue name tooltip on hover */}
+                  {isHovered && !isActive && (
+                    <div style={{
+                      position: 'absolute',
+                      top: '-32px',
+                      left: '50%',
+                      transform: 'translateX(-50%)',
+                      backgroundColor: 'rgba(13,40,71,0.95)',
+                      color: 'white',
+                      padding: '4px 10px',
+                      borderRadius: '8px',
+                      fontSize: '10px',
+                      fontWeight: '600',
+                      whiteSpace: 'nowrap',
+                      boxShadow: '0 4px 12px rgba(0,0,0,0.2)',
+                      animation: 'tooltipFadeIn 0.2s ease-out'
+                    }}>
+                      {v.name}
+                      <div style={{
+                        position: 'absolute',
+                        bottom: '-5px',
+                        left: '50%',
+                        transform: 'translateX(-50%)',
+                        width: 0,
+                        height: 0,
+                        borderLeft: '5px solid transparent',
+                        borderRight: '5px solid transparent',
+                        borderTop: '5px solid rgba(13,40,71,0.95)'
+                      }} />
+                    </div>
+                  )}
+                </div>
+              </button>
+            );
+          })}
+
+          {/* User location with premium styling */}
+          <div style={{ position: 'absolute', left: '50%', top: '50%', transform: 'translate(-50%, -50%)', zIndex: 25 }}>
+            {/* Outer pulse ring */}
+            <div style={{
+              position: 'absolute',
+              left: '50%',
+              top: '50%',
+              transform: 'translate(-50%, -50%)',
+              width: '50px',
+              height: '50px',
+              borderRadius: '50%',
+              border: '2px solid rgba(59,130,246,0.3)',
+              animation: 'userLocationPulse 2s ease-out infinite'
+            }} />
+            {/* Middle ring */}
+            <div style={{
+              position: 'absolute',
+              left: '50%',
+              top: '50%',
+              transform: 'translate(-50%, -50%)',
+              width: '30px',
+              height: '30px',
+              borderRadius: '50%',
+              backgroundColor: 'rgba(59,130,246,0.15)',
+              animation: 'userLocationPulse 2s ease-out infinite 0.5s'
+            }} />
+            {/* Main dot */}
+            <div style={{
+              width: '18px',
+              height: '18px',
+              borderRadius: '50%',
+              background: 'linear-gradient(135deg, #3b82f6, #1d4ed8)',
+              border: '3px solid white',
+              boxShadow: '0 3px 10px rgba(59,130,246,0.4), inset 0 1px 2px rgba(255,255,255,0.3)'
+            }} />
           </div>
         </div>
 
@@ -1535,7 +1970,7 @@ const FlockApp = () => {
 
         {/* Venue Popup with AI Crowd Forecast */}
         {activeVenue && !showConnectPanel && (
-          <div style={{ position: 'absolute', bottom: '12px', left: '8px', right: '8px', backgroundColor: 'white', borderRadius: '16px', boxShadow: '0 4px 20px rgba(0,0,0,0.2)', zIndex: 30, overflow: 'hidden', maxHeight: '70%', overflowY: 'auto' }}>
+          <div style={{ position: 'absolute', bottom: '12px', left: '8px', right: '8px', backgroundColor: 'white', borderRadius: '16px', boxShadow: '0 8px 32px rgba(0,0,0,0.25)', zIndex: 45, overflow: 'hidden', maxHeight: '70%', overflowY: 'auto' }}>
             <div style={{ height: '56px', background: `linear-gradient(135deg, ${getCategoryColor(activeVenue.category)}, ${activeVenue.crowd > 70 ? colors.red : colors.navy})`, position: 'relative', padding: '8px 12px', display: 'flex', alignItems: 'flex-end' }}>
               <button onClick={() => setActiveVenue(null)} style={{ position: 'absolute', top: '8px', right: '8px', width: '24px', height: '24px', borderRadius: '12px', backgroundColor: 'rgba(255,255,255,0.2)', border: 'none', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.x('white', 14)}</button>
               <div style={{ color: 'white' }}>
@@ -1966,24 +2401,167 @@ const FlockApp = () => {
     );
   };
 
-  // CHAT DETAIL SCREEN - No hooks inside, uses parent's ref and callback
+  // CHAT DETAIL SCREEN - Enhanced with location cards, timestamps, typing indicators, and image sharing
   const ChatDetailScreen = () => {
     const flock = getSelectedFlock();
     const reactions = ['❤️', '👍', '😂', '🔥'];
 
+    // Venue Card Component for chat
+    const VenueCard = ({ venue, onViewDetails, onVote }) => {
+      const crowdColor = venue.crowd > 70 ? colors.red : venue.crowd > 40 ? colors.amber : colors.teal;
+      return (
+        <div style={{
+          backgroundColor: 'white',
+          borderRadius: '16px',
+          overflow: 'hidden',
+          boxShadow: '0 4px 20px rgba(0,0,0,0.12)',
+          border: '1px solid rgba(0,0,0,0.06)',
+          width: '100%',
+          maxWidth: '280px',
+          animation: 'cardSlideIn 0.4s ease-out'
+        }}>
+          {/* Header with gradient */}
+          <div style={{
+            background: `linear-gradient(135deg, ${getCategoryColor(venue.category)}, ${getCategoryColor(venue.category)}cc)`,
+            padding: '12px 14px',
+            position: 'relative'
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <div>
+                <h4 style={{ color: 'white', fontSize: '14px', fontWeight: '700', margin: 0 }}>{venue.name}</h4>
+                <p style={{ color: 'rgba(255,255,255,0.8)', fontSize: '11px', margin: '2px 0 0' }}>{venue.type}</p>
+              </div>
+              <div style={{
+                backgroundColor: 'rgba(255,255,255,0.2)',
+                padding: '4px 8px',
+                borderRadius: '12px',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '4px'
+              }}>
+                {Icons.starFilled('#fbbf24', 12)}
+                <span style={{ color: 'white', fontSize: '12px', fontWeight: '600' }}>{venue.stars}</span>
+              </div>
+            </div>
+          </div>
+
+          {/* Details */}
+          <div style={{ padding: '12px 14px' }}>
+            {/* Address */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '10px' }}>
+              {Icons.mapPin('#6b7280', 12)}
+              <span style={{ fontSize: '11px', color: '#6b7280' }}>{venue.addr}</span>
+            </div>
+
+            {/* Info row */}
+            <div style={{ display: 'flex', gap: '12px', marginBottom: '12px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                {Icons.dollar('#6b7280', 12)}
+                <span style={{ fontSize: '11px', color: colors.navy, fontWeight: '600' }}>{venue.price}</span>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                {Icons.clock('#6b7280', 12)}
+                <span style={{ fontSize: '11px', color: colors.navy, fontWeight: '600' }}>{venue.best}</span>
+              </div>
+            </div>
+
+            {/* Crowd indicator */}
+            <div style={{
+              backgroundColor: '#f8fafc',
+              borderRadius: '12px',
+              padding: '10px 12px',
+              marginBottom: '12px',
+              border: '1px solid #e2e8f0'
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '6px' }}>
+                <span style={{ fontSize: '11px', color: '#64748b', fontWeight: '500' }}>Current Crowd</span>
+                <div style={{
+                  backgroundColor: `${crowdColor}20`,
+                  color: crowdColor,
+                  padding: '2px 8px',
+                  borderRadius: '10px',
+                  fontSize: '11px',
+                  fontWeight: '700'
+                }}>
+                  {venue.crowd}%
+                </div>
+              </div>
+              <div style={{ width: '100%', height: '6px', backgroundColor: '#e2e8f0', borderRadius: '3px', overflow: 'hidden' }}>
+                <div style={{
+                  height: '100%',
+                  width: `${venue.crowd}%`,
+                  backgroundColor: crowdColor,
+                  borderRadius: '3px',
+                  transition: 'width 0.5s ease-out'
+                }} />
+              </div>
+            </div>
+
+            {/* Action buttons */}
+            <div style={{ display: 'flex', gap: '8px' }}>
+              <button
+                onClick={onViewDetails}
+                style={{
+                  flex: 1,
+                  padding: '10px',
+                  borderRadius: '10px',
+                  border: `2px solid ${colors.navy}`,
+                  backgroundColor: 'white',
+                  color: colors.navy,
+                  fontSize: '12px',
+                  fontWeight: '600',
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: '4px',
+                  transition: 'all 0.2s ease'
+                }}
+              >
+                {Icons.eye(colors.navy, 14)} View Details
+              </button>
+              <button
+                onClick={onVote}
+                style={{
+                  flex: 1,
+                  padding: '10px',
+                  borderRadius: '10px',
+                  border: 'none',
+                  background: `linear-gradient(135deg, ${colors.navy}, ${colors.navyMid})`,
+                  color: 'white',
+                  fontSize: '12px',
+                  fontWeight: '600',
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: '4px',
+                  boxShadow: '0 2px 8px rgba(13,40,71,0.25)',
+                  transition: 'all 0.2s ease'
+                }}
+              >
+                {Icons.vote('white', 14)} Vote for This
+              </button>
+            </div>
+          </div>
+        </div>
+      );
+    };
+
     return (
       <div key="chat-detail-screen-container" style={{ display: 'flex', flexDirection: 'column', height: '100%', backgroundColor: 'white' }}>
-        <div style={{ padding: '12px', display: 'flex', alignItems: 'center', gap: '8px', background: `linear-gradient(135deg, ${colors.navy}, ${colors.navyMid})`, flexShrink: 0 }}>
-          <button onClick={() => { setCurrentScreen('main'); setChatInput(''); setReplyingTo(null); }} style={{ background: 'none', border: 'none', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.arrowLeft('white', 20)}</button>
+        <div style={{ padding: '12px', display: 'flex', alignItems: 'center', gap: '8px', background: `linear-gradient(135deg, ${colors.navy}, ${colors.navyMid})`, flexShrink: 0, boxShadow: '0 2px 10px rgba(0,0,0,0.1)' }}>
+          <button onClick={() => { setCurrentScreen('main'); setChatInput(''); setReplyingTo(null); }} style={{ background: 'none', border: 'none', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'transform 0.2s ease' }}>{Icons.arrowLeft('white', 20)}</button>
           <div style={{ flex: 1 }}>
             <h2 style={{ fontWeight: 'bold', color: 'white', fontSize: '14px', margin: 0 }}>{flock.name}</h2>
-            <p style={{ fontSize: '10px', color: 'rgba(255,255,255,0.6)', margin: 0 }}>{flock.members.length} members • {isTyping ? <span style={{ color: '#22C55E' }}>typing...</span> : 'online'}</p>
+            <p style={{ fontSize: '10px', color: 'rgba(255,255,255,0.6)', margin: 0 }}>{flock.members.length} members • {isTyping ? <span style={{ color: '#86EFAC', fontWeight: '500' }}>{typingUser} is typing...</span> : 'online'}</p>
           </div>
-          <button onClick={() => setShowChatSearch(!showChatSearch)} style={{ width: '32px', height: '32px', borderRadius: '16px', border: 'none', backgroundColor: 'rgba(255,255,255,0.2)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.search('white', 16)}</button>
-          <button onClick={() => setShowChatPool(true)} style={{ width: '32px', height: '32px', borderRadius: '16px', border: 'none', backgroundColor: colors.cream, color: colors.navy, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.dollar(colors.navy, 16)}</button>
+          <button onClick={() => setShowVenueShareModal(true)} style={{ width: '32px', height: '32px', borderRadius: '16px', border: 'none', backgroundColor: 'rgba(255,255,255,0.2)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'all 0.2s ease' }}>{Icons.mapPin('white', 16)}</button>
+          <button onClick={() => setShowChatSearch(!showChatSearch)} style={{ width: '32px', height: '32px', borderRadius: '16px', border: 'none', backgroundColor: 'rgba(255,255,255,0.2)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'all 0.2s ease' }}>{Icons.search('white', 16)}</button>
+          <button onClick={() => setShowChatPool(true)} style={{ width: '32px', height: '32px', borderRadius: '16px', border: 'none', backgroundColor: colors.cream, color: colors.navy, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'all 0.2s ease' }}>{Icons.dollar(colors.navy, 16)}</button>
         </div>
 
-        <div onScroll={() => document.activeElement?.blur()} style={{ flex: 1, padding: '16px', overflowY: 'auto', background: `linear-gradient(180deg, ${colors.cream} 0%, rgba(245,240,230,0.8) 100%)` }}>
+        <div onScroll={() => document.activeElement?.blur()} style={{ flex: 1, padding: '16px', overflowY: 'auto', background: `linear-gradient(180deg, ${colors.cream} 0%, rgba(245,240,230,0.8) 100%)`, scrollBehavior: 'smooth' }}>
           {flock.messages.map((m, idx) => (
             <div
               key={m.id}
@@ -1997,57 +2575,173 @@ const FlockApp = () => {
                 flexDirection: m.sender === 'You' ? 'row-reverse' : 'row',
                 position: 'relative',
                 transform: swipeState.id === m.id ? `translateX(${swipeState.x}px)` : 'translateX(0)',
-                transition: swipeState.id === m.id ? 'none' : 'transform 0.2s ease-out'
+                transition: swipeState.id === m.id ? 'none' : 'transform 0.25s cubic-bezier(0.34, 1.56, 0.64, 1)',
+                animation: 'fadeIn 0.3s ease-out'
               }}
             >
               {/* Swipe hint icon */}
               {swipeState.id === m.id && swipeState.x > 20 && (
-                <div style={{ position: 'absolute', left: '-30px', top: '50%', transform: 'translateY(-50%)', opacity: Math.min(swipeState.x / 50, 1) }}>
+                <div style={{ position: 'absolute', left: '-30px', top: '50%', transform: 'translateY(-50%)', opacity: Math.min(swipeState.x / 50, 1), transition: 'opacity 0.2s ease' }}>
                   {Icons.reply(colors.navy, 20)}
                 </div>
               )}
               <div style={{ position: 'relative', flexShrink: 0 }}>
-                <div style={{ width: '34px', height: '34px', borderRadius: '17px', background: m.sender === 'You' ? `linear-gradient(135deg, ${colors.navy}, ${colors.navyMid})` : 'white', border: m.sender === 'You' ? 'none' : '2px solid rgba(13,40,71,0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '11px', fontWeight: '700', color: m.sender === 'You' ? 'white' : colors.navy, boxShadow: m.sender === 'You' ? '0 3px 10px rgba(13,40,71,0.25)' : '0 2px 6px rgba(0,0,0,0.06)' }}>
+                <div style={{ width: '34px', height: '34px', borderRadius: '17px', background: m.sender === 'You' ? `linear-gradient(135deg, ${colors.navy}, ${colors.navyMid})` : 'white', border: m.sender === 'You' ? 'none' : '2px solid rgba(13,40,71,0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '11px', fontWeight: '700', color: m.sender === 'You' ? 'white' : colors.navy, boxShadow: m.sender === 'You' ? '0 3px 10px rgba(13,40,71,0.25)' : '0 2px 6px rgba(0,0,0,0.06)', transition: 'transform 0.2s ease' }}>
                   {m.sender[0]}
                 </div>
                 {m.sender !== 'You' && idx === 0 && <div style={{ position: 'absolute', bottom: '-1px', right: '-1px', width: '10px', height: '10px', borderRadius: '5px', backgroundColor: '#22C55E', border: '2px solid white' }} />}
               </div>
               <div style={{ maxWidth: '72%', display: 'flex', flexDirection: 'column', alignItems: m.sender === 'You' ? 'flex-end' : 'flex-start' }}>
-                <p style={{ fontSize: '10px', color: '#9ca3af', marginBottom: '4px', padding: '0 4px', fontWeight: '500' }}>{m.sender} • {getRelativeTime(m.time)}</p>
-                <div
-                  onClick={() => setShowReactionPicker(showReactionPicker === m.id ? null : m.id)}
-                  style={{ borderRadius: '18px', padding: '10px 14px', background: m.sender === 'You' ? `linear-gradient(135deg, ${colors.navy} 0%, ${colors.navyMid} 100%)` : 'rgba(255,255,255,0.95)', backdropFilter: 'blur(10px)', WebkitBackdropFilter: 'blur(10px)', color: m.sender === 'You' ? 'white' : colors.navy, borderBottomRightRadius: m.sender === 'You' ? '4px' : '18px', borderBottomLeftRadius: m.sender === 'You' ? '18px' : '4px', boxShadow: m.sender === 'You' ? '0 3px 12px rgba(13,40,71,0.2)' : '0 2px 10px rgba(0,0,0,0.05)', border: m.sender === 'You' ? 'none' : '1px solid rgba(255,255,255,0.8)', cursor: 'pointer', position: 'relative' }}>
-                  <p style={{ fontSize: '14px', lineHeight: '1.45', margin: 0, fontWeight: '500' }}>{m.text}</p>
-                  {m.sender === 'You' && (
-                    <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '4px', gap: '2px' }}>
-                      {Icons.checkDouble('#22C55E', 12)}
-                    </div>
-                  )}
+                {/* Sender name and timestamp */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '4px', padding: '0 4px' }}>
+                  <span style={{ fontSize: '11px', color: colors.navy, fontWeight: '600' }}>{m.sender}</span>
+                  <span style={{ fontSize: '10px', color: '#9ca3af' }}>•</span>
+                  <span style={{ fontSize: '10px', color: '#9ca3af', fontWeight: '500' }}>{m.time || getRelativeTime(m.time)}</span>
                 </div>
-                {showReactionPicker === m.id && (
-                  <div style={{ display: 'flex', gap: '6px', marginTop: '6px', padding: '6px 10px', backgroundColor: 'white', borderRadius: '20px', boxShadow: '0 4px 15px rgba(0,0,0,0.15)' }}>
-                    {reactions.map(r => (
-                      <button key={r} onClick={(e) => { e.stopPropagation(); addReactionToMessage(flock.id, m.id, r); }} style={{ background: 'none', border: 'none', fontSize: '18px', cursor: 'pointer', padding: '4px', borderRadius: '8px', transition: 'transform 0.1s' }}>{r}</button>
-                    ))}
-                    <button onClick={(e) => { e.stopPropagation(); setReplyingTo(m); setShowReactionPicker(null); }} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '4px', display: 'flex', alignItems: 'center' }}>{Icons.reply('#6b7280', 16)}</button>
+
+                {/* Image message */}
+                {m.image && (
+                  <div style={{
+                    borderRadius: '16px',
+                    overflow: 'hidden',
+                    boxShadow: '0 4px 15px rgba(0,0,0,0.1)',
+                    marginBottom: '4px'
+                  }}>
+                    <img src={m.image} alt="Shared" style={{ width: '200px', height: '150px', objectFit: 'cover', display: 'block' }} />
                   </div>
                 )}
-                {m.reactions.length > 0 && (
-                  <div style={{ display: 'flex', gap: '4px', marginTop: '6px' }}>
-                    {m.reactions.map((r, i) => <span key={i} className="reaction-pop" style={{ fontSize: '14px', backgroundColor: 'white', borderRadius: '12px', padding: '3px 7px', boxShadow: '0 2px 6px rgba(0,0,0,0.08)', border: '1px solid rgba(0,0,0,0.05)', display: 'inline-block' }}>{r}</span>)}
+
+                {/* Venue Card message */}
+                {m.venueCard && (
+                  <VenueCard
+                    venue={m.venueCard}
+                    onViewDetails={() => {
+                      const venue = allVenues.find(v => v.id === m.venueCard.id);
+                      if (venue) {
+                        setActiveVenue(venue);
+                        setCurrentTab('explore');
+                        setCurrentScreen('main');
+                      }
+                    }}
+                    onVote={() => {
+                      const existingVote = flock.votes.find(v => v.venue === m.venueCard.name);
+                      if (existingVote) {
+                        const newVotes = flock.votes.map(v => ({
+                          ...v,
+                          voters: v.venue === m.venueCard.name
+                            ? (v.voters.includes('You') ? v.voters : [...v.voters, 'You'])
+                            : v.voters.filter(x => x !== 'You')
+                        }));
+                        updateFlockVotes(selectedFlockId, newVotes);
+                      } else {
+                        const newVotes = [...flock.votes, { venue: m.venueCard.name, type: m.venueCard.type, voters: ['You'] }];
+                        updateFlockVotes(selectedFlockId, newVotes);
+                      }
+                      showToast(`Voted for ${m.venueCard.name}!`);
+                      addXP(10);
+                    }}
+                  />
+                )}
+
+                {/* Regular text message */}
+                {m.text && (
+                  <div
+                    onClick={() => setShowReactionPicker(showReactionPicker === m.id ? null : m.id)}
+                    style={{
+                      borderRadius: '18px',
+                      padding: '10px 14px',
+                      background: m.sender === 'You' ? `linear-gradient(135deg, ${colors.navy} 0%, ${colors.navyMid} 100%)` : 'rgba(255,255,255,0.95)',
+                      backdropFilter: 'blur(10px)',
+                      WebkitBackdropFilter: 'blur(10px)',
+                      color: m.sender === 'You' ? 'white' : colors.navy,
+                      borderBottomRightRadius: m.sender === 'You' ? '4px' : '18px',
+                      borderBottomLeftRadius: m.sender === 'You' ? '18px' : '4px',
+                      boxShadow: m.sender === 'You' ? '0 3px 12px rgba(13,40,71,0.2)' : '0 2px 10px rgba(0,0,0,0.05)',
+                      border: m.sender === 'You' ? 'none' : '1px solid rgba(255,255,255,0.8)',
+                      cursor: 'pointer',
+                      position: 'relative',
+                      transition: 'transform 0.15s ease, box-shadow 0.15s ease'
+                    }}
+                  >
+                    <p style={{ fontSize: '14px', lineHeight: '1.45', margin: 0, fontWeight: '500' }}>{m.text}</p>
+                    {m.sender === 'You' && (
+                      <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '4px', gap: '2px', alignItems: 'center' }}>
+                        {Icons.checkDouble('#86EFAC', 12)}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Reaction picker */}
+                {showReactionPicker === m.id && (
+                  <div style={{
+                    display: 'flex',
+                    gap: '4px',
+                    marginTop: '6px',
+                    padding: '6px 10px',
+                    backgroundColor: 'white',
+                    borderRadius: '24px',
+                    boxShadow: '0 4px 20px rgba(0,0,0,0.15)',
+                    animation: 'reactionPop 0.3s cubic-bezier(0.34, 1.56, 0.64, 1)'
+                  }}>
+                    {reactions.map(r => (
+                      <button
+                        key={r}
+                        onClick={(e) => { e.stopPropagation(); addReactionToMessage(flock.id, m.id, r); }}
+                        style={{
+                          background: 'none',
+                          border: 'none',
+                          fontSize: '20px',
+                          cursor: 'pointer',
+                          padding: '6px',
+                          borderRadius: '10px',
+                          transition: 'transform 0.15s ease, background-color 0.15s ease'
+                        }}
+                      >{r}</button>
+                    ))}
+                    <button onClick={(e) => { e.stopPropagation(); setReplyingTo(m); setShowReactionPicker(null); }} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '6px', display: 'flex', alignItems: 'center', borderRadius: '10px' }}>{Icons.reply('#6b7280', 18)}</button>
+                  </div>
+                )}
+
+                {/* Reactions display */}
+                {m.reactions && m.reactions.length > 0 && (
+                  <div style={{ display: 'flex', gap: '4px', marginTop: '6px', flexWrap: 'wrap' }}>
+                    {m.reactions.map((r, i) => (
+                      <span
+                        key={i}
+                        className="reaction-pop"
+                        style={{
+                          fontSize: '14px',
+                          backgroundColor: 'white',
+                          borderRadius: '14px',
+                          padding: '4px 8px',
+                          boxShadow: '0 2px 8px rgba(0,0,0,0.08)',
+                          border: '1px solid rgba(0,0,0,0.05)',
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '4px'
+                        }}
+                      >
+                        {r}
+                        <span style={{ fontSize: '10px', color: '#9ca3af', fontWeight: '500' }}>1</span>
+                      </span>
+                    ))}
                   </div>
                 )}
               </div>
             </div>
           ))}
+
+          {/* Enhanced typing indicator with user name */}
           {isTyping && (
             <div style={{ display: 'flex', gap: '10px', marginBottom: '16px', animation: 'fadeIn 0.3s ease-out' }}>
-              <div style={{ width: '34px', height: '34px', borderRadius: '17px', backgroundColor: 'white', border: '2px solid rgba(13,40,71,0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '11px', fontWeight: '700', color: colors.navy }}>A</div>
-              <div style={{ padding: '12px 16px', backgroundColor: 'white', borderRadius: '18px', borderBottomLeftRadius: '4px', boxShadow: '0 2px 10px rgba(0,0,0,0.05)' }}>
-                <div style={{ display: 'flex', gap: '5px', alignItems: 'center' }}>
-                  <div style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: colors.navy, animation: 'typingDot 1.4s ease-in-out infinite' }} />
-                  <div style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: colors.navy, animation: 'typingDot 1.4s ease-in-out 0.2s infinite' }} />
-                  <div style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: colors.navy, animation: 'typingDot 1.4s ease-in-out 0.4s infinite' }} />
+              <div style={{ width: '34px', height: '34px', borderRadius: '17px', backgroundColor: 'white', border: '2px solid rgba(13,40,71,0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '11px', fontWeight: '700', color: colors.navy }}>{typingUser?.[0] || 'A'}</div>
+              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start' }}>
+                <span style={{ fontSize: '11px', color: colors.navy, fontWeight: '600', marginBottom: '4px', paddingLeft: '4px' }}>{typingUser || 'Alex'}</span>
+                <div style={{ padding: '12px 16px', backgroundColor: 'white', borderRadius: '18px', borderBottomLeftRadius: '4px', boxShadow: '0 2px 10px rgba(0,0,0,0.05)', display: 'flex', alignItems: 'center', gap: '3px' }}>
+                  <div style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: colors.navy, animation: 'typingDot 1.4s ease-in-out infinite', opacity: 0.7 }} />
+                  <div style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: colors.navy, animation: 'typingDot 1.4s ease-in-out 0.2s infinite', opacity: 0.7 }} />
+                  <div style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: colors.navy, animation: 'typingDot 1.4s ease-in-out 0.4s infinite', opacity: 0.7 }} />
                 </div>
               </div>
             </div>
@@ -2055,41 +2749,140 @@ const FlockApp = () => {
           <div ref={chatEndRef} />
         </div>
 
+        {/* Reply bar */}
         {replyingTo && (
-          <div style={{ padding: '8px 16px', backgroundColor: 'rgba(13,40,71,0.05)', borderTop: '1px solid rgba(0,0,0,0.05)', display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <div style={{ width: '3px', height: '32px', backgroundColor: colors.navy, borderRadius: '2px' }} />
+          <div style={{ padding: '10px 16px', backgroundColor: 'rgba(13,40,71,0.05)', borderTop: '1px solid rgba(0,0,0,0.05)', display: 'flex', alignItems: 'center', gap: '10px', animation: 'slideUp 0.2s ease-out' }}>
+            <div style={{ width: '3px', height: '36px', backgroundColor: colors.navy, borderRadius: '2px' }} />
             <div style={{ flex: 1 }}>
               <p style={{ fontSize: '11px', fontWeight: '600', color: colors.navy, margin: 0 }}>Replying to {replyingTo.sender}</p>
-              <p style={{ fontSize: '11px', color: '#6b7280', margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{replyingTo.text}</p>
+              <p style={{ fontSize: '11px', color: '#6b7280', margin: '2px 0 0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{replyingTo.text}</p>
             </div>
-            <button onClick={() => setReplyingTo(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '4px' }}>{Icons.x('#6b7280', 16)}</button>
+            <button onClick={() => setReplyingTo(null)} style={{ width: '28px', height: '28px', borderRadius: '14px', backgroundColor: 'rgba(0,0,0,0.05)', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'background-color 0.2s ease' }}>{Icons.x('#6b7280', 16)}</button>
           </div>
         )}
 
+        {/* Image preview bar */}
+        {showImagePreview && pendingImage && (
+          <div style={{ padding: '12px 16px', backgroundColor: 'rgba(13,40,71,0.05)', borderTop: '1px solid rgba(0,0,0,0.05)', display: 'flex', alignItems: 'center', gap: '12px', animation: 'slideUp 0.2s ease-out' }}>
+            <div style={{ position: 'relative' }}>
+              <img src={pendingImage} alt="Preview" style={{ width: '60px', height: '60px', objectFit: 'cover', borderRadius: '12px', boxShadow: '0 2px 8px rgba(0,0,0,0.1)' }} />
+              <button
+                onClick={() => { setPendingImage(null); setShowImagePreview(false); }}
+                style={{ position: 'absolute', top: '-6px', right: '-6px', width: '22px', height: '22px', borderRadius: '11px', backgroundColor: colors.red, border: '2px solid white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+              >
+                {Icons.x('white', 12)}
+              </button>
+            </div>
+            <div style={{ flex: 1 }}>
+              <p style={{ fontSize: '12px', fontWeight: '600', color: colors.navy, margin: 0 }}>Ready to send</p>
+              <p style={{ fontSize: '11px', color: '#6b7280', margin: '2px 0 0' }}>Tap send to share this image</p>
+            </div>
+            <button
+              onClick={() => shareImageToChat(selectedFlockId)}
+              style={{
+                width: '44px',
+                height: '44px',
+                borderRadius: '22px',
+                border: 'none',
+                background: `linear-gradient(135deg, ${colors.navy}, ${colors.navyMid})`,
+                color: 'white',
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                boxShadow: '0 3px 10px rgba(13,40,71,0.25)'
+              }}
+            >
+              {Icons.send('white', 18)}
+            </button>
+          </div>
+        )}
+
+        {/* Input area */}
         <div style={{ padding: '10px 12px', backgroundColor: 'rgba(255,255,255,0.98)', backdropFilter: 'blur(10px)', WebkitBackdropFilter: 'blur(10px)', borderTop: '1px solid rgba(0,0,0,0.05)', display: 'flex', gap: '8px', alignItems: 'center', flexShrink: 0, boxShadow: '0 -4px 20px rgba(0,0,0,0.03)' }}>
-          <button onClick={() => showToast('Opening camera...')} style={{ width: '36px', height: '36px', borderRadius: '18px', border: 'none', backgroundColor: 'rgba(13,40,71,0.08)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.image('#6b7280', 18)}</button>
-          <input key="chat-input" id="chat-input" type="text" value={chatInput} onChange={(e) => setChatInput(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && sendChatMessage()} placeholder={replyingTo ? 'Reply...' : 'Type a message...'} style={{ flex: 1, padding: '11px 16px', borderRadius: '22px', backgroundColor: 'rgba(243,244,246,0.9)', border: '1px solid rgba(0,0,0,0.05)', fontSize: '14px', outline: 'none', fontWeight: '500' }} autoComplete="off" />
+          <button onClick={handleChatImageSelect} style={{ width: '38px', height: '38px', borderRadius: '19px', border: 'none', backgroundColor: 'rgba(13,40,71,0.08)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'all 0.2s ease' }}>{Icons.camera('#6b7280', 18)}</button>
+          <input key="chat-input" id="chat-input" type="text" value={chatInput} onChange={(e) => setChatInput(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && sendChatMessage()} placeholder={replyingTo ? 'Reply...' : 'Type a message...'} style={{ flex: 1, padding: '12px 16px', borderRadius: '22px', backgroundColor: 'rgba(243,244,246,0.9)', border: '1px solid rgba(0,0,0,0.05)', fontSize: '14px', outline: 'none', fontWeight: '500', transition: 'all 0.2s ease' }} autoComplete="off" />
           {chatInput ? (
-            <button onClick={sendChatMessage} style={{ width: '40px', height: '40px', borderRadius: '20px', border: 'none', background: `linear-gradient(135deg, ${colors.navy}, ${colors.navyMid})`, color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 3px 10px rgba(13,40,71,0.25)' }}>{Icons.send('white', 17)}</button>
+            <button onClick={sendChatMessage} style={{ width: '42px', height: '42px', borderRadius: '21px', border: 'none', background: `linear-gradient(135deg, ${colors.navy}, ${colors.navyMid})`, color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 3px 10px rgba(13,40,71,0.25)', transition: 'all 0.2s ease' }}>{Icons.send('white', 18)}</button>
           ) : (
-            <button onClick={() => showToast('Recording voice...')} style={{ width: '40px', height: '40px', borderRadius: '20px', border: 'none', background: `linear-gradient(135deg, ${colors.navy}, ${colors.navyMid})`, color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 3px 10px rgba(13,40,71,0.25)' }}>{Icons.mic('white', 18)}</button>
+            <button onClick={() => showToast('Recording voice...')} style={{ width: '42px', height: '42px', borderRadius: '21px', border: 'none', background: `linear-gradient(135deg, ${colors.navy}, ${colors.navyMid})`, color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 3px 10px rgba(13,40,71,0.25)', transition: 'all 0.2s ease' }}>{Icons.mic('white', 18)}</button>
           )}
         </div>
 
+        {/* Cash Pool Modal */}
         {showChatPool && (
-          <div style={{ position: 'absolute', inset: 0, backgroundColor: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'flex-end', zIndex: 50 }}>
-            <div style={{ backgroundColor: 'white', borderRadius: '16px 16px 0 0', padding: '16px', width: '100%' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+          <div className="modal-backdrop" style={{ position: 'absolute', inset: 0, backgroundColor: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'flex-end', zIndex: 50 }}>
+            <div className="modal-content" style={{ backgroundColor: 'white', borderRadius: '20px 20px 0 0', padding: '20px', width: '100%' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
                 <h2 style={{ fontSize: '18px', fontWeight: '900', color: colors.navy, margin: 0 }}>Cash Pool</h2>
-                <button onClick={() => setShowChatPool(false)} style={{ width: '32px', height: '32px', borderRadius: '16px', backgroundColor: '#f3f4f6', border: 'none', cursor: 'pointer' }}>✕</button>
+                <button onClick={() => setShowChatPool(false)} style={{ width: '32px', height: '32px', borderRadius: '16px', backgroundColor: '#f3f4f6', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.x('#6b7280', 18)}</button>
               </div>
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '12px', marginBottom: '12px' }}>
-                <button onClick={() => setChatPoolAmount(prev => Math.max(5, prev - 5))} style={{ width: '40px', height: '40px', borderRadius: '20px', border: `2px solid ${colors.navy}`, backgroundColor: 'white', color: colors.navy, fontWeight: 'bold', cursor: 'pointer' }}>−</button>
-                <span style={{ fontSize: '32px', fontWeight: '900', width: '80px', textAlign: 'center', color: colors.navy }}>${chatPoolAmount}</span>
-                <button onClick={() => setChatPoolAmount(prev => prev + 5)} style={{ width: '40px', height: '40px', borderRadius: '20px', border: `2px solid ${colors.navy}`, backgroundColor: 'white', color: colors.navy, fontWeight: 'bold', cursor: 'pointer' }}>+</button>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '16px', marginBottom: '16px' }}>
+                <button onClick={() => setChatPoolAmount(prev => Math.max(5, prev - 5))} style={{ width: '44px', height: '44px', borderRadius: '22px', border: `2px solid ${colors.navy}`, backgroundColor: 'white', color: colors.navy, fontWeight: 'bold', cursor: 'pointer', fontSize: '18px', transition: 'all 0.2s ease' }}>−</button>
+                <span style={{ fontSize: '36px', fontWeight: '900', width: '100px', textAlign: 'center', color: colors.navy }}>${chatPoolAmount}</span>
+                <button onClick={() => setChatPoolAmount(prev => prev + 5)} style={{ width: '44px', height: '44px', borderRadius: '22px', border: `2px solid ${colors.navy}`, backgroundColor: 'white', color: colors.navy, fontWeight: 'bold', cursor: 'pointer', fontSize: '18px', transition: 'all 0.2s ease' }}>+</button>
               </div>
-              <p style={{ fontSize: '12px', color: '#6b7280', textAlign: 'center', marginBottom: '16px' }}>Per person • Total: ${chatPoolAmount * flock.members.length}</p>
-              <button onClick={() => { addMessageToFlock(selectedFlockId, { id: Date.now(), sender: 'You', time: 'Now', text: `💰 Pool: $${chatPoolAmount}/person`, reactions: [] }); setShowChatPool(false); showToast('💰 Pool created!'); }} style={styles.gradientButton}>Create Pool</button>
+              <p style={{ fontSize: '13px', color: '#6b7280', textAlign: 'center', marginBottom: '20px' }}>Per person • Total: ${chatPoolAmount * flock.members.length}</p>
+              <button onClick={() => { addMessageToFlock(selectedFlockId, { id: Date.now(), sender: 'You', time: new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }), text: `💰 Pool: $${chatPoolAmount}/person`, reactions: [] }); setShowChatPool(false); showToast('💰 Pool created!'); }} style={{ ...styles.gradientButton, padding: '14px' }}>Create Pool</button>
+            </div>
+          </div>
+        )}
+
+        {/* Venue Share Modal */}
+        {showVenueShareModal && (
+          <div className="modal-backdrop" style={{ position: 'absolute', inset: 0, backgroundColor: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'flex-end', zIndex: 50 }}>
+            <div className="modal-content" style={{ backgroundColor: 'white', borderRadius: '20px 20px 0 0', padding: '20px', width: '100%', maxHeight: '70%', overflowY: 'auto' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+                <h2 style={{ fontSize: '18px', fontWeight: '900', color: colors.navy, margin: 0, display: 'flex', alignItems: 'center', gap: '8px' }}>{Icons.mapPin(colors.navy, 20)} Share a Venue</h2>
+                <button onClick={() => setShowVenueShareModal(false)} style={{ width: '32px', height: '32px', borderRadius: '16px', backgroundColor: '#f3f4f6', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.x('#6b7280', 18)}</button>
+              </div>
+              <p style={{ fontSize: '13px', color: '#6b7280', marginBottom: '16px' }}>Select a venue to share with your flock</p>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                {allVenues.map(venue => (
+                  <button
+                    key={venue.id}
+                    onClick={() => shareVenueToChat(selectedFlockId, venue)}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '12px',
+                      padding: '12px',
+                      borderRadius: '14px',
+                      border: '1px solid #e2e8f0',
+                      backgroundColor: 'white',
+                      cursor: 'pointer',
+                      textAlign: 'left',
+                      transition: 'all 0.2s ease'
+                    }}
+                  >
+                    <div style={{
+                      width: '44px',
+                      height: '44px',
+                      borderRadius: '12px',
+                      background: `linear-gradient(135deg, ${getCategoryColor(venue.category)}, ${getCategoryColor(venue.category)}cc)`,
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center'
+                    }}>
+                      {venue.category === 'Food' ? Icons.pizza('white', 20) : venue.category === 'Nightlife' ? Icons.cocktail('white', 20) : venue.category === 'Live Music' ? Icons.music('white', 20) : Icons.sports('white', 20)}
+                    </div>
+                    <div style={{ flex: 1 }}>
+                      <p style={{ fontSize: '14px', fontWeight: '600', color: colors.navy, margin: 0 }}>{venue.name}</p>
+                      <p style={{ fontSize: '11px', color: '#6b7280', margin: '2px 0 0' }}>{venue.type} • {venue.price}</p>
+                    </div>
+                    <div style={{
+                      padding: '4px 10px',
+                      borderRadius: '12px',
+                      backgroundColor: venue.crowd > 70 ? '#FEE2E2' : venue.crowd > 40 ? '#FEF3C7' : '#D1FAE5',
+                      color: venue.crowd > 70 ? colors.red : venue.crowd > 40 ? colors.amber : colors.teal,
+                      fontSize: '11px',
+                      fontWeight: '600'
+                    }}>
+                      {venue.crowd}%
+                    </div>
+                  </button>
+                ))}
+              </div>
             </div>
           </div>
         )}
@@ -4233,6 +5026,43 @@ const FlockApp = () => {
           0%, 100% { opacity: 0.4; transform: translate(-50%, -50%) scale(1); }
           50% { opacity: 0.8; transform: translate(-50%, -50%) scale(1.2); }
         }
+        @keyframes heatPulseOuter {
+          0%, 100% { opacity: 0.3; transform: translate(-50%, -50%) scale(1); }
+          50% { opacity: 0.6; transform: translate(-50%, -50%) scale(1.15); }
+        }
+        @keyframes heatPulseMiddle {
+          0%, 100% { opacity: 0.4; transform: translate(-50%, -50%) scale(1); }
+          50% { opacity: 0.7; transform: translate(-50%, -50%) scale(1.12); }
+        }
+        @keyframes heatPulseInner {
+          0%, 100% { opacity: 0.5; transform: translate(-50%, -50%) scale(1); }
+          50% { opacity: 0.85; transform: translate(-50%, -50%) scale(1.08); }
+        }
+        @keyframes heatPulseCore {
+          0%, 100% { opacity: 0.6; transform: translate(-50%, -50%) scale(1); }
+          50% { opacity: 1; transform: translate(-50%, -50%) scale(1.05); }
+        }
+        @keyframes heatGlow {
+          0%, 100% { opacity: 0.8; filter: blur(0px); }
+          50% { opacity: 1; filter: blur(2px); }
+        }
+        @keyframes trendingBounce {
+          0%, 100% { transform: translateY(0) rotate(0deg); }
+          25% { transform: translateY(-2px) rotate(-5deg); }
+          75% { transform: translateY(-2px) rotate(5deg); }
+        }
+        @keyframes pinRingPulse {
+          0% { opacity: 0.6; transform: translateX(-50%) scale(1); }
+          100% { opacity: 0; transform: translateX(-50%) scale(1.8); }
+        }
+        @keyframes tooltipFadeIn {
+          from { opacity: 0; transform: translateX(-50%) translateY(4px); }
+          to { opacity: 1; transform: translateX(-50%) translateY(0); }
+        }
+        @keyframes userLocationPulse {
+          0% { opacity: 0.8; transform: translate(-50%, -50%) scale(1); }
+          100% { opacity: 0; transform: translate(-50%, -50%) scale(2.5); }
+        }
         @keyframes bounce {
           0%, 100% { transform: translateY(0); }
           50% { transform: translateY(-4px); }
@@ -4378,23 +5208,222 @@ const FlockApp = () => {
           box-shadow: 0 0 0 3px rgba(13,40,71,0.1) !important;
         }
         button {
-          transition: transform 0.15s ease-out, box-shadow 0.15s ease-out;
+          transition: transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1), box-shadow 0.2s ease, background-color 0.2s ease, opacity 0.2s ease;
         }
         button:active {
-          transform: scale(0.96);
+          transform: scale(0.94);
         }
         button:hover {
-          transform: scale(1.02);
+          transform: scale(1.03);
+        }
+        /* Premium loading shimmer */
+        @keyframes loadingShimmer {
+          0% { background-position: -200% 0; }
+          100% { background-position: 200% 0; }
+        }
+        .loading-shimmer {
+          background: linear-gradient(90deg, #f0f0f0 25%, #e0e0e0 50%, #f0f0f0 75%);
+          background-size: 200% 100%;
+          animation: loadingShimmer 1.5s ease-in-out infinite;
+        }
+        /* Smooth hover lift effect */
+        .hover-lift {
+          transition: transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1), box-shadow 0.3s ease;
+        }
+        .hover-lift:hover {
+          transform: translateY(-4px);
+          box-shadow: 0 12px 30px rgba(0,0,0,0.15);
+        }
+        /* Card entrance stagger */
+        @keyframes cardEntrance {
+          from { opacity: 0; transform: translateY(20px) scale(0.96); }
+          to { opacity: 1; transform: translateY(0) scale(1); }
+        }
+        .card-entrance {
+          animation: cardEntrance 0.5s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+        }
+        /* Button press ripple */
+        @keyframes buttonRipple {
+          0% { transform: scale(0); opacity: 0.6; }
+          100% { transform: scale(2.5); opacity: 0; }
+        }
+        /* Glow pulse for active states */
+        @keyframes glowPulse {
+          0%, 100% { box-shadow: 0 0 5px rgba(13,40,71,0.2); }
+          50% { box-shadow: 0 0 20px rgba(13,40,71,0.4); }
+        }
+        /* Smooth icon rotation */
+        @keyframes iconSpin {
+          from { transform: rotate(0deg); }
+          to { transform: rotate(360deg); }
+        }
+        .icon-spin {
+          animation: iconSpin 1s linear infinite;
+        }
+        /* Success checkmark animation */
+        @keyframes successCheck {
+          0% { transform: scale(0) rotate(-45deg); opacity: 0; }
+          50% { transform: scale(1.2) rotate(0deg); opacity: 1; }
+          100% { transform: scale(1) rotate(0deg); opacity: 1; }
+        }
+        .success-check {
+          animation: successCheck 0.5s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+        }
+        /* Slide in from bottom */
+        @keyframes slideInBottom {
+          from { opacity: 0; transform: translateY(30px); }
+          to { opacity: 1; transform: translateY(0); }
+        }
+        .slide-in-bottom {
+          animation: slideInBottom 0.4s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+        }
+        /* Scale bounce in */
+        @keyframes scaleBounceIn {
+          0% { transform: scale(0); }
+          60% { transform: scale(1.1); }
+          100% { transform: scale(1); }
+        }
+        .scale-bounce-in {
+          animation: scaleBounceIn 0.4s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+        }
+        /* Subtle breathing animation */
+        @keyframes breathe {
+          0%, 100% { transform: scale(1); }
+          50% { transform: scale(1.02); }
+        }
+        .breathe {
+          animation: breathe 3s ease-in-out infinite;
+        }
+        /* Enhanced focus states */
+        input:focus, textarea:focus, select:focus {
+          outline: none;
+          border-color: #0d2847 !important;
+          box-shadow: 0 0 0 4px rgba(13,40,71,0.1), 0 2px 8px rgba(13,40,71,0.1) !important;
+          transition: all 0.2s ease;
+        }
+        /* Smooth scroll behavior */
+        * {
+          scroll-behavior: smooth;
+        }
+        /* Link hover underline animation */
+        .link-hover {
+          position: relative;
+        }
+        .link-hover::after {
+          content: '';
+          position: absolute;
+          bottom: -2px;
+          left: 0;
+          width: 0;
+          height: 2px;
+          background: #0d2847;
+          transition: width 0.3s ease;
+        }
+        .link-hover:hover::after {
+          width: 100%;
+        }
+        /* Gradient text animation */
+        @keyframes gradientShift {
+          0% { background-position: 0% 50%; }
+          50% { background-position: 100% 50%; }
+          100% { background-position: 0% 50%; }
+        }
+        .gradient-text {
+          background: linear-gradient(135deg, #0d2847, #2d5a87, #14B8A6, #0d2847);
+          background-size: 300% 300%;
+          -webkit-background-clip: text;
+          -webkit-text-fill-color: transparent;
+          animation: gradientShift 4s ease infinite;
+        }
+        /* Notification badge bounce */
+        @keyframes badgeBounce {
+          0%, 100% { transform: scale(1); }
+          50% { transform: scale(1.15); }
+        }
+        .badge-bounce {
+          animation: badgeBounce 0.6s ease-in-out;
+        }
+        /* Skeleton loading for cards */
+        .skeleton {
+          background: linear-gradient(90deg, #f0f0f0 25%, #e8e8e8 37%, #f0f0f0 63%);
+          background-size: 400% 100%;
+          animation: loadingShimmer 1.4s ease infinite;
+          border-radius: 8px;
+        }
+        /* Premium glass effect */
+        .glass {
+          background: rgba(255,255,255,0.85);
+          backdrop-filter: blur(12px);
+          -webkit-backdrop-filter: blur(12px);
+          border: 1px solid rgba(255,255,255,0.5);
+        }
+        /* Interactive card hover */
+        .interactive-card {
+          transition: all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+        }
+        .interactive-card:hover {
+          transform: translateY(-2px) scale(1.01);
+          box-shadow: 0 8px 25px rgba(0,0,0,0.1);
+        }
+        .interactive-card:active {
+          transform: translateY(0) scale(0.99);
         }
         ::-webkit-scrollbar {
-          width: 4px;
+          width: 5px;
+          height: 5px;
         }
         ::-webkit-scrollbar-track {
           background: transparent;
         }
         ::-webkit-scrollbar-thumb {
-          background: rgba(13,40,71,0.2);
-          border-radius: 2px;
+          background: rgba(13,40,71,0.15);
+          border-radius: 4px;
+          transition: background 0.2s ease;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+          background: rgba(13,40,71,0.3);
+        }
+        /* Smooth scroll containers */
+        [style*="overflow"] {
+          scroll-behavior: smooth;
+          -webkit-overflow-scrolling: touch;
+        }
+        /* Loading indicator */
+        @keyframes loadingPulse {
+          0%, 100% { opacity: 1; }
+          50% { opacity: 0.5; }
+        }
+        .loading-pulse {
+          animation: loadingPulse 1.5s ease-in-out infinite;
+        }
+        /* Highlight flash for new items */
+        @keyframes highlightFlash {
+          0% { background-color: rgba(20,184,166,0.2); }
+          100% { background-color: transparent; }
+        }
+        .highlight-flash {
+          animation: highlightFlash 1s ease-out;
+        }
+        /* Subtle scale on press */
+        .press-scale:active {
+          transform: scale(0.97);
+        }
+        /* Gradient border effect */
+        .gradient-border {
+          position: relative;
+          background: white;
+        }
+        .gradient-border::before {
+          content: '';
+          position: absolute;
+          inset: 0;
+          border-radius: inherit;
+          padding: 2px;
+          background: linear-gradient(135deg, #0d2847, #2d5a87);
+          -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+          mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+          -webkit-mask-composite: xor;
+          mask-composite: exclude;
         }
       `}</style>
     </div>
