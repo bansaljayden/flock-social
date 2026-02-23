@@ -10,6 +10,9 @@ import {
   formatCurrency,
   calculateProfitMargin
 } from './lib/finance';
+import { getCurrentUser, logout, isLoggedIn } from './services/api';
+import LoginScreen from './components/auth/LoginScreen';
+import SignupScreen from './components/auth/SignupScreen';
 
 // Brand Colors
 const colors = {
@@ -126,7 +129,7 @@ const styles = {
   },
 };
 
-const FlockApp = () => {
+const FlockAppInner = () => {
   // User Mode Selection
   const [userMode, setUserMode] = useState(() => localStorage.getItem('flockUserMode') || null);
   const [showModeSelection, setShowModeSelection] = useState(!localStorage.getItem('flockUserMode'));
@@ -5428,6 +5431,63 @@ const FlockApp = () => {
       `}</style>
     </div>
   );
+};
+
+const FlockApp = () => {
+  const [authUser, setAuthUser] = useState(null);
+  const [authScreen, setAuthScreen] = useState('login');
+  const [authChecking, setAuthChecking] = useState(true);
+
+  useEffect(() => {
+    if (!isLoggedIn()) {
+      setAuthChecking(false);
+      return;
+    }
+    getCurrentUser()
+      .then((data) => setAuthUser(data.user || data))
+      .catch(() => {
+        logout();
+        setAuthUser(null);
+      })
+      .finally(() => setAuthChecking(false));
+  }, []);
+
+  if (authChecking) {
+    return (
+      <div style={{
+        minHeight: '100vh',
+        background: `linear-gradient(135deg, #0d2847 0%, #1a3a5c 50%, #2d5a87 100%)`,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        fontFamily: "'Inter', -apple-system, BlinkMacSystemFont, sans-serif",
+      }}>
+        <div style={{ textAlign: 'center', color: 'white' }}>
+          <div style={{ fontSize: '48px', marginBottom: '16px' }}>🐦</div>
+          <div style={{ fontSize: '18px', fontWeight: '600' }}>Loading...</div>
+        </div>
+      </div>
+    );
+  }
+
+  if (!authUser) {
+    if (authScreen === 'signup') {
+      return (
+        <SignupScreen
+          onSignupSuccess={(user) => setAuthUser(user)}
+          onSwitchToLogin={() => setAuthScreen('login')}
+        />
+      );
+    }
+    return (
+      <LoginScreen
+        onLoginSuccess={(user) => setAuthUser(user)}
+        onSwitchToSignup={() => setAuthScreen('signup')}
+      />
+    );
+  }
+
+  return <FlockAppInner />;
 };
 
 export default FlockApp;
