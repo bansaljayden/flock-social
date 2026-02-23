@@ -555,6 +555,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
             time: new Date(m.created_at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }),
             text: m.message_text,
             reactions: (m.reactions || []).map(r => r.emoji),
+            ...(m.image_url ? { image: m.image_url } : {}),
           }));
           setFlocks(prev => prev.map(f => f.id === selectedFlockId ? { ...f, messages: msgs } : f));
         })
