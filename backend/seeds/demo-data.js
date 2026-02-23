@@ -139,7 +139,7 @@ async function seed() {
       await client.query(`DELETE FROM flocks WHERE creator_id = $1`, [realJayden]);
       console.log('  Cleaned previous demo data for real account.');
     } else {
-      const hashed = await bcrypt.hash('demo123', SALT_ROUNDS);
+      const hashed = await bcrypt.hash('REDACTED_PASSWORD', SALT_ROUNDS);
       const result = await client.query(
         `INSERT INTO users (email, password, name, interests)
          VALUES ('Bansal.jayden@gmail.com', $1, 'Jayden Bansal', $2)
