@@ -10,7 +10,7 @@ import {
   formatCurrency,
   calculateProfitMargin
 } from './lib/finance';
-import { getCurrentUser, logout, isLoggedIn, getFlocks, createFlock as apiCreateFlock, getMessages, sendMessage as apiSendMessage, updateProfile, searchVenues } from './services/api';
+import { getCurrentUser, logout, isLoggedIn, getFlocks, createFlock as apiCreateFlock, getMessages, sendMessage as apiSendMessage, updateProfile, searchVenues, getStories } from './services/api';
 import { connectSocket, disconnectSocket, joinFlock, leaveFlock, sendMessage as socketSendMessage, sendImageMessage as socketSendImage, startTyping, stopTyping, onNewMessage, onUserTyping, onUserStoppedTyping } from './services/socket';
 import LoginScreen from './components/auth/LoginScreen';
 import SignupScreen from './components/auth/SignupScreen';
@@ -155,6 +155,32 @@ const FlockAppInner = ({ authUser, onLogout }) => {
   const [pickingVenueForCreate, setPickingVenueForCreate] = useState(false);
   const [selectedVenueForCreate, setSelectedVenueForCreate] = useState(null);
 
+  // Venue search state (hoisted from CreateScreen to avoid conditional hook calls)
+  const [venueQuery, setVenueQuery] = useState('');
+  const [venueResults, setVenueResults] = useState([]);
+  const [venueSearching, setVenueSearching] = useState(false);
+  const [showVenueSearch, setShowVenueSearch] = useState(false);
+  const searchTimerRef = useRef(null);
+
+  const doVenueSearch = useCallback(async (q) => {
+    if (!q.trim() || q.trim().length < 2) { setVenueResults([]); return; }
+    setVenueSearching(true);
+    try {
+      const data = await searchVenues(q);
+      setVenueResults(data.venues || []);
+    } catch (err) {
+      console.error('Venue search error:', err);
+    } finally {
+      setVenueSearching(false);
+    }
+  }, []);
+
+  const handleVenueQueryChange = useCallback((val) => {
+    setVenueQuery(val);
+    if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
+    searchTimerRef.current = setTimeout(() => doVenueSearch(val), 400);
+  }, [doVenueSearch]);
+
   // Toast
   const [toast, setToast] = useState(null);
   const showToast = useCallback((message, type = 'success') => {
@@ -227,8 +253,28 @@ const FlockAppInner = ({ authUser, onLogout }) => {
   const [newEventTitle, setNewEventTitle] = useState('');
   const [newEventVenue, setNewEventVenue] = useState('');
 
-  // Stories (populated from flock members)
-  const stories = [];
+  // Stories (fetched from API)
+  const [stories, setStories] = useState([]);
+
+  useEffect(() => {
+    getStories()
+      .then(data => {
+        const avatarEmojis = ['😎', '🔥', '✨', '🎉', '🚀', '💪', '🎨', '🌟', '🎯', '🍕'];
+        const mapped = (data.story_groups || []).map((g, i) => ({
+          id: g.user_id,
+          name: g.user_name.split(' ')[0],
+          avatar: avatarEmojis[i % avatarEmojis.length],
+          hasNew: true,
+          storyData: g.stories,
+        }));
+        setStories(mapped);
+      })
+      .catch(() => setStories([]));
+  }, []);
+
+  // Story viewer state
+  const [viewingStory, setViewingStory] = useState(null);
+  const [storyIndex, setStoryIndex] = useState(0);
 
   // Activity (populated from real events)
   const activityFeed = [];
@@ -1509,9 +1555,10 @@ const FlockAppInner = ({ authUser, onLogout }) => {
       {/* Scrollable Content */}
       <div onScroll={handleScroll} style={{ flex: 1, padding: '12px', overflowY: 'auto', marginTop: '-8px' }}>
         {/* Stories */}
+        {stories.length > 0 && (
         <div style={{ display: 'flex', gap: '12px', marginBottom: '12px', overflowX: 'auto', paddingBottom: '4px' }}>
           {stories.map(s => (
-            <button key={s.id} onClick={() => showToast(`${s.name}'s story`)} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '4px', background: 'none', border: 'none', cursor: 'pointer', flexShrink: 0 }}>
+            <button key={s.id} onClick={() => { setViewingStory(s); setStoryIndex(0); }} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '4px', background: 'none', border: 'none', cursor: 'pointer', flexShrink: 0 }}>
               <div style={{ width: '52px', height: '52px', borderRadius: '26px', padding: '2px', background: s.hasNew ? `linear-gradient(135deg, ${colors.navy}, ${colors.skyBlue})` : '#d1d5db' }}>
                 <div style={{ width: '100%', height: '100%', borderRadius: '24px', backgroundColor: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '24px' }}>{s.avatar}</div>
               </div>
@@ -1519,6 +1566,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
             </button>
           ))}
         </div>
+        )}
 
         {/* Action Buttons */}
         <div style={{ display: 'flex', gap: '10px', marginBottom: '14px' }}>
@@ -1616,31 +1664,6 @@ const FlockAppInner = ({ authUser, onLogout }) => {
 
   // CREATE SCREEN
   const CreateScreen = () => {
-    const [venueQuery, setVenueQuery] = React.useState('');
-    const [venueResults, setVenueResults] = React.useState([]);
-    const [venueSearching, setVenueSearching] = React.useState(false);
-    const [showVenueSearch, setShowVenueSearch] = React.useState(false);
-    const searchTimerRef = React.useRef(null);
-
-    const doVenueSearch = React.useCallback(async (q) => {
-      if (!q.trim() || q.trim().length < 2) { setVenueResults([]); return; }
-      setVenueSearching(true);
-      try {
-        const data = await searchVenues(q);
-        setVenueResults(data.venues || []);
-      } catch (err) {
-        console.error('Venue search error:', err);
-      } finally {
-        setVenueSearching(false);
-      }
-    }, []);
-
-    const handleVenueQueryChange = React.useCallback((val) => {
-      setVenueQuery(val);
-      if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
-      searchTimerRef.current = setTimeout(() => doVenueSearch(val), 400);
-    }, [doVenueSearch]);
-
     const selectVenue = (venue) => {
       setSelectedVenueForCreate({
         name: venue.name,
@@ -5296,6 +5319,51 @@ const FlockAppInner = ({ authUser, onLogout }) => {
         </div>
       </div>
       <Toast />
+      {/* Story Viewer Overlay */}
+      {viewingStory && viewingStory.storyData && viewingStory.storyData.length > 0 && (
+        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.95)', zIndex: 9999, display: 'flex', flexDirection: 'column' }}
+          onClick={(e) => {
+            const rect = e.currentTarget.getBoundingClientRect();
+            const x = e.clientX - rect.left;
+            if (x > rect.width / 2) {
+              if (storyIndex < viewingStory.storyData.length - 1) setStoryIndex(storyIndex + 1);
+              else setViewingStory(null);
+            } else {
+              if (storyIndex > 0) setStoryIndex(storyIndex - 1);
+            }
+          }}
+        >
+          {/* Progress bars */}
+          <div style={{ display: 'flex', gap: '3px', padding: '12px 12px 0', flexShrink: 0 }}>
+            {viewingStory.storyData.map((_, i) => (
+              <div key={i} style={{ flex: 1, height: '3px', borderRadius: '2px', backgroundColor: i <= storyIndex ? 'white' : 'rgba(255,255,255,0.3)' }} />
+            ))}
+          </div>
+          {/* Header */}
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px', flexShrink: 0 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+              <div style={{ width: '36px', height: '36px', borderRadius: '18px', backgroundColor: colors.navyMid, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '18px' }}>{viewingStory.avatar}</div>
+              <div>
+                <p style={{ fontSize: '14px', fontWeight: '700', color: 'white', margin: 0 }}>{viewingStory.name}</p>
+                <p style={{ fontSize: '11px', color: 'rgba(255,255,255,0.6)', margin: 0 }}>
+                  {(() => { const h = Math.round((Date.now() - new Date(viewingStory.storyData[storyIndex].created_at).getTime()) / 3600000); return h < 1 ? 'Just now' : `${h}h ago`; })()}
+                </p>
+              </div>
+            </div>
+            <button onClick={(e) => { e.stopPropagation(); setViewingStory(null); }} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '8px' }}>{Icons.x('white', 24)}</button>
+          </div>
+          {/* Image */}
+          <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', padding: '0 8px' }}>
+            <img src={viewingStory.storyData[storyIndex].image_url} alt="" style={{ maxWidth: '100%', maxHeight: '100%', borderRadius: '12px', objectFit: 'contain' }} />
+          </div>
+          {/* Caption */}
+          {viewingStory.storyData[storyIndex].caption && (
+            <div style={{ padding: '16px', textAlign: 'center', flexShrink: 0 }}>
+              <p style={{ fontSize: '16px', fontWeight: '600', color: 'white', margin: 0, textShadow: '0 1px 4px rgba(0,0,0,0.5)' }}>{viewingStory.storyData[storyIndex].caption}</p>
+            </div>
+          )}
+        </div>
+      )}
       <SOSModal />
       <CheckinModal />
       <ProfilePicModal />

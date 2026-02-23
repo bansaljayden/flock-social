@@ -75,6 +75,15 @@ CREATE TABLE IF NOT EXISTS emoji_reactions (
   UNIQUE(message_id, user_id, emoji)
 );
 
+CREATE TABLE IF NOT EXISTS stories (
+  id SERIAL PRIMARY KEY,
+  user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+  image_url TEXT NOT NULL,
+  caption TEXT,
+  created_at TIMESTAMP DEFAULT NOW(),
+  expires_at TIMESTAMP DEFAULT (NOW() + INTERVAL '24 hours')
+);
+
 -- Indexes for query performance
 CREATE INDEX IF NOT EXISTS idx_flock_members_flock ON flock_members(flock_id);
 CREATE INDEX IF NOT EXISTS idx_flock_members_user ON flock_members(user_id);
@@ -86,3 +95,5 @@ CREATE INDEX IF NOT EXISTS idx_dm_conversation ON direct_messages(sender_id, rec
 CREATE INDEX IF NOT EXISTS idx_venue_votes_flock ON venue_votes(flock_id);
 CREATE INDEX IF NOT EXISTS idx_emoji_reactions_message ON emoji_reactions(message_id);
 CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
+CREATE INDEX IF NOT EXISTS idx_stories_user ON stories(user_id);
+CREATE INDEX IF NOT EXISTS idx_stories_expires ON stories(expires_at);

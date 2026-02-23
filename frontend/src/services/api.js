@@ -140,5 +140,10 @@ export async function getVenueDetails(placeId) {
   return request(`/api/venues/details?place_id=${encodeURIComponent(placeId)}`);
 }
 
+// Stories
+export async function getStories() {
+  return request('/api/stories');
+}
+
 export { getToken, BASE_URL };
 export default request;
