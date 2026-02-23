@@ -235,7 +235,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
 
   // Flocks
   const [flocks, setFlocks] = useState([]);
-  const [flocksLoading, setFlocksLoading] = useState(true);
+  const [, setFlocksLoading] = useState(true);
 
   // Fetch flocks from API on mount
   useEffect(() => {
@@ -532,7 +532,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
   }, [selectedFlock?.messages, currentScreen]);
 
   // Fetch messages from API + join socket room when opening a chat
-  const [messagesLoading, setMessagesLoading] = useState(false);
+  const [, setMessagesLoading] = useState(false);
   const prevFlockIdRef = useRef(null);
   useEffect(() => {
     if (currentScreen === 'chatDetail' && selectedFlockId) {
@@ -571,7 +571,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
   useEffect(() => {
     const unsub = onNewMessage((msg) => {
       // Don't duplicate own messages (loose equality handles string/number mismatch)
-      if (msg.sender_id == authUser?.id) return;
+      if (String(msg.sender_id) === String(authUser?.id)) return;
       const mapped = {
         id: msg.id,
         sender: msg.sender_name || 'Unknown',
