@@ -400,11 +400,11 @@ const FlockAppInner = ({ authUser, onLogout }) => {
   const [joinCode, setJoinCode] = useState('');
 
   // Explore
-  const [searchText, setSearchText] = useState('');
+  const [searchText] = useState('');
   const [category, setCategory] = useState('All');
   const [activeVenue, setActiveVenue] = useState(null);
   const [venueDetailModal, setVenueDetailModal] = useState(null); // full venue details for modal
-  const [venueDetailLoading, setVenueDetailLoading] = useState(false);
+  const [, setVenueDetailLoading] = useState(false);
   const [venueDetailPhotoIdx, setVenueDetailPhotoIdx] = useState(0);
   const [connections, setConnections] = useState([]);
   const [showConnectPanel, setShowConnectPanel] = useState(false);
@@ -435,7 +435,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
   const [profileScreen, setProfileScreen] = useState('main');
   const [profileName, setProfileName] = useState(authUser?.name || '');
   const [profileHandle, setProfileHandle] = useState(authUser?.email?.split('@')[0] || '');
-  const [profileBio, setProfileBio] = useState('Love exploring new places!');
+  const [profileBio] = useState('Love exploring new places!'); // eslint-disable-line no-unused-vars
   const [profilePic, setProfilePic] = useState(null);
   const [showPicModal, setShowPicModal] = useState(false);
   const [trustedContacts, setTrustedContacts] = useState(['Mom', 'Dad']);
