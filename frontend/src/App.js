@@ -10,7 +10,7 @@ import {
   formatCurrency,
   calculateProfitMargin
 } from './lib/finance';
-import { getCurrentUser, logout, isLoggedIn, getFlocks, createFlock as apiCreateFlock, getMessages, sendMessage as apiSendMessage } from './services/api';
+import { getCurrentUser, logout, isLoggedIn, getFlocks, createFlock as apiCreateFlock, getMessages, sendMessage as apiSendMessage, updateProfile } from './services/api';
 import { connectSocket, disconnectSocket, joinFlock, leaveFlock, sendMessage as socketSendMessage, sendImageMessage as socketSendImage, startTyping, stopTyping, onNewMessage, onUserTyping, onUserStoppedTyping } from './services/socket';
 import LoginScreen from './components/auth/LoginScreen';
 import SignupScreen from './components/auth/SignupScreen';
@@ -3092,27 +3092,141 @@ const FlockAppInner = ({ authUser, onLogout }) => {
             <h1 style={{ fontSize: '18px', fontWeight: '900', color: colors.navy, margin: 0 }}>{profileScreen === 'edit' ? 'Edit Profile' : profileScreen === 'safety' ? 'Safety' : profileScreen === 'interests' ? 'Interests' : 'Payment'}</h1>
           </div>
           <div style={{ flex: 1, padding: '16px', overflowY: 'auto' }}>
-            {profileScreen === 'edit' && (
-              <div>
-                <div style={{ display: 'flex', justifyContent: 'center', marginBottom: '16px' }}>
-                  <button onClick={() => setShowPicModal(true)} style={{ width: '80px', height: '80px', borderRadius: '40px', background: `linear-gradient(135deg, ${colors.navy}, ${colors.navyMid})`, border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden' }}>
-                    {profilePic ? <img src={profilePic} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : Icons.user(colors.navy, 32)}
-                  </button>
-                </div>
-                <div style={{ marginBottom: '12px' }}>
-                  <label style={{ display: 'block', fontSize: '12px', fontWeight: 'bold', color: colors.navy, marginBottom: '4px' }}>Name</label>
-                  <input key="profile-name" id="profile-name" type="text" value={profileName} onChange={(e) => setProfileName(e.target.value)} style={styles.input} autoComplete="off" />
-                </div>
-                <div style={{ marginBottom: '12px' }}>
-                  <label style={{ display: 'block', fontSize: '12px', fontWeight: 'bold', color: colors.navy, marginBottom: '4px' }}>Username</label>
-                  <input key="profile-handle" id="profile-handle" type="text" value={profileHandle} onChange={(e) => setProfileHandle(e.target.value)} style={styles.input} autoComplete="off" />
-                </div>
-                <div style={{ marginBottom: '12px' }}>
-                  <label style={{ display: 'block', fontSize: '12px', fontWeight: 'bold', color: colors.navy, marginBottom: '4px' }}>Bio</label>
-                  <textarea key="profile-bio" id="profile-bio" value={profileBio} onChange={(e) => setProfileBio(e.target.value)} rows={2} style={{ ...styles.input, resize: 'none' }} />
-                </div>
-              </div>
-            )}
+            {profileScreen === 'edit' && (() => {
+              const EditProfileForm = () => {
+                const [editName, setEditName] = React.useState(profileName);
+                const [editEmail, setEditEmail] = React.useState(authUser?.email || '');
+                const [editHandle, setEditHandle] = React.useState(profileHandle);
+                const [currentPw, setCurrentPw] = React.useState('');
+                const [newPw, setNewPw] = React.useState('');
+                const [confirmPw, setConfirmPw] = React.useState('');
+                const [showCurrentPw, setShowCurrentPw] = React.useState(false);
+                const [showNewPw, setShowNewPw] = React.useState(false);
+                const [editError, setEditError] = React.useState('');
+                const [editSuccess, setEditSuccess] = React.useState('');
+                const [editLoading, setEditLoading] = React.useState(false);
+
+                const EyeSvg = ({ show }) => (
+                  <svg width={18} height={18} viewBox="0 0 24 24" fill="none" stroke="#6b7280" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    {show ? (
+                      <>
+                        <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24" />
+                        <line x1="1" y1="1" x2="23" y2="23" />
+                      </>
+                    ) : (
+                      <>
+                        <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+                        <circle cx="12" cy="12" r="3" />
+                      </>
+                    )}
+                  </svg>
+                );
+
+                const handleSaveProfile = async () => {
+                  setEditError('');
+                  setEditSuccess('');
+
+                  if (!editName.trim()) { setEditError('Name is required'); return; }
+                  if (!editEmail.trim()) { setEditError('Email is required'); return; }
+                  if (!currentPw) { setEditError('Current password is required to save changes'); return; }
+                  if (newPw && newPw.length < 8) { setEditError('New password must be at least 8 characters'); return; }
+                  if (newPw && newPw !== confirmPw) { setEditError('New passwords do not match'); return; }
+
+                  setEditLoading(true);
+                  try {
+                    const payload = {
+                      name: editName.trim(),
+                      email: editEmail.trim(),
+                      current_password: currentPw,
+                    };
+                    if (newPw) payload.new_password = newPw;
+
+                    const data = await updateProfile(payload);
+                    setProfileName(data.user.name);
+                    setProfileHandle(data.user.email.split('@')[0]);
+                    setEditSuccess('Profile updated successfully!');
+                    setCurrentPw('');
+                    setNewPw('');
+                    setConfirmPw('');
+                    showToast('Profile updated!');
+                  } catch (err) {
+                    setEditError(err.message);
+                  } finally {
+                    setEditLoading(false);
+                  }
+                };
+
+                const pwFieldStyle = { position: 'relative' };
+                const eyeBtnStyle = { position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', padding: '4px', display: 'flex', alignItems: 'center' };
+
+                return (
+                  <div>
+                    <div style={{ display: 'flex', justifyContent: 'center', marginBottom: '16px' }}>
+                      <button onClick={() => setShowPicModal(true)} style={{ width: '80px', height: '80px', borderRadius: '40px', background: `linear-gradient(135deg, ${colors.navy}, ${colors.navyMid})`, border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden' }}>
+                        {profilePic ? <img src={profilePic} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : Icons.user(colors.navy, 32)}
+                      </button>
+                    </div>
+
+                    {editError && (
+                      <div style={{ backgroundColor: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)', borderRadius: '10px', padding: '10px 14px', marginBottom: '14px', color: colors.red, fontSize: '13px', fontWeight: '600' }}>{editError}</div>
+                    )}
+                    {editSuccess && (
+                      <div style={{ backgroundColor: 'rgba(20,184,166,0.1)', border: '1px solid rgba(20,184,166,0.3)', borderRadius: '10px', padding: '10px 14px', marginBottom: '14px', color: colors.teal, fontSize: '13px', fontWeight: '600' }}>{editSuccess}</div>
+                    )}
+
+                    <div style={{ marginBottom: '12px' }}>
+                      <label style={{ display: 'block', fontSize: '12px', fontWeight: 'bold', color: colors.navy, marginBottom: '4px' }}>Display Name *</label>
+                      <input type="text" value={editName} onChange={(e) => setEditName(e.target.value)} style={styles.input} autoComplete="off" />
+                    </div>
+                    <div style={{ marginBottom: '12px' }}>
+                      <label style={{ display: 'block', fontSize: '12px', fontWeight: 'bold', color: colors.navy, marginBottom: '4px' }}>Username</label>
+                      <input type="text" value={editHandle} onChange={(e) => setEditHandle(e.target.value)} style={styles.input} autoComplete="off" />
+                    </div>
+                    <div style={{ marginBottom: '12px' }}>
+                      <label style={{ display: 'block', fontSize: '12px', fontWeight: 'bold', color: colors.navy, marginBottom: '4px' }}>Email *</label>
+                      <input type="email" value={editEmail} onChange={(e) => setEditEmail(e.target.value)} style={styles.input} autoComplete="off" />
+                    </div>
+
+                    <div style={{ borderTop: `1px solid ${colors.creamDark}`, marginTop: '16px', paddingTop: '16px' }}>
+                      <p style={{ fontSize: '12px', fontWeight: 'bold', color: colors.navy, marginBottom: '12px' }}>Security</p>
+
+                      <div style={{ marginBottom: '12px' }}>
+                        <label style={{ display: 'block', fontSize: '12px', fontWeight: 'bold', color: colors.navy, marginBottom: '4px' }}>Current Password *</label>
+                        <div style={pwFieldStyle}>
+                          <input type={showCurrentPw ? 'text' : 'password'} value={currentPw} onChange={(e) => setCurrentPw(e.target.value)} placeholder="Required to save changes" style={{ ...styles.input, paddingRight: '40px' }} autoComplete="off" />
+                          <button type="button" onClick={() => setShowCurrentPw(!showCurrentPw)} style={eyeBtnStyle}><EyeSvg show={showCurrentPw} /></button>
+                        </div>
+                      </div>
+                      <div style={{ marginBottom: '12px' }}>
+                        <label style={{ display: 'block', fontSize: '12px', fontWeight: 'bold', color: colors.navy, marginBottom: '4px' }}>New Password <span style={{ fontWeight: 'normal', color: '#6b7280' }}>(optional)</span></label>
+                        <div style={pwFieldStyle}>
+                          <input type={showNewPw ? 'text' : 'password'} value={newPw} onChange={(e) => setNewPw(e.target.value)} placeholder="Min 8 characters" style={{ ...styles.input, paddingRight: '40px' }} autoComplete="off" />
+                          <button type="button" onClick={() => setShowNewPw(!showNewPw)} style={eyeBtnStyle}><EyeSvg show={showNewPw} /></button>
+                        </div>
+                      </div>
+                      {newPw && (
+                        <div style={{ marginBottom: '12px' }}>
+                          <label style={{ display: 'block', fontSize: '12px', fontWeight: 'bold', color: colors.navy, marginBottom: '4px' }}>Confirm New Password</label>
+                          <input type="password" value={confirmPw} onChange={(e) => setConfirmPw(e.target.value)} placeholder="Re-enter new password" style={styles.input} autoComplete="off" />
+                          {confirmPw && newPw !== confirmPw && (
+                            <p style={{ fontSize: '11px', color: colors.red, margin: '4px 0 0' }}>Passwords do not match</p>
+                          )}
+                        </div>
+                      )}
+                    </div>
+
+                    <button
+                      onClick={handleSaveProfile}
+                      disabled={editLoading}
+                      style={{ ...styles.gradientButton, marginTop: '8px', opacity: editLoading ? 0.7 : 1 }}
+                    >
+                      {editLoading ? 'Saving...' : 'Save Changes'}
+                    </button>
+                  </div>
+                );
+              };
+              return <EditProfileForm />;
+            })()}
             {profileScreen === 'safety' && (
               <div>
                 <div style={styles.card}>
@@ -3224,9 +3338,11 @@ const FlockAppInner = ({ authUser, onLogout }) => {
               </div>
             )}
           </div>
-          <div style={{ padding: '12px', backgroundColor: 'white', borderTop: '1px solid #eee', flexShrink: 0 }}>
-            <button onClick={() => { showToast('✅ Saved!'); setProfileScreen('main'); }} style={styles.gradientButton}>Save</button>
-          </div>
+          {profileScreen !== 'edit' && (
+            <div style={{ padding: '12px', backgroundColor: 'white', borderTop: '1px solid #eee', flexShrink: 0 }}>
+              <button onClick={() => { showToast('✅ Saved!'); setProfileScreen('main'); }} style={styles.gradientButton}>Save</button>
+            </div>
+          )}
         </div>
       );
     }

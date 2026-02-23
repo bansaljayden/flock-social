@@ -1,4 +1,5 @@
 const express = require('express');
+const bcrypt = require('bcryptjs');
 const { body, query, validationResult } = require('express-validator');
 const multer = require('multer');
 const path = require('path');
@@ -6,6 +7,7 @@ const pool = require('../config/database');
 const { authenticate } = require('../middleware/auth');
 
 const router = express.Router();
+const SALT_ROUNDS = 10;
 
 router.use(authenticate);
 
@@ -64,12 +66,15 @@ router.get('/profile', async (req, res) => {
   }
 });
 
-// PUT /api/users/profile - Update current user's profile
+// PUT /api/users/profile - Update current user's profile (requires current password)
 router.put('/profile',
   [
-    body('name').optional().trim().isLength({ min: 1, max: 255 }),
-    body('phone').optional().isMobilePhone(),
+    body('name').optional().trim().isLength({ min: 1, max: 255 }).withMessage('Name must be 1-255 characters'),
+    body('email').optional().isEmail().withMessage('Valid email required'),
+    body('phone').optional(),
     body('interests').optional().isArray(),
+    body('current_password').notEmpty().withMessage('Current password is required'),
+    body('new_password').optional().isLength({ min: 8 }).withMessage('New password must be at least 8 characters'),
   ],
   async (req, res) => {
     try {
@@ -78,17 +83,50 @@ router.put('/profile',
         return res.status(400).json({ error: errors.array()[0].msg });
       }
 
-      const { name, phone, interests } = req.body;
+      const { name, email, phone, interests, current_password, new_password } = req.body;
+
+      // Fetch current user with password
+      const userResult = await pool.query('SELECT * FROM users WHERE id = $1', [req.user.id]);
+      if (userResult.rows.length === 0) {
+        return res.status(404).json({ error: 'User not found' });
+      }
+
+      const user = userResult.rows[0];
+
+      // Verify current password
+      const validPassword = await bcrypt.compare(current_password, user.password);
+      if (!validPassword) {
+        return res.status(401).json({ error: 'Current password is incorrect' });
+      }
+
+      // Check email uniqueness if changing email
+      if (email && email.toLowerCase() !== user.email.toLowerCase()) {
+        const emailCheck = await pool.query(
+          'SELECT id FROM users WHERE LOWER(email) = LOWER($1) AND id != $2',
+          [email, req.user.id]
+        );
+        if (emailCheck.rows.length > 0) {
+          return res.status(400).json({ error: 'Email is already in use' });
+        }
+      }
+
+      // Hash new password if provided
+      let hashedPassword = null;
+      if (new_password) {
+        hashedPassword = await bcrypt.hash(new_password, SALT_ROUNDS);
+      }
 
       const result = await pool.query(
         `UPDATE users
          SET name = COALESCE($1, name),
-             phone = COALESCE($2, phone),
-             interests = COALESCE($3, interests),
+             email = COALESCE($2, email),
+             phone = COALESCE($3, phone),
+             interests = COALESCE($4, interests),
+             password = COALESCE($5, password),
              updated_at = NOW()
-         WHERE id = $4
+         WHERE id = $6
          RETURNING id, email, name, phone, interests, role, profile_image_url, created_at, updated_at`,
-        [name, phone, interests, req.user.id]
+        [name || null, email || null, phone || null, interests || null, hashedPassword, req.user.id]
       );
 
       res.json({ user: result.rows[0] });
@@ -142,8 +180,6 @@ router.post('/upload-image', (req, res) => {
     }
 
     try {
-      // In production, upload to S3/Cloudinary and store the URL.
-      // For now, serve from the local uploads directory.
       const imageUrl = `/uploads/${req.file.filename}`;
 
       await pool.query(
