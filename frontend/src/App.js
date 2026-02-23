@@ -10,7 +10,7 @@ import {
   formatCurrency,
   calculateProfitMargin
 } from './lib/finance';
-import { getCurrentUser, logout, isLoggedIn } from './services/api';
+import { getCurrentUser, logout, isLoggedIn, getFlocks, createFlock as apiCreateFlock, getMessages, sendMessage as apiSendMessage } from './services/api';
 import LoginScreen from './components/auth/LoginScreen';
 import SignupScreen from './components/auth/SignupScreen';
 
@@ -129,7 +129,7 @@ const styles = {
   },
 };
 
-const FlockAppInner = () => {
+const FlockAppInner = ({ authUser, onLogout }) => {
   // User Mode Selection
   const [userMode, setUserMode] = useState(() => localStorage.getItem('flockUserMode') || null);
   const [showModeSelection, setShowModeSelection] = useState(!localStorage.getItem('flockUserMode'));
@@ -215,35 +215,44 @@ const FlockAppInner = () => {
   // Calendar
   const [calendarMonth, setCalendarMonth] = useState(new Date());
   const [selectedDate, setSelectedDate] = useState(new Date());
-  const [calendarEvents, setCalendarEvents] = useState([
-    { id: 1, title: 'Friday Night Downtown', date: '2025-01-17', time: '9:17 PM', venue: 'Blue Heron Bar', color: colors.navy, members: 4 },
-    { id: 2, title: "Sarah's Birthday Extravaganza", date: '2025-01-18', time: '7:45 PM', venue: 'The Bookstore Speakeasy', color: colors.navyMid, members: 7 },
-  ]);
+  const [calendarEvents, setCalendarEvents] = useState([]);
   const [showAddEvent, setShowAddEvent] = useState(false);
   const [newEventTitle, setNewEventTitle] = useState('');
   const [newEventVenue, setNewEventVenue] = useState('');
 
-  // Stories
-  const stories = [
-    { id: 1, name: 'Alex', avatar: '🎸', hasNew: true },
-    { id: 2, name: 'Sarah', avatar: '🎂', hasNew: true },
-    { id: 3, name: 'Jordan', avatar: '⚽', hasNew: false },
-    { id: 4, name: 'Taylor', avatar: '🍸', hasNew: true },
-    { id: 5, name: 'Mike', avatar: '🎮', hasNew: true },
-  ];
+  // Stories (populated from flock members)
+  const stories = [];
 
-  // Activity
-  const activityFeed = [
-    { id: 1, user: 'Alex', action: 'created', target: 'Jazz Night', time: '5m', icon: '🎉' },
-    { id: 2, user: 'Jordan', action: 'voted for', target: 'Sports Bar', time: '12m', icon: '🗳️' },
-  ];
+  // Activity (populated from real events)
+  const activityFeed = [];
 
   // Flocks
-  const [flocks, setFlocks] = useState([
-    { id: 1, name: "Friday Night Downtown", host: "Alex", members: ['Alex', 'Sam', 'Jordan', 'Taylor'], time: "Tonight 9:17 PM", status: "voting", venue: "Blue Heron Bar", cashPool: { target: 80, collected: 63, perPerson: 20, paid: ['Alex', 'Sam', 'Jordan'] }, votes: [{ venue: "Blue Heron Bar", type: "Cocktail Bar", voters: ['Alex', 'Sam'] }, { venue: "The Bookstore Speakeasy", type: "Hidden Bar", voters: ['Jordan'] }], messages: [{ id: 1, sender: 'Alex', time: '4:47 PM', text: "we're still doing this right?? 🎉", reactions: ['🔥'] }] },
-    { id: 2, name: "Sarah's Birthday Extravaganza", host: "Sarah", members: ['Sarah', 'You', 'Mike', 'Emma', 'Jordan', 'Taylor', 'Chris'], time: "Saturday 7:45 PM", status: "confirmed", venue: "The Bookstore Speakeasy", cashPool: { target: 140, collected: 140, perPerson: 20, paid: ['Sarah', 'You', 'Mike', 'Emma', 'Jordan', 'Taylor', 'Chris'] }, votes: [], messages: [{ id: 1, sender: 'Sarah', time: '2:23 PM', text: "omg I'm so excited!! 🎂", reactions: ['❤️', '🎉'] }] },
-    { id: 3, name: "Sunday Funday", host: "Chris", members: ['Chris', 'You', 'Dave'], time: "Sunday 3:30 PM", status: "voting", venue: "Porters Pub", cashPool: null, votes: [{ venue: "Porters Pub", type: "Sports Bar", voters: ['Chris', 'Dave'] }], messages: [{ id: 1, sender: 'Chris', time: '11:12 AM', text: "Eagles game!! 🏈 who's in", reactions: [] }] }
-  ]);
+  const [flocks, setFlocks] = useState([]);
+  const [flocksLoading, setFlocksLoading] = useState(true);
+
+  // Fetch flocks from API on mount
+  useEffect(() => {
+    setFlocksLoading(true);
+    getFlocks()
+      .then((data) => {
+        const mapped = (data.flocks || []).map(f => ({
+          id: f.id,
+          name: f.name,
+          host: f.creator_name || 'Unknown',
+          members: [],
+          memberCount: f.member_count || 1,
+          time: f.event_time ? new Date(f.event_time).toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' }) : 'TBD',
+          status: f.status === 'planning' ? 'voting' : f.status,
+          venue: f.venue_name || 'TBD',
+          cashPool: null,
+          votes: [],
+          messages: [],
+        }));
+        setFlocks(mapped);
+      })
+      .catch(() => setFlocks([]))
+      .finally(() => setFlocksLoading(false));
+  }, []);
 
   // Create Flock form
   const [flockName, setFlockName] = useState('');
@@ -258,10 +267,7 @@ const FlockAppInner = () => {
   const [searchText, setSearchText] = useState('');
   const [category, setCategory] = useState('All');
   const [activeVenue, setActiveVenue] = useState(null);
-  const [connections, setConnections] = useState([
-    { id: 1, name: 'Alex M.', loc: 'The Jazz Room', interests: ['Live Music'], status: 'available', distance: '0.3 mi' },
-    { id: 2, name: 'Jordan K.', loc: 'Sports Bar', interests: ['Sports'], status: 'available', distance: '0.5 mi' },
-  ]);
+  const [connections, setConnections] = useState([]);
   const [showConnectPanel, setShowConnectPanel] = useState(false);
 
   // Chat
@@ -281,25 +287,15 @@ const FlockAppInner = () => {
   const [showImagePreview, setShowImagePreview] = useState(false);
 
   // Direct Messages
-  const [directMessages, setDirectMessages] = useState([
-    { id: 'dm-1', friendName: 'Alex', avatar: '🎸', messages: [
-      { id: 1, sender: 'Alex', text: 'yo you coming out tonight or what', time: '6:34 PM' },
-      { id: 2, sender: 'You', text: 'ya for sure! where we thinking', time: '6:37 PM' },
-      { id: 3, sender: 'Alex', text: 'Blue Heron? Sarah said shes down', time: '6:38 PM' },
-    ], lastActive: '3m ago', isOnline: true, unread: 2 },
-    { id: 'dm-2', friendName: 'Sarah', avatar: '🎂', messages: [
-      { id: 1, sender: 'Sarah', text: 'thanks for the bday wishes!! 🎉', time: '2:13 PM' },
-      { id: 2, sender: 'You', text: 'ofc!! cant wait for saturday', time: '2:27 PM' },
-    ], lastActive: '47m ago', isOnline: false, unread: 0 },
-  ]);
+  const [directMessages, setDirectMessages] = useState([]);
   const [selectedDmId, setSelectedDmId] = useState(null);
   const [showNewDmModal, setShowNewDmModal] = useState(false);
   const [dmSearchText, setDmSearchText] = useState('');
 
   // Profile
   const [profileScreen, setProfileScreen] = useState('main');
-  const [profileName, setProfileName] = useState('Jayden');
-  const [profileHandle, setProfileHandle] = useState('jayden');
+  const [profileName, setProfileName] = useState(authUser?.name || '');
+  const [profileHandle, setProfileHandle] = useState(authUser?.email?.split('@')[0] || '');
   const [profileBio, setProfileBio] = useState('Love exploring new places!');
   const [profilePic, setProfilePic] = useState(null);
   const [showPicModal, setShowPicModal] = useState(false);
@@ -351,7 +347,7 @@ const FlockAppInner = () => {
     }
   }, [showAiAssistant]);
 
-  const allFriends = useMemo(() => ['Alex', 'Sam', 'Jordan', 'Taylor', 'Morgan', 'Chris', 'Emma', 'Mike'], []);
+  const allFriends = useMemo(() => [], []);
 
   const allVenues = useMemo(() => [
     { id: 1, name: "Apollo Grill", type: "Italian", category: "Food", x: 25, y: 30, crowd: 47, best: "Now-ish", stars: 4.6, addr: '85 W Broad St, Bethlehem', price: '$', trending: false },
@@ -528,14 +524,42 @@ const FlockAppInner = () => {
     }
   }, [selectedFlock?.messages, currentScreen]);
 
-  // Send chat message callback
-  const sendChatMessage = useCallback(() => {
-    if (chatInput.trim()) {
-      addMessageToFlock(selectedFlockId, { id: Date.now(), sender: 'You', time: 'Now', text: chatInput, reactions: [] });
-      setChatInput('');
-      addXP(5);
+  // Fetch messages from API when opening a chat
+  const [messagesLoading, setMessagesLoading] = useState(false);
+  useEffect(() => {
+    if (currentScreen === 'chatDetail' && selectedFlockId) {
+      setMessagesLoading(true);
+      getMessages(selectedFlockId)
+        .then((data) => {
+          const msgs = (data.messages || []).map(m => ({
+            id: m.id,
+            sender: m.sender_name || 'Unknown',
+            time: new Date(m.created_at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }),
+            text: m.message_text,
+            reactions: (m.reactions || []).map(r => r.emoji),
+          }));
+          setFlocks(prev => prev.map(f => f.id === selectedFlockId ? { ...f, messages: msgs } : f));
+        })
+        .catch(() => {})
+        .finally(() => setMessagesLoading(false));
     }
-  }, [chatInput, selectedFlockId, addMessageToFlock, addXP]);
+  }, [currentScreen, selectedFlockId]);
+
+  // Send chat message callback
+  const sendChatMessage = useCallback(async () => {
+    if (chatInput.trim()) {
+      const text = chatInput;
+      setChatInput('');
+      try {
+        const data = await apiSendMessage(selectedFlockId, text);
+        const m = data.message;
+        addMessageToFlock(selectedFlockId, { id: m.id, sender: m.sender_name || authUser?.name || 'You', time: 'Now', text: m.message_text, reactions: [] });
+        addXP(5);
+      } catch {
+        addMessageToFlock(selectedFlockId, { id: Date.now(), sender: authUser?.name || 'You', time: 'Now', text, reactions: [] });
+      }
+    }
+  }, [chatInput, selectedFlockId, addMessageToFlock, addXP, authUser]);
 
   const getCategoryColor = (cat) => {
     switch(cat) {
@@ -1511,18 +1535,24 @@ const FlockAppInner = () => {
 
   // CREATE SCREEN
   const CreateScreen = () => {
-    const handleCreate = () => {
+    const handleCreate = async () => {
       if (!flockName.trim()) { showToast('Enter a plan name', 'error'); return; }
       setIsLoading(true);
-      setTimeout(() => {
-        const venueName = selectedVenueForCreate?.name || 'TBD';
-        const newFlock = { id: Date.now(), name: flockName, host: 'You', members: ['You', ...flockFriends], time: `${flockDate} ${flockTime}`, status: 'voting', venue: venueName, cashPool: flockCashPool ? { target: flockAmount * (flockFriends.length + 1), collected: flockAmount, perPerson: flockAmount, paid: ['You'] } : null, votes: [], messages: [{ id: 1, sender: 'You', time: 'Now', text: `Let's go! 🎉`, reactions: [] }] };
+      try {
+        const venueName = selectedVenueForCreate?.name || null;
+        const venueAddr = selectedVenueForCreate?.addr || null;
+        const data = await apiCreateFlock({ name: flockName, venue_name: venueName, venue_address: venueAddr });
+        const f = data.flock;
+        const newFlock = { id: f.id, name: f.name, host: authUser?.name || 'You', members: [], memberCount: 1, time: f.event_time ? new Date(f.event_time).toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' }) : `${flockDate} ${flockTime}`, status: 'voting', venue: f.venue_name || 'TBD', cashPool: null, votes: [], messages: [] };
         setFlocks(prev => [...prev, newFlock]);
-        addEventToCalendar(flockName, venueName, new Date(), flockTime, colors.navy);
         setFlockName(''); setFlockFriends([]); setFlockCashPool(false); setSelectedVenueForCreate(null);
-        setIsLoading(false); setCurrentScreen('main');
+        setCurrentScreen('main');
         addXP(50); showToast(`"${newFlock.name}" created!`);
-      }, 800);
+      } catch (err) {
+        showToast(err.message || 'Failed to create flock', 'error');
+      } finally {
+        setIsLoading(false);
+      }
     };
 
     return (
@@ -3141,7 +3171,7 @@ const FlockAppInner = () => {
 
         <div style={{ flex: 1, padding: '12px', overflowY: 'auto', marginTop: '-8px' }}>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '6px', marginBottom: '12px' }}>
-            {[{ l: 'Flocks', v: flocks.length }, { l: 'Friends', v: 48 }, { l: 'Streak', v: streak, hasIcon: true }, { l: 'Events', v: calendarEvents.length }].map(s => (
+            {[{ l: 'Flocks', v: flocks.length }, { l: 'Friends', v: allFriends.length }, { l: 'Streak', v: streak, hasIcon: true }, { l: 'Events', v: calendarEvents.length }].map(s => (
               <div key={s.l} style={{ backgroundColor: 'white', borderRadius: '12px', padding: '8px', textAlign: 'center', boxShadow: '0 1px 3px rgba(0,0,0,0.1)' }}>
                 <p style={{ fontSize: '18px', fontWeight: '900', color: colors.navy, margin: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px' }}>{s.v}{s.hasIcon && Icons.flame('#F59E0B', 16)}</p>
                 <p style={{ fontSize: '9px', color: '#6b7280', margin: 0 }}>{s.l}</p>
@@ -3162,7 +3192,7 @@ const FlockAppInner = () => {
                 <span style={{ color: '#9ca3af' }}>›</span>
               </button>
             ))}
-            <button onClick={() => showToast('Logged out!')} style={{ width: '100%', padding: '12px', textAlign: 'left', display: 'flex', alignItems: 'center', gap: '12px', backgroundColor: 'white', border: 'none', cursor: 'pointer', color: colors.red }}>
+            <button onClick={() => { if (onLogout) onLogout(); }} style={{ width: '100%', padding: '12px', textAlign: 'left', display: 'flex', alignItems: 'center', gap: '12px', backgroundColor: 'white', border: 'none', cursor: 'pointer', color: colors.red }}>
               {Icons.logout(colors.red, 18)}
               <span style={{ fontWeight: '600', fontSize: '14px' }}>Log Out</span>
             </button>
@@ -5487,7 +5517,7 @@ const FlockApp = () => {
     );
   }
 
-  return <FlockAppInner />;
+  return <FlockAppInner authUser={authUser} onLogout={() => { logout(); setAuthUser(null); setAuthScreen('login'); }} />;
 };
 
 export default FlockApp;

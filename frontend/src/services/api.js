@@ -37,6 +37,7 @@ async function request(endpoint, options = {}) {
   return data;
 }
 
+// Auth
 export async function signup(name, email, password) {
   const data = await request('/api/auth/signup', {
     method: 'POST',
@@ -65,6 +66,57 @@ export function logout() {
 
 export function isLoggedIn() {
   return !!getToken();
+}
+
+// Flocks
+export async function getFlocks() {
+  return request('/api/flocks');
+}
+
+export async function getFlock(id) {
+  return request(`/api/flocks/${id}`);
+}
+
+export async function createFlock({ name, venue_name, venue_address, event_time }) {
+  return request('/api/flocks', {
+    method: 'POST',
+    body: JSON.stringify({ name, venue_name, venue_address, event_time }),
+  });
+}
+
+export async function deleteFlock(id) {
+  return request(`/api/flocks/${id}`, { method: 'DELETE' });
+}
+
+// Messages
+export async function getMessages(flockId) {
+  return request(`/api/flocks/${flockId}/messages`);
+}
+
+export async function sendMessage(flockId, text) {
+  return request(`/api/flocks/${flockId}/messages`, {
+    method: 'POST',
+    body: JSON.stringify({ message_text: text, message_type: 'text' }),
+  });
+}
+
+export async function addReaction(messageId, emoji) {
+  return request(`/api/messages/${messageId}/react`, {
+    method: 'POST',
+    body: JSON.stringify({ emoji }),
+  });
+}
+
+// DMs
+export async function getDMs(userId) {
+  return request(`/api/dm/${userId}`);
+}
+
+export async function sendDM(userId, text) {
+  return request(`/api/dm/${userId}`, {
+    method: 'POST',
+    body: JSON.stringify({ message_text: text }),
+  });
 }
 
 export { getToken, BASE_URL };
