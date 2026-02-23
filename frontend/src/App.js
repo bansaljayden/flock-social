@@ -573,6 +573,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
 
   // Relative time formatter
   const getRelativeTime = (timeStr) => {
+    if (!timeStr) return '';
     if (timeStr === 'Now') return 'Just now';
     if (timeStr.includes('ago') || timeStr === 'Yesterday') return timeStr;
     const times = { '5m': '5m ago', '10m': '10m ago', '1h': '1h ago', '2h': '2h ago' };
@@ -2416,7 +2417,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
                   </div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
                     {lastMsg?.sender === 'You' && <span style={{ flexShrink: 0 }}>{Icons.checkDouble('#22C55E', 12)}</span>}
-                    <p style={{ fontSize: '12px', color: unreadCount ? colors.navy : '#6b7280', fontWeight: unreadCount ? '500' : '400', margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{lastMsg?.sender === 'You' ? 'You: ' : `${lastMsg?.sender}: `}{lastMsg?.text}</p>
+                    <p style={{ fontSize: '12px', color: unreadCount ? colors.navy : '#6b7280', fontWeight: unreadCount ? '500' : '400', margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{lastMsg ? `${lastMsg.sender === 'You' ? 'You' : lastMsg.sender}: ${lastMsg.text}` : 'No messages yet'}</p>
                   </div>
                 </div>
                 {unreadCount > 0 && (
@@ -2587,7 +2588,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
           <button onClick={() => { setCurrentScreen('main'); setChatInput(''); setReplyingTo(null); }} style={{ background: 'none', border: 'none', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'transform 0.2s ease' }}>{Icons.arrowLeft('white', 20)}</button>
           <div style={{ flex: 1 }}>
             <h2 style={{ fontWeight: 'bold', color: 'white', fontSize: '14px', margin: 0 }}>{flock.name}</h2>
-            <p style={{ fontSize: '10px', color: 'rgba(255,255,255,0.6)', margin: 0 }}>{flock.members.length} members • {isTyping ? <span style={{ color: '#86EFAC', fontWeight: '500' }}>{typingUser} is typing...</span> : 'online'}</p>
+            <p style={{ fontSize: '10px', color: 'rgba(255,255,255,0.6)', margin: 0 }}>{flock.members?.length || flock.memberCount || 0} members • {isTyping ? <span style={{ color: '#86EFAC', fontWeight: '500' }}>{typingUser} is typing...</span> : 'online'}</p>
           </div>
           <button onClick={() => setShowVenueShareModal(true)} style={{ width: '32px', height: '32px', borderRadius: '16px', border: 'none', backgroundColor: 'rgba(255,255,255,0.2)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'all 0.2s ease' }}>{Icons.mapPin('white', 16)}</button>
           <button onClick={() => setShowChatSearch(!showChatSearch)} style={{ width: '32px', height: '32px', borderRadius: '16px', border: 'none', backgroundColor: 'rgba(255,255,255,0.2)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'all 0.2s ease' }}>{Icons.search('white', 16)}</button>
@@ -2855,7 +2856,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
                 <span style={{ fontSize: '36px', fontWeight: '900', width: '100px', textAlign: 'center', color: colors.navy }}>${chatPoolAmount}</span>
                 <button onClick={() => setChatPoolAmount(prev => prev + 5)} style={{ width: '44px', height: '44px', borderRadius: '22px', border: `2px solid ${colors.navy}`, backgroundColor: 'white', color: colors.navy, fontWeight: 'bold', cursor: 'pointer', fontSize: '18px', transition: 'all 0.2s ease' }}>+</button>
               </div>
-              <p style={{ fontSize: '13px', color: '#6b7280', textAlign: 'center', marginBottom: '20px' }}>Per person • Total: ${chatPoolAmount * flock.members.length}</p>
+              <p style={{ fontSize: '13px', color: '#6b7280', textAlign: 'center', marginBottom: '20px' }}>Per person • Total: ${chatPoolAmount * (flock.members?.length || flock.memberCount || 1)}</p>
               <button onClick={() => { addMessageToFlock(selectedFlockId, { id: Date.now(), sender: 'You', time: new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }), text: `💰 Pool: $${chatPoolAmount}/person`, reactions: [] }); setShowChatPool(false); showToast('💰 Pool created!'); }} style={{ ...styles.gradientButton, padding: '14px' }}>Create Pool</button>
             </div>
           </div>
@@ -2950,7 +2951,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
             {flock.members.slice(0, 5).map((m, i) => (
               <div key={i} style={{ width: '24px', height: '24px', borderRadius: '12px', backgroundColor: 'rgba(255,255,255,0.3)', border: '2px solid white', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '9px', fontWeight: 'bold', color: 'white', marginLeft: i > 0 ? '-6px' : 0 }}>{m[0]}</div>
             ))}
-            <span style={{ fontSize: '10px', color: 'rgba(255,255,255,0.6)', marginLeft: '8px', alignSelf: 'center' }}>{flock.members.length} going</span>
+            <span style={{ fontSize: '10px', color: 'rgba(255,255,255,0.6)', marginLeft: '8px', alignSelf: 'center' }}>{flock.members?.length || flock.memberCount || 0} going</span>
           </div>
         </div>
 
