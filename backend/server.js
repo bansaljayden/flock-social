@@ -28,6 +28,7 @@ const server = http.createServer(app);
 const allowedOrigins = [
   process.env.FRONTEND_URL || 'http://localhost:3000',
   'http://localhost:5173', // Vite dev server
+  'https://flock-app-w65m-git-main-jayden-bansals-projects.vercel.app',
 ];
 
 app.use(cors({
@@ -103,6 +104,8 @@ const io = new Server(server, {
     methods: ['GET', 'POST'],
     credentials: true,
   },
+  transports: ['websocket', 'polling'],
+  allowUpgrades: true,
   pingTimeout: 60000,
   pingInterval: 25000,
 });
