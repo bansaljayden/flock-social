@@ -29,12 +29,15 @@ const allowedOrigins = [
   process.env.FRONTEND_URL || 'http://localhost:3000',
   'http://localhost:5173', // Vite dev server
   'https://flock-app-w65m-git-main-jayden-bansals-projects.vercel.app',
+  'https://flock-app-w65m-hm8hk9uo6-jayden-bansals-projects.vercel.app',
 ];
 
 app.use(cors({
   origin: (origin, callback) => {
     // Allow requests with no origin (mobile apps, Postman, etc.)
-    if (!origin || allowedOrigins.includes(origin)) {
+    if (!origin) return callback(null, true);
+    // Allow any Vercel preview deployment for this project
+    if (allowedOrigins.includes(origin) || origin.endsWith('-jayden-bansals-projects.vercel.app')) {
       callback(null, true);
     } else {
       callback(new Error('Not allowed by CORS'));
@@ -100,7 +103,13 @@ app.use((err, req, res, _next) => {
 // ---------------------------------------------------------------------------
 const io = new Server(server, {
   cors: {
-    origin: allowedOrigins,
+    origin: (origin, callback) => {
+      if (!origin || allowedOrigins.includes(origin) || origin.endsWith('-jayden-bansals-projects.vercel.app')) {
+        callback(null, true);
+      } else {
+        callback(new Error('Not allowed by CORS'));
+      }
+    },
     methods: ['GET', 'POST'],
     credentials: true,
   },
