@@ -569,8 +569,8 @@ const FlockAppInner = ({ authUser, onLogout }) => {
   // Listen for real-time messages via WebSocket
   useEffect(() => {
     const unsub = onNewMessage((msg) => {
-      // Don't duplicate own messages — only add if sender is someone else
-      if (msg.sender_id === authUser?.id) return;
+      // Don't duplicate own messages (loose equality handles string/number mismatch)
+      if (msg.sender_id == authUser?.id) return;
       const mapped = {
         id: msg.id,
         sender: msg.sender_name || 'Unknown',
@@ -578,7 +578,12 @@ const FlockAppInner = ({ authUser, onLogout }) => {
         text: msg.message_text,
         reactions: [],
       };
-      setFlocks(prev => prev.map(f => f.id === msg.flock_id ? { ...f, messages: [...(f.messages || []), mapped] } : f));
+      setFlocks(prev => prev.map(f => {
+        if (f.id !== msg.flock_id) return f;
+        // Deduplicate — skip if message ID already exists
+        if ((f.messages || []).some(m => m.id === msg.id)) return f;
+        return { ...f, messages: [...(f.messages || []), mapped] };
+      }));
     });
     return unsub;
   }, [authUser]);
@@ -2835,12 +2840,12 @@ const FlockAppInner = ({ authUser, onLogout }) => {
             </div>
           ))}
 
-          {/* Enhanced typing indicator with user name */}
-          {isTyping && (
-            <div style={{ display: 'flex', gap: '10px', marginBottom: '16px', animation: 'fadeIn 0.3s ease-out' }}>
+          {/* Enhanced typing indicator with user name — fixed height to prevent layout shift */}
+          <div style={{ height: '58px', overflow: 'hidden', opacity: isTyping ? 1 : 0, transition: 'opacity 0.2s ease', pointerEvents: isTyping ? 'auto' : 'none' }}>
+            <div style={{ display: 'flex', gap: '10px' }}>
               <div style={{ width: '34px', height: '34px', borderRadius: '17px', backgroundColor: 'white', border: '2px solid rgba(13,40,71,0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '11px', fontWeight: '700', color: colors.navy }}>{typingUser?.[0] || 'A'}</div>
               <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start' }}>
-                <span style={{ fontSize: '11px', color: colors.navy, fontWeight: '600', marginBottom: '4px', paddingLeft: '4px' }}>{typingUser || 'Alex'}</span>
+                <span style={{ fontSize: '11px', color: colors.navy, fontWeight: '600', marginBottom: '4px', paddingLeft: '4px' }}>{typingUser || 'Someone'}</span>
                 <div style={{ padding: '12px 16px', backgroundColor: 'white', borderRadius: '18px', borderBottomLeftRadius: '4px', boxShadow: '0 2px 10px rgba(0,0,0,0.05)', display: 'flex', alignItems: 'center', gap: '3px' }}>
                   <div style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: colors.navy, animation: 'typingDot 1.4s ease-in-out infinite', opacity: 0.7 }} />
                   <div style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: colors.navy, animation: 'typingDot 1.4s ease-in-out 0.2s infinite', opacity: 0.7 }} />
@@ -2848,7 +2853,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
                 </div>
               </div>
             </div>
-          )}
+          </div>
           <div ref={chatEndRef} />
         </div>
 
