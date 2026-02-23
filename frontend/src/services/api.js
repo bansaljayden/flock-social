@@ -1,4 +1,6 @@
-const BASE_URL = 'https://flock-app-production.up.railway.app';
+const BASE_URL = process.env.NODE_ENV === 'production'
+  ? 'https://flock-app-production.up.railway.app'
+  : 'http://localhost:5000';
 
 function getToken() {
   return localStorage.getItem('flockToken');
