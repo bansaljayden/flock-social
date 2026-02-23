@@ -1940,11 +1940,68 @@ const FlockAppInner = ({ authUser, onLogout }) => {
 
       <div style={{ padding: '10px 12px', display: 'flex', alignItems: 'center', gap: '10px', backgroundColor: 'white', boxShadow: '0 2px 12px rgba(0,0,0,0.08)', zIndex: 20, flexShrink: 0 }}>
         <div style={{ flex: 1, position: 'relative' }}>
-          <input key="search-input" id="search-input" type="text" value={searchText} onChange={(e) => setSearchText(e.target.value)} placeholder="Search venues..." style={{ width: '100%', padding: '12px 12px 12px 38px', borderRadius: '14px', backgroundColor: '#f8fafc', border: '1px solid #e2e8f0', fontSize: '13px', outline: 'none', boxSizing: 'border-box', transition: 'all 0.2s ease', fontWeight: '500' }} autoComplete="off" />
-          <span style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', transition: 'all 0.2s ease' }}>{Icons.search('#94a3b8', 16)}</span>
+          <input key="search-input" id="search-input" type="text" value={venueQuery} onChange={(e) => handleVenueQueryChange(e.target.value)} placeholder="Search restaurants, bars, venues..." style={{ width: '100%', padding: '12px 40px 12px 38px', borderRadius: '14px', backgroundColor: '#f8fafc', border: `2px solid ${venueQuery ? colors.navy : '#e2e8f0'}`, fontSize: '13px', outline: 'none', boxSizing: 'border-box', transition: 'all 0.2s ease', fontWeight: '500' }} autoComplete="off" />
+          <span style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', transition: 'all 0.2s ease' }}>{Icons.search(venueQuery ? colors.navy : '#94a3b8', 16)}</span>
+          {venueQuery && (
+            <button onClick={() => { setVenueQuery(''); setVenueResults([]); }} style={{ position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', padding: '2px' }}>{Icons.x('#94a3b8', 16)}</button>
+          )}
         </div>
         <button onClick={() => setShowConnectPanel(true)} style={{ width: '42px', height: '42px', borderRadius: '14px', border: 'none', background: `linear-gradient(135deg, ${colors.navy}, ${colors.navyMid})`, color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 4px 12px rgba(13,40,71,0.25)', transition: 'all 0.2s ease' }}>{Icons.users('white', 18)}</button>
       </div>
+
+      {/* Google Places Search Results Overlay */}
+      {(venueSearching || venueResults.length > 0 || (venueQuery.trim().length >= 2 && !venueSearching && venueResults.length === 0)) && (
+        <div style={{ position: 'relative', zIndex: 30, backgroundColor: 'white', borderBottom: '1px solid #e5e7eb', maxHeight: '260px', overflowY: 'auto' }}>
+          {venueSearching && (
+            <div style={{ textAlign: 'center', padding: '20px 0' }}>
+              <div style={{ display: 'inline-block', width: '20px', height: '20px', border: `3px solid #e5e7eb`, borderTopColor: colors.navy, borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
+              <p style={{ fontSize: '11px', color: '#6b7280', margin: '8px 0 0' }}>Searching Google Places...</p>
+            </div>
+          )}
+          {!venueSearching && venueResults.length > 0 && (
+            <div style={{ padding: '4px 12px 8px' }}>
+              <p style={{ fontSize: '10px', fontWeight: '600', color: '#6b7280', margin: '4px 0 8px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>{venueResults.length} result{venueResults.length !== 1 ? 's' : ''}</p>
+              {venueResults.map((venue) => (
+                <button
+                  key={venue.place_id}
+                  onClick={() => {
+                    setSelectedVenueForCreate({ name: venue.name, addr: venue.formatted_address, place_id: venue.place_id, rating: venue.rating, user_ratings_total: venue.user_ratings_total, price_level: venue.price_level, photo_url: venue.photo_url, types: venue.types });
+                    setVenueQuery(''); setVenueResults([]);
+                    showToast(`Selected ${venue.name}!`);
+                    setCurrentScreen('create');
+                  }}
+                  style={{ width: '100%', padding: '10px', display: 'flex', alignItems: 'center', gap: '10px', border: 'none', borderRadius: '12px', backgroundColor: '#f8fafc', cursor: 'pointer', textAlign: 'left', marginBottom: '6px', transition: 'background-color 0.15s' }}
+                  onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = '#eef2ff'; }}
+                  onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = '#f8fafc'; }}
+                >
+                  {venue.photo_url ? (
+                    <img src={venue.photo_url} alt="" style={{ width: '48px', height: '48px', borderRadius: '10px', objectFit: 'cover', flexShrink: 0 }} />
+                  ) : (
+                    <div style={{ width: '48px', height: '48px', borderRadius: '10px', backgroundColor: '#e5e7eb', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{Icons.mapPin(colors.navyMid, 20)}</div>
+                  )}
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <p style={{ fontWeight: '700', fontSize: '13px', color: colors.navy, margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{venue.name}</p>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginTop: '2px', flexWrap: 'wrap' }}>
+                      {venue.rating && <span style={{ fontSize: '11px', fontWeight: '700', color: colors.navy }}>{venue.rating} ★</span>}
+                      {venue.user_ratings_total > 0 && <span style={{ fontSize: '10px', color: '#9ca3af' }}>({venue.user_ratings_total})</span>}
+                      {venue.price_level && <span style={{ fontSize: '11px', color: '#6b7280', fontWeight: '600' }}>{'$'.repeat(venue.price_level)}</span>}
+                    </div>
+                    <p style={{ fontSize: '10px', color: '#6b7280', margin: '2px 0 0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{venue.formatted_address}</p>
+                  </div>
+                  <div style={{ flexShrink: 0, width: '28px', height: '28px', borderRadius: '14px', background: `linear-gradient(135deg, ${colors.navy}, ${colors.navyMid})`, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                    {Icons.plus('white', 12)}
+                  </div>
+                </button>
+              ))}
+            </div>
+          )}
+          {!venueSearching && venueQuery.trim().length >= 2 && venueResults.length === 0 && (
+            <div style={{ textAlign: 'center', padding: '16px 0' }}>
+              <p style={{ fontSize: '12px', color: '#6b7280', margin: 0 }}>No venues found. Try a different search.</p>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Premium Map */}
       <div style={{ flex: 1, position: 'relative', overflow: 'hidden' }}>
