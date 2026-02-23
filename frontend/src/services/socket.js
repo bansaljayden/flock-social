@@ -45,6 +45,7 @@ export function disconnectSocket() {
 }
 
 export function joinFlock(flockId) {
+  console.log('Joining flock:', flockId);
   if (socket?.connected) {
     socket.emit('join_flock', flockId);
   }
@@ -57,6 +58,7 @@ export function leaveFlock(flockId) {
 }
 
 export function sendMessage(flockId, messageText) {
+  console.log('Emitting send_message:', { flockId, message: messageText });
   if (socket?.connected) {
     socket.emit('send_message', {
       flockId,
@@ -67,6 +69,7 @@ export function sendMessage(flockId, messageText) {
 }
 
 export function startTyping(flockId) {
+  console.log('Emitting typing:', { flockId });
   if (socket?.connected) {
     socket.emit('typing', flockId);
   }
@@ -79,13 +82,19 @@ export function stopTyping(flockId) {
 }
 
 export function onNewMessage(callback) {
-  if (socket) socket.on('new_message', callback);
-  return () => { if (socket) socket.off('new_message', callback); };
+  if (socket) socket.on('new_message', (msg) => {
+    console.log('Received new_message:', msg);
+    callback(msg);
+  });
+  return () => { if (socket) socket.off('new_message'); };
 }
 
 export function onUserTyping(callback) {
-  if (socket) socket.on('user_typing', callback);
-  return () => { if (socket) socket.off('user_typing', callback); };
+  if (socket) socket.on('user_typing', (data) => {
+    console.log('Received user_typing:', data);
+    callback(data);
+  });
+  return () => { if (socket) socket.off('user_typing'); };
 }
 
 export function onUserStoppedTyping(callback) {
