@@ -177,6 +177,16 @@ const FlockAppInner = ({ authUser, onLogout }) => {
   const [userLocation, setUserLocation] = useState(null); // { lat, lng }
   const [locationLoading, setLocationLoading] = useState(false);
 
+  // Search result cache: key -> { data, timestamp }
+  const searchCacheRef = useRef({});
+
+  // Toast (hoisted above venue search for use in error handlers)
+  const [toast, setToast] = useState(null);
+  const showToast = useCallback((message, type = 'success') => {
+    setToast({ message, type });
+    setTimeout(() => setToast(null), 3000);
+  }, []);
+
   // Smart location detection - enhance bare location queries
   const enhanceQuery = useCallback((q) => {
     const trimmed = q.trim().toLowerCase();
@@ -223,25 +233,37 @@ const FlockAppInner = ({ authUser, onLogout }) => {
 
   const doVenueSearch = useCallback(async (q) => {
     if (!q.trim() || q.trim().length < 2) { setVenueResults([]); return; }
+    const enhanced = enhanceQuery(q);
+    const loc = userLocation ? `${userLocation.lat},${userLocation.lng}` : null;
+    const cacheKey = `${enhanced}|${loc || ''}`;
+
+    // Check cache (5 min TTL)
+    const cached = searchCacheRef.current[cacheKey];
+    if (cached && Date.now() - cached.timestamp < 300000) {
+      const venues = cached.data;
+      setVenueResults(venues);
+      if (venues.length > 0) { setAllVenues(venuesToMapPins(venues)); setActiveVenue(null); }
+      setShowSearchDropdown(true);
+      return;
+    }
+
     setVenueSearching(true);
     setShowSearchDropdown(true);
     try {
-      const enhanced = enhanceQuery(q);
-      const loc = userLocation ? `${userLocation.lat},${userLocation.lng}` : null;
       const data = await searchVenues(enhanced, loc);
       const venues = data.venues || [];
+      searchCacheRef.current[cacheKey] = { data: venues, timestamp: Date.now() };
       setVenueResults(venues);
-      // Update map pins (deduplicated)
-      if (venues.length > 0) {
-        setAllVenues(venuesToMapPins(venues));
-        setActiveVenue(null);
-      }
+      if (venues.length > 0) { setAllVenues(venuesToMapPins(venues)); setActiveVenue(null); }
     } catch (err) {
       console.error('Venue search error:', err);
+      if (err.message && (err.message.includes('429') || err.message.toLowerCase().includes('rate') || err.message.toLowerCase().includes('too many'))) {
+        showToast('Slow down! Try again in a few seconds', 'error');
+      }
     } finally {
       setVenueSearching(false);
     }
-  }, [enhanceQuery, venuesToMapPins, userLocation]);
+  }, [enhanceQuery, venuesToMapPins, userLocation, showToast]);
 
   // Open the full venue details modal
   const openVenueDetail = useCallback(async (placeId, fallbackData) => {
@@ -264,15 +286,8 @@ const FlockAppInner = ({ authUser, onLogout }) => {
     setVenueQuery(val);
     setShowSearchDropdown(true);
     if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
-    searchTimerRef.current = setTimeout(() => doVenueSearch(val), 400);
+    searchTimerRef.current = setTimeout(() => doVenueSearch(val), 800);
   }, [doVenueSearch]);
-
-  // Toast
-  const [toast, setToast] = useState(null);
-  const showToast = useCallback((message, type = 'success') => {
-    setToast({ message, type });
-    setTimeout(() => setToast(null), 3000);
-  }, []);
 
   // Loading & Gamification
   const [isLoading, setIsLoading] = useState(false);
@@ -499,56 +514,94 @@ const FlockAppInner = ({ authUser, onLogout }) => {
 
   // Geolocation helper: request user location and load nearby venues
   const loadNearbyVenues = useCallback((lat, lng) => {
+    console.log('[Geo] Loading venues near:', lat, lng);
     setUserLocation({ lat, lng });
-    searchVenues('restaurants bars', `${lat},${lng}`)
+    const locStr = `${lat},${lng}`;
+    const cacheKey = `nearby|${locStr}`;
+    const cached = searchCacheRef.current[cacheKey];
+    if (cached && Date.now() - cached.timestamp < 300000) {
+      console.log('[Geo] Using cached nearby venues');
+      setAllVenues(venuesToMapPins(cached.data));
+      setMapVenuesLoaded(true);
+      return;
+    }
+    searchVenues('restaurants bars', locStr)
       .then((data) => {
-        setAllVenues(venuesToMapPins(data.venues || []));
+        const venues = data.venues || [];
+        searchCacheRef.current[cacheKey] = { data: venues, timestamp: Date.now() };
+        setAllVenues(venuesToMapPins(venues));
         setMapVenuesLoaded(true);
       })
-      .catch(() => setMapVenuesLoaded(true));
-  }, [venuesToMapPins]);
+      .catch((err) => {
+        console.error('[Geo] Nearby venue search failed:', err);
+        if (err.message && (err.message.includes('429') || err.message.toLowerCase().includes('rate'))) {
+          showToast('Slow down! Try again in a few seconds', 'error');
+        }
+        setMapVenuesLoaded(true);
+      });
+  }, [venuesToMapPins, showToast]);
 
   const loadDefaultVenues = useCallback(() => {
+    console.log('[Geo] Falling back to Bethlehem PA defaults');
+    const cacheKey = 'default|bethlehem';
+    const cached = searchCacheRef.current[cacheKey];
+    if (cached && Date.now() - cached.timestamp < 300000) {
+      setAllVenues(venuesToMapPins(cached.data));
+      setMapVenuesLoaded(true);
+      return;
+    }
     searchVenues('popular restaurants bethlehem pa')
       .then((data) => {
-        setAllVenues(venuesToMapPins(data.venues || []));
+        const venues = data.venues || [];
+        searchCacheRef.current[cacheKey] = { data: venues, timestamp: Date.now() };
+        setAllVenues(venuesToMapPins(venues));
         setMapVenuesLoaded(true);
       })
-      .catch(() => setMapVenuesLoaded(true));
+      .catch((err) => {
+        console.error('[Geo] Default venue search failed:', err);
+        setMapVenuesLoaded(true);
+      });
   }, [venuesToMapPins]);
 
   const requestUserLocation = useCallback((forceRefresh = false) => {
     if (locationLoading) return;
     if (!forceRefresh && userLocation) {
+      console.log('[Geo] Reusing existing location:', userLocation);
       loadNearbyVenues(userLocation.lat, userLocation.lng);
       return;
     }
     if (!navigator.geolocation) {
+      console.warn('[Geo] Geolocation not supported');
       loadDefaultVenues();
       return;
     }
     setLocationLoading(true);
+    console.log('[Geo] Requesting browser geolocation...', forceRefresh ? '(fresh)' : '(cached ok)');
     navigator.geolocation.getCurrentPosition(
       (pos) => {
-        const { latitude, longitude } = pos.coords;
+        const { latitude, longitude, accuracy } = pos.coords;
+        console.log('[Geo] Got position:', latitude, longitude, 'accuracy:', accuracy, 'm');
         setLocationLoading(false);
-        localStorage.setItem('flock_user_lat', latitude);
-        localStorage.setItem('flock_user_lng', longitude);
+        localStorage.setItem('flock_user_lat', String(latitude));
+        localStorage.setItem('flock_user_lng', String(longitude));
         loadNearbyVenues(latitude, longitude);
       },
-      () => {
+      (err) => {
+        console.warn('[Geo] Geolocation denied/failed:', err.code, err.message);
         setLocationLoading(false);
         // Fallback: check localStorage for last known location
         const savedLat = localStorage.getItem('flock_user_lat');
         const savedLng = localStorage.getItem('flock_user_lng');
         if (savedLat && savedLng) {
+          console.log('[Geo] Using saved location:', savedLat, savedLng);
           loadNearbyVenues(parseFloat(savedLat), parseFloat(savedLng));
         } else {
-          // Final fallback: Lehigh Valley (Bethlehem, PA)
           loadDefaultVenues();
         }
       },
-      { enableHighAccuracy: false, timeout: 8000, maximumAge: 300000 }
+      forceRefresh
+        ? { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
+        : { enableHighAccuracy: true, timeout: 10000, maximumAge: 60000 }
     );
   }, [locationLoading, userLocation, loadNearbyVenues, loadDefaultVenues]);
 
