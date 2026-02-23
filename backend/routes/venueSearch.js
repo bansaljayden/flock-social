@@ -8,6 +8,28 @@ router.use(authenticate);
 
 const API_KEY = process.env.GOOGLE_PLACES_API_KEY;
 
+// Server-side venue search cache (5 min TTL)
+const venueCache = new Map();
+const CACHE_TTL = 5 * 60 * 1000;
+
+function getCached(key) {
+  const entry = venueCache.get(key);
+  if (entry && Date.now() - entry.ts < CACHE_TTL) return entry.data;
+  if (entry) venueCache.delete(key);
+  return null;
+}
+
+function setCache(key, data) {
+  venueCache.set(key, { data, ts: Date.now() });
+  // Evict old entries if cache grows too large
+  if (venueCache.size > 200) {
+    const now = Date.now();
+    for (const [k, v] of venueCache) {
+      if (now - v.ts > CACHE_TTL) venueCache.delete(k);
+    }
+  }
+}
+
 // Build photo URL from a Places API (New) photo resource name
 function photoUrl(photoName, maxWidth = 400) {
   return `https://places.googleapis.com/v1/${photoName}/media?maxWidthPx=${maxWidth}&key=${API_KEY}`;
@@ -44,6 +66,13 @@ router.get('/search',
 
       const searchQuery = req.query.query;
       const location = req.query.location; // "lat,lng"
+
+      // Check server-side cache first
+      const cacheKey = `search:${searchQuery}|${location || ''}`;
+      const cached = getCached(cacheKey);
+      if (cached) {
+        return res.json(cached);
+      }
 
       // Use Places API (New) - Text Search
       const body = { textQuery: searchQuery };
@@ -92,7 +121,9 @@ router.get('/search',
         };
       });
 
-      res.json({ venues, total: venues.length });
+      const result = { venues, total: venues.length };
+      setCache(cacheKey, result);
+      res.json(result);
     } catch (err) {
       console.error('Venue search error:', err);
       res.status(500).json({ error: 'Failed to search venues' });
@@ -116,6 +147,10 @@ router.get('/details',
 
       const placeId = req.query.place_id;
 
+      const detailCacheKey = `detail:${placeId}`;
+      const cached = getCached(detailCacheKey);
+      if (cached) return res.json(cached);
+
       const response = await fetch(`https://places.googleapis.com/v1/places/${placeId}`, {
         headers: {
           'X-Goog-Api-Key': API_KEY,
@@ -131,7 +166,7 @@ router.get('/details',
 
       const photos = (p.photos || []).slice(0, 5).map(photo => photoUrl(photo.name, 600));
 
-      res.json({
+      const result = {
         venue: {
           place_id: p.id,
           name: p.displayName?.text || '',
@@ -147,7 +182,9 @@ router.get('/details',
           location: p.location || null,
           google_maps_url: p.googleMapsUri || null,
         },
-      });
+      };
+      setCache(detailCacheKey, result);
+      res.json(result);
     } catch (err) {
       console.error('Venue details error:', err);
       res.status(500).json({ error: 'Failed to get venue details' });

@@ -512,6 +512,18 @@ const FlockAppInner = ({ authUser, onLogout }) => {
   const [allVenues, setAllVenues] = useState([]);
   const [mapVenuesLoaded, setMapVenuesLoaded] = useState(false);
 
+  // Seed venues - shown when API is unavailable (rate limited, no key, offline)
+  const seedVenues = useMemo(() => [
+    { place_id: 'seed_1', name: 'The Bookstore Speakeasy', formatted_address: '336 Adams St, Bethlehem, PA', rating: 4.6, user_ratings_total: 312, price_level: 2, types: ['bar', 'night_club'], location: { latitude: 40.6262, longitude: -75.3775 } },
+    { place_id: 'seed_2', name: 'Molinari\'s', formatted_address: '322 E 3rd St, Bethlehem, PA', rating: 4.5, user_ratings_total: 287, price_level: 2, types: ['restaurant', 'italian_restaurant'], location: { latitude: 40.6178, longitude: -75.3683 } },
+    { place_id: 'seed_3', name: 'Bonn Place Brewing', formatted_address: '302 Brodhead Ave, Bethlehem, PA', rating: 4.7, user_ratings_total: 198, price_level: 2, types: ['bar', 'brewery'], location: { latitude: 40.6130, longitude: -75.3780 } },
+    { place_id: 'seed_4', name: 'Social Still', formatted_address: '530 E 3rd St, Bethlehem, PA', rating: 4.4, user_ratings_total: 245, price_level: 2, types: ['bar', 'restaurant'], location: { latitude: 40.6180, longitude: -75.3650 } },
+    { place_id: 'seed_5', name: 'Twisted Olive', formatted_address: '101 W Broad St, Bethlehem, PA', rating: 4.3, user_ratings_total: 189, price_level: 2, types: ['restaurant', 'mediterranean_restaurant'], location: { latitude: 40.6260, longitude: -75.3810 } },
+    { place_id: 'seed_6', name: 'McCarthy\'s Red Stag', formatted_address: '16 W 3rd St, Bethlehem, PA', rating: 4.2, user_ratings_total: 156, price_level: 1, types: ['bar', 'restaurant'], location: { latitude: 40.6185, longitude: -75.3780 } },
+    { place_id: 'seed_7', name: 'Tapas on Main', formatted_address: '500 Main St, Bethlehem, PA', rating: 4.5, user_ratings_total: 220, price_level: 3, types: ['restaurant', 'spanish_restaurant'], location: { latitude: 40.6258, longitude: -75.3755 } },
+    { place_id: 'seed_8', name: 'ArtsQuest Center', formatted_address: '101 Founders Way, Bethlehem, PA', rating: 4.6, user_ratings_total: 402, price_level: 2, types: ['performing_arts_theater', 'live_music_venue'], location: { latitude: 40.6150, longitude: -75.3770 } },
+  ], []);
+
   // Geolocation helper: request user location and load nearby venues
   const loadNearbyVenues = useCallback((lat, lng) => {
     console.log('[Geo] Loading venues near:', lat, lng);
@@ -534,12 +546,15 @@ const FlockAppInner = ({ authUser, onLogout }) => {
       })
       .catch((err) => {
         console.error('[Geo] Nearby venue search failed:', err);
-        if (err.message && (err.message.includes('429') || err.message.toLowerCase().includes('rate'))) {
+        if (err.message && (err.message.includes('429') || err.message.toLowerCase().includes('rate') || err.message.toLowerCase().includes('too many'))) {
           showToast('Slow down! Try again in a few seconds', 'error');
         }
+        // Fallback to seed data so map is never empty
+        console.log('[Geo] Using seed venues as fallback');
+        setAllVenues(venuesToMapPins(seedVenues));
         setMapVenuesLoaded(true);
       });
-  }, [venuesToMapPins, showToast]);
+  }, [venuesToMapPins, showToast, seedVenues]);
 
   const loadDefaultVenues = useCallback(() => {
     console.log('[Geo] Falling back to Bethlehem PA defaults');
@@ -559,9 +574,12 @@ const FlockAppInner = ({ authUser, onLogout }) => {
       })
       .catch((err) => {
         console.error('[Geo] Default venue search failed:', err);
+        // Fallback to seed data so map is never empty
+        console.log('[Geo] Using seed venues as fallback');
+        setAllVenues(venuesToMapPins(seedVenues));
         setMapVenuesLoaded(true);
       });
-  }, [venuesToMapPins]);
+  }, [venuesToMapPins, seedVenues]);
 
   const requestUserLocation = useCallback((forceRefresh = false) => {
     if (locationLoading) return;
