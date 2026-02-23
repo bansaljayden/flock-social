@@ -70,6 +70,14 @@ export function isLoggedIn() {
   return !!getToken();
 }
 
+// Profile
+export async function updateProfile({ name, email, current_password, new_password }) {
+  return request('/api/users/profile', {
+    method: 'PUT',
+    body: JSON.stringify({ name, email, current_password, new_password }),
+  });
+}
+
 // Flocks
 export async function getFlocks() {
   return request('/api/flocks');

@@ -125,12 +125,16 @@ async function seed() {
     const jordan = userIds['jordan@demo.com'];
 
     // --------------------------------------------------
-    // 3. Look up or create real account (Bansal.jayden@gmail.com)
+    // 3. Look up or create real account
     // --------------------------------------------------
-    console.log('\nSetting up real account (Bansal.jayden@gmail.com)...');
+    // Note: express-validator normalizeEmail() strips dots from Gmail
+    // so Bansal.jayden@gmail.com becomes bansaljayden@gmail.com in the DB
+    const REAL_EMAIL = 'bansaljayden@gmail.com';
+    console.log(`\nSetting up real account (${REAL_EMAIL})...`);
     let realJayden;
     const realLookup = await client.query(
-      `SELECT id FROM users WHERE LOWER(email) = LOWER('Bansal.jayden@gmail.com')`
+      `SELECT id FROM users WHERE LOWER(email) = LOWER($1)`,
+      [REAL_EMAIL]
     );
     if (realLookup.rows.length > 0) {
       realJayden = realLookup.rows[0].id;
@@ -142,7 +146,6 @@ async function seed() {
       await client.query(`DELETE FROM messages WHERE flock_id IN (SELECT id FROM flocks WHERE creator_id = $1)`, [realJayden]);
       await client.query(`DELETE FROM venue_votes WHERE user_id = $1`, [realJayden]);
       await client.query(`DELETE FROM flock_members WHERE user_id = $1`, [realJayden]);
-      // Also remove flock_members for flocks we're about to delete
       await client.query(`DELETE FROM flock_members WHERE flock_id IN (SELECT id FROM flocks WHERE creator_id = $1)`, [realJayden]);
       await client.query(`DELETE FROM flocks WHERE creator_id = $1`, [realJayden]);
       console.log('  Cleaned previous demo data for real account.');
@@ -150,9 +153,9 @@ async function seed() {
       const hashed = await bcrypt.hash('REDACTED_PASSWORD', SALT_ROUNDS);
       const result = await client.query(
         `INSERT INTO users (email, password, name, interests)
-         VALUES ('Bansal.jayden@gmail.com', $1, 'Jayden Bansal', $2)
+         VALUES ($1, $2, 'Jayden Bansal', $3)
          RETURNING id`,
-        [hashed, ['entrepreneurship', 'technology', 'business', 'innovation']]
+        [REAL_EMAIL, hashed, ['entrepreneurship', 'technology', 'business', 'innovation']]
       );
       realJayden = result.rows[0].id;
       console.log(`  Created real account → id ${realJayden}`);
