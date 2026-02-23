@@ -123,6 +123,34 @@ async function seed() {
     const jordan = userIds['jordan@demo.com'];
 
     // --------------------------------------------------
+    // 2b. Look up or create real account (Bansal.jayden@gmail.com)
+    // --------------------------------------------------
+    console.log('\nSetting up real account...');
+    let realJayden;
+    const realLookup = await client.query(
+      `SELECT id FROM users WHERE email = 'Bansal.jayden@gmail.com'`
+    );
+    if (realLookup.rows.length > 0) {
+      realJayden = realLookup.rows[0].id;
+      console.log(`  Found real account → id ${realJayden}`);
+      // Clean previous demo flocks/messages linked to real account
+      await client.query(`DELETE FROM messages WHERE sender_id = $1`, [realJayden]);
+      await client.query(`DELETE FROM flock_members WHERE user_id = $1`, [realJayden]);
+      await client.query(`DELETE FROM flocks WHERE creator_id = $1`, [realJayden]);
+      console.log('  Cleaned previous demo data for real account.');
+    } else {
+      const hashed = await bcrypt.hash('demo123', SALT_ROUNDS);
+      const result = await client.query(
+        `INSERT INTO users (email, password, name, interests)
+         VALUES ('Bansal.jayden@gmail.com', $1, 'Jayden Bansal', $2)
+         RETURNING id`,
+        [hashed, ['Nightlife', 'Live Music', 'Food', 'Cocktails']]
+      );
+      realJayden = result.rows[0].id;
+      console.log(`  Created real account → id ${realJayden}`);
+    }
+
+    // --------------------------------------------------
     // 3. Create flocks
     // --------------------------------------------------
     console.log('\nCreating demo flocks...');
@@ -359,6 +387,203 @@ async function seed() {
     await msg('Pickup Basketball Game', mike, "always 💪", 210);
 
     // --------------------------------------------------
+    // 5. Create flocks & messages for REAL account
+    // --------------------------------------------------
+    console.log('\nCreating flocks for real account...');
+    let realFlockCount = 0;
+
+    const realFlockDefs = [
+      {
+        name: 'Weekend Plans',
+        creator: realJayden,
+        venue_name: 'The Steel Pub',
+        venue_address: '55 E 3rd St, Bethlehem',
+        event_time: hoursFromNow(6),
+        status: 'confirmed',
+        members: [
+          { uid: mike, status: 'accepted' },
+          { uid: emma, status: 'accepted' },
+          { uid: jordan, status: 'accepted' },
+        ],
+      },
+      {
+        name: 'Study Group',
+        creator: realJayden,
+        venue_name: 'Linderman Library',
+        venue_address: '30 Library Dr, Bethlehem',
+        event_time: hoursFromNow(24),
+        status: 'planning',
+        members: [
+          { uid: alex, status: 'accepted' },
+          { uid: emma, status: 'accepted' },
+        ],
+      },
+      {
+        name: 'Concert Tonight',
+        creator: realJayden,
+        venue_name: 'ArtsQuest Center',
+        venue_address: '101 Founders Way, Bethlehem',
+        event_time: hoursFromNow(4),
+        status: 'confirmed',
+        members: [
+          { uid: mike, status: 'accepted' },
+          { uid: jordan, status: 'accepted' },
+          { uid: alex, status: 'accepted' },
+          { uid: emma, status: 'accepted' },
+        ],
+      },
+      {
+        name: 'Gym Session',
+        creator: mike,
+        venue_name: 'Taylor Gym',
+        venue_address: '621 Taylor St, Bethlehem',
+        event_time: hoursFromNow(14),
+        status: 'planning',
+        members: [
+          { uid: realJayden, status: 'accepted' },
+          { uid: jordan, status: 'accepted' },
+        ],
+      },
+      {
+        name: 'Dinner at Tulum',
+        creator: emma,
+        venue_name: 'Tulum',
+        venue_address: '21 E 4th St, Bethlehem',
+        event_time: hoursFromNow(28),
+        status: 'confirmed',
+        members: [
+          { uid: realJayden, status: 'accepted' },
+          { uid: alex, status: 'accepted' },
+          { uid: mike, status: 'accepted' },
+        ],
+      },
+      {
+        name: 'Road Trip Crew',
+        creator: jordan,
+        venue_name: null,
+        venue_address: null,
+        event_time: hoursFromNow(72),
+        status: 'planning',
+        members: [
+          { uid: realJayden, status: 'accepted' },
+          { uid: mike, status: 'invited' },
+          { uid: emma, status: 'accepted' },
+        ],
+      },
+      {
+        name: 'Sunday Brunch',
+        creator: alex,
+        venue_name: "Molinari's",
+        venue_address: '322 E 3rd St, Bethlehem',
+        event_time: hoursFromNow(40),
+        status: 'planning',
+        members: [
+          { uid: realJayden, status: 'accepted' },
+          { uid: emma, status: 'accepted' },
+          { uid: jordan, status: 'invited' },
+        ],
+      },
+    ];
+
+    const realFlockIds = {};
+
+    for (const f of realFlockDefs) {
+      const result = await client.query(
+        `INSERT INTO flocks (name, creator_id, venue_name, venue_address, event_time, status)
+         VALUES ($1, $2, $3, $4, $5, $6)
+         RETURNING id, name`,
+        [f.name, f.creator, f.venue_name, f.venue_address, f.event_time, f.status]
+      );
+      const flock = result.rows[0];
+      realFlockIds[f.name] = flock.id;
+
+      await client.query(
+        `INSERT INTO flock_members (flock_id, user_id, status) VALUES ($1, $2, 'accepted')`,
+        [flock.id, f.creator]
+      );
+
+      for (const m of f.members) {
+        await client.query(
+          `INSERT INTO flock_members (flock_id, user_id, status) VALUES ($1, $2, $3)`,
+          [flock.id, m.uid, m.status]
+        );
+      }
+
+      realFlockCount++;
+      console.log(`  + "${flock.name}" → id ${flock.id}`);
+    }
+
+    async function rmsg(flockName, senderId, text, agoMinutes) {
+      await client.query(
+        `INSERT INTO messages (flock_id, sender_id, message_text, message_type, created_at)
+         VALUES ($1, $2, $3, 'text', $4)`,
+        [realFlockIds[flockName], senderId, text, minutesAgo(agoMinutes)]
+      );
+      messageCount++;
+    }
+
+    console.log('Creating messages for real account flocks...');
+
+    // --- Weekend Plans ---
+    await rmsg('Weekend Plans', realJayden, "who's down for tonight? thinking Steel Pub", 120);
+    await rmsg('Weekend Plans', mike, "100% in, what time?", 115);
+    await rmsg('Weekend Plans', emma, "me too! happy hour starts at 5", 110);
+    await rmsg('Weekend Plans', realJayden, "let's do 6pm? gives us time to get ready", 105);
+    await rmsg('Weekend Plans', jordan, "bet, I'll be there", 100);
+    await rmsg('Weekend Plans', realJayden, "perfect, see y'all at 6 🎉", 95);
+    await rmsg('Weekend Plans', mike, "should we grab food first or just apps there?", 60);
+    await rmsg('Weekend Plans', emma, "their wings are actually fire", 55);
+    await rmsg('Weekend Plans', realJayden, "wings it is 🍗", 50);
+
+    // --- Study Group ---
+    await rmsg('Study Group', realJayden, "anyone want to grind for the CS exam tomorrow?", 200);
+    await rmsg('Study Group', alex, "yes please, I'm lost on the recursion stuff", 195);
+    await rmsg('Study Group', emma, "same, Linderman 3rd floor?", 190);
+    await rmsg('Study Group', realJayden, "yeah, I'll grab the study room if I get there early", 185);
+    await rmsg('Study Group', alex, "goat 🐐 see you at 2", 180);
+    await rmsg('Study Group', realJayden, "bringing coffee for everyone ☕", 175);
+
+    // --- Concert Tonight ---
+    await rmsg('Concert Tonight', realJayden, "GUYS the concert tonight is going to be insane 🎵", 180);
+    await rmsg('Concert Tonight', mike, "bro I've been waiting for this all week", 175);
+    await rmsg('Concert Tonight', jordan, "facts, doors open at 7 right?", 170);
+    await rmsg('Concert Tonight', realJayden, "yeah, let's get there early for good spots", 165);
+    await rmsg('Concert Tonight', emma, "I'm so excited!! what should I wear?", 160);
+    await rmsg('Concert Tonight', alex, "something comfortable, we're gonna be standing", 155);
+    await rmsg('Concert Tonight', realJayden, "meeting at ArtsQuest entrance at 6:30?", 140);
+    await rmsg('Concert Tonight', mike, "sounds good, I'll drive", 135);
+    await rmsg('Concert Tonight', jordan, "shotgun! 🚗", 130);
+
+    // --- Gym Session ---
+    await rmsg('Gym Session', mike, "leg day tomorrow, who's in? 😤", 300);
+    await rmsg('Gym Session', realJayden, "let's go! I need to get back on track", 295);
+    await rmsg('Gym Session', jordan, "I'm in, Taylor Gym at 10am?", 290);
+    await rmsg('Gym Session', mike, "perfect, don't skip this time Jayden 😂", 285);
+    await rmsg('Gym Session', realJayden, "I WON'T I promise lol", 280);
+
+    // --- Dinner at Tulum ---
+    await rmsg('Dinner at Tulum', emma, "craving Tulum, dinner this week?", 400);
+    await rmsg('Dinner at Tulum', realJayden, "yesss their tacos are unmatched", 395);
+    await rmsg('Dinner at Tulum', alex, "I'm free Thursday night!", 390);
+    await rmsg('Dinner at Tulum', mike, "Thursday works, 7pm?", 385);
+    await rmsg('Dinner at Tulum', realJayden, "let's do it, I'll make a reservation", 380);
+    await rmsg('Dinner at Tulum', emma, "you're the best 🙌", 375);
+
+    // --- Road Trip Crew ---
+    await rmsg('Road Trip Crew', jordan, "road trip to Philly next weekend??", 500);
+    await rmsg('Road Trip Crew', realJayden, "I'm SO down, where should we go?", 495);
+    await rmsg('Road Trip Crew', emma, "Reading Terminal Market is a must", 490);
+    await rmsg('Road Trip Crew', realJayden, "and South Street for shopping", 485);
+    await rmsg('Road Trip Crew', jordan, "bet, I'll plan the route 🗺️", 480);
+
+    // --- Sunday Brunch ---
+    await rmsg('Sunday Brunch', alex, "brunch Sunday? Molinari's has bottomless mimosas", 350);
+    await rmsg('Sunday Brunch', realJayden, "say less, I'm there 🥂", 345);
+    await rmsg('Sunday Brunch', emma, "their french toast is insane too", 340);
+    await rmsg('Sunday Brunch', realJayden, "11am? don't want to go too early", 335);
+    await rmsg('Sunday Brunch', alex, "11 is perfect, see you there!", 330);
+
+    // --------------------------------------------------
     // Done
     // --------------------------------------------------
     await client.query('COMMIT');
@@ -367,10 +592,12 @@ async function seed() {
     console.log('  Demo data seeded successfully!');
     console.log('========================================');
     console.log(`  Users:    ${demoUsers.length}`);
-    console.log(`  Flocks:   ${flockDefs.length}`);
+    console.log(`  Flocks:   ${flockDefs.length + realFlockCount}`);
     console.log(`  Messages: ${messageCount}`);
+    console.log(`  Real account: Bansal.jayden@gmail.com → id ${realJayden}`);
     console.log('\n  Login with any demo account:');
     console.log('  Email:    jayden@demo.com (or mike/emma/alex/jordan)');
+    console.log('  Real:     Bansal.jayden@gmail.com');
     console.log('  Password: demo123');
     console.log('========================================\n');
   } catch (err) {
