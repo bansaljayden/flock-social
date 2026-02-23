@@ -15,10 +15,10 @@ const SALT_ROUNDS = 10;
 // ---------------------------------------------------------------------------
 const demoUsers = [
   {
-    name: 'Sarah Chen',
-    email: 'sarah@demo.com',
+    name: 'Jayden Bansal',
+    email: 'jayden@demo.com',
     password: 'demo123',
-    interests: ['Cocktails', 'Live Music', 'Food', 'Dancing'],
+    interests: ['Nightlife', 'Live Music', 'Food', 'Cocktails'],
   },
   {
     name: 'Mike Rodriguez',
@@ -116,7 +116,7 @@ async function seed() {
       console.log(`  + ${user.name} (${user.email}) → id ${user.id}`);
     }
 
-    const sarah = userIds['sarah@demo.com'];
+    const jayden = userIds['jayden@demo.com'];
     const mike = userIds['mike@demo.com'];
     const emma = userIds['emma@demo.com'];
     const alex = userIds['alex@demo.com'];
@@ -130,7 +130,7 @@ async function seed() {
     const flockDefs = [
       {
         name: 'Friday Night Downtown',
-        creator: sarah,
+        creator: jayden,
         venue_name: 'Blue Heron Bar',
         venue_address: '123 N 3rd St, Easton',
         event_time: hoursFromNow(3),
@@ -150,7 +150,7 @@ async function seed() {
         event_time: hoursFromNow(20),
         status: 'planning',
         members: [
-          { uid: sarah, status: 'accepted' },
+          { uid: jayden, status: 'accepted' },
           { uid: alex, status: 'accepted' },
           { uid: jordan, status: 'invited' },
         ],
@@ -177,7 +177,7 @@ async function seed() {
         members: [
           { uid: alex, status: 'accepted' },
           { uid: jordan, status: 'accepted' },
-          { uid: sarah, status: 'accepted' },
+          { uid: jayden, status: 'accepted' },
         ],
       },
       {
@@ -188,7 +188,7 @@ async function seed() {
         event_time: hoursFromNow(48),
         status: 'planning',
         members: [
-          { uid: sarah, status: 'accepted' },
+          { uid: jayden, status: 'accepted' },
           { uid: mike, status: 'invited' },
           { uid: emma, status: 'accepted' },
           { uid: alex, status: 'invited' },
@@ -202,12 +202,12 @@ async function seed() {
         event_time: hoursFromNow(22),
         status: 'confirmed',
         members: [
-          { uid: sarah, status: 'accepted' },
+          { uid: jayden, status: 'accepted' },
           { uid: alex, status: 'accepted' },
         ],
       },
       {
-        name: 'Birthday Dinner for Sarah',
+        name: 'Birthday Dinner for Jayden',
         creator: alex,
         venue_name: null,
         venue_address: null,
@@ -279,27 +279,27 @@ async function seed() {
     }
 
     // --- Friday Night Downtown ---
-    await msg('Friday Night Downtown', sarah, "who's ready for tonight?? 🎉", 180);
+    await msg('Friday Night Downtown', jayden, "who's ready for tonight?? 🎉", 180);
     await msg('Friday Night Downtown', mike, "let's gooo! what time we meeting?", 175);
-    await msg('Friday Night Downtown', sarah, "I was thinking 7pm? happy hour ends at 8", 170);
+    await msg('Friday Night Downtown', jayden, "I was thinking 7pm? happy hour ends at 8", 170);
     await msg('Friday Night Downtown', alex, "7 works for me! I'll be coming from campus", 160);
     await msg('Friday Night Downtown', jordan, "same, I'm in! should we grab a table or bar seats?", 155);
     await msg('Friday Night Downtown', emma, "table for sure, it gets packed on Fridays", 148);
-    await msg('Friday Night Downtown', sarah, "I'll get there early and grab one", 140);
+    await msg('Friday Night Downtown', jayden, "I'll get there early and grab one", 140);
     await msg('Friday Night Downtown', mike, "legend 🙌", 138);
     await msg('Friday Night Downtown', alex, "anyone tried their new cocktail menu?", 90);
     await msg('Friday Night Downtown', emma, "yes! the spicy margarita is incredible", 85);
     await msg('Friday Night Downtown', jordan, "say less, I'm getting that", 80);
-    await msg('Friday Night Downtown', sarah, "ok I just got here, table by the window 🪟", 15);
+    await msg('Friday Night Downtown', jayden, "ok I just got here, table by the window 🪟", 15);
     await msg('Friday Night Downtown', mike, "on my way! 5 min", 12);
     await msg('Friday Night Downtown', alex, "same, walking over now", 10);
 
     // --- Weekend Brunch Crew ---
     await msg('Weekend Brunch Crew', emma, "brunch tomorrow? I need it after this week 😩", 300);
-    await msg('Weekend Brunch Crew', sarah, "YES. absolutely. where though?", 295);
+    await msg('Weekend Brunch Crew', jayden, "YES. absolutely. where though?", 295);
     await msg('Weekend Brunch Crew', alex, "that new place on 4th has amazing avocado toast", 288);
     await msg('Weekend Brunch Crew', emma, "oooh or we could do Molinari's, they have bottomless mimosas", 280);
-    await msg('Weekend Brunch Crew', sarah, "you had me at bottomless mimosas 🥂", 275);
+    await msg('Weekend Brunch Crew', jayden, "you had me at bottomless mimosas 🥂", 275);
     await msg('Weekend Brunch Crew', alex, "haha ok that settles it. 11am?", 270);
     await msg('Weekend Brunch Crew', emma, "perfect! Jordan, you in?", 265);
 
@@ -316,38 +316,38 @@ async function seed() {
     await msg('Late Night Tacos Run', alex, "bro it's 11pm", 895);
     await msg('Late Night Tacos Run', mike, "...and? tacos don't have a bedtime 🌮", 893);
     await msg('Late Night Tacos Run', jordan, "lmaooo I'm in actually", 890);
-    await msg('Late Night Tacos Run', sarah, "wait for me!! omw", 885);
+    await msg('Late Night Tacos Run', jayden, "wait for me!! omw", 885);
     await msg('Late Night Tacos Run', alex, "fine fine, meet at Tulum in 10?", 882);
     await msg('Late Night Tacos Run', mike, "let's ride 🚗", 880);
     await msg('Late Night Tacos Run', jordan, "just got here, they have a table open", 870);
-    await msg('Late Night Tacos Run', sarah, "the al pastor is unreal", 855);
+    await msg('Late Night Tacos Run', jayden, "the al pastor is unreal", 855);
     await msg('Late Night Tacos Run', mike, "best decision we've made all week", 850);
 
     // --- Movie Night Plans ---
     await msg('Movie Night Plans', jordan, "movie night Friday? my place or theater?", 500);
-    await msg('Movie Night Plans', sarah, "theater! I wanna see that new thriller", 495);
+    await msg('Movie Night Plans', jayden, "theater! I wanna see that new thriller", 495);
     await msg('Movie Night Plans', emma, "ooh yes, I've heard it's so good", 490);
     await msg('Movie Night Plans', jordan, "cool, I'll check showtimes. 8pm showing work?", 485);
-    await msg('Movie Night Plans', sarah, "perfect 🍿", 480);
+    await msg('Movie Night Plans', jayden, "perfect 🍿", 480);
     await msg('Movie Night Plans', emma, "should we do dinner before?", 475);
     await msg('Movie Night Plans', jordan, "great idea, maybe that pizza place next door", 470);
 
     // --- Coffee & Catch Up ---
     await msg('Coffee & Catch Up', emma, "I miss you guys, coffee date soon?", 360);
-    await msg('Coffee & Catch Up', sarah, "tomorrow? Local Grounds has that new oat milk latte", 355);
+    await msg('Coffee & Catch Up', jayden, "tomorrow? Local Grounds has that new oat milk latte", 355);
     await msg('Coffee & Catch Up', alex, "I'm free after 2! been wanting to try that", 350);
     await msg('Coffee & Catch Up', emma, "2pm it is! I have so much to tell you both", 345);
-    await msg('Coffee & Catch Up', sarah, "ooh tea ☕ can't wait", 340);
+    await msg('Coffee & Catch Up', jayden, "ooh tea ☕ can't wait", 340);
 
-    // --- Birthday Dinner for Sarah ---
-    await msg('Birthday Dinner for Sarah', alex, "ok team, Sarah's birthday is next Saturday 🎂", 720);
-    await msg('Birthday Dinner for Sarah', mike, "we gotta make it special! any restaurant ideas?", 715);
-    await msg('Birthday Dinner for Sarah', emma, "what about that rooftop place? she mentioned wanting to go", 710);
-    await msg('Birthday Dinner for Sarah', jordan, "Rooftop @ The Grand? yes that's perfect", 705);
-    await msg('Birthday Dinner for Sarah', alex, "love it. I'll make a reservation. 7pm?", 700);
-    await msg('Birthday Dinner for Sarah', mike, "should we do a surprise or tell her?", 695);
-    await msg('Birthday Dinner for Sarah', emma, "surprise!! she'll love it", 690);
-    await msg('Birthday Dinner for Sarah', jordan, "my lips are sealed 🤐", 685);
+    // --- Birthday Dinner for Jayden ---
+    await msg('Birthday Dinner for Jayden', alex, "ok team, Jayden's birthday is next Saturday 🎂", 720);
+    await msg('Birthday Dinner for Jayden', mike, "we gotta make it special! any restaurant ideas?", 715);
+    await msg('Birthday Dinner for Jayden', emma, "what about that rooftop place? he mentioned wanting to go", 710);
+    await msg('Birthday Dinner for Jayden', jordan, "Rooftop @ The Grand? yes that's perfect", 705);
+    await msg('Birthday Dinner for Jayden', alex, "love it. I'll make a reservation. 7pm?", 700);
+    await msg('Birthday Dinner for Jayden', mike, "should we do a surprise or tell him?", 695);
+    await msg('Birthday Dinner for Jayden', emma, "surprise!! he'll love it", 690);
+    await msg('Birthday Dinner for Jayden', jordan, "my lips are sealed 🤐", 685);
 
     // --- Pickup Basketball Game ---
     await msg('Pickup Basketball Game', mike, "hoops today? community court at 5", 240);
@@ -370,7 +370,7 @@ async function seed() {
     console.log(`  Flocks:   ${flockDefs.length}`);
     console.log(`  Messages: ${messageCount}`);
     console.log('\n  Login with any demo account:');
-    console.log('  Email:    sarah@demo.com (or mike/emma/alex/jordan)');
+    console.log('  Email:    jayden@demo.com (or mike/emma/alex/jordan)');
     console.log('  Password: demo123');
     console.log('========================================\n');
   } catch (err) {
