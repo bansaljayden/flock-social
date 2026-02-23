@@ -155,6 +155,16 @@ const FlockAppInner = ({ authUser, onLogout }) => {
   const [pickingVenueForCreate, setPickingVenueForCreate] = useState(false);
   const [selectedVenueForCreate, setSelectedVenueForCreate] = useState(null);
 
+  // Assign a category based on Google Places types
+  const categorizeVenue = useCallback((types) => {
+    if (!types || types.length === 0) return 'Food';
+    const t = types.join(' ').toLowerCase();
+    if (t.includes('bar') || t.includes('night_club') || t.includes('liquor')) return 'Nightlife';
+    if (t.includes('music') || t.includes('concert') || t.includes('performing_arts')) return 'Live Music';
+    if (t.includes('stadium') || t.includes('gym') || t.includes('sports') || t.includes('bowling')) return 'Sports';
+    return 'Food';
+  }, []);
+
   // Venue search state (hoisted from CreateScreen to avoid conditional hook calls)
   const [venueQuery, setVenueQuery] = useState('');
   const [venueResults, setVenueResults] = useState([]);
@@ -167,11 +177,56 @@ const FlockAppInner = ({ authUser, onLogout }) => {
     setVenueSearching(true);
     try {
       const data = await searchVenues(q);
-      setVenueResults(data.venues || []);
+      const venues = data.venues || [];
+      setVenueResults(venues);
+      // Also update map pins with search results
+      if (venues.length > 0) {
+        const mapped = venues.map((v, i) => {
+          const seed = ((v.place_id || '').charCodeAt(0) || 0) + i;
+          const crowd = Math.round(20 + ((seed * 37) % 70));
+          const bestTimes = ['Now-ish', 'Right now', '8 PM', '9 PM', '10 PM+', 'Sunset!', 'Game time!', '8:30ish'];
+          return {
+            id: i + 1,
+            place_id: v.place_id,
+            name: v.name,
+            type: (v.types && v.types[0]) ? v.types[0].replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()) : 'Restaurant',
+            category: categorizeVenue(v.types),
+            x: 10 + ((seed * 13) % 80),
+            y: 10 + ((seed * 29) % 75),
+            crowd,
+            best: bestTimes[i % bestTimes.length],
+            stars: v.rating || 4.0,
+            addr: v.formatted_address || '',
+            price: v.price_level ? '$'.repeat(v.price_level) : '$$',
+            trending: v.rating >= 4.5,
+            photo_url: v.photo_url || null,
+            location: v.location || null,
+          };
+        });
+        setAllVenues(mapped);
+        setActiveVenue(null);
+      }
     } catch (err) {
       console.error('Venue search error:', err);
     } finally {
       setVenueSearching(false);
+    }
+  }, [categorizeVenue]);
+
+  // Open the full venue details modal
+  const openVenueDetail = useCallback(async (placeId, fallbackData) => {
+    setVenueDetailLoading(true);
+    setVenueDetailPhotoIdx(0);
+    setVenueDetailModal(fallbackData ? { ...fallbackData, loading: true } : { name: 'Loading...', loading: true });
+    try {
+      const data = await getVenueDetails(placeId);
+      setVenueDetailModal({ ...data.venue, loading: false });
+    } catch {
+      // Keep fallback data if API fails
+      if (fallbackData) setVenueDetailModal({ ...fallbackData, loading: false });
+      else setVenueDetailModal(null);
+    } finally {
+      setVenueDetailLoading(false);
     }
   }, []);
 
@@ -322,6 +377,9 @@ const FlockAppInner = ({ authUser, onLogout }) => {
   const [searchText, setSearchText] = useState('');
   const [category, setCategory] = useState('All');
   const [activeVenue, setActiveVenue] = useState(null);
+  const [venueDetailModal, setVenueDetailModal] = useState(null); // full venue details for modal
+  const [venueDetailLoading, setVenueDetailLoading] = useState(false);
+  const [venueDetailPhotoIdx, setVenueDetailPhotoIdx] = useState(0);
   const [connections, setConnections] = useState([]);
   const [showConnectPanel, setShowConnectPanel] = useState(false);
 
@@ -407,16 +465,6 @@ const FlockAppInner = ({ authUser, onLogout }) => {
   // Map venues loaded from Google Places API
   const [allVenues, setAllVenues] = useState([]);
   const [mapVenuesLoaded, setMapVenuesLoaded] = useState(false);
-
-  // Assign a category based on Google Places types
-  const categorizeVenue = useCallback((types) => {
-    if (!types || types.length === 0) return 'Food';
-    const t = types.join(' ').toLowerCase();
-    if (t.includes('bar') || t.includes('night_club') || t.includes('liquor')) return 'Nightlife';
-    if (t.includes('music') || t.includes('concert') || t.includes('performing_arts')) return 'Live Music';
-    if (t.includes('stadium') || t.includes('gym') || t.includes('sports') || t.includes('bowling')) return 'Sports';
-    return 'Food';
-  }, []);
 
   // Load real venues from Google Places for the Discover map
   useEffect(() => {
@@ -1839,7 +1887,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
                 {venueSearching && (
                   <div style={{ textAlign: 'center', padding: '20px 0' }}>
                     <div style={{ display: 'inline-block', width: '20px', height: '20px', border: `3px solid ${colors.creamDark}`, borderTopColor: colors.navy, borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
-                    <p style={{ fontSize: '12px', color: '#6b7280', margin: '8px 0 0' }}>Searching Google Places...</p>
+                    <p style={{ fontSize: '12px', color: '#6b7280', margin: '8px 0 0' }}>Searching venues...</p>
                   </div>
                 )}
 
@@ -2012,7 +2060,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
           {venueSearching && (
             <div style={{ textAlign: 'center', padding: '20px 0' }}>
               <div style={{ display: 'inline-block', width: '20px', height: '20px', border: `3px solid #e5e7eb`, borderTopColor: colors.navy, borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
-              <p style={{ fontSize: '11px', color: '#6b7280', margin: '8px 0 0' }}>Searching Google Places...</p>
+              <p style={{ fontSize: '11px', color: '#6b7280', margin: '8px 0 0' }}>Searching venues...</p>
             </div>
           )}
           {!venueSearching && venueResults.length > 0 && (
@@ -2022,10 +2070,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
                 <button
                   key={venue.place_id}
                   onClick={() => {
-                    setSelectedVenueForCreate({ name: venue.name, addr: venue.formatted_address, place_id: venue.place_id, rating: venue.rating, user_ratings_total: venue.user_ratings_total, price_level: venue.price_level, photo_url: venue.photo_url, types: venue.types });
-                    setVenueQuery(''); setVenueResults([]);
-                    showToast(`Selected ${venue.name}!`);
-                    setCurrentScreen('create');
+                    openVenueDetail(venue.place_id, { name: venue.name, formatted_address: venue.formatted_address, place_id: venue.place_id, rating: venue.rating, price_level: venue.price_level, photo_url: venue.photo_url });
                   }}
                   style={{ width: '100%', padding: '10px', display: 'flex', alignItems: 'center', gap: '10px', border: 'none', borderRadius: '12px', backgroundColor: '#f8fafc', cursor: 'pointer', textAlign: 'left', marginBottom: '6px', transition: 'background-color 0.15s' }}
                   onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = '#eef2ff'; }}
@@ -2045,8 +2090,8 @@ const FlockAppInner = ({ authUser, onLogout }) => {
                     </div>
                     <p style={{ fontSize: '10px', color: '#6b7280', margin: '2px 0 0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{venue.formatted_address}</p>
                   </div>
-                  <div style={{ flexShrink: 0, width: '28px', height: '28px', borderRadius: '14px', background: `linear-gradient(135deg, ${colors.navy}, ${colors.navyMid})`, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                    {Icons.plus('white', 12)}
+                  <div style={{ flexShrink: 0, display: 'flex', alignItems: 'center', gap: '3px' }}>
+                    {Icons.chevronRight(colors.navyMid, 16)}
                   </div>
                 </button>
               ))}
@@ -2474,8 +2519,10 @@ const FlockAppInner = ({ authUser, onLogout }) => {
                 ) : (
                   <button onClick={() => { setSelectedVenueForCreate(activeVenue); setActiveVenue(null); setCurrentScreen('create'); }} style={{ flex: 1, padding: '10px', borderRadius: '8px', border: 'none', background: `linear-gradient(90deg, ${colors.navy}, ${colors.navyMid})`, color: 'white', fontWeight: 'bold', fontSize: '12px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px' }}>{Icons.users('white', 14)} Start Flock Here</button>
                 )}
+                {activeVenue.place_id && (
+                  <button onClick={() => { openVenueDetail(activeVenue.place_id, { name: activeVenue.name, formatted_address: activeVenue.addr, place_id: activeVenue.place_id, rating: activeVenue.stars, photo_url: activeVenue.photo_url }); }} style={{ width: '40px', height: '40px', borderRadius: '8px', border: `2px solid ${colors.creamDark}`, backgroundColor: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.eye(colors.navy, 18)}</button>
+                )}
                 <button onClick={() => addEventToCalendar(`Visit ${activeVenue.name}`, activeVenue.name, new Date(), '8 PM', getCategoryColor(activeVenue.category))} style={{ width: '40px', height: '40px', borderRadius: '8px', border: `2px solid ${colors.creamDark}`, backgroundColor: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.calendar(colors.navy, 18)}</button>
-                <button onClick={() => showToast('Calling venue...')} style={{ width: '40px', height: '40px', borderRadius: '8px', border: `2px solid ${colors.creamDark}`, backgroundColor: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.wave(colors.navy, 18)}</button>
               </div>
             </div>
           </div>
@@ -2892,7 +2939,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
             <div style={{ display: 'flex', gap: '8px' }}>
               {(venue.place_id || venue.id) && (
                 <button onClick={onViewDetails} style={{ flex: 1, padding: '10px', borderRadius: '10px', border: `2px solid ${colors.navy}`, backgroundColor: 'white', color: colors.navy, fontSize: '12px', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px', transition: 'all 0.2s ease' }}>
-                  {Icons.eye(colors.navy, 14)} View on Maps
+                  {Icons.eye(colors.navy, 14)} View Details
                 </button>
               )}
               <button onClick={onVote} style={{ flex: 1, padding: '10px', borderRadius: '10px', border: 'none', background: `linear-gradient(135deg, ${colors.navy}, ${colors.navyMid})`, color: 'white', fontSize: '12px', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px', boxShadow: '0 2px 8px rgba(13,40,71,0.25)', transition: 'all 0.2s ease' }}>
@@ -2973,10 +3020,11 @@ const FlockAppInner = ({ authUser, onLogout }) => {
                     venue={m.venueCard}
                     onViewDetails={() => {
                       if (m.venueCard.place_id) {
-                        window.open(`https://www.google.com/maps/place/?q=place_id:${m.venueCard.place_id}`, '_blank');
+                        openVenueDetail(m.venueCard.place_id, { name: m.venueCard.name, formatted_address: m.venueCard.addr, place_id: m.venueCard.place_id, rating: m.venueCard.rating || m.venueCard.stars, photo_url: m.venueCard.photo_url });
                       } else {
                         const venue = allVenues.find(v => v.id === m.venueCard.id);
-                        if (venue) { setActiveVenue(venue); setCurrentTab('explore'); setCurrentScreen('main'); }
+                        if (venue && venue.place_id) openVenueDetail(venue.place_id, { name: venue.name, formatted_address: venue.addr, place_id: venue.place_id, rating: venue.stars, photo_url: venue.photo_url });
+                        else if (venue) { setActiveVenue(venue); setCurrentTab('explore'); setCurrentScreen('main'); }
                       }
                     }}
                     onVote={() => {
@@ -3295,8 +3343,8 @@ const FlockAppInner = ({ authUser, onLogout }) => {
                 </div>
               </div>
               {flock.venueId && (
-                <button onClick={() => window.open(`https://www.google.com/maps/place/?q=place_id:${flock.venueId}`, '_blank')} style={{ padding: '6px 10px', borderRadius: '10px', border: 'none', background: `linear-gradient(135deg, ${colors.navy}, ${colors.navyMid})`, color: 'white', fontSize: '10px', fontWeight: '700', cursor: 'pointer', flexShrink: 0 }}>
-                  {Icons.mapPin('white', 12)} Maps
+                <button onClick={() => openVenueDetail(flock.venueId, { name: flock.venue, formatted_address: flock.venueAddress, place_id: flock.venueId, rating: flock.venueRating, photo_url: flock.venuePhoto })} style={{ padding: '6px 10px', borderRadius: '10px', border: 'none', background: `linear-gradient(135deg, ${colors.navy}, ${colors.navyMid})`, color: 'white', fontSize: '10px', fontWeight: '700', cursor: 'pointer', flexShrink: 0 }}>
+                  {Icons.eye('white', 12)} Details
                 </button>
               )}
             </div>
@@ -5411,6 +5459,147 @@ const FlockAppInner = ({ authUser, onLogout }) => {
         </div>
       </div>
       <Toast />
+
+      {/* Venue Details Modal */}
+      {venueDetailModal && (
+        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.85)', zIndex: 9998, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+          onClick={(e) => { if (e.target === e.currentTarget) setVenueDetailModal(null); }}
+        >
+          <div style={{ width: '100%', maxWidth: '420px', maxHeight: '92vh', backgroundColor: colors.cream, borderRadius: '20px', overflow: 'hidden', display: 'flex', flexDirection: 'column', boxShadow: '0 20px 60px rgba(0,0,0,0.5)' }}>
+            {/* Photo area */}
+            <div style={{ position: 'relative', height: '220px', flexShrink: 0, overflow: 'hidden' }}>
+              {venueDetailModal.photos && venueDetailModal.photos.length > 0 ? (
+                <>
+                  <img src={venueDetailModal.photos[venueDetailPhotoIdx] || venueDetailModal.photos[0]} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
+                  {venueDetailModal.photos.length > 1 && (
+                    <>
+                      <button onClick={(e) => { e.stopPropagation(); setVenueDetailPhotoIdx(i => i > 0 ? i - 1 : venueDetailModal.photos.length - 1); }} style={{ position: 'absolute', left: '8px', top: '50%', transform: 'translateY(-50%)', width: '32px', height: '32px', borderRadius: '16px', backgroundColor: 'rgba(0,0,0,0.5)', border: 'none', color: 'white', cursor: 'pointer', fontSize: '16px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>‹</button>
+                      <button onClick={(e) => { e.stopPropagation(); setVenueDetailPhotoIdx(i => i < venueDetailModal.photos.length - 1 ? i + 1 : 0); }} style={{ position: 'absolute', right: '8px', top: '50%', transform: 'translateY(-50%)', width: '32px', height: '32px', borderRadius: '16px', backgroundColor: 'rgba(0,0,0,0.5)', border: 'none', color: 'white', cursor: 'pointer', fontSize: '16px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>›</button>
+                      <div style={{ position: 'absolute', bottom: '10px', left: '50%', transform: 'translateX(-50%)', display: 'flex', gap: '5px' }}>
+                        {venueDetailModal.photos.map((_, i) => (
+                          <div key={i} style={{ width: '7px', height: '7px', borderRadius: '50%', backgroundColor: i === venueDetailPhotoIdx ? 'white' : 'rgba(255,255,255,0.4)', transition: 'background-color 0.2s' }} />
+                        ))}
+                      </div>
+                    </>
+                  )}
+                </>
+              ) : venueDetailModal.photo_url ? (
+                <img src={venueDetailModal.photo_url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
+              ) : (
+                <div style={{ width: '100%', height: '100%', background: `linear-gradient(135deg, ${colors.navy}, ${colors.navyMid})`, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.mapPin('rgba(255,255,255,0.3)', 48)}</div>
+              )}
+              {/* Overlay gradient */}
+              <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: '80px', background: 'linear-gradient(transparent, rgba(0,0,0,0.7))' }} />
+              {/* Close button */}
+              <button onClick={() => setVenueDetailModal(null)} style={{ position: 'absolute', top: '12px', right: '12px', width: '34px', height: '34px', borderRadius: '17px', backgroundColor: 'rgba(0,0,0,0.5)', border: 'none', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', backdropFilter: 'blur(10px)' }}>{Icons.x('white', 18)}</button>
+              {/* Name overlay */}
+              <div style={{ position: 'absolute', bottom: '12px', left: '14px', right: '14px' }}>
+                <h2 style={{ color: 'white', fontSize: '20px', fontWeight: '900', margin: 0, textShadow: '0 2px 8px rgba(0,0,0,0.5)' }}>{venueDetailModal.name}</h2>
+                {venueDetailModal.formatted_address && <p style={{ color: 'rgba(255,255,255,0.85)', fontSize: '12px', margin: '3px 0 0', textShadow: '0 1px 4px rgba(0,0,0,0.5)' }}>{venueDetailModal.formatted_address}</p>}
+              </div>
+            </div>
+
+            {/* Content */}
+            <div style={{ flex: 1, overflowY: 'auto', padding: '16px' }}>
+              {venueDetailModal.loading ? (
+                <div style={{ textAlign: 'center', padding: '30px 0' }}>
+                  <div style={{ display: 'inline-block', width: '24px', height: '24px', border: `3px solid ${colors.creamDark}`, borderTopColor: colors.navy, borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
+                  <p style={{ fontSize: '12px', color: '#6b7280', margin: '10px 0 0' }}>Loading details...</p>
+                </div>
+              ) : (
+                <>
+                  {/* Stats row */}
+                  <div style={{ display: 'flex', gap: '8px', marginBottom: '16px' }}>
+                    {venueDetailModal.rating && (
+                      <div style={{ flex: 1, backgroundColor: 'white', borderRadius: '12px', padding: '10px', textAlign: 'center', border: '1px solid rgba(0,0,0,0.06)' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '3px', marginBottom: '2px' }}>
+                          {Icons.starFilled('#F59E0B', 16)}
+                          <span style={{ fontSize: '18px', fontWeight: '900', color: colors.navy }}>{venueDetailModal.rating}</span>
+                        </div>
+                        <p style={{ fontSize: '10px', color: '#6b7280', margin: 0 }}>{venueDetailModal.user_ratings_total ? `${venueDetailModal.user_ratings_total} reviews` : 'Rating'}</p>
+                      </div>
+                    )}
+                    {venueDetailModal.price_level != null && (
+                      <div style={{ flex: 1, backgroundColor: 'white', borderRadius: '12px', padding: '10px', textAlign: 'center', border: '1px solid rgba(0,0,0,0.06)' }}>
+                        <p style={{ fontSize: '18px', fontWeight: '900', color: colors.navy, margin: '0 0 2px' }}>{'$'.repeat(venueDetailModal.price_level || 1)}</p>
+                        <p style={{ fontSize: '10px', color: '#6b7280', margin: 0 }}>Price</p>
+                      </div>
+                    )}
+                    {venueDetailModal.opening_hours && (
+                      <div style={{ flex: 1, backgroundColor: 'white', borderRadius: '12px', padding: '10px', textAlign: 'center', border: '1px solid rgba(0,0,0,0.06)' }}>
+                        <div style={{ marginBottom: '2px' }}>{Icons.clock(venueDetailModal.opening_hours.openNow ? colors.teal : colors.red, 18)}</div>
+                        <p style={{ fontSize: '10px', color: venueDetailModal.opening_hours.openNow ? colors.teal : colors.red, fontWeight: '600', margin: 0 }}>{venueDetailModal.opening_hours.openNow ? 'Open Now' : 'Closed'}</p>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Hours */}
+                  {venueDetailModal.opening_hours?.weekdayDescriptions && (
+                    <div style={{ backgroundColor: 'white', borderRadius: '12px', padding: '12px', marginBottom: '14px', border: '1px solid rgba(0,0,0,0.06)' }}>
+                      <h4 style={{ fontSize: '12px', fontWeight: '800', color: colors.navy, margin: '0 0 8px', display: 'flex', alignItems: 'center', gap: '6px' }}>{Icons.clock(colors.navy, 14)} Hours</h4>
+                      {venueDetailModal.opening_hours.weekdayDescriptions.map((day, i) => {
+                        const today = new Date().getDay();
+                        const isToday = i === (today === 0 ? 6 : today - 1);
+                        return <p key={i} style={{ fontSize: '11px', color: isToday ? colors.navy : '#6b7280', fontWeight: isToday ? '700' : '400', margin: '3px 0', padding: isToday ? '3px 6px' : '0', backgroundColor: isToday ? `${colors.navy}10` : 'transparent', borderRadius: '6px' }}>{day}</p>;
+                      })}
+                    </div>
+                  )}
+
+                  {/* Contact */}
+                  {(venueDetailModal.formatted_phone_number || venueDetailModal.website) && (
+                    <div style={{ backgroundColor: 'white', borderRadius: '12px', padding: '12px', marginBottom: '14px', border: '1px solid rgba(0,0,0,0.06)' }}>
+                      <h4 style={{ fontSize: '12px', fontWeight: '800', color: colors.navy, margin: '0 0 8px' }}>Contact</h4>
+                      {venueDetailModal.formatted_phone_number && (
+                        <a href={`tel:${venueDetailModal.formatted_phone_number}`} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '8px', backgroundColor: colors.cream, borderRadius: '10px', textDecoration: 'none', marginBottom: venueDetailModal.website ? '6px' : 0 }}>
+                          {Icons.wave(colors.navy, 16)}
+                          <span style={{ fontSize: '13px', fontWeight: '600', color: colors.navy }}>{venueDetailModal.formatted_phone_number}</span>
+                        </a>
+                      )}
+                      {venueDetailModal.website && (
+                        <a href={venueDetailModal.website} target="_blank" rel="noopener noreferrer" style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '8px', backgroundColor: colors.cream, borderRadius: '10px', textDecoration: 'none' }}>
+                          {Icons.externalLink(colors.navy, 16)}
+                          <span style={{ fontSize: '13px', fontWeight: '600', color: colors.navy, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>Website</span>
+                        </a>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Types/Tags */}
+                  {venueDetailModal.types && venueDetailModal.types.length > 0 && (
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginBottom: '16px' }}>
+                      {venueDetailModal.types.slice(0, 6).map((t, i) => (
+                        <span key={i} style={{ fontSize: '10px', padding: '4px 10px', borderRadius: '20px', backgroundColor: 'white', color: colors.navy, fontWeight: '600', border: '1px solid rgba(0,0,0,0.06)' }}>{t.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())}</span>
+                      ))}
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+
+            {/* Bottom action buttons */}
+            <div style={{ padding: '12px 16px', borderTop: '1px solid rgba(0,0,0,0.08)', backgroundColor: 'white', flexShrink: 0, display: 'flex', gap: '8px' }}>
+              {venueDetailModal.google_maps_url ? (
+                <a href={venueDetailModal.google_maps_url} target="_blank" rel="noopener noreferrer" style={{ flex: 1, padding: '12px', borderRadius: '12px', border: `2px solid ${colors.navy}`, backgroundColor: 'white', color: colors.navy, fontSize: '13px', fontWeight: '700', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', textDecoration: 'none' }}>
+                  {Icons.mapPin(colors.navy, 16)} Get Directions
+                </a>
+              ) : venueDetailModal.place_id ? (
+                <a href={`https://www.google.com/maps/place/?q=place_id:${venueDetailModal.place_id}`} target="_blank" rel="noopener noreferrer" style={{ flex: 1, padding: '12px', borderRadius: '12px', border: `2px solid ${colors.navy}`, backgroundColor: 'white', color: colors.navy, fontSize: '13px', fontWeight: '700', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', textDecoration: 'none' }}>
+                  {Icons.mapPin(colors.navy, 16)} Get Directions
+                </a>
+              ) : null}
+              <button onClick={() => {
+                setSelectedVenueForCreate({ name: venueDetailModal.name, addr: venueDetailModal.formatted_address, place_id: venueDetailModal.place_id, rating: venueDetailModal.rating, price_level: venueDetailModal.price_level, photo_url: (venueDetailModal.photos && venueDetailModal.photos[0]) || venueDetailModal.photo_url || null });
+                setVenueDetailModal(null);
+                setCurrentScreen('create');
+                showToast(`Selected ${venueDetailModal.name}!`);
+              }} style={{ flex: 1, padding: '12px', borderRadius: '12px', border: 'none', background: `linear-gradient(135deg, ${colors.navy}, ${colors.navyMid})`, color: 'white', fontSize: '13px', fontWeight: '700', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', boxShadow: '0 4px 12px rgba(13,40,71,0.3)' }}>
+                {Icons.plus('white', 16)} Add to Flock
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Story Viewer Overlay */}
       {viewingStory && viewingStory.storyData && viewingStory.storyData.length > 0 && (
         <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.95)', zIndex: 9999, display: 'flex', flexDirection: 'column' }}
