@@ -11,7 +11,7 @@ import {
   calculateProfitMargin
 } from './lib/finance';
 import { getCurrentUser, logout, isLoggedIn, getFlocks, createFlock as apiCreateFlock, getMessages, sendMessage as apiSendMessage } from './services/api';
-import { connectSocket, disconnectSocket, joinFlock, leaveFlock, sendMessage as socketSendMessage, startTyping, stopTyping, onNewMessage, onUserTyping, onUserStoppedTyping } from './services/socket';
+import { connectSocket, disconnectSocket, joinFlock, leaveFlock, sendMessage as socketSendMessage, sendImageMessage as socketSendImage, startTyping, stopTyping, onNewMessage, onUserTyping, onUserStoppedTyping } from './services/socket';
 import LoginScreen from './components/auth/LoginScreen';
 import SignupScreen from './components/auth/SignupScreen';
 
@@ -577,6 +577,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
         time: new Date(msg.created_at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }),
         text: msg.message_text,
         reactions: [],
+        ...(msg.image_url ? { image: msg.image_url } : {}),
       };
       setFlocks(prev => prev.map(f => {
         if (f.id !== msg.flock_id) return f;
@@ -803,6 +804,10 @@ const FlockAppInner = ({ authUser, onLogout }) => {
       image: pendingImage
     };
     addMessageToFlock(flockId, imageMessage);
+
+    // Broadcast via WebSocket so other users see it in real-time
+    socketSendImage(flockId, pendingImage);
+
     setPendingImage(null);
     setShowImagePreview(false);
     showToast('Image sent!');
