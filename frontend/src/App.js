@@ -11,6 +11,7 @@ import {
   calculateProfitMargin
 } from './lib/finance';
 import { getCurrentUser, logout, isLoggedIn, getFlocks, createFlock as apiCreateFlock, getMessages, sendMessage as apiSendMessage } from './services/api';
+import { connectSocket, disconnectSocket, joinFlock, leaveFlock, sendMessage as socketSendMessage, startTyping, stopTyping, onNewMessage, onUserTyping, onUserStoppedTyping } from './services/socket';
 import LoginScreen from './components/auth/LoginScreen';
 import SignupScreen from './components/auth/SignupScreen';
 
@@ -130,6 +131,12 @@ const styles = {
 };
 
 const FlockAppInner = ({ authUser, onLogout }) => {
+  // Connect WebSocket on mount
+  useEffect(() => {
+    connectSocket();
+    return () => disconnectSocket();
+  }, []);
+
   // User Mode Selection
   const [userMode, setUserMode] = useState(() => localStorage.getItem('flockUserMode') || null);
   const [showModeSelection, setShowModeSelection] = useState(!localStorage.getItem('flockUserMode'));
@@ -524,10 +531,21 @@ const FlockAppInner = ({ authUser, onLogout }) => {
     }
   }, [selectedFlock?.messages, currentScreen]);
 
-  // Fetch messages from API when opening a chat
+  // Fetch messages from API + join socket room when opening a chat
   const [messagesLoading, setMessagesLoading] = useState(false);
+  const prevFlockIdRef = useRef(null);
   useEffect(() => {
     if (currentScreen === 'chatDetail' && selectedFlockId) {
+      // Leave previous room
+      if (prevFlockIdRef.current && prevFlockIdRef.current !== selectedFlockId) {
+        leaveFlock(prevFlockIdRef.current);
+      }
+      prevFlockIdRef.current = selectedFlockId;
+
+      // Join socket room
+      joinFlock(selectedFlockId);
+
+      // Fetch message history via HTTP
       setMessagesLoading(true);
       getMessages(selectedFlockId)
         .then((data) => {
@@ -542,21 +560,76 @@ const FlockAppInner = ({ authUser, onLogout }) => {
         })
         .catch(() => {})
         .finally(() => setMessagesLoading(false));
+    } else if (currentScreen !== 'chatDetail' && prevFlockIdRef.current) {
+      leaveFlock(prevFlockIdRef.current);
+      prevFlockIdRef.current = null;
     }
   }, [currentScreen, selectedFlockId]);
 
-  // Send chat message callback
+  // Listen for real-time messages via WebSocket
+  useEffect(() => {
+    const unsub = onNewMessage((msg) => {
+      // Don't duplicate own messages — only add if sender is someone else
+      if (msg.sender_id === authUser?.id) return;
+      const mapped = {
+        id: msg.id,
+        sender: msg.sender_name || 'Unknown',
+        time: new Date(msg.created_at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }),
+        text: msg.message_text,
+        reactions: [],
+      };
+      setFlocks(prev => prev.map(f => f.id === msg.flock_id ? { ...f, messages: [...(f.messages || []), mapped] } : f));
+    });
+    return unsub;
+  }, [authUser]);
+
+  // Listen for typing indicators via WebSocket
+  useEffect(() => {
+    const unsubTyping = onUserTyping((data) => {
+      setTypingUser(data.name);
+      setIsTyping(true);
+    });
+    const unsubStop = onUserStoppedTyping(() => {
+      setIsTyping(false);
+      setTypingUser('');
+    });
+    return () => { unsubTyping(); unsubStop(); };
+  }, []);
+
+  // Typing indicator — emit via socket with debounce
+  const typingTimeoutRef = useRef(null);
+  const handleChatInputChange = useCallback((e) => {
+    setChatInput(e.target.value);
+    if (selectedFlockId) {
+      startTyping(selectedFlockId);
+      clearTimeout(typingTimeoutRef.current);
+      typingTimeoutRef.current = setTimeout(() => {
+        stopTyping(selectedFlockId);
+      }, 2000);
+    }
+  }, [selectedFlockId]);
+
+  // Send chat message — emit via WebSocket, fall back to HTTP
   const sendChatMessage = useCallback(async () => {
     if (chatInput.trim()) {
       const text = chatInput;
       setChatInput('');
+      if (typingTimeoutRef.current) {
+        clearTimeout(typingTimeoutRef.current);
+        stopTyping(selectedFlockId);
+      }
+
+      // Optimistic local update
+      const tempId = Date.now();
+      addMessageToFlock(selectedFlockId, { id: tempId, sender: authUser?.name || 'You', time: 'Now', text, reactions: [] });
+      addXP(5);
+
+      // Send via WebSocket (instant) + HTTP (persistent)
+      socketSendMessage(selectedFlockId, text);
       try {
-        const data = await apiSendMessage(selectedFlockId, text);
-        const m = data.message;
-        addMessageToFlock(selectedFlockId, { id: m.id, sender: m.sender_name || authUser?.name || 'You', time: 'Now', text: m.message_text, reactions: [] });
-        addXP(5);
+        await apiSendMessage(selectedFlockId, text);
       } catch {
-        addMessageToFlock(selectedFlockId, { id: Date.now(), sender: authUser?.name || 'You', time: 'Now', text, reactions: [] });
+        // WebSocket already sent it, HTTP is just backup persistence
       }
     }
   }, [chatInput, selectedFlockId, addMessageToFlock, addXP, authUser]);
@@ -684,12 +757,8 @@ const FlockAppInner = ({ authUser, onLogout }) => {
   }, []);
 
   // Simulate typing indicator with user name
-  const simulateTyping = useCallback((userName) => {
-    const names = userName || ['Alex', 'Sam', 'Jordan', 'Taylor'][Math.floor(Math.random() * 4)];
-    setTypingUser(names);
-    setIsTyping(true);
-    setTimeout(() => setIsTyping(false), 2000 + Math.random() * 2000);
-  }, []);
+  // Typing indicators now driven by real WebSocket events
+  const simulateTyping = useCallback(() => {}, []);
 
   // Share venue to chat
   const shareVenueToChat = useCallback((flockId, venue) => {
@@ -2835,7 +2904,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
         {/* Input area */}
         <div style={{ padding: '10px 12px', backgroundColor: 'rgba(255,255,255,0.98)', backdropFilter: 'blur(10px)', WebkitBackdropFilter: 'blur(10px)', borderTop: '1px solid rgba(0,0,0,0.05)', display: 'flex', gap: '8px', alignItems: 'center', flexShrink: 0, boxShadow: '0 -4px 20px rgba(0,0,0,0.03)' }}>
           <button onClick={handleChatImageSelect} style={{ width: '38px', height: '38px', borderRadius: '19px', border: 'none', backgroundColor: 'rgba(13,40,71,0.08)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'all 0.2s ease' }}>{Icons.camera('#6b7280', 18)}</button>
-          <input key="chat-input" id="chat-input" type="text" value={chatInput} onChange={(e) => setChatInput(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && sendChatMessage()} placeholder={replyingTo ? 'Reply...' : 'Type a message...'} style={{ flex: 1, padding: '12px 16px', borderRadius: '22px', backgroundColor: 'rgba(243,244,246,0.9)', border: '1px solid rgba(0,0,0,0.05)', fontSize: '14px', outline: 'none', fontWeight: '500', transition: 'all 0.2s ease' }} autoComplete="off" />
+          <input key="chat-input" id="chat-input" type="text" value={chatInput} onChange={handleChatInputChange} onKeyDown={(e) => e.key === 'Enter' && sendChatMessage()} placeholder={replyingTo ? 'Reply...' : 'Type a message...'} style={{ flex: 1, padding: '12px 16px', borderRadius: '22px', backgroundColor: 'rgba(243,244,246,0.9)', border: '1px solid rgba(0,0,0,0.05)', fontSize: '14px', outline: 'none', fontWeight: '500', transition: 'all 0.2s ease' }} autoComplete="off" />
           {chatInput ? (
             <button onClick={sendChatMessage} style={{ width: '42px', height: '42px', borderRadius: '21px', border: 'none', background: `linear-gradient(135deg, ${colors.navy}, ${colors.navyMid})`, color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 3px 10px rgba(13,40,71,0.25)', transition: 'all 0.2s ease' }}>{Icons.send('white', 18)}</button>
           ) : (
@@ -5518,7 +5587,7 @@ const FlockApp = () => {
     );
   }
 
-  return <FlockAppInner authUser={authUser} onLogout={() => { logout(); setAuthUser(null); setAuthScreen('login'); }} />;
+  return <FlockAppInner authUser={authUser} onLogout={() => { disconnectSocket(); logout(); setAuthUser(null); setAuthScreen('login'); }} />;
 };
 
 export default FlockApp;
