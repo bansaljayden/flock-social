@@ -77,6 +77,22 @@ async function seed() {
     console.log('Starting demo data seed...\n');
 
     // --------------------------------------------------
+    // 0. Ensure stories table exists
+    // --------------------------------------------------
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS stories (
+        id SERIAL PRIMARY KEY,
+        user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+        image_url TEXT NOT NULL,
+        caption TEXT,
+        created_at TIMESTAMP DEFAULT NOW(),
+        expires_at TIMESTAMP DEFAULT (NOW() + INTERVAL '24 hours')
+      )
+    `);
+    await client.query(`CREATE INDEX IF NOT EXISTS idx_stories_user ON stories(user_id)`);
+    await client.query(`CREATE INDEX IF NOT EXISTS idx_stories_expires ON stories(expires_at)`);
+
+    // --------------------------------------------------
     // 1. Clean previous demo data
     // --------------------------------------------------
     console.log('Cleaning previous demo data...');
@@ -88,6 +104,7 @@ async function seed() {
 
     if (existingIds.length > 0) {
       const idList = existingIds.join(',');
+      await client.query(`DELETE FROM stories WHERE user_id IN (${idList})`);
       await client.query(`DELETE FROM emoji_reactions WHERE user_id IN (${idList})`);
       await client.query(`DELETE FROM messages WHERE sender_id IN (${idList})`);
       await client.query(`DELETE FROM direct_messages WHERE sender_id IN (${idList}) OR receiver_id IN (${idList})`);
@@ -140,7 +157,8 @@ async function seed() {
       realJayden = realLookup.rows[0].id;
       console.log(`  Found real account → id ${realJayden}`);
 
-      // Clean previous flocks/messages linked to real account so we start fresh
+      // Clean previous flocks/messages/stories linked to real account so we start fresh
+      await client.query(`DELETE FROM stories WHERE user_id = $1`, [realJayden]);
       await client.query(`DELETE FROM emoji_reactions WHERE message_id IN (SELECT id FROM messages WHERE sender_id = $1)`, [realJayden]);
       await client.query(`DELETE FROM messages WHERE sender_id = $1`, [realJayden]);
       await client.query(`DELETE FROM messages WHERE flock_id IN (SELECT id FROM flocks WHERE creator_id = $1)`, [realJayden]);
@@ -335,12 +353,44 @@ async function seed() {
     await msg('Sunday Brunch Crew', realJayden, "you're the best Emma 🙌", 1380);
 
     // --------------------------------------------------
-    // 6. Verify everything is linked
+    // 6. Seed demo stories
+    // --------------------------------------------------
+    console.log('\nCreating stories...');
+
+    const storyDefs = [
+      { user: realJayden, image: 'https://picsum.photos/seed/flock1/400/600', caption: 'Grinding for DECA nationals 💪', hoursAgo: 1 },
+      { user: mike,       image: 'https://picsum.photos/seed/flock2/400/600', caption: 'Game day vibes 🏈',             hoursAgo: 2 },
+      { user: emma,       image: 'https://picsum.photos/seed/flock3/400/600', caption: 'Coffee and code ☕',             hoursAgo: 3 },
+      { user: realJayden, image: 'https://picsum.photos/seed/flock4/400/600', caption: 'Late night study session 📚',    hoursAgo: 4 },
+      { user: alex,       image: 'https://picsum.photos/seed/flock5/400/600', caption: 'Downtown adventures 🌃',         hoursAgo: 5 },
+      { user: jordan,     image: 'https://picsum.photos/seed/flock6/400/600', caption: 'Cooking something up 🍳',        hoursAgo: 6 },
+      { user: emma,       image: 'https://picsum.photos/seed/flock7/400/600', caption: 'Art gallery finds 🎨',           hoursAgo: 8 },
+      { user: mike,       image: 'https://picsum.photos/seed/flock8/400/600', caption: 'Sunset views 🌅',               hoursAgo: 9 },
+      { user: alex,       image: 'https://picsum.photos/seed/flock9/400/600', caption: 'Weekend plans loading... 🔄',    hoursAgo: 10 },
+      { user: jordan,     image: 'https://picsum.photos/seed/flock10/400/600', caption: 'New spot just dropped 📍',      hoursAgo: 11 },
+    ];
+
+    let storyCount = 0;
+    for (const s of storyDefs) {
+      const createdAt = hoursAgo(s.hoursAgo);
+      const expiresAt = new Date(createdAt.getTime() + 24 * 60 * 60 * 1000); // 24hr after creation
+      await client.query(
+        `INSERT INTO stories (user_id, image_url, caption, created_at, expires_at)
+         VALUES ($1, $2, $3, $4, $5)`,
+        [s.user, s.image, s.caption, createdAt, expiresAt]
+      );
+      storyCount++;
+    }
+    console.log(`  Created ${storyCount} stories.`);
+
+    // --------------------------------------------------
+    // 7. Verify everything is linked
     // --------------------------------------------------
     console.log('\nVerifying data...');
 
     const userCheck = await client.query(
-      `SELECT id, email, name FROM users WHERE LOWER(email) = LOWER('Bansal.jayden@gmail.com')`
+      `SELECT id, email, name FROM users WHERE LOWER(email) = LOWER($1)`,
+      [REAL_EMAIL]
     );
     console.log(`  User: ${userCheck.rows[0].name} (${userCheck.rows[0].email}) → id ${userCheck.rows[0].id}`);
 
@@ -370,6 +420,11 @@ async function seed() {
     );
     console.log(`  Messages from Jayden: ${myMsgCheck.rows[0].count}`);
 
+    const storyCheck = await client.query(
+      `SELECT COUNT(*) as count FROM stories WHERE expires_at > NOW()`
+    );
+    console.log(`  Active stories: ${storyCheck.rows[0].count}`);
+
     // --------------------------------------------------
     // Done
     // --------------------------------------------------
@@ -381,6 +436,7 @@ async function seed() {
     console.log(`  Demo users: ${demoUsers.length}`);
     console.log(`  Flocks:     ${flockDefs.length}`);
     console.log(`  Messages:   ${messageCount}`);
+    console.log(`  Stories:    ${storyCount}`);
     console.log(`  Real account: Bansal.jayden@gmail.com → id ${realJayden}`);
     console.log('\n  Login credentials:');
     console.log('  Email:    Bansal.jayden@gmail.com');
