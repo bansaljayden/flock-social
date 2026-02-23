@@ -10,7 +10,7 @@ import {
   formatCurrency,
   calculateProfitMargin
 } from './lib/finance';
-import { getCurrentUser, logout, isLoggedIn, getFlocks, createFlock as apiCreateFlock, getMessages, sendMessage as apiSendMessage, updateProfile, searchVenues, getStories } from './services/api';
+import { getCurrentUser, logout, isLoggedIn, getFlocks, createFlock as apiCreateFlock, getMessages, sendMessage as apiSendMessage, updateProfile, searchVenues, getStories, getVenueDetails } from './services/api';
 import { connectSocket, disconnectSocket, joinFlock, leaveFlock, sendMessage as socketSendMessage, sendImageMessage as socketSendImage, startTyping, stopTyping, onNewMessage, onUserTyping, onUserStoppedTyping } from './services/socket';
 import LoginScreen from './components/auth/LoginScreen';
 import SignupScreen from './components/auth/SignupScreen';
@@ -297,6 +297,8 @@ const FlockAppInner = ({ authUser, onLogout }) => {
           time: f.event_time ? new Date(f.event_time).toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' }) : 'TBD',
           status: f.status === 'planning' ? 'voting' : f.status,
           venue: f.venue_name || 'TBD',
+          venueAddress: f.venue_address || null,
+          venueId: f.venue_id || null,
           cashPool: null,
           votes: [],
           messages: [],
@@ -402,16 +404,52 @@ const FlockAppInner = ({ authUser, onLogout }) => {
 
   const allFriends = useMemo(() => [], []);
 
-  const allVenues = useMemo(() => [
-    { id: 1, name: "Apollo Grill", type: "Italian", category: "Food", x: 25, y: 30, crowd: 47, best: "Now-ish", stars: 4.6, addr: '85 W Broad St, Bethlehem', price: '$', trending: false },
-    { id: 2, name: "Tulum", type: "Mexican", category: "Food", x: 48, y: 55, crowd: 33, best: "8:47 PM", stars: 4.3, addr: '21 E 4th St, Bethlehem', price: '$$', trending: false },
-    { id: 3, name: "The Dime", type: "American", category: "Food", x: 70, y: 38, crowd: 62, best: "Right now", stars: 4.1, addr: '27 Bank St, Easton', price: '$$', trending: false },
-    { id: 4, name: "Blue Heron Bar", type: "Cocktail Bar", category: "Nightlife", x: 30, y: 45, crowd: 58, best: "8:30ish", stars: 4.7, addr: '123 N 3rd St, Easton', price: '$$', trending: true },
-    { id: 5, name: "The Bookstore Speakeasy", type: "Hidden Bar", category: "Nightlife", x: 45, y: 62, crowd: 41, best: "10 PM+", stars: 4.4, addr: '336 Adams St, Bethlehem', price: '$$$', trending: true },
-    { id: 6, name: "Rooftop @ The Grand", type: "Lounge", category: "Nightlife", x: 38, y: 28, crowd: 73, best: "Sunset!", stars: 4.8, addr: '45 N 3rd St, Easton', price: '$$$', trending: true },
-    { id: 7, name: "Godfrey Daniels", type: "Live Music", category: "Live Music", x: 58, y: 35, crowd: 51, best: "9 PM", stars: 4.7, addr: '7 E 4th St, Bethlehem', price: '$$', trending: false },
-    { id: 8, name: "Porters Pub", type: "Sports Bar", category: "Sports", x: 75, y: 25, crowd: 87, best: "Game time!", stars: 4.2, addr: '700 Northampton St, Easton', price: '$$', trending: false },
-  ], []);
+  // Map venues loaded from Google Places API
+  const [allVenues, setAllVenues] = useState([]);
+  const [mapVenuesLoaded, setMapVenuesLoaded] = useState(false);
+
+  // Assign a category based on Google Places types
+  const categorizeVenue = useCallback((types) => {
+    if (!types || types.length === 0) return 'Food';
+    const t = types.join(' ').toLowerCase();
+    if (t.includes('bar') || t.includes('night_club') || t.includes('liquor')) return 'Nightlife';
+    if (t.includes('music') || t.includes('concert') || t.includes('performing_arts')) return 'Live Music';
+    if (t.includes('stadium') || t.includes('gym') || t.includes('sports') || t.includes('bowling')) return 'Sports';
+    return 'Food';
+  }, []);
+
+  // Load real venues from Google Places for the Discover map
+  useEffect(() => {
+    if (mapVenuesLoaded) return;
+    searchVenues('restaurants bars bethlehem pa')
+      .then((data) => {
+        const venues = (data.venues || []).map((v, i) => {
+          const seed = ((v.place_id || '').charCodeAt(0) || 0) + i;
+          const crowd = Math.round(20 + ((seed * 37) % 70));
+          const bestTimes = ['Now-ish', 'Right now', '8 PM', '9 PM', '10 PM+', 'Sunset!', 'Game time!', '8:30ish'];
+          return {
+            id: i + 1,
+            place_id: v.place_id,
+            name: v.name,
+            type: (v.types && v.types[0]) ? v.types[0].replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()) : 'Restaurant',
+            category: categorizeVenue(v.types),
+            x: 10 + ((seed * 13) % 80),
+            y: 10 + ((seed * 29) % 75),
+            crowd,
+            best: bestTimes[i % bestTimes.length],
+            stars: v.rating || 4.0,
+            addr: v.formatted_address || '',
+            price: v.price_level ? '$'.repeat(v.price_level) : '$$',
+            trending: v.rating >= 4.5,
+            photo_url: v.photo_url || null,
+            location: v.location || null,
+          };
+        });
+        setAllVenues(venues);
+        setMapVenuesLoaded(true);
+      })
+      .catch(() => setMapVenuesLoaded(true));
+  }, [mapVenuesLoaded, categorizeVenue]);
 
   const getFilteredVenues = useCallback(() => {
     let venues = category === 'All' ? allVenues : allVenues.filter(v => v.category === category);
@@ -823,14 +861,18 @@ const FlockAppInner = ({ authUser, onLogout }) => {
       reactions: [],
       venueCard: {
         id: venue.id,
+        place_id: venue.place_id || null,
         name: venue.name,
         type: venue.type,
         category: venue.category,
         addr: venue.addr,
         stars: venue.stars,
+        rating: venue.rating || venue.stars || null,
         price: venue.price,
+        price_level: venue.price_level || null,
         crowd: venue.crowd,
-        best: venue.best
+        best: venue.best,
+        photo_url: venue.photo_url || null,
       }
     };
     addMessageToFlock(flockId, venueMessage);
@@ -1711,12 +1753,27 @@ const FlockAppInner = ({ authUser, onLogout }) => {
         const venueName = selectedVenueForCreate?.name || null;
         const venueAddr = selectedVenueForCreate?.addr || null;
         const venueId = selectedVenueForCreate?.place_id || null;
+        const venuePhoto = selectedVenueForCreate?.photo_url || null;
+        const venueRating = selectedVenueForCreate?.rating || null;
+        const venuePriceLevel = selectedVenueForCreate?.price_level || null;
         const data = await apiCreateFlock({ name: flockName, venue_name: venueName, venue_address: venueAddr, venue_id: venueId });
         const f = data.flock;
-        const newFlock = { id: f.id, name: f.name, host: authUser?.name || 'You', members: [], memberCount: 1, time: f.event_time ? new Date(f.event_time).toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' }) : `${flockDate} ${flockTime}`, status: 'voting', venue: f.venue_name || 'TBD', cashPool: null, votes: [], messages: [] };
+        const initialMessages = [];
+        if (venueName) {
+          initialMessages.push({
+            id: Date.now(),
+            sender: 'You',
+            time: new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }),
+            text: '',
+            reactions: [],
+            venueCard: { name: venueName, addr: venueAddr, place_id: venueId, photo_url: venuePhoto, rating: venueRating, price_level: venuePriceLevel, type: 'Venue' }
+          });
+        }
+        const newFlock = { id: f.id, name: f.name, host: authUser?.name || 'You', members: [], memberCount: 1, time: f.event_time ? new Date(f.event_time).toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' }) : `${flockDate} ${flockTime}`, status: 'voting', venue: f.venue_name || 'TBD', venueAddress: venueAddr, venueId: venueId, venuePhoto: venuePhoto, venueRating: venueRating, venuePriceLevel: venuePriceLevel, cashPool: null, votes: [], messages: initialMessages };
         setFlocks(prev => [...prev, newFlock]);
         setFlockName(''); setFlockFriends([]); setFlockCashPool(false); setSelectedVenueForCreate(null);
-        setCurrentScreen('main');
+        setSelectedFlockId(f.id);
+        setCurrentScreen('chatDetail');
         addXP(50); showToast(`"${newFlock.name}" created!`);
       } catch (err) {
         showToast(err.message || 'Failed to create flock', 'error');
@@ -2750,9 +2807,13 @@ const FlockAppInner = ({ authUser, onLogout }) => {
     const flock = getSelectedFlock();
     const reactions = ['❤️', '👍', '😂', '🔥'];
 
-    // Venue Card Component for chat
+    // Venue Card Component for chat - supports both map venues and Google Places venues
     const VenueCard = ({ venue, onViewDetails, onVote }) => {
-      const crowdColor = venue.crowd > 70 ? colors.red : venue.crowd > 40 ? colors.amber : colors.teal;
+      const rating = venue.stars || venue.rating || null;
+      const price = venue.price || (venue.price_level ? '$'.repeat(venue.price_level) : null);
+      const address = venue.addr || venue.formatted_address || '';
+      const hasCrowd = typeof venue.crowd === 'number';
+      const crowdColor = hasCrowd ? (venue.crowd > 70 ? colors.red : venue.crowd > 40 ? colors.amber : colors.teal) : colors.teal;
       return (
         <div style={{
           backgroundColor: 'white',
@@ -2764,126 +2825,77 @@ const FlockAppInner = ({ authUser, onLogout }) => {
           maxWidth: '280px',
           animation: 'cardSlideIn 0.4s ease-out'
         }}>
-          {/* Header with gradient */}
-          <div style={{
-            background: `linear-gradient(135deg, ${getCategoryColor(venue.category)}, ${getCategoryColor(venue.category)}cc)`,
-            padding: '12px 14px',
-            position: 'relative'
-          }}>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-              <div>
+          {/* Photo or gradient header */}
+          {venue.photo_url ? (
+            <div style={{ position: 'relative' }}>
+              <img src={venue.photo_url} alt="" style={{ width: '100%', height: '120px', objectFit: 'cover', display: 'block' }} />
+              <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, background: 'linear-gradient(transparent, rgba(0,0,0,0.7))', padding: '24px 12px 10px' }}>
                 <h4 style={{ color: 'white', fontSize: '14px', fontWeight: '700', margin: 0 }}>{venue.name}</h4>
-                <p style={{ color: 'rgba(255,255,255,0.8)', fontSize: '11px', margin: '2px 0 0' }}>{venue.type}</p>
+                {venue.type && <p style={{ color: 'rgba(255,255,255,0.8)', fontSize: '11px', margin: '2px 0 0' }}>{venue.type}</p>}
               </div>
-              <div style={{
-                backgroundColor: 'rgba(255,255,255,0.2)',
-                padding: '4px 8px',
-                borderRadius: '12px',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '4px'
-              }}>
-                {Icons.starFilled('#fbbf24', 12)}
-                <span style={{ color: 'white', fontSize: '12px', fontWeight: '600' }}>{venue.stars}</span>
+              {rating && (
+                <div style={{ position: 'absolute', top: '8px', right: '8px', backgroundColor: 'rgba(0,0,0,0.6)', padding: '3px 8px', borderRadius: '10px', display: 'flex', alignItems: 'center', gap: '3px' }}>
+                  {Icons.starFilled('#fbbf24', 11)}
+                  <span style={{ color: 'white', fontSize: '11px', fontWeight: '600' }}>{rating}</span>
+                </div>
+              )}
+            </div>
+          ) : (
+            <div style={{
+              background: `linear-gradient(135deg, ${getCategoryColor(venue.category || 'Food')}, ${getCategoryColor(venue.category || 'Food')}cc)`,
+              padding: '12px 14px'
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <div>
+                  <h4 style={{ color: 'white', fontSize: '14px', fontWeight: '700', margin: 0 }}>{venue.name}</h4>
+                  {venue.type && <p style={{ color: 'rgba(255,255,255,0.8)', fontSize: '11px', margin: '2px 0 0' }}>{venue.type}</p>}
+                </div>
+                {rating && (
+                  <div style={{ backgroundColor: 'rgba(255,255,255,0.2)', padding: '4px 8px', borderRadius: '12px', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                    {Icons.starFilled('#fbbf24', 12)}
+                    <span style={{ color: 'white', fontSize: '12px', fontWeight: '600' }}>{rating}</span>
+                  </div>
+                )}
               </div>
             </div>
-          </div>
+          )}
 
           {/* Details */}
           <div style={{ padding: '12px 14px' }}>
-            {/* Address */}
-            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '10px' }}>
-              {Icons.mapPin('#6b7280', 12)}
-              <span style={{ fontSize: '11px', color: '#6b7280' }}>{venue.addr}</span>
-            </div>
-
-            {/* Info row */}
-            <div style={{ display: 'flex', gap: '12px', marginBottom: '12px' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                {Icons.dollar('#6b7280', 12)}
-                <span style={{ fontSize: '11px', color: colors.navy, fontWeight: '600' }}>{venue.price}</span>
+            {address && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '10px' }}>
+                {Icons.mapPin('#6b7280', 12)}
+                <span style={{ fontSize: '11px', color: '#6b7280', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{address}</span>
               </div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                {Icons.clock('#6b7280', 12)}
-                <span style={{ fontSize: '11px', color: colors.navy, fontWeight: '600' }}>{venue.best}</span>
-              </div>
-            </div>
+            )}
 
-            {/* Crowd indicator */}
-            <div style={{
-              backgroundColor: '#f8fafc',
-              borderRadius: '12px',
-              padding: '10px 12px',
-              marginBottom: '12px',
-              border: '1px solid #e2e8f0'
-            }}>
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '6px' }}>
-                <span style={{ fontSize: '11px', color: '#64748b', fontWeight: '500' }}>Current Crowd</span>
-                <div style={{
-                  backgroundColor: `${crowdColor}20`,
-                  color: crowdColor,
-                  padding: '2px 8px',
-                  borderRadius: '10px',
-                  fontSize: '11px',
-                  fontWeight: '700'
-                }}>
-                  {venue.crowd}%
+            {(price || venue.best) && (
+              <div style={{ display: 'flex', gap: '12px', marginBottom: '12px' }}>
+                {price && <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>{Icons.dollar('#6b7280', 12)}<span style={{ fontSize: '11px', color: colors.navy, fontWeight: '600' }}>{price}</span></div>}
+                {venue.best && <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>{Icons.clock('#6b7280', 12)}<span style={{ fontSize: '11px', color: colors.navy, fontWeight: '600' }}>{venue.best}</span></div>}
+              </div>
+            )}
+
+            {hasCrowd && (
+              <div style={{ backgroundColor: '#f8fafc', borderRadius: '12px', padding: '10px 12px', marginBottom: '12px', border: '1px solid #e2e8f0' }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '6px' }}>
+                  <span style={{ fontSize: '11px', color: '#64748b', fontWeight: '500' }}>Current Crowd</span>
+                  <div style={{ backgroundColor: `${crowdColor}20`, color: crowdColor, padding: '2px 8px', borderRadius: '10px', fontSize: '11px', fontWeight: '700' }}>{venue.crowd}%</div>
+                </div>
+                <div style={{ width: '100%', height: '6px', backgroundColor: '#e2e8f0', borderRadius: '3px', overflow: 'hidden' }}>
+                  <div style={{ height: '100%', width: `${venue.crowd}%`, backgroundColor: crowdColor, borderRadius: '3px', transition: 'width 0.5s ease-out' }} />
                 </div>
               </div>
-              <div style={{ width: '100%', height: '6px', backgroundColor: '#e2e8f0', borderRadius: '3px', overflow: 'hidden' }}>
-                <div style={{
-                  height: '100%',
-                  width: `${venue.crowd}%`,
-                  backgroundColor: crowdColor,
-                  borderRadius: '3px',
-                  transition: 'width 0.5s ease-out'
-                }} />
-              </div>
-            </div>
+            )}
 
             {/* Action buttons */}
             <div style={{ display: 'flex', gap: '8px' }}>
-              <button
-                onClick={onViewDetails}
-                style={{
-                  flex: 1,
-                  padding: '10px',
-                  borderRadius: '10px',
-                  border: `2px solid ${colors.navy}`,
-                  backgroundColor: 'white',
-                  color: colors.navy,
-                  fontSize: '12px',
-                  fontWeight: '600',
-                  cursor: 'pointer',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  gap: '4px',
-                  transition: 'all 0.2s ease'
-                }}
-              >
-                {Icons.eye(colors.navy, 14)} View Details
-              </button>
-              <button
-                onClick={onVote}
-                style={{
-                  flex: 1,
-                  padding: '10px',
-                  borderRadius: '10px',
-                  border: 'none',
-                  background: `linear-gradient(135deg, ${colors.navy}, ${colors.navyMid})`,
-                  color: 'white',
-                  fontSize: '12px',
-                  fontWeight: '600',
-                  cursor: 'pointer',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  gap: '4px',
-                  boxShadow: '0 2px 8px rgba(13,40,71,0.25)',
-                  transition: 'all 0.2s ease'
-                }}
-              >
+              {(venue.place_id || venue.id) && (
+                <button onClick={onViewDetails} style={{ flex: 1, padding: '10px', borderRadius: '10px', border: `2px solid ${colors.navy}`, backgroundColor: 'white', color: colors.navy, fontSize: '12px', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px', transition: 'all 0.2s ease' }}>
+                  {Icons.eye(colors.navy, 14)} View on Maps
+                </button>
+              )}
+              <button onClick={onVote} style={{ flex: 1, padding: '10px', borderRadius: '10px', border: 'none', background: `linear-gradient(135deg, ${colors.navy}, ${colors.navyMid})`, color: 'white', fontSize: '12px', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px', boxShadow: '0 2px 8px rgba(13,40,71,0.25)', transition: 'all 0.2s ease' }}>
                 {Icons.vote('white', 14)} Vote for This
               </button>
             </div>
@@ -2960,11 +2972,11 @@ const FlockAppInner = ({ authUser, onLogout }) => {
                   <VenueCard
                     venue={m.venueCard}
                     onViewDetails={() => {
-                      const venue = allVenues.find(v => v.id === m.venueCard.id);
-                      if (venue) {
-                        setActiveVenue(venue);
-                        setCurrentTab('explore');
-                        setCurrentScreen('main');
+                      if (m.venueCard.place_id) {
+                        window.open(`https://www.google.com/maps/place/?q=place_id:${m.venueCard.place_id}`, '_blank');
+                      } else {
+                        const venue = allVenues.find(v => v.id === m.venueCard.id);
+                        if (venue) { setActiveVenue(venue); setCurrentTab('explore'); setCurrentScreen('main'); }
                       }
                     }}
                     onVote={() => {
@@ -3266,6 +3278,29 @@ const FlockAppInner = ({ authUser, onLogout }) => {
         </div>
 
         <div style={{ flex: 1, padding: '12px', overflowY: 'auto' }}>
+          {/* Venue Info Card */}
+          {flock.venue && flock.venue !== 'TBD' && (
+            <div style={{ ...styles.card, display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '12px' }}>
+              {flock.venuePhoto ? (
+                <img src={flock.venuePhoto} alt="" style={{ width: '52px', height: '52px', borderRadius: '10px', objectFit: 'cover', flexShrink: 0 }} />
+              ) : (
+                <div style={{ width: '52px', height: '52px', borderRadius: '10px', background: `linear-gradient(135deg, ${colors.navy}, ${colors.navyMid})`, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{Icons.mapPin('white', 20)}</div>
+              )}
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <p style={{ fontWeight: '700', fontSize: '13px', color: colors.navy, margin: 0 }}>{flock.venue}</p>
+                {flock.venueAddress && <p style={{ fontSize: '10px', color: '#6b7280', margin: '2px 0 0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{flock.venueAddress}</p>}
+                <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginTop: '3px' }}>
+                  {flock.venueRating && <span style={{ fontSize: '11px', fontWeight: '700', color: colors.navy }}>{flock.venueRating} ★</span>}
+                  {flock.venuePriceLevel && <span style={{ fontSize: '11px', color: '#6b7280', fontWeight: '600' }}>{'$'.repeat(flock.venuePriceLevel)}</span>}
+                </div>
+              </div>
+              {flock.venueId && (
+                <button onClick={() => window.open(`https://www.google.com/maps/place/?q=place_id:${flock.venueId}`, '_blank')} style={{ padding: '6px 10px', borderRadius: '10px', border: 'none', background: `linear-gradient(135deg, ${colors.navy}, ${colors.navyMid})`, color: 'white', fontSize: '10px', fontWeight: '700', cursor: 'pointer', flexShrink: 0 }}>
+                  {Icons.mapPin('white', 12)} Maps
+                </button>
+              )}
+            </div>
+          )}
           {flock.cashPool && (
             <div style={styles.card}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
