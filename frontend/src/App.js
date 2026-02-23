@@ -173,6 +173,10 @@ const FlockAppInner = ({ authUser, onLogout }) => {
   const [showSearchDropdown, setShowSearchDropdown] = useState(true);
   const searchTimerRef = useRef(null);
 
+  // Geolocation state
+  const [userLocation, setUserLocation] = useState(null); // { lat, lng }
+  const [locationLoading, setLocationLoading] = useState(false);
+
   // Smart location detection - enhance bare location queries
   const enhanceQuery = useCallback((q) => {
     const trimmed = q.trim().toLowerCase();
@@ -223,7 +227,8 @@ const FlockAppInner = ({ authUser, onLogout }) => {
     setShowSearchDropdown(true);
     try {
       const enhanced = enhanceQuery(q);
-      const data = await searchVenues(enhanced);
+      const loc = userLocation ? `${userLocation.lat},${userLocation.lng}` : null;
+      const data = await searchVenues(enhanced, loc);
       const venues = data.venues || [];
       setVenueResults(venues);
       // Update map pins (deduplicated)
@@ -236,7 +241,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
     } finally {
       setVenueSearching(false);
     }
-  }, [enhanceQuery, venuesToMapPins]);
+  }, [enhanceQuery, venuesToMapPins, userLocation]);
 
   // Open the full venue details modal
   const openVenueDetail = useCallback(async (placeId, fallbackData) => {
@@ -492,16 +497,66 @@ const FlockAppInner = ({ authUser, onLogout }) => {
   const [allVenues, setAllVenues] = useState([]);
   const [mapVenuesLoaded, setMapVenuesLoaded] = useState(false);
 
-  // Load real venues from Google Places for the Discover map
-  useEffect(() => {
-    if (mapVenuesLoaded) return;
-    searchVenues('restaurants bars bethlehem pa')
+  // Geolocation helper: request user location and load nearby venues
+  const loadNearbyVenues = useCallback((lat, lng) => {
+    setUserLocation({ lat, lng });
+    searchVenues('restaurants bars', `${lat},${lng}`)
       .then((data) => {
         setAllVenues(venuesToMapPins(data.venues || []));
         setMapVenuesLoaded(true);
       })
       .catch(() => setMapVenuesLoaded(true));
-  }, [mapVenuesLoaded, venuesToMapPins]);
+  }, [venuesToMapPins]);
+
+  const loadDefaultVenues = useCallback(() => {
+    searchVenues('popular restaurants bethlehem pa')
+      .then((data) => {
+        setAllVenues(venuesToMapPins(data.venues || []));
+        setMapVenuesLoaded(true);
+      })
+      .catch(() => setMapVenuesLoaded(true));
+  }, [venuesToMapPins]);
+
+  const requestUserLocation = useCallback((forceRefresh = false) => {
+    if (locationLoading) return;
+    if (!forceRefresh && userLocation) {
+      loadNearbyVenues(userLocation.lat, userLocation.lng);
+      return;
+    }
+    if (!navigator.geolocation) {
+      loadDefaultVenues();
+      return;
+    }
+    setLocationLoading(true);
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        const { latitude, longitude } = pos.coords;
+        setLocationLoading(false);
+        localStorage.setItem('flock_user_lat', latitude);
+        localStorage.setItem('flock_user_lng', longitude);
+        loadNearbyVenues(latitude, longitude);
+      },
+      () => {
+        setLocationLoading(false);
+        // Fallback: check localStorage for last known location
+        const savedLat = localStorage.getItem('flock_user_lat');
+        const savedLng = localStorage.getItem('flock_user_lng');
+        if (savedLat && savedLng) {
+          loadNearbyVenues(parseFloat(savedLat), parseFloat(savedLng));
+        } else {
+          // Final fallback: Lehigh Valley (Bethlehem, PA)
+          loadDefaultVenues();
+        }
+      },
+      { enableHighAccuracy: false, timeout: 8000, maximumAge: 300000 }
+    );
+  }, [locationLoading, userLocation, loadNearbyVenues, loadDefaultVenues]);
+
+  // Load real venues from Google Places for the Discover map using geolocation
+  useEffect(() => {
+    if (mapVenuesLoaded) return;
+    requestUserLocation();
+  }, [mapVenuesLoaded, requestUserLocation]);
 
   const getFilteredVenues = useCallback(() => {
     let venues = category === 'All' ? allVenues : allVenues.filter(v => v.category === category);
@@ -821,6 +876,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
     checkDouble: (color = 'currentColor', size = 14) => <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="18 6 9 17 4 12"></polyline><polyline points="22 6 13 17"></polyline></svg>,
     reply: (color = 'currentColor', size = 16) => <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="9 17 4 12 9 7"></polyline><path d="M20 18v-2a4 4 0 0 0-4-4H4"></path></svg>,
     compass: (color = 'currentColor', size = 18) => <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"></circle><polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76"></polygon></svg>,
+    crosshair: (color = 'currentColor', size = 18) => <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="22" y1="12" x2="18" y2="12"></line><line x1="6" y1="12" x2="2" y2="12"></line><line x1="12" y1="6" x2="12" y2="2"></line><line x1="12" y1="22" x2="12" y2="18"></line></svg>,
     trendingUp: (color = 'currentColor', size = 18) => <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"></polyline><polyline points="17 6 23 6 23 12"></polyline></svg>,
     clock: (color = 'currentColor', size = 18) => <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>,
     sun: (color = '#F59E0B', size = 18) => <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="5"></circle><line x1="12" y1="1" x2="12" y2="3"></line><line x1="12" y1="21" x2="12" y2="23"></line><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line><line x1="1" y1="12" x2="3" y2="12"></line><line x1="21" y1="12" x2="23" y2="12"></line><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line></svg>,
@@ -2055,8 +2111,17 @@ const FlockAppInner = ({ authUser, onLogout }) => {
             <button onClick={() => { setVenueQuery(''); setVenueResults([]); setShowSearchDropdown(false); }} style={{ position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', padding: '2px' }}>{Icons.x('#94a3b8', 16)}</button>
           )}
         </div>
+        <button onClick={() => { setMapVenuesLoaded(false); setVenueQuery(''); setVenueResults([]); setShowSearchDropdown(false); requestUserLocation(true); }} title="Near Me" style={{ width: '42px', height: '42px', borderRadius: '14px', border: 'none', background: locationLoading ? `linear-gradient(135deg, ${colors.teal}, ${colors.skyBlue})` : `linear-gradient(135deg, ${colors.teal}, #0d9488)`, color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 4px 12px rgba(20,184,166,0.3)', transition: 'all 0.2s ease', animation: locationLoading ? 'spin 1s linear infinite' : 'none' }}>{Icons.crosshair('white', 18)}</button>
         <button onClick={() => setShowConnectPanel(true)} style={{ width: '42px', height: '42px', borderRadius: '14px', border: 'none', background: `linear-gradient(135deg, ${colors.navy}, ${colors.navyMid})`, color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 4px 12px rgba(13,40,71,0.25)', transition: 'all 0.2s ease' }}>{Icons.users('white', 18)}</button>
       </div>
+
+      {/* Location loading overlay */}
+      {locationLoading && !mapVenuesLoaded && (
+        <div style={{ position: 'relative', zIndex: 25, backgroundColor: 'white', borderBottom: '1px solid #e5e7eb', padding: '16px 0', textAlign: 'center' }}>
+          <div style={{ display: 'inline-block', width: '24px', height: '24px', border: `3px solid #e5e7eb`, borderTopColor: colors.teal, borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
+          <p style={{ fontSize: '12px', color: '#6b7280', margin: '8px 0 0', fontWeight: '500' }}>Finding venues near you...</p>
+        </div>
+      )}
 
       {/* Search Results Overlay */}
       {showSearchDropdown && (venueSearching || venueResults.length > 0 || (venueQuery.trim().length >= 2 && !venueSearching && venueResults.length === 0)) && (
