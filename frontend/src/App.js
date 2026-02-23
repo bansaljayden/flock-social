@@ -144,7 +144,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
   // Onboarding
   const [hasCompletedOnboarding, setHasCompletedOnboarding] = useState(() => localStorage.getItem('flockOnboardingComplete') === 'true');
   const [onboardingStep, setOnboardingStep] = useState(0);
-  const [onboardingName, setOnboardingName] = useState('');
+  // onboardingName removed — name comes from signup
   const [onboardingVibes, setOnboardingVibes] = useState([]);
   const [onboardingAnimating, setOnboardingAnimating] = useState(false);
 
@@ -3351,7 +3351,6 @@ const FlockAppInner = ({ authUser, onLogout }) => {
                 localStorage.removeItem('flockOnboardingComplete');
                 setHasCompletedOnboarding(false);
                 setOnboardingStep(0);
-                setOnboardingName('');
                 setOnboardingVibes([]);
               }}
               style={{
@@ -4801,15 +4800,12 @@ const FlockAppInner = ({ authUser, onLogout }) => {
     setOnboardingAnimating(true);
     setTimeout(() => {
       localStorage.setItem('flockOnboardingComplete', 'true');
-      if (onboardingName.trim()) {
-        setProfileName(onboardingName.trim());
-      }
       if (onboardingVibes.length > 0) {
         setUserInterests(onboardingVibes);
       }
       setHasCompletedOnboarding(true);
       setOnboardingAnimating(false);
-      showToast(`Welcome to the flock, ${onboardingName || 'friend'}!`);
+      showToast(`Welcome to the flock, ${authUser?.name || 'friend'}!`);
     }, 1500);
   };
 
@@ -4837,7 +4833,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
       {/* Progress indicator */}
       <div style={{ padding: '24px 24px 0', flexShrink: 0, position: 'relative', zIndex: 1 }}>
         <div style={{ display: 'flex', gap: '8px' }}>
-          {[0, 1, 2, 3].map(step => (
+          {[0, 1].map(step => (
             <div
               key={step}
               style={{
@@ -4851,7 +4847,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
             />
           ))}
         </div>
-        <p style={{ fontSize: '11px', color: '#9ca3af', marginTop: '8px', textAlign: 'center' }}>Step {onboardingStep + 1} of 4</p>
+        <p style={{ fontSize: '11px', color: '#9ca3af', marginTop: '8px', textAlign: 'center' }}>Step {onboardingStep + 1} of 2</p>
       </div>
 
       {/* Content */}
@@ -4866,102 +4862,8 @@ const FlockAppInner = ({ authUser, onLogout }) => {
         position: 'relative',
         zIndex: 1
       }}>
-        {/* Step 0: Welcome */}
+        {/* Step 0: Pick Interests */}
         {onboardingStep === 0 && (
-          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', textAlign: 'center' }}>
-            <div style={{
-              width: '120px',
-              height: '120px',
-              borderRadius: '36px',
-              background: `linear-gradient(135deg, ${colors.navy} 0%, ${colors.navyMid} 100%)`,
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              marginBottom: '32px',
-              boxShadow: '0 20px 60px rgba(13,40,71,0.35)',
-              position: 'relative'
-            }}>
-              {Icons.users('white', 56)}
-              <div style={{ position: 'absolute', top: '-8px', right: '-8px', width: '32px', height: '32px', borderRadius: '50%', backgroundColor: colors.teal, display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 4px 12px rgba(20,184,166,0.4)' }}>
-                {Icons.sparkles('white', 16)}
-              </div>
-            </div>
-            <h1 style={{ fontSize: '32px', fontWeight: '900', color: colors.navy, margin: '0 0 12px', letterSpacing: '-0.5px' }}>
-              Welcome to Flock
-            </h1>
-            <p style={{ fontSize: '16px', color: colors.navyMid, margin: '0 0 8px', lineHeight: 1.5, fontWeight: '500' }}>
-              Where plans come together.
-            </p>
-            <p style={{ fontSize: '14px', color: '#6b7280', margin: '0 0 48px', lineHeight: 1.6, maxWidth: '260px' }}>
-              Coordinate nights out, discover venues, and rally your crew in seconds.
-            </p>
-            <button
-              onClick={nextOnboardingStep}
-              style={{ ...styles.gradientButton, maxWidth: '280px', padding: '16px 32px', fontSize: '15px' }}
-            >
-              Get Started →
-            </button>
-          </div>
-        )}
-
-        {/* Step 1: Name */}
-        {onboardingStep === 1 && (
-          <div style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '16px', marginTop: '20px', marginBottom: '32px' }}>
-              <div style={{ width: '56px', height: '56px', borderRadius: '16px', background: `linear-gradient(135deg, ${colors.navy}, ${colors.navyMid})`, display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 8px 24px rgba(13,40,71,0.25)' }}>
-                {Icons.user('white', 28)}
-              </div>
-              <div>
-                <h1 style={{ fontSize: '24px', fontWeight: '900', color: colors.navy, margin: '0 0 4px' }}>
-                  What's your name?
-                </h1>
-                <p style={{ fontSize: '13px', color: '#6b7280', margin: 0 }}>
-                  This is how friends will see you
-                </p>
-              </div>
-            </div>
-            <div style={{ position: 'relative', marginBottom: '12px' }}>
-              <input
-                type="text"
-                value={onboardingName}
-                onChange={(e) => setOnboardingName(e.target.value)}
-                placeholder="Enter your name"
-                style={{
-                  ...styles.input,
-                  fontSize: '18px',
-                  padding: '20px 24px',
-                  paddingLeft: '56px',
-                  borderRadius: '16px',
-                  border: `2px solid ${onboardingName.trim() ? colors.navy : colors.creamDark}`,
-                  transition: 'border-color 0.2s'
-                }}
-                autoFocus
-              />
-              <div style={{ position: 'absolute', left: '18px', top: '50%', transform: 'translateY(-50%)' }}>
-                {Icons.edit(onboardingName.trim() ? colors.navy : '#9ca3af', 20)}
-              </div>
-            </div>
-            <p style={{ fontSize: '12px', color: '#9ca3af', margin: '0 0 auto', paddingLeft: '4px' }}>
-              You can change this anytime in settings
-            </p>
-            <button
-              onClick={nextOnboardingStep}
-              disabled={!onboardingName.trim()}
-              style={{
-                ...styles.gradientButton,
-                padding: '16px 32px',
-                fontSize: '15px',
-                opacity: onboardingName.trim() ? 1 : 0.5,
-                cursor: onboardingName.trim() ? 'pointer' : 'not-allowed'
-              }}
-            >
-              Continue →
-            </button>
-          </div>
-        )}
-
-        {/* Step 2: Vibes */}
-        {onboardingStep === 2 && (
           <div style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '16px', marginTop: '12px', marginBottom: '24px' }}>
               <div style={{ width: '56px', height: '56px', borderRadius: '16px', background: `linear-gradient(135deg, ${colors.teal}, #0d9488)`, display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 8px 24px rgba(20,184,166,0.3)' }}>
@@ -4972,7 +4874,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
                   What's your vibe?
                 </h1>
                 <p style={{ fontSize: '13px', color: '#6b7280', margin: 0 }}>
-                  Pick what you're into
+                  Pick 3-5 interests so we can personalize your experience
                 </p>
               </div>
             </div>
@@ -5044,8 +4946,8 @@ const FlockAppInner = ({ authUser, onLogout }) => {
           </div>
         )}
 
-        {/* Step 3: All set */}
-        {onboardingStep === 3 && (
+        {/* Step 1: All set */}
+        {onboardingStep === 1 && (
           <div style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', textAlign: 'center' }}>
             <div style={{ position: 'relative', marginBottom: '32px' }}>
               <div style={{
@@ -5065,7 +4967,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
               </div>
             </div>
             <h1 style={{ fontSize: '28px', fontWeight: '900', color: colors.navy, margin: '0 0 8px', letterSpacing: '-0.5px' }}>
-              You're all set, {onboardingName || 'friend'}!
+              You're all set{authUser?.name ? `, ${authUser.name}` : ''}!
             </h1>
             <p style={{ fontSize: '16px', color: colors.navyMid, margin: '0 0 12px', lineHeight: 1.5, fontWeight: '500' }}>
               Time to find your flock.
