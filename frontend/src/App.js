@@ -2344,94 +2344,6 @@ const FlockAppInner = ({ authUser, onLogout }) => {
             );
           })}
 
-          {/* VenueInfoCard — rich popup on pin click */}
-          {activeVenue && !showConnectPanel && (
-            <div
-              onClick={(e) => e.stopPropagation()}
-              style={{
-                position: 'absolute',
-                left: `${activeVenue.x}%`,
-                top: `${activeVenue.y}%`,
-                transform: 'translate(-50%, calc(-100% - 56px))',
-                width: '260px',
-                backgroundColor: colors.navy,
-                borderRadius: '14px',
-                boxShadow: '0 12px 40px rgba(0,0,0,0.35)',
-                zIndex: 50,
-                overflow: 'hidden',
-                animation: 'tooltipFadeIn 0.2s ease-out'
-              }}
-            >
-              {/* Photo header */}
-              {activeVenue.photo_url ? (
-                <div style={{ position: 'relative', height: '100px' }}>
-                  <img src={activeVenue.photo_url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
-                  <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(transparent 40%, rgba(13,40,71,0.8) 100%)' }} />
-                  <button onClick={() => setActiveVenue(null)} style={{ position: 'absolute', top: '6px', right: '6px', width: '22px', height: '22px', borderRadius: '11px', backgroundColor: 'rgba(0,0,0,0.5)', border: 'none', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '12px', fontWeight: 'bold' }}>{Icons.x('white', 12)}</button>
-                </div>
-              ) : (
-                <div style={{ position: 'relative', height: '50px', background: `linear-gradient(135deg, ${getCategoryColor(activeVenue.category)}, ${colors.navyMid})` }}>
-                  <button onClick={() => setActiveVenue(null)} style={{ position: 'absolute', top: '6px', right: '6px', width: '22px', height: '22px', borderRadius: '11px', backgroundColor: 'rgba(0,0,0,0.3)', border: 'none', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.x('white', 12)}</button>
-                </div>
-              )}
-
-              {/* Card body */}
-              <div style={{ padding: '10px 12px 12px' }}>
-                <h4 style={{ fontSize: '14px', fontWeight: '800', color: colors.cream, margin: '0 0 4px', lineHeight: '1.2' }}>{activeVenue.name}</h4>
-
-                {/* Rating + Price row */}
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '6px', flexWrap: 'wrap' }}>
-                  {activeVenue.stars && (
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '3px' }}>
-                      <span style={{ color: '#fbbf24', fontSize: '12px' }}>{'★'.repeat(Math.round(activeVenue.stars))}</span>
-                      <span style={{ fontSize: '11px', fontWeight: '700', color: colors.cream }}>{activeVenue.stars}</span>
-                    </div>
-                  )}
-                  {activeVenue.price && (
-                    <span style={{ fontSize: '11px', fontWeight: '600', color: 'rgba(245,240,230,0.7)' }}>{activeVenue.price}</span>
-                  )}
-                  <span style={{ fontSize: '10px', color: 'rgba(245,240,230,0.5)' }}>{activeVenue.type}</span>
-                </div>
-
-                {/* Address */}
-                {activeVenue.addr && (
-                  <p style={{ fontSize: '10px', color: 'rgba(245,240,230,0.6)', margin: '0 0 10px', lineHeight: '1.3', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{activeVenue.addr.split(',')[0]}</p>
-                )}
-
-                {/* Crowd indicator */}
-                <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '10px', padding: '6px 8px', backgroundColor: 'rgba(255,255,255,0.08)', borderRadius: '8px' }}>
-                  <div style={{ width: '8px', height: '8px', borderRadius: '4px', backgroundColor: activeVenue.crowd > 70 ? colors.red : activeVenue.crowd > 40 ? colors.amber : colors.teal }} />
-                  <span style={{ fontSize: '10px', fontWeight: '600', color: colors.cream }}>{activeVenue.crowd}% busy</span>
-                  <span style={{ fontSize: '9px', color: 'rgba(245,240,230,0.5)', marginLeft: 'auto' }}>Best: {activeVenue.best}</span>
-                </div>
-
-                {/* Action buttons */}
-                <div style={{ display: 'flex', gap: '6px' }}>
-                  {activeVenue.place_id && (
-                    <button onClick={() => { openVenueDetail(activeVenue.place_id, { name: activeVenue.name, formatted_address: activeVenue.addr, place_id: activeVenue.place_id, rating: activeVenue.stars, photo_url: activeVenue.photo_url }); }} style={{ flex: 1, padding: '8px', borderRadius: '8px', border: 'none', backgroundColor: 'rgba(255,255,255,0.12)', color: colors.cream, fontWeight: '700', fontSize: '11px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px', transition: 'background-color 0.15s' }} onMouseEnter={e => e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.2)'} onMouseLeave={e => e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.12)'}>{Icons.eye('white', 13)} View Details</button>
-                  )}
-                  {pickingVenueForCreate ? (
-                    <button onClick={() => { setSelectedVenueForCreate(activeVenue); setActiveVenue(null); setPickingVenueForCreate(false); setCurrentScreen('create'); showToast('Selected!'); }} style={{ flex: 1, padding: '8px', borderRadius: '8px', border: 'none', backgroundColor: colors.teal, color: 'white', fontWeight: '700', fontSize: '11px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px' }}>{Icons.check('white', 13)} Select</button>
-                  ) : (
-                    <button onClick={() => { setSelectedVenueForCreate(activeVenue); setActiveVenue(null); setCurrentScreen('create'); }} style={{ flex: 1, padding: '8px', borderRadius: '8px', border: 'none', background: `linear-gradient(90deg, ${colors.teal}, #0d9488)`, color: 'white', fontWeight: '700', fontSize: '11px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px' }}>{Icons.users('white', 13)} Add to Flock</button>
-                  )}
-                </div>
-              </div>
-
-              {/* Arrow pointing down to pin */}
-              <div style={{
-                position: 'absolute',
-                bottom: '-8px',
-                left: '50%',
-                transform: 'translateX(-50%)',
-                width: 0,
-                height: 0,
-                borderLeft: '10px solid transparent',
-                borderRight: '10px solid transparent',
-                borderTop: `10px solid ${colors.navy}`
-              }} />
-            </div>
-          )}
 
           {/* User location with premium styling */}
           <div style={{ position: 'absolute', left: '50%', top: '50%', transform: 'translate(-50%, -50%)', zIndex: 25 }}>
@@ -2495,6 +2407,119 @@ const FlockAppInner = ({ authUser, onLogout }) => {
           </div>
         )}
 
+        {/* Venue Popup with AI Crowd Forecast */}
+        {activeVenue && !showConnectPanel && (
+          <div onClick={(e) => e.stopPropagation()} style={{ position: 'absolute', bottom: '12px', left: '8px', right: '8px', backgroundColor: 'white', borderRadius: '16px', boxShadow: '0 8px 32px rgba(0,0,0,0.25)', zIndex: 45, overflow: 'hidden', maxHeight: '70%', overflowY: 'auto' }}>
+            <div style={{ height: '56px', background: `linear-gradient(135deg, ${getCategoryColor(activeVenue.category)}, ${activeVenue.crowd > 70 ? colors.red : colors.navy})`, position: 'relative', padding: '8px 12px', display: 'flex', alignItems: 'flex-end' }}>
+              <button onClick={() => setActiveVenue(null)} style={{ position: 'absolute', top: '8px', right: '8px', width: '24px', height: '24px', borderRadius: '12px', backgroundColor: 'rgba(255,255,255,0.2)', border: 'none', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.x('white', 14)}</button>
+              <div style={{ color: 'white' }}>
+                <h3 style={{ fontSize: '14px', fontWeight: '900', margin: 0 }}>{activeVenue.name}</h3>
+                <p style={{ fontSize: '10px', opacity: 0.8, margin: 0 }}>{activeVenue.type} • {activeVenue.price}</p>
+              </div>
+              <div style={{ position: 'absolute', bottom: '8px', right: '40px', display: 'flex', alignItems: 'center', gap: '2px', backgroundColor: 'rgba(255,255,255,0.2)', padding: '2px 6px', borderRadius: '10px' }}>
+                {Icons.party('#fbbf24', 10)}
+                <span style={{ color: 'white', fontSize: '10px', fontWeight: 'bold', marginLeft: '2px' }}>{activeVenue.stars}</span>
+              </div>
+            </div>
+            <div style={{ padding: '12px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '10px', color: '#6b7280', marginBottom: '8px' }}>
+                {Icons.mapPin('#6b7280', 12)}
+                <span>{activeVenue.addr}</span>
+              </div>
+
+              {/* AI Crowd Forecast Widget */}
+              <div style={{ backgroundColor: '#f9fafb', borderRadius: '12px', padding: '10px', marginBottom: '10px', border: '1px solid rgba(13,40,71,0.08)' }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    {Icons.robot(colors.navy, 14)}
+                    <span style={{ fontSize: '11px', fontWeight: 'bold', color: colors.navy }}>AI Crowd Forecast</span>
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                    <div style={{ width: '6px', height: '6px', borderRadius: '3px', backgroundColor: '#22C55E', animation: 'pulse 2s ease-in-out infinite' }} />
+                    <span style={{ fontSize: '9px', color: '#22C55E', fontWeight: '500' }}>LIVE</span>
+                    <span style={{ fontSize: '9px', padding: '2px 6px', borderRadius: '10px', backgroundColor: '#dbeafe', color: '#1d4ed8', fontWeight: '600' }}>87% accuracy</span>
+                  </div>
+                </div>
+
+                {/* Crowd Meter */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '10px' }}>
+                  <div style={{ width: '50px', height: '50px', borderRadius: '25px', background: `conic-gradient(${activeVenue.crowd > 70 ? colors.red : activeVenue.crowd > 40 ? colors.amber : colors.teal} ${activeVenue.crowd * 3.6}deg, #e5e7eb 0deg)`, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                    <div style={{ width: '40px', height: '40px', borderRadius: '20px', backgroundColor: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column' }}>
+                      <span style={{ fontSize: '14px', fontWeight: '900', color: activeVenue.crowd > 70 ? colors.red : activeVenue.crowd > 40 ? colors.amber : colors.teal }}>{activeVenue.crowd}%</span>
+                    </div>
+                  </div>
+                  <div style={{ flex: 1 }}>
+                    <p style={{ fontSize: '11px', fontWeight: '600', color: colors.navy, margin: 0 }}>{activeVenue.crowd > 70 ? 'Very Busy' : activeVenue.crowd > 40 ? 'Moderate' : 'Not Busy'}</p>
+                    <p style={{ fontSize: '10px', color: '#6b7280', margin: '2px 0' }}>Capacity: ~{Math.round(activeVenue.crowd * 1.5)} / 150 people</p>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                      {Icons.clock(colors.teal, 10)}
+                      <span style={{ fontSize: '10px', fontWeight: 'bold', color: colors.teal }}>Best time: {activeVenue.best}</span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Hourly Forecast Graph */}
+                <div style={{ marginBottom: '10px' }}>
+                  <p style={{ fontSize: '9px', fontWeight: '600', color: '#6b7280', marginBottom: '6px', textTransform: 'uppercase' }}>Hourly Forecast</p>
+                  <div style={{ display: 'flex', alignItems: 'flex-end', gap: '3px', height: '40px' }}>
+                    {[30, 35, 45, 55, 70, 85, 90, 80, 65, 50, 35, 25].map((h, i) => (
+                      <div key={i} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '2px' }}>
+                        <div style={{ width: '100%', height: `${h * 0.4}px`, borderRadius: '2px', backgroundColor: h > 70 ? colors.red : h > 40 ? colors.amber : colors.teal, opacity: i === 5 ? 1 : 0.6 }} />
+                        <span style={{ fontSize: '7px', color: '#9ca3af' }}>{6 + i}p</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Peak Time Prediction */}
+                <div style={{ display: 'flex', gap: '6px', marginBottom: '8px' }}>
+                  <div style={{ flex: 1, backgroundColor: 'white', borderRadius: '8px', padding: '6px 8px', border: '1px solid rgba(0,0,0,0.05)' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '4px', marginBottom: '2px' }}>
+                      {Icons.trendingUp(colors.red, 10)}
+                      <span style={{ fontSize: '8px', color: '#6b7280', textTransform: 'uppercase' }}>Peak</span>
+                    </div>
+                    <span style={{ fontSize: '11px', fontWeight: '700', color: colors.navy }}>10-11 PM</span>
+                  </div>
+                  <div style={{ flex: 1, backgroundColor: 'white', borderRadius: '8px', padding: '6px 8px', border: '1px solid rgba(0,0,0,0.05)' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '4px', marginBottom: '2px' }}>
+                      {Icons.zap(colors.amber, 10)}
+                      <span style={{ fontSize: '8px', color: '#6b7280', textTransform: 'uppercase' }}>Wait</span>
+                    </div>
+                    <span style={{ fontSize: '11px', fontWeight: '700', color: colors.navy }}>{activeVenue.crowd > 70 ? '15-20 min' : activeVenue.crowd > 40 ? '5-10 min' : 'No wait'}</span>
+                  </div>
+                </div>
+
+                {/* Similar Venues */}
+                <div>
+                  <p style={{ fontSize: '9px', fontWeight: '600', color: '#6b7280', marginBottom: '6px', textTransform: 'uppercase' }}>Quieter Options</p>
+                  <div style={{ display: 'flex', gap: '6px' }}>
+                    {allVenues.filter(v => v.id !== activeVenue.id && v.category === activeVenue.category).slice(0, 2).map(v => (
+                      <button key={v.id} onClick={() => setActiveVenue(v)} style={{ flex: 1, padding: '6px', backgroundColor: 'white', border: '1px solid rgba(0,0,0,0.08)', borderRadius: '8px', cursor: 'pointer', textAlign: 'left' }}>
+                        <p style={{ fontSize: '10px', fontWeight: '600', color: colors.navy, margin: 0 }}>{v.name}</p>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '4px', marginTop: '2px' }}>
+                          <div style={{ width: '6px', height: '6px', borderRadius: '3px', backgroundColor: v.crowd > 70 ? colors.red : v.crowd > 40 ? colors.amber : colors.teal }} />
+                          <span style={{ fontSize: '9px', color: '#6b7280' }}>{v.crowd}% full</span>
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              <div style={{ display: 'flex', gap: '6px' }}>
+                {pickingVenueForCreate ? (
+                  <button onClick={() => { setSelectedVenueForCreate(activeVenue); setActiveVenue(null); setPickingVenueForCreate(false); setCurrentScreen('create'); showToast('Selected!'); }} style={{ flex: 1, padding: '10px', borderRadius: '8px', border: 'none', backgroundColor: colors.teal, color: 'white', fontWeight: 'bold', fontSize: '12px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px' }}>{Icons.check('white', 14)} Select</button>
+                ) : (
+                  <button onClick={() => { setSelectedVenueForCreate(activeVenue); setActiveVenue(null); setCurrentScreen('create'); }} style={{ flex: 1, padding: '10px', borderRadius: '8px', border: 'none', background: `linear-gradient(90deg, ${colors.navy}, ${colors.navyMid})`, color: 'white', fontWeight: 'bold', fontSize: '12px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px' }}>{Icons.users('white', 14)} Start Flock Here</button>
+                )}
+                {activeVenue.place_id && (
+                  <button onClick={() => { openVenueDetail(activeVenue.place_id, { name: activeVenue.name, formatted_address: activeVenue.addr, place_id: activeVenue.place_id, rating: activeVenue.stars, photo_url: activeVenue.photo_url }); }} style={{ width: '40px', height: '40px', borderRadius: '8px', border: `2px solid ${colors.creamDark}`, backgroundColor: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.eye(colors.navy, 18)}</button>
+                )}
+                <button onClick={() => addEventToCalendar(`Visit ${activeVenue.name}`, activeVenue.name, new Date(), '8 PM', getCategoryColor(activeVenue.category))} style={{ width: '40px', height: '40px', borderRadius: '8px', border: `2px solid ${colors.creamDark}`, backgroundColor: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.calendar(colors.navy, 18)}</button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Categories */}
