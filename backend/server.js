@@ -19,6 +19,7 @@ const userRoutes = require('./routes/users');
 const venueRoutes = require('./routes/venues');
 
 const app = express();
+app.set('trust proxy', true);
 const server = http.createServer(app);
 
 // ---------------------------------------------------------------------------
