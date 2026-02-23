@@ -10,8 +10,8 @@ import {
   formatCurrency,
   calculateProfitMargin
 } from './lib/finance';
-import { getCurrentUser, logout, isLoggedIn, getFlocks, createFlock as apiCreateFlock, getMessages, sendMessage as apiSendMessage, updateProfile, searchVenues, getStories, getVenueDetails } from './services/api';
-import { connectSocket, disconnectSocket, joinFlock, leaveFlock, sendMessage as socketSendMessage, sendImageMessage as socketSendImage, startTyping, stopTyping, onNewMessage, onUserTyping, onUserStoppedTyping } from './services/socket';
+import { getCurrentUser, logout, isLoggedIn, getFlocks, createFlock as apiCreateFlock, getMessages, sendMessage as apiSendMessage, updateProfile, searchVenues, getStories, getVenueDetails, leaveFlock as apiLeaveFlock } from './services/api';
+import { connectSocket, disconnectSocket, getSocket, joinFlock, leaveFlock, sendMessage as socketSendMessage, sendImageMessage as socketSendImage, startTyping, stopTyping, onNewMessage, onUserTyping, onUserStoppedTyping } from './services/socket';
 import LoginScreen from './components/auth/LoginScreen';
 import SignupScreen from './components/auth/SignupScreen';
 
@@ -391,6 +391,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
           id: f.id,
           name: f.name,
           host: f.creator_name || 'Unknown',
+          creatorId: f.creator_id,
           members: [],
           memberCount: f.member_count || 1,
           time: f.event_time ? new Date(f.event_time).toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' }) : 'TBD',
@@ -442,6 +443,8 @@ const FlockAppInner = ({ authUser, onLogout }) => {
   const [showVenueShareModal, setShowVenueShareModal] = useState(false);
   const [pendingImage, setPendingImage] = useState(null);
   const [showImagePreview, setShowImagePreview] = useState(false);
+  const [showFlockMenu, setShowFlockMenu] = useState(false);
+  const [showLeaveConfirm, setShowLeaveConfirm] = useState(false);
 
   // Direct Messages
   const [directMessages, setDirectMessages] = useState([]);
@@ -863,6 +866,28 @@ const FlockAppInner = ({ authUser, onLogout }) => {
     return () => { unsubTyping(); unsubStop(); };
   }, []);
 
+  // Listen for member_left events — show system message + update member count
+  useEffect(() => {
+    const sock = getSocket();
+    if (!sock) return;
+    const handler = (data) => {
+      const systemMsg = {
+        id: `sys-left-${Date.now()}`,
+        sender: 'System',
+        time: new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }),
+        text: `${data.name} left the flock`,
+        reactions: [],
+        system: true,
+      };
+      setFlocks(prev => prev.map(f => {
+        if (String(f.id) !== String(data.flockId)) return f;
+        return { ...f, memberCount: Math.max(0, (f.memberCount || 1) - 1), messages: [...(f.messages || []), systemMsg] };
+      }));
+    };
+    sock.on('member_left', handler);
+    return () => { sock.off('member_left', handler); };
+  }, []);
+
   // Typing indicator — emit via socket with debounce
   const typingTimeoutRef = useRef(null);
   const handleChatInputChange = useCallback((e) => {
@@ -1002,6 +1027,8 @@ const FlockAppInner = ({ authUser, onLogout }) => {
     partyPopper: (color = 'currentColor', size = 18) => <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M5.8 11.3 2 22l10.7-3.79"></path><path d="M4 3h.01"></path><path d="M22 8h.01"></path><path d="M15 2h.01"></path><path d="M22 20h.01"></path><path d="m22 2-2.24.75a2.9 2.9 0 0 0-1.96 3.12v0c.1.86-.57 1.63-1.45 1.63h-.38c-.86 0-1.6.6-1.76 1.44L14 10"></path><path d="m22 13-.82-.33c-.86-.34-1.82.2-1.98 1.11v0c-.11.7-.72 1.22-1.43 1.22H17"></path><path d="m11 2 .33.82c.34.86-.2 1.82-1.11 1.98v0C9.52 4.9 9 5.52 9 6.23V7"></path><path d="M11 13c1.93 1.93 2.83 4.17 2 5-.83.83-3.07-.07-5-2-1.93-1.93-2.83-4.17-2-5 .83-.83 3.07.07 5 2Z"></path></svg>,
     externalLink: (color = 'currentColor', size = 18) => <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path><polyline points="15 3 21 3 21 9"></polyline><line x1="10" y1="14" x2="21" y2="3"></line></svg>,
     fileText: (color = 'currentColor', size = 18) => <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg>,
+    moreVertical: (color = 'currentColor', size = 18) => <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="1"></circle><circle cx="12" cy="5" r="1"></circle><circle cx="12" cy="19" r="1"></circle></svg>,
+    doorOpen: (color = 'currentColor', size = 18) => <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M13 4h3a2 2 0 0 1 2 2v14"></path><path d="M2 20h3"></path><path d="M13 20h9"></path><path d="M10 12v.01"></path><path d="M13 4.562v16.157a1 1 0 0 1-1.242.97L5 20V5.562a2 2 0 0 1 1.515-1.94l4-1A2 2 0 0 1 13 4.561Z"></path></svg>,
   };
 
   // Activity feed
@@ -1936,7 +1963,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
             venueCard: { name: venueName, addr: venueAddr, place_id: venueId, photo_url: venuePhoto, rating: venueRating, price_level: venuePriceLevel, type: 'Venue' }
           });
         }
-        const newFlock = { id: f.id, name: f.name, host: authUser?.name || 'You', members: [], memberCount: 1, time: f.event_time ? new Date(f.event_time).toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' }) : `${flockDate} ${flockTime}`, status: 'voting', venue: f.venue_name || 'TBD', venueAddress: venueAddr, venueId: venueId, venuePhoto: venuePhoto, venueRating: venueRating, venuePriceLevel: venuePriceLevel, cashPool: null, votes: [], messages: initialMessages };
+        const newFlock = { id: f.id, name: f.name, host: authUser?.name || 'You', creatorId: f.creator_id, members: [], memberCount: 1, time: f.event_time ? new Date(f.event_time).toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' }) : `${flockDate} ${flockTime}`, status: 'voting', venue: f.venue_name || 'TBD', venueAddress: venueAddr, venueId: venueId, venuePhoto: venuePhoto, venueRating: venueRating, venuePriceLevel: venuePriceLevel, cashPool: null, votes: [], messages: initialMessages };
         setFlocks(prev => [...prev, newFlock]);
         setFlockName(''); setFlockFriends([]); setFlockCashPool(false); setSelectedVenueForCreate(null);
         setSelectedFlockId(f.id);
@@ -2998,7 +3025,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
     return (
       <div key="chat-detail-screen-container" style={{ display: 'flex', flexDirection: 'column', height: '100%', backgroundColor: 'white' }}>
         <div style={{ padding: '12px', display: 'flex', alignItems: 'center', gap: '8px', background: `linear-gradient(135deg, ${colors.navy}, ${colors.navyMid})`, flexShrink: 0, boxShadow: '0 2px 10px rgba(0,0,0,0.1)' }}>
-          <button onClick={() => { setCurrentScreen('main'); setChatInput(''); setReplyingTo(null); }} style={{ background: 'none', border: 'none', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'transform 0.2s ease' }}>{Icons.arrowLeft('white', 20)}</button>
+          <button onClick={() => { setCurrentScreen('main'); setChatInput(''); setReplyingTo(null); setShowFlockMenu(false); setShowLeaveConfirm(false); }} style={{ background: 'none', border: 'none', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'transform 0.2s ease' }}>{Icons.arrowLeft('white', 20)}</button>
           <div style={{ flex: 1 }}>
             <h2 style={{ fontWeight: 'bold', color: 'white', fontSize: '14px', margin: 0 }}>{flock.name}</h2>
             <p style={{ fontSize: '10px', color: 'rgba(255,255,255,0.6)', margin: 0 }}>{flock.members?.length || flock.memberCount || 0} members • {isTyping ? <span style={{ color: '#86EFAC', fontWeight: '500' }}>{typingUser} is typing...</span> : 'online'}</p>
@@ -3006,7 +3033,22 @@ const FlockAppInner = ({ authUser, onLogout }) => {
           <button onClick={() => setShowVenueShareModal(true)} style={{ width: '32px', height: '32px', borderRadius: '16px', border: 'none', backgroundColor: 'rgba(255,255,255,0.2)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'all 0.2s ease' }}>{Icons.mapPin('white', 16)}</button>
           <button onClick={() => setShowChatSearch(!showChatSearch)} style={{ width: '32px', height: '32px', borderRadius: '16px', border: 'none', backgroundColor: 'rgba(255,255,255,0.2)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'all 0.2s ease' }}>{Icons.search('white', 16)}</button>
           <button onClick={() => setShowChatPool(true)} style={{ width: '32px', height: '32px', borderRadius: '16px', border: 'none', backgroundColor: colors.cream, color: colors.navy, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'all 0.2s ease' }}>{Icons.dollar(colors.navy, 16)}</button>
+          <div style={{ position: 'relative' }}>
+            <button onClick={() => setShowFlockMenu(!showFlockMenu)} style={{ width: '32px', height: '32px', borderRadius: '16px', border: 'none', backgroundColor: 'rgba(255,255,255,0.2)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'all 0.2s ease' }}>{Icons.moreVertical('white', 16)}</button>
+            {showFlockMenu && (
+              <div style={{ position: 'absolute', top: '38px', right: 0, backgroundColor: 'white', borderRadius: '12px', boxShadow: '0 4px 20px rgba(0,0,0,0.15)', minWidth: '180px', zIndex: 60, overflow: 'hidden' }}>
+                <button onClick={() => { setShowFlockMenu(false); setShowLeaveConfirm(true); }} style={{ width: '100%', padding: '12px 16px', display: 'flex', alignItems: 'center', gap: '10px', border: 'none', backgroundColor: 'white', cursor: 'pointer', fontSize: '14px', fontWeight: '600', color: '#EF4444' }}>
+                  {Icons.doorOpen('#EF4444', 16)} Leave Flock
+                </button>
+              </div>
+            )}
+          </div>
         </div>
+
+        {/* Dismiss menu on outside tap */}
+        {showFlockMenu && (
+          <div onClick={() => setShowFlockMenu(false)} style={{ position: 'absolute', inset: 0, zIndex: 55 }} />
+        )}
 
         <div onScroll={() => document.activeElement?.blur()} style={{ flex: 1, padding: '16px', overflowY: 'auto', background: `linear-gradient(180deg, ${colors.cream} 0%, rgba(245,240,230,0.8) 100%)`, scrollBehavior: 'smooth' }}>
           {flock.messages.map((m, idx) => (
@@ -3330,6 +3372,51 @@ const FlockAppInner = ({ authUser, onLogout }) => {
                     </div>
                   </button>
                 ))}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Leave Flock Confirmation Modal */}
+        {showLeaveConfirm && (
+          <div className="modal-backdrop" style={{ position: 'absolute', inset: 0, backgroundColor: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(8px)', WebkitBackdropFilter: 'blur(8px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 50, padding: '16px' }}>
+            <div className="modal-content" style={{ backgroundColor: 'white', borderRadius: '24px', padding: '24px', width: '100%', maxWidth: '300px' }}>
+              <div style={{ textAlign: 'center', marginBottom: '16px' }}>
+                <div style={{ width: '48px', height: '48px', borderRadius: '24px', backgroundColor: '#FEE2E2', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 12px' }}>{Icons.doorOpen('#EF4444', 24)}</div>
+                <h3 style={{ fontSize: '16px', fontWeight: '900', color: colors.navy, margin: '0 0 8px' }}>Leave Flock?</h3>
+                <p style={{ fontSize: '13px', color: '#6b7280', margin: 0, lineHeight: '1.4' }}>
+                  {flock.creatorId && String(flock.creatorId) === String(authUser?.id)
+                    ? `You're the creator. Leaving will delete "${flock.name}" for everyone.`
+                    : `Are you sure you want to leave "${flock.name}"?`}
+                </p>
+              </div>
+              <div style={{ display: 'flex', gap: '8px' }}>
+                <button onClick={() => setShowLeaveConfirm(false)} style={{ flex: 1, padding: '12px', borderRadius: '12px', border: `2px solid ${colors.creamDark}`, backgroundColor: 'white', color: colors.navy, fontWeight: '700', fontSize: '14px', cursor: 'pointer' }}>Cancel</button>
+                <button onClick={async () => {
+                  try {
+                    setIsLoading(true);
+                    const flockName = flock.name;
+                    const flockId = flock.id;
+                    await apiLeaveFlock(flockId);
+                    setFlocks(prev => prev.filter(f => f.id !== flockId));
+                    setShowLeaveConfirm(false);
+                    setShowFlockMenu(false);
+                    setCurrentScreen('main');
+                    setCurrentTab('home');
+                    showToast(`Left "${flockName}"`);
+                    // Notify other members via socket
+                    const sock = getSocket();
+                    if (sock?.connected) {
+                      sock.emit('leave_flock', flockId);
+                    }
+                  } catch (err) {
+                    showToast(err.message || 'Failed to leave flock', 'error');
+                  } finally {
+                    setIsLoading(false);
+                  }
+                }} style={{ flex: 1, padding: '12px', borderRadius: '12px', border: 'none', backgroundColor: '#EF4444', color: 'white', fontWeight: '700', fontSize: '14px', cursor: 'pointer' }}>
+                  {isLoading ? 'Leaving...' : 'Leave'}
+                </button>
               </div>
             </div>
           </div>

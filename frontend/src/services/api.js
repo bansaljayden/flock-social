@@ -98,6 +98,10 @@ export async function deleteFlock(id) {
   return request(`/api/flocks/${id}`, { method: 'DELETE' });
 }
 
+export async function leaveFlock(id) {
+  return request(`/api/flocks/${id}/leave`, { method: 'POST' });
+}
+
 // Messages
 export async function getMessages(flockId) {
   return request(`/api/flocks/${flockId}/messages`);
