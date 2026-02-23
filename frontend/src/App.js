@@ -171,6 +171,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
   const [venueSearching, setVenueSearching] = useState(false);
   const [showVenueSearch, setShowVenueSearch] = useState(false);
   const [showSearchDropdown, setShowSearchDropdown] = useState(true);
+  const [highlightedVenueId, setHighlightedVenueId] = useState(null);
   const searchTimerRef = useRef(null);
 
   // Smart location detection - enhance bare location queries
@@ -226,10 +227,13 @@ const FlockAppInner = ({ authUser, onLogout }) => {
       const data = await searchVenues(enhanced);
       const venues = data.venues || [];
       setVenueResults(venues);
-      // Update map pins (deduplicated)
+      // Update map pins (deduplicated) and highlight top result
       if (venues.length > 0) {
         setAllVenues(venuesToMapPins(venues));
+        setHighlightedVenueId(venues[0].place_id);
         setActiveVenue(null);
+      } else {
+        setHighlightedVenueId(null);
       }
     } catch (err) {
       console.error('Venue search error:', err);
@@ -2052,7 +2056,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
           <input key="search-input" id="search-input" type="text" value={venueQuery} onChange={(e) => handleVenueQueryChange(e.target.value)} placeholder="Search restaurants, bars, venues..." style={{ width: '100%', padding: '12px 40px 12px 38px', borderRadius: '14px', backgroundColor: '#f8fafc', border: `2px solid ${venueQuery ? colors.navy : '#e2e8f0'}`, fontSize: '13px', outline: 'none', boxSizing: 'border-box', transition: 'all 0.2s ease', fontWeight: '500' }} autoComplete="off" />
           <span style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', transition: 'all 0.2s ease' }}>{Icons.search(venueQuery ? colors.navy : '#94a3b8', 16)}</span>
           {venueQuery && (
-            <button onClick={() => { setVenueQuery(''); setVenueResults([]); setShowSearchDropdown(false); }} style={{ position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', padding: '2px' }}>{Icons.x('#94a3b8', 16)}</button>
+            <button onClick={() => { setVenueQuery(''); setVenueResults([]); setShowSearchDropdown(false); setHighlightedVenueId(null); }} style={{ position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', padding: '2px' }}>{Icons.x('#94a3b8', 16)}</button>
           )}
         </div>
         <button onClick={() => setShowConnectPanel(true)} style={{ width: '42px', height: '42px', borderRadius: '14px', border: 'none', background: `linear-gradient(135deg, ${colors.navy}, ${colors.navyMid})`, color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 4px 12px rgba(13,40,71,0.25)', transition: 'all 0.2s ease' }}>{Icons.users('white', 18)}</button>
@@ -2077,7 +2081,10 @@ const FlockAppInner = ({ authUser, onLogout }) => {
                 <button
                   key={venue.place_id}
                   onClick={() => {
-                    openVenueDetail(venue.place_id, { name: venue.name, formatted_address: venue.formatted_address, place_id: venue.place_id, rating: venue.rating, price_level: venue.price_level, photo_url: venue.photo_url });
+                    setHighlightedVenueId(venue.place_id);
+                    const matchingPin = allVenues.find(p => p.place_id === venue.place_id);
+                    if (matchingPin) setActiveVenue(matchingPin);
+                    setShowSearchDropdown(false);
                   }}
                   style={{ width: '100%', padding: '10px', display: 'flex', alignItems: 'center', gap: '10px', border: 'none', borderRadius: '12px', backgroundColor: '#f8fafc', cursor: 'pointer', textAlign: 'left', marginBottom: '6px', transition: 'background-color 0.15s' }}
                   onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = '#eef2ff'; }}
@@ -2114,83 +2121,21 @@ const FlockAppInner = ({ authUser, onLogout }) => {
 
       {/* Premium Map */}
       <div onClick={() => setShowSearchDropdown(false)} style={{ flex: 1, position: 'relative', overflow: 'hidden' }}>
-        <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(145deg, #f0f4f0 0%, #e8ece8 50%, #dfe3df 100%)' }}>
-          {/* Premium SVG Map with buildings, parks, and roads */}
-          <svg style={{ position: 'absolute', inset: 0, width: '100%', height: '100%' }}>
-            <defs>
-              {/* Grid pattern */}
-              <pattern id="mapGrid" width="50" height="50" patternUnits="userSpaceOnUse">
-                <path d="M 50 0 L 0 0 0 50" fill="none" stroke="rgba(0,0,0,0.03)" strokeWidth="1"/>
-              </pattern>
-              {/* Building shadow gradient */}
-              <linearGradient id="buildingShadow" x1="0%" y1="0%" x2="100%" y2="100%">
-                <stop offset="0%" stopColor="rgba(0,0,0,0.08)"/>
-                <stop offset="100%" stopColor="rgba(0,0,0,0)"/>
-              </linearGradient>
-              {/* Water gradient */}
-              <linearGradient id="waterGradient" x1="0%" y1="0%" x2="0%" y2="100%">
-                <stop offset="0%" stopColor="#a8d4e6"/>
-                <stop offset="50%" stopColor="#7ec8e3"/>
-                <stop offset="100%" stopColor="#a8d4e6"/>
-              </linearGradient>
-              {/* Park gradient */}
-              <linearGradient id="parkGradient" x1="0%" y1="0%" x2="100%" y2="100%">
-                <stop offset="0%" stopColor="#b8d4a8"/>
-                <stop offset="100%" stopColor="#9bc485"/>
-              </linearGradient>
-              {/* Road gradient */}
-              <linearGradient id="roadGradient" x1="0%" y1="0%" x2="0%" y2="100%">
-                <stop offset="0%" stopColor="#e5e5e5"/>
-                <stop offset="50%" stopColor="#d4d4d4"/>
-                <stop offset="100%" stopColor="#e5e5e5"/>
-              </linearGradient>
-            </defs>
-
-            {/* Base grid */}
-            <rect width="100%" height="100%" fill="url(#mapGrid)" />
-
-            {/* Water feature (river/lake) */}
-            <ellipse cx="85%" cy="75%" rx="60" ry="80" fill="url(#waterGradient)" opacity="0.7" />
-            <ellipse cx="90%" cy="85%" rx="40" ry="50" fill="url(#waterGradient)" opacity="0.6" />
-
-            {/* Parks/green spaces */}
-            <rect x="5%" y="10%" width="45" height="55" rx="8" fill="url(#parkGradient)" opacity="0.6" />
-            <circle cx="12%" cy="80%" r="30" fill="url(#parkGradient)" opacity="0.5" />
-            <ellipse cx="70%" cy="15%" rx="35" ry="25" fill="url(#parkGradient)" opacity="0.6" />
-
-            {/* Main roads with rounded ends */}
-            <rect x="0" y="28%" width="100%" height="22" rx="2" fill="url(#roadGradient)" />
-            <rect x="0" y="58%" width="100%" height="26" rx="2" fill="url(#roadGradient)" />
-            <rect x="23%" y="0" width="18" height="100%" rx="2" fill="url(#roadGradient)" />
-            <rect x="62%" y="0" width="22" height="100%" rx="2" fill="url(#roadGradient)" />
-
-            {/* Road center lines */}
-            <line x1="0" y1="39%" x2="100%" y2="39%" stroke="#fbbf24" strokeWidth="2" strokeDasharray="12 6" opacity="0.6"/>
-            <line x1="0" y1="71%" x2="100%" y2="71%" stroke="#fbbf24" strokeWidth="2" strokeDasharray="12 6" opacity="0.6"/>
-            <line x1="32%" y1="0" x2="32%" y2="100%" stroke="#fbbf24" strokeWidth="2" strokeDasharray="12 6" opacity="0.6"/>
-            <line x1="73%" y1="0" x2="73%" y2="100%" stroke="#fbbf24" strokeWidth="2" strokeDasharray="12 6" opacity="0.6"/>
-
-            {/* Building blocks */}
-            <rect x="8%" y="45%" width="35" height="28" rx="4" fill="#d1d5db" />
-            <rect x="8%" y="45%" width="35" height="5" rx="2" fill="#9ca3af" />
-
-            <rect x="45%" y="5%" width="50" height="35" rx="4" fill="#d1d5db" />
-            <rect x="45%" y="5%" width="50" height="6" rx="2" fill="#9ca3af" />
-
-            <rect x="78%" y="40%" width="40" height="45" rx="4" fill="#d1d5db" />
-            <rect x="78%" y="40%" width="40" height="7" rx="2" fill="#9ca3af" />
-
-            <rect x="38%" y="78%" width="55" height="30" rx="4" fill="#d1d5db" />
-            <rect x="38%" y="78%" width="55" height="5" rx="2" fill="#9ca3af" />
-
-            <rect x="5%" y="35%" width="25" height="20" rx="3" fill="#c4c9cf" />
-            <rect x="52%" y="45%" width="30" height="22" rx="3" fill="#c4c9cf" />
-
-            {/* Small decorative buildings */}
-            <rect x="15%" y="20%" width="18" height="14" rx="2" fill="#cdd1d6" />
-            <rect x="85%" y="18%" width="22" height="16" rx="2" fill="#cdd1d6" />
-            <rect x="42%" y="88%" width="20" height="12" rx="2" fill="#cdd1d6" />
-          </svg>
+        <div style={{ position: 'absolute', inset: 0, background: '#e8e0d0' }}>
+          {/* Real map tiles from OpenStreetMap - Bethlehem PA area */}
+          <div style={{ position: 'absolute', inset: 0, display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gridTemplateRows: 'repeat(3, 1fr)' }}>
+            {[
+              [1218, 1554], [1219, 1554], [1220, 1554],
+              [1218, 1555], [1219, 1555], [1220, 1555],
+              [1218, 1556], [1219, 1556], [1220, 1556],
+            ].map(([x, y], i) => (
+              <img key={i} src={`https://tile.openstreetmap.org/11/${x}/${y}.png`} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} draggable={false} />
+            ))}
+          </div>
+          {/* Subtle overlay to match Flock brand */}
+          <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(180deg, rgba(13,40,71,0.06) 0%, rgba(13,40,71,0.02) 50%, rgba(13,40,71,0.08) 100%)', pointerEvents: 'none' }} />
+          {/* Map attribution */}
+          <div style={{ position: 'absolute', bottom: '2px', right: '4px', fontSize: '8px', color: 'rgba(0,0,0,0.4)', pointerEvents: 'none', zIndex: 5 }}>© OpenStreetMap</div>
 
           {/* Premium Heatmap with smooth gradients and animations */}
           {getFilteredVenues().map(v => {
@@ -2221,7 +2166,9 @@ const FlockAppInner = ({ authUser, onLogout }) => {
             const isHovered = hoveredPin === v.id;
             const isClicked = clickedPin === v.id;
             const isActive = activeVenue?.id === v.id;
-            const pinColor = getCategoryColor(v.category);
+            const isHighlighted = highlightedVenueId && v.place_id === highlightedVenueId;
+            const pinColor = isHighlighted ? colors.teal : getCategoryColor(v.category);
+            const pinSize = isHighlighted ? { w: 42, h: 54 } : { w: 34, h: 44 };
 
             return (
               <button
@@ -2241,9 +2188,10 @@ const FlockAppInner = ({ authUser, onLogout }) => {
                   background: 'none',
                   border: 'none',
                   cursor: 'pointer',
-                  zIndex: isActive ? 20 : isHovered ? 15 : 10,
+                  zIndex: isHighlighted ? 22 : isActive ? 20 : isHovered ? 15 : 10,
                   transition: 'transform 0.25s cubic-bezier(0.34, 1.56, 0.64, 1), filter 0.2s ease',
-                  filter: isHovered || isActive ? 'drop-shadow(0 8px 16px rgba(0,0,0,0.25))' : 'drop-shadow(0 3px 6px rgba(0,0,0,0.15))'
+                  filter: isHovered || isActive || isHighlighted ? 'drop-shadow(0 8px 16px rgba(0,0,0,0.25))' : 'drop-shadow(0 3px 6px rgba(0,0,0,0.15))',
+                  animation: isHighlighted ? 'highlightedPinPulse 2s ease-in-out infinite' : 'none'
                 }}
               >
                 <div style={{ position: 'relative' }}>
@@ -2253,15 +2201,31 @@ const FlockAppInner = ({ authUser, onLogout }) => {
                     bottom: '-8px',
                     left: '50%',
                     transform: 'translateX(-50%)',
-                    width: '20px',
+                    width: isHighlighted ? '26px' : '20px',
                     height: '6px',
-                    background: 'radial-gradient(ellipse, rgba(0,0,0,0.3) 0%, transparent 70%)',
-                    opacity: isHovered || isActive ? 0.8 : 0.5,
+                    background: isHighlighted ? 'radial-gradient(ellipse, rgba(20,184,166,0.4) 0%, transparent 70%)' : 'radial-gradient(ellipse, rgba(0,0,0,0.3) 0%, transparent 70%)',
+                    opacity: isHovered || isActive || isHighlighted ? 0.8 : 0.5,
                     transition: 'opacity 0.2s ease'
                   }} />
 
+                  {/* Highlighted glow ring */}
+                  {isHighlighted && (
+                    <div style={{
+                      position: 'absolute',
+                      top: '-4px',
+                      left: '50%',
+                      transform: 'translateX(-50%)',
+                      width: '48px',
+                      height: '48px',
+                      borderRadius: '50%',
+                      border: `2px solid ${colors.teal}`,
+                      animation: 'highlightRingPulse 1.5s ease-out infinite',
+                      pointerEvents: 'none'
+                    }} />
+                  )}
+
                   {/* Main pin SVG with gradient */}
-                  <svg width="34" height="44" viewBox="0 0 24 32" style={{ filter: isActive ? 'brightness(1.1)' : 'none', transition: 'filter 0.2s ease' }}>
+                  <svg width={pinSize.w} height={pinSize.h} viewBox="0 0 24 32" style={{ filter: isActive || isHighlighted ? 'brightness(1.1)' : 'none', transition: 'filter 0.2s ease' }}>
                     <defs>
                       <linearGradient id={`pinGrad-${v.id}`} x1="0%" y1="0%" x2="100%" y2="100%">
                         <stop offset="0%" stopColor={pinColor} stopOpacity="1"/>
@@ -2323,22 +2287,27 @@ const FlockAppInner = ({ authUser, onLogout }) => {
                     }} />
                   )}
 
-                  {/* Venue name tooltip on hover */}
-                  {isHovered && !isActive && (
+                  {/* Venue name tooltip on hover or highlighted */}
+                  {(isHovered || isHighlighted) && !isActive && (
                     <div style={{
                       position: 'absolute',
-                      top: '-32px',
+                      top: isHighlighted ? '-46px' : '-40px',
                       left: '50%',
                       transform: 'translateX(-50%)',
-                      backgroundColor: 'rgba(13,40,71,0.95)',
+                      backgroundColor: isHighlighted ? colors.teal : 'rgba(13,40,71,0.95)',
                       color: 'white',
-                      padding: '4px 10px',
+                      padding: isHighlighted ? '6px 12px' : '5px 10px',
                       borderRadius: '8px',
-                      fontSize: '10px',
-                      fontWeight: '600',
-                      whiteSpace: 'nowrap',
-                      boxShadow: '0 4px 12px rgba(0,0,0,0.2)',
-                      animation: 'tooltipFadeIn 0.2s ease-out'
+                      fontSize: isHighlighted ? '11px' : '10px',
+                      fontWeight: isHighlighted ? '700' : '600',
+                      maxWidth: '160px',
+                      textAlign: 'center',
+                      lineHeight: '1.3',
+                      wordBreak: 'break-word',
+                      boxShadow: isHighlighted ? `0 4px 16px rgba(20,184,166,0.4)` : '0 4px 12px rgba(0,0,0,0.2)',
+                      animation: 'tooltipFadeIn 0.2s ease-out',
+                      pointerEvents: 'none',
+                      zIndex: 50
                     }}>
                       {v.name}
                       <div style={{
@@ -2350,7 +2319,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
                         height: 0,
                         borderLeft: '5px solid transparent',
                         borderRight: '5px solid transparent',
-                        borderTop: '5px solid rgba(13,40,71,0.95)'
+                        borderTop: `5px solid ${isHighlighted ? colors.teal : 'rgba(13,40,71,0.95)'}`
                       }} />
                     </div>
                   )}
@@ -5692,6 +5661,14 @@ const FlockAppInner = ({ authUser, onLogout }) => {
         @keyframes pinRingPulse {
           0% { opacity: 0.6; transform: translateX(-50%) scale(1); }
           100% { opacity: 0; transform: translateX(-50%) scale(1.8); }
+        }
+        @keyframes highlightedPinPulse {
+          0%, 100% { transform: translate(-50%, -100%) scale(1); }
+          50% { transform: translate(-50%, -100%) scale(1.12) translateY(-3px); }
+        }
+        @keyframes highlightRingPulse {
+          0% { opacity: 0.8; transform: translateX(-50%) scale(1); }
+          100% { opacity: 0; transform: translateX(-50%) scale(2); }
         }
         @keyframes tooltipFadeIn {
           from { opacity: 0; transform: translateX(-50%) translateY(4px); }
