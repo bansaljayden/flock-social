@@ -18,7 +18,7 @@ export function connectSocket() {
   });
 
   socket.on('connect', () => {
-    console.log('Socket connected:', socket.id);
+    console.log('Socket connected:', socket?.id);
   });
 
   socket.on('connect_error', (err) => {
@@ -26,7 +26,7 @@ export function connectSocket() {
   });
 
   socket.on('error', (data) => {
-    console.warn('Socket error:', data.message);
+    console.warn('Socket error:', data?.message);
   });
 
   return socket;
@@ -38,6 +38,7 @@ export function getSocket() {
 
 export function disconnectSocket() {
   if (socket) {
+    socket.removeAllListeners();
     socket.disconnect();
     socket = null;
   }
@@ -78,19 +79,16 @@ export function stopTyping(flockId) {
 }
 
 export function onNewMessage(callback) {
-  if (!socket) return () => {};
-  socket.on('new_message', callback);
-  return () => socket.off('new_message', callback);
+  if (socket) socket.on('new_message', callback);
+  return () => { if (socket) socket.off('new_message', callback); };
 }
 
 export function onUserTyping(callback) {
-  if (!socket) return () => {};
-  socket.on('user_typing', callback);
-  return () => socket.off('user_typing', callback);
+  if (socket) socket.on('user_typing', callback);
+  return () => { if (socket) socket.off('user_typing', callback); };
 }
 
 export function onUserStoppedTyping(callback) {
-  if (!socket) return () => {};
-  socket.on('user_stopped_typing', callback);
-  return () => socket.off('user_stopped_typing', callback);
+  if (socket) socket.on('user_stopped_typing', callback);
+  return () => { if (socket) socket.off('user_stopped_typing', callback); };
 }
