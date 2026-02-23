@@ -68,6 +68,18 @@ export function sendMessage(flockId, messageText) {
   }
 }
 
+export function sendImageMessage(flockId, imageUrl) {
+  console.log('Emitting send_message (image):', { flockId, imageUrl });
+  if (socket?.connected) {
+    socket.emit('send_message', {
+      flockId,
+      message_text: '',
+      message_type: 'image',
+      image_url: imageUrl,
+    });
+  }
+}
+
 export function startTyping(flockId) {
   console.log('Emitting typing:', { flockId });
   if (socket?.connected) {
