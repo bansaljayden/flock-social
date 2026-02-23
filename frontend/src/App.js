@@ -170,40 +170,65 @@ const FlockAppInner = ({ authUser, onLogout }) => {
   const [venueResults, setVenueResults] = useState([]);
   const [venueSearching, setVenueSearching] = useState(false);
   const [showVenueSearch, setShowVenueSearch] = useState(false);
+  const [showSearchDropdown, setShowSearchDropdown] = useState(true);
   const searchTimerRef = useRef(null);
+
+  // Smart location detection - enhance bare location queries
+  const enhanceQuery = useCallback((q) => {
+    const trimmed = q.trim().toLowerCase();
+    const venueWords = ['restaurant', 'bar', 'cafe', 'coffee', 'pizza', 'food', 'grill', 'pub', 'club', 'hotel', 'gym', 'park', 'shop', 'store', 'salon', 'theater', 'theatre', 'museum', 'brewery', 'bakery', 'diner', 'sushi', 'burger', 'taco', 'thai', 'italian', 'chinese', 'mexican', 'indian'];
+    if (venueWords.some(w => trimmed.includes(w))) return q;
+    if (/^(.+?)\s+(?:in|near|at|around)\s+(.+)$/.test(trimmed)) return q;
+    const words = trimmed.split(/\s+/);
+    if (words.length <= 2 && !/\d/.test(trimmed) && trimmed.length >= 3) {
+      return `restaurants bars in ${q.trim()}`;
+    }
+    return q;
+  }, []);
+
+  // Convert venues array to map pin format, deduplicating by place_id
+  const venuesToMapPins = useCallback((venues) => {
+    const seen = new Set();
+    const bestTimes = ['Now-ish', 'Right now', '8 PM', '9 PM', '10 PM+', 'Sunset!', 'Game time!', '8:30ish'];
+    return venues.filter(v => {
+      if (seen.has(v.place_id)) return false;
+      seen.add(v.place_id);
+      return true;
+    }).map((v, i) => {
+      const seed = ((v.place_id || '').charCodeAt(0) || 0) + i;
+      const crowd = Math.round(20 + ((seed * 37) % 70));
+      return {
+        id: i + 1,
+        place_id: v.place_id,
+        name: v.name,
+        type: (v.types && v.types[0]) ? v.types[0].replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()) : 'Restaurant',
+        category: categorizeVenue(v.types),
+        x: 10 + ((seed * 13) % 80),
+        y: 10 + ((seed * 29) % 75),
+        crowd,
+        best: bestTimes[i % bestTimes.length],
+        stars: v.rating || 4.0,
+        addr: v.formatted_address || '',
+        price: v.price_level ? '$'.repeat(v.price_level) : '$$',
+        trending: v.rating >= 4.5,
+        photo_url: v.photo_url || null,
+        location: v.location || null,
+      };
+    });
+  }, [categorizeVenue]);
 
   const doVenueSearch = useCallback(async (q) => {
     if (!q.trim() || q.trim().length < 2) { setVenueResults([]); return; }
     setVenueSearching(true);
+    setShowSearchDropdown(true);
     try {
-      const data = await searchVenues(q);
+      const enhanced = enhanceQuery(q);
+      const data = await searchVenues(enhanced);
       const venues = data.venues || [];
       setVenueResults(venues);
-      // Also update map pins with search results
+      // Update map pins (deduplicated)
       if (venues.length > 0) {
-        const mapped = venues.map((v, i) => {
-          const seed = ((v.place_id || '').charCodeAt(0) || 0) + i;
-          const crowd = Math.round(20 + ((seed * 37) % 70));
-          const bestTimes = ['Now-ish', 'Right now', '8 PM', '9 PM', '10 PM+', 'Sunset!', 'Game time!', '8:30ish'];
-          return {
-            id: i + 1,
-            place_id: v.place_id,
-            name: v.name,
-            type: (v.types && v.types[0]) ? v.types[0].replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()) : 'Restaurant',
-            category: categorizeVenue(v.types),
-            x: 10 + ((seed * 13) % 80),
-            y: 10 + ((seed * 29) % 75),
-            crowd,
-            best: bestTimes[i % bestTimes.length],
-            stars: v.rating || 4.0,
-            addr: v.formatted_address || '',
-            price: v.price_level ? '$'.repeat(v.price_level) : '$$',
-            trending: v.rating >= 4.5,
-            photo_url: v.photo_url || null,
-            location: v.location || null,
-          };
-        });
-        setAllVenues(mapped);
+        setAllVenues(venuesToMapPins(venues));
         setActiveVenue(null);
       }
     } catch (err) {
@@ -211,7 +236,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
     } finally {
       setVenueSearching(false);
     }
-  }, [categorizeVenue]);
+  }, [enhanceQuery, venuesToMapPins]);
 
   // Open the full venue details modal
   const openVenueDetail = useCallback(async (placeId, fallbackData) => {
@@ -232,6 +257,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
 
   const handleVenueQueryChange = useCallback((val) => {
     setVenueQuery(val);
+    setShowSearchDropdown(true);
     if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
     searchTimerRef.current = setTimeout(() => doVenueSearch(val), 400);
   }, [doVenueSearch]);
@@ -471,33 +497,11 @@ const FlockAppInner = ({ authUser, onLogout }) => {
     if (mapVenuesLoaded) return;
     searchVenues('restaurants bars bethlehem pa')
       .then((data) => {
-        const venues = (data.venues || []).map((v, i) => {
-          const seed = ((v.place_id || '').charCodeAt(0) || 0) + i;
-          const crowd = Math.round(20 + ((seed * 37) % 70));
-          const bestTimes = ['Now-ish', 'Right now', '8 PM', '9 PM', '10 PM+', 'Sunset!', 'Game time!', '8:30ish'];
-          return {
-            id: i + 1,
-            place_id: v.place_id,
-            name: v.name,
-            type: (v.types && v.types[0]) ? v.types[0].replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()) : 'Restaurant',
-            category: categorizeVenue(v.types),
-            x: 10 + ((seed * 13) % 80),
-            y: 10 + ((seed * 29) % 75),
-            crowd,
-            best: bestTimes[i % bestTimes.length],
-            stars: v.rating || 4.0,
-            addr: v.formatted_address || '',
-            price: v.price_level ? '$'.repeat(v.price_level) : '$$',
-            trending: v.rating >= 4.5,
-            photo_url: v.photo_url || null,
-            location: v.location || null,
-          };
-        });
-        setAllVenues(venues);
+        setAllVenues(venuesToMapPins(data.venues || []));
         setMapVenuesLoaded(true);
       })
       .catch(() => setMapVenuesLoaded(true));
-  }, [mapVenuesLoaded, categorizeVenue]);
+  }, [mapVenuesLoaded, venuesToMapPins]);
 
   const getFilteredVenues = useCallback(() => {
     let venues = category === 'All' ? allVenues : allVenues.filter(v => v.category === category);
@@ -2048,14 +2052,14 @@ const FlockAppInner = ({ authUser, onLogout }) => {
           <input key="search-input" id="search-input" type="text" value={venueQuery} onChange={(e) => handleVenueQueryChange(e.target.value)} placeholder="Search restaurants, bars, venues..." style={{ width: '100%', padding: '12px 40px 12px 38px', borderRadius: '14px', backgroundColor: '#f8fafc', border: `2px solid ${venueQuery ? colors.navy : '#e2e8f0'}`, fontSize: '13px', outline: 'none', boxSizing: 'border-box', transition: 'all 0.2s ease', fontWeight: '500' }} autoComplete="off" />
           <span style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', transition: 'all 0.2s ease' }}>{Icons.search(venueQuery ? colors.navy : '#94a3b8', 16)}</span>
           {venueQuery && (
-            <button onClick={() => { setVenueQuery(''); setVenueResults([]); }} style={{ position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', padding: '2px' }}>{Icons.x('#94a3b8', 16)}</button>
+            <button onClick={() => { setVenueQuery(''); setVenueResults([]); setShowSearchDropdown(false); }} style={{ position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', padding: '2px' }}>{Icons.x('#94a3b8', 16)}</button>
           )}
         </div>
         <button onClick={() => setShowConnectPanel(true)} style={{ width: '42px', height: '42px', borderRadius: '14px', border: 'none', background: `linear-gradient(135deg, ${colors.navy}, ${colors.navyMid})`, color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 4px 12px rgba(13,40,71,0.25)', transition: 'all 0.2s ease' }}>{Icons.users('white', 18)}</button>
       </div>
 
-      {/* Google Places Search Results Overlay */}
-      {(venueSearching || venueResults.length > 0 || (venueQuery.trim().length >= 2 && !venueSearching && venueResults.length === 0)) && (
+      {/* Search Results Overlay */}
+      {showSearchDropdown && (venueSearching || venueResults.length > 0 || (venueQuery.trim().length >= 2 && !venueSearching && venueResults.length === 0)) && (
         <div style={{ position: 'relative', zIndex: 30, backgroundColor: 'white', borderBottom: '1px solid #e5e7eb', maxHeight: '260px', overflowY: 'auto' }}>
           {venueSearching && (
             <div style={{ textAlign: 'center', padding: '20px 0' }}>
@@ -2065,7 +2069,10 @@ const FlockAppInner = ({ authUser, onLogout }) => {
           )}
           {!venueSearching && venueResults.length > 0 && (
             <div style={{ padding: '4px 12px 8px' }}>
-              <p style={{ fontSize: '10px', fontWeight: '600', color: '#6b7280', margin: '4px 0 8px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>{venueResults.length} result{venueResults.length !== 1 ? 's' : ''}</p>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', margin: '4px 0 8px' }}>
+                <p style={{ fontSize: '10px', fontWeight: '600', color: '#6b7280', margin: 0, textTransform: 'uppercase', letterSpacing: '0.5px' }}>{venueResults.length} result{venueResults.length !== 1 ? 's' : ''}</p>
+                <button onClick={() => setShowSearchDropdown(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '2px 4px', display: 'flex', alignItems: 'center', gap: '3px', fontSize: '10px', color: '#6b7280', fontWeight: '600' }}>{Icons.x('#6b7280', 14)} Close</button>
+              </div>
               {venueResults.map((venue) => (
                 <button
                   key={venue.place_id}
@@ -2106,7 +2113,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
       )}
 
       {/* Premium Map */}
-      <div style={{ flex: 1, position: 'relative', overflow: 'hidden' }}>
+      <div onClick={() => setShowSearchDropdown(false)} style={{ flex: 1, position: 'relative', overflow: 'hidden' }}>
         <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(145deg, #f0f4f0 0%, #e8ece8 50%, #dfe3df 100%)' }}>
           {/* Premium SVG Map with buildings, parks, and roads */}
           <svg style={{ position: 'absolute', inset: 0, width: '100%', height: '100%' }}>
