@@ -255,21 +255,38 @@ router.post('/:id/leave', param('id').isInt(), async (req, res) => {
   try {
     const flockId = req.params.id;
 
-    // Creators cannot leave their own flock (they must delete it)
-    const flock = await pool.query('SELECT creator_id FROM flocks WHERE id = $1', [flockId]);
+    const flock = await pool.query('SELECT id, name, creator_id FROM flocks WHERE id = $1', [flockId]);
     if (flock.rows.length === 0) {
       return res.status(404).json({ error: 'Flock not found' });
     }
-    if (flock.rows[0].creator_id === req.user.id) {
-      return res.status(400).json({ error: 'Creators cannot leave their flock. Delete it instead.' });
+
+    const isCreator = flock.rows[0].creator_id === req.user.id;
+    const flockName = flock.rows[0].name;
+
+    if (isCreator) {
+      // Creator leaving deletes the entire flock (cascade removes members, messages, votes)
+      await pool.query('DELETE FROM flocks WHERE id = $1', [flockId]);
+      return res.json({ message: 'Left flock', flock_name: flockName, deleted: true });
     }
 
+    // Remove member
     await pool.query(
       'DELETE FROM flock_members WHERE flock_id = $1 AND user_id = $2',
       [flockId, req.user.id]
     );
 
-    res.json({ message: 'Left flock' });
+    // If no accepted members remain, delete the flock
+    const remaining = await pool.query(
+      "SELECT COUNT(*) AS cnt FROM flock_members WHERE flock_id = $1 AND status = 'accepted'",
+      [flockId]
+    );
+
+    const deleted = parseInt(remaining.rows[0].cnt) === 0;
+    if (deleted) {
+      await pool.query('DELETE FROM flocks WHERE id = $1', [flockId]);
+    }
+
+    res.json({ message: 'Left flock', flock_name: flockName, deleted });
   } catch (err) {
     console.error('Leave flock error:', err);
     res.status(500).json({ error: 'Failed to leave flock' });
