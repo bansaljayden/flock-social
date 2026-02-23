@@ -1890,22 +1890,6 @@ const FlockAppInner = ({ authUser, onLogout }) => {
 
   // CREATE SCREEN
   const CreateScreen = () => {
-    const selectVenue = (venue) => {
-      setSelectedVenueForCreate({
-        name: venue.name,
-        addr: venue.formatted_address,
-        place_id: venue.place_id,
-        rating: venue.rating,
-        user_ratings_total: venue.user_ratings_total,
-        price_level: venue.price_level,
-        photo_url: venue.photo_url,
-        types: venue.types,
-      });
-      setVenueQuery('');
-      setVenueResults([]);
-      showToast(`Selected ${venue.name}!`);
-    };
-
     const priceLabel = (level) => {
       if (!level) return '';
       return '$'.repeat(level);
@@ -1978,13 +1962,12 @@ const FlockAppInner = ({ authUser, onLogout }) => {
             <input key="flock-name-input" id="flock-name-input" type="text" value={flockName} onChange={(e) => setFlockName(e.target.value)} placeholder="Movie night, dinner, party..." style={styles.input} autoComplete="off" />
           </div>
 
-          {/* VENUE PICKER — MAP FIRST */}
+          {/* VENUE PICKER — Browse on Discover tab */}
           <div style={{ marginBottom: '16px' }}>
             <label style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '12px', fontWeight: 'bold', color: colors.navy, marginBottom: '6px' }}>{Icons.mapPin(colors.navy, 12)} Venue</label>
 
-            {/* Selected venue card */}
-            {selectedVenueForCreate && (
-              <div style={{ backgroundColor: 'white', borderRadius: '12px', padding: '10px', border: `2px solid ${colors.teal}`, display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '8px' }}>
+            {selectedVenueForCreate ? (
+              <div style={{ backgroundColor: 'white', borderRadius: '12px', padding: '10px', border: `2px solid ${colors.teal}`, display: 'flex', alignItems: 'center', gap: '10px' }}>
                 {selectedVenueForCreate.photo_url ? (
                   <img src={selectedVenueForCreate.photo_url} alt="" style={{ width: '48px', height: '48px', borderRadius: '8px', objectFit: 'cover' }} />
                 ) : (
@@ -1999,83 +1982,13 @@ const FlockAppInner = ({ authUser, onLogout }) => {
                   </div>
                   <p style={{ fontSize: '10px', color: '#6b7280', margin: '2px 0 0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{selectedVenueForCreate.addr}</p>
                 </div>
-                <button onClick={() => setSelectedVenueForCreate(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{Icons.x(colors.red, 16)}</button>
+                <button onClick={() => { setPickingVenueForCreate(true); setCurrentTab('explore'); setCurrentScreen('main'); }} style={{ padding: '4px 10px', borderRadius: '8px', border: `1px solid ${colors.creamDark}`, backgroundColor: colors.cream, color: colors.navy, fontWeight: '600', fontSize: '11px', cursor: 'pointer', flexShrink: 0 }}>Change</button>
               </div>
+            ) : (
+              <button onClick={() => { setPickingVenueForCreate(true); setCurrentTab('explore'); setCurrentScreen('main'); }} style={{ width: '100%', padding: '14px', borderRadius: '12px', border: `2px dashed ${colors.creamDark}`, backgroundColor: 'white', color: colors.navy, fontWeight: '700', fontSize: '14px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
+                {Icons.mapPin(colors.teal, 18)} Browse Venues
+              </button>
             )}
-
-            {/* Optional search bar */}
-            <div style={{ position: 'relative', marginBottom: '8px' }}>
-              <input
-                type="text"
-                value={venueQuery}
-                onChange={(e) => handleVenueQueryChange(e.target.value)}
-                placeholder="Search or tap a pin below..."
-                style={{ ...styles.input, paddingLeft: '36px', paddingRight: venueQuery ? '36px' : '12px', fontSize: '12px' }}
-                autoComplete="off"
-              />
-              <span style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)' }}>{Icons.search('#94a3b8', 14)}</span>
-              {venueQuery && (
-                <button onClick={() => { setVenueQuery(''); setVenueResults([]); }} style={{ position: 'absolute', right: '8px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', padding: '4px' }}>{Icons.x('#94a3b8', 14)}</button>
-              )}
-            </div>
-
-            {/* Search results dropdown (only when actively searching) */}
-            {venueSearching && (
-              <div style={{ textAlign: 'center', padding: '12px 0' }}>
-                <div style={{ display: 'inline-block', width: '16px', height: '16px', border: `2px solid ${colors.creamDark}`, borderTopColor: colors.navy, borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
-                <span style={{ fontSize: '11px', color: '#6b7280', marginLeft: '8px' }}>Searching...</span>
-              </div>
-            )}
-            {!venueSearching && venueQuery.trim().length >= 2 && venueResults.length > 0 && (
-              <div style={{ maxHeight: '140px', overflowY: 'auto', borderRadius: '10px', border: `1px solid ${colors.creamDark}`, backgroundColor: 'white', marginBottom: '8px' }}>
-                {venueResults.map((venue, i) => (
-                  <button key={venue.place_id} onClick={() => selectVenue(venue)} style={{ width: '100%', padding: '8px 10px', display: 'flex', alignItems: 'center', gap: '8px', border: 'none', borderBottom: i < venueResults.length - 1 ? `1px solid ${colors.creamDark}` : 'none', backgroundColor: 'white', cursor: 'pointer', textAlign: 'left' }}>
-                    <div style={{ width: '8px', height: '8px', borderRadius: '4px', backgroundColor: colors.teal, flexShrink: 0 }} />
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <p style={{ fontWeight: '700', fontSize: '12px', color: colors.navy, margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{venue.name}</p>
-                      <p style={{ fontSize: '9px', color: '#9ca3af', margin: '1px 0 0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{venue.formatted_address}</p>
-                    </div>
-                  </button>
-                ))}
-              </div>
-            )}
-
-            {/* Mini venue map — tap pins to select */}
-            <div style={{ position: 'relative', height: '180px', borderRadius: '12px', overflow: 'hidden', border: `2px solid ${colors.creamDark}`, background: 'linear-gradient(145deg, #f0f4f0, #e8ece8, #dfe3df)' }}>
-              {/* Decorative map lines */}
-              <svg width="100%" height="100%" style={{ position: 'absolute', inset: 0, opacity: 0.15 }}>
-                <line x1="0" y1="40%" x2="100%" y2="40%" stroke={colors.navy} strokeWidth="1" />
-                <line x1="0" y1="70%" x2="100%" y2="70%" stroke={colors.navy} strokeWidth="1" />
-                <line x1="30%" y1="0" x2="30%" y2="100%" stroke={colors.navy} strokeWidth="1" />
-                <line x1="65%" y1="0" x2="65%" y2="100%" stroke={colors.navy} strokeWidth="1" />
-              </svg>
-              {/* Instruction overlay */}
-              {!selectedVenueForCreate && allVenues.length > 0 && (
-                <div style={{ position: 'absolute', top: '6px', left: '50%', transform: 'translateX(-50%)', backgroundColor: 'rgba(13,40,71,0.85)', color: 'white', padding: '3px 10px', borderRadius: '10px', fontSize: '9px', fontWeight: '600', zIndex: 10, whiteSpace: 'nowrap' }}>Tap a pin to select venue</div>
-              )}
-              {/* Venue pins */}
-              {allVenues.map(v => {
-                const isSelected = selectedVenueForCreate?.place_id === v.place_id;
-                const pinColor = getCategoryColor(v.category);
-                return (
-                  <button key={v.id} onClick={() => {
-                    setSelectedVenueForCreate({ name: v.name, addr: v.addr, place_id: v.place_id, rating: v.stars, price_level: v.price_level ? (typeof v.price === 'string' ? v.price.length : null) : null, photo_url: v.photo_url, types: [] });
-                    showToast(`Selected ${v.name}!`);
-                  }} style={{ position: 'absolute', left: `${v.x}%`, top: `${v.y}%`, transform: `translate(-50%, -100%) scale(${isSelected ? 1.3 : 1})`, background: 'none', border: 'none', cursor: 'pointer', padding: 0, zIndex: isSelected ? 20 : 5, transition: 'transform 0.2s ease', filter: isSelected ? `drop-shadow(0 3px 6px ${pinColor}55)` : 'drop-shadow(0 2px 3px rgba(0,0,0,0.2))' }}>
-                    <svg width="24" height="32" viewBox="0 0 24 32">
-                      <path d="M12 0C5.4 0 0 5.4 0 12c0 9 12 20 12 20s12-11 12-20C24 5.4 18.6 0 12 0z" fill={isSelected ? colors.teal : pinColor} />
-                      <circle cx="12" cy="11" r="5" fill="white" />
-                    </svg>
-                  </button>
-                );
-              })}
-              {allVenues.length === 0 && (
-                <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                  <div style={{ display: 'inline-block', width: '16px', height: '16px', border: `2px solid ${colors.creamDark}`, borderTopColor: colors.navy, borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
-                  <span style={{ fontSize: '11px', color: '#6b7280', marginLeft: '8px' }}>Loading venues...</span>
-                </div>
-              )}
-            </div>
           </div>
 
           <div style={{ marginBottom: '16px' }}>
