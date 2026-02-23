@@ -2,13 +2,23 @@ import React, { useState } from 'react';
 import { signup } from '../../services/api';
 
 const colors = {
-  cream: '#f5f1e8',
-  creamDark: '#e8dfd0',
-  teal: '#14b8a6',
-  tealDark: '#0d9488',
-  navy: '#1e293b',
+  navy: '#0d2847',
+  navyLight: '#1a3a5c',
+  navyMid: '#2d5a87',
+  cream: '#f5f0e6',
+  creamDark: '#e8e0d0',
+  teal: '#14B8A6',
   red: '#EF4444',
 };
+
+const UsersIcon = ({ color = 'white', size = 40 }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path>
+    <circle cx="9" cy="7" r="4"></circle>
+    <path d="M23 21v-2a4 4 0 0 0-3-3.87"></path>
+    <path d="M16 3.13a4 4 0 0 1 0 7.75"></path>
+  </svg>
+);
 
 const SignupScreen = ({ onSignupSuccess, onSwitchToLogin }) => {
   const [name, setName] = useState('');
@@ -42,19 +52,20 @@ const SignupScreen = ({ onSignupSuccess, onSwitchToLogin }) => {
     width: '100%',
     padding: '14px 16px',
     borderRadius: '14px',
-    border: `2px solid ${colors.creamDark}`,
+    border: '2px solid rgba(245,240,230,0.15)',
     fontSize: '14px',
     fontWeight: '500',
     outline: 'none',
     boxSizing: 'border-box',
     transition: 'border-color 0.2s',
-    backgroundColor: '#faf8f5',
+    backgroundColor: 'rgba(255,255,255,0.06)',
+    color: colors.cream,
   };
 
   return (
     <div style={{
       minHeight: '100vh',
-      background: 'linear-gradient(135deg, #f5f1e8 0%, #e8dfd0 100%)',
+      background: `linear-gradient(135deg, ${colors.navy} 0%, ${colors.navyLight} 50%, ${colors.navyMid} 100%)`,
       display: 'flex',
       alignItems: 'center',
       justifyContent: 'center',
@@ -66,28 +77,32 @@ const SignupScreen = ({ onSignupSuccess, onSwitchToLogin }) => {
         maxWidth: '400px',
         animation: 'fadeInUp 0.6s ease-out',
       }}>
-        {/* Flock Logo */}
+        {/* Logo - matches main app */}
         <div style={{ textAlign: 'center', marginBottom: '40px' }}>
           <div style={{
+            width: '80px',
+            height: '80px',
+            borderRadius: '24px',
+            background: `linear-gradient(135deg, ${colors.navy}, ${colors.navyMid})`,
             display: 'inline-flex',
             alignItems: 'center',
-            gap: '10px',
-            marginBottom: '12px',
+            justifyContent: 'center',
+            marginBottom: '16px',
+            boxShadow: '0 8px 32px rgba(13,40,71,0.3)',
+            border: '2px solid rgba(255,255,255,0.1)',
           }}>
-            <svg width="40" height="40" viewBox="0 0 40 40" fill="none">
-              <circle cx="20" cy="20" r="20" fill={colors.teal} opacity="0.12" />
-              <path d="M12 28c2-4 6-7 10-8 -2 1-4 3-5 5 3-3 7-5 11-5-3 1-6 3-8 6 2-2 5-3 8-3-4 2-7 5-8 9" stroke={colors.teal} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" fill="none" />
-            </svg>
-            <span style={{
-              fontSize: '32px',
-              fontWeight: '800',
-              color: colors.teal,
-              letterSpacing: '-1px',
-            }}>Flock</span>
+            <UsersIcon color="white" size={40} />
           </div>
+          <h1 style={{
+            fontSize: '28px',
+            fontWeight: '900',
+            color: colors.cream,
+            margin: '0 0 4px',
+            letterSpacing: '-0.5px',
+          }}>Join Flock</h1>
           <p style={{
-            color: '#94a3b8',
-            fontSize: '15px',
+            fontSize: '13px',
+            color: 'rgba(245,240,230,0.5)',
             fontWeight: '500',
             margin: 0,
           }}>Create your account</p>
@@ -95,20 +110,23 @@ const SignupScreen = ({ onSignupSuccess, onSwitchToLogin }) => {
 
         {/* Card */}
         <div style={{
-          backgroundColor: 'white',
+          backgroundColor: 'rgba(255,255,255,0.08)',
+          backdropFilter: 'blur(12px)',
+          WebkitBackdropFilter: 'blur(12px)',
           borderRadius: '24px',
           padding: '32px 28px',
-          boxShadow: '0 4px 24px rgba(0,0,0,0.06), 0 1px 3px rgba(0,0,0,0.04)',
+          border: '1px solid rgba(255,255,255,0.1)',
+          boxShadow: '0 8px 32px rgba(0,0,0,0.2)',
         }}>
           <form onSubmit={handleSubmit}>
             {error && (
               <div style={{
-                backgroundColor: `${colors.red}10`,
-                border: `1px solid ${colors.red}30`,
+                backgroundColor: 'rgba(239,68,68,0.15)',
+                border: '1px solid rgba(239,68,68,0.3)',
                 borderRadius: '12px',
                 padding: '12px 16px',
                 marginBottom: '20px',
-                color: colors.red,
+                color: '#fca5a5',
                 fontSize: '13px',
                 fontWeight: '600',
               }}>{error}</div>
@@ -119,7 +137,7 @@ const SignupScreen = ({ onSignupSuccess, onSwitchToLogin }) => {
                 display: 'block',
                 fontSize: '13px',
                 fontWeight: '600',
-                color: colors.navy,
+                color: colors.cream,
                 marginBottom: '6px',
               }}>Name</label>
               <input
@@ -130,7 +148,7 @@ const SignupScreen = ({ onSignupSuccess, onSwitchToLogin }) => {
                 required
                 style={inputStyle}
                 onFocus={(e) => e.target.style.borderColor = colors.teal}
-                onBlur={(e) => e.target.style.borderColor = colors.creamDark}
+                onBlur={(e) => e.target.style.borderColor = 'rgba(245,240,230,0.15)'}
               />
             </div>
 
@@ -139,7 +157,7 @@ const SignupScreen = ({ onSignupSuccess, onSwitchToLogin }) => {
                 display: 'block',
                 fontSize: '13px',
                 fontWeight: '600',
-                color: colors.navy,
+                color: colors.cream,
                 marginBottom: '6px',
               }}>Email</label>
               <input
@@ -150,7 +168,7 @@ const SignupScreen = ({ onSignupSuccess, onSwitchToLogin }) => {
                 required
                 style={inputStyle}
                 onFocus={(e) => e.target.style.borderColor = colors.teal}
-                onBlur={(e) => e.target.style.borderColor = colors.creamDark}
+                onBlur={(e) => e.target.style.borderColor = 'rgba(245,240,230,0.15)'}
               />
             </div>
 
@@ -159,7 +177,7 @@ const SignupScreen = ({ onSignupSuccess, onSwitchToLogin }) => {
                 display: 'block',
                 fontSize: '13px',
                 fontWeight: '600',
-                color: colors.navy,
+                color: colors.cream,
                 marginBottom: '6px',
               }}>Password</label>
               <input
@@ -171,7 +189,7 @@ const SignupScreen = ({ onSignupSuccess, onSwitchToLogin }) => {
                 minLength={8}
                 style={inputStyle}
                 onFocus={(e) => e.target.style.borderColor = colors.teal}
-                onBlur={(e) => e.target.style.borderColor = colors.creamDark}
+                onBlur={(e) => e.target.style.borderColor = 'rgba(245,240,230,0.15)'}
               />
             </div>
 
@@ -179,17 +197,17 @@ const SignupScreen = ({ onSignupSuccess, onSwitchToLogin }) => {
               type="submit"
               disabled={loading}
               style={{
-                background: colors.teal,
+                background: `linear-gradient(135deg, ${colors.navy} 0%, ${colors.navyLight} 50%, ${colors.navyMid} 100%)`,
                 color: 'white',
-                border: 'none',
+                border: '1px solid rgba(255,255,255,0.15)',
                 borderRadius: '14px',
                 padding: '14px 24px',
                 fontWeight: '700',
                 fontSize: '15px',
                 cursor: loading ? 'not-allowed' : 'pointer',
                 width: '100%',
-                boxShadow: '0 4px 14px rgba(20,184,166,0.3)',
-                transition: 'all 0.3s ease',
+                boxShadow: '0 4px 15px rgba(13,40,71,0.3), 0 2px 4px rgba(0,0,0,0.1)',
+                transition: 'all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1)',
                 opacity: loading ? 0.7 : 1,
                 letterSpacing: '0.3px',
               }}
@@ -202,7 +220,7 @@ const SignupScreen = ({ onSignupSuccess, onSwitchToLogin }) => {
             textAlign: 'center',
             marginTop: '20px',
             fontSize: '14px',
-            color: '#94a3b8',
+            color: 'rgba(245,240,230,0.5)',
           }}>
             Already have an account?{' '}
             <button
@@ -225,6 +243,9 @@ const SignupScreen = ({ onSignupSuccess, onSwitchToLogin }) => {
         @keyframes fadeInUp {
           from { opacity: 0; transform: translateY(20px); }
           to { opacity: 1; transform: translateY(0); }
+        }
+        ::placeholder {
+          color: rgba(245,240,230,0.3) !important;
         }
       `}</style>
     </div>
