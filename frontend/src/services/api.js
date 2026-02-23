@@ -87,10 +87,10 @@ export async function getFlock(id) {
   return request(`/api/flocks/${id}`);
 }
 
-export async function createFlock({ name, venue_name, venue_address, event_time }) {
+export async function createFlock({ name, venue_name, venue_address, venue_id, event_time }) {
   return request('/api/flocks', {
     method: 'POST',
-    body: JSON.stringify({ name, venue_name, venue_address, event_time }),
+    body: JSON.stringify({ name, venue_name, venue_address, venue_id, event_time }),
   });
 }
 
@@ -127,6 +127,17 @@ export async function sendDM(userId, text) {
     method: 'POST',
     body: JSON.stringify({ message_text: text }),
   });
+}
+
+// Venues
+export async function searchVenues(query, location) {
+  let endpoint = `/api/venues/search?query=${encodeURIComponent(query)}`;
+  if (location) endpoint += `&location=${location}`;
+  return request(endpoint);
+}
+
+export async function getVenueDetails(placeId) {
+  return request(`/api/venues/details?place_id=${encodeURIComponent(placeId)}`);
 }
 
 export { getToken, BASE_URL };

@@ -17,6 +17,7 @@ const flockRoutes = require('./routes/flocks');
 const messageRoutes = require('./routes/messages');
 const userRoutes = require('./routes/users');
 const venueRoutes = require('./routes/venues');
+const venueSearchRoutes = require('./routes/venueSearch');
 
 const app = express();
 app.set('trust proxy', true);
@@ -81,6 +82,7 @@ app.use('/api/flocks', apiLimiter, flockRoutes);
 app.use('/api', apiLimiter, messageRoutes);     // Handles /api/flocks/:id/messages, /api/messages/:id/react, /api/dm/*
 app.use('/api/users', apiLimiter, userRoutes);
 app.use('/api/flocks', apiLimiter, venueRoutes); // Handles /api/flocks/:id/vote, /api/flocks/:id/votes
+app.use('/api/venues', apiLimiter, venueSearchRoutes); // Handles /api/venues/search, /api/venues/details
 
 // Health check
 app.get('/api/health', (req, res) => {

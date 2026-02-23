@@ -10,7 +10,7 @@ import {
   formatCurrency,
   calculateProfitMargin
 } from './lib/finance';
-import { getCurrentUser, logout, isLoggedIn, getFlocks, createFlock as apiCreateFlock, getMessages, sendMessage as apiSendMessage, updateProfile } from './services/api';
+import { getCurrentUser, logout, isLoggedIn, getFlocks, createFlock as apiCreateFlock, getMessages, sendMessage as apiSendMessage, updateProfile, searchVenues } from './services/api';
 import { connectSocket, disconnectSocket, joinFlock, leaveFlock, sendMessage as socketSendMessage, sendImageMessage as socketSendImage, startTyping, stopTyping, onNewMessage, onUserTyping, onUserStoppedTyping } from './services/socket';
 import LoginScreen from './components/auth/LoginScreen';
 import SignupScreen from './components/auth/SignupScreen';
@@ -1616,13 +1616,79 @@ const FlockAppInner = ({ authUser, onLogout }) => {
 
   // CREATE SCREEN
   const CreateScreen = () => {
+    const [venueQuery, setVenueQuery] = React.useState('');
+    const [venueResults, setVenueResults] = React.useState([]);
+    const [venueSearching, setVenueSearching] = React.useState(false);
+    const [showVenueSearch, setShowVenueSearch] = React.useState(false);
+    const searchTimerRef = React.useRef(null);
+
+    const doVenueSearch = React.useCallback(async (q) => {
+      if (!q.trim() || q.trim().length < 2) { setVenueResults([]); return; }
+      setVenueSearching(true);
+      try {
+        const data = await searchVenues(q);
+        setVenueResults(data.venues || []);
+      } catch (err) {
+        console.error('Venue search error:', err);
+      } finally {
+        setVenueSearching(false);
+      }
+    }, []);
+
+    const handleVenueQueryChange = React.useCallback((val) => {
+      setVenueQuery(val);
+      if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
+      searchTimerRef.current = setTimeout(() => doVenueSearch(val), 400);
+    }, [doVenueSearch]);
+
+    const selectVenue = (venue) => {
+      setSelectedVenueForCreate({
+        name: venue.name,
+        addr: venue.formatted_address,
+        place_id: venue.place_id,
+        rating: venue.rating,
+        user_ratings_total: venue.user_ratings_total,
+        price_level: venue.price_level,
+        photo_url: venue.photo_url,
+        types: venue.types,
+      });
+      setShowVenueSearch(false);
+      setVenueQuery('');
+      setVenueResults([]);
+      showToast(`Selected ${venue.name}!`);
+    };
+
+    const priceLabel = (level) => {
+      if (!level) return '';
+      return '$'.repeat(level);
+    };
+
+    const StarRating = ({ rating }) => {
+      if (!rating) return null;
+      const full = Math.floor(rating);
+      const half = rating - full >= 0.3;
+      return (
+        <span style={{ display: 'inline-flex', alignItems: 'center', gap: '1px' }}>
+          {[...Array(5)].map((_, i) => (
+            <svg key={i} width={12} height={12} viewBox="0 0 24 24" fill={i < full ? '#F59E0B' : (i === full && half ? 'url(#halfStar)' : '#d1d5db')} stroke="none">
+              {i === full && half && (
+                <defs><linearGradient id="halfStar"><stop offset="50%" stopColor="#F59E0B"/><stop offset="50%" stopColor="#d1d5db"/></linearGradient></defs>
+              )}
+              <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/>
+            </svg>
+          ))}
+        </span>
+      );
+    };
+
     const handleCreate = async () => {
       if (!flockName.trim()) { showToast('Enter a plan name', 'error'); return; }
       setIsLoading(true);
       try {
         const venueName = selectedVenueForCreate?.name || null;
         const venueAddr = selectedVenueForCreate?.addr || null;
-        const data = await apiCreateFlock({ name: flockName, venue_name: venueName, venue_address: venueAddr });
+        const venueId = selectedVenueForCreate?.place_id || null;
+        const data = await apiCreateFlock({ name: flockName, venue_name: venueName, venue_address: venueAddr, venue_id: venueId });
         const f = data.flock;
         const newFlock = { id: f.id, name: f.name, host: authUser?.name || 'You', members: [], memberCount: 1, time: f.event_time ? new Date(f.event_time).toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' }) : `${flockDate} ${flockTime}`, status: 'voting', venue: f.venue_name || 'TBD', cashPool: null, votes: [], messages: [] };
         setFlocks(prev => [...prev, newFlock]);
@@ -1649,21 +1715,105 @@ const FlockAppInner = ({ authUser, onLogout }) => {
             <input key="flock-name-input" id="flock-name-input" type="text" value={flockName} onChange={(e) => setFlockName(e.target.value)} placeholder="Movie night, dinner, party..." style={styles.input} autoComplete="off" />
           </div>
 
+          {/* VENUE SEARCH SECTION */}
           <div style={{ marginBottom: '16px' }}>
             <label style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '12px', fontWeight: 'bold', color: colors.navy, marginBottom: '6px' }}>{Icons.mapPin(colors.navy, 12)} Venue</label>
             {selectedVenueForCreate ? (
-              <div style={{ backgroundColor: 'white', borderRadius: '12px', padding: '12px', border: `2px solid ${colors.navy}`, display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <div style={{ width: '40px', height: '40px', borderRadius: '8px', backgroundColor: colors.cream, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{selectedVenueForCreate.category === 'Food' ? Icons.pizza(colors.food, 20) : Icons.cocktail(colors.nightlife, 20)}</div>
-                <div style={{ flex: 1 }}>
-                  <p style={{ fontWeight: 'bold', fontSize: '14px', color: colors.navy, margin: 0 }}>{selectedVenueForCreate.name}</p>
-                  <p style={{ fontSize: '10px', color: '#6b7280', margin: 0 }}>{selectedVenueForCreate.type}</p>
+              <div style={{ backgroundColor: 'white', borderRadius: '12px', padding: '10px', border: `2px solid ${colors.navy}`, display: 'flex', alignItems: 'center', gap: '10px' }}>
+                {selectedVenueForCreate.photo_url ? (
+                  <img src={selectedVenueForCreate.photo_url} alt="" style={{ width: '48px', height: '48px', borderRadius: '8px', objectFit: 'cover' }} />
+                ) : (
+                  <div style={{ width: '48px', height: '48px', borderRadius: '8px', backgroundColor: colors.cream, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.mapPin(colors.navy, 20)}</div>
+                )}
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <p style={{ fontWeight: 'bold', fontSize: '14px', color: colors.navy, margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{selectedVenueForCreate.name}</p>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginTop: '2px' }}>
+                    {selectedVenueForCreate.rating && <span style={{ fontSize: '11px', fontWeight: '700', color: colors.navy }}>{selectedVenueForCreate.rating}</span>}
+                    {selectedVenueForCreate.rating && <StarRating rating={selectedVenueForCreate.rating} />}
+                    {selectedVenueForCreate.price_level && <span style={{ fontSize: '11px', color: '#6b7280', fontWeight: '600' }}>{priceLabel(selectedVenueForCreate.price_level)}</span>}
+                  </div>
+                  <p style={{ fontSize: '10px', color: '#6b7280', margin: '2px 0 0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{selectedVenueForCreate.addr}</p>
                 </div>
-                <button onClick={() => setSelectedVenueForCreate(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.x(colors.red, 16)}</button>
+                <button onClick={() => setSelectedVenueForCreate(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{Icons.x(colors.red, 16)}</button>
               </div>
-            ) : (
-              <button onClick={() => { setPickingVenueForCreate(true); setCurrentTab('explore'); setCurrentScreen('main'); }} style={{ width: '100%', padding: '12px', borderRadius: '12px', border: `2px dashed ${colors.navyMid}`, backgroundColor: 'transparent', color: colors.navy, fontSize: '14px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
-                {Icons.compass(colors.navy, 16)} Pick Venue
+            ) : !showVenueSearch ? (
+              <button onClick={() => setShowVenueSearch(true)} style={{ width: '100%', padding: '12px', borderRadius: '12px', border: `2px dashed ${colors.navyMid}`, backgroundColor: 'transparent', color: colors.navy, fontSize: '14px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
+                {Icons.search(colors.navy, 16)} Search Venues
               </button>
+            ) : (
+              <div>
+                <div style={{ position: 'relative', marginBottom: '8px' }}>
+                  <input
+                    type="text"
+                    value={venueQuery}
+                    onChange={(e) => handleVenueQueryChange(e.target.value)}
+                    placeholder="Search restaurants, bars, parks..."
+                    autoFocus
+                    style={{ ...styles.input, paddingLeft: '36px', paddingRight: '36px' }}
+                    autoComplete="off"
+                  />
+                  <span style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)' }}>{Icons.search('#94a3b8', 16)}</span>
+                  <button onClick={() => { setShowVenueSearch(false); setVenueQuery(''); setVenueResults([]); }} style={{ position: 'absolute', right: '8px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', padding: '4px' }}>{Icons.x('#94a3b8', 16)}</button>
+                </div>
+
+                {venueSearching && (
+                  <div style={{ textAlign: 'center', padding: '20px 0' }}>
+                    <div style={{ display: 'inline-block', width: '20px', height: '20px', border: `3px solid ${colors.creamDark}`, borderTopColor: colors.navy, borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
+                    <p style={{ fontSize: '12px', color: '#6b7280', margin: '8px 0 0' }}>Searching Google Places...</p>
+                  </div>
+                )}
+
+                {!venueSearching && venueResults.length > 0 && (
+                  <div style={{ maxHeight: '320px', overflowY: 'auto', borderRadius: '12px', border: `1px solid ${colors.creamDark}`, backgroundColor: 'white' }}>
+                    {venueResults.map((venue, i) => (
+                      <button
+                        key={venue.place_id}
+                        onClick={() => selectVenue(venue)}
+                        style={{
+                          width: '100%',
+                          padding: '10px 12px',
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '10px',
+                          border: 'none',
+                          borderBottom: i < venueResults.length - 1 ? `1px solid ${colors.creamDark}` : 'none',
+                          backgroundColor: 'white',
+                          cursor: 'pointer',
+                          textAlign: 'left',
+                          transition: 'background-color 0.15s',
+                        }}
+                        onMouseEnter={(e) => e.currentTarget.style.backgroundColor = colors.cream}
+                        onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'white'}
+                      >
+                        {venue.photo_url ? (
+                          <img src={venue.photo_url} alt="" style={{ width: '56px', height: '56px', borderRadius: '8px', objectFit: 'cover', flexShrink: 0 }} />
+                        ) : (
+                          <div style={{ width: '56px', height: '56px', borderRadius: '8px', backgroundColor: colors.cream, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{Icons.mapPin(colors.navyMid, 22)}</div>
+                        )}
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <p style={{ fontWeight: '700', fontSize: '13px', color: colors.navy, margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{venue.name}</p>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '4px', marginTop: '2px', flexWrap: 'wrap' }}>
+                            {venue.rating && <span style={{ fontSize: '11px', fontWeight: '700', color: colors.navy }}>{venue.rating}</span>}
+                            {venue.rating && <StarRating rating={venue.rating} />}
+                            {venue.user_ratings_total > 0 && <span style={{ fontSize: '10px', color: '#9ca3af' }}>({venue.user_ratings_total})</span>}
+                            {venue.price_level && <span style={{ fontSize: '11px', color: '#6b7280', fontWeight: '600', marginLeft: '2px' }}>{priceLabel(venue.price_level)}</span>}
+                          </div>
+                          <p style={{ fontSize: '10px', color: '#6b7280', margin: '2px 0 0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{venue.formatted_address}</p>
+                        </div>
+                        <div style={{ flexShrink: 0, width: '28px', height: '28px', borderRadius: '14px', backgroundColor: colors.cream, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                          <svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke={colors.navy} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                )}
+
+                {!venueSearching && venueQuery.trim().length >= 2 && venueResults.length === 0 && (
+                  <div style={{ textAlign: 'center', padding: '20px 0' }}>
+                    <p style={{ fontSize: '12px', color: '#6b7280', margin: 0 }}>No venues found. Try a different search.</p>
+                  </div>
+                )}
+              </div>
             )}
           </div>
 
