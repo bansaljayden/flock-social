@@ -5456,15 +5456,15 @@ const FlockApp = () => {
     return (
       <div style={{
         minHeight: '100vh',
-        background: `linear-gradient(135deg, #0d2847 0%, #1a3a5c 50%, #2d5a87 100%)`,
+        background: 'linear-gradient(135deg, #f5f1e8 0%, #e8dfd0 100%)',
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
         fontFamily: "'Inter', -apple-system, BlinkMacSystemFont, sans-serif",
       }}>
-        <div style={{ textAlign: 'center', color: 'white' }}>
-          <div style={{ fontSize: '48px', marginBottom: '16px' }}>🐦</div>
-          <div style={{ fontSize: '18px', fontWeight: '600' }}>Loading...</div>
+        <div style={{ textAlign: 'center', color: '#14b8a6' }}>
+          <div style={{ fontSize: '36px', fontWeight: '800', letterSpacing: '-1px', marginBottom: '12px' }}>Flock</div>
+          <div style={{ fontSize: '14px', fontWeight: '500', color: '#94a3b8' }}>Loading...</div>
         </div>
       </div>
     );
