@@ -234,31 +234,31 @@ const GoogleMapView = React.memo(({ venues, userLocation, activeVenue, setActive
 
       // --- Heatmap circle (drawn FIRST, behind pins) ---
       if (typeof v.crowd === 'number') {
-        // Outer glow circle
+        // Outer glow circle — large, soft aura
         const outerCircle = new window.google.maps.Circle({
           map: mapInstanceRef.current,
           center: position,
-          radius: 80 + (v.crowd * 0.8),
+          radius: 150 + (v.crowd * 1.2),
           fillColor: cc,
-          fillOpacity: 0.10 + (v.crowd / 500),
+          fillOpacity: 0.18 + (v.crowd / 300),
           strokeColor: cc,
-          strokeOpacity: 0.15,
-          strokeWeight: 1,
+          strokeOpacity: 0.5,
+          strokeWeight: 1.5,
           zIndex: 1,
           clickable: false,
         });
         circlesRef.current.push(outerCircle);
 
-        // Inner core circle
+        // Inner core circle — dense, vibrant center
         const innerCircle = new window.google.maps.Circle({
           map: mapInstanceRef.current,
           center: position,
-          radius: 35 + (v.crowd * 0.4),
+          radius: 60 + (v.crowd * 0.6),
           fillColor: cc,
-          fillOpacity: 0.20 + (v.crowd / 300),
+          fillOpacity: 0.40 + (v.crowd / 250),
           strokeColor: cc,
-          strokeOpacity: 0.35,
-          strokeWeight: 1.5,
+          strokeOpacity: 1.0,
+          strokeWeight: 2,
           zIndex: 2,
           clickable: false,
         });
@@ -281,6 +281,12 @@ const GoogleMapView = React.memo(({ venues, userLocation, activeVenue, setActive
         },
         zIndex: isActive ? 100 : v.trending ? 50 : 10,
         animation: isActive ? window.google.maps.Animation.BOUNCE : null,
+      });
+
+      // Hover animation — bounce once on mouseover
+      marker.addListener('mouseover', () => {
+        marker.setAnimation(window.google.maps.Animation.BOUNCE);
+        setTimeout(() => marker.setAnimation(null), 750);
       });
 
       marker.addListener('click', () => {
@@ -355,6 +361,12 @@ const GoogleMapView = React.memo(({ venues, userLocation, activeVenue, setActive
 
   return (
     <div style={{ position: 'absolute', inset: 0 }}>
+      {/* Minimize Google branding — keep legal, make subtle */}
+      <style>{`
+        .gm-style .gmnoprint, .gm-style-cc { opacity: 0.55; font-size: 9px !important; }
+        .gm-style a[href^="https://maps.google"] { opacity: 0.45 !important; transform: scale(0.8); transform-origin: bottom left; }
+        .gm-style .gm-style-cc a, .gm-style .gm-style-cc span { font-size: 8px !important; }
+      `}</style>
       <div ref={mapRef} style={{ width: '100%', height: '100%' }} />
       {/* Heatmap Legend */}
       <div style={{
@@ -3356,10 +3368,18 @@ const FlockAppInner = ({ authUser, onLogout }) => {
               </div>
               {flock.venueAddress && (
                 <button
-                  onClick={() => window.open(`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(flock.venue + ' ' + flock.venueAddress)}`, '_blank')}
+                  onClick={() => {
+                    // Navigate in-app to Explore tab with venue highlighted
+                    if (flock.venueId) {
+                      const matchedVenue = allVenues.find(v => v.place_id === flock.venueId);
+                      if (matchedVenue) setActiveVenue(matchedVenue);
+                    }
+                    setCurrentTab('explore');
+                    setCurrentScreen('main');
+                  }}
                   style={{ padding: '8px 12px', borderRadius: '10px', border: 'none', background: `linear-gradient(135deg, ${colors.teal}, #0d9488)`, color: 'white', fontSize: '10px', fontWeight: '700', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px', flexShrink: 0, boxShadow: '0 2px 8px rgba(20,184,166,0.3)' }}
                 >
-                  {Icons.mapPin('white', 12)} Map
+                  {Icons.mapPin('white', 12)} View on Map
                 </button>
               )}
             </div>
