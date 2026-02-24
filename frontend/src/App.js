@@ -166,7 +166,7 @@ const GoogleMapView = React.memo(({ venues, userLocation, activeVenue, setActive
 
     const map = new window.google.maps.Map(mapRef.current, {
       center,
-      zoom: 14,
+      zoom: 15,
       styles: FLOCK_MAP_STYLES,
       disableDefaultUI: true,
       zoomControl: true,
@@ -234,15 +234,15 @@ const GoogleMapView = React.memo(({ venues, userLocation, activeVenue, setActive
 
       // --- Heatmap circle (drawn FIRST, behind pins) ---
       if (typeof v.crowd === 'number') {
-        // Outer glow circle — large, soft aura
+        // Outer glow circle — large, soft aura visible from default zoom
         const outerCircle = new window.google.maps.Circle({
           map: mapInstanceRef.current,
           center: position,
-          radius: 150 + (v.crowd * 1.2),
+          radius: 300 + (v.crowd * 1.5),
           fillColor: cc,
-          fillOpacity: 0.18 + (v.crowd / 300),
+          fillOpacity: 0.20 + (v.crowd / 250),
           strokeColor: cc,
-          strokeOpacity: 0.5,
+          strokeOpacity: 0.6,
           strokeWeight: 1.5,
           zIndex: 1,
           clickable: false,
@@ -253,12 +253,12 @@ const GoogleMapView = React.memo(({ venues, userLocation, activeVenue, setActive
         const innerCircle = new window.google.maps.Circle({
           map: mapInstanceRef.current,
           center: position,
-          radius: 60 + (v.crowd * 0.6),
+          radius: 120 + (v.crowd * 0.8),
           fillColor: cc,
-          fillOpacity: 0.40 + (v.crowd / 250),
+          fillOpacity: 0.45 + (v.crowd / 200),
           strokeColor: cc,
           strokeOpacity: 1.0,
-          strokeWeight: 2,
+          strokeWeight: 2.5,
           zIndex: 2,
           clickable: false,
         });
@@ -344,9 +344,14 @@ const GoogleMapView = React.memo(({ venues, userLocation, activeVenue, setActive
 
     if (hasValidBounds && venues.length > 1) {
       mapInstanceRef.current.fitBounds(bounds, { top: 60, bottom: 60, left: 30, right: 30 });
+      // Prevent zooming out too far — keep heatmap visible
+      const listener = mapInstanceRef.current.addListener('idle', () => {
+        window.google.maps.event.removeListener(listener);
+        if (mapInstanceRef.current.getZoom() < 14) mapInstanceRef.current.setZoom(14);
+      });
     } else if (hasValidBounds && venues.length === 1) {
       mapInstanceRef.current.panTo({ lat: venues[0].location.latitude, lng: venues[0].location.longitude });
-      mapInstanceRef.current.setZoom(15);
+      mapInstanceRef.current.setZoom(16);
     }
   }, [venues, activeVenue, getCategoryColor, pickingVenueForCreate, setActiveVenue, setSelectedVenueForCreate, setPickingVenueForCreate, setCurrentScreen]);
 
@@ -361,11 +366,16 @@ const GoogleMapView = React.memo(({ venues, userLocation, activeVenue, setActive
 
   return (
     <div style={{ position: 'absolute', inset: 0 }}>
-      {/* Minimize Google branding — keep legal, make subtle */}
+      {/* Minimize Google branding — legal but nearly invisible */}
       <style>{`
-        .gm-style .gmnoprint, .gm-style-cc { opacity: 0.55; font-size: 9px !important; }
-        .gm-style a[href^="https://maps.google"] { opacity: 0.45 !important; transform: scale(0.8); transform-origin: bottom left; }
-        .gm-style .gm-style-cc a, .gm-style .gm-style-cc span { font-size: 8px !important; }
+        .gm-style-cc, .gm-style .gmnoprint:not(.gm-bundled-control), .gm-style-mtc { opacity: 0.1 !important; pointer-events: none; transition: opacity 0.3s; }
+        .gm-style-cc:hover, .gm-style .gmnoprint:not(.gm-bundled-control):hover { opacity: 0.4 !important; pointer-events: auto; }
+        .gm-style-cc { font-size: 7px !important; }
+        .gm-style-cc a, .gm-style-cc span { font-size: 7px !important; }
+        .gm-style a[href^="https://maps.google"] { opacity: 0.1 !important; transform: scale(0.7); transform-origin: bottom left; transition: opacity 0.3s; }
+        .gm-style a[href^="https://maps.google"]:hover { opacity: 0.35 !important; }
+        .gm-style a[title="Open this area in Google Maps (opens a new window)"] img { opacity: 0.15 !important; }
+        .gm-style .gm-bundled-control { opacity: 0.75; }
       `}</style>
       <div ref={mapRef} style={{ width: '100%', height: '100%' }} />
       {/* Heatmap Legend */}
@@ -979,7 +989,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
       setMapVenuesLoaded(true);
       return;
     }
-    searchVenues('restaurants bars', locStr)
+    searchVenues('restaurants bars nightclubs live music sports venues', locStr)
       .then((data) => {
         const venues = data.venues || [];
         searchCacheRef.current[cacheKey] = { data: venues, timestamp: Date.now() };
@@ -2999,7 +3009,26 @@ const FlockAppInner = ({ authUser, onLogout }) => {
               { id: 'Live Music', icon: () => Icons.music(category === 'Live Music' ? colors.cream : colors.music, 14) },
               { id: 'Sports', icon: () => Icons.sports(category === 'Sports' ? colors.cream : colors.sports, 14) }
             ].map(c => (
-            <button key={c.id} onClick={() => { setCategory(c.id); setActiveVenue(null); }} style={{ padding: '8px 12px', borderRadius: '20px', border: `2px solid ${colors.navy}`, backgroundColor: category === c.id ? colors.navy : 'white', color: category === c.id ? colors.cream : colors.navy, fontWeight: 'bold', fontSize: '11px', cursor: 'pointer', whiteSpace: 'nowrap', display: 'flex', alignItems: 'center', gap: '4px', flexShrink: 0 }}>
+            <button key={c.id} onClick={() => {
+              setCategory(c.id);
+              setActiveVenue(null);
+              // Load category-specific venues if current results have few matches
+              if (c.id !== 'All' && userLocation) {
+                const matches = allVenues.filter(v => v.category === c.id);
+                if (matches.length < 3) {
+                  const queryMap = { Food: 'restaurants cafes food', Nightlife: 'bars nightclubs lounges', 'Live Music': 'live music concert venues', Sports: 'sports bars bowling gyms stadiums' };
+                  searchVenues(queryMap[c.id] || c.id, `${userLocation.lat},${userLocation.lng}`)
+                    .then(data => {
+                      const newVenues = venuesToMapPins(data.venues || []);
+                      setAllVenues(prev => {
+                        const existingIds = new Set(prev.map(v => v.place_id));
+                        const unique = newVenues.filter(v => !existingIds.has(v.place_id));
+                        return [...prev, ...unique];
+                      });
+                    }).catch(() => {});
+                }
+              }
+            }} style={{ padding: '8px 12px', borderRadius: '20px', border: `2px solid ${colors.navy}`, backgroundColor: category === c.id ? colors.navy : 'white', color: category === c.id ? colors.cream : colors.navy, fontWeight: 'bold', fontSize: '11px', cursor: 'pointer', whiteSpace: 'nowrap', display: 'flex', alignItems: 'center', gap: '4px', flexShrink: 0 }}>
               {c.icon()} {c.id}
             </button>
           ))}
@@ -3369,17 +3398,18 @@ const FlockAppInner = ({ authUser, onLogout }) => {
               {flock.venueAddress && (
                 <button
                   onClick={() => {
-                    // Navigate in-app to Explore tab with venue highlighted
                     if (flock.venueId) {
-                      const matchedVenue = allVenues.find(v => v.place_id === flock.venueId);
-                      if (matchedVenue) setActiveVenue(matchedVenue);
+                      // Open venue details directly — seamless in-app experience
+                      openVenueDetail(flock.venueId, { name: flock.venue, formatted_address: flock.venueAddress, place_id: flock.venueId, rating: flock.venueRating, photo_url: flock.venuePhoto });
+                    } else {
+                      // Fallback: navigate to Explore tab
+                      setCurrentTab('explore');
+                      setCurrentScreen('main');
                     }
-                    setCurrentTab('explore');
-                    setCurrentScreen('main');
                   }}
                   style={{ padding: '8px 12px', borderRadius: '10px', border: 'none', background: `linear-gradient(135deg, ${colors.teal}, #0d9488)`, color: 'white', fontSize: '10px', fontWeight: '700', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px', flexShrink: 0, boxShadow: '0 2px 8px rgba(20,184,166,0.3)' }}
                 >
-                  {Icons.mapPin('white', 12)} View on Map
+                  {Icons.eye('white', 12)} Details
                 </button>
               )}
             </div>
