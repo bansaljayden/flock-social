@@ -87,10 +87,10 @@ export async function getFlock(id) {
   return request(`/api/flocks/${id}`);
 }
 
-export async function createFlock({ name, venue_name, venue_address, venue_id, event_time, invited_user_ids }) {
+export async function createFlock({ name, venue_name, venue_address, venue_id, venue_latitude, venue_longitude, event_time, invited_user_ids }) {
   return request('/api/flocks', {
     method: 'POST',
-    body: JSON.stringify({ name, venue_name, venue_address, venue_id, event_time, invited_user_ids }),
+    body: JSON.stringify({ name, venue_name, venue_address, venue_id, venue_latitude, venue_longitude, event_time, invited_user_ids }),
   });
 }
 

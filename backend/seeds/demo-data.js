@@ -279,7 +279,8 @@ async function seed() {
         name: 'DECA Nationals Prep',
         creator: realJayden,
         venue_name: 'Linderman Library',
-        venue_address: '30 Library Dr, Bethlehem',
+        venue_address: '30 Library Drive, Bethlehem, PA 18015',
+        venue_id: 'ChIJK8wKxVNWxokRVxqRmqBFRjY',
         venue_latitude: 40.6064,
         venue_longitude: -75.3779,
         event_time: hoursFromNow(18),
@@ -354,10 +355,10 @@ async function seed() {
 
     for (const f of flockDefs) {
       const result = await client.query(
-        `INSERT INTO flocks (name, creator_id, venue_name, venue_address, venue_latitude, venue_longitude, event_time, status)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+        `INSERT INTO flocks (name, creator_id, venue_name, venue_address, venue_id, venue_latitude, venue_longitude, event_time, status)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
          RETURNING id, name`,
-        [f.name, f.creator, f.venue_name, f.venue_address, f.venue_latitude || null, f.venue_longitude || null, f.event_time, f.status]
+        [f.name, f.creator, f.venue_name, f.venue_address, f.venue_id || null, f.venue_latitude || null, f.venue_longitude || null, f.event_time, f.status]
       );
       const flock = result.rows[0];
       flockIds[f.name] = flock.id;
