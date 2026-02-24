@@ -61,19 +61,21 @@ app.use(express.urlencoded({ extended: true }));
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
 // ---------------------------------------------------------------------------
-// Rate limiting
+// Rate limiting (disabled in development)
 // ---------------------------------------------------------------------------
-const apiLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 300,                  // 300 requests per window per IP
+const isDev = process.env.NODE_ENV !== 'production';
+
+const apiLimiter = isDev ? (_req, _res, next) => next() : rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 300,
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: 'Too many requests, please try again later' },
 });
 
-const authLimiter = rateLimit({
+const authLimiter = isDev ? (_req, _res, next) => next() : rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 20, // Tighter limit on auth endpoints
+  max: 20,
   message: { error: 'Too many login attempts, please try again later' },
 });
 
