@@ -149,6 +149,22 @@ export async function searchUsers(query) {
   return request(`/api/users/search?q=${encodeURIComponent(query)}`);
 }
 
+export async function getSuggestedUsers() {
+  return request('/api/users/suggested');
+}
+
+// Friends
+export async function sendFriendRequest(userId) {
+  return request('/api/friends/request', {
+    method: 'POST',
+    body: JSON.stringify({ user_id: userId }),
+  });
+}
+
+export async function getFriends() {
+  return request('/api/friends');
+}
+
 // Stories
 export async function getStories() {
   return request('/api/stories');

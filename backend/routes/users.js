@@ -165,6 +165,27 @@ router.get('/search',
   }
 );
 
+// GET /api/users/suggested - Get suggested users (flock mates, ordered by shared flock count)
+router.get('/suggested', async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT u.id, u.name, u.email, u.profile_image_url, COUNT(fm2.flock_id) AS shared_flocks
+       FROM flock_members fm1
+       JOIN flock_members fm2 ON fm2.flock_id = fm1.flock_id AND fm2.user_id != fm1.user_id AND fm2.status = 'accepted'
+       JOIN users u ON u.id = fm2.user_id
+       WHERE fm1.user_id = $1 AND fm1.status = 'accepted'
+       GROUP BY u.id, u.name, u.email, u.profile_image_url
+       ORDER BY shared_flocks DESC, u.name ASC
+       LIMIT 10`,
+      [req.user.id]
+    );
+    res.json({ users: result.rows });
+  } catch (err) {
+    console.error('Suggested users error:', err);
+    res.status(500).json({ error: 'Failed to get suggested users' });
+  }
+});
+
 // POST /api/users/upload-image - Upload profile image
 router.post('/upload-image', (req, res) => {
   upload.single('image')(req, res, async (err) => {

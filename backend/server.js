@@ -20,6 +20,7 @@ const userRoutes = require('./routes/users');
 const venueRoutes = require('./routes/venues');
 const venueSearchRoutes = require('./routes/venueSearch');
 const storyRoutes = require('./routes/stories');
+const friendRoutes = require('./routes/friends');
 
 const app = express();
 app.set('trust proxy', true);
@@ -86,6 +87,7 @@ app.use('/api/users', apiLimiter, userRoutes);
 app.use('/api/flocks', apiLimiter, venueRoutes); // Handles /api/flocks/:id/vote, /api/flocks/:id/votes
 app.use('/api/venues', apiLimiter, venueSearchRoutes); // Handles /api/venues/search, /api/venues/details
 app.use('/api/stories', apiLimiter, storyRoutes);     // Handles /api/stories
+app.use('/api/friends', apiLimiter, friendRoutes);    // Handles /api/friends, /api/friends/request, etc.
 
 // Health check
 app.get('/api/health', (req, res) => {

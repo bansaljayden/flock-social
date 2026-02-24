@@ -10,7 +10,7 @@ import {
   formatCurrency,
   calculateProfitMargin
 } from './lib/finance';
-import { getCurrentUser, logout, isLoggedIn, getFlocks, createFlock as apiCreateFlock, getMessages, sendMessage as apiSendMessage, updateProfile, searchVenues, searchUsers, getStories, getVenueDetails, leaveFlock as apiLeaveFlock } from './services/api';
+import { getCurrentUser, logout, isLoggedIn, getFlocks, createFlock as apiCreateFlock, getMessages, sendMessage as apiSendMessage, updateProfile, searchVenues, searchUsers, getSuggestedUsers, sendFriendRequest, getStories, getVenueDetails, leaveFlock as apiLeaveFlock } from './services/api';
 import { connectSocket, disconnectSocket, getSocket, joinFlock, leaveFlock, sendMessage as socketSendMessage, sendImageMessage as socketSendImage, startTyping, stopTyping, onNewMessage, onUserTyping, onUserStoppedTyping } from './services/socket';
 import LoginScreen from './components/auth/LoginScreen';
 import SignupScreen from './components/auth/SignupScreen';
@@ -304,6 +304,40 @@ const FlockAppInner = ({ authUser, onLogout }) => {
     }, 400);
   }, []);
 
+  // Fetch suggested users for invite section
+  const loadSuggestedUsers = useCallback(async () => {
+    try {
+      const data = await getSuggestedUsers();
+      setSuggestedUsers(data.users || []);
+    } catch { /* ignore */ }
+  }, []);
+
+  // Connect panel search with debounce
+  const connectTimerRef = useRef(null);
+  const handleConnectSearch = useCallback((val) => {
+    setConnectSearch(val);
+    if (connectTimerRef.current) clearTimeout(connectTimerRef.current);
+    if (val.trim().length < 1) { setConnectResults([]); return; }
+    setConnectSearching(true);
+    connectTimerRef.current = setTimeout(async () => {
+      try {
+        const data = await searchUsers(val.trim());
+        setConnectResults(data.users || []);
+      } catch { setConnectResults([]); }
+      finally { setConnectSearching(false); }
+    }, 400);
+  }, []);
+
+  const handleSendFriendRequest = useCallback(async (user) => {
+    try {
+      const data = await sendFriendRequest(user.id);
+      setFriendStatuses(prev => ({ ...prev, [user.id]: data.status || 'pending' }));
+      showToast(data.message || `Friend request sent to ${user.name}`);
+    } catch (err) {
+      showToast(err.message || 'Failed to send request', 'error');
+    }
+  }, [showToast]);
+
   // Loading & Gamification
   const [isLoading, setIsLoading] = useState(false);
   const [userXP, setUserXP] = useState(280);
@@ -433,6 +467,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
   const [inviteSearch, setInviteSearch] = useState('');
   const [inviteResults, setInviteResults] = useState([]);
   const [inviteSearching, setInviteSearching] = useState(false);
+  const [suggestedUsers, setSuggestedUsers] = useState([]);
   const [flockCashPool, setFlockCashPool] = useState(false);
   const [flockAmount, setFlockAmount] = useState(20);
   const [joinCode, setJoinCode] = useState('');
@@ -444,8 +479,11 @@ const FlockAppInner = ({ authUser, onLogout }) => {
   const [venueDetailModal, setVenueDetailModal] = useState(null); // full venue details for modal
   const [, setVenueDetailLoading] = useState(false);
   const [venueDetailPhotoIdx, setVenueDetailPhotoIdx] = useState(0);
-  const [connections, setConnections] = useState([]);
   const [showConnectPanel, setShowConnectPanel] = useState(false);
+  const [connectSearch, setConnectSearch] = useState('');
+  const [connectResults, setConnectResults] = useState([]);
+  const [connectSearching, setConnectSearching] = useState(false);
+  const [friendStatuses, setFriendStatuses] = useState({}); // { [userId]: 'pending' | 'accepted' }
 
   // Chat
   const [chatInput, setChatInput] = useState('');
@@ -810,6 +848,11 @@ const FlockAppInner = ({ authUser, onLogout }) => {
       chatEndRef.current.scrollIntoView({ behavior: 'smooth' });
     }
   }, [selectedFlock?.messages, currentScreen]);
+
+  // Load suggested users when opening Create screen
+  useEffect(() => {
+    if (currentScreen === 'create') loadSuggestedUsers();
+  }, [currentScreen, loadSuggestedUsers]);
 
   // Fetch messages from API + join socket room when opening a chat
   const [, setMessagesLoading] = useState(false);
@@ -2073,13 +2116,31 @@ const FlockAppInner = ({ authUser, onLogout }) => {
               </div>
             )}
 
+            {/* Suggested friends - quick add */}
+            {suggestedUsers.filter(u => !flockFriends.some(f => f.id === u.id)).length > 0 && (
+              <div style={{ marginBottom: '8px' }}>
+                <p style={{ fontSize: '10px', fontWeight: '600', color: '#9ca3af', margin: '0 0 6px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Suggested</p>
+                <div style={{ display: 'flex', gap: '6px', overflowX: 'auto', paddingBottom: '4px' }}>
+                  {suggestedUsers.filter(u => !flockFriends.some(f => f.id === u.id)).slice(0, 5).map(user => (
+                    <button key={user.id} onClick={() => setFlockFriends(prev => [...prev, user])} style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '6px 10px', borderRadius: '20px', border: `1.5px solid ${colors.creamDark}`, backgroundColor: 'white', cursor: 'pointer', flexShrink: 0, transition: 'all 0.15s ease' }}>
+                      <div style={{ width: '24px', height: '24px', borderRadius: '12px', backgroundColor: colors.navyMid, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '10px', fontWeight: '700', color: 'white', overflow: 'hidden', flexShrink: 0 }}>
+                        {user.profile_image_url ? <img src={user.profile_image_url} alt="" style={{ width: '24px', height: '24px', borderRadius: '12px', objectFit: 'cover' }} /> : user.name[0]?.toUpperCase()}
+                      </div>
+                      <span style={{ fontSize: '12px', fontWeight: '600', color: colors.navy, whiteSpace: 'nowrap' }}>{user.name.split(' ')[0]}</span>
+                      <span style={{ fontSize: '12px', color: colors.teal, fontWeight: '700' }}>+</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
             {/* Search input */}
             <div style={{ position: 'relative' }}>
               <input
                 type="text"
                 value={inviteSearch}
                 onChange={(e) => handleInviteSearch(e.target.value)}
-                placeholder="Search by name or email..."
+                placeholder="Or search by name or email..."
                 style={{ ...styles.input, paddingLeft: '36px', paddingRight: inviteSearch ? '36px' : '12px', fontSize: '12px' }}
                 autoComplete="off"
               />
@@ -2535,26 +2596,77 @@ const FlockAppInner = ({ authUser, onLogout }) => {
           </div>
         </div>
 
-        {/* Connect Panel */}
+        {/* Find Your People Panel */}
         {showConnectPanel && (
-          <div style={{ position: 'absolute', left: '8px', right: '8px', top: '8px', backgroundColor: 'white', borderRadius: '12px', boxShadow: '0 4px 20px rgba(0,0,0,0.2)', zIndex: 40, maxHeight: '65%', overflow: 'auto' }}>
-            <div style={{ padding: '12px', borderBottom: '1px solid #eee', display: 'flex', justifyContent: 'space-between', alignItems: 'center', position: 'sticky', top: 0, backgroundColor: 'white', borderRadius: '12px 12px 0 0' }}>
+          <div style={{ position: 'absolute', left: '8px', right: '8px', top: '8px', backgroundColor: 'white', borderRadius: '16px', boxShadow: '0 4px 24px rgba(0,0,0,0.2)', zIndex: 40, maxHeight: '70%', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+            <div style={{ padding: '12px', borderBottom: '1px solid #eee', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexShrink: 0 }}>
               <h2 style={{ fontSize: '14px', fontWeight: '900', color: colors.navy, margin: 0, display: 'flex', alignItems: 'center', gap: '6px' }}>{Icons.users(colors.navy, 16)} Find Your People</h2>
-              <button onClick={() => setShowConnectPanel(false)} style={{ width: '24px', height: '24px', borderRadius: '12px', backgroundColor: '#f3f4f6', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.x('#6b7280', 14)}</button>
+              <button onClick={() => { setShowConnectPanel(false); setConnectSearch(''); setConnectResults([]); }} style={{ width: '28px', height: '28px', borderRadius: '14px', backgroundColor: '#f3f4f6', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.x('#6b7280', 14)}</button>
             </div>
-            <div style={{ padding: '12px' }}>
-              {connections.map(c => (
-                <div key={c.id} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '8px', borderRadius: '8px', backgroundColor: colors.cream, marginBottom: '8px' }}>
-                  <div style={{ width: '40px', height: '40px', borderRadius: '20px', backgroundColor: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 1px 3px rgba(0,0,0,0.1)' }}>{c.interests[0] === 'Live Music' ? Icons.music(colors.music, 20) : Icons.sports(colors.sports, 20)}</div>
-                  <div style={{ flex: 1 }}>
-                    <p style={{ fontWeight: 'bold', fontSize: '12px', color: colors.navy, margin: 0 }}>{c.name}</p>
-                    <p style={{ fontSize: '10px', color: '#6b7280', margin: 0 }}>{c.loc} • {c.distance}</p>
-                  </div>
-                  <button onClick={() => { setConnections(prev => prev.map(conn => conn.id === c.id ? { ...conn, status: 'pending' } : conn)); showToast('Request sent!'); }} disabled={c.status === 'pending'} style={{ padding: '6px 12px', borderRadius: '20px', border: 'none', fontSize: '10px', fontWeight: 'bold', cursor: 'pointer', backgroundColor: c.status === 'pending' ? '#e5e7eb' : colors.navy, color: c.status === 'pending' ? '#6b7280' : 'white' }}>
-                    {c.status === 'pending' ? 'Pending' : 'Connect'}
-                  </button>
+
+            {/* Search input */}
+            <div style={{ padding: '8px 12px', borderBottom: '1px solid #f3f4f6', flexShrink: 0 }}>
+              <div style={{ position: 'relative' }}>
+                <input
+                  type="text"
+                  value={connectSearch}
+                  onChange={(e) => handleConnectSearch(e.target.value)}
+                  placeholder="Search by name or email..."
+                  style={{ width: '100%', padding: '10px 12px 10px 34px', borderRadius: '10px', border: `1.5px solid ${connectSearch ? colors.navy : '#e2e8f0'}`, fontSize: '13px', outline: 'none', boxSizing: 'border-box', backgroundColor: '#f8fafc', fontWeight: '500', transition: 'all 0.2s ease' }}
+                  autoComplete="off"
+                />
+                <span style={{ position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)' }}>{Icons.search(connectSearch ? colors.navy : '#94a3b8', 14)}</span>
+                {connectSearch && (
+                  <button onClick={() => { setConnectSearch(''); setConnectResults([]); }} style={{ position: 'absolute', right: '8px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', padding: '4px' }}>{Icons.x('#94a3b8', 14)}</button>
+                )}
+              </div>
+            </div>
+
+            {/* Results */}
+            <div style={{ flex: 1, overflowY: 'auto', padding: '8px 12px' }}>
+              {connectSearching && (
+                <div style={{ textAlign: 'center', padding: '20px 0' }}>
+                  <div style={{ display: 'inline-block', width: '16px', height: '16px', border: `2px solid ${colors.creamDark}`, borderTopColor: colors.navy, borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
+                  <span style={{ fontSize: '12px', color: '#6b7280', marginLeft: '8px' }}>Searching...</span>
                 </div>
-              ))}
+              )}
+
+              {!connectSearching && connectSearch.trim().length >= 1 && connectResults.length === 0 && (
+                <p style={{ fontSize: '13px', color: '#9ca3af', textAlign: 'center', padding: '20px 0', margin: 0 }}>No users found for "{connectSearch}"</p>
+              )}
+
+              {!connectSearching && connectResults.length > 0 && connectResults.map(user => {
+                const status = friendStatuses[user.id] || 'none';
+                return (
+                  <div key={user.id} style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '10px', borderRadius: '12px', backgroundColor: colors.cream, marginBottom: '8px' }}>
+                    <div style={{ width: '42px', height: '42px', borderRadius: '21px', backgroundColor: colors.navyMid, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '14px', fontWeight: '700', color: 'white', flexShrink: 0, overflow: 'hidden' }}>
+                      {user.profile_image_url ? <img src={user.profile_image_url} alt="" style={{ width: '42px', height: '42px', borderRadius: '21px', objectFit: 'cover' }} /> : user.name[0]?.toUpperCase()}
+                    </div>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <p style={{ fontWeight: '700', fontSize: '13px', color: colors.navy, margin: 0 }}>{user.name}</p>
+                      <p style={{ fontSize: '10px', color: '#6b7280', margin: '1px 0 0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{user.email}</p>
+                    </div>
+                    <div style={{ display: 'flex', gap: '6px', flexShrink: 0 }}>
+                      {status === 'accepted' ? (
+                        <span style={{ padding: '6px 12px', borderRadius: '20px', backgroundColor: '#d1fae5', color: '#047857', fontSize: '11px', fontWeight: '700' }}>Friends</span>
+                      ) : status === 'pending' ? (
+                        <span style={{ padding: '6px 12px', borderRadius: '20px', backgroundColor: '#e5e7eb', color: '#6b7280', fontSize: '11px', fontWeight: '700' }}>Pending</span>
+                      ) : (
+                        <button onClick={() => handleSendFriendRequest(user)} style={{ padding: '6px 12px', borderRadius: '20px', border: 'none', backgroundColor: colors.navy, color: 'white', fontSize: '11px', fontWeight: '700', cursor: 'pointer' }}>Add Friend</button>
+                      )}
+                      <button onClick={() => { setShowConnectPanel(false); setConnectSearch(''); setConnectResults([]); setSelectedDmId(user.id); setCurrentScreen('dmDetail'); }} style={{ padding: '6px 12px', borderRadius: '20px', border: `1.5px solid ${colors.creamDark}`, backgroundColor: 'white', color: colors.navy, fontSize: '11px', fontWeight: '700', cursor: 'pointer' }}>Message</button>
+                    </div>
+                  </div>
+                );
+              })}
+
+              {!connectSearching && connectSearch.trim().length === 0 && (
+                <div style={{ textAlign: 'center', padding: '24px 16px' }}>
+                  <div style={{ width: '48px', height: '48px', borderRadius: '24px', backgroundColor: colors.cream, display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 10px' }}>{Icons.search(colors.navy, 22)}</div>
+                  <p style={{ fontSize: '13px', fontWeight: '600', color: colors.navy, margin: '0 0 4px' }}>Search for people</p>
+                  <p style={{ fontSize: '11px', color: '#9ca3af', margin: 0 }}>Find friends by name or email</p>
+                </div>
+              )}
             </div>
           </div>
         )}

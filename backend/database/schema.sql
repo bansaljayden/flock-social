@@ -84,7 +84,18 @@ CREATE TABLE IF NOT EXISTS stories (
   expires_at TIMESTAMP DEFAULT (NOW() + INTERVAL '24 hours')
 );
 
+CREATE TABLE IF NOT EXISTS friendships (
+  id SERIAL PRIMARY KEY,
+  requester_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+  addressee_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+  status VARCHAR(20) DEFAULT 'pending' CHECK (status IN ('pending', 'accepted', 'declined')),
+  created_at TIMESTAMP DEFAULT NOW(),
+  UNIQUE(requester_id, addressee_id)
+);
+
 -- Indexes for query performance
+CREATE INDEX IF NOT EXISTS idx_friendships_requester ON friendships(requester_id);
+CREATE INDEX IF NOT EXISTS idx_friendships_addressee ON friendships(addressee_id);
 CREATE INDEX IF NOT EXISTS idx_flock_members_flock ON flock_members(flock_id);
 CREATE INDEX IF NOT EXISTS idx_flock_members_user ON flock_members(user_id);
 CREATE INDEX IF NOT EXISTS idx_messages_flock ON messages(flock_id);
