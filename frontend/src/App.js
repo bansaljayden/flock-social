@@ -138,10 +138,34 @@ const GoogleMapView = React.memo(({ venues, filterCategory, userLocation, active
   const prevVenueCountRef = useRef(0); // track if venues are newly loaded vs just re-rendered
   const zoomListenerRef = useRef(null);
 
-  // Hellertown, PA — ONLY fallback if geolocation fails
-  const FALLBACK_CENTER = { lat: 40.5798, lng: -75.2932 };
   const DEFAULT_ZOOM = 12;
-  const hasLockedOnUserRef = useRef(false); // true once we've centered on user
+
+  // Get user's REAL location — works anywhere (PA, KY, CA, anywhere!)
+  // Only falls back to Hellertown if geolocation is denied/unsupported
+  const getUserLocation = () => {
+    return new Promise((resolve) => {
+      if (navigator.geolocation) {
+        navigator.geolocation.getCurrentPosition(
+          (position) => {
+            const userLoc = {
+              lat: position.coords.latitude,
+              lng: position.coords.longitude
+            };
+            console.log('[Map] User location:', userLoc);
+            resolve(userLoc);
+          },
+          (error) => {
+            console.log('[Map] Geolocation denied/failed:', error.message, '- using Hellertown fallback');
+            resolve({ lat: 40.5798, lng: -75.2932 });
+          },
+          { enableHighAccuracy: true, timeout: 8000, maximumAge: 60000 }
+        );
+      } else {
+        console.log('[Map] Geolocation not supported - using Hellertown fallback');
+        resolve({ lat: 40.5798, lng: -75.2932 });
+      }
+    });
+  };
 
   // Build Flock-branded pin SVG
   const buildPinSvg = useCallback((isActive, category) => {
@@ -161,15 +185,20 @@ const GoogleMapView = React.memo(({ venues, filterCategory, userLocation, active
   // Crowd color helper
   const crowdColor = (crowd) => crowd > 70 ? '#EF4444' : crowd > 40 ? '#F59E0B' : '#10B981';
 
-  // Initialize map ONCE — get user location FIRST, then create map centered on it
+  // Initialize map ONCE — get user's REAL location first, then create map centered on THEM
   useEffect(() => {
     if (!mapRef.current || !window.google?.maps) return;
     if (mapInstanceRef.current) return;
 
-    // Get user's ACTUAL location, then init map
-    const initMap = (center) => {
+    const initMap = async () => {
+      // Get user's REAL location (wherever they are!)
+      const userLoc = await getUserLocation();
+
+      console.log('[Map] Initializing map at:', userLoc);
+
+      // Create map centered on THEIR location
       const map = new window.google.maps.Map(mapRef.current, {
-        center,
+        center: userLoc,
         zoom: DEFAULT_ZOOM,
         styles: FLOCK_MAP_STYLES,
         disableDefaultUI: true,
@@ -182,18 +211,11 @@ const GoogleMapView = React.memo(({ venues, filterCategory, userLocation, active
       });
       mapInstanceRef.current = map;
       map.addListener('click', () => { setActiveVenue(null); });
-      hasLockedOnUserRef.current = true;
+
+      console.log('[Map] Map created, centered on user at', userLoc.lat, userLoc.lng);
     };
 
-    if (navigator.geolocation) {
-      navigator.geolocation.getCurrentPosition(
-        (pos) => initMap({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
-        () => initMap(FALLBACK_CENTER),
-        { enableHighAccuracy: true, timeout: 5000, maximumAge: 60000 }
-      );
-    } else {
-      initMap(FALLBACK_CENTER);
-    }
+    initMap();
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // User location blue dot — just place the marker, DON'T move the map
@@ -405,26 +427,13 @@ const GoogleMapView = React.memo(({ venues, filterCategory, userLocation, active
         }
       }
     };
-    // My Location: re-request geolocation, center on it, zoom 12
-    // Also triggers venue reload via global callback
-    window.__flockGoToMyLocation = () => {
+    // My Location: re-request user's REAL geolocation, center on it, zoom 12
+    window.__flockGoToMyLocation = async () => {
       if (!mapInstanceRef.current) return;
-      const centerAndZoom = (loc) => {
-        mapInstanceRef.current.panTo(loc);
-        mapInstanceRef.current.setZoom(DEFAULT_ZOOM);
-      };
-      if (navigator.geolocation) {
-        navigator.geolocation.getCurrentPosition(
-          (pos) => centerAndZoom({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
-          () => {
-            if (userMarkerRef.current) centerAndZoom(userMarkerRef.current.getPosition());
-            else centerAndZoom(FALLBACK_CENTER);
-          },
-          { enableHighAccuracy: true, timeout: 5000, maximumAge: 60000 }
-        );
-      } else if (userMarkerRef.current) {
-        centerAndZoom(userMarkerRef.current.getPosition());
-      }
+      const userLoc = await getUserLocation();
+      console.log('[Map] My Location pressed, centering on:', userLoc);
+      mapInstanceRef.current.panTo(userLoc);
+      mapInstanceRef.current.setZoom(DEFAULT_ZOOM);
     };
     return () => { delete window.__flockOpenVenue; delete window.__flockPanToVenue; delete window.__flockGoToMyLocation; };
   }, [venues, openVenueDetail]);
