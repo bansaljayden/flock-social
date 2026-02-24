@@ -282,8 +282,6 @@ const GoogleMapView = React.memo(({ venues, filterCategory, userLocation, active
     markersRef.current = [];
 
     const bounds = new window.google.maps.LatLngBounds();
-    let hasValidBounds = false;
-    const isNewData = venues.length !== prevVenueCountRef.current;
     prevVenueCountRef.current = venues.length;
 
     venues.forEach(v => {
@@ -352,7 +350,6 @@ const GoogleMapView = React.memo(({ venues, filterCategory, userLocation, active
 
       markersRef.current.push({ marker, venue: v, circles: entryCircles });
       bounds.extend(position);
-      hasValidBounds = true;
     });
 
     // Do NOT fitBounds on initial load — map stays centered on user's location.
@@ -465,7 +462,7 @@ const GoogleMapView = React.memo(({ venues, filterCategory, userLocation, active
       mapInstanceRef.current.setZoom(DEFAULT_ZOOM);
     };
     return () => { delete window.__flockOpenVenue; delete window.__flockPanToVenue; delete window.__flockGoToMyLocation; };
-  }, [venues, openVenueDetail]);
+  }, [venues, openVenueDetail, setActiveVenue]);
 
   return (
     <div style={{ position: 'absolute', inset: 0 }}>
@@ -1001,7 +998,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
   const [joinCode, setJoinCode] = useState('');
 
   // Explore
-  const [searchText] = useState('');
+  // searchText removed — filtering handled by venue search
   const [category, setCategory] = useState('All');
   const [activeVenue, setActiveVenue] = useState(null);
   const [venueDetailModal, setVenueDetailModal] = useState(null); // full venue details for modal
@@ -1192,15 +1189,6 @@ const FlockAppInner = ({ authUser, onLogout }) => {
       requestUserLocation();
     }
   }, [requestUserLocation]);
-
-  const getFilteredVenues = useCallback(() => {
-    let venues = category === 'All' ? allVenues : allVenues.filter(v => v.category === category);
-    if (searchText.trim()) {
-      const q = searchText.toLowerCase();
-      venues = allVenues.filter(v => v.name.toLowerCase().includes(q) || v.type.toLowerCase().includes(q));
-    }
-    return venues;
-  }, [category, searchText, allVenues]);
 
   const getSelectedFlock = useCallback(() => flocks.find(f => f.id === selectedFlockId) || flocks[0], [flocks, selectedFlockId]);
 
@@ -2827,10 +2815,6 @@ const FlockAppInner = ({ authUser, onLogout }) => {
   );
 
   // EXPLORE SCREEN
-  // Track clicked/hovered pins for animations
-  const [hoveredPin, setHoveredPin] = useState(null);
-  const [clickedPin, setClickedPin] = useState(null);
-
   const ExploreScreen = () => (
     <div key="explore-screen-container" style={{ display: 'flex', flexDirection: 'column', height: '100%', backgroundColor: '#e5e7eb' }}>
       {pickingVenueForCreate && (
