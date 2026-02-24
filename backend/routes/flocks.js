@@ -73,7 +73,7 @@ router.post('/',
         if (invited_user_ids && invited_user_ids.length > 0) {
           const values = invited_user_ids
             .filter((id) => id !== req.user.id)
-            .map((userId) => `(${flock.id}, ${parseInt(userId)}, 'invited')`);
+            .map((userId) => `(${flock.id}, ${parseInt(userId)}, 'accepted')`);
 
           if (values.length > 0) {
             await client.query(
