@@ -15,6 +15,29 @@ import { connectSocket, disconnectSocket, getSocket, joinFlock, leaveFlock, send
 import LoginScreen from './components/auth/LoginScreen';
 import SignupScreen from './components/auth/SignupScreen';
 
+// Load Google Maps dynamically from .env — API key never exposed in HTML
+const loadGoogleMapsScript = () => {
+  return new Promise((resolve, reject) => {
+    if (window.google && window.google.maps) {
+      resolve();
+      return;
+    }
+    const existing = document.querySelector('script[src*="maps.googleapis.com"]');
+    if (existing) {
+      existing.addEventListener('load', () => resolve());
+      if (window.google?.maps) resolve();
+      return;
+    }
+    const script = document.createElement('script');
+    script.src = `https://maps.googleapis.com/maps/api/js?key=${process.env.REACT_APP_GOOGLE_MAPS_API_KEY}&libraries=places`;
+    script.async = true;
+    script.defer = true;
+    script.onload = () => resolve();
+    script.onerror = () => reject(new Error('Failed to load Google Maps'));
+    document.head.appendChild(script);
+  });
+};
+
 // Memoized VenueCard — extracted outside App so it never re-creates on parent renders
 const VenueCard = React.memo(({ venue, onViewDetails, onVote, colors: c, Icons: I, getCategoryColor: gcc }) => {
   const rating = venue.stars || venue.rating || null;
@@ -185,12 +208,15 @@ const GoogleMapView = React.memo(({ venues, filterCategory, userLocation, active
   // Crowd color helper
   const crowdColor = (crowd) => crowd > 70 ? '#EF4444' : crowd > 40 ? '#F59E0B' : '#10B981';
 
-  // Initialize map ONCE — get user's REAL location first, then create map centered on THEM
+  // Initialize map ONCE — load Google Maps script, get user location, then create map
   useEffect(() => {
-    if (!mapRef.current || !window.google?.maps) return;
+    if (!mapRef.current) return;
     if (mapInstanceRef.current) return;
 
     const initMap = async () => {
+      // Load Google Maps script first (from .env, not index.html)
+      await loadGoogleMapsScript();
+
       // Get user's REAL location (wherever they are!)
       const userLoc = await getUserLocation();
 
