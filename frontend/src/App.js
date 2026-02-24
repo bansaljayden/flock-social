@@ -160,6 +160,7 @@ const GoogleMapView = React.memo(({ venues, filterCategory, userLocation, active
   const userMarkerRef = useRef(null);
   const prevVenueCountRef = useRef(0); // track if venues are newly loaded vs just re-rendered
   const zoomListenerRef = useRef(null);
+  const [mapReady, setMapReady] = useState(false); // tracks when Google Map instance is initialized
 
   const DEFAULT_ZOOM = 12;
 
@@ -236,6 +237,7 @@ const GoogleMapView = React.memo(({ venues, filterCategory, userLocation, active
         gestureHandling: 'greedy',
       });
       mapInstanceRef.current = map;
+      setMapReady(true);
       map.addListener('click', () => { setActiveVenue(null); });
 
       console.log('[Map] Map created, centered on user at', userLoc.lat, userLoc.lng);
@@ -246,7 +248,7 @@ const GoogleMapView = React.memo(({ venues, filterCategory, userLocation, active
 
   // User location blue dot — just place the marker, DON'T move the map
   useEffect(() => {
-    if (!mapInstanceRef.current || !userLocation) return;
+    if (!mapReady || !mapInstanceRef.current || !userLocation) return;
     const pos = { lat: userLocation.lat, lng: userLocation.lng };
     if (userMarkerRef.current) {
       userMarkerRef.current.setPosition(pos);
@@ -266,7 +268,7 @@ const GoogleMapView = React.memo(({ venues, filterCategory, userLocation, active
         title: 'You are here',
       });
     }
-  }, [userLocation]);
+  }, [userLocation, mapReady]);
 
   // Venue markers + heatmap — rebuild ONLY when venue data actually changes (not on activeVenue!)
   useEffect(() => {
@@ -355,7 +357,8 @@ const GoogleMapView = React.memo(({ venues, filterCategory, userLocation, active
 
     // Do NOT fitBounds on initial load — map stays centered on user's location.
     // Only fitBounds when explicitly searching (not on default venue load).
-  }, [venues, buildPinSvg, pickingVenueForCreate, setActiveVenue, setSelectedVenueForCreate, setPickingVenueForCreate, setCurrentScreen]); // NO activeVenue — no rebuild on click!
+  }, [venues, buildPinSvg]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Only rebuild markers when venue DATA changes — setters are stable refs, don't trigger rebuilds
 
   // Active venue highlight — update pin style WITHOUT rebuilding everything
   useEffect(() => {
@@ -689,8 +692,13 @@ const FlockAppInner = ({ authUser, onLogout }) => {
   const [showSearchDropdown, setShowSearchDropdown] = useState(true);
   const searchTimerRef = useRef(null);
 
-  // Geolocation state
-  const [userLocation, setUserLocation] = useState(null); // { lat, lng }
+  // Geolocation state — restore last known location immediately so map isn't empty
+  const [userLocation, setUserLocation] = useState(() => {
+    const savedLat = localStorage.getItem('flock_user_lat');
+    const savedLng = localStorage.getItem('flock_user_lng');
+    if (savedLat && savedLng) return { lat: parseFloat(savedLat), lng: parseFloat(savedLng) };
+    return null;
+  });
   const [locationLoading, setLocationLoading] = useState(false);
 
   // Search result cache: key -> { data, timestamp }
@@ -1085,32 +1093,8 @@ const FlockAppInner = ({ authUser, onLogout }) => {
   }, [showAiAssistant]);
 
   // Map venues loaded from Google Places API
-  // Start with seed venues so map is NEVER empty on load
-  const [allVenues, setAllVenues] = useState(() => {
-    const seedData = [
-      { place_id: 'seed_1', name: 'The Bookstore Speakeasy', formatted_address: '336 Adams St, Bethlehem, PA', rating: 4.6, user_ratings_total: 312, price_level: 2, types: ['bar', 'night_club'], location: { latitude: 40.6262, longitude: -75.3775 } },
-      { place_id: 'seed_2', name: "Molinari's", formatted_address: '322 E 3rd St, Bethlehem, PA', rating: 4.5, user_ratings_total: 287, price_level: 2, types: ['restaurant', 'italian_restaurant'], location: { latitude: 40.6178, longitude: -75.3683 } },
-      { place_id: 'seed_3', name: 'Bonn Place Brewing', formatted_address: '302 Brodhead Ave, Bethlehem, PA', rating: 4.7, user_ratings_total: 198, price_level: 2, types: ['bar', 'brewery'], location: { latitude: 40.6130, longitude: -75.3780 } },
-      { place_id: 'seed_4', name: 'Social Still', formatted_address: '530 E 3rd St, Bethlehem, PA', rating: 4.4, user_ratings_total: 245, price_level: 2, types: ['bar', 'restaurant'], location: { latitude: 40.6180, longitude: -75.3650 } },
-      { place_id: 'seed_5', name: 'Linderman Library', formatted_address: '30 Library Dr, Bethlehem, PA', rating: 4.5, user_ratings_total: 80, price_level: 0, types: ['library', 'university'], location: { latitude: 40.6064, longitude: -75.3779 } },
-      { place_id: 'seed_6', name: 'The Steel Pub', formatted_address: '55 E 3rd St, Bethlehem, PA', rating: 4.3, user_ratings_total: 156, price_level: 1, types: ['bar', 'restaurant'], location: { latitude: 40.6183, longitude: -75.3748 } },
-      { place_id: 'seed_7', name: 'Tapas on Main', formatted_address: '500 Main St, Bethlehem, PA', rating: 4.5, user_ratings_total: 220, price_level: 3, types: ['restaurant', 'spanish_restaurant'], location: { latitude: 40.6258, longitude: -75.3755 } },
-      { place_id: 'seed_8', name: 'ArtsQuest Center', formatted_address: '101 Founders Way, Bethlehem, PA', rating: 4.6, user_ratings_total: 402, price_level: 2, types: ['performing_arts_theater', 'live_music_venue'], location: { latitude: 40.6150, longitude: -75.3770 } },
-    ];
-    // Pre-convert to map pin format inline
-    const bestTimes = ['Now-ish', 'Right now', '8 PM', '9 PM', '10 PM+', 'Sunset!', 'Game time!', '8:30ish'];
-    return seedData.map((v, i) => {
-      const seed = ((v.place_id || '').charCodeAt(0) || 0) + i;
-      const crowd = Math.round(20 + ((seed * 37) % 70));
-      const t = (v.types || []).join(' ').toLowerCase();
-      let cat = 'Food';
-      if (t.includes('bar') || t.includes('night_club')) cat = 'Nightlife';
-      else if (t.includes('music') || t.includes('performing_arts')) cat = 'Live Music';
-      else if (t.includes('stadium') || t.includes('gym') || t.includes('sports')) cat = 'Sports';
-      else if (t.includes('restaurant') || t.includes('cafe') || t.includes('bakery')) cat = 'Food';
-      return { id: i + 1, place_id: v.place_id, name: v.name, type: v.types[0]?.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()) || 'Venue', category: cat, x: 10 + ((seed * 13) % 80), y: 10 + ((seed * 29) % 75), crowd, best: bestTimes[i % bestTimes.length], stars: v.rating, addr: v.formatted_address, price: v.price_level ? '$'.repeat(v.price_level) : '$$', trending: v.rating >= 4.5, photo_url: null, location: v.location, types: v.types };
-    });
-  });
+  // Start empty — venues load from API based on user's actual location
+  const [allVenues, setAllVenues] = useState([]);
   const [mapVenuesLoaded, setMapVenuesLoaded] = useState(false);
 
   // Seed venues - shown when API is unavailable (rate limited, no key, offline)
@@ -1125,10 +1109,15 @@ const FlockAppInner = ({ authUser, onLogout }) => {
     { place_id: 'seed_8', name: 'ArtsQuest Center', formatted_address: '101 Founders Way, Bethlehem, PA', rating: 4.6, user_ratings_total: 402, price_level: 2, types: ['performing_arts_theater', 'live_music_venue'], location: { latitude: 40.6150, longitude: -75.3770 } },
   ], []);
 
-  // Geolocation helper: request user location and load nearby venues
-  const loadNearbyVenues = useCallback((lat, lng) => {
+  // Ref to track if initial venue load has been attempted (survives re-renders)
+  const venueLoadAttemptedRef = useRef(false);
+
+  // Core venue loading function
+  const loadVenuesAtLocation = useCallback((lat, lng) => {
     console.log('[Geo] Loading venues near:', lat, lng);
     setUserLocation({ lat, lng });
+    localStorage.setItem('flock_user_lat', String(lat));
+    localStorage.setItem('flock_user_lng', String(lng));
     const locStr = `${lat},${lng}`;
     const cacheKey = `nearby|${locStr}`;
     const cached = searchCacheRef.current[cacheKey];
@@ -1147,88 +1136,62 @@ const FlockAppInner = ({ authUser, onLogout }) => {
       })
       .catch((err) => {
         console.error('[Geo] Nearby venue search failed:', err);
-        if (err.message && (err.message.includes('429') || err.message.toLowerCase().includes('rate') || err.message.toLowerCase().includes('too many'))) {
-          showToast('Slow down! Try again in a few seconds', 'error');
-        }
-        // Fallback to seed data so map is never empty
-        console.log('[Geo] Using seed venues as fallback');
-        setAllVenues(venuesToMapPins(seedVenues));
-        setMapVenuesLoaded(true);
-      });
-  }, [venuesToMapPins, showToast, seedVenues]);
-
-  const loadDefaultVenues = useCallback(() => {
-    console.log('[Geo] Falling back to Bethlehem PA defaults');
-    const cacheKey = 'default|bethlehem';
-    const cached = searchCacheRef.current[cacheKey];
-    if (cached && Date.now() - cached.timestamp < 300000) {
-      setAllVenues(venuesToMapPins(cached.data));
-      setMapVenuesLoaded(true);
-      return;
-    }
-    searchVenues('restaurants bars cafes parks libraries museums nightclubs bethlehem pa')
-      .then((data) => {
-        const venues = data.venues || [];
-        searchCacheRef.current[cacheKey] = { data: venues, timestamp: Date.now() };
-        setAllVenues(venuesToMapPins(venues));
-        setMapVenuesLoaded(true);
-      })
-      .catch((err) => {
-        console.error('[Geo] Default venue search failed:', err);
-        // Fallback to seed data so map is never empty
         console.log('[Geo] Using seed venues as fallback');
         setAllVenues(venuesToMapPins(seedVenues));
         setMapVenuesLoaded(true);
       });
   }, [venuesToMapPins, seedVenues]);
 
+  // Request user geolocation and load venues
   const requestUserLocation = useCallback((forceRefresh = false) => {
-    if (locationLoading) return;
-    if (!forceRefresh && userLocation) {
-      console.log('[Geo] Reusing existing location:', userLocation);
-      loadNearbyVenues(userLocation.lat, userLocation.lng);
-      return;
+    const savedLat = localStorage.getItem('flock_user_lat');
+    const savedLng = localStorage.getItem('flock_user_lng');
+
+    // Use saved location immediately so map has data right away
+    if (!forceRefresh && savedLat && savedLng) {
+      const lat = parseFloat(savedLat);
+      const lng = parseFloat(savedLng);
+      setUserLocation({ lat, lng }); // Set blue dot immediately
+      loadVenuesAtLocation(lat, lng);
     }
+
     if (!navigator.geolocation) {
-      console.warn('[Geo] Geolocation not supported');
-      loadDefaultVenues();
+      if (!savedLat) {
+        searchVenues('restaurants bars cafes parks libraries museums nightclubs bethlehem pa')
+          .then((data) => { setAllVenues(venuesToMapPins(data.venues || [])); setMapVenuesLoaded(true); })
+          .catch(() => { setAllVenues(venuesToMapPins(seedVenues)); setMapVenuesLoaded(true); });
+      }
       return;
     }
+
     setLocationLoading(true);
-    console.log('[Geo] Requesting browser geolocation...', forceRefresh ? '(fresh)' : '(cached ok)');
     navigator.geolocation.getCurrentPosition(
       (pos) => {
-        const { latitude, longitude, accuracy } = pos.coords;
-        console.log('[Geo] Got position:', latitude, longitude, 'accuracy:', accuracy, 'm');
+        const { latitude, longitude } = pos.coords;
+        console.log('[Geo] Got position:', latitude, longitude);
         setLocationLoading(false);
-        localStorage.setItem('flock_user_lat', String(latitude));
-        localStorage.setItem('flock_user_lng', String(longitude));
-        loadNearbyVenues(latitude, longitude);
+        loadVenuesAtLocation(latitude, longitude);
       },
       (err) => {
-        console.warn('[Geo] Geolocation denied/failed:', err.code, err.message);
+        console.warn('[Geo] Geolocation denied:', err.message);
         setLocationLoading(false);
-        // Fallback: check localStorage for last known location
-        const savedLat = localStorage.getItem('flock_user_lat');
-        const savedLng = localStorage.getItem('flock_user_lng');
-        if (savedLat && savedLng) {
-          console.log('[Geo] Using saved location:', savedLat, savedLng);
-          loadNearbyVenues(parseFloat(savedLat), parseFloat(savedLng));
-        } else {
-          loadDefaultVenues();
+        if (!savedLat || forceRefresh) {
+          searchVenues('restaurants bars cafes parks libraries museums nightclubs bethlehem pa')
+            .then((data) => { setAllVenues(venuesToMapPins(data.venues || [])); setMapVenuesLoaded(true); })
+            .catch(() => { setAllVenues(venuesToMapPins(seedVenues)); setMapVenuesLoaded(true); });
         }
       },
-      forceRefresh
-        ? { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
-        : { enableHighAccuracy: true, timeout: 10000, maximumAge: 60000 }
+      { enableHighAccuracy: true, timeout: 10000, maximumAge: forceRefresh ? 0 : 60000 }
     );
-  }, [locationLoading, userLocation, loadNearbyVenues, loadDefaultVenues]);
+  }, [loadVenuesAtLocation, venuesToMapPins, seedVenues]);
 
-  // Load real venues from Google Places for the Discover map using geolocation
+  // Load venues on mount
   useEffect(() => {
-    if (mapVenuesLoaded) return;
-    requestUserLocation();
-  }, [mapVenuesLoaded, requestUserLocation]);
+    if (!venueLoadAttemptedRef.current) {
+      venueLoadAttemptedRef.current = true;
+      requestUserLocation();
+    }
+  }, [requestUserLocation]);
 
   const getFilteredVenues = useCallback(() => {
     let venues = category === 'All' ? allVenues : allVenues.filter(v => v.category === category);
@@ -1809,6 +1772,10 @@ const FlockAppInner = ({ authUser, onLogout }) => {
       setProfileScreen('main');
       setActiveVenue(null);
       setShowConnectPanel(false);
+      // Auto-load venues when switching to Discover
+      if (tabId === 'explore' && (!mapVenuesLoaded || !userLocation)) {
+        requestUserLocation();
+      }
     };
 
     return (
