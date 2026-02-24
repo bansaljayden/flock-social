@@ -87,10 +87,10 @@ export async function getFlock(id) {
   return request(`/api/flocks/${id}`);
 }
 
-export async function createFlock({ name, venue_name, venue_address, venue_id, event_time }) {
+export async function createFlock({ name, venue_name, venue_address, venue_id, event_time, invited_user_ids }) {
   return request('/api/flocks', {
     method: 'POST',
-    body: JSON.stringify({ name, venue_name, venue_address, venue_id, event_time }),
+    body: JSON.stringify({ name, venue_name, venue_address, venue_id, event_time, invited_user_ids }),
   });
 }
 
@@ -142,6 +142,11 @@ export async function searchVenues(query, location) {
 
 export async function getVenueDetails(placeId) {
   return request(`/api/venues/details?place_id=${encodeURIComponent(placeId)}`);
+}
+
+// Users
+export async function searchUsers(query) {
+  return request(`/api/users/search?q=${encodeURIComponent(query)}`);
 }
 
 // Stories
