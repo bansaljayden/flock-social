@@ -21,6 +21,8 @@ CREATE TABLE IF NOT EXISTS flocks (
   venue_name VARCHAR(255),
   venue_address TEXT,
   venue_id VARCHAR(255),
+  venue_latitude DOUBLE PRECISION,
+  venue_longitude DOUBLE PRECISION,
   event_time TIMESTAMP,
   status VARCHAR(20) DEFAULT 'planning' CHECK (status IN ('planning', 'confirmed', 'completed', 'cancelled')),
   created_at TIMESTAMP DEFAULT NOW(),

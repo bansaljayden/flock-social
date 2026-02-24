@@ -138,9 +138,10 @@ const GoogleMapView = React.memo(({ venues, filterCategory, userLocation, active
   const prevVenueCountRef = useRef(0); // track if venues are newly loaded vs just re-rendered
   const zoomListenerRef = useRef(null);
 
-  // Bethlehem / Lehigh Valley — default view for Discover tab
-  const defaultCenter = { lat: 40.6259, lng: -75.3705 };
-  const defaultZoom = 12; // shows entire Lehigh Valley
+  // Hellertown fallback — only used if geolocation fails
+  const fallbackCenter = { lat: 40.5798, lng: -75.2932 };
+  const defaultZoom = 12; // zoomed out to show user's area
+  const hasInitiallyPannedRef = useRef(false);
 
   // Build Flock-branded pin SVG
   const buildPinSvg = useCallback((isActive, category) => {
@@ -166,7 +167,7 @@ const GoogleMapView = React.memo(({ venues, filterCategory, userLocation, active
     if (mapInstanceRef.current) return;
 
     const map = new window.google.maps.Map(mapRef.current, {
-      center: defaultCenter,
+      center: fallbackCenter,
       zoom: defaultZoom,
       styles: FLOCK_MAP_STYLES,
       disableDefaultUI: true,
@@ -208,8 +209,12 @@ const GoogleMapView = React.memo(({ venues, filterCategory, userLocation, active
         title: 'You are here',
       });
     }
-    // Don't auto-center — let the default Lehigh Valley view persist.
-    // User can tap "My Location" button to recenter.
+    // Center on user's REAL location the first time we get it
+    if (!hasInitiallyPannedRef.current) {
+      hasInitiallyPannedRef.current = true;
+      mapInstanceRef.current.setCenter(pos);
+      mapInstanceRef.current.setZoom(defaultZoom);
+    }
   }, [userLocation]);
 
   // Venue markers + heatmap — rebuild ONLY when venue data actually changes (not on activeVenue!)
@@ -286,21 +291,9 @@ const GoogleMapView = React.memo(({ venues, filterCategory, userLocation, active
       });
 
       marker.addListener('click', () => {
-        if (pickingVenueForCreate) {
-          setSelectedVenueForCreate({
-            name: v.name, addr: v.addr, place_id: v.place_id,
-            photo_url: v.photo_url, rating: v.stars,
-            price_level: v.price ? v.price.length : null,
-            lat: v.location?.latitude, lng: v.location?.longitude,
-          });
-          setPickingVenueForCreate(false);
-          setCurrentScreen('create');
-          return;
-        }
-
-        // Set active venue — the bottom panel (AI Crowd Forecast card) will show
+        // Always show forecast card first — even when picking venue for flock
+        // The bottom panel has a "Select" button when pickingVenueForCreate is true
         setActiveVenue(v);
-        // Smooth pan to venue
         mapInstanceRef.current.panTo(position);
       });
 
@@ -420,12 +413,15 @@ const GoogleMapView = React.memo(({ venues, filterCategory, userLocation, active
         }
       }
     };
-    // My Location: recenter to Lehigh Valley default view
+    // My Location: recenter on user's real location, zoom 12
     window.__flockGoToMyLocation = () => {
-      if (mapInstanceRef.current) {
-        mapInstanceRef.current.panTo(defaultCenter);
-        mapInstanceRef.current.setZoom(defaultZoom);
+      if (!mapInstanceRef.current) return;
+      if (userMarkerRef.current) {
+        mapInstanceRef.current.panTo(userMarkerRef.current.getPosition());
+      } else {
+        mapInstanceRef.current.panTo(fallbackCenter);
       }
+      mapInstanceRef.current.setZoom(defaultZoom);
     };
     return () => { delete window.__flockOpenVenue; delete window.__flockPanToVenue; delete window.__flockGoToMyLocation; };
   }, [venues, openVenueDetail]);
@@ -933,6 +929,8 @@ const FlockAppInner = ({ authUser, onLogout }) => {
           venue: f.venue_name || 'TBD',
           venueAddress: f.venue_address || null,
           venueId: f.venue_id || null,
+          venueLat: f.venue_latitude || null,
+          venueLng: f.venue_longitude || null,
           cashPool: null,
           votes: [],
           messages: [],
@@ -2549,7 +2547,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
         const venueLat = selectedVenueForCreate?.lat || selectedVenueForCreate?.location?.latitude || null;
         const venueLng = selectedVenueForCreate?.lng || selectedVenueForCreate?.location?.longitude || null;
         const invitedIds = flockFriends.map(f => f.id).filter(Boolean);
-        const data = await apiCreateFlock({ name: flockName, venue_name: venueName, venue_address: venueAddr, venue_id: venueId, invited_user_ids: invitedIds.length > 0 ? invitedIds : undefined });
+        const data = await apiCreateFlock({ name: flockName, venue_name: venueName, venue_address: venueAddr, venue_id: venueId, venue_latitude: venueLat || undefined, venue_longitude: venueLng || undefined, invited_user_ids: invitedIds.length > 0 ? invitedIds : undefined });
         const f = data.flock;
         const initialMessages = [];
         if (venueName) {
@@ -3081,9 +3079,9 @@ const FlockAppInner = ({ authUser, onLogout }) => {
 
               <div style={{ display: 'flex', gap: '6px' }}>
                 {pickingVenueForCreate ? (
-                  <button onClick={() => { setSelectedVenueForCreate(activeVenue); setActiveVenue(null); setPickingVenueForCreate(false); setCurrentScreen('create'); showToast('Selected!'); }} style={{ flex: 1, padding: '10px', borderRadius: '8px', border: 'none', backgroundColor: colors.teal, color: 'white', fontWeight: 'bold', fontSize: '12px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px' }}>{Icons.check('white', 14)} Select</button>
+                  <button onClick={() => { setSelectedVenueForCreate({ ...activeVenue, addr: activeVenue.addr || activeVenue.formatted_address, lat: activeVenue.location?.latitude, lng: activeVenue.location?.longitude }); setActiveVenue(null); setPickingVenueForCreate(false); setCurrentScreen('create'); showToast('Selected!'); }} style={{ flex: 1, padding: '10px', borderRadius: '8px', border: 'none', backgroundColor: colors.teal, color: 'white', fontWeight: 'bold', fontSize: '12px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px' }}>{Icons.check('white', 14)} Select</button>
                 ) : (
-                  <button onClick={() => { setSelectedVenueForCreate(activeVenue); setActiveVenue(null); setCurrentScreen('create'); }} style={{ flex: 1, padding: '10px', borderRadius: '8px', border: 'none', background: `linear-gradient(90deg, ${colors.navy}, ${colors.navyMid})`, color: 'white', fontWeight: 'bold', fontSize: '12px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px' }}>{Icons.users('white', 14)} Start Flock Here</button>
+                  <button onClick={() => { setSelectedVenueForCreate({ ...activeVenue, addr: activeVenue.addr || activeVenue.formatted_address, lat: activeVenue.location?.latitude, lng: activeVenue.location?.longitude }); setActiveVenue(null); setCurrentScreen('create'); }} style={{ flex: 1, padding: '10px', borderRadius: '8px', border: 'none', background: `linear-gradient(90deg, ${colors.navy}, ${colors.navyMid})`, color: 'white', fontWeight: 'bold', fontSize: '12px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px' }}>{Icons.users('white', 14)} Start Flock Here</button>
                 )}
                 {activeVenue.place_id && (
                   <button onClick={() => { openVenueDetail(activeVenue.place_id, { name: activeVenue.name, formatted_address: activeVenue.addr, place_id: activeVenue.place_id, rating: activeVenue.stars, photo_url: activeVenue.photo_url }); }} style={{ width: '40px', height: '40px', borderRadius: '8px', border: `2px solid ${colors.creamDark}`, backgroundColor: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.eye(colors.navy, 18)}</button>
