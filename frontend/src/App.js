@@ -138,10 +138,10 @@ const GoogleMapView = React.memo(({ venues, filterCategory, userLocation, active
   const prevVenueCountRef = useRef(0); // track if venues are newly loaded vs just re-rendered
   const zoomListenerRef = useRef(null);
 
-  // Hellertown fallback — only used if geolocation fails
-  const fallbackCenter = { lat: 40.5798, lng: -75.2932 };
-  const defaultZoom = 12; // zoomed out to show user's area
-  const hasInitiallyPannedRef = useRef(false);
+  // Hellertown, PA — ONLY fallback if geolocation fails
+  const FALLBACK_CENTER = { lat: 40.5798, lng: -75.2932 };
+  const DEFAULT_ZOOM = 12;
+  const hasLockedOnUserRef = useRef(false); // true once we've centered on user
 
   // Build Flock-branded pin SVG
   const buildPinSvg = useCallback((isActive, category) => {
@@ -161,36 +161,45 @@ const GoogleMapView = React.memo(({ venues, filterCategory, userLocation, active
   // Crowd color helper
   const crowdColor = (crowd) => crowd > 70 ? '#EF4444' : crowd > 40 ? '#F59E0B' : '#10B981';
 
-  // Initialize map ONCE — never recreate
+  // Initialize map ONCE — get user location FIRST, then create map centered on it
   useEffect(() => {
     if (!mapRef.current || !window.google?.maps) return;
     if (mapInstanceRef.current) return;
 
-    const map = new window.google.maps.Map(mapRef.current, {
-      center: fallbackCenter,
-      zoom: defaultZoom,
-      styles: FLOCK_MAP_STYLES,
-      disableDefaultUI: true,
-      zoomControl: true,
-      zoomControlOptions: { position: window.google.maps.ControlPosition.RIGHT_CENTER },
-      fullscreenControl: false,
-      mapTypeControl: false,
-      streetViewControl: false,
-      gestureHandling: 'greedy',
-    });
+    // Get user's ACTUAL location, then init map
+    const initMap = (center) => {
+      const map = new window.google.maps.Map(mapRef.current, {
+        center,
+        zoom: DEFAULT_ZOOM,
+        styles: FLOCK_MAP_STYLES,
+        disableDefaultUI: true,
+        zoomControl: true,
+        zoomControlOptions: { position: window.google.maps.ControlPosition.RIGHT_CENTER },
+        fullscreenControl: false,
+        mapTypeControl: false,
+        streetViewControl: false,
+        gestureHandling: 'greedy',
+      });
+      mapInstanceRef.current = map;
+      map.addListener('click', () => { setActiveVenue(null); });
+      hasLockedOnUserRef.current = true;
+    };
 
-    mapInstanceRef.current = map;
-
-    map.addListener('click', () => {
-      setActiveVenue(null);
-    });
+    if (navigator.geolocation) {
+      navigator.geolocation.getCurrentPosition(
+        (pos) => initMap({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
+        () => initMap(FALLBACK_CENTER),
+        { enableHighAccuracy: true, timeout: 5000, maximumAge: 60000 }
+      );
+    } else {
+      initMap(FALLBACK_CENTER);
+    }
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // User location marker — always center on user's REAL location
+  // User location blue dot — just place the marker, DON'T move the map
   useEffect(() => {
     if (!mapInstanceRef.current || !userLocation) return;
     const pos = { lat: userLocation.lat, lng: userLocation.lng };
-
     if (userMarkerRef.current) {
       userMarkerRef.current.setPosition(pos);
     } else {
@@ -208,12 +217,6 @@ const GoogleMapView = React.memo(({ venues, filterCategory, userLocation, active
         zIndex: 999,
         title: 'You are here',
       });
-    }
-    // Center on user's REAL location the first time we get it
-    if (!hasInitiallyPannedRef.current) {
-      hasInitiallyPannedRef.current = true;
-      mapInstanceRef.current.setCenter(pos);
-      mapInstanceRef.current.setZoom(defaultZoom);
     }
   }, [userLocation]);
 
@@ -302,19 +305,8 @@ const GoogleMapView = React.memo(({ venues, filterCategory, userLocation, active
       hasValidBounds = true;
     });
 
-    // fitBounds when venue data actually changes (new search, Near Me, etc.) — not on re-renders
-    if (hasValidBounds && isNewData) {
-      if (venues.length > 1) {
-        mapInstanceRef.current.fitBounds(bounds, { top: 60, bottom: 60, left: 30, right: 30 });
-        const listener = mapInstanceRef.current.addListener('idle', () => {
-          window.google.maps.event.removeListener(listener);
-          if (mapInstanceRef.current.getZoom() < 12) mapInstanceRef.current.setZoom(12);
-        });
-      } else {
-        mapInstanceRef.current.panTo({ lat: venues[0].location.latitude, lng: venues[0].location.longitude });
-        mapInstanceRef.current.setZoom(16);
-      }
-    }
+    // Do NOT fitBounds on initial load — map stays centered on user's location.
+    // Only fitBounds when explicitly searching (not on default venue load).
   }, [venues, buildPinSvg, pickingVenueForCreate, setActiveVenue, setSelectedVenueForCreate, setPickingVenueForCreate, setCurrentScreen]); // NO activeVenue — no rebuild on click!
 
   // Active venue highlight — update pin style WITHOUT rebuilding everything
@@ -413,15 +405,31 @@ const GoogleMapView = React.memo(({ venues, filterCategory, userLocation, active
         }
       }
     };
-    // My Location: recenter on user's real location, zoom 12
+    // My Location: re-request geolocation and center on it, zoom 12
     window.__flockGoToMyLocation = () => {
       if (!mapInstanceRef.current) return;
-      if (userMarkerRef.current) {
+      if (navigator.geolocation) {
+        navigator.geolocation.getCurrentPosition(
+          (pos) => {
+            const loc = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+            mapInstanceRef.current.panTo(loc);
+            mapInstanceRef.current.setZoom(DEFAULT_ZOOM);
+          },
+          () => {
+            // Fallback to blue dot or Hellertown
+            if (userMarkerRef.current) {
+              mapInstanceRef.current.panTo(userMarkerRef.current.getPosition());
+            } else {
+              mapInstanceRef.current.panTo(FALLBACK_CENTER);
+            }
+            mapInstanceRef.current.setZoom(DEFAULT_ZOOM);
+          },
+          { enableHighAccuracy: true, timeout: 5000, maximumAge: 60000 }
+        );
+      } else if (userMarkerRef.current) {
         mapInstanceRef.current.panTo(userMarkerRef.current.getPosition());
-      } else {
-        mapInstanceRef.current.panTo(fallbackCenter);
+        mapInstanceRef.current.setZoom(DEFAULT_ZOOM);
       }
-      mapInstanceRef.current.setZoom(defaultZoom);
     };
     return () => { delete window.__flockOpenVenue; delete window.__flockPanToVenue; delete window.__flockGoToMyLocation; };
   }, [venues, openVenueDetail]);
@@ -3105,22 +3113,28 @@ const FlockAppInner = ({ authUser, onLogout }) => {
             ].map(c => (
             <button key={c.id} onClick={() => {
               setActiveVenue(null);
-              // Local filter ONLY — uses types-based matching (same logic as GoogleMapView filter)
-              if (c.id !== 'All') {
-                const matches = allVenues.filter(v => {
-                  const t = (v.types || []).join(' ').toLowerCase();
-                  const nm = (v.name || '').toLowerCase();
-                  if (c.id === 'Food') return t.includes('restaurant') || t.includes('cafe') || t.includes('food') || t.includes('bakery') || t.includes('bar') || v.category === 'Food';
-                  if (c.id === 'Nightlife') return t.includes('bar') || t.includes('night_club') || t.includes('club') || t.includes('liquor') || v.category === 'Nightlife';
-                  if (c.id === 'Live Music') return t.includes('music') || t.includes('concert') || t.includes('performing_arts') || nm.includes('music') || v.category === 'Live Music';
-                  if (c.id === 'Sports') return t.includes('stadium') || t.includes('gym') || t.includes('sports') || t.includes('bowling') || v.category === 'Sports';
-                  return true;
-                });
-                if (matches.length === 0) {
-                  showToast(`No ${c.id} venues nearby. Showing all.`);
-                  setCategory('All');
-                  return;
-                }
+              if (c.id === 'All') {
+                // Reset: recenter on user, reload nearby venues
+                setCategory('All');
+                setVenueQuery('');
+                if (window.__flockGoToMyLocation) window.__flockGoToMyLocation();
+                requestUserLocation(true); // force reload nearby venues
+                return;
+              }
+              // Category filter — uses types-based matching
+              const matches = allVenues.filter(v => {
+                const t = (v.types || []).join(' ').toLowerCase();
+                const nm = (v.name || '').toLowerCase();
+                if (c.id === 'Food') return t.includes('restaurant') || t.includes('cafe') || t.includes('food') || t.includes('bakery') || t.includes('bar') || v.category === 'Food';
+                if (c.id === 'Nightlife') return t.includes('bar') || t.includes('night_club') || t.includes('club') || t.includes('liquor') || v.category === 'Nightlife';
+                if (c.id === 'Live Music') return t.includes('music') || t.includes('concert') || t.includes('performing_arts') || nm.includes('music') || v.category === 'Live Music';
+                if (c.id === 'Sports') return t.includes('stadium') || t.includes('gym') || t.includes('sports') || t.includes('bowling') || v.category === 'Sports';
+                return true;
+              });
+              if (matches.length === 0) {
+                showToast(`No ${c.id} venues nearby. Showing all.`);
+                setCategory('All');
+                return;
               }
               setCategory(c.id);
             }} style={{ padding: '8px 12px', borderRadius: '20px', border: `2px solid ${colors.navy}`, backgroundColor: category === c.id ? colors.navy : 'white', color: category === c.id ? colors.cream : colors.navy, fontWeight: 'bold', fontSize: '11px', cursor: 'pointer', whiteSpace: 'nowrap', display: 'flex', alignItems: 'center', gap: '4px', flexShrink: 0 }}>

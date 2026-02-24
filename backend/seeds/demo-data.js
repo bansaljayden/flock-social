@@ -280,6 +280,8 @@ async function seed() {
         creator: realJayden,
         venue_name: 'Linderman Library',
         venue_address: '30 Library Dr, Bethlehem',
+        venue_latitude: 40.6064,
+        venue_longitude: -75.3779,
         event_time: hoursFromNow(18),
         status: 'confirmed',
         members: [
@@ -293,6 +295,8 @@ async function seed() {
         creator: realJayden,
         venue_name: 'The Steel Pub',
         venue_address: '55 E 3rd St, Bethlehem',
+        venue_latitude: 40.6183,
+        venue_longitude: -75.3748,
         event_time: hoursFromNow(6),
         status: 'planning',
         members: [
@@ -306,6 +310,8 @@ async function seed() {
         creator: alex,
         venue_name: 'Rauch Business Center',
         venue_address: '621 Taylor St, Bethlehem',
+        venue_latitude: 40.6076,
+        venue_longitude: -75.3785,
         event_time: hoursFromNow(24),
         status: 'confirmed',
         members: [
@@ -332,6 +338,8 @@ async function seed() {
         creator: emma,
         venue_name: "Molinari's",
         venue_address: '322 E 3rd St, Bethlehem',
+        venue_latitude: 40.6178,
+        venue_longitude: -75.3683,
         event_time: hoursFromNow(40),
         status: 'confirmed',
         members: [
@@ -346,10 +354,10 @@ async function seed() {
 
     for (const f of flockDefs) {
       const result = await client.query(
-        `INSERT INTO flocks (name, creator_id, venue_name, venue_address, event_time, status)
-         VALUES ($1, $2, $3, $4, $5, $6)
+        `INSERT INTO flocks (name, creator_id, venue_name, venue_address, venue_latitude, venue_longitude, event_time, status)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
          RETURNING id, name`,
-        [f.name, f.creator, f.venue_name, f.venue_address, f.event_time, f.status]
+        [f.name, f.creator, f.venue_name, f.venue_address, f.venue_latitude || null, f.venue_longitude || null, f.event_time, f.status]
       );
       const flock = result.rows[0];
       flockIds[f.name] = flock.id;
