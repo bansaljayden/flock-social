@@ -130,10 +130,10 @@ const FLOCK_MAP_STYLES = [
 ];
 
 // Google Maps wrapper — Flock-branded pins + AI crowd heatmap
-const GoogleMapView = React.memo(({ venues, userLocation, activeVenue, setActiveVenue, getCategoryColor, pickingVenueForCreate, setPickingVenueForCreate, setSelectedVenueForCreate, setCurrentScreen, openVenueDetail }) => {
+const GoogleMapView = React.memo(({ venues, filterCategory, userLocation, activeVenue, setActiveVenue, getCategoryColor, pickingVenueForCreate, setPickingVenueForCreate, setSelectedVenueForCreate, setCurrentScreen, openVenueDetail }) => {
   const mapRef = useRef(null);
   const mapInstanceRef = useRef(null);
-  const markersRef = useRef([]);
+  const markersRef = useRef([]); // each entry: { marker, venue, circles: [] }
   const circlesRef = useRef([]);
   const infoWindowRef = useRef(null);
   const userMarkerRef = useRef(null);
@@ -211,15 +211,16 @@ const GoogleMapView = React.memo(({ venues, userLocation, activeVenue, setActive
     mapInstanceRef.current.panTo({ lat: userLocation.lat, lng: userLocation.lng });
   }, [userLocation]);
 
-  // Venue markers + crowd heatmap circles
+  // Venue markers + crowd heatmap circles — rebuild when venue DATA changes
   useEffect(() => {
     if (!mapInstanceRef.current || !window.google?.maps) return;
 
     // Clear previous
-    markersRef.current.forEach(m => m.setMap(null));
+    markersRef.current.forEach(entry => {
+      entry.marker.setMap(null);
+      entry.circles.forEach(c => c.setMap(null));
+    });
     markersRef.current = [];
-    circlesRef.current.forEach(c => c.setMap(null));
-    circlesRef.current = [];
 
     const bounds = new window.google.maps.LatLngBounds();
     let hasValidBounds = false;
@@ -231,38 +232,39 @@ const GoogleMapView = React.memo(({ venues, userLocation, activeVenue, setActive
       const position = { lat: loc.latitude, lng: loc.longitude };
       const isActive = activeVenue?.id === v.id;
       const cc = crowdColor(v.crowd);
+      const entryCircles = [];
 
       // --- Heatmap circle (drawn FIRST, behind pins) ---
       if (typeof v.crowd === 'number') {
-        // Outer glow circle — large, soft aura visible from default zoom
+        // Outer glow — HUGE, visible from any zoom level
         const outerCircle = new window.google.maps.Circle({
           map: mapInstanceRef.current,
           center: position,
-          radius: 300 + (v.crowd * 1.5),
+          radius: 600 + (v.crowd * 3),
           fillColor: cc,
-          fillOpacity: 0.20 + (v.crowd / 250),
+          fillOpacity: 0.15 + (v.crowd / 250),
           strokeColor: cc,
-          strokeOpacity: 0.6,
-          strokeWeight: 1.5,
+          strokeOpacity: 0.4,
+          strokeWeight: 1,
           zIndex: 1,
           clickable: false,
         });
-        circlesRef.current.push(outerCircle);
+        entryCircles.push(outerCircle);
 
-        // Inner core circle — dense, vibrant center
+        // Inner core — bold, vibrant center
         const innerCircle = new window.google.maps.Circle({
           map: mapInstanceRef.current,
           center: position,
-          radius: 120 + (v.crowd * 0.8),
+          radius: 250 + (v.crowd * 1.5),
           fillColor: cc,
-          fillOpacity: 0.45 + (v.crowd / 200),
+          fillOpacity: 0.35 + (v.crowd / 180),
           strokeColor: cc,
-          strokeOpacity: 1.0,
+          strokeOpacity: 0.9,
           strokeWeight: 2.5,
           zIndex: 2,
           clickable: false,
         });
-        circlesRef.current.push(innerCircle);
+        entryCircles.push(innerCircle);
       }
 
       // --- Custom Flock pin ---
@@ -337,7 +339,7 @@ const GoogleMapView = React.memo(({ venues, userLocation, activeVenue, setActive
         infoWindowRef.current.open(mapInstanceRef.current, marker);
       });
 
-      markersRef.current.push(marker);
+      markersRef.current.push({ marker, venue: v, circles: entryCircles });
       bounds.extend(position);
       hasValidBounds = true;
     });
@@ -355,6 +357,15 @@ const GoogleMapView = React.memo(({ venues, userLocation, activeVenue, setActive
     }
   }, [venues, activeVenue, getCategoryColor, pickingVenueForCreate, setActiveVenue, setSelectedVenueForCreate, setPickingVenueForCreate, setCurrentScreen]);
 
+  // Filter visibility — show/hide markers by category WITHOUT moving the map
+  useEffect(() => {
+    markersRef.current.forEach(entry => {
+      const show = !filterCategory || filterCategory === 'All' || entry.venue.category === filterCategory;
+      entry.marker.setVisible(show);
+      entry.circles.forEach(c => c.setVisible(show));
+    });
+  }, [filterCategory]);
+
   // Expose openVenueDetail for info window button
   useEffect(() => {
     window.__flockOpenVenue = (placeId) => {
@@ -366,16 +377,15 @@ const GoogleMapView = React.memo(({ venues, userLocation, activeVenue, setActive
 
   return (
     <div style={{ position: 'absolute', inset: 0 }}>
-      {/* Minimize Google branding — legal but nearly invisible */}
+      {/* Minimize Google branding — legal but nearly invisible. Zoom controls always work. */}
       <style>{`
-        .gm-style-cc, .gm-style .gmnoprint:not(.gm-bundled-control), .gm-style-mtc { opacity: 0.1 !important; pointer-events: none; transition: opacity 0.3s; }
-        .gm-style-cc:hover, .gm-style .gmnoprint:not(.gm-bundled-control):hover { opacity: 0.4 !important; pointer-events: auto; }
-        .gm-style-cc { font-size: 7px !important; }
+        .gm-style-cc { opacity: 0.1 !important; pointer-events: none; transition: opacity 0.3s; font-size: 7px !important; }
+        .gm-style-cc:hover { opacity: 0.4 !important; pointer-events: auto; }
         .gm-style-cc a, .gm-style-cc span { font-size: 7px !important; }
         .gm-style a[href^="https://maps.google"] { opacity: 0.1 !important; transform: scale(0.7); transform-origin: bottom left; transition: opacity 0.3s; }
         .gm-style a[href^="https://maps.google"]:hover { opacity: 0.35 !important; }
         .gm-style a[title="Open this area in Google Maps (opens a new window)"] img { opacity: 0.15 !important; }
-        .gm-style .gm-bundled-control { opacity: 0.75; }
+        .gm-style .gm-bundled-control, .gm-style .gm-bundled-control * { opacity: 1 !important; pointer-events: auto !important; }
       `}</style>
       <div ref={mapRef} style={{ width: '100%', height: '100%' }} />
       {/* Heatmap Legend */}
@@ -2775,7 +2785,8 @@ const FlockAppInner = ({ authUser, onLogout }) => {
       <div onClick={() => { setShowSearchDropdown(false); setActiveVenue(null); }} style={{ flex: 1, position: 'relative', overflow: 'hidden' }}>
         {/* Real Google Maps */}
         <GoogleMapView
-          venues={getFilteredVenues()}
+          venues={allVenues}
+          filterCategory={category}
           userLocation={userLocation}
           activeVenue={activeVenue}
           setActiveVenue={setActiveVenue}
@@ -3010,24 +3021,17 @@ const FlockAppInner = ({ authUser, onLogout }) => {
               { id: 'Sports', icon: () => Icons.sports(category === 'Sports' ? colors.cream : colors.sports, 14) }
             ].map(c => (
             <button key={c.id} onClick={() => {
-              setCategory(c.id);
               setActiveVenue(null);
-              // Load category-specific venues if current results have few matches
-              if (c.id !== 'All' && userLocation) {
+              // Local filter ONLY — never re-search or move the map
+              if (c.id !== 'All') {
                 const matches = allVenues.filter(v => v.category === c.id);
-                if (matches.length < 3) {
-                  const queryMap = { Food: 'restaurants cafes food', Nightlife: 'bars nightclubs lounges', 'Live Music': 'live music concert venues', Sports: 'sports bars bowling gyms stadiums' };
-                  searchVenues(queryMap[c.id] || c.id, `${userLocation.lat},${userLocation.lng}`)
-                    .then(data => {
-                      const newVenues = venuesToMapPins(data.venues || []);
-                      setAllVenues(prev => {
-                        const existingIds = new Set(prev.map(v => v.place_id));
-                        const unique = newVenues.filter(v => !existingIds.has(v.place_id));
-                        return [...prev, ...unique];
-                      });
-                    }).catch(() => {});
+                if (matches.length === 0) {
+                  showToast(`No ${c.id} venues nearby. Showing all.`);
+                  setCategory('All');
+                  return;
                 }
               }
+              setCategory(c.id);
             }} style={{ padding: '8px 12px', borderRadius: '20px', border: `2px solid ${colors.navy}`, backgroundColor: category === c.id ? colors.navy : 'white', color: category === c.id ? colors.cream : colors.navy, fontWeight: 'bold', fontSize: '11px', cursor: 'pointer', whiteSpace: 'nowrap', display: 'flex', alignItems: 'center', gap: '4px', flexShrink: 0 }}>
               {c.icon()} {c.id}
             </button>
@@ -3474,12 +3478,13 @@ const FlockAppInner = ({ authUser, onLogout }) => {
                     Icons={Icons}
                     getCategoryColor={getCategoryColor}
                     onViewDetails={() => {
-                      if (m.venueCard.place_id) {
-                        openVenueDetail(m.venueCard.place_id, { name: m.venueCard.name, formatted_address: m.venueCard.addr, place_id: m.venueCard.place_id, rating: m.venueCard.rating || m.venueCard.stars, photo_url: m.venueCard.photo_url });
+                      // Always open venue detail modal — never navigate away
+                      const vc = m.venueCard;
+                      const pid = vc.place_id || (allVenues.find(v => v.id === vc.id) || {}).place_id;
+                      if (pid) {
+                        openVenueDetail(pid, { name: vc.name, formatted_address: vc.addr || vc.formatted_address, place_id: pid, rating: vc.rating || vc.stars, photo_url: vc.photo_url });
                       } else {
-                        const venue = allVenues.find(v => v.id === m.venueCard.id);
-                        if (venue && venue.place_id) openVenueDetail(venue.place_id, { name: venue.name, formatted_address: venue.addr, place_id: venue.place_id, rating: venue.stars, photo_url: venue.photo_url });
-                        else if (venue) { setActiveVenue(venue); setCurrentTab('explore'); setCurrentScreen('main'); }
+                        showToast('Venue details unavailable');
                       }
                     }}
                     onVote={() => {
