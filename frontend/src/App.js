@@ -15,6 +15,285 @@ import { connectSocket, disconnectSocket, getSocket, joinFlock, leaveFlock, send
 import LoginScreen from './components/auth/LoginScreen';
 import SignupScreen from './components/auth/SignupScreen';
 
+// Memoized VenueCard — extracted outside App so it never re-creates on parent renders
+const VenueCard = React.memo(({ venue, onViewDetails, onVote, colors: c, Icons: I, getCategoryColor: gcc }) => {
+  const rating = venue.stars || venue.rating || null;
+  const price = venue.price || (venue.price_level ? '$'.repeat(venue.price_level) : null);
+  const address = venue.addr || venue.formatted_address || '';
+  const hasCrowd = typeof venue.crowd === 'number';
+  const crowdColor = hasCrowd ? (venue.crowd > 70 ? c.red : venue.crowd > 40 ? c.amber : c.teal) : c.teal;
+  return (
+    <div style={{
+      backgroundColor: 'white',
+      borderRadius: '16px',
+      overflow: 'hidden',
+      boxShadow: '0 4px 20px rgba(0,0,0,0.12)',
+      border: '1px solid rgba(0,0,0,0.06)',
+      width: '100%',
+      maxWidth: '280px',
+      animation: 'cardSlideIn 0.4s ease-out'
+    }}>
+      {venue.photo_url ? (
+        <div style={{ position: 'relative' }}>
+          <img src={venue.photo_url} alt="" style={{ width: '100%', height: '120px', objectFit: 'cover', display: 'block' }} />
+          <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, background: 'linear-gradient(transparent, rgba(0,0,0,0.7))', padding: '24px 12px 10px' }}>
+            <h4 style={{ color: 'white', fontSize: '14px', fontWeight: '700', margin: 0 }}>{venue.name}</h4>
+            {venue.type && <p style={{ color: 'rgba(255,255,255,0.8)', fontSize: '11px', margin: '2px 0 0' }}>{venue.type}</p>}
+          </div>
+          {rating && (
+            <div style={{ position: 'absolute', top: '8px', right: '8px', backgroundColor: 'rgba(0,0,0,0.6)', padding: '3px 8px', borderRadius: '10px', display: 'flex', alignItems: 'center', gap: '3px' }}>
+              {I.starFilled('#fbbf24', 11)}
+              <span style={{ color: 'white', fontSize: '11px', fontWeight: '600' }}>{rating}</span>
+            </div>
+          )}
+        </div>
+      ) : (
+        <div style={{
+          background: `linear-gradient(135deg, ${gcc(venue.category || 'Food')}, ${gcc(venue.category || 'Food')}cc)`,
+          padding: '12px 14px'
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <div>
+              <h4 style={{ color: 'white', fontSize: '14px', fontWeight: '700', margin: 0 }}>{venue.name}</h4>
+              {venue.type && <p style={{ color: 'rgba(255,255,255,0.8)', fontSize: '11px', margin: '2px 0 0' }}>{venue.type}</p>}
+            </div>
+            {rating && (
+              <div style={{ backgroundColor: 'rgba(255,255,255,0.2)', padding: '4px 8px', borderRadius: '12px', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                {I.starFilled('#fbbf24', 12)}
+                <span style={{ color: 'white', fontSize: '12px', fontWeight: '600' }}>{rating}</span>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      <div style={{ padding: '12px 14px' }}>
+        {address && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '10px' }}>
+            {I.mapPin('#6b7280', 12)}
+            <span style={{ fontSize: '11px', color: '#6b7280', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{address}</span>
+          </div>
+        )}
+
+        {(price || venue.best) && (
+          <div style={{ display: 'flex', gap: '12px', marginBottom: '12px' }}>
+            {price && <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>{I.dollar('#6b7280', 12)}<span style={{ fontSize: '11px', color: c.navy, fontWeight: '600' }}>{price}</span></div>}
+            {venue.best && <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>{I.clock('#6b7280', 12)}<span style={{ fontSize: '11px', color: c.navy, fontWeight: '600' }}>{venue.best}</span></div>}
+          </div>
+        )}
+
+        {hasCrowd && (
+          <div style={{ backgroundColor: '#f8fafc', borderRadius: '12px', padding: '10px 12px', marginBottom: '12px', border: '1px solid #e2e8f0' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '6px' }}>
+              <span style={{ fontSize: '11px', color: '#64748b', fontWeight: '500' }}>Current Crowd</span>
+              <div style={{ backgroundColor: `${crowdColor}20`, color: crowdColor, padding: '2px 8px', borderRadius: '10px', fontSize: '11px', fontWeight: '700' }}>{venue.crowd}%</div>
+            </div>
+            <div style={{ width: '100%', height: '6px', backgroundColor: '#e2e8f0', borderRadius: '3px', overflow: 'hidden' }}>
+              <div style={{ height: '100%', width: `${venue.crowd}%`, backgroundColor: crowdColor, borderRadius: '3px', transition: 'width 0.5s ease-out' }} />
+            </div>
+          </div>
+        )}
+
+        <div style={{ display: 'flex', gap: '8px' }}>
+          {(venue.place_id || venue.id) && (
+            <button onClick={onViewDetails} style={{ flex: 1, padding: '10px', borderRadius: '10px', border: `2px solid ${c.navy}`, backgroundColor: 'white', color: c.navy, fontSize: '12px', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px', transition: 'all 0.2s ease' }}>
+              {I.eye(c.navy, 14)} View Details
+            </button>
+          )}
+          <button onClick={onVote} style={{ flex: 1, padding: '10px', borderRadius: '10px', border: 'none', background: `linear-gradient(135deg, ${c.navy}, ${c.navyMid})`, color: 'white', fontSize: '12px', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px', boxShadow: '0 2px 8px rgba(13,40,71,0.25)', transition: 'all 0.2s ease' }}>
+              {I.vote('white', 14)} Vote for This
+            </button>
+        </div>
+      </div>
+    </div>
+  );
+});
+
+// Google Maps dark theme matching Flock's navy aesthetic
+const FLOCK_MAP_STYLES = [
+  { elementType: 'geometry', stylers: [{ color: '#1a2a3a' }] },
+  { elementType: 'labels.text.stroke', stylers: [{ color: '#1a2a3a' }] },
+  { elementType: 'labels.text.fill', stylers: [{ color: '#8ec3b9' }] },
+  { featureType: 'administrative.locality', elementType: 'labels.text.fill', stylers: [{ color: '#b8d4e3' }] },
+  { featureType: 'poi', elementType: 'labels.text.fill', stylers: [{ color: '#6b8a9e' }] },
+  { featureType: 'poi.park', elementType: 'geometry', stylers: [{ color: '#1e3a2a' }] },
+  { featureType: 'poi.park', elementType: 'labels.text.fill', stylers: [{ color: '#4a8c6f' }] },
+  { featureType: 'road', elementType: 'geometry', stylers: [{ color: '#2d4a5c' }] },
+  { featureType: 'road', elementType: 'geometry.stroke', stylers: [{ color: '#1a3045' }] },
+  { featureType: 'road.highway', elementType: 'geometry', stylers: [{ color: '#3a5a70' }] },
+  { featureType: 'road.highway', elementType: 'geometry.stroke', stylers: [{ color: '#1f3a4f' }] },
+  { featureType: 'road.highway', elementType: 'labels.text.fill', stylers: [{ color: '#b8c8d8' }] },
+  { featureType: 'transit', elementType: 'geometry', stylers: [{ color: '#2a3a4a' }] },
+  { featureType: 'transit.station', elementType: 'labels.text.fill', stylers: [{ color: '#7a9ab0' }] },
+  { featureType: 'water', elementType: 'geometry', stylers: [{ color: '#0e1f30' }] },
+  { featureType: 'water', elementType: 'labels.text.fill', stylers: [{ color: '#3a6080' }] },
+];
+
+// Google Maps wrapper component
+const GoogleMapView = React.memo(({ venues, userLocation, activeVenue, setActiveVenue, getCategoryColor, pickingVenueForCreate, setPickingVenueForCreate, setSelectedVenueForCreate, setCurrentScreen, openVenueDetail }) => {
+  const mapRef = useRef(null);
+  const mapInstanceRef = useRef(null);
+  const markersRef = useRef([]);
+  const infoWindowRef = useRef(null);
+  const userMarkerRef = useRef(null);
+
+  const defaultCenter = { lat: 40.6259, lng: -75.3705 }; // Bethlehem, PA
+  const center = userLocation ? { lat: userLocation.lat, lng: userLocation.lng } : defaultCenter;
+
+  // Initialize map
+  useEffect(() => {
+    if (!mapRef.current || !window.google?.maps) return;
+    if (mapInstanceRef.current) return; // Already initialized
+
+    const map = new window.google.maps.Map(mapRef.current, {
+      center,
+      zoom: 14,
+      styles: FLOCK_MAP_STYLES,
+      disableDefaultUI: true,
+      zoomControl: true,
+      zoomControlOptions: { position: window.google.maps.ControlPosition.RIGHT_CENTER },
+      fullscreenControl: false,
+      mapTypeControl: false,
+      streetViewControl: false,
+      gestureHandling: 'greedy',
+    });
+
+    mapInstanceRef.current = map;
+    infoWindowRef.current = new window.google.maps.InfoWindow();
+
+    // Click anywhere to dismiss info window
+    map.addListener('click', () => {
+      infoWindowRef.current.close();
+      setActiveVenue(null);
+    });
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Update user location marker
+  useEffect(() => {
+    if (!mapInstanceRef.current || !userLocation) return;
+
+    if (userMarkerRef.current) {
+      userMarkerRef.current.setPosition({ lat: userLocation.lat, lng: userLocation.lng });
+    } else {
+      userMarkerRef.current = new window.google.maps.Marker({
+        position: { lat: userLocation.lat, lng: userLocation.lng },
+        map: mapInstanceRef.current,
+        icon: {
+          path: window.google.maps.SymbolPath.CIRCLE,
+          scale: 10,
+          fillColor: '#3b82f6',
+          fillOpacity: 1,
+          strokeColor: '#ffffff',
+          strokeWeight: 3,
+        },
+        zIndex: 999,
+        title: 'You are here',
+      });
+    }
+
+    mapInstanceRef.current.panTo({ lat: userLocation.lat, lng: userLocation.lng });
+  }, [userLocation]);
+
+  // Update venue markers
+  useEffect(() => {
+    if (!mapInstanceRef.current || !window.google?.maps) return;
+
+    // Clear old markers
+    markersRef.current.forEach(m => m.setMap(null));
+    markersRef.current = [];
+
+    const bounds = new window.google.maps.LatLngBounds();
+    let hasValidBounds = false;
+
+    venues.forEach(v => {
+      const loc = v.location;
+      if (!loc || !loc.latitude || !loc.longitude) return;
+
+      const position = { lat: loc.latitude, lng: loc.longitude };
+      const catColor = getCategoryColor(v.category);
+      const isActive = activeVenue?.id === v.id;
+
+      const pinSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="32" height="42" viewBox="0 0 24 32">` +
+        `<path d="M12 0C5.4 0 0 5.4 0 12c0 9 12 20 12 20s12-11 12-20c0-6.6-5.4-12-12-12z" fill="${catColor}"/>` +
+        `<circle cx="12" cy="11" r="6" fill="white"/>` +
+        `</svg>`;
+
+      const marker = new window.google.maps.Marker({
+        position,
+        map: mapInstanceRef.current,
+        title: v.name,
+        icon: {
+          url: 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(pinSvg),
+          scaledSize: new window.google.maps.Size(isActive ? 40 : 32, isActive ? 52 : 42),
+          anchor: new window.google.maps.Point(isActive ? 20 : 16, isActive ? 52 : 42),
+        },
+        zIndex: isActive ? 100 : v.trending ? 50 : 10,
+        animation: isActive ? window.google.maps.Animation.BOUNCE : null,
+      });
+
+      marker.addListener('click', () => {
+        setActiveVenue(v);
+
+        if (pickingVenueForCreate) {
+          setSelectedVenueForCreate({
+            name: v.name,
+            addr: v.addr,
+            place_id: v.place_id,
+            photo_url: v.photo_url,
+            rating: v.stars,
+            price_level: v.price ? v.price.length : null,
+          });
+          setPickingVenueForCreate(false);
+          setCurrentScreen('create');
+          return;
+        }
+
+        const rating = v.stars ? `<span style="color:#F59E0B;font-weight:700">★ ${v.stars}</span>` : '';
+        const crowd = typeof v.crowd === 'number' ? `<span style="color:${v.crowd > 70 ? '#EF4444' : v.crowd > 40 ? '#F59E0B' : '#14B8A6'};font-weight:600">${v.crowd}% busy</span>` : '';
+        const photo = v.photo_url ? `<img src="${v.photo_url}" style="width:100%;height:80px;object-fit:cover;border-radius:8px 8px 0 0;display:block;" alt=""/>` : '';
+
+        const content = `<div style="font-family:-apple-system,BlinkMacSystemFont,sans-serif;width:200px;border-radius:12px;overflow:hidden;box-shadow:0 4px 16px rgba(0,0,0,0.15);">` +
+          photo +
+          `<div style="padding:10px 12px;">` +
+          `<div style="font-size:13px;font-weight:800;color:#0d2847;margin-bottom:4px;">${v.name}</div>` +
+          `<div style="font-size:11px;color:#6b7280;margin-bottom:6px;">${v.addr || ''}</div>` +
+          `<div style="display:flex;gap:8px;align-items:center;font-size:11px;margin-bottom:8px;">` +
+          rating + (rating && crowd ? ' · ' : '') + crowd +
+          (v.price ? ` · <span style="font-weight:600;color:#0d2847">${v.price}</span>` : '') +
+          `</div>` +
+          `<button onclick="window.__flockOpenVenue&&window.__flockOpenVenue('${v.place_id}')" style="width:100%;padding:8px;border-radius:8px;border:none;background:linear-gradient(135deg,#0d2847,#2d5a87);color:white;font-size:11px;font-weight:700;cursor:pointer;">View Details</button>` +
+          `</div></div>`;
+
+        infoWindowRef.current.setContent(content);
+        infoWindowRef.current.open(mapInstanceRef.current, marker);
+      });
+
+      markersRef.current.push(marker);
+      bounds.extend(position);
+      hasValidBounds = true;
+    });
+
+    if (hasValidBounds && venues.length > 1) {
+      mapInstanceRef.current.fitBounds(bounds, { top: 60, bottom: 60, left: 30, right: 30 });
+    } else if (hasValidBounds && venues.length === 1) {
+      const pos = { lat: venues[0].location.latitude, lng: venues[0].location.longitude };
+      mapInstanceRef.current.panTo(pos);
+      mapInstanceRef.current.setZoom(15);
+    }
+  }, [venues, activeVenue, getCategoryColor, pickingVenueForCreate, setActiveVenue, setSelectedVenueForCreate, setPickingVenueForCreate, setCurrentScreen]);
+
+  // Expose openVenueDetail to window for info window button
+  useEffect(() => {
+    window.__flockOpenVenue = (placeId) => {
+      const v = venues.find(venue => venue.place_id === placeId);
+      if (v) openVenueDetail(placeId, { name: v.name, formatted_address: v.addr, place_id: placeId, rating: v.stars, photo_url: v.photo_url });
+    };
+    return () => { delete window.__flockOpenVenue; };
+  }, [venues, openVenueDetail]);
+
+  return <div ref={mapRef} style={{ position: 'absolute', inset: 0 }} />;
+});
+
 // Brand Colors
 const colors = {
   navy: '#0d2847',
@@ -2327,274 +2606,19 @@ const FlockAppInner = ({ authUser, onLogout }) => {
 
       {/* Premium Map */}
       <div onClick={() => { setShowSearchDropdown(false); setActiveVenue(null); }} style={{ flex: 1, position: 'relative', overflow: 'hidden' }}>
-        <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(145deg, #f0f4f0 0%, #e8ece8 50%, #dfe3df 100%)' }}>
-          {/* Premium SVG Map with buildings, parks, and roads */}
-          <svg style={{ position: 'absolute', inset: 0, width: '100%', height: '100%' }}>
-            <defs>
-              <pattern id="mapGrid" width="50" height="50" patternUnits="userSpaceOnUse">
-                <path d="M 50 0 L 0 0 0 50" fill="none" stroke="rgba(0,0,0,0.03)" strokeWidth="1"/>
-              </pattern>
-              <linearGradient id="buildingShadow" x1="0%" y1="0%" x2="100%" y2="100%">
-                <stop offset="0%" stopColor="rgba(0,0,0,0.08)"/>
-                <stop offset="100%" stopColor="rgba(0,0,0,0)"/>
-              </linearGradient>
-              <linearGradient id="waterGradient" x1="0%" y1="0%" x2="0%" y2="100%">
-                <stop offset="0%" stopColor="#a8d4e6"/>
-                <stop offset="50%" stopColor="#7ec8e3"/>
-                <stop offset="100%" stopColor="#a8d4e6"/>
-              </linearGradient>
-              <linearGradient id="parkGradient" x1="0%" y1="0%" x2="100%" y2="100%">
-                <stop offset="0%" stopColor="#b8d4a8"/>
-                <stop offset="100%" stopColor="#9bc485"/>
-              </linearGradient>
-              <linearGradient id="roadGradient" x1="0%" y1="0%" x2="0%" y2="100%">
-                <stop offset="0%" stopColor="#e5e5e5"/>
-                <stop offset="50%" stopColor="#d4d4d4"/>
-                <stop offset="100%" stopColor="#e5e5e5"/>
-              </linearGradient>
-            </defs>
-            <rect width="100%" height="100%" fill="url(#mapGrid)" />
-            <ellipse cx="85%" cy="75%" rx="60" ry="80" fill="url(#waterGradient)" opacity="0.7" />
-            <ellipse cx="90%" cy="85%" rx="40" ry="50" fill="url(#waterGradient)" opacity="0.6" />
-            <rect x="5%" y="10%" width="45" height="55" rx="8" fill="url(#parkGradient)" opacity="0.6" />
-            <circle cx="12%" cy="80%" r="30" fill="url(#parkGradient)" opacity="0.5" />
-            <ellipse cx="70%" cy="15%" rx="35" ry="25" fill="url(#parkGradient)" opacity="0.6" />
-            <rect x="0" y="28%" width="100%" height="22" rx="2" fill="url(#roadGradient)" />
-            <rect x="0" y="58%" width="100%" height="26" rx="2" fill="url(#roadGradient)" />
-            <rect x="23%" y="0" width="18" height="100%" rx="2" fill="url(#roadGradient)" />
-            <rect x="62%" y="0" width="22" height="100%" rx="2" fill="url(#roadGradient)" />
-            <line x1="0" y1="39%" x2="100%" y2="39%" stroke="#fbbf24" strokeWidth="2" strokeDasharray="12 6" opacity="0.6"/>
-            <line x1="0" y1="71%" x2="100%" y2="71%" stroke="#fbbf24" strokeWidth="2" strokeDasharray="12 6" opacity="0.6"/>
-            <line x1="32%" y1="0" x2="32%" y2="100%" stroke="#fbbf24" strokeWidth="2" strokeDasharray="12 6" opacity="0.6"/>
-            <line x1="73%" y1="0" x2="73%" y2="100%" stroke="#fbbf24" strokeWidth="2" strokeDasharray="12 6" opacity="0.6"/>
-            <rect x="8%" y="45%" width="35" height="28" rx="4" fill="#d1d5db" />
-            <rect x="8%" y="45%" width="35" height="5" rx="2" fill="#9ca3af" />
-            <rect x="45%" y="5%" width="50" height="35" rx="4" fill="#d1d5db" />
-            <rect x="45%" y="5%" width="50" height="6" rx="2" fill="#9ca3af" />
-            <rect x="78%" y="40%" width="40" height="45" rx="4" fill="#d1d5db" />
-            <rect x="78%" y="40%" width="40" height="7" rx="2" fill="#9ca3af" />
-            <rect x="38%" y="78%" width="55" height="30" rx="4" fill="#d1d5db" />
-            <rect x="38%" y="78%" width="55" height="5" rx="2" fill="#9ca3af" />
-            <rect x="5%" y="35%" width="25" height="20" rx="3" fill="#c4c9cf" />
-            <rect x="52%" y="45%" width="30" height="22" rx="3" fill="#c4c9cf" />
-            <rect x="15%" y="20%" width="18" height="14" rx="2" fill="#cdd1d6" />
-            <rect x="85%" y="18%" width="22" height="16" rx="2" fill="#cdd1d6" />
-            <rect x="42%" y="88%" width="20" height="12" rx="2" fill="#cdd1d6" />
-          </svg>
-
-          {/* Premium Heatmap with smooth gradients and animations */}
-          {getFilteredVenues().map(v => {
-            const intensity = v.crowd / 100;
-            const baseColor = v.crowd > 70 ? '#EF4444' : v.crowd > 50 ? '#F59E0B' : v.crowd > 30 ? '#FBBF24' : '#10B981';
-            const innerSize = 50 + (intensity * 70);
-            const middleSize = 80 + (intensity * 90);
-            const outerSize = 120 + (intensity * 110);
-            const pulseDelay = (v.id * 0.4) % 2.5;
-            return (
-              <div key={`heat-${v.id}`} style={{ position: 'absolute', left: `${v.x}%`, top: `${v.y}%`, transform: 'translate(-50%, -50%)', pointerEvents: 'none', zIndex: 1 }}>
-                {/* Outermost soft glow */}
-                <div style={{ position: 'absolute', left: '50%', top: '50%', width: `${outerSize * 1.3}px`, height: `${outerSize * 1.3}px`, transform: 'translate(-50%, -50%)', borderRadius: '50%', background: `radial-gradient(circle, ${baseColor}10 0%, ${baseColor}05 40%, transparent 70%)`, animation: `heatPulseOuter 4s ease-in-out infinite ${pulseDelay}s`, filter: 'blur(4px)' }} />
-                {/* Outer glow layer */}
-                <div style={{ position: 'absolute', left: '50%', top: '50%', width: `${outerSize}px`, height: `${outerSize}px`, transform: 'translate(-50%, -50%)', borderRadius: '50%', background: `radial-gradient(circle, ${baseColor}18 0%, ${baseColor}08 45%, transparent 70%)`, animation: `heatPulseMiddle 3s ease-in-out infinite ${pulseDelay + 0.3}s` }} />
-                {/* Middle pulsing layer */}
-                <div style={{ position: 'absolute', left: '50%', top: '50%', width: `${middleSize}px`, height: `${middleSize}px`, transform: 'translate(-50%, -50%)', borderRadius: '50%', background: `radial-gradient(circle, ${baseColor}30 0%, ${baseColor}12 50%, transparent 75%)`, animation: `heatPulseInner 2.5s ease-in-out infinite ${pulseDelay + 0.6}s` }} />
-                {/* Inner bright core */}
-                <div style={{ position: 'absolute', left: '50%', top: '50%', width: `${innerSize}px`, height: `${innerSize}px`, transform: 'translate(-50%, -50%)', borderRadius: '50%', background: `radial-gradient(circle, ${baseColor}45 0%, ${baseColor}20 40%, transparent 80%)`, animation: `heatPulseCore 2s ease-in-out infinite ${pulseDelay + 0.2}s` }} />
-                {/* Center hotspot */}
-                <div style={{ position: 'absolute', left: '50%', top: '50%', width: `${innerSize * 0.4}px`, height: `${innerSize * 0.4}px`, transform: 'translate(-50%, -50%)', borderRadius: '50%', background: `radial-gradient(circle, ${baseColor}60 0%, ${baseColor}30 60%, transparent 100%)`, animation: `heatGlow 1.5s ease-in-out infinite ${pulseDelay}s` }} />
-              </div>
-            );
-          })}
-
-          {/* Premium Venue Pins with hover effects and animations */}
-          {getFilteredVenues().map(v => {
-            const isHovered = hoveredPin === v.id;
-            const isClicked = clickedPin === v.id;
-            const isActive = activeVenue?.id === v.id;
-            const pinColor = getCategoryColor(v.category);
-
-            return (
-              <button
-                key={v.id}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setClickedPin(v.id);
-                  setTimeout(() => setClickedPin(null), 300);
-                  setActiveVenue(isActive ? null : v);
-                }}
-                onMouseEnter={() => setHoveredPin(v.id)}
-                onMouseLeave={() => setHoveredPin(null)}
-                style={{
-                  position: 'absolute',
-                  left: `${v.x}%`,
-                  top: `${v.y}%`,
-                  transform: `translate(-50%, -100%) ${isHovered ? 'scale(1.15) translateY(-4px)' : ''} ${isClicked ? 'scale(0.9)' : ''} ${isActive ? 'scale(1.2) translateY(-6px)' : ''}`,
-                  background: 'none',
-                  border: 'none',
-                  cursor: 'pointer',
-                  zIndex: isActive ? 20 : isHovered ? 15 : 10,
-                  transition: 'transform 0.25s cubic-bezier(0.34, 1.56, 0.64, 1), filter 0.2s ease',
-                  filter: isHovered || isActive ? 'drop-shadow(0 8px 16px rgba(0,0,0,0.25))' : 'drop-shadow(0 3px 6px rgba(0,0,0,0.15))'
-                }}
-              >
-                <div style={{ position: 'relative' }}>
-                  {/* Pin shadow */}
-                  <div style={{
-                    position: 'absolute',
-                    bottom: '-8px',
-                    left: '50%',
-                    transform: 'translateX(-50%)',
-                    width: '20px',
-                    height: '6px',
-                    background: 'radial-gradient(ellipse, rgba(0,0,0,0.3) 0%, transparent 70%)',
-                    opacity: isHovered || isActive ? 0.8 : 0.5,
-                    transition: 'opacity 0.2s ease'
-                  }} />
-
-                  {/* Main pin SVG with gradient */}
-                  <svg width="34" height="44" viewBox="0 0 24 32" style={{ filter: isActive ? 'brightness(1.1)' : 'none', transition: 'filter 0.2s ease' }}>
-                    <defs>
-                      <linearGradient id={`pinGrad-${v.id}`} x1="0%" y1="0%" x2="100%" y2="100%">
-                        <stop offset="0%" stopColor={pinColor} stopOpacity="1"/>
-                        <stop offset="100%" stopColor={pinColor} stopOpacity="0.8"/>
-                      </linearGradient>
-                      <filter id={`pinShadow-${v.id}`} x="-20%" y="-20%" width="140%" height="140%">
-                        <feDropShadow dx="0" dy="1" stdDeviation="1" floodOpacity="0.3"/>
-                      </filter>
-                    </defs>
-                    <path d="M12 0C5.4 0 0 5.4 0 12c0 9 12 20 12 20s12-11 12-20c0-6.6-5.4-12-12-12z" fill={`url(#pinGrad-${v.id})`} filter={`url(#pinShadow-${v.id})`}/>
-                    <path d="M12 1C6 1 1 6 1 12c0 4 4 10 11 19 7-9 11-15 11-19 0-6-5-11-11-11z" fill="rgba(255,255,255,0.15)" />
-                    <circle cx="12" cy="11" r="7" fill="white" />
-                    <circle cx="12" cy="11" r="6.5" fill="white" stroke="rgba(0,0,0,0.05)" strokeWidth="0.5"/>
-                  </svg>
-
-                  {/* Category icon */}
-                  <span style={{
-                    position: 'absolute',
-                    top: '7px',
-                    left: '50%',
-                    transform: 'translateX(-50%)',
-                    transition: 'transform 0.2s ease'
-                  }}>
-                    {v.category === 'Food' ? Icons.pizza(colors.food, 15) : v.category === 'Nightlife' ? Icons.cocktail(colors.nightlife, 15) : v.category === 'Live Music' ? Icons.music(colors.music, 15) : Icons.sports(colors.sports, 15)}
-                  </span>
-
-                  {/* Trending badge with animation */}
-                  {v.trending && (
-                    <span style={{
-                      position: 'absolute',
-                      top: '-6px',
-                      right: '-10px',
-                      animation: 'trendingBounce 2s ease-in-out infinite'
-                    }}>
-                      <div style={{
-                        background: 'linear-gradient(135deg, #FF6B35, #F7931E)',
-                        borderRadius: '50%',
-                        padding: '3px',
-                        boxShadow: '0 2px 6px rgba(247,147,30,0.4)'
-                      }}>
-                        {Icons.flame('white', 11)}
-                      </div>
-                    </span>
-                  )}
-
-                  {/* Crowd indicator ring on hover */}
-                  {isHovered && !isActive && (
-                    <div style={{
-                      position: 'absolute',
-                      top: '2px',
-                      left: '50%',
-                      transform: 'translateX(-50%)',
-                      width: '30px',
-                      height: '30px',
-                      borderRadius: '50%',
-                      border: `2px solid ${v.crowd > 70 ? colors.red : v.crowd > 40 ? colors.amber : colors.teal}`,
-                      opacity: 0.6,
-                      animation: 'pinRingPulse 1.5s ease-out infinite'
-                    }} />
-                  )}
-
-                  {/* Hover tooltip — name only */}
-                  {isHovered && !isActive && (
-                    <div style={{
-                      position: 'absolute',
-                      top: '-40px',
-                      left: '50%',
-                      transform: 'translateX(-50%)',
-                      backgroundColor: 'rgba(13,40,71,0.95)',
-                      color: 'white',
-                      padding: '5px 10px',
-                      borderRadius: '8px',
-                      fontSize: '10px',
-                      fontWeight: '600',
-                      whiteSpace: 'nowrap',
-                      width: 'max-content',
-                      maxWidth: '260px',
-                      overflow: 'hidden',
-                      textOverflow: 'ellipsis',
-                      textAlign: 'center',
-                      boxShadow: '0 4px 12px rgba(0,0,0,0.2)',
-                      animation: 'tooltipFadeIn 0.2s ease-out',
-                      pointerEvents: 'none',
-                      zIndex: 50
-                    }}>
-                      {v.name}
-                      <div style={{
-                        position: 'absolute',
-                        bottom: '-5px',
-                        left: '50%',
-                        transform: 'translateX(-50%)',
-                        width: 0,
-                        height: 0,
-                        borderLeft: '5px solid transparent',
-                        borderRight: '5px solid transparent',
-                        borderTop: '5px solid rgba(13,40,71,0.95)'
-                      }} />
-                    </div>
-                  )}
-                </div>
-              </button>
-            );
-          })}
-
-
-          {/* User location with premium styling */}
-          <div style={{ position: 'absolute', left: '50%', top: '50%', transform: 'translate(-50%, -50%)', zIndex: 25 }}>
-            {/* Outer pulse ring */}
-            <div style={{
-              position: 'absolute',
-              left: '50%',
-              top: '50%',
-              transform: 'translate(-50%, -50%)',
-              width: '50px',
-              height: '50px',
-              borderRadius: '50%',
-              border: '2px solid rgba(59,130,246,0.3)',
-              animation: 'userLocationPulse 2s ease-out infinite'
-            }} />
-            {/* Middle ring */}
-            <div style={{
-              position: 'absolute',
-              left: '50%',
-              top: '50%',
-              transform: 'translate(-50%, -50%)',
-              width: '30px',
-              height: '30px',
-              borderRadius: '50%',
-              backgroundColor: 'rgba(59,130,246,0.15)',
-              animation: 'userLocationPulse 2s ease-out infinite 0.5s'
-            }} />
-            {/* Main dot */}
-            <div style={{
-              width: '18px',
-              height: '18px',
-              borderRadius: '50%',
-              background: 'linear-gradient(135deg, #3b82f6, #1d4ed8)',
-              border: '3px solid white',
-              boxShadow: '0 3px 10px rgba(59,130,246,0.4), inset 0 1px 2px rgba(255,255,255,0.3)'
-            }} />
-          </div>
-        </div>
+        {/* Real Google Maps */}
+        <GoogleMapView
+          venues={getFilteredVenues()}
+          userLocation={userLocation}
+          activeVenue={activeVenue}
+          setActiveVenue={setActiveVenue}
+          getCategoryColor={getCategoryColor}
+          pickingVenueForCreate={pickingVenueForCreate}
+          setPickingVenueForCreate={setPickingVenueForCreate}
+          setSelectedVenueForCreate={setSelectedVenueForCreate}
+          setCurrentScreen={setCurrentScreen}
+          openVenueDetail={openVenueDetail}
+        />
 
         {/* Find Your People Panel */}
         {showConnectPanel && (
@@ -3111,103 +3135,6 @@ const FlockAppInner = ({ authUser, onLogout }) => {
     const flock = getSelectedFlock();
     const reactions = ['❤️', '👍', '😂', '🔥'];
 
-    // Venue Card Component for chat - supports both map venues and Google Places venues
-    const VenueCard = ({ venue, onViewDetails, onVote }) => {
-      const rating = venue.stars || venue.rating || null;
-      const price = venue.price || (venue.price_level ? '$'.repeat(venue.price_level) : null);
-      const address = venue.addr || venue.formatted_address || '';
-      const hasCrowd = typeof venue.crowd === 'number';
-      const crowdColor = hasCrowd ? (venue.crowd > 70 ? colors.red : venue.crowd > 40 ? colors.amber : colors.teal) : colors.teal;
-      return (
-        <div style={{
-          backgroundColor: 'white',
-          borderRadius: '16px',
-          overflow: 'hidden',
-          boxShadow: '0 4px 20px rgba(0,0,0,0.12)',
-          border: '1px solid rgba(0,0,0,0.06)',
-          width: '100%',
-          maxWidth: '280px',
-          animation: 'cardSlideIn 0.4s ease-out'
-        }}>
-          {/* Photo or gradient header */}
-          {venue.photo_url ? (
-            <div style={{ position: 'relative' }}>
-              <img src={venue.photo_url} alt="" style={{ width: '100%', height: '120px', objectFit: 'cover', display: 'block' }} />
-              <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, background: 'linear-gradient(transparent, rgba(0,0,0,0.7))', padding: '24px 12px 10px' }}>
-                <h4 style={{ color: 'white', fontSize: '14px', fontWeight: '700', margin: 0 }}>{venue.name}</h4>
-                {venue.type && <p style={{ color: 'rgba(255,255,255,0.8)', fontSize: '11px', margin: '2px 0 0' }}>{venue.type}</p>}
-              </div>
-              {rating && (
-                <div style={{ position: 'absolute', top: '8px', right: '8px', backgroundColor: 'rgba(0,0,0,0.6)', padding: '3px 8px', borderRadius: '10px', display: 'flex', alignItems: 'center', gap: '3px' }}>
-                  {Icons.starFilled('#fbbf24', 11)}
-                  <span style={{ color: 'white', fontSize: '11px', fontWeight: '600' }}>{rating}</span>
-                </div>
-              )}
-            </div>
-          ) : (
-            <div style={{
-              background: `linear-gradient(135deg, ${getCategoryColor(venue.category || 'Food')}, ${getCategoryColor(venue.category || 'Food')}cc)`,
-              padding: '12px 14px'
-            }}>
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                <div>
-                  <h4 style={{ color: 'white', fontSize: '14px', fontWeight: '700', margin: 0 }}>{venue.name}</h4>
-                  {venue.type && <p style={{ color: 'rgba(255,255,255,0.8)', fontSize: '11px', margin: '2px 0 0' }}>{venue.type}</p>}
-                </div>
-                {rating && (
-                  <div style={{ backgroundColor: 'rgba(255,255,255,0.2)', padding: '4px 8px', borderRadius: '12px', display: 'flex', alignItems: 'center', gap: '4px' }}>
-                    {Icons.starFilled('#fbbf24', 12)}
-                    <span style={{ color: 'white', fontSize: '12px', fontWeight: '600' }}>{rating}</span>
-                  </div>
-                )}
-              </div>
-            </div>
-          )}
-
-          {/* Details */}
-          <div style={{ padding: '12px 14px' }}>
-            {address && (
-              <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '10px' }}>
-                {Icons.mapPin('#6b7280', 12)}
-                <span style={{ fontSize: '11px', color: '#6b7280', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{address}</span>
-              </div>
-            )}
-
-            {(price || venue.best) && (
-              <div style={{ display: 'flex', gap: '12px', marginBottom: '12px' }}>
-                {price && <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>{Icons.dollar('#6b7280', 12)}<span style={{ fontSize: '11px', color: colors.navy, fontWeight: '600' }}>{price}</span></div>}
-                {venue.best && <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>{Icons.clock('#6b7280', 12)}<span style={{ fontSize: '11px', color: colors.navy, fontWeight: '600' }}>{venue.best}</span></div>}
-              </div>
-            )}
-
-            {hasCrowd && (
-              <div style={{ backgroundColor: '#f8fafc', borderRadius: '12px', padding: '10px 12px', marginBottom: '12px', border: '1px solid #e2e8f0' }}>
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '6px' }}>
-                  <span style={{ fontSize: '11px', color: '#64748b', fontWeight: '500' }}>Current Crowd</span>
-                  <div style={{ backgroundColor: `${crowdColor}20`, color: crowdColor, padding: '2px 8px', borderRadius: '10px', fontSize: '11px', fontWeight: '700' }}>{venue.crowd}%</div>
-                </div>
-                <div style={{ width: '100%', height: '6px', backgroundColor: '#e2e8f0', borderRadius: '3px', overflow: 'hidden' }}>
-                  <div style={{ height: '100%', width: `${venue.crowd}%`, backgroundColor: crowdColor, borderRadius: '3px', transition: 'width 0.5s ease-out' }} />
-                </div>
-              </div>
-            )}
-
-            {/* Action buttons */}
-            <div style={{ display: 'flex', gap: '8px' }}>
-              {(venue.place_id || venue.id) && (
-                <button onClick={onViewDetails} style={{ flex: 1, padding: '10px', borderRadius: '10px', border: `2px solid ${colors.navy}`, backgroundColor: 'white', color: colors.navy, fontSize: '12px', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px', transition: 'all 0.2s ease' }}>
-                  {Icons.eye(colors.navy, 14)} View Details
-                </button>
-              )}
-              <button onClick={onVote} style={{ flex: 1, padding: '10px', borderRadius: '10px', border: 'none', background: `linear-gradient(135deg, ${colors.navy}, ${colors.navyMid})`, color: 'white', fontSize: '12px', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px', boxShadow: '0 2px 8px rgba(13,40,71,0.25)', transition: 'all 0.2s ease' }}>
-                {Icons.vote('white', 14)} Vote for This
-              </button>
-            </div>
-          </div>
-        </div>
-      );
-    };
-
     return (
       <div key="chat-detail-screen-container" style={{ display: 'flex', flexDirection: 'column', height: '100%', backgroundColor: 'white' }}>
         <div style={{ padding: '12px', display: 'flex', alignItems: 'center', gap: '8px', background: `linear-gradient(135deg, ${colors.navy}, ${colors.navyMid})`, flexShrink: 0, boxShadow: '0 2px 10px rgba(0,0,0,0.1)' }}>
@@ -3234,6 +3161,42 @@ const FlockAppInner = ({ authUser, onLogout }) => {
         {/* Dismiss menu on outside tap */}
         {showFlockMenu && (
           <div onClick={() => setShowFlockMenu(false)} style={{ position: 'absolute', inset: 0, zIndex: 55 }} />
+        )}
+
+        {/* Pinned Venue Banner — shows which venue this flock is at */}
+        {flock.venue && flock.venue !== 'TBD' && (
+          <div style={{ padding: '10px 14px', background: `linear-gradient(135deg, ${colors.navy}08, ${colors.teal}12)`, borderBottom: `1px solid ${colors.creamDark}`, flexShrink: 0 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+              {flock.venuePhoto ? (
+                <img src={flock.venuePhoto} alt="" style={{ width: '52px', height: '52px', borderRadius: '12px', objectFit: 'cover', flexShrink: 0, boxShadow: '0 2px 8px rgba(0,0,0,0.1)' }} />
+              ) : (
+                <div style={{ width: '52px', height: '52px', borderRadius: '12px', background: `linear-gradient(135deg, ${colors.navy}, ${colors.navyMid})`, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, boxShadow: '0 2px 8px rgba(13,40,71,0.2)' }}>
+                  {Icons.mapPin('white', 22)}
+                </div>
+              )}
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  <h4 style={{ fontSize: '13px', fontWeight: '800', color: colors.navy, margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{flock.venue}</h4>
+                  {flock.venueRating && (
+                    <span style={{ fontSize: '11px', fontWeight: '700', color: '#F59E0B', display: 'flex', alignItems: 'center', gap: '2px', flexShrink: 0 }}>
+                      {Icons.starFilled('#F59E0B', 11)} {flock.venueRating}
+                    </span>
+                  )}
+                </div>
+                {flock.venueAddress && (
+                  <p style={{ fontSize: '11px', color: '#6b7280', margin: '2px 0 0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{flock.venueAddress}</p>
+                )}
+              </div>
+              {flock.venueAddress && (
+                <button
+                  onClick={() => window.open(`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(flock.venue + ' ' + flock.venueAddress)}`, '_blank')}
+                  style={{ padding: '8px 12px', borderRadius: '10px', border: 'none', background: `linear-gradient(135deg, ${colors.teal}, #0d9488)`, color: 'white', fontSize: '10px', fontWeight: '700', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px', flexShrink: 0, boxShadow: '0 2px 8px rgba(20,184,166,0.3)' }}
+                >
+                  {Icons.mapPin('white', 12)} Map
+                </button>
+              )}
+            </div>
+          </div>
         )}
 
         <div onScroll={() => document.activeElement?.blur()} style={{ flex: 1, padding: '16px', overflowY: 'auto', background: `linear-gradient(180deg, ${colors.cream} 0%, rgba(245,240,230,0.8) 100%)`, scrollBehavior: 'smooth' }}>
@@ -3290,6 +3253,9 @@ const FlockAppInner = ({ authUser, onLogout }) => {
                 {m.venueCard && (
                   <VenueCard
                     venue={m.venueCard}
+                    colors={colors}
+                    Icons={Icons}
+                    getCategoryColor={getCategoryColor}
                     onViewDetails={() => {
                       if (m.venueCard.place_id) {
                         openVenueDetail(m.venueCard.place_id, { name: m.venueCard.name, formatted_address: m.venueCard.addr, place_id: m.venueCard.place_id, rating: m.venueCard.rating || m.venueCard.stars, photo_url: m.venueCard.photo_url });
