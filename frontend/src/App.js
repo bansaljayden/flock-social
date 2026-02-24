@@ -138,8 +138,9 @@ const GoogleMapView = React.memo(({ venues, filterCategory, userLocation, active
   const prevVenueCountRef = useRef(0); // track if venues are newly loaded vs just re-rendered
   const zoomListenerRef = useRef(null);
 
-  // Hellertown, PA fallback (user's actual area)
-  const defaultCenter = { lat: 40.5798, lng: -75.2932 };
+  // Bethlehem / Lehigh Valley — default view for Discover tab
+  const defaultCenter = { lat: 40.6259, lng: -75.3705 };
+  const defaultZoom = 12; // shows entire Lehigh Valley
 
   // Build Flock-branded pin SVG
   const buildPinSvg = useCallback((isActive, category) => {
@@ -164,10 +165,9 @@ const GoogleMapView = React.memo(({ venues, filterCategory, userLocation, active
     if (!mapRef.current || !window.google?.maps) return;
     if (mapInstanceRef.current) return;
 
-    const startCenter = userLocation ? { lat: userLocation.lat, lng: userLocation.lng } : defaultCenter;
     const map = new window.google.maps.Map(mapRef.current, {
-      center: startCenter,
-      zoom: 15,
+      center: defaultCenter,
+      zoom: defaultZoom,
       styles: FLOCK_MAP_STYLES,
       disableDefaultUI: true,
       zoomControl: true,
@@ -208,9 +208,8 @@ const GoogleMapView = React.memo(({ venues, filterCategory, userLocation, active
         title: 'You are here',
       });
     }
-    // Always center on user location when it updates
-    mapInstanceRef.current.setCenter(pos);
-    mapInstanceRef.current.setZoom(15);
+    // Don't auto-center — let the default Lehigh Valley view persist.
+    // User can tap "My Location" button to recenter.
   }, [userLocation]);
 
   // Venue markers + heatmap — rebuild ONLY when venue data actually changes (not on activeVenue!)
@@ -292,6 +291,7 @@ const GoogleMapView = React.memo(({ venues, filterCategory, userLocation, active
             name: v.name, addr: v.addr, place_id: v.place_id,
             photo_url: v.photo_url, rating: v.stars,
             price_level: v.price ? v.price.length : null,
+            lat: v.location?.latitude, lng: v.location?.longitude,
           });
           setPickingVenueForCreate(false);
           setCurrentScreen('create');
@@ -315,7 +315,7 @@ const GoogleMapView = React.memo(({ venues, filterCategory, userLocation, active
         mapInstanceRef.current.fitBounds(bounds, { top: 60, bottom: 60, left: 30, right: 30 });
         const listener = mapInstanceRef.current.addListener('idle', () => {
           window.google.maps.event.removeListener(listener);
-          if (mapInstanceRef.current.getZoom() < 14) mapInstanceRef.current.setZoom(14);
+          if (mapInstanceRef.current.getZoom() < 12) mapInstanceRef.current.setZoom(12);
         });
       } else {
         mapInstanceRef.current.panTo({ lat: venues[0].location.latitude, lng: venues[0].location.longitude });
@@ -341,9 +341,24 @@ const GoogleMapView = React.memo(({ venues, filterCategory, userLocation, active
   }, [activeVenue, buildPinSvg]);
 
   // Filter visibility — show/hide markers by category WITHOUT moving the map
+  // Uses actual Google Places types for broader, more accurate matching
   useEffect(() => {
     markersRef.current.forEach(entry => {
-      const show = !filterCategory || filterCategory === 'All' || entry.venue.category === filterCategory;
+      const v = entry.venue;
+      const t = (v.types || []).join(' ').toLowerCase();
+      const nm = (v.name || '').toLowerCase();
+      let show = true;
+      if (filterCategory && filterCategory !== 'All') {
+        if (filterCategory === 'Food') {
+          show = t.includes('restaurant') || t.includes('cafe') || t.includes('food') || t.includes('bakery') || t.includes('meal') || t.includes('pizza') || t.includes('diner') || t.includes('bar') || v.category === 'Food';
+        } else if (filterCategory === 'Nightlife') {
+          show = t.includes('bar') || t.includes('night_club') || t.includes('club') || t.includes('liquor') || t.includes('lounge') || v.category === 'Nightlife';
+        } else if (filterCategory === 'Live Music') {
+          show = t.includes('music') || t.includes('concert') || t.includes('performing_arts') || nm.includes('music') || nm.includes('jazz') || v.category === 'Live Music';
+        } else if (filterCategory === 'Sports') {
+          show = t.includes('stadium') || t.includes('gym') || t.includes('sports') || t.includes('bowling') || t.includes('fitness') || nm.includes('sport') || v.category === 'Sports';
+        }
+      }
       entry.marker.setVisible(show);
       entry.circles.forEach(c => c.setVisible(show));
     });
@@ -371,23 +386,45 @@ const GoogleMapView = React.memo(({ venues, filterCategory, userLocation, active
       if (v) openVenueDetail(placeId, { name: v.name, formatted_address: v.addr, place_id: placeId, rating: v.stars, photo_url: v.photo_url });
     };
     // Pan to a specific venue from outside (chat, search, etc.)
-    window.__flockPanToVenue = (placeId) => {
-      const entry = markersRef.current.find(e => e.venue.place_id === placeId);
-      if (entry && mapInstanceRef.current) {
+    // Accepts placeId string OR object { place_id, lat, lng } for coordinate-based fallback
+    window.__flockPanToVenue = (target) => {
+      if (!mapInstanceRef.current) return;
+      const placeId = typeof target === 'string' ? target : target?.place_id;
+      const fallbackLat = typeof target === 'object' ? parseFloat(target?.lat) : NaN;
+      const fallbackLng = typeof target === 'object' ? parseFloat(target?.lng) : NaN;
+
+      // Try to find existing marker by place_id
+      const entry = placeId ? markersRef.current.find(e => e.venue.place_id === placeId) : null;
+      if (entry) {
         const loc = entry.venue.location;
         mapInstanceRef.current.panTo({ lat: loc.latitude, lng: loc.longitude });
         mapInstanceRef.current.setZoom(17);
         setActiveVenue(entry.venue);
         entry.marker.setAnimation(window.google.maps.Animation.BOUNCE);
         setTimeout(() => entry.marker.setAnimation(null), 1500);
+      } else if (!isNaN(fallbackLat) && !isNaN(fallbackLng)) {
+        // Fallback: use raw coordinates (venue not in current markers)
+        mapInstanceRef.current.panTo({ lat: fallbackLat, lng: fallbackLng });
+        mapInstanceRef.current.setZoom(17);
+        // Try to find by proximity (within ~100m)
+        const nearby = markersRef.current.find(e => {
+          const loc = e.venue.location;
+          if (!loc) return false;
+          const dist = Math.sqrt(Math.pow(loc.latitude - fallbackLat, 2) + Math.pow(loc.longitude - fallbackLng, 2)) * 111000;
+          return dist < 100;
+        });
+        if (nearby) {
+          setActiveVenue(nearby.venue);
+          nearby.marker.setAnimation(window.google.maps.Animation.BOUNCE);
+          setTimeout(() => nearby.marker.setAnimation(null), 1500);
+        }
       }
     };
-    // My Location: pan back to user's location
+    // My Location: recenter to Lehigh Valley default view
     window.__flockGoToMyLocation = () => {
-      if (mapInstanceRef.current && userMarkerRef.current) {
-        const pos = userMarkerRef.current.getPosition();
-        mapInstanceRef.current.panTo(pos);
-        mapInstanceRef.current.setZoom(15);
+      if (mapInstanceRef.current) {
+        mapInstanceRef.current.panTo(defaultCenter);
+        mapInstanceRef.current.setZoom(defaultZoom);
       }
     };
     return () => { delete window.__flockOpenVenue; delete window.__flockPanToVenue; delete window.__flockGoToMyLocation; };
@@ -604,10 +641,11 @@ const FlockAppInner = ({ authUser, onLogout }) => {
   const categorizeVenue = useCallback((types) => {
     if (!types || types.length === 0) return 'Food';
     const t = types.join(' ').toLowerCase();
-    if (t.includes('bar') || t.includes('night_club') || t.includes('liquor')) return 'Nightlife';
+    if (t.includes('bar') || t.includes('night_club') || t.includes('liquor') || t.includes('lounge')) return 'Nightlife';
     if (t.includes('music') || t.includes('concert') || t.includes('performing_arts')) return 'Live Music';
-    if (t.includes('stadium') || t.includes('gym') || t.includes('sports') || t.includes('bowling')) return 'Sports';
-    return 'Food';
+    if (t.includes('stadium') || t.includes('gym') || t.includes('sports') || t.includes('bowling') || t.includes('fitness')) return 'Sports';
+    if (t.includes('restaurant') || t.includes('cafe') || t.includes('bakery') || t.includes('food') || t.includes('pizza') || t.includes('meal')) return 'Food';
+    return 'Food'; // default for libraries, parks, museums, etc.
   }, []);
 
   // Venue search state (hoisted from CreateScreen to avoid conditional hook calls)
@@ -671,6 +709,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
         trending: v.rating >= 4.5,
         photo_url: v.photo_url || null,
         location: v.location || null,
+        types: v.types || [],
       };
     });
   }, [categorizeVenue]);
@@ -1038,7 +1077,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
       setMapVenuesLoaded(true);
       return;
     }
-    searchVenues('restaurants bars nightclubs live music sports venues', locStr)
+    searchVenues('restaurants bars cafes nightclubs live music sports bowling parks libraries museums arcades movie theaters', locStr)
       .then((data) => {
         const venues = data.venues || [];
         searchCacheRef.current[cacheKey] = { data: venues, timestamp: Date.now() };
@@ -1066,7 +1105,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
       setMapVenuesLoaded(true);
       return;
     }
-    searchVenues('popular restaurants bethlehem pa')
+    searchVenues('restaurants bars cafes parks libraries museums nightclubs bethlehem pa')
       .then((data) => {
         const venues = data.venues || [];
         searchCacheRef.current[cacheKey] = { data: venues, timestamp: Date.now() };
@@ -1589,6 +1628,8 @@ const FlockAppInner = ({ authUser, onLogout }) => {
         crowd: venue.crowd,
         best: venue.best,
         photo_url: venue.photo_url || null,
+        lat: venue.location?.latitude || null,
+        lng: venue.location?.longitude || null,
       }
     };
     addMessageToFlock(flockId, venueMessage);
@@ -2500,11 +2541,13 @@ const FlockAppInner = ({ authUser, onLogout }) => {
       setIsLoading(true);
       try {
         const venueName = selectedVenueForCreate?.name || null;
-        const venueAddr = selectedVenueForCreate?.addr || null;
+        const venueAddr = selectedVenueForCreate?.addr || selectedVenueForCreate?.formatted_address || null;
         const venueId = selectedVenueForCreate?.place_id || null;
         const venuePhoto = selectedVenueForCreate?.photo_url || null;
-        const venueRating = selectedVenueForCreate?.rating || null;
+        const venueRating = selectedVenueForCreate?.rating || selectedVenueForCreate?.stars || null;
         const venuePriceLevel = selectedVenueForCreate?.price_level || null;
+        const venueLat = selectedVenueForCreate?.lat || selectedVenueForCreate?.location?.latitude || null;
+        const venueLng = selectedVenueForCreate?.lng || selectedVenueForCreate?.location?.longitude || null;
         const invitedIds = flockFriends.map(f => f.id).filter(Boolean);
         const data = await apiCreateFlock({ name: flockName, venue_name: venueName, venue_address: venueAddr, venue_id: venueId, invited_user_ids: invitedIds.length > 0 ? invitedIds : undefined });
         const f = data.flock;
@@ -2516,11 +2559,11 @@ const FlockAppInner = ({ authUser, onLogout }) => {
             time: new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }),
             text: '',
             reactions: [],
-            venueCard: { name: venueName, addr: venueAddr, place_id: venueId, photo_url: venuePhoto, rating: venueRating, price_level: venuePriceLevel, type: 'Venue' }
+            venueCard: { name: venueName, addr: venueAddr, place_id: venueId, photo_url: venuePhoto, rating: venueRating, price_level: venuePriceLevel, type: 'Venue', lat: venueLat, lng: venueLng }
           });
         }
         const invitedNames = flockFriends.map(f => f.name);
-        const newFlock = { id: f.id, name: f.name, host: authUser?.name || 'You', creatorId: f.creator_id, members: invitedNames, memberCount: 1 + invitedIds.length, time: f.event_time ? new Date(f.event_time).toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' }) : `${flockDate} ${flockTime}`, status: 'voting', venue: f.venue_name || 'TBD', venueAddress: venueAddr, venueId: venueId, venuePhoto: venuePhoto, venueRating: venueRating, venuePriceLevel: venuePriceLevel, cashPool: null, votes: [], messages: initialMessages };
+        const newFlock = { id: f.id, name: f.name, host: authUser?.name || 'You', creatorId: f.creator_id, members: invitedNames, memberCount: 1 + invitedIds.length, time: f.event_time ? new Date(f.event_time).toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' }) : `${flockDate} ${flockTime}`, status: 'voting', venue: f.venue_name || 'TBD', venueAddress: venueAddr, venueId: venueId, venuePhoto: venuePhoto, venueRating: venueRating, venuePriceLevel: venuePriceLevel, venueLat: venueLat, venueLng: venueLng, cashPool: null, votes: [], messages: initialMessages };
         setFlocks(prev => [...prev, newFlock]);
         setFlockName(''); setFlockFriends([]); setInviteSearch(''); setInviteResults([]); setFlockCashPool(false); setSelectedVenueForCreate(null);
         setSelectedFlockId(f.id);
@@ -3064,9 +3107,17 @@ const FlockAppInner = ({ authUser, onLogout }) => {
             ].map(c => (
             <button key={c.id} onClick={() => {
               setActiveVenue(null);
-              // Local filter ONLY — never re-search or move the map
+              // Local filter ONLY — uses types-based matching (same logic as GoogleMapView filter)
               if (c.id !== 'All') {
-                const matches = allVenues.filter(v => v.category === c.id);
+                const matches = allVenues.filter(v => {
+                  const t = (v.types || []).join(' ').toLowerCase();
+                  const nm = (v.name || '').toLowerCase();
+                  if (c.id === 'Food') return t.includes('restaurant') || t.includes('cafe') || t.includes('food') || t.includes('bakery') || t.includes('bar') || v.category === 'Food';
+                  if (c.id === 'Nightlife') return t.includes('bar') || t.includes('night_club') || t.includes('club') || t.includes('liquor') || v.category === 'Nightlife';
+                  if (c.id === 'Live Music') return t.includes('music') || t.includes('concert') || t.includes('performing_arts') || nm.includes('music') || v.category === 'Live Music';
+                  if (c.id === 'Sports') return t.includes('stadium') || t.includes('gym') || t.includes('sports') || t.includes('bowling') || v.category === 'Sports';
+                  return true;
+                });
                 if (matches.length === 0) {
                   showToast(`No ${c.id} venues nearby. Showing all.`);
                   setCategory('All');
@@ -3447,8 +3498,12 @@ const FlockAppInner = ({ authUser, onLogout }) => {
                     // Navigate to Discover tab and center map on this venue
                     setCurrentTab('explore');
                     setCurrentScreen('main');
-                    if (flock.venueId) {
-                      setTimeout(() => { if (window.__flockPanToVenue) window.__flockPanToVenue(flock.venueId); }, 300);
+                    if (flock.venueId || flock.venueLat) {
+                      setTimeout(() => {
+                        if (window.__flockPanToVenue) {
+                          window.__flockPanToVenue({ place_id: flock.venueId, lat: flock.venueLat, lng: flock.venueLng });
+                        }
+                      }, 300);
                     }
                   }}
                   style={{ padding: '8px 12px', borderRadius: '10px', border: 'none', background: `linear-gradient(135deg, ${colors.teal}, #0d9488)`, color: 'white', fontSize: '10px', fontWeight: '700', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px', flexShrink: 0, boxShadow: '0 2px 8px rgba(20,184,166,0.3)' }}
@@ -3523,9 +3578,14 @@ const FlockAppInner = ({ authUser, onLogout }) => {
                       // Navigate to Discover tab and center map on this venue
                       setCurrentTab('explore');
                       setCurrentScreen('main');
-                      if (pid) {
-                        // Pan map to venue after a brief delay for tab switch
-                        setTimeout(() => { if (window.__flockPanToVenue) window.__flockPanToVenue(pid); }, 300);
+                      if (pid || vc.lat || vc.latitude) {
+                        const lat = vc.lat || vc.latitude;
+                        const lng = vc.lng || vc.longitude;
+                        setTimeout(() => {
+                          if (window.__flockPanToVenue) {
+                            window.__flockPanToVenue({ place_id: pid, lat, lng });
+                          }
+                        }, 300);
                       }
                     }}
                     onVote={() => {
@@ -6134,7 +6194,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
                 </a>
               ) : null}
               <button onClick={() => {
-                setSelectedVenueForCreate({ name: venueDetailModal.name, addr: venueDetailModal.formatted_address, place_id: venueDetailModal.place_id, rating: venueDetailModal.rating, price_level: venueDetailModal.price_level, photo_url: (venueDetailModal.photos && venueDetailModal.photos[0]) || venueDetailModal.photo_url || null });
+                setSelectedVenueForCreate({ name: venueDetailModal.name, addr: venueDetailModal.formatted_address, place_id: venueDetailModal.place_id, rating: venueDetailModal.rating, price_level: venueDetailModal.price_level, photo_url: (venueDetailModal.photos && venueDetailModal.photos[0]) || venueDetailModal.photo_url || null, lat: venueDetailModal.location?.latitude, lng: venueDetailModal.location?.longitude });
                 setVenueDetailModal(null);
                 setCurrentScreen('create');
                 showToast(`Selected ${venueDetailModal.name}!`);
