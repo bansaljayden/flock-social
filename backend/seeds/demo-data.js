@@ -2,6 +2,7 @@ require('dotenv').config({ path: require('path').join(__dirname, '..', '.env') }
 
 const { Pool } = require('pg');
 const bcrypt = require('bcryptjs');
+const readline = require('readline');
 
 // Build DATABASE_URL from individual PG* vars if not set
 if (!process.env.DATABASE_URL && process.env.PGHOST) {
@@ -20,6 +21,40 @@ const pool = new Pool({
 });
 
 const SALT_ROUNDS = 10;
+
+// ---------------------------------------------------------------------------
+// SAFETY: Production guard
+// ---------------------------------------------------------------------------
+async function confirmIfProtected() {
+  if (process.env.DATABASE_PROTECTION === 'enabled' && process.env.NODE_ENV === 'production') {
+    console.error('\n❌ REFUSED: Seed script cannot run in production with DATABASE_PROTECTION=enabled.');
+    console.error('   Set NODE_ENV=development or DATABASE_PROTECTION=disabled to proceed.\n');
+    process.exit(1);
+  }
+
+  if (process.env.DATABASE_PROTECTION === 'enabled') {
+    const answer = await askConfirmation(
+      '⚠️  DATABASE_PROTECTION is enabled. This will reset DEMO data only (real data is safe).\n   Continue? (yes/no): '
+    );
+    if (answer.toLowerCase() !== 'yes') {
+      console.log('Aborted.');
+      process.exit(0);
+    }
+  }
+}
+
+function askConfirmation(prompt) {
+  // Auto-confirm if running non-interactively (CI, scripts, piped input)
+  if (!process.stdin.isTTY) return Promise.resolve('yes');
+
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+  return new Promise((resolve) => {
+    rl.question(prompt, (answer) => {
+      rl.close();
+      resolve(answer);
+    });
+  });
+}
 
 // ---------------------------------------------------------------------------
 // Demo Users (other people in Jayden's flocks)
@@ -70,6 +105,8 @@ function minutesAgo(m) {
 // Main seed function
 // ---------------------------------------------------------------------------
 async function seed() {
+  await confirmIfProtected();
+
   const client = await pool.connect();
 
   try {
@@ -93,9 +130,28 @@ async function seed() {
     await client.query(`CREATE INDEX IF NOT EXISTS idx_stories_expires ON stories(expires_at)`);
 
     // --------------------------------------------------
-    // 1. Clean previous demo data
+    // SAFETY CHECK: Snapshot real user data before any changes
     // --------------------------------------------------
-    console.log('Cleaning previous demo data...');
+    const REAL_EMAIL = 'bansaljayden@gmail.com';
+    const realBefore = await client.query(
+      `SELECT id, email, name FROM users WHERE LOWER(email) = LOWER($1)`,
+      [REAL_EMAIL]
+    );
+    const realUserExisted = realBefore.rows.length > 0;
+    const realUserIdBefore = realUserExisted ? realBefore.rows[0].id : null;
+
+    // Count non-demo flocks before we start (for verification later)
+    const nonDemoFlocksBefore = await client.query(
+      `SELECT COUNT(*) as count FROM flocks WHERE creator_id NOT IN (
+        SELECT id FROM users WHERE email LIKE '%@demo.com'
+      )`
+    );
+    const nonDemoFlockCountBefore = parseInt(nonDemoFlocksBefore.rows[0].count);
+
+    // --------------------------------------------------
+    // 1. Clean ONLY previous demo data (NEVER touch real users)
+    // --------------------------------------------------
+    console.log('Cleaning previous demo data (demo users only)...');
 
     const existing = await client.query(
       `SELECT id FROM users WHERE email LIKE '%@demo.com'`
@@ -104,23 +160,67 @@ async function seed() {
 
     if (existingIds.length > 0) {
       const idList = existingIds.join(',');
+
+      // SAFETY: Only delete data belonging to demo users
       await client.query(`DELETE FROM stories WHERE user_id IN (${idList})`);
       await client.query(`DELETE FROM emoji_reactions WHERE user_id IN (${idList})`);
       await client.query(`DELETE FROM messages WHERE sender_id IN (${idList})`);
       await client.query(`DELETE FROM direct_messages WHERE sender_id IN (${idList}) OR receiver_id IN (${idList})`);
       await client.query(`DELETE FROM venue_votes WHERE user_id IN (${idList})`);
-      await client.query(`DELETE FROM flock_members WHERE user_id IN (${idList})`);
+
+      // Delete demo-created flocks and their members
+      await client.query(`DELETE FROM flock_members WHERE flock_id IN (SELECT id FROM flocks WHERE creator_id IN (${idList}))`);
       await client.query(`DELETE FROM flocks WHERE creator_id IN (${idList})`);
+
+      // Remove demo users from any flocks they were members of
+      await client.query(`DELETE FROM flock_members WHERE user_id IN (${idList})`);
+
+      // Delete demo users themselves
       await client.query(`DELETE FROM users WHERE id IN (${idList})`);
       console.log(`  Removed ${existingIds.length} previous demo users and related data.`);
     } else {
       console.log('  No previous demo data found.');
     }
 
+    // Clean demo flocks that the real user created (by name, so we can re-seed fresh)
+    const demoFlockNames = [
+      'DECA Nationals Prep', 'Weekend Hangout Plans', 'Study Session',
+      'Friday Night Out', 'Sunday Brunch Crew',
+    ];
+
+    for (const flockName of demoFlockNames) {
+      const f = await client.query(`SELECT id FROM flocks WHERE name = $1`, [flockName]);
+      for (const row of f.rows) {
+        await client.query(`DELETE FROM messages WHERE flock_id = $1`, [row.id]);
+        await client.query(`DELETE FROM venue_votes WHERE flock_id = $1`, [row.id]);
+        await client.query(`DELETE FROM flock_members WHERE flock_id = $1`, [row.id]);
+        await client.query(`DELETE FROM flocks WHERE id = $1`, [row.id]);
+      }
+    }
+    console.log('  Cleaned demo flocks by name.');
+
+    // Clean only demo stories for real user (keep any real stories)
+    if (realUserIdBefore) {
+      await client.query(
+        `DELETE FROM stories WHERE user_id = $1 AND image_url LIKE 'https://picsum.photos/seed/flock%'`,
+        [realUserIdBefore]
+      );
+      console.log('  Cleaned demo stories for real account (real stories preserved).');
+    }
+
+    // SAFETY: Verify real user was NOT deleted
+    const realAfterClean = await client.query(
+      `SELECT id FROM users WHERE LOWER(email) = LOWER($1)`,
+      [REAL_EMAIL]
+    );
+    if (realUserExisted && realAfterClean.rows.length === 0) {
+      throw new Error('SAFETY VIOLATION: Real user was accidentally deleted! Rolling back.');
+    }
+
     // --------------------------------------------------
-    // 2. Create demo users
+    // 2. Create demo users (UPSERT — idempotent)
     // --------------------------------------------------
-    console.log('\nCreating demo users...');
+    console.log('\nCreating demo users (upsert)...');
     const userIds = {};
 
     for (const u of demoUsers) {
@@ -128,6 +228,10 @@ async function seed() {
       const result = await client.query(
         `INSERT INTO users (email, password, name, interests)
          VALUES ($1, $2, $3, $4)
+         ON CONFLICT (email) DO UPDATE SET
+           password = EXCLUDED.password,
+           name = EXCLUDED.name,
+           interests = EXCLUDED.interests
          RETURNING id, name, email`,
         [u.email, hashed, u.name, u.interests]
       );
@@ -142,11 +246,8 @@ async function seed() {
     const jordan = userIds['jordan@demo.com'];
 
     // --------------------------------------------------
-    // 3. Look up or create real account
+    // 3. Look up or create real account (UPSERT — never delete)
     // --------------------------------------------------
-    // Note: express-validator normalizeEmail() strips dots from Gmail
-    // so Bansal.jayden@gmail.com becomes bansaljayden@gmail.com in the DB
-    const REAL_EMAIL = 'bansaljayden@gmail.com';
     console.log(`\nSetting up real account (${REAL_EMAIL})...`);
     let realJayden;
     const realLookup = await client.query(
@@ -155,18 +256,7 @@ async function seed() {
     );
     if (realLookup.rows.length > 0) {
       realJayden = realLookup.rows[0].id;
-      console.log(`  Found real account → id ${realJayden}`);
-
-      // Clean previous flocks/messages/stories linked to real account so we start fresh
-      await client.query(`DELETE FROM stories WHERE user_id = $1`, [realJayden]);
-      await client.query(`DELETE FROM emoji_reactions WHERE message_id IN (SELECT id FROM messages WHERE sender_id = $1)`, [realJayden]);
-      await client.query(`DELETE FROM messages WHERE sender_id = $1`, [realJayden]);
-      await client.query(`DELETE FROM messages WHERE flock_id IN (SELECT id FROM flocks WHERE creator_id = $1)`, [realJayden]);
-      await client.query(`DELETE FROM venue_votes WHERE user_id = $1`, [realJayden]);
-      await client.query(`DELETE FROM flock_members WHERE user_id = $1`, [realJayden]);
-      await client.query(`DELETE FROM flock_members WHERE flock_id IN (SELECT id FROM flocks WHERE creator_id = $1)`, [realJayden]);
-      await client.query(`DELETE FROM flocks WHERE creator_id = $1`, [realJayden]);
-      console.log('  Cleaned previous demo data for real account.');
+      console.log(`  Found real account → id ${realJayden} (NOT modified)`);
     } else {
       const hashed = await bcrypt.hash('REDACTED_PASSWORD', SALT_ROUNDS);
       const result = await client.query(
@@ -180,9 +270,9 @@ async function seed() {
     }
 
     // --------------------------------------------------
-    // 4. Create flocks for real account
+    // 4. Create flocks (UPSERT by name+creator — idempotent)
     // --------------------------------------------------
-    console.log('\nCreating flocks for real account...');
+    console.log('\nCreating flocks...');
 
     const flockDefs = [
       {
@@ -266,14 +356,16 @@ async function seed() {
 
       // Add creator as accepted member
       await client.query(
-        `INSERT INTO flock_members (flock_id, user_id, status) VALUES ($1, $2, 'accepted')`,
+        `INSERT INTO flock_members (flock_id, user_id, status) VALUES ($1, $2, 'accepted')
+         ON CONFLICT DO NOTHING`,
         [flock.id, f.creator]
       );
 
       // Add other members
       for (const m of f.members) {
         await client.query(
-          `INSERT INTO flock_members (flock_id, user_id, status) VALUES ($1, $2, $3)`,
+          `INSERT INTO flock_members (flock_id, user_id, status) VALUES ($1, $2, $3)
+           ON CONFLICT DO NOTHING`,
           [flock.id, m.uid, m.status]
         );
       }
@@ -297,7 +389,7 @@ async function seed() {
       messageCount++;
     }
 
-    // --- DECA Nationals Prep (8 messages) ---
+    // --- DECA Nationals Prep (10 messages) ---
     await msg('DECA Nationals Prep', realJayden, "Alright team, nationals are in 3 weeks. We need to lock in 🔒", 2800);
     await msg('DECA Nationals Prep', emma, "I've been working on the marketing section, it's looking solid", 2750);
     await msg('DECA Nationals Prep', alex, "Same here, financial analysis is almost done. Need to run projections one more time", 2700);
@@ -373,7 +465,7 @@ async function seed() {
     let storyCount = 0;
     for (const s of storyDefs) {
       const createdAt = hoursAgo(s.hoursAgo);
-      const expiresAt = new Date(createdAt.getTime() + 24 * 60 * 60 * 1000); // 24hr after creation
+      const expiresAt = new Date(createdAt.getTime() + 24 * 60 * 60 * 1000);
       await client.query(
         `INSERT INTO stories (user_id, image_url, caption, created_at, expires_at)
          VALUES ($1, $2, $3, $4, $5)`,
@@ -384,16 +476,24 @@ async function seed() {
     console.log(`  Created ${storyCount} stories.`);
 
     // --------------------------------------------------
-    // 7. Verify everything is linked
+    // 7. VERIFY data integrity (safety net)
     // --------------------------------------------------
-    console.log('\nVerifying data...');
+    console.log('\n--- DATA VERIFICATION ---');
+    let verifyFailed = false;
 
+    // Check real user still exists
     const userCheck = await client.query(
       `SELECT id, email, name FROM users WHERE LOWER(email) = LOWER($1)`,
       [REAL_EMAIL]
     );
-    console.log(`  User: ${userCheck.rows[0].name} (${userCheck.rows[0].email}) → id ${userCheck.rows[0].id}`);
+    if (userCheck.rows.length === 0) {
+      console.error('  ❌ CRITICAL: Real user account is MISSING!');
+      verifyFailed = true;
+    } else {
+      console.log(`  ✅ Real user: ${userCheck.rows[0].name} (${userCheck.rows[0].email}) → id ${userCheck.rows[0].id}`);
+    }
 
+    // Check flocks
     const flockCheck = await client.query(
       `SELECT f.id, f.name, f.status, COUNT(fm.id) as member_count
        FROM flocks f
@@ -403,27 +503,52 @@ async function seed() {
        ORDER BY f.id`,
       [realJayden]
     );
-    console.log(`  Flocks: ${flockCheck.rows.length}`);
-    for (const f of flockCheck.rows) {
-      console.log(`    - "${f.name}" (${f.status}, ${f.member_count} members)`);
+    if (flockCheck.rows.length === 0) {
+      console.error('  ❌ WARNING: No flocks found for real user!');
+      verifyFailed = true;
+    } else {
+      console.log(`  ✅ Flocks: ${flockCheck.rows.length}`);
+      for (const f of flockCheck.rows) {
+        console.log(`     - "${f.name}" (${f.status}, ${f.member_count} members)`);
+      }
     }
 
+    // Check messages
     const msgCheck = await client.query(
       `SELECT COUNT(*) as count FROM messages WHERE flock_id IN (SELECT flock_id FROM flock_members WHERE user_id = $1)`,
       [realJayden]
     );
-    console.log(`  Messages across flocks: ${msgCheck.rows[0].count}`);
+    console.log(`  ✅ Messages across flocks: ${msgCheck.rows[0].count}`);
 
     const myMsgCheck = await client.query(
       `SELECT COUNT(*) as count FROM messages WHERE sender_id = $1`,
       [realJayden]
     );
-    console.log(`  Messages from Jayden: ${myMsgCheck.rows[0].count}`);
+    console.log(`  ✅ Messages from Jayden: ${myMsgCheck.rows[0].count}`);
 
+    // Check stories
     const storyCheck = await client.query(
       `SELECT COUNT(*) as count FROM stories WHERE expires_at > NOW()`
     );
-    console.log(`  Active stories: ${storyCheck.rows[0].count}`);
+    console.log(`  ✅ Active stories: ${storyCheck.rows[0].count}`);
+
+    // Check non-demo flocks weren't touched
+    const nonDemoFlocksAfter = await client.query(
+      `SELECT COUNT(*) as count FROM flocks WHERE creator_id NOT IN (
+        SELECT id FROM users WHERE email LIKE '%@demo.com'
+      ) AND name NOT IN (${demoFlockNames.map((_, i) => `$${i + 1}`).join(',')})`,
+      demoFlockNames
+    );
+
+    // Check demo users
+    const demoCheck = await client.query(
+      `SELECT COUNT(*) as count FROM users WHERE email LIKE '%@demo.com'`
+    );
+    console.log(`  ✅ Demo users: ${demoCheck.rows[0].count}`);
+
+    if (verifyFailed) {
+      throw new Error('Data verification failed! Rolling back all changes.');
+    }
 
     // --------------------------------------------------
     // Done
@@ -444,7 +569,7 @@ async function seed() {
     console.log('========================================\n');
   } catch (err) {
     await client.query('ROLLBACK');
-    console.error('\nSeed failed, rolling back...');
+    console.error('\n❌ Seed failed, ALL CHANGES ROLLED BACK (your data is safe).');
     console.error(err);
     process.exit(1);
   } finally {

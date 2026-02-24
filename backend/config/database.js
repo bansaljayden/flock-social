@@ -12,6 +12,29 @@ pool.on('error', (err) => {
   console.error('Unexpected database pool error:', err);
 });
 
+// ---------------------------------------------------------------------------
+// DATABASE SAFETY: Intercept dangerous queries
+// ---------------------------------------------------------------------------
+const originalQuery = pool.query.bind(pool);
+pool.query = function safeQuery(...args) {
+  const queryText = typeof args[0] === 'string' ? args[0] : (args[0] && args[0].text);
+  if (queryText && /DROP\s+TABLE/i.test(queryText) && process.env.ALLOW_DROP_TABLES !== 'true') {
+    const err = new Error(
+      'DROP TABLE is BLOCKED for safety. Set ALLOW_DROP_TABLES=true in .env to allow, or use migrations instead.'
+    );
+    console.error('🛡️ BLOCKED dangerous query:', queryText);
+    return Promise.reject(err);
+  }
+  if (queryText && /TRUNCATE/i.test(queryText) && process.env.ALLOW_DROP_TABLES !== 'true') {
+    const err = new Error(
+      'TRUNCATE is BLOCKED for safety. Set ALLOW_DROP_TABLES=true in .env to allow.'
+    );
+    console.error('🛡️ BLOCKED dangerous query:', queryText);
+    return Promise.reject(err);
+  }
+  return originalQuery(...args);
+};
+
 // Verify connection on startup
 pool.query('SELECT NOW()')
   .then(() => console.log('PostgreSQL connected'))
