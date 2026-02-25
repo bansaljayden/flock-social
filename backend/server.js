@@ -1,5 +1,5 @@
 require('dotenv').config();
-console.log('DATABASE_URL:', process.env.DATABASE_URL);
+console.log('DATABASE_URL:', process.env.DATABASE_URL ? '[configured]' : '[missing]');
 
 const express = require('express');
 const http = require('http');
@@ -40,7 +40,7 @@ app.use(cors({
     // Allow requests with no origin (mobile apps, Postman, etc.)
     if (!origin) return callback(null, true);
     // Allow any Vercel preview/production deployment for this project
-    if (allowedOrigins.includes(origin) || origin.includes('flock-app') && origin.endsWith('.vercel.app')) {
+    if (allowedOrigins.includes(origin) || /^https:\/\/flock-app(-[a-z0-9]+)*\.vercel\.app$/.test(origin)) {
       callback(null, true);
     } else {
       callback(new Error('Not allowed by CORS'));
@@ -52,17 +52,31 @@ app.use(cors({
 // ---------------------------------------------------------------------------
 // Security & parsing middleware
 // ---------------------------------------------------------------------------
-app.use(helmet());
+app.use(helmet({
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'self'"],
+      scriptSrc: ["'self'", "https://maps.googleapis.com"],
+      styleSrc: ["'self'", "'unsafe-inline'"],
+      imgSrc: ["'self'", "data:", "https:", "blob:"],
+      connectSrc: ["'self'", "https://maps.googleapis.com", "https://places.googleapis.com", "wss:", "ws:"],
+      frameSrc: ["'none'"],
+      objectSrc: ["'none'"],
+    },
+  },
+  frameguard: { action: 'deny' },
+  crossOriginEmbedderPolicy: false,
+}));
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
 
-// Serve uploaded files
-app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+// Serve uploaded files (deny dotfiles, no directory listing)
+app.use('/uploads', express.static(path.join(__dirname, 'uploads'), { dotfiles: 'deny', index: false }));
 
 // ---------------------------------------------------------------------------
 // Rate limiting (disabled in development)
 // ---------------------------------------------------------------------------
-const isDev = process.env.NODE_ENV !== 'production';
+const isDev = process.env.NODE_ENV === 'development';
 
 const apiLimiter = isDev ? (_req, _res, next) => next() : rateLimit({
   windowMs: 15 * 60 * 1000,
@@ -73,9 +87,19 @@ const apiLimiter = isDev ? (_req, _res, next) => next() : rateLimit({
 });
 
 const authLimiter = isDev ? (_req, _res, next) => next() : rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 20,
+  windowMs: 60 * 1000,
+  max: 5,
+  standardHeaders: true,
+  legacyHeaders: false,
   message: { error: 'Too many login attempts, please try again later' },
+});
+
+const venueSearchLimiter = isDev ? (_req, _res, next) => next() : rateLimit({
+  windowMs: 60 * 1000,
+  max: 20,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many venue searches, please try again later' },
 });
 
 // ---------------------------------------------------------------------------
@@ -86,7 +110,7 @@ app.use('/api/flocks', apiLimiter, flockRoutes);
 app.use('/api', apiLimiter, messageRoutes);     // Handles /api/flocks/:id/messages, /api/messages/:id/react, /api/dm/*
 app.use('/api/users', apiLimiter, userRoutes);
 app.use('/api/flocks', apiLimiter, venueRoutes); // Handles /api/flocks/:id/vote, /api/flocks/:id/votes
-app.use('/api/venues', apiLimiter, venueSearchRoutes); // Handles /api/venues/search, /api/venues/details
+app.use('/api/venues', venueSearchLimiter, venueSearchRoutes); // Handles /api/venues/search, /api/venues/details
 app.use('/api/stories', apiLimiter, storyRoutes);     // Handles /api/stories
 app.use('/api/friends', apiLimiter, friendRoutes);    // Handles /api/friends, /api/friends/request, etc.
 
@@ -112,7 +136,7 @@ app.use((err, req, res, _next) => {
 const io = new Server(server, {
   cors: {
     origin: (origin, callback) => {
-      if (!origin || allowedOrigins.includes(origin) || origin.includes('flock-app') && origin.endsWith('.vercel.app')) {
+      if (!origin || allowedOrigins.includes(origin) || /^https:\/\/flock-app(-[a-z0-9]+)*\.vercel\.app$/.test(origin)) {
         callback(null, true);
       } else {
         callback(new Error('Not allowed by CORS'));
@@ -125,6 +149,29 @@ const io = new Server(server, {
   allowUpgrades: true,
   pingTimeout: 60000,
   pingInterval: 25000,
+});
+
+// Rate limit WebSocket connections: 10 per minute per IP
+const socketConnections = new Map();
+io.use((socket, next) => {
+  const ip = socket.handshake.address;
+  const now = Date.now();
+  const windowMs = 60 * 1000;
+  const maxConnections = 10;
+
+  if (!socketConnections.has(ip)) {
+    socketConnections.set(ip, []);
+  }
+
+  const timestamps = socketConnections.get(ip).filter(t => now - t < windowMs);
+  timestamps.push(now);
+  socketConnections.set(ip, timestamps);
+
+  if (timestamps.length > maxConnections) {
+    return next(new Error('Too many connections, please try again later'));
+  }
+
+  next();
 });
 
 // Authenticate every socket connection

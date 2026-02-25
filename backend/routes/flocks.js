@@ -2,6 +2,7 @@ const express = require('express');
 const { body, param, validationResult } = require('express-validator');
 const pool = require('../config/database');
 const { authenticate } = require('../middleware/auth');
+const { stripHtml } = require('../utils/sanitize');
 
 const router = express.Router();
 
@@ -33,9 +34,9 @@ router.get('/', async (req, res) => {
 // POST /api/flocks - Create a new flock
 router.post('/',
   [
-    body('name').trim().isLength({ min: 1, max: 255 }).withMessage('Flock name is required'),
-    body('venue_name').optional().trim(),
-    body('venue_address').optional().trim(),
+    body('name').trim().customSanitizer(stripHtml).isLength({ min: 1, max: 255 }).withMessage('Flock name is required'),
+    body('venue_name').optional().trim().customSanitizer(stripHtml),
+    body('venue_address').optional().trim().customSanitizer(stripHtml),
     body('venue_id').optional().trim(),
     body('venue_latitude').optional().isFloat(),
     body('venue_longitude').optional().isFloat(),
@@ -71,16 +72,15 @@ router.post('/',
           [flock.id, req.user.id]
         );
 
-        // Invite additional users if provided
+        // Invite additional users if provided (parameterized, status = 'invited')
         if (invited_user_ids && invited_user_ids.length > 0) {
-          const values = invited_user_ids
-            .filter((id) => id !== req.user.id)
-            .map((userId) => `(${flock.id}, ${parseInt(userId)}, 'accepted')`);
-
-          if (values.length > 0) {
+          for (const userId of invited_user_ids) {
+            const uid = parseInt(userId);
+            if (!Number.isFinite(uid) || uid === req.user.id) continue;
             await client.query(
-              `INSERT INTO flock_members (flock_id, user_id, status) VALUES ${values.join(', ')}
-               ON CONFLICT (flock_id, user_id) DO NOTHING`
+              `INSERT INTO flock_members (flock_id, user_id, status) VALUES ($1, $2, 'invited')
+               ON CONFLICT (flock_id, user_id) DO NOTHING`,
+              [flock.id, uid]
             );
           }
         }

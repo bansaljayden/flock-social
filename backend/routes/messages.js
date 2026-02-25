@@ -2,6 +2,7 @@ const express = require('express');
 const { body, param, query, validationResult } = require('express-validator');
 const pool = require('../config/database');
 const { authenticate } = require('../middleware/auth');
+const { stripHtml } = require('../utils/sanitize');
 
 const router = express.Router();
 
@@ -102,7 +103,7 @@ router.get('/flocks/:id/messages',
 router.post('/flocks/:id/messages',
   [
     param('id').isInt(),
-    body('message_text').trim().isLength({ min: 1, max: 5000 }).withMessage('Message is required'),
+    body('message_text').trim().customSanitizer(stripHtml).isLength({ min: 1, max: 5000 }).withMessage('Message is required'),
     body('message_type').optional().isIn(['text', 'venue_card', 'image']),
     body('venue_data').optional().isObject(),
     body('image_url').optional().isURL(),
@@ -282,7 +283,7 @@ router.get('/dm/:userId',
 router.post('/dm/:userId',
   [
     param('userId').isInt(),
-    body('message_text').trim().isLength({ min: 1, max: 5000 }).withMessage('Message is required'),
+    body('message_text').trim().customSanitizer(stripHtml).isLength({ min: 1, max: 5000 }).withMessage('Message is required'),
   ],
   async (req, res) => {
     try {

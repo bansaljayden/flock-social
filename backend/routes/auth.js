@@ -70,12 +70,14 @@ router.post('/login', loginValidation, async (req, res) => {
 
     const result = await pool.query('SELECT * FROM users WHERE LOWER(email) = LOWER($1)', [email]);
     if (result.rows.length === 0) {
+      console.warn(`Failed login attempt (unknown email) for ${email} from ${req.ip} at ${new Date().toISOString()}`);
       return res.status(401).json({ error: 'Invalid email or password' });
     }
 
     const user = result.rows[0];
     const validPassword = await bcrypt.compare(password, user.password);
     if (!validPassword) {
+      console.warn(`Failed login attempt for ${email} from ${req.ip} at ${new Date().toISOString()}`);
       return res.status(401).json({ error: 'Invalid email or password' });
     }
 
