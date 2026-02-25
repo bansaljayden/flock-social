@@ -1,7 +1,17 @@
 const pool = require('../config/database');
+const { stripHtml } = require('../utils/sanitize');
 
 // Track which users are in which rooms for presence
 const roomUsers = new Map(); // flockId -> Set of { socketId, userId, name }
+
+// Reusable membership check for socket handlers
+async function verifyMembership(flockId, userId) {
+  const result = await pool.query(
+    "SELECT id FROM flock_members WHERE flock_id = $1 AND user_id = $2 AND status = 'accepted'",
+    [flockId, userId]
+  );
+  return result.rows.length > 0;
+}
 
 function registerHandlers(io, socket) {
   const user = socket.user; // Set by authenticateSocket middleware
@@ -80,7 +90,20 @@ function registerHandlers(io, socket) {
 
   socket.on('send_message', async (data) => {
     try {
-      const { flockId, message_text, message_type, venue_data, image_url } = data;
+      const { flockId, message_type, venue_data, image_url } = data;
+      const message_text = stripHtml(typeof data.message_text === 'string' ? data.message_text.trim() : '');
+
+      // Validate inputs
+      if (!flockId || (!message_text && message_type !== 'image')) {
+        socket.emit('error', { message: 'Message text is required' });
+        return;
+      }
+      if (message_text.length > 5000) {
+        socket.emit('error', { message: 'Message too long (max 5000 characters)' });
+        return;
+      }
+      const allowedTypes = ['text', 'venue_card', 'image'];
+      const safeType = allowedTypes.includes(message_type) ? message_type : 'text';
 
       // Verify membership
       const membership = await pool.query(
@@ -101,7 +124,7 @@ function registerHandlers(io, socket) {
           flockId,
           user.id,
           message_text,
-          message_type || 'text',
+          safeType,
           venue_data ? JSON.stringify(venue_data) : null,
           image_url || null,
         ]
@@ -121,7 +144,8 @@ function registerHandlers(io, socket) {
 
   // --- Typing indicators ---
 
-  socket.on('typing', (flockId) => {
+  socket.on('typing', async (flockId) => {
+    if (!(await verifyMembership(flockId, user.id))) return;
     socket.to(`flock:${flockId}`).emit('user_typing', {
       userId: user.id,
       name: user.name,
@@ -129,7 +153,8 @@ function registerHandlers(io, socket) {
     });
   });
 
-  socket.on('stop_typing', (flockId) => {
+  socket.on('stop_typing', async (flockId) => {
+    if (!(await verifyMembership(flockId, user.id))) return;
     socket.to(`flock:${flockId}`).emit('user_stopped_typing', {
       userId: user.id,
       flockId,
@@ -140,13 +165,20 @@ function registerHandlers(io, socket) {
 
   socket.on('vote_venue', async (data) => {
     try {
-      const { flockId, venue_name, venue_id } = data;
+      const { flockId, venue_id } = data;
+      const venue_name = stripHtml(typeof data.venue_name === 'string' ? data.venue_name.trim() : '');
 
-      const membership = await pool.query(
-        "SELECT id FROM flock_members WHERE flock_id = $1 AND user_id = $2 AND status = 'accepted'",
-        [flockId, user.id]
-      );
-      if (membership.rows.length === 0) {
+      // Validate inputs
+      if (!flockId || !venue_name) {
+        socket.emit('error', { message: 'Venue name is required' });
+        return;
+      }
+      if (venue_name.length > 255) {
+        socket.emit('error', { message: 'Venue name too long' });
+        return;
+      }
+
+      if (!(await verifyMembership(flockId, user.id))) {
         socket.emit('error', { message: 'Not a member of this flock' });
         return;
       }
@@ -184,8 +216,12 @@ function registerHandlers(io, socket) {
 
   // --- Location sharing ---
 
-  socket.on('update_location', (data) => {
+  socket.on('update_location', async (data) => {
     const { flockId, lat, lng } = data;
+
+    if (!flockId || typeof lat !== 'number' || typeof lng !== 'number') return;
+    if (!(await verifyMembership(flockId, user.id))) return;
+
     socket.to(`flock:${flockId}`).emit('location_update', {
       userId: user.id,
       name: user.name,
@@ -232,7 +268,20 @@ function registerHandlers(io, socket) {
 
   socket.on('crowd_update', (data) => {
     const { venue_id, level } = data; // level: 'low' | 'moderate' | 'busy' | 'packed'
-    // Broadcast to all connected clients watching this venue
+
+    // Only venue owners or admins can broadcast crowd updates
+    if (user.role !== 'venue_owner' && user.role !== 'admin') {
+      socket.emit('error', { message: 'Only venue owners can update crowd levels' });
+      return;
+    }
+
+    const allowedLevels = ['low', 'moderate', 'busy', 'packed'];
+    if (!venue_id || !allowedLevels.includes(level)) {
+      socket.emit('error', { message: 'Invalid crowd update data' });
+      return;
+    }
+
+    // Broadcast to clients watching this venue
     io.emit('crowd_update', {
       venue_id,
       level,

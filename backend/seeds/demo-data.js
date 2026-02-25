@@ -12,7 +12,7 @@ if (!process.env.DATABASE_URL && process.env.PGHOST) {
   const pass = process.env.PGPASSWORD || '';
   const db = process.env.PGDATABASE || 'railway';
   process.env.DATABASE_URL = `postgresql://${user}:${pass}@${host}:${port}/${db}`;
-  console.log(`Built DATABASE_URL from PG* vars → ${host}:${port}/${db}`);
+  console.log(`Built DATABASE_URL from PG* vars → [configured]`);
 }
 
 const pool = new Pool({
@@ -159,24 +159,22 @@ async function seed() {
     const existingIds = existing.rows.map((r) => r.id);
 
     if (existingIds.length > 0) {
-      const idList = existingIds.join(',');
-
-      // SAFETY: Only delete data belonging to demo users
-      await client.query(`DELETE FROM stories WHERE user_id IN (${idList})`);
-      await client.query(`DELETE FROM emoji_reactions WHERE user_id IN (${idList})`);
-      await client.query(`DELETE FROM messages WHERE sender_id IN (${idList})`);
-      await client.query(`DELETE FROM direct_messages WHERE sender_id IN (${idList}) OR receiver_id IN (${idList})`);
-      await client.query(`DELETE FROM venue_votes WHERE user_id IN (${idList})`);
+      // SAFETY: Only delete data belonging to demo users (parameterized)
+      await client.query(`DELETE FROM stories WHERE user_id = ANY($1)`, [existingIds]);
+      await client.query(`DELETE FROM emoji_reactions WHERE user_id = ANY($1)`, [existingIds]);
+      await client.query(`DELETE FROM messages WHERE sender_id = ANY($1)`, [existingIds]);
+      await client.query(`DELETE FROM direct_messages WHERE sender_id = ANY($1) OR receiver_id = ANY($1)`, [existingIds]);
+      await client.query(`DELETE FROM venue_votes WHERE user_id = ANY($1)`, [existingIds]);
 
       // Delete demo-created flocks and their members
-      await client.query(`DELETE FROM flock_members WHERE flock_id IN (SELECT id FROM flocks WHERE creator_id IN (${idList}))`);
-      await client.query(`DELETE FROM flocks WHERE creator_id IN (${idList})`);
+      await client.query(`DELETE FROM flock_members WHERE flock_id IN (SELECT id FROM flocks WHERE creator_id = ANY($1))`, [existingIds]);
+      await client.query(`DELETE FROM flocks WHERE creator_id = ANY($1)`, [existingIds]);
 
       // Remove demo users from any flocks they were members of
-      await client.query(`DELETE FROM flock_members WHERE user_id IN (${idList})`);
+      await client.query(`DELETE FROM flock_members WHERE user_id = ANY($1)`, [existingIds]);
 
       // Delete demo users themselves
-      await client.query(`DELETE FROM users WHERE id IN (${idList})`);
+      await client.query(`DELETE FROM users WHERE id = ANY($1)`, [existingIds]);
       console.log(`  Removed ${existingIds.length} previous demo users and related data.`);
     } else {
       console.log('  No previous demo data found.');
@@ -258,7 +256,11 @@ async function seed() {
       realJayden = realLookup.rows[0].id;
       console.log(`  Found real account → id ${realJayden} (NOT modified)`);
     } else {
-      const hashed = await bcrypt.hash('REDACTED_PASSWORD', SALT_ROUNDS);
+      const seedPassword = process.env.SEED_REAL_USER_PASSWORD;
+      if (!seedPassword) {
+        throw new Error('SEED_REAL_USER_PASSWORD env var is required to create real user. Set it in .env');
+      }
+      const hashed = await bcrypt.hash(seedPassword, SALT_ROUNDS);
       const result = await client.query(
         `INSERT INTO users (email, password, name, interests)
          VALUES ($1, $2, 'Jayden Bansal', $3)
@@ -572,9 +574,7 @@ async function seed() {
     console.log(`  Messages:   ${messageCount}`);
     console.log(`  Stories:    ${storyCount}`);
     console.log(`  Real account: Bansal.jayden@gmail.com → id ${realJayden}`);
-    console.log('\n  Login credentials:');
-    console.log('  Email:    Bansal.jayden@gmail.com');
-    console.log('  Password: REDACTED_PASSWORD');
+    console.log('\n  Login with your configured credentials.');
     console.log('========================================\n');
   } catch (err) {
     await client.query('ROLLBACK');
