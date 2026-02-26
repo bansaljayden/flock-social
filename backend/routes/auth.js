@@ -4,6 +4,7 @@ const jwt = require('jsonwebtoken');
 const { body, validationResult } = require('express-validator');
 const pool = require('../config/database');
 const { authenticate } = require('../middleware/auth');
+const { stripHtml, sanitizeArray } = require('../utils/sanitize');
 
 const router = express.Router();
 
@@ -13,8 +14,11 @@ const TOKEN_EXPIRY = '24h';
 // Validation rules
 const signupValidation = [
   body('email').isEmail().normalizeEmail().withMessage('Valid email required'),
-  body('password').isLength({ min: 8 }).withMessage('Password must be at least 8 characters'),
-  body('name').trim().isLength({ min: 1, max: 255 }).withMessage('Name is required'),
+  body('password')
+    .isLength({ min: 8 }).withMessage('Password must be at least 8 characters')
+    .matches(/[A-Z]/).withMessage('Password must contain at least one uppercase letter')
+    .matches(/[0-9]/).withMessage('Password must contain at least one number'),
+  body('name').trim().customSanitizer(stripHtml).isLength({ min: 1, max: 255 }).withMessage('Name is required'),
   body('phone').optional().isMobilePhone().withMessage('Invalid phone number'),
 ];
 
@@ -32,6 +36,7 @@ router.post('/signup', signupValidation, async (req, res) => {
     }
 
     const { email, password, name, phone, interests } = req.body;
+    const safeInterests = sanitizeArray(interests || []);
 
     // Check if email already exists
     const existing = await pool.query('SELECT id FROM users WHERE LOWER(email) = LOWER($1)', [email]);
@@ -45,7 +50,7 @@ router.post('/signup', signupValidation, async (req, res) => {
       `INSERT INTO users (email, password, name, phone, interests)
        VALUES ($1, $2, $3, $4, $5)
        RETURNING id, email, name, phone, interests, role, profile_image_url, created_at`,
-      [email, hashedPassword, name, phone || null, interests || []]
+      [email, hashedPassword, name, phone || null, safeInterests]
     );
 
     const user = result.rows[0];

@@ -5,6 +5,7 @@ const multer = require('multer');
 const path = require('path');
 const pool = require('../config/database');
 const { authenticate } = require('../middleware/auth');
+const { stripHtml, sanitizeArray } = require('../utils/sanitize');
 
 const router = express.Router();
 const SALT_ROUNDS = 10;
@@ -69,12 +70,15 @@ router.get('/profile', async (req, res) => {
 // PUT /api/users/profile - Update current user's profile (requires current password)
 router.put('/profile',
   [
-    body('name').optional().trim().isLength({ min: 1, max: 255 }).withMessage('Name must be 1-255 characters'),
+    body('name').optional().trim().customSanitizer(stripHtml).isLength({ min: 1, max: 255 }).withMessage('Name must be 1-255 characters'),
     body('email').optional().isEmail().withMessage('Valid email required'),
     body('phone').optional(),
     body('interests').optional().isArray(),
     body('current_password').notEmpty().withMessage('Current password is required'),
-    body('new_password').optional().isLength({ min: 8 }).withMessage('New password must be at least 8 characters'),
+    body('new_password').optional()
+      .isLength({ min: 8 }).withMessage('New password must be at least 8 characters')
+      .matches(/[A-Z]/).withMessage('Password must contain at least one uppercase letter')
+      .matches(/[0-9]/).withMessage('Password must contain at least one number'),
   ],
   async (req, res) => {
     try {
@@ -84,6 +88,7 @@ router.put('/profile',
       }
 
       const { name, email, phone, interests, current_password, new_password } = req.body;
+      const safeInterests = interests ? sanitizeArray(interests) : null;
 
       // Fetch current user with password
       const userResult = await pool.query('SELECT * FROM users WHERE id = $1', [req.user.id]);
@@ -126,7 +131,7 @@ router.put('/profile',
              updated_at = NOW()
          WHERE id = $6
          RETURNING id, email, name, phone, interests, role, profile_image_url, created_at, updated_at`,
-        [name || null, email || null, phone || null, interests || null, hashedPassword, req.user.id]
+        [name || null, email || null, phone || null, safeInterests, hashedPassword, req.user.id]
       );
 
       res.json({ user: result.rows[0] });
@@ -137,7 +142,7 @@ router.put('/profile',
   }
 );
 
-// GET /api/users/search?q= - Search users by name or email
+// GET /api/users/search?q= - Search users by name only (no email exposure)
 router.get('/search',
   query('q').trim().isLength({ min: 1 }).withMessage('Search query is required'),
   async (req, res) => {
@@ -150,9 +155,9 @@ router.get('/search',
       const searchTerm = `%${req.query.q}%`;
 
       const result = await pool.query(
-        `SELECT id, name, email, profile_image_url
+        `SELECT id, name, profile_image_url
          FROM users
-         WHERE (name ILIKE $1 OR email ILIKE $1) AND id != $2
+         WHERE name ILIKE $1 AND id != $2
          LIMIT 20`,
         [searchTerm, req.user.id]
       );
@@ -169,12 +174,12 @@ router.get('/search',
 router.get('/suggested', async (req, res) => {
   try {
     const result = await pool.query(
-      `SELECT u.id, u.name, u.email, u.profile_image_url, COUNT(fm2.flock_id) AS shared_flocks
+      `SELECT u.id, u.name, u.profile_image_url, COUNT(fm2.flock_id) AS shared_flocks
        FROM flock_members fm1
        JOIN flock_members fm2 ON fm2.flock_id = fm1.flock_id AND fm2.user_id != fm1.user_id AND fm2.status = 'accepted'
        JOIN users u ON u.id = fm2.user_id
        WHERE fm1.user_id = $1 AND fm1.status = 'accepted'
-       GROUP BY u.id, u.name, u.email, u.profile_image_url
+       GROUP BY u.id, u.name, u.profile_image_url
        ORDER BY shared_flocks DESC, u.name ASC
        LIMIT 10`,
       [req.user.id]

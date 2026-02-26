@@ -122,7 +122,7 @@ router.post('/accept',
 router.get('/', async (req, res) => {
   try {
     const result = await pool.query(
-      `SELECT u.id, u.name, u.email, u.profile_image_url, f.created_at AS friends_since
+      `SELECT u.id, u.name, u.profile_image_url, f.created_at AS friends_since
        FROM friendships f
        JOIN users u ON u.id = CASE WHEN f.requester_id = $1 THEN f.addressee_id ELSE f.requester_id END
        WHERE (f.requester_id = $1 OR f.addressee_id = $1) AND f.status = 'accepted'
@@ -140,7 +140,7 @@ router.get('/', async (req, res) => {
 router.get('/pending', async (req, res) => {
   try {
     const result = await pool.query(
-      `SELECT u.id, u.name, u.email, u.profile_image_url, f.created_at
+      `SELECT u.id, u.name, u.profile_image_url, f.created_at
        FROM friendships f
        JOIN users u ON u.id = f.requester_id
        WHERE f.addressee_id = $1 AND f.status = 'pending'

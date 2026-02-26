@@ -57,17 +57,19 @@ app.use(helmet({
     directives: {
       defaultSrc: ["'self'"],
       scriptSrc: ["'self'", "https://maps.googleapis.com"],
-      styleSrc: ["'self'", "'unsafe-inline'"],
+      styleSrc: ["'self'", "https://fonts.googleapis.com"],
       imgSrc: ["'self'", "data:", "https:", "blob:"],
       connectSrc: ["'self'", "https://maps.googleapis.com", "https://places.googleapis.com", "wss:", "ws:"],
+      fontSrc: ["'self'", "https://fonts.gstatic.com"],
       frameSrc: ["'none'"],
       objectSrc: ["'none'"],
     },
   },
   frameguard: { action: 'deny' },
   crossOriginEmbedderPolicy: false,
+  hsts: { maxAge: 31536000, includeSubDomains: true, preload: true },
 }));
-app.use(express.json({ limit: '10mb' }));
+app.use(express.json({ limit: '1mb' }));
 app.use(express.urlencoded({ extended: true }));
 
 // Serve uploaded files (deny dotfiles, no directory listing)
