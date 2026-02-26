@@ -578,31 +578,82 @@ const GoogleMapView = React.memo(({ venues, filterCategory, userLocation, active
         }
       }
     };
-    // My Location: re-request user's REAL geolocation, center on it, zoom 12
+    // My Location: re-request user's REAL geolocation, center on it, zoom 15 (street level)
     window.__flockGoToMyLocation = () => {
       if (!mapInstanceRef.current) return;
+      // Show loading state on the button
+      const locBtn = document.getElementById('flock-my-location-btn');
+      if (locBtn) locBtn.style.opacity = '0.6';
+
       if (navigator.geolocation) {
         navigator.geolocation.getCurrentPosition(
           (pos) => {
             const freshLoc = { lat: pos.coords.latitude, lng: pos.coords.longitude };
             console.log('[Map] My Location pressed, centering on fresh GPS:', freshLoc);
             mapInstanceRef.current.panTo(freshLoc);
-            mapInstanceRef.current.setZoom(DEFAULT_ZOOM);
-            if (userMarkerRef.current) userMarkerRef.current.setPosition(freshLoc);
+            mapInstanceRef.current.setZoom(15);
+            if (locBtn) locBtn.style.opacity = '1';
+
+            // Update or create user blue dot
+            if (userMarkerRef.current) {
+              userMarkerRef.current.setPosition(freshLoc);
+            } else {
+              userMarkerRef.current = new window.google.maps.Marker({
+                position: freshLoc,
+                map: mapInstanceRef.current,
+                icon: {
+                  path: window.google.maps.SymbolPath.CIRCLE,
+                  scale: 10,
+                  fillColor: '#3b82f6',
+                  fillOpacity: 1,
+                  strokeColor: '#ffffff',
+                  strokeWeight: 3,
+                },
+                zIndex: 999,
+                title: 'You are here',
+              });
+            }
+
+            // Update accuracy circle
             if (accuracyCircleRef.current) {
               accuracyCircleRef.current.setCenter(freshLoc);
               accuracyCircleRef.current.setRadius(pos.coords.accuracy || 50);
             }
+
+            // Pulse animation on blue dot — briefly enlarge then shrink
+            if (userMarkerRef.current) {
+              const pulseScales = [14, 16, 14, 12, 10];
+              pulseScales.forEach((s, i) => {
+                setTimeout(() => {
+                  if (userMarkerRef.current) {
+                    userMarkerRef.current.setIcon({
+                      path: window.google.maps.SymbolPath.CIRCLE,
+                      scale: s,
+                      fillColor: '#3b82f6',
+                      fillOpacity: i < 2 ? 0.7 : 1,
+                      strokeColor: '#ffffff',
+                      strokeWeight: 3,
+                    });
+                  }
+                }, i * 400);
+              });
+            }
           },
           () => {
             console.log('[Map] My Location: geolocation denied');
+            if (locBtn) locBtn.style.opacity = '1';
+            // Show toast via a custom event since we can't access React state here
+            window.dispatchEvent(new CustomEvent('flock-toast', { detail: { message: 'Location permission required', type: 'error' } }));
           },
           { enableHighAccuracy: true, timeout: 8000, maximumAge: 0 }
         );
+      } else {
+        if (locBtn) locBtn.style.opacity = '1';
+        window.dispatchEvent(new CustomEvent('flock-toast', { detail: { message: 'Location permission required', type: 'error' } }));
       }
     };
     return () => { delete window.__flockOpenVenue; delete window.__flockPanToVenue; delete window.__flockGoToMyLocation; };
-  }, [venues, openVenueDetail, setActiveVenue]);
+  }, [venues, openVenueDetail, setActiveVenue, buildPinSvg]);
 
   return (
     <div style={{ position: 'absolute', inset: 0 }}>
@@ -627,6 +678,7 @@ const GoogleMapView = React.memo(({ venues, filterCategory, userLocation, active
 
       {/* My Location button — Snap Maps style */}
       <button
+        id="flock-my-location-btn"
         onClick={() => window.__flockGoToMyLocation && window.__flockGoToMyLocation()}
         style={{
           position: 'absolute', bottom: '80px', right: '12px',
@@ -634,7 +686,7 @@ const GoogleMapView = React.memo(({ venues, filterCategory, userLocation, active
           border: 'none', background: 'white', cursor: 'pointer',
           boxShadow: '0 2px 8px rgba(0,0,0,0.25)',
           display: 'flex', alignItems: 'center', justifyContent: 'center',
-          zIndex: 5, transition: 'transform 0.2s ease',
+          zIndex: 5, transition: 'transform 0.2s ease, opacity 0.3s ease',
         }}
         onMouseEnter={(e) => { e.currentTarget.style.transform = 'scale(1.1)'; }}
         onMouseLeave={(e) => { e.currentTarget.style.transform = 'scale(1)'; }}
@@ -854,6 +906,13 @@ const FlockAppInner = ({ authUser, onLogout }) => {
     setToast({ message, type });
     setTimeout(() => setToast(null), 3000);
   }, []);
+
+  // Listen for toast events from Google Maps component (can't access React state directly)
+  useEffect(() => {
+    const handler = (e) => showToast(e.detail.message, e.detail.type);
+    window.addEventListener('flock-toast', handler);
+    return () => window.removeEventListener('flock-toast', handler);
+  }, [showToast]);
 
   // Smart location detection - enhance bare location queries
   const enhanceQuery = useCallback((q) => {
@@ -1180,6 +1239,8 @@ const FlockAppInner = ({ authUser, onLogout }) => {
   const [selectedDmId, setSelectedDmId] = useState(null);
   const [showNewDmModal, setShowNewDmModal] = useState(false);
   const [dmSearchText, setDmSearchText] = useState('');
+  const [showDmMenu, setShowDmMenu] = useState(false);
+  const [showDeleteDmConfirm, setShowDeleteDmConfirm] = useState(false);
 
   // Profile
   const [profileScreen, setProfileScreen] = useState('main');
@@ -1256,14 +1317,18 @@ const FlockAppInner = ({ authUser, onLogout }) => {
   // Ref to track if initial venue load has been attempted (survives re-renders)
   const venueLoadAttemptedRef = useRef(false);
 
+  // Popular chains to show by default on map
+  const defaultChains = useMemo(() => ["McDonald's", "Starbucks", "Chipotle", "Panera Bread", "Subway", "Dunkin'", "Chick-fil-A"], []);
+
   // Core venue loading function
-  const loadVenuesAtLocation = useCallback((lat, lng) => {
-    console.log('[Geo] Loading venues near:', lat, lng);
+  const loadVenuesAtLocation = useCallback((lat, lng, chainsOnly = false) => {
+    console.log('[Geo] Loading venues near:', lat, lng, chainsOnly ? '(popular chains)' : '(all)');
     setUserLocation({ lat, lng });
     localStorage.setItem('flock_user_lat', String(lat));
     localStorage.setItem('flock_user_lng', String(lng));
     const locStr = `${lat},${lng}`;
-    const cacheKey = `nearby|${locStr}`;
+    const suffix = chainsOnly ? '|chains' : '';
+    const cacheKey = `nearby|${locStr}${suffix}`;
     const cached = searchCacheRef.current[cacheKey];
     if (cached && Date.now() - cached.timestamp < 300000) {
       console.log('[Geo] Using cached nearby venues');
@@ -1271,39 +1336,67 @@ const FlockAppInner = ({ authUser, onLogout }) => {
       setMapVenuesLoaded(true);
       return;
     }
-    searchVenues('restaurants bars cafes nightclubs live music sports bowling parks libraries museums arcades movie theaters', locStr)
-      .then((data) => {
-        const venues = data.venues || [];
-        searchCacheRef.current[cacheKey] = { data: venues, timestamp: Date.now() };
-        setAllVenues(venuesToMapPins(venues));
-        setMapVenuesLoaded(true);
-      })
-      .catch((err) => {
-        console.error('[Geo] Nearby venue search failed:', err);
-        console.log('[Geo] Using seed venues as fallback');
-        setAllVenues(venuesToMapPins(seedVenues));
-        setMapVenuesLoaded(true);
-      });
-  }, [venuesToMapPins, seedVenues]);
+
+    if (chainsOnly) {
+      // Search for popular chains individually then merge results
+      const chainSearches = defaultChains.map(chain =>
+        searchVenues(chain, locStr).then(data => (data.venues || []).slice(0, 2)).catch(() => [])
+      );
+      Promise.all(chainSearches)
+        .then(results => {
+          const allResults = results.flat();
+          // Deduplicate by place_id
+          const seen = new Set();
+          const deduped = allResults.filter(v => {
+            if (seen.has(v.place_id)) return false;
+            seen.add(v.place_id);
+            return true;
+          });
+          searchCacheRef.current[cacheKey] = { data: deduped, timestamp: Date.now() };
+          setAllVenues(venuesToMapPins(deduped));
+          setMapVenuesLoaded(true);
+        })
+        .catch(() => {
+          setAllVenues(venuesToMapPins(seedVenues));
+          setMapVenuesLoaded(true);
+        });
+    } else {
+      searchVenues('restaurants bars cafes nightclubs live music sports bowling parks libraries museums arcades movie theaters', locStr)
+        .then((data) => {
+          const venues = data.venues || [];
+          searchCacheRef.current[cacheKey] = { data: venues, timestamp: Date.now() };
+          setAllVenues(venuesToMapPins(venues));
+          setMapVenuesLoaded(true);
+        })
+        .catch((err) => {
+          console.error('[Geo] Nearby venue search failed:', err);
+          console.log('[Geo] Using seed venues as fallback');
+          setAllVenues(venuesToMapPins(seedVenues));
+          setMapVenuesLoaded(true);
+        });
+    }
+  }, [venuesToMapPins, seedVenues, defaultChains]);
 
   // Request user geolocation and load venues
+  // chainsOnly=true shows popular chains by default; forceRefresh=true shows ALL venues (near me)
   const requestUserLocation = useCallback((forceRefresh = false) => {
     const savedLat = localStorage.getItem('flock_user_lat');
     const savedLng = localStorage.getItem('flock_user_lng');
+    const useChains = !forceRefresh; // initial load = chains only; near me = all venues
 
     // Use saved location immediately so map has data right away
     if (!forceRefresh && savedLat && savedLng) {
       const lat = parseFloat(savedLat);
       const lng = parseFloat(savedLng);
       setUserLocation({ lat, lng }); // Set blue dot immediately
-      loadVenuesAtLocation(lat, lng);
+      loadVenuesAtLocation(lat, lng, useChains);
     }
 
     if (!navigator.geolocation) {
       if (!savedLat) {
-        searchVenues('restaurants bars cafes parks libraries museums nightclubs bethlehem pa')
-          .then((data) => { setAllVenues(venuesToMapPins(data.venues || [])); setMapVenuesLoaded(true); })
-          .catch(() => { setAllVenues(venuesToMapPins(seedVenues)); setMapVenuesLoaded(true); });
+        // Fallback to Hellertown
+        loadVenuesAtLocation(40.5798, -75.2932, useChains);
+        showToast('Location blocked \u2014 showing Hellertown, PA area', 'error');
       }
       return;
     }
@@ -1314,20 +1407,24 @@ const FlockAppInner = ({ authUser, onLogout }) => {
         const { latitude, longitude } = pos.coords;
         console.log('[Geo] Got position:', latitude, longitude);
         setLocationLoading(false);
-        loadVenuesAtLocation(latitude, longitude);
+        loadVenuesAtLocation(latitude, longitude, useChains);
+        // Re-center map when user explicitly requests refresh
+        if (forceRefresh && window.__flockGoToMyLocation) {
+          window.__flockGoToMyLocation();
+        }
       },
       (err) => {
         console.warn('[Geo] Geolocation denied:', err.message);
         setLocationLoading(false);
-        if (!savedLat || forceRefresh) {
-          searchVenues('restaurants bars cafes parks libraries museums nightclubs bethlehem pa')
-            .then((data) => { setAllVenues(venuesToMapPins(data.venues || [])); setMapVenuesLoaded(true); })
-            .catch(() => { setAllVenues(venuesToMapPins(seedVenues)); setMapVenuesLoaded(true); });
-        }
+        // Always fall back to Hellertown with proper coordinates
+        const fallbackLat = 40.5798;
+        const fallbackLng = -75.2932;
+        loadVenuesAtLocation(fallbackLat, fallbackLng, useChains);
+        showToast('Location blocked \u2014 showing Hellertown, PA area', 'error');
       },
       { enableHighAccuracy: true, timeout: 10000, maximumAge: forceRefresh ? 0 : 60000 }
     );
-  }, [loadVenuesAtLocation, venuesToMapPins, seedVenues]);
+  }, [loadVenuesAtLocation, showToast]);
 
   // Load venues on mount
   useEffect(() => {
@@ -2279,7 +2376,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
   const dmDetailScreen = currentScreen === 'dmDetail' && selectedDm && (
     <div key="dm-detail-screen" style={{ display: 'flex', flexDirection: 'column', height: '100%', backgroundColor: 'white' }}>
       <div style={{ padding: '12px', display: 'flex', alignItems: 'center', gap: '10px', background: `linear-gradient(135deg, ${colors.navy}, ${colors.navyMid})`, flexShrink: 0 }}>
-        <button onClick={() => { setCurrentScreen('main'); setChatInput(''); }} style={{ background: 'none', border: 'none', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.arrowLeft('white', 20)}</button>
+        <button onClick={() => { setCurrentScreen('main'); setChatInput(''); setShowDmMenu(false); setShowDeleteDmConfirm(false); }} style={{ background: 'none', border: 'none', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.arrowLeft('white', 20)}</button>
         <div style={{ width: '36px', height: '36px', borderRadius: '18px', backgroundColor: 'rgba(255,255,255,0.2)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '14px', fontWeight: '700', color: 'white', overflow: 'hidden' }}>
           {selectedDm.friendImage ? <img src={selectedDm.friendImage} alt="" style={{ width: '36px', height: '36px', borderRadius: '18px', objectFit: 'cover' }} /> : selectedDm.avatar}
         </div>
@@ -2287,7 +2384,49 @@ const FlockAppInner = ({ authUser, onLogout }) => {
           <h2 style={{ fontWeight: 'bold', color: 'white', fontSize: '15px', margin: 0 }}>{selectedDm.friendName}</h2>
           <p style={{ fontSize: '10px', color: 'rgba(255,255,255,0.7)', margin: 0 }}>{selectedDm.isOnline ? <span style={{ color: '#86EFAC' }}>Online</span> : selectedDm.lastActive}</p>
         </div>
+        <div style={{ position: 'relative' }}>
+          <button onClick={() => setShowDmMenu(!showDmMenu)} style={{ width: '32px', height: '32px', borderRadius: '16px', border: 'none', backgroundColor: 'rgba(255,255,255,0.2)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.moreVertical('white', 16)}</button>
+          {showDmMenu && (
+            <div style={{ position: 'absolute', top: '38px', right: 0, backgroundColor: 'white', borderRadius: '12px', boxShadow: '0 4px 20px rgba(0,0,0,0.15)', minWidth: '200px', zIndex: 60, overflow: 'hidden' }}>
+              <button onClick={() => { setShowDmMenu(false); setShowDeleteDmConfirm(true); }} style={{ width: '100%', padding: '12px 16px', display: 'flex', alignItems: 'center', gap: '10px', border: 'none', backgroundColor: 'white', cursor: 'pointer', fontSize: '14px', fontWeight: '600', color: '#EF4444' }}>
+                {Icons.x('#EF4444', 16)} Delete Conversation
+              </button>
+            </div>
+          )}
+        </div>
       </div>
+
+      {/* Dismiss DM menu on outside tap */}
+      {showDmMenu && (
+        <div onClick={() => setShowDmMenu(false)} style={{ position: 'absolute', inset: 0, zIndex: 55 }} />
+      )}
+
+      {/* Delete DM Confirmation Modal */}
+      {showDeleteDmConfirm && (
+        <div style={{ position: 'absolute', inset: 0, backgroundColor: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(8px)', WebkitBackdropFilter: 'blur(8px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 60, padding: '16px' }}>
+          <div style={{ backgroundColor: 'white', borderRadius: '24px', padding: '24px', width: '100%', maxWidth: '300px' }}>
+            <div style={{ textAlign: 'center', marginBottom: '16px' }}>
+              <div style={{ width: '48px', height: '48px', borderRadius: '24px', backgroundColor: '#FEE2E2', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 12px' }}>{Icons.x('#EF4444', 24)}</div>
+              <h3 style={{ fontSize: '16px', fontWeight: '900', color: colors.navy, margin: '0 0 8px' }}>Delete Conversation?</h3>
+              <p style={{ fontSize: '13px', color: '#6b7280', margin: 0, lineHeight: '1.4' }}>Delete this conversation with {selectedDm.friendName}? Messages will be removed from your view.</p>
+            </div>
+            <div style={{ display: 'flex', gap: '8px' }}>
+              <button onClick={() => setShowDeleteDmConfirm(false)} style={{ flex: 1, padding: '12px', borderRadius: '12px', border: `2px solid ${colors.creamDark}`, backgroundColor: 'white', color: colors.navy, fontWeight: '700', fontSize: '14px', cursor: 'pointer' }}>Cancel</button>
+              <button onClick={() => {
+                const dmId = selectedDm.id;
+                const friendName = selectedDm.friendName;
+                setDirectMessages(prev => prev.filter(d => d.id !== dmId));
+                setShowDeleteDmConfirm(false);
+                setShowDmMenu(false);
+                setCurrentScreen('main');
+                showToast(`Conversation with ${friendName} deleted`);
+              }} style={{ flex: 1, padding: '12px', borderRadius: '12px', border: 'none', backgroundColor: '#EF4444', color: 'white', fontWeight: '700', fontSize: '14px', cursor: 'pointer' }}>
+                Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       <div onScroll={() => document.activeElement?.blur()} style={{ flex: 1, padding: '16px', overflowY: 'auto', background: `linear-gradient(180deg, ${colors.cream} 0%, rgba(245,240,230,0.8) 100%)` }}>
         {selectedDm.messages.length === 0 ? (
@@ -2979,7 +3118,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
             <button onClick={() => { setVenueQuery(''); setVenueResults([]); setShowSearchDropdown(false); }} style={{ position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', padding: '2px' }}>{Icons.x('#94a3b8', 16)}</button>
           )}
         </div>
-        <button onClick={() => { setMapVenuesLoaded(false); setVenueQuery(''); setVenueResults([]); setShowSearchDropdown(false); requestUserLocation(true); }} title="Near Me" style={{ width: '42px', height: '42px', borderRadius: '14px', border: 'none', background: locationLoading ? `linear-gradient(135deg, ${colors.teal}, ${colors.skyBlue})` : `linear-gradient(135deg, ${colors.teal}, #0d9488)`, color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 4px 12px rgba(20,184,166,0.3)', transition: 'all 0.2s ease', animation: locationLoading ? 'spin 1s linear infinite' : 'none' }}>{Icons.crosshair('white', 18)}</button>
+        <button onClick={() => { setMapVenuesLoaded(false); setVenueQuery(''); setVenueResults([]); setShowSearchDropdown(false); setActiveVenue(null); requestUserLocation(true); }} title="Near Me" style={{ width: '42px', height: '42px', borderRadius: '14px', border: 'none', background: locationLoading ? `linear-gradient(135deg, ${colors.teal}, ${colors.skyBlue})` : `linear-gradient(135deg, ${colors.teal}, #0d9488)`, color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 4px 12px rgba(20,184,166,0.3)', transition: 'all 0.2s ease', animation: locationLoading ? 'spin 1s linear infinite' : 'none' }}>{Icons.crosshair('white', 18)}</button>
         <button onClick={() => setShowConnectPanel(true)} style={{ width: '42px', height: '42px', borderRadius: '14px', border: 'none', background: `linear-gradient(135deg, ${colors.navy}, ${colors.navyMid})`, color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 4px 12px rgba(13,40,71,0.25)', transition: 'all 0.2s ease' }}>{Icons.users('white', 18)}</button>
       </div>
 
@@ -3313,11 +3452,10 @@ const FlockAppInner = ({ authUser, onLogout }) => {
             <button key={c.id} onClick={() => {
               setActiveVenue(null);
               if (c.id === 'All') {
-                // Reset: recenter on user, reload nearby venues
+                // Reset: reload all venues near user (not just popular chains)
                 setCategory('All');
                 setVenueQuery('');
-                if (window.__flockGoToMyLocation) window.__flockGoToMyLocation();
-                requestUserLocation(true); // force reload nearby venues
+                requestUserLocation(true); // force reload all nearby venues + re-center map
                 return;
               }
               // Category filter — uses types-based matching
@@ -4031,7 +4169,27 @@ const FlockAppInner = ({ authUser, onLogout }) => {
                 <h2 style={{ fontSize: '18px', fontWeight: '900', color: colors.navy, margin: 0, display: 'flex', alignItems: 'center', gap: '8px' }}>{Icons.mapPin(colors.navy, 20)} Share a Venue</h2>
                 <button onClick={() => setShowVenueShareModal(false)} style={{ width: '32px', height: '32px', borderRadius: '16px', backgroundColor: '#f3f4f6', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.x('#6b7280', 18)}</button>
               </div>
-              <p style={{ fontSize: '13px', color: '#6b7280', marginBottom: '16px' }}>Select a venue to share with your flock</p>
+
+              {/* Current venue display */}
+              {flock.venue && flock.venue !== 'TBD' ? (
+                <div style={{ padding: '12px', borderRadius: '14px', background: `linear-gradient(135deg, ${colors.navy}08, ${colors.teal}15)`, border: `2px solid ${colors.teal}40`, marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '10px' }}>
+                  <div style={{ width: '40px', height: '40px', borderRadius: '10px', background: `linear-gradient(135deg, ${colors.teal}, #0d9488)`, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                    {Icons.mapPin('white', 18)}
+                  </div>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <p style={{ fontSize: '10px', fontWeight: '600', color: colors.teal, margin: '0 0 2px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Current Venue</p>
+                    <p style={{ fontSize: '14px', fontWeight: '700', color: colors.navy, margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{flock.venue}</p>
+                    {flock.venueAddress && <p style={{ fontSize: '11px', color: '#6b7280', margin: '2px 0 0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{flock.venueAddress}</p>}
+                  </div>
+                  <button onClick={() => { shareVenueToChat(selectedFlockId, { name: flock.venue, addr: flock.venueAddress, place_id: flock.venueId, stars: flock.venueRating, photo_url: flock.venuePhoto, category: 'Food', crowd: 50, price: '$$' }); }} style={{ padding: '8px 12px', borderRadius: '10px', border: 'none', background: `linear-gradient(135deg, ${colors.teal}, #0d9488)`, color: 'white', fontSize: '11px', fontWeight: '700', cursor: 'pointer', whiteSpace: 'nowrap' }}>Share This</button>
+                </div>
+              ) : (
+                <div style={{ padding: '10px 12px', borderRadius: '12px', backgroundColor: '#f8fafc', border: '1px solid #e2e8f0', marginBottom: '16px' }}>
+                  <p style={{ fontSize: '12px', color: '#6b7280', margin: 0, fontStyle: 'italic' }}>No venue selected. Pick one below:</p>
+                </div>
+              )}
+
+              <p style={{ fontSize: '12px', fontWeight: '600', color: '#6b7280', marginBottom: '12px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Or select a different venue:</p>
               <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
                 {allVenues.map(venue => (
                   <button
