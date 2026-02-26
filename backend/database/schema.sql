@@ -54,8 +54,32 @@ CREATE TABLE IF NOT EXISTS direct_messages (
   sender_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
   receiver_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
   message_text TEXT NOT NULL,
+  message_type VARCHAR(20) DEFAULT 'text' CHECK (message_type IN ('text', 'venue_card', 'image')),
+  venue_data JSONB,
+  image_url TEXT,
+  reply_to_id INTEGER REFERENCES direct_messages(id) ON DELETE SET NULL,
   read_status BOOLEAN DEFAULT FALSE,
   created_at TIMESTAMP DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS dm_emoji_reactions (
+  id SERIAL PRIMARY KEY,
+  dm_id INTEGER REFERENCES direct_messages(id) ON DELETE CASCADE,
+  user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+  emoji VARCHAR(10) NOT NULL,
+  created_at TIMESTAMP DEFAULT NOW(),
+  UNIQUE(dm_id, user_id, emoji)
+);
+
+CREATE TABLE IF NOT EXISTS dm_venue_votes (
+  id SERIAL PRIMARY KEY,
+  user1_id INTEGER NOT NULL,
+  user2_id INTEGER NOT NULL,
+  user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+  venue_name VARCHAR(255) NOT NULL,
+  venue_id VARCHAR(255),
+  created_at TIMESTAMP DEFAULT NOW(),
+  UNIQUE(user1_id, user2_id, user_id, venue_name)
 );
 
 CREATE TABLE IF NOT EXISTS venue_votes (
@@ -105,6 +129,8 @@ CREATE INDEX IF NOT EXISTS idx_messages_created ON messages(created_at);
 CREATE INDEX IF NOT EXISTS idx_dm_sender ON direct_messages(sender_id);
 CREATE INDEX IF NOT EXISTS idx_dm_receiver ON direct_messages(receiver_id);
 CREATE INDEX IF NOT EXISTS idx_dm_conversation ON direct_messages(sender_id, receiver_id);
+CREATE INDEX IF NOT EXISTS idx_dm_emoji_reactions_dm ON dm_emoji_reactions(dm_id);
+CREATE INDEX IF NOT EXISTS idx_dm_venue_votes_pair ON dm_venue_votes(user1_id, user2_id);
 CREATE INDEX IF NOT EXISTS idx_venue_votes_flock ON venue_votes(flock_id);
 CREATE INDEX IF NOT EXISTS idx_emoji_reactions_message ON emoji_reactions(message_id);
 CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);

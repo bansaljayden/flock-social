@@ -132,7 +132,7 @@ router.post('/flocks/:id/messages',
           req.user.id,
           message_text,
           message_type || 'text',
-          venue_data ? JSON.stringify(venue_data) : null,
+          venue_data || null,
           image_url || null,
         ]
       );
@@ -223,6 +223,54 @@ router.delete('/messages/:id/react/:emoji',
 
 // --- Direct Messages ---
 
+// GET /api/dm - List all DM conversations (latest message per user)
+router.get('/dm', async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT DISTINCT ON (other_id) *
+       FROM (
+         SELECT dm.id, dm.message_text, dm.created_at, dm.read_status, dm.sender_id, dm.receiver_id,
+                CASE WHEN dm.sender_id = $1 THEN dm.receiver_id ELSE dm.sender_id END AS other_id,
+                u.name AS other_name, u.profile_image_url AS other_image
+         FROM direct_messages dm
+         JOIN users u ON u.id = CASE WHEN dm.sender_id = $1 THEN dm.receiver_id ELSE dm.sender_id END
+         WHERE dm.sender_id = $1 OR dm.receiver_id = $1
+       ) sub
+       ORDER BY other_id, created_at DESC`,
+      [req.user.id]
+    );
+
+    // Get unread counts per conversation
+    const unreadResult = await pool.query(
+      `SELECT sender_id, COUNT(*) AS unread_count
+       FROM direct_messages
+       WHERE receiver_id = $1 AND read_status = FALSE
+       GROUP BY sender_id`,
+      [req.user.id]
+    );
+    const unreadMap = {};
+    unreadResult.rows.forEach(r => { unreadMap[r.sender_id] = parseInt(r.unread_count); });
+
+    const conversations = result.rows.map(r => ({
+      userId: r.other_id,
+      name: r.other_name,
+      image: r.other_image,
+      lastMessage: r.message_text,
+      lastMessageTime: r.created_at,
+      lastMessageIsYou: r.sender_id === req.user.id,
+      unread: unreadMap[r.other_id] || 0,
+    }));
+
+    // Sort by most recent message
+    conversations.sort((a, b) => new Date(b.lastMessageTime) - new Date(a.lastMessageTime));
+
+    res.json({ conversations });
+  } catch (err) {
+    console.error('Get DM conversations error:', err);
+    res.status(500).json({ error: 'Failed to get conversations' });
+  }
+});
+
 // GET /api/dm/:userId - Get DM conversation with a user (paginated)
 router.get('/dm/:userId',
   [
@@ -263,6 +311,45 @@ router.get('/dm/:userId',
       }
 
       const result = await pool.query(dmQuery, params);
+      const messages = result.rows;
+
+      // Fetch reactions for all returned DMs
+      if (messages.length > 0) {
+        const dmIds = messages.map((m) => m.id);
+        const reactionsResult = await pool.query(
+          `SELECT dr.dm_id, dr.emoji, dr.user_id, u.name AS user_name
+           FROM dm_emoji_reactions dr
+           JOIN users u ON u.id = dr.user_id
+           WHERE dr.dm_id = ANY($1)`,
+          [dmIds]
+        );
+        const reactionsByDm = {};
+        for (const r of reactionsResult.rows) {
+          if (!reactionsByDm[r.dm_id]) reactionsByDm[r.dm_id] = [];
+          reactionsByDm[r.dm_id].push(r);
+        }
+        for (const msg of messages) {
+          msg.reactions = reactionsByDm[msg.id] || [];
+        }
+      }
+
+      // Fetch reply-to message text for any replies
+      const replyIds = messages.filter(m => m.reply_to_id).map(m => m.reply_to_id);
+      if (replyIds.length > 0) {
+        const replyResult = await pool.query(
+          `SELECT dm.id, dm.message_text, u.name AS sender_name
+           FROM direct_messages dm JOIN users u ON u.id = dm.sender_id
+           WHERE dm.id = ANY($1)`,
+          [replyIds]
+        );
+        const replyMap = {};
+        replyResult.rows.forEach(r => { replyMap[r.id] = r; });
+        for (const msg of messages) {
+          if (msg.reply_to_id && replyMap[msg.reply_to_id]) {
+            msg.reply_to = replyMap[msg.reply_to_id];
+          }
+        }
+      }
 
       // Mark unread messages from the other user as read
       await pool.query(
@@ -271,7 +358,7 @@ router.get('/dm/:userId',
         [otherUserId, req.user.id]
       );
 
-      res.json({ messages: result.rows.reverse() });
+      res.json({ messages: messages.reverse() });
     } catch (err) {
       console.error('Get DMs error:', err);
       res.status(500).json({ error: 'Failed to get messages' });
@@ -279,11 +366,15 @@ router.get('/dm/:userId',
   }
 );
 
-// POST /api/dm/:userId - Send a DM
+// POST /api/dm/:userId - Send a DM (supports text, venue_card, image)
 router.post('/dm/:userId',
   [
     param('userId').isInt(),
     body('message_text').trim().customSanitizer(stripHtml).isLength({ min: 1, max: 5000 }).withMessage('Message is required'),
+    body('message_type').optional().isIn(['text', 'venue_card', 'image']),
+    body('venue_data').optional().isObject(),
+    body('image_url').optional().isURL(),
+    body('reply_to_id').optional().isInt(),
   ],
   async (req, res) => {
     try {
@@ -303,20 +394,128 @@ router.post('/dm/:userId',
         return res.status(404).json({ error: 'User not found' });
       }
 
+      const { message_text, message_type, venue_data, image_url, reply_to_id } = req.body;
+
       const result = await pool.query(
-        `INSERT INTO direct_messages (sender_id, receiver_id, message_text)
-         VALUES ($1, $2, $3)
+        `INSERT INTO direct_messages (sender_id, receiver_id, message_text, message_type, venue_data, image_url, reply_to_id)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)
          RETURNING *`,
-        [req.user.id, receiverId, req.body.message_text]
+        [req.user.id, receiverId, message_text, message_type || 'text', venue_data || null, image_url || null, reply_to_id || null]
       );
 
       const message = result.rows[0];
       message.sender_name = req.user.name;
+      message.reactions = [];
 
       res.status(201).json({ message });
     } catch (err) {
       console.error('Send DM error:', err);
       res.status(500).json({ error: 'Failed to send message' });
+    }
+  }
+);
+
+// Helper: canonical DM pair key (always smaller ID first)
+function dmPairKey(a, b) {
+  return a < b ? { user1: a, user2: b } : { user1: b, user2: a };
+}
+
+// POST /api/dm/messages/:id/react - Add reaction to a DM
+router.post('/dm/messages/:id/react',
+  [param('id').isInt(), body('emoji').trim().isLength({ min: 1, max: 10 })],
+  async (req, res) => {
+    try {
+      const dmId = parseInt(req.params.id);
+      const { emoji } = req.body;
+
+      // Verify DM exists and user is sender or receiver
+      const dm = await pool.query('SELECT sender_id, receiver_id FROM direct_messages WHERE id = $1', [dmId]);
+      if (dm.rows.length === 0) return res.status(404).json({ error: 'Message not found' });
+      if (dm.rows[0].sender_id !== req.user.id && dm.rows[0].receiver_id !== req.user.id) {
+        return res.status(403).json({ error: 'Not authorized' });
+      }
+
+      const result = await pool.query(
+        `INSERT INTO dm_emoji_reactions (dm_id, user_id, emoji) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING RETURNING *`,
+        [dmId, req.user.id, emoji]
+      );
+      if (result.rows.length === 0) return res.status(400).json({ error: 'Already reacted' });
+      res.status(201).json({ reaction: result.rows[0] });
+    } catch (err) {
+      console.error('DM react error:', err);
+      res.status(500).json({ error: 'Failed to add reaction' });
+    }
+  }
+);
+
+// DELETE /api/dm/messages/:id/react/:emoji - Remove DM reaction
+router.delete('/dm/messages/:id/react/:emoji', [param('id').isInt()], async (req, res) => {
+  try {
+    const dmId = parseInt(req.params.id);
+    const emoji = decodeURIComponent(req.params.emoji);
+    const result = await pool.query(
+      'DELETE FROM dm_emoji_reactions WHERE dm_id = $1 AND user_id = $2 AND emoji = $3 RETURNING *',
+      [dmId, req.user.id, emoji]
+    );
+    if (result.rows.length === 0) return res.status(404).json({ error: 'Reaction not found' });
+    res.json({ message: 'Reaction removed' });
+  } catch (err) {
+    console.error('DM remove react error:', err);
+    res.status(500).json({ error: 'Failed to remove reaction' });
+  }
+});
+
+// GET /api/dm/:userId/venue-votes - Get venue votes for a DM conversation
+router.get('/dm/:userId/venue-votes', [param('userId').isInt()], async (req, res) => {
+  try {
+    const { user1, user2 } = dmPairKey(req.user.id, parseInt(req.params.userId));
+    const result = await pool.query(
+      `SELECT venue_name, venue_id, COUNT(*) AS vote_count, ARRAY_AGG(u.name) AS voters
+       FROM dm_venue_votes vv JOIN users u ON u.id = vv.user_id
+       WHERE vv.user1_id = $1 AND vv.user2_id = $2
+       GROUP BY venue_name, venue_id ORDER BY vote_count DESC`,
+      [user1, user2]
+    );
+    res.json({ votes: result.rows });
+  } catch (err) {
+    console.error('DM venue votes error:', err);
+    res.status(500).json({ error: 'Failed to get votes' });
+  }
+});
+
+// POST /api/dm/:userId/venue-votes - Vote for a venue in a DM conversation
+router.post('/dm/:userId/venue-votes',
+  [param('userId').isInt(), body('venue_name').trim().isLength({ min: 1, max: 255 }), body('venue_id').optional().isString()],
+  async (req, res) => {
+    try {
+      const { user1, user2 } = dmPairKey(req.user.id, parseInt(req.params.userId));
+      const venue_name = stripHtml(req.body.venue_name);
+      // Toggle: if already voted for this venue, unvote; otherwise switch vote
+      const existing = await pool.query(
+        `SELECT id FROM dm_venue_votes WHERE user1_id = $1 AND user2_id = $2 AND user_id = $3 AND venue_name = $4`,
+        [user1, user2, req.user.id, venue_name]
+      );
+      if (existing.rows.length > 0) {
+        await pool.query(`DELETE FROM dm_venue_votes WHERE user1_id = $1 AND user2_id = $2 AND user_id = $3 AND venue_name = $4`, [user1, user2, req.user.id, venue_name]);
+      } else {
+        await pool.query(`DELETE FROM dm_venue_votes WHERE user1_id = $1 AND user2_id = $2 AND user_id = $3`, [user1, user2, req.user.id]);
+        await pool.query(
+          `INSERT INTO dm_venue_votes (user1_id, user2_id, user_id, venue_name, venue_id) VALUES ($1, $2, $3, $4, $5)`,
+          [user1, user2, req.user.id, venue_name, req.body.venue_id || null]
+        );
+      }
+      // Return updated tallies
+      const result = await pool.query(
+        `SELECT venue_name, venue_id, COUNT(*) AS vote_count, ARRAY_AGG(u.name) AS voters
+         FROM dm_venue_votes vv JOIN users u ON u.id = vv.user_id
+         WHERE vv.user1_id = $1 AND vv.user2_id = $2
+         GROUP BY venue_name, venue_id ORDER BY vote_count DESC`,
+        [user1, user2]
+      );
+      res.json({ votes: result.rows });
+    } catch (err) {
+      console.error('DM venue vote error:', err);
+      res.status(500).json({ error: 'Failed to vote' });
     }
   }
 );
@@ -343,5 +542,54 @@ router.put('/dm/:messageId/read', param('messageId').isInt(), async (req, res) =
     res.status(500).json({ error: 'Failed to mark message as read' });
   }
 });
+
+// GET /api/dm/:userId/pinned-venue - Get pinned venue for a DM conversation
+router.get('/dm/:userId/pinned-venue', [param('userId').isInt()], async (req, res) => {
+  try {
+    const { user1, user2 } = dmPairKey(req.user.id, parseInt(req.params.userId));
+    const result = await pool.query(
+      `SELECT venue_name, venue_address, venue_id, venue_rating, venue_photo_url, pinned_by, u.name AS pinned_by_name
+       FROM dm_pinned_venues pv LEFT JOIN users u ON u.id = pv.pinned_by
+       WHERE pv.user1_id = $1 AND pv.user2_id = $2`,
+      [user1, user2]
+    );
+    res.json({ venue: result.rows[0] || null });
+  } catch (err) {
+    console.error('DM pinned venue error:', err);
+    res.status(500).json({ error: 'Failed to get pinned venue' });
+  }
+});
+
+// PUT /api/dm/:userId/pinned-venue - Pin or update a venue for a DM conversation
+router.put('/dm/:userId/pinned-venue',
+  [param('userId').isInt(), body('venue_name').trim().isLength({ min: 1, max: 255 })],
+  async (req, res) => {
+    try {
+      const otherUserId = parseInt(req.params.userId);
+      const { user1, user2 } = dmPairKey(req.user.id, otherUserId);
+      const venue_name = stripHtml(req.body.venue_name);
+      const venue_address = req.body.venue_address ? stripHtml(req.body.venue_address) : null;
+      const venue_id = req.body.venue_id || null;
+      const venue_rating = req.body.venue_rating || null;
+      const venue_photo_url = req.body.venue_photo_url || null;
+
+      await pool.query(
+        `INSERT INTO dm_pinned_venues (user1_id, user2_id, venue_name, venue_address, venue_id, venue_rating, venue_photo_url, pinned_by, updated_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
+         ON CONFLICT (user1_id, user2_id) DO UPDATE SET
+           venue_name = EXCLUDED.venue_name, venue_address = EXCLUDED.venue_address, venue_id = EXCLUDED.venue_id,
+           venue_rating = EXCLUDED.venue_rating, venue_photo_url = EXCLUDED.venue_photo_url,
+           pinned_by = EXCLUDED.pinned_by, updated_at = NOW()`,
+        [user1, user2, venue_name, venue_address, venue_id, venue_rating, venue_photo_url, req.user.id]
+      );
+
+      const venue = { venue_name, venue_address, venue_id, venue_rating, venue_photo_url, pinned_by: req.user.id };
+      res.json({ venue });
+    } catch (err) {
+      console.error('DM pin venue error:', err);
+      res.status(500).json({ error: 'Failed to pin venue' });
+    }
+  }
+);
 
 module.exports = router;

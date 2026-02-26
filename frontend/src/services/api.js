@@ -122,15 +122,39 @@ export async function addReaction(messageId, emoji) {
 }
 
 // DMs
+export async function getDMConversations() {
+  return request('/api/dm');
+}
+
 export async function getDMs(userId) {
   return request(`/api/dm/${userId}`);
 }
 
-export async function sendDM(userId, text) {
+export async function sendDM(userId, text, opts = {}) {
   return request(`/api/dm/${userId}`, {
     method: 'POST',
-    body: JSON.stringify({ message_text: text }),
+    body: JSON.stringify({ message_text: text, message_type: opts.message_type, venue_data: opts.venue_data, image_url: opts.image_url, reply_to_id: opts.reply_to_id }),
   });
+}
+
+export async function addDmReaction(dmId, emoji) {
+  return request(`/api/dm/messages/${dmId}/react`, { method: 'POST', body: JSON.stringify({ emoji }) });
+}
+
+export async function removeDmReaction(dmId, emoji) {
+  return request(`/api/dm/messages/${dmId}/react/${encodeURIComponent(emoji)}`, { method: 'DELETE' });
+}
+
+export async function getDmVenueVotes(userId) {
+  return request(`/api/dm/${userId}/venue-votes`);
+}
+
+export async function voteDmVenue(userId, venueName, venueId) {
+  return request(`/api/dm/${userId}/venue-votes`, { method: 'POST', body: JSON.stringify({ venue_name: venueName, venue_id: venueId }) });
+}
+
+export async function getDmPinnedVenue(userId) {
+  return request(`/api/dm/${userId}/pinned-venue`);
 }
 
 // Venues

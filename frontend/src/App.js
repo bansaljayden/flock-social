@@ -10,8 +10,8 @@ import {
   formatCurrency,
   calculateProfitMargin
 } from './lib/finance';
-import { getCurrentUser, logout, isLoggedIn, getFlocks, createFlock as apiCreateFlock, getMessages, sendMessage as apiSendMessage, updateProfile, searchVenues, searchUsers, getSuggestedUsers, sendFriendRequest, getStories, getVenueDetails, leaveFlock as apiLeaveFlock, BASE_URL } from './services/api';
-import { connectSocket, disconnectSocket, getSocket, joinFlock, leaveFlock, sendMessage as socketSendMessage, sendImageMessage as socketSendImage, startTyping, stopTyping, onNewMessage, onUserTyping, onUserStoppedTyping } from './services/socket';
+import { getCurrentUser, logout, isLoggedIn, getFlocks, createFlock as apiCreateFlock, getMessages, sendMessage as apiSendMessage, updateProfile, searchVenues, searchUsers, getSuggestedUsers, sendFriendRequest, getStories, getVenueDetails, leaveFlock as apiLeaveFlock, getDMConversations, getDMs, getDmVenueVotes, getDmPinnedVenue, BASE_URL } from './services/api';
+import { connectSocket, disconnectSocket, getSocket, joinFlock, leaveFlock, sendMessage as socketSendMessage, sendImageMessage as socketSendImage, startTyping, stopTyping, onNewMessage, onUserTyping, onUserStoppedTyping, emitLocation, stopSharingLocation as socketStopSharing, onLocationUpdate, onMemberStoppedSharing, socketSendDm, onNewDm, dmStartTyping, dmStopTyping, onDmUserTyping, onDmUserStoppedTyping, dmReact, dmRemoveReact, onDmReactionAdded, onDmReactionRemoved, dmVoteVenue, onDmNewVote, dmShareLocation, dmStopSharingLocation, onDmLocationUpdate, onDmMemberStoppedSharing, dmPinVenue, onDmVenuePinned } from './services/socket';
 import LoginScreen from './components/auth/LoginScreen';
 import SignupScreen from './components/auth/SignupScreen';
 import { MarkerClusterer } from '@googlemaps/markerclusterer';
@@ -154,15 +154,28 @@ const FLOCK_MAP_STYLES = [
 ];
 
 // Google Maps wrapper — Flock-branded pins + AI crowd heatmap
-const GoogleMapView = React.memo(({ venues, filterCategory, userLocation, activeVenue, setActiveVenue, getCategoryColor, pickingVenueForCreate, setPickingVenueForCreate, setSelectedVenueForCreate, setCurrentScreen, openVenueDetail }) => {
+const GoogleMapView = React.memo(({ venues, filterCategory, userLocation, activeVenue, setActiveVenue, getCategoryColor, pickingVenueForCreate, setPickingVenueForCreate, setSelectedVenueForCreate, setCurrentScreen, openVenueDetail, flockMemberLocations, calcDistance }) => {
   const mapRef = useRef(null);
   const mapInstanceRef = useRef(null);
   const markersRef = useRef([]); // each entry: { marker, venue, circles: [] }
   const clustererRef = useRef(null);
   const userMarkerRef = useRef(null);
+  const memberMarkersRef = useRef({}); // userId -> { marker, infoWindow }
   const prevVenueCountRef = useRef(0); // track if venues are newly loaded vs just re-rendered
   const zoomListenerRef = useRef(null);
   const [mapReady, setMapReady] = useState(false); // tracks when Google Map instance is initialized
+  const [mapType, setMapType] = useState(() => localStorage.getItem('flock_map_type') || 'roadmap');
+
+  const toggleMapType = useCallback(() => {
+    const newType = mapType === 'roadmap' ? 'hybrid' : 'roadmap';
+    setMapType(newType);
+    localStorage.setItem('flock_map_type', newType);
+    if (mapInstanceRef.current) {
+      mapInstanceRef.current.setMapTypeId(newType);
+      // Apply custom styles only on roadmap, satellite looks better without them
+      mapInstanceRef.current.setOptions({ styles: newType === 'roadmap' ? FLOCK_MAP_STYLES : [] });
+    }
+  }, [mapType]);
 
   const DEFAULT_ZOOM = 12;
 
@@ -226,13 +239,14 @@ const GoogleMapView = React.memo(({ venues, filterCategory, userLocation, active
       console.log('[Map] Initializing map at:', userLoc);
 
       // Create map centered on THEIR location
+      const savedMapType = localStorage.getItem('flock_map_type') || 'roadmap';
       const map = new window.google.maps.Map(mapRef.current, {
         center: userLoc,
         zoom: DEFAULT_ZOOM,
-        styles: FLOCK_MAP_STYLES,
+        styles: savedMapType === 'roadmap' ? FLOCK_MAP_STYLES : [],
+        mapTypeId: savedMapType,
         disableDefaultUI: true,
-        zoomControl: true,
-        zoomControlOptions: { position: window.google.maps.ControlPosition.RIGHT_CENTER },
+        zoomControl: false,
         fullscreenControl: false,
         mapTypeControl: false,
         streetViewControl: false,
@@ -642,6 +656,71 @@ const GoogleMapView = React.memo(({ venues, filterCategory, userLocation, active
     return () => { delete window.__flockOpenVenue; delete window.__flockPanToVenue; delete window.__flockGoToMyLocation; };
   }, [venues, openVenueDetail, setActiveVenue, buildPinSvg]);
 
+  // Render flock member location markers
+  useEffect(() => {
+    if (!mapReady || !mapInstanceRef.current || !flockMemberLocations) return;
+    const map = mapInstanceRef.current;
+    const currentIds = new Set(Object.keys(flockMemberLocations));
+
+    // Remove markers for members who stopped sharing
+    Object.keys(memberMarkersRef.current).forEach(uid => {
+      if (!currentIds.has(uid)) {
+        memberMarkersRef.current[uid].marker.setMap(null);
+        memberMarkersRef.current[uid].infoWindow.close();
+        delete memberMarkersRef.current[uid];
+      }
+    });
+
+    // Add/update markers for sharing members
+    Object.entries(flockMemberLocations).forEach(([uid, loc]) => {
+      const pos = { lat: loc.lat, lng: loc.lng };
+      const dist = userLocation ? calcDistance(userLocation.lat, userLocation.lng, loc.lat, loc.lng) : '';
+      const age = Math.round((Date.now() - loc.timestamp) / 1000);
+      const ageStr = age < 10 ? 'just now' : age < 60 ? `${age}s ago` : `${Math.round(age / 60)}m ago`;
+      const initial = (loc.name || '?')[0].toUpperCase();
+      const cardHtml = `<div style="font-family:-apple-system,system-ui,BlinkMacSystemFont,sans-serif;display:flex;align-items:center;gap:10px;padding:6px 4px;min-width:160px">
+        <div style="width:36px;height:36px;border-radius:18px;background:linear-gradient(135deg,#0d2847,#1a3a5c);display:flex;align-items:center;justify-content:center;flex-shrink:0;box-shadow:0 2px 6px rgba(13,40,71,0.3)">
+          <span style="color:white;font-size:15px;font-weight:700;line-height:1">${initial}</span>
+        </div>
+        <div style="flex:1;min-width:0">
+          <div style="font-size:13px;font-weight:700;color:#0d2847;margin:0 0 2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${loc.name}</div>
+          <div style="display:flex;align-items:center;gap:4px">
+            <span style="width:6px;height:6px;border-radius:3px;background:#22c55e;display:inline-block;flex-shrink:0"></span>
+            <span style="font-size:11px;color:#6b7280;font-weight:500">${dist ? dist + ' away' : 'Live'}${dist ? ' · ' + ageStr : ''}</span>
+          </div>
+        </div>
+      </div>`;
+
+      if (memberMarkersRef.current[uid]) {
+        memberMarkersRef.current[uid].marker.setPosition(pos);
+        memberMarkersRef.current[uid].infoWindow.setContent(cardHtml);
+      } else {
+        const svgIcon = `<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 40 40">
+          <circle cx="20" cy="20" r="18" fill="#0d2847" stroke="white" stroke-width="3"/>
+          <circle cx="20" cy="20" r="18" fill="none" stroke="#22c55e" stroke-width="2" stroke-dasharray="4 4" opacity="0.6"/>
+          <text x="20" y="26" text-anchor="middle" fill="white" font-size="16" font-weight="bold" font-family="system-ui">${initial}</text>
+        </svg>`;
+        const marker = new window.google.maps.Marker({
+          position: pos,
+          map,
+          icon: {
+            url: 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(svgIcon),
+            scaledSize: new window.google.maps.Size(40, 40),
+            anchor: new window.google.maps.Point(20, 20),
+          },
+          zIndex: 998,
+          title: loc.name,
+        });
+        const infoWindow = new window.google.maps.InfoWindow({ content: cardHtml });
+        marker.addListener('click', () => {
+          Object.values(memberMarkersRef.current).forEach(m => m.infoWindow.close());
+          infoWindow.open(map, marker);
+        });
+        memberMarkersRef.current[uid] = { marker, infoWindow };
+      }
+    });
+  }, [mapReady, flockMemberLocations, userLocation, calcDistance]);
+
   return (
     <div style={{ position: 'absolute', inset: 0 }}>
       {/* Map loading overlay — shown until Google Map initializes */}
@@ -659,7 +738,7 @@ const GoogleMapView = React.memo(({ venues, filterCategory, userLocation, active
         .gm-style a[href^="https://maps.google"] { opacity: 0.1 !important; transform: scale(0.7); transform-origin: bottom left; transition: opacity 0.3s; }
         .gm-style a[href^="https://maps.google"]:hover { opacity: 0.35 !important; }
         .gm-style a[title="Open this area in Google Maps (opens a new window)"] img { opacity: 0.15 !important; }
-        .gm-style .gm-bundled-control, .gm-style .gm-bundled-control * { opacity: 1 !important; pointer-events: auto !important; }
+        .gm-style .gm-bundled-control { display: none !important; }
       `}</style>
       <div ref={mapRef} style={{ width: '100%', height: '100%' }} />
 
@@ -682,6 +761,72 @@ const GoogleMapView = React.memo(({ venues, filterCategory, userLocation, active
         <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
           <circle cx="12" cy="12" r="4"/><line x1="12" y1="2" x2="12" y2="6"/><line x1="12" y1="18" x2="12" y2="22"/><line x1="2" y1="12" x2="6" y2="12"/><line x1="18" y1="12" x2="22" y2="12"/>
         </svg>
+      </button>
+
+      {/* Zoom controls */}
+      <div style={{
+        position: 'absolute', bottom: '184px', right: '12px',
+        display: 'flex', flexDirection: 'column',
+        borderRadius: '22px', overflow: 'hidden',
+        boxShadow: '0 2px 8px rgba(0,0,0,0.25)', zIndex: 5,
+      }}>
+        <button
+          onClick={() => mapInstanceRef.current && mapInstanceRef.current.setZoom(mapInstanceRef.current.getZoom() + 1)}
+          style={{
+            width: '44px', height: '40px', border: 'none', background: 'white', cursor: 'pointer',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            transition: 'background 0.15s ease',
+          }}
+          onMouseEnter={(e) => { e.currentTarget.style.background = '#f3f4f6'; }}
+          onMouseLeave={(e) => { e.currentTarget.style.background = 'white'; }}
+          title="Zoom in"
+        >
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#0d2847" strokeWidth="2.5" strokeLinecap="round">
+            <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+          </svg>
+        </button>
+        <div style={{ height: '1px', background: '#e5e7eb' }} />
+        <button
+          onClick={() => mapInstanceRef.current && mapInstanceRef.current.setZoom(mapInstanceRef.current.getZoom() - 1)}
+          style={{
+            width: '44px', height: '40px', border: 'none', background: 'white', cursor: 'pointer',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            transition: 'background 0.15s ease',
+          }}
+          onMouseEnter={(e) => { e.currentTarget.style.background = '#f3f4f6'; }}
+          onMouseLeave={(e) => { e.currentTarget.style.background = 'white'; }}
+          title="Zoom out"
+        >
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#0d2847" strokeWidth="2.5" strokeLinecap="round">
+            <line x1="5" y1="12" x2="19" y2="12"/>
+          </svg>
+        </button>
+      </div>
+
+      {/* Satellite / Map toggle — Snapchat-style */}
+      <button
+        onClick={toggleMapType}
+        style={{
+          position: 'absolute', bottom: '132px', right: '12px',
+          width: '44px', height: '44px', borderRadius: '22px',
+          border: 'none', background: 'white', cursor: 'pointer',
+          boxShadow: '0 2px 8px rgba(0,0,0,0.25)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          zIndex: 5, transition: 'transform 0.2s ease',
+        }}
+        onMouseEnter={(e) => { e.currentTarget.style.transform = 'scale(1.1)'; }}
+        onMouseLeave={(e) => { e.currentTarget.style.transform = 'scale(1)'; }}
+        title={mapType === 'roadmap' ? 'Switch to Satellite' : 'Switch to Map'}
+      >
+        {mapType === 'roadmap' ? (
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#0d2847" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <circle cx="12" cy="12" r="10"/><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"/><path d="M2 12h20"/>
+          </svg>
+        ) : (
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#0d2847" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <polygon points="1 6 1 22 8 18 16 22 23 18 23 2 16 6 8 2 1 6"/><line x1="8" y1="2" x2="8" y2="18"/><line x1="16" y1="6" x2="16" y2="22"/>
+          </svg>
+        )}
       </button>
 
       {/* Heatmap Legend */}
@@ -1229,6 +1374,13 @@ const FlockAppInner = ({ authUser, onLogout }) => {
   const [chatSearch, setChatSearch] = useState('');
   const [showChatSearch, setShowChatSearch] = useState(false);
   const chatSearchRef = useRef(null);
+
+  // Live location sharing
+  const [sharingLocationForFlock, setSharingLocationForFlock] = useState(null); // { flockId, watchId }
+  const [flockMemberLocations, setFlockMemberLocations] = useState({}); // userId -> { lat, lng, name, timestamp }
+  const [locationBannerDismissed, setLocationBannerDismissed] = useState(() => {
+    try { return JSON.parse(localStorage.getItem('flock_loc_dismissed') || '{}'); } catch { return {}; }
+  });
   const chatListSearchRef = useRef(null);
   const searchResultsInputRef = useRef(null);
 
@@ -1255,6 +1407,30 @@ const FlockAppInner = ({ authUser, onLogout }) => {
   const [dmSearchText, setDmSearchText] = useState('');
   const [showDmMenu, setShowDmMenu] = useState(false);
   const [showDeleteDmConfirm, setShowDeleteDmConfirm] = useState(false);
+  const [deletedDmUserIds, setDeletedDmUserIds] = useState(() => {
+    try { return JSON.parse(localStorage.getItem('flock_deleted_dms') || '[]'); } catch { return []; }
+  });
+  const [dmIsTyping, setDmIsTyping] = useState(false);
+  const [dmTypingUser, setDmTypingUser] = useState('');
+  const dmTypingTimeoutRef = useRef(null);
+  const dmChatEndRef = useRef(null);
+  const [dmChatSearch, setDmChatSearch] = useState('');
+  const [showDmChatSearch, setShowDmChatSearch] = useState(false);
+  const dmChatSearchRef = useRef(null);
+  const [dmReplyingTo, setDmReplyingTo] = useState(null);
+  const [showDmReactionPicker, setShowDmReactionPicker] = useState(null);
+  const [showDmVotePanel, setShowDmVotePanel] = useState(false);
+  const [dmVenueVotes, setDmVenueVotes] = useState([]);
+  const [showDmVenueSearch, setShowDmVenueSearch] = useState(false);
+  const [dmPendingImage, setDmPendingImage] = useState(null);
+  const [showDmImagePreview, setShowDmImagePreview] = useState(false);
+  const [dmSharingLocation, setDmSharingLocation] = useState(null); // userId we're sharing with
+  const [dmMemberLocation, setDmMemberLocation] = useState(null); // { lat, lng, name, timestamp }
+  const [showDmCashPool, setShowDmCashPool] = useState(false);
+  const [dmCashPoolAmount, setDmCashPoolAmount] = useState(20);
+  const [dmCashPool, setDmCashPool] = useState(null); // { perPerson, total, collected, paid: [] }
+  const [dmPinnedVenue, setDmPinnedVenue] = useState(null); // { name, addr, place_id, rating, photo_url }
+  const [pickingVenueForDm, setPickingVenueForDm] = useState(false);
 
   // Profile
   const [profileScreen, setProfileScreen] = useState('main');
@@ -1452,6 +1628,16 @@ const FlockAppInner = ({ authUser, onLogout }) => {
 
   const getSelectedFlock = useCallback(() => flocks.find(f => f.id === selectedFlockId) || flocks[0], [flocks, selectedFlockId]);
 
+  // Haversine distance between two lat/lng points
+  const calcDistance = useCallback((lat1, lng1, lat2, lng2) => {
+    const R = 6371;
+    const dLat = (lat2 - lat1) * Math.PI / 180;
+    const dLng = (lng2 - lng1) * Math.PI / 180;
+    const a = Math.sin(dLat / 2) ** 2 + Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.sin(dLng / 2) ** 2;
+    const d = R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    return d < 1 ? `${Math.round(d * 1000)}m` : `${d.toFixed(1)}km`;
+  }, []);
+
   const formatDateStr = (d) => d.toISOString().split('T')[0];
   const getDaysInMonth = (d) => new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate();
   const getFirstDayOfMonth = (d) => new Date(d.getFullYear(), d.getMonth(), 1).getDay();
@@ -1636,6 +1822,8 @@ const FlockAppInner = ({ authUser, onLogout }) => {
   // Fetch messages from API + join socket room when opening a chat
   const [, setMessagesLoading] = useState(false);
   const prevFlockIdRef = useRef(null);
+  const sharingLocationRef = useRef(sharingLocationForFlock);
+  sharingLocationRef.current = sharingLocationForFlock;
   useEffect(() => {
     if (currentScreen === 'chatDetail' && selectedFlockId) {
       // Leave previous room
@@ -1664,7 +1852,10 @@ const FlockAppInner = ({ authUser, onLogout }) => {
         .catch(() => {})
         .finally(() => setMessagesLoading(false));
     } else if (currentScreen !== 'chatDetail' && prevFlockIdRef.current) {
-      leaveFlock(prevFlockIdRef.current);
+      // Don't leave socket room if actively sharing location (need to keep receiving updates)
+      if (!sharingLocationRef.current || sharingLocationRef.current !== prevFlockIdRef.current) {
+        leaveFlock(prevFlockIdRef.current);
+      }
       prevFlockIdRef.current = null;
     }
   }, [currentScreen, selectedFlockId]);
@@ -1705,27 +1896,74 @@ const FlockAppInner = ({ authUser, onLogout }) => {
     return () => { unsubTyping(); unsubStop(); };
   }, []);
 
-  // Listen for member_left events — show system message + update member count
+  // --- Live location sharing ---
+
+  const startSharingLocation = useCallback((flockId) => {
+    if (!userLocation) {
+      showToast('Waiting for your location...');
+      return;
+    }
+    console.log('[Location] Started sharing for flock:', flockId);
+    emitLocation(flockId, userLocation.lat, userLocation.lng);
+    setSharingLocationForFlock(flockId);
+  }, [showToast, userLocation]);
+
+  const stopLocationSharing = useCallback(() => {
+    if (!sharingLocationForFlock) return;
+    console.log('[Location] Stopped sharing');
+    socketStopSharing(sharingLocationForFlock);
+    setSharingLocationForFlock(null);
+    setFlockMemberLocations({});
+  }, [sharingLocationForFlock]);
+
+  // Emit location every 10 seconds while sharing is active
   useEffect(() => {
-    const sock = getSocket();
-    if (!sock) return;
-    const handler = (data) => {
-      const systemMsg = {
-        id: `sys-left-${Date.now()}`,
-        sender: 'System',
-        time: new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }),
-        text: `${data.name} left the flock`,
-        reactions: [],
-        system: true,
-      };
-      setFlocks(prev => prev.map(f => {
-        if (String(f.id) !== String(data.flockId)) return f;
-        return { ...f, memberCount: Math.max(0, (f.memberCount || 1) - 1), messages: [...(f.messages || []), systemMsg] };
+    if (!sharingLocationForFlock || !userLocation) return;
+    const interval = setInterval(() => {
+      console.log('[Location] Emitting position:', userLocation.lat, userLocation.lng);
+      emitLocation(sharingLocationForFlock, userLocation.lat, userLocation.lng);
+    }, 10000);
+    // Emit immediately on location change
+    emitLocation(sharingLocationForFlock, userLocation.lat, userLocation.lng);
+    return () => clearInterval(interval);
+  }, [sharingLocationForFlock, userLocation]);
+
+  // Auto-stop sharing when flock status changes from confirmed
+  useEffect(() => {
+    if (!sharingLocationForFlock) return;
+    const flock = flocks.find(f => f.id === sharingLocationForFlock);
+    if (!flock || flock.status !== 'confirmed') {
+      stopLocationSharing();
+    }
+  }, [flocks, sharingLocationForFlock, stopLocationSharing]);
+
+  // Listen for member location updates
+  useEffect(() => {
+    const unsubLocation = onLocationUpdate((data) => {
+      console.log('[Location] Received member location:', data);
+      setFlockMemberLocations(prev => ({
+        ...prev,
+        [data.userId]: { lat: data.lat, lng: data.lng, name: data.name, timestamp: data.timestamp },
       }));
-    };
-    sock.on('member_left', handler);
-    return () => { sock.off('member_left', handler); };
+    });
+    const unsubStopped = onMemberStoppedSharing((data) => {
+      setFlockMemberLocations(prev => {
+        const next = { ...prev };
+        delete next[data.userId];
+        return next;
+      });
+    });
+    return () => { unsubLocation(); unsubStopped(); };
   }, []);
+
+  // Clean up location sharing on unmount
+  useEffect(() => {
+    return () => {
+      if (sharingLocationForFlock) {
+        socketStopSharing(sharingLocationForFlock);
+      }
+    };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Typing indicator — emit via socket with debounce
   const typingTimeoutRef = useRef(null);
@@ -2293,30 +2531,35 @@ const FlockAppInner = ({ authUser, onLogout }) => {
   }, [showNewDmModal, suggestedUsers.length, loadSuggestedUsers]);
 
   const startNewDmWithUser = useCallback((user) => {
-    // Find existing DM or create new one
-    const existingDm = directMessages.find(dm => dm.friendName === user.name);
+    // Find existing DM by user ID or create a new local entry
+    const existingDm = directMessages.find(dm => dm.userId === user.id);
     if (existingDm) {
-      setSelectedDmId(existingDm.id);
+      setSelectedDmId(existingDm.userId);
     } else {
+      // Auto-send friend request when starting a new DM
+      sendFriendRequest(user.id).catch(() => {});
+      // Un-delete if previously deleted
+      if (deletedDmUserIds.includes(user.id)) {
+        const updated = deletedDmUserIds.filter(id => id !== user.id);
+        setDeletedDmUserIds(updated);
+        try { localStorage.setItem('flock_deleted_dms', JSON.stringify(updated)); } catch {}
+      }
       const newDm = {
-        id: `dm-${Date.now()}`,
-        friendName: user.name,
-        friendEmail: user.email,
-        friendImage: user.profile_image_url || null,
-        avatar: user.name[0]?.toUpperCase() || '👤',
+        userId: user.id,
+        name: user.name,
+        image: user.profile_image_url || null,
         messages: [],
-        lastActive: 'Just now',
-        isOnline: true,
-        unread: 0
+        lastMessage: null,
+        unread: 0,
       };
       setDirectMessages(prev => [newDm, ...prev]);
-      setSelectedDmId(newDm.id);
+      setSelectedDmId(user.id);
     }
     setShowNewDmModal(false);
     setDmSearchText('');
     setDmModalResults([]);
     setCurrentScreen('dmDetail');
-  }, [directMessages]);
+  }, [directMessages, deletedDmUserIds]);
 
   const NewDmModal = () => {
     const usersToShow = dmSearchText.trim() ? dmModalResults : suggestedUsers;
@@ -2378,33 +2621,282 @@ const FlockAppInner = ({ authUser, onLogout }) => {
   };
 
   // DM Detail Screen - Inline JSX to prevent focus loss on input
-  const selectedDm = directMessages.find(d => d.id === selectedDmId);
+  const selectedDm = directMessages.find(d => d.userId === selectedDmId);
 
-  const sendDmMessage = () => {
-    if (!chatInput.trim() || !selectedDm) return;
-    const newMsg = { id: Date.now(), sender: 'You', text: chatInput.trim(), time: new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) };
-    setDirectMessages(prev => prev.map(d => d.id === selectedDmId ? { ...d, messages: [...d.messages, newMsg], lastActive: 'Just now' } : d));
-    setChatInput('');
-    // Simulate reply
-    const friendName = selectedDm.friendName;
-    setTimeout(() => {
-      const replies = ["Sounds good!", "Yeah for sure!", "Can't wait!", "Haha nice!", "Let's do it!", "See you there!", "Perfect!"];
-      const replyMsg = { id: Date.now() + 1, sender: friendName, text: replies[Math.floor(Math.random() * replies.length)], time: new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) };
-      setDirectMessages(prev => prev.map(d => d.id === selectedDmId ? { ...d, messages: [...d.messages, replyMsg] } : d));
-    }, 1500 + Math.random() * 1000);
-  };
+  // Load DM conversations from backend on mount (filter out deleted ones)
+  useEffect(() => {
+    getDMConversations()
+      .then(data => {
+        const hidden = deletedDmUserIds;
+        setDirectMessages((data.conversations || []).filter(c => !hidden.includes(c.userId)).map(c => ({
+          userId: c.userId,
+          name: c.name,
+          image: c.image,
+          messages: [],
+          lastMessage: c.lastMessage,
+          lastMessageTime: c.lastMessageTime,
+          lastMessageIsYou: c.lastMessageIsYou,
+          unread: c.unread,
+        })));
+      })
+      .catch(() => {});
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Load messages when opening a DM conversation
+  useEffect(() => {
+    if (currentScreen === 'dmDetail' && selectedDmId) {
+      getDMs(selectedDmId)
+        .then(data => {
+          const msgs = (data.messages || []).map(m => ({
+            id: m.id,
+            sender: m.sender_id === authUser?.id ? 'You' : (m.sender_name || 'Unknown'),
+            senderId: m.sender_id,
+            text: m.message_text,
+            time: new Date(m.created_at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }),
+            message_type: m.message_type || 'text',
+            venue_data: m.venue_data,
+            image_url: m.image_url,
+            reactions: m.reactions || [],
+            reply_to: m.reply_to ? { id: m.reply_to.id, text: m.reply_to.message_text, sender: m.reply_to.sender_name } : null,
+          }));
+          setDirectMessages(prev => prev.map(d => d.userId === selectedDmId ? { ...d, messages: msgs, unread: 0 } : d));
+        })
+        .catch(() => {});
+      // Load venue votes for this conversation
+      getDmVenueVotes(selectedDmId).then(data => setDmVenueVotes(data.votes || [])).catch(() => {});
+      // Load pinned venue for this conversation
+      getDmPinnedVenue(selectedDmId).then(data => {
+        if (data.venue) setDmPinnedVenue({ name: data.venue.venue_name, addr: data.venue.venue_address, place_id: data.venue.venue_id, rating: data.venue.venue_rating, photo_url: data.venue.venue_photo_url });
+        else setDmPinnedVenue(null);
+      }).catch(() => {});
+    }
+  }, [currentScreen, selectedDmId, authUser]);
+
+  const sendDmMessage = useCallback((opts = {}) => {
+    const text = (opts.text || chatInput).trim();
+    const msgType = opts.message_type || 'text';
+    if (!text && msgType !== 'image') return;
+    if (!selectedDm) return;
+    if (!opts.text) setChatInput('');
+    // Stop typing indicator
+    if (dmTypingTimeoutRef.current) {
+      clearTimeout(dmTypingTimeoutRef.current);
+      dmStopTyping(selectedDmId);
+    }
+    // Clear reply
+    const replyTo = opts.reply_to_id ? dmReplyingTo : dmReplyingTo;
+    if (!opts.noReply) setDmReplyingTo(null);
+    // Optimistic update — show message instantly
+    const tempId = `temp-${Date.now()}`;
+    const optimistic = {
+      id: tempId,
+      sender: 'You',
+      senderId: authUser?.id,
+      text: text || (msgType === 'image' ? '📷 Photo' : ''),
+      time: new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }),
+      message_type: msgType,
+      venue_data: opts.venue_data || null,
+      image_url: opts.image_url || null,
+      reactions: [],
+      reply_to: replyTo && !opts.noReply ? { id: replyTo.id, text: replyTo.text, sender: replyTo.sender } : null,
+    };
+    setDirectMessages(prev => prev.map(d => d.userId === selectedDmId ? { ...d, messages: [...d.messages, optimistic], lastMessage: text || '📷 Photo', lastMessageIsYou: true } : d));
+    socketSendDm(selectedDmId, text || '', {
+      message_type: msgType,
+      venue_data: opts.venue_data,
+      image_url: opts.image_url,
+      reply_to_id: replyTo && !opts.noReply ? replyTo.id : null,
+    });
+  }, [chatInput, selectedDm, selectedDmId, dmReplyingTo, authUser]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Listen for real-time DMs
+  useEffect(() => {
+    const unsub = onNewDm((msg) => {
+      const otherUserId = msg.sender_id === authUser?.id ? msg.receiver_id : msg.sender_id;
+      const isYou = msg.sender_id === authUser?.id;
+      const mapped = {
+        id: msg.id,
+        sender: isYou ? 'You' : (msg.sender_name || 'Unknown'),
+        senderId: msg.sender_id,
+        text: msg.message_text,
+        time: new Date(msg.created_at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }),
+        message_type: msg.message_type || 'text',
+        venue_data: msg.venue_data,
+        image_url: msg.image_url,
+        reactions: msg.reactions || [],
+        reply_to: msg.reply_to || null,
+      };
+      const previewText = msg.message_type === 'image' ? '📷 Photo' : msg.message_type === 'venue_card' ? '📍 Venue' : msg.message_text;
+      setDirectMessages(prev => {
+        const existing = prev.find(d => d.userId === otherUserId);
+        if (existing) {
+          return prev.map(d => {
+            if (d.userId !== otherUserId) return d;
+            if (d.messages.some(m => m.id === msg.id)) return d;
+            // If own message, replace the optimistic temp message
+            if (isYou) {
+              const tempIdx = d.messages.findIndex(m => typeof m.id === 'string' && m.id.startsWith('temp-') && m.text === msg.message_text);
+              if (tempIdx !== -1) {
+                const updated = [...d.messages];
+                updated[tempIdx] = mapped;
+                return { ...d, messages: updated, lastMessageTime: msg.created_at };
+              }
+            }
+            return { ...d, messages: [...d.messages, mapped], lastMessage: previewText, lastMessageIsYou: isYou, lastMessageTime: msg.created_at, unread: isYou ? d.unread : d.unread + 1 };
+          });
+        }
+        return [{
+          userId: otherUserId,
+          name: msg.sender_name || 'Unknown',
+          image: null,
+          messages: [mapped],
+          lastMessage: previewText,
+          lastMessageTime: msg.created_at,
+          lastMessageIsYou: isYou,
+          unread: isYou ? 0 : 1,
+        }, ...prev];
+      });
+    });
+    return unsub;
+  }, [authUser]);
+
+  // Listen for DM reactions in real-time
+  useEffect(() => {
+    const unsubAdd = onDmReactionAdded((data) => {
+      setDirectMessages(prev => prev.map(d => ({
+        ...d,
+        messages: d.messages.map(m => {
+          if (m.id !== data.dmId) return m;
+          const exists = (m.reactions || []).some(r => r.emoji === data.emoji && r.user_id === data.userId);
+          if (exists) return m;
+          return { ...m, reactions: [...(m.reactions || []), { emoji: data.emoji, user_id: data.userId, user_name: data.userName }] };
+        }),
+      })));
+    });
+    const unsubRemove = onDmReactionRemoved((data) => {
+      setDirectMessages(prev => prev.map(d => ({
+        ...d,
+        messages: d.messages.map(m => {
+          if (m.id !== data.dmId) return m;
+          return { ...m, reactions: (m.reactions || []).filter(r => !(r.emoji === data.emoji && r.user_id === data.userId)) };
+        }),
+      })));
+    });
+    return () => { unsubAdd(); unsubRemove(); };
+  }, []);
+
+  // Listen for DM venue votes in real-time
+  useEffect(() => {
+    const unsub = onDmNewVote((data) => {
+      setDmVenueVotes(data.votes || []);
+    });
+    return unsub;
+  }, []);
+
+  // DM location sharing
+  useEffect(() => {
+    const unsubLoc = onDmLocationUpdate((data) => {
+      setDmMemberLocation({ lat: data.lat, lng: data.lng, name: data.name, timestamp: data.timestamp });
+    });
+    const unsubStop = onDmMemberStoppedSharing(() => {
+      setDmMemberLocation(null);
+    });
+    return () => { unsubLoc(); unsubStop(); };
+  }, []);
+
+  // DM pinned venue real-time sync
+  useEffect(() => {
+    const unsub = onDmVenuePinned((data) => {
+      setDmPinnedVenue({ name: data.venue_name, addr: data.venue_address, place_id: data.venue_id, rating: data.venue_rating, photo_url: data.venue_photo_url });
+    });
+    return unsub;
+  }, []);
+
+  // Emit DM location periodically when sharing
+  useEffect(() => {
+    if (!dmSharingLocation || !userLocation) return;
+    const interval = setInterval(() => {
+      dmShareLocation(dmSharingLocation, userLocation.lat, userLocation.lng);
+    }, 10000);
+    dmShareLocation(dmSharingLocation, userLocation.lat, userLocation.lng);
+    return () => clearInterval(interval);
+  }, [dmSharingLocation, userLocation]);
+
+  // DM typing indicators
+  useEffect(() => {
+    const unsubTyping = onDmUserTyping((data) => {
+      if (data.userId === selectedDmId) {
+        setDmTypingUser(data.name);
+        setDmIsTyping(true);
+      }
+    });
+    const unsubStop = onDmUserStoppedTyping((data) => {
+      if (data.userId === selectedDmId) {
+        setDmIsTyping(false);
+        setDmTypingUser('');
+      }
+    });
+    return () => { unsubTyping(); unsubStop(); };
+  }, [selectedDmId]);
+
+  // DM input change with typing indicator
+  const handleDmInputChange = useCallback((e) => {
+    setChatInput(e.target.value);
+    if (selectedDmId) {
+      dmStartTyping(selectedDmId);
+      clearTimeout(dmTypingTimeoutRef.current);
+      dmTypingTimeoutRef.current = setTimeout(() => {
+        dmStopTyping(selectedDmId);
+      }, 2000);
+    }
+  }, [selectedDmId]);
+
+  // Auto-scroll DM chat to bottom
+  useEffect(() => {
+    if (currentScreen === 'dmDetail' && selectedDm?.messages?.length) {
+      setTimeout(() => dmChatEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 50);
+    }
+  }, [currentScreen, selectedDm?.messages?.length]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Keep DM chat search focused
+  useEffect(() => {
+    if (showDmChatSearch && dmChatSearchRef.current) dmChatSearchRef.current.focus();
+  }, [showDmChatSearch, dmChatSearch]);
+
+  // DM venue search with debounce
+
+  // DM image handler
+  const handleDmImageSelect = useCallback((e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (file.size > 5 * 1024 * 1024) { showToast('Image too large (max 5MB)', 'error'); return; }
+    const reader = new FileReader();
+    reader.onload = () => { setDmPendingImage(reader.result); setShowDmImagePreview(true); };
+    reader.readAsDataURL(file);
+    e.target.value = '';
+  }, [showToast]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const dmReactions = ['❤️', '👍', '😂', '🔥'];
 
   const dmDetailScreen = currentScreen === 'dmDetail' && selectedDm && (
     <div key="dm-detail-screen" style={{ display: 'flex', flexDirection: 'column', height: '100%', backgroundColor: 'white' }}>
-      <div style={{ padding: '12px', display: 'flex', alignItems: 'center', gap: '10px', background: `linear-gradient(135deg, ${colors.navy}, ${colors.navyMid})`, flexShrink: 0 }}>
-        <button onClick={() => { setCurrentScreen('main'); setChatInput(''); setShowDmMenu(false); setShowDeleteDmConfirm(false); }} style={{ background: 'none', border: 'none', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.arrowLeft('white', 20)}</button>
+      {/* Header — matches flock chat header */}
+      <div style={{ padding: '12px', display: 'flex', alignItems: 'center', gap: '8px', background: `linear-gradient(135deg, ${colors.navy}, ${colors.navyMid})`, flexShrink: 0, boxShadow: '0 2px 10px rgba(0,0,0,0.1)' }}>
+        <button onClick={() => { setCurrentScreen('main'); setChatInput(''); setShowDmMenu(false); setShowDeleteDmConfirm(false); setShowDmChatSearch(false); setDmChatSearch(''); setShowDmVotePanel(false); setShowDmVenueSearch(false); setDmReplyingTo(null); if (dmSharingLocation) { dmStopSharingLocation(dmSharingLocation); setDmSharingLocation(null); } }} style={{ background: 'none', border: 'none', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.arrowLeft('white', 20)}</button>
         <div style={{ width: '36px', height: '36px', borderRadius: '18px', backgroundColor: 'rgba(255,255,255,0.2)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '14px', fontWeight: '700', color: 'white', overflow: 'hidden' }}>
-          {selectedDm.friendImage ? <img src={selectedDm.friendImage} alt="" style={{ width: '36px', height: '36px', borderRadius: '18px', objectFit: 'cover' }} /> : selectedDm.avatar}
+          {selectedDm.image ? <img src={selectedDm.image} alt="" style={{ width: '36px', height: '36px', borderRadius: '18px', objectFit: 'cover' }} /> : (selectedDm.name?.[0]?.toUpperCase() || '?')}
         </div>
         <div style={{ flex: 1 }}>
-          <h2 style={{ fontWeight: 'bold', color: 'white', fontSize: '15px', margin: 0 }}>{selectedDm.friendName}</h2>
-          <p style={{ fontSize: '10px', color: 'rgba(255,255,255,0.7)', margin: 0 }}>{selectedDm.isOnline ? <span style={{ color: '#86EFAC' }}>Online</span> : selectedDm.lastActive}</p>
+          <h2 style={{ fontWeight: 'bold', color: 'white', fontSize: '14px', margin: 0 }}>{selectedDm.name}</h2>
+          <p style={{ fontSize: '10px', color: 'rgba(255,255,255,0.6)', margin: 0 }}>{dmIsTyping ? <span style={{ color: '#86EFAC', fontWeight: '500' }}>{dmTypingUser || selectedDm.name} is typing...</span> : dmSharingLocation ? '📍 sharing location' : 'recently'}</p>
         </div>
+        {/* Vote button */}
+        <button onClick={() => setShowDmVotePanel(!showDmVotePanel)} style={{ height: '32px', borderRadius: '16px', border: 'none', backgroundColor: 'rgba(255,255,255,0.2)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px', padding: '0 10px', fontSize: '11px', fontWeight: '700' }}>{Icons.vote('white', 14)} Vote</button>
+        {/* Search button */}
+        <button onClick={() => setShowDmChatSearch(!showDmChatSearch)} style={{ width: '32px', height: '32px', borderRadius: '16px', border: 'none', backgroundColor: showDmChatSearch ? 'rgba(255,255,255,0.4)' : 'rgba(255,255,255,0.2)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.search('white', 14)}</button>
+        {/* Cash pool button */}
+        <button onClick={() => setShowDmCashPool(true)} style={{ width: '32px', height: '32px', borderRadius: '16px', border: 'none', backgroundColor: colors.cream, color: colors.navy, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.dollar(colors.navy, 16)}</button>
+        {/* More menu */}
         <div style={{ position: 'relative' }}>
           <button onClick={() => setShowDmMenu(!showDmMenu)} style={{ width: '32px', height: '32px', borderRadius: '16px', border: 'none', backgroundColor: 'rgba(255,255,255,0.2)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.moreVertical('white', 16)}</button>
           {showDmMenu && (
@@ -2417,9 +2909,325 @@ const FlockAppInner = ({ authUser, onLogout }) => {
         </div>
       </div>
 
-      {/* Dismiss DM menu on outside tap */}
-      {showDmMenu && (
-        <div onClick={() => setShowDmMenu(false)} style={{ position: 'absolute', inset: 0, zIndex: 55 }} />
+      {/* Dismiss DM menu */}
+      {showDmMenu && <div onClick={() => setShowDmMenu(false)} style={{ position: 'absolute', inset: 0, zIndex: 55 }} />}
+
+      {/* Chat search bar */}
+      {showDmChatSearch && (
+        <div style={{ padding: '8px 12px', backgroundColor: 'white', borderBottom: '1px solid #eee', display: 'flex', gap: '8px', alignItems: 'center', flexShrink: 0 }}>
+          <input ref={dmChatSearchRef} type="text" value={dmChatSearch} onChange={(e) => setDmChatSearch(e.target.value)} placeholder="Search messages..." style={{ flex: 1, padding: '8px 12px', borderRadius: '20px', backgroundColor: '#f3f4f6', border: 'none', fontSize: '13px', outline: 'none' }} />
+          {dmChatSearch && <button onClick={() => setDmChatSearch('')} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '4px' }}>{Icons.x('#6b7280', 14)}</button>}
+        </div>
+      )}
+
+      {/* Location sharing indicator */}
+      {dmSharingLocation && (
+        <div style={{ padding: '8px 14px', background: 'linear-gradient(135deg, #059669, #047857)', flexShrink: 0, display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <div style={{ width: '8px', height: '8px', borderRadius: '4px', backgroundColor: '#34d399', animation: 'pulse 2s ease-in-out infinite', boxShadow: '0 0 6px #34d399' }} />
+          <p style={{ fontSize: '11px', fontWeight: '600', color: 'white', margin: 0, flex: 1 }}>Sharing live location with {selectedDm.name}</p>
+          {dmMemberLocation && <span style={{ fontSize: '10px', color: '#a7f3d0', fontWeight: '500' }}>{selectedDm.name} sharing too</span>}
+          <button onClick={() => { dmStopSharingLocation(dmSharingLocation); setDmSharingLocation(null); }} style={{ padding: '4px 10px', borderRadius: '10px', border: '1px solid rgba(255,255,255,0.3)', background: 'rgba(255,255,255,0.15)', color: 'white', fontSize: '10px', fontWeight: '600', cursor: 'pointer' }}>Stop</button>
+        </div>
+      )}
+
+      {/* Pinned Venue Banner — top-voted or manually pinned venue */}
+      {dmPinnedVenue ? (
+        <div style={{ padding: '10px 14px', background: `linear-gradient(135deg, ${colors.navy}08, ${colors.teal}12)`, borderBottom: `1px solid ${colors.creamDark}`, flexShrink: 0 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+            {dmPinnedVenue.photo_url ? (
+              <img src={dmPinnedVenue.photo_url} alt="" style={{ width: '52px', height: '52px', borderRadius: '12px', objectFit: 'cover', flexShrink: 0, boxShadow: '0 2px 8px rgba(0,0,0,0.1)' }} />
+            ) : (
+              <div style={{ width: '52px', height: '52px', borderRadius: '12px', background: `linear-gradient(135deg, ${colors.navy}, ${colors.navyMid})`, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, boxShadow: '0 2px 8px rgba(13,40,71,0.2)' }}>
+                {Icons.mapPin('white', 22)}
+              </div>
+            )}
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <h4 style={{ fontSize: '13px', fontWeight: '800', color: colors.navy, margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{dmPinnedVenue.name}</h4>
+                {dmPinnedVenue.rating && <span style={{ fontSize: '11px', fontWeight: '700', color: '#F59E0B', display: 'flex', alignItems: 'center', gap: '2px', flexShrink: 0 }}>{Icons.starFilled('#F59E0B', 11)} {dmPinnedVenue.rating}</span>}
+              </div>
+              {dmPinnedVenue.addr && <p style={{ fontSize: '11px', color: '#6b7280', margin: '2px 0 0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{dmPinnedVenue.addr}</p>}
+            </div>
+            <div style={{ display: 'flex', gap: '4px', flexShrink: 0 }}>
+              <button
+                onClick={() => {
+                  setCurrentTab('explore');
+                  setCurrentScreen('main');
+                  if (dmPinnedVenue.place_id) {
+                    setTimeout(() => {
+                      if (window.__flockPanToVenue) {
+                        window.__flockPanToVenue({ place_id: dmPinnedVenue.place_id, name: dmPinnedVenue.name, address: dmPinnedVenue.addr, rating: dmPinnedVenue.rating, photo_url: dmPinnedVenue.photo_url });
+                      }
+                    }, 300);
+                  }
+                }}
+                style={{ padding: '8px 10px', borderRadius: '10px', border: 'none', background: `linear-gradient(135deg, ${colors.teal}, #0d9488)`, color: 'white', fontSize: '10px', fontWeight: '700', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px', boxShadow: '0 2px 8px rgba(20,184,166,0.3)' }}
+              >
+                {Icons.mapPin('white', 12)} Map
+              </button>
+              <button onClick={() => { setPickingVenueForDm(true); setPickingVenueForCreate(true); setCurrentTab('explore'); setCurrentScreen('main'); }} style={{ padding: '8px 10px', borderRadius: '10px', border: `1px solid ${colors.creamDark}`, background: 'white', color: colors.navy, fontSize: '10px', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '3px' }}>
+                Change
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : (
+        <button onClick={() => { setPickingVenueForDm(true); setPickingVenueForCreate(true); setCurrentTab('explore'); setCurrentScreen('main'); }} style={{ margin: '0', padding: '10px 14px', background: `linear-gradient(135deg, ${colors.cream}, white)`, borderBottom: `1px solid ${colors.creamDark}`, border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '10px', width: '100%', flexShrink: 0 }}>
+          <div style={{ width: '40px', height: '40px', borderRadius: '12px', border: `2px dashed ${colors.teal}`, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.mapPin(colors.teal, 18)}</div>
+          <div style={{ flex: 1, textAlign: 'left' }}>
+            <p style={{ fontSize: '13px', fontWeight: '700', color: colors.navy, margin: 0 }}>Add a Venue</p>
+            <p style={{ fontSize: '11px', color: '#6b7280', margin: '1px 0 0' }}>Pick a spot on the map</p>
+          </div>
+          <div style={{ color: colors.teal, fontWeight: '700', fontSize: '20px' }}>+</div>
+        </button>
+      )}
+
+      {/* Cash Pool Display */}
+      {dmCashPool && (
+        <div style={{ padding: '10px 14px', borderBottom: `1px solid ${colors.creamDark}`, backgroundColor: 'white', flexShrink: 0 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+            <h3 style={{ fontSize: '12px', fontWeight: 'bold', color: colors.navy, margin: 0 }}>Cash Pool</h3>
+            <span style={{ fontSize: '10px', padding: '2px 8px', borderRadius: '10px', fontWeight: '500', backgroundColor: dmCashPool.collected >= dmCashPool.total ? '#d1fae5' : '#fef3c7', color: dmCashPool.collected >= dmCashPool.total ? '#047857' : '#b45309' }}>
+              ${dmCashPool.collected}/${dmCashPool.total}
+            </span>
+          </div>
+          <div style={{ width: '100%', height: '8px', backgroundColor: '#e5e7eb', borderRadius: '4px', marginBottom: '8px', overflow: 'hidden' }}>
+            <div style={{ height: '100%', width: `${(dmCashPool.collected / dmCashPool.total) * 100}%`, background: `linear-gradient(90deg, ${colors.navy}, ${colors.navyMid})`, borderRadius: '4px', transition: 'width 0.8s cubic-bezier(0.34, 1.56, 0.64, 1)', boxShadow: dmCashPool.collected >= dmCashPool.total ? '0 0 12px rgba(13,40,71,0.4)' : 'none' }} />
+          </div>
+          {!dmCashPool.paid.includes('You') ? (
+            <button onClick={() => { setDmCashPool(prev => ({ ...prev, paid: [...prev.paid, 'You'], collected: prev.collected + prev.perPerson })); sendDmMessage({ text: `💰 I paid $${dmCashPool.perPerson} to the pool!`, noReply: true }); showToast('Payment sent!'); }} style={{ width: '100%', padding: '8px', borderRadius: '12px', border: 'none', background: `linear-gradient(90deg, ${colors.navy}, ${colors.navyMid})`, color: 'white', fontWeight: '700', fontSize: '13px', cursor: 'pointer' }}>Pay ${dmCashPool.perPerson}</button>
+          ) : (
+            <div style={{ textAlign: 'center', padding: '4px', color: colors.teal, fontWeight: '600', fontSize: '12px' }}>✓ Paid!</div>
+          )}
+        </div>
+      )}
+
+      {/* Vote panel — identical to flock with optimistic local updates */}
+      {showDmVotePanel && (() => {
+        const myName = authUser?.name;
+        const totalVoters = new Set(dmVenueVotes.flatMap(v => v.voters || [])).size;
+        const myVote = dmVenueVotes.find(v => (v.voters || []).includes(myName))?.venue_name || null;
+        const pinnedName = dmPinnedVenue?.name || null;
+
+        const handleDmQuickVote = (venueName, venueId) => {
+          const existing = dmVenueVotes.find(v => v.venue_name === venueName);
+          if (existing) {
+            if ((existing.voters || []).includes(myName)) return; // already voted here
+            // Switch vote: remove from old, add to new
+            const newVotes = dmVenueVotes.map(v => ({
+              ...v,
+              voters: v.venue_name === venueName
+                ? [...(v.voters || []), myName]
+                : (v.voters || []).filter(x => x !== myName),
+              vote_count: v.venue_name === venueName
+                ? parseInt(v.vote_count || 0) + 1
+                : (v.voters || []).includes(myName) ? parseInt(v.vote_count || 0) - 1 : parseInt(v.vote_count || 0),
+            })).filter(v => parseInt(v.vote_count || 0) > 0 || v.venue_name === venueName);
+            setDmVenueVotes(newVotes);
+          } else {
+            // New vote: remove from old venues, add new entry
+            const newVotes = [
+              ...dmVenueVotes.map(v => ({
+                ...v,
+                voters: (v.voters || []).filter(x => x !== myName),
+                vote_count: (v.voters || []).includes(myName) ? parseInt(v.vote_count || 0) - 1 : parseInt(v.vote_count || 0),
+              })).filter(v => parseInt(v.vote_count || 0) > 0),
+              { venue_name: venueName, venue_id: venueId || null, vote_count: 1, voters: [myName] },
+            ];
+            setDmVenueVotes(newVotes);
+          }
+          dmVoteVenue(selectedDmId, venueName, venueId);
+          showToast(`Voted for ${venueName}!`);
+        };
+
+        const handleDmUnvote = () => {
+          const newVotes = dmVenueVotes.map(v => ({
+            ...v,
+            voters: (v.voters || []).filter(x => x !== myName),
+            vote_count: (v.voters || []).includes(myName) ? parseInt(v.vote_count || 0) - 1 : parseInt(v.vote_count || 0),
+          })).filter(v => parseInt(v.vote_count || 0) > 0);
+          setDmVenueVotes(newVotes);
+          if (myVote) dmVoteVenue(selectedDmId, myVote, dmVenueVotes.find(v => v.venue_name === myVote)?.venue_id);
+        };
+
+        const votesWithPinned = pinnedName && !dmVenueVotes.find(v => v.venue_name === pinnedName)
+          ? [{ venue_name: pinnedName, venue_id: dmPinnedVenue?.place_id, vote_count: 0, voters: [], isPinned: true }, ...dmVenueVotes]
+          : dmVenueVotes.map(v => ({ ...v, isPinned: v.venue_name === pinnedName }));
+        const sortedVotes = [...votesWithPinned].sort((a, b) => {
+          if (a.isPinned && !b.isPinned) return -1;
+          if (b.isPinned && !a.isPinned) return 1;
+          return parseInt(b.vote_count || 0) - parseInt(a.vote_count || 0);
+        });
+        const suggestedVenues = allVenues.filter(v => !votesWithPinned.find(fv => fv.venue_name === v.name)).slice(0, 5);
+
+        return (
+          <div className="modal-backdrop" style={{ position: 'absolute', inset: 0, backgroundColor: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'flex-end', zIndex: 50 }}>
+            <div className="modal-content" style={{ backgroundColor: 'white', borderRadius: '20px 20px 0 0', padding: '20px', width: '100%', maxHeight: '80%', overflowY: 'auto' }}>
+              {/* Header */}
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+                <div>
+                  <h2 style={{ fontSize: '18px', fontWeight: '900', color: colors.navy, margin: 0, display: 'flex', alignItems: 'center', gap: '8px' }}>{Icons.vote(colors.navy, 20)} Vote for a Venue</h2>
+                  <p style={{ fontSize: '11px', color: '#9ca3af', margin: '2px 0 0' }}>{totalVoters} vote{totalVoters !== 1 ? 's' : ''} cast{myVote ? ` • You voted for ${myVote}` : ''}</p>
+                </div>
+                <button onClick={() => setShowDmVotePanel(false)} style={{ width: '32px', height: '32px', borderRadius: '16px', backgroundColor: '#f3f4f6', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.x('#6b7280', 18)}</button>
+              </div>
+
+              {/* Current votes */}
+              {sortedVotes.length > 0 ? (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '16px' }}>
+                  {sortedVotes.map((v, idx) => {
+                    const isMyVote = (v.voters || []).includes(myName);
+                    const voteCount = parseInt(v.vote_count || 0);
+                    const votePercent = totalVoters > 0 ? Math.round((voteCount / totalVoters) * 100) : 0;
+                    const isLeading = !v.isPinned && idx === 0 && voteCount > 0;
+                    const iconBg = v.isPinned
+                      ? `linear-gradient(135deg, ${colors.navy}, ${colors.navyMid})`
+                      : isLeading ? `linear-gradient(135deg, ${colors.teal}, #0d9488)` : `linear-gradient(135deg, ${colors.navy}15, ${colors.navy}25)`;
+                    return (
+                      <button key={v.venue_name} onClick={() => isMyVote ? handleDmUnvote() : handleDmQuickVote(v.venue_name, v.venue_id)} style={{ width: '100%', textAlign: 'left', padding: '12px 14px', borderRadius: '14px', border: v.isPinned ? `2px solid ${colors.navy}` : isMyVote ? `2px solid ${colors.navy}` : '1.5px solid #e5e7eb', backgroundColor: v.isPinned ? `${colors.navy}05` : isMyVote ? `${colors.navy}06` : 'white', cursor: 'pointer', position: 'relative', overflow: 'hidden', transition: 'all 0.2s' }}>
+                        {/* Progress bar background */}
+                        <div style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: `${votePercent}%`, backgroundColor: isMyVote ? `${colors.navy}10` : '#f8fafc', transition: 'width 0.4s ease', borderRadius: '14px' }} />
+                        <div style={{ position: 'relative', display: 'flex', alignItems: 'center', gap: '10px' }}>
+                          <div style={{ width: '36px', height: '36px', borderRadius: '10px', background: iconBg, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                            {v.isPinned ? Icons.mapPin('white', 16) : isLeading ? Icons.flame('#fff', 18) : Icons.mapPin(colors.navy, 16)}
+                          </div>
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                              <h4 style={{ fontSize: '14px', fontWeight: '700', color: colors.navy, margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{v.venue_name}</h4>
+                              {v.isPinned && <span style={{ fontSize: '9px', fontWeight: '700', color: 'white', backgroundColor: colors.navy, padding: '1px 6px', borderRadius: '6px', flexShrink: 0 }}>Pinned</span>}
+                              {isLeading && <span style={{ fontSize: '9px', fontWeight: '700', color: colors.teal, backgroundColor: `${colors.teal}15`, padding: '1px 6px', borderRadius: '6px', flexShrink: 0 }}>Leading</span>}
+                            </div>
+                            <p style={{ fontSize: '11px', color: '#9ca3af', margin: '1px 0 0' }}>{(v.voters || []).length > 0 ? (v.voters || []).join(', ') : v.isPinned ? 'Current pinned venue — tap to vote' : 'No votes yet'}</p>
+                          </div>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0 }}>
+                            {voteCount > 0 && <span style={{ fontSize: '16px', fontWeight: '900', color: isMyVote ? colors.navy : '#9ca3af' }}>{voteCount}</span>}
+                            {isMyVote && <div style={{ width: '20px', height: '20px', borderRadius: '10px', backgroundColor: colors.navy, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.check('white', 12)}</div>}
+                          </div>
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              ) : (
+                <div style={{ padding: '20px', textAlign: 'center', backgroundColor: '#f8fafc', borderRadius: '14px', marginBottom: '16px' }}>
+                  <p style={{ fontSize: '13px', color: '#9ca3af', margin: 0, fontWeight: '500' }}>No votes yet. Be the first to suggest a venue!</p>
+                </div>
+              )}
+
+              {/* Nearby venue suggestions */}
+              {suggestedVenues.length > 0 && (
+                <>
+                  <p style={{ fontSize: '12px', fontWeight: '700', color: '#9ca3af', marginBottom: '10px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Nearby venues</p>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                    {suggestedVenues.map(venue => (
+                      <button key={venue.id || venue.name} onClick={() => handleDmQuickVote(venue.name, venue.place_id)} style={{ width: '100%', textAlign: 'left', padding: '10px 12px', borderRadius: '12px', border: '1px solid #e5e7eb', backgroundColor: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '10px', transition: 'all 0.2s' }}>
+                        {venue.photo_url ? (
+                          <img src={venue.photo_url} alt="" style={{ width: '36px', height: '36px', borderRadius: '8px', objectFit: 'cover', flexShrink: 0 }} />
+                        ) : (
+                          <div style={{ width: '36px', height: '36px', borderRadius: '8px', background: `linear-gradient(135deg, ${getCategoryColor(venue.category)}, ${getCategoryColor(venue.category)}cc)`, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                            {Icons.mapPin('white', 14)}
+                          </div>
+                        )}
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <p style={{ fontSize: '13px', fontWeight: '600', color: colors.navy, margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{venue.name}</p>
+                          <p style={{ fontSize: '10px', color: '#9ca3af', margin: '1px 0 0' }}>{venue.type || venue.category}{venue.stars ? ` • ${venue.stars}★` : ''}{venue.price ? ` • ${venue.price}` : ''}</p>
+                        </div>
+                        <div style={{ padding: '6px 12px', borderRadius: '10px', backgroundColor: `${colors.navy}08`, color: colors.navy, fontSize: '11px', fontWeight: '700', flexShrink: 0 }}>
+                          {Icons.vote(colors.navy, 12)} Vote
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                </>
+              )}
+
+              {/* Browse more button */}
+              <button onClick={() => { setShowDmVotePanel(false); setShowDmVenueSearch(true); }} style={{ width: '100%', padding: '12px', borderRadius: '12px', border: `2px dashed ${colors.creamDark}`, backgroundColor: 'transparent', color: '#9ca3af', fontSize: '13px', fontWeight: '600', cursor: 'pointer', marginTop: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}>
+                {Icons.plus('#9ca3af', 14)} Share a venue to chat
+              </button>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* Venue Share Modal — matches flock style exactly */}
+      {showDmVenueSearch && (
+        <div className="modal-backdrop" style={{ position: 'absolute', inset: 0, backgroundColor: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'flex-end', zIndex: 50 }}>
+          <div className="modal-content" style={{ backgroundColor: 'white', borderRadius: '20px 20px 0 0', padding: '20px', width: '100%', maxHeight: '70%', overflowY: 'auto' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+              <h2 style={{ fontSize: '18px', fontWeight: '900', color: colors.navy, margin: 0, display: 'flex', alignItems: 'center', gap: '8px' }}>{Icons.mapPin(colors.navy, 20)} Share a Venue</h2>
+              <button onClick={() => setShowDmVenueSearch(false)} style={{ width: '32px', height: '32px', borderRadius: '16px', backgroundColor: '#f3f4f6', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.x('#6b7280', 18)}</button>
+            </div>
+
+            {/* Current pinned venue display */}
+            {dmPinnedVenue ? (
+              <div style={{ padding: '12px', borderRadius: '14px', background: `linear-gradient(135deg, ${colors.navy}08, ${colors.teal}15)`, border: `2px solid ${colors.teal}40`, marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '10px' }}>
+                <div style={{ width: '40px', height: '40px', borderRadius: '10px', background: `linear-gradient(135deg, ${colors.teal}, #0d9488)`, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                  {Icons.mapPin('white', 18)}
+                </div>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <p style={{ fontSize: '10px', fontWeight: '600', color: colors.teal, margin: '0 0 2px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Pinned Venue</p>
+                  <p style={{ fontSize: '14px', fontWeight: '700', color: colors.navy, margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{dmPinnedVenue.name}</p>
+                  {dmPinnedVenue.addr && <p style={{ fontSize: '11px', color: '#6b7280', margin: '2px 0 0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{dmPinnedVenue.addr}</p>}
+                </div>
+                <button onClick={() => { sendDmMessage({ text: `Check out ${dmPinnedVenue.name}!`, message_type: 'venue_card', venue_data: { name: dmPinnedVenue.name, addr: dmPinnedVenue.addr, stars: dmPinnedVenue.rating, rating: dmPinnedVenue.rating, photo_url: dmPinnedVenue.photo_url, place_id: dmPinnedVenue.place_id }, noReply: true }); setShowDmVenueSearch(false); }} style={{ padding: '8px 12px', borderRadius: '10px', border: 'none', background: `linear-gradient(135deg, ${colors.teal}, #0d9488)`, color: 'white', fontSize: '11px', fontWeight: '700', cursor: 'pointer', whiteSpace: 'nowrap' }}>Share This</button>
+              </div>
+            ) : (
+              <div style={{ padding: '10px 12px', borderRadius: '12px', backgroundColor: '#f8fafc', border: '1px solid #e2e8f0', marginBottom: '16px' }}>
+                <p style={{ fontSize: '12px', color: '#6b7280', margin: 0, fontStyle: 'italic' }}>No venue pinned. Pick one below:</p>
+              </div>
+            )}
+
+            <p style={{ fontSize: '12px', fontWeight: '600', color: '#6b7280', marginBottom: '12px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Or select a different venue:</p>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+              {allVenues.map(venue => (
+                <button
+                  key={venue.id}
+                  onClick={() => {
+                    sendDmMessage({ text: `Check out ${venue.name}!`, message_type: 'venue_card', venue_data: { name: venue.name, addr: venue.addr, stars: venue.stars, rating: venue.rating || venue.stars, price: venue.price, price_level: venue.price_level, photo_url: venue.photo_url, place_id: venue.place_id, category: venue.category, type: venue.type, crowd: venue.crowd, best: venue.best }, noReply: true });
+                    setShowDmVenueSearch(false);
+                  }}
+                  style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '12px', borderRadius: '14px', border: '1px solid #e2e8f0', backgroundColor: 'white', cursor: 'pointer', textAlign: 'left', transition: 'all 0.2s ease' }}
+                >
+                  <div style={{ width: '44px', height: '44px', borderRadius: '12px', background: `linear-gradient(135deg, ${getCategoryColor(venue.category)}, ${getCategoryColor(venue.category)}cc)`, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                    {venue.category === 'Food' ? Icons.pizza('white', 20) : venue.category === 'Nightlife' ? Icons.cocktail('white', 20) : venue.category === 'Live Music' ? Icons.music('white', 20) : Icons.sports('white', 20)}
+                  </div>
+                  <div style={{ flex: 1 }}>
+                    <p style={{ fontSize: '14px', fontWeight: '600', color: colors.navy, margin: 0 }}>{venue.name}</p>
+                    <p style={{ fontSize: '11px', color: '#6b7280', margin: '2px 0 0' }}>{venue.type} {venue.price ? `\u2022 ${venue.price}` : ''}</p>
+                  </div>
+                  <div style={{ padding: '4px 10px', borderRadius: '12px', backgroundColor: venue.crowd > 70 ? '#FEE2E2' : venue.crowd > 40 ? '#FEF3C7' : '#D1FAE5', color: venue.crowd > 70 ? colors.red : venue.crowd > 40 ? colors.amber : colors.teal, fontSize: '11px', fontWeight: '600' }}>
+                    {venue.crowd}%
+                  </div>
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Cash Pool Creation Modal */}
+      {showDmCashPool && (
+        <div className="modal-backdrop" style={{ position: 'absolute', inset: 0, backgroundColor: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'flex-end', zIndex: 50 }}>
+          <div className="modal-content" style={{ backgroundColor: 'white', borderRadius: '20px 20px 0 0', padding: '20px', width: '100%' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+              <h2 style={{ fontSize: '18px', fontWeight: '900', color: colors.navy, margin: 0 }}>Cash Pool</h2>
+              <button onClick={() => setShowDmCashPool(false)} style={{ width: '32px', height: '32px', borderRadius: '16px', backgroundColor: '#f3f4f6', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.x('#6b7280', 18)}</button>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '16px', marginBottom: '16px' }}>
+              <button onClick={() => setDmCashPoolAmount(prev => Math.max(5, prev - 5))} style={{ width: '44px', height: '44px', borderRadius: '22px', border: `2px solid ${colors.navy}`, backgroundColor: 'white', color: colors.navy, fontWeight: 'bold', cursor: 'pointer', fontSize: '18px' }}>−</button>
+              <span style={{ fontSize: '36px', fontWeight: '900', width: '100px', textAlign: 'center', color: colors.navy }}>${dmCashPoolAmount}</span>
+              <button onClick={() => setDmCashPoolAmount(prev => prev + 5)} style={{ width: '44px', height: '44px', borderRadius: '22px', border: `2px solid ${colors.navy}`, backgroundColor: 'white', color: colors.navy, fontWeight: 'bold', cursor: 'pointer', fontSize: '18px' }}>+</button>
+            </div>
+            <p style={{ fontSize: '13px', color: '#6b7280', textAlign: 'center', marginBottom: '20px' }}>Per person • Total: ${dmCashPoolAmount * 2}</p>
+            <button onClick={() => {
+              setDmCashPool({ perPerson: dmCashPoolAmount, total: dmCashPoolAmount * 2, collected: 0, paid: [] });
+              sendDmMessage({ text: `💰 Cash Pool: $${dmCashPoolAmount}/person — let's split it!`, noReply: true });
+              setShowDmCashPool(false);
+              showToast('Cash pool created!');
+            }} style={{ width: '100%', padding: '14px', borderRadius: '14px', border: 'none', background: `linear-gradient(90deg, ${colors.navy}, ${colors.navyMid})`, color: 'white', fontWeight: '800', fontSize: '15px', cursor: 'pointer' }}>Create Pool</button>
+          </div>
+        </div>
       )}
 
       {/* Delete DM Confirmation Modal */}
@@ -2429,56 +3237,182 @@ const FlockAppInner = ({ authUser, onLogout }) => {
             <div style={{ textAlign: 'center', marginBottom: '16px' }}>
               <div style={{ width: '48px', height: '48px', borderRadius: '24px', backgroundColor: '#FEE2E2', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 12px' }}>{Icons.x('#EF4444', 24)}</div>
               <h3 style={{ fontSize: '16px', fontWeight: '900', color: colors.navy, margin: '0 0 8px' }}>Delete Conversation?</h3>
-              <p style={{ fontSize: '13px', color: '#6b7280', margin: 0, lineHeight: '1.4' }}>Delete this conversation with {selectedDm.friendName}? Messages will be removed from your view.</p>
+              <p style={{ fontSize: '13px', color: '#6b7280', margin: 0, lineHeight: '1.4' }}>Delete this conversation with {selectedDm.name}? Messages will be removed from your view.</p>
             </div>
             <div style={{ display: 'flex', gap: '8px' }}>
               <button onClick={() => setShowDeleteDmConfirm(false)} style={{ flex: 1, padding: '12px', borderRadius: '12px', border: `2px solid ${colors.creamDark}`, backgroundColor: 'white', color: colors.navy, fontWeight: '700', fontSize: '14px', cursor: 'pointer' }}>Cancel</button>
               <button onClick={() => {
-                const dmId = selectedDm.id;
-                const friendName = selectedDm.friendName;
-                setDirectMessages(prev => prev.filter(d => d.id !== dmId));
+                const dmUserId = selectedDm.userId;
+                const friendName = selectedDm.name;
+                setDirectMessages(prev => prev.filter(d => d.userId !== dmUserId));
+                const updated = [...deletedDmUserIds, dmUserId];
+                setDeletedDmUserIds(updated);
+                try { localStorage.setItem('flock_deleted_dms', JSON.stringify(updated)); } catch {}
                 setShowDeleteDmConfirm(false);
                 setShowDmMenu(false);
                 setCurrentScreen('main');
                 showToast(`Conversation with ${friendName} deleted`);
-              }} style={{ flex: 1, padding: '12px', borderRadius: '12px', border: 'none', backgroundColor: '#EF4444', color: 'white', fontWeight: '700', fontSize: '14px', cursor: 'pointer' }}>
-                Delete
-              </button>
+              }} style={{ flex: 1, padding: '12px', borderRadius: '12px', border: 'none', backgroundColor: '#EF4444', color: 'white', fontWeight: '700', fontSize: '14px', cursor: 'pointer' }}>Delete</button>
             </div>
           </div>
         </div>
       )}
 
-      <div onScroll={() => document.activeElement?.blur()} style={{ flex: 1, padding: '16px', overflowY: 'auto', background: `linear-gradient(180deg, ${colors.cream} 0%, rgba(245,240,230,0.8) 100%)` }}>
+      {/* Image preview modal */}
+      {showDmImagePreview && dmPendingImage && (
+        <div style={{ position: 'absolute', inset: 0, backgroundColor: 'rgba(0,0,0,0.9)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', zIndex: 50, padding: '20px' }}>
+          <img src={dmPendingImage} alt="Preview" style={{ maxWidth: '100%', maxHeight: '60%', borderRadius: '12px', objectFit: 'contain' }} />
+          <div style={{ display: 'flex', gap: '12px', marginTop: '20px' }}>
+            <button onClick={() => { setShowDmImagePreview(false); setDmPendingImage(null); }} style={{ padding: '12px 24px', borderRadius: '24px', border: '2px solid white', backgroundColor: 'transparent', color: 'white', fontSize: '14px', fontWeight: '700', cursor: 'pointer' }}>Cancel</button>
+            <button onClick={() => { sendDmMessage({ text: '📷 Photo', message_type: 'image', image_url: dmPendingImage, noReply: true }); setShowDmImagePreview(false); setDmPendingImage(null); }} style={{ padding: '12px 24px', borderRadius: '24px', border: 'none', background: `linear-gradient(135deg, ${colors.navy}, ${colors.navyMid})`, color: 'white', fontSize: '14px', fontWeight: '700', cursor: 'pointer' }}>Send</button>
+          </div>
+        </div>
+      )}
+
+      {/* Messages area */}
+      <div onScroll={() => document.activeElement?.blur()} style={{ flex: 1, padding: '16px', overflowY: 'auto', background: `linear-gradient(180deg, ${colors.cream} 0%, rgba(245,240,230,0.8) 100%)`, scrollBehavior: 'smooth' }}>
+        {showDmChatSearch && dmChatSearch.trim() && selectedDm.messages.filter(m => {
+          const q = dmChatSearch.toLowerCase();
+          return m.text?.toLowerCase().includes(q) || m.sender?.toLowerCase().includes(q);
+        }).length > 0 && (
+          <div style={{ textAlign: 'center', marginBottom: '12px' }}>
+            <span style={{ fontSize: '11px', color: '#6b7280', backgroundColor: 'rgba(255,255,255,0.8)', padding: '4px 12px', borderRadius: '12px' }}>
+              {selectedDm.messages.filter(m => { const q = dmChatSearch.toLowerCase(); return m.text?.toLowerCase().includes(q) || m.sender?.toLowerCase().includes(q); }).length} matching messages
+            </span>
+          </div>
+        )}
         {selectedDm.messages.length === 0 ? (
           <div style={{ textAlign: 'center', padding: '40px 20px' }}>
             <div style={{ width: '60px', height: '60px', borderRadius: '30px', background: `linear-gradient(135deg, ${colors.navy}, ${colors.navyMid})`, margin: '0 auto 12px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '22px', fontWeight: '700', color: 'white', overflow: 'hidden' }}>
-              {selectedDm.friendImage ? <img src={selectedDm.friendImage} alt="" style={{ width: '60px', height: '60px', borderRadius: '30px', objectFit: 'cover' }} /> : selectedDm.avatar}
+              {selectedDm.image ? <img src={selectedDm.image} alt="" style={{ width: '60px', height: '60px', borderRadius: '30px', objectFit: 'cover' }} /> : (selectedDm.name?.[0]?.toUpperCase() || '?')}
             </div>
-            <h3 style={{ fontSize: '16px', fontWeight: '700', color: colors.navy, margin: '0 0 4px' }}>Chat with {selectedDm.friendName}</h3>
+            <h3 style={{ fontSize: '16px', fontWeight: '700', color: colors.navy, margin: '0 0 4px' }}>Chat with {selectedDm.name}</h3>
             <p style={{ fontSize: '12px', color: '#6b7280', margin: 0 }}>Say hi to start the conversation!</p>
           </div>
         ) : (
-          selectedDm.messages.map((m) => (
+          (showDmChatSearch && dmChatSearch.trim()
+            ? selectedDm.messages.filter(m => { const q = dmChatSearch.toLowerCase(); return m.text?.toLowerCase().includes(q) || m.sender?.toLowerCase().includes(q); })
+            : selectedDm.messages
+          ).map((m) => (
             <div key={m.id} style={{ display: 'flex', gap: '10px', marginBottom: '12px', flexDirection: m.sender === 'You' ? 'row-reverse' : 'row' }}>
               <div style={{ width: '32px', height: '32px', borderRadius: '16px', background: `linear-gradient(135deg, ${colors.navy}, ${colors.navyMid})`, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '11px', color: 'white', fontWeight: '700', flexShrink: 0, overflow: 'hidden' }}>
-                {m.sender === 'You' ? 'Y' : (selectedDm.friendImage ? <img src={selectedDm.friendImage} alt="" style={{ width: '32px', height: '32px', borderRadius: '16px', objectFit: 'cover' }} /> : selectedDm.avatar)}
+                {m.sender === 'You' ? 'Y' : (selectedDm.image ? <img src={selectedDm.image} alt="" style={{ width: '32px', height: '32px', borderRadius: '16px', objectFit: 'cover' }} /> : (selectedDm.name?.[0]?.toUpperCase() || '?'))}
               </div>
-              <div style={{ maxWidth: '75%' }}>
-                <div style={{ borderRadius: '16px', padding: '10px 14px', fontSize: '13px', backgroundColor: m.sender === 'You' ? colors.navy : 'white', color: m.sender === 'You' ? 'white' : colors.navy, borderTopRightRadius: m.sender === 'You' ? '4px' : '16px', borderTopLeftRadius: m.sender === 'You' ? '16px' : '4px', boxShadow: '0 1px 3px rgba(0,0,0,0.1)' }}>
-                  {m.text}
-                </div>
+              <div style={{ maxWidth: '75%', position: 'relative' }}>
+                {/* Reply reference */}
+                {m.reply_to && (
+                  <div style={{ padding: '4px 10px', marginBottom: '2px', borderLeft: `3px solid ${colors.navy}40`, borderRadius: '4px', backgroundColor: 'rgba(13,40,71,0.05)' }}>
+                    <span style={{ fontSize: '10px', fontWeight: '600', color: colors.navy }}>{m.reply_to.sender}</span>
+                    <p style={{ fontSize: '10px', color: '#6b7280', margin: '1px 0 0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{m.reply_to.text}</p>
+                  </div>
+                )}
+                {/* Venue card message — uses same VenueCard component as flocks */}
+                {m.message_type === 'venue_card' && m.venue_data ? (
+                  <VenueCard
+                    venue={m.venue_data}
+                    colors={colors}
+                    Icons={Icons}
+                    getCategoryColor={getCategoryColor}
+                    onViewDetails={() => {
+                      const vd = m.venue_data;
+                      const pid = vd.place_id;
+                      if (pid) {
+                        openVenueDetail(pid, { name: vd.name, formatted_address: vd.addr, place_id: pid, rating: vd.stars || vd.rating, photo_url: vd.photo_url });
+                      }
+                    }}
+                    onVote={() => {
+                      const vName = m.venue_data.name;
+                      const vId = m.venue_data.place_id;
+                      const mn = authUser?.name;
+                      const existing = dmVenueVotes.find(v => v.venue_name === vName);
+                      if (existing && (existing.voters || []).includes(mn)) return;
+                      if (existing) {
+                        setDmVenueVotes(prev => prev.map(v => ({ ...v, voters: v.venue_name === vName ? [...(v.voters || []), mn] : (v.voters || []).filter(x => x !== mn), vote_count: v.venue_name === vName ? parseInt(v.vote_count || 0) + 1 : (v.voters || []).includes(mn) ? parseInt(v.vote_count || 0) - 1 : parseInt(v.vote_count || 0) })).filter(v => parseInt(v.vote_count || 0) > 0 || v.venue_name === vName));
+                      } else {
+                        setDmVenueVotes(prev => [...prev.map(v => ({ ...v, voters: (v.voters || []).filter(x => x !== mn), vote_count: (v.voters || []).includes(mn) ? parseInt(v.vote_count || 0) - 1 : parseInt(v.vote_count || 0) })).filter(v => parseInt(v.vote_count || 0) > 0), { venue_name: vName, venue_id: vId, vote_count: 1, voters: [mn] }]);
+                      }
+                      dmVoteVenue(selectedDmId, vName, vId);
+                      showToast(`Voted for ${vName}!`);
+                    }}
+                  />
+                ) : m.message_type === 'image' && m.image_url ? (
+                  /* Image message */
+                  <div style={{ borderRadius: '16px', overflow: 'hidden', boxShadow: '0 2px 10px rgba(0,0,0,0.1)', borderTopRightRadius: m.sender === 'You' ? '4px' : '16px', borderTopLeftRadius: m.sender === 'You' ? '16px' : '4px' }}>
+                    <img src={m.image_url} alt="" style={{ maxWidth: '100%', maxHeight: '240px', objectFit: 'cover', display: 'block', borderRadius: '16px' }} />
+                  </div>
+                ) : (
+                  /* Text message */
+                  <div onClick={() => setShowDmReactionPicker(showDmReactionPicker === m.id ? null : m.id)} style={{ borderRadius: '16px', padding: '10px 14px', fontSize: '13px', backgroundColor: m.sender === 'You' ? colors.navy : 'white', color: m.sender === 'You' ? 'white' : colors.navy, borderTopRightRadius: m.sender === 'You' ? '4px' : '16px', borderTopLeftRadius: m.sender === 'You' ? '16px' : '4px', boxShadow: '0 1px 3px rgba(0,0,0,0.1)', cursor: 'pointer' }}>
+                    {showDmChatSearch && dmChatSearch.trim() && m.text?.toLowerCase().includes(dmChatSearch.toLowerCase()) ? (
+                      <span dangerouslySetInnerHTML={{ __html: m.text.replace(new RegExp(`(${dmChatSearch.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'gi'), '<mark style="background:#fde047;color:inherit;border-radius:2px;padding:0 1px">$1</mark>') }} />
+                    ) : m.text}
+                  </div>
+                )}
+                {/* Reactions display */}
+                {m.reactions && m.reactions.length > 0 && (
+                  <div style={{ display: 'flex', gap: '4px', marginTop: '4px', flexWrap: 'wrap', justifyContent: m.sender === 'You' ? 'flex-end' : 'flex-start' }}>
+                    {Object.entries(m.reactions.reduce((acc, r) => { acc[r.emoji] = (acc[r.emoji] || 0) + 1; return acc; }, {})).map(([emoji, count]) => (
+                      <span key={emoji} onClick={() => { const otherUser = selectedDmId; if (m.reactions.some(r => r.emoji === emoji && r.user_id === authUser?.id)) { dmRemoveReact(m.id, emoji, otherUser); } else { dmReact(m.id, emoji, otherUser); } }} style={{ fontSize: '12px', backgroundColor: 'white', border: '1px solid #e5e7eb', borderRadius: '12px', padding: '2px 6px', cursor: 'pointer', boxShadow: '0 1px 3px rgba(0,0,0,0.05)' }}>{emoji} {count > 1 ? count : ''}</span>
+                    ))}
+                  </div>
+                )}
+                {/* Reaction picker */}
+                {showDmReactionPicker === m.id && (
+                  <div style={{ display: 'flex', gap: '4px', marginTop: '4px', backgroundColor: 'white', borderRadius: '16px', padding: '4px 8px', boxShadow: '0 2px 12px rgba(0,0,0,0.15)', position: 'absolute', [m.sender === 'You' ? 'right' : 'left']: 0, bottom: '-8px', zIndex: 5 }}>
+                    {dmReactions.map(emoji => (
+                      <button key={emoji} onClick={(e) => { e.stopPropagation(); dmReact(m.id, emoji, selectedDmId); setShowDmReactionPicker(null); }} style={{ fontSize: '18px', background: 'none', border: 'none', cursor: 'pointer', padding: '4px', borderRadius: '8px', transition: 'transform 0.15s' }}
+                        onMouseEnter={(e) => { e.currentTarget.style.transform = 'scale(1.3)'; }}
+                        onMouseLeave={(e) => { e.currentTarget.style.transform = 'scale(1)'; }}
+                      >{emoji}</button>
+                    ))}
+                    <button onClick={(e) => { e.stopPropagation(); setDmReplyingTo(m); setShowDmReactionPicker(null); }} style={{ fontSize: '14px', background: 'none', border: 'none', cursor: 'pointer', padding: '4px 6px', borderRadius: '8px', color: colors.navy, fontWeight: '700' }} title="Reply">↩</button>
+                  </div>
+                )}
                 <p style={{ fontSize: '9px', color: '#9ca3af', margin: '4px 4px 0', textAlign: m.sender === 'You' ? 'right' : 'left' }}>{getRelativeTime(m.time)}</p>
               </div>
             </div>
           ))
         )}
+        {/* Typing indicator */}
+        <div style={{ height: '50px', overflow: 'hidden', opacity: dmIsTyping ? 1 : 0, transition: 'opacity 0.2s ease', pointerEvents: dmIsTyping ? 'auto' : 'none' }}>
+          <div style={{ display: 'flex', gap: '10px' }}>
+            <div style={{ width: '32px', height: '32px', borderRadius: '16px', backgroundColor: 'white', border: '2px solid rgba(13,40,71,0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '11px', fontWeight: '700', color: colors.navy }}>{selectedDm.name?.[0] || '?'}</div>
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start' }}>
+              <span style={{ fontSize: '11px', color: colors.navy, fontWeight: '600', marginBottom: '4px', paddingLeft: '4px' }}>{dmTypingUser || selectedDm.name}</span>
+              <div style={{ padding: '10px 16px', backgroundColor: 'white', borderRadius: '18px', borderBottomLeftRadius: '4px', boxShadow: '0 2px 10px rgba(0,0,0,0.05)', display: 'flex', alignItems: 'center', gap: '3px' }}>
+                <div style={{ width: '7px', height: '7px', borderRadius: '50%', backgroundColor: colors.navy, animation: 'typingDot 1.4s ease-in-out infinite', opacity: 0.7 }} />
+                <div style={{ width: '7px', height: '7px', borderRadius: '50%', backgroundColor: colors.navy, animation: 'typingDot 1.4s ease-in-out 0.2s infinite', opacity: 0.7 }} />
+                <div style={{ width: '7px', height: '7px', borderRadius: '50%', backgroundColor: colors.navy, animation: 'typingDot 1.4s ease-in-out 0.4s infinite', opacity: 0.7 }} />
+              </div>
+            </div>
+          </div>
+        </div>
+        <div ref={dmChatEndRef} />
       </div>
 
+      {/* Reply bar */}
+      {dmReplyingTo && (
+        <div style={{ padding: '8px 12px', borderTop: '1px solid #eee', backgroundColor: '#f8fafc', display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0 }}>
+          <div style={{ flex: 1, borderLeft: `3px solid ${colors.navy}`, paddingLeft: '8px' }}>
+            <span style={{ fontSize: '11px', fontWeight: '700', color: colors.navy }}>Replying to {dmReplyingTo.sender}</span>
+            <p style={{ fontSize: '11px', color: '#6b7280', margin: '1px 0 0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{dmReplyingTo.text}</p>
+          </div>
+          <button onClick={() => setDmReplyingTo(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '4px' }}>{Icons.x('#6b7280', 14)}</button>
+        </div>
+      )}
+
+      {/* Input bar — text + camera + venue search + send */}
       <div style={{ padding: '10px 12px', borderTop: '1px solid #eee', backgroundColor: 'white' }}>
         <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-          <input type="text" value={chatInput} onChange={(e) => setChatInput(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && sendDmMessage()} placeholder={`Message ${selectedDm.friendName}...`} style={{ flex: 1, padding: '12px 16px', borderRadius: '24px', backgroundColor: '#f3f4f6', border: '1px solid rgba(0,0,0,0.05)', fontSize: '13px', outline: 'none' }} autoComplete="off" />
-          <button onClick={sendDmMessage} disabled={!chatInput.trim()} style={{ width: '42px', height: '42px', borderRadius: '21px', border: 'none', background: chatInput.trim() ? `linear-gradient(135deg, ${colors.navy}, ${colors.navyMid})` : '#e5e7eb', color: 'white', cursor: chatInput.trim() ? 'pointer' : 'default', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.send('white', 18)}</button>
+          {/* Camera button */}
+          <label style={{ width: '36px', height: '36px', borderRadius: '18px', backgroundColor: '#f3f4f6', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', flexShrink: 0 }}>
+            {Icons.camera('#6b7280', 16)}
+            <input type="file" accept="image/*" onChange={handleDmImageSelect} style={{ display: 'none' }} />
+          </label>
+          {/* Location share button */}
+          <button onClick={() => { if (dmSharingLocation) { dmStopSharingLocation(dmSharingLocation); setDmSharingLocation(null); setDmMemberLocation(null); } else { setDmSharingLocation(selectedDmId); } }} style={{ width: '36px', height: '36px', borderRadius: '18px', backgroundColor: dmSharingLocation ? '#10b981' : '#f3f4f6', border: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', flexShrink: 0 }}>{Icons.mapPin(dmSharingLocation ? 'white' : '#6b7280', 16)}</button>
+          <input type="text" value={chatInput} onChange={handleDmInputChange} onKeyDown={(e) => e.key === 'Enter' && sendDmMessage()} placeholder={dmReplyingTo ? `Reply...` : `Message ${selectedDm.name}...`} style={{ flex: 1, padding: '12px 16px', borderRadius: '24px', backgroundColor: '#f3f4f6', border: '1px solid rgba(0,0,0,0.05)', fontSize: '13px', outline: 'none' }} autoComplete="off" />
+          <button onClick={() => sendDmMessage()} disabled={!chatInput.trim()} style={{ width: '42px', height: '42px', borderRadius: '21px', border: 'none', background: chatInput.trim() ? `linear-gradient(135deg, ${colors.navy}, ${colors.navyMid})` : '#e5e7eb', color: 'white', cursor: chatInput.trim() ? 'pointer' : 'default', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.send('white', 18)}</button>
         </div>
       </div>
     </div>
@@ -2884,6 +3818,15 @@ const FlockAppInner = ({ authUser, onLogout }) => {
 
     const handleCreate = async () => {
       if (!flockName.trim()) { showToast('Enter a plan name', 'error'); return; }
+      // If only 1 person invited, redirect to DM instead
+      const invitedFriends = flockFriends.filter(f => f.id);
+      if (invitedFriends.length === 1) {
+        const friend = invitedFriends[0];
+        startNewDmWithUser({ id: friend.id, name: friend.name, profile_image_url: friend.profile_image_url || null });
+        setFlockName(''); setFlockFriends([]); setInviteSearch(''); setInviteResults([]); setFlockCashPool(false); setSelectedVenueForCreate(null);
+        showToast(`Started a DM with ${friend.name}`);
+        return;
+      }
       setIsLoading(true);
       try {
         const venueName = selectedVenueForCreate?.name || null;
@@ -3127,7 +4070,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
       {pickingVenueForCreate && (
         <div style={{ padding: '10px 14px', background: `linear-gradient(90deg, ${colors.navy}, ${colors.navyMid})`, display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0, boxShadow: '0 2px 8px rgba(13,40,71,0.3)' }}>
           <span style={{ color: 'white', fontSize: '12px', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '6px' }}>{Icons.mapPin('white', 14)} Tap venue to select</span>
-          <button onClick={() => { setPickingVenueForCreate(false); setCurrentScreen('create'); }} style={{ backgroundColor: 'rgba(255,255,255,0.2)', border: 'none', borderRadius: '12px', padding: '4px 12px', color: 'white', fontSize: '11px', cursor: 'pointer', fontWeight: '500', transition: 'all 0.2s ease' }}>Cancel</button>
+          <button onClick={() => { setPickingVenueForCreate(false); if (pickingVenueForDm) { setPickingVenueForDm(false); setCurrentTab('chats'); setCurrentScreen('dmDetail'); } else { setCurrentScreen('create'); } }} style={{ backgroundColor: 'rgba(255,255,255,0.2)', border: 'none', borderRadius: '12px', padding: '4px 12px', color: 'white', fontSize: '11px', cursor: 'pointer', fontWeight: '500', transition: 'all 0.2s ease' }}>Cancel</button>
         </div>
       )}
 
@@ -3235,7 +4178,26 @@ const FlockAppInner = ({ authUser, onLogout }) => {
           setSelectedVenueForCreate={setSelectedVenueForCreate}
           setCurrentScreen={setCurrentScreen}
           openVenueDetail={openVenueDetail}
+          flockMemberLocations={flockMemberLocations}
+          calcDistance={calcDistance}
         />
+
+        {/* Live location sharing indicator on map */}
+        {sharingLocationForFlock && (
+          <div style={{
+            position: 'absolute', top: '8px', left: '8px', right: '8px',
+            padding: '8px 12px', borderRadius: '14px',
+            background: 'linear-gradient(135deg, #059669, #047857)',
+            display: 'flex', alignItems: 'center', gap: '8px',
+            zIndex: 35, boxShadow: '0 2px 12px rgba(5,150,105,0.4)',
+          }}>
+            <div style={{ width: '8px', height: '8px', borderRadius: '4px', backgroundColor: '#34d399', animation: 'pulse 2s ease-in-out infinite', boxShadow: '0 0 6px #34d399', flexShrink: 0 }} />
+            <p style={{ fontSize: '11px', fontWeight: '600', color: 'white', margin: 0, flex: 1 }}>
+              Live location · {Object.keys(flockMemberLocations).length > 0 ? `${Object.keys(flockMemberLocations).length} member${Object.keys(flockMemberLocations).length > 1 ? 's' : ''} nearby` : 'Waiting for others...'}
+            </p>
+            <button onClick={stopLocationSharing} style={{ padding: '4px 10px', borderRadius: '10px', border: '1px solid rgba(255,255,255,0.3)', background: 'rgba(255,255,255,0.15)', color: 'white', fontSize: '10px', fontWeight: '600', cursor: 'pointer' }}>Stop</button>
+          </div>
+        )}
 
         {/* Floating "See All Results" on map */}
         {allVenues.length > 0 && !activeVenue && !showConnectPanel && !pickingVenueForCreate && (
@@ -3307,26 +4269,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
                       )}
                       <button onClick={() => {
                         setShowConnectPanel(false); setConnectSearch(''); setConnectResults([]);
-                        // Find or create DM for this user
-                        const existingDm = directMessages.find(dm => dm.friendName === user.name);
-                        if (existingDm) {
-                          setSelectedDmId(existingDm.id);
-                        } else {
-                          const newDm = {
-                            id: `dm-${Date.now()}`,
-                            friendName: user.name,
-                            friendEmail: user.email,
-                            friendImage: user.profile_image_url || null,
-                            avatar: user.name[0]?.toUpperCase() || '👤',
-                            messages: [],
-                            lastActive: 'Just now',
-                            isOnline: true,
-                            unread: 0
-                          };
-                          setDirectMessages(prev => [newDm, ...prev]);
-                          setSelectedDmId(newDm.id);
-                        }
-                        setCurrentScreen('dmDetail');
+                        startNewDmWithUser(user);
                       }} style={{ padding: '6px 12px', borderRadius: '20px', border: `1.5px solid ${colors.creamDark}`, backgroundColor: 'white', color: colors.navy, fontSize: '11px', fontWeight: '700', cursor: 'pointer' }}>Message</button>
                     </div>
                   </div>
@@ -3447,8 +4390,19 @@ const FlockAppInner = ({ authUser, onLogout }) => {
                 {pickingVenueForCreate ? (
                   <button onClick={() => {
                     const venueData = { ...activeVenue, addr: activeVenue.addr || activeVenue.formatted_address, lat: activeVenue.location?.latitude, lng: activeVenue.location?.longitude };
+                    // If picking for a DM, pin venue and go back to DM
+                    if (pickingVenueForDm) {
+                      const v = { name: venueData.name, addr: venueData.addr, place_id: venueData.place_id, rating: venueData.stars || venueData.rating, photo_url: venueData.photo_url };
+                      setDmPinnedVenue(v);
+                      dmPinVenue(selectedDmId, v);
+                      setActiveVenue(null);
+                      setPickingVenueForCreate(false);
+                      setPickingVenueForDm(false);
+                      setCurrentTab('chats');
+                      setCurrentScreen('dmDetail');
+                      showToast(`${venueData.name} pinned!`);
                     // If we have a selected flock (came from chat), assign venue to it directly
-                    if (selectedFlockId) {
+                    } else if (selectedFlockId) {
                       updateFlockVenue(selectedFlockId, venueData);
                       setActiveVenue(null);
                       setPickingVenueForCreate(false);
@@ -3735,7 +4689,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
       return 0;
     });
 
-    const filteredDms = directMessages.filter(dm => !chatSearch || dm.friendName.toLowerCase().includes(chatSearch.toLowerCase()));
+    const filteredDms = directMessages.filter(dm => !chatSearch || dm.name.toLowerCase().includes(chatSearch.toLowerCase()));
     const filteredFlocks = sortedFlocks.filter(f => !chatSearch || f.name.toLowerCase().includes(chatSearch.toLowerCase()));
 
     const moveFlockUp = (flockId) => {
@@ -3810,23 +4764,22 @@ const FlockAppInner = ({ authUser, onLogout }) => {
                 <div style={{ flex: 1, height: '1px', backgroundColor: '#e5e7eb' }} />
               </div>
               {filteredDms.map((dm) => {
-                const lastMsg = dm.messages[dm.messages.length - 1];
+                const lastMsg = dm.messages?.length > 0 ? dm.messages[dm.messages.length - 1] : (dm.lastMessage ? { text: dm.lastMessage, sender: dm.lastMessageIsYou ? 'You' : dm.name } : null);
                 return (
-                  <button key={`dm-${dm.id}`} onClick={() => { setSelectedDmId(dm.id); setCurrentScreen('dmDetail'); setDirectMessages(prev => prev.map(d => d.id === dm.id ? { ...d, unread: 0 } : d)); }} style={{ width: '100%', textAlign: 'left', backgroundColor: 'white', borderRadius: '16px', padding: '12px 14px', marginBottom: '6px', border: dm.unread ? `1.5px solid ${colors.navy}15` : '1px solid #f0f0f0', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '12px', transition: 'all 0.2s', boxShadow: dm.unread ? '0 2px 12px rgba(13,40,71,0.08)' : '0 1px 4px rgba(0,0,0,0.03)' }}>
+                  <button key={`dm-${dm.userId}`} onClick={() => { setSelectedDmId(dm.userId); setCurrentScreen('dmDetail'); setDirectMessages(prev => prev.map(d => d.userId === dm.userId ? { ...d, unread: 0 } : d)); }} style={{ width: '100%', textAlign: 'left', backgroundColor: 'white', borderRadius: '16px', padding: '12px 14px', marginBottom: '6px', border: dm.unread ? `1.5px solid ${colors.navy}15` : '1px solid #f0f0f0', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '12px', transition: 'all 0.2s', boxShadow: dm.unread ? '0 2px 12px rgba(13,40,71,0.08)' : '0 1px 4px rgba(0,0,0,0.03)' }}>
                     <div style={{ position: 'relative', flexShrink: 0 }}>
-                      <div style={{ width: '46px', height: '46px', borderRadius: '23px', background: 'linear-gradient(135deg, #4F46E5, #7C3AED)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '20px' }}>
-                        {dm.avatar}
+                      <div style={{ width: '46px', height: '46px', borderRadius: '23px', background: `linear-gradient(135deg, ${colors.navy}, ${colors.navyMid})`, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '18px', fontWeight: '700', color: 'white', overflow: 'hidden' }}>
+                        {dm.image ? <img src={dm.image} alt="" style={{ width: '46px', height: '46px', borderRadius: '23px', objectFit: 'cover' }} /> : (dm.name?.[0]?.toUpperCase() || '?')}
                       </div>
-                      {dm.isOnline && <div style={{ position: 'absolute', bottom: '0px', right: '0px', width: '12px', height: '12px', borderRadius: '6px', backgroundColor: '#22C55E', border: '2px solid white' }} />}
                     </div>
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '3px' }}>
-                        <h3 style={{ fontSize: '14px', fontWeight: dm.unread ? '800' : '600', color: colors.navy, margin: 0 }}>{dm.friendName}</h3>
-                        <span style={{ fontSize: '10px', color: dm.isOnline ? '#22C55E' : '#b0b0b0', fontWeight: '500' }}>{dm.isOnline ? 'Online' : dm.lastActive}</span>
+                        <h3 style={{ fontSize: '14px', fontWeight: dm.unread ? '800' : '600', color: colors.navy, margin: 0 }}>{dm.name}</h3>
+                        {dm.lastMessageTime && <span style={{ fontSize: '10px', color: '#b0b0b0', fontWeight: '500' }}>{new Date(dm.lastMessageTime).toLocaleDateString([], { month: 'short', day: 'numeric' })}</span>}
                       </div>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
                         {lastMsg?.sender === 'You' && <span style={{ flexShrink: 0 }}>{Icons.checkDouble('#22C55E', 11)}</span>}
-                        <p style={{ fontSize: '12px', color: dm.unread ? colors.navy : '#8b8b8b', fontWeight: dm.unread ? '500' : '400', margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{lastMsg?.sender === 'You' ? 'You: ' : ''}{lastMsg?.text}</p>
+                        <p style={{ fontSize: '12px', color: dm.unread ? colors.navy : '#8b8b8b', fontWeight: dm.unread ? '500' : '400', margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{lastMsg?.sender === 'You' ? 'You: ' : ''}{lastMsg?.text || 'Start a conversation'}</p>
                       </div>
                     </div>
                     {dm.unread > 0 && (
@@ -4062,6 +5015,33 @@ const FlockAppInner = ({ authUser, onLogout }) => {
             </div>
             <div style={{ color: colors.teal, fontWeight: '700', fontSize: '20px' }}>+</div>
           </button>
+        )}
+
+        {/* Live location sharing banner */}
+        {flock.status === 'confirmed' && !sharingLocationForFlock && !locationBannerDismissed[flock.id] && (
+          <div style={{ padding: '10px 14px', background: 'linear-gradient(135deg, #ecfdf5, #d1fae5)', borderBottom: '1px solid #a7f3d0', flexShrink: 0, display: 'flex', alignItems: 'center', gap: '10px', animation: 'fadeIn 0.3s ease-out' }}>
+            <div style={{ width: '36px', height: '36px', borderRadius: '18px', background: 'linear-gradient(135deg, #10b981, #059669)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, boxShadow: '0 2px 8px rgba(16,185,129,0.3)' }}>
+              {Icons.mapPin('white', 18)}
+            </div>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <p style={{ fontSize: '12px', fontWeight: '700', color: '#065f46', margin: 0 }}>Share your location with the group?</p>
+              <p style={{ fontSize: '10px', color: '#047857', margin: '1px 0 0' }}>Members can see where everyone is on the map</p>
+            </div>
+            <button onClick={() => startSharingLocation(flock.id)} style={{ padding: '6px 12px', borderRadius: '14px', border: 'none', background: '#10b981', color: 'white', fontSize: '11px', fontWeight: '700', cursor: 'pointer', flexShrink: 0 }}>Share</button>
+            <button onClick={() => { setLocationBannerDismissed(prev => { const next = { ...prev, [flock.id]: true }; localStorage.setItem('flock_loc_dismissed', JSON.stringify(next)); return next; }); }} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '4px', flexShrink: 0 }}>{Icons.x('#6b7280', 14)}</button>
+          </div>
+        )}
+
+        {/* Active location sharing indicator */}
+        {sharingLocationForFlock === flock.id && (
+          <div style={{ padding: '8px 14px', background: 'linear-gradient(135deg, #059669, #047857)', flexShrink: 0, display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <div style={{ width: '8px', height: '8px', borderRadius: '4px', backgroundColor: '#34d399', animation: 'pulse 2s ease-in-out infinite', boxShadow: '0 0 6px #34d399' }} />
+            <p style={{ fontSize: '11px', fontWeight: '600', color: 'white', margin: 0, flex: 1 }}>Sharing location with {flock.name}</p>
+            {Object.keys(flockMemberLocations).length > 0 && (
+              <span style={{ fontSize: '10px', color: '#a7f3d0', fontWeight: '500' }}>{Object.keys(flockMemberLocations).length} sharing</span>
+            )}
+            <button onClick={stopLocationSharing} style={{ padding: '4px 10px', borderRadius: '10px', border: '1px solid rgba(255,255,255,0.3)', background: 'rgba(255,255,255,0.15)', color: 'white', fontSize: '10px', fontWeight: '600', cursor: 'pointer' }}>Stop</button>
+          </div>
         )}
 
         <div onScroll={() => document.activeElement?.blur()} style={{ flex: 1, padding: '16px', overflowY: 'auto', background: `linear-gradient(180deg, ${colors.cream} 0%, rgba(245,240,230,0.8) 100%)`, scrollBehavior: 'smooth' }}>
@@ -7121,12 +8101,25 @@ const FlockAppInner = ({ authUser, onLogout }) => {
                 </a>
               ) : null}
               <button onClick={() => {
-                setSelectedVenueForCreate({ name: venueDetailModal.name, addr: venueDetailModal.formatted_address, place_id: venueDetailModal.place_id, rating: venueDetailModal.rating, price_level: venueDetailModal.price_level, photo_url: (venueDetailModal.photos && venueDetailModal.photos[0]) || venueDetailModal.photo_url || null, lat: venueDetailModal.location?.latitude, lng: venueDetailModal.location?.longitude });
-                setVenueDetailModal(null);
-                setCurrentScreen('create');
-                showToast(`Selected ${venueDetailModal.name}!`);
+                const photoUrl = (venueDetailModal.photos && venueDetailModal.photos[0]) || venueDetailModal.photo_url || null;
+                if (pickingVenueForDm) {
+                  const v = { name: venueDetailModal.name, addr: venueDetailModal.formatted_address, place_id: venueDetailModal.place_id, rating: venueDetailModal.rating, photo_url: photoUrl };
+                  setDmPinnedVenue(v);
+                  dmPinVenue(selectedDmId, v);
+                  setVenueDetailModal(null);
+                  setPickingVenueForCreate(false);
+                  setPickingVenueForDm(false);
+                  setCurrentTab('chats');
+                  setCurrentScreen('dmDetail');
+                  showToast(`${venueDetailModal.name} pinned!`);
+                } else {
+                  setSelectedVenueForCreate({ name: venueDetailModal.name, addr: venueDetailModal.formatted_address, place_id: venueDetailModal.place_id, rating: venueDetailModal.rating, price_level: venueDetailModal.price_level, photo_url: photoUrl, lat: venueDetailModal.location?.latitude, lng: venueDetailModal.location?.longitude });
+                  setVenueDetailModal(null);
+                  setCurrentScreen('create');
+                  showToast(`Selected ${venueDetailModal.name}!`);
+                }
               }} style={{ flex: 1, padding: '12px', borderRadius: '12px', border: 'none', background: `linear-gradient(135deg, ${colors.navy}, ${colors.navyMid})`, color: 'white', fontSize: '13px', fontWeight: '700', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', boxShadow: '0 4px 12px rgba(13,40,71,0.3)' }}>
-                {Icons.plus('white', 16)} Add to Flock
+                {Icons.plus('white', 16)} {pickingVenueForDm ? 'Pin to DM' : 'Add to Flock'}
               </button>
             </div>
           </div>
