@@ -185,12 +185,69 @@ io.on('connection', (socket) => {
 });
 
 // ---------------------------------------------------------------------------
+// Lightweight migrations (idempotent — safe to run every startup)
+// ---------------------------------------------------------------------------
+const pool = require('./config/database');
+
+async function runMigrations() {
+  try {
+    // DM feature parity: add rich message columns
+    await pool.query(`ALTER TABLE direct_messages ADD COLUMN IF NOT EXISTS message_type VARCHAR(20) DEFAULT 'text'`);
+    await pool.query(`ALTER TABLE direct_messages ADD COLUMN IF NOT EXISTS venue_data JSONB`);
+    await pool.query(`ALTER TABLE direct_messages ADD COLUMN IF NOT EXISTS image_url TEXT`);
+    await pool.query(`ALTER TABLE direct_messages ADD COLUMN IF NOT EXISTS reply_to_id INTEGER REFERENCES direct_messages(id) ON DELETE SET NULL`);
+
+    await pool.query(`CREATE TABLE IF NOT EXISTS dm_emoji_reactions (
+      id SERIAL PRIMARY KEY,
+      dm_id INTEGER REFERENCES direct_messages(id) ON DELETE CASCADE,
+      user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+      emoji VARCHAR(10) NOT NULL,
+      created_at TIMESTAMP DEFAULT NOW(),
+      UNIQUE(dm_id, user_id, emoji)
+    )`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_dm_emoji_reactions_dm ON dm_emoji_reactions(dm_id)`);
+
+    await pool.query(`CREATE TABLE IF NOT EXISTS dm_venue_votes (
+      id SERIAL PRIMARY KEY,
+      user1_id INTEGER NOT NULL,
+      user2_id INTEGER NOT NULL,
+      user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+      venue_name VARCHAR(255) NOT NULL,
+      venue_id VARCHAR(255),
+      created_at TIMESTAMP DEFAULT NOW(),
+      UNIQUE(user1_id, user2_id, user_id, venue_name)
+    )`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_dm_venue_votes_pair ON dm_venue_votes(user1_id, user2_id)`);
+
+    await pool.query(`CREATE TABLE IF NOT EXISTS dm_pinned_venues (
+      id SERIAL PRIMARY KEY,
+      user1_id INTEGER NOT NULL,
+      user2_id INTEGER NOT NULL,
+      venue_name VARCHAR(255) NOT NULL,
+      venue_address TEXT,
+      venue_id VARCHAR(255),
+      venue_rating NUMERIC(2,1),
+      venue_photo_url TEXT,
+      pinned_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+      created_at TIMESTAMP DEFAULT NOW(),
+      updated_at TIMESTAMP DEFAULT NOW(),
+      UNIQUE(user1_id, user2_id)
+    )`);
+
+    console.log('Migrations complete');
+  } catch (err) {
+    console.warn('Migration warning (non-fatal):', err.message);
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Start server
 // ---------------------------------------------------------------------------
 const PORT = process.env.PORT || 5000;
 
-server.listen(PORT, () => {
+server.listen(PORT, async () => {
   console.log(`Flock API running on port ${PORT} [${process.env.NODE_ENV || 'development'}]`);
+  await runMigrations();
 });
 
 module.exports = { app, server, io };

@@ -113,3 +113,128 @@ export function onUserStoppedTyping(callback) {
   if (socket) socket.on('user_stopped_typing', callback);
   return () => { if (socket) socket.off('user_stopped_typing', callback); };
 }
+
+// --- Direct messages ---
+
+export function socketSendDm(receiverId, messageText, opts = {}) {
+  if (socket?.connected) {
+    socket.emit('send_dm', {
+      receiverId,
+      message_text: messageText,
+      message_type: opts.message_type || 'text',
+      venue_data: opts.venue_data || null,
+      image_url: opts.image_url || null,
+      reply_to_id: opts.reply_to_id || null,
+    });
+  }
+}
+
+export function onNewDm(callback) {
+  if (socket) socket.on('new_dm', callback);
+  return () => { if (socket) socket.off('new_dm', callback); };
+}
+
+export function dmStartTyping(receiverId) {
+  if (socket?.connected) {
+    socket.emit('dm_typing', { receiverId });
+  }
+}
+
+export function dmStopTyping(receiverId) {
+  if (socket?.connected) {
+    socket.emit('dm_stop_typing', { receiverId });
+  }
+}
+
+export function onDmUserTyping(callback) {
+  if (socket) socket.on('dm_user_typing', callback);
+  return () => { if (socket) socket.off('dm_user_typing', callback); };
+}
+
+export function onDmUserStoppedTyping(callback) {
+  if (socket) socket.on('dm_user_stopped_typing', callback);
+  return () => { if (socket) socket.off('dm_user_stopped_typing', callback); };
+}
+
+// DM reactions
+export function dmReact(dmId, emoji, receiverId) {
+  if (socket?.connected) socket.emit('dm_react', { dmId, emoji, receiverId });
+}
+
+export function dmRemoveReact(dmId, emoji, receiverId) {
+  if (socket?.connected) socket.emit('dm_remove_react', { dmId, emoji, receiverId });
+}
+
+export function onDmReactionAdded(callback) {
+  if (socket) socket.on('dm_reaction_added', callback);
+  return () => { if (socket) socket.off('dm_reaction_added', callback); };
+}
+
+export function onDmReactionRemoved(callback) {
+  if (socket) socket.on('dm_reaction_removed', callback);
+  return () => { if (socket) socket.off('dm_reaction_removed', callback); };
+}
+
+// DM venue voting
+export function dmVoteVenue(receiverId, venueName, venueId) {
+  if (socket?.connected) socket.emit('dm_vote_venue', { receiverId, venue_name: venueName, venue_id: venueId });
+}
+
+export function onDmNewVote(callback) {
+  if (socket) socket.on('dm_new_vote', callback);
+  return () => { if (socket) socket.off('dm_new_vote', callback); };
+}
+
+// DM pinned venue
+export function dmPinVenue(receiverId, venueData) {
+  if (socket?.connected) socket.emit('dm_pin_venue', { receiverId, venue_name: venueData.name, venue_address: venueData.addr, venue_id: venueData.place_id, venue_rating: venueData.rating, venue_photo_url: venueData.photo_url });
+}
+
+export function onDmVenuePinned(callback) {
+  if (socket) socket.on('dm_venue_pinned', callback);
+  return () => { if (socket) socket.off('dm_venue_pinned', callback); };
+}
+
+// DM location sharing
+export function dmShareLocation(receiverId, lat, lng) {
+  if (socket?.connected) socket.emit('dm_share_location', { receiverId, lat, lng });
+}
+
+export function dmStopSharingLocation(receiverId) {
+  if (socket?.connected) socket.emit('dm_stop_sharing_location', { receiverId });
+}
+
+export function onDmLocationUpdate(callback) {
+  if (socket) socket.on('dm_location_update', callback);
+  return () => { if (socket) socket.off('dm_location_update', callback); };
+}
+
+export function onDmMemberStoppedSharing(callback) {
+  if (socket) socket.on('dm_member_stopped_sharing', callback);
+  return () => { if (socket) socket.off('dm_member_stopped_sharing', callback); };
+}
+
+// --- Live location sharing ---
+
+export function emitLocation(flockId, lat, lng) {
+  console.log('[Location] Emitting:', { flockId, lat, lng });
+  if (socket?.connected) {
+    socket.emit('update_location', { flockId, lat, lng });
+  }
+}
+
+export function stopSharingLocation(flockId) {
+  if (socket?.connected) {
+    socket.emit('stop_sharing_location', { flockId });
+  }
+}
+
+export function onLocationUpdate(callback) {
+  if (socket) socket.on('location_update', callback);
+  return () => { if (socket) socket.off('location_update', callback); };
+}
+
+export function onMemberStoppedSharing(callback) {
+  if (socket) socket.on('member_stopped_sharing', callback);
+  return () => { if (socket) socket.off('member_stopped_sharing', callback); };
+}

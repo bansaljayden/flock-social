@@ -84,6 +84,12 @@ const demoUsers = [
     password: 'demo123',
     interests: ['Sports', 'Live Music', 'Pool', 'Darts'],
   },
+  {
+    name: 'Sarah Kim',
+    email: 'sarah@demo.com',
+    password: 'demo123',
+    interests: ['Coffee', 'Hiking', 'Photography', 'Food'],
+  },
 ];
 
 // ---------------------------------------------------------------------------
@@ -183,7 +189,7 @@ async function seed() {
     // Clean demo flocks that the real user created (by name, so we can re-seed fresh)
     const demoFlockNames = [
       'DECA Nationals Prep', 'Weekend Hangout Plans', 'Study Session',
-      'Friday Night Out', 'Sunday Brunch Crew',
+      'Friday Night Out', 'Sunday Brunch Crew', 'Downtown Tonight',
     ];
 
     for (const flockName of demoFlockNames) {
@@ -242,6 +248,7 @@ async function seed() {
     const emma = userIds['emma@demo.com'];
     const alex = userIds['alex@demo.com'];
     const jordan = userIds['jordan@demo.com'];
+    const sarah = userIds['sarah@demo.com'];
 
     // --------------------------------------------------
     // 3. Look up or create real account (UPSERT — never delete)
@@ -291,6 +298,7 @@ async function seed() {
           { uid: emma, status: 'accepted' },
           { uid: alex, status: 'accepted' },
           { uid: jordan, status: 'accepted' },
+          { uid: sarah, status: 'accepted' },
         ],
       },
       {
@@ -349,6 +357,22 @@ async function seed() {
           { uid: realJayden, status: 'accepted' },
           { uid: alex, status: 'accepted' },
           { uid: jordan, status: 'accepted' },
+          { uid: sarah, status: 'accepted' },
+        ],
+      },
+      {
+        name: 'Downtown Tonight',
+        creator: sarah,
+        venue_name: 'SouthSide 313',
+        venue_address: '313 E 3rd St, Bethlehem, PA',
+        venue_latitude: 40.6175,
+        venue_longitude: -75.3690,
+        event_time: hoursFromNow(1),
+        status: 'confirmed',
+        members: [
+          { uid: realJayden, status: 'accepted' },
+          { uid: mike, status: 'accepted' },
+          { uid: emma, status: 'accepted' },
         ],
       },
     ];
@@ -446,14 +470,25 @@ async function seed() {
     await msg('Friday Night Out', jordan, "I'll bring the speaker 🔊", 3200);
     await msg('Friday Night Out', realJayden, "this is gonna be a good night 🎉", 3150);
 
-    // --- Sunday Brunch Crew (7 messages) ---
+    // --- Sunday Brunch Crew (8 messages) ---
     await msg('Sunday Brunch Crew', emma, "who's doing brunch Sunday?", 1500);
     await msg('Sunday Brunch Crew', realJayden, "me!! Molinari's?", 1480);
     await msg('Sunday Brunch Crew', alex, "bottomless mimosas? say less 🥂", 1460);
     await msg('Sunday Brunch Crew', jordan, "their french toast is unreal", 1440);
+    await msg('Sunday Brunch Crew', sarah, "count me in! love that place", 1430);
     await msg('Sunday Brunch Crew', realJayden, "11am? I don't wanna wake up too early lol", 1420);
     await msg('Sunday Brunch Crew', emma, "11 is perfect, I'll make a reservation", 1400);
     await msg('Sunday Brunch Crew', realJayden, "you're the best Emma 🙌", 1380);
+
+    // --- Downtown Tonight (8 messages) ---
+    await msg('Downtown Tonight', sarah, "who's coming out tonight?? 🎉", 120);
+    await msg('Downtown Tonight', realJayden, "I'm in! where we going?", 115);
+    await msg('Downtown Tonight', sarah, "SouthSide 313, they have live music tonight", 110);
+    await msg('Downtown Tonight', mike, "say less, I'm there", 100);
+    await msg('Downtown Tonight', emma, "yesss I've been wanting to check that place out", 90);
+    await msg('Downtown Tonight', realJayden, "what time we meeting up?", 80);
+    await msg('Downtown Tonight', sarah, "doors open at 8, let's get there around 8:30", 70);
+    await msg('Downtown Tonight', mike, "bet, see everyone there 🤙", 60);
 
     // --------------------------------------------------
     // 6. Seed demo stories
@@ -471,6 +506,7 @@ async function seed() {
       { user: mike,       image: 'https://picsum.photos/seed/flock8/400/600', caption: 'Sunset views 🌅',               hoursAgo: 9 },
       { user: alex,       image: 'https://picsum.photos/seed/flock9/400/600', caption: 'Weekend plans loading... 🔄',    hoursAgo: 10 },
       { user: jordan,     image: 'https://picsum.photos/seed/flock10/400/600', caption: 'New spot just dropped 📍',      hoursAgo: 11 },
+      { user: sarah,      image: 'https://picsum.photos/seed/flock11/400/600', caption: 'Getting ready for tonight 💃',   hoursAgo: 1 },
     ];
 
     let storyCount = 0;

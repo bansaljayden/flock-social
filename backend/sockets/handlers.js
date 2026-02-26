@@ -79,7 +79,7 @@ function registerHandlers(io, socket) {
       if (users.size === 0) roomUsers.delete(flockId);
     }
 
-    socket.to(room).emit('member_left', {
+    socket.to(room).emit('member_offline', {
       userId: user.id,
       name: user.name,
       flockId,
@@ -231,6 +231,205 @@ function registerHandlers(io, socket) {
     });
   });
 
+  socket.on('stop_sharing_location', async ({ flockId }) => {
+    if (!flockId) return;
+    socket.to(`flock:${flockId}`).emit('member_stopped_sharing', {
+      userId: user.id,
+    });
+  });
+
+  // --- Direct Messages (real-time) ---
+
+  // Join a personal DM room so we can receive DMs
+  socket.join(`user:${user.id}`);
+
+  socket.on('send_dm', async (data) => {
+    try {
+      const { receiverId, message_type, venue_data, image_url, reply_to_id } = data;
+      const text = stripHtml(typeof data.message_text === 'string' ? data.message_text.trim() : '');
+      if (!receiverId || (!text && message_type !== 'image')) return;
+      if (text.length > 5000) return;
+
+      const allowedTypes = ['text', 'venue_card', 'image'];
+      const safeType = allowedTypes.includes(message_type) ? message_type : 'text';
+
+      // Verify receiver exists
+      const receiver = await pool.query('SELECT id, name FROM users WHERE id = $1', [receiverId]);
+      if (receiver.rows.length === 0) return;
+
+      // Persist to database
+      const result = await pool.query(
+        `INSERT INTO direct_messages (sender_id, receiver_id, message_text, message_type, venue_data, image_url, reply_to_id)
+         VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
+        [user.id, receiverId, text, safeType, venue_data || null, image_url || null, reply_to_id || null]
+      );
+
+      const msg = result.rows[0];
+      msg.sender_name = user.name;
+      msg.reactions = [];
+
+      // If replying, attach the reply-to info
+      if (reply_to_id) {
+        const replyResult = await pool.query(
+          `SELECT dm.id, dm.message_text, u.name AS sender_name FROM direct_messages dm JOIN users u ON u.id = dm.sender_id WHERE dm.id = $1`,
+          [reply_to_id]
+        );
+        if (replyResult.rows.length > 0) msg.reply_to = replyResult.rows[0];
+      }
+
+      // Send to receiver's personal room
+      socket.to(`user:${receiverId}`).emit('new_dm', msg);
+      // Also send back to sender for confirmation
+      socket.emit('new_dm', msg);
+    } catch (err) {
+      console.error('send_dm error:', err);
+    }
+  });
+
+  // DM reactions (real-time)
+  socket.on('dm_react', async (data) => {
+    try {
+      const { dmId, emoji, receiverId } = data;
+      if (!dmId || !emoji || !receiverId) return;
+
+      const dm = await pool.query('SELECT sender_id, receiver_id FROM direct_messages WHERE id = $1', [dmId]);
+      if (dm.rows.length === 0) return;
+      if (dm.rows[0].sender_id !== user.id && dm.rows[0].receiver_id !== user.id) return;
+
+      await pool.query(
+        `INSERT INTO dm_emoji_reactions (dm_id, user_id, emoji) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING`,
+        [dmId, user.id, emoji]
+      );
+
+      const payload = { dmId, emoji, userId: user.id, userName: user.name };
+      socket.to(`user:${receiverId}`).emit('dm_reaction_added', payload);
+      socket.emit('dm_reaction_added', payload);
+    } catch (err) {
+      console.error('dm_react error:', err);
+    }
+  });
+
+  socket.on('dm_remove_react', async (data) => {
+    try {
+      const { dmId, emoji, receiverId } = data;
+      if (!dmId || !emoji || !receiverId) return;
+
+      await pool.query(
+        'DELETE FROM dm_emoji_reactions WHERE dm_id = $1 AND user_id = $2 AND emoji = $3',
+        [dmId, user.id, emoji]
+      );
+
+      const payload = { dmId, emoji, userId: user.id };
+      socket.to(`user:${receiverId}`).emit('dm_reaction_removed', payload);
+      socket.emit('dm_reaction_removed', payload);
+    } catch (err) {
+      console.error('dm_remove_react error:', err);
+    }
+  });
+
+  // DM venue voting (real-time)
+  socket.on('dm_vote_venue', async (data) => {
+    try {
+      const { receiverId, venue_id } = data;
+      const venue_name = stripHtml(typeof data.venue_name === 'string' ? data.venue_name.trim() : '');
+      if (!receiverId || !venue_name) return;
+
+      const u1 = Math.min(user.id, receiverId);
+      const u2 = Math.max(user.id, receiverId);
+
+      // Check if user already voted for this exact venue (toggle off)
+      const existing = await pool.query(
+        `SELECT id FROM dm_venue_votes WHERE user1_id = $1 AND user2_id = $2 AND user_id = $3 AND venue_name = $4`,
+        [u1, u2, user.id, venue_name]
+      );
+      if (existing.rows.length > 0) {
+        // Unvote — remove this vote
+        await pool.query(`DELETE FROM dm_venue_votes WHERE user1_id = $1 AND user2_id = $2 AND user_id = $3 AND venue_name = $4`, [u1, u2, user.id, venue_name]);
+      } else {
+        // Switch vote — remove any existing vote by this user, then insert new one
+        await pool.query(`DELETE FROM dm_venue_votes WHERE user1_id = $1 AND user2_id = $2 AND user_id = $3`, [u1, u2, user.id]);
+        await pool.query(
+          `INSERT INTO dm_venue_votes (user1_id, user2_id, user_id, venue_name, venue_id) VALUES ($1, $2, $3, $4, $5)`,
+          [u1, u2, user.id, venue_name, venue_id || null]
+        );
+      }
+
+      const votes = await pool.query(
+        `SELECT venue_name, venue_id, COUNT(*) AS vote_count, ARRAY_AGG(u.name) AS voters
+         FROM dm_venue_votes vv JOIN users u ON u.id = vv.user_id
+         WHERE vv.user1_id = $1 AND vv.user2_id = $2
+         GROUP BY venue_name, venue_id ORDER BY vote_count DESC`,
+        [u1, u2]
+      );
+
+      const payload = { voter: { userId: user.id, name: user.name }, venue_name, votes: votes.rows };
+      socket.to(`user:${receiverId}`).emit('dm_new_vote', payload);
+      socket.emit('dm_new_vote', payload);
+    } catch (err) {
+      console.error('dm_vote_venue error:', err);
+    }
+  });
+
+  // DM pin venue (real-time sync)
+  socket.on('dm_pin_venue', async (data) => {
+    try {
+      const { receiverId, venue_name, venue_address, venue_id, venue_rating, venue_photo_url } = data;
+      if (!receiverId || !venue_name) return;
+      const u1 = Math.min(user.id, receiverId);
+      const u2 = Math.max(user.id, receiverId);
+      const safeName = stripHtml(typeof venue_name === 'string' ? venue_name.trim() : '');
+
+      await pool.query(
+        `INSERT INTO dm_pinned_venues (user1_id, user2_id, venue_name, venue_address, venue_id, venue_rating, venue_photo_url, pinned_by, updated_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
+         ON CONFLICT (user1_id, user2_id) DO UPDATE SET
+           venue_name = EXCLUDED.venue_name, venue_address = EXCLUDED.venue_address, venue_id = EXCLUDED.venue_id,
+           venue_rating = EXCLUDED.venue_rating, venue_photo_url = EXCLUDED.venue_photo_url,
+           pinned_by = EXCLUDED.pinned_by, updated_at = NOW()`,
+        [u1, u2, safeName, venue_address || null, venue_id || null, venue_rating || null, venue_photo_url || null, user.id]
+      );
+
+      const payload = { venue_name: safeName, venue_address, venue_id, venue_rating, venue_photo_url, pinned_by: user.id, pinned_by_name: user.name };
+      socket.to(`user:${receiverId}`).emit('dm_venue_pinned', payload);
+      socket.emit('dm_venue_pinned', payload);
+    } catch (err) {
+      console.error('dm_pin_venue error:', err);
+    }
+  });
+
+  // DM location sharing
+  socket.on('dm_share_location', (data) => {
+    const { receiverId, lat, lng } = data;
+    if (!receiverId || typeof lat !== 'number' || typeof lng !== 'number') return;
+    socket.to(`user:${receiverId}`).emit('dm_location_update', {
+      userId: user.id, name: user.name, lat, lng, timestamp: Date.now(),
+    });
+  });
+
+  socket.on('dm_stop_sharing_location', (data) => {
+    const { receiverId } = data;
+    if (!receiverId) return;
+    socket.to(`user:${receiverId}`).emit('dm_member_stopped_sharing', { userId: user.id });
+  });
+
+  // DM typing indicators
+  socket.on('dm_typing', (data) => {
+    const { receiverId } = data;
+    if (!receiverId) return;
+    socket.to(`user:${receiverId}`).emit('dm_user_typing', {
+      userId: user.id,
+      name: user.name,
+    });
+  });
+
+  socket.on('dm_stop_typing', (data) => {
+    const { receiverId } = data;
+    if (!receiverId) return;
+    socket.to(`user:${receiverId}`).emit('dm_user_stopped_typing', {
+      userId: user.id,
+    });
+  });
+
   // --- Venue confirmed by creator ---
 
   socket.on('select_venue', async (data) => {
@@ -298,10 +497,14 @@ function registerHandlers(io, socket) {
       for (const u of users) {
         if (u.socketId === socket.id) {
           users.delete(u);
-          io.to(`flock:${flockId}`).emit('member_left', {
+          io.to(`flock:${flockId}`).emit('member_offline', {
             userId: user.id,
             name: user.name,
             flockId,
+          });
+          // Also notify that location sharing stopped
+          io.to(`flock:${flockId}`).emit('member_stopped_sharing', {
+            userId: user.id,
           });
           break;
         }
