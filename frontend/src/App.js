@@ -182,7 +182,7 @@ const GoogleMapView = React.memo(({ venues, filterCategory, userLocation, active
             console.log('[Map] Geolocation denied/failed:', error.message, '- using Hellertown fallback');
             resolve({ lat: 40.5798, lng: -75.2932 });
           },
-          { enableHighAccuracy: true, timeout: 8000, maximumAge: 60000 }
+          { enableHighAccuracy: true, timeout: 8000, maximumAge: 0 }
         );
       } else {
         console.log('[Map] Geolocation not supported - using Hellertown fallback');
@@ -241,12 +241,35 @@ const GoogleMapView = React.memo(({ venues, filterCategory, userLocation, active
       map.addListener('click', () => { setActiveVenue(null); });
 
       console.log('[Map] Map created, centered on user at', userLoc.lat, userLoc.lng);
+
+      // Listen for permission changes (denied → granted)
+      if (navigator.permissions) {
+        navigator.permissions.query({ name: 'geolocation' }).then((permStatus) => {
+          permStatus.addEventListener('change', () => {
+            if (permStatus.state === 'granted') {
+              navigator.geolocation.getCurrentPosition(
+                (pos) => {
+                  const newLoc = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+                  console.log('[Map] Permission changed to granted, re-centering:', newLoc);
+                  map.panTo(newLoc);
+                  map.setZoom(DEFAULT_ZOOM);
+                },
+                () => {},
+                { enableHighAccuracy: true, timeout: 8000, maximumAge: 0 }
+              );
+            }
+          });
+        }).catch(() => {});
+      }
     };
 
     initMap();
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // User location blue dot — just place the marker, DON'T move the map
+  // User location blue dot with accuracy circle + live tracking
+  const accuracyCircleRef = useRef(null);
+  const watchIdRef = useRef(null);
+
   useEffect(() => {
     if (!mapReady || !mapInstanceRef.current || !userLocation) return;
     const pos = { lat: userLocation.lat, lng: userLocation.lng };
@@ -268,7 +291,46 @@ const GoogleMapView = React.memo(({ venues, filterCategory, userLocation, active
         title: 'You are here',
       });
     }
+
+    // Accuracy circle
+    const accuracy = userLocation.accuracy || 50;
+    if (accuracyCircleRef.current) {
+      accuracyCircleRef.current.setCenter(pos);
+      accuracyCircleRef.current.setRadius(accuracy);
+    } else {
+      accuracyCircleRef.current = new window.google.maps.Circle({
+        map: mapInstanceRef.current,
+        center: pos,
+        radius: accuracy,
+        fillColor: '#3b82f6',
+        fillOpacity: 0.1,
+        strokeColor: '#3b82f6',
+        strokeOpacity: 0.3,
+        strokeWeight: 1,
+        clickable: false,
+        zIndex: 998,
+      });
+    }
   }, [userLocation, mapReady]);
+
+  // Live position tracking — update blue dot every 10 seconds
+  useEffect(() => {
+    if (!mapReady || !navigator.geolocation) return;
+    if (watchIdRef.current !== null) navigator.geolocation.clearWatch(watchIdRef.current);
+    watchIdRef.current = navigator.geolocation.watchPosition(
+      (pos) => {
+        const newLoc = { lat: pos.coords.latitude, lng: pos.coords.longitude, accuracy: pos.coords.accuracy };
+        if (userMarkerRef.current) userMarkerRef.current.setPosition({ lat: newLoc.lat, lng: newLoc.lng });
+        if (accuracyCircleRef.current) {
+          accuracyCircleRef.current.setCenter({ lat: newLoc.lat, lng: newLoc.lng });
+          accuracyCircleRef.current.setRadius(newLoc.accuracy || 50);
+        }
+      },
+      () => {},
+      { enableHighAccuracy: true, timeout: 15000, maximumAge: 10000 }
+    );
+    return () => { if (watchIdRef.current !== null) navigator.geolocation.clearWatch(watchIdRef.current); };
+  }, [mapReady]);
 
   // Venue markers + heatmap — rebuild ONLY when venue data actually changes (not on activeVenue!)
   useEffect(() => {
@@ -450,22 +512,84 @@ const GoogleMapView = React.memo(({ venues, filterCategory, userLocation, active
           setActiveVenue(nearby.venue);
           nearby.marker.setAnimation(window.google.maps.Animation.BOUNCE);
           setTimeout(() => nearby.marker.setAnimation(null), 1500);
+        } else {
+          // No existing marker — create a temporary pin at these coordinates
+          const venueName = target?.name || 'Selected Venue';
+          const tempPinSvg = buildPinSvg(true, 'Food');
+          const tempPinSize = 44;
+          const tempPinHeight = Math.round(tempPinSize * 1.32);
+          const tempMarker = new window.google.maps.Marker({
+            position: { lat: fallbackLat, lng: fallbackLng },
+            map: mapInstanceRef.current,
+            title: venueName,
+            icon: {
+              url: 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(tempPinSvg),
+              scaledSize: new window.google.maps.Size(tempPinSize, tempPinHeight),
+              anchor: new window.google.maps.Point(tempPinSize / 2, tempPinHeight),
+            },
+            animation: window.google.maps.Animation.DROP,
+            zIndex: 200,
+          });
+          setTimeout(() => {
+            tempMarker.setAnimation(window.google.maps.Animation.BOUNCE);
+            setTimeout(() => tempMarker.setAnimation(null), 1500);
+          }, 400);
+          // Create a temporary venue object and set it active
+          const tempVenue = {
+            id: 'temp_nav_' + Date.now(),
+            place_id: placeId || null,
+            name: venueName,
+            addr: target?.address || '',
+            location: { latitude: fallbackLat, longitude: fallbackLng },
+            category: 'Food',
+            stars: null,
+            crowd: null,
+            types: [],
+          };
+          markersRef.current.push({ marker: tempMarker, venue: tempVenue, circles: [] });
+          setActiveVenue(tempVenue);
+          // Auto-open venue detail if we have a place_id
+          if (placeId) {
+            openVenueDetail(placeId, { name: venueName, place_id: placeId });
+          }
         }
       }
     };
     // My Location: re-request user's REAL geolocation, center on it, zoom 12
-    window.__flockGoToMyLocation = async () => {
+    window.__flockGoToMyLocation = () => {
       if (!mapInstanceRef.current) return;
-      const userLoc = await getUserLocation();
-      console.log('[Map] My Location pressed, centering on:', userLoc);
-      mapInstanceRef.current.panTo(userLoc);
-      mapInstanceRef.current.setZoom(DEFAULT_ZOOM);
+      if (navigator.geolocation) {
+        navigator.geolocation.getCurrentPosition(
+          (pos) => {
+            const freshLoc = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+            console.log('[Map] My Location pressed, centering on fresh GPS:', freshLoc);
+            mapInstanceRef.current.panTo(freshLoc);
+            mapInstanceRef.current.setZoom(DEFAULT_ZOOM);
+            if (userMarkerRef.current) userMarkerRef.current.setPosition(freshLoc);
+            if (accuracyCircleRef.current) {
+              accuracyCircleRef.current.setCenter(freshLoc);
+              accuracyCircleRef.current.setRadius(pos.coords.accuracy || 50);
+            }
+          },
+          () => {
+            console.log('[Map] My Location: geolocation denied');
+          },
+          { enableHighAccuracy: true, timeout: 8000, maximumAge: 0 }
+        );
+      }
     };
     return () => { delete window.__flockOpenVenue; delete window.__flockPanToVenue; delete window.__flockGoToMyLocation; };
   }, [venues, openVenueDetail, setActiveVenue]);
 
   return (
     <div style={{ position: 'absolute', inset: 0 }}>
+      {/* Map loading overlay — shown until Google Map initializes */}
+      {!mapReady && (
+        <div style={{ position: 'absolute', inset: 0, zIndex: 10, backgroundColor: '#1a2a3a', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '12px' }}>
+          <div style={{ width: '32px', height: '32px', border: '3px solid rgba(255,255,255,0.15)', borderTopColor: '#14B8A6', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
+          <p style={{ color: '#8ec3b9', fontSize: '13px', fontWeight: '500', margin: 0 }}>Loading map...</p>
+        </div>
+      )}
       {/* Minimize Google branding — legal but nearly invisible. Zoom controls always work. */}
       <style>{`
         .gm-style-cc { opacity: 0.1 !important; pointer-events: none; transition: opacity 0.3s; font-size: 7px !important; }
@@ -2883,6 +3007,13 @@ const FlockAppInner = ({ authUser, onLogout }) => {
                       {venue.rating && <span style={{ fontSize: '11px', fontWeight: '700', color: colors.navy }}>{venue.rating} ★</span>}
                       {venue.user_ratings_total > 0 && <span style={{ fontSize: '10px', color: '#9ca3af' }}>({venue.user_ratings_total})</span>}
                       {venue.price_level && <span style={{ fontSize: '11px', color: '#6b7280', fontWeight: '600' }}>{'$'.repeat(venue.price_level)}</span>}
+                      {userLocation && venue.location && (() => {
+                        const dLat = (venue.location.latitude - userLocation.lat) * Math.PI / 180;
+                        const dLng = (venue.location.longitude - userLocation.lng) * Math.PI / 180;
+                        const a = Math.sin(dLat/2)**2 + Math.cos(userLocation.lat*Math.PI/180)*Math.cos(venue.location.latitude*Math.PI/180)*Math.sin(dLng/2)**2;
+                        const dist = 6371 * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+                        return <span style={{ fontSize: '10px', color: colors.teal, fontWeight: '600' }}>{dist < 1 ? `${Math.round(dist*1000)}m` : `${dist.toFixed(1)}km`}</span>;
+                      })()}
                     </div>
                     <p style={{ fontSize: '10px', color: '#6b7280', margin: '2px 0 0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{venue.formatted_address}</p>
                   </div>
@@ -6109,6 +6240,8 @@ const FlockAppInner = ({ authUser, onLogout }) => {
   );
 
   // RENDER - Call functions directly instead of JSX to prevent component recreation
+  const isExploreVisible = currentTab === 'explore' && currentScreen === 'main' && !showModeSelection && (userMode !== 'user' || hasCompletedOnboarding);
+
   const renderScreen = () => {
     // Show welcome screen for mode selection
     if (showModeSelection) return <WelcomeScreen />;
@@ -6122,7 +6255,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
     if (currentScreen === 'venueDashboard') return <VenueDashboard />;
     if (currentScreen === 'adminRevenue') return <RevenueScreen />;
     switch (currentTab) {
-      case 'explore': return ExploreScreen();
+      case 'explore': return null; // Rendered persistently below
       case 'calendar': return CalendarScreen();
       case 'chat': return ChatListScreen();
       case 'profile': return ProfileScreen();
@@ -6137,6 +6270,10 @@ const FlockAppInner = ({ authUser, onLogout }) => {
           <div style={styles.notchInner} />
         </div>
         <div style={styles.content}>
+          {/* Persistent map layer — hidden via CSS, never unmounted */}
+          <div style={{ position: 'absolute', inset: 0, zIndex: isExploreVisible ? 1 : -1, visibility: isExploreVisible ? 'visible' : 'hidden', pointerEvents: isExploreVisible ? 'auto' : 'none' }}>
+            {ExploreScreen()}
+          </div>
           {renderScreen()}
         </div>
       </div>
