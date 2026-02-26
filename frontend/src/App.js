@@ -514,10 +514,36 @@ const GoogleMapView = React.memo(({ venues, filterCategory, userLocation, active
           setTimeout(() => nearby.marker.setAnimation(null), 1500);
         } else {
           // No existing marker — create a temporary pin at these coordinates
-          const venueName = target?.name || 'Selected Venue';
+          const venueName = target?.name || 'Venue';
+          const venueAddr = target?.address || '';
+          const venueRating = target?.rating ? parseFloat(target.rating) : 4.0;
+          const venuePhoto = target?.photo_url || null;
+          const seed = ((placeId || venueName || '').charCodeAt(0) || 0) + Math.floor(fallbackLat * 100);
+          const crowd = Math.round(20 + ((seed * 37) % 70));
+          const bestTimes = ['6-8 PM', '7-9 PM', '8-10 PM', '5-7 PM', '9-11 PM'];
+
           const tempPinSvg = buildPinSvg(true, 'Food');
           const tempPinSize = 44;
           const tempPinHeight = Math.round(tempPinSize * 1.32);
+
+          // Create a complete venue object with all fields the info card needs
+          const tempVenue = {
+            id: 'temp_nav_' + Date.now(),
+            place_id: placeId || null,
+            name: venueName,
+            addr: venueAddr,
+            type: 'Venue',
+            category: 'Food',
+            price: '$$',
+            stars: venueRating,
+            crowd: crowd,
+            best: bestTimes[seed % bestTimes.length],
+            trending: false,
+            photo_url: venuePhoto,
+            location: { latitude: fallbackLat, longitude: fallbackLng },
+            types: [],
+          };
+
           const tempMarker = new window.google.maps.Marker({
             position: { lat: fallbackLat, lng: fallbackLng },
             map: mapInstanceRef.current,
@@ -530,27 +556,24 @@ const GoogleMapView = React.memo(({ venues, filterCategory, userLocation, active
             animation: window.google.maps.Animation.DROP,
             zIndex: 200,
           });
+
+          // Click listener so pin is re-clickable
+          tempMarker.addListener('click', () => {
+            setActiveVenue(tempVenue);
+            mapInstanceRef.current.panTo({ lat: fallbackLat, lng: fallbackLng });
+          });
+
           setTimeout(() => {
             tempMarker.setAnimation(window.google.maps.Animation.BOUNCE);
             setTimeout(() => tempMarker.setAnimation(null), 1500);
           }, 400);
-          // Create a temporary venue object and set it active
-          const tempVenue = {
-            id: 'temp_nav_' + Date.now(),
-            place_id: placeId || null,
-            name: venueName,
-            addr: target?.address || '',
-            location: { latitude: fallbackLat, longitude: fallbackLng },
-            category: 'Food',
-            stars: null,
-            crowd: null,
-            types: [],
-          };
+
           markersRef.current.push({ marker: tempMarker, venue: tempVenue, circles: [] });
           setActiveVenue(tempVenue);
+
           // Auto-open venue detail if we have a place_id
           if (placeId) {
-            openVenueDetail(placeId, { name: venueName, place_id: placeId });
+            openVenueDetail(placeId, { name: venueName, formatted_address: venueAddr, place_id: placeId, rating: venueRating, photo_url: venuePhoto });
           }
         }
       }
@@ -3688,7 +3711,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
                     if (flock.venueId || flock.venueLat) {
                       setTimeout(() => {
                         if (window.__flockPanToVenue) {
-                          window.__flockPanToVenue({ place_id: flock.venueId, lat: flock.venueLat, lng: flock.venueLng });
+                          window.__flockPanToVenue({ place_id: flock.venueId, lat: flock.venueLat, lng: flock.venueLng, name: flock.venue, address: flock.venueAddress, rating: flock.venueRating, photo_url: flock.venuePhoto });
                         }
                       }, 300);
                     }
@@ -3790,7 +3813,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
                         const lng = vc.lng || vc.longitude;
                         setTimeout(() => {
                           if (window.__flockPanToVenue) {
-                            window.__flockPanToVenue({ place_id: pid, lat, lng });
+                            window.__flockPanToVenue({ place_id: pid, lat, lng, name: vc.name, address: vc.addr || vc.formatted_address, rating: vc.stars || vc.rating, photo_url: vc.photo_url });
                           }
                         }, 300);
                       }
