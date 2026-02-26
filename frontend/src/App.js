@@ -14,6 +14,7 @@ import { getCurrentUser, logout, isLoggedIn, getFlocks, createFlock as apiCreate
 import { connectSocket, disconnectSocket, getSocket, joinFlock, leaveFlock, sendMessage as socketSendMessage, sendImageMessage as socketSendImage, startTyping, stopTyping, onNewMessage, onUserTyping, onUserStoppedTyping } from './services/socket';
 import LoginScreen from './components/auth/LoginScreen';
 import SignupScreen from './components/auth/SignupScreen';
+import { MarkerClusterer } from '@googlemaps/markerclusterer';
 
 // Load Google Maps dynamically from .env — API key never exposed in HTML
 const loadGoogleMapsScript = () => {
@@ -157,6 +158,7 @@ const GoogleMapView = React.memo(({ venues, filterCategory, userLocation, active
   const mapRef = useRef(null);
   const mapInstanceRef = useRef(null);
   const markersRef = useRef([]); // each entry: { marker, venue, circles: [] }
+  const clustererRef = useRef(null);
   const userMarkerRef = useRef(null);
   const prevVenueCountRef = useRef(0); // track if venues are newly loaded vs just re-rendered
   const zoomListenerRef = useRef(null);
@@ -336,7 +338,11 @@ const GoogleMapView = React.memo(({ venues, filterCategory, userLocation, active
   useEffect(() => {
     if (!mapInstanceRef.current || !window.google?.maps) return;
 
-    // Clear previous
+    // Clear previous markers + clusterer
+    if (clustererRef.current) {
+      clustererRef.current.clearMarkers();
+      clustererRef.current = null;
+    }
     markersRef.current.forEach(entry => {
       entry.marker.setMap(null);
       entry.circles.forEach(c => c.setMap(null));
@@ -345,6 +351,7 @@ const GoogleMapView = React.memo(({ venues, filterCategory, userLocation, active
 
     const bounds = new window.google.maps.LatLngBounds();
     prevVenueCountRef.current = venues.length;
+    const allMarkers = [];
 
     venues.forEach(v => {
       const loc = v.location;
@@ -374,20 +381,18 @@ const GoogleMapView = React.memo(({ venues, filterCategory, userLocation, active
           strokeColor: cc, strokeOpacity: 0.85, strokeWeight: 2.5,
           zIndex: 2, clickable: false,
         });
-        // Store scale functions on circles for zoom updates
         outerCircle.__getR = getOuterR;
         innerCircle.__getR = getInnerR;
         entryCircles.push(outerCircle, innerCircle);
       }
 
-      // --- Custom Flock pin (always default style — active state handled separately) ---
+      // --- Custom Flock pin (don't add to map yet — clusterer manages it) ---
       const pinSvg = buildPinSvg(false, v.category);
       const pinSize = 32;
       const pinHeight = Math.round(pinSize * 1.32);
 
       const marker = new window.google.maps.Marker({
         position,
-        map: mapInstanceRef.current,
         title: v.name,
         icon: {
           url: 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(pinSvg),
@@ -397,25 +402,45 @@ const GoogleMapView = React.memo(({ venues, filterCategory, userLocation, active
         zIndex: v.trending ? 50 : 10,
       });
 
-      // Hover animation — single bounce
       marker.addListener('mouseover', () => {
         marker.setAnimation(window.google.maps.Animation.BOUNCE);
         setTimeout(() => marker.setAnimation(null), 750);
       });
 
       marker.addListener('click', () => {
-        // Always show forecast card first — even when picking venue for flock
-        // The bottom panel has a "Select" button when pickingVenueForCreate is true
         setActiveVenue(v);
         mapInstanceRef.current.panTo(position);
       });
 
       markersRef.current.push({ marker, venue: v, circles: entryCircles });
+      allMarkers.push(marker);
       bounds.extend(position);
     });
 
-    // Do NOT fitBounds on initial load — map stays centered on user's location.
-    // Only fitBounds when explicitly searching (not on default venue load).
+    // Create clusterer — groups overlapping pins into numbered clusters
+    if (allMarkers.length > 0) {
+      clustererRef.current = new MarkerClusterer({
+        map: mapInstanceRef.current,
+        markers: allMarkers,
+        renderer: {
+          render: ({ count, position }) => {
+            return new window.google.maps.Marker({
+              position,
+              label: { text: String(count), color: 'white', fontSize: '12px', fontWeight: '700' },
+              icon: {
+                path: window.google.maps.SymbolPath.CIRCLE,
+                scale: 20,
+                fillColor: '#0d2847',
+                fillOpacity: 0.9,
+                strokeColor: '#f5f0e6',
+                strokeWeight: 2,
+              },
+              zIndex: 1000,
+            });
+          },
+        },
+      });
+    }
   }, [venues, buildPinSvg]); // eslint-disable-line react-hooks/exhaustive-deps
   // Only rebuild markers when venue DATA changes — setters are stable refs, don't trigger rebuilds
 
@@ -578,82 +603,40 @@ const GoogleMapView = React.memo(({ venues, filterCategory, userLocation, active
         }
       }
     };
-    // My Location: re-request user's REAL geolocation, center on it, zoom 15 (street level)
+    // My Location: instantly pan to the blue dot (no GPS request needed — just go to where the dot already is)
     window.__flockGoToMyLocation = () => {
       if (!mapInstanceRef.current) return;
-      // Show loading state on the button
-      const locBtn = document.getElementById('flock-my-location-btn');
-      if (locBtn) locBtn.style.opacity = '0.6';
 
-      if (navigator.geolocation) {
-        navigator.geolocation.getCurrentPosition(
-          (pos) => {
-            const freshLoc = { lat: pos.coords.latitude, lng: pos.coords.longitude };
-            console.log('[Map] My Location pressed, centering on fresh GPS:', freshLoc);
-            mapInstanceRef.current.panTo(freshLoc);
-            mapInstanceRef.current.setZoom(15);
-            if (locBtn) locBtn.style.opacity = '1';
+      // If we have a blue dot, just pan to it instantly
+      if (userMarkerRef.current) {
+        const pos = userMarkerRef.current.getPosition();
+        mapInstanceRef.current.panTo(pos);
+        mapInstanceRef.current.setZoom(15);
 
-            // Update or create user blue dot
+        // Pulse animation on blue dot so user sees it
+        const pulseScales = [14, 16, 14, 12, 10];
+        pulseScales.forEach((s, i) => {
+          setTimeout(() => {
             if (userMarkerRef.current) {
-              userMarkerRef.current.setPosition(freshLoc);
-            } else {
-              userMarkerRef.current = new window.google.maps.Marker({
-                position: freshLoc,
-                map: mapInstanceRef.current,
-                icon: {
-                  path: window.google.maps.SymbolPath.CIRCLE,
-                  scale: 10,
-                  fillColor: '#3b82f6',
-                  fillOpacity: 1,
-                  strokeColor: '#ffffff',
-                  strokeWeight: 3,
-                },
-                zIndex: 999,
-                title: 'You are here',
+              userMarkerRef.current.setIcon({
+                path: window.google.maps.SymbolPath.CIRCLE,
+                scale: s,
+                fillColor: '#3b82f6',
+                fillOpacity: i < 2 ? 0.7 : 1,
+                strokeColor: '#ffffff',
+                strokeWeight: 3,
               });
             }
+          }, i * 400);
+        });
+        return;
+      }
 
-            // Update accuracy circle
-            if (accuracyCircleRef.current) {
-              accuracyCircleRef.current.setCenter(freshLoc);
-              accuracyCircleRef.current.setRadius(pos.coords.accuracy || 50);
-            }
-
-            // Pulse animation on blue dot — briefly enlarge then shrink
-            if (userMarkerRef.current) {
-              const pulseScales = [14, 16, 14, 12, 10];
-              pulseScales.forEach((s, i) => {
-                setTimeout(() => {
-                  if (userMarkerRef.current) {
-                    userMarkerRef.current.setIcon({
-                      path: window.google.maps.SymbolPath.CIRCLE,
-                      scale: s,
-                      fillColor: '#3b82f6',
-                      fillOpacity: i < 2 ? 0.7 : 1,
-                      strokeColor: '#ffffff',
-                      strokeWeight: 3,
-                    });
-                  }
-                }, i * 400);
-              });
-            }
-          },
-          (err) => {
-            console.log('[Map] My Location error:', err.code, err.message);
-            if (locBtn) locBtn.style.opacity = '1';
-            // Only show error toast for actual permission denial (code 1)
-            if (err.code === 1) {
-              window.dispatchEvent(new CustomEvent('flock-toast', { detail: { message: 'Please allow location access in your browser settings', type: 'error' } }));
-            }
-            // For timeout or unavailable, silently fail — user can try again
-          },
-          { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
-        );
-      } else {
-        if (locBtn) locBtn.style.opacity = '1';
-        // Geolocation API not supported in this browser — extremely rare
-        window.dispatchEvent(new CustomEvent('flock-toast', { detail: { message: 'Location not supported in this browser', type: 'error' } }));
+      // No blue dot yet — fall back to map center
+      const center = mapInstanceRef.current.getCenter();
+      if (center) {
+        mapInstanceRef.current.panTo(center);
+        mapInstanceRef.current.setZoom(15);
       }
     };
     return () => { delete window.__flockOpenVenue; delete window.__flockPanToVenue; delete window.__flockGoToMyLocation; };
@@ -890,6 +873,8 @@ const FlockAppInner = ({ authUser, onLogout }) => {
   const [venueResults, setVenueResults] = useState([]);
   const [venueSearching, setVenueSearching] = useState(false);
   const [showSearchDropdown, setShowSearchDropdown] = useState(true);
+  const [showSearchResults, setShowSearchResults] = useState(false);
+  const [searchResultsSort, setSearchResultsSort] = useState('rating');
   const searchTimerRef = useRef(null);
 
   // Geolocation state — restore last known location immediately so map isn't empty
@@ -1016,10 +1001,10 @@ const FlockAppInner = ({ authUser, onLogout }) => {
 
   const handleVenueQueryChange = useCallback((val) => {
     setVenueQuery(val);
-    setShowSearchDropdown(true);
+    if (!showSearchResults) setShowSearchDropdown(true);
     if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
     searchTimerRef.current = setTimeout(() => doVenueSearch(val), 800);
-  }, [doVenueSearch]);
+  }, [doVenueSearch, showSearchResults]);
 
   // Invite user search with debounce
   const inviteTimerRef = useRef(null);
@@ -1194,6 +1179,19 @@ const FlockAppInner = ({ authUser, onLogout }) => {
       .finally(() => setFlocksLoading(false));
   }, []);
 
+  // Flock ordering & pinning (persisted in localStorage)
+  const [pinnedFlockIds, setPinnedFlockIds] = useState(() => {
+    try { return JSON.parse(localStorage.getItem('flock_pinned') || '[]'); } catch { return []; }
+  });
+  const [flockOrder, setFlockOrder] = useState(() => {
+    try { return JSON.parse(localStorage.getItem('flock_order') || '[]'); } catch { return []; }
+  });
+  const [editingFlockList, setEditingFlockList] = useState(false);
+
+  // Persist pin/order changes
+  useEffect(() => { localStorage.setItem('flock_pinned', JSON.stringify(pinnedFlockIds)); }, [pinnedFlockIds]);
+  useEffect(() => { localStorage.setItem('flock_order', JSON.stringify(flockOrder)); }, [flockOrder]);
+
   // Create Flock form
   const [flockName, setFlockName] = useState('');
   const [flockDate, setFlockDate] = useState('Tonight');
@@ -1230,9 +1228,21 @@ const FlockAppInner = ({ authUser, onLogout }) => {
   const [typingUser, setTypingUser] = useState('');
   const [chatSearch, setChatSearch] = useState('');
   const [showChatSearch, setShowChatSearch] = useState(false);
+  const chatSearchRef = useRef(null);
+  const chatListSearchRef = useRef(null);
+  const searchResultsInputRef = useRef(null);
+
+  // Keep chat search input focused after re-renders
+  useEffect(() => {
+    if (showChatSearch && chatSearchRef.current) {
+      chatSearchRef.current.focus();
+    }
+  }, [showChatSearch, chatSearch]);
+
   const [replyingTo, setReplyingTo] = useState(null);
   const [showReactionPicker, setShowReactionPicker] = useState(null);
   const [showVenueShareModal, setShowVenueShareModal] = useState(false);
+  const [showVotePanel, setShowVotePanel] = useState(false);
   const [pendingImage, setPendingImage] = useState(null);
   const [showImagePreview, setShowImagePreview] = useState(false);
   const [showFlockMenu, setShowFlockMenu] = useState(false);
@@ -1321,8 +1331,8 @@ const FlockAppInner = ({ authUser, onLogout }) => {
   // Ref to track if initial venue load has been attempted (survives re-renders)
   const venueLoadAttemptedRef = useRef(false);
 
-  // Popular chains to show by default on map
-  const defaultChains = useMemo(() => ["McDonald's", "Starbucks", "Chipotle", "Panera Bread", "Subway", "Dunkin'", "Chick-fil-A"], []);
+  // Popular chains to show on map (default + near me)
+  const defaultChains = useMemo(() => ["McDonald's", "Starbucks", "Chipotle", "Panera Bread", "Subway", "Dunkin'", "Chick-fil-A", "Wendy's"], []);
 
   // Core venue loading function
   const loadVenuesAtLocation = useCallback((lat, lng, chainsOnly = false) => {
@@ -1342,9 +1352,9 @@ const FlockAppInner = ({ authUser, onLogout }) => {
     }
 
     if (chainsOnly) {
-      // Search for popular chains individually then merge results
+      // Search for popular chains individually then merge results (3 per chain, max ~24 pins)
       const chainSearches = defaultChains.map(chain =>
-        searchVenues(chain, locStr).then(data => (data.venues || []).slice(0, 2)).catch(() => [])
+        searchVenues(chain, locStr).then(data => (data.venues || []).slice(0, 3)).catch(() => [])
       );
       Promise.all(chainSearches)
         .then(results => {
@@ -1359,6 +1369,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
           searchCacheRef.current[cacheKey] = { data: deduped, timestamp: Date.now() };
           setAllVenues(venuesToMapPins(deduped));
           setMapVenuesLoaded(true);
+
         })
         .catch(() => {
           setAllVenues(venuesToMapPins(seedVenues));
@@ -1379,14 +1390,14 @@ const FlockAppInner = ({ authUser, onLogout }) => {
           setMapVenuesLoaded(true);
         });
     }
-  }, [venuesToMapPins, seedVenues, defaultChains]);
+  }, [venuesToMapPins, seedVenues, defaultChains, showToast]);
 
   // Request user geolocation and load venues
-  // chainsOnly=true shows popular chains by default; forceRefresh=true shows ALL venues (near me)
+  // forceRefresh=true forces fresh GPS + reloads popular chains near user
   const requestUserLocation = useCallback((forceRefresh = false) => {
     const savedLat = localStorage.getItem('flock_user_lat');
     const savedLng = localStorage.getItem('flock_user_lng');
-    const useChains = !forceRefresh; // initial load = chains only; near me = all venues
+    const useChains = true; // always load popular chains (both initial and near me)
 
     // Use saved location immediately so map has data right away
     if (!forceRefresh && savedLat && savedLng) {
@@ -1420,14 +1431,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
       (err) => {
         console.warn('[Geo] Geolocation error:', err.code, err.message);
         setLocationLoading(false);
-        // Only show error for actual permission denial
-        if (err.code === 1) { // PERMISSION_DENIED
-          showToast('Please allow location access in your browser settings', 'error');
-        } else if (err.code === 2) { // POSITION_UNAVAILABLE
-          showToast('Location unavailable \u2014 using default area', 'error');
-        }
-        // For TIMEOUT (code 3), silently fall back — no toast needed
-        // Fall back to saved location or Hellertown
+        // Silently fall back to Hellertown — no error toasts
         if (savedLat && savedLng && !forceRefresh) {
           // Already loaded from saved above, nothing to do
         } else {
@@ -1864,6 +1868,11 @@ const FlockAppInner = ({ authUser, onLogout }) => {
     fileText: (color = 'currentColor', size = 18) => <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg>,
     moreVertical: (color = 'currentColor', size = 18) => <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="1"></circle><circle cx="12" cy="5" r="1"></circle><circle cx="12" cy="19" r="1"></circle></svg>,
     doorOpen: (color = 'currentColor', size = 18) => <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M13 4h3a2 2 0 0 1 2 2v14"></path><path d="M2 20h3"></path><path d="M13 20h9"></path><path d="M10 12v.01"></path><path d="M13 4.562v16.157a1 1 0 0 1-1.242.97L5 20V5.562a2 2 0 0 1 1.515-1.94l4-1A2 2 0 0 1 13 4.561Z"></path></svg>,
+    pin: (color = 'currentColor', size = 18) => <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="17" x2="12" y2="22"></line><path d="M5 17h14v-1.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V6h1a2 2 0 0 0 0-4H8a2 2 0 0 0 0 4h1v4.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24Z"></path></svg>,
+    pinFilled: (color = 'currentColor', size = 18) => <svg width={size} height={size} viewBox="0 0 24 24" fill={color} stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="17" x2="12" y2="22"></line><path d="M5 17h14v-1.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V6h1a2 2 0 0 0 0-4H8a2 2 0 0 0 0 4h1v4.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24Z"></path></svg>,
+    chevronUp: (color = 'currentColor', size = 18) => <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 15l-6-6-6 6"></path></svg>,
+    chevronDown: (color = 'currentColor', size = 18) => <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M6 9l6 6 6-6"></path></svg>,
+    gripVertical: (color = 'currentColor', size = 18) => <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="9" cy="5" r="1"></circle><circle cx="9" cy="12" r="1"></circle><circle cx="9" cy="19" r="1"></circle><circle cx="15" cy="5" r="1"></circle><circle cx="15" cy="12" r="1"></circle><circle cx="15" cy="19" r="1"></circle></svg>,
   };
 
   // Activity feed
@@ -3153,11 +3162,16 @@ const FlockAppInner = ({ authUser, onLogout }) => {
           )}
           {!venueSearching && venueResults.length > 0 && (
             <div style={{ padding: '4px 12px 8px' }}>
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', margin: '4px 0 8px' }}>
-                <p style={{ fontSize: '10px', fontWeight: '600', color: '#6b7280', margin: 0, textTransform: 'uppercase', letterSpacing: '0.5px' }}>{venueResults.length} result{venueResults.length !== 1 ? 's' : ''}</p>
-                <button onClick={() => setShowSearchDropdown(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '2px 4px', display: 'flex', alignItems: 'center', gap: '3px', fontSize: '10px', color: '#6b7280', fontWeight: '600' }}>{Icons.x('#6b7280', 14)} Close</button>
-              </div>
-              {venueResults.map((venue) => (
+              {/* View All — first thing you see */}
+              <button
+                onClick={() => { setShowSearchResults(true); setShowSearchDropdown(false); }}
+                style={{ width: '100%', padding: '11px 14px', borderRadius: '12px', border: 'none', background: `linear-gradient(135deg, ${colors.navy}, ${colors.navyMid})`, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', margin: '4px 0 8px', transition: 'all 0.2s', boxShadow: '0 2px 8px rgba(13,40,71,0.2)' }}
+              >
+                {Icons.filter('white', 13)}
+                <span style={{ fontSize: '13px', fontWeight: '700', color: 'white' }}>See All Results ({venueResults.length})</span>
+                {Icons.arrowRight('white', 14)}
+              </button>
+              {venueResults.slice(0, 4).map((venue) => (
                 <button
                   key={venue.place_id}
                   onClick={() => {
@@ -3222,6 +3236,16 @@ const FlockAppInner = ({ authUser, onLogout }) => {
           setCurrentScreen={setCurrentScreen}
           openVenueDetail={openVenueDetail}
         />
+
+        {/* Floating "See All Results" on map */}
+        {allVenues.length > 0 && !activeVenue && !showConnectPanel && !pickingVenueForCreate && (
+          <button
+            onClick={() => { setShowSearchResults(true); setShowSearchDropdown(false); }}
+            style={{ position: 'absolute', bottom: '14px', right: '12px', padding: '8px 14px', borderRadius: '12px', border: 'none', background: 'white', color: colors.navy, fontSize: '12px', fontWeight: '700', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px', boxShadow: '0 2px 12px rgba(0,0,0,0.15)', zIndex: 35, transition: 'all 0.2s ease' }}
+          >
+            {Icons.filter(colors.navy, 13)} View All {allVenues.length} Results
+          </button>
+        )}
 
         {/* Find Your People Panel */}
         {showConnectPanel && (
@@ -3693,102 +3717,220 @@ const FlockAppInner = ({ authUser, onLogout }) => {
     );
   };
 
-  // CHAT LIST SCREEN
+  // CHAT LIST SCREEN — redesigned with pin & reorder
   const ChatListScreen = () => {
     const totalConversations = flocks.length + directMessages.length;
-    const allChats = [
-      ...directMessages.map(dm => ({ ...dm, type: 'dm', sortTime: dm.messages[dm.messages.length - 1]?.time })),
-      ...flocks.map(f => ({ ...f, type: 'flock', sortTime: f.messages[f.messages.length - 1]?.time }))
-    ].filter(c => !chatSearch || (c.type === 'dm' ? c.friendName : c.name).toLowerCase().includes(chatSearch.toLowerCase()));
+
+    // Sort flocks: pinned first, then by custom order, then default
+    const sortedFlocks = [...flocks].sort((a, b) => {
+      const aPinned = pinnedFlockIds.includes(a.id);
+      const bPinned = pinnedFlockIds.includes(b.id);
+      if (aPinned && !bPinned) return -1;
+      if (!aPinned && bPinned) return 1;
+      const aOrder = flockOrder.indexOf(a.id);
+      const bOrder = flockOrder.indexOf(b.id);
+      if (aOrder !== -1 && bOrder !== -1) return aOrder - bOrder;
+      if (aOrder !== -1) return -1;
+      if (bOrder !== -1) return 1;
+      return 0;
+    });
+
+    const filteredDms = directMessages.filter(dm => !chatSearch || dm.friendName.toLowerCase().includes(chatSearch.toLowerCase()));
+    const filteredFlocks = sortedFlocks.filter(f => !chatSearch || f.name.toLowerCase().includes(chatSearch.toLowerCase()));
+
+    const moveFlockUp = (flockId) => {
+      setFlockOrder(prev => {
+        const ids = prev.length > 0 ? [...prev] : sortedFlocks.map(f => f.id);
+        const idx = ids.indexOf(flockId);
+        if (idx <= 0) return ids;
+        [ids[idx - 1], ids[idx]] = [ids[idx], ids[idx - 1]];
+        return ids;
+      });
+    };
+
+    const moveFlockDown = (flockId) => {
+      setFlockOrder(prev => {
+        const ids = prev.length > 0 ? [...prev] : sortedFlocks.map(f => f.id);
+        const idx = ids.indexOf(flockId);
+        if (idx === -1 || idx >= ids.length - 1) return ids;
+        [ids[idx], ids[idx + 1]] = [ids[idx + 1], ids[idx]];
+        return ids;
+      });
+    };
+
+    const togglePin = (flockId) => {
+      setPinnedFlockIds(prev => prev.includes(flockId) ? prev.filter(id => id !== flockId) : [...prev, flockId]);
+    };
 
     return (
-      <div key="chat-list-screen-container" style={{ display: 'flex', flexDirection: 'column', height: '100%', backgroundColor: colors.cream }}>
-        <div style={{ padding: '16px', background: `linear-gradient(135deg, ${colors.navy}, ${colors.navyMid})`, flexShrink: 0 }}>
+      <div key="chat-list-screen-container" style={{ display: 'flex', flexDirection: 'column', height: '100%', backgroundColor: '#f0ede6' }}>
+        {/* Header */}
+        <div style={{ padding: '20px 16px 16px', background: `linear-gradient(135deg, ${colors.navy}, ${colors.navyMid})`, flexShrink: 0 }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <div>
-              <h1 style={{ fontSize: '20px', fontWeight: '900', color: 'white', margin: 0 }}>Messages</h1>
-              <p style={{ fontSize: '10px', color: 'rgba(255,255,255,0.6)', margin: 0 }}>{totalConversations} conversations</p>
+              <h1 style={{ fontSize: '22px', fontWeight: '900', color: 'white', margin: 0, letterSpacing: '-0.3px' }}>Messages</h1>
+              <p style={{ fontSize: '11px', color: 'rgba(255,255,255,0.5)', margin: '2px 0 0', fontWeight: '500' }}>{totalConversations} conversation{totalConversations !== 1 ? 's' : ''}</p>
             </div>
-            <div style={{ display: 'flex', gap: '8px' }}>
-              <button onClick={() => setShowNewDmModal(true)} style={{ width: '36px', height: '36px', borderRadius: '18px', border: 'none', backgroundColor: colors.cream, color: colors.navy, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                {Icons.plus(colors.navy, 18)}
+            <div style={{ display: 'flex', gap: '6px' }}>
+              <button onClick={() => setEditingFlockList(!editingFlockList)} style={{ width: '36px', height: '36px', borderRadius: '12px', border: editingFlockList ? '2px solid white' : 'none', backgroundColor: editingFlockList ? 'rgba(255,255,255,0.25)' : 'rgba(255,255,255,0.12)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'all 0.2s' }}>
+                {Icons.gripVertical('white', 16)}
               </button>
-              <button onClick={() => setShowChatSearch(!showChatSearch)} style={{ width: '36px', height: '36px', borderRadius: '18px', border: 'none', backgroundColor: 'rgba(255,255,255,0.2)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                {Icons.search('white', 18)}
+              <button onClick={() => setShowNewDmModal(true)} style={{ width: '36px', height: '36px', borderRadius: '12px', border: 'none', backgroundColor: colors.cream, color: colors.navy, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'all 0.2s', boxShadow: '0 2px 8px rgba(0,0,0,0.15)' }}>
+                {Icons.plus(colors.navy, 16)}
+              </button>
+              <button onClick={() => { setShowChatSearch(!showChatSearch); if (!showChatSearch) setTimeout(() => chatListSearchRef.current?.focus(), 50); }} style={{ width: '36px', height: '36px', borderRadius: '12px', border: 'none', backgroundColor: showChatSearch ? 'rgba(255,255,255,0.25)' : 'rgba(255,255,255,0.12)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'all 0.2s' }}>
+                {Icons.search('white', 16)}
               </button>
             </div>
           </div>
+
+          {/* Search bar */}
           {showChatSearch && (
-            <div style={{ marginTop: '12px' }}>
-              <input type="text" value={chatSearch} onChange={(e) => setChatSearch(e.target.value)} placeholder="Search conversations..." style={{ width: '100%', padding: '10px 14px', borderRadius: '20px', border: 'none', fontSize: '13px', outline: 'none', backgroundColor: 'rgba(255,255,255,0.95)' }} autoComplete="off" />
+            <div style={{ marginTop: '12px', position: 'relative' }}>
+              <input ref={chatListSearchRef} type="text" value={chatSearch} onChange={(e) => setChatSearch(e.target.value)} placeholder="Search conversations..." style={{ width: '100%', padding: '10px 14px 10px 36px', borderRadius: '12px', border: 'none', fontSize: '13px', fontWeight: '500', outline: 'none', backgroundColor: 'rgba(255,255,255,0.95)', boxSizing: 'border-box' }} autoComplete="off" />
+              <span style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)' }}>{Icons.search('#94a3b8', 14)}</span>
+            </div>
+          )}
+
+          {/* Edit mode banner */}
+          {editingFlockList && (
+            <div style={{ marginTop: '10px', padding: '8px 12px', backgroundColor: 'rgba(255,255,255,0.15)', borderRadius: '10px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <span style={{ fontSize: '11px', color: 'rgba(255,255,255,0.9)', fontWeight: '600', flex: 1 }}>Tap arrows to reorder, pin to keep on top</span>
+              <button onClick={() => setEditingFlockList(false)} style={{ background: 'none', border: 'none', color: colors.cream, cursor: 'pointer', fontSize: '12px', fontWeight: '700', padding: '2px 8px' }}>Done</button>
             </div>
           )}
         </div>
-        <div style={{ flex: 1, padding: '12px', overflowY: 'auto' }}>
-          {/* Direct Messages */}
-          {allChats.filter(c => c.type === 'dm').map((dm) => {
-            const lastMsg = dm.messages[dm.messages.length - 1];
-            return (
-              <button key={dm.id} onClick={() => { setSelectedDmId(dm.id); setCurrentScreen('dmDetail'); setDirectMessages(prev => prev.map(d => d.id === dm.id ? { ...d, unread: 0 } : d)); }} style={{ width: '100%', textAlign: 'left', ...styles.card, border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '12px', position: 'relative' }}>
-                <div style={{ position: 'relative' }}>
-                  <div style={{ width: '48px', height: '48px', borderRadius: '24px', background: 'linear-gradient(135deg, #4F46E5, #7C3AED)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '22px' }}>
-                    {dm.avatar}
-                  </div>
-                  {dm.isOnline && <div style={{ position: 'absolute', bottom: '-2px', right: '-2px', width: '14px', height: '14px', borderRadius: '7px', backgroundColor: '#22C55E', border: '2px solid white' }} />}
-                </div>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <h3 style={{ fontSize: '14px', fontWeight: dm.unread ? '800' : '600', color: colors.navy, margin: 0 }}>{dm.friendName}</h3>
-                    <span style={{ fontSize: '10px', color: dm.isOnline ? '#22C55E' : '#9ca3af', fontWeight: dm.unread ? '600' : '400' }}>{dm.isOnline ? 'Online' : dm.lastActive}</span>
-                  </div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                    {lastMsg?.sender === 'You' && <span style={{ flexShrink: 0 }}>{Icons.checkDouble('#22C55E', 12)}</span>}
-                    <p style={{ fontSize: '12px', color: dm.unread ? colors.navy : '#6b7280', fontWeight: dm.unread ? '500' : '400', margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{lastMsg?.sender === 'You' ? 'You: ' : ''}{lastMsg?.text}</p>
-                  </div>
-                </div>
-                {dm.unread > 0 && (
-                  <div style={{ width: '22px', height: '22px', borderRadius: '11px', background: 'linear-gradient(135deg, #EF4444, #DC2626)', color: 'white', fontSize: '11px', fontWeight: '700', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                    {dm.unread}
-                  </div>
-                )}
-              </button>
-            );
-          })}
 
-          {/* Group Flocks */}
-          {allChats.filter(c => c.type === 'flock').map((f, idx) => {
-            const unreadCount = idx === 0 ? 3 : idx === 1 ? 1 : 0;
-            const isOnline = idx < 2;
-            const lastMsg = f.messages[f.messages.length - 1];
-            return (
-              <button key={f.id} onClick={() => { setSelectedFlockId(f.id); setCurrentScreen('chatDetail'); simulateTyping(); }} style={{ width: '100%', textAlign: 'left', ...styles.card, border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '12px', position: 'relative' }}>
-                <div style={{ position: 'relative' }}>
-                  <div style={{ width: '48px', height: '48px', borderRadius: '14px', background: `linear-gradient(135deg, ${colors.navy}, ${colors.navyMid})`, display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 2px 8px rgba(13,40,71,0.2)' }}>
-                    {Icons.users('white', 22)}
-                  </div>
-                  {isOnline && <div style={{ position: 'absolute', bottom: '-2px', right: '-2px', width: '14px', height: '14px', borderRadius: '7px', backgroundColor: '#22C55E', border: '2px solid white' }} />}
-                </div>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                      <h3 style={{ fontSize: '14px', fontWeight: unreadCount ? '800' : '600', color: colors.navy, margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{f.name}</h3>
-                      <span style={{ fontSize: '9px', color: '#9ca3af', backgroundColor: '#f3f4f6', padding: '2px 6px', borderRadius: '8px' }}>Group</span>
+        <div style={{ flex: 1, overflowY: 'auto', padding: '8px 12px 12px' }}>
+          {/* Direct Messages section */}
+          {filteredDms.length > 0 && (
+            <>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '12px 4px 8px' }}>
+                <span style={{ fontSize: '11px', fontWeight: '700', color: '#9ca3af', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Direct Messages</span>
+                <div style={{ flex: 1, height: '1px', backgroundColor: '#e5e7eb' }} />
+              </div>
+              {filteredDms.map((dm) => {
+                const lastMsg = dm.messages[dm.messages.length - 1];
+                return (
+                  <button key={`dm-${dm.id}`} onClick={() => { setSelectedDmId(dm.id); setCurrentScreen('dmDetail'); setDirectMessages(prev => prev.map(d => d.id === dm.id ? { ...d, unread: 0 } : d)); }} style={{ width: '100%', textAlign: 'left', backgroundColor: 'white', borderRadius: '16px', padding: '12px 14px', marginBottom: '6px', border: dm.unread ? `1.5px solid ${colors.navy}15` : '1px solid #f0f0f0', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '12px', transition: 'all 0.2s', boxShadow: dm.unread ? '0 2px 12px rgba(13,40,71,0.08)' : '0 1px 4px rgba(0,0,0,0.03)' }}>
+                    <div style={{ position: 'relative', flexShrink: 0 }}>
+                      <div style={{ width: '46px', height: '46px', borderRadius: '23px', background: 'linear-gradient(135deg, #4F46E5, #7C3AED)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '20px' }}>
+                        {dm.avatar}
+                      </div>
+                      {dm.isOnline && <div style={{ position: 'absolute', bottom: '0px', right: '0px', width: '12px', height: '12px', borderRadius: '6px', backgroundColor: '#22C55E', border: '2px solid white' }} />}
                     </div>
-                    <span style={{ fontSize: '10px', color: unreadCount ? colors.navy : '#9ca3af', fontWeight: unreadCount ? '600' : '400' }}>{getRelativeTime(lastMsg?.time)}</span>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '3px' }}>
+                        <h3 style={{ fontSize: '14px', fontWeight: dm.unread ? '800' : '600', color: colors.navy, margin: 0 }}>{dm.friendName}</h3>
+                        <span style={{ fontSize: '10px', color: dm.isOnline ? '#22C55E' : '#b0b0b0', fontWeight: '500' }}>{dm.isOnline ? 'Online' : dm.lastActive}</span>
+                      </div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                        {lastMsg?.sender === 'You' && <span style={{ flexShrink: 0 }}>{Icons.checkDouble('#22C55E', 11)}</span>}
+                        <p style={{ fontSize: '12px', color: dm.unread ? colors.navy : '#8b8b8b', fontWeight: dm.unread ? '500' : '400', margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{lastMsg?.sender === 'You' ? 'You: ' : ''}{lastMsg?.text}</p>
+                      </div>
+                    </div>
+                    {dm.unread > 0 && (
+                      <div style={{ width: '20px', height: '20px', borderRadius: '10px', background: 'linear-gradient(135deg, #EF4444, #DC2626)', color: 'white', fontSize: '10px', fontWeight: '700', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                        {dm.unread}
+                      </div>
+                    )}
+                  </button>
+                );
+              })}
+            </>
+          )}
+
+          {/* Flocks section */}
+          {filteredFlocks.length > 0 && (
+            <>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '12px 4px 8px' }}>
+                <span style={{ fontSize: '11px', fontWeight: '700', color: '#9ca3af', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Flocks</span>
+                <div style={{ flex: 1, height: '1px', backgroundColor: '#e5e7eb' }} />
+                <span style={{ fontSize: '10px', color: '#b0b0b0', fontWeight: '500' }}>{filteredFlocks.length}</span>
+              </div>
+              {filteredFlocks.map((f, idx) => {
+                const isPinned = pinnedFlockIds.includes(f.id);
+                const lastMsg = f.messages[f.messages.length - 1];
+                const hasUnread = f.messages.some(m => m.sender !== 'You' && !m.read);
+                const statusColor = f.status === 'confirmed' ? '#22C55E' : f.status === 'voting' ? '#F59E0B' : colors.teal;
+                const statusLabel = f.status === 'confirmed' ? 'Confirmed' : f.status === 'voting' ? 'Voting' : 'Planning';
+
+                return (
+                  <div key={`flock-${f.id}`} style={{ display: 'flex', alignItems: 'stretch', gap: '0', marginBottom: '6px' }}>
+                    {/* Edit controls */}
+                    {editingFlockList && (
+                      <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'center', gap: '2px', paddingRight: '6px', flexShrink: 0 }}>
+                        <button onClick={(e) => { e.stopPropagation(); moveFlockUp(f.id); }} style={{ width: '26px', height: '26px', borderRadius: '8px', border: 'none', backgroundColor: idx === 0 ? '#f3f4f6' : 'white', cursor: idx === 0 ? 'default' : 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 1px 3px rgba(0,0,0,0.08)', opacity: idx === 0 ? 0.4 : 1 }}>
+                          {Icons.chevronUp(colors.navy, 14)}
+                        </button>
+                        <button onClick={(e) => { e.stopPropagation(); moveFlockDown(f.id); }} style={{ width: '26px', height: '26px', borderRadius: '8px', border: 'none', backgroundColor: idx === filteredFlocks.length - 1 ? '#f3f4f6' : 'white', cursor: idx === filteredFlocks.length - 1 ? 'default' : 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 1px 3px rgba(0,0,0,0.08)', opacity: idx === filteredFlocks.length - 1 ? 0.4 : 1 }}>
+                          {Icons.chevronDown(colors.navy, 14)}
+                        </button>
+                      </div>
+                    )}
+
+                    {/* Flock card */}
+                    <button onClick={() => { if (editingFlockList) return; setSelectedFlockId(f.id); setCurrentScreen('chatDetail'); simulateTyping(); }} style={{ flex: 1, textAlign: 'left', backgroundColor: isPinned ? `${colors.navy}06` : 'white', borderRadius: '16px', padding: '12px 14px', border: isPinned ? `1.5px solid ${colors.navy}18` : '1px solid #f0f0f0', cursor: editingFlockList ? 'default' : 'pointer', display: 'flex', alignItems: 'center', gap: '12px', transition: 'all 0.2s', boxShadow: isPinned ? '0 2px 12px rgba(13,40,71,0.06)' : '0 1px 4px rgba(0,0,0,0.03)', position: 'relative', overflow: 'hidden' }}>
+                      {/* Avatar */}
+                      <div style={{ position: 'relative', flexShrink: 0 }}>
+                        <div style={{ width: '46px', height: '46px', borderRadius: '14px', background: `linear-gradient(135deg, ${colors.navy}, ${colors.navyMid})`, display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 2px 8px rgba(13,40,71,0.2)' }}>
+                          {Icons.users('white', 20)}
+                        </div>
+                        {/* Status dot */}
+                        <div style={{ position: 'absolute', bottom: '-1px', right: '-1px', width: '14px', height: '14px', borderRadius: '7px', backgroundColor: statusColor, border: '2px solid white', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                          {f.status === 'confirmed' && <span style={{ fontSize: '7px', color: 'white', fontWeight: '900' }}>&#10003;</span>}
+                        </div>
+                      </div>
+
+                      {/* Content */}
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '2px' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '5px', minWidth: 0 }}>
+                            {isPinned && <span style={{ flexShrink: 0 }}>{Icons.pinFilled(colors.navy, 11)}</span>}
+                            <h3 style={{ fontSize: '14px', fontWeight: hasUnread ? '800' : '600', color: colors.navy, margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{f.name}</h3>
+                          </div>
+                          <span style={{ fontSize: '10px', color: hasUnread ? colors.navy : '#b0b0b0', fontWeight: hasUnread ? '600' : '400', flexShrink: 0, marginLeft: '8px' }}>{getRelativeTime(lastMsg?.time)}</span>
+                        </div>
+
+                        {/* Venue + status row */}
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '3px' }}>
+                          <span style={{ fontSize: '10px', fontWeight: '600', color: statusColor, backgroundColor: `${statusColor}15`, padding: '1px 6px', borderRadius: '6px' }}>{statusLabel}</span>
+                          {f.venue && f.venue !== 'TBD' && (
+                            <span style={{ fontSize: '10px', color: '#8b8b8b', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{f.venue}</span>
+                          )}
+                          <span style={{ fontSize: '10px', color: '#b0b0b0', marginLeft: 'auto', flexShrink: 0 }}>{f.memberCount || 0} {Icons.users('#b0b0b0', 10)}</span>
+                        </div>
+
+                        {/* Last message */}
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                          {lastMsg?.sender === 'You' && <span style={{ flexShrink: 0 }}>{Icons.checkDouble('#22C55E', 11)}</span>}
+                          <p style={{ fontSize: '12px', color: hasUnread ? colors.navy : '#8b8b8b', fontWeight: hasUnread ? '500' : '400', margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{lastMsg ? `${lastMsg.sender === 'You' ? 'You' : lastMsg.sender}: ${lastMsg.text}` : 'No messages yet'}</p>
+                        </div>
+                      </div>
+
+                      {/* Pin button (edit mode) or unread badge */}
+                      {editingFlockList ? (
+                        <button onClick={(e) => { e.stopPropagation(); togglePin(f.id); }} style={{ width: '32px', height: '32px', borderRadius: '10px', border: 'none', backgroundColor: isPinned ? `${colors.navy}12` : '#f5f5f5', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, transition: 'all 0.2s' }}>
+                          {isPinned ? Icons.pinFilled(colors.navy, 16) : Icons.pin('#9ca3af', 16)}
+                        </button>
+                      ) : hasUnread && (
+                        <div style={{ width: '10px', height: '10px', borderRadius: '5px', backgroundColor: colors.navy, flexShrink: 0 }} />
+                      )}
+                    </button>
                   </div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                    {lastMsg?.sender === 'You' && <span style={{ flexShrink: 0 }}>{Icons.checkDouble('#22C55E', 12)}</span>}
-                    <p style={{ fontSize: '12px', color: unreadCount ? colors.navy : '#6b7280', fontWeight: unreadCount ? '500' : '400', margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{lastMsg ? `${lastMsg.sender === 'You' ? 'You' : lastMsg.sender}: ${lastMsg.text}` : 'No messages yet'}</p>
-                  </div>
-                </div>
-                {unreadCount > 0 && (
-                  <div style={{ width: '22px', height: '22px', borderRadius: '11px', background: `linear-gradient(135deg, ${colors.navy}, ${colors.navyMid})`, color: 'white', fontSize: '11px', fontWeight: '700', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                    {unreadCount}
-                  </div>
-                )}
-              </button>
-            );
-          })}
+                );
+              })}
+            </>
+          )}
+
+          {/* Empty state */}
+          {filteredDms.length === 0 && filteredFlocks.length === 0 && (
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '60px 20px', opacity: 0.6 }}>
+              {Icons.messageSquare('#9ca3af', 40)}
+              <p style={{ fontSize: '14px', color: '#9ca3af', fontWeight: '600', margin: '12px 0 4px' }}>{chatSearch ? 'No results found' : 'No conversations yet'}</p>
+              <p style={{ fontSize: '12px', color: '#b0b0b0', margin: 0 }}>{chatSearch ? 'Try a different search' : 'Create a flock or send a DM to get started'}</p>
+            </div>
+          )}
         </div>
         <SafetyButton />
         <BottomNav />
@@ -3804,12 +3946,12 @@ const FlockAppInner = ({ authUser, onLogout }) => {
     return (
       <div key="chat-detail-screen-container" style={{ display: 'flex', flexDirection: 'column', height: '100%', backgroundColor: 'white' }}>
         <div style={{ padding: '12px', display: 'flex', alignItems: 'center', gap: '8px', background: `linear-gradient(135deg, ${colors.navy}, ${colors.navyMid})`, flexShrink: 0, boxShadow: '0 2px 10px rgba(0,0,0,0.1)' }}>
-          <button onClick={() => { setCurrentScreen('main'); setChatInput(''); setReplyingTo(null); setShowFlockMenu(false); setShowLeaveConfirm(false); }} style={{ background: 'none', border: 'none', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'transform 0.2s ease' }}>{Icons.arrowLeft('white', 20)}</button>
+          <button onClick={() => { setCurrentScreen('main'); setChatInput(''); setReplyingTo(null); setShowFlockMenu(false); setShowLeaveConfirm(false); setShowChatSearch(false); setChatSearch(''); setShowVotePanel(false); }} style={{ background: 'none', border: 'none', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'transform 0.2s ease' }}>{Icons.arrowLeft('white', 20)}</button>
           <div style={{ flex: 1 }}>
             <h2 style={{ fontWeight: 'bold', color: 'white', fontSize: '14px', margin: 0 }}>{flock.name}</h2>
             <p style={{ fontSize: '10px', color: 'rgba(255,255,255,0.6)', margin: 0 }}>{flock.members?.length || flock.memberCount || 0} members • {isTyping ? <span style={{ color: '#86EFAC', fontWeight: '500' }}>{typingUser} is typing...</span> : 'online'}</p>
           </div>
-          <button onClick={() => setShowVenueShareModal(true)} style={{ width: '32px', height: '32px', borderRadius: '16px', border: 'none', backgroundColor: 'rgba(255,255,255,0.2)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'all 0.2s ease' }}>{Icons.mapPin('white', 16)}</button>
+          <button onClick={() => setShowVotePanel(true)} style={{ height: '32px', borderRadius: '16px', border: 'none', backgroundColor: flock.status === 'voting' ? colors.teal : 'rgba(255,255,255,0.2)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px', padding: '0 10px', transition: 'all 0.2s ease', fontSize: '11px', fontWeight: '700' }}>{Icons.vote('white', 14)} Vote</button>
           <button onClick={() => setShowChatSearch(!showChatSearch)} style={{ width: '32px', height: '32px', borderRadius: '16px', border: 'none', backgroundColor: 'rgba(255,255,255,0.2)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'all 0.2s ease' }}>{Icons.search('white', 16)}</button>
           <button onClick={() => setShowChatPool(true)} style={{ width: '32px', height: '32px', borderRadius: '16px', border: 'none', backgroundColor: colors.cream, color: colors.navy, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'all 0.2s ease' }}>{Icons.dollar(colors.navy, 16)}</button>
           <div style={{ position: 'relative' }}>
@@ -3827,6 +3969,33 @@ const FlockAppInner = ({ authUser, onLogout }) => {
         {/* Dismiss menu on outside tap */}
         {showFlockMenu && (
           <div onClick={() => setShowFlockMenu(false)} style={{ position: 'absolute', inset: 0, zIndex: 55 }} />
+        )}
+
+        {/* Chat message search bar */}
+        {showChatSearch && (
+          <div style={{ padding: '8px 12px', backgroundColor: 'white', borderBottom: '1px solid #e5e7eb', flexShrink: 0, animation: 'fadeIn 0.2s ease-out' }}>
+            <div style={{ position: 'relative' }}>
+              <input
+                ref={chatSearchRef}
+                type="text"
+                value={chatSearch}
+                onChange={(e) => setChatSearch(e.target.value)}
+                placeholder="Search messages in this flock..."
+                style={{ width: '100%', padding: '10px 36px 10px 36px', borderRadius: '20px', border: `2px solid ${chatSearch ? colors.navy : '#e2e8f0'}`, fontSize: '13px', outline: 'none', boxSizing: 'border-box', backgroundColor: '#f8fafc', fontWeight: '500', transition: 'border-color 0.2s' }}
+                autoComplete="off"
+              />
+              <span style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)' }}>{Icons.search(chatSearch ? colors.navy : '#94a3b8', 14)}</span>
+              <button onClick={() => { setShowChatSearch(false); setChatSearch(''); }} style={{ position: 'absolute', right: '8px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', padding: '4px' }}>{Icons.x('#94a3b8', 16)}</button>
+            </div>
+            {chatSearch.trim() && (
+              <p style={{ fontSize: '10px', color: '#6b7280', margin: '6px 0 0 4px', fontWeight: '500' }}>
+                {flock.messages.filter(m => {
+                  const q = chatSearch.toLowerCase();
+                  return (m.text || '').toLowerCase().includes(q) || (m.sender || '').toLowerCase().includes(q);
+                }).length} messages found
+              </p>
+            )}
+          </div>
         )}
 
         {/* Pinned Venue Banner — shows which venue this flock is at */}
@@ -3896,7 +4065,21 @@ const FlockAppInner = ({ authUser, onLogout }) => {
         )}
 
         <div onScroll={() => document.activeElement?.blur()} style={{ flex: 1, padding: '16px', overflowY: 'auto', background: `linear-gradient(180deg, ${colors.cream} 0%, rgba(245,240,230,0.8) 100%)`, scrollBehavior: 'smooth' }}>
-          {flock.messages.map((m, idx) => (
+          {showChatSearch && chatSearch.trim() && flock.messages.filter(m => {
+            const q = chatSearch.toLowerCase();
+            return (m.text || '').toLowerCase().includes(q) || (m.sender || '').toLowerCase().includes(q);
+          }).length === 0 && (
+            <div style={{ textAlign: 'center', padding: '40px 20px' }}>
+              <p style={{ fontSize: '14px', color: '#9ca3af', fontWeight: '500' }}>No messages match "{chatSearch}"</p>
+            </div>
+          )}
+          {(showChatSearch && chatSearch.trim()
+            ? flock.messages.filter(m => {
+                const q = chatSearch.toLowerCase();
+                return (m.text || '').toLowerCase().includes(q) || (m.sender || '').toLowerCase().includes(q);
+              })
+            : flock.messages
+          ).map((m, idx) => (
             <div
               key={m.id}
               onTouchStart={(e) => handleTouchStart(m.id, e)}
@@ -4008,7 +4191,11 @@ const FlockAppInner = ({ authUser, onLogout }) => {
                       transition: 'transform 0.15s ease, box-shadow 0.15s ease'
                     }}
                   >
-                    <p style={{ fontSize: '14px', lineHeight: '1.45', margin: 0, fontWeight: '500' }}>{m.text}</p>
+                    <p style={{ fontSize: '14px', lineHeight: '1.45', margin: 0, fontWeight: '500' }}>{showChatSearch && chatSearch.trim() && m.text && m.text.toLowerCase().includes(chatSearch.toLowerCase()) ? (() => {
+                      const q = chatSearch.toLowerCase();
+                      const i = m.text.toLowerCase().indexOf(q);
+                      return <>{m.text.slice(0, i)}<mark style={{ backgroundColor: '#fde047', color: 'inherit', borderRadius: '2px', padding: '0 1px' }}>{m.text.slice(i, i + chatSearch.length)}</mark>{m.text.slice(i + chatSearch.length)}</>;
+                    })() : m.text}</p>
                     {m.sender === 'You' && (
                       <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '4px', gap: '2px', alignItems: 'center' }}>
                         {Icons.checkDouble('#86EFAC', 12)}
@@ -4172,6 +4359,160 @@ const FlockAppInner = ({ authUser, onLogout }) => {
             </div>
           </div>
         )}
+
+        {/* Vote Panel */}
+        {showVotePanel && (() => {
+          const myVote = flock.votes.find(v => v.voters.includes('You'))?.venue || null;
+          const totalVoters = new Set(flock.votes.flatMap(v => v.voters)).size;
+          const isCreator = flock.creatorId && String(flock.creatorId) === String(authUser?.id);
+
+          const handleQuickVote = (venueName, venueType) => {
+            const existingVote = flock.votes.find(v => v.venue === venueName);
+            if (existingVote) {
+              if (existingVote.voters.includes('You')) return; // already voted
+              const newVotes = flock.votes.map(v => ({
+                ...v,
+                voters: v.venue === venueName
+                  ? [...v.voters, 'You']
+                  : v.voters.filter(x => x !== 'You')
+              }));
+              updateFlockVotes(selectedFlockId, newVotes);
+            } else {
+              const newVotes = [...flock.votes.map(v => ({ ...v, voters: v.voters.filter(x => x !== 'You') })), { venue: venueName, type: venueType || 'Venue', voters: ['You'] }];
+              updateFlockVotes(selectedFlockId, newVotes);
+            }
+            showToast(`Voted for ${venueName}!`);
+            addXP(10);
+          };
+
+          const handleUnvote = () => {
+            const newVotes = flock.votes.map(v => ({ ...v, voters: v.voters.filter(x => x !== 'You') })).filter(v => v.voters.length > 0);
+            updateFlockVotes(selectedFlockId, newVotes);
+          };
+
+          const handleConfirmVenue = (venueName) => {
+            const venueObj = allVenues.find(v => v.name === venueName);
+            updateFlockVenue(selectedFlockId, {
+              name: venueName,
+              addr: venueObj?.addr || venueObj?.formatted_address || '',
+              place_id: venueObj?.place_id || null,
+              lat: venueObj?.location?.latitude || null,
+              lng: venueObj?.location?.longitude || null,
+              photo_url: venueObj?.photo_url || null,
+              rating: venueObj?.stars || venueObj?.rating || null,
+            });
+            setShowVotePanel(false);
+            showToast(`${venueName} confirmed!`);
+          };
+
+          // Ensure assigned venue is in votes list
+          const assignedVenue = flock.venue && flock.venue !== 'TBD' ? flock.venue : null;
+          const votesWithAssigned = assignedVenue && !flock.votes.find(v => v.venue === assignedVenue)
+            ? [{ venue: assignedVenue, type: 'Assigned', voters: [] }, ...flock.votes]
+            : flock.votes;
+
+          // Sort: assigned venue always first, then by vote count
+          const sortedVotes = [...votesWithAssigned].sort((a, b) => {
+            if (a.venue === assignedVenue && b.venue !== assignedVenue) return -1;
+            if (b.venue === assignedVenue && a.venue !== assignedVenue) return 1;
+            return b.voters.length - a.voters.length;
+          });
+
+          // Venues from explore that aren't already vote options
+          const suggestedVenues = allVenues.filter(v => !votesWithAssigned.find(fv => fv.venue === v.name)).slice(0, 5);
+
+          return (
+            <div className="modal-backdrop" style={{ position: 'absolute', inset: 0, backgroundColor: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'flex-end', zIndex: 50 }}>
+              <div className="modal-content" style={{ backgroundColor: 'white', borderRadius: '20px 20px 0 0', padding: '20px', width: '100%', maxHeight: '80%', overflowY: 'auto' }}>
+                {/* Header */}
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+                  <div>
+                    <h2 style={{ fontSize: '18px', fontWeight: '900', color: colors.navy, margin: 0, display: 'flex', alignItems: 'center', gap: '8px' }}>{Icons.vote(colors.navy, 20)} Vote for a Venue</h2>
+                    <p style={{ fontSize: '11px', color: '#9ca3af', margin: '2px 0 0' }}>{totalVoters} vote{totalVoters !== 1 ? 's' : ''} cast{myVote ? ` • You voted for ${myVote}` : ''}</p>
+                  </div>
+                  <button onClick={() => setShowVotePanel(false)} style={{ width: '32px', height: '32px', borderRadius: '16px', backgroundColor: '#f3f4f6', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.x('#6b7280', 18)}</button>
+                </div>
+
+                {/* Current votes */}
+                {sortedVotes.length > 0 ? (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '16px' }}>
+                    {sortedVotes.map((v, idx) => {
+                      const isAssigned = v.venue === assignedVenue;
+                      const isMyVote = v.voters.includes('You');
+                      const votePercent = totalVoters > 0 ? Math.round((v.voters.length / totalVoters) * 100) : 0;
+                      const isLeading = !isAssigned && idx === 0 && v.voters.length > 0;
+                      const iconBg = isAssigned
+                        ? `linear-gradient(135deg, ${colors.navy}, ${colors.navyMid})`
+                        : isLeading ? `linear-gradient(135deg, ${colors.teal}, #0d9488)` : `linear-gradient(135deg, ${colors.navy}15, ${colors.navy}25)`;
+                      return (
+                        <button key={v.venue} onClick={() => isMyVote ? handleUnvote() : handleQuickVote(v.venue, v.type)} style={{ width: '100%', textAlign: 'left', padding: '12px 14px', borderRadius: '14px', border: isAssigned ? `2px solid ${colors.navy}` : isMyVote ? `2px solid ${colors.navy}` : '1.5px solid #e5e7eb', backgroundColor: isAssigned ? `${colors.navy}05` : isMyVote ? `${colors.navy}06` : 'white', cursor: 'pointer', position: 'relative', overflow: 'hidden', transition: 'all 0.2s' }}>
+                          {/* Progress bar background */}
+                          <div style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: `${votePercent}%`, backgroundColor: isMyVote ? `${colors.navy}10` : '#f8fafc', transition: 'width 0.4s ease', borderRadius: '14px' }} />
+                          <div style={{ position: 'relative', display: 'flex', alignItems: 'center', gap: '10px' }}>
+                            <div style={{ width: '36px', height: '36px', borderRadius: '10px', background: iconBg, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                              {isAssigned ? Icons.mapPin('white', 16) : isLeading ? Icons.flame('#fff', 18) : Icons.mapPin(colors.navy, 16)}
+                            </div>
+                            <div style={{ flex: 1, minWidth: 0 }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                <h4 style={{ fontSize: '14px', fontWeight: '700', color: colors.navy, margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{v.venue}</h4>
+                                {isAssigned && <span style={{ fontSize: '9px', fontWeight: '700', color: 'white', backgroundColor: colors.navy, padding: '1px 6px', borderRadius: '6px', flexShrink: 0 }}>Assigned</span>}
+                                {isLeading && <span style={{ fontSize: '9px', fontWeight: '700', color: colors.teal, backgroundColor: `${colors.teal}15`, padding: '1px 6px', borderRadius: '6px', flexShrink: 0 }}>Leading</span>}
+                              </div>
+                              <p style={{ fontSize: '11px', color: '#9ca3af', margin: '1px 0 0' }}>{v.voters.length > 0 ? v.voters.join(', ') : isAssigned ? 'Current flock venue — tap to vote' : 'No votes yet'}</p>
+                            </div>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0 }}>
+                              {v.voters.length > 0 && <span style={{ fontSize: '16px', fontWeight: '900', color: isMyVote ? colors.navy : '#9ca3af' }}>{v.voters.length}</span>}
+                              {isMyVote && <div style={{ width: '20px', height: '20px', borderRadius: '10px', backgroundColor: colors.navy, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.check('white', 12)}</div>}
+                              {isCreator && !isAssigned && (
+                                <button onClick={(e) => { e.stopPropagation(); handleConfirmVenue(v.venue); }} style={{ padding: '4px 8px', borderRadius: '8px', border: 'none', background: `linear-gradient(135deg, ${colors.teal}, #0d9488)`, color: 'white', fontSize: '10px', fontWeight: '700', cursor: 'pointer' }}>Confirm</button>
+                              )}
+                            </div>
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <div style={{ padding: '20px', textAlign: 'center', backgroundColor: '#f8fafc', borderRadius: '14px', marginBottom: '16px' }}>
+                    <p style={{ fontSize: '13px', color: '#9ca3af', margin: 0, fontWeight: '500' }}>No votes yet. Be the first to suggest a venue!</p>
+                  </div>
+                )}
+
+                {/* Add from nearby venues */}
+                {suggestedVenues.length > 0 && (
+                  <>
+                    <p style={{ fontSize: '12px', fontWeight: '700', color: '#9ca3af', marginBottom: '10px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Nearby venues</p>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                      {suggestedVenues.map(venue => (
+                        <button key={venue.id || venue.name} onClick={() => handleQuickVote(venue.name, venue.type || venue.category || 'Venue')} style={{ width: '100%', textAlign: 'left', padding: '10px 12px', borderRadius: '12px', border: '1px solid #e5e7eb', backgroundColor: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '10px', transition: 'all 0.2s' }}>
+                          {venue.photo_url ? (
+                            <img src={venue.photo_url} alt="" style={{ width: '36px', height: '36px', borderRadius: '8px', objectFit: 'cover', flexShrink: 0 }} />
+                          ) : (
+                            <div style={{ width: '36px', height: '36px', borderRadius: '8px', background: `linear-gradient(135deg, ${getCategoryColor(venue.category)}, ${getCategoryColor(venue.category)}cc)`, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                              {Icons.mapPin('white', 14)}
+                            </div>
+                          )}
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <p style={{ fontSize: '13px', fontWeight: '600', color: colors.navy, margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{venue.name}</p>
+                            <p style={{ fontSize: '10px', color: '#9ca3af', margin: '1px 0 0' }}>{venue.type || venue.category}{venue.stars ? ` • ${venue.stars}★` : ''}{venue.price ? ` • ${venue.price}` : ''}</p>
+                          </div>
+                          <div style={{ padding: '6px 12px', borderRadius: '10px', backgroundColor: `${colors.navy}08`, color: colors.navy, fontSize: '11px', fontWeight: '700', flexShrink: 0 }}>
+                            {Icons.vote(colors.navy, 12)} Vote
+                          </div>
+                        </button>
+                      ))}
+                    </div>
+                  </>
+                )}
+
+                {/* Browse more button */}
+                <button onClick={() => { setShowVotePanel(false); setShowVenueShareModal(true); }} style={{ width: '100%', padding: '12px', borderRadius: '12px', border: `2px dashed ${colors.creamDark}`, backgroundColor: 'transparent', color: '#9ca3af', fontSize: '13px', fontWeight: '600', cursor: 'pointer', marginTop: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}>
+                  {Icons.plus('#9ca3af', 14)} Share a venue to chat
+                </button>
+              </div>
+            </div>
+          );
+        })()}
 
         {/* Venue Share Modal */}
         {showVenueShareModal && (
@@ -6468,6 +6809,186 @@ const FlockAppInner = ({ authUser, onLogout }) => {
             {ExploreScreen()}
           </div>
           {renderScreen()}
+
+          {/* Full-screen venue search results overlay */}
+          {showSearchResults && (() => {
+            const calcDist = (vLoc) => {
+              if (!userLocation || !vLoc) return null;
+              const dLat = (vLoc.latitude - userLocation.lat) * Math.PI / 180;
+              const dLng = (vLoc.longitude - userLocation.lng) * Math.PI / 180;
+              const a = Math.sin(dLat/2)**2 + Math.cos(userLocation.lat*Math.PI/180)*Math.cos(vLoc.latitude*Math.PI/180)*Math.sin(dLng/2)**2;
+              return 6371 * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+            };
+
+            const sorted = [...allVenues].sort((a, b) => {
+              if (searchResultsSort === 'rating') return (b.stars || 0) - (a.stars || 0);
+              if (searchResultsSort === 'distance') {
+                const dA = calcDist(a.location);
+                const dB = calcDist(b.location);
+                if (dA == null && dB == null) return 0;
+                if (dA == null) return 1;
+                if (dB == null) return -1;
+                return dA - dB;
+              }
+              // 'recommended' - AI interest matching (coming soon), using weighted score for now
+              const scoreA = (a.stars || 0) * 20 - (a.crowd || 50) + (a.trending ? 30 : 0);
+              const scoreB = (b.stars || 0) * 20 - (b.crowd || 50) + (b.trending ? 30 : 0);
+              return scoreB - scoreA;
+            });
+
+            return (
+              <div style={{ position: 'absolute', inset: 0, zIndex: 100, display: 'flex', flexDirection: 'column', backgroundColor: '#f0ede6' }}>
+                {/* Search bar header */}
+                <div style={{ backgroundColor: 'white', flexShrink: 0, boxShadow: '0 2px 12px rgba(0,0,0,0.06)' }}>
+                  <div style={{ padding: '10px 12px', display: 'flex', alignItems: 'center', gap: '10px' }}>
+                    <div style={{ flex: 1, position: 'relative' }}>
+                      <input
+                        ref={searchResultsInputRef}
+                        type="text"
+                        value={venueQuery}
+                        onChange={(e) => handleVenueQueryChange(e.target.value)}
+                        placeholder="Search restaurants, bars, venues..."
+                        style={{ width: '100%', padding: '12px 40px 12px 38px', borderRadius: '14px', backgroundColor: '#f8fafc', border: `2px solid ${venueQuery ? colors.navy : '#e2e8f0'}`, fontSize: '13px', outline: 'none', boxSizing: 'border-box', transition: 'all 0.2s ease', fontWeight: '500' }}
+                        autoComplete="off"
+                        autoFocus
+                      />
+                      <span style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)' }}>{Icons.search(venueQuery ? colors.navy : '#94a3b8', 16)}</span>
+                      {venueQuery && (
+                        <button onClick={() => { setShowSearchResults(false); setVenueQuery(''); setVenueResults([]); setShowSearchDropdown(false); }} style={{ position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', padding: '2px' }}>{Icons.x('#94a3b8', 16)}</button>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Back to map + count + sort */}
+                  <div style={{ padding: '0 12px 10px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <button onClick={() => setShowSearchResults(false)} style={{ display: 'flex', alignItems: 'center', gap: '4px', background: 'none', border: 'none', cursor: 'pointer', padding: '4px 0', flexShrink: 0 }}>
+                      {Icons.arrowLeft(colors.navy, 14)}
+                      <span style={{ fontSize: '12px', fontWeight: '600', color: colors.navy }}>Map</span>
+                    </button>
+                    <div style={{ width: '1px', height: '16px', backgroundColor: '#e5e7eb', flexShrink: 0 }} />
+                    <span style={{ fontSize: '11px', fontWeight: '600', color: '#9ca3af', flexShrink: 0 }}>{sorted.length} result{sorted.length !== 1 ? 's' : ''}</span>
+                    <div style={{ flex: 1 }} />
+                    <div style={{ display: 'flex', gap: '4px' }}>
+                      {[
+                        { id: 'rating', label: 'Best Rated' },
+                        { id: 'recommended', label: 'Recommended' },
+                        { id: 'distance', label: 'Closest' },
+                      ].map(s => (
+                        <button key={s.id} onClick={() => setSearchResultsSort(s.id)} style={{ padding: '5px 10px', borderRadius: '8px', border: 'none', backgroundColor: searchResultsSort === s.id ? colors.navy : '#f3f4f6', color: searchResultsSort === s.id ? 'white' : '#6b7280', fontSize: '10px', fontWeight: '700', cursor: 'pointer', transition: 'all 0.15s' }}>
+                          {s.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Loading spinner */}
+                {venueSearching && (
+                  <div style={{ padding: '24px 0', textAlign: 'center', flexShrink: 0 }}>
+                    <div style={{ display: 'inline-block', width: '20px', height: '20px', border: `3px solid #e5e7eb`, borderTopColor: colors.navy, borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
+                    <p style={{ fontSize: '11px', color: '#6b7280', margin: '8px 0 0' }}>Searching...</p>
+                  </div>
+                )}
+
+                {/* Results list */}
+                <div style={{ flex: 1, overflowY: 'auto', padding: '4px 12px 80px' }}>
+                  {!venueSearching && sorted.length === 0 ? (
+                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '60px 20px', opacity: 0.6 }}>
+                      {Icons.search('#9ca3af', 40)}
+                      <p style={{ fontSize: '14px', color: '#9ca3af', fontWeight: '600', margin: '12px 0 4px' }}>No venues found</p>
+                      <p style={{ fontSize: '12px', color: '#b0b0b0', margin: 0 }}>Try a different search or location</p>
+                    </div>
+                  ) : !venueSearching && sorted.map((venue) => {
+                    const dist = calcDist(venue.location);
+                    const crowdColor = venue.crowd > 70 ? '#EF4444' : venue.crowd > 40 ? '#F59E0B' : '#22C55E';
+                    const crowdLabel = venue.crowd > 70 ? 'Busy' : venue.crowd > 40 ? 'Moderate' : 'Not Busy';
+                    const forecastBars = [30, 35, 45, 55, 70, 85, 90, 80, 65, 50, 35, 25].map(h => {
+                      const seed = ((venue.place_id || '').charCodeAt(2) || 0);
+                      return Math.max(15, Math.min(95, h + ((seed * 7) % 30) - 15));
+                    });
+
+                    return (
+                      <button
+                        key={venue.place_id || venue.id}
+                        onClick={() => {
+                          setShowSearchResults(false);
+                          if (window.__flockPanToVenue) window.__flockPanToVenue(venue.place_id || venue);
+                          openVenueDetail(venue.place_id, { name: venue.name, formatted_address: venue.addr, place_id: venue.place_id, rating: venue.stars, price_level: venue.price ? venue.price.length : null, photo_url: venue.photo_url });
+                        }}
+                        style={{ width: '100%', textAlign: 'left', backgroundColor: 'white', borderRadius: '16px', border: '1px solid #f0f0f0', padding: 0, marginBottom: '10px', cursor: 'pointer', overflow: 'hidden', boxShadow: '0 2px 10px rgba(0,0,0,0.04)', transition: 'all 0.2s' }}
+                      >
+                        {/* Photo + overlay info */}
+                        <div style={{ position: 'relative', height: venue.photo_url ? '120px' : '0' }}>
+                          {venue.photo_url && (
+                            <>
+                              <img src={venue.photo_url} alt="" style={{ width: '100%', height: '120px', objectFit: 'cover', display: 'block' }} />
+                              <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(transparent 40%, rgba(0,0,0,0.6) 100%)' }} />
+                              {venue.trending && (
+                                <div style={{ position: 'absolute', top: '8px', left: '8px', padding: '3px 8px', borderRadius: '8px', backgroundColor: 'rgba(245,158,11,0.9)', display: 'flex', alignItems: 'center', gap: '3px' }}>
+                                  {Icons.flame('#fff', 10)}
+                                  <span style={{ fontSize: '9px', fontWeight: '700', color: 'white' }}>Trending</span>
+                                </div>
+                              )}
+                              <div style={{ position: 'absolute', top: '8px', right: '8px', padding: '4px 8px', borderRadius: '10px', backgroundColor: `${crowdColor}18`, backdropFilter: 'blur(8px)', WebkitBackdropFilter: 'blur(8px)', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                <div style={{ width: '6px', height: '6px', borderRadius: '3px', backgroundColor: crowdColor }} />
+                                <span style={{ fontSize: '10px', fontWeight: '700', color: crowdColor }}>{venue.crowd}%</span>
+                              </div>
+                            </>
+                          )}
+                        </div>
+
+                        {/* Content */}
+                        <div style={{ padding: '12px 14px' }}>
+                          <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '8px', marginBottom: '6px' }}>
+                            <div style={{ flex: 1, minWidth: 0 }}>
+                              <h3 style={{ fontSize: '15px', fontWeight: '800', color: colors.navy, margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{venue.name}</h3>
+                              <p style={{ fontSize: '11px', color: '#8b8b8b', margin: '2px 0 0', fontWeight: '500' }}>{venue.type}{venue.price ? ` • ${venue.price}` : ''}</p>
+                            </div>
+                            {venue.stars && (
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '3px', padding: '3px 8px', borderRadius: '8px', backgroundColor: '#FEF3C7', flexShrink: 0 }}>
+                                {Icons.starFilled('#F59E0B', 12)}
+                                <span style={{ fontSize: '12px', fontWeight: '800', color: '#92400E' }}>{venue.stars}</span>
+                              </div>
+                            )}
+                          </div>
+
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', marginBottom: '8px' }}>
+                            {dist != null && (
+                              <span style={{ fontSize: '11px', fontWeight: '600', color: colors.teal, display: 'flex', alignItems: 'center', gap: '3px' }}>
+                                {Icons.mapPin(colors.teal, 11)} {dist < 1 ? `${Math.round(dist*1000)}m` : `${dist.toFixed(1)}km`}
+                              </span>
+                            )}
+                            {!venue.photo_url && (
+                              <span style={{ fontSize: '10px', fontWeight: '600', color: crowdColor, backgroundColor: `${crowdColor}12`, padding: '2px 8px', borderRadius: '8px', display: 'flex', alignItems: 'center', gap: '3px' }}>
+                                <div style={{ width: '5px', height: '5px', borderRadius: '3px', backgroundColor: crowdColor }} />
+                                {crowdLabel} {venue.crowd}%
+                              </span>
+                            )}
+                            <span style={{ fontSize: '10px', fontWeight: '600', color: colors.navy, display: 'flex', alignItems: 'center', gap: '3px' }}>
+                              {Icons.clock(colors.navy, 10)} Best: {venue.best}
+                            </span>
+                          </div>
+
+                          {venue.addr && (
+                            <p style={{ fontSize: '11px', color: '#9ca3af', margin: '0 0 8px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{venue.addr}</p>
+                          )}
+
+                          <div style={{ display: 'flex', alignItems: 'flex-end', gap: '2px', height: '28px' }}>
+                            {forecastBars.map((h, i) => (
+                              <div key={i} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '1px' }}>
+                                <div style={{ width: '100%', height: `${h * 0.28}px`, borderRadius: '1.5px', backgroundColor: h > 70 ? '#EF444440' : h > 40 ? '#F59E0B40' : '#22C55E40', transition: 'height 0.3s' }} />
+                              </div>
+                            ))}
+                            <span style={{ fontSize: '8px', color: '#b0b0b0', marginLeft: '4px', whiteSpace: 'nowrap', flexShrink: 0 }}>6p-5a</span>
+                          </div>
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          })()}
         </div>
       </div>
       <Toast />
