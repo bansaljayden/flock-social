@@ -639,17 +639,21 @@ const GoogleMapView = React.memo(({ venues, filterCategory, userLocation, active
               });
             }
           },
-          () => {
-            console.log('[Map] My Location: geolocation denied');
+          (err) => {
+            console.log('[Map] My Location error:', err.code, err.message);
             if (locBtn) locBtn.style.opacity = '1';
-            // Show toast via a custom event since we can't access React state here
-            window.dispatchEvent(new CustomEvent('flock-toast', { detail: { message: 'Location permission required', type: 'error' } }));
+            // Only show error toast for actual permission denial (code 1)
+            if (err.code === 1) {
+              window.dispatchEvent(new CustomEvent('flock-toast', { detail: { message: 'Please allow location access in your browser settings', type: 'error' } }));
+            }
+            // For timeout or unavailable, silently fail — user can try again
           },
-          { enableHighAccuracy: true, timeout: 8000, maximumAge: 0 }
+          { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
         );
       } else {
         if (locBtn) locBtn.style.opacity = '1';
-        window.dispatchEvent(new CustomEvent('flock-toast', { detail: { message: 'Location permission required', type: 'error' } }));
+        // Geolocation API not supported in this browser — extremely rare
+        window.dispatchEvent(new CustomEvent('flock-toast', { detail: { message: 'Location not supported in this browser', type: 'error' } }));
       }
     };
     return () => { delete window.__flockOpenVenue; delete window.__flockPanToVenue; delete window.__flockGoToMyLocation; };
@@ -1394,13 +1398,13 @@ const FlockAppInner = ({ authUser, onLogout }) => {
 
     if (!navigator.geolocation) {
       if (!savedLat) {
-        // Fallback to Hellertown
         loadVenuesAtLocation(40.5798, -75.2932, useChains);
-        showToast('Location blocked \u2014 showing Hellertown, PA area', 'error');
       }
       return;
     }
 
+    // Don't pre-check permissions — just try to get location.
+    // The browser will prompt if needed and return an error only on actual denial.
     setLocationLoading(true);
     navigator.geolocation.getCurrentPosition(
       (pos) => {
@@ -1414,13 +1418,21 @@ const FlockAppInner = ({ authUser, onLogout }) => {
         }
       },
       (err) => {
-        console.warn('[Geo] Geolocation denied:', err.message);
+        console.warn('[Geo] Geolocation error:', err.code, err.message);
         setLocationLoading(false);
-        // Always fall back to Hellertown with proper coordinates
-        const fallbackLat = 40.5798;
-        const fallbackLng = -75.2932;
-        loadVenuesAtLocation(fallbackLat, fallbackLng, useChains);
-        showToast('Location blocked \u2014 showing Hellertown, PA area', 'error');
+        // Only show error for actual permission denial
+        if (err.code === 1) { // PERMISSION_DENIED
+          showToast('Please allow location access in your browser settings', 'error');
+        } else if (err.code === 2) { // POSITION_UNAVAILABLE
+          showToast('Location unavailable \u2014 using default area', 'error');
+        }
+        // For TIMEOUT (code 3), silently fall back — no toast needed
+        // Fall back to saved location or Hellertown
+        if (savedLat && savedLng && !forceRefresh) {
+          // Already loaded from saved above, nothing to do
+        } else {
+          loadVenuesAtLocation(40.5798, -75.2932, useChains);
+        }
       },
       { enableHighAccuracy: true, timeout: 10000, maximumAge: forceRefresh ? 0 : 60000 }
     );
