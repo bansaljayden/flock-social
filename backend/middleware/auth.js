@@ -26,9 +26,11 @@ const authenticate = async (req, res, next) => {
     next();
   } catch (err) {
     if (err.name === 'TokenExpiredError') {
+      console.warn(`Expired token from ${req.ip} at ${new Date().toISOString()}`);
       return res.status(401).json({ error: 'Token expired' });
     }
     if (err.name === 'JsonWebTokenError') {
+      console.warn(`Invalid token from ${req.ip} at ${new Date().toISOString()}`);
       return res.status(401).json({ error: 'Invalid token' });
     }
     return res.status(500).json({ error: 'Authentication failed' });

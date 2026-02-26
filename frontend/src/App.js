@@ -1390,7 +1390,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
           setMapVenuesLoaded(true);
         });
     }
-  }, [venuesToMapPins, seedVenues, defaultChains, showToast]);
+  }, [venuesToMapPins, seedVenues, defaultChains]);
 
   // Request user geolocation and load venues
   // forceRefresh=true forces fresh GPS + reloads popular chains near user
@@ -1440,7 +1440,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
       },
       { enableHighAccuracy: true, timeout: 10000, maximumAge: forceRefresh ? 0 : 60000 }
     );
-  }, [loadVenuesAtLocation, showToast]);
+  }, [loadVenuesAtLocation]);
 
   // Load venues on mount
   useEffect(() => {
