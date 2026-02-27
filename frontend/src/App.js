@@ -194,8 +194,8 @@ const GoogleMapView = React.memo(({ venues, filterCategory, userLocation, active
       `</svg>`;
   }, []);
 
-  // Crowd color helper
-  const crowdColor = (crowd) => crowd > 70 ? '#EF4444' : crowd > 40 ? '#F59E0B' : '#10B981';
+  // Crowd color helper — used by map popup & venue cards
+  const getCrowdColor = (crowd) => crowd > 70 ? '#EF4444' : crowd > 40 ? '#F59E0B' : '#10B981'; // eslint-disable-line no-unused-vars
 
   // Initialize map ONCE — load Google Maps script, get user location, then create map
   useEffect(() => {
@@ -1643,7 +1643,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
   const addEventToCalendar = useCallback((title, venue, date, time, color) => {
     setCalendarEvents(prev => [...prev, { id: Date.now(), title, venue, date: typeof date === 'string' ? date : formatDateStr(date), time, color: color || colors.navy, members: 1 }]);
     // Toast removed
-  }, [showToast]);
+  }, []);
 
   const addMessageToFlock = useCallback((flockId, message) => {
     setFlocks(prev => prev.map(f => f.id === flockId ? { ...f, messages: [...f.messages, message] } : f));
@@ -1675,7 +1675,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
       }).catch(err => console.error('Failed to update flock venue:', err));
     }
     // Toast removed — venue updates visually
-  }, [showToast]);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const makePoolPayment = useCallback((flockId) => {
     setFlocks(prev => prev.map(f => {
@@ -1686,7 +1686,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
     }));
     addXP(20);
     // Toast removed
-  }, [addXP, showToast]);
+  }, [addXP]);
 
   // AI Response Generation - Professional but friendly assistant
   const generateAiResponse = useCallback((userMsg, venueList, flockList, friendsList) => {
@@ -1908,7 +1908,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
     console.log('[Location] Started sharing for flock:', flockId);
     emitLocation(flockId, userLocation.lat, userLocation.lng);
     setSharingLocationForFlock(flockId);
-  }, [showToast, userLocation]);
+  }, [userLocation]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const stopLocationSharing = useCallback(() => {
     if (!sharingLocationForFlock) return;
@@ -2186,7 +2186,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
     setShowVenueShareModal(false);
     // Toast removed — card appears in chat
     addXP(5);
-  }, [addMessageToFlock, showToast, addXP, authUser]);
+  }, [addMessageToFlock, addXP, authUser]);
 
   // Share image to chat
   const shareImageToChat = useCallback((flockId) => {
@@ -2208,7 +2208,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
     setShowImagePreview(false);
     // Toast removed — image appears in chat
     addXP(5);
-  }, [pendingImage, addMessageToFlock, showToast, addXP]);
+  }, [pendingImage, addMessageToFlock, addXP]);
 
   // Handle image selection
   const handleChatImageSelect = useCallback(() => {
@@ -2229,7 +2229,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
       reader.onload = () => { setProfilePic(reader.result); setShowPicModal(false); addXP(10); };
       reader.readAsDataURL(file);
     }
-  }, [showToast, addXP]);
+  }, [addXP]);
 
   const generateAIAvatar = useCallback(() => {
     const styles = ['adventurer', 'avataaars', 'bottts', 'personas', 'pixel-art'];
@@ -2239,7 +2239,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
     setShowPicModal(false);
     // Toast removed — avatar updates visually
     addXP(10);
-  }, [showToast, addXP]);
+  }, [addXP]);
 
   // Toggle Component
   const Toggle = ({ on, onChange }) => (
@@ -3249,7 +3249,6 @@ const FlockAppInner = ({ authUser, onLogout }) => {
               <button onClick={() => setShowDeleteDmConfirm(false)} style={{ flex: 1, padding: '12px', borderRadius: '12px', border: `2px solid ${colors.creamDark}`, backgroundColor: 'white', color: colors.navy, fontWeight: '700', fontSize: '14px', cursor: 'pointer' }}>Cancel</button>
               <button onClick={() => {
                 const dmUserId = selectedDm.userId;
-                const friendName = selectedDm.name;
                 setDirectMessages(prev => prev.filter(d => d.userId !== dmUserId));
                 const updated = [...deletedDmUserIds, dmUserId];
                 setDeletedDmUserIds(updated);
@@ -5593,7 +5592,6 @@ const FlockAppInner = ({ authUser, onLogout }) => {
                 <button onClick={async () => {
                   try {
                     setIsLoading(true);
-                    const flockName = flock.name;
                     const flockId = flock.id;
                     await apiLeaveFlock(flockId);
                     setFlocks(prev => prev.filter(f => f.id !== flockId));
