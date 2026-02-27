@@ -4,9 +4,47 @@ const { authenticate } = require('../middleware/auth');
 
 const router = express.Router();
 
-router.use(authenticate);
-
 const API_KEY = process.env.GOOGLE_PLACES_API_KEY;
+
+// Photo proxy — streams image bytes through our server so the browser
+// never has to follow a cross-origin redirect (avoids CORP / 401 blocks).
+router.get('/photo',
+  query('ref').trim().isLength({ min: 1 }).withMessage('Photo ref is required'),
+  async (req, res) => {
+    try {
+      const errors = validationResult(req);
+      if (!errors.isEmpty()) return res.status(400).json({ error: 'Missing photo ref' });
+      if (!API_KEY) return res.status(500).json({ error: 'API key not configured' });
+
+      const photoRef = req.query.ref;
+      const maxWidth = parseInt(req.query.maxwidth) || 400;
+
+      // Step 1: ask Google for the actual CDN url (JSON response)
+      const metaUrl = `https://places.googleapis.com/v1/${photoRef}/media?maxWidthPx=${maxWidth}&key=${API_KEY}&skipHttpRedirect=true`;
+      const metaRes = await fetch(metaUrl);
+      if (!metaRes.ok) return res.status(502).json({ error: 'Google API error' });
+      const meta = await metaRes.json();
+      if (!meta.photoUri) return res.status(404).json({ error: 'Photo not found' });
+
+      // Step 2: fetch the actual image bytes from the CDN
+      const imgRes = await fetch(meta.photoUri);
+      if (!imgRes.ok) return res.status(502).json({ error: 'CDN fetch failed' });
+
+      // Step 3: send the image bytes straight to the client
+      const buffer = Buffer.from(await imgRes.arrayBuffer());
+      res.set('Content-Type', imgRes.headers.get('content-type') || 'image/jpeg');
+      res.set('Cache-Control', 'public, max-age=86400');
+      res.set('Cross-Origin-Resource-Policy', 'cross-origin');
+      res.send(buffer);
+    } catch (err) {
+      console.error('Photo proxy error:', err);
+      res.status(500).json({ error: 'Failed to fetch photo' });
+    }
+  }
+);
+
+// All other routes require authentication
+router.use(authenticate);
 
 // Server-side venue search cache (5 min TTL)
 const venueCache = new Map();
@@ -30,9 +68,9 @@ function setCache(key, data) {
   }
 }
 
-// Build photo URL from a Places API (New) photo resource name
+// Build photo URL — proxied through our backend so the API key stays server-side
 function photoUrl(photoName, maxWidth = 400) {
-  return `https://places.googleapis.com/v1/${photoName}/media?maxWidthPx=${maxWidth}&key=${API_KEY}`;
+  return `/api/venues/photo?ref=${encodeURIComponent(photoName)}&maxwidth=${maxWidth}`;
 }
 
 // Map price level enum to numeric

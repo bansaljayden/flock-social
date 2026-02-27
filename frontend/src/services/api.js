@@ -87,10 +87,10 @@ export async function getFlock(id) {
   return request(`/api/flocks/${id}`);
 }
 
-export async function createFlock({ name, venue_name, venue_address, venue_id, venue_latitude, venue_longitude, event_time, invited_user_ids }) {
+export async function createFlock({ name, venue_name, venue_address, venue_id, venue_latitude, venue_longitude, venue_rating, venue_photo_url, event_time, invited_user_ids }) {
   return request('/api/flocks', {
     method: 'POST',
-    body: JSON.stringify({ name, venue_name, venue_address, venue_id, venue_latitude, venue_longitude, event_time, invited_user_ids }),
+    body: JSON.stringify({ name, venue_name, venue_address, venue_id, venue_latitude, venue_longitude, venue_rating, venue_photo_url, event_time, invited_user_ids }),
   });
 }
 
@@ -107,10 +107,10 @@ export async function getMessages(flockId) {
   return request(`/api/flocks/${flockId}/messages`);
 }
 
-export async function sendMessage(flockId, text) {
+export async function sendMessage(flockId, text, opts = {}) {
   return request(`/api/flocks/${flockId}/messages`, {
     method: 'POST',
-    body: JSON.stringify({ message_text: text, message_type: 'text' }),
+    body: JSON.stringify({ message_text: text, message_type: opts.message_type || 'text', venue_data: opts.venue_data || undefined }),
   });
 }
 
@@ -157,15 +157,29 @@ export async function getDmPinnedVenue(userId) {
   return request(`/api/dm/${userId}/pinned-venue`);
 }
 
+// Resolve relative photo URLs to full backend URLs
+function resolvePhotoUrl(url) {
+  if (url && url.startsWith('/api/')) return `${BASE_URL}${url}`;
+  return url;
+}
+
 // Venues
 export async function searchVenues(query, location) {
   let endpoint = `/api/venues/search?query=${encodeURIComponent(query)}`;
   if (location) endpoint += `&location=${location}`;
-  return request(endpoint);
+  const data = await request(endpoint);
+  if (data.venues) {
+    data.venues = data.venues.map(v => ({ ...v, photo_url: resolvePhotoUrl(v.photo_url) }));
+  }
+  return data;
 }
 
 export async function getVenueDetails(placeId) {
-  return request(`/api/venues/details?place_id=${encodeURIComponent(placeId)}`);
+  const data = await request(`/api/venues/details?place_id=${encodeURIComponent(placeId)}`);
+  if (data.venue && data.venue.photos) {
+    data.venue.photos = data.venue.photos.map(url => resolvePhotoUrl(url));
+  }
+  return data;
 }
 
 // Users

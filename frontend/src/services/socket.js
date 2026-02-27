@@ -57,13 +57,14 @@ export function leaveFlock(flockId) {
   }
 }
 
-export function sendMessage(flockId, messageText) {
-  console.log('Emitting send_message:', { flockId, message: messageText });
+export function sendMessage(flockId, messageText, opts = {}) {
+  console.log('Emitting send_message:', { flockId, message: messageText, opts });
   if (socket?.connected) {
     socket.emit('send_message', {
       flockId,
       message_text: messageText,
-      message_type: 'text',
+      message_type: opts.message_type || 'text',
+      venue_data: opts.venue_data || null,
     });
   }
 }

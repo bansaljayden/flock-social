@@ -30,7 +30,7 @@ const loadGoogleMapsScript = () => {
       return;
     }
     const script = document.createElement('script');
-    script.src = `https://maps.googleapis.com/maps/api/js?key=${process.env.REACT_APP_GOOGLE_MAPS_API_KEY}&libraries=places`;
+    script.src = `https://maps.googleapis.com/maps/api/js?key=${process.env.REACT_APP_GOOGLE_MAPS_API_KEY}&libraries=places,visualization`;
     script.async = true;
     script.defer = true;
     script.onload = () => resolve();
@@ -39,13 +39,13 @@ const loadGoogleMapsScript = () => {
   });
 };
 
-// Memoized VenueCard — extracted outside App so it never re-creates on parent renders
+// Memoized VenueCard — unified design for both DMs and Flocks
 const VenueCard = React.memo(({ venue, onViewDetails, onVote, colors: c, Icons: I, getCategoryColor: gcc }) => {
   const rating = venue.stars || venue.rating || null;
   const price = venue.price || (venue.price_level ? '$'.repeat(venue.price_level) : null);
   const address = venue.addr || venue.formatted_address || '';
-  const hasCrowd = typeof venue.crowd === 'number';
-  const crowdColor = hasCrowd ? (venue.crowd > 70 ? c.red : venue.crowd > 40 ? c.amber : c.teal) : c.teal;
+  const crowd = typeof venue.crowd === 'number' ? venue.crowd : Math.round(20 + ((((venue.place_id || venue.name || '').charCodeAt(0) || 0) * 37) % 60));
+  const crowdColor = crowd > 70 ? '#EF4444' : crowd > 40 ? '#F59E0B' : '#22C55E';
   return (
     <div style={{
       backgroundColor: 'white',
@@ -57,41 +57,13 @@ const VenueCard = React.memo(({ venue, onViewDetails, onVote, colors: c, Icons: 
       maxWidth: '280px',
       animation: 'cardSlideIn 0.4s ease-out'
     }}>
-      {venue.photo_url ? (
-        <div style={{ position: 'relative' }}>
-          <img src={venue.photo_url} alt="" style={{ width: '100%', height: '120px', objectFit: 'cover', display: 'block' }} />
-          <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, background: 'linear-gradient(transparent, rgba(0,0,0,0.7))', padding: '24px 12px 10px' }}>
-            <h4 style={{ color: 'white', fontSize: '14px', fontWeight: '700', margin: 0 }}>{venue.name}</h4>
-            {venue.type && <p style={{ color: 'rgba(255,255,255,0.8)', fontSize: '11px', margin: '2px 0 0' }}>{venue.type}</p>}
-          </div>
-          {rating && (
-            <div style={{ position: 'absolute', top: '8px', right: '8px', backgroundColor: 'rgba(0,0,0,0.6)', padding: '3px 8px', borderRadius: '10px', display: 'flex', alignItems: 'center', gap: '3px' }}>
-              {I.starFilled('#fbbf24', 11)}
-              <span style={{ color: 'white', fontSize: '11px', fontWeight: '600' }}>{rating}</span>
-            </div>
-          )}
-        </div>
-      ) : (
-        <div style={{
-          background: `linear-gradient(135deg, ${gcc(venue.category || 'Food')}, ${gcc(venue.category || 'Food')}cc)`,
-          padding: '12px 14px'
-        }}>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-            <div>
-              <h4 style={{ color: 'white', fontSize: '14px', fontWeight: '700', margin: 0 }}>{venue.name}</h4>
-              {venue.type && <p style={{ color: 'rgba(255,255,255,0.8)', fontSize: '11px', margin: '2px 0 0' }}>{venue.type}</p>}
-            </div>
-            {rating && (
-              <div style={{ backgroundColor: 'rgba(255,255,255,0.2)', padding: '4px 8px', borderRadius: '12px', display: 'flex', alignItems: 'center', gap: '4px' }}>
-                {I.starFilled('#fbbf24', 12)}
-                <span style={{ color: 'white', fontSize: '12px', fontWeight: '600' }}>{rating}</span>
-              </div>
-            )}
-          </div>
-        </div>
+      {venue.photo_url && (
+        <img src={venue.photo_url} alt={venue.name} style={{ width: '100%', height: '160px', objectFit: 'cover', display: 'block' }} />
       )}
 
-      <div style={{ padding: '12px 14px' }}>
+      <div style={{ padding: '14px' }}>
+        <h4 style={{ fontSize: '15px', fontWeight: '700', color: c.navy, margin: '0 0 4px' }}>{venue.name}</h4>
+
         {address && (
           <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '10px' }}>
             {I.mapPin('#6b7280', 12)}
@@ -99,24 +71,25 @@ const VenueCard = React.memo(({ venue, onViewDetails, onVote, colors: c, Icons: 
           </div>
         )}
 
-        {(price || venue.best) && (
-          <div style={{ display: 'flex', gap: '12px', marginBottom: '12px' }}>
-            {price && <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>{I.dollar('#6b7280', 12)}<span style={{ fontSize: '11px', color: c.navy, fontWeight: '600' }}>{price}</span></div>}
-            {venue.best && <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>{I.clock('#6b7280', 12)}<span style={{ fontSize: '11px', color: c.navy, fontWeight: '600' }}>{venue.best}</span></div>}
-          </div>
-        )}
+        <div style={{ display: 'flex', gap: '12px', marginBottom: '12px' }}>
+          {price && <span style={{ fontSize: '12px', color: c.navy, fontWeight: '600' }}>{price}</span>}
+          {rating && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: '3px' }}>
+              {I.starFilled('#fbbf24', 12)}
+              <span style={{ fontSize: '12px', color: c.navy, fontWeight: '600' }}>{rating}</span>
+            </div>
+          )}
+        </div>
 
-        {hasCrowd && (
-          <div style={{ backgroundColor: '#f8fafc', borderRadius: '12px', padding: '10px 12px', marginBottom: '12px', border: '1px solid #e2e8f0' }}>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '6px' }}>
-              <span style={{ fontSize: '11px', color: '#64748b', fontWeight: '500' }}>Current Crowd</span>
-              <div style={{ backgroundColor: `${crowdColor}20`, color: crowdColor, padding: '2px 8px', borderRadius: '10px', fontSize: '11px', fontWeight: '700' }}>{venue.crowd}%</div>
-            </div>
-            <div style={{ width: '100%', height: '6px', backgroundColor: '#e2e8f0', borderRadius: '3px', overflow: 'hidden' }}>
-              <div style={{ height: '100%', width: `${venue.crowd}%`, backgroundColor: crowdColor, borderRadius: '3px', transition: 'width 0.5s ease-out' }} />
-            </div>
+        <div style={{ backgroundColor: '#f8fafc', borderRadius: '12px', padding: '10px 12px', marginBottom: '12px', border: '1px solid #e2e8f0' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '6px' }}>
+            <span style={{ fontSize: '11px', color: '#64748b', fontWeight: '500' }}>Current Crowd</span>
+            <div style={{ backgroundColor: `${crowdColor}20`, color: crowdColor, padding: '2px 8px', borderRadius: '10px', fontSize: '11px', fontWeight: '700' }}>{crowd}%</div>
           </div>
-        )}
+          <div style={{ width: '100%', height: '6px', backgroundColor: '#e2e8f0', borderRadius: '3px', overflow: 'hidden' }}>
+            <div style={{ height: '100%', width: `${crowd}%`, backgroundColor: crowdColor, borderRadius: '3px', transition: 'width 0.5s ease-out' }} />
+          </div>
+        </div>
 
         <div style={{ display: 'flex', gap: '8px' }}>
           {(venue.place_id || venue.id) && (
@@ -124,7 +97,7 @@ const VenueCard = React.memo(({ venue, onViewDetails, onVote, colors: c, Icons: 
               {I.eye(c.navy, 14)} View Details
             </button>
           )}
-          <button onClick={onVote} style={{ flex: 1, padding: '10px', borderRadius: '10px', border: 'none', background: `linear-gradient(135deg, ${c.navy}, ${c.navyMid})`, color: 'white', fontSize: '12px', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px', boxShadow: '0 2px 8px rgba(13,40,71,0.25)', transition: 'all 0.2s ease' }}>
+          <button onClick={(e) => { const btn = e.currentTarget; if (!btn.classList.contains('btn-confirmed')) { btn.classList.add('btn-confirmed'); setTimeout(() => btn.classList.remove('btn-confirmed'), 1100); } onVote(); }} style={{ flex: 1, padding: '10px', borderRadius: '10px', border: 'none', background: `linear-gradient(135deg, ${c.navy}, ${c.navyMid})`, color: 'white', fontSize: '12px', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px', boxShadow: '0 2px 8px rgba(13,40,71,0.25)', transition: 'all 0.2s ease', position: 'relative', overflow: 'hidden' }}>
               {I.vote('white', 14)} Vote for This
             </button>
         </div>
@@ -157,12 +130,12 @@ const FLOCK_MAP_STYLES = [
 const GoogleMapView = React.memo(({ venues, filterCategory, userLocation, activeVenue, setActiveVenue, getCategoryColor, pickingVenueForCreate, setPickingVenueForCreate, setSelectedVenueForCreate, setCurrentScreen, openVenueDetail, flockMemberLocations, calcDistance }) => {
   const mapRef = useRef(null);
   const mapInstanceRef = useRef(null);
-  const markersRef = useRef([]); // each entry: { marker, venue, circles: [] }
+  const markersRef = useRef([]); // each entry: { marker, venue }
   const clustererRef = useRef(null);
+  const heatmapRef = useRef(null);
   const userMarkerRef = useRef(null);
   const memberMarkersRef = useRef({}); // userId -> { marker, infoWindow }
   const prevVenueCountRef = useRef(0); // track if venues are newly loaded vs just re-rendered
-  const zoomListenerRef = useRef(null);
   const [mapReady, setMapReady] = useState(false); // tracks when Google Map instance is initialized
   const [mapType, setMapType] = useState(() => localStorage.getItem('flock_map_type') || 'roadmap');
 
@@ -243,6 +216,8 @@ const GoogleMapView = React.memo(({ venues, filterCategory, userLocation, active
       const map = new window.google.maps.Map(mapRef.current, {
         center: userLoc,
         zoom: DEFAULT_ZOOM,
+        minZoom: 3,
+        maxZoom: 18,
         styles: savedMapType === 'roadmap' ? FLOCK_MAP_STYLES : [],
         mapTypeId: savedMapType,
         disableDefaultUI: true,
@@ -352,52 +327,34 @@ const GoogleMapView = React.memo(({ venues, filterCategory, userLocation, active
   useEffect(() => {
     if (!mapInstanceRef.current || !window.google?.maps) return;
 
-    // Clear previous markers + clusterer
+    // Clear previous markers + clusterer + heatmap
     if (clustererRef.current) {
       clustererRef.current.clearMarkers();
       clustererRef.current = null;
     }
+    if (heatmapRef.current) {
+      heatmapRef.current.setMap(null);
+      heatmapRef.current = null;
+    }
     markersRef.current.forEach(entry => {
       entry.marker.setMap(null);
-      entry.circles.forEach(c => c.setMap(null));
     });
     markersRef.current = [];
 
     const bounds = new window.google.maps.LatLngBounds();
     prevVenueCountRef.current = venues.length;
     const allMarkers = [];
+    const heatPoints = [];
 
     venues.forEach(v => {
       const loc = v.location;
       if (!loc || !loc.latitude || !loc.longitude) return;
 
       const position = { lat: loc.latitude, lng: loc.longitude };
-      const cc = crowdColor(v.crowd);
-      const entryCircles = [];
 
-      // --- Heatmap circles that SCALE with zoom level ---
+      // Collect heatmap data points weighted by crowd level
       if (typeof v.crowd === 'number') {
-        const zoom = mapInstanceRef.current.getZoom() || 15;
-        const getOuterR = (z) => z <= 12 ? 5000 : z <= 14 ? 2500 : z <= 16 ? 1000 : 400;
-        const getInnerR = (z) => z <= 12 ? 2500 : z <= 14 ? 1200 : z <= 16 ? 500 : 200;
-
-        const outerCircle = new window.google.maps.Circle({
-          map: mapInstanceRef.current, center: position,
-          radius: getOuterR(zoom), fillColor: cc,
-          fillOpacity: 0.14 + (v.crowd / 280),
-          strokeColor: cc, strokeOpacity: 0.35, strokeWeight: 1,
-          zIndex: 1, clickable: false,
-        });
-        const innerCircle = new window.google.maps.Circle({
-          map: mapInstanceRef.current, center: position,
-          radius: getInnerR(zoom), fillColor: cc,
-          fillOpacity: 0.32 + (v.crowd / 200),
-          strokeColor: cc, strokeOpacity: 0.85, strokeWeight: 2.5,
-          zIndex: 2, clickable: false,
-        });
-        outerCircle.__getR = getOuterR;
-        innerCircle.__getR = getInnerR;
-        entryCircles.push(outerCircle, innerCircle);
+        heatPoints.push({ lat: loc.latitude, lng: loc.longitude, weight: v.crowd / 100 });
       }
 
       // --- Custom Flock pin (don't add to map yet — clusterer manages it) ---
@@ -426,10 +383,36 @@ const GoogleMapView = React.memo(({ venues, filterCategory, userLocation, active
         mapInstanceRef.current.panTo(position);
       });
 
-      markersRef.current.push({ marker, venue: v, circles: entryCircles });
+      markersRef.current.push({ marker, venue: v });
       allMarkers.push(marker);
       bounds.extend(position);
     });
+
+    // Heatmap overlay — Google HeatmapLayer
+    if (heatPoints.length > 0 && window.google.maps.visualization) {
+      const heatData = heatPoints.map(pt => ({
+        location: new window.google.maps.LatLng(pt.lat, pt.lng),
+        weight: pt.weight,
+      }));
+      heatmapRef.current = new window.google.maps.visualization.HeatmapLayer({
+        data: heatData,
+        map: mapInstanceRef.current,
+        radius: 50,
+        opacity: 0.8,
+        dissipating: true,
+        maxIntensity: 1,
+        gradient: [
+          'rgba(0, 0, 0, 0)',
+          'rgba(10, 120, 50, 0.55)',
+          'rgba(14, 140, 58, 0.72)',
+          'rgba(60, 155, 30, 0.8)',
+          'rgba(200, 140, 0, 0.84)',
+          'rgba(220, 110, 0, 0.88)',
+          'rgba(200, 45, 45, 0.92)',
+          'rgba(180, 20, 20, 0.96)',
+        ],
+      });
+    }
 
     // Create clusterer — groups overlapping pins into numbered clusters
     if (allMarkers.length > 0) {
@@ -494,24 +477,8 @@ const GoogleMapView = React.memo(({ venues, filterCategory, userLocation, active
         }
       }
       entry.marker.setVisible(show);
-      entry.circles.forEach(c => c.setVisible(show));
     });
   }, [filterCategory]);
-
-  // Dynamic heatmap scaling — resize circles when zoom changes
-  useEffect(() => {
-    if (!mapInstanceRef.current) return;
-    if (zoomListenerRef.current) window.google.maps.event.removeListener(zoomListenerRef.current);
-    zoomListenerRef.current = mapInstanceRef.current.addListener('zoom_changed', () => {
-      const z = mapInstanceRef.current.getZoom();
-      markersRef.current.forEach(entry => {
-        entry.circles.forEach(c => {
-          if (c.__getR) c.setRadius(c.__getR(z));
-        });
-      });
-    });
-    return () => { if (zoomListenerRef.current) window.google.maps.event.removeListener(zoomListenerRef.current); };
-  }, [venues]);
 
   // Expose global helpers for external venue navigation
   useEffect(() => {
@@ -607,7 +574,7 @@ const GoogleMapView = React.memo(({ venues, filterCategory, userLocation, active
             setTimeout(() => tempMarker.setAnimation(null), 1500);
           }, 400);
 
-          markersRef.current.push({ marker: tempMarker, venue: tempVenue, circles: [] });
+          markersRef.current.push({ marker: tempMarker, venue: tempVenue });
           setActiveVenue(tempVenue);
 
           // Auto-open venue detail if we have a place_id
@@ -1036,9 +1003,19 @@ const FlockAppInner = ({ authUser, onLogout }) => {
 
   // Toast (hoisted above venue search for use in error handlers)
   const [toast, setToast] = useState(null);
+  const toastTimerRef = useRef(null);
   const showToast = useCallback((message, type = 'success') => {
+    if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
     setToast({ message, type });
-    setTimeout(() => setToast(null), 3000);
+    toastTimerRef.current = setTimeout(() => setToast(null), 2000);
+  }, []);
+
+  // Confirm click — shows a ✓ overlay on the button, no state/re-renders (pure DOM + CSS)
+  const confirmClick = useCallback((e) => {
+    const btn = e.currentTarget;
+    if (btn.classList.contains('btn-confirmed')) return;
+    btn.classList.add('btn-confirmed');
+    setTimeout(() => btn.classList.remove('btn-confirmed'), 1100);
   }, []);
 
   // Listen for toast events from Google Maps component (can't access React state directly)
@@ -1048,17 +1025,8 @@ const FlockAppInner = ({ authUser, onLogout }) => {
     return () => window.removeEventListener('flock-toast', handler);
   }, [showToast]);
 
-  // Smart location detection - enhance bare location queries
   const enhanceQuery = useCallback((q) => {
-    const trimmed = q.trim().toLowerCase();
-    const venueWords = ['restaurant', 'bar', 'cafe', 'coffee', 'pizza', 'food', 'grill', 'pub', 'club', 'hotel', 'gym', 'park', 'shop', 'store', 'salon', 'theater', 'theatre', 'museum', 'brewery', 'bakery', 'diner', 'sushi', 'burger', 'taco', 'thai', 'italian', 'chinese', 'mexican', 'indian'];
-    if (venueWords.some(w => trimmed.includes(w))) return q;
-    if (/^(.+?)\s+(?:in|near|at|around)\s+(.+)$/.test(trimmed)) return q;
-    const words = trimmed.split(/\s+/);
-    if (words.length <= 2 && !/\d/.test(trimmed) && trimmed.length >= 3) {
-      return `restaurants bars in ${q.trim()}`;
-    }
-    return q;
+    return q.trim();
   }, []);
 
   // Convert venues array to map pin format, deduplicating by place_id
@@ -1195,7 +1163,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
     try {
       const data = await sendFriendRequest(user.id);
       setFriendStatuses(prev => ({ ...prev, [user.id]: data.status || 'pending' }));
-      showToast(data.message || `Friend request sent to ${user.name}`);
+      // Toast removed — UI updates visually
     } catch (err) {
       showToast(err.message || 'Failed to send request', 'error');
     }
@@ -1314,6 +1282,9 @@ const FlockAppInner = ({ authUser, onLogout }) => {
           venueId: f.venue_id || null,
           venueLat: f.venue_latitude || null,
           venueLng: f.venue_longitude || null,
+          venuePhoto: f.venue_photo_url || null,
+          venueRating: f.venue_rating || null,
+          venuePriceLevel: f.venue_price_level || null,
           cashPool: null,
           votes: [],
           messages: [],
@@ -1395,6 +1366,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
   const [showReactionPicker, setShowReactionPicker] = useState(null);
   const [showVenueShareModal, setShowVenueShareModal] = useState(false);
   const [showVotePanel, setShowVotePanel] = useState(false);
+  const [popularVenues, setPopularVenues] = useState([]);
   const [pendingImage, setPendingImage] = useState(null);
   const [showImagePreview, setShowImagePreview] = useState(false);
   const [showFlockMenu, setShowFlockMenu] = useState(false);
@@ -1509,6 +1481,31 @@ const FlockAppInner = ({ authUser, onLogout }) => {
 
   // Popular chains to show on map (default + near me)
   const defaultChains = useMemo(() => ["McDonald's", "Starbucks", "Chipotle", "Panera Bread", "Subway", "Dunkin'", "Chick-fil-A", "Wendy's"], []);
+
+  // Load diverse popular chain venues for vote panels (independent of map search)
+  const loadPopularVenues = useCallback(() => {
+    if (!userLocation) return;
+    const locStr = `${userLocation.lat},${userLocation.lng}`;
+    const cacheKey = `popular_vote|${locStr}`;
+    const cached = searchCacheRef.current[cacheKey];
+    if (cached && Date.now() - cached.timestamp < 300000) {
+      setPopularVenues(venuesToMapPins(cached.data));
+      return;
+    }
+    const chainSearches = defaultChains.map(chain =>
+      searchVenues(chain, locStr).then(data => (data.venues || []).slice(0, 2)).catch(() => [])
+    );
+    Promise.all(chainSearches).then(results => {
+      const seen = new Set();
+      const deduped = results.flat().filter(v => {
+        if (seen.has(v.place_id)) return false;
+        seen.add(v.place_id);
+        return true;
+      });
+      searchCacheRef.current[cacheKey] = { data: deduped, timestamp: Date.now() };
+      setPopularVenues(venuesToMapPins(deduped));
+    }).catch(() => {});
+  }, [userLocation, defaultChains, venuesToMapPins]);
 
   // Core venue loading function
   const loadVenuesAtLocation = useCallback((lat, lng, chainsOnly = false) => {
@@ -1645,7 +1642,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
 
   const addEventToCalendar = useCallback((title, venue, date, time, color) => {
     setCalendarEvents(prev => [...prev, { id: Date.now(), title, venue, date: typeof date === 'string' ? date : formatDateStr(date), time, color: color || colors.navy, members: 1 }]);
-    showToast('Added to calendar!');
+    // Toast removed
   }, [showToast]);
 
   const addMessageToFlock = useCallback((flockId, message) => {
@@ -1665,18 +1662,19 @@ const FlockAppInner = ({ authUser, onLogout }) => {
     const vLng = venue.lng || venue.location?.longitude || null;
     const vPhoto = venue.photo_url || null;
     const vRating = venue.stars || venue.rating || null;
+    const vPriceLevel = venue.price_level || null;
     // Update local state immediately
-    setFlocks(prev => prev.map(f => f.id === flockId ? { ...f, venue: vName, venueAddress: vAddr, venueId: vId, venueLat: vLat, venueLng: vLng, venuePhoto: vPhoto, venueRating: vRating } : f));
+    setFlocks(prev => prev.map(f => f.id === flockId ? { ...f, venue: vName, venueAddress: vAddr, venueId: vId, venueLat: vLat, venueLng: vLng, venuePhoto: vPhoto, venueRating: vRating, venuePriceLevel: vPriceLevel } : f));
     // Also update the API
     const token = localStorage.getItem('flockToken');
     if (token && typeof flockId === 'number') {
       fetch(`${BASE_URL}/api/flocks/${flockId}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ venue_name: vName, venue_address: vAddr, venue_id: vId, venue_latitude: vLat, venue_longitude: vLng }),
+        body: JSON.stringify({ venue_name: vName, venue_address: vAddr, venue_id: vId, venue_latitude: vLat, venue_longitude: vLng, venue_rating: vRating, venue_photo_url: vPhoto }),
       }).catch(err => console.error('Failed to update flock venue:', err));
     }
-    showToast(`Venue set to ${vName}!`);
+    // Toast removed — venue updates visually
   }, [showToast]);
 
   const makePoolPayment = useCallback((flockId) => {
@@ -1687,7 +1685,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
       return f;
     }));
     addXP(20);
-    showToast('Payment sent!');
+    // Toast removed
   }, [addXP, showToast]);
 
   // AI Response Generation - Professional but friendly assistant
@@ -1844,6 +1842,8 @@ const FlockAppInner = ({ authUser, onLogout }) => {
             sender: m.sender_name || 'Unknown',
             time: new Date(m.created_at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }),
             text: m.message_text,
+            message_type: m.message_type || 'text',
+            venue_data: m.venue_data || null,
             reactions: (m.reactions || []).map(r => r.emoji),
             ...(m.image_url ? { image: m.image_url } : {}),
           }));
@@ -1870,6 +1870,8 @@ const FlockAppInner = ({ authUser, onLogout }) => {
         sender: msg.sender_name || 'Unknown',
         time: new Date(msg.created_at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }),
         text: msg.message_text,
+        message_type: msg.message_type || 'text',
+        venue_data: msg.venue_data || null,
         reactions: [],
         ...(msg.image_url ? { image: msg.image_url } : {}),
       };
@@ -1900,7 +1902,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
 
   const startSharingLocation = useCallback((flockId) => {
     if (!userLocation) {
-      showToast('Waiting for your location...');
+      // Toast removed — banner shows location status
       return;
     }
     console.log('[Location] Started sharing for flock:', flockId);
@@ -2145,36 +2147,46 @@ const FlockAppInner = ({ authUser, onLogout }) => {
   const simulateTyping = useCallback(() => {}, []);
 
   // Share venue to chat
-  const shareVenueToChat = useCallback((flockId, venue) => {
-    const venueMessage = {
-      id: Date.now(),
-      sender: 'You',
-      time: new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }),
-      text: '',
-      reactions: [],
-      venueCard: {
-        id: venue.id,
-        place_id: venue.place_id || null,
-        name: venue.name,
-        type: venue.type,
-        category: venue.category,
-        addr: venue.addr,
-        stars: venue.stars,
-        rating: venue.rating || venue.stars || null,
-        price: venue.price,
-        price_level: venue.price_level || null,
-        crowd: venue.crowd,
-        best: venue.best,
-        photo_url: venue.photo_url || null,
-        lat: venue.location?.latitude || null,
-        lng: venue.location?.longitude || null,
-      }
+  const shareVenueToChat = useCallback(async (flockId, venue) => {
+    const venueData = {
+      place_id: venue.place_id || null,
+      name: venue.name,
+      type: venue.type,
+      category: venue.category,
+      addr: venue.addr,
+      stars: venue.stars,
+      rating: venue.rating || venue.stars || null,
+      price: venue.price,
+      price_level: venue.price_level || null,
+      crowd: venue.crowd,
+      best: venue.best,
+      photo_url: venue.photo_url || null,
+      lat: venue.location?.latitude || null,
+      lng: venue.location?.longitude || null,
     };
-    addMessageToFlock(flockId, venueMessage);
+    const msgText = `Check out ${venue.name}!`;
+
+    // Optimistic local update
+    addMessageToFlock(flockId, {
+      id: Date.now(),
+      sender: authUser?.name || 'You',
+      time: new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }),
+      text: msgText,
+      reactions: [],
+      message_type: 'venue_card',
+      venue_data: venueData,
+    });
+
+    // Send via socket (instant) + HTTP (persistent)
+    socketSendMessage(flockId, msgText, { message_type: 'venue_card', venue_data: venueData });
+    try {
+      await apiSendMessage(flockId, msgText, { message_type: 'venue_card', venue_data: venueData });
+    } catch {}
+
     setShowVenueShareModal(false);
-    showToast('Venue shared!');
+    // Toast removed — card appears in chat
     addXP(5);
-  }, [addMessageToFlock, showToast, addXP]);
+  }, [addMessageToFlock, showToast, addXP, authUser]);
 
   // Share image to chat
   const shareImageToChat = useCallback((flockId) => {
@@ -2194,7 +2206,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
 
     setPendingImage(null);
     setShowImagePreview(false);
-    showToast('Image sent!');
+    // Toast removed — image appears in chat
     addXP(5);
   }, [pendingImage, addMessageToFlock, showToast, addXP]);
 
@@ -2214,7 +2226,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
     const file = e.target.files?.[0];
     if (file) {
       const reader = new FileReader();
-      reader.onload = () => { setProfilePic(reader.result); setShowPicModal(false); showToast('Photo uploaded!'); addXP(10); };
+      reader.onload = () => { setProfilePic(reader.result); setShowPicModal(false); addXP(10); };
       reader.readAsDataURL(file);
     }
   }, [showToast, addXP]);
@@ -2225,7 +2237,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
     const seed = Math.random().toString(36).substring(7);
     setProfilePic(`https://api.dicebear.com/7.x/${style}/svg?seed=${seed}`);
     setShowPicModal(false);
-    showToast('AI Avatar generated!');
+    // Toast removed — avatar updates visually
     addXP(10);
   }, [showToast, addXP]);
 
@@ -2382,32 +2394,26 @@ const FlockAppInner = ({ authUser, onLogout }) => {
     </button>
   );
 
-  // Toast - Enhanced with better animations
+  // Toast — lightweight, GPU-accelerated
   const Toast = () => toast && (
-    <div style={{ position: 'fixed', top: '50px', left: '50%', transform: 'translateX(-50%)', zIndex: 60 }}>
-      <div
-        className="toast-animate"
-        style={{
-          padding: '14px 28px',
-          borderRadius: '28px',
-          backgroundColor: toast.type === 'success' ? colors.teal : colors.red,
-          color: 'white',
-          fontSize: '14px',
-          fontWeight: '600',
-          boxShadow: toast.type === 'success'
-            ? '0 8px 30px rgba(20,184,166,0.35), 0 2px 8px rgba(0,0,0,0.1)'
-            : '0 8px 30px rgba(239,68,68,0.35), 0 2px 8px rgba(0,0,0,0.1)',
-          backdropFilter: 'blur(12px)',
-          WebkitBackdropFilter: 'blur(12px)',
-          whiteSpace: 'nowrap',
-          display: 'flex',
-          alignItems: 'center',
-          gap: '8px'
-        }}
-      >
-        {toast.type === 'success' ? Icons.checkCircle('white', 18) : Icons.alertCircle('white', 18)}
-        {toast.message}
-      </div>
+    <div style={{
+      position: 'fixed',
+      top: '50px',
+      left: '50%',
+      transform: 'translateX(-50%)',
+      zIndex: 60,
+      padding: '12px 24px',
+      borderRadius: '24px',
+      backgroundColor: toast.type === 'error' ? colors.red : colors.navy,
+      color: 'white',
+      fontSize: '13px',
+      fontWeight: '700',
+      boxShadow: '0 4px 16px rgba(0,0,0,0.2)',
+      whiteSpace: 'nowrap',
+      pointerEvents: 'none',
+      willChange: 'transform, opacity',
+    }}>
+      {toast.message}
     </div>
   );
 
@@ -2421,8 +2427,8 @@ const FlockAppInner = ({ authUser, onLogout }) => {
           <h2 style={{ fontSize: '20px', fontWeight: '900', color: colors.navy, margin: 0 }}>Emergency</h2>
         </div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-          <button onClick={() => { showToast('SOS sent to contacts!'); setShowSOS(false); addXP(30); }} style={{ ...styles.gradientButton, background: `linear-gradient(90deg, ${colors.red}, #f97316)`, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}>{Icons.shield('white', 16)} Alert Contacts</button>
-          <button onClick={() => { showToast('Location shared!'); setShowSOS(false); }} style={{ ...styles.gradientButton, background: 'white', color: colors.navy, border: `2px solid ${colors.navy}`, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}>{Icons.mapPin(colors.navy, 16)} Share Location</button>
+          <button onClick={(e) => { confirmClick(e); setShowSOS(false); addXP(30); }} style={{ ...styles.gradientButton, background: `linear-gradient(90deg, ${colors.red}, #f97316)`, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', position: 'relative', overflow: 'hidden' }}>{Icons.shield('white', 16)} Alert Contacts</button>
+          <button onClick={() => { setShowSOS(false); }} style={{ ...styles.gradientButton, background: 'white', color: colors.navy, border: `2px solid ${colors.navy}`, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}>{Icons.mapPin(colors.navy, 16)} Share Location</button>
           <button onClick={() => setShowSOS(false)} style={{ background: 'none', border: 'none', color: '#9ca3af', padding: '8px', cursor: 'pointer' }}>Cancel</button>
         </div>
       </div>
@@ -2438,7 +2444,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
           <h2 style={{ fontSize: '20px', fontWeight: '900', color: colors.navy, margin: 0 }}>Check-in</h2>
         </div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-          <button onClick={() => { showToast('Check-in sent!'); setShowCheckin(false); addXP(30); }} style={{ ...styles.gradientButton, backgroundColor: colors.teal, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}>{Icons.check('white', 16)} I'm Safe</button>
+          <button onClick={(e) => { confirmClick(e); setShowCheckin(false); addXP(30); }} style={{ ...styles.gradientButton, backgroundColor: colors.teal, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', position: 'relative', overflow: 'hidden' }}>{Icons.check('white', 16)} I'm Safe</button>
           <button onClick={() => { setShowCheckin(false); setShowSOS(true); }} style={{ ...styles.gradientButton, backgroundColor: colors.red, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}>{Icons.shield('white', 16)} Need Help</button>
           <button onClick={() => setShowCheckin(false)} style={{ background: 'none', border: 'none', color: '#9ca3af', padding: '8px', cursor: 'pointer' }}>Dismiss</button>
         </div>
@@ -2472,7 +2478,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
       setShowAdminPrompt(false);
       setAdminPassword('');
       setCurrentScreen('adminRevenue');
-      showToast('Admin access granted');
+      // Toast removed
     } else {
       showToast('Incorrect password', 'error');
       setAdminPassword('');
@@ -2891,7 +2897,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
           <p style={{ fontSize: '10px', color: 'rgba(255,255,255,0.6)', margin: 0 }}>{dmIsTyping ? <span style={{ color: '#86EFAC', fontWeight: '500' }}>{dmTypingUser || selectedDm.name} is typing...</span> : dmSharingLocation ? '📍 sharing location' : 'recently'}</p>
         </div>
         {/* Vote button */}
-        <button onClick={() => setShowDmVotePanel(!showDmVotePanel)} style={{ height: '32px', borderRadius: '16px', border: 'none', backgroundColor: 'rgba(255,255,255,0.2)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px', padding: '0 10px', fontSize: '11px', fontWeight: '700' }}>{Icons.vote('white', 14)} Vote</button>
+        <button onClick={() => { setShowDmVotePanel(!showDmVotePanel); if (!showDmVotePanel) loadPopularVenues(); }} style={{ height: '32px', borderRadius: '16px', border: 'none', backgroundColor: 'rgba(255,255,255,0.2)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px', padding: '0 10px', fontSize: '11px', fontWeight: '700' }}>{Icons.vote('white', 14)} Vote</button>
         {/* Search button */}
         <button onClick={() => setShowDmChatSearch(!showDmChatSearch)} style={{ width: '32px', height: '32px', borderRadius: '16px', border: 'none', backgroundColor: showDmChatSearch ? 'rgba(255,255,255,0.4)' : 'rgba(255,255,255,0.2)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.search('white', 14)}</button>
         {/* Cash pool button */}
@@ -2995,7 +3001,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
             <div style={{ height: '100%', width: `${(dmCashPool.collected / dmCashPool.total) * 100}%`, background: `linear-gradient(90deg, ${colors.navy}, ${colors.navyMid})`, borderRadius: '4px', transition: 'width 0.8s cubic-bezier(0.34, 1.56, 0.64, 1)', boxShadow: dmCashPool.collected >= dmCashPool.total ? '0 0 12px rgba(13,40,71,0.4)' : 'none' }} />
           </div>
           {!dmCashPool.paid.includes('You') ? (
-            <button onClick={() => { setDmCashPool(prev => ({ ...prev, paid: [...prev.paid, 'You'], collected: prev.collected + prev.perPerson })); sendDmMessage({ text: `💰 I paid $${dmCashPool.perPerson} to the pool!`, noReply: true }); showToast('Payment sent!'); }} style={{ width: '100%', padding: '8px', borderRadius: '12px', border: 'none', background: `linear-gradient(90deg, ${colors.navy}, ${colors.navyMid})`, color: 'white', fontWeight: '700', fontSize: '13px', cursor: 'pointer' }}>Pay ${dmCashPool.perPerson}</button>
+            <button onClick={(e) => { confirmClick(e); setDmCashPool(prev => ({ ...prev, paid: [...prev.paid, 'You'], collected: prev.collected + prev.perPerson })); sendDmMessage({ text: `💰 I paid $${dmCashPool.perPerson} to the pool!`, noReply: true }); }} style={{ width: '100%', padding: '8px', borderRadius: '12px', border: 'none', background: `linear-gradient(90deg, ${colors.navy}, ${colors.navyMid})`, color: 'white', fontWeight: '700', fontSize: '13px', cursor: 'pointer', position: 'relative', overflow: 'hidden' }}>Pay ${dmCashPool.perPerson}</button>
           ) : (
             <div style={{ textAlign: 'center', padding: '4px', color: colors.teal, fontWeight: '600', fontSize: '12px' }}>✓ Paid!</div>
           )}
@@ -3037,8 +3043,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
             setDmVenueVotes(newVotes);
           }
           dmVoteVenue(selectedDmId, venueName, venueId);
-          showToast(`Voted for ${venueName}!`);
-        };
+                 };
 
         const handleDmUnvote = () => {
           const newVotes = dmVenueVotes.map(v => ({
@@ -3058,7 +3063,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
           if (b.isPinned && !a.isPinned) return 1;
           return parseInt(b.vote_count || 0) - parseInt(a.vote_count || 0);
         });
-        const suggestedVenues = allVenues.filter(v => !votesWithPinned.find(fv => fv.venue_name === v.name)).slice(0, 5);
+        const suggestedVenues = popularVenues.filter(v => !votesWithPinned.find(fv => fv.venue_name === v.name)).slice(0, 8);
 
         return (
           <div className="modal-backdrop" style={{ position: 'absolute', inset: 0, backgroundColor: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'flex-end', zIndex: 50 }}>
@@ -3084,7 +3089,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
                       ? `linear-gradient(135deg, ${colors.navy}, ${colors.navyMid})`
                       : isLeading ? `linear-gradient(135deg, ${colors.teal}, #0d9488)` : `linear-gradient(135deg, ${colors.navy}15, ${colors.navy}25)`;
                     return (
-                      <button key={v.venue_name} onClick={() => isMyVote ? handleDmUnvote() : handleDmQuickVote(v.venue_name, v.venue_id)} style={{ width: '100%', textAlign: 'left', padding: '12px 14px', borderRadius: '14px', border: v.isPinned ? `2px solid ${colors.navy}` : isMyVote ? `2px solid ${colors.navy}` : '1.5px solid #e5e7eb', backgroundColor: v.isPinned ? `${colors.navy}05` : isMyVote ? `${colors.navy}06` : 'white', cursor: 'pointer', position: 'relative', overflow: 'hidden', transition: 'all 0.2s' }}>
+                      <button key={v.venue_name} onClick={(e) => { confirmClick(e); isMyVote ? handleDmUnvote() : handleDmQuickVote(v.venue_name, v.venue_id); }} style={{ width: '100%', textAlign: 'left', padding: '12px 14px', borderRadius: '14px', border: v.isPinned ? `2px solid ${colors.navy}` : isMyVote ? `2px solid ${colors.navy}` : '1.5px solid #e5e7eb', backgroundColor: v.isPinned ? `${colors.navy}05` : isMyVote ? `${colors.navy}06` : 'white', cursor: 'pointer', position: 'relative', overflow: 'hidden', transition: 'all 0.2s' }}>
                         {/* Progress bar background */}
                         <div style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: `${votePercent}%`, backgroundColor: isMyVote ? `${colors.navy}10` : '#f8fafc', transition: 'width 0.4s ease', borderRadius: '14px' }} />
                         <div style={{ position: 'relative', display: 'flex', alignItems: 'center', gap: '10px' }}>
@@ -3114,13 +3119,13 @@ const FlockAppInner = ({ authUser, onLogout }) => {
                 </div>
               )}
 
-              {/* Nearby venue suggestions */}
+              {/* Popular chains nearby */}
               {suggestedVenues.length > 0 && (
                 <>
-                  <p style={{ fontSize: '12px', fontWeight: '700', color: '#9ca3af', marginBottom: '10px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Nearby venues</p>
+                  <p style={{ fontSize: '12px', fontWeight: '700', color: '#9ca3af', marginBottom: '10px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Popular Chains Nearby</p>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
                     {suggestedVenues.map(venue => (
-                      <button key={venue.id || venue.name} onClick={() => handleDmQuickVote(venue.name, venue.place_id)} style={{ width: '100%', textAlign: 'left', padding: '10px 12px', borderRadius: '12px', border: '1px solid #e5e7eb', backgroundColor: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '10px', transition: 'all 0.2s' }}>
+                      <button key={venue.id || venue.name} onClick={(e) => { confirmClick(e); handleDmQuickVote(venue.name, venue.place_id); }} style={{ width: '100%', textAlign: 'left', padding: '10px 12px', borderRadius: '12px', border: '1px solid #e5e7eb', backgroundColor: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '10px', transition: 'all 0.2s', position: 'relative', overflow: 'hidden' }}>
                         {venue.photo_url ? (
                           <img src={venue.photo_url} alt="" style={{ width: '36px', height: '36px', borderRadius: '8px', objectFit: 'cover', flexShrink: 0 }} />
                         ) : (
@@ -3170,7 +3175,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
                   <p style={{ fontSize: '14px', fontWeight: '700', color: colors.navy, margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{dmPinnedVenue.name}</p>
                   {dmPinnedVenue.addr && <p style={{ fontSize: '11px', color: '#6b7280', margin: '2px 0 0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{dmPinnedVenue.addr}</p>}
                 </div>
-                <button onClick={() => { sendDmMessage({ text: `Check out ${dmPinnedVenue.name}!`, message_type: 'venue_card', venue_data: { name: dmPinnedVenue.name, addr: dmPinnedVenue.addr, stars: dmPinnedVenue.rating, rating: dmPinnedVenue.rating, photo_url: dmPinnedVenue.photo_url, place_id: dmPinnedVenue.place_id }, noReply: true }); setShowDmVenueSearch(false); }} style={{ padding: '8px 12px', borderRadius: '10px', border: 'none', background: `linear-gradient(135deg, ${colors.teal}, #0d9488)`, color: 'white', fontSize: '11px', fontWeight: '700', cursor: 'pointer', whiteSpace: 'nowrap' }}>Share This</button>
+                <button onClick={(e) => { confirmClick(e); sendDmMessage({ text: `Check out ${dmPinnedVenue.name}!`, message_type: 'venue_card', venue_data: { name: dmPinnedVenue.name, addr: dmPinnedVenue.addr, stars: dmPinnedVenue.rating, rating: dmPinnedVenue.rating, photo_url: dmPinnedVenue.photo_url, place_id: dmPinnedVenue.place_id }, noReply: true }); setShowDmVenueSearch(false); }} style={{ padding: '8px 12px', borderRadius: '10px', border: 'none', background: `linear-gradient(135deg, ${colors.teal}, #0d9488)`, color: 'white', fontSize: '11px', fontWeight: '700', cursor: 'pointer', whiteSpace: 'nowrap', position: 'relative', overflow: 'hidden' }}>Share This</button>
               </div>
             ) : (
               <div style={{ padding: '10px 12px', borderRadius: '12px', backgroundColor: '#f8fafc', border: '1px solid #e2e8f0', marginBottom: '16px' }}>
@@ -3183,7 +3188,8 @@ const FlockAppInner = ({ authUser, onLogout }) => {
               {allVenues.map(venue => (
                 <button
                   key={venue.id}
-                  onClick={() => {
+                  onClick={(e) => {
+                    confirmClick(e);
                     sendDmMessage({ text: `Check out ${venue.name}!`, message_type: 'venue_card', venue_data: { name: venue.name, addr: venue.addr, stars: venue.stars, rating: venue.rating || venue.stars, price: venue.price, price_level: venue.price_level, photo_url: venue.photo_url, place_id: venue.place_id, category: venue.category, type: venue.type, crowd: venue.crowd, best: venue.best }, noReply: true });
                     setShowDmVenueSearch(false);
                   }}
@@ -3220,12 +3226,12 @@ const FlockAppInner = ({ authUser, onLogout }) => {
               <button onClick={() => setDmCashPoolAmount(prev => prev + 5)} style={{ width: '44px', height: '44px', borderRadius: '22px', border: `2px solid ${colors.navy}`, backgroundColor: 'white', color: colors.navy, fontWeight: 'bold', cursor: 'pointer', fontSize: '18px' }}>+</button>
             </div>
             <p style={{ fontSize: '13px', color: '#6b7280', textAlign: 'center', marginBottom: '20px' }}>Per person • Total: ${dmCashPoolAmount * 2}</p>
-            <button onClick={() => {
+            <button onClick={(e) => {
+              confirmClick(e);
               setDmCashPool({ perPerson: dmCashPoolAmount, total: dmCashPoolAmount * 2, collected: 0, paid: [] });
               sendDmMessage({ text: `💰 Cash Pool: $${dmCashPoolAmount}/person — let's split it!`, noReply: true });
               setShowDmCashPool(false);
-              showToast('Cash pool created!');
-            }} style={{ width: '100%', padding: '14px', borderRadius: '14px', border: 'none', background: `linear-gradient(90deg, ${colors.navy}, ${colors.navyMid})`, color: 'white', fontWeight: '800', fontSize: '15px', cursor: 'pointer' }}>Create Pool</button>
+                         }} style={{ width: '100%', padding: '14px', borderRadius: '14px', border: 'none', background: `linear-gradient(90deg, ${colors.navy}, ${colors.navyMid})`, color: 'white', fontWeight: '800', fontSize: '15px', cursor: 'pointer', position: 'relative', overflow: 'hidden' }}>Create Pool</button>
           </div>
         </div>
       )}
@@ -3251,8 +3257,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
                 setShowDeleteDmConfirm(false);
                 setShowDmMenu(false);
                 setCurrentScreen('main');
-                showToast(`Conversation with ${friendName} deleted`);
-              }} style={{ flex: 1, padding: '12px', borderRadius: '12px', border: 'none', backgroundColor: '#EF4444', color: 'white', fontWeight: '700', fontSize: '14px', cursor: 'pointer' }}>Delete</button>
+                             }} style={{ flex: 1, padding: '12px', borderRadius: '12px', border: 'none', backgroundColor: '#EF4444', color: 'white', fontWeight: '700', fontSize: '14px', cursor: 'pointer' }}>Delete</button>
             </div>
           </div>
         </div>
@@ -3332,8 +3337,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
                         setDmVenueVotes(prev => [...prev.map(v => ({ ...v, voters: (v.voters || []).filter(x => x !== mn), vote_count: (v.voters || []).includes(mn) ? parseInt(v.vote_count || 0) - 1 : parseInt(v.vote_count || 0) })).filter(v => parseInt(v.vote_count || 0) > 0), { venue_name: vName, venue_id: vId, vote_count: 1, voters: [mn] }]);
                       }
                       dmVoteVenue(selectedDmId, vName, vId);
-                      showToast(`Voted for ${vName}!`);
-                    }}
+                                         }}
                   />
                 ) : m.message_type === 'image' && m.image_url ? (
                   /* Image message */
@@ -3573,10 +3577,10 @@ const FlockAppInner = ({ authUser, onLogout }) => {
             setEasterEggTaps(prev => {
               const newCount = prev + 1;
               if (newCount === 7) {
-                showToast("You found a secret! Welcome to the flock.");
+                // Easter egg found
                 return 0;
               }
-              if (newCount === 5) showToast("Keep tapping...");
+              // Easter egg hint at 5 taps
               return newCount;
             });
           }}
@@ -3824,8 +3828,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
         const friend = invitedFriends[0];
         startNewDmWithUser({ id: friend.id, name: friend.name, profile_image_url: friend.profile_image_url || null });
         setFlockName(''); setFlockFriends([]); setInviteSearch(''); setInviteResults([]); setFlockCashPool(false); setSelectedVenueForCreate(null);
-        showToast(`Started a DM with ${friend.name}`);
-        return;
+               return;
       }
       setIsLoading(true);
       try {
@@ -3838,18 +3841,22 @@ const FlockAppInner = ({ authUser, onLogout }) => {
         const venueLat = selectedVenueForCreate?.lat || selectedVenueForCreate?.location?.latitude || null;
         const venueLng = selectedVenueForCreate?.lng || selectedVenueForCreate?.location?.longitude || null;
         const invitedIds = flockFriends.map(f => f.id).filter(Boolean);
-        const data = await apiCreateFlock({ name: flockName, venue_name: venueName, venue_address: venueAddr, venue_id: venueId, venue_latitude: venueLat || undefined, venue_longitude: venueLng || undefined, invited_user_ids: invitedIds.length > 0 ? invitedIds : undefined });
+        const data = await apiCreateFlock({ name: flockName, venue_name: venueName, venue_address: venueAddr, venue_id: venueId, venue_latitude: venueLat || undefined, venue_longitude: venueLng || undefined, venue_rating: venueRating || undefined, venue_photo_url: venuePhoto || undefined, invited_user_ids: invitedIds.length > 0 ? invitedIds : undefined });
         const f = data.flock;
         const initialMessages = [];
         if (venueName) {
+          const venueCardData = { name: venueName, addr: venueAddr, place_id: venueId, photo_url: venuePhoto, rating: venueRating, stars: venueRating, price: venuePriceLevel ? '$'.repeat(venuePriceLevel) : null, price_level: venuePriceLevel, type: selectedVenueForCreate?.type || 'Venue', category: selectedVenueForCreate?.category || 'Food', crowd: selectedVenueForCreate?.crowd || Math.round(20 + Math.random() * 60), lat: venueLat, lng: venueLng };
           initialMessages.push({
             id: Date.now(),
             sender: 'You',
             time: new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }),
-            text: '',
+            text: `Check out ${venueName}!`,
             reactions: [],
-            venueCard: { name: venueName, addr: venueAddr, place_id: venueId, photo_url: venuePhoto, rating: venueRating, price_level: venuePriceLevel, type: 'Venue', lat: venueLat, lng: venueLng }
+            message_type: 'venue_card',
+            venue_data: venueCardData,
           });
+          // Persist venue card to backend
+          apiSendMessage(f.id, `Check out ${venueName}!`, { message_type: 'venue_card', venue_data: venueCardData }).catch(() => {});
         }
         const invitedNames = flockFriends.map(f => f.name);
         const newFlock = { id: f.id, name: f.name, host: authUser?.name || 'You', creatorId: f.creator_id, members: invitedNames, memberCount: 1 + invitedIds.length, time: f.event_time ? new Date(f.event_time).toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' }) : `${flockDate} ${flockTime}`, status: 'voting', venue: f.venue_name || 'TBD', venueAddress: venueAddr, venueId: venueId, venuePhoto: venuePhoto, venueRating: venueRating, venuePriceLevel: venuePriceLevel, venueLat: venueLat, venueLng: venueLng, cashPool: null, votes: [], messages: initialMessages };
@@ -3857,8 +3864,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
         setFlockName(''); setFlockFriends([]); setInviteSearch(''); setInviteResults([]); setFlockCashPool(false); setSelectedVenueForCreate(null);
         setSelectedFlockId(f.id);
         setCurrentScreen('chatDetail');
-        addXP(50); showToast(`"${newFlock.name}" created!`);
-      } catch (err) {
+        addXP(50);      } catch (err) {
         showToast(err.message || 'Failed to create flock', 'error');
       } finally {
         setIsLoading(false);
@@ -4056,10 +4062,10 @@ const FlockAppInner = ({ authUser, onLogout }) => {
           <span style={{ color: '#9ca3af', fontSize: '12px' }}>or</span>
           <div style={{ flex: 1, height: '1px', backgroundColor: '#d1d5db' }} />
         </div>
-        <button onClick={() => showToast('Camera opening...')} style={{ width: '100%', padding: '12px', borderRadius: '12px', border: `2px solid ${colors.creamDark}`, backgroundColor: 'white', color: colors.navy, fontWeight: '500', fontSize: '14px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>{Icons.camera(colors.navy, 16)} Scan QR</button>
+        <button onClick={() => {}} style={{ width: '100%', padding: '12px', borderRadius: '12px', border: `2px solid ${colors.creamDark}`, backgroundColor: 'white', color: colors.navy, fontWeight: '500', fontSize: '14px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>{Icons.camera(colors.navy, 16)} Scan QR</button>
       </div>
       <div style={{ padding: '12px', backgroundColor: 'white', borderTop: '1px solid #eee', flexShrink: 0 }}>
-        <button onClick={() => { if (joinCode.length === 6) { showToast('Joined successfully!'); addXP(20); setJoinCode(''); setCurrentScreen('main'); } else { showToast('Enter a valid code', 'error'); }}} style={styles.gradientButton}>Join Flock</button>
+        <button onClick={(e) => { if (joinCode.length === 6) { confirmClick(e); addXP(20); setJoinCode(''); setCurrentScreen('main'); } else { showToast('Enter a valid code', 'error'); }}} style={{ ...styles.gradientButton, position: 'relative', overflow: 'hidden' }}>Join Flock</button>
       </div>
     </div>
   );
@@ -4265,7 +4271,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
                       ) : status === 'pending' ? (
                         <span style={{ padding: '6px 12px', borderRadius: '20px', backgroundColor: '#e5e7eb', color: '#6b7280', fontSize: '11px', fontWeight: '700' }}>Pending</span>
                       ) : (
-                        <button onClick={() => handleSendFriendRequest(user)} style={{ padding: '6px 12px', borderRadius: '20px', border: 'none', backgroundColor: colors.navy, color: 'white', fontSize: '11px', fontWeight: '700', cursor: 'pointer' }}>Add Friend</button>
+                        <button onClick={(e) => { confirmClick(e); handleSendFriendRequest(user); }} style={{ padding: '6px 12px', borderRadius: '20px', border: 'none', backgroundColor: colors.navy, color: 'white', fontSize: '11px', fontWeight: '700', cursor: 'pointer', position: 'relative', overflow: 'hidden' }}>Add Friend</button>
                       )}
                       <button onClick={() => {
                         setShowConnectPanel(false); setConnectSearch(''); setConnectResults([]);
@@ -4388,7 +4394,8 @@ const FlockAppInner = ({ authUser, onLogout }) => {
 
               <div style={{ display: 'flex', gap: '6px' }}>
                 {pickingVenueForCreate ? (
-                  <button onClick={() => {
+                  <button onClick={(e) => {
+                    confirmClick(e);
                     const venueData = { ...activeVenue, addr: activeVenue.addr || activeVenue.formatted_address, lat: activeVenue.location?.latitude, lng: activeVenue.location?.longitude };
                     // If picking for a DM, pin venue and go back to DM
                     if (pickingVenueForDm) {
@@ -4400,8 +4407,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
                       setPickingVenueForDm(false);
                       setCurrentTab('chats');
                       setCurrentScreen('dmDetail');
-                      showToast(`${venueData.name} pinned!`);
-                    // If we have a selected flock (came from chat), assign venue to it directly
+                                         // If we have a selected flock (came from chat), assign venue to it directly
                     } else if (selectedFlockId) {
                       updateFlockVenue(selectedFlockId, venueData);
                       setActiveVenue(null);
@@ -4413,16 +4419,15 @@ const FlockAppInner = ({ authUser, onLogout }) => {
                       setActiveVenue(null);
                       setPickingVenueForCreate(false);
                       setCurrentScreen('create');
-                      showToast('Selected!');
-                    }
-                  }} style={{ flex: 1, padding: '10px', borderRadius: '8px', border: 'none', backgroundColor: colors.teal, color: 'white', fontWeight: 'bold', fontSize: '12px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px' }}>{Icons.check('white', 14)} Select</button>
+                                         }
+                  }} style={{ flex: 1, padding: '10px', borderRadius: '8px', border: 'none', backgroundColor: colors.teal, color: 'white', fontWeight: 'bold', fontSize: '12px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px', position: 'relative', overflow: 'hidden' }}>{Icons.check('white', 14)} Select</button>
                 ) : (
-                  <button onClick={() => { setSelectedVenueForCreate({ ...activeVenue, addr: activeVenue.addr || activeVenue.formatted_address, lat: activeVenue.location?.latitude, lng: activeVenue.location?.longitude }); setActiveVenue(null); setCurrentScreen('create'); }} style={{ flex: 1, padding: '10px', borderRadius: '8px', border: 'none', background: `linear-gradient(90deg, ${colors.navy}, ${colors.navyMid})`, color: 'white', fontWeight: 'bold', fontSize: '12px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px' }}>{Icons.users('white', 14)} Start Flock Here</button>
+                  <button onClick={(e) => { confirmClick(e); setSelectedVenueForCreate({ ...activeVenue, addr: activeVenue.addr || activeVenue.formatted_address, lat: activeVenue.location?.latitude, lng: activeVenue.location?.longitude }); setActiveVenue(null); setCurrentScreen('create'); }} style={{ flex: 1, padding: '10px', borderRadius: '8px', border: 'none', background: `linear-gradient(90deg, ${colors.navy}, ${colors.navyMid})`, color: 'white', fontWeight: 'bold', fontSize: '12px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px', position: 'relative', overflow: 'hidden' }}>{Icons.users('white', 14)} Start Flock Here</button>
                 )}
                 {activeVenue.place_id && (
                   <button onClick={() => { openVenueDetail(activeVenue.place_id, { name: activeVenue.name, formatted_address: activeVenue.addr, place_id: activeVenue.place_id, rating: activeVenue.stars, photo_url: activeVenue.photo_url }); }} style={{ width: '40px', height: '40px', borderRadius: '8px', border: `2px solid ${colors.creamDark}`, backgroundColor: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.eye(colors.navy, 18)}</button>
                 )}
-                <button onClick={() => addEventToCalendar(`Visit ${activeVenue.name}`, activeVenue.name, new Date(), '8 PM', getCategoryColor(activeVenue.category))} style={{ width: '40px', height: '40px', borderRadius: '8px', border: `2px solid ${colors.creamDark}`, backgroundColor: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.calendar(colors.navy, 18)}</button>
+                <button onClick={(e) => { confirmClick(e); addEventToCalendar(`Visit ${activeVenue.name}`, activeVenue.name, new Date(), '8 PM', getCategoryColor(activeVenue.category)); }} style={{ width: '40px', height: '40px', borderRadius: '8px', border: `2px solid ${colors.creamDark}`, backgroundColor: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', position: 'relative', overflow: 'hidden' }}>{Icons.calendar(colors.navy, 18)}</button>
               </div>
             </div>
           </div>
@@ -4459,8 +4464,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
                 return true;
               });
               if (matches.length === 0) {
-                showToast(`No ${c.id} venues nearby. Showing all.`);
-                setCategory('All');
+                               setCategory('All');
                 return;
               }
               setCategory(c.id);
@@ -4639,11 +4643,11 @@ const FlockAppInner = ({ authUser, onLogout }) => {
               {/* Repeat toggle */}
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 0', borderTop: '1px solid #eee', marginBottom: '10px' }}>
                 <span style={{ fontSize: '11px', fontWeight: '500', color: colors.navy, display: 'flex', alignItems: 'center', gap: '4px' }}>{Icons.repeat(colors.navy, 12)} Repeat weekly</span>
-                <Toggle on={false} onChange={() => showToast('Repeat enabled')} />
+                <Toggle on={false} onChange={() => {}} />
               </div>
               <div style={{ display: 'flex', gap: '8px' }}>
                 <button onClick={() => { setShowAddEvent(false); setNewEventTitle(''); setNewEventVenue(''); }} style={{ flex: 1, padding: '10px', borderRadius: '10px', border: '1px solid #d1d5db', backgroundColor: 'white', fontWeight: '600', fontSize: '13px', cursor: 'pointer' }}>Cancel</button>
-                <button onClick={() => { if (newEventTitle.trim()) { addEventToCalendar(newEventTitle, newEventVenue || 'TBD', selectedDate, '7:00 PM', colors.navy); setNewEventTitle(''); setNewEventVenue(''); setShowAddEvent(false); }}} style={{ flex: 1, padding: '10px', borderRadius: '10px', border: 'none', background: `linear-gradient(90deg, ${colors.navy}, ${colors.navyMid})`, color: 'white', fontWeight: 'bold', fontSize: '13px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px' }}>{Icons.check('white', 14)} Add</button>
+                <button onClick={(e) => { if (newEventTitle.trim()) { confirmClick(e); addEventToCalendar(newEventTitle, newEventVenue || 'TBD', selectedDate, '7:00 PM', colors.navy); setNewEventTitle(''); setNewEventVenue(''); setShowAddEvent(false); }}} style={{ flex: 1, padding: '10px', borderRadius: '10px', border: 'none', background: `linear-gradient(90deg, ${colors.navy}, ${colors.navyMid})`, color: 'white', fontWeight: 'bold', fontSize: '13px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px', position: 'relative', overflow: 'hidden' }}>{Icons.check('white', 14)} Add</button>
               </div>
             </div>
           )}
@@ -4904,7 +4908,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
             <h2 style={{ fontWeight: 'bold', color: 'white', fontSize: '14px', margin: 0 }}>{flock.name}</h2>
             <p style={{ fontSize: '10px', color: 'rgba(255,255,255,0.6)', margin: 0 }}>{flock.members?.length || flock.memberCount || 0} members • {isTyping ? <span style={{ color: '#86EFAC', fontWeight: '500' }}>{typingUser} is typing...</span> : 'online'}</p>
           </div>
-          <button onClick={() => setShowVotePanel(true)} style={{ height: '32px', borderRadius: '16px', border: 'none', backgroundColor: flock.status === 'voting' ? colors.teal : 'rgba(255,255,255,0.2)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px', padding: '0 10px', transition: 'all 0.2s ease', fontSize: '11px', fontWeight: '700' }}>{Icons.vote('white', 14)} Vote</button>
+          <button onClick={() => { setShowVotePanel(true); loadPopularVenues(); }} style={{ height: '32px', borderRadius: '16px', border: 'none', backgroundColor: flock.status === 'voting' ? colors.teal : 'rgba(255,255,255,0.2)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px', padding: '0 10px', transition: 'all 0.2s ease', fontSize: '11px', fontWeight: '700' }}>{Icons.vote('white', 14)} Vote</button>
           <button onClick={() => setShowChatSearch(!showChatSearch)} style={{ width: '32px', height: '32px', borderRadius: '16px', border: 'none', backgroundColor: 'rgba(255,255,255,0.2)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'all 0.2s ease' }}>{Icons.search('white', 16)}</button>
           <button onClick={() => setShowChatPool(true)} style={{ width: '32px', height: '32px', borderRadius: '16px', border: 'none', backgroundColor: colors.cream, color: colors.navy, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'all 0.2s ease' }}>{Icons.dollar(colors.navy, 16)}</button>
           <div style={{ position: 'relative' }}>
@@ -5027,7 +5031,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
               <p style={{ fontSize: '12px', fontWeight: '700', color: '#065f46', margin: 0 }}>Share your location with the group?</p>
               <p style={{ fontSize: '10px', color: '#047857', margin: '1px 0 0' }}>Members can see where everyone is on the map</p>
             </div>
-            <button onClick={() => startSharingLocation(flock.id)} style={{ padding: '6px 12px', borderRadius: '14px', border: 'none', background: '#10b981', color: 'white', fontSize: '11px', fontWeight: '700', cursor: 'pointer', flexShrink: 0 }}>Share</button>
+            <button onClick={(e) => { confirmClick(e); startSharingLocation(flock.id); }} style={{ padding: '6px 12px', borderRadius: '14px', border: 'none', background: '#10b981', color: 'white', fontSize: '11px', fontWeight: '700', cursor: 'pointer', flexShrink: 0, position: 'relative', overflow: 'hidden' }}>Share</button>
             <button onClick={() => { setLocationBannerDismissed(prev => { const next = { ...prev, [flock.id]: true }; localStorage.setItem('flock_loc_dismissed', JSON.stringify(next)); return next; }); }} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '4px', flexShrink: 0 }}>{Icons.x('#6b7280', 14)}</button>
           </div>
         )}
@@ -5109,16 +5113,15 @@ const FlockAppInner = ({ authUser, onLogout }) => {
                 )}
 
                 {/* Venue Card message */}
-                {m.venueCard && (
+                {m.message_type === 'venue_card' && m.venue_data && (
                   <VenueCard
-                    venue={m.venueCard}
+                    venue={m.venue_data}
                     colors={colors}
                     Icons={Icons}
                     getCategoryColor={getCategoryColor}
                     onViewDetails={() => {
-                      const vc = m.venueCard;
-                      const pid = vc.place_id || (allVenues.find(v => v.id === vc.id) || {}).place_id;
-                      // Navigate to Discover tab and center map on this venue
+                      const vc = m.venue_data;
+                      const pid = vc.place_id;
                       setCurrentTab('explore');
                       setCurrentScreen('main');
                       if (pid || vc.lat || vc.latitude) {
@@ -5132,27 +5135,26 @@ const FlockAppInner = ({ authUser, onLogout }) => {
                       }
                     }}
                     onVote={() => {
-                      const existingVote = flock.votes.find(v => v.venue === m.venueCard.name);
+                      const existingVote = flock.votes.find(v => v.venue === m.venue_data.name);
                       if (existingVote) {
                         const newVotes = flock.votes.map(v => ({
                           ...v,
-                          voters: v.venue === m.venueCard.name
+                          voters: v.venue === m.venue_data.name
                             ? (v.voters.includes('You') ? v.voters : [...v.voters, 'You'])
                             : v.voters.filter(x => x !== 'You')
                         }));
                         updateFlockVotes(selectedFlockId, newVotes);
                       } else {
-                        const newVotes = [...flock.votes, { venue: m.venueCard.name, type: m.venueCard.type, voters: ['You'] }];
+                        const newVotes = [...flock.votes, { venue: m.venue_data.name, type: m.venue_data.type, voters: ['You'] }];
                         updateFlockVotes(selectedFlockId, newVotes);
                       }
-                      showToast(`Voted for ${m.venueCard.name}!`);
-                      addXP(10);
+                                           addXP(10);
                     }}
                   />
                 )}
 
                 {/* Regular text message */}
-                {m.text && (
+                {m.text && m.message_type !== 'venue_card' && (
                   <div
                     onClick={() => setShowReactionPicker(showReactionPicker === m.id ? null : m.id)}
                     style={{
@@ -5317,7 +5319,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
           {chatInput ? (
             <button onClick={sendChatMessage} style={{ width: '42px', height: '42px', borderRadius: '21px', border: 'none', background: `linear-gradient(135deg, ${colors.navy}, ${colors.navyMid})`, color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 3px 10px rgba(13,40,71,0.25)', transition: 'all 0.2s ease' }}>{Icons.send('white', 18)}</button>
           ) : (
-            <button onClick={() => showToast('Recording voice...')} style={{ width: '42px', height: '42px', borderRadius: '21px', border: 'none', background: `linear-gradient(135deg, ${colors.navy}, ${colors.navyMid})`, color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 3px 10px rgba(13,40,71,0.25)', transition: 'all 0.2s ease' }}>{Icons.mic('white', 18)}</button>
+            <button onClick={() => {}} style={{ width: '42px', height: '42px', borderRadius: '21px', border: 'none', background: `linear-gradient(135deg, ${colors.navy}, ${colors.navyMid})`, color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 3px 10px rgba(13,40,71,0.25)', transition: 'all 0.2s ease' }}>{Icons.mic('white', 18)}</button>
           )}
         </div>
 
@@ -5335,7 +5337,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
                 <button onClick={() => setChatPoolAmount(prev => prev + 5)} style={{ width: '44px', height: '44px', borderRadius: '22px', border: `2px solid ${colors.navy}`, backgroundColor: 'white', color: colors.navy, fontWeight: 'bold', cursor: 'pointer', fontSize: '18px', transition: 'all 0.2s ease' }}>+</button>
               </div>
               <p style={{ fontSize: '13px', color: '#6b7280', textAlign: 'center', marginBottom: '20px' }}>Per person • Total: ${chatPoolAmount * (flock.members?.length || flock.memberCount || 1)}</p>
-              <button onClick={() => { addMessageToFlock(selectedFlockId, { id: Date.now(), sender: 'You', time: new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }), text: `💰 Pool: $${chatPoolAmount}/person`, reactions: [] }); setShowChatPool(false); showToast('💰 Pool created!'); }} style={{ ...styles.gradientButton, padding: '14px' }}>Create Pool</button>
+              <button onClick={(e) => { confirmClick(e); addMessageToFlock(selectedFlockId, { id: Date.now(), sender: 'You', time: new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }), text: `💰 Pool: $${chatPoolAmount}/person`, reactions: [] }); setShowChatPool(false); }} style={{ ...styles.gradientButton, padding: '14px', position: 'relative', overflow: 'hidden' }}>Create Pool</button>
             </div>
           </div>
         )}
@@ -5361,8 +5363,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
               const newVotes = [...flock.votes.map(v => ({ ...v, voters: v.voters.filter(x => x !== 'You') })), { venue: venueName, type: venueType || 'Venue', voters: ['You'] }];
               updateFlockVotes(selectedFlockId, newVotes);
             }
-            showToast(`Voted for ${venueName}!`);
-            addXP(10);
+                       addXP(10);
           };
 
           const handleUnvote = () => {
@@ -5382,8 +5383,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
               rating: venueObj?.stars || venueObj?.rating || null,
             });
             setShowVotePanel(false);
-            showToast(`${venueName} confirmed!`);
-          };
+                     };
 
           // Ensure assigned venue is in votes list
           const assignedVenue = flock.venue && flock.venue !== 'TBD' ? flock.venue : null;
@@ -5398,8 +5398,8 @@ const FlockAppInner = ({ authUser, onLogout }) => {
             return b.voters.length - a.voters.length;
           });
 
-          // Venues from explore that aren't already vote options
-          const suggestedVenues = allVenues.filter(v => !votesWithAssigned.find(fv => fv.venue === v.name)).slice(0, 5);
+          // Popular chains nearby that aren't already vote options
+          const suggestedVenues = popularVenues.filter(v => !votesWithAssigned.find(fv => fv.venue === v.name)).slice(0, 8);
 
           return (
             <div className="modal-backdrop" style={{ position: 'absolute', inset: 0, backgroundColor: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'flex-end', zIndex: 50 }}>
@@ -5425,7 +5425,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
                         ? `linear-gradient(135deg, ${colors.navy}, ${colors.navyMid})`
                         : isLeading ? `linear-gradient(135deg, ${colors.teal}, #0d9488)` : `linear-gradient(135deg, ${colors.navy}15, ${colors.navy}25)`;
                       return (
-                        <button key={v.venue} onClick={() => isMyVote ? handleUnvote() : handleQuickVote(v.venue, v.type)} style={{ width: '100%', textAlign: 'left', padding: '12px 14px', borderRadius: '14px', border: isAssigned ? `2px solid ${colors.navy}` : isMyVote ? `2px solid ${colors.navy}` : '1.5px solid #e5e7eb', backgroundColor: isAssigned ? `${colors.navy}05` : isMyVote ? `${colors.navy}06` : 'white', cursor: 'pointer', position: 'relative', overflow: 'hidden', transition: 'all 0.2s' }}>
+                        <button key={v.venue} onClick={(e) => { confirmClick(e); isMyVote ? handleUnvote() : handleQuickVote(v.venue, v.type); }} style={{ width: '100%', textAlign: 'left', padding: '12px 14px', borderRadius: '14px', border: isAssigned ? `2px solid ${colors.navy}` : isMyVote ? `2px solid ${colors.navy}` : '1.5px solid #e5e7eb', backgroundColor: isAssigned ? `${colors.navy}05` : isMyVote ? `${colors.navy}06` : 'white', cursor: 'pointer', position: 'relative', overflow: 'hidden', transition: 'all 0.2s' }}>
                           {/* Progress bar background */}
                           <div style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: `${votePercent}%`, backgroundColor: isMyVote ? `${colors.navy}10` : '#f8fafc', transition: 'width 0.4s ease', borderRadius: '14px' }} />
                           <div style={{ position: 'relative', display: 'flex', alignItems: 'center', gap: '10px' }}>
@@ -5444,7 +5444,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
                               {v.voters.length > 0 && <span style={{ fontSize: '16px', fontWeight: '900', color: isMyVote ? colors.navy : '#9ca3af' }}>{v.voters.length}</span>}
                               {isMyVote && <div style={{ width: '20px', height: '20px', borderRadius: '10px', backgroundColor: colors.navy, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.check('white', 12)}</div>}
                               {isCreator && !isAssigned && (
-                                <button onClick={(e) => { e.stopPropagation(); handleConfirmVenue(v.venue); }} style={{ padding: '4px 8px', borderRadius: '8px', border: 'none', background: `linear-gradient(135deg, ${colors.teal}, #0d9488)`, color: 'white', fontSize: '10px', fontWeight: '700', cursor: 'pointer' }}>Confirm</button>
+                                <button onClick={(e) => { e.stopPropagation(); confirmClick(e); handleConfirmVenue(v.venue); }} style={{ padding: '4px 8px', borderRadius: '8px', border: 'none', background: `linear-gradient(135deg, ${colors.teal}, #0d9488)`, color: 'white', fontSize: '10px', fontWeight: '700', cursor: 'pointer', position: 'relative', overflow: 'hidden' }}>Confirm</button>
                               )}
                             </div>
                           </div>
@@ -5458,13 +5458,13 @@ const FlockAppInner = ({ authUser, onLogout }) => {
                   </div>
                 )}
 
-                {/* Add from nearby venues */}
+                {/* Popular chains nearby */}
                 {suggestedVenues.length > 0 && (
                   <>
-                    <p style={{ fontSize: '12px', fontWeight: '700', color: '#9ca3af', marginBottom: '10px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Nearby venues</p>
+                    <p style={{ fontSize: '12px', fontWeight: '700', color: '#9ca3af', marginBottom: '10px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Popular Chains Nearby</p>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
                       {suggestedVenues.map(venue => (
-                        <button key={venue.id || venue.name} onClick={() => handleQuickVote(venue.name, venue.type || venue.category || 'Venue')} style={{ width: '100%', textAlign: 'left', padding: '10px 12px', borderRadius: '12px', border: '1px solid #e5e7eb', backgroundColor: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '10px', transition: 'all 0.2s' }}>
+                        <button key={venue.id || venue.name} onClick={(e) => { confirmClick(e); handleQuickVote(venue.name, venue.type || venue.category || 'Venue'); }} style={{ width: '100%', textAlign: 'left', padding: '10px 12px', borderRadius: '12px', border: '1px solid #e5e7eb', backgroundColor: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '10px', transition: 'all 0.2s', position: 'relative', overflow: 'hidden' }}>
                           {venue.photo_url ? (
                             <img src={venue.photo_url} alt="" style={{ width: '36px', height: '36px', borderRadius: '8px', objectFit: 'cover', flexShrink: 0 }} />
                           ) : (
@@ -5514,7 +5514,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
                     <p style={{ fontSize: '14px', fontWeight: '700', color: colors.navy, margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{flock.venue}</p>
                     {flock.venueAddress && <p style={{ fontSize: '11px', color: '#6b7280', margin: '2px 0 0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{flock.venueAddress}</p>}
                   </div>
-                  <button onClick={() => { shareVenueToChat(selectedFlockId, { name: flock.venue, addr: flock.venueAddress, place_id: flock.venueId, stars: flock.venueRating, photo_url: flock.venuePhoto, category: 'Food', crowd: 50, price: '$$' }); }} style={{ padding: '8px 12px', borderRadius: '10px', border: 'none', background: `linear-gradient(135deg, ${colors.teal}, #0d9488)`, color: 'white', fontSize: '11px', fontWeight: '700', cursor: 'pointer', whiteSpace: 'nowrap' }}>Share This</button>
+                  <button onClick={(e) => { confirmClick(e); shareVenueToChat(selectedFlockId, { name: flock.venue, addr: flock.venueAddress, place_id: flock.venueId, stars: flock.venueRating, photo_url: flock.venuePhoto, category: 'Food', crowd: 50, price: '$$' }); }} style={{ padding: '8px 12px', borderRadius: '10px', border: 'none', background: `linear-gradient(135deg, ${colors.teal}, #0d9488)`, color: 'white', fontSize: '11px', fontWeight: '700', cursor: 'pointer', whiteSpace: 'nowrap', position: 'relative', overflow: 'hidden' }}>Share This</button>
                 </div>
               ) : (
                 <div style={{ padding: '10px 12px', borderRadius: '12px', backgroundColor: '#f8fafc', border: '1px solid #e2e8f0', marginBottom: '16px' }}>
@@ -5527,7 +5527,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
                 {allVenues.map(venue => (
                   <button
                     key={venue.id}
-                    onClick={() => shareVenueToChat(selectedFlockId, venue)}
+                    onClick={(e) => { confirmClick(e); shareVenueToChat(selectedFlockId, venue); }}
                     style={{
                       display: 'flex',
                       alignItems: 'center',
@@ -5538,7 +5538,9 @@ const FlockAppInner = ({ authUser, onLogout }) => {
                       backgroundColor: 'white',
                       cursor: 'pointer',
                       textAlign: 'left',
-                      transition: 'all 0.2s ease'
+                      transition: 'all 0.2s ease',
+                      position: 'relative',
+                      overflow: 'hidden'
                     }}
                   >
                     <div style={{
@@ -5599,8 +5601,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
                     setShowFlockMenu(false);
                     setCurrentScreen('main');
                     setCurrentTab('home');
-                    showToast(`Left "${flockName}"`);
-                    // Notify other members via socket
+                                       // Notify other members via socket
                     const sock = getSocket();
                     if (sock?.connected) {
                       sock.emit('leave_flock', flockId);
@@ -5630,8 +5631,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
       const newVotes = flock.votes.map(v => ({ ...v, voters: v.venue === venueName ? (v.voters.includes('You') ? v.voters : [...v.voters, 'You']) : v.voters.filter(x => x !== 'You') }));
       updateFlockVotes(selectedFlockId, newVotes);
       addXP(10);
-      showToast(`Voted for ${venueName}!`);
-    };
+         };
 
     return (
       <div key="flock-detail-screen-container" style={{ display: 'flex', flexDirection: 'column', height: '100%', backgroundColor: colors.cream }}>
@@ -5642,7 +5642,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
               <h1 style={{ fontWeight: '900', color: 'white', fontSize: '14px', margin: 0 }}>{flock.name}</h1>
               <p style={{ fontSize: '10px', color: 'rgba(255,255,255,0.6)', margin: 0 }}>{flock.host} • {flock.time}</p>
             </div>
-            <button onClick={() => addEventToCalendar(flock.name, flock.venue, new Date(), '9 PM')} style={{ width: '32px', height: '32px', borderRadius: '16px', border: 'none', backgroundColor: 'rgba(255,255,255,0.2)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.calendar('white', 16)}</button>
+            <button onClick={(e) => { confirmClick(e); addEventToCalendar(flock.name, flock.venue, new Date(), '9 PM'); }} style={{ width: '32px', height: '32px', borderRadius: '16px', border: 'none', backgroundColor: 'rgba(255,255,255,0.2)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', position: 'relative', overflow: 'hidden' }}>{Icons.calendar('white', 16)}</button>
           </div>
           <div style={{ display: 'flex' }}>
             {flock.members.slice(0, 5).map((m, i) => (
@@ -5688,7 +5688,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
                 <div style={{ height: '100%', width: `${(flock.cashPool.collected / flock.cashPool.target) * 100}%`, background: `linear-gradient(90deg, ${colors.navy}, ${colors.navyMid})`, borderRadius: '4px', transition: 'width 0.8s cubic-bezier(0.34, 1.56, 0.64, 1)', boxShadow: flock.cashPool.collected >= flock.cashPool.target ? '0 0 12px rgba(13,40,71,0.4)' : 'none' }} />
               </div>
               {!flock.cashPool.paid.includes('You') ? (
-                <button onClick={() => makePoolPayment(selectedFlockId)} style={{ ...styles.gradientButton, padding: '8px' }}>Pay ${flock.cashPool.perPerson}</button>
+                <button onClick={(e) => { confirmClick(e); makePoolPayment(selectedFlockId); }} style={{ ...styles.gradientButton, padding: '8px', position: 'relative', overflow: 'hidden' }}>Pay ${flock.cashPool.perPerson}</button>
               ) : (
                 <div style={{ textAlign: 'center', padding: '4px', color: colors.teal, fontWeight: '600', fontSize: '12px' }}>✓ Paid!</div>
               )}
@@ -5716,7 +5716,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
         </div>
 
         <div style={{ padding: '12px', backgroundColor: 'white', borderTop: '1px solid #eee', flexShrink: 0 }}>
-          <button onClick={() => showToast('Location shared!')} style={{ ...styles.gradientButton, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}>{Icons.mapPin('white', 16)} Share Location</button>
+          <button onClick={() => {}} style={{ ...styles.gradientButton, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}>{Icons.mapPin('white', 16)} Share Location</button>
         </div>
       </div>
     );
@@ -5788,8 +5788,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
                     setCurrentPw('');
                     setNewPw('');
                     setConfirmPw('');
-                    showToast('Profile updated!');
-                  } catch (err) {
+                                     } catch (err) {
                     setEditError(err.message);
                   } finally {
                     setEditLoading(false);
@@ -5856,9 +5855,9 @@ const FlockAppInner = ({ authUser, onLogout }) => {
                     </div>
 
                     <button
-                      onClick={handleSaveProfile}
+                      onClick={(e) => { confirmClick(e); handleSaveProfile(); }}
                       disabled={editLoading}
-                      style={{ ...styles.gradientButton, marginTop: '8px', opacity: editLoading ? 0.7 : 1 }}
+                      style={{ ...styles.gradientButton, marginTop: '8px', opacity: editLoading ? 0.7 : 1, position: 'relative', overflow: 'hidden' }}
                     >
                       {editLoading ? 'Saving...' : 'Save Changes'}
                     </button>
@@ -5883,12 +5882,12 @@ const FlockAppInner = ({ authUser, onLogout }) => {
                   {trustedContacts.map(c => (
                     <div key={c} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 0', borderBottom: '1px solid #f3f4f6' }}>
                       <span style={{ fontWeight: '500', fontSize: '14px', color: colors.navy }}>{c}</span>
-                      <button onClick={() => { setTrustedContacts(trustedContacts.filter(x => x !== c)); showToast('Removed'); }} style={{ background: 'none', border: 'none', color: colors.red, fontSize: '12px', fontWeight: '500', cursor: 'pointer' }}>Remove</button>
+                      <button onClick={(e) => { confirmClick(e); setTrustedContacts(trustedContacts.filter(x => x !== c)); }} style={{ background: 'none', border: 'none', color: colors.red, fontSize: '12px', fontWeight: '500', cursor: 'pointer', position: 'relative', overflow: 'hidden' }}>Remove</button>
                     </div>
                   ))}
                   <div style={{ display: 'flex', gap: '8px', marginTop: '12px' }}>
                     <input key="new-contact" id="new-contact" type="text" value={newContactName} onChange={(e) => setNewContactName(e.target.value)} placeholder="Add emergency contact..." style={{ ...styles.input, flex: 1 }} autoComplete="off" />
-                    <button onClick={() => { if (newContactName.trim()) { setTrustedContacts([...trustedContacts, newContactName.trim()]); showToast('✅ Added!'); setNewContactName(''); }}} style={{ padding: '0 16px', borderRadius: '8px', border: 'none', background: `linear-gradient(90deg, ${colors.navy}, ${colors.navyMid})`, color: 'white', fontWeight: 'bold', fontSize: '14px', cursor: 'pointer' }}>Add</button>
+                    <button onClick={(e) => { if (newContactName.trim()) { confirmClick(e); setTrustedContacts([...trustedContacts, newContactName.trim()]); setNewContactName(''); }}} style={{ padding: '0 16px', borderRadius: '8px', border: 'none', background: `linear-gradient(90deg, ${colors.navy}, ${colors.navyMid})`, color: 'white', fontWeight: 'bold', fontSize: '14px', cursor: 'pointer', position: 'relative', overflow: 'hidden' }}>Add</button>
                   </div>
                 </div>
               </div>
@@ -5901,20 +5900,20 @@ const FlockAppInner = ({ authUser, onLogout }) => {
                     {userInterests.map(interest => (
                       <div key={interest} style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '6px 12px', borderRadius: '20px', background: `linear-gradient(90deg, ${colors.navy}, ${colors.navyMid})`, color: 'white', fontSize: '12px', fontWeight: '600' }}>
                         {interest}
-                        <button onClick={() => { setUserInterests(userInterests.filter(i => i !== interest)); showToast('Removed'); }} style={{ background: 'none', border: 'none', color: 'rgba(255,255,255,0.7)', cursor: 'pointer', padding: 0, display: 'flex' }}>{Icons.x('rgba(255,255,255,0.7)', 14)}</button>
+                        <button onClick={(e) => { confirmClick(e); setUserInterests(userInterests.filter(i => i !== interest)); }} style={{ background: 'none', border: 'none', color: 'rgba(255,255,255,0.7)', cursor: 'pointer', padding: 0, display: 'flex', position: 'relative', overflow: 'hidden' }}>{Icons.x('rgba(255,255,255,0.7)', 14)}</button>
                       </div>
                     ))}
                   </div>
                   <div style={{ display: 'flex', gap: '8px' }}>
                     <input type="text" value={newInterest} onChange={(e) => setNewInterest(e.target.value)} placeholder="Add an interest..." style={{ ...styles.input, flex: 1 }} autoComplete="off" />
-                    <button onClick={() => { if (newInterest.trim() && !userInterests.includes(newInterest.trim())) { setUserInterests([...userInterests, newInterest.trim()]); setNewInterest(''); showToast('✅ Added!'); }}} style={{ padding: '0 16px', borderRadius: '8px', border: 'none', background: `linear-gradient(90deg, ${colors.navy}, ${colors.navyMid})`, color: 'white', fontWeight: 'bold', fontSize: '14px', cursor: 'pointer' }}>Add</button>
+                    <button onClick={(e) => { if (newInterest.trim() && !userInterests.includes(newInterest.trim())) { confirmClick(e); setUserInterests([...userInterests, newInterest.trim()]); setNewInterest(''); }}} style={{ padding: '0 16px', borderRadius: '8px', border: 'none', background: `linear-gradient(90deg, ${colors.navy}, ${colors.navyMid})`, color: 'white', fontWeight: 'bold', fontSize: '14px', cursor: 'pointer', position: 'relative', overflow: 'hidden' }}>Add</button>
                   </div>
                 </div>
                 <div style={styles.card}>
                   <h3 style={{ fontWeight: 'bold', fontSize: '14px', color: colors.navy, margin: '0 0 12px' }}>Suggested Interests</h3>
                   <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
                     {suggestedInterests.filter(s => !userInterests.includes(s)).map(interest => (
-                      <button key={interest} onClick={() => { setUserInterests([...userInterests, interest]); showToast('✅ Added!'); }} style={{ padding: '6px 12px', borderRadius: '20px', border: `1px solid ${colors.creamDark}`, backgroundColor: 'white', color: colors.navy, fontSize: '12px', fontWeight: '500', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                      <button key={interest} onClick={(e) => { confirmClick(e); setUserInterests([...userInterests, interest]); }} style={{ padding: '6px 12px', borderRadius: '20px', border: `1px solid ${colors.creamDark}`, backgroundColor: 'white', color: colors.navy, fontSize: '12px', fontWeight: '500', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px', position: 'relative', overflow: 'hidden' }}>
                         {Icons.plus(colors.navy, 12)} {interest}
                       </button>
                     ))}
@@ -5939,7 +5938,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
                           <p style={{ fontSize: '11px', color: '#6b7280', margin: 0 }}>Expires {card.expiry}</p>
                         </div>
                         {card.isDefault && <span style={{ fontSize: '9px', fontWeight: '600', color: '#22C55E', backgroundColor: '#DCFCE7', padding: '2px 6px', borderRadius: '4px' }}>Default</span>}
-                        <button onClick={() => { setPaymentMethods(paymentMethods.filter(c => c.id !== card.id)); showToast('Card removed'); }} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '4px' }}>{Icons.x('#9ca3af', 16)}</button>
+                        <button onClick={(e) => { confirmClick(e); setPaymentMethods(paymentMethods.filter(c => c.id !== card.id)); }} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '4px', position: 'relative', overflow: 'hidden' }}>{Icons.x('#9ca3af', 16)}</button>
                       </div>
                     ))
                   )}
@@ -5970,7 +5969,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
                       </div>
                       <div style={{ display: 'flex', gap: '8px' }}>
                         <button onClick={() => { setShowAddCard(false); setNewCard({ number: '', expiry: '', cvv: '', name: '' }); }} style={{ flex: 1, padding: '12px', borderRadius: '8px', border: '1px solid #d1d5db', backgroundColor: 'white', fontWeight: '600', cursor: 'pointer' }}>Cancel</button>
-                        <button onClick={() => { if (newCard.number.length >= 19 && newCard.expiry.length === 5 && newCard.cvv.length === 3 && newCard.name.trim()) { const brand = newCard.number.startsWith('4') ? 'Visa' : 'MC'; setPaymentMethods([...paymentMethods, { id: Date.now(), brand, last4: newCard.number.slice(-4), expiry: newCard.expiry, isDefault: paymentMethods.length === 0 }]); setNewCard({ number: '', expiry: '', cvv: '', name: '' }); setShowAddCard(false); showToast('✅ Card added!'); } else { showToast('Please fill all fields', 'error'); }}} style={{ flex: 1, padding: '12px', borderRadius: '8px', border: 'none', background: `linear-gradient(90deg, ${colors.navy}, ${colors.navyMid})`, color: 'white', fontWeight: '600', cursor: 'pointer' }}>Add Card</button>
+                        <button onClick={(e) => { if (newCard.number.length >= 19 && newCard.expiry.length === 5 && newCard.cvv.length === 3 && newCard.name.trim()) { confirmClick(e); const brand = newCard.number.startsWith('4') ? 'Visa' : 'MC'; setPaymentMethods([...paymentMethods, { id: Date.now(), brand, last4: newCard.number.slice(-4), expiry: newCard.expiry, isDefault: paymentMethods.length === 0 }]); setNewCard({ number: '', expiry: '', cvv: '', name: '' }); setShowAddCard(false); } else { showToast('Please fill all fields', 'error'); }}} style={{ flex: 1, padding: '12px', borderRadius: '8px', border: 'none', background: `linear-gradient(90deg, ${colors.navy}, ${colors.navyMid})`, color: 'white', fontWeight: '600', cursor: 'pointer', position: 'relative', overflow: 'hidden' }}>Add Card</button>
                       </div>
                     </div>
                   )}
@@ -5980,7 +5979,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
           </div>
           {profileScreen !== 'edit' && (
             <div style={{ padding: '12px', backgroundColor: 'white', borderTop: '1px solid #eee', flexShrink: 0 }}>
-              <button onClick={() => { showToast('✅ Saved!'); setProfileScreen('main'); }} style={styles.gradientButton}>Save</button>
+              <button onClick={(e) => { confirmClick(e); setProfileScreen('main'); }} style={{ ...styles.gradientButton, position: 'relative', overflow: 'hidden' }}>Save</button>
             </div>
           )}
         </div>
@@ -6255,18 +6254,15 @@ const FlockAppInner = ({ authUser, onLogout }) => {
       if (!promoForm.title.trim()) return;
       if (editingPromo) {
         setPromotions(prev => prev.map(p => p.id === editingPromo.id ? { ...p, ...promoForm } : p));
-        showToast('Promotion updated!');
-      } else {
+             } else {
         setPromotions(prev => [...prev, { id: Date.now(), ...promoForm, views: 0, claims: 0 }]);
-        showToast('Promotion created!');
-      }
+             }
       setShowPromoModal(false);
     };
 
     const deletePromo = (id) => {
       setPromotions(prev => prev.filter(p => p.id !== id));
-      showToast('Promotion deleted');
-    };
+         };
 
     // Event handlers
     const openEventModal = (event = null) => {
@@ -6284,18 +6280,15 @@ const FlockAppInner = ({ authUser, onLogout }) => {
       if (!eventForm.title.trim()) return;
       if (editingEvent) {
         setVenueEventsList(prev => prev.map(e => e.id === editingEvent.id ? { ...e, ...eventForm, capacity: parseInt(eventForm.capacity) || 50 } : e));
-        showToast('Event updated!');
-      } else {
+             } else {
         setVenueEventsList(prev => [...prev, { id: Date.now(), ...eventForm, capacity: parseInt(eventForm.capacity) || 50, rsvps: 0 }]);
-        showToast('Event created!');
-      }
+             }
       setShowEventModal(false);
     };
 
     const deleteEvent = (id) => {
       setVenueEventsList(prev => prev.filter(e => e.id !== id));
-      showToast('Event deleted');
-    };
+         };
 
     // Mock venue data
     const venueData = {
@@ -6430,7 +6423,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
                 </button>
               ))}
             </div>
-            <button onClick={() => { showToast('Deal posted!'); setDealDescription(''); }} style={{ width: '100%', padding: '10px', borderRadius: '8px', border: 'none', background: `linear-gradient(90deg, ${colors.navy}, ${colors.navyMid})`, color: 'white', fontWeight: '600', fontSize: '12px', cursor: 'pointer' }} disabled={isFeatureLocked('Post deals') || !dealDescription.trim()}>
+            <button onClick={() => { setDealDescription(''); }} style={{ width: '100%', padding: '10px', borderRadius: '8px', border: 'none', background: `linear-gradient(90deg, ${colors.navy}, ${colors.navyMid})`, color: 'white', fontWeight: '600', fontSize: '12px', cursor: 'pointer' }} disabled={isFeatureLocked('Post deals') || !dealDescription.trim()}>
               Post Deal
             </button>
             {isFeatureLocked('Post deals') && <div style={{ position: 'absolute', inset: 0, backgroundColor: 'rgba(255,255,255,0.9)', borderRadius: '12px', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>{Icons.shield('#9ca3af', 24)}<span style={{ fontSize: '10px', color: '#6b7280', marginTop: '4px' }}>Premium Feature</span></div>}
@@ -6635,7 +6628,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
                     </div>
                     <p style={{ fontSize: '11px', color: '#4b5563', margin: '8px 0 0', lineHeight: '1.4' }}>{review.text}</p>
                     {!review.replied && (
-                      <button onClick={() => showToast('Reply sent!')} style={{ marginTop: '8px', padding: '6px 10px', borderRadius: '6px', border: `1px solid ${colors.navy}`, backgroundColor: 'white', color: colors.navy, fontSize: '10px', fontWeight: '500', cursor: 'pointer' }}>
+                      <button onClick={() => {}} style={{ marginTop: '8px', padding: '6px 10px', borderRadius: '6px', border: `1px solid ${colors.navy}`, backgroundColor: 'white', color: colors.navy, fontSize: '10px', fontWeight: '500', cursor: 'pointer' }}>
                         Reply
                       </button>
                     )}
@@ -6656,7 +6649,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
                   {!editingVenueInfo ? (
                     <button onClick={() => setEditingVenueInfo(true)} style={{ padding: '4px 8px', borderRadius: '6px', border: 'none', backgroundColor: colors.cream, color: colors.navy, fontSize: '10px', fontWeight: '500', cursor: 'pointer' }}>Edit</button>
                   ) : (
-                    <button onClick={() => { setEditingVenueInfo(false); showToast('Info saved!'); }} style={{ padding: '4px 8px', borderRadius: '6px', border: 'none', backgroundColor: colors.teal, color: 'white', fontSize: '10px', fontWeight: '500', cursor: 'pointer' }}>Save</button>
+                    <button onClick={() => { setEditingVenueInfo(false); }} style={{ padding: '4px 8px', borderRadius: '6px', border: 'none', backgroundColor: colors.teal, color: 'white', fontSize: '10px', fontWeight: '500', cursor: 'pointer' }}>Save</button>
                   )}
                 </div>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
@@ -6697,7 +6690,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
                     <p style={{ fontSize: '11px', fontWeight: '500', color: colors.navy, margin: 0 }}>New bookings</p>
                     <p style={{ fontSize: '9px', color: '#9ca3af', margin: 0 }}>Get notified when a flock books</p>
                   </div>
-                  <div onClick={() => { setNotifications({...notifications, bookings: !notifications.bookings}); showToast(notifications.bookings ? 'Disabled' : 'Enabled'); }} style={{ width: '36px', height: '20px', borderRadius: '10px', backgroundColor: notifications.bookings ? colors.teal : '#d1d5db', cursor: 'pointer', position: 'relative' }}>
+                  <div onClick={() => { setNotifications({...notifications, bookings: !notifications.bookings}); }} style={{ width: '36px', height: '20px', borderRadius: '10px', backgroundColor: notifications.bookings ? colors.teal : '#d1d5db', cursor: 'pointer', position: 'relative' }}>
                     <div style={{ position: 'absolute', top: '2px', left: notifications.bookings ? '18px' : '2px', width: '16px', height: '16px', borderRadius: '8px', backgroundColor: 'white', transition: 'left 0.2s' }} />
                   </div>
                 </div>
@@ -6706,7 +6699,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
                     <p style={{ fontSize: '11px', fontWeight: '500', color: colors.navy, margin: 0 }}>New reviews</p>
                     <p style={{ fontSize: '9px', color: '#9ca3af', margin: 0 }}>Alerts for customer reviews</p>
                   </div>
-                  <div onClick={() => { setNotifications({...notifications, reviews: !notifications.reviews}); showToast(notifications.reviews ? 'Disabled' : 'Enabled'); }} style={{ width: '36px', height: '20px', borderRadius: '10px', backgroundColor: notifications.reviews ? colors.teal : '#d1d5db', cursor: 'pointer', position: 'relative' }}>
+                  <div onClick={() => { setNotifications({...notifications, reviews: !notifications.reviews}); }} style={{ width: '36px', height: '20px', borderRadius: '10px', backgroundColor: notifications.reviews ? colors.teal : '#d1d5db', cursor: 'pointer', position: 'relative' }}>
                     <div style={{ position: 'absolute', top: '2px', left: notifications.reviews ? '18px' : '2px', width: '16px', height: '16px', borderRadius: '8px', backgroundColor: 'white', transition: 'left 0.2s' }} />
                   </div>
                 </div>
@@ -6715,7 +6708,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
                     <p style={{ fontSize: '11px', fontWeight: '500', color: colors.navy, margin: 0 }}>Weekly reports</p>
                     <p style={{ fontSize: '9px', color: '#9ca3af', margin: 0 }}>Performance summary emails</p>
                   </div>
-                  <div onClick={() => { setNotifications({...notifications, weekly: !notifications.weekly}); showToast(notifications.weekly ? 'Disabled' : 'Enabled'); }} style={{ width: '36px', height: '20px', borderRadius: '10px', backgroundColor: notifications.weekly ? colors.teal : '#d1d5db', cursor: 'pointer', position: 'relative' }}>
+                  <div onClick={() => { setNotifications({...notifications, weekly: !notifications.weekly}); }} style={{ width: '36px', height: '20px', borderRadius: '10px', backgroundColor: notifications.weekly ? colors.teal : '#d1d5db', cursor: 'pointer', position: 'relative' }}>
                     <div style={{ position: 'absolute', top: '2px', left: notifications.weekly ? '18px' : '2px', width: '16px', height: '16px', borderRadius: '8px', backgroundColor: 'white', transition: 'left 0.2s' }} />
                   </div>
                 </div>
@@ -6740,7 +6733,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
               {/* Danger Zone */}
               <div style={{ backgroundColor: '#fef2f2', borderRadius: '12px', padding: '12px', border: '1px solid #fecaca' }}>
                 <h3 style={{ fontSize: '12px', fontWeight: '700', color: colors.red, margin: '0 0 10px', display: 'flex', alignItems: 'center', gap: '6px' }}>{Icons.alertCircle(colors.red, 14)} Danger Zone</h3>
-                <button onClick={() => showToast('Contact support to deactivate')} style={{ width: '100%', padding: '8px', borderRadius: '6px', border: `1px solid ${colors.red}`, backgroundColor: 'white', color: colors.red, fontSize: '11px', fontWeight: '500', cursor: 'pointer' }}>
+                <button onClick={() => {}} style={{ width: '100%', padding: '8px', borderRadius: '6px', border: `1px solid ${colors.red}`, backgroundColor: 'white', color: colors.red, fontSize: '11px', fontWeight: '500', cursor: 'pointer' }}>
                   Deactivate Venue Listing
                 </button>
               </div>
@@ -6774,7 +6767,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
                   <ul style={{ margin: 0, paddingLeft: '16px', fontSize: '11px', color: '#6b7280' }}>
                     {features.premium.map(f => <li key={f} style={{ marginBottom: '2px' }}>{f}</li>)}
                   </ul>
-                  {venueTier === 'premium' ? <span style={{ display: 'block', textAlign: 'center', fontSize: '10px', color: '#b45309', fontWeight: '600', marginTop: '8px' }}>Current Plan</span> : venueTier === 'free' && <button onClick={() => { setVenueTier('premium'); setShowUpgradeModal(false); showToast('Upgraded to Premium!'); }} style={{ width: '100%', padding: '8px', borderRadius: '8px', border: 'none', backgroundColor: '#b45309', color: 'white', fontWeight: '600', fontSize: '12px', cursor: 'pointer', marginTop: '8px' }}>Upgrade</button>}
+                  {venueTier === 'premium' ? <span style={{ display: 'block', textAlign: 'center', fontSize: '10px', color: '#b45309', fontWeight: '600', marginTop: '8px' }}>Current Plan</span> : venueTier === 'free' && <button onClick={() => { setVenueTier('premium'); setShowUpgradeModal(false); }} style={{ width: '100%', padding: '8px', borderRadius: '8px', border: 'none', backgroundColor: '#b45309', color: 'white', fontWeight: '600', fontSize: '12px', cursor: 'pointer', marginTop: '8px' }}>Upgrade</button>}
                 </div>
 
                 {/* Pro Tier */}
@@ -6786,7 +6779,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
                   <ul style={{ margin: 0, paddingLeft: '16px', fontSize: '11px', color: '#6b7280' }}>
                     {features.pro.map(f => <li key={f} style={{ marginBottom: '2px' }}>{f}</li>)}
                   </ul>
-                  <button onClick={() => { setVenueTier('pro'); setShowUpgradeModal(false); showToast('Upgraded to Pro!'); }} style={{ width: '100%', padding: '8px', borderRadius: '8px', border: 'none', background: 'linear-gradient(90deg, #7c3aed, #a78bfa)', color: 'white', fontWeight: '600', fontSize: '12px', cursor: 'pointer', marginTop: '8px' }}>Upgrade to Pro</button>
+                  <button onClick={() => { setVenueTier('pro'); setShowUpgradeModal(false); }} style={{ width: '100%', padding: '8px', borderRadius: '8px', border: 'none', background: 'linear-gradient(90deg, #7c3aed, #a78bfa)', color: 'white', fontWeight: '600', fontSize: '12px', cursor: 'pointer', marginTop: '8px' }}>Upgrade to Pro</button>
                 </div>
 
                 <button onClick={() => setShowUpgradeModal(false)} style={{ width: '100%', padding: '10px', borderRadius: '8px', border: '1px solid #d1d5db', backgroundColor: 'white', color: '#6b7280', fontWeight: '500', cursor: 'pointer' }}>Cancel</button>
@@ -6906,7 +6899,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
                 </div>
                 <div style={{ display: 'flex', gap: '10px', marginTop: '20px' }}>
                   <button onClick={() => setShowHoursModal(false)} style={{ flex: 1, padding: '12px', borderRadius: '8px', border: '1px solid #d1d5db', backgroundColor: 'white', color: '#6b7280', fontWeight: '600', cursor: 'pointer' }}>Cancel</button>
-                  <button onClick={() => { setShowHoursModal(false); showToast('Hours updated!'); }} style={{ flex: 1, padding: '12px', borderRadius: '8px', border: 'none', backgroundColor: colors.navy, color: 'white', fontWeight: '600', cursor: 'pointer' }}>Save Hours</button>
+                  <button onClick={() => { setShowHoursModal(false); }} style={{ flex: 1, padding: '12px', borderRadius: '8px', border: 'none', backgroundColor: colors.navy, color: 'white', fontWeight: '600', cursor: 'pointer' }}>Save Hours</button>
                 </div>
               </div>
             </div>
@@ -7561,8 +7554,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
       }
       setHasCompletedOnboarding(true);
       setOnboardingAnimating(false);
-      showToast(`Welcome to the flock, ${authUser?.name || 'friend'}!`);
-    }, 1500);
+         }, 1500);
   };
 
   const nextOnboardingStep = () => {
@@ -7779,6 +7771,25 @@ const FlockAppInner = ({ authUser, onLogout }) => {
 
   return (
     <div style={{ minHeight: '100vh', backgroundColor: '#1a1a2e', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px', boxSizing: 'border-box', fontFamily: "'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" }}>
+      <style>{`
+        .btn-confirmed { position: relative !important; overflow: hidden !important; pointer-events: none !important; }
+        .btn-confirmed::after {
+          content: '✓';
+          position: absolute; inset: 0;
+          display: flex; align-items: center; justify-content: center;
+          background: #22c55e; color: white;
+          font-size: 18px; font-weight: 800;
+          border-radius: inherit;
+          animation: confirmPop 1.1s ease-out forwards;
+        }
+        @keyframes confirmPop {
+          0% { opacity: 0; transform: scale(0.5); }
+          15% { opacity: 1; transform: scale(1.1); }
+          25% { transform: scale(1); }
+          75% { opacity: 1; }
+          100% { opacity: 0; }
+        }
+      `}</style>
       <div style={styles.phoneContainer}>
         <div style={styles.notch}>
           <div style={styles.notchInner} />
@@ -8100,7 +8111,8 @@ const FlockAppInner = ({ authUser, onLogout }) => {
                   {Icons.mapPin(colors.navy, 16)} Get Directions
                 </a>
               ) : null}
-              <button onClick={() => {
+              <button onClick={(e) => {
+                confirmClick(e);
                 const photoUrl = (venueDetailModal.photos && venueDetailModal.photos[0]) || venueDetailModal.photo_url || null;
                 if (pickingVenueForDm) {
                   const v = { name: venueDetailModal.name, addr: venueDetailModal.formatted_address, place_id: venueDetailModal.place_id, rating: venueDetailModal.rating, photo_url: photoUrl };
@@ -8111,14 +8123,12 @@ const FlockAppInner = ({ authUser, onLogout }) => {
                   setPickingVenueForDm(false);
                   setCurrentTab('chats');
                   setCurrentScreen('dmDetail');
-                  showToast(`${venueDetailModal.name} pinned!`);
-                } else {
-                  setSelectedVenueForCreate({ name: venueDetailModal.name, addr: venueDetailModal.formatted_address, place_id: venueDetailModal.place_id, rating: venueDetailModal.rating, price_level: venueDetailModal.price_level, photo_url: photoUrl, lat: venueDetailModal.location?.latitude, lng: venueDetailModal.location?.longitude });
+                                 } else {
+                  setSelectedVenueForCreate({ name: venueDetailModal.name, addr: venueDetailModal.formatted_address, place_id: venueDetailModal.place_id, rating: venueDetailModal.rating, stars: venueDetailModal.rating, price_level: venueDetailModal.price_level, price: venueDetailModal.price_level ? '$'.repeat(venueDetailModal.price_level) : null, photo_url: photoUrl, type: venueDetailModal.types?.[0]?.replace(/_/g, ' ')?.replace(/\b\w/g, c => c.toUpperCase()) || 'Venue', crowd: Math.round(20 + Math.random() * 60), lat: venueDetailModal.location?.latitude, lng: venueDetailModal.location?.longitude });
                   setVenueDetailModal(null);
                   setCurrentScreen('create');
-                  showToast(`Selected ${venueDetailModal.name}!`);
-                }
-              }} style={{ flex: 1, padding: '12px', borderRadius: '12px', border: 'none', background: `linear-gradient(135deg, ${colors.navy}, ${colors.navyMid})`, color: 'white', fontSize: '13px', fontWeight: '700', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', boxShadow: '0 4px 12px rgba(13,40,71,0.3)' }}>
+                                 }
+              }} style={{ flex: 1, padding: '12px', borderRadius: '12px', border: 'none', background: `linear-gradient(135deg, ${colors.navy}, ${colors.navyMid})`, color: 'white', fontSize: '13px', fontWeight: '700', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', boxShadow: '0 4px 12px rgba(13,40,71,0.3)', position: 'relative', overflow: 'hidden' }}>
                 {Icons.plus('white', 16)} {pickingVenueForDm ? 'Pin to DM' : 'Add to Flock'}
               </button>
             </div>
