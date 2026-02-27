@@ -40,6 +40,8 @@ router.post('/',
     body('venue_id').optional().trim(),
     body('venue_latitude').optional().isFloat(),
     body('venue_longitude').optional().isFloat(),
+    body('venue_rating').optional().isFloat(),
+    body('venue_photo_url').optional().trim(),
     body('event_time').optional().isISO8601().withMessage('Invalid event time'),
     body('invited_user_ids').optional().isArray().withMessage('invited_user_ids must be an array'),
   ],
@@ -50,7 +52,7 @@ router.post('/',
         return res.status(400).json({ error: errors.array()[0].msg });
       }
 
-      const { name, venue_name, venue_address, venue_id, venue_latitude, venue_longitude, event_time, invited_user_ids } = req.body;
+      const { name, venue_name, venue_address, venue_id, venue_latitude, venue_longitude, venue_rating, venue_photo_url, event_time, invited_user_ids } = req.body;
 
       const client = await pool.connect();
       try {
@@ -58,10 +60,10 @@ router.post('/',
 
         // Create the flock
         const flockResult = await client.query(
-          `INSERT INTO flocks (name, creator_id, venue_name, venue_address, venue_id, venue_latitude, venue_longitude, event_time)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+          `INSERT INTO flocks (name, creator_id, venue_name, venue_address, venue_id, venue_latitude, venue_longitude, venue_rating, venue_photo_url, event_time)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
            RETURNING *`,
-          [name, req.user.id, venue_name || null, venue_address || null, venue_id || null, venue_latitude || null, venue_longitude || null, event_time || null]
+          [name, req.user.id, venue_name || null, venue_address || null, venue_id || null, venue_latitude || null, venue_longitude || null, venue_rating || null, venue_photo_url || null, event_time || null]
         );
 
         const flock = flockResult.rows[0];
@@ -160,6 +162,8 @@ router.put('/:id',
     body('venue_id').optional().trim(),
     body('venue_latitude').optional().isFloat(),
     body('venue_longitude').optional().isFloat(),
+    body('venue_rating').optional().isFloat(),
+    body('venue_photo_url').optional().trim(),
     body('event_time').optional().isISO8601(),
     body('status').optional().isIn(['planning', 'confirmed', 'completed', 'cancelled']),
   ],
@@ -181,7 +185,7 @@ router.put('/:id',
         return res.status(403).json({ error: 'Only the creator can update this flock' });
       }
 
-      const { name, venue_name, venue_address, venue_id, venue_latitude, venue_longitude, event_time, status } = req.body;
+      const { name, venue_name, venue_address, venue_id, venue_latitude, venue_longitude, venue_rating, venue_photo_url, event_time, status } = req.body;
 
       const result = await pool.query(
         `UPDATE flocks
@@ -191,12 +195,14 @@ router.put('/:id',
              venue_id = COALESCE($4, venue_id),
              venue_latitude = COALESCE($5, venue_latitude),
              venue_longitude = COALESCE($6, venue_longitude),
-             event_time = COALESCE($7, event_time),
-             status = COALESCE($8, status),
+             venue_rating = COALESCE($7, venue_rating),
+             venue_photo_url = COALESCE($8, venue_photo_url),
+             event_time = COALESCE($9, event_time),
+             status = COALESCE($10, status),
              updated_at = NOW()
-         WHERE id = $9
+         WHERE id = $11
          RETURNING *`,
-        [name, venue_name, venue_address, venue_id, venue_latitude, venue_longitude, event_time, status, flockId]
+        [name, venue_name, venue_address, venue_id, venue_latitude, venue_longitude, venue_rating, venue_photo_url, event_time, status, flockId]
       );
 
       res.json({ flock: result.rows[0] });

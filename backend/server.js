@@ -67,6 +67,7 @@ app.use(helmet({
   },
   frameguard: { action: 'deny' },
   crossOriginEmbedderPolicy: false,
+  crossOriginResourcePolicy: { policy: 'cross-origin' },
   hsts: { maxAge: 31536000, includeSubDomains: true, preload: true },
 }));
 app.use(express.json({ limit: '1mb' }));
@@ -108,11 +109,11 @@ const venueSearchLimiter = isDev ? (_req, _res, next) => next() : rateLimit({
 // Routes
 // ---------------------------------------------------------------------------
 app.use('/api/auth', authLimiter, authRoutes);
+app.use('/api/venues', venueSearchLimiter, venueSearchRoutes); // Before /api catch-all — photo proxy needs no auth
 app.use('/api/flocks', apiLimiter, flockRoutes);
 app.use('/api', apiLimiter, messageRoutes);     // Handles /api/flocks/:id/messages, /api/messages/:id/react, /api/dm/*
 app.use('/api/users', apiLimiter, userRoutes);
 app.use('/api/flocks', apiLimiter, venueRoutes); // Handles /api/flocks/:id/vote, /api/flocks/:id/votes
-app.use('/api/venues', venueSearchLimiter, venueSearchRoutes); // Handles /api/venues/search, /api/venues/details
 app.use('/api/stories', apiLimiter, storyRoutes);     // Handles /api/stories
 app.use('/api/friends', apiLimiter, friendRoutes);    // Handles /api/friends, /api/friends/request, etc.
 
