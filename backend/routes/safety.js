@@ -82,6 +82,28 @@ router.post('/contacts', authenticate, async (req, res) => {
   }
 });
 
+// ── Update trusted contact ──
+router.put('/contacts/:id', authenticate, async (req, res) => {
+  try {
+    const { name, phone, email, relationship } = req.body;
+    if (!name || !phone) {
+      return res.status(400).json({ error: 'Name and phone are required' });
+    }
+    const result = await pool.query(
+      `UPDATE trusted_contacts SET contact_name = $1, contact_phone = $2, contact_email = $3, relationship = $4
+       WHERE id = $5 AND user_id = $6 RETURNING *`,
+      [name.trim(), phone.trim(), email?.trim() || null, relationship?.trim() || null, req.params.id, req.user.id]
+    );
+    if (result.rowCount === 0) {
+      return res.status(404).json({ error: 'Contact not found' });
+    }
+    res.json({ contact: result.rows[0] });
+  } catch (err) {
+    console.error('[Safety] Update contact error:', err);
+    res.status(500).json({ error: 'Failed to update contact' });
+  }
+});
+
 // ── Delete trusted contact ──
 router.delete('/contacts/:id', authenticate, async (req, res) => {
   try {
