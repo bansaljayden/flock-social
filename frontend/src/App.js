@@ -2751,11 +2751,11 @@ const FlockAppInner = ({ authUser, onLogout }) => {
     }
     setSosAlertSending(true);
     try {
-      const getPos = () => new Promise((resolve, reject) => {
+      const getPos = () => new Promise((resolve) => {
         navigator.geolocation.getCurrentPosition(
           pos => resolve({ latitude: pos.coords.latitude, longitude: pos.coords.longitude }),
-          () => resolve(null),
-          { timeout: 5000 }
+          (err) => { console.warn('[Emergency] Location error:', err.message); resolve(null); },
+          { enableHighAccuracy: true, timeout: 15000, maximumAge: 30000 }
         );
       });
       const loc = navigator.geolocation ? await getPos() : null;
@@ -2785,7 +2785,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
     setSosAlertSending(true);
     try {
       const pos = await new Promise((resolve, reject) => {
-        navigator.geolocation.getCurrentPosition(resolve, reject, { timeout: 5000 });
+        navigator.geolocation.getCurrentPosition(resolve, reject, { enableHighAccuracy: true, timeout: 15000, maximumAge: 30000 });
       });
       const data = await shareLocationWithContacts({
         latitude: pos.coords.latitude,
