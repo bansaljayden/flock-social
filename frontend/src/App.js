@@ -1547,6 +1547,11 @@ const FlockAppInner = ({ authUser, onLogout }) => {
       .finally(() => setFlocksLoading(false));
   }, []);
 
+  // Load trusted contacts on mount (for SOS modal)
+  useEffect(() => {
+    getTrustedContacts().then(d => setTrustedContacts(d.contacts || [])).catch(() => {});
+  }, []);
+
   // Flock ordering & pinning (persisted in localStorage)
   const [pinnedFlockIds, setPinnedFlockIds] = useState(() => {
     try { return JSON.parse(localStorage.getItem('flock_pinned') || '[]'); } catch { return []; }
@@ -2807,7 +2812,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
   // Safety Button - Enhanced with pulse animation
   const SafetyButton = () => safetyOn && currentScreen === 'main' && !showSOS && (
     <button
-      onClick={() => { setShowSOS(true); getTrustedContacts().then(d => setTrustedContacts(d.contacts || [])).catch(() => {}); }}
+      onClick={() => setShowSOS(true)}
       style={{
         position: 'absolute',
         bottom: '75px',
