@@ -24,7 +24,7 @@ const friendRoutes = require('./routes/friends');
 const safetyRoutes = require('./routes/safety');
 
 const app = express();
-app.set('trust proxy', true);
+app.set('trust proxy', 1);
 const server = http.createServer(app);
 
 // ---------------------------------------------------------------------------
