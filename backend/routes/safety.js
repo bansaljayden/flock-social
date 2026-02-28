@@ -13,13 +13,17 @@ async function sendAlertEmail(to, subject, htmlBody) {
     return { skipped: true };
   }
   try {
-    await resend.emails.send({
+    const { data, error } = await resend.emails.send({
       from: 'Flock Safety <onboarding@resend.dev>',
       to,
       subject,
       html: htmlBody,
     });
-    console.log('[Safety] Email sent to', to);
+    if (error) {
+      console.error('[Safety] Resend error for', to, JSON.stringify(error));
+      return { sent: false, error: error.message || JSON.stringify(error) };
+    }
+    console.log('[Safety] Email sent to', to, 'id:', data?.id);
     return { sent: true };
   } catch (err) {
     console.error('[Safety] Email failed for', to, err.message);
