@@ -5,12 +5,14 @@ const { authenticate } = require('../middleware/auth');
 const pool = require('../config/database');
 
 // ── Email transporter (configured via env vars on Railway) ──
+const dns = require('dns');
 const smtpUser = process.env.SMTP_USER;
 const smtpPass = process.env.SMTP_PASS;
 
 const transporter = nodemailer.createTransport({
-  service: 'gmail',
-  family: 4,
+  host: 'smtp.gmail.com',
+  port: 587,
+  secure: false,
   auth: {
     user: smtpUser,
     pass: smtpPass,
@@ -18,6 +20,9 @@ const transporter = nodemailer.createTransport({
   connectionTimeout: 10000,
   greetingTimeout: 10000,
   socketTimeout: 10000,
+  dnsLookup: (hostname, options, callback) => {
+    dns.lookup(hostname, { family: 4 }, callback);
+  },
 });
 
 const FROM_EMAIL = process.env.SMTP_FROM || smtpUser || 'noreply@flock-app.com';
