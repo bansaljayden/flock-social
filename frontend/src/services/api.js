@@ -204,6 +204,10 @@ export async function getSuggestedUsers() {
   return request('/api/users/suggested');
 }
 
+export async function getUserStats() {
+  return request('/api/users/stats');
+}
+
 // Friends
 export async function sendFriendRequest(userId) {
   return request('/api/friends/request', {
