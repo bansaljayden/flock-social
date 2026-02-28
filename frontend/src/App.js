@@ -2805,7 +2805,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
   }, [trustedContacts, showToast]);
 
   // Safety Button - Enhanced with pulse animation
-  const SafetyButton = () => safetyOn && currentScreen === 'main' && (
+  const SafetyButton = () => safetyOn && currentScreen === 'main' && !showSOS && (
     <button
       onClick={() => { setShowSOS(true); getTrustedContacts().then(d => setTrustedContacts(d.contacts || [])).catch(() => {}); }}
       style={{
