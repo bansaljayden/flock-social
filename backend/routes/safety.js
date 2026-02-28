@@ -1,53 +1,20 @@
 const express = require('express');
 const router = express.Router();
-const nodemailer = require('nodemailer');
+const { Resend } = require('resend');
 const { authenticate } = require('../middleware/auth');
 const pool = require('../config/database');
 
-// ── Email transporter (configured via env vars on Railway) ──
-const dns = require('dns');
-const smtpUser = process.env.SMTP_USER;
-const smtpPass = process.env.SMTP_PASS;
-
-const transporter = nodemailer.createTransport({
-  host: 'smtp.gmail.com',
-  port: 587,
-  secure: false,
-  auth: {
-    user: smtpUser,
-    pass: smtpPass,
-  },
-  connectionTimeout: 10000,
-  greetingTimeout: 10000,
-  socketTimeout: 10000,
-  dnsLookup: (hostname, options, callback) => {
-    dns.lookup(hostname, { family: 4 }, callback);
-  },
-});
-
-const FROM_EMAIL = process.env.SMTP_FROM || smtpUser || 'noreply@flock-app.com';
-
-// Debug endpoint to test SMTP connection
-router.get('/test-smtp', authenticate, async (req, res) => {
-  if (!smtpUser || !smtpPass) {
-    return res.json({ ok: false, error: 'SMTP_USER or SMTP_PASS not set' });
-  }
-  try {
-    await transporter.verify();
-    res.json({ ok: true, user: smtpUser });
-  } catch (err) {
-    res.json({ ok: false, error: err.message });
-  }
-});
+// ── Resend email client (configured via RESEND_API_KEY on Railway) ──
+const resend = new Resend(process.env.RESEND_API_KEY);
 
 async function sendAlertEmail(to, subject, htmlBody) {
-  if (!process.env.SMTP_USER || !process.env.SMTP_PASS) {
-    console.warn('[Safety] SMTP not configured — skipping email to', to);
+  if (!process.env.RESEND_API_KEY) {
+    console.warn('[Safety] RESEND_API_KEY not set — skipping email to', to);
     return { skipped: true };
   }
   try {
-    await transporter.sendMail({
-      from: `"Flock Safety" <${FROM_EMAIL}>`,
+    await resend.emails.send({
+      from: 'Flock Safety <onboarding@resend.dev>',
       to,
       subject,
       html: htmlBody,
@@ -59,6 +26,24 @@ async function sendAlertEmail(to, subject, htmlBody) {
     return { sent: false, error: err.message };
   }
 }
+
+// ── Test email endpoint ──
+router.get('/test-email', authenticate, async (req, res) => {
+  if (!process.env.RESEND_API_KEY) {
+    return res.json({ ok: false, error: 'RESEND_API_KEY not set' });
+  }
+  try {
+    const user = await pool.query('SELECT name, email FROM users WHERE id = $1', [req.user.id]);
+    const result = await sendAlertEmail(
+      user.rows[0].email,
+      'Flock Safety — Test Email',
+      '<div style="font-family:Arial,sans-serif;padding:20px;text-align:center"><h2>It works!</h2><p>Your Flock emergency alerts are set up correctly.</p></div>'
+    );
+    res.json({ ok: result.sent || false, error: result.error });
+  } catch (err) {
+    res.json({ ok: false, error: err.message });
+  }
+});
 
 // ── Get user's trusted contacts ──
 router.get('/contacts', authenticate, async (req, res) => {
