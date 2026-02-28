@@ -5,7 +5,7 @@ const { authenticate } = require('../middleware/auth');
 const pool = require('../config/database');
 
 // ── Resend email client (configured via RESEND_API_KEY on Railway) ──
-const resend = new Resend(process.env.RESEND_API_KEY);
+const resend = process.env.RESEND_API_KEY ? new Resend(process.env.RESEND_API_KEY) : null;
 
 async function sendAlertEmail(to, subject, htmlBody) {
   if (!process.env.RESEND_API_KEY) {
@@ -130,14 +130,14 @@ router.post('/alert', authenticate, async (req, res) => {
   try {
     const { latitude, longitude, includeLocation } = req.body;
 
-    // Check cooldown — 1 alert per 20 minutes
+    // Check cooldown — 1 alert per 5 minutes
     const recent = await pool.query(
-      `SELECT created_at FROM emergency_alerts WHERE user_id = $1 AND created_at > NOW() - INTERVAL '20 minutes' ORDER BY created_at DESC LIMIT 1`,
+      `SELECT created_at FROM emergency_alerts WHERE user_id = $1 AND created_at > NOW() - INTERVAL '5 minutes' ORDER BY created_at DESC LIMIT 1`,
       [req.user.id]
     );
     if (recent.rows.length > 0) {
       const lastSent = new Date(recent.rows[0].created_at);
-      const cooldownEnd = new Date(lastSent.getTime() + 20 * 60 * 1000);
+      const cooldownEnd = new Date(lastSent.getTime() + 5 * 60 * 1000);
       const minsLeft = Math.ceil((cooldownEnd - Date.now()) / 60000);
       return res.status(429).json({ error: `Please wait ${minsLeft} minute${minsLeft > 1 ? 's' : ''} before sending another alert` });
     }
