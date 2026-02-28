@@ -238,6 +238,27 @@ function registerHandlers(io, socket) {
     });
   });
 
+  // --- Friend request events ---
+
+  socket.on('friend_request_sent', (data) => {
+    const { toUserId } = data;
+    if (!toUserId) return;
+    io.to(`user:${toUserId}`).emit('friend_request_received', {
+      fromUserId: user.id,
+      fromUserName: user.name,
+    });
+  });
+
+  socket.on('friend_request_response', (data) => {
+    const { toUserId, action } = data; // action: 'accepted' | 'declined'
+    if (!toUserId || !['accepted', 'declined'].includes(action)) return;
+    io.to(`user:${toUserId}`).emit('friend_request_responded', {
+      fromUserId: user.id,
+      fromUserName: user.name,
+      action,
+    });
+  });
+
   // --- Flock invite events ---
 
   socket.on('flock_invite', async (data) => {
