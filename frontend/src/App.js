@@ -10,8 +10,8 @@ import {
   formatCurrency,
   calculateProfitMargin
 } from './lib/finance';
-import { getCurrentUser, logout, isLoggedIn, getFlocks, createFlock as apiCreateFlock, getMessages, sendMessage as apiSendMessage, updateProfile, searchVenues, searchUsers, getSuggestedUsers, sendFriendRequest, getStories, getVenueDetails, leaveFlock as apiLeaveFlock, getDMConversations, getDMs, getDmVenueVotes, getDmPinnedVenue, BASE_URL } from './services/api';
-import { connectSocket, disconnectSocket, getSocket, joinFlock, leaveFlock, sendMessage as socketSendMessage, sendImageMessage as socketSendImage, startTyping, stopTyping, onNewMessage, onUserTyping, onUserStoppedTyping, emitLocation, stopSharingLocation as socketStopSharing, onLocationUpdate, onMemberStoppedSharing, socketSendDm, onNewDm, dmStartTyping, dmStopTyping, onDmUserTyping, onDmUserStoppedTyping, dmReact, dmRemoveReact, onDmReactionAdded, onDmReactionRemoved, dmVoteVenue, onDmNewVote, dmShareLocation, dmStopSharingLocation, onDmLocationUpdate, onDmMemberStoppedSharing, dmPinVenue, onDmVenuePinned } from './services/socket';
+import { getCurrentUser, logout, isLoggedIn, getFlocks, createFlock as apiCreateFlock, getMessages, sendMessage as apiSendMessage, updateProfile, searchVenues, searchUsers, getSuggestedUsers, sendFriendRequest, getStories, getVenueDetails, leaveFlock as apiLeaveFlock, getDMConversations, getDMs, getDmVenueVotes, getDmPinnedVenue, BASE_URL, inviteToFlock, acceptFlockInvite, declineFlockInvite, getFriends } from './services/api';
+import { connectSocket, disconnectSocket, getSocket, joinFlock, leaveFlock, sendMessage as socketSendMessage, sendImageMessage as socketSendImage, startTyping, stopTyping, onNewMessage, onUserTyping, onUserStoppedTyping, emitLocation, stopSharingLocation as socketStopSharing, onLocationUpdate, onMemberStoppedSharing, socketSendDm, onNewDm, dmStartTyping, dmStopTyping, onDmUserTyping, onDmUserStoppedTyping, dmReact, dmRemoveReact, onDmReactionAdded, onDmReactionRemoved, dmVoteVenue, onDmNewVote, dmShareLocation, dmStopSharingLocation, onDmLocationUpdate, onDmMemberStoppedSharing, dmPinVenue, onDmVenuePinned, emitFlockInvite, emitFlockInviteResponse, onFlockInviteReceived, onFlockInviteResponded } from './services/socket';
 import LoginScreen from './components/auth/LoginScreen';
 import SignupScreen from './components/auth/SignupScreen';
 import { MarkerClusterer } from '@googlemaps/markerclusterer';
@@ -58,7 +58,7 @@ const VenueCard = React.memo(({ venue, onViewDetails, onVote, colors: c, Icons: 
       animation: 'cardSlideIn 0.4s ease-out'
     }}>
       {venue.photo_url && (
-        <img src={venue.photo_url} alt={venue.name} style={{ width: '100%', height: '160px', objectFit: 'cover', display: 'block' }} />
+        <img src={venue.photo_url} alt={venue.name} style={{ width: '100%', height: '160px', objectFit: 'cover', display: 'block' }} onError={(e) => { e.target.style.display = 'none'; }} />
       )}
 
       <div style={{ padding: '14px' }}>
@@ -1116,7 +1116,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
     setVenueQuery(val);
     if (!showSearchResults) setShowSearchDropdown(true);
     if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
-    searchTimerRef.current = setTimeout(() => doVenueSearch(val), 800);
+    searchTimerRef.current = setTimeout(() => doVenueSearch(val), 400);
   }, [doVenueSearch, showSearchResults]);
 
   // Invite user search with debounce
@@ -1166,6 +1166,82 @@ const FlockAppInner = ({ authUser, onLogout }) => {
       // Toast removed — UI updates visually
     } catch (err) {
       showToast(err.message || 'Failed to send request', 'error');
+    }
+  }, [showToast]);
+
+  // Flock invites
+  const [pendingFlockInvites, setPendingFlockInvites] = useState([]);
+  const [showFlockInviteModal, setShowFlockInviteModal] = useState(false);
+  const [flockInviteSearch, setFlockInviteSearch] = useState('');
+  const [flockInviteSearching, setFlockInviteSearching] = useState(false);
+  const [flockInviteResults, setFlockInviteResults] = useState([]);
+  const [flockInviteSelected, setFlockInviteSelected] = useState([]);
+  const [flockInviteSending, setFlockInviteSending] = useState(false);
+
+  // Flock invite search (searches friends list)
+  const flockInviteTimerRef = useRef(null);
+  const handleFlockInviteSearch = useCallback((val) => {
+    setFlockInviteSearch(val);
+    if (flockInviteTimerRef.current) clearTimeout(flockInviteTimerRef.current);
+    if (val.trim().length < 1) { setFlockInviteResults([]); return; }
+    setFlockInviteSearching(true);
+    flockInviteTimerRef.current = setTimeout(async () => {
+      try {
+        const data = await getFriends();
+        const friends = (data.friends || []).filter(f =>
+          f.name.toLowerCase().includes(val.toLowerCase())
+        );
+        setFlockInviteResults(friends);
+      } catch { setFlockInviteResults([]); }
+      finally { setFlockInviteSearching(false); }
+    }, 300);
+  }, []);
+
+  // Send flock invites
+  const handleSendFlockInvites = useCallback(async () => {
+    if (flockInviteSelected.length === 0 || !selectedFlockId) return;
+    setFlockInviteSending(true);
+    try {
+      const userIds = flockInviteSelected.map(f => f.id);
+      await inviteToFlock(selectedFlockId, userIds);
+      emitFlockInvite(selectedFlockId, userIds);
+      showToast(`Invited ${flockInviteSelected.length} friend${flockInviteSelected.length > 1 ? 's' : ''}!`);
+      setShowFlockInviteModal(false);
+      setFlockInviteSelected([]);
+      setFlockInviteSearch('');
+      setFlockInviteResults([]);
+    } catch (err) {
+      showToast(err.message || 'Failed to send invites', 'error');
+    } finally {
+      setFlockInviteSending(false);
+    }
+  }, [flockInviteSelected, selectedFlockId, showToast]);
+
+  // Accept a flock invite
+  const handleAcceptFlockInvite = useCallback(async (flockId) => {
+    try {
+      await acceptFlockInvite(flockId);
+      emitFlockInviteResponse(flockId, 'accepted');
+      const invite = pendingFlockInvites.find(f => f.id === flockId);
+      if (invite) {
+        setPendingFlockInvites(prev => prev.filter(f => f.id !== flockId));
+        setFlocks(prev => [...prev, { ...invite, memberStatus: 'accepted' }]);
+      }
+      showToast(`Joined ${invite?.name || 'flock'}!`);
+    } catch (err) {
+      showToast(err.message || 'Failed to accept invite', 'error');
+    }
+  }, [pendingFlockInvites, showToast]);
+
+  // Decline a flock invite
+  const handleDeclineFlockInvite = useCallback(async (flockId) => {
+    try {
+      await declineFlockInvite(flockId);
+      emitFlockInviteResponse(flockId, 'declined');
+      setPendingFlockInvites(prev => prev.filter(f => f.id !== flockId));
+      showToast('Invite declined');
+    } catch (err) {
+      showToast(err.message || 'Failed to decline invite', 'error');
     }
   }, [showToast]);
 
@@ -1273,6 +1349,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
           name: f.name,
           host: f.creator_name || 'Unknown',
           creatorId: f.creator_id,
+          memberStatus: f.member_status,
           members: [],
           memberCount: f.member_count || 1,
           time: f.event_time ? new Date(f.event_time).toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' }) : 'TBD',
@@ -1289,7 +1366,8 @@ const FlockAppInner = ({ authUser, onLogout }) => {
           votes: [],
           messages: [],
         }));
-        setFlocks(mapped);
+        setFlocks(mapped.filter(f => f.memberStatus === 'accepted'));
+        setPendingFlockInvites(mapped.filter(f => f.memberStatus === 'invited'));
       })
       .catch(() => setFlocks([]))
       .finally(() => setFlocksLoading(false));
@@ -1479,9 +1557,6 @@ const FlockAppInner = ({ authUser, onLogout }) => {
   // Ref to track if initial venue load has been attempted (survives re-renders)
   const venueLoadAttemptedRef = useRef(false);
 
-  // Popular chains to show on map (default + near me)
-  const defaultChains = useMemo(() => ["McDonald's", "Starbucks", "Chipotle", "Panera Bread", "Subway", "Dunkin'", "Chick-fil-A", "Wendy's"], []);
-
   // Load diverse popular chain venues for vote panels (independent of map search)
   const loadPopularVenues = useCallback(() => {
     if (!userLocation) return;
@@ -1492,30 +1567,23 @@ const FlockAppInner = ({ authUser, onLogout }) => {
       setPopularVenues(venuesToMapPins(cached.data));
       return;
     }
-    const chainSearches = defaultChains.map(chain =>
-      searchVenues(chain, locStr).then(data => (data.venues || []).slice(0, 2)).catch(() => [])
-    );
-    Promise.all(chainSearches).then(results => {
-      const seen = new Set();
-      const deduped = results.flat().filter(v => {
-        if (seen.has(v.place_id)) return false;
-        seen.add(v.place_id);
-        return true;
-      });
-      searchCacheRef.current[cacheKey] = { data: deduped, timestamp: Date.now() };
-      setPopularVenues(venuesToMapPins(deduped));
-    }).catch(() => {});
-  }, [userLocation, defaultChains, venuesToMapPins]);
+    searchVenues('popular restaurants cafes bars fast food', locStr)
+      .then(data => {
+        const venues = data.venues || [];
+        searchCacheRef.current[cacheKey] = { data: venues, timestamp: Date.now() };
+        setPopularVenues(venuesToMapPins(venues));
+      })
+      .catch(() => {});
+  }, [userLocation, venuesToMapPins]);
 
   // Core venue loading function
-  const loadVenuesAtLocation = useCallback((lat, lng, chainsOnly = false) => {
-    console.log('[Geo] Loading venues near:', lat, lng, chainsOnly ? '(popular chains)' : '(all)');
+  const loadVenuesAtLocation = useCallback((lat, lng) => {
+    console.log('[Geo] Loading venues near:', lat, lng);
     setUserLocation({ lat, lng });
     localStorage.setItem('flock_user_lat', String(lat));
     localStorage.setItem('flock_user_lng', String(lng));
     const locStr = `${lat},${lng}`;
-    const suffix = chainsOnly ? '|chains' : '';
-    const cacheKey = `nearby|${locStr}${suffix}`;
+    const cacheKey = `nearby|${locStr}`;
     const cached = searchCacheRef.current[cacheKey];
     if (cached && Date.now() - cached.timestamp < 300000) {
       console.log('[Geo] Using cached nearby venues');
@@ -1524,79 +1592,49 @@ const FlockAppInner = ({ authUser, onLogout }) => {
       return;
     }
 
-    if (chainsOnly) {
-      // Search for popular chains individually then merge results (3 per chain, max ~24 pins)
-      const chainSearches = defaultChains.map(chain =>
-        searchVenues(chain, locStr).then(data => (data.venues || []).slice(0, 3)).catch(() => [])
-      );
-      Promise.all(chainSearches)
-        .then(results => {
-          const allResults = results.flat();
-          // Deduplicate by place_id
-          const seen = new Set();
-          const deduped = allResults.filter(v => {
-            if (seen.has(v.place_id)) return false;
-            seen.add(v.place_id);
-            return true;
-          });
-          searchCacheRef.current[cacheKey] = { data: deduped, timestamp: Date.now() };
-          setAllVenues(venuesToMapPins(deduped));
-          setMapVenuesLoaded(true);
-
-        })
-        .catch(() => {
-          setAllVenues(venuesToMapPins(seedVenues));
-          setMapVenuesLoaded(true);
-        });
-    } else {
-      searchVenues('restaurants bars cafes nightclubs live music sports bowling parks libraries museums arcades movie theaters', locStr)
-        .then((data) => {
-          const venues = data.venues || [];
-          searchCacheRef.current[cacheKey] = { data: venues, timestamp: Date.now() };
-          setAllVenues(venuesToMapPins(venues));
-          setMapVenuesLoaded(true);
-        })
-        .catch((err) => {
-          console.error('[Geo] Nearby venue search failed:', err);
-          console.log('[Geo] Using seed venues as fallback');
-          setAllVenues(venuesToMapPins(seedVenues));
-          setMapVenuesLoaded(true);
-        });
-    }
-  }, [venuesToMapPins, seedVenues, defaultChains]);
+    // Single query for popular venues nearby (1 API call instead of 8)
+    searchVenues('popular restaurants cafes bars fast food', locStr)
+      .then((data) => {
+        const venues = data.venues || [];
+        searchCacheRef.current[cacheKey] = { data: venues, timestamp: Date.now() };
+        setAllVenues(venuesToMapPins(venues));
+        setMapVenuesLoaded(true);
+      })
+      .catch((err) => {
+        console.error('[Geo] Nearby venue search failed:', err);
+        setAllVenues(venuesToMapPins(seedVenues));
+        setMapVenuesLoaded(true);
+      });
+  }, [venuesToMapPins, seedVenues]);
 
   // Request user geolocation and load venues
   // forceRefresh=true forces fresh GPS + reloads popular chains near user
   const requestUserLocation = useCallback((forceRefresh = false) => {
     const savedLat = localStorage.getItem('flock_user_lat');
     const savedLng = localStorage.getItem('flock_user_lng');
-    const useChains = true; // always load popular chains (both initial and near me)
 
     // Use saved location immediately so map has data right away
     if (!forceRefresh && savedLat && savedLng) {
       const lat = parseFloat(savedLat);
       const lng = parseFloat(savedLng);
       setUserLocation({ lat, lng }); // Set blue dot immediately
-      loadVenuesAtLocation(lat, lng, useChains);
+      loadVenuesAtLocation(lat, lng);
     }
 
     if (!navigator.geolocation) {
       if (!savedLat) {
-        loadVenuesAtLocation(40.5798, -75.2932, useChains);
+        loadVenuesAtLocation(40.5798, -75.2932);
       }
       return;
     }
 
-    // Don't pre-check permissions — just try to get location.
-    // The browser will prompt if needed and return an error only on actual denial.
     setLocationLoading(true);
     navigator.geolocation.getCurrentPosition(
       (pos) => {
         const { latitude, longitude } = pos.coords;
         console.log('[Geo] Got position:', latitude, longitude);
         setLocationLoading(false);
-        loadVenuesAtLocation(latitude, longitude, useChains);
-        // Re-center map when user explicitly requests refresh
+        loadVenuesAtLocation(latitude, longitude);
         if (forceRefresh && window.__flockGoToMyLocation) {
           window.__flockGoToMyLocation();
         }
@@ -1604,14 +1642,13 @@ const FlockAppInner = ({ authUser, onLogout }) => {
       (err) => {
         console.warn('[Geo] Geolocation error:', err.code, err.message);
         setLocationLoading(false);
-        // Silently fall back to Hellertown — no error toasts
         if (savedLat && savedLng && !forceRefresh) {
-          // Already loaded from saved above, nothing to do
+          // Already loaded from saved above
         } else {
-          loadVenuesAtLocation(40.5798, -75.2932, useChains);
+          loadVenuesAtLocation(40.5798, -75.2932);
         }
       },
-      { enableHighAccuracy: true, timeout: 10000, maximumAge: forceRefresh ? 0 : 60000 }
+      { enableHighAccuracy: false, timeout: 5000, maximumAge: forceRefresh ? 0 : 120000 }
     );
   }, [loadVenuesAtLocation]);
 
@@ -1820,6 +1857,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
   // Fetch messages from API + join socket room when opening a chat
   const [, setMessagesLoading] = useState(false);
   const prevFlockIdRef = useRef(null);
+  const newlyCreatedFlockRef = useRef(null);
   const sharingLocationRef = useRef(sharingLocationForFlock);
   sharingLocationRef.current = sharingLocationForFlock;
   useEffect(() => {
@@ -1833,24 +1871,29 @@ const FlockAppInner = ({ authUser, onLogout }) => {
       // Join socket room
       joinFlock(selectedFlockId);
 
-      // Fetch message history via HTTP
-      setMessagesLoading(true);
-      getMessages(selectedFlockId)
-        .then((data) => {
-          const msgs = (data.messages || []).map(m => ({
-            id: m.id,
-            sender: m.sender_name || 'Unknown',
-            time: new Date(m.created_at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }),
-            text: m.message_text,
-            message_type: m.message_type || 'text',
-            venue_data: m.venue_data || null,
-            reactions: (m.reactions || []).map(r => r.emoji),
-            ...(m.image_url ? { image: m.image_url } : {}),
-          }));
-          setFlocks(prev => prev.map(f => f.id === selectedFlockId ? { ...f, messages: msgs } : f));
-        })
-        .catch(() => {})
-        .finally(() => setMessagesLoading(false));
+      // Skip message fetch for just-created flocks (we already have the messages locally)
+      if (newlyCreatedFlockRef.current === selectedFlockId) {
+        newlyCreatedFlockRef.current = null;
+      } else {
+        // Fetch message history via HTTP
+        setMessagesLoading(true);
+        getMessages(selectedFlockId)
+          .then((data) => {
+            const msgs = (data.messages || []).map(m => ({
+              id: m.id,
+              sender: m.sender_name || 'Unknown',
+              time: new Date(m.created_at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }),
+              text: m.message_text,
+              message_type: m.message_type || 'text',
+              venue_data: m.venue_data || null,
+              reactions: (m.reactions || []).map(r => r.emoji),
+              ...(m.image_url ? { image: m.image_url } : {}),
+            }));
+            setFlocks(prev => prev.map(f => f.id === selectedFlockId ? { ...f, messages: msgs } : f));
+          })
+          .catch(() => {})
+          .finally(() => setMessagesLoading(false));
+      }
     } else if (currentScreen !== 'chatDetail' && prevFlockIdRef.current) {
       // Don't leave socket room if actively sharing location (need to keep receiving updates)
       if (!sharingLocationRef.current || sharingLocationRef.current !== prevFlockIdRef.current) {
@@ -1967,6 +2010,39 @@ const FlockAppInner = ({ authUser, onLogout }) => {
     };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Listen for real-time flock invite notifications
+  useEffect(() => {
+    const unsubInvite = onFlockInviteReceived((data) => {
+      setPendingFlockInvites(prev => {
+        if (prev.some(f => f.id === data.flockId)) return prev;
+        return [...prev, {
+          id: data.flockId,
+          name: data.flockName,
+          host: data.invitedBy.name,
+          memberStatus: 'invited',
+          members: [],
+          memberCount: 0,
+          time: 'TBD',
+          status: 'planning',
+          venue: 'TBD',
+          messages: [],
+          votes: [],
+        }];
+      });
+      showToast(`${data.invitedBy.name} invited you to ${data.flockName}`);
+    });
+
+    const unsubResponse = onFlockInviteResponded((data) => {
+      if (data.action === 'accepted') {
+        setFlocks(prev => prev.map(f =>
+          f.id === data.flockId ? { ...f, memberCount: (f.memberCount || 0) + 1 } : f
+        ));
+      }
+    });
+
+    return () => { unsubInvite(); unsubResponse(); };
+  }, [showToast]);
+
   // Typing indicator — emit via socket with debounce
   const typingTimeoutRef = useRef(null);
   const handleChatInputChange = useCallback((e) => {
@@ -2033,6 +2109,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
     mapPin: (color = 'currentColor', size = 18) => <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"></path><circle cx="12" cy="10" r="3"></circle></svg>,
     calendar: (color = 'currentColor', size = 18) => <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg>,
     users: (color = 'currentColor', size = 18) => <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M23 21v-2a4 4 0 0 0-3-3.87"></path><path d="M16 3.13a4 4 0 0 1 0 7.75"></path></svg>,
+    userPlus: (color = 'currentColor', size = 18) => <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="8.5" cy="7" r="4"></circle><line x1="20" y1="8" x2="20" y2="14"></line><line x1="23" y1="11" x2="17" y2="11"></line></svg>,
     shield: (color = 'currentColor', size = 18) => <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path></svg>,
     sparkles: (color = 'currentColor', size = 18) => <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 3l1.5 4.5L18 9l-4.5 1.5L12 15l-1.5-4.5L6 9l4.5-1.5L12 3z"></path><path d="M5 19l.5 1.5L7 21l-1.5.5L5 23l-.5-1.5L3 21l1.5-.5L5 19z"></path><path d="M19 12l.5 1.5 1.5.5-1.5.5-.5 1.5-.5-1.5-1.5-.5 1.5-.5.5-1.5z"></path></svg>,
     dollar: (color = 'currentColor', size = 18) => <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="1" x2="12" y2="23"></line><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"></path></svg>,
@@ -2211,16 +2288,20 @@ const FlockAppInner = ({ authUser, onLogout }) => {
   }, [pendingImage, addMessageToFlock, addXP]);
 
   // Handle image selection
-  const handleChatImageSelect = useCallback(() => {
-    // Simulate selecting an image (in real app would open file picker)
-    const sampleImages = [
-      'https://images.unsplash.com/photo-1514933651103-005eec06c04b?w=400&h=300&fit=crop',
-      'https://images.unsplash.com/photo-1470337458703-46ad1756a187?w=400&h=300&fit=crop',
-      'https://images.unsplash.com/photo-1566417713940-fe7c737a9ef2?w=400&h=300&fit=crop',
-    ];
-    setPendingImage(sampleImages[Math.floor(Math.random() * sampleImages.length)]);
-    setShowImagePreview(true);
-  }, []);
+  const chatImageInputRef = useRef(null);
+  const handleChatImageSelect = useCallback((e) => {
+    if (e && e.target && e.target.files) {
+      const file = e.target.files[0];
+      if (!file) return;
+      if (file.size > 5 * 1024 * 1024) { showToast('Image too large (max 5MB)', 'error'); return; }
+      const reader = new FileReader();
+      reader.onload = () => { setPendingImage(reader.result); setShowImagePreview(true); };
+      reader.readAsDataURL(file);
+      e.target.value = '';
+    } else {
+      chatImageInputRef.current?.click();
+    }
+  }, [showToast]);
 
   const handlePhotoUpload = useCallback((e) => {
     const file = e.target.files?.[0];
@@ -2941,7 +3022,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
         <div style={{ padding: '10px 14px', background: `linear-gradient(135deg, ${colors.navy}08, ${colors.teal}12)`, borderBottom: `1px solid ${colors.creamDark}`, flexShrink: 0 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
             {dmPinnedVenue.photo_url ? (
-              <img src={dmPinnedVenue.photo_url} alt="" style={{ width: '52px', height: '52px', borderRadius: '12px', objectFit: 'cover', flexShrink: 0, boxShadow: '0 2px 8px rgba(0,0,0,0.1)' }} />
+              <img src={dmPinnedVenue.photo_url} alt="" style={{ width: '52px', height: '52px', borderRadius: '12px', objectFit: 'cover', flexShrink: 0, boxShadow: '0 2px 8px rgba(0,0,0,0.1)' }} onError={(e) => { e.target.onerror = null; e.target.src = 'data:image/svg+xml,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="52" height="52"><rect fill="#1a3a5c" width="52" height="52" rx="12"/></svg>'); }} />
             ) : (
               <div style={{ width: '52px', height: '52px', borderRadius: '12px', background: `linear-gradient(135deg, ${colors.navy}, ${colors.navyMid})`, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, boxShadow: '0 2px 8px rgba(13,40,71,0.2)' }}>
                 {Icons.mapPin('white', 22)}
@@ -3127,7 +3208,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
                     {suggestedVenues.map(venue => (
                       <button key={venue.id || venue.name} onClick={(e) => { confirmClick(e); handleDmQuickVote(venue.name, venue.place_id); }} style={{ width: '100%', textAlign: 'left', padding: '10px 12px', borderRadius: '12px', border: '1px solid #e5e7eb', backgroundColor: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '10px', transition: 'all 0.2s', position: 'relative', overflow: 'hidden' }}>
                         {venue.photo_url ? (
-                          <img src={venue.photo_url} alt="" style={{ width: '36px', height: '36px', borderRadius: '8px', objectFit: 'cover', flexShrink: 0 }} />
+                          <img src={venue.photo_url} alt="" style={{ width: '36px', height: '36px', borderRadius: '8px', objectFit: 'cover', flexShrink: 0 }} onError={(e) => { e.target.onerror = null; e.target.src = 'data:image/svg+xml,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="36" height="36"><rect fill="#1a3a5c" width="36" height="36" rx="8"/></svg>'); }} />
                         ) : (
                           <div style={{ width: '36px', height: '36px', borderRadius: '8px', background: `linear-gradient(135deg, ${getCategoryColor(venue.category)}, ${getCategoryColor(venue.category)}cc)`, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
                             {Icons.mapPin('white', 14)}
@@ -3830,21 +3911,30 @@ const FlockAppInner = ({ authUser, onLogout }) => {
                return;
       }
       setIsLoading(true);
+
+      // Capture form values before clearing
+      const capturedName = flockName;
+      const capturedVenue = selectedVenueForCreate;
+      const capturedFriends = [...flockFriends];
+      const venueName = capturedVenue?.name || null;
+      const venueAddr = capturedVenue?.addr || capturedVenue?.formatted_address || null;
+      const venueId = capturedVenue?.place_id || null;
+      const venuePhoto = capturedVenue?.photo_url || null;
+      const venueRating = capturedVenue?.rating || capturedVenue?.stars || null;
+      const venuePriceLevel = capturedVenue?.price_level || null;
+      const venueLat = capturedVenue?.lat || capturedVenue?.location?.latitude || null;
+      const venueLng = capturedVenue?.lng || capturedVenue?.location?.longitude || null;
+      const invitedIds = capturedFriends.map(f => f.id).filter(Boolean);
+
+      // Clear form immediately for snappy feel
+      setFlockName(''); setFlockFriends([]); setInviteSearch(''); setInviteResults([]); setFlockCashPool(false); setSelectedVenueForCreate(null);
+
       try {
-        const venueName = selectedVenueForCreate?.name || null;
-        const venueAddr = selectedVenueForCreate?.addr || selectedVenueForCreate?.formatted_address || null;
-        const venueId = selectedVenueForCreate?.place_id || null;
-        const venuePhoto = selectedVenueForCreate?.photo_url || null;
-        const venueRating = selectedVenueForCreate?.rating || selectedVenueForCreate?.stars || null;
-        const venuePriceLevel = selectedVenueForCreate?.price_level || null;
-        const venueLat = selectedVenueForCreate?.lat || selectedVenueForCreate?.location?.latitude || null;
-        const venueLng = selectedVenueForCreate?.lng || selectedVenueForCreate?.location?.longitude || null;
-        const invitedIds = flockFriends.map(f => f.id).filter(Boolean);
-        const data = await apiCreateFlock({ name: flockName, venue_name: venueName, venue_address: venueAddr, venue_id: venueId, venue_latitude: venueLat || undefined, venue_longitude: venueLng || undefined, venue_rating: venueRating || undefined, venue_photo_url: venuePhoto || undefined, invited_user_ids: invitedIds.length > 0 ? invitedIds : undefined });
+        const data = await apiCreateFlock({ name: capturedName, venue_name: venueName, venue_address: venueAddr, venue_id: venueId, venue_latitude: venueLat || undefined, venue_longitude: venueLng || undefined, venue_rating: venueRating || undefined, venue_photo_url: venuePhoto || undefined, invited_user_ids: invitedIds.length > 0 ? invitedIds : undefined });
         const f = data.flock;
         const initialMessages = [];
         if (venueName) {
-          const venueCardData = { name: venueName, addr: venueAddr, place_id: venueId, photo_url: venuePhoto, rating: venueRating, stars: venueRating, price: venuePriceLevel ? '$'.repeat(venuePriceLevel) : null, price_level: venuePriceLevel, type: selectedVenueForCreate?.type || 'Venue', category: selectedVenueForCreate?.category || 'Food', crowd: selectedVenueForCreate?.crowd || Math.round(20 + Math.random() * 60), lat: venueLat, lng: venueLng };
+          const venueCardData = { name: venueName, addr: venueAddr, place_id: venueId, photo_url: venuePhoto, rating: venueRating, stars: venueRating, price: venuePriceLevel ? '$'.repeat(venuePriceLevel) : null, price_level: venuePriceLevel, type: capturedVenue?.type || 'Venue', category: capturedVenue?.category || 'Food', crowd: capturedVenue?.crowd || Math.round(20 + Math.random() * 60), lat: venueLat, lng: venueLng };
           initialMessages.push({
             id: Date.now(),
             sender: 'You',
@@ -3854,18 +3944,22 @@ const FlockAppInner = ({ authUser, onLogout }) => {
             message_type: 'venue_card',
             venue_data: venueCardData,
           });
-          // Persist venue card to backend
+          // Persist venue card to backend (fire-and-forget)
           apiSendMessage(f.id, `Check out ${venueName}!`, { message_type: 'venue_card', venue_data: venueCardData }).catch(() => {});
         }
-        const invitedNames = flockFriends.map(f => f.name);
+        const invitedNames = capturedFriends.map(fr => fr.name);
         const newFlock = { id: f.id, name: f.name, host: authUser?.name || 'You', creatorId: f.creator_id, members: invitedNames, memberCount: 1 + invitedIds.length, time: f.event_time ? new Date(f.event_time).toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' }) : `${flockDate} ${flockTime}`, status: 'voting', venue: f.venue_name || 'TBD', venueAddress: venueAddr, venueId: venueId, venuePhoto: venuePhoto, venueRating: venueRating, venuePriceLevel: venuePriceLevel, venueLat: venueLat, venueLng: venueLng, cashPool: null, votes: [], messages: initialMessages };
+
+        // Batch all state updates together — navigate immediately
+        newlyCreatedFlockRef.current = f.id;
         setFlocks(prev => [...prev, newFlock]);
-        setFlockName(''); setFlockFriends([]); setInviteSearch(''); setInviteResults([]); setFlockCashPool(false); setSelectedVenueForCreate(null);
         setSelectedFlockId(f.id);
         setCurrentScreen('chatDetail');
-        addXP(50);      } catch (err) {
+        setIsLoading(false);
+        // Defer XP animation so it doesn't compete with screen transition
+        setTimeout(() => addXP(50), 600);
+      } catch (err) {
         showToast(err.message || 'Failed to create flock', 'error');
-      } finally {
         setIsLoading(false);
       }
     };
@@ -3890,7 +3984,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
             {selectedVenueForCreate ? (
               <div style={{ backgroundColor: 'white', borderRadius: '12px', padding: '10px', border: `2px solid ${colors.teal}`, display: 'flex', alignItems: 'center', gap: '10px' }}>
                 {selectedVenueForCreate.photo_url ? (
-                  <img src={selectedVenueForCreate.photo_url} alt="" style={{ width: '48px', height: '48px', borderRadius: '8px', objectFit: 'cover' }} />
+                  <img src={selectedVenueForCreate.photo_url} alt="" style={{ width: '48px', height: '48px', borderRadius: '8px', objectFit: 'cover' }} onError={(e) => { e.target.onerror = null; e.target.src = 'data:image/svg+xml,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48"><rect fill="#1a3a5c" width="48" height="48" rx="8"/></svg>'); }} />
                 ) : (
                   <div style={{ width: '48px', height: '48px', borderRadius: '8px', backgroundColor: colors.cream, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.mapPin(colors.navy, 20)}</div>
                 )}
@@ -4133,7 +4227,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
                   onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = '#f8fafc'; }}
                 >
                   {venue.photo_url ? (
-                    <img src={venue.photo_url} alt="" style={{ width: '48px', height: '48px', borderRadius: '10px', objectFit: 'cover', flexShrink: 0 }} />
+                    <img src={venue.photo_url} alt="" style={{ width: '48px', height: '48px', borderRadius: '10px', objectFit: 'cover', flexShrink: 0 }} onError={(e) => { e.target.onerror = null; e.target.src = 'data:image/svg+xml,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48"><rect fill="#1a3a5c" width="48" height="48" rx="10"/></svg>'); }} />
                   ) : (
                     <div style={{ width: '48px', height: '48px', borderRadius: '10px', backgroundColor: '#e5e7eb', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{Icons.mapPin(colors.navyMid, 20)}</div>
                   )}
@@ -4294,7 +4388,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
 
         {/* Venue Popup with AI Crowd Forecast */}
         {activeVenue && !showConnectPanel && (
-          <div onClick={(e) => e.stopPropagation()} style={{ position: 'absolute', bottom: '12px', left: '8px', right: '8px', backgroundColor: 'white', borderRadius: '16px', boxShadow: '0 8px 32px rgba(0,0,0,0.25)', zIndex: 45, overflow: 'hidden', maxHeight: '70%', overflowY: 'auto' }}>
+          <div onClick={(e) => e.stopPropagation()} style={{ position: 'absolute', bottom: '12px', left: '8px', right: '8px', backgroundColor: 'white', borderRadius: '16px', boxShadow: '0 8px 32px rgba(0,0,0,0.25)', zIndex: 45, overflow: 'hidden', maxHeight: 'calc(100% - 24px)', overflowY: 'auto', WebkitOverflowScrolling: 'touch' }}>
             <div style={{ height: '56px', background: `linear-gradient(135deg, ${getCategoryColor(activeVenue.category)}, ${activeVenue.crowd > 70 ? colors.red : colors.navy})`, position: 'relative', padding: '8px 12px', display: 'flex', alignItems: 'flex-end' }}>
               <button onClick={() => setActiveVenue(null)} style={{ position: 'absolute', top: '8px', right: '8px', width: '24px', height: '24px', borderRadius: '12px', backgroundColor: 'rgba(255,255,255,0.2)', border: 'none', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.x('white', 14)}</button>
               <div style={{ color: 'white' }}>
@@ -4406,19 +4500,13 @@ const FlockAppInner = ({ authUser, onLogout }) => {
                       setPickingVenueForDm(false);
                       setCurrentTab('chats');
                       setCurrentScreen('dmDetail');
-                                         // If we have a selected flock (came from chat), assign venue to it directly
-                    } else if (selectedFlockId) {
-                      updateFlockVenue(selectedFlockId, venueData);
-                      setActiveVenue(null);
-                      setPickingVenueForCreate(false);
-                      setCurrentTab('chats');
-                      setCurrentScreen('chatDetail');
                     } else {
+                      // Always go to create form with venue selected
                       setSelectedVenueForCreate(venueData);
                       setActiveVenue(null);
                       setPickingVenueForCreate(false);
                       setCurrentScreen('create');
-                                         }
+                    }
                   }} style={{ flex: 1, padding: '10px', borderRadius: '8px', border: 'none', backgroundColor: colors.teal, color: 'white', fontWeight: 'bold', fontSize: '12px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px', position: 'relative', overflow: 'hidden' }}>{Icons.check('white', 14)} Select</button>
                 ) : (
                   <button onClick={(e) => { confirmClick(e); setSelectedVenueForCreate({ ...activeVenue, addr: activeVenue.addr || activeVenue.formatted_address, lat: activeVenue.location?.latitude, lng: activeVenue.location?.longitude }); setActiveVenue(null); setCurrentScreen('create'); }} style={{ flex: 1, padding: '10px', borderRadius: '8px', border: 'none', background: `linear-gradient(90deg, ${colors.navy}, ${colors.navyMid})`, color: 'white', fontWeight: 'bold', fontSize: '12px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px', position: 'relative', overflow: 'hidden' }}>{Icons.users('white', 14)} Start Flock Here</button>
@@ -4796,6 +4884,36 @@ const FlockAppInner = ({ authUser, onLogout }) => {
             </>
           )}
 
+          {/* Pending Flock Invites */}
+          {pendingFlockInvites.length > 0 && (
+            <>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '12px 4px 8px' }}>
+                <span style={{ fontSize: '11px', fontWeight: '700', color: '#F59E0B', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Pending Invites</span>
+                <div style={{ flex: 1, height: '1px', backgroundColor: '#e5e7eb' }} />
+                <span style={{ width: '18px', height: '18px', borderRadius: '9px', background: 'linear-gradient(135deg, #F59E0B, #D97706)', color: 'white', fontSize: '10px', fontWeight: '700', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{pendingFlockInvites.length}</span>
+              </div>
+              {pendingFlockInvites.map((f) => (
+                <div key={`invite-${f.id}`} style={{ backgroundColor: 'white', borderRadius: '16px', padding: '12px 14px', marginBottom: '6px', border: '1.5px solid #FDE68A', display: 'flex', alignItems: 'center', gap: '12px', boxShadow: '0 2px 12px rgba(245,158,11,0.08)' }}>
+                  <div style={{ width: '46px', height: '46px', borderRadius: '14px', background: 'linear-gradient(135deg, #F59E0B, #D97706)', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 2px 8px rgba(245,158,11,0.2)', flexShrink: 0 }}>
+                    {Icons.mail('white', 20)}
+                  </div>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <h3 style={{ fontSize: '14px', fontWeight: '700', color: colors.navy, margin: '0 0 2px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{f.name}</h3>
+                    <p style={{ fontSize: '11px', color: '#6b7280', margin: 0 }}>Invited by {f.host}</p>
+                  </div>
+                  <div style={{ display: 'flex', gap: '6px', flexShrink: 0 }}>
+                    <button onClick={() => handleDeclineFlockInvite(f.id)} style={{ width: '32px', height: '32px', borderRadius: '10px', border: '1.5px solid #e5e7eb', backgroundColor: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                      {Icons.x('#9ca3af', 14)}
+                    </button>
+                    <button onClick={() => handleAcceptFlockInvite(f.id)} style={{ width: '32px', height: '32px', borderRadius: '10px', border: 'none', background: `linear-gradient(135deg, ${colors.navy}, ${colors.navyMid})`, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                      {Icons.check('white', 14)}
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </>
+          )}
+
           {/* Flocks section */}
           {filteredFlocks.length > 0 && (
             <>
@@ -4908,6 +5026,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
             <p style={{ fontSize: '10px', color: 'rgba(255,255,255,0.6)', margin: 0 }}>{flock.members?.length || flock.memberCount || 0} members • {isTyping ? <span style={{ color: '#86EFAC', fontWeight: '500' }}>{typingUser} is typing...</span> : 'online'}</p>
           </div>
           <button onClick={() => { setShowVotePanel(true); loadPopularVenues(); }} style={{ height: '32px', borderRadius: '16px', border: 'none', backgroundColor: flock.status === 'voting' ? colors.teal : 'rgba(255,255,255,0.2)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px', padding: '0 10px', transition: 'all 0.2s ease', fontSize: '11px', fontWeight: '700' }}>{Icons.vote('white', 14)} Vote</button>
+          <button onClick={() => { setShowFlockInviteModal(true); setFlockInviteSelected([]); setFlockInviteSearch(''); setFlockInviteResults([]); }} style={{ width: '32px', height: '32px', borderRadius: '16px', border: 'none', backgroundColor: 'rgba(255,255,255,0.2)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'all 0.2s ease' }}>{Icons.userPlus('white', 14)}</button>
           <button onClick={() => setShowChatSearch(!showChatSearch)} style={{ width: '32px', height: '32px', borderRadius: '16px', border: 'none', backgroundColor: 'rgba(255,255,255,0.2)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'all 0.2s ease' }}>{Icons.search('white', 16)}</button>
           <button onClick={() => setShowChatPool(true)} style={{ width: '32px', height: '32px', borderRadius: '16px', border: 'none', backgroundColor: colors.cream, color: colors.navy, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'all 0.2s ease' }}>{Icons.dollar(colors.navy, 16)}</button>
           <div style={{ position: 'relative' }}>
@@ -4959,7 +5078,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
           <div style={{ padding: '10px 14px', background: `linear-gradient(135deg, ${colors.navy}08, ${colors.teal}12)`, borderBottom: `1px solid ${colors.creamDark}`, flexShrink: 0 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
               {flock.venuePhoto ? (
-                <img src={flock.venuePhoto} alt="" style={{ width: '52px', height: '52px', borderRadius: '12px', objectFit: 'cover', flexShrink: 0, boxShadow: '0 2px 8px rgba(0,0,0,0.1)' }} />
+                <img src={flock.venuePhoto} alt="" style={{ width: '52px', height: '52px', borderRadius: '12px', objectFit: 'cover', flexShrink: 0, boxShadow: '0 2px 8px rgba(0,0,0,0.1)' }} onError={(e) => { e.target.onerror = null; e.target.src = 'data:image/svg+xml,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="52" height="52"><rect fill="#1a3a5c" width="52" height="52" rx="12"/></svg>'); }} />
               ) : (
                 <div style={{ width: '52px', height: '52px', borderRadius: '12px', background: `linear-gradient(135deg, ${colors.navy}, ${colors.navyMid})`, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, boxShadow: '0 2px 8px rgba(13,40,71,0.2)' }}>
                   {Icons.mapPin('white', 22)}
@@ -5313,7 +5432,11 @@ const FlockAppInner = ({ authUser, onLogout }) => {
 
         {/* Input area */}
         <div style={{ padding: '10px 12px', backgroundColor: 'rgba(255,255,255,0.98)', backdropFilter: 'blur(10px)', WebkitBackdropFilter: 'blur(10px)', borderTop: '1px solid rgba(0,0,0,0.05)', display: 'flex', gap: '8px', alignItems: 'center', flexShrink: 0, boxShadow: '0 -4px 20px rgba(0,0,0,0.03)' }}>
-          <button onClick={handleChatImageSelect} style={{ width: '38px', height: '38px', borderRadius: '19px', border: 'none', backgroundColor: 'rgba(13,40,71,0.08)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'all 0.2s ease' }}>{Icons.camera('#6b7280', 18)}</button>
+          <label style={{ width: '38px', height: '38px', borderRadius: '19px', border: 'none', backgroundColor: 'rgba(13,40,71,0.08)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'all 0.2s ease', flexShrink: 0 }}>
+            {Icons.camera('#6b7280', 18)}
+            <input ref={chatImageInputRef} type="file" accept="image/*" onChange={handleChatImageSelect} style={{ display: 'none' }} />
+          </label>
+          <button onClick={() => { if (sharingLocationForFlock === flock.id) { stopLocationSharing(); } else { startSharingLocation(flock.id); } }} style={{ width: '38px', height: '38px', borderRadius: '19px', border: 'none', backgroundColor: sharingLocationForFlock === flock.id ? '#10b981' : 'rgba(13,40,71,0.08)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'all 0.2s ease', flexShrink: 0 }}>{Icons.mapPin(sharingLocationForFlock === flock.id ? 'white' : '#6b7280', 16)}</button>
           <input key="chat-input" id="chat-input" type="text" value={chatInput} onChange={handleChatInputChange} onKeyDown={(e) => e.key === 'Enter' && sendChatMessage()} placeholder={replyingTo ? 'Reply...' : 'Type a message...'} style={{ flex: 1, padding: '12px 16px', borderRadius: '22px', backgroundColor: 'rgba(243,244,246,0.9)', border: '1px solid rgba(0,0,0,0.05)', fontSize: '14px', outline: 'none', fontWeight: '500', transition: 'all 0.2s ease' }} autoComplete="off" />
           {chatInput ? (
             <button onClick={sendChatMessage} style={{ width: '42px', height: '42px', borderRadius: '21px', border: 'none', background: `linear-gradient(135deg, ${colors.navy}, ${colors.navyMid})`, color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 3px 10px rgba(13,40,71,0.25)', transition: 'all 0.2s ease' }}>{Icons.send('white', 18)}</button>
@@ -5465,7 +5588,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
                       {suggestedVenues.map(venue => (
                         <button key={venue.id || venue.name} onClick={(e) => { confirmClick(e); handleQuickVote(venue.name, venue.type || venue.category || 'Venue'); }} style={{ width: '100%', textAlign: 'left', padding: '10px 12px', borderRadius: '12px', border: '1px solid #e5e7eb', backgroundColor: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '10px', transition: 'all 0.2s', position: 'relative', overflow: 'hidden' }}>
                           {venue.photo_url ? (
-                            <img src={venue.photo_url} alt="" style={{ width: '36px', height: '36px', borderRadius: '8px', objectFit: 'cover', flexShrink: 0 }} />
+                            <img src={venue.photo_url} alt="" style={{ width: '36px', height: '36px', borderRadius: '8px', objectFit: 'cover', flexShrink: 0 }} onError={(e) => { e.target.onerror = null; e.target.src = 'data:image/svg+xml,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="36" height="36"><rect fill="#1a3a5c" width="36" height="36" rx="8"/></svg>'); }} />
                           ) : (
                             <div style={{ width: '36px', height: '36px', borderRadius: '8px', background: `linear-gradient(135deg, ${getCategoryColor(venue.category)}, ${getCategoryColor(venue.category)}cc)`, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
                               {Icons.mapPin('white', 14)}
@@ -5574,6 +5697,90 @@ const FlockAppInner = ({ authUser, onLogout }) => {
           </div>
         )}
 
+        {/* Invite Friends Modal */}
+        {showFlockInviteModal && (
+          <div className="modal-backdrop" style={{ position: 'absolute', inset: 0, backgroundColor: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'flex-end', zIndex: 50 }}>
+            <div className="modal-content" style={{ backgroundColor: 'white', borderRadius: '20px 20px 0 0', padding: '20px', width: '100%', maxHeight: '70%', overflowY: 'auto' }}>
+              <div style={{ width: '40px', height: '4px', backgroundColor: '#e5e7eb', borderRadius: '2px', margin: '0 auto 16px' }} />
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+                <h3 style={{ fontSize: '16px', fontWeight: '800', color: colors.navy, margin: 0 }}>Invite Friends</h3>
+                <button onClick={() => setShowFlockInviteModal(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '4px' }}>{Icons.x('#94a3b8', 20)}</button>
+              </div>
+
+              {/* Selected friends chips */}
+              {flockInviteSelected.length > 0 && (
+                <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', marginBottom: '12px' }}>
+                  {flockInviteSelected.map(f => (
+                    <div key={f.id} style={{ display: 'flex', alignItems: 'center', gap: '4px', padding: '4px 8px 4px 4px', borderRadius: '20px', backgroundColor: colors.navy, color: 'white' }}>
+                      <div style={{ width: '22px', height: '22px', borderRadius: '11px', backgroundColor: 'rgba(255,255,255,0.2)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '10px', fontWeight: '700', overflow: 'hidden' }}>
+                        {f.profile_image_url ? <img src={f.profile_image_url} alt="" style={{ width: '22px', height: '22px', borderRadius: '11px', objectFit: 'cover' }} /> : f.name[0]?.toUpperCase()}
+                      </div>
+                      <span style={{ fontSize: '12px', fontWeight: '600' }}>{f.name.split(' ')[0]}</span>
+                      <button onClick={() => setFlockInviteSelected(prev => prev.filter(x => x.id !== f.id))} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '0 2px', display: 'flex', alignItems: 'center' }}>{Icons.x('rgba(255,255,255,0.7)', 12)}</button>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* Search input */}
+              <div style={{ position: 'relative', marginBottom: '12px' }}>
+                <input
+                  type="text"
+                  value={flockInviteSearch}
+                  onChange={(e) => handleFlockInviteSearch(e.target.value)}
+                  placeholder="Search friends..."
+                  style={{ width: '100%', padding: '10px 14px 10px 36px', borderRadius: '12px', border: `2px solid ${flockInviteSearch ? colors.navy : '#e2e8f0'}`, fontSize: '13px', outline: 'none', boxSizing: 'border-box', backgroundColor: '#f8fafc', fontWeight: '500', transition: 'border-color 0.2s' }}
+                  autoComplete="off"
+                />
+                <span style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)' }}>{Icons.search('#94a3b8', 14)}</span>
+                {flockInviteSearch && (
+                  <button onClick={() => { setFlockInviteSearch(''); setFlockInviteResults([]); }} style={{ position: 'absolute', right: '8px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', padding: '4px' }}>{Icons.x('#94a3b8', 14)}</button>
+                )}
+              </div>
+
+              {/* Search results */}
+              {flockInviteSearching && (
+                <div style={{ textAlign: 'center', padding: '10px 0' }}>
+                  <div style={{ display: 'inline-block', width: '14px', height: '14px', border: `2px solid ${colors.creamDark}`, borderTopColor: colors.navy, borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
+                  <span style={{ fontSize: '11px', color: '#6b7280', marginLeft: '6px' }}>Searching...</span>
+                </div>
+              )}
+              {!flockInviteSearching && flockInviteResults.length > 0 && (
+                <div style={{ maxHeight: '200px', overflowY: 'auto', borderRadius: '10px', border: `1px solid ${colors.creamDark}`, backgroundColor: 'white' }}>
+                  {flockInviteResults
+                    .filter(u => !flockInviteSelected.some(s => s.id === u.id))
+                    .filter(u => !(flock?.members || []).some(m => m.id === u.id))
+                    .map((friend, i, arr) => (
+                      <button key={friend.id} onClick={() => setFlockInviteSelected(prev => [...prev, friend])} style={{ width: '100%', padding: '10px 12px', display: 'flex', alignItems: 'center', gap: '10px', border: 'none', borderBottom: i < arr.length - 1 ? `1px solid ${colors.creamDark}` : 'none', backgroundColor: 'white', cursor: 'pointer', textAlign: 'left' }}>
+                        <div style={{ width: '36px', height: '36px', borderRadius: '18px', backgroundColor: colors.navyMid, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '13px', fontWeight: '700', color: 'white', flexShrink: 0, overflow: 'hidden' }}>
+                          {friend.profile_image_url ? <img src={friend.profile_image_url} alt="" style={{ width: '36px', height: '36px', borderRadius: '18px', objectFit: 'cover' }} /> : friend.name[0]?.toUpperCase()}
+                        </div>
+                        <div style={{ flex: 1 }}>
+                          <p style={{ fontWeight: '700', fontSize: '14px', color: colors.navy, margin: 0 }}>{friend.name}</p>
+                        </div>
+                        <div style={{ padding: '4px 10px', borderRadius: '8px', backgroundColor: colors.cream, color: colors.teal, fontSize: '11px', fontWeight: '700' }}>Add</div>
+                      </button>
+                    ))}
+                </div>
+              )}
+              {!flockInviteSearching && flockInviteSearch.trim().length >= 1 && flockInviteResults.length === 0 && (
+                <p style={{ fontSize: '11px', color: '#9ca3af', textAlign: 'center', padding: '8px 0', margin: 0 }}>No friends found</p>
+              )}
+
+              {/* Send button */}
+              {flockInviteSelected.length > 0 && (
+                <button
+                  onClick={handleSendFlockInvites}
+                  disabled={flockInviteSending}
+                  style={{ width: '100%', padding: '14px', borderRadius: '14px', border: 'none', background: `linear-gradient(135deg, ${colors.navy}, ${colors.navyMid})`, color: 'white', fontSize: '14px', fontWeight: '800', cursor: 'pointer', marginTop: '12px', opacity: flockInviteSending ? 0.7 : 1 }}
+                >
+                  {flockInviteSending ? 'Sending...' : `Invite ${flockInviteSelected.length} Friend${flockInviteSelected.length > 1 ? 's' : ''}`}
+                </button>
+              )}
+            </div>
+          </div>
+        )}
+
         {/* Leave Flock Confirmation Modal */}
         {showLeaveConfirm && (
           <div className="modal-backdrop" style={{ position: 'absolute', inset: 0, backgroundColor: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(8px)', WebkitBackdropFilter: 'blur(8px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 50, padding: '16px' }}>
@@ -5655,7 +5862,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
           {flock.venue && flock.venue !== 'TBD' && (
             <div style={{ ...styles.card, display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '12px' }}>
               {flock.venuePhoto ? (
-                <img src={flock.venuePhoto} alt="" style={{ width: '52px', height: '52px', borderRadius: '10px', objectFit: 'cover', flexShrink: 0 }} />
+                <img src={flock.venuePhoto} alt="" style={{ width: '52px', height: '52px', borderRadius: '10px', objectFit: 'cover', flexShrink: 0 }} onError={(e) => { e.target.onerror = null; e.target.src = 'data:image/svg+xml,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="52" height="52"><rect fill="#1a3a5c" width="52" height="52" rx="10"/></svg>'); }} />
               ) : (
                 <div style={{ width: '52px', height: '52px', borderRadius: '10px', background: `linear-gradient(135deg, ${colors.navy}, ${colors.navyMid})`, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{Icons.mapPin('white', 20)}</div>
               )}
@@ -7910,7 +8117,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
                         <div style={{ position: 'relative', height: venue.photo_url ? '120px' : '0' }}>
                           {venue.photo_url && (
                             <>
-                              <img src={venue.photo_url} alt="" style={{ width: '100%', height: '120px', objectFit: 'cover', display: 'block' }} />
+                              <img src={venue.photo_url} alt="" style={{ width: '100%', height: '120px', objectFit: 'cover', display: 'block' }} onError={(e) => { e.target.style.display = 'none'; e.target.parentElement.style.height = '0'; }} />
                               <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(transparent 40%, rgba(0,0,0,0.6) 100%)' }} />
                               {venue.trending && (
                                 <div style={{ position: 'absolute', top: '8px', left: '8px', padding: '3px 8px', borderRadius: '8px', backgroundColor: 'rgba(245,158,11,0.9)', display: 'flex', alignItems: 'center', gap: '3px' }}>
@@ -7992,7 +8199,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
             <div style={{ position: 'relative', height: '220px', flexShrink: 0, overflow: 'hidden' }}>
               {venueDetailModal.photos && venueDetailModal.photos.length > 0 ? (
                 <>
-                  <img src={venueDetailModal.photos[venueDetailPhotoIdx] || venueDetailModal.photos[0]} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
+                  <img src={venueDetailModal.photos[venueDetailPhotoIdx] || venueDetailModal.photos[0]} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} onError={(e) => { e.target.src = ''; e.target.parentElement.style.background = `linear-gradient(135deg, #0d2847, #1a3a5c)`; e.target.style.display = 'none'; }} />
                   {venueDetailModal.photos.length > 1 && (
                     <>
                       <button onClick={(e) => { e.stopPropagation(); setVenueDetailPhotoIdx(i => i > 0 ? i - 1 : venueDetailModal.photos.length - 1); }} style={{ position: 'absolute', left: '8px', top: '50%', transform: 'translateY(-50%)', width: '32px', height: '32px', borderRadius: '16px', backgroundColor: 'rgba(0,0,0,0.5)', border: 'none', color: 'white', cursor: 'pointer', fontSize: '16px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>‹</button>
@@ -8006,7 +8213,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
                   )}
                 </>
               ) : venueDetailModal.photo_url ? (
-                <img src={venueDetailModal.photo_url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
+                <img src={venueDetailModal.photo_url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} onError={(e) => { e.target.src = ''; e.target.style.display = 'none'; e.target.parentElement.style.background = `linear-gradient(135deg, #0d2847, #1a3a5c)`; }} />
               ) : (
                 <div style={{ width: '100%', height: '100%', background: `linear-gradient(135deg, ${colors.navy}, ${colors.navyMid})`, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.mapPin('rgba(255,255,255,0.3)', 48)}</div>
               )}
@@ -8084,6 +8291,18 @@ const FlockAppInner = ({ authUser, onLogout }) => {
                         </a>
                       )}
                     </div>
+                  )}
+
+                  {/* View Menu */}
+                  {!venueDetailModal.loading && (
+                    <a href={venueDetailModal.menu_url || `https://www.google.com/search?q=${encodeURIComponent((venueDetailModal.name || '') + ' ' + (venueDetailModal.formatted_address || '') + ' menu')}`} target="_blank" rel="noopener noreferrer" style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '12px', backgroundColor: 'white', borderRadius: '12px', border: '1px solid rgba(0,0,0,0.06)', textDecoration: 'none', marginBottom: '14px', transition: 'background-color 0.15s' }}>
+                      <svg width={18} height={18} viewBox="0 0 24 24" fill="none" stroke={colors.navy} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="4" y1="6" x2="20" y2="6"></line><line x1="4" y1="10" x2="20" y2="10"></line><line x1="4" y1="14" x2="16" y2="14"></line><line x1="4" y1="18" x2="12" y2="18"></line></svg>
+                      <div style={{ flex: 1 }}>
+                        <span style={{ fontSize: '13px', fontWeight: '700', color: colors.navy }}>View Menu</span>
+                        <p style={{ fontSize: '10px', color: '#6b7280', margin: '1px 0 0' }}>{venueDetailModal.menu_url ? 'Official menu' : 'Search online'}</p>
+                      </div>
+                      {Icons.externalLink('#9ca3af', 14)}
+                    </a>
                   )}
 
                   {/* Types/Tags */}

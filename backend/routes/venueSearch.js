@@ -22,13 +22,22 @@ router.get('/photo',
       // Step 1: ask Google for the actual CDN url (JSON response)
       const metaUrl = `https://places.googleapis.com/v1/${photoRef}/media?maxWidthPx=${maxWidth}&key=${API_KEY}&skipHttpRedirect=true`;
       const metaRes = await fetch(metaUrl);
-      if (!metaRes.ok) return res.status(502).json({ error: 'Google API error' });
+      if (!metaRes.ok) {
+        console.error('[Photo Proxy] Google API error:', metaRes.status, 'for ref:', photoRef.slice(0, 60));
+        return res.status(502).json({ error: 'Google API error' });
+      }
       const meta = await metaRes.json();
-      if (!meta.photoUri) return res.status(404).json({ error: 'Photo not found' });
+      if (!meta.photoUri) {
+        console.error('[Photo Proxy] No photoUri in response for ref:', photoRef.slice(0, 60));
+        return res.status(404).json({ error: 'Photo not found' });
+      }
 
       // Step 2: fetch the actual image bytes from the CDN
       const imgRes = await fetch(meta.photoUri);
-      if (!imgRes.ok) return res.status(502).json({ error: 'CDN fetch failed' });
+      if (!imgRes.ok) {
+        console.error('[Photo Proxy] CDN fetch failed:', imgRes.status, 'for ref:', photoRef.slice(0, 60));
+        return res.status(502).json({ error: 'CDN fetch failed' });
+      }
 
       // Step 3: send the image bytes straight to the client
       const buffer = Buffer.from(await imgRes.arrayBuffer());
@@ -37,7 +46,7 @@ router.get('/photo',
       res.set('Cross-Origin-Resource-Policy', 'cross-origin');
       res.send(buffer);
     } catch (err) {
-      console.error('Photo proxy error:', err);
+      console.error('[Photo Proxy] Error:', err.message, '| ref:', req.query.ref?.slice(0, 60));
       res.status(500).json({ error: 'Failed to fetch photo' });
     }
   }
@@ -192,7 +201,7 @@ router.get('/details',
       const response = await fetch(`https://places.googleapis.com/v1/places/${placeId}`, {
         headers: {
           'X-Goog-Api-Key': API_KEY,
-          'X-Goog-FieldMask': 'id,displayName,formattedAddress,nationalPhoneNumber,websiteUri,rating,userRatingCount,priceLevel,photos,currentOpeningHours,types,location,googleMapsUri',
+          'X-Goog-FieldMask': 'id,displayName,formattedAddress,nationalPhoneNumber,websiteUri,rating,userRatingCount,priceLevel,photos,currentOpeningHours,types,location,googleMapsUri,menuUri',
         },
       });
 
@@ -219,6 +228,7 @@ router.get('/details',
           types: p.types || [],
           location: p.location || null,
           google_maps_url: p.googleMapsUri || null,
+          menu_url: p.menuUri || null,
         },
       };
       setCache(detailCacheKey, result);

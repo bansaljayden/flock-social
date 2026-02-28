@@ -238,6 +238,59 @@ function registerHandlers(io, socket) {
     });
   });
 
+  // --- Flock invite events ---
+
+  socket.on('flock_invite', async (data) => {
+    try {
+      const { flockId, invitedUserIds } = data;
+      if (!flockId || !Array.isArray(invitedUserIds) || invitedUserIds.length === 0) return;
+
+      if (!(await verifyMembership(flockId, user.id))) {
+        socket.emit('error', { message: 'Not a member of this flock' });
+        return;
+      }
+
+      const flockResult = await pool.query('SELECT id, name FROM flocks WHERE id = $1', [flockId]);
+      if (flockResult.rows.length === 0) return;
+      const flockName = flockResult.rows[0].name;
+
+      for (const uid of invitedUserIds) {
+        io.to(`user:${uid}`).emit('flock_invite_received', {
+          flockId,
+          flockName,
+          invitedBy: { userId: user.id, name: user.name },
+        });
+      }
+
+      socket.to(`flock:${flockId}`).emit('flock_members_invited', {
+        flockId,
+        invitedBy: { userId: user.id, name: user.name },
+        invitedUserIds,
+      });
+    } catch (err) {
+      console.error('flock_invite error:', err);
+    }
+  });
+
+  socket.on('flock_invite_response', async (data) => {
+    try {
+      const { flockId, action } = data;
+      if (!flockId || !['accepted', 'declined'].includes(action)) return;
+
+      const flockResult = await pool.query('SELECT id, name FROM flocks WHERE id = $1', [flockId]);
+      if (flockResult.rows.length === 0) return;
+
+      io.to(`flock:${flockId}`).emit('flock_invite_responded', {
+        flockId,
+        userId: user.id,
+        userName: user.name,
+        action,
+      });
+    } catch (err) {
+      console.error('flock_invite_response error:', err);
+    }
+  });
+
   // --- Direct Messages (real-time) ---
 
   // Join a personal DM room so we can receive DMs
