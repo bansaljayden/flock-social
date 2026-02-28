@@ -281,6 +281,13 @@ export async function addTrustedContact({ name, phone, email, relationship }) {
   });
 }
 
+export async function updateTrustedContact(id, { name, phone, email, relationship }) {
+  return request(`/api/safety/contacts/${id}`, {
+    method: 'PUT',
+    body: JSON.stringify({ name, phone, email, relationship }),
+  });
+}
+
 export async function deleteTrustedContact(id) {
   return request(`/api/safety/contacts/${id}`, { method: 'DELETE' });
 }

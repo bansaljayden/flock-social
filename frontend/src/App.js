@@ -10,7 +10,7 @@ import {
   formatCurrency,
   calculateProfitMargin
 } from './lib/finance';
-import { getCurrentUser, logout, isLoggedIn, getFlocks, getFlock, createFlock as apiCreateFlock, getMessages, sendMessage as apiSendMessage, updateProfile, searchVenues, searchUsers, getSuggestedUsers, sendFriendRequest, getStories, getVenueDetails, leaveFlock as apiLeaveFlock, getDMConversations, getDMs, getDmVenueVotes, getDmPinnedVenue, BASE_URL, inviteToFlock, acceptFlockInvite, declineFlockInvite, getFriends, acceptFriendRequest, declineFriendRequest, getPendingRequests, getOutgoingRequests, getFriendSuggestions, getMyFriendCode, addFriendByCode, findFriendsByPhone, removeFriend, getTrustedContacts, addTrustedContact, deleteTrustedContact, sendEmergencyAlert, shareLocationWithContacts } from './services/api';
+import { getCurrentUser, logout, isLoggedIn, getFlocks, getFlock, createFlock as apiCreateFlock, getMessages, sendMessage as apiSendMessage, updateProfile, searchVenues, searchUsers, getSuggestedUsers, sendFriendRequest, getStories, getVenueDetails, leaveFlock as apiLeaveFlock, getDMConversations, getDMs, getDmVenueVotes, getDmPinnedVenue, BASE_URL, inviteToFlock, acceptFlockInvite, declineFlockInvite, getFriends, acceptFriendRequest, declineFriendRequest, getPendingRequests, getOutgoingRequests, getFriendSuggestions, getMyFriendCode, addFriendByCode, findFriendsByPhone, removeFriend, getTrustedContacts, addTrustedContact, updateTrustedContact, deleteTrustedContact, sendEmergencyAlert, shareLocationWithContacts } from './services/api';
 import { connectSocket, disconnectSocket, getSocket, joinFlock, leaveFlock, sendMessage as socketSendMessage, sendImageMessage as socketSendImage, startTyping, stopTyping, onNewMessage, onUserTyping, onUserStoppedTyping, emitLocation, stopSharingLocation as socketStopSharing, onLocationUpdate, onMemberStoppedSharing, socketSendDm, onNewDm, dmStartTyping, dmStopTyping, onDmUserTyping, onDmUserStoppedTyping, dmReact, dmRemoveReact, onDmReactionAdded, onDmReactionRemoved, dmVoteVenue, onDmNewVote, dmShareLocation, dmStopSharingLocation, onDmLocationUpdate, onDmMemberStoppedSharing, dmPinVenue, onDmVenuePinned, emitFlockInvite, emitFlockInviteResponse, onFlockInviteReceived, onFlockInviteResponded, emitFriendRequest, emitFriendResponse, onFriendRequestReceived, onFriendRequestResponded } from './services/socket';
 import { QRCodeSVG } from 'qrcode.react';
 import { Html5Qrcode } from 'html5-qrcode';
@@ -1673,6 +1673,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
   const [trustedContacts, setTrustedContacts] = useState([]);
   const [safetyOn, setSafetyOn] = useState(true);
   const [showAddContact, setShowAddContact] = useState(false);
+  const [editingContact, setEditingContact] = useState(null); // null or contact object
   const [newContact, setNewContact] = useState({ name: '', phone: '', email: '', relationship: '' });
   const [safetyLoading, setSafetyLoading] = useState(false);
   const [sosAlertSending, setSosAlertSending] = useState(false);
@@ -2698,7 +2699,13 @@ const FlockAppInner = ({ authUser, onLogout }) => {
     }
   }, []);
 
-  const handleAddContact = useCallback(async () => {
+  const handleEditContact = useCallback((contact) => {
+    setEditingContact(contact);
+    setNewContact({ name: contact.contact_name, phone: contact.contact_phone, email: contact.contact_email || '', relationship: contact.relationship || '' });
+    setShowAddContact(true);
+  }, []);
+
+  const handleSaveContact = useCallback(async () => {
     if (!newContact.name.trim() || !newContact.phone.trim()) {
       showToast('Name and phone are required', 'error');
       return;
@@ -2709,17 +2716,23 @@ const FlockAppInner = ({ authUser, onLogout }) => {
     }
     try {
       setSafetyLoading(true);
-      await addTrustedContact(newContact);
+      if (editingContact) {
+        await updateTrustedContact(editingContact.id, newContact);
+        showToast('Contact updated');
+      } else {
+        await addTrustedContact(newContact);
+        showToast('Trusted contact added');
+      }
       setNewContact({ name: '', phone: '', email: '', relationship: '' });
       setShowAddContact(false);
-      showToast('Trusted contact added');
+      setEditingContact(null);
       loadTrustedContacts();
     } catch (err) {
-      showToast(err.message || 'Failed to add contact', 'error');
+      showToast(err.message || 'Failed to save contact', 'error');
     } finally {
       setSafetyLoading(false);
     }
-  }, [newContact, showToast, loadTrustedContacts]);
+  }, [newContact, editingContact, showToast, loadTrustedContacts]);
 
   const handleDeleteContact = useCallback(async (contactId) => {
     try {
@@ -6543,6 +6556,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
                         {c.contact_email && <p style={{ fontSize: '11px', color: '#9ca3af', margin: '1px 0 0' }}>{c.contact_email}</p>}
                         {c.relationship && <span style={{ display: 'inline-block', marginTop: '3px', padding: '1px 8px', background: colors.cream, borderRadius: '10px', fontSize: '10px', color: '#6b7280', textTransform: 'capitalize' }}>{c.relationship}</span>}
                       </div>
+                      <button onClick={() => handleEditContact(c)} style={{ background: 'none', border: 'none', color: colors.navy, fontSize: '12px', fontWeight: '600', cursor: 'pointer' }}>Edit</button>
                       <button onClick={() => handleDeleteContact(c.id)} style={{ background: 'none', border: 'none', color: colors.red, fontSize: '12px', fontWeight: '600', cursor: 'pointer' }}>Remove</button>
                     </div>
                   ))}
@@ -6557,7 +6571,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
                 {showAddContact && (
                   <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'flex-end', zIndex: 1000 }}>
                     <div style={{ background: 'white', width: '100%', borderRadius: '20px 20px 0 0', padding: '20px', maxHeight: '80vh', overflowY: 'auto' }}>
-                      <h3 style={{ fontWeight: '800', fontSize: '18px', color: colors.navy, margin: '0 0 16px' }}>Add Trusted Contact</h3>
+                      <h3 style={{ fontWeight: '800', fontSize: '18px', color: colors.navy, margin: '0 0 16px' }}>{editingContact ? 'Edit Contact' : 'Add Trusted Contact'}</h3>
 
                       <div style={{ marginBottom: '10px' }}>
                         <label style={{ display: 'block', fontSize: '11px', fontWeight: '600', color: '#6b7280', marginBottom: '4px' }}>Name *</label>
@@ -6588,8 +6602,8 @@ const FlockAppInner = ({ authUser, onLogout }) => {
                       </div>
 
                       <div style={{ display: 'flex', gap: '8px' }}>
-                        <button onClick={() => { setShowAddContact(false); setNewContact({ name: '', phone: '', email: '', relationship: '' }); }} style={{ flex: 1, padding: '12px', borderRadius: '10px', border: '1px solid #d1d5db', backgroundColor: 'white', fontWeight: '600', fontSize: '14px', cursor: 'pointer', color: colors.navy }}>Cancel</button>
-                        <button disabled={safetyLoading} onClick={handleAddContact} style={{ flex: 1, padding: '12px', borderRadius: '10px', border: 'none', background: `linear-gradient(90deg, ${colors.navy}, ${colors.navyMid})`, color: 'white', fontWeight: '600', fontSize: '14px', cursor: 'pointer', opacity: safetyLoading ? 0.6 : 1 }}>{safetyLoading ? 'Adding...' : 'Add Contact'}</button>
+                        <button onClick={() => { setShowAddContact(false); setEditingContact(null); setNewContact({ name: '', phone: '', email: '', relationship: '' }); }} style={{ flex: 1, padding: '12px', borderRadius: '10px', border: '1px solid #d1d5db', backgroundColor: 'white', fontWeight: '600', fontSize: '14px', cursor: 'pointer', color: colors.navy }}>Cancel</button>
+                        <button disabled={safetyLoading} onClick={handleSaveContact} style={{ flex: 1, padding: '12px', borderRadius: '10px', border: 'none', background: `linear-gradient(90deg, ${colors.navy}, ${colors.navyMid})`, color: 'white', fontWeight: '600', fontSize: '14px', cursor: 'pointer', opacity: safetyLoading ? 0.6 : 1 }}>{safetyLoading ? 'Saving...' : editingContact ? 'Save Changes' : 'Add Contact'}</button>
                       </div>
                     </div>
                   </div>
