@@ -5,18 +5,35 @@ const { authenticate } = require('../middleware/auth');
 const pool = require('../config/database');
 
 // ── Email transporter (configured via env vars on Railway) ──
+const smtpUser = process.env.SMTP_USER;
+const smtpPass = process.env.SMTP_PASS;
+
 const transporter = nodemailer.createTransport({
-  host: process.env.SMTP_HOST || 'smtp.gmail.com',
-  port: parseInt(process.env.SMTP_PORT || '587', 10),
-  secure: process.env.SMTP_SECURE === 'true',
-  family: 4, // Force IPv4 — Railway can't reach Gmail over IPv6
+  service: 'gmail',
+  family: 4,
   auth: {
-    user: process.env.SMTP_USER,
-    pass: process.env.SMTP_PASS,
+    user: smtpUser,
+    pass: smtpPass,
   },
+  connectionTimeout: 10000,
+  greetingTimeout: 10000,
+  socketTimeout: 10000,
 });
 
-const FROM_EMAIL = process.env.SMTP_FROM || process.env.SMTP_USER || 'noreply@flock-app.com';
+const FROM_EMAIL = process.env.SMTP_FROM || smtpUser || 'noreply@flock-app.com';
+
+// Debug endpoint to test SMTP connection
+router.get('/test-smtp', authenticate, async (req, res) => {
+  if (!smtpUser || !smtpPass) {
+    return res.json({ ok: false, error: 'SMTP_USER or SMTP_PASS not set' });
+  }
+  try {
+    await transporter.verify();
+    res.json({ ok: true, user: smtpUser });
+  } catch (err) {
+    res.json({ ok: false, error: err.message });
+  }
+});
 
 async function sendAlertEmail(to, subject, htmlBody) {
   if (!process.env.SMTP_USER || !process.env.SMTP_PASS) {
