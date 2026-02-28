@@ -240,6 +240,26 @@ export function onMemberStoppedSharing(callback) {
   return () => { if (socket) socket.off('member_stopped_sharing', callback); };
 }
 
+// --- Friend requests ---
+
+export function emitFriendRequest(toUserId) {
+  if (socket?.connected) socket.emit('friend_request_sent', { toUserId });
+}
+
+export function emitFriendResponse(toUserId, action) {
+  if (socket?.connected) socket.emit('friend_request_response', { toUserId, action });
+}
+
+export function onFriendRequestReceived(callback) {
+  if (socket) socket.on('friend_request_received', callback);
+  return () => { if (socket) socket.off('friend_request_received', callback); };
+}
+
+export function onFriendRequestResponded(callback) {
+  if (socket) socket.on('friend_request_responded', callback);
+  return () => { if (socket) socket.off('friend_request_responded', callback); };
+}
+
 // --- Flock invites ---
 
 export function emitFlockInvite(flockId, invitedUserIds) {

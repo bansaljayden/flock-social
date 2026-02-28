@@ -216,9 +216,87 @@ export async function getFriends() {
   return request('/api/friends');
 }
 
+export async function acceptFriendRequest(userId) {
+  return request('/api/friends/accept', {
+    method: 'POST',
+    body: JSON.stringify({ user_id: userId }),
+  });
+}
+
+export async function declineFriendRequest(userId) {
+  return request('/api/friends/decline', {
+    method: 'POST',
+    body: JSON.stringify({ user_id: userId }),
+  });
+}
+
+export async function removeFriend(userId) {
+  return request(`/api/friends/${userId}`, { method: 'DELETE' });
+}
+
+export async function getPendingRequests() {
+  return request('/api/friends/pending');
+}
+
+export async function getOutgoingRequests() {
+  return request('/api/friends/outgoing');
+}
+
+export async function getFriendSuggestions() {
+  return request('/api/friends/suggestions');
+}
+
+export async function getMyFriendCode() {
+  return request('/api/friends/my-code');
+}
+
+export async function addFriendByCode(code) {
+  return request('/api/friends/add-by-code', {
+    method: 'POST',
+    body: JSON.stringify({ code }),
+  });
+}
+
+export async function findFriendsByPhone(phones) {
+  return request('/api/friends/find-by-phone', {
+    method: 'POST',
+    body: JSON.stringify({ phones }),
+  });
+}
+
 // Stories
 export async function getStories() {
   return request('/api/stories');
+}
+
+// Safety
+export async function getTrustedContacts() {
+  return request('/api/safety/contacts');
+}
+
+export async function addTrustedContact({ name, phone, email, relationship }) {
+  return request('/api/safety/contacts', {
+    method: 'POST',
+    body: JSON.stringify({ name, phone, email, relationship }),
+  });
+}
+
+export async function deleteTrustedContact(id) {
+  return request(`/api/safety/contacts/${id}`, { method: 'DELETE' });
+}
+
+export async function sendEmergencyAlert({ latitude, longitude, includeLocation }) {
+  return request('/api/safety/alert', {
+    method: 'POST',
+    body: JSON.stringify({ latitude, longitude, includeLocation }),
+  });
+}
+
+export async function shareLocationWithContacts({ latitude, longitude }) {
+  return request('/api/safety/share-location', {
+    method: 'POST',
+    body: JSON.stringify({ latitude, longitude }),
+  });
 }
 
 export { getToken, BASE_URL };

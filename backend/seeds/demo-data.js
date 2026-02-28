@@ -138,7 +138,7 @@ async function seed() {
     // --------------------------------------------------
     // SAFETY CHECK: Snapshot real user data before any changes
     // --------------------------------------------------
-    const REAL_EMAIL = 'bansaljayden@gmail.com';
+    const REAL_EMAIL = process.env.SEED_REAL_EMAIL || 'admin@flock.app';
     const realBefore = await client.query(
       `SELECT id, email, name FROM users WHERE LOWER(email) = LOWER($1)`,
       [REAL_EMAIL]

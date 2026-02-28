@@ -21,6 +21,7 @@ const venueRoutes = require('./routes/venues');
 const venueSearchRoutes = require('./routes/venueSearch');
 const storyRoutes = require('./routes/stories');
 const friendRoutes = require('./routes/friends');
+const safetyRoutes = require('./routes/safety');
 
 const app = express();
 app.set('trust proxy', true);
@@ -116,6 +117,7 @@ app.use('/api/users', apiLimiter, userRoutes);
 app.use('/api/flocks', apiLimiter, venueRoutes); // Handles /api/flocks/:id/vote, /api/flocks/:id/votes
 app.use('/api/stories', apiLimiter, storyRoutes);     // Handles /api/stories
 app.use('/api/friends', apiLimiter, friendRoutes);    // Handles /api/friends, /api/friends/request, etc.
+app.use('/api/safety', apiLimiter, safetyRoutes);     // Handles /api/safety/contacts, /api/safety/alert, etc.
 
 // Health check
 app.get('/api/health', (req, res) => {
@@ -233,6 +235,28 @@ async function runMigrations() {
       created_at TIMESTAMP DEFAULT NOW(),
       updated_at TIMESTAMP DEFAULT NOW(),
       UNIQUE(user1_id, user2_id)
+    )`);
+
+    // Safety: trusted contacts & emergency alert log
+    await pool.query(`CREATE TABLE IF NOT EXISTS trusted_contacts (
+      id SERIAL PRIMARY KEY,
+      user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+      contact_name VARCHAR(100) NOT NULL,
+      contact_phone VARCHAR(20) NOT NULL,
+      contact_email VARCHAR(255),
+      relationship VARCHAR(50),
+      created_at TIMESTAMP DEFAULT NOW(),
+      UNIQUE(user_id, contact_phone)
+    )`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_trusted_contacts_user ON trusted_contacts(user_id)`);
+
+    await pool.query(`CREATE TABLE IF NOT EXISTS emergency_alerts (
+      id SERIAL PRIMARY KEY,
+      user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+      latitude DOUBLE PRECISION,
+      longitude DOUBLE PRECISION,
+      contacts_alerted INTEGER,
+      created_at TIMESTAMP DEFAULT NOW()
     )`);
 
     console.log('Migrations complete');

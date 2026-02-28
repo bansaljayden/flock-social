@@ -10,8 +10,10 @@ import {
   formatCurrency,
   calculateProfitMargin
 } from './lib/finance';
-import { getCurrentUser, logout, isLoggedIn, getFlocks, createFlock as apiCreateFlock, getMessages, sendMessage as apiSendMessage, updateProfile, searchVenues, searchUsers, getSuggestedUsers, sendFriendRequest, getStories, getVenueDetails, leaveFlock as apiLeaveFlock, getDMConversations, getDMs, getDmVenueVotes, getDmPinnedVenue, BASE_URL, inviteToFlock, acceptFlockInvite, declineFlockInvite, getFriends } from './services/api';
-import { connectSocket, disconnectSocket, getSocket, joinFlock, leaveFlock, sendMessage as socketSendMessage, sendImageMessage as socketSendImage, startTyping, stopTyping, onNewMessage, onUserTyping, onUserStoppedTyping, emitLocation, stopSharingLocation as socketStopSharing, onLocationUpdate, onMemberStoppedSharing, socketSendDm, onNewDm, dmStartTyping, dmStopTyping, onDmUserTyping, onDmUserStoppedTyping, dmReact, dmRemoveReact, onDmReactionAdded, onDmReactionRemoved, dmVoteVenue, onDmNewVote, dmShareLocation, dmStopSharingLocation, onDmLocationUpdate, onDmMemberStoppedSharing, dmPinVenue, onDmVenuePinned, emitFlockInvite, emitFlockInviteResponse, onFlockInviteReceived, onFlockInviteResponded } from './services/socket';
+import { getCurrentUser, logout, isLoggedIn, getFlocks, getFlock, createFlock as apiCreateFlock, getMessages, sendMessage as apiSendMessage, updateProfile, searchVenues, searchUsers, getSuggestedUsers, sendFriendRequest, getStories, getVenueDetails, leaveFlock as apiLeaveFlock, getDMConversations, getDMs, getDmVenueVotes, getDmPinnedVenue, BASE_URL, inviteToFlock, acceptFlockInvite, declineFlockInvite, getFriends, acceptFriendRequest, declineFriendRequest, getPendingRequests, getOutgoingRequests, getFriendSuggestions, getMyFriendCode, addFriendByCode, findFriendsByPhone, removeFriend, getTrustedContacts, addTrustedContact, deleteTrustedContact, sendEmergencyAlert, shareLocationWithContacts } from './services/api';
+import { connectSocket, disconnectSocket, getSocket, joinFlock, leaveFlock, sendMessage as socketSendMessage, sendImageMessage as socketSendImage, startTyping, stopTyping, onNewMessage, onUserTyping, onUserStoppedTyping, emitLocation, stopSharingLocation as socketStopSharing, onLocationUpdate, onMemberStoppedSharing, socketSendDm, onNewDm, dmStartTyping, dmStopTyping, onDmUserTyping, onDmUserStoppedTyping, dmReact, dmRemoveReact, onDmReactionAdded, onDmReactionRemoved, dmVoteVenue, onDmNewVote, dmShareLocation, dmStopSharingLocation, onDmLocationUpdate, onDmMemberStoppedSharing, dmPinVenue, onDmVenuePinned, emitFlockInvite, emitFlockInviteResponse, onFlockInviteReceived, onFlockInviteResponded, emitFriendRequest, emitFriendResponse, onFriendRequestReceived, onFriendRequestResponded } from './services/socket';
+import { QRCodeSVG } from 'qrcode.react';
+import { Html5Qrcode } from 'html5-qrcode';
 import LoginScreen from './components/auth/LoginScreen';
 import SignupScreen from './components/auth/SignupScreen';
 import { MarkerClusterer } from '@googlemaps/markerclusterer';
@@ -967,6 +969,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
   const [currentScreen, setCurrentScreen] = useState('main');
   const [selectedFlockId, setSelectedFlockId] = useState(null);
   const [pickingVenueForCreate, setPickingVenueForCreate] = useState(false);
+  const [pickingVenueForFlockId, setPickingVenueForFlockId] = useState(null); // existing flock ID when assigning venue
   const [selectedVenueForCreate, setSelectedVenueForCreate] = useState(null);
 
   // Assign a category based on Google Places types
@@ -1102,8 +1105,10 @@ const FlockAppInner = ({ authUser, onLogout }) => {
     setVenueDetailModal(fallbackData ? { ...fallbackData, loading: true } : { name: 'Loading...', loading: true });
     try {
       const data = await getVenueDetails(placeId);
+      console.log('[VenueDetail] API response:', JSON.stringify(data.venue, null, 2).slice(0, 500));
       setVenueDetailModal({ ...data.venue, loading: false });
-    } catch {
+    } catch (err) {
+      console.error('[VenueDetail] API failed:', err.message);
       // Keep fallback data if API fails
       if (fallbackData) setVenueDetailModal({ ...fallbackData, loading: false });
       else setVenueDetailModal(null);
@@ -1159,15 +1164,184 @@ const FlockAppInner = ({ authUser, onLogout }) => {
     }, 400);
   }, []);
 
+  // Add Friends screen state (declared before handlers that reference them)
+  const [addFriendsTab, setAddFriendsTab] = useState('username');
+  const [pendingRequests, setPendingRequests] = useState([]);
+  const [outgoingRequests, setOutgoingRequests] = useState([]);
+  const [friendSuggestions, setFriendSuggestions] = useState([]);
+  const [addFriendsSearch, setAddFriendsSearch] = useState('');
+  const [addFriendsResults, setAddFriendsResults] = useState([]);
+  const [addFriendsSearching, setAddFriendsSearching] = useState(false);
+  const [myFriendCode, setMyFriendCode] = useState('');
+  const [friendCodeInput, setFriendCodeInput] = useState('');
+  const [friendCodeLoading, setFriendCodeLoading] = useState(false);
+  const [contactsUsers, setContactsUsers] = useState([]);
+  const [contactsLoading, setContactsLoading] = useState(false);
+  const [contactsSupported, setContactsSupported] = useState(false);
+  const [showQrScanner, setShowQrScanner] = useState(false);
+  const [qrScanError, setQrScanError] = useState('');
+  const qrScannerRef = useRef(null);
+  const qrScannerDivId = 'flock-qr-scanner';
+
   const handleSendFriendRequest = useCallback(async (user) => {
     try {
       const data = await sendFriendRequest(user.id);
       setFriendStatuses(prev => ({ ...prev, [user.id]: data.status || 'pending' }));
-      // Toast removed — UI updates visually
+      emitFriendRequest(user.id);
     } catch (err) {
       showToast(err.message || 'Failed to send request', 'error');
     }
   }, [showToast]);
+
+  // Add Friends screen handlers
+  const addFriendsTimerRef = useRef(null);
+  const handleAddFriendsSearch = useCallback((val) => {
+    setAddFriendsSearch(val);
+    if (addFriendsTimerRef.current) clearTimeout(addFriendsTimerRef.current);
+    if (val.trim().length < 1) { setAddFriendsResults([]); return; }
+    setAddFriendsSearching(true);
+    addFriendsTimerRef.current = setTimeout(async () => {
+      try {
+        const data = await searchUsers(val.trim());
+        setAddFriendsResults(data.users || []);
+      } catch { setAddFriendsResults([]); }
+      finally { setAddFriendsSearching(false); }
+    }, 400);
+  }, []);
+
+  const loadAddFriendsData = useCallback(async () => {
+    setContactsSupported('contacts' in navigator && 'ContactsManager' in window);
+    // Generate friend code client-side (deterministic from user ID)
+    if (authUser?.id) {
+      setMyFriendCode('FLOCK-' + authUser.id.toString(36).toUpperCase().padStart(4, '0'));
+    }
+    // Load each independently so one failure doesn't block the rest
+    getPendingRequests().then(d => setPendingRequests(d.requests || [])).catch(e => console.error('[AddFriends] Pending:', e.message));
+    getOutgoingRequests().then(d => setOutgoingRequests(d.requests || [])).catch(e => console.error('[AddFriends] Outgoing:', e.message));
+    getFriendSuggestions().then(d => setFriendSuggestions(d.suggestions || [])).catch(e => console.error('[AddFriends] Suggestions:', e.message));
+  }, [authUser]);
+
+  const handleAcceptFriendRequest = useCallback(async (userId) => {
+    try {
+      await acceptFriendRequest(userId);
+      setPendingRequests(prev => prev.filter(r => r.id !== userId));
+      setFriendStatuses(prev => ({ ...prev, [userId]: 'accepted' }));
+      emitFriendResponse(userId, 'accepted');
+      showToast('Friend request accepted!');
+    } catch (err) {
+      showToast(err.message || 'Failed to accept', 'error');
+    }
+  }, [showToast]);
+
+  const handleDeclineFriendRequest = useCallback(async (userId) => {
+    try {
+      await declineFriendRequest(userId);
+      setPendingRequests(prev => prev.filter(r => r.id !== userId));
+      emitFriendResponse(userId, 'declined');
+    } catch (err) {
+      showToast(err.message || 'Failed to decline', 'error');
+    }
+  }, [showToast]);
+
+  const handleCancelOutgoingRequest = useCallback(async (userId) => {
+    try {
+      await removeFriend(userId);
+      setOutgoingRequests(prev => prev.filter(r => r.id !== userId));
+      setFriendStatuses(prev => { const n = { ...prev }; delete n[userId]; return n; });
+    } catch (err) {
+      showToast(err.message || 'Failed to cancel', 'error');
+    }
+  }, [showToast]);
+
+  const handleAddByCode = useCallback(async () => {
+    if (!friendCodeInput.trim()) return;
+    setFriendCodeLoading(true);
+    try {
+      const data = await addFriendByCode(friendCodeInput.trim());
+      showToast(data.message);
+      if (data.user) setFriendStatuses(prev => ({ ...prev, [data.user.id]: data.status || 'pending' }));
+      setFriendCodeInput('');
+    } catch (err) {
+      showToast(err.message || 'Invalid code', 'error');
+    } finally {
+      setFriendCodeLoading(false);
+    }
+  }, [friendCodeInput, showToast]);
+
+  const handleSyncContacts = useCallback(async () => {
+    if (!('contacts' in navigator)) {
+      showToast('Contact sync not supported in this browser', 'error');
+      return;
+    }
+    setContactsLoading(true);
+    try {
+      const contacts = await navigator.contacts.select(['tel'], { multiple: true });
+      const phones = contacts.flatMap(c => c.tel || []).filter(Boolean);
+      if (phones.length === 0) {
+        showToast('No phone numbers found in selected contacts');
+        setContactsLoading(false);
+        return;
+      }
+      const data = await findFriendsByPhone(phones);
+      setContactsUsers(data.users || []);
+      if ((data.users || []).length === 0) showToast('No Flock users found from your contacts');
+    } catch (err) {
+      if (err.name !== 'TypeError') showToast(err.message || 'Failed to sync contacts', 'error');
+    } finally {
+      setContactsLoading(false);
+    }
+  }, [showToast]);
+
+  const startQrScanner = useCallback(async () => {
+    setShowQrScanner(true);
+    setQrScanError('');
+    // Small delay to let the DOM render the scanner div
+    setTimeout(async () => {
+      try {
+        const scanner = new Html5Qrcode(qrScannerDivId);
+        qrScannerRef.current = scanner;
+        await scanner.start(
+          { facingMode: 'environment' },
+          { fps: 10, qrbox: { width: 250, height: 250 } },
+          async (decodedText) => {
+            // Successfully scanned
+            console.log('[QR Scan] Raw:', decodedText);
+            try {
+              const parsed = JSON.parse(decodedText);
+              if (parsed.type === 'flock_friend' && parsed.code) {
+                // Stop scanner first
+                try { await scanner.stop(); } catch {}
+                qrScannerRef.current = null;
+                setShowQrScanner(false);
+                // Add friend by code
+                setFriendCodeInput(parsed.code);
+                const data = await addFriendByCode(parsed.code);
+                showToast(data.message || 'Friend request sent!');
+                if (data.user) setFriendStatuses(prev => ({ ...prev, [data.user.id]: data.status || 'pending' }));
+              } else {
+                setQrScanError('Not a Flock QR code');
+              }
+            } catch {
+              setQrScanError('Not a valid Flock QR code');
+            }
+          },
+          () => {} // ignore scan failures (no QR in frame)
+        );
+      } catch (err) {
+        console.error('[QR Scanner] Start error:', err);
+        setQrScanError(err.message || 'Could not access camera');
+      }
+    }, 300);
+  }, [showToast]);
+
+  const stopQrScanner = useCallback(async () => {
+    if (qrScannerRef.current) {
+      try { await qrScannerRef.current.stop(); } catch {}
+      qrScannerRef.current = null;
+    }
+    setShowQrScanner(false);
+    setQrScanError('');
+  }, []);
 
   // Flock invites
   const [pendingFlockInvites, setPendingFlockInvites] = useState([]);
@@ -1447,6 +1621,11 @@ const FlockAppInner = ({ authUser, onLogout }) => {
   const [popularVenues, setPopularVenues] = useState([]);
   const [pendingImage, setPendingImage] = useState(null);
   const [showImagePreview, setShowImagePreview] = useState(false);
+  const [showCameraPopup, setShowCameraPopup] = useState(false);
+  const [showCameraViewfinder, setShowCameraViewfinder] = useState(null); // 'flock' or 'dm'
+  const cameraVideoRef = useRef(null);
+  const cameraStreamRef = useRef(null);
+  const chatGalleryInputRef = useRef(null);
   const [showFlockMenu, setShowFlockMenu] = useState(false);
   const [showLeaveConfirm, setShowLeaveConfirm] = useState(false);
 
@@ -1474,6 +1653,8 @@ const FlockAppInner = ({ authUser, onLogout }) => {
   const [showDmVenueSearch, setShowDmVenueSearch] = useState(false);
   const [dmPendingImage, setDmPendingImage] = useState(null);
   const [showDmImagePreview, setShowDmImagePreview] = useState(false);
+  const [showDmCameraPopup, setShowDmCameraPopup] = useState(false);
+  const dmGalleryInputRef = useRef(null);
   const [dmSharingLocation, setDmSharingLocation] = useState(null); // userId we're sharing with
   const [dmMemberLocation, setDmMemberLocation] = useState(null); // { lat, lng, name, timestamp }
   const [showDmCashPool, setShowDmCashPool] = useState(false);
@@ -1489,9 +1670,12 @@ const FlockAppInner = ({ authUser, onLogout }) => {
   const [profileBio] = useState('Love exploring new places!'); // eslint-disable-line no-unused-vars
   const [profilePic, setProfilePic] = useState(null);
   const [showPicModal, setShowPicModal] = useState(false);
-  const [trustedContacts, setTrustedContacts] = useState(['Mom', 'Dad']);
-  const [newContactName, setNewContactName] = useState('');
+  const [trustedContacts, setTrustedContacts] = useState([]);
   const [safetyOn, setSafetyOn] = useState(true);
+  const [showAddContact, setShowAddContact] = useState(false);
+  const [newContact, setNewContact] = useState({ name: '', phone: '', email: '', relationship: '' });
+  const [safetyLoading, setSafetyLoading] = useState(false);
+  const [sosAlertSending, setSosAlertSending] = useState(false);
 
   // Interests
   const [userInterests, setUserInterests] = useState(['Live Music', 'Cocktails', 'Nightlife']);
@@ -1511,7 +1695,6 @@ const FlockAppInner = ({ authUser, onLogout }) => {
 
   // Admin Mode (for Revenue Simulator access)
   const [showAdminPrompt, setShowAdminPrompt] = useState(false);
-  const [adminPassword, setAdminPassword] = useState('');
 
   // Venue Dashboard (for venue owners)
   const [venueTier, setVenueTier] = useState('free'); // 'free', 'premium', 'pro'
@@ -1852,7 +2035,8 @@ const FlockAppInner = ({ authUser, onLogout }) => {
   // Load suggested users when opening Create screen
   useEffect(() => {
     if (currentScreen === 'create') loadSuggestedUsers();
-  }, [currentScreen, loadSuggestedUsers]);
+    if (currentScreen === 'addFriends') loadAddFriendsData();
+  }, [currentScreen, loadSuggestedUsers, loadAddFriendsData]);
 
   // Fetch messages from API + join socket room when opening a chat
   const [, setMessagesLoading] = useState(false);
@@ -1870,6 +2054,14 @@ const FlockAppInner = ({ authUser, onLogout }) => {
 
       // Join socket room
       joinFlock(selectedFlockId);
+
+      // Fetch flock members
+      getFlock(selectedFlockId)
+        .then((data) => {
+          const members = (data.members || []).filter(m => m.status === 'accepted').map(m => ({ id: m.id, name: m.name, image: m.profile_image_url || null }));
+          setFlocks(prev => prev.map(f => f.id === selectedFlockId ? { ...f, members, memberCount: members.length } : f));
+        })
+        .catch(() => {});
 
       // Skip message fetch for just-created flocks (we already have the messages locally)
       if (newlyCreatedFlockRef.current === selectedFlockId) {
@@ -2041,6 +2233,27 @@ const FlockAppInner = ({ authUser, onLogout }) => {
     });
 
     return () => { unsubInvite(); unsubResponse(); };
+  }, [showToast]);
+
+  // Listen for real-time friend request notifications
+  useEffect(() => {
+    const unsubReq = onFriendRequestReceived((data) => {
+      setPendingRequests(prev => {
+        if (prev.some(r => r.id === data.fromUserId)) return prev;
+        return [{ id: data.fromUserId, name: data.fromUserName, profile_image_url: null, created_at: new Date().toISOString() }, ...prev];
+      });
+      showToast(`${data.fromUserName} sent you a friend request`);
+    });
+
+    const unsubResp = onFriendRequestResponded((data) => {
+      if (data.action === 'accepted') {
+        setOutgoingRequests(prev => prev.filter(r => r.id !== data.fromUserId));
+        setFriendStatuses(prev => ({ ...prev, [data.fromUserId]: 'accepted' }));
+        showToast(`${data.fromUserName} accepted your friend request!`);
+      }
+    });
+
+    return () => { unsubReq(); unsubResp(); };
   }, [showToast]);
 
   // Typing indicator — emit via socket with debounce
@@ -2288,20 +2501,73 @@ const FlockAppInner = ({ authUser, onLogout }) => {
   }, [pendingImage, addMessageToFlock, addXP]);
 
   // Handle image selection
-  const chatImageInputRef = useRef(null);
   const handleChatImageSelect = useCallback((e) => {
-    if (e && e.target && e.target.files) {
-      const file = e.target.files[0];
-      if (!file) return;
-      if (file.size > 5 * 1024 * 1024) { showToast('Image too large (max 5MB)', 'error'); return; }
-      const reader = new FileReader();
-      reader.onload = () => { setPendingImage(reader.result); setShowImagePreview(true); };
-      reader.readAsDataURL(file);
-      e.target.value = '';
-    } else {
-      chatImageInputRef.current?.click();
-    }
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (file.size > 5 * 1024 * 1024) { showToast('Image too large (max 5MB)', 'error'); return; }
+    const reader = new FileReader();
+    reader.onload = () => { setPendingImage(reader.result); setShowImagePreview(true); };
+    reader.readAsDataURL(file);
+    e.target.value = '';
   }, [showToast]);
+
+  // Camera viewfinder handlers
+  const openCameraViewfinder = useCallback(async (source) => {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      showToast('Camera not supported in this browser', 'error');
+      return;
+    }
+    setShowCameraViewfinder(source); // 'flock' or 'dm'
+    setShowCameraPopup(false);
+    setShowDmCameraPopup(false);
+    setTimeout(async () => {
+      try {
+        let stream;
+        try {
+          stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' } }, audio: false });
+        } catch {
+          // Fallback — any camera
+          stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+        }
+        cameraStreamRef.current = stream;
+        if (cameraVideoRef.current) {
+          cameraVideoRef.current.srcObject = stream;
+          await cameraVideoRef.current.play();
+        }
+      } catch (err) {
+        console.error('Camera access error:', err);
+        showToast(err.name === 'NotAllowedError' ? 'Camera permission denied — allow it in browser settings' : 'Could not access camera: ' + (err.message || err.name), 'error');
+        setShowCameraViewfinder(null);
+      }
+    }, 300);
+  }, [showToast]);
+
+  const closeCameraViewfinder = useCallback(() => {
+    if (cameraStreamRef.current) {
+      cameraStreamRef.current.getTracks().forEach(t => t.stop());
+      cameraStreamRef.current = null;
+    }
+    setShowCameraViewfinder(null);
+  }, []);
+
+  const capturePhoto = useCallback(() => {
+    const video = cameraVideoRef.current;
+    if (!video) return;
+    const canvas = document.createElement('canvas');
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    canvas.getContext('2d').drawImage(video, 0, 0);
+    const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
+    const source = showCameraViewfinder;
+    closeCameraViewfinder();
+    if (source === 'flock') {
+      setPendingImage(dataUrl);
+      setShowImagePreview(true);
+    } else if (source === 'dm') {
+      setDmPendingImage(dataUrl);
+      setShowDmImagePreview(true);
+    }
+  }, [showCameraViewfinder, closeCameraViewfinder]);
 
   const handlePhotoUpload = useCallback((e) => {
     const file = e.target.files?.[0];
@@ -2419,10 +2685,116 @@ const FlockAppInner = ({ authUser, onLogout }) => {
     );
   };
 
+  // --- Safety handlers ---
+  const loadTrustedContacts = useCallback(async () => {
+    try {
+      setSafetyLoading(true);
+      const data = await getTrustedContacts();
+      setTrustedContacts(data.contacts || []);
+    } catch (err) {
+      console.warn('Failed to load trusted contacts:', err);
+    } finally {
+      setSafetyLoading(false);
+    }
+  }, []);
+
+  const handleAddContact = useCallback(async () => {
+    if (!newContact.name.trim() || !newContact.phone.trim()) {
+      showToast('Name and phone are required', 'error');
+      return;
+    }
+    if (!newContact.email.trim()) {
+      showToast('Email is required to send alerts', 'error');
+      return;
+    }
+    try {
+      setSafetyLoading(true);
+      await addTrustedContact(newContact);
+      setNewContact({ name: '', phone: '', email: '', relationship: '' });
+      setShowAddContact(false);
+      showToast('Trusted contact added');
+      loadTrustedContacts();
+    } catch (err) {
+      showToast(err.message || 'Failed to add contact', 'error');
+    } finally {
+      setSafetyLoading(false);
+    }
+  }, [newContact, showToast, loadTrustedContacts]);
+
+  const handleDeleteContact = useCallback(async (contactId) => {
+    try {
+      await deleteTrustedContact(contactId);
+      setTrustedContacts(prev => prev.filter(c => c.id !== contactId));
+      showToast('Contact removed');
+    } catch (err) {
+      showToast('Failed to remove contact', 'error');
+    }
+  }, [showToast]);
+
+  const handleEmergencyAlert = useCallback(async () => {
+    if (trustedContacts.length === 0) {
+      showToast('Add trusted contacts in Safety settings first', 'error');
+      return;
+    }
+    setSosAlertSending(true);
+    try {
+      const getPos = () => new Promise((resolve, reject) => {
+        navigator.geolocation.getCurrentPosition(
+          pos => resolve({ latitude: pos.coords.latitude, longitude: pos.coords.longitude }),
+          () => resolve(null),
+          { timeout: 5000 }
+        );
+      });
+      const loc = navigator.geolocation ? await getPos() : null;
+      const data = await sendEmergencyAlert({
+        latitude: loc?.latitude,
+        longitude: loc?.longitude,
+        includeLocation: !!loc,
+      });
+      showToast(data.message || 'Emergency alert sent');
+      setShowSOS(false);
+    } catch (err) {
+      showToast(err.message || 'Failed to send alert', 'error');
+    } finally {
+      setSosAlertSending(false);
+    }
+  }, [trustedContacts, showToast]);
+
+  const handleShareLocationWithContacts = useCallback(async () => {
+    if (trustedContacts.length === 0) {
+      showToast('Add trusted contacts in Safety settings first', 'error');
+      return;
+    }
+    if (!navigator.geolocation) {
+      showToast('Location not supported', 'error');
+      return;
+    }
+    setSosAlertSending(true);
+    try {
+      const pos = await new Promise((resolve, reject) => {
+        navigator.geolocation.getCurrentPosition(resolve, reject, { timeout: 5000 });
+      });
+      const data = await shareLocationWithContacts({
+        latitude: pos.coords.latitude,
+        longitude: pos.coords.longitude,
+      });
+      showToast(data.message || 'Location shared');
+      setShowSOS(false);
+    } catch (err) {
+      if (err.code) {
+        showToast('Could not get location — check permissions', 'error');
+      } else {
+        showToast(err.message || 'Failed to share location', 'error');
+      }
+    } finally {
+      setSosAlertSending(false);
+    }
+  }, [trustedContacts, showToast]);
+
   // Safety Button - Enhanced with pulse animation
   const SafetyButton = () => safetyOn && currentScreen === 'main' && (
     <button
-      onClick={() => setShowSOS(true)}
+      onClick={() => { setShowSOS(true); loadTrustedContacts(); }}
       style={{
         position: 'absolute',
         bottom: '75px',
@@ -2502,15 +2874,19 @@ const FlockAppInner = ({ authUser, onLogout }) => {
   // SOS Modal
   const SOSModal = () => showSOS && (
     <div className="modal-backdrop" style={{ position: 'absolute', inset: 0, backgroundColor: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(8px)', WebkitBackdropFilter: 'blur(8px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 50, padding: '16px' }}>
-      <div className="modal-content" style={{ backgroundColor: 'white', borderRadius: '24px', padding: '20px', width: '100%', maxWidth: '280px' }}>
+      <div className="modal-content" style={{ backgroundColor: 'white', borderRadius: '24px', padding: '24px', width: '100%', maxWidth: '300px' }}>
         <div style={{ textAlign: 'center', marginBottom: '16px' }}>
           <div style={{ width: '64px', height: '64px', borderRadius: '32px', backgroundColor: '#fee2e2', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 8px' }}>{Icons.bell(colors.red, 32)}</div>
-          <h2 style={{ fontSize: '20px', fontWeight: '900', color: colors.navy, margin: 0 }}>Emergency</h2>
+          <h2 style={{ fontSize: '20px', fontWeight: '900', color: colors.navy, margin: '0 0 4px' }}>Emergency</h2>
+          <p style={{ fontSize: '12px', color: '#6b7280', margin: 0 }}>{trustedContacts.length > 0 ? `${trustedContacts.length} trusted contact${trustedContacts.length > 1 ? 's' : ''} will be notified` : 'No trusted contacts set up'}</p>
         </div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-          <button onClick={(e) => { confirmClick(e); setShowSOS(false); addXP(30); }} style={{ ...styles.gradientButton, background: `linear-gradient(90deg, ${colors.red}, #f97316)`, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', position: 'relative', overflow: 'hidden' }}>{Icons.shield('white', 16)} Alert Contacts</button>
-          <button onClick={() => { setShowSOS(false); }} style={{ ...styles.gradientButton, background: 'white', color: colors.navy, border: `2px solid ${colors.navy}`, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}>{Icons.mapPin(colors.navy, 16)} Share Location</button>
-          <button onClick={() => setShowSOS(false)} style={{ background: 'none', border: 'none', color: '#9ca3af', padding: '8px', cursor: 'pointer' }}>Cancel</button>
+          <button disabled={sosAlertSending} onClick={handleEmergencyAlert} style={{ ...styles.gradientButton, background: `linear-gradient(90deg, ${colors.red}, #f97316)`, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', position: 'relative', overflow: 'hidden', opacity: sosAlertSending ? 0.6 : 1 }}>{Icons.shield('white', 16)} {sosAlertSending ? 'Sending...' : 'Alert Contacts'}</button>
+          <button disabled={sosAlertSending} onClick={handleShareLocationWithContacts} style={{ ...styles.gradientButton, background: 'white', color: colors.navy, border: `2px solid ${colors.navy}`, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', opacity: sosAlertSending ? 0.6 : 1 }}>{Icons.mapPin(colors.navy, 16)} {sosAlertSending ? 'Sending...' : 'Share Location'}</button>
+          {trustedContacts.length === 0 && (
+            <button onClick={() => { setShowSOS(false); setProfileScreen('safety'); setCurrentScreen('profile'); loadTrustedContacts(); }} style={{ ...styles.gradientButton, background: colors.cream, color: colors.navy, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', fontSize: '13px' }}>Set Up Trusted Contacts</button>
+          )}
+          <button disabled={sosAlertSending} onClick={() => setShowSOS(false)} style={{ background: 'none', border: 'none', color: '#9ca3af', padding: '8px', cursor: 'pointer' }}>Cancel</button>
         </div>
       </div>
     </div>
@@ -2550,23 +2926,21 @@ const FlockAppInner = ({ authUser, onLogout }) => {
     </div>
   );
 
-  // Handler for admin password submission
+  // Handler for admin mode — verified via user role from backend
   const handleAdminModeSelect = () => {
-    if (adminPassword === 'flock2026') {
+    if (authUser?.role === 'admin') {
       localStorage.setItem('flockUserMode', 'admin');
       setUserMode('admin');
       setShowModeSelection(false);
       setShowAdminPrompt(false);
-      setAdminPassword('');
       setCurrentScreen('adminRevenue');
-      // Toast removed
     } else {
-      showToast('Incorrect password', 'error');
-      setAdminPassword('');
+      showToast('Admin access denied', 'error');
+      setShowAdminPrompt(false);
     }
   };
 
-  // Admin Password Modal - Inline JSX (not a component to prevent focus loss)
+  // Admin Access Modal - role-based, no password needed
   const adminPromptModal = showAdminPrompt && (
     <div style={{ position: 'absolute', inset: 0, backgroundColor: 'rgba(0,0,0,0.8)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 50, padding: '16px' }}>
       <div style={{ backgroundColor: 'white', borderRadius: '24px', padding: '20px', width: '100%', maxWidth: '280px' }}>
@@ -2575,19 +2949,13 @@ const FlockAppInner = ({ authUser, onLogout }) => {
             {Icons.shield(colors.navy, 24)}
           </div>
           <h2 style={{ fontSize: '18px', fontWeight: '900', color: colors.navy, margin: 0 }}>Admin Access</h2>
-          <p style={{ fontSize: '12px', color: '#6b7280', margin: '4px 0 0' }}>Enter password to continue</p>
+          <p style={{ fontSize: '12px', color: '#6b7280', margin: '4px 0 0' }}>{authUser?.role === 'admin' ? 'Switch to admin mode?' : 'Admin access is restricted'}</p>
         </div>
-        <input
-          type="password"
-          value={adminPassword}
-          onChange={(e) => setAdminPassword(e.target.value)}
-          onKeyDown={(e) => e.key === 'Enter' && handleAdminModeSelect()}
-          placeholder="Password"
-          style={{ width: '100%', padding: '12px', borderRadius: '12px', border: `1px solid ${colors.creamDark}`, fontSize: '14px', marginBottom: '12px', boxSizing: 'border-box' }}
-        />
         <div style={{ display: 'flex', gap: '8px' }}>
-          <button onClick={() => { setShowAdminPrompt(false); setAdminPassword(''); }} style={{ flex: 1, padding: '12px', borderRadius: '12px', border: '1px solid #d1d5db', backgroundColor: 'white', fontWeight: '600', cursor: 'pointer' }}>Cancel</button>
-          <button onClick={handleAdminModeSelect} style={{ flex: 1, padding: '12px', borderRadius: '12px', border: 'none', background: `linear-gradient(90deg, ${colors.navy}, ${colors.navyMid})`, color: 'white', fontWeight: '600', cursor: 'pointer' }}>Access</button>
+          <button onClick={() => setShowAdminPrompt(false)} style={{ flex: 1, padding: '12px', borderRadius: '12px', border: '1px solid #d1d5db', backgroundColor: 'white', fontWeight: '600', cursor: 'pointer' }}>Cancel</button>
+          {authUser?.role === 'admin' && (
+            <button onClick={handleAdminModeSelect} style={{ flex: 1, padding: '12px', borderRadius: '12px', border: 'none', background: `linear-gradient(90deg, ${colors.navy}, ${colors.navyMid})`, color: 'white', fontWeight: '600', cursor: 'pointer' }}>Access</button>
+          )}
         </div>
       </div>
     </div>
@@ -2967,32 +3335,30 @@ const FlockAppInner = ({ authUser, onLogout }) => {
 
   const dmDetailScreen = currentScreen === 'dmDetail' && selectedDm && (
     <div key="dm-detail-screen" style={{ display: 'flex', flexDirection: 'column', height: '100%', backgroundColor: 'white' }}>
-      {/* Header — matches flock chat header */}
-      <div style={{ padding: '12px', display: 'flex', alignItems: 'center', gap: '8px', background: `linear-gradient(135deg, ${colors.navy}, ${colors.navyMid})`, flexShrink: 0, boxShadow: '0 2px 10px rgba(0,0,0,0.1)' }}>
-        <button onClick={() => { setCurrentScreen('main'); setChatInput(''); setShowDmMenu(false); setShowDeleteDmConfirm(false); setShowDmChatSearch(false); setDmChatSearch(''); setShowDmVotePanel(false); setShowDmVenueSearch(false); setDmReplyingTo(null); if (dmSharingLocation) { dmStopSharingLocation(dmSharingLocation); setDmSharingLocation(null); } }} style={{ background: 'none', border: 'none', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.arrowLeft('white', 20)}</button>
-        <div style={{ width: '36px', height: '36px', borderRadius: '18px', backgroundColor: 'rgba(255,255,255,0.2)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '14px', fontWeight: '700', color: 'white', overflow: 'hidden' }}>
-          {selectedDm.image ? <img src={selectedDm.image} alt="" style={{ width: '36px', height: '36px', borderRadius: '18px', objectFit: 'cover' }} /> : (selectedDm.name?.[0]?.toUpperCase() || '?')}
+      {/* Header */}
+      <div style={{ padding: '6px 10px 5px 4px', background: `linear-gradient(135deg, ${colors.navy}, ${colors.navyMid})`, flexShrink: 0, boxShadow: '0 2px 10px rgba(0,0,0,0.1)' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+          <button onClick={() => { setCurrentScreen('main'); setChatInput(''); setShowDmMenu(false); setShowDeleteDmConfirm(false); setShowDmChatSearch(false); setDmChatSearch(''); setShowDmVotePanel(false); setShowDmVenueSearch(false); setDmReplyingTo(null); if (dmSharingLocation) { dmStopSharingLocation(dmSharingLocation); setDmSharingLocation(null); } }} style={{ width: '34px', height: '34px', borderRadius: '17px', background: 'none', border: 'none', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{Icons.arrowLeft('white', 20)}</button>
+          <div style={{ width: '34px', height: '34px', borderRadius: '17px', backgroundColor: 'rgba(255,255,255,0.2)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '13px', fontWeight: '700', color: 'white', overflow: 'hidden', flexShrink: 0 }}>
+            {selectedDm.image ? <img src={selectedDm.image} alt="" style={{ width: '34px', height: '34px', borderRadius: '17px', objectFit: 'cover' }} /> : (selectedDm.name?.[0]?.toUpperCase() || '?')}
+          </div>
+          <h2 style={{ flex: 1, fontWeight: '800', color: 'white', fontSize: '15px', margin: 0, lineHeight: '1.3', minWidth: 0 }}>{selectedDm.name}</h2>
+          <button onClick={() => { setShowDmVotePanel(!showDmVotePanel); if (!showDmVotePanel) loadPopularVenues(); }} style={{ height: '34px', borderRadius: '17px', border: 'none', backgroundColor: 'rgba(255,255,255,0.15)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px', padding: '0 12px', fontSize: '12px', fontWeight: '700', flexShrink: 0 }}>{Icons.vote('white', 14)} Vote</button>
+          <button onClick={() => setShowDmChatSearch(!showDmChatSearch)} style={{ width: '34px', height: '34px', borderRadius: '17px', border: 'none', backgroundColor: showDmChatSearch ? 'rgba(255,255,255,0.35)' : 'rgba(255,255,255,0.15)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{Icons.search('white', 15)}</button>
+          <button onClick={() => setShowDmCashPool(true)} style={{ width: '34px', height: '34px', borderRadius: '17px', border: 'none', backgroundColor: colors.cream, color: colors.navy, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{Icons.dollar(colors.navy, 15)}</button>
+          <div style={{ position: 'relative', flexShrink: 0 }}>
+            <button onClick={() => setShowDmMenu(!showDmMenu)} style={{ width: '34px', height: '34px', borderRadius: '17px', border: 'none', backgroundColor: 'rgba(255,255,255,0.15)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.moreVertical('white', 16)}</button>
+            {showDmMenu && (
+              <div style={{ position: 'absolute', top: '38px', right: 0, backgroundColor: 'white', borderRadius: '14px', boxShadow: '0 8px 30px rgba(0,0,0,0.18)', minWidth: '200px', zIndex: 60, overflow: 'hidden', border: '1px solid rgba(0,0,0,0.06)' }}>
+                <button onClick={() => { setShowDmMenu(false); setShowDeleteDmConfirm(true); }} style={{ width: '100%', padding: '14px 16px', display: 'flex', alignItems: 'center', gap: '10px', border: 'none', backgroundColor: 'white', cursor: 'pointer', fontSize: '14px', fontWeight: '600', color: '#EF4444' }}>
+                  {Icons.x('#EF4444', 16)} Delete Conversation
+                </button>
+              </div>
+            )}
+          </div>
         </div>
-        <div style={{ flex: 1 }}>
-          <h2 style={{ fontWeight: 'bold', color: 'white', fontSize: '14px', margin: 0 }}>{selectedDm.name}</h2>
-          <p style={{ fontSize: '10px', color: 'rgba(255,255,255,0.6)', margin: 0 }}>{dmIsTyping ? <span style={{ color: '#86EFAC', fontWeight: '500' }}>{dmTypingUser || selectedDm.name} is typing...</span> : dmSharingLocation ? '📍 sharing location' : 'recently'}</p>
-        </div>
-        {/* Vote button */}
-        <button onClick={() => { setShowDmVotePanel(!showDmVotePanel); if (!showDmVotePanel) loadPopularVenues(); }} style={{ height: '32px', borderRadius: '16px', border: 'none', backgroundColor: 'rgba(255,255,255,0.2)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px', padding: '0 10px', fontSize: '11px', fontWeight: '700' }}>{Icons.vote('white', 14)} Vote</button>
-        {/* Search button */}
-        <button onClick={() => setShowDmChatSearch(!showDmChatSearch)} style={{ width: '32px', height: '32px', borderRadius: '16px', border: 'none', backgroundColor: showDmChatSearch ? 'rgba(255,255,255,0.4)' : 'rgba(255,255,255,0.2)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.search('white', 14)}</button>
-        {/* Cash pool button */}
-        <button onClick={() => setShowDmCashPool(true)} style={{ width: '32px', height: '32px', borderRadius: '16px', border: 'none', backgroundColor: colors.cream, color: colors.navy, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.dollar(colors.navy, 16)}</button>
-        {/* More menu */}
-        <div style={{ position: 'relative' }}>
-          <button onClick={() => setShowDmMenu(!showDmMenu)} style={{ width: '32px', height: '32px', borderRadius: '16px', border: 'none', backgroundColor: 'rgba(255,255,255,0.2)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.moreVertical('white', 16)}</button>
-          {showDmMenu && (
-            <div style={{ position: 'absolute', top: '38px', right: 0, backgroundColor: 'white', borderRadius: '12px', boxShadow: '0 4px 20px rgba(0,0,0,0.15)', minWidth: '200px', zIndex: 60, overflow: 'hidden' }}>
-              <button onClick={() => { setShowDmMenu(false); setShowDeleteDmConfirm(true); }} style={{ width: '100%', padding: '12px 16px', display: 'flex', alignItems: 'center', gap: '10px', border: 'none', backgroundColor: 'white', cursor: 'pointer', fontSize: '14px', fontWeight: '600', color: '#EF4444' }}>
-                {Icons.x('#EF4444', 16)} Delete Conversation
-              </button>
-            </div>
-          )}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '5px', paddingLeft: '74px', marginTop: '2px' }}>
+          {dmIsTyping ? <span style={{ fontSize: '11px', color: '#86EFAC', fontWeight: '600' }}>{dmTypingUser || selectedDm.name} is typing...</span> : dmSharingLocation ? <span style={{ fontSize: '11px', color: '#34d399', fontWeight: '600' }}>📍 sharing location</span> : <><span style={{ width: '5px', height: '5px', borderRadius: '3px', backgroundColor: '#22c55e', boxShadow: '0 0 6px #22c55e' }} /><span style={{ fontSize: '11px', color: 'rgba(255,255,255,0.55)', fontWeight: '500' }}>online</span></>}
         </div>
       </div>
 
@@ -3428,7 +3794,9 @@ const FlockAppInner = ({ authUser, onLogout }) => {
                   /* Text message */
                   <div onClick={() => setShowDmReactionPicker(showDmReactionPicker === m.id ? null : m.id)} style={{ borderRadius: '16px', padding: '10px 14px', fontSize: '13px', backgroundColor: m.sender === 'You' ? colors.navy : 'white', color: m.sender === 'You' ? 'white' : colors.navy, borderTopRightRadius: m.sender === 'You' ? '4px' : '16px', borderTopLeftRadius: m.sender === 'You' ? '16px' : '4px', boxShadow: '0 1px 3px rgba(0,0,0,0.1)', cursor: 'pointer' }}>
                     {showDmChatSearch && dmChatSearch.trim() && m.text?.toLowerCase().includes(dmChatSearch.toLowerCase()) ? (
-                      <span dangerouslySetInnerHTML={{ __html: m.text.replace(new RegExp(`(${dmChatSearch.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'gi'), '<mark style="background:#fde047;color:inherit;border-radius:2px;padding:0 1px">$1</mark>') }} />
+                      m.text.split(new RegExp(`(${dmChatSearch.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'gi')).map((part, pi) =>
+                        part.toLowerCase() === dmChatSearch.toLowerCase() ? <mark key={pi} style={{ background: '#fde047', color: 'inherit', borderRadius: '2px', padding: '0 1px' }}>{part}</mark> : part
+                      )
                     ) : m.text}
                   </div>
                 )}
@@ -3489,16 +3857,36 @@ const FlockAppInner = ({ authUser, onLogout }) => {
       <div style={{ padding: '10px 12px', borderTop: '1px solid #eee', backgroundColor: 'white' }}>
         <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
           {/* Camera button */}
-          <label style={{ width: '36px', height: '36px', borderRadius: '18px', backgroundColor: '#f3f4f6', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', flexShrink: 0 }}>
+          <button onClick={() => setShowDmCameraPopup(true)} style={{ width: '36px', height: '36px', borderRadius: '18px', backgroundColor: '#f3f4f6', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', flexShrink: 0, border: 'none', position: 'relative' }}>
             {Icons.camera('#6b7280', 16)}
-            <input type="file" accept="image/*" onChange={handleDmImageSelect} style={{ display: 'none' }} />
-          </label>
+          </button>
+          <input ref={dmGalleryInputRef} type="file" accept="image/*" onChange={handleDmImageSelect} style={{ display: 'none' }} />
           {/* Location share button */}
           <button onClick={() => { if (dmSharingLocation) { dmStopSharingLocation(dmSharingLocation); setDmSharingLocation(null); setDmMemberLocation(null); } else { setDmSharingLocation(selectedDmId); } }} style={{ width: '36px', height: '36px', borderRadius: '18px', backgroundColor: dmSharingLocation ? '#10b981' : '#f3f4f6', border: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', flexShrink: 0 }}>{Icons.mapPin(dmSharingLocation ? 'white' : '#6b7280', 16)}</button>
           <input type="text" value={chatInput} onChange={handleDmInputChange} onKeyDown={(e) => e.key === 'Enter' && sendDmMessage()} placeholder={dmReplyingTo ? `Reply...` : `Message ${selectedDm.name}...`} style={{ flex: 1, padding: '12px 16px', borderRadius: '24px', backgroundColor: '#f3f4f6', border: '1px solid rgba(0,0,0,0.05)', fontSize: '13px', outline: 'none' }} autoComplete="off" />
           <button onClick={() => sendDmMessage()} disabled={!chatInput.trim()} style={{ width: '42px', height: '42px', borderRadius: '21px', border: 'none', background: chatInput.trim() ? `linear-gradient(135deg, ${colors.navy}, ${colors.navyMid})` : '#e5e7eb', color: 'white', cursor: chatInput.trim() ? 'pointer' : 'default', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.send('white', 18)}</button>
         </div>
       </div>
+
+      {/* Camera options popup */}
+      {showDmCameraPopup && (
+        <div onClick={() => setShowDmCameraPopup(false)} style={{ position: 'absolute', inset: 0, backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'flex-end', zIndex: 60 }}>
+          <div onClick={e => e.stopPropagation()} style={{ backgroundColor: 'white', borderRadius: '20px 20px 0 0', padding: '20px', width: '100%', paddingBottom: '28px' }}>
+            <div style={{ width: '36px', height: '4px', borderRadius: '2px', backgroundColor: '#d1d5db', margin: '0 auto 16px' }} />
+            <h3 style={{ fontSize: '16px', fontWeight: '800', color: colors.navy, margin: '0 0 16px', textAlign: 'center' }}>Add Photo</h3>
+            <div style={{ display: 'flex', gap: '12px' }}>
+              <button onClick={() => openCameraViewfinder('dm')} style={{ flex: 1, padding: '16px', borderRadius: '16px', border: `2px solid ${colors.creamDark}`, backgroundColor: 'white', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px', transition: 'all 0.2s ease' }}>
+                {Icons.camera(colors.navy, 28)}
+                <span style={{ fontSize: '13px', fontWeight: '700', color: colors.navy }}>Take Photo</span>
+              </button>
+              <button onClick={() => { setShowDmCameraPopup(false); setTimeout(() => dmGalleryInputRef.current?.click(), 100); }} style={{ flex: 1, padding: '16px', borderRadius: '16px', border: `2px solid ${colors.creamDark}`, backgroundColor: 'white', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px', transition: 'all 0.2s ease' }}>
+                {Icons.image(colors.navy, 28)}
+                <span style={{ fontSize: '13px', fontWeight: '700', color: colors.navy }}>Gallery</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 
@@ -3806,7 +4194,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
             {Icons.plus('white', 16)} Start a Flock
           </button>
           <button
-            onClick={() => setCurrentScreen('join')}
+            onClick={() => setCurrentScreen('addFriends')}
             style={{
               flex: 0.8,
               padding: '14px',
@@ -3818,10 +4206,14 @@ const FlockAppInner = ({ authUser, onLogout }) => {
               fontSize: '13px',
               cursor: 'pointer',
               transition: 'all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1)',
-              boxShadow: '0 2px 8px rgba(13,40,71,0.08)'
+              boxShadow: '0 2px 8px rgba(13,40,71,0.08)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: '6px'
             }}
           >
-            Join Flock
+            {Icons.userPlus(colors.navy, 15)} Add Friends
           </button>
         </div>
 
@@ -4169,19 +4561,19 @@ const FlockAppInner = ({ authUser, onLogout }) => {
       {pickingVenueForCreate && (
         <div style={{ padding: '10px 14px', background: `linear-gradient(90deg, ${colors.navy}, ${colors.navyMid})`, display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0, boxShadow: '0 2px 8px rgba(13,40,71,0.3)' }}>
           <span style={{ color: 'white', fontSize: '12px', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '6px' }}>{Icons.mapPin('white', 14)} Tap venue to select</span>
-          <button onClick={() => { setPickingVenueForCreate(false); if (pickingVenueForDm) { setPickingVenueForDm(false); setCurrentTab('chats'); setCurrentScreen('dmDetail'); } else { setCurrentScreen('create'); } }} style={{ backgroundColor: 'rgba(255,255,255,0.2)', border: 'none', borderRadius: '12px', padding: '4px 12px', color: 'white', fontSize: '11px', cursor: 'pointer', fontWeight: '500', transition: 'all 0.2s ease' }}>Cancel</button>
+          <button onClick={() => { setPickingVenueForCreate(false); if (pickingVenueForDm) { setPickingVenueForDm(false); setCurrentTab('chats'); setCurrentScreen('dmDetail'); } else if (pickingVenueForFlockId) { setSelectedFlockId(pickingVenueForFlockId); setPickingVenueForFlockId(null); setCurrentTab('chats'); setCurrentScreen('chatDetail'); } else { setCurrentScreen('create'); } }} style={{ backgroundColor: 'rgba(255,255,255,0.2)', border: 'none', borderRadius: '12px', padding: '4px 12px', color: 'white', fontSize: '11px', cursor: 'pointer', fontWeight: '500', transition: 'all 0.2s ease' }}>Cancel</button>
         </div>
       )}
 
       <div style={{ padding: '10px 12px', display: 'flex', alignItems: 'center', gap: '10px', backgroundColor: 'white', boxShadow: '0 2px 12px rgba(0,0,0,0.08)', zIndex: 20, flexShrink: 0 }}>
         <div style={{ flex: 1, position: 'relative' }}>
-          <input key="search-input" id="search-input" type="text" value={venueQuery} onChange={(e) => handleVenueQueryChange(e.target.value)} placeholder="Search restaurants, bars, venues..." style={{ width: '100%', padding: '12px 40px 12px 38px', borderRadius: '14px', backgroundColor: '#f8fafc', border: `2px solid ${venueQuery ? colors.navy : '#e2e8f0'}`, fontSize: '13px', outline: 'none', boxSizing: 'border-box', transition: 'all 0.2s ease', fontWeight: '500' }} autoComplete="off" />
+          <input key="search-input" id="search-input" type="text" value={venueQuery} onChange={(e) => handleVenueQueryChange(e.target.value)} placeholder="Search restaurants, bars, venues..." style={{ width: '100%', padding: '12px 14px 12px 38px', borderRadius: '14px', backgroundColor: '#f8fafc', border: `2px solid ${venueQuery ? colors.navy : '#e2e8f0'}`, fontSize: '13px', outline: 'none', boxSizing: 'border-box', transition: 'all 0.2s ease', fontWeight: '500' }} autoComplete="off" />
           <span style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', transition: 'all 0.2s ease' }}>{Icons.search(venueQuery ? colors.navy : '#94a3b8', 16)}</span>
-          {venueQuery && (
-            <button onClick={() => { setVenueQuery(''); setVenueResults([]); setShowSearchDropdown(false); }} style={{ position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', padding: '2px' }}>{Icons.x('#94a3b8', 16)}</button>
-          )}
         </div>
-        <button onClick={() => { setMapVenuesLoaded(false); setVenueQuery(''); setVenueResults([]); setShowSearchDropdown(false); setActiveVenue(null); requestUserLocation(true); }} title="Near Me" style={{ width: '42px', height: '42px', borderRadius: '14px', border: 'none', background: locationLoading ? `linear-gradient(135deg, ${colors.teal}, ${colors.skyBlue})` : `linear-gradient(135deg, ${colors.teal}, #0d9488)`, color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 4px 12px rgba(20,184,166,0.3)', transition: 'all 0.2s ease', animation: locationLoading ? 'spin 1s linear infinite' : 'none' }}>{Icons.crosshair('white', 18)}</button>
+        {venueQuery && (
+          <button onClick={() => { setVenueQuery(''); setVenueResults([]); setShowSearchDropdown(false); setShowSearchResults(false); setActiveVenue(null); const lat = parseFloat(localStorage.getItem('flock_user_lat')); const lng = parseFloat(localStorage.getItem('flock_user_lng')); if (lat && lng) { setMapVenuesLoaded(false); loadVenuesAtLocation(lat, lng); } else { setMapVenuesLoaded(false); requestUserLocation(false); } }} title="Clear search" style={{ width: '42px', height: '42px', borderRadius: '14px', border: 'none', backgroundColor: '#f1f5f9', color: '#64748b', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'all 0.2s ease', flexShrink: 0 }}>{Icons.x('#64748b', 18)}</button>
+        )}
+        <button onClick={() => { setMapVenuesLoaded(false); setVenueQuery(''); setVenueResults([]); setShowSearchDropdown(false); setShowSearchResults(false); setActiveVenue(null); requestUserLocation(true); }} title="Near Me" style={{ width: '42px', height: '42px', borderRadius: '14px', border: 'none', background: locationLoading ? `linear-gradient(135deg, ${colors.teal}, ${colors.skyBlue})` : `linear-gradient(135deg, ${colors.teal}, #0d9488)`, color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 4px 12px rgba(20,184,166,0.3)', transition: 'all 0.2s ease', animation: locationLoading ? 'spin 1s linear infinite' : 'none' }}>{Icons.crosshair('white', 18)}</button>
         <button onClick={() => setShowConnectPanel(true)} style={{ width: '42px', height: '42px', borderRadius: '14px', border: 'none', background: `linear-gradient(135deg, ${colors.navy}, ${colors.navyMid})`, color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 4px 12px rgba(13,40,71,0.25)', transition: 'all 0.2s ease' }}>{Icons.users('white', 18)}</button>
       </div>
 
@@ -4313,7 +4705,10 @@ const FlockAppInner = ({ authUser, onLogout }) => {
           <div style={{ position: 'absolute', left: '8px', right: '8px', top: '8px', backgroundColor: 'white', borderRadius: '16px', boxShadow: '0 4px 24px rgba(0,0,0,0.2)', zIndex: 40, maxHeight: '70%', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
             <div style={{ padding: '12px', borderBottom: '1px solid #eee', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexShrink: 0 }}>
               <h2 style={{ fontSize: '14px', fontWeight: '900', color: colors.navy, margin: 0, display: 'flex', alignItems: 'center', gap: '6px' }}>{Icons.users(colors.navy, 16)} Find Your People</h2>
-              <button onClick={() => { setShowConnectPanel(false); setConnectSearch(''); setConnectResults([]); }} style={{ width: '28px', height: '28px', borderRadius: '14px', backgroundColor: '#f3f4f6', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.x('#6b7280', 14)}</button>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <button onClick={() => { setShowConnectPanel(false); setConnectSearch(''); setConnectResults([]); setCurrentScreen('addFriends'); }} style={{ padding: '4px 10px', borderRadius: '10px', backgroundColor: colors.cream, border: 'none', cursor: 'pointer', fontSize: '11px', fontWeight: '600', color: colors.navy }}>See All</button>
+                <button onClick={() => { setShowConnectPanel(false); setConnectSearch(''); setConnectResults([]); }} style={{ width: '28px', height: '28px', borderRadius: '14px', backgroundColor: '#f3f4f6', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.x('#6b7280', 14)}</button>
+              </div>
             </div>
 
             {/* Search input */}
@@ -4500,8 +4895,15 @@ const FlockAppInner = ({ authUser, onLogout }) => {
                       setPickingVenueForDm(false);
                       setCurrentTab('chats');
                       setCurrentScreen('dmDetail');
+                    } else if (pickingVenueForFlockId) {
+                      updateFlockVenue(pickingVenueForFlockId, venueData);
+                      setActiveVenue(null);
+                      setPickingVenueForCreate(false);
+                      setSelectedFlockId(pickingVenueForFlockId);
+                      setPickingVenueForFlockId(null);
+                      setCurrentTab('chats');
+                      setCurrentScreen('chatDetail');
                     } else {
-                      // Always go to create form with venue selected
                       setSelectedVenueForCreate(venueData);
                       setActiveVenue(null);
                       setPickingVenueForCreate(false);
@@ -5019,25 +5421,29 @@ const FlockAppInner = ({ authUser, onLogout }) => {
 
     return (
       <div key="chat-detail-screen-container" style={{ display: 'flex', flexDirection: 'column', height: '100%', backgroundColor: 'white' }}>
-        <div style={{ padding: '12px', display: 'flex', alignItems: 'center', gap: '8px', background: `linear-gradient(135deg, ${colors.navy}, ${colors.navyMid})`, flexShrink: 0, boxShadow: '0 2px 10px rgba(0,0,0,0.1)' }}>
-          <button onClick={() => { setCurrentScreen('main'); setChatInput(''); setReplyingTo(null); setShowFlockMenu(false); setShowLeaveConfirm(false); setShowChatSearch(false); setChatSearch(''); setShowVotePanel(false); }} style={{ background: 'none', border: 'none', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'transform 0.2s ease' }}>{Icons.arrowLeft('white', 20)}</button>
-          <div style={{ flex: 1 }}>
-            <h2 style={{ fontWeight: 'bold', color: 'white', fontSize: '14px', margin: 0 }}>{flock.name}</h2>
-            <p style={{ fontSize: '10px', color: 'rgba(255,255,255,0.6)', margin: 0 }}>{flock.members?.length || flock.memberCount || 0} members • {isTyping ? <span style={{ color: '#86EFAC', fontWeight: '500' }}>{typingUser} is typing...</span> : 'online'}</p>
+        <div style={{ padding: '6px 10px 5px 4px', background: `linear-gradient(135deg, ${colors.navy}, ${colors.navyMid})`, flexShrink: 0, boxShadow: '0 2px 10px rgba(0,0,0,0.1)' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+            <button onClick={() => { setCurrentScreen('main'); setChatInput(''); setReplyingTo(null); setShowFlockMenu(false); setShowLeaveConfirm(false); setShowChatSearch(false); setChatSearch(''); setShowVotePanel(false); }} style={{ width: '34px', height: '34px', borderRadius: '17px', background: 'none', border: 'none', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{Icons.arrowLeft('white', 20)}</button>
+            <h2 style={{ flex: 1, fontWeight: '800', color: 'white', fontSize: '15px', margin: 0, lineHeight: '1.3', minWidth: 0 }}>{flock.name}</h2>
+            <button onClick={() => { setShowVotePanel(true); loadPopularVenues(); }} style={{ height: '34px', borderRadius: '17px', border: 'none', backgroundColor: flock.status === 'voting' ? colors.teal : 'rgba(255,255,255,0.15)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px', padding: '0 12px', fontSize: '12px', fontWeight: '700', flexShrink: 0 }}>{Icons.vote('white', 14)} Vote</button>
+            <button onClick={() => { setShowFlockInviteModal(true); setFlockInviteSelected([]); setFlockInviteSearch(''); setFlockInviteResults([]); }} style={{ width: '34px', height: '34px', borderRadius: '17px', border: 'none', backgroundColor: 'rgba(255,255,255,0.15)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{Icons.userPlus('white', 15)}</button>
+            <button onClick={() => setShowChatSearch(!showChatSearch)} style={{ width: '34px', height: '34px', borderRadius: '17px', border: 'none', backgroundColor: showChatSearch ? 'rgba(255,255,255,0.35)' : 'rgba(255,255,255,0.15)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{Icons.search('white', 15)}</button>
+            <button onClick={() => setShowChatPool(true)} style={{ width: '34px', height: '34px', borderRadius: '17px', border: 'none', backgroundColor: colors.cream, color: colors.navy, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{Icons.dollar(colors.navy, 15)}</button>
+            <div style={{ position: 'relative', flexShrink: 0 }}>
+              <button onClick={() => setShowFlockMenu(!showFlockMenu)} style={{ width: '34px', height: '34px', borderRadius: '17px', border: 'none', backgroundColor: 'rgba(255,255,255,0.15)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.moreVertical('white', 16)}</button>
+              {showFlockMenu && (
+                <div style={{ position: 'absolute', top: '38px', right: 0, backgroundColor: 'white', borderRadius: '14px', boxShadow: '0 8px 30px rgba(0,0,0,0.18)', minWidth: '180px', zIndex: 60, overflow: 'hidden', border: '1px solid rgba(0,0,0,0.06)' }}>
+                  <button onClick={() => { setShowFlockMenu(false); setShowLeaveConfirm(true); }} style={{ width: '100%', padding: '14px 16px', display: 'flex', alignItems: 'center', gap: '10px', border: 'none', backgroundColor: 'white', cursor: 'pointer', fontSize: '14px', fontWeight: '600', color: '#EF4444' }}>
+                    {Icons.doorOpen('#EF4444', 16)} Leave Flock
+                  </button>
+                </div>
+              )}
+            </div>
           </div>
-          <button onClick={() => { setShowVotePanel(true); loadPopularVenues(); }} style={{ height: '32px', borderRadius: '16px', border: 'none', backgroundColor: flock.status === 'voting' ? colors.teal : 'rgba(255,255,255,0.2)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px', padding: '0 10px', transition: 'all 0.2s ease', fontSize: '11px', fontWeight: '700' }}>{Icons.vote('white', 14)} Vote</button>
-          <button onClick={() => { setShowFlockInviteModal(true); setFlockInviteSelected([]); setFlockInviteSearch(''); setFlockInviteResults([]); }} style={{ width: '32px', height: '32px', borderRadius: '16px', border: 'none', backgroundColor: 'rgba(255,255,255,0.2)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'all 0.2s ease' }}>{Icons.userPlus('white', 14)}</button>
-          <button onClick={() => setShowChatSearch(!showChatSearch)} style={{ width: '32px', height: '32px', borderRadius: '16px', border: 'none', backgroundColor: 'rgba(255,255,255,0.2)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'all 0.2s ease' }}>{Icons.search('white', 16)}</button>
-          <button onClick={() => setShowChatPool(true)} style={{ width: '32px', height: '32px', borderRadius: '16px', border: 'none', backgroundColor: colors.cream, color: colors.navy, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'all 0.2s ease' }}>{Icons.dollar(colors.navy, 16)}</button>
-          <div style={{ position: 'relative' }}>
-            <button onClick={() => setShowFlockMenu(!showFlockMenu)} style={{ width: '32px', height: '32px', borderRadius: '16px', border: 'none', backgroundColor: 'rgba(255,255,255,0.2)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'all 0.2s ease' }}>{Icons.moreVertical('white', 16)}</button>
-            {showFlockMenu && (
-              <div style={{ position: 'absolute', top: '38px', right: 0, backgroundColor: 'white', borderRadius: '12px', boxShadow: '0 4px 20px rgba(0,0,0,0.15)', minWidth: '180px', zIndex: 60, overflow: 'hidden' }}>
-                <button onClick={() => { setShowFlockMenu(false); setShowLeaveConfirm(true); }} style={{ width: '100%', padding: '12px 16px', display: 'flex', alignItems: 'center', gap: '10px', border: 'none', backgroundColor: 'white', cursor: 'pointer', fontSize: '14px', fontWeight: '600', color: '#EF4444' }}>
-                  {Icons.doorOpen('#EF4444', 16)} Leave Flock
-                </button>
-              </div>
-            )}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '5px', paddingLeft: '34px', marginTop: '2px' }}>
+            <span style={{ fontSize: '11px', color: 'rgba(255,255,255,0.55)', fontWeight: '500' }}>{flock.members?.length || flock.memberCount || 0} members</span>
+            <span style={{ fontSize: '11px', color: 'rgba(255,255,255,0.3)' }}>•</span>
+            {isTyping ? <span style={{ fontSize: '11px', color: '#86EFAC', fontWeight: '600' }}>{typingUser} is typing...</span> : <><span style={{ width: '5px', height: '5px', borderRadius: '3px', backgroundColor: '#22c55e', boxShadow: '0 0 6px #22c55e' }} /><span style={{ fontSize: '11px', color: 'rgba(255,255,255,0.55)', fontWeight: '500' }}>online</span></>}
           </div>
         </div>
 
@@ -5115,7 +5521,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
                   {Icons.mapPin('white', 12)} Map
                 </button>
                 <button
-                  onClick={() => { setPickingVenueForCreate(true); setCurrentTab('explore'); setCurrentScreen('main'); }}
+                  onClick={() => { setPickingVenueForCreate(true); setPickingVenueForFlockId(flock.id); setCurrentTab('explore'); setCurrentScreen('main'); }}
                   style={{ padding: '8px 10px', borderRadius: '10px', border: `1px solid ${colors.creamDark}`, background: 'white', color: colors.navy, fontSize: '10px', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '3px' }}
                 >
                   Change
@@ -5125,7 +5531,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
           </div>
         ) : (
           <button
-            onClick={() => { setPickingVenueForCreate(true); setCurrentTab('explore'); setCurrentScreen('main'); }}
+            onClick={() => { setPickingVenueForCreate(true); setPickingVenueForFlockId(flock.id); setCurrentTab('explore'); setCurrentScreen('main'); }}
             style={{ margin: '0', padding: '10px 14px', background: `linear-gradient(135deg, ${colors.cream}, white)`, borderBottom: `1px solid ${colors.creamDark}`, border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '10px', width: '100%', flexShrink: 0 }}
           >
             <div style={{ width: '40px', height: '40px', borderRadius: '12px', border: `2px dashed ${colors.teal}`, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -5432,11 +5838,11 @@ const FlockAppInner = ({ authUser, onLogout }) => {
 
         {/* Input area */}
         <div style={{ padding: '10px 12px', backgroundColor: 'rgba(255,255,255,0.98)', backdropFilter: 'blur(10px)', WebkitBackdropFilter: 'blur(10px)', borderTop: '1px solid rgba(0,0,0,0.05)', display: 'flex', gap: '8px', alignItems: 'center', flexShrink: 0, boxShadow: '0 -4px 20px rgba(0,0,0,0.03)' }}>
-          <label style={{ width: '38px', height: '38px', borderRadius: '19px', border: 'none', backgroundColor: 'rgba(13,40,71,0.08)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'all 0.2s ease', flexShrink: 0 }}>
+          <button onClick={() => setShowCameraPopup(true)} style={{ width: '38px', height: '38px', borderRadius: '19px', border: 'none', backgroundColor: 'rgba(13,40,71,0.08)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'all 0.2s ease', flexShrink: 0 }}>
             {Icons.camera('#6b7280', 18)}
-            <input ref={chatImageInputRef} type="file" accept="image/*" onChange={handleChatImageSelect} style={{ display: 'none' }} />
-          </label>
-          <button onClick={() => { if (sharingLocationForFlock === flock.id) { stopLocationSharing(); } else { startSharingLocation(flock.id); } }} style={{ width: '38px', height: '38px', borderRadius: '19px', border: 'none', backgroundColor: sharingLocationForFlock === flock.id ? '#10b981' : 'rgba(13,40,71,0.08)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'all 0.2s ease', flexShrink: 0 }}>{Icons.mapPin(sharingLocationForFlock === flock.id ? 'white' : '#6b7280', 16)}</button>
+          </button>
+          <input ref={chatGalleryInputRef} type="file" accept="image/*" onChange={handleChatImageSelect} style={{ display: 'none' }} />
+          <button onClick={() => { if (sharingLocationForFlock === flock.id) { stopLocationSharing(); } else { const otherMembers = (flock.members || []).filter(m => m.id !== authUser?.id).length; if (otherMembers === 0) { showToast('No one else in this flock to share with', 'error'); return; } startSharingLocation(flock.id); } }} style={{ width: '38px', height: '38px', borderRadius: '19px', border: 'none', backgroundColor: sharingLocationForFlock === flock.id ? '#10b981' : 'rgba(13,40,71,0.08)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'all 0.2s ease', flexShrink: 0 }}>{Icons.mapPin(sharingLocationForFlock === flock.id ? 'white' : '#6b7280', 16)}</button>
           <input key="chat-input" id="chat-input" type="text" value={chatInput} onChange={handleChatInputChange} onKeyDown={(e) => e.key === 'Enter' && sendChatMessage()} placeholder={replyingTo ? 'Reply...' : 'Type a message...'} style={{ flex: 1, padding: '12px 16px', borderRadius: '22px', backgroundColor: 'rgba(243,244,246,0.9)', border: '1px solid rgba(0,0,0,0.05)', fontSize: '14px', outline: 'none', fontWeight: '500', transition: 'all 0.2s ease' }} autoComplete="off" />
           {chatInput ? (
             <button onClick={sendChatMessage} style={{ width: '42px', height: '42px', borderRadius: '21px', border: 'none', background: `linear-gradient(135deg, ${colors.navy}, ${colors.navyMid})`, color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 3px 10px rgba(13,40,71,0.25)', transition: 'all 0.2s ease' }}>{Icons.send('white', 18)}</button>
@@ -5444,6 +5850,26 @@ const FlockAppInner = ({ authUser, onLogout }) => {
             <button onClick={() => {}} style={{ width: '42px', height: '42px', borderRadius: '21px', border: 'none', background: `linear-gradient(135deg, ${colors.navy}, ${colors.navyMid})`, color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 3px 10px rgba(13,40,71,0.25)', transition: 'all 0.2s ease' }}>{Icons.mic('white', 18)}</button>
           )}
         </div>
+
+        {/* Camera options popup */}
+        {showCameraPopup && (
+          <div onClick={() => setShowCameraPopup(false)} style={{ position: 'absolute', inset: 0, backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'flex-end', zIndex: 60 }}>
+            <div onClick={e => e.stopPropagation()} style={{ backgroundColor: 'white', borderRadius: '20px 20px 0 0', padding: '20px', width: '100%', paddingBottom: '28px' }}>
+              <div style={{ width: '36px', height: '4px', borderRadius: '2px', backgroundColor: '#d1d5db', margin: '0 auto 16px' }} />
+              <h3 style={{ fontSize: '16px', fontWeight: '800', color: colors.navy, margin: '0 0 16px', textAlign: 'center' }}>Add Photo</h3>
+              <div style={{ display: 'flex', gap: '12px' }}>
+                <button onClick={() => openCameraViewfinder('flock')} style={{ flex: 1, padding: '16px', borderRadius: '16px', border: `2px solid ${colors.creamDark}`, backgroundColor: 'white', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px', transition: 'all 0.2s ease' }}>
+                  {Icons.camera(colors.navy, 28)}
+                  <span style={{ fontSize: '13px', fontWeight: '700', color: colors.navy }}>Take Photo</span>
+                </button>
+                <button onClick={() => { setShowCameraPopup(false); setTimeout(() => chatGalleryInputRef.current?.click(), 100); }} style={{ flex: 1, padding: '16px', borderRadius: '16px', border: `2px solid ${colors.creamDark}`, backgroundColor: 'white', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px', transition: 'all 0.2s ease' }}>
+                  {Icons.image(colors.navy, 28)}
+                  <span style={{ fontSize: '13px', fontWeight: '700', color: colors.navy }}>Gallery</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Cash Pool Modal */}
         {showChatPool && (
@@ -6073,6 +6499,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
             })()}
             {profileScreen === 'safety' && (
               <div>
+                {/* Safety toggle */}
                 <div style={styles.card}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                     <div>
@@ -6082,19 +6509,91 @@ const FlockAppInner = ({ authUser, onLogout }) => {
                     <Toggle on={safetyOn} onChange={() => setSafetyOn(!safetyOn)} />
                   </div>
                 </div>
-                <div style={styles.card}>
-                  <h3 style={{ fontWeight: 'bold', fontSize: '14px', color: colors.navy, margin: '0 0 8px' }}>Trusted Contacts</h3>
-                  {trustedContacts.map(c => (
-                    <div key={c} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 0', borderBottom: '1px solid #f3f4f6' }}>
-                      <span style={{ fontWeight: '500', fontSize: '14px', color: colors.navy }}>{c}</span>
-                      <button onClick={(e) => { confirmClick(e); setTrustedContacts(trustedContacts.filter(x => x !== c)); }} style={{ background: 'none', border: 'none', color: colors.red, fontSize: '12px', fontWeight: '500', cursor: 'pointer', position: 'relative', overflow: 'hidden' }}>Remove</button>
-                    </div>
-                  ))}
-                  <div style={{ display: 'flex', gap: '8px', marginTop: '12px' }}>
-                    <input key="new-contact" id="new-contact" type="text" value={newContactName} onChange={(e) => setNewContactName(e.target.value)} placeholder="Add emergency contact..." style={{ ...styles.input, flex: 1 }} autoComplete="off" />
-                    <button onClick={(e) => { if (newContactName.trim()) { confirmClick(e); setTrustedContacts([...trustedContacts, newContactName.trim()]); setNewContactName(''); }}} style={{ padding: '0 16px', borderRadius: '8px', border: 'none', background: `linear-gradient(90deg, ${colors.navy}, ${colors.navyMid})`, color: 'white', fontWeight: 'bold', fontSize: '14px', cursor: 'pointer', position: 'relative', overflow: 'hidden' }}>Add</button>
+
+                {/* Info card */}
+                <div style={{ ...styles.card, display: 'flex', gap: '10px', alignItems: 'flex-start' }}>
+                  <div style={{ width: '36px', height: '36px', borderRadius: '10px', background: '#fee2e2', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{Icons.shield(colors.red, 18)}</div>
+                  <div>
+                    <p style={{ fontWeight: '700', fontSize: '13px', color: colors.navy, margin: '0 0 4px' }}>Emergency Contacts</p>
+                    <p style={{ fontSize: '11px', color: '#6b7280', margin: 0, lineHeight: '1.4' }}>Add trusted contacts who will receive alerts when you use the emergency button. They'll get a message with your location.</p>
                   </div>
                 </div>
+
+                {/* Trusted contacts list */}
+                <div style={styles.card}>
+                  <h3 style={{ fontWeight: 'bold', fontSize: '14px', color: colors.navy, margin: '0 0 12px' }}>Trusted Contacts ({trustedContacts.length})</h3>
+
+                  {safetyLoading && trustedContacts.length === 0 && (
+                    <p style={{ fontSize: '13px', color: '#6b7280', textAlign: 'center', padding: '16px 0' }}>Loading...</p>
+                  )}
+
+                  {!safetyLoading && trustedContacts.length === 0 && (
+                    <div style={{ textAlign: 'center', padding: '20px 0' }}>
+                      <div style={{ fontSize: '36px', marginBottom: '8px' }}>{'👤'}</div>
+                      <p style={{ fontSize: '13px', color: '#6b7280', margin: 0 }}>No trusted contacts yet</p>
+                    </div>
+                  )}
+
+                  {trustedContacts.map(c => (
+                    <div key={c.id} style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '10px 0', borderBottom: '1px solid #f3f4f6' }}>
+                      <div style={{ width: '40px', height: '40px', borderRadius: '20px', backgroundColor: colors.cream, display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: '700', fontSize: '16px', color: colors.navy, flexShrink: 0 }}>{c.contact_name?.[0]?.toUpperCase() || '?'}</div>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <p style={{ fontWeight: '600', fontSize: '14px', color: colors.navy, margin: 0 }}>{c.contact_name}</p>
+                        <p style={{ fontSize: '12px', color: '#6b7280', margin: '2px 0 0' }}>{c.contact_phone}</p>
+                        {c.contact_email && <p style={{ fontSize: '11px', color: '#9ca3af', margin: '1px 0 0' }}>{c.contact_email}</p>}
+                        {c.relationship && <span style={{ display: 'inline-block', marginTop: '3px', padding: '1px 8px', background: colors.cream, borderRadius: '10px', fontSize: '10px', color: '#6b7280', textTransform: 'capitalize' }}>{c.relationship}</span>}
+                      </div>
+                      <button onClick={() => handleDeleteContact(c.id)} style={{ background: 'none', border: 'none', color: colors.red, fontSize: '12px', fontWeight: '600', cursor: 'pointer' }}>Remove</button>
+                    </div>
+                  ))}
+
+                  {/* Add contact button */}
+                  <button onClick={() => setShowAddContact(true)} style={{ width: '100%', padding: '12px', borderRadius: '10px', border: `2px dashed ${colors.creamDark}`, backgroundColor: 'transparent', color: colors.navy, fontWeight: '600', fontSize: '13px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', marginTop: '12px' }}>
+                    {Icons.plus(colors.navy, 14)} Add Trusted Contact
+                  </button>
+                </div>
+
+                {/* Add Contact Modal */}
+                {showAddContact && (
+                  <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'flex-end', zIndex: 1000 }}>
+                    <div style={{ background: 'white', width: '100%', borderRadius: '20px 20px 0 0', padding: '20px', maxHeight: '80vh', overflowY: 'auto' }}>
+                      <h3 style={{ fontWeight: '800', fontSize: '18px', color: colors.navy, margin: '0 0 16px' }}>Add Trusted Contact</h3>
+
+                      <div style={{ marginBottom: '10px' }}>
+                        <label style={{ display: 'block', fontSize: '11px', fontWeight: '600', color: '#6b7280', marginBottom: '4px' }}>Name *</label>
+                        <input type="text" value={newContact.name} onChange={(e) => setNewContact({ ...newContact, name: e.target.value })} placeholder="Contact name" style={{ ...styles.input, width: '100%' }} autoComplete="off" />
+                      </div>
+
+                      <div style={{ marginBottom: '10px' }}>
+                        <label style={{ display: 'block', fontSize: '11px', fontWeight: '600', color: '#6b7280', marginBottom: '4px' }}>Phone Number *</label>
+                        <input type="tel" value={newContact.phone} onChange={(e) => setNewContact({ ...newContact, phone: e.target.value })} placeholder="+1 234 567 8900" style={{ ...styles.input, width: '100%' }} autoComplete="off" />
+                      </div>
+
+                      <div style={{ marginBottom: '10px' }}>
+                        <label style={{ display: 'block', fontSize: '11px', fontWeight: '600', color: '#6b7280', marginBottom: '4px' }}>Email * <span style={{ fontWeight: '400', color: '#9ca3af' }}>(alerts sent here)</span></label>
+                        <input type="email" value={newContact.email} onChange={(e) => setNewContact({ ...newContact, email: e.target.value })} placeholder="email@example.com" style={{ ...styles.input, width: '100%' }} autoComplete="off" />
+                      </div>
+
+                      <div style={{ marginBottom: '16px' }}>
+                        <label style={{ display: 'block', fontSize: '11px', fontWeight: '600', color: '#6b7280', marginBottom: '4px' }}>Relationship (optional)</label>
+                        <select value={newContact.relationship} onChange={(e) => setNewContact({ ...newContact, relationship: e.target.value })} style={{ ...styles.input, width: '100%', appearance: 'auto' }}>
+                          <option value="">Select...</option>
+                          <option value="parent">Parent</option>
+                          <option value="sibling">Sibling</option>
+                          <option value="partner">Partner</option>
+                          <option value="friend">Friend</option>
+                          <option value="roommate">Roommate</option>
+                          <option value="other">Other</option>
+                        </select>
+                      </div>
+
+                      <div style={{ display: 'flex', gap: '8px' }}>
+                        <button onClick={() => { setShowAddContact(false); setNewContact({ name: '', phone: '', email: '', relationship: '' }); }} style={{ flex: 1, padding: '12px', borderRadius: '10px', border: '1px solid #d1d5db', backgroundColor: 'white', fontWeight: '600', fontSize: '14px', cursor: 'pointer', color: colors.navy }}>Cancel</button>
+                        <button disabled={safetyLoading} onClick={handleAddContact} style={{ flex: 1, padding: '12px', borderRadius: '10px', border: 'none', background: `linear-gradient(90deg, ${colors.navy}, ${colors.navyMid})`, color: 'white', fontWeight: '600', fontSize: '14px', cursor: 'pointer', opacity: safetyLoading ? 0.6 : 1 }}>{safetyLoading ? 'Adding...' : 'Add Contact'}</button>
+                      </div>
+                    </div>
+                  </div>
+                )}
               </div>
             )}
             {profileScreen === 'interests' && (
@@ -6220,6 +6719,17 @@ const FlockAppInner = ({ authUser, onLogout }) => {
             ))}
           </div>
 
+          {/* Add Friends Button */}
+          <button onClick={() => setCurrentScreen('addFriends')} style={{ width: '100%', padding: '14px', borderRadius: '14px', border: 'none', background: `linear-gradient(135deg, ${colors.navy}, ${colors.navyMid})`, color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '12px', boxShadow: '0 4px 12px rgba(13,40,71,0.25)', position: 'relative', overflow: 'hidden' }}>
+            <div style={{ width: '36px', height: '36px', borderRadius: '12px', backgroundColor: 'rgba(255,255,255,0.2)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.userPlus('white', 18)}</div>
+            <div style={{ flex: 1, textAlign: 'left' }}>
+              <span style={{ fontWeight: '700', fontSize: '15px', display: 'block' }}>Add Friends</span>
+              <span style={{ fontSize: '11px', opacity: 0.7 }}>Find people, scan QR, sync contacts</span>
+            </div>
+            {pendingRequests.length > 0 && <span style={{ padding: '4px 10px', borderRadius: '12px', backgroundColor: colors.amber, fontSize: '12px', fontWeight: '700' }}>{pendingRequests.length}</span>}
+            <span style={{ opacity: 0.6 }}>›</span>
+          </button>
+
           <div style={{ backgroundColor: 'white', borderRadius: '12px', boxShadow: '0 1px 3px rgba(0,0,0,0.1)', overflow: 'hidden' }}>
             {[
               { l: 'Edit Profile', s: 'edit', icon: Icons.edit },
@@ -6227,7 +6737,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
               { l: 'Safety', s: 'safety', icon: Icons.shield },
               { l: 'Payment', s: 'payment', icon: Icons.creditCard },
             ].map(m => (
-              <button key={m.s} onClick={() => setProfileScreen(m.s)} style={{ width: '100%', padding: '12px', textAlign: 'left', borderBottom: '1px solid #f3f4f6', display: 'flex', alignItems: 'center', gap: '12px', backgroundColor: 'white', border: 'none', cursor: 'pointer' }}>
+              <button key={m.s} onClick={() => { setProfileScreen(m.s); if (m.s === 'safety') loadTrustedContacts(); }} style={{ width: '100%', padding: '12px', textAlign: 'left', borderBottom: '1px solid #f3f4f6', display: 'flex', alignItems: 'center', gap: '12px', backgroundColor: 'white', border: 'none', cursor: 'pointer' }}>
                 <div style={{ width: '32px', height: '32px', borderRadius: '8px', backgroundColor: colors.cream, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{m.icon(colors.navy, 18)}</div>
                 <span style={{ flex: 1, fontWeight: '600', fontSize: '14px', color: colors.navy }}>{m.l}</span>
                 <span style={{ color: '#9ca3af' }}>›</span>
@@ -7950,6 +8460,311 @@ const FlockAppInner = ({ authUser, onLogout }) => {
     </div>
   );
 
+  // ADD FRIENDS SCREEN (Snapchat-style)
+  const AddFriendsScreen = () => {
+    const tabs = [
+      { id: 'username', label: 'Search', icon: Icons.search },
+      { id: 'suggestions', label: 'Quick Add', icon: Icons.users },
+      { id: 'qr', label: 'QR', icon: Icons.layers },
+      { id: 'contacts', label: 'Contacts', icon: Icons.phone },
+    ];
+
+    return (
+      <div key="add-friends-container" style={{ display: 'flex', flexDirection: 'column', height: '100%', backgroundColor: colors.cream }}>
+        {/* Header */}
+        <div style={{ padding: '16px', background: `linear-gradient(135deg, ${colors.navy} 0%, ${colors.navyLight} 50%, ${colors.navyMid} 100%)`, flexShrink: 0 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '12px' }}>
+            <button onClick={() => setCurrentScreen('main')} style={{ width: '32px', height: '32px', borderRadius: '16px', border: 'none', backgroundColor: 'rgba(255,255,255,0.15)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.arrowLeft('white', 18)}</button>
+            <h1 style={{ fontSize: '20px', fontWeight: '900', color: 'white', margin: 0, flex: 1 }}>Add Friends</h1>
+            {pendingRequests.length > 0 && (
+              <span style={{ padding: '4px 10px', borderRadius: '12px', backgroundColor: colors.amber, color: 'white', fontSize: '12px', fontWeight: '700' }}>{pendingRequests.length} new</span>
+            )}
+          </div>
+
+          {/* Tab Navigation */}
+          <div style={{ display: 'flex', gap: '4px', paddingBottom: '2px' }}>
+            {tabs.map(tab => (
+              <button key={tab.id} onClick={() => setAddFriendsTab(tab.id)} style={{
+                flex: 1, padding: '8px 4px', borderRadius: '16px', border: 'none', cursor: 'pointer', fontSize: '11px', fontWeight: '700', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '3px', transition: 'all 0.2s ease',
+                backgroundColor: addFriendsTab === tab.id ? 'white' : 'rgba(255,255,255,0.15)',
+                color: addFriendsTab === tab.id ? colors.navy : 'rgba(255,255,255,0.8)',
+              }}>
+                {tab.icon(addFriendsTab === tab.id ? colors.navy : 'rgba(255,255,255,0.8)', 16)}
+                {tab.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Content */}
+        <div style={{ flex: 1, overflowY: 'auto', padding: '12px' }}>
+
+          {/* Pending Friend Requests (always visible at top if any) */}
+          {pendingRequests.length > 0 && (
+            <div style={{ marginBottom: '16px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '10px' }}>
+                <div style={{ width: '28px', height: '28px', borderRadius: '14px', backgroundColor: '#fef3c7', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.userPlus('#b45309', 14)}</div>
+                <h3 style={{ fontSize: '14px', fontWeight: '800', color: colors.navy, margin: 0 }}>Friend Requests</h3>
+                <span style={{ padding: '2px 8px', borderRadius: '10px', backgroundColor: colors.amber, color: 'white', fontSize: '11px', fontWeight: '700' }}>{pendingRequests.length}</span>
+              </div>
+              {pendingRequests.map(req => (
+                <div key={req.id} style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '10px', borderRadius: '14px', backgroundColor: 'white', marginBottom: '8px', border: `1.5px solid #fde68a`, boxShadow: '0 1px 4px rgba(0,0,0,0.06)' }}>
+                  <div style={{ width: '44px', height: '44px', borderRadius: '22px', backgroundColor: colors.navyMid, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '16px', fontWeight: '700', color: 'white', flexShrink: 0, overflow: 'hidden' }}>
+                    {req.profile_image_url ? <img src={req.profile_image_url} alt="" style={{ width: '44px', height: '44px', borderRadius: '22px', objectFit: 'cover' }} /> : req.name[0]?.toUpperCase()}
+                  </div>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <p style={{ fontWeight: '700', fontSize: '14px', color: colors.navy, margin: 0 }}>{req.name}</p>
+                    <p style={{ fontSize: '10px', color: '#9ca3af', margin: '2px 0 0' }}>Wants to be your friend</p>
+                  </div>
+                  <div style={{ display: 'flex', gap: '6px', flexShrink: 0 }}>
+                    <button onClick={(e) => { confirmClick(e); handleAcceptFriendRequest(req.id); }} style={{ width: '36px', height: '36px', borderRadius: '18px', border: 'none', backgroundColor: '#22c55e', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', position: 'relative', overflow: 'hidden' }}>{Icons.check('white', 18)}</button>
+                    <button onClick={() => handleDeclineFriendRequest(req.id)} style={{ width: '36px', height: '36px', borderRadius: '18px', border: 'none', backgroundColor: '#f3f4f6', color: '#6b7280', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.x('#6b7280', 16)}</button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Outgoing Requests */}
+          {outgoingRequests.length > 0 && addFriendsTab === 'username' && (
+            <div style={{ marginBottom: '16px' }}>
+              <h4 style={{ fontSize: '11px', fontWeight: '700', color: '#9ca3af', margin: '0 0 8px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Sent Requests</h4>
+              {outgoingRequests.map(req => (
+                <div key={req.id} style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '10px', borderRadius: '12px', backgroundColor: 'white', marginBottom: '6px' }}>
+                  <div style={{ width: '38px', height: '38px', borderRadius: '19px', backgroundColor: colors.navyMid, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '14px', fontWeight: '700', color: 'white', flexShrink: 0, overflow: 'hidden' }}>
+                    {req.profile_image_url ? <img src={req.profile_image_url} alt="" style={{ width: '38px', height: '38px', borderRadius: '19px', objectFit: 'cover' }} /> : req.name[0]?.toUpperCase()}
+                  </div>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <p style={{ fontWeight: '600', fontSize: '13px', color: colors.navy, margin: 0 }}>{req.name}</p>
+                    <p style={{ fontSize: '10px', color: '#9ca3af', margin: '1px 0 0' }}>Pending</p>
+                  </div>
+                  <button onClick={() => handleCancelOutgoingRequest(req.id)} style={{ padding: '6px 12px', borderRadius: '16px', border: `1px solid ${colors.creamDark}`, backgroundColor: 'white', color: '#6b7280', fontSize: '11px', fontWeight: '600', cursor: 'pointer' }}>Cancel</button>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* TAB: Add by Name */}
+          {addFriendsTab === 'username' && (
+            <div>
+              <div style={{ position: 'relative', marginBottom: '12px' }}>
+                <input type="text" value={addFriendsSearch} onChange={(e) => handleAddFriendsSearch(e.target.value)} placeholder="Search by name..." autoComplete="off"
+                  style={{ width: '100%', padding: '12px 12px 12px 38px', borderRadius: '14px', border: `1.5px solid ${addFriendsSearch ? colors.navy : '#e2e8f0'}`, fontSize: '14px', outline: 'none', boxSizing: 'border-box', backgroundColor: 'white', fontWeight: '500', transition: 'all 0.2s ease' }}
+                />
+                <span style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)' }}>{Icons.search(addFriendsSearch ? colors.navy : '#94a3b8', 16)}</span>
+                {addFriendsSearch && <button onClick={() => { setAddFriendsSearch(''); setAddFriendsResults([]); }} style={{ position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', padding: '4px' }}>{Icons.x('#94a3b8', 14)}</button>}
+              </div>
+
+              {addFriendsSearching && (
+                <div style={{ textAlign: 'center', padding: '24px 0' }}>
+                  <div style={{ display: 'inline-block', width: '18px', height: '18px', border: `2px solid ${colors.creamDark}`, borderTopColor: colors.navy, borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
+                  <p style={{ fontSize: '12px', color: '#9ca3af', margin: '8px 0 0' }}>Searching...</p>
+                </div>
+              )}
+
+              {!addFriendsSearching && addFriendsSearch.trim().length >= 1 && addFriendsResults.length === 0 && (
+                <p style={{ fontSize: '13px', color: '#9ca3af', textAlign: 'center', padding: '24px 0', margin: 0 }}>No users found for "{addFriendsSearch}"</p>
+              )}
+
+              {!addFriendsSearching && addFriendsResults.map(user => {
+                const status = friendStatuses[user.id] || 'none';
+                return (
+                  <div key={user.id} style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '10px', borderRadius: '14px', backgroundColor: 'white', marginBottom: '8px', boxShadow: '0 1px 3px rgba(0,0,0,0.06)' }}>
+                    <div style={{ width: '44px', height: '44px', borderRadius: '22px', backgroundColor: colors.navyMid, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '16px', fontWeight: '700', color: 'white', flexShrink: 0, overflow: 'hidden' }}>
+                      {user.profile_image_url ? <img src={user.profile_image_url} alt="" style={{ width: '44px', height: '44px', borderRadius: '22px', objectFit: 'cover' }} /> : user.name[0]?.toUpperCase()}
+                    </div>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <p style={{ fontWeight: '700', fontSize: '14px', color: colors.navy, margin: 0 }}>{user.name}</p>
+                    </div>
+                    <div style={{ display: 'flex', gap: '6px', flexShrink: 0 }}>
+                      {status === 'accepted' ? (
+                        <span style={{ padding: '6px 14px', borderRadius: '20px', backgroundColor: '#d1fae5', color: '#047857', fontSize: '12px', fontWeight: '700' }}>Friends</span>
+                      ) : status === 'pending' ? (
+                        <span style={{ padding: '6px 14px', borderRadius: '20px', backgroundColor: '#e5e7eb', color: '#6b7280', fontSize: '12px', fontWeight: '700' }}>Pending</span>
+                      ) : (
+                        <button onClick={(e) => { confirmClick(e); handleSendFriendRequest(user); }} style={{ padding: '8px 16px', borderRadius: '20px', border: 'none', background: `linear-gradient(135deg, ${colors.navy}, ${colors.navyMid})`, color: 'white', fontSize: '12px', fontWeight: '700', cursor: 'pointer', position: 'relative', overflow: 'hidden' }}>Add</button>
+                      )}
+                      <button onClick={() => { setCurrentScreen('main'); startNewDmWithUser(user); }} style={{ padding: '8px 12px', borderRadius: '20px', border: `1.5px solid ${colors.creamDark}`, backgroundColor: 'white', color: colors.navy, fontSize: '12px', fontWeight: '600', cursor: 'pointer' }}>{Icons.messageSquare(colors.navy, 14)}</button>
+                    </div>
+                  </div>
+                );
+              })}
+
+              {!addFriendsSearch && (
+                <div style={{ textAlign: 'center', padding: '40px 16px' }}>
+                  <div style={{ width: '56px', height: '56px', borderRadius: '28px', backgroundColor: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 12px', boxShadow: '0 2px 8px rgba(0,0,0,0.08)' }}>{Icons.search(colors.navy, 24)}</div>
+                  <p style={{ fontSize: '15px', fontWeight: '700', color: colors.navy, margin: '0 0 4px' }}>Find People</p>
+                  <p style={{ fontSize: '12px', color: '#9ca3af', margin: 0 }}>Search by name to add friends</p>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* TAB: Quick Add / Suggestions */}
+          {addFriendsTab === 'suggestions' && (
+            <div>
+              {friendSuggestions.length === 0 ? (
+                <div style={{ textAlign: 'center', padding: '40px 16px' }}>
+                  <div style={{ width: '56px', height: '56px', borderRadius: '28px', backgroundColor: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 12px', boxShadow: '0 2px 8px rgba(0,0,0,0.08)' }}>{Icons.users(colors.navy, 24)}</div>
+                  <p style={{ fontSize: '15px', fontWeight: '700', color: colors.navy, margin: '0 0 4px' }}>No Suggestions Yet</p>
+                  <p style={{ fontSize: '12px', color: '#9ca3af', margin: 0 }}>Add more friends to see people you may know</p>
+                </div>
+              ) : (
+                <>
+                  <h3 style={{ fontSize: '14px', fontWeight: '800', color: colors.navy, margin: '0 0 10px', display: 'flex', alignItems: 'center', gap: '6px' }}>{Icons.zap(colors.amber, 16)} Quick Add</h3>
+                  {friendSuggestions.map(user => {
+                    const status = friendStatuses[user.id] || 'none';
+                    return (
+                      <div key={user.id} style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '10px', borderRadius: '14px', backgroundColor: 'white', marginBottom: '8px', boxShadow: '0 1px 3px rgba(0,0,0,0.06)' }}>
+                        <div style={{ width: '44px', height: '44px', borderRadius: '22px', backgroundColor: colors.navyMid, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '16px', fontWeight: '700', color: 'white', flexShrink: 0, overflow: 'hidden' }}>
+                          {user.profile_image_url ? <img src={user.profile_image_url} alt="" style={{ width: '44px', height: '44px', borderRadius: '22px', objectFit: 'cover' }} /> : user.name[0]?.toUpperCase()}
+                        </div>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <p style={{ fontWeight: '700', fontSize: '14px', color: colors.navy, margin: 0 }}>{user.name}</p>
+                          <p style={{ fontSize: '11px', color: '#6b7280', margin: '2px 0 0' }}>{user.mutual_count} mutual friend{parseInt(user.mutual_count) !== 1 ? 's' : ''}</p>
+                        </div>
+                        {status === 'accepted' ? (
+                          <span style={{ padding: '6px 14px', borderRadius: '20px', backgroundColor: '#d1fae5', color: '#047857', fontSize: '12px', fontWeight: '700' }}>Friends</span>
+                        ) : status === 'pending' ? (
+                          <span style={{ padding: '6px 14px', borderRadius: '20px', backgroundColor: '#e5e7eb', color: '#6b7280', fontSize: '12px', fontWeight: '700' }}>Pending</span>
+                        ) : (
+                          <button onClick={(e) => { confirmClick(e); handleSendFriendRequest(user); }} style={{ padding: '8px 16px', borderRadius: '20px', border: 'none', background: `linear-gradient(135deg, ${colors.navy}, ${colors.navyMid})`, color: 'white', fontSize: '12px', fontWeight: '700', cursor: 'pointer', position: 'relative', overflow: 'hidden' }}>Add</button>
+                        )}
+                      </div>
+                    );
+                  })}
+                </>
+              )}
+            </div>
+          )}
+
+          {/* TAB: QR Code */}
+          {addFriendsTab === 'qr' && (
+            <div>
+              {/* My QR Code */}
+              <div style={{ textAlign: 'center', padding: '20px', backgroundColor: 'white', borderRadius: '20px', marginBottom: '16px', boxShadow: '0 2px 12px rgba(0,0,0,0.08)' }}>
+                <h3 style={{ fontSize: '16px', fontWeight: '800', color: colors.navy, margin: '0 0 4px' }}>My Flock Code</h3>
+                <p style={{ fontSize: '11px', color: '#9ca3af', margin: '0 0 16px' }}>Friends can scan this to add you</p>
+                <div style={{ display: 'inline-block', padding: '16px', backgroundColor: 'white', borderRadius: '16px', border: `3px solid ${colors.cream}` }}>
+                  {myFriendCode ? (
+                    <QRCodeSVG value={JSON.stringify({ type: 'flock_friend', code: myFriendCode })} size={180} level="H" bgColor="white" fgColor={colors.navy} />
+                  ) : (
+                    <div style={{ width: '180px', height: '180px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                      <div style={{ width: '20px', height: '20px', border: `2px solid ${colors.creamDark}`, borderTopColor: colors.navy, borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
+                    </div>
+                  )}
+                </div>
+                {myFriendCode && (
+                  <div style={{ marginTop: '14px' }}>
+                    <p style={{ fontSize: '10px', color: '#9ca3af', margin: '0 0 6px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Your Code</p>
+                    <button onClick={() => { navigator.clipboard?.writeText(myFriendCode); showToast('Code copied!'); }} style={{ padding: '8px 20px', borderRadius: '10px', border: `2px solid ${colors.cream}`, backgroundColor: colors.cream, color: colors.navy, fontSize: '16px', fontWeight: '800', cursor: 'pointer', letterSpacing: '2px', fontFamily: 'monospace' }}>{myFriendCode}</button>
+                    <p style={{ fontSize: '10px', color: '#9ca3af', margin: '6px 0 0' }}>Tap to copy</p>
+                  </div>
+                )}
+              </div>
+
+              {/* Scan button */}
+              <button onClick={startQrScanner} style={{ width: '100%', padding: '14px', borderRadius: '14px', border: 'none', background: `linear-gradient(135deg, ${colors.navy}, ${colors.navyMid})`, color: 'white', fontSize: '15px', fontWeight: '700', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', marginBottom: '16px', boxShadow: '0 4px 12px rgba(13,40,71,0.2)' }}>
+                {Icons.camera('white', 18)} Scan a Friend's Code
+              </button>
+
+              {/* Enter friend's code */}
+              <div style={{ padding: '16px', backgroundColor: 'white', borderRadius: '16px', boxShadow: '0 2px 8px rgba(0,0,0,0.06)' }}>
+                <h4 style={{ fontSize: '14px', fontWeight: '700', color: colors.navy, margin: '0 0 4px' }}>Or Enter Code Manually</h4>
+                <p style={{ fontSize: '11px', color: '#9ca3af', margin: '0 0 10px' }}>Ask your friend for their Flock code</p>
+                <div style={{ display: 'flex', gap: '8px' }}>
+                  <input type="text" value={friendCodeInput} onChange={(e) => setFriendCodeInput(e.target.value.toUpperCase())} placeholder="FLOCK-XXXX" maxLength={15}
+                    style={{ flex: 1, padding: '12px', borderRadius: '12px', border: `1.5px solid ${friendCodeInput ? colors.navy : '#e2e8f0'}`, fontSize: '15px', fontWeight: '600', fontFamily: 'monospace', letterSpacing: '1px', outline: 'none', boxSizing: 'border-box', textAlign: 'center' }}
+                  />
+                  <button onClick={(e) => { if (!friendCodeLoading) { confirmClick(e); handleAddByCode(); } }} disabled={friendCodeLoading || !friendCodeInput.trim()}
+                    style={{ padding: '12px 20px', borderRadius: '12px', border: 'none', background: friendCodeInput.trim() ? `linear-gradient(135deg, ${colors.navy}, ${colors.navyMid})` : '#e5e7eb', color: friendCodeInput.trim() ? 'white' : '#9ca3af', fontSize: '14px', fontWeight: '700', cursor: friendCodeInput.trim() ? 'pointer' : 'default', position: 'relative', overflow: 'hidden', opacity: friendCodeLoading ? 0.7 : 1 }}>
+                    {friendCodeLoading ? '...' : 'Add'}
+                  </button>
+                </div>
+              </div>
+
+              {/* QR Scanner Modal */}
+              {showQrScanner && (
+                <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.95)', zIndex: 1000, display: 'flex', flexDirection: 'column' }}>
+                  <div style={{ padding: '16px', display: 'flex', alignItems: 'center', gap: '12px', flexShrink: 0 }}>
+                    <button onClick={stopQrScanner} style={{ width: '36px', height: '36px', borderRadius: '18px', border: 'none', backgroundColor: 'rgba(255,255,255,0.15)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.x('white', 18)}</button>
+                    <h3 style={{ fontSize: '16px', fontWeight: '800', color: 'white', margin: 0 }}>Scan Flock Code</h3>
+                  </div>
+                  <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '20px' }}>
+                    <div id={qrScannerDivId} style={{ width: '100%', maxWidth: '340px', borderRadius: '20px', overflow: 'hidden' }} />
+                    {qrScanError && (
+                      <div style={{ marginTop: '16px', padding: '10px 20px', borderRadius: '12px', backgroundColor: 'rgba(239,68,68,0.2)', border: '1px solid rgba(239,68,68,0.4)' }}>
+                        <p style={{ fontSize: '13px', color: '#fca5a5', margin: 0, textAlign: 'center' }}>{qrScanError}</p>
+                      </div>
+                    )}
+                    <p style={{ fontSize: '13px', color: 'rgba(255,255,255,0.5)', marginTop: '20px', textAlign: 'center' }}>Point your camera at a Flock QR code</p>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* TAB: Contacts */}
+          {addFriendsTab === 'contacts' && (
+            <div>
+              {contactsUsers.length > 0 ? (
+                <>
+                  <h3 style={{ fontSize: '14px', fontWeight: '800', color: colors.navy, margin: '0 0 10px' }}>Contacts on Flock</h3>
+                  {contactsUsers.map(user => {
+                    const status = friendStatuses[user.id] || user.friendship_status || 'none';
+                    return (
+                      <div key={user.id} style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '10px', borderRadius: '14px', backgroundColor: 'white', marginBottom: '8px', boxShadow: '0 1px 3px rgba(0,0,0,0.06)' }}>
+                        <div style={{ width: '44px', height: '44px', borderRadius: '22px', backgroundColor: colors.navyMid, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '16px', fontWeight: '700', color: 'white', flexShrink: 0, overflow: 'hidden' }}>
+                          {user.profile_image_url ? <img src={user.profile_image_url} alt="" style={{ width: '44px', height: '44px', borderRadius: '22px', objectFit: 'cover' }} /> : user.name[0]?.toUpperCase()}
+                        </div>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <p style={{ fontWeight: '700', fontSize: '14px', color: colors.navy, margin: 0 }}>{user.name}</p>
+                          <p style={{ fontSize: '11px', color: '#6b7280', margin: '2px 0 0' }}>From your contacts</p>
+                        </div>
+                        {status === 'accepted' ? (
+                          <span style={{ padding: '6px 14px', borderRadius: '20px', backgroundColor: '#d1fae5', color: '#047857', fontSize: '12px', fontWeight: '700' }}>Friends</span>
+                        ) : status === 'pending' ? (
+                          <span style={{ padding: '6px 14px', borderRadius: '20px', backgroundColor: '#e5e7eb', color: '#6b7280', fontSize: '12px', fontWeight: '700' }}>Pending</span>
+                        ) : (
+                          <button onClick={(e) => { confirmClick(e); handleSendFriendRequest(user); }} style={{ padding: '8px 16px', borderRadius: '20px', border: 'none', background: `linear-gradient(135deg, ${colors.navy}, ${colors.navyMid})`, color: 'white', fontSize: '12px', fontWeight: '700', cursor: 'pointer', position: 'relative', overflow: 'hidden' }}>Add</button>
+                        )}
+                      </div>
+                    );
+                  })}
+                  <button onClick={handleSyncContacts} style={{ width: '100%', padding: '12px', borderRadius: '12px', border: `1.5px solid ${colors.creamDark}`, backgroundColor: 'white', color: colors.navy, fontSize: '13px', fontWeight: '600', cursor: 'pointer', marginTop: '8px' }}>Refresh Contacts</button>
+                </>
+              ) : (
+                <div style={{ textAlign: 'center', padding: '40px 16px' }}>
+                  <div style={{ width: '64px', height: '64px', borderRadius: '32px', backgroundColor: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 14px', boxShadow: '0 2px 12px rgba(0,0,0,0.08)' }}>{Icons.phone(colors.navy, 28)}</div>
+                  <p style={{ fontSize: '16px', fontWeight: '700', color: colors.navy, margin: '0 0 6px' }}>Find Friends in Contacts</p>
+                  <p style={{ fontSize: '12px', color: '#9ca3af', margin: '0 0 20px', lineHeight: '1.5' }}>
+                    {contactsSupported
+                      ? 'See which of your contacts are already on Flock'
+                      : 'Contact sync is only available on mobile browsers (Chrome Android)'}
+                  </p>
+                  {contactsSupported && (
+                    <button onClick={(e) => { confirmClick(e); handleSyncContacts(); }} disabled={contactsLoading}
+                      style={{ padding: '14px 28px', borderRadius: '14px', border: 'none', background: `linear-gradient(135deg, ${colors.navy}, ${colors.navyMid})`, color: 'white', fontSize: '15px', fontWeight: '700', cursor: 'pointer', position: 'relative', overflow: 'hidden', opacity: contactsLoading ? 0.7 : 1 }}>
+                      {contactsLoading ? 'Searching...' : 'Sync Contacts'}
+                    </button>
+                  )}
+                  {!contactsSupported && (
+                    <div style={{ padding: '12px', borderRadius: '12px', backgroundColor: '#fef3c7', border: '1px solid #fde68a' }}>
+                      <p style={{ fontSize: '12px', color: '#92400e', margin: 0, fontWeight: '500' }}>Share your Flock Code with friends instead!</p>
+                      <button onClick={() => setAddFriendsTab('qr')} style={{ marginTop: '8px', padding: '8px 16px', borderRadius: '10px', border: 'none', backgroundColor: colors.navy, color: 'white', fontSize: '12px', fontWeight: '600', cursor: 'pointer' }}>Go to QR Code</button>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+
+        <BottomNav />
+      </div>
+    );
+  };
+
   // RENDER - Call functions directly instead of JSX to prevent component recreation
   const isExploreVisible = currentTab === 'explore' && currentScreen === 'main' && !showModeSelection && (userMode !== 'user' || hasCompletedOnboarding);
 
@@ -7958,6 +8773,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
     if (showModeSelection) return <WelcomeScreen />;
     // Show onboarding for new users
     if (userMode === 'user' && !hasCompletedOnboarding) return <OnboardingScreen />;
+    if (currentScreen === 'addFriends') return AddFriendsScreen();
     if (currentScreen === 'create') return CreateScreen();
     if (currentScreen === 'join') return JoinScreen();
     if (currentScreen === 'detail') return FlockDetailScreen();
@@ -8189,6 +9005,23 @@ const FlockAppInner = ({ authUser, onLogout }) => {
       </div>
       <Toast />
 
+      {/* Camera Viewfinder */}
+      {showCameraViewfinder && (
+        <div style={{ position: 'fixed', inset: 0, backgroundColor: '#000', zIndex: 9999, display: 'flex', flexDirection: 'column' }}>
+          <div style={{ padding: '12px 16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', position: 'absolute', top: 0, left: 0, right: 0, zIndex: 2 }}>
+            <button onClick={closeCameraViewfinder} style={{ width: '40px', height: '40px', borderRadius: '20px', border: 'none', backgroundColor: 'rgba(0,0,0,0.5)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.x('white', 20)}</button>
+            <span style={{ fontSize: '15px', fontWeight: '700', color: 'white' }}>Take Photo</span>
+            <div style={{ width: '40px' }} />
+          </div>
+          <video ref={cameraVideoRef} autoPlay playsInline muted style={{ flex: 1, objectFit: 'cover', width: '100%' }} />
+          <div style={{ padding: '24px 0 36px', display: 'flex', justifyContent: 'center', backgroundColor: 'rgba(0,0,0,0.6)' }}>
+            <button onClick={capturePhoto} style={{ width: '72px', height: '72px', borderRadius: '36px', border: '4px solid white', backgroundColor: 'rgba(255,255,255,0.3)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'all 0.15s ease' }}>
+              <div style={{ width: '56px', height: '56px', borderRadius: '28px', backgroundColor: 'white' }} />
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Venue Details Modal */}
       {venueDetailModal && (
         <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.85)', zIndex: 9998, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
@@ -8340,11 +9173,19 @@ const FlockAppInner = ({ authUser, onLogout }) => {
                   setPickingVenueForDm(false);
                   setCurrentTab('chats');
                   setCurrentScreen('dmDetail');
-                                 } else {
+                } else if (pickingVenueForFlockId) {
+                  updateFlockVenue(pickingVenueForFlockId, { name: venueDetailModal.name, addr: venueDetailModal.formatted_address, place_id: venueDetailModal.place_id, rating: venueDetailModal.rating, photo_url: photoUrl, lat: venueDetailModal.location?.latitude, lng: venueDetailModal.location?.longitude });
+                  setVenueDetailModal(null);
+                  setPickingVenueForCreate(false);
+                  setSelectedFlockId(pickingVenueForFlockId);
+                  setPickingVenueForFlockId(null);
+                  setCurrentTab('chats');
+                  setCurrentScreen('chatDetail');
+                } else {
                   setSelectedVenueForCreate({ name: venueDetailModal.name, addr: venueDetailModal.formatted_address, place_id: venueDetailModal.place_id, rating: venueDetailModal.rating, stars: venueDetailModal.rating, price_level: venueDetailModal.price_level, price: venueDetailModal.price_level ? '$'.repeat(venueDetailModal.price_level) : null, photo_url: photoUrl, type: venueDetailModal.types?.[0]?.replace(/_/g, ' ')?.replace(/\b\w/g, c => c.toUpperCase()) || 'Venue', crowd: Math.round(20 + Math.random() * 60), lat: venueDetailModal.location?.latitude, lng: venueDetailModal.location?.longitude });
                   setVenueDetailModal(null);
                   setCurrentScreen('create');
-                                 }
+                }
               }} style={{ flex: 1, padding: '12px', borderRadius: '12px', border: 'none', background: `linear-gradient(135deg, ${colors.navy}, ${colors.navyMid})`, color: 'white', fontSize: '13px', fontWeight: '700', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', boxShadow: '0 4px 12px rgba(13,40,71,0.3)', position: 'relative', overflow: 'hidden' }}>
                 {Icons.plus('white', 16)} {pickingVenueForDm ? 'Pin to DM' : 'Add to Flock'}
               </button>
