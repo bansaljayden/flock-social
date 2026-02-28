@@ -14,7 +14,7 @@ async function sendAlertEmail(to, subject, htmlBody) {
   }
   try {
     const { data, error } = await resend.emails.send({
-      from: 'Flock Safety <onboarding@resend.dev>',
+      from: 'Flock Safety <alerts@flockcorp.com>',
       to,
       subject,
       html: htmlBody,
