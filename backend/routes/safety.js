@@ -125,10 +125,22 @@ router.delete('/contacts/:id', authenticate, async (req, res) => {
   }
 });
 
-// ── Send emergency alert ──
+// ── Send emergency alert (rate limited: 1 per 20 minutes) ──
 router.post('/alert', authenticate, async (req, res) => {
   try {
     const { latitude, longitude, includeLocation } = req.body;
+
+    // Check cooldown — 1 alert per 20 minutes
+    const recent = await pool.query(
+      `SELECT created_at FROM emergency_alerts WHERE user_id = $1 AND created_at > NOW() - INTERVAL '20 minutes' ORDER BY created_at DESC LIMIT 1`,
+      [req.user.id]
+    );
+    if (recent.rows.length > 0) {
+      const lastSent = new Date(recent.rows[0].created_at);
+      const cooldownEnd = new Date(lastSent.getTime() + 20 * 60 * 1000);
+      const minsLeft = Math.ceil((cooldownEnd - Date.now()) / 60000);
+      return res.status(429).json({ error: `Please wait ${minsLeft} minute${minsLeft > 1 ? 's' : ''} before sending another alert` });
+    }
 
     const contacts = await pool.query(
       'SELECT * FROM trusted_contacts WHERE user_id = $1',
