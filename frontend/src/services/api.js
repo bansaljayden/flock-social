@@ -1,6 +1,4 @@
-const BASE_URL = process.env.NODE_ENV === 'production'
-  ? 'https://flock-app-production.up.railway.app'
-  : 'http://localhost:5000';
+const BASE_URL = process.env.REACT_APP_API_URL || 'https://flock-app-production.up.railway.app';
 
 function getToken() {
   return localStorage.getItem('flockToken');
@@ -100,6 +98,21 @@ export async function deleteFlock(id) {
 
 export async function leaveFlock(id) {
   return request(`/api/flocks/${id}/leave`, { method: 'POST' });
+}
+
+export async function inviteToFlock(flockId, userIds) {
+  return request(`/api/flocks/${flockId}/invite`, {
+    method: 'POST',
+    body: JSON.stringify({ user_ids: userIds }),
+  });
+}
+
+export async function acceptFlockInvite(flockId) {
+  return request(`/api/flocks/${flockId}/join`, { method: 'POST' });
+}
+
+export async function declineFlockInvite(flockId) {
+  return request(`/api/flocks/${flockId}/decline`, { method: 'POST' });
 }
 
 // Messages

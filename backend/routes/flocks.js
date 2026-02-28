@@ -49,10 +49,12 @@ router.post('/',
     try {
       const errors = validationResult(req);
       if (!errors.isEmpty()) {
+        console.error('[Flock Create] Validation error:', errors.array());
         return res.status(400).json({ error: errors.array()[0].msg });
       }
 
       const { name, venue_name, venue_address, venue_id, venue_latitude, venue_longitude, venue_rating, venue_photo_url, event_time, invited_user_ids } = req.body;
+      console.log('[Flock Create] User:', req.user.id, '| Name:', name, '| Venue:', venue_name || '(none)');
 
       const client = await pool.connect();
       try {
@@ -67,6 +69,7 @@ router.post('/',
         );
 
         const flock = flockResult.rows[0];
+        console.log('[Flock Create] Flock created with id:', flock.id);
 
         // Add the creator as an accepted member
         await client.query(
@@ -85,9 +88,11 @@ router.post('/',
               [flock.id, uid]
             );
           }
+          console.log('[Flock Create] Invited', invited_user_ids.length, 'users');
         }
 
         await client.query('COMMIT');
+        console.log('[Flock Create] Success - flock id:', flock.id);
         res.status(201).json({ flock });
       } catch (err) {
         await client.query('ROLLBACK');
@@ -96,7 +101,8 @@ router.post('/',
         client.release();
       }
     } catch (err) {
-      console.error('Create flock error:', err);
+      console.error('[Flock Create] Error:', err.message);
+      console.error('[Flock Create] Detail:', err.detail || 'none');
       res.status(500).json({ error: 'Failed to create flock' });
     }
   }
@@ -259,6 +265,90 @@ router.post('/:id/join', param('id').isInt(), async (req, res) => {
   } catch (err) {
     console.error('Join flock error:', err);
     res.status(500).json({ error: 'Failed to join flock' });
+  }
+});
+
+// POST /api/flocks/:id/invite - Invite users to an existing flock
+router.post('/:id/invite',
+  [
+    param('id').isInt(),
+    body('user_ids').isArray({ min: 1 }).withMessage('user_ids must be a non-empty array'),
+  ],
+  async (req, res) => {
+    try {
+      const errors = validationResult(req);
+      if (!errors.isEmpty()) {
+        return res.status(400).json({ error: errors.array()[0].msg });
+      }
+
+      const flockId = parseInt(req.params.id);
+      const { user_ids } = req.body;
+
+      // Verify the inviter is an accepted member
+      const membership = await pool.query(
+        "SELECT id FROM flock_members WHERE flock_id = $1 AND user_id = $2 AND status = 'accepted'",
+        [flockId, req.user.id]
+      );
+      if (membership.rows.length === 0) {
+        return res.status(403).json({ error: 'You must be a member of this flock to invite others' });
+      }
+
+      const flockResult = await pool.query('SELECT id, name FROM flocks WHERE id = $1', [flockId]);
+      if (flockResult.rows.length === 0) {
+        return res.status(404).json({ error: 'Flock not found' });
+      }
+
+      const invited = [];
+      for (const userId of user_ids) {
+        const uid = parseInt(userId);
+        if (!Number.isFinite(uid) || uid === req.user.id) continue;
+
+        const userCheck = await pool.query('SELECT id, name FROM users WHERE id = $1', [uid]);
+        if (userCheck.rows.length === 0) continue;
+
+        const result = await pool.query(
+          `INSERT INTO flock_members (flock_id, user_id, status)
+           VALUES ($1, $2, 'invited')
+           ON CONFLICT (flock_id, user_id)
+           DO UPDATE SET status = 'invited'
+           WHERE flock_members.status = 'declined'
+           RETURNING *`,
+          [flockId, uid]
+        );
+
+        if (result.rows.length > 0) {
+          invited.push({ user_id: uid, user_name: userCheck.rows[0].name });
+        }
+      }
+
+      res.json({ message: `Invited ${invited.length} user(s)`, invited, flock: flockResult.rows[0] });
+    } catch (err) {
+      console.error('Invite to flock error:', err);
+      res.status(500).json({ error: 'Failed to invite users' });
+    }
+  }
+);
+
+// POST /api/flocks/:id/decline - Decline a flock invite
+router.post('/:id/decline', param('id').isInt(), async (req, res) => {
+  try {
+    const flockId = parseInt(req.params.id);
+
+    const result = await pool.query(
+      `UPDATE flock_members SET status = 'declined'
+       WHERE flock_id = $1 AND user_id = $2 AND status = 'invited'
+       RETURNING *`,
+      [flockId, req.user.id]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'No pending invite for this flock' });
+    }
+
+    res.json({ message: 'Invite declined' });
+  } catch (err) {
+    console.error('Decline flock error:', err);
+    res.status(500).json({ error: 'Failed to decline invite' });
   }
 });
 

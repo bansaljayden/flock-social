@@ -239,3 +239,27 @@ export function onMemberStoppedSharing(callback) {
   if (socket) socket.on('member_stopped_sharing', callback);
   return () => { if (socket) socket.off('member_stopped_sharing', callback); };
 }
+
+// --- Flock invites ---
+
+export function emitFlockInvite(flockId, invitedUserIds) {
+  if (socket?.connected) {
+    socket.emit('flock_invite', { flockId, invitedUserIds });
+  }
+}
+
+export function emitFlockInviteResponse(flockId, action) {
+  if (socket?.connected) {
+    socket.emit('flock_invite_response', { flockId, action });
+  }
+}
+
+export function onFlockInviteReceived(callback) {
+  if (socket) socket.on('flock_invite_received', callback);
+  return () => { if (socket) socket.off('flock_invite_received', callback); };
+}
+
+export function onFlockInviteResponded(callback) {
+  if (socket) socket.on('flock_invite_responded', callback);
+  return () => { if (socket) socket.off('flock_invite_responded', callback); };
+}
