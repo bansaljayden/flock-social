@@ -142,6 +142,86 @@ router.put('/profile',
   }
 );
 
+// GET /api/users/stats - Get user's real stats (friends, XP, streak)
+router.get('/stats', async (req, res) => {
+  try {
+    const userId = req.user.id;
+
+    // Friend count
+    const friendResult = await pool.query(
+      `SELECT COUNT(*) FROM friendships WHERE (requester_id = $1 OR addressee_id = $1) AND status = 'accepted'`,
+      [userId]
+    );
+    const friendCount = parseInt(friendResult.rows[0].count);
+
+    // Flock count
+    const flockResult = await pool.query(
+      `SELECT COUNT(*) FROM flock_members WHERE user_id = $1 AND status = 'accepted'`,
+      [userId]
+    );
+    const flockCount = parseInt(flockResult.rows[0].count);
+
+    // Messages sent (flock + DM)
+    const flockMsgResult = await pool.query(
+      `SELECT COUNT(*) FROM messages WHERE sender_id = $1`,
+      [userId]
+    );
+    const dmMsgResult = await pool.query(
+      `SELECT COUNT(*) FROM direct_messages WHERE sender_id = $1`,
+      [userId]
+    );
+    const messageCount = parseInt(flockMsgResult.rows[0].count) + parseInt(dmMsgResult.rows[0].count);
+
+    // Flocks created
+    const createdResult = await pool.query(
+      `SELECT COUNT(*) FROM flocks WHERE creator_id = $1`,
+      [userId]
+    );
+    const flocksCreated = parseInt(createdResult.rows[0].count);
+
+    // Calculate XP: 50 per flock created, 20 per flock joined, 5 per message, 10 per friend
+    const xp = (flocksCreated * 50) + (Math.max(0, flockCount - flocksCreated) * 20) + (messageCount * 5) + (friendCount * 10);
+    const level = Math.floor(xp / 100) + 1;
+
+    // Streak: count consecutive days with activity (messages or flock joins) going back from today
+    const activityResult = await pool.query(
+      `SELECT DISTINCT DATE(created_at AT TIME ZONE 'UTC') AS d FROM (
+        SELECT created_at FROM messages WHERE sender_id = $1
+        UNION ALL
+        SELECT created_at FROM direct_messages WHERE sender_id = $1
+        UNION ALL
+        SELECT joined_at AS created_at FROM flock_members WHERE user_id = $1
+      ) AS activity ORDER BY d DESC LIMIT 60`,
+      [userId]
+    );
+    let streak = 0;
+    if (activityResult.rows.length > 0) {
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      const dates = activityResult.rows.map(r => {
+        const d = new Date(r.d);
+        d.setHours(0, 0, 0, 0);
+        return d.getTime();
+      });
+      // Check if today or yesterday has activity, then count back
+      const dayMs = 86400000;
+      let checkDate = today.getTime();
+      if (!dates.includes(checkDate)) {
+        checkDate -= dayMs; // allow yesterday as start
+      }
+      while (dates.includes(checkDate)) {
+        streak++;
+        checkDate -= dayMs;
+      }
+    }
+
+    res.json({ friendCount, flockCount, flocksCreated, messageCount, xp, level, streak });
+  } catch (err) {
+    console.error('Get user stats error:', err);
+    res.status(500).json({ error: 'Failed to get stats' });
+  }
+});
+
 // GET /api/users/search?q= - Search users by name only (no email exposure)
 router.get('/search',
   query('q').trim().isLength({ min: 1 }).withMessage('Search query is required'),

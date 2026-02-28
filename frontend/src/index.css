@@ -1,5 +1,109 @@
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap');
 
+:root {
+  --bg-primary: #f5f0e6;
+  --bg-card: rgba(255,255,255,0.95);
+  --bg-card-solid: #ffffff;
+  --bg-input: rgba(255,255,255,0.95);
+  --bg-nav: rgba(255,255,255,0.95);
+  --bg-modal: #ffffff;
+  --bg-hover: #f3f4f6;
+  --bg-tertiary: #f8fafc;
+  --bg-elevated: #ffffff;
+  --text-primary: #0d2847;
+  --text-secondary: #6b7280;
+  --text-tertiary: #9ca3af;
+  --text-on-primary: #0d2847;
+  --border-color: #e8e0d0;
+  --border-light: #f3f4f6;
+  --border-default: #e5e7eb;
+  --border-mid: #d1d5db;
+  --border-subtle: rgba(0,0,0,0.06);
+  --divider: #eeeeee;
+  --card-shadow: 0 4px 24px rgba(13,40,71,0.08), 0 1px 3px rgba(0,0,0,0.04);
+  --card-shadow-sm: 0 1px 3px rgba(0,0,0,0.1);
+  --card-border: 1px solid rgba(255,255,255,0.9);
+  --nav-shadow: 0 -4px 24px rgba(0,0,0,0.06);
+  --nav-border: 1px solid rgba(0,0,0,0.03);
+  --icon-bg: #f5f0e6;
+  --modal-backdrop: rgba(0,0,0,0.5);
+  --badge-bg: #f5f0e6;
+  --toggle-off: #d1d5db;
+  --toggle-knob: #ffffff;
+  --accent-amber-bg: #fef3c7;
+  --accent-amber-text: #b45309;
+  --accent-red-bg: #fee2e2;
+  --accent-green-bg: #d1fae5;
+  --accent-blue-bg: #dbeafe;
+  --pill-bg: #e5e7eb;
+  --msg-received-bg: #ffffff;
+  --msg-received-text: #0d2847;
+  --reaction-bg: #ffffff;
+  --search-highlight: #fde047;
+  --skeleton-bg: #e5e7eb;
+  --locked-overlay: rgba(255,255,255,0.9);
+  --star-empty: #d1d5db;
+  --accent-green-text: #047857;
+  --accent-blue-text: #1d4ed8;
+  --accent-red-text: #b91c1c;
+  --accent-purple-bg: #faf5ff;
+  --accent-purple-text: #7c3aed;
+  --accent-pink-bg: #fce7f3;
+  --accent-pink-text: #be185d;
+}
+
+[data-theme="dark"] {
+  --bg-primary: #0f172a;
+  --bg-card: rgba(30,41,59,0.95);
+  --bg-card-solid: #1e293b;
+  --bg-input: rgba(30,41,59,0.95);
+  --bg-nav: rgba(15,23,42,0.95);
+  --bg-modal: #1e293b;
+  --bg-hover: #334155;
+  --bg-tertiary: #334155;
+  --bg-elevated: #1e293b;
+  --text-primary: #f1f5f9;
+  --text-secondary: #94a3b8;
+  --text-tertiary: #64748b;
+  --text-on-primary: #f1f5f9;
+  --border-color: #334155;
+  --border-light: #1e293b;
+  --border-default: #334155;
+  --border-mid: #475569;
+  --border-subtle: rgba(255,255,255,0.06);
+  --divider: #334155;
+  --card-shadow: 0 4px 24px rgba(0,0,0,0.25), 0 1px 3px rgba(0,0,0,0.15);
+  --card-shadow-sm: 0 1px 3px rgba(0,0,0,0.3);
+  --card-border: 1px solid rgba(255,255,255,0.05);
+  --nav-shadow: 0 -4px 24px rgba(0,0,0,0.3);
+  --nav-border: 1px solid rgba(255,255,255,0.05);
+  --icon-bg: #334155;
+  --modal-backdrop: rgba(0,0,0,0.7);
+  --badge-bg: #334155;
+  --toggle-off: #475569;
+  --toggle-knob: #1e293b;
+  --accent-amber-bg: rgba(245,158,11,0.15);
+  --accent-amber-text: #fbbf24;
+  --accent-red-bg: rgba(239,68,68,0.15);
+  --accent-green-bg: rgba(16,185,129,0.15);
+  --accent-blue-bg: rgba(59,130,246,0.15);
+  --pill-bg: #475569;
+  --msg-received-bg: #334155;
+  --msg-received-text: #f1f5f9;
+  --reaction-bg: #1e293b;
+  --search-highlight: rgba(253,224,71,0.3);
+  --skeleton-bg: #475569;
+  --locked-overlay: rgba(30,41,59,0.9);
+  --star-empty: #475569;
+  --accent-green-text: #34d399;
+  --accent-blue-text: #60a5fa;
+  --accent-red-text: #f87171;
+  --accent-purple-bg: rgba(124,58,237,0.15);
+  --accent-purple-text: #a78bfa;
+  --accent-pink-bg: rgba(190,24,93,0.15);
+  --accent-pink-text: #f472b6;
+}
+
 body {
   margin: 0;
   font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
@@ -7,6 +111,9 @@ body {
     sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  transition: background 0.3s ease, color 0.3s ease;
 }
 
 code {
