@@ -259,6 +259,12 @@ async function runMigrations() {
       created_at TIMESTAMP DEFAULT NOW()
     )`);
 
+    // Keep demo stories alive — refresh expiration for seeded picsum stories
+    await pool.query(
+      `UPDATE stories SET expires_at = NOW() + INTERVAL '24 hours'
+       WHERE image_url LIKE 'https://picsum.photos/seed/flock%' AND expires_at < NOW()`
+    );
+
     console.log('Migrations complete');
   } catch (err) {
     console.warn('Migration warning (non-fatal):', err.message);
