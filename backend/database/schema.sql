@@ -119,6 +119,26 @@ CREATE TABLE IF NOT EXISTS friendships (
   UNIQUE(requester_id, addressee_id)
 );
 
+CREATE TABLE IF NOT EXISTS trusted_contacts (
+  id SERIAL PRIMARY KEY,
+  user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+  contact_name VARCHAR(100) NOT NULL,
+  contact_phone VARCHAR(20) NOT NULL,
+  contact_email VARCHAR(255),
+  relationship VARCHAR(50),
+  created_at TIMESTAMP DEFAULT NOW(),
+  UNIQUE(user_id, contact_phone)
+);
+
+CREATE TABLE IF NOT EXISTS emergency_alerts (
+  id SERIAL PRIMARY KEY,
+  user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+  latitude DOUBLE PRECISION,
+  longitude DOUBLE PRECISION,
+  contacts_alerted INTEGER,
+  created_at TIMESTAMP DEFAULT NOW()
+);
+
 -- Indexes for query performance
 CREATE INDEX IF NOT EXISTS idx_friendships_requester ON friendships(requester_id);
 CREATE INDEX IF NOT EXISTS idx_friendships_addressee ON friendships(addressee_id);
@@ -136,3 +156,4 @@ CREATE INDEX IF NOT EXISTS idx_emoji_reactions_message ON emoji_reactions(messag
 CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
 CREATE INDEX IF NOT EXISTS idx_stories_user ON stories(user_id);
 CREATE INDEX IF NOT EXISTS idx_stories_expires ON stories(expires_at);
+CREATE INDEX IF NOT EXISTS idx_trusted_contacts_user ON trusted_contacts(user_id);
