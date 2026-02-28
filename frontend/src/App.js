@@ -1832,7 +1832,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
           loadVenuesAtLocation(40.5798, -75.2932);
         }
       },
-      { enableHighAccuracy: false, timeout: 5000, maximumAge: forceRefresh ? 0 : 120000 }
+      { enableHighAccuracy: true, timeout: 10000, maximumAge: forceRefresh ? 0 : 30000 }
     );
   }, [loadVenuesAtLocation]);
 
