@@ -2963,6 +2963,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
           <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: 0 }}>{trustedContacts.length > 0 ? `${trustedContacts.length} trusted contact${trustedContacts.length > 1 ? 's' : ''} will be notified` : 'No trusted contacts set up'}</p>
         </div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+          <a href="tel:911" style={{ ...styles.gradientButton, background: colors.red, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', textDecoration: 'none', color: 'white', fontWeight: '700' }}>{Icons.phone('white', 16)} Call 911</a>
           <button disabled={sosAlertSending} onClick={handleEmergencyAlert} style={{ ...styles.gradientButton, background: `linear-gradient(90deg, ${colors.red}, #f97316)`, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', position: 'relative', overflow: 'hidden', opacity: sosAlertSending ? 0.6 : 1 }}>{Icons.shield('white', 16)} {sosAlertSending ? 'Sending...' : 'Alert Contacts'}</button>
           <button disabled={sosAlertSending} onClick={handleShareLocationWithContacts} style={{ ...styles.gradientButton, background: 'var(--bg-card-solid)', color: colors.navy, border: `2px solid ${colors.navy}`, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', opacity: sosAlertSending ? 0.6 : 1 }}>{Icons.mapPin(colors.navy, 16)} {sosAlertSending ? 'Sending...' : 'Share Location'}</button>
           {trustedContacts.length === 0 && (
