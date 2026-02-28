@@ -276,8 +276,10 @@ router.post('/:id/invite',
   ],
   async (req, res) => {
     try {
+      console.log('[Invite] Route hit — flock:', req.params.id, '| body:', JSON.stringify(req.body));
       const errors = validationResult(req);
       if (!errors.isEmpty()) {
+        console.log('[Invite] Validation error:', errors.array());
         return res.status(400).json({ error: errors.array()[0].msg });
       }
 
@@ -306,24 +308,44 @@ router.post('/:id/invite',
         const userCheck = await pool.query('SELECT id, name FROM users WHERE id = $1', [uid]);
         if (userCheck.rows.length === 0) continue;
 
-        const result = await pool.query(
-          `INSERT INTO flock_members (flock_id, user_id, status)
-           VALUES ($1, $2, 'invited')
-           ON CONFLICT (flock_id, user_id)
-           DO UPDATE SET status = 'invited'
-           WHERE flock_members.status = 'declined'
-           RETURNING *`,
+        // Check if already a member
+        const existing = await pool.query(
+          'SELECT status FROM flock_members WHERE flock_id = $1 AND user_id = $2',
           [flockId, uid]
         );
 
-        if (result.rows.length > 0) {
+        if (existing.rows.length > 0 && existing.rows[0].status === 'accepted') {
+          console.log('[Invite] User', uid, 'already accepted member, skipping');
+          continue;
+        }
+
+        if (existing.rows.length > 0 && existing.rows[0].status === 'invited') {
+          console.log('[Invite] User', uid, 'already invited, skipping');
+          continue;
+        }
+
+        if (existing.rows.length > 0 && existing.rows[0].status === 'declined') {
+          // Re-invite
+          await pool.query(
+            `UPDATE flock_members SET status = 'invited' WHERE flock_id = $1 AND user_id = $2`,
+            [flockId, uid]
+          );
           invited.push({ user_id: uid, user_name: userCheck.rows[0].name });
+          console.log('[Invite] Re-invited declined user', uid);
+        } else {
+          // New invite
+          await pool.query(
+            `INSERT INTO flock_members (flock_id, user_id, status) VALUES ($1, $2, 'invited')`,
+            [flockId, uid]
+          );
+          invited.push({ user_id: uid, user_name: userCheck.rows[0].name });
+          console.log('[Invite] Invited new user', uid);
         }
       }
 
       res.json({ message: `Invited ${invited.length} user(s)`, invited, flock: flockResult.rows[0] });
     } catch (err) {
-      console.error('Invite to flock error:', err);
+      console.error('[Invite] Error:', err.message, err.detail || '');
       res.status(500).json({ error: 'Failed to invite users' });
     }
   }
@@ -332,6 +354,7 @@ router.post('/:id/invite',
 // POST /api/flocks/:id/decline - Decline a flock invite
 router.post('/:id/decline', param('id').isInt(), async (req, res) => {
   try {
+    console.log('[Decline] Route hit — flock:', req.params.id, '| user:', req.user.id);
     const flockId = parseInt(req.params.id);
 
     const result = await pool.query(
