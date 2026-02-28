@@ -201,7 +201,7 @@ router.get('/details',
       const response = await fetch(`https://places.googleapis.com/v1/places/${placeId}`, {
         headers: {
           'X-Goog-Api-Key': API_KEY,
-          'X-Goog-FieldMask': 'id,displayName,formattedAddress,nationalPhoneNumber,websiteUri,rating,userRatingCount,priceLevel,photos,currentOpeningHours,types,location,googleMapsUri,menuUri',
+          'X-Goog-FieldMask': 'id,displayName,formattedAddress,nationalPhoneNumber,websiteUri,rating,userRatingCount,priceLevel,photos,currentOpeningHours,types,location,googleMapsUri',
         },
       });
 
@@ -228,7 +228,7 @@ router.get('/details',
           types: p.types || [],
           location: p.location || null,
           google_maps_url: p.googleMapsUri || null,
-          menu_url: p.menuUri || null,
+          menu_url: null,
         },
       };
       setCache(detailCacheKey, result);
