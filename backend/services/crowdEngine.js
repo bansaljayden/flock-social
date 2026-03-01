@@ -265,12 +265,37 @@ function estimateCapacity(venue, score) {
 // Wait estimate
 // ---------------------------------------------------------------------------
 
-function estimateWait(score) {
+function estimateWait(score, types) {
+  // Bars: walk-in, minimal wait unless packed
+  if (hasType(types, 'bar')) {
+    if (score < 50) return 'No wait';
+    if (score <= 70) return '~5 min';
+    if (score <= 85) return '5-10 min';
+    return '10-15 min';
+  }
+
+  // Night clubs: queue-based
+  if (hasType(types, 'night_club')) {
+    if (score < 40) return 'No wait';
+    if (score <= 60) return '5-10 min';
+    if (score <= 80) return '15-30 min';
+    return '30-60 min';
+  }
+
+  // Cafes: counter service, fast
+  if (hasType(types, 'cafe')) {
+    if (score < 50) return 'No wait';
+    if (score <= 70) return '~3 min';
+    if (score <= 85) return '5-10 min';
+    return '10-15 min';
+  }
+
+  // Restaurants: table waits
   if (score < 40) return 'No wait';
   if (score <= 55) return '~5 min';
-  if (score <= 70) return '5-15 min';
-  if (score <= 85) return '15-30 min';
-  return '30+ min';
+  if (score <= 70) return '10-20 min';
+  if (score <= 85) return '20-35 min';
+  return '35+ min';
 }
 
 // ---------------------------------------------------------------------------

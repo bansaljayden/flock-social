@@ -4979,7 +4979,21 @@ const FlockAppInner = ({ authUser, onLogout }) => {
                 };
 
                 const hourlyData = cd?.hourly || genHourly();
-                const waitText = cd ? cd.waitEstimate : (score > 70 ? '15-30 min' : score > 40 ? '~5 min' : 'No wait');
+                const isOpen = cd?.isOpen;
+                const isClosed = isOpen === false;
+
+                // Venue-type-aware wait estimate (client-side fallback)
+                const getWait = () => {
+                  if (isClosed) return 'Closed';
+                  if (cd) return cd.waitEstimate;
+                  const types = activeVenue.types || [];
+                  const isBarType = types.some(t => ['bar', 'night_club'].includes(t));
+                  const isCafeType = types.some(t => t === 'cafe');
+                  if (isBarType) return score < 50 ? 'No wait' : score <= 70 ? '~5 min' : score <= 85 ? '5-10 min' : '10-15 min';
+                  if (isCafeType) return score < 50 ? 'No wait' : score <= 70 ? '~3 min' : score <= 85 ? '5-10 min' : '10-15 min';
+                  return score < 40 ? 'No wait' : score <= 55 ? '~5 min' : score <= 70 ? '10-20 min' : score <= 85 ? '20-35 min' : '35+ min';
+                };
+                const waitText = getWait();
 
                 // Compute peak & best from hourly data
                 let peakText = cd?.peak;
@@ -5029,18 +5043,38 @@ const FlockAppInner = ({ authUser, onLogout }) => {
 
                 {/* Crowd Meter */}
                 <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '10px' }}>
-                  <div style={{ width: '50px', height: '50px', borderRadius: '25px', background: `conic-gradient(${crowdColor} ${score * 3.6}deg, var(--border-default) 0deg)`, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                    <div style={{ width: '40px', height: '40px', borderRadius: '20px', backgroundColor: 'var(--bg-card-solid)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column' }}>
-                      <span style={{ fontSize: '14px', fontWeight: '900', color: crowdColor }}>{score}%</span>
+                  {isClosed ? (
+                    <div style={{ width: '50px', height: '50px', borderRadius: '25px', backgroundColor: 'var(--border-default)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                      <div style={{ width: '40px', height: '40px', borderRadius: '20px', backgroundColor: 'var(--bg-card-solid)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                        <span style={{ fontSize: '10px', fontWeight: '900', color: 'var(--text-tertiary)' }}>---</span>
+                      </div>
                     </div>
-                  </div>
+                  ) : (
+                    <div style={{ width: '50px', height: '50px', borderRadius: '25px', background: `conic-gradient(${crowdColor} ${score * 3.6}deg, var(--border-default) 0deg)`, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                      <div style={{ width: '40px', height: '40px', borderRadius: '20px', backgroundColor: 'var(--bg-card-solid)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column' }}>
+                        <span style={{ fontSize: '14px', fontWeight: '900', color: crowdColor }}>{score}%</span>
+                      </div>
+                    </div>
+                  )}
                   <div style={{ flex: 1 }}>
-                    <p style={{ fontSize: '12px', fontWeight: '700', color: crowdColor, margin: 0 }}>{label}</p>
-                    <p style={{ fontSize: '10px', color: 'var(--text-secondary)', margin: '2px 0' }}>{waitText === 'No wait' ? 'No wait expected' : `Est. wait: ${waitText}`}</p>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                      {Icons.clock(colors.teal, 10)}
-                      <span style={{ fontSize: '10px', fontWeight: 'bold', color: colors.teal }}>Least crowded: {bestText}</span>
-                    </div>
+                    {isClosed ? (
+                      <>
+                        <p style={{ fontSize: '12px', fontWeight: '700', color: colors.red, margin: 0 }}>Currently Closed</p>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '4px', marginTop: '2px' }}>
+                          {Icons.clock(colors.teal, 10)}
+                          <span style={{ fontSize: '10px', fontWeight: 'bold', color: colors.teal }}>Best time to visit: {bestText}</span>
+                        </div>
+                      </>
+                    ) : (
+                      <>
+                        <p style={{ fontSize: '12px', fontWeight: '700', color: crowdColor, margin: 0 }}>{label}</p>
+                        <p style={{ fontSize: '10px', color: 'var(--text-secondary)', margin: '2px 0' }}>{waitText === 'No wait' ? 'No wait expected' : `Est. wait: ${waitText}`}</p>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                          {Icons.clock(colors.teal, 10)}
+                          <span style={{ fontSize: '10px', fontWeight: 'bold', color: colors.teal }}>Least crowded: {bestText}</span>
+                        </div>
+                      </>
+                    )}
                   </div>
                 </div>
 
@@ -5048,12 +5082,16 @@ const FlockAppInner = ({ authUser, onLogout }) => {
                 <div style={{ marginBottom: '10px' }}>
                   <p style={{ fontSize: '9px', fontWeight: '600', color: 'var(--text-secondary)', marginBottom: '6px', textTransform: 'uppercase' }}>Expected Crowd by Hour</p>
                   <div style={{ display: 'flex', alignItems: 'flex-end', gap: '3px', height: '40px' }}>
-                    {hourlyData.map((h, i) => (
+                    {hourlyData.map((h, i) => {
+                      const barColor = h.score > 70 ? colors.red : h.score > 40 ? colors.amber : colors.teal;
+                      const isNow = i === 0;
+                      return (
                       <div key={i} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '2px' }}>
-                        <div style={{ width: '100%', height: `${h.score * 0.4}px`, borderRadius: '2px', backgroundColor: h.score > 70 ? colors.red : h.score > 40 ? colors.amber : colors.teal, opacity: i === 0 ? 1 : 0.6 }} />
-                        <span style={{ fontSize: '7px', color: 'var(--text-tertiary)' }}>{h.hour}</span>
+                        <div style={{ width: '100%', height: `${Math.max(h.score * 0.4, 3)}px`, borderRadius: '2px', backgroundColor: barColor, opacity: isNow ? 1 : 0.5, border: isNow ? `1px solid ${barColor}` : 'none', boxShadow: isNow ? `0 0 4px ${barColor}40` : 'none' }} />
+                        <span style={{ fontSize: '7px', color: isNow ? colors.navy : 'var(--text-tertiary)', fontWeight: isNow ? '700' : '400' }}>{isNow ? 'Now' : h.hour}</span>
                       </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 </div>
 
@@ -5069,9 +5107,9 @@ const FlockAppInner = ({ authUser, onLogout }) => {
                   <div style={{ flex: 1, backgroundColor: 'var(--bg-card-solid)', borderRadius: '8px', padding: '6px 8px', border: '1px solid var(--border-subtle)' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '4px', marginBottom: '2px' }}>
                       {Icons.zap(colors.amber, 10)}
-                      <span style={{ fontSize: '8px', color: 'var(--text-secondary)', textTransform: 'uppercase' }}>Est. Wait Right Now</span>
+                      <span style={{ fontSize: '8px', color: 'var(--text-secondary)', textTransform: 'uppercase' }}>{isClosed ? 'Status' : 'Est. Wait Right Now'}</span>
                     </div>
-                    <span style={{ fontSize: '11px', fontWeight: '700', color: colors.navy }}>{waitText}</span>
+                    <span style={{ fontSize: '11px', fontWeight: '700', color: isClosed ? colors.red : colors.navy }}>{isClosed ? 'Closed' : waitText}</span>
                   </div>
                 </div>
 
