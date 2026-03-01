@@ -280,48 +280,66 @@ function estimateWait(score) {
 }
 
 // ---------------------------------------------------------------------------
-// Best time (lowest score in reasonable future hours)
+// Best time — lowest score, excluding peak hours and closed hours
 // ---------------------------------------------------------------------------
 
-function findBestTime(hourlyForecast, venue) {
-  if (!hourlyForecast || !hourlyForecast.length) return 'Right now';
+function findBestTime(hourlyForecast, venue, peakStartIdx, peakEndIdx) {
+  if (!hourlyForecast || !hourlyForecast.length) return 'Now is good';
 
   const currentScore = hourlyForecast[0].score;
-  const startHour = new Date().getHours();
   const types = venue?.types || [];
 
-  // Filter to hours when venue is likely open
-  const candidates = hourlyForecast.filter((_, i) => {
-    const h = ((startHour + i) % 24 + 24) % 24;
-    if (hasType(types, 'restaurant')) return h >= 11 && h <= 22;
-    if (hasType(types, 'cafe')) return h >= 6 && h <= 21;
-    if (hasType(types, 'bar', 'night_club')) return h >= 16 || h <= 2;
-    return h >= 7 && h <= 23;
-  });
+  // Build candidates: skip peak hours and closed hours
+  const candidates = [];
+  for (let i = 0; i < hourlyForecast.length; i++) {
+    // Skip hours that fall within the peak window
+    if (peakStartIdx != null && i >= peakStartIdx && i <= peakEndIdx) continue;
 
-  if (!candidates.length) return 'Right now';
+    // Parse the hour label back to 24h to check if venue is open
+    const hourLabel = hourlyForecast[i].hour;
+    const h = parseHourLabel(hourLabel);
 
-  let minEntry = candidates[0];
-  let minOrigIdx = hourlyForecast.indexOf(minEntry);
+    if (hasType(types, 'restaurant') && (h < 11 || h > 22)) continue;
+    if (hasType(types, 'cafe') && (h < 6 || h > 21)) continue;
+    // Bars/clubs and others: allow all forecast hours
 
+    candidates.push({ entry: hourlyForecast[i], idx: i });
+  }
+
+  if (!candidates.length) return 'Now is good';
+
+  let best = candidates[0];
   for (let i = 1; i < candidates.length; i++) {
-    if (candidates[i].score < minEntry.score) {
-      minEntry = candidates[i];
-      minOrigIdx = hourlyForecast.indexOf(candidates[i]);
+    if (candidates[i].entry.score < best.entry.score) {
+      best = candidates[i];
     }
   }
 
-  if (currentScore <= minEntry.score + 5) return 'Right now';
+  // If current time is already close to the best, say so
+  if (currentScore <= best.entry.score + 5) return 'Now is good';
 
-  return formatHourFull(startHour + minOrigIdx);
+  return hourlyForecast[best.idx].hour;
+}
+
+// Parse "7 PM" / "12 AM" back to 24h number
+function parseHourLabel(label) {
+  if (!label) return 12;
+  const parts = label.match(/^(\d+)\s*(AM|PM)$/i);
+  if (!parts) return 12;
+  let h = parseInt(parts[1], 10);
+  const ampm = parts[2].toUpperCase();
+  if (ampm === 'AM' && h === 12) h = 0;
+  else if (ampm === 'PM' && h !== 12) h += 12;
+  return h;
 }
 
 // ---------------------------------------------------------------------------
 // Peak time (highest score, range if consecutive tie)
+// Returns { text, startIdx, endIdx } so bestTime can avoid peak
 // ---------------------------------------------------------------------------
 
 function findPeakTime(hourlyForecast) {
-  if (!hourlyForecast || !hourlyForecast.length) return '';
+  if (!hourlyForecast || !hourlyForecast.length) return { text: '', startIdx: 0, endIdx: 0 };
 
   let maxScore = -1;
   let maxIndex = 0;
@@ -333,7 +351,7 @@ function findPeakTime(hourlyForecast) {
     }
   }
 
-  // Check if next hour ties (within 3 points)
+  // Extend to consecutive hours within 3 points
   let endIndex = maxIndex;
   for (let i = maxIndex + 1; i < hourlyForecast.length; i++) {
     if (Math.abs(hourlyForecast[i].score - maxScore) <= 3) {
@@ -343,13 +361,16 @@ function findPeakTime(hourlyForecast) {
     }
   }
 
-  const startHour = new Date().getHours() + maxIndex;
+  const startLabel = hourlyForecast[maxIndex].hour;
+  let text;
   if (endIndex > maxIndex) {
-    const endHour = new Date().getHours() + endIndex + 1;
-    return `${formatHourFull(startHour)} - ${formatHourFull(endHour)}`;
+    const endLabel = hourlyForecast[Math.min(endIndex + 1, hourlyForecast.length - 1)].hour;
+    text = `${startLabel} - ${endLabel}`;
+  } else {
+    text = startLabel;
   }
 
-  return formatHourFull(startHour);
+  return { text, startIdx: maxIndex, endIdx: endIndex };
 }
 
 // ---------------------------------------------------------------------------

@@ -116,8 +116,8 @@ router.get('/:placeId',
       const hourly = generateHourlyForecast(venue, weather, now.getHours(), 12);
       const capacity = estimateCapacity(venue, crowdResult.score);
       const waitEstimate = estimateWait(crowdResult.score);
-      const bestTime = findBestTime(hourly, venue);
-      const peak = findPeakTime(hourly);
+      const peakResult = findPeakTime(hourly);
+      const bestTime = findBestTime(hourly, venue, peakResult.startIdx, peakResult.endIdx);
 
       const result = {
         placeId,
@@ -127,7 +127,7 @@ router.get('/:placeId',
         confidence: crowdResult.confidence,
         capacity,
         bestTime,
-        peak,
+        peak: peakResult.text,
         waitEstimate,
         hourly,
         factors: crowdResult.factors,
