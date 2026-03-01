@@ -96,8 +96,9 @@ router.get('/:placeId',
 
       const placeId = req.params.placeId;
 
-      // Check cache
-      const cached = getCached(`full:${placeId}`);
+      // Check cache (include local time in key so different hours aren't stale)
+      const cacheKey = `full:${placeId}:${req.query.localHour || ''}:${req.query.localDay || ''}`;
+      const cached = getCached(cacheKey);
       if (cached) return res.json(cached);
 
       // Fetch venue from Google Places
@@ -111,10 +112,21 @@ router.get('/:placeId',
       const lon = venue.location?.longitude;
       const weather = (lat && lon) ? await getWeather(lat, lon) : null;
 
-      // Calculate everything
+      // Use client's local time if provided, else fall back to server time
       const now = new Date();
-      const crowdResult = calculateCrowdScore(venue, weather, now);
-      const hourly = generateHourlyForecast(venue, weather, now.getHours(), 12);
+      const localHour = req.query.localHour != null ? parseInt(req.query.localHour, 10) : now.getHours();
+      const localDay = req.query.localDay != null ? parseInt(req.query.localDay, 10) : now.getDay();
+
+      // Build a timestamp with the client's local hour/day for accurate scoring
+      const clientTime = new Date(now);
+      // Adjust to match client's day of week and hour
+      const serverDay = clientTime.getDay();
+      const dayDiff = localDay - serverDay;
+      clientTime.setDate(clientTime.getDate() + dayDiff);
+      clientTime.setHours(localHour, 0, 0, 0);
+
+      const crowdResult = calculateCrowdScore(venue, weather, clientTime);
+      const hourly = generateHourlyForecast(venue, weather, localHour, 12);
       const capacity = estimateCapacity(venue, crowdResult.score);
       const peakResult = findPeakTime(hourly);
       const bestTime = findBestTime(hourly, venue, peakResult.startIdx, peakResult.endIdx);
@@ -139,7 +151,7 @@ router.get('/:placeId',
         lastUpdated: now.toISOString(),
       };
 
-      setCache(`full:${placeId}`, result);
+      setCache(cacheKey, result);
       res.json(result);
     } catch (err) {
       console.error('[Crowd] Prediction error:', err);
@@ -160,8 +172,16 @@ router.post('/batch',
         return res.status(400).json({ error: errors.array()[0].msg });
       }
 
-      const { venues } = req.body;
+      const { venues, localHour, localDay } = req.body;
       const now = new Date();
+
+      // Use client's local time if provided
+      const clientTime = new Date(now);
+      if (localHour != null && localDay != null) {
+        const dayDiff = localDay - clientTime.getDay();
+        clientTime.setDate(clientTime.getDate() + dayDiff);
+        clientTime.setHours(localHour, 0, 0, 0);
+      }
 
       // Get weather once from the first venue's location
       const firstLoc = venues[0]?.location;
@@ -170,7 +190,7 @@ router.post('/batch',
         : null;
 
       const predictions = venues.map(v => {
-        const result = calculateCrowdScore(v, weather, now);
+        const result = calculateCrowdScore(v, weather, clientTime);
         return {
           placeId: v.place_id,
           name: v.name,
