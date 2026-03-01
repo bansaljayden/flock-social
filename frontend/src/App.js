@@ -5035,7 +5035,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
                       <>
                         <div style={{ width: '6px', height: '6px', borderRadius: '3px', backgroundColor: hasWeather ? '#22C55E' : colors.amber, animation: hasWeather ? 'pulse 2s ease-in-out infinite' : 'none' }} />
                         <span style={{ fontSize: '9px', color: hasWeather ? '#22C55E' : colors.amber, fontWeight: '500' }}>{hasWeather ? 'LIVE' : 'ESTIMATED'}</span>
-                        {confidenceText && <span style={{ fontSize: '9px', padding: '2px 6px', borderRadius: '10px', backgroundColor: 'var(--accent-blue-bg)', color: 'var(--accent-blue-text)', fontWeight: '600' }}>{confidenceText} confidence</span>}
+                        {confidenceText && <span style={{ fontSize: '9px', padding: '2px 6px', borderRadius: '10px', backgroundColor: 'var(--accent-blue-bg)', color: 'var(--accent-blue-text)', fontWeight: '600' }}>{confidenceText} accuracy</span>}
                       </>
                     )}
                   </div>
@@ -5052,7 +5052,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
                   ) : (
                     <div style={{ width: '50px', height: '50px', borderRadius: '25px', background: `conic-gradient(${crowdColor} ${score * 3.6}deg, var(--border-default) 0deg)`, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                       <div style={{ width: '40px', height: '40px', borderRadius: '20px', backgroundColor: 'var(--bg-card-solid)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column' }}>
-                        <span style={{ fontSize: '14px', fontWeight: '900', color: crowdColor }}>{score}%</span>
+                        <span style={{ fontSize: '13px', fontWeight: '900', color: crowdColor }}>{score}%</span>
                       </div>
                     </div>
                   )}
@@ -5067,7 +5067,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
                       </>
                     ) : (
                       <>
-                        <p style={{ fontSize: '12px', fontWeight: '700', color: crowdColor, margin: 0 }}>{label}</p>
+                        <p style={{ fontSize: '12px', fontWeight: '700', color: crowdColor, margin: 0 }}>{label} <span style={{ fontSize: '9px', fontWeight: '500', color: 'var(--text-tertiary)' }}>({score}% capacity filled)</span></p>
                         <p style={{ fontSize: '10px', color: 'var(--text-secondary)', margin: '2px 0' }}>{waitText === 'No wait' ? 'No wait expected' : `Est. wait: ${waitText}`}</p>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
                           {Icons.clock(colors.teal, 10)}
@@ -9300,10 +9300,21 @@ const FlockAppInner = ({ authUser, onLogout }) => {
                     const crowdScore = prediction ? prediction.score : venue.crowd;
                     const crowdColor = crowdScore > 70 ? '#EF4444' : crowdScore > 40 ? '#F59E0B' : '#22C55E';
                     const crowdLabel = prediction ? prediction.label : (crowdScore > 70 ? 'Busy' : crowdScore > 40 ? 'Moderate' : 'Not Busy');
-                    const forecastBars = [30, 35, 45, 55, 70, 85, 90, 80, 65, 50, 35, 25].map(h => {
-                      const seed = ((venue.place_id || '').charCodeAt(2) || 0);
-                      return Math.max(15, Math.min(95, h + ((seed * 7) % 30) - 15));
-                    });
+                    const forecastBars = (() => {
+                      const base = crowdScore;
+                      const types = venue.types || [];
+                      const isBar = types.some(t => ['bar', 'night_club'].includes(t));
+                      const isCafe = types.some(t => t === 'cafe');
+                      const nowH = new Date().getHours();
+                      return Array.from({ length: 12 }, (_, i) => {
+                        const h24 = ((nowH + i) % 24 + 24) % 24;
+                        let s = base;
+                        if (isBar) { s += (h24 >= 21 ? 25 : h24 >= 18 ? 10 : h24 >= 14 ? -15 : -25); }
+                        else if (isCafe) { s += (h24 >= 7 && h24 <= 9 ? 15 : h24 >= 10 && h24 <= 11 ? 5 : h24 >= 15 ? -15 : -10); }
+                        else { s += (h24 >= 18 && h24 <= 20 ? 15 : h24 >= 11 && h24 <= 13 ? 10 : h24 >= 14 && h24 <= 17 ? -12 : -20); }
+                        return Math.max(5, Math.min(95, Math.round(s)));
+                      });
+                    })();
 
                     return (
                       <button
@@ -9377,7 +9388,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
                                 <div style={{ width: '100%', height: `${h * 0.28}px`, borderRadius: '1.5px', backgroundColor: h > 70 ? '#EF444440' : h > 40 ? '#F59E0B40' : '#22C55E40', transition: 'height 0.3s' }} />
                               </div>
                             ))}
-                            <span style={{ fontSize: '8px', color: 'var(--text-tertiary)', marginLeft: '4px', whiteSpace: 'nowrap', flexShrink: 0 }}>6p-5a</span>
+                            <span style={{ fontSize: '8px', color: 'var(--text-tertiary)', marginLeft: '4px', whiteSpace: 'nowrap', flexShrink: 0 }}>12h</span>
                           </div>
                         </div>
                       </button>

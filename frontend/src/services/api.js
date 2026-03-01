@@ -312,13 +312,17 @@ export async function shareLocationWithContacts({ latitude, longitude }) {
 
 // Crowd Intelligence
 export async function getCrowdPrediction(placeId) {
-  return request(`/api/crowd/${encodeURIComponent(placeId)}`);
+  const now = new Date();
+  const localHour = now.getHours();
+  const localDay = now.getDay();
+  return request(`/api/crowd/${encodeURIComponent(placeId)}?localHour=${localHour}&localDay=${localDay}`);
 }
 
 export async function getCrowdBatch(venues) {
+  const now = new Date();
   return request('/api/crowd/batch', {
     method: 'POST',
-    body: JSON.stringify({ venues }),
+    body: JSON.stringify({ venues, localHour: now.getHours(), localDay: now.getDay() }),
   });
 }
 

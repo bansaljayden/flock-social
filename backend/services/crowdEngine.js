@@ -3,7 +3,7 @@
 // Sources: Google Places + OpenWeatherMap + time patterns
 // ---------------------------------------------------------------------------
 
-const BASE_SCORE = 30;
+const BASE_SCORE = 10;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -80,21 +80,26 @@ function getTimeFactor(dayOfWeek, hour) {
 }
 
 function getPopularityFactor(reviewCount) {
-  if (!reviewCount) return 1;
-  if (reviewCount >= 2000) return 15;
-  if (reviewCount >= 1000) return 12;
-  if (reviewCount >= 500) return 10;
-  if (reviewCount >= 200) return 7;
-  if (reviewCount >= 100) return 5;
-  if (reviewCount >= 50) return 3;
+  if (!reviewCount) return 0;
+  if (reviewCount >= 5000) return 25;
+  if (reviewCount >= 3000) return 22;
+  if (reviewCount >= 2000) return 19;
+  if (reviewCount >= 1000) return 16;
+  if (reviewCount >= 500) return 13;
+  if (reviewCount >= 200) return 10;
+  if (reviewCount >= 100) return 7;
+  if (reviewCount >= 50) return 4;
+  if (reviewCount >= 20) return 2;
   return 1;
 }
 
 function getRatingFactor(rating) {
   if (!rating) return 0;
-  if (rating >= 4.5) return 7;
-  if (rating >= 4.2) return 5;
-  if (rating >= 4.0) return 4;
+  if (rating >= 4.7) return 12;
+  if (rating >= 4.5) return 10;
+  if (rating >= 4.3) return 8;
+  if (rating >= 4.0) return 6;
+  if (rating >= 3.7) return 4;
   if (rating >= 3.5) return 3;
   if (rating >= 3.0) return 1;
   return 0;
@@ -191,14 +196,37 @@ function calculateCrowdScore(venue, weather, timestamp) {
   const rawScore = BASE_SCORE + time + popularity + rating + venueType + priceLevel + weatherMod;
   const score = Math.max(0, Math.min(100, Math.round(rawScore)));
 
-  // Confidence based on data availability
-  let confidence = 25; // time/day always available
-  if (venue.rating != null) confidence += 15;
-  if (reviews > 0) confidence += 15;
-  if (types.length > 0) confidence += 10;
-  if (venue.price_level != null) confidence += 5;
-  if (weather) confidence += 20;
-  confidence = Math.min(100, confidence);
+  // Confidence based on data quality (not just presence)
+  let confidence = 20; // time/day always available
+
+  // Review count is the strongest confidence signal
+  if (reviews >= 5000) confidence += 30;
+  else if (reviews >= 2000) confidence += 25;
+  else if (reviews >= 1000) confidence += 20;
+  else if (reviews >= 500) confidence += 16;
+  else if (reviews >= 200) confidence += 12;
+  else if (reviews >= 100) confidence += 8;
+  else if (reviews >= 50) confidence += 5;
+  else if (reviews > 0) confidence += 2;
+
+  // Rating precision (more reviews = more reliable rating)
+  if (venue.rating != null) {
+    if (reviews >= 500) confidence += 10;
+    else if (reviews >= 100) confidence += 6;
+    else confidence += 3;
+  }
+
+  // Venue type helps scoring accuracy
+  if (types.length >= 3) confidence += 8;
+  else if (types.length > 0) confidence += 4;
+
+  // Price level is a minor signal
+  if (venue.price_level != null) confidence += 3;
+
+  // Weather data adds real-time accuracy
+  if (weather) confidence += 15;
+
+  confidence = Math.min(95, confidence);
 
   const dataSourcesUsed = ['google_places', 'time_patterns'];
   if (weather) dataSourcesUsed.push('weather');
@@ -219,12 +247,14 @@ function calculateCrowdScore(venue, weather, timestamp) {
 function generateHourlyForecast(venue, weather, startHour, count) {
   const hours = count || 12;
   const start = startHour != null ? startHour : new Date().getHours();
-  const now = new Date();
   const forecast = [];
 
+  // Build a base timestamp matching the start hour
+  const base = new Date();
+  base.setHours(start, 0, 0, 0);
+
   for (let i = 0; i < hours; i++) {
-    const ts = new Date(now.getTime() + i * 60 * 60 * 1000);
-    ts.setMinutes(0, 0, 0);
+    const ts = new Date(base.getTime() + i * 60 * 60 * 1000);
 
     const result = calculateCrowdScore(venue, weather, ts);
     forecast.push({
