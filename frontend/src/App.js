@@ -5118,12 +5118,19 @@ const FlockAppInner = ({ authUser, onLogout }) => {
                   <p style={{ fontSize: '9px', fontWeight: '600', color: 'var(--text-secondary)', marginBottom: '6px', textTransform: 'uppercase' }}>Expected Crowd by Hour</p>
                   <div style={{ display: 'flex', alignItems: 'flex-end', gap: '3px', height: '40px' }}>
                     {hourlyData.map((h, i) => {
-                      const barColor = h.score > 70 ? colors.red : h.score > 40 ? colors.amber : colors.teal;
                       const isNow = i === 0;
+                      // Determine if this hour is during closed time for venue type
+                      const parsedH = (() => { const p = (h.hour || '').match(/^(\d+)\s*(AM|PM)$/i); if (!p) return 12; let hr = parseInt(p[1], 10); if (p[2].toUpperCase() === 'AM' && hr === 12) hr = 0; else if (p[2].toUpperCase() === 'PM' && hr !== 12) hr += 12; return hr; })();
+                      const vTypes = activeVenue.types || [];
+                      const isBarH = vTypes.some(t => ['bar', 'night_club'].includes(t));
+                      const isCafeH = vTypes.some(t => t === 'cafe');
+                      const isRestH = vTypes.some(t => t === 'restaurant');
+                      const hourClosed = isBarH ? (parsedH >= 3 && parsedH < 16) : isRestH ? (parsedH < 11 || parsedH > 22) : isCafeH ? (parsedH < 6 || parsedH > 21) : false;
+                      const barColor = hourClosed ? 'var(--text-tertiary)' : h.score > 70 ? colors.red : h.score > 40 ? colors.amber : colors.teal;
                       return (
                       <div key={i} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '2px' }}>
-                        <div style={{ width: '100%', height: `${Math.max(h.score * 0.4, 3)}px`, borderRadius: '2px', backgroundColor: barColor, opacity: isNow ? 1 : 0.5, border: isNow ? `1px solid ${barColor}` : 'none', boxShadow: isNow ? `0 0 4px ${barColor}40` : 'none' }} />
-                        <span style={{ fontSize: '7px', color: isNow ? colors.navy : 'var(--text-tertiary)', fontWeight: isNow ? '700' : '400' }}>{isNow ? 'Now' : h.hour}</span>
+                        <div style={{ width: '100%', height: `${hourClosed ? 3 : Math.max(h.score * 0.4, 3)}px`, borderRadius: '2px', backgroundColor: barColor, opacity: hourClosed ? 0.3 : isNow ? 1 : 0.5, border: isNow && !hourClosed ? `1px solid ${barColor}` : 'none', boxShadow: isNow && !hourClosed ? `0 0 4px ${barColor}40` : 'none' }} />
+                        <span style={{ fontSize: '7px', color: hourClosed ? 'var(--text-tertiary)' : isNow ? colors.navy : 'var(--text-tertiary)', fontWeight: isNow ? '700' : '400', opacity: hourClosed ? 0.4 : 1 }}>{isNow ? 'Now' : h.hour}</span>
                       </div>
                       );
                     })}
