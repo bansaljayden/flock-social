@@ -310,5 +310,29 @@ export async function shareLocationWithContacts({ latitude, longitude }) {
   });
 }
 
+// Crowd Intelligence
+export async function getCrowdPrediction(placeId) {
+  return request(`/api/crowd/${encodeURIComponent(placeId)}`);
+}
+
+export async function getCrowdBatch(venues) {
+  return request('/api/crowd/batch', {
+    method: 'POST',
+    body: JSON.stringify({ venues }),
+  });
+}
+
+export async function getCrowdAlternatives(placeId) {
+  return request(`/api/crowd/${encodeURIComponent(placeId)}/alternatives`);
+}
+
+// Venue Feedback
+export async function submitVenueFeedback(data) {
+  return request('/api/feedback', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+}
+
 export { getToken, BASE_URL };
 export default request;

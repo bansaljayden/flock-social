@@ -11,7 +11,7 @@ import {
   formatCurrency,
   calculateProfitMargin
 } from './lib/finance';
-import { getCurrentUser, logout, isLoggedIn, getFlocks, getFlock, createFlock as apiCreateFlock, getMessages, sendMessage as apiSendMessage, updateProfile, searchVenues, searchUsers, getSuggestedUsers, sendFriendRequest, getStories, getVenueDetails, leaveFlock as apiLeaveFlock, getDMConversations, getDMs, getDmVenueVotes, getDmPinnedVenue, BASE_URL, inviteToFlock, acceptFlockInvite, declineFlockInvite, getFriends, acceptFriendRequest, declineFriendRequest, getPendingRequests, getOutgoingRequests, getFriendSuggestions, addFriendByCode, findFriendsByPhone, removeFriend, getTrustedContacts, addTrustedContact, updateTrustedContact, deleteTrustedContact, sendEmergencyAlert, shareLocationWithContacts, getUserStats } from './services/api';
+import { getCurrentUser, logout, isLoggedIn, getFlocks, getFlock, createFlock as apiCreateFlock, getMessages, sendMessage as apiSendMessage, updateProfile, searchVenues, searchUsers, getSuggestedUsers, sendFriendRequest, getStories, getVenueDetails, leaveFlock as apiLeaveFlock, getDMConversations, getDMs, getDmVenueVotes, getDmPinnedVenue, BASE_URL, inviteToFlock, acceptFlockInvite, declineFlockInvite, getFriends, acceptFriendRequest, declineFriendRequest, getPendingRequests, getOutgoingRequests, getFriendSuggestions, addFriendByCode, findFriendsByPhone, removeFriend, getTrustedContacts, addTrustedContact, updateTrustedContact, deleteTrustedContact, sendEmergencyAlert, shareLocationWithContacts, getUserStats, getCrowdPrediction, getCrowdBatch, getCrowdAlternatives } from './services/api';
 import { connectSocket, disconnectSocket, getSocket, joinFlock, leaveFlock, sendMessage as socketSendMessage, sendImageMessage as socketSendImage, startTyping, stopTyping, onNewMessage, onUserTyping, onUserStoppedTyping, emitLocation, stopSharingLocation as socketStopSharing, onLocationUpdate, onMemberStoppedSharing, socketSendDm, onNewDm, dmStartTyping, dmStopTyping, onDmUserTyping, onDmUserStoppedTyping, dmReact, dmRemoveReact, onDmReactionAdded, onDmReactionRemoved, dmVoteVenue, onDmNewVote, dmShareLocation, dmStopSharingLocation, onDmLocationUpdate, onDmMemberStoppedSharing, dmPinVenue, onDmVenuePinned, emitFlockInvite, emitFlockInviteResponse, onFlockInviteReceived, onFlockInviteResponded, emitFriendRequest, emitFriendResponse, onFriendRequestReceived, onFriendRequestResponded } from './services/socket';
 import { QRCodeSVG } from 'qrcode.react';
 import { Html5Qrcode } from 'html5-qrcode';
@@ -1044,6 +1044,10 @@ const FlockAppInner = ({ authUser, onLogout }) => {
   const [showSearchResults, setShowSearchResults] = useState(false);
   const [searchResultsSort, setSearchResultsSort] = useState('rating');
   const searchTimerRef = useRef(null);
+  const [crowdPredictions, setCrowdPredictions] = useState({});
+  const [crowdData, setCrowdData] = useState(null);
+  const [crowdLoading, setCrowdLoading] = useState(false);
+  const [crowdAlternatives, setCrowdAlternatives] = useState([]);
 
   // Geolocation state — restore last known location immediately so map isn't empty
   const [userLocation, setUserLocation] = useState(() => {
@@ -1095,7 +1099,8 @@ const FlockAppInner = ({ authUser, onLogout }) => {
       return true;
     }).map((v, i) => {
       const seed = ((v.place_id || '').charCodeAt(0) || 0) + i;
-      const crowd = Math.round(20 + ((seed * 37) % 70));
+      const prediction = crowdPredictions[v.place_id];
+      const crowd = prediction ? prediction.score : Math.round(20 + ((seed * 37) % 70));
       return {
         id: i + 1,
         place_id: v.place_id,
@@ -1105,6 +1110,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
         x: 10 + ((seed * 13) % 80),
         y: 10 + ((seed * 29) % 75),
         crowd,
+        crowdLabel: prediction ? prediction.label : null,
         best: bestTimes[i % bestTimes.length],
         stars: v.rating || 4.0,
         addr: v.formatted_address || '',
@@ -1115,7 +1121,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
         types: v.types || [],
       };
     });
-  }, [categorizeVenue]);
+  }, [categorizeVenue, crowdPredictions]);
 
   const doVenueSearch = useCallback(async (q) => {
     if (!q.trim() || q.trim().length < 2) { setVenueResults([]); return; }
@@ -1140,7 +1146,23 @@ const FlockAppInner = ({ authUser, onLogout }) => {
       const venues = data.venues || [];
       searchCacheRef.current[cacheKey] = { data: venues, timestamp: Date.now() };
       setVenueResults(venues);
-      if (venues.length > 0) { setAllVenues(venuesToMapPins(venues)); setActiveVenue(null); }
+      if (venues.length > 0) {
+        setAllVenues(venuesToMapPins(venues));
+        setActiveVenue(null);
+        // Fire batch crowd prediction (non-blocking)
+        const batchPayload = venues.slice(0, 20).map(v => ({
+          place_id: v.place_id, name: v.name, rating: v.rating,
+          user_ratings_total: v.user_ratings_total, types: v.types,
+          price_level: v.price_level, location: v.location,
+        }));
+        getCrowdBatch(batchPayload)
+          .then(res => {
+            const map = {};
+            (res.predictions || []).forEach(p => { map[p.placeId] = p; });
+            setCrowdPredictions(prev => ({ ...prev, ...map }));
+          })
+          .catch(err => console.error('[Crowd] Batch prediction failed:', err));
+      }
     } catch (err) {
       console.error('Venue search error:', err);
       if (err.message && (err.message.includes('429') || err.message.toLowerCase().includes('rate') || err.message.toLowerCase().includes('too many'))) {
@@ -1155,18 +1177,38 @@ const FlockAppInner = ({ authUser, onLogout }) => {
   const openVenueDetail = useCallback(async (placeId, fallbackData) => {
     setVenueDetailLoading(true);
     setVenueDetailPhotoIdx(0);
+    setCrowdData(null);
+    setCrowdLoading(true);
+    setCrowdAlternatives([]);
     setVenueDetailModal(fallbackData ? { ...fallbackData, loading: true } : { name: 'Loading...', loading: true });
     try {
-      const data = await getVenueDetails(placeId);
-      console.log('[VenueDetail] API response:', JSON.stringify(data.venue, null, 2).slice(0, 500));
-      setVenueDetailModal({ ...data.venue, loading: false });
+      const [detailResult, crowdResult] = await Promise.allSettled([
+        getVenueDetails(placeId),
+        getCrowdPrediction(placeId),
+      ]);
+
+      const venue = detailResult.status === 'fulfilled' ? detailResult.value.venue : fallbackData;
+      const crowd = crowdResult.status === 'fulfilled' ? crowdResult.value : null;
+
+      if (venue) setVenueDetailModal({ ...venue, loading: false });
+      else if (fallbackData) setVenueDetailModal({ ...fallbackData, loading: false });
+      else setVenueDetailModal(null);
+
+      setCrowdData(crowd);
+
+      // Fetch quieter alternatives (non-blocking)
+      if (crowd) {
+        getCrowdAlternatives(placeId)
+          .then(res => setCrowdAlternatives(res.alternatives || []))
+          .catch(() => setCrowdAlternatives([]));
+      }
     } catch (err) {
-      console.error('[VenueDetail] API failed:', err.message);
-      // Keep fallback data if API fails
+      console.error('[VenueDetail] Failed:', err.message);
       if (fallbackData) setVenueDetailModal({ ...fallbackData, loading: false });
       else setVenueDetailModal(null);
     } finally {
       setVenueDetailLoading(false);
+      setCrowdLoading(false);
     }
   }, []);
 
@@ -4895,6 +4937,21 @@ const FlockAppInner = ({ authUser, onLogout }) => {
               </div>
 
               {/* AI Crowd Forecast Widget */}
+              {(() => {
+                const cd = crowdData;
+                const score = cd ? cd.score : activeVenue.crowd;
+                const label = cd ? cd.label : (score > 70 ? 'Very Busy' : score > 40 ? 'Moderate' : 'Not Busy');
+                const crowdColor = score > 70 ? colors.red : score > 40 ? colors.amber : colors.teal;
+                const hourlyData = cd?.hourly || [30, 35, 45, 55, 70, 85, 90, 80, 65, 50, 35, 25].map((h, i) => ({ hour: `${6 + i}p`, score: h }));
+                const capacityText = cd ? `~${cd.capacity.current} / ${cd.capacity.max} people` : `~${Math.round(score * 1.5)} / 150 people`;
+                const bestTimeText = cd ? cd.bestTime : activeVenue.best;
+                const peakText = cd ? cd.peak : '10-11 PM';
+                const waitText = cd ? cd.waitEstimate : (score > 70 ? '15-20 min' : score > 40 ? '5-10 min' : 'No wait');
+                const confidenceText = cd ? `${cd.confidence}% confidence` : '—';
+                const hasWeather = cd?.weather != null;
+                const sources = cd?.dataSourcesUsed || [];
+
+                return (
               <div style={{ backgroundColor: 'var(--bg-tertiary)', borderRadius: '12px', padding: '10px', marginBottom: '10px', border: '1px solid var(--border-subtle)' }}>
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
@@ -4902,76 +4959,89 @@ const FlockAppInner = ({ authUser, onLogout }) => {
                     <span style={{ fontSize: '11px', fontWeight: 'bold', color: colors.navy }}>AI Crowd Forecast</span>
                   </div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                    <div style={{ width: '6px', height: '6px', borderRadius: '3px', backgroundColor: '#22C55E', animation: 'pulse 2s ease-in-out infinite' }} />
-                    <span style={{ fontSize: '9px', color: '#22C55E', fontWeight: '500' }}>LIVE</span>
-                    <span style={{ fontSize: '9px', padding: '2px 6px', borderRadius: '10px', backgroundColor: 'var(--accent-blue-bg)', color: 'var(--accent-blue-text)', fontWeight: '600' }}>87% accuracy</span>
+                    {crowdLoading ? (
+                      <span style={{ fontSize: '9px', color: 'var(--text-secondary)' }}>Loading...</span>
+                    ) : (
+                      <>
+                        <div style={{ width: '6px', height: '6px', borderRadius: '3px', backgroundColor: hasWeather ? '#22C55E' : colors.amber, animation: hasWeather ? 'pulse 2s ease-in-out infinite' : 'none' }} />
+                        <span style={{ fontSize: '9px', color: hasWeather ? '#22C55E' : colors.amber, fontWeight: '500' }}>{hasWeather ? 'LIVE' : 'ESTIMATED'}</span>
+                        <span style={{ fontSize: '9px', padding: '2px 6px', borderRadius: '10px', backgroundColor: 'var(--accent-blue-bg)', color: 'var(--accent-blue-text)', fontWeight: '600' }}>{confidenceText}</span>
+                      </>
+                    )}
                   </div>
                 </div>
 
                 {/* Crowd Meter */}
                 <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '10px' }}>
-                  <div style={{ width: '50px', height: '50px', borderRadius: '25px', background: `conic-gradient(${activeVenue.crowd > 70 ? colors.red : activeVenue.crowd > 40 ? colors.amber : colors.teal} ${activeVenue.crowd * 3.6}deg, var(--border-default) 0deg)`, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  <div style={{ width: '50px', height: '50px', borderRadius: '25px', background: `conic-gradient(${crowdColor} ${score * 3.6}deg, var(--border-default) 0deg)`, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                     <div style={{ width: '40px', height: '40px', borderRadius: '20px', backgroundColor: 'var(--bg-card-solid)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column' }}>
-                      <span style={{ fontSize: '14px', fontWeight: '900', color: activeVenue.crowd > 70 ? colors.red : activeVenue.crowd > 40 ? colors.amber : colors.teal }}>{activeVenue.crowd}%</span>
+                      <span style={{ fontSize: '14px', fontWeight: '900', color: crowdColor }}>{score}%</span>
                     </div>
                   </div>
                   <div style={{ flex: 1 }}>
-                    <p style={{ fontSize: '11px', fontWeight: '600', color: colors.navy, margin: 0 }}>{activeVenue.crowd > 70 ? 'Very Busy' : activeVenue.crowd > 40 ? 'Moderate' : 'Not Busy'}</p>
-                    <p style={{ fontSize: '10px', color: 'var(--text-secondary)', margin: '2px 0' }}>Capacity: ~{Math.round(activeVenue.crowd * 1.5)} / 150 people</p>
+                    <p style={{ fontSize: '11px', fontWeight: '600', color: colors.navy, margin: 0 }}>{label}</p>
+                    <p style={{ fontSize: '10px', color: 'var(--text-secondary)', margin: '2px 0' }}>Capacity: {capacityText}</p>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
                       {Icons.clock(colors.teal, 10)}
-                      <span style={{ fontSize: '10px', fontWeight: 'bold', color: colors.teal }}>Best time: {activeVenue.best}</span>
+                      <span style={{ fontSize: '10px', fontWeight: 'bold', color: colors.teal }}>Best time: {bestTimeText}</span>
                     </div>
                   </div>
                 </div>
+
+                {/* Data Sources */}
+                {sources.length > 0 && (
+                  <p style={{ fontSize: '8px', color: 'var(--text-tertiary)', margin: '0 0 8px 0' }}>Sources: {sources.map(s => s.replace(/_/g, ' ')).join(' + ')}</p>
+                )}
 
                 {/* Hourly Forecast Graph */}
                 <div style={{ marginBottom: '10px' }}>
                   <p style={{ fontSize: '9px', fontWeight: '600', color: 'var(--text-secondary)', marginBottom: '6px', textTransform: 'uppercase' }}>Hourly Forecast</p>
                   <div style={{ display: 'flex', alignItems: 'flex-end', gap: '3px', height: '40px' }}>
-                    {[30, 35, 45, 55, 70, 85, 90, 80, 65, 50, 35, 25].map((h, i) => (
+                    {hourlyData.map((h, i) => (
                       <div key={i} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '2px' }}>
-                        <div style={{ width: '100%', height: `${h * 0.4}px`, borderRadius: '2px', backgroundColor: h > 70 ? colors.red : h > 40 ? colors.amber : colors.teal, opacity: i === 5 ? 1 : 0.6 }} />
-                        <span style={{ fontSize: '7px', color: 'var(--text-tertiary)' }}>{6 + i}p</span>
+                        <div style={{ width: '100%', height: `${(h.score || h) * 0.4}px`, borderRadius: '2px', backgroundColor: (h.score || h) > 70 ? colors.red : (h.score || h) > 40 ? colors.amber : colors.teal, opacity: i === 0 ? 1 : 0.6 }} />
+                        <span style={{ fontSize: '7px', color: 'var(--text-tertiary)' }}>{h.hour || `${6 + i}p`}</span>
                       </div>
                     ))}
                   </div>
                 </div>
 
-                {/* Peak Time Prediction */}
+                {/* Peak Time & Wait */}
                 <div style={{ display: 'flex', gap: '6px', marginBottom: '8px' }}>
                   <div style={{ flex: 1, backgroundColor: 'var(--bg-card-solid)', borderRadius: '8px', padding: '6px 8px', border: '1px solid var(--border-subtle)' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '4px', marginBottom: '2px' }}>
                       {Icons.trendingUp(colors.red, 10)}
                       <span style={{ fontSize: '8px', color: 'var(--text-secondary)', textTransform: 'uppercase' }}>Peak</span>
                     </div>
-                    <span style={{ fontSize: '11px', fontWeight: '700', color: colors.navy }}>10-11 PM</span>
+                    <span style={{ fontSize: '11px', fontWeight: '700', color: colors.navy }}>{peakText}</span>
                   </div>
                   <div style={{ flex: 1, backgroundColor: 'var(--bg-card-solid)', borderRadius: '8px', padding: '6px 8px', border: '1px solid var(--border-subtle)' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '4px', marginBottom: '2px' }}>
                       {Icons.zap(colors.amber, 10)}
                       <span style={{ fontSize: '8px', color: 'var(--text-secondary)', textTransform: 'uppercase' }}>Wait</span>
                     </div>
-                    <span style={{ fontSize: '11px', fontWeight: '700', color: colors.navy }}>{activeVenue.crowd > 70 ? '15-20 min' : activeVenue.crowd > 40 ? '5-10 min' : 'No wait'}</span>
+                    <span style={{ fontSize: '11px', fontWeight: '700', color: colors.navy }}>{waitText}</span>
                   </div>
                 </div>
 
-                {/* Similar Venues */}
+                {/* Quieter Options */}
                 <div>
                   <p style={{ fontSize: '9px', fontWeight: '600', color: 'var(--text-secondary)', marginBottom: '6px', textTransform: 'uppercase' }}>Quieter Options</p>
                   <div style={{ display: 'flex', gap: '6px' }}>
-                    {allVenues.filter(v => v.id !== activeVenue.id && v.category === activeVenue.category).slice(0, 2).map(v => (
-                      <button key={v.id} onClick={() => setActiveVenue(v)} style={{ flex: 1, padding: '6px', backgroundColor: 'var(--bg-card-solid)', border: '1px solid var(--border-subtle)', borderRadius: '8px', cursor: 'pointer', textAlign: 'left' }}>
+                    {(crowdAlternatives.length > 0 ? crowdAlternatives.slice(0, 2) : allVenues.filter(v => v.id !== activeVenue.id && v.category === activeVenue.category).slice(0, 2)).map((v, i) => (
+                      <button key={v.placeId || v.id || i} onClick={() => { if (v.placeId) openVenueDetail(v.placeId, null); else setActiveVenue(v); }} style={{ flex: 1, padding: '6px', backgroundColor: 'var(--bg-card-solid)', border: '1px solid var(--border-subtle)', borderRadius: '8px', cursor: 'pointer', textAlign: 'left' }}>
                         <p style={{ fontSize: '10px', fontWeight: '600', color: colors.navy, margin: 0 }}>{v.name}</p>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '4px', marginTop: '2px' }}>
-                          <div style={{ width: '6px', height: '6px', borderRadius: '3px', backgroundColor: v.crowd > 70 ? colors.red : v.crowd > 40 ? colors.amber : colors.teal }} />
-                          <span style={{ fontSize: '9px', color: 'var(--text-secondary)' }}>{v.crowd}% full</span>
+                          <div style={{ width: '6px', height: '6px', borderRadius: '3px', backgroundColor: (v.score || v.crowd) > 70 ? colors.red : (v.score || v.crowd) > 40 ? colors.amber : colors.teal }} />
+                          <span style={{ fontSize: '9px', color: 'var(--text-secondary)' }}>{v.label || `${v.crowd}% full`}</span>
                         </div>
                       </button>
                     ))}
                   </div>
                 </div>
               </div>
+                );
+              })()}
 
               <div style={{ display: 'flex', gap: '6px' }}>
                 {pickingVenueForCreate ? (
@@ -9135,8 +9205,10 @@ const FlockAppInner = ({ authUser, onLogout }) => {
                     </div>
                   ) : !venueSearching && sorted.map((venue) => {
                     const dist = calcDist(venue.location);
-                    const crowdColor = venue.crowd > 70 ? '#EF4444' : venue.crowd > 40 ? '#F59E0B' : '#22C55E';
-                    const crowdLabel = venue.crowd > 70 ? 'Busy' : venue.crowd > 40 ? 'Moderate' : 'Not Busy';
+                    const prediction = crowdPredictions[venue.place_id];
+                    const crowdScore = prediction ? prediction.score : venue.crowd;
+                    const crowdColor = crowdScore > 70 ? '#EF4444' : crowdScore > 40 ? '#F59E0B' : '#22C55E';
+                    const crowdLabel = prediction ? prediction.label : (crowdScore > 70 ? 'Busy' : crowdScore > 40 ? 'Moderate' : 'Not Busy');
                     const forecastBars = [30, 35, 45, 55, 70, 85, 90, 80, 65, 50, 35, 25].map(h => {
                       const seed = ((venue.place_id || '').charCodeAt(2) || 0);
                       return Math.max(15, Math.min(95, h + ((seed * 7) % 30) - 15));
@@ -9166,7 +9238,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
                               )}
                               <div style={{ position: 'absolute', top: '8px', right: '8px', padding: '4px 8px', borderRadius: '10px', backgroundColor: `${crowdColor}18`, backdropFilter: 'blur(8px)', WebkitBackdropFilter: 'blur(8px)', display: 'flex', alignItems: 'center', gap: '4px' }}>
                                 <div style={{ width: '6px', height: '6px', borderRadius: '3px', backgroundColor: crowdColor }} />
-                                <span style={{ fontSize: '10px', fontWeight: '700', color: crowdColor }}>{venue.crowd}%</span>
+                                <span style={{ fontSize: '10px', fontWeight: '700', color: crowdColor }}>{crowdScore}%</span>
                               </div>
                             </>
                           )}
@@ -9196,7 +9268,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
                             {!venue.photo_url && (
                               <span style={{ fontSize: '10px', fontWeight: '600', color: crowdColor, backgroundColor: `${crowdColor}12`, padding: '2px 8px', borderRadius: '8px', display: 'flex', alignItems: 'center', gap: '3px' }}>
                                 <div style={{ width: '5px', height: '5px', borderRadius: '3px', backgroundColor: crowdColor }} />
-                                {crowdLabel} {venue.crowd}%
+                                {crowdLabel} {crowdScore}%
                               </span>
                             )}
                             <span style={{ fontSize: '10px', fontWeight: '600', color: colors.navy, display: 'flex', alignItems: 'center', gap: '3px' }}>
