@@ -53,7 +53,7 @@ function priceLevelToNum(priceLevel) {
   return map[priceLevel] ?? null;
 }
 
-async function fetchVenueFromGoogle(placeId) {
+async function fetchVenueFromGoogle(placeId, clientDay) {
   if (!API_KEY) return null;
 
   const response = await fetch(`https://places.googleapis.com/v1/places/${placeId}`, {
@@ -71,7 +71,7 @@ async function fetchVenueFromGoogle(placeId) {
   let closeHour = null;
   const periods = p.currentOpeningHours?.periods;
   if (periods && periods.length) {
-    const today = new Date().getDay(); // 0=Sun
+    const today = clientDay != null ? clientDay : new Date().getDay(); // 0=Sun
     const todayPeriod = periods.find(pd => pd.open?.day === today);
     if (todayPeriod) {
       openHour = todayPeriod.open?.hour ?? null;
@@ -118,8 +118,13 @@ router.get('/:placeId',
       const cached = getCached(cacheKey);
       if (cached) return res.json(cached);
 
+      // Use client's local time if provided, else fall back to server time
+      const now = new Date();
+      const localHour = req.query.localHour != null ? parseInt(req.query.localHour, 10) : now.getHours();
+      const localDay = req.query.localDay != null ? parseInt(req.query.localDay, 10) : now.getDay();
+
       // Fetch venue from Google Places
-      const venue = await fetchVenueFromGoogle(placeId);
+      const venue = await fetchVenueFromGoogle(placeId, localDay);
       if (!venue) {
         return res.status(502).json({ error: 'Failed to fetch venue data from Google Places' });
       }
@@ -128,11 +133,6 @@ router.get('/:placeId',
       const lat = venue.location?.latitude;
       const lon = venue.location?.longitude;
       const weather = (lat && lon) ? await getWeather(lat, lon) : null;
-
-      // Use client's local time if provided, else fall back to server time
-      const now = new Date();
-      const localHour = req.query.localHour != null ? parseInt(req.query.localHour, 10) : now.getHours();
-      const localDay = req.query.localDay != null ? parseInt(req.query.localDay, 10) : now.getDay();
 
       // Build a timestamp with the client's local hour/day for accurate scoring
       const clientTime = new Date(now);
@@ -249,7 +249,8 @@ router.get('/:placeId/alternatives',
       const placeId = req.params.placeId;
 
       // Fetch target venue
-      const target = await fetchVenueFromGoogle(placeId);
+      const clientDay = req.query.localDay != null ? parseInt(req.query.localDay, 10) : undefined;
+      const target = await fetchVenueFromGoogle(placeId, clientDay);
       if (!target) {
         return res.status(502).json({ error: 'Failed to fetch venue data' });
       }
