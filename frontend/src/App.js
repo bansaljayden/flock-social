@@ -541,8 +541,8 @@ const GoogleMapView = React.memo(({ venues, filterCategory, userLocation, active
             place_id: placeId || null,
             name: venueName,
             addr: venueAddr,
-            type: 'Venue',
-            category: 'Food',
+            type: target?.types?.[0] ? target.types[0].replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()) : 'Place',
+            category: (() => { const tt = (target?.types || []).join(' ').toLowerCase(); if (tt.includes('bar') || tt.includes('night_club')) return 'Nightlife'; if (tt.includes('restaurant') || tt.includes('cafe') || tt.includes('food') || tt.includes('diner') || tt.includes('juice')) return 'Food'; return 'Food'; })(),
             price: '$$',
             stars: venueRating,
             crowd: crowd,
@@ -1693,6 +1693,20 @@ const FlockAppInner = ({ authUser, onLogout }) => {
   const [venueDetailModal, setVenueDetailModal] = useState(null); // full venue details for modal
   const [, setVenueDetailLoading] = useState(false);
   const [venueDetailPhotoIdx, setVenueDetailPhotoIdx] = useState(0);
+
+  // Fetch crowd data when activeVenue changes (map pin tapped)
+  useEffect(() => {
+    if (!activeVenue || !activeVenue.place_id) { setCrowdData(null); return; }
+    let cancelled = false;
+    setCrowdLoading(true);
+    setCrowdData(null);
+    setCrowdAlternatives([]);
+    getCrowdPrediction(activeVenue.place_id)
+      .then(data => { if (!cancelled) { setCrowdData(data); if (data) getCrowdAlternatives(activeVenue.place_id).then(res => { if (!cancelled) setCrowdAlternatives(res.alternatives || []); }).catch(() => {}); } })
+      .catch(() => {})
+      .finally(() => { if (!cancelled) setCrowdLoading(false); });
+    return () => { cancelled = true; };
+  }, [activeVenue]);
 
   // Auto-refresh crowd data every 5 minutes when venue detail modal is open
   useEffect(() => {
@@ -4472,7 +4486,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
         const f = data.flock;
         const initialMessages = [];
         if (venueName) {
-          const venueCardData = { name: venueName, addr: venueAddr, place_id: venueId, photo_url: venuePhoto, rating: venueRating, stars: venueRating, price: venuePriceLevel ? '$'.repeat(venuePriceLevel) : null, price_level: venuePriceLevel, type: capturedVenue?.type || 'Venue', category: capturedVenue?.category || 'Food', crowd: capturedVenue?.crowd || Math.round(20 + Math.random() * 60), lat: venueLat, lng: venueLng };
+          const venueCardData = { name: venueName, addr: venueAddr, place_id: venueId, photo_url: venuePhoto, rating: venueRating, stars: venueRating, price: venuePriceLevel ? '$'.repeat(venuePriceLevel) : null, price_level: venuePriceLevel, type: capturedVenue?.type || (capturedVenue?.types?.[0] ? capturedVenue.types[0].replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()) : 'Place'), category: capturedVenue?.category || 'Food', crowd: capturedVenue?.crowd || Math.round(20 + Math.random() * 60), lat: venueLat, lng: venueLng };
           initialMessages.push({
             id: Date.now(),
             sender: 'You',
@@ -4934,7 +4948,15 @@ const FlockAppInner = ({ authUser, onLogout }) => {
               <button onClick={() => setActiveVenue(null)} style={{ position: 'absolute', top: '8px', right: '8px', width: '24px', height: '24px', borderRadius: '12px', backgroundColor: 'rgba(255,255,255,0.2)', border: 'none', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.x('white', 14)}</button>
               <div style={{ color: 'white' }}>
                 <h3 style={{ fontSize: '14px', fontWeight: '900', margin: 0 }}>{activeVenue.name}</h3>
-                <p style={{ fontSize: '10px', opacity: 0.8, margin: 0 }}>{activeVenue.type} • {activeVenue.price}</p>
+                <p style={{ fontSize: '10px', opacity: 0.8, margin: 0 }}>{(() => {
+                  // Derive readable type from types array, falling back to type field
+                  const types = activeVenue.types || [];
+                  if (types.length > 0) {
+                    // Use first type, format nicely
+                    return types[0].replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+                  }
+                  return activeVenue.type || 'Place';
+                })()} • {activeVenue.price}</p>
               </div>
               <div style={{ position: 'absolute', bottom: '8px', right: '40px', display: 'flex', alignItems: 'center', gap: '2px', backgroundColor: 'rgba(255,255,255,0.2)', padding: '2px 6px', borderRadius: '10px' }}>
                 {Icons.party('#fbbf24', 10)}
@@ -4962,6 +4984,9 @@ const FlockAppInner = ({ authUser, onLogout }) => {
                   const isBar = types.some(t => ['bar', 'night_club'].includes(t));
                   const isCafe = types.some(t => ['cafe', 'juice_shop', 'smoothie_shop', 'juice_bar', 'tea_house', 'coffee_shop'].includes(t));
                   const isDiner = types.some(t => ['diner', 'breakfast_restaurant', 'brunch_restaurant'].includes(t));
+                  const isMall = types.some(t => t === 'shopping_mall');
+                  const isGym = types.some(t => ['gym', 'fitness_center'].includes(t));
+                  const isLibrary = types.some(t => ['library', 'museum'].includes(t));
                   const day = new Date().getDay();
                   const wkend = day === 5 || day === 6;
                   return Array.from({ length: 12 }, (_, i) => {
@@ -4988,6 +5013,24 @@ const FlockAppInner = ({ authUser, onLogout }) => {
                       else if (h24 >= 12 && h24 <= 14) s = score - 5;
                       else if (h24 >= 15 && h24 <= 19) s = score - 15;
                       else s = score - 30;
+                    } else if (isMall) {
+                      if (wkend && h24 >= 12 && h24 <= 17) s = score + 18;
+                      else if (wkend && h24 >= 10 && h24 <= 11) s = score + 10;
+                      else if (h24 >= 12 && h24 <= 14) s = score + 10;
+                      else if (h24 >= 15 && h24 <= 17) s = score + 5;
+                      else if (h24 >= 18 && h24 <= 20) s = score + 3;
+                      else s = score - 15;
+                    } else if (isGym) {
+                      if (!wkend && h24 >= 17 && h24 <= 19) s = score + 18;
+                      else if (!wkend && h24 >= 6 && h24 <= 8) s = score + 12;
+                      else if (wkend && h24 >= 9 && h24 <= 11) s = score + 10;
+                      else if (h24 >= 12 && h24 <= 14) s = score + 3;
+                      else s = score - 15;
+                    } else if (isLibrary) {
+                      if (wkend && h24 >= 11 && h24 <= 15) s = score + 12;
+                      else if (h24 >= 11 && h24 <= 14) s = score + 8;
+                      else if (h24 >= 15 && h24 <= 17) s = score + 3;
+                      else s = score - 15;
                     } else {
                       // Restaurant / default
                       if (h24 >= 18 && h24 <= 20) s = score + 15;
@@ -5027,6 +5070,9 @@ const FlockAppInner = ({ authUser, onLogout }) => {
                   const isBarF = types.some(t => ['bar', 'night_club'].includes(t));
                   const isCafeF = types.some(t => ['cafe', 'juice_shop', 'smoothie_shop', 'juice_bar', 'tea_house', 'coffee_shop'].includes(t));
                   const isDinerF = types.some(t => ['diner', 'breakfast_restaurant', 'brunch_restaurant'].includes(t));
+                  const isMallF = types.some(t => t === 'shopping_mall');
+                  const isGymF = types.some(t => ['gym', 'fitness_center'].includes(t));
+                  const isLibF = types.some(t => ['library', 'museum'].includes(t));
                   const isRestF = types.some(t => t === 'restaurant');
                   const dayF = new Date().getDay();
                   const wkendF = dayF === 5 || dayF === 6;
@@ -5036,6 +5082,9 @@ const FlockAppInner = ({ authUser, onLogout }) => {
                     if (isDinerF) return (h24 >= 6 && h24 <= 21);
                     if (isRestF) return (h24 >= 11 && h24 <= 22);
                     if (isCafeF) return (h24 >= 6 && h24 <= 21);
+                    if (isMallF) return (h24 >= 10 && h24 <= 21);
+                    if (isGymF) return (h24 >= 5 && h24 <= 23);
+                    if (isLibF) return (h24 >= 9 && h24 <= 18);
                     return (h24 >= 8 && h24 <= 23);
                   };
                   const fullDay = Array.from({ length: 24 }, (_, i) => {
@@ -5044,6 +5093,9 @@ const FlockAppInner = ({ authUser, onLogout }) => {
                     if (isBarF) { s += (wkendF && h24 >= 22 ? 30 : h24 >= 22 ? 25 : wkendF && h24 >= 21 ? 22 : h24 >= 21 ? 18 : h24 >= 18 ? 8 : h24 >= 6 && h24 <= 16 ? -20 : -10); }
                     else if (isDinerF) { s += (h24 >= 7 && h24 <= 9 ? (wkendF ? 20 : 18) : h24 >= 10 && h24 <= 11 ? 14 : h24 >= 11 && h24 <= 13 ? 12 : h24 >= 14 && h24 <= 16 ? -8 : h24 >= 17 && h24 <= 20 ? -5 : -15); }
                     else if (isCafeF) { s += (h24 >= 7 && h24 <= 9 ? 18 : h24 >= 10 && h24 <= 11 ? 10 : h24 >= 12 && h24 <= 14 ? 2 : h24 >= 15 && h24 <= 17 ? -8 : h24 >= 20 ? -20 : -10); }
+                    else if (isMallF) { s += (wkendF && h24 >= 12 && h24 <= 17 ? 18 : wkendF && h24 >= 10 && h24 <= 11 ? 10 : h24 >= 12 && h24 <= 14 ? 10 : h24 >= 15 && h24 <= 17 ? 5 : h24 >= 18 && h24 <= 20 ? 3 : -15); }
+                    else if (isGymF) { s += (!wkendF && h24 >= 17 && h24 <= 19 ? 18 : !wkendF && h24 >= 6 && h24 <= 8 ? 12 : wkendF && h24 >= 9 && h24 <= 11 ? 10 : h24 >= 12 && h24 <= 14 ? 3 : -15); }
+                    else if (isLibF) { s += (wkendF && h24 >= 11 && h24 <= 15 ? 12 : h24 >= 11 && h24 <= 14 ? 8 : h24 >= 15 && h24 <= 17 ? 3 : -15); }
                     else { s += (h24 >= 18 && h24 <= 20 ? (wkendF ? 20 : 15) : h24 >= 11 && h24 <= 13 ? 10 : h24 >= 21 && h24 <= 22 ? 5 : h24 >= 14 && h24 <= 17 ? -12 : -18); }
                     return { hour: fmtH(6 + i), score: Math.round(Math.max(5, Math.min(95, s))), h24 };
                   });
@@ -5118,7 +5170,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
                     ) : (
                       <>
                         <p style={{ fontSize: '12px', fontWeight: '700', color: crowdColor, margin: 0 }}>{label} <span style={{ fontSize: '9px', fontWeight: '500', color: 'var(--text-tertiary)' }}>({score}% capacity filled)</span></p>
-                        <p style={{ fontSize: '10px', color: 'var(--text-secondary)', margin: '2px 0' }}>{waitText === 'No wait' ? 'No wait expected' : `Est. wait: ${waitText}`}</p>
+                        <p style={{ fontSize: '10px', color: 'var(--text-secondary)', margin: '2px 0' }}>{waitText === 'No wait' ? 'No wait expected' : /^\d|^~/.test(waitText) ? `Est. wait: ${waitText}` : waitText}</p>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
                           {Icons.clock(colors.teal, 10)}
                           <span style={{ fontSize: '10px', fontWeight: 'bold', color: colors.teal }}>Least crowded: {bestText}</span>
@@ -5149,6 +5201,9 @@ const FlockAppInner = ({ authUser, onLogout }) => {
                           if (vTypes.some(t => ['bar', 'night_club'].includes(t))) return parsedH < 16;
                           if (vTypes.some(t => ['cafe', 'juice_shop', 'smoothie_shop', 'juice_bar', 'tea_house', 'coffee_shop'].includes(t))) return parsedH < 6 || parsedH > 21;
                           if (vTypes.some(t => ['fast_food_restaurant', 'meal_takeaway'].includes(t))) return parsedH < 6 || parsedH > 23;
+                          if (vTypes.some(t => t === 'shopping_mall')) return parsedH < 10 || parsedH > 21;
+                          if (vTypes.some(t => ['gym', 'fitness_center'].includes(t))) return parsedH < 5 || parsedH > 23;
+                          if (vTypes.some(t => ['library', 'museum'].includes(t))) return parsedH < 9 || parsedH > 18;
                           return parsedH <= new Date().getHours();
                         }
                         // Fallback: type-based estimates for open venues
@@ -5158,6 +5213,9 @@ const FlockAppInner = ({ authUser, onLogout }) => {
                         if (vTypes.some(t => ['fast_food_restaurant', 'meal_takeaway'].includes(t))) return (parsedH < 6 || parsedH > 23);
                         if (vTypes.some(t => t === 'restaurant')) return (parsedH < 11 || parsedH > 22);
                         if (vTypes.some(t => ['cafe', 'juice_shop', 'smoothie_shop', 'juice_bar', 'tea_house', 'coffee_shop'].includes(t))) return (parsedH < 6 || parsedH > 21);
+                        if (vTypes.some(t => t === 'shopping_mall')) return (parsedH < 10 || parsedH > 21);
+                        if (vTypes.some(t => ['gym', 'fitness_center'].includes(t))) return (parsedH < 5 || parsedH > 23);
+                        if (vTypes.some(t => ['library', 'museum'].includes(t))) return (parsedH < 9 || parsedH > 18);
                         return false;
                       })();
                       const barColor = hourClosed ? 'var(--text-tertiary)' : h.score > 70 ? colors.red : h.score > 40 ? colors.amber : colors.teal;
@@ -5183,7 +5241,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
                   <div style={{ flex: 1, backgroundColor: 'var(--bg-card-solid)', borderRadius: '8px', padding: '6px 8px', border: '1px solid var(--border-subtle)' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '4px', marginBottom: '2px' }}>
                       {Icons.zap(colors.amber, 10)}
-                      <span style={{ fontSize: '8px', color: 'var(--text-secondary)', textTransform: 'uppercase' }}>{isClosed ? 'Status' : 'Est. Wait Right Now'}</span>
+                      <span style={{ fontSize: '8px', color: 'var(--text-secondary)', textTransform: 'uppercase' }}>{isClosed ? 'Status' : /^\d|^~|wait/i.test(waitText) ? 'Est. Wait Right Now' : 'Crowd Level'}</span>
                     </div>
                     <span style={{ fontSize: '11px', fontWeight: '700', color: isClosed ? colors.red : colors.navy }}>{isClosed ? 'Closed' : waitText}</span>
                   </div>
@@ -9382,13 +9440,20 @@ const FlockAppInner = ({ authUser, onLogout }) => {
                       const isBar = types.some(t => ['bar', 'night_club'].includes(t));
                       const isCafe = types.some(t => ['cafe', 'juice_shop', 'smoothie_shop', 'juice_bar', 'tea_house', 'coffee_shop'].includes(t));
                       const isDiner = types.some(t => ['diner', 'breakfast_restaurant', 'brunch_restaurant'].includes(t));
+                      const isMall = types.some(t => t === 'shopping_mall');
+                      const isGym = types.some(t => ['gym', 'fitness_center'].includes(t));
+                      const isLib = types.some(t => ['library', 'museum'].includes(t));
                       const nowH = new Date().getHours();
+                      const wkd = new Date().getDay() === 5 || new Date().getDay() === 6;
                       return Array.from({ length: 12 }, (_, i) => {
                         const h24 = ((nowH + i) % 24 + 24) % 24;
                         let s = base;
                         if (isBar) { s += (h24 >= 21 ? 25 : h24 >= 18 ? 10 : h24 >= 14 ? -15 : -25); }
                         else if (isDiner) { s += (h24 >= 7 && h24 <= 9 ? 18 : h24 >= 10 && h24 <= 13 ? 12 : h24 >= 14 && h24 <= 16 ? -10 : h24 >= 17 && h24 <= 20 ? -5 : -15); }
                         else if (isCafe) { s += (h24 >= 7 && h24 <= 9 ? 15 : h24 >= 10 && h24 <= 11 ? 5 : h24 >= 15 ? -15 : -10); }
+                        else if (isMall) { s += (wkd && h24 >= 12 && h24 <= 17 ? 18 : h24 >= 12 && h24 <= 14 ? 10 : h24 >= 15 && h24 <= 17 ? 5 : h24 >= 18 && h24 <= 20 ? 3 : -15); }
+                        else if (isGym) { s += (!wkd && h24 >= 17 && h24 <= 19 ? 18 : !wkd && h24 >= 6 && h24 <= 8 ? 12 : wkd && h24 >= 9 && h24 <= 11 ? 10 : -15); }
+                        else if (isLib) { s += (h24 >= 11 && h24 <= 14 ? 10 : h24 >= 15 && h24 <= 17 ? 3 : -15); }
                         else { s += (h24 >= 18 && h24 <= 20 ? 15 : h24 >= 11 && h24 <= 13 ? 10 : h24 >= 14 && h24 <= 17 ? -12 : -20); }
                         return Math.max(5, Math.min(95, Math.round(s)));
                       });
