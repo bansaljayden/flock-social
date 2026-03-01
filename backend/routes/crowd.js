@@ -128,8 +128,11 @@ router.get('/:placeId',
       const crowdResult = calculateCrowdScore(venue, weather, clientTime);
       const hourly = generateHourlyForecast(venue, weather, localHour, 12);
       const capacity = estimateCapacity(venue, crowdResult.score);
-      const peakResult = findPeakTime(hourly);
-      const bestTime = findBestTime(hourly, venue, peakResult.startIdx, peakResult.endIdx);
+
+      // Full-day forecast (6 AM - 5 AM) for accurate peak/best detection
+      const fullDay = generateHourlyForecast(venue, weather, 6, 24);
+      const peakResult = findPeakTime(fullDay);
+      const bestTime = findBestTime(fullDay, venue, peakResult.startIdx, peakResult.endIdx);
 
       const waitEstimateTyped = estimateWait(crowdResult.score, venue.types);
 

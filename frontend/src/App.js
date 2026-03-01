@@ -5009,27 +5009,41 @@ const FlockAppInner = ({ authUser, onLogout }) => {
                 };
                 const waitText = getWait();
 
-                // Compute peak & best from hourly data
+                // Compute peak & best from full-day forecast (6 AM - 5 AM)
                 let peakText = cd?.peak;
                 let bestText = cd?.bestTime;
-                let peakStartI = -1, peakEndI = -1;
-                if (!peakText) {
-                  let maxS = -1, maxI = 0;
-                  hourlyData.forEach((h, i) => { if (h.score > maxS) { maxS = h.score; maxI = i; } });
-                  peakStartI = maxI;
-                  peakEndI = maxI;
-                  for (let i = maxI + 1; i < hourlyData.length; i++) { if (Math.abs(hourlyData[i].score - maxS) <= 3) peakEndI = i; else break; }
-                  peakText = peakEndI > peakStartI ? `${hourlyData[peakStartI].hour} - ${hourlyData[peakEndI].hour}` : hourlyData[peakStartI].hour;
-                }
-                if (!bestText) {
-                  // Find least crowded OUTSIDE peak hours
-                  let minS = 999, minI = -1;
-                  hourlyData.forEach((h, i) => {
-                    if (peakStartI >= 0 && i >= peakStartI && i <= peakEndI) return; // skip peak
-                    if (h.score < minS) { minS = h.score; minI = i; }
+                if (!peakText || !bestText) {
+                  const types = activeVenue.types || [];
+                  const isBarF = types.some(t => ['bar', 'night_club'].includes(t));
+                  const isCafeF = types.some(t => t === 'cafe');
+                  const dayF = new Date().getDay();
+                  const wkendF = dayF === 5 || dayF === 6;
+                  const fullDay = Array.from({ length: 24 }, (_, i) => {
+                    const h24 = ((6 + i) % 24 + 24) % 24;
+                    let s = score;
+                    if (isBarF) { s += (wkendF && h24 >= 22 ? 30 : h24 >= 22 ? 25 : wkendF && h24 >= 21 ? 22 : h24 >= 21 ? 18 : h24 >= 18 ? 8 : h24 >= 6 && h24 <= 16 ? -20 : -10); }
+                    else if (isCafeF) { s += (h24 >= 7 && h24 <= 9 ? 18 : h24 >= 10 && h24 <= 11 ? 10 : h24 >= 12 && h24 <= 14 ? 2 : h24 >= 15 && h24 <= 17 ? -8 : h24 >= 20 ? -20 : -10); }
+                    else { s += (h24 >= 18 && h24 <= 20 ? (wkendF ? 20 : 15) : h24 >= 11 && h24 <= 13 ? 10 : h24 >= 21 && h24 <= 22 ? 5 : h24 >= 14 && h24 <= 17 ? -12 : -18); }
+                    return { hour: fmtH(6 + i), score: Math.round(Math.max(5, Math.min(95, s))), h24 };
                   });
-                  if (minI < 0) minI = 0;
-                  bestText = (hourlyData[0].score <= minS + 5) ? 'Now is good' : hourlyData[minI].hour;
+                  if (!peakText) {
+                    let maxS = -1, maxI = 0;
+                    fullDay.forEach((h, i) => { if (h.score > maxS) { maxS = h.score; maxI = i; } });
+                    let endI = maxI;
+                    for (let i = maxI + 1; i < fullDay.length; i++) { if (Math.abs(fullDay[i].score - maxS) <= 3) endI = i; else break; }
+                    peakText = endI > maxI ? `${fullDay[maxI].hour} - ${fullDay[endI].hour}` : fullDay[maxI].hour;
+                    if (!bestText) {
+                      let minS = 999, minI = -1;
+                      fullDay.forEach((h, i) => {
+                        if (i >= maxI && i <= endI) return;
+                        if (types.some(t => t === 'restaurant') && (h.h24 < 11 || h.h24 > 22)) return;
+                        if (types.some(t => t === 'cafe') && (h.h24 < 6 || h.h24 > 21)) return;
+                        if (h.score < minS) { minS = h.score; minI = i; }
+                      });
+                      if (minI < 0) minI = 0;
+                      bestText = (score <= minS + 5) ? 'Now is good' : fullDay[minI].hour;
+                    }
+                  }
                 }
 
                 const hasWeather = cd?.weather != null;
