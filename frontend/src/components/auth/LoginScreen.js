@@ -2,11 +2,11 @@ import React, { useState } from 'react';
 import { login } from '../../services/api';
 
 const colors = {
-  navy: '#0d2847',
+  navy: '#1e293b',
   navyLight: '#1a3a5c',
   navyMid: '#2d5a87',
-  cream: '#f5f0e6',
-  creamDark: '#e8e0d0',
+  cream: '#f1ede0',
+  creamDark: '#e8e0d5',
   teal: '#14B8A6',
   red: '#EF4444',
 };
