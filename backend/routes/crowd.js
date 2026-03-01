@@ -59,7 +59,7 @@ async function fetchVenueFromGoogle(placeId) {
   const response = await fetch(`https://places.googleapis.com/v1/places/${placeId}`, {
     headers: {
       'X-Goog-Api-Key': API_KEY,
-      'X-Goog-FieldMask': 'id,displayName,formattedAddress,rating,userRatingCount,priceLevel,types,location',
+      'X-Goog-FieldMask': 'id,displayName,formattedAddress,rating,userRatingCount,priceLevel,types,location,currentOpeningHours',
     },
   });
 
@@ -75,6 +75,7 @@ async function fetchVenueFromGoogle(placeId) {
     price_level: priceLevelToNum(p.priceLevel),
     types: p.types || [],
     location: p.location || null,
+    isOpen: p.currentOpeningHours?.openNow ?? null,
   };
 }
 
@@ -115,9 +116,10 @@ router.get('/:placeId',
       const crowdResult = calculateCrowdScore(venue, weather, now);
       const hourly = generateHourlyForecast(venue, weather, now.getHours(), 12);
       const capacity = estimateCapacity(venue, crowdResult.score);
-      const waitEstimate = estimateWait(crowdResult.score);
       const peakResult = findPeakTime(hourly);
       const bestTime = findBestTime(hourly, venue, peakResult.startIdx, peakResult.endIdx);
+
+      const waitEstimateTyped = estimateWait(crowdResult.score, venue.types);
 
       const result = {
         placeId,
@@ -128,7 +130,8 @@ router.get('/:placeId',
         capacity,
         bestTime,
         peak: peakResult.text,
-        waitEstimate,
+        waitEstimate: waitEstimateTyped,
+        isOpen: venue.isOpen,
         hourly,
         factors: crowdResult.factors,
         dataSourcesUsed: crowdResult.dataSourcesUsed,
