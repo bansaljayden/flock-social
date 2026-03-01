@@ -21,12 +21,25 @@ function isWeekend(day) {
 
 function isIndoor(types) {
   if (!types || !types.length) return true;
-  return types.some(t => ['restaurant', 'bar', 'night_club', 'cafe', 'movie_theater', 'bowling_alley', 'shopping_mall'].includes(t));
+  return types.some(t => ['restaurant', 'bar', 'night_club', 'cafe', 'movie_theater', 'bowling_alley', 'shopping_mall', 'juice_shop', 'diner', 'american_restaurant', 'fast_food_restaurant'].includes(t));
 }
 
 function hasType(types, ...targets) {
   if (!types) return false;
   return targets.some(t => types.includes(t));
+}
+
+// Google returns granular types — map them to behavioral categories
+function isCafeLike(types) {
+  return hasType(types, 'cafe', 'juice_shop', 'smoothie_shop', 'juice_bar', 'tea_house', 'coffee_shop');
+}
+
+function isDinerLike(types) {
+  return hasType(types, 'diner', 'breakfast_restaurant', 'brunch_restaurant');
+}
+
+function isFastFoodLike(types) {
+  return hasType(types, 'fast_food_restaurant', 'meal_takeaway');
 }
 
 function formatHour(h) {
@@ -116,6 +129,28 @@ function getVenueTypeFactor(types, dayOfWeek, hour) {
     return -8;
   }
 
+  // Diners — breakfast/lunch spots, NOT dinner places
+  if (isDinerLike(types)) {
+    if (hour >= 7 && hour <= 9) return weekend ? 18 : 15;   // Breakfast rush
+    if (hour >= 10 && hour <= 11) return weekend ? 14 : 10;  // Late breakfast
+    if (hour >= 11 && hour <= 13) return weekend ? 12 : 10;  // Lunch
+    if (hour >= 14 && hour <= 16) return -8;                  // Dead afternoon
+    if (hour >= 17 && hour <= 20) return -5;                  // Some dinner but not peak
+    if (hour >= 21) return -12;                               // Closing up
+    if (hour >= 0 && hour <= 6) return -15;                   // Closed
+    return -5;
+  }
+
+  // Fast food — lunch peak, steady dinner, quick turnover
+  if (isFastFoodLike(types)) {
+    if (hour >= 11 && hour <= 13) return weekend ? 12 : 15;  // Lunch rush (bigger weekday)
+    if (hour >= 18 && hour <= 20) return weekend ? 10 : 8;   // Dinner secondary
+    if (hour >= 14 && hour <= 17) return -5;                  // Afternoon lull
+    if (hour >= 7 && hour <= 10) return 3;                    // Breakfast
+    if (hour >= 21) return -10;
+    return -8;
+  }
+
   // Restaurants — dinner is ALWAYS the peak, lunch is secondary
   if (hasType(types, 'restaurant')) {
     if (hour >= 18 && hour <= 20) return weekend ? 18 : 15;
@@ -126,8 +161,8 @@ function getVenueTypeFactor(types, dayOfWeek, hour) {
     return -5;
   }
 
-  // Cafes — morning rush, dead evening
-  if (hasType(types, 'cafe')) {
+  // Cafes, juice shops, smoothie shops — morning rush, dead evening
+  if (isCafeLike(types)) {
     if (hour >= 7 && hour <= 9) return 10;
     if (hour >= 10 && hour <= 11) return 6;
     if (hour >= 12 && hour <= 14) return 2;
@@ -302,9 +337,13 @@ function estimateCapacity(venue, score) {
     max = reviews >= 1000 ? 300 : reviews >= 500 ? 200 : 100;
   } else if (hasType(types, 'bar')) {
     max = reviews >= 1000 ? 200 : reviews >= 500 ? 120 : 60;
+  } else if (isDinerLike(types)) {
+    max = reviews >= 1000 ? 120 : reviews >= 500 ? 80 : reviews >= 100 ? 50 : 30;
+  } else if (isFastFoodLike(types)) {
+    max = reviews >= 2000 ? 150 : reviews >= 500 ? 100 : reviews >= 100 ? 60 : 35;
   } else if (hasType(types, 'restaurant')) {
     max = reviews >= 2000 ? 200 : reviews >= 500 ? 120 : reviews >= 100 ? 60 : 40;
-  } else if (hasType(types, 'cafe')) {
+  } else if (isCafeLike(types)) {
     max = reviews >= 500 ? 80 : reviews >= 100 ? 40 : 25;
   } else {
     max = reviews >= 1000 ? 150 : reviews >= 200 ? 80 : 40;
@@ -332,11 +371,29 @@ function estimateWait(score, types) {
     return '30-60 min';
   }
 
-  if (hasType(types, 'cafe')) {
+  // Cafes, juice shops, smoothie shops — quick service
+  if (isCafeLike(types)) {
     if (score < 50) return 'No wait';
     if (score <= 70) return '~3 min';
     if (score <= 85) return '5-10 min';
     return '10-15 min';
+  }
+
+  // Fast food — quick turnover
+  if (isFastFoodLike(types)) {
+    if (score < 40) return 'No wait';
+    if (score <= 60) return '~3 min';
+    if (score <= 80) return '5-10 min';
+    return '10-15 min';
+  }
+
+  // Diners — counter + table service, faster than fine dining
+  if (isDinerLike(types)) {
+    if (score < 40) return 'No wait';
+    if (score <= 55) return '~5 min';
+    if (score <= 70) return '5-15 min';
+    if (score <= 85) return '15-25 min';
+    return '25+ min';
   }
 
   // Restaurants: table waits
@@ -355,8 +412,10 @@ function isOpenHour(h, types, openHour, closeHour) {
   // Use real hours from Google if available
   if (openHour != null && closeHour != null) return h >= openHour && h < closeHour;
   if (hasType(types, 'bar', 'night_club')) return (h >= 16 || h <= 2);
+  if (isDinerLike(types)) return (h >= 6 && h <= 21);
+  if (isFastFoodLike(types)) return (h >= 6 && h <= 23);
   if (hasType(types, 'restaurant')) return (h >= 11 && h <= 22);
-  if (hasType(types, 'cafe')) return (h >= 6 && h <= 21);
+  if (isCafeLike(types)) return (h >= 6 && h <= 21);
   if (hasType(types, 'park')) return (h >= 6 && h <= 21);
   return (h >= 8 && h <= 23);
 }

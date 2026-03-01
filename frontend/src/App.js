@@ -4960,7 +4960,8 @@ const FlockAppInner = ({ authUser, onLogout }) => {
                   const now = new Date().getHours();
                   const types = activeVenue.types || [];
                   const isBar = types.some(t => ['bar', 'night_club'].includes(t));
-                  const isCafe = types.some(t => t === 'cafe');
+                  const isCafe = types.some(t => ['cafe', 'juice_shop', 'smoothie_shop', 'juice_bar', 'tea_house', 'coffee_shop'].includes(t));
+                  const isDiner = types.some(t => ['diner', 'breakfast_restaurant', 'brunch_restaurant'].includes(t));
                   const day = new Date().getDay();
                   const wkend = day === 5 || day === 6;
                   return Array.from({ length: 12 }, (_, i) => {
@@ -4974,6 +4975,13 @@ const FlockAppInner = ({ authUser, onLogout }) => {
                       else if (h24 >= 18) s = score + 5;
                       else if (h24 >= 14) s = score - 20;
                       else s = score - 30;
+                    } else if (isDiner) {
+                      if (h24 >= 7 && h24 <= 9) s = score + 18;
+                      else if (h24 >= 10 && h24 <= 11) s = score + 12;
+                      else if (h24 >= 11 && h24 <= 13) s = score + 10;
+                      else if (h24 >= 14 && h24 <= 16) s = score - 10;
+                      else if (h24 >= 17 && h24 <= 20) s = score - 5;
+                      else s = score - 20;
                     } else if (isCafe) {
                       if (h24 >= 7 && h24 <= 9) s = score + 15;
                       else if (h24 >= 10 && h24 <= 11) s = score + 5;
@@ -5004,7 +5012,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
                   if (cd) return cd.waitEstimate;
                   const types = activeVenue.types || [];
                   const isBarType = types.some(t => ['bar', 'night_club'].includes(t));
-                  const isCafeType = types.some(t => t === 'cafe');
+                  const isCafeType = types.some(t => ['cafe', 'juice_shop', 'smoothie_shop', 'juice_bar', 'tea_house', 'coffee_shop'].includes(t));
                   if (isBarType) return score < 50 ? 'No wait' : score <= 70 ? '~5 min' : score <= 85 ? '5-10 min' : '10-15 min';
                   if (isCafeType) return score < 50 ? 'No wait' : score <= 70 ? '~3 min' : score <= 85 ? '5-10 min' : '10-15 min';
                   return score < 40 ? 'No wait' : score <= 55 ? '~5 min' : score <= 70 ? '10-20 min' : score <= 85 ? '20-35 min' : '35+ min';
@@ -5017,13 +5025,15 @@ const FlockAppInner = ({ authUser, onLogout }) => {
                 if (!peakText || !bestText) {
                   const types = activeVenue.types || [];
                   const isBarF = types.some(t => ['bar', 'night_club'].includes(t));
-                  const isCafeF = types.some(t => t === 'cafe');
+                  const isCafeF = types.some(t => ['cafe', 'juice_shop', 'smoothie_shop', 'juice_bar', 'tea_house', 'coffee_shop'].includes(t));
+                  const isDinerF = types.some(t => ['diner', 'breakfast_restaurant', 'brunch_restaurant'].includes(t));
                   const isRestF = types.some(t => t === 'restaurant');
                   const dayF = new Date().getDay();
                   const wkendF = dayF === 5 || dayF === 6;
                   // Filter by typical operating hours
                   const isOpenH = (h24) => {
                     if (isBarF) return (h24 >= 16 || h24 <= 2);
+                    if (isDinerF) return (h24 >= 6 && h24 <= 21);
                     if (isRestF) return (h24 >= 11 && h24 <= 22);
                     if (isCafeF) return (h24 >= 6 && h24 <= 21);
                     return (h24 >= 8 && h24 <= 23);
@@ -5032,6 +5042,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
                     const h24 = ((6 + i) % 24 + 24) % 24;
                     let s = score;
                     if (isBarF) { s += (wkendF && h24 >= 22 ? 30 : h24 >= 22 ? 25 : wkendF && h24 >= 21 ? 22 : h24 >= 21 ? 18 : h24 >= 18 ? 8 : h24 >= 6 && h24 <= 16 ? -20 : -10); }
+                    else if (isDinerF) { s += (h24 >= 7 && h24 <= 9 ? (wkendF ? 20 : 18) : h24 >= 10 && h24 <= 11 ? 14 : h24 >= 11 && h24 <= 13 ? 12 : h24 >= 14 && h24 <= 16 ? -8 : h24 >= 17 && h24 <= 20 ? -5 : -15); }
                     else if (isCafeF) { s += (h24 >= 7 && h24 <= 9 ? 18 : h24 >= 10 && h24 <= 11 ? 10 : h24 >= 12 && h24 <= 14 ? 2 : h24 >= 15 && h24 <= 17 ? -8 : h24 >= 20 ? -20 : -10); }
                     else { s += (h24 >= 18 && h24 <= 20 ? (wkendF ? 20 : 15) : h24 >= 11 && h24 <= 13 ? 10 : h24 >= 21 && h24 <= 22 ? 5 : h24 >= 14 && h24 <= 17 ? -12 : -18); }
                     return { hour: fmtH(6 + i), score: Math.round(Math.max(5, Math.min(95, s))), h24 };
@@ -9365,12 +9376,14 @@ const FlockAppInner = ({ authUser, onLogout }) => {
                       const base = crowdScore;
                       const types = venue.types || [];
                       const isBar = types.some(t => ['bar', 'night_club'].includes(t));
-                      const isCafe = types.some(t => t === 'cafe');
+                      const isCafe = types.some(t => ['cafe', 'juice_shop', 'smoothie_shop', 'juice_bar', 'tea_house', 'coffee_shop'].includes(t));
+                      const isDiner = types.some(t => ['diner', 'breakfast_restaurant', 'brunch_restaurant'].includes(t));
                       const nowH = new Date().getHours();
                       return Array.from({ length: 12 }, (_, i) => {
                         const h24 = ((nowH + i) % 24 + 24) % 24;
                         let s = base;
                         if (isBar) { s += (h24 >= 21 ? 25 : h24 >= 18 ? 10 : h24 >= 14 ? -15 : -25); }
+                        else if (isDiner) { s += (h24 >= 7 && h24 <= 9 ? 18 : h24 >= 10 && h24 <= 13 ? 12 : h24 >= 14 && h24 <= 16 ? -10 : h24 >= 17 && h24 <= 20 ? -5 : -15); }
                         else if (isCafe) { s += (h24 >= 7 && h24 <= 9 ? 15 : h24 >= 10 && h24 <= 11 ? 5 : h24 >= 15 ? -15 : -10); }
                         else { s += (h24 >= 18 && h24 <= 20 ? 15 : h24 >= 11 && h24 <= 13 ? 10 : h24 >= 14 && h24 <= 17 ? -12 : -20); }
                         return Math.max(5, Math.min(95, Math.round(s)));
