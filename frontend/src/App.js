@@ -1051,6 +1051,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
   const [crowdAlternatives, setCrowdAlternatives] = useState([]);
   const [venueDetailHistory, setVenueDetailHistory] = useState([]);
   const skipCrowdFetchRef = useRef(false);
+  const [liveWeather, setLiveWeather] = useState(null);
 
   // Geolocation state — restore last known location immediately so map isn't empty
   const [userLocation, setUserLocation] = useState(() => {
@@ -1162,6 +1163,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
             const map = {};
             (res.predictions || []).forEach(p => { map[p.placeId] = p; });
             setCrowdPredictions(prev => ({ ...prev, ...map }));
+            if (res.weather) setLiveWeather(res.weather);
           })
           .catch(err => console.error('[Crowd] Batch prediction failed:', err));
       }
@@ -1716,7 +1718,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
     setCrowdData(null);
     setCrowdAlternatives([]);
     getCrowdPrediction(activeVenue.place_id)
-      .then(data => { if (!cancelled) { setCrowdData(data); if (data) getCrowdAlternatives(activeVenue.place_id).then(res => { if (!cancelled) setCrowdAlternatives(res.alternatives || []); }).catch(() => {}); } })
+      .then(data => { if (!cancelled) { setCrowdData(data); if (data?.weather) setLiveWeather(data.weather); if (data) getCrowdAlternatives(activeVenue.place_id).then(res => { if (!cancelled) setCrowdAlternatives(res.alternatives || []); }).catch(() => {}); } })
       .catch(() => {})
       .finally(() => { if (!cancelled) setCrowdLoading(false); });
     return () => { cancelled = true; };
@@ -5473,17 +5475,15 @@ const FlockAppInner = ({ authUser, onLogout }) => {
       return upcoming.slice(0, 4);
     };
 
-    // Weather data (mock)
-    const getWeatherForDate = (dateStr) => {
-      const weathers = [
-        { icon: Icons.sun, temp: '72°', condition: 'Sunny' },
-        { icon: Icons.cloud, temp: '65°', condition: 'Cloudy' },
-        { icon: Icons.sun, temp: '78°', condition: 'Clear' },
-      ];
-      return weathers[Math.abs(dateStr.split('-')[2]) % 3];
-    };
-
-    const weather = getWeatherForDate(selectedDateStr);
+    // Weather data — use live data for today, null for other dates
+    const isSelectedToday = selectedDateStr === todayStr;
+    const weather = isSelectedToday && liveWeather ? {
+      icon: liveWeather.conditions?.toLowerCase().includes('rain') || liveWeather.conditions?.toLowerCase().includes('drizzle') ? Icons.cloud
+        : liveWeather.conditions?.toLowerCase().includes('cloud') || liveWeather.conditions?.toLowerCase().includes('overcast') ? Icons.cloud
+        : Icons.sun,
+      temp: `${Math.round(liveWeather.temp)}°`,
+      condition: liveWeather.conditions ? liveWeather.conditions.charAt(0).toUpperCase() + liveWeather.conditions.slice(1) : 'Clear',
+    } : null;
 
     return (
       <div key="calendar-screen-container" style={{ display: 'flex', flexDirection: 'column', height: '100%', backgroundColor: 'var(--bg-primary)' }}>
@@ -5538,6 +5538,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
         {/* Events section */}
         <div style={{ flex: 1, padding: '12px', overflowY: 'auto' }}>
           {/* Weather widget for selected date */}
+          {weather ? (
           <div style={{ ...styles.card, display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px', background: isDark ? 'linear-gradient(135deg, #1e3a5c, #1a3a5c)' : 'linear-gradient(135deg, #dbeafe, #e0f2fe)' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
               {weather.icon('#F59E0B', 28)}
@@ -5551,6 +5552,14 @@ const FlockAppInner = ({ authUser, onLogout }) => {
               <p style={{ fontSize: '10px', color: 'var(--text-secondary)', margin: 0 }}>{selectedDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}</p>
             </div>
           </div>
+          ) : (
+          <div style={{ ...styles.card, display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: '12px', padding: '12px', background: isDark ? 'linear-gradient(135deg, #1e3a5c, #1a3a5c)' : 'linear-gradient(135deg, #dbeafe, #e0f2fe)' }}>
+            <div style={{ textAlign: 'center' }}>
+              <p style={{ fontSize: '12px', fontWeight: '600', color: colors.navy, margin: 0 }}>{selectedDate.toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' })}</p>
+              {isSelectedToday && <p style={{ fontSize: '10px', color: 'var(--text-secondary)', margin: '2px 0 0' }}>Search a venue to see live weather</p>}
+            </div>
+          </div>
+          )}
 
           {/* Selected date events header */}
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
