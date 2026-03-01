@@ -470,7 +470,7 @@ const GoogleMapView = React.memo(({ venues, filterCategory, userLocation, active
       let show = true;
       if (filterCategory && filterCategory !== 'All') {
         if (filterCategory === 'Food') {
-          show = t.includes('restaurant') || t.includes('cafe') || t.includes('food') || t.includes('bakery') || t.includes('meal') || t.includes('pizza') || t.includes('diner') || t.includes('bar') || v.category === 'Food';
+          show = t.includes('restaurant') || t.includes('cafe') || t.includes('food') || t.includes('bakery') || t.includes('meal') || t.includes('pizza') || t.includes('diner') || t.includes('bar') || t.includes('juice') || t.includes('smoothie') || t.includes('brunch') || t.includes('breakfast') || v.category === 'Food';
         } else if (filterCategory === 'Nightlife') {
           show = t.includes('bar') || t.includes('night_club') || t.includes('club') || t.includes('liquor') || t.includes('lounge') || v.category === 'Nightlife';
         } else if (filterCategory === 'Live Music') {
@@ -1032,7 +1032,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
     if (t.includes('bar') || t.includes('night_club') || t.includes('liquor') || t.includes('lounge')) return 'Nightlife';
     if (t.includes('music') || t.includes('concert') || t.includes('performing_arts')) return 'Live Music';
     if (t.includes('stadium') || t.includes('gym') || t.includes('sports') || t.includes('bowling') || t.includes('fitness')) return 'Sports';
-    if (t.includes('restaurant') || t.includes('cafe') || t.includes('bakery') || t.includes('food') || t.includes('pizza') || t.includes('meal')) return 'Food';
+    if (t.includes('restaurant') || t.includes('cafe') || t.includes('bakery') || t.includes('food') || t.includes('pizza') || t.includes('meal') || t.includes('diner') || t.includes('juice') || t.includes('smoothie') || t.includes('brunch') || t.includes('breakfast')) return 'Food';
     return 'Food'; // default for libraries, parks, museums, etc.
   }, []);
 
@@ -5144,16 +5144,20 @@ const FlockAppInner = ({ authUser, onLogout }) => {
                         if (isClosed && isNow) return true;
                         if (isClosed) {
                           const vTypes = activeVenue.types || [];
+                          if (vTypes.some(t => ['diner', 'breakfast_restaurant', 'brunch_restaurant'].includes(t))) return parsedH < 6 || parsedH > 21;
                           if (vTypes.some(t => t === 'restaurant')) return parsedH < 17 || parsedH > 22;
                           if (vTypes.some(t => ['bar', 'night_club'].includes(t))) return parsedH < 16;
-                          if (vTypes.some(t => t === 'cafe')) return parsedH < 6 || parsedH > 21;
+                          if (vTypes.some(t => ['cafe', 'juice_shop', 'smoothie_shop', 'juice_bar', 'tea_house', 'coffee_shop'].includes(t))) return parsedH < 6 || parsedH > 21;
+                          if (vTypes.some(t => ['fast_food_restaurant', 'meal_takeaway'].includes(t))) return parsedH < 6 || parsedH > 23;
                           return parsedH <= new Date().getHours();
                         }
                         // Fallback: type-based estimates for open venues
                         const vTypes = activeVenue.types || [];
                         if (vTypes.some(t => ['bar', 'night_club'].includes(t))) return (parsedH >= 3 && parsedH < 16);
+                        if (vTypes.some(t => ['diner', 'breakfast_restaurant', 'brunch_restaurant'].includes(t))) return (parsedH < 6 || parsedH > 21);
+                        if (vTypes.some(t => ['fast_food_restaurant', 'meal_takeaway'].includes(t))) return (parsedH < 6 || parsedH > 23);
                         if (vTypes.some(t => t === 'restaurant')) return (parsedH < 11 || parsedH > 22);
-                        if (vTypes.some(t => t === 'cafe')) return (parsedH < 6 || parsedH > 21);
+                        if (vTypes.some(t => ['cafe', 'juice_shop', 'smoothie_shop', 'juice_bar', 'tea_house', 'coffee_shop'].includes(t))) return (parsedH < 6 || parsedH > 21);
                         return false;
                       })();
                       const barColor = hourClosed ? 'var(--text-tertiary)' : h.score > 70 ? colors.red : h.score > 40 ? colors.amber : colors.teal;
@@ -5272,7 +5276,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
               const matches = allVenues.filter(v => {
                 const t = (v.types || []).join(' ').toLowerCase();
                 const nm = (v.name || '').toLowerCase();
-                if (c.id === 'Food') return t.includes('restaurant') || t.includes('cafe') || t.includes('food') || t.includes('bakery') || t.includes('bar') || v.category === 'Food';
+                if (c.id === 'Food') return t.includes('restaurant') || t.includes('cafe') || t.includes('food') || t.includes('bakery') || t.includes('bar') || t.includes('diner') || t.includes('juice') || t.includes('smoothie') || t.includes('brunch') || t.includes('breakfast') || v.category === 'Food';
                 if (c.id === 'Nightlife') return t.includes('bar') || t.includes('night_club') || t.includes('club') || t.includes('liquor') || v.category === 'Nightlife';
                 if (c.id === 'Live Music') return t.includes('music') || t.includes('concert') || t.includes('performing_arts') || nm.includes('music') || v.category === 'Live Music';
                 if (c.id === 'Sports') return t.includes('stadium') || t.includes('gym') || t.includes('sports') || t.includes('bowling') || v.category === 'Sports';
