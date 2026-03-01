@@ -25,7 +25,7 @@ frontend/build/
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
-.claude
+.claude/settings.local.json
 
 # database backups (contain user data)
 backend/backups/
