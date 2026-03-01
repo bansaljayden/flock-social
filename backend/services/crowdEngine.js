@@ -351,7 +351,15 @@ function estimateWait(score, types) {
 // Best time — lowest score, excluding peak hours and closed hours
 // ---------------------------------------------------------------------------
 
-function findBestTime(hourlyForecast, venue, peakStartIdx, peakEndIdx) {
+function isOpenHour(h, types) {
+  if (hasType(types, 'bar', 'night_club')) return (h >= 16 || h <= 2);
+  if (hasType(types, 'restaurant')) return (h >= 11 && h <= 22);
+  if (hasType(types, 'cafe')) return (h >= 6 && h <= 21);
+  if (hasType(types, 'park')) return (h >= 6 && h <= 21);
+  return (h >= 8 && h <= 23);
+}
+
+function findBestTime(hourlyForecast, venue, peakStartIdx, peakEndIdx, isOpen) {
   if (!hourlyForecast || !hourlyForecast.length) return 'Now is good';
 
   const currentScore = hourlyForecast[0].score;
@@ -361,11 +369,8 @@ function findBestTime(hourlyForecast, venue, peakStartIdx, peakEndIdx) {
   for (let i = 0; i < hourlyForecast.length; i++) {
     if (peakStartIdx != null && i >= peakStartIdx && i <= peakEndIdx) continue;
 
-    const hourLabel = hourlyForecast[i].hour;
-    const h = parseHourLabel(hourLabel);
-
-    if (hasType(types, 'restaurant') && (h < 11 || h > 22)) continue;
-    if (hasType(types, 'cafe') && (h < 6 || h > 21)) continue;
+    const h = parseHourLabel(hourlyForecast[i].hour);
+    if (!isOpenHour(h, types)) continue;
 
     candidates.push({ entry: hourlyForecast[i], idx: i });
   }
@@ -378,6 +383,9 @@ function findBestTime(hourlyForecast, venue, peakStartIdx, peakEndIdx) {
       best = candidates[i];
     }
   }
+
+  // If venue is currently closed, never say "Now is good"
+  if (isOpen === false) return hourlyForecast[best.idx].hour;
 
   if (currentScore <= best.entry.score + 5) return 'Now is good';
 
@@ -400,13 +408,17 @@ function parseHourLabel(label) {
 // Returns { text, startIdx, endIdx } so bestTime can avoid peak
 // ---------------------------------------------------------------------------
 
-function findPeakTime(hourlyForecast) {
+function findPeakTime(hourlyForecast, types) {
   if (!hourlyForecast || !hourlyForecast.length) return { text: '', startIdx: 0, endIdx: 0 };
 
   let maxScore = -1;
   let maxIndex = 0;
 
   for (let i = 0; i < hourlyForecast.length; i++) {
+    // Only consider hours when venue type would be open
+    const h = parseHourLabel(hourlyForecast[i].hour);
+    if (types && types.length && !isOpenHour(h, types)) continue;
+
     if (hourlyForecast[i].score > maxScore) {
       maxScore = hourlyForecast[i].score;
       maxIndex = i;
@@ -415,6 +427,8 @@ function findPeakTime(hourlyForecast) {
 
   let endIndex = maxIndex;
   for (let i = maxIndex + 1; i < hourlyForecast.length; i++) {
+    const h = parseHourLabel(hourlyForecast[i].hour);
+    if (types && types.length && !isOpenHour(h, types)) break;
     if (Math.abs(hourlyForecast[i].score - maxScore) <= 3) {
       endIndex = i;
     } else {

@@ -131,8 +131,8 @@ router.get('/:placeId',
 
       // Full-day forecast (6 AM - 5 AM) for accurate peak/best detection
       const fullDay = generateHourlyForecast(venue, weather, 6, 24);
-      const peakResult = findPeakTime(fullDay);
-      const bestTime = findBestTime(fullDay, venue, peakResult.startIdx, peakResult.endIdx);
+      const peakResult = findPeakTime(fullDay, venue.types);
+      const bestTime = findBestTime(fullDay, venue, peakResult.startIdx, peakResult.endIdx, venue.isOpen);
 
       const waitEstimateTyped = estimateWait(crowdResult.score, venue.types);
 
