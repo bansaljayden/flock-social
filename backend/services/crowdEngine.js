@@ -335,13 +335,13 @@ function calculateCrowdScore(venue, weather, timestamp) {
 // Hourly forecast
 // ---------------------------------------------------------------------------
 
-function generateHourlyForecast(venue, weather, startHour, count) {
+function generateHourlyForecast(venue, weather, startHour, count, baseTimestamp) {
   const hours = count || 12;
   const start = startHour != null ? startHour : new Date().getHours();
   const forecast = [];
 
-  // Build a base timestamp matching the start hour
-  const base = new Date();
+  // Use provided base timestamp (already timezone-adjusted) or create one
+  const base = baseTimestamp ? new Date(baseTimestamp) : new Date();
   base.setHours(start, 0, 0, 0);
 
   for (let i = 0; i < hours; i++) {
