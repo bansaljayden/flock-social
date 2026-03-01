@@ -1693,6 +1693,20 @@ const FlockAppInner = ({ authUser, onLogout }) => {
   const [venueDetailModal, setVenueDetailModal] = useState(null); // full venue details for modal
   const [, setVenueDetailLoading] = useState(false);
   const [venueDetailPhotoIdx, setVenueDetailPhotoIdx] = useState(0);
+
+  // Auto-refresh crowd data every 5 minutes when venue detail modal is open
+  useEffect(() => {
+    if (!venueDetailModal || venueDetailModal.loading) return;
+    const placeId = venueDetailModal.place_id;
+    if (!placeId) return;
+    const interval = setInterval(() => {
+      getCrowdPrediction(placeId)
+        .then(data => setCrowdData(data))
+        .catch(() => {});
+    }, 5 * 60 * 1000);
+    return () => clearInterval(interval);
+  }, [venueDetailModal]);
+
   const [showConnectPanel, setShowConnectPanel] = useState(false);
   const [connectSearch, setConnectSearch] = useState('');
   const [connectResults, setConnectResults] = useState([]);

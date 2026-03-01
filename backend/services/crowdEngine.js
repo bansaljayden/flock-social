@@ -3,8 +3,6 @@
 // Sources: Google Places + OpenWeatherMap + time patterns
 // ---------------------------------------------------------------------------
 
-const BASE_SCORE = 10;
-
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -22,7 +20,7 @@ function isWeekend(day) {
 }
 
 function isIndoor(types) {
-  if (!types || !types.length) return true; // assume indoor by default
+  if (!types || !types.length) return true;
   return types.some(t => ['restaurant', 'bar', 'night_club', 'cafe', 'movie_theater', 'bowling_alley', 'shopping_mall'].includes(t));
 }
 
@@ -39,7 +37,15 @@ function formatHour(h) {
   return `${hour24 - 12} PM`;
 }
 
-
+// Simple deterministic hash from place_id to add per-venue variance
+function venueHash(placeId) {
+  if (!placeId) return 0;
+  let hash = 0;
+  for (let i = 0; i < placeId.length; i++) {
+    hash = ((hash << 5) - hash + placeId.charCodeAt(i)) | 0;
+  }
+  return Math.abs(hash);
+}
 
 // ---------------------------------------------------------------------------
 // Scoring factors
@@ -79,30 +85,17 @@ function getTimeFactor(dayOfWeek, hour) {
   return 2;
 }
 
+// Continuous popularity using log scale — venues with more reviews are busier
 function getPopularityFactor(reviewCount) {
-  if (!reviewCount) return 0;
-  if (reviewCount >= 5000) return 25;
-  if (reviewCount >= 3000) return 22;
-  if (reviewCount >= 2000) return 19;
-  if (reviewCount >= 1000) return 16;
-  if (reviewCount >= 500) return 13;
-  if (reviewCount >= 200) return 10;
-  if (reviewCount >= 100) return 7;
-  if (reviewCount >= 50) return 4;
-  if (reviewCount >= 20) return 2;
-  return 1;
+  if (!reviewCount || reviewCount <= 0) return 0;
+  // log2(50) ≈ 5.6 → 8, log2(500) ≈ 9 → 13, log2(5000) ≈ 12.3 → 18
+  return Math.min(25, Math.round(Math.log2(reviewCount) * 1.5));
 }
 
 function getRatingFactor(rating) {
   if (!rating) return 0;
-  if (rating >= 4.7) return 12;
-  if (rating >= 4.5) return 10;
-  if (rating >= 4.3) return 8;
-  if (rating >= 4.0) return 6;
-  if (rating >= 3.7) return 4;
-  if (rating >= 3.5) return 3;
-  if (rating >= 3.0) return 1;
-  return 0;
+  // Continuous: 3.0 → 0, 4.0 → 6, 4.5 → 9, 5.0 → 12
+  return Math.min(12, Math.max(0, Math.round((rating - 3.0) * 6)));
 }
 
 function getVenueTypeFactor(types, dayOfWeek, hour) {
@@ -110,31 +103,55 @@ function getVenueTypeFactor(types, dayOfWeek, hour) {
 
   const weekend = isWeekend(dayOfWeek);
 
+  // Bars & clubs — big swings between dead daytime and peak nightlife
   if (hasType(types, 'bar', 'night_club')) {
-    if (weekend && hour >= 21 && hour <= 23) return 10;
-    if (weekend && hour >= 18 && hour <= 20) return 6;
-    if (hour >= 21 && hour <= 23) return 8;
-    if (hour >= 18 && hour <= 20) return 3;
-    if (hour >= 6 && hour <= 17) return -8;
+    if (weekend && hour >= 22) return 15;
+    if (weekend && hour >= 21) return 12;
+    if (weekend && hour >= 18 && hour <= 20) return 8;
+    if (hour >= 22) return 12;
+    if (hour >= 21) return 10;
+    if (hour >= 18 && hour <= 20) return 5;
+    if (hour >= 6 && hour <= 16) return -12;
+    if (hour >= 0 && hour <= 5) return -5;
+    return -8;
   }
 
+  // Restaurants — lunch/dinner peaks, dead afternoon
   if (hasType(types, 'restaurant')) {
-    if (hour >= 18 && hour <= 20) return 8;
-    if (hour >= 11 && hour <= 13) return 6;
-    if (hour >= 14 && hour <= 17) return -10;
-    if (hour >= 0 && hour <= 10) return -8;
+    if (hour >= 18 && hour <= 20) return weekend ? 12 : 10;
+    if (hour >= 11 && hour <= 13) return weekend ? 8 : 6;
+    if (hour >= 21 && hour <= 22) return weekend ? 5 : 2;
+    if (hour >= 14 && hour <= 17) return -12;
+    if (hour >= 0 && hour <= 10) return -10;
+    return -5;
   }
 
+  // Cafes — morning rush, dead evening
   if (hasType(types, 'cafe')) {
-    if (hour >= 7 && hour <= 10) return 8;
-    if (hour >= 10 && hour <= 12) return 5;
-    if (hour >= 20) return -10;
+    if (hour >= 7 && hour <= 9) return 10;
+    if (hour >= 10 && hour <= 11) return 6;
+    if (hour >= 12 && hour <= 14) return 2;
+    if (hour >= 15 && hour <= 17) return -8;
+    if (hour >= 20) return -15;
+    return -5;
   }
 
+  // Movie theaters
   if (hasType(types, 'movie_theater')) {
-    if (weekend && hour >= 18 && hour <= 23) return 8;
-    if ((dayOfWeek === 0 || dayOfWeek === 6) && hour >= 12 && hour <= 17) return 5;
-    if (!weekend && hour >= 6 && hour <= 11) return -8;
+    if (weekend && hour >= 18 && hour <= 22) return 10;
+    if (weekend && hour >= 13 && hour <= 17) return 6;
+    if (hour >= 18 && hour <= 21) return 5;
+    if (hour >= 6 && hour <= 11) return -10;
+    return -3;
+  }
+
+  // Parks
+  if (hasType(types, 'park')) {
+    if (weekend && hour >= 10 && hour <= 16) return 10;
+    if (hour >= 10 && hour <= 16) return 5;
+    if (hour >= 17 && hour <= 19) return 3;
+    if (hour >= 20 || hour <= 6) return -10;
+    return 0;
   }
 
   return 0;
@@ -144,8 +161,9 @@ function getPriceLevelFactor(priceLevel, dayOfWeek) {
   if (priceLevel == null) return 0;
   const weekend = isWeekend(dayOfWeek);
 
-  if (priceLevel >= 3) return weekend ? 5 : 2;
-  if (priceLevel === 1) return weekend ? 3 : 0;
+  if (priceLevel >= 3) return weekend ? 6 : 3;
+  if (priceLevel === 2) return weekend ? 3 : 1;
+  if (priceLevel === 1) return weekend ? 4 : 2;
   return 0;
 }
 
@@ -171,7 +189,7 @@ function getWeatherFactor(weather, types) {
     if (!indoor) modifier += -8;
   }
 
-  return Math.max(-15, Math.min(8, modifier));
+  return Math.max(-15, Math.min(10, modifier));
 }
 
 // ---------------------------------------------------------------------------
@@ -193,13 +211,17 @@ function calculateCrowdScore(venue, weather, timestamp) {
   const priceLevel = getPriceLevelFactor(venue.price_level, dayOfWeek);
   const weatherMod = getWeatherFactor(weather, types);
 
-  const rawScore = BASE_SCORE + time + popularity + rating + venueType + priceLevel + weatherMod;
+  // Per-venue variance: ±7 points from place_id hash so no two venues are identical
+  const hash = venueHash(venue.place_id);
+  const venueVariance = (hash % 15) - 7; // range: -7 to +7
+
+  const rawScore = 10 + time + popularity + rating + venueType + priceLevel + weatherMod + venueVariance;
   const score = Math.max(0, Math.min(100, Math.round(rawScore)));
 
-  // Confidence based on data quality (not just presence)
+  // Confidence based on data quality
   let confidence = 20; // time/day always available
 
-  // Review count is the strongest confidence signal
+  // Review count is the strongest confidence signal (continuous)
   if (reviews >= 5000) confidence += 30;
   else if (reviews >= 2000) confidence += 25;
   else if (reviews >= 1000) confidence += 20;
@@ -296,7 +318,6 @@ function estimateCapacity(venue, score) {
 // ---------------------------------------------------------------------------
 
 function estimateWait(score, types) {
-  // Bars: walk-in, minimal wait unless packed
   if (hasType(types, 'bar')) {
     if (score < 50) return 'No wait';
     if (score <= 70) return '~5 min';
@@ -304,7 +325,6 @@ function estimateWait(score, types) {
     return '10-15 min';
   }
 
-  // Night clubs: queue-based
   if (hasType(types, 'night_club')) {
     if (score < 40) return 'No wait';
     if (score <= 60) return '5-10 min';
@@ -312,7 +332,6 @@ function estimateWait(score, types) {
     return '30-60 min';
   }
 
-  // Cafes: counter service, fast
   if (hasType(types, 'cafe')) {
     if (score < 50) return 'No wait';
     if (score <= 70) return '~3 min';
@@ -338,19 +357,15 @@ function findBestTime(hourlyForecast, venue, peakStartIdx, peakEndIdx) {
   const currentScore = hourlyForecast[0].score;
   const types = venue?.types || [];
 
-  // Build candidates: skip peak hours and closed hours
   const candidates = [];
   for (let i = 0; i < hourlyForecast.length; i++) {
-    // Skip hours that fall within the peak window
     if (peakStartIdx != null && i >= peakStartIdx && i <= peakEndIdx) continue;
 
-    // Parse the hour label back to 24h to check if venue is open
     const hourLabel = hourlyForecast[i].hour;
     const h = parseHourLabel(hourLabel);
 
     if (hasType(types, 'restaurant') && (h < 11 || h > 22)) continue;
     if (hasType(types, 'cafe') && (h < 6 || h > 21)) continue;
-    // Bars/clubs and others: allow all forecast hours
 
     candidates.push({ entry: hourlyForecast[i], idx: i });
   }
@@ -364,13 +379,11 @@ function findBestTime(hourlyForecast, venue, peakStartIdx, peakEndIdx) {
     }
   }
 
-  // If current time is already close to the best, say so
   if (currentScore <= best.entry.score + 5) return 'Now is good';
 
   return hourlyForecast[best.idx].hour;
 }
 
-// Parse "7 PM" / "12 AM" back to 24h number
 function parseHourLabel(label) {
   if (!label) return 12;
   const parts = label.match(/^(\d+)\s*(AM|PM)$/i);
@@ -400,7 +413,6 @@ function findPeakTime(hourlyForecast) {
     }
   }
 
-  // Extend to consecutive hours within 3 points
   let endIndex = maxIndex;
   for (let i = maxIndex + 1; i < hourlyForecast.length; i++) {
     if (Math.abs(hourlyForecast[i].score - maxScore) <= 3) {
