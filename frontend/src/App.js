@@ -1092,7 +1092,6 @@ const FlockAppInner = ({ authUser, onLogout }) => {
   // Convert venues array to map pin format, deduplicating by place_id
   const venuesToMapPins = useCallback((venues) => {
     const seen = new Set();
-    const bestTimes = ['Now-ish', 'Right now', '8 PM', '9 PM', '10 PM+', 'Sunset!', 'Game time!', '8:30ish'];
     return venues.filter(v => {
       if (seen.has(v.place_id)) return false;
       seen.add(v.place_id);
@@ -1111,7 +1110,6 @@ const FlockAppInner = ({ authUser, onLogout }) => {
         y: 10 + ((seed * 29) % 75),
         crowd,
         crowdLabel: prediction ? prediction.label : null,
-        best: bestTimes[i % bestTimes.length],
         stars: v.rating || 4.0,
         addr: v.formatted_address || '',
         price: v.price_level ? '$'.repeat(v.price_level) : '$$',
@@ -2062,7 +2060,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
       const nightlife = venueList.filter(v => v.category === 'Nightlife').sort((a, b) => b.stars - a.stars);
       if (nightlife.length > 0) {
         const top = nightlife[0];
-        return { text: `${top.name} is a great option - ${top.stars} stars, currently at ${top.crowd}% capacity. Best time to arrive: ${top.best}.`, confidence: 90 };
+        return { text: `${top.name} is a great option - ${top.stars} stars, currently at ${top.crowd}% capacity.`, confidence: 90 };
       }
     }
 
@@ -2073,7 +2071,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
         const venue = findVenue(name);
         if (venue) {
           const crowdComment = venue.crowd > 70 ? 'Currently very busy.' : venue.crowd > 40 ? 'Moderate crowd.' : 'Light crowd right now.';
-          return { text: `${venue.name}: ${crowdComment} (${venue.crowd}% capacity). ${venue.stars} stars. Best time: ${venue.best}. Located at ${venue.addr}.`, confidence: 96 };
+          return { text: `${venue.name}: ${crowdComment} (${venue.crowd}% capacity). ${venue.stars} stars. Located at ${venue.addr}.`, confidence: 96 };
         }
       }
     }
@@ -2090,8 +2088,8 @@ const FlockAppInner = ({ authUser, onLogout }) => {
 
     // TIME/SCHEDULE QUESTIONS
     if (msg.includes('time') || msg.includes('when') || msg.includes('schedule') || msg.includes('tonight') || msg.includes('best time')) {
-      const bestVenue = venueList.find(v => v.best.includes('Now')) || venueList[0];
-      return { text: `${bestVenue.name} is ideal right now. Generally, most venues are best between 9-10 PM. Arriving earlier helps avoid wait times.`, confidence: 87 };
+      const bestVenue = venueList.sort((a, b) => a.crowd - b.crowd)[0];
+      return { text: `${bestVenue.name} is the least crowded right now at ${bestVenue.crowd}%. Generally, arriving earlier helps avoid wait times.`, confidence: 87 };
     }
 
     // HELP QUESTIONS
@@ -2568,7 +2566,6 @@ const FlockAppInner = ({ authUser, onLogout }) => {
       price: venue.price,
       price_level: venue.price_level || null,
       crowd: venue.crowd,
-      best: venue.best,
       photo_url: venue.photo_url || null,
       lat: venue.location?.latitude || null,
       lng: venue.location?.longitude || null,
@@ -3768,7 +3765,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
                   key={venue.id}
                   onClick={(e) => {
                     confirmClick(e);
-                    sendDmMessage({ text: `Check out ${venue.name}!`, message_type: 'venue_card', venue_data: { name: venue.name, addr: venue.addr, stars: venue.stars, rating: venue.rating || venue.stars, price: venue.price, price_level: venue.price_level, photo_url: venue.photo_url, place_id: venue.place_id, category: venue.category, type: venue.type, crowd: venue.crowd, best: venue.best }, noReply: true });
+                    sendDmMessage({ text: `Check out ${venue.name}!`, message_type: 'venue_card', venue_data: { name: venue.name, addr: venue.addr, stars: venue.stars, rating: venue.rating || venue.stars, price: venue.price, price_level: venue.price_level, photo_url: venue.photo_url, place_id: venue.place_id, category: venue.category, type: venue.type, crowd: venue.crowd }, noReply: true });
                     setShowDmVenueSearch(false);
                   }}
                   style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '12px', borderRadius: '14px', border: '1px solid var(--border-default)', backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer', textAlign: 'left', transition: 'all 0.2s ease' }}
@@ -4942,12 +4939,6 @@ const FlockAppInner = ({ authUser, onLogout }) => {
                 const score = cd ? cd.score : activeVenue.crowd;
                 const label = cd ? cd.label : (score > 70 ? 'Very Busy' : score > 40 ? 'Moderate' : 'Not Busy');
                 const crowdColor = score > 70 ? colors.red : score > 40 ? colors.amber : colors.teal;
-                const hourlyData = cd?.hourly || [30, 35, 45, 55, 70, 85, 90, 80, 65, 50, 35, 25].map((h, i) => ({ hour: `${6 + i} PM`, score: h }));
-                const bestTimeText = cd ? cd.bestTime : activeVenue.best;
-                const peakText = cd ? cd.peak : '7 PM - 9 PM';
-                const waitText = cd ? cd.waitEstimate : (score > 70 ? '15-20 min' : score > 40 ? '5-10 min' : 'No wait');
-                const confidenceText = cd ? `${cd.confidence}% confidence` : '—';
-                const hasWeather = cd?.weather != null;
 
                 return (
               <div style={{ backgroundColor: 'var(--bg-tertiary)', borderRadius: '12px', padding: '10px', marginBottom: '10px', border: '1px solid var(--border-subtle)' }}>
@@ -4959,18 +4950,18 @@ const FlockAppInner = ({ authUser, onLogout }) => {
                   <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
                     {crowdLoading ? (
                       <span style={{ fontSize: '9px', color: 'var(--text-secondary)' }}>Loading...</span>
-                    ) : (
+                    ) : cd ? (
                       <>
-                        <div style={{ width: '6px', height: '6px', borderRadius: '3px', backgroundColor: hasWeather ? '#22C55E' : colors.amber, animation: hasWeather ? 'pulse 2s ease-in-out infinite' : 'none' }} />
-                        <span style={{ fontSize: '9px', color: hasWeather ? '#22C55E' : colors.amber, fontWeight: '500' }}>{hasWeather ? 'LIVE' : 'ESTIMATED'}</span>
-                        <span style={{ fontSize: '9px', padding: '2px 6px', borderRadius: '10px', backgroundColor: 'var(--accent-blue-bg)', color: 'var(--accent-blue-text)', fontWeight: '600' }}>{confidenceText}</span>
+                        <div style={{ width: '6px', height: '6px', borderRadius: '3px', backgroundColor: cd.weather ? '#22C55E' : colors.amber, animation: cd.weather ? 'pulse 2s ease-in-out infinite' : 'none' }} />
+                        <span style={{ fontSize: '9px', color: cd.weather ? '#22C55E' : colors.amber, fontWeight: '500' }}>{cd.weather ? 'LIVE' : 'ESTIMATED'}</span>
+                        <span style={{ fontSize: '9px', padding: '2px 6px', borderRadius: '10px', backgroundColor: 'var(--accent-blue-bg)', color: 'var(--accent-blue-text)', fontWeight: '600' }}>{cd.confidence}% confidence</span>
                       </>
-                    )}
+                    ) : null}
                   </div>
                 </div>
 
                 {/* Crowd Meter */}
-                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '10px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: cd ? '10px' : '0' }}>
                   <div style={{ width: '50px', height: '50px', borderRadius: '25px', background: `conic-gradient(${crowdColor} ${score * 3.6}deg, var(--border-default) 0deg)`, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                     <div style={{ width: '40px', height: '40px', borderRadius: '20px', backgroundColor: 'var(--bg-card-solid)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column' }}>
                       <span style={{ fontSize: '14px', fontWeight: '900', color: crowdColor }}>{score}%</span>
@@ -4978,22 +4969,31 @@ const FlockAppInner = ({ authUser, onLogout }) => {
                   </div>
                   <div style={{ flex: 1 }}>
                     <p style={{ fontSize: '12px', fontWeight: '700', color: crowdColor, margin: 0 }}>{label}</p>
-                    <p style={{ fontSize: '10px', color: 'var(--text-secondary)', margin: '2px 0' }}>{waitText === 'No wait' ? 'No wait expected' : `Est. wait: ${waitText}`}</p>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                      {Icons.clock(colors.teal, 10)}
-                      <span style={{ fontSize: '10px', fontWeight: 'bold', color: colors.teal }}>Least crowded: {bestTimeText}</span>
-                    </div>
+                    {cd ? (
+                      <>
+                        <p style={{ fontSize: '10px', color: 'var(--text-secondary)', margin: '2px 0' }}>{cd.waitEstimate === 'No wait' ? 'No wait expected' : `Est. wait: ${cd.waitEstimate}`}</p>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                          {Icons.clock(colors.teal, 10)}
+                          <span style={{ fontSize: '10px', fontWeight: 'bold', color: colors.teal }}>Least crowded: {cd.bestTime}</span>
+                        </div>
+                      </>
+                    ) : (
+                      <p style={{ fontSize: '10px', color: 'var(--text-secondary)', margin: '2px 0' }}>Based on venue popularity</p>
+                    )}
                   </div>
                 </div>
 
+                {/* Only show detailed forecast when we have real API data */}
+                {cd && (
+                  <>
                 {/* Hourly Forecast Graph */}
                 <div style={{ marginBottom: '10px' }}>
                   <p style={{ fontSize: '9px', fontWeight: '600', color: 'var(--text-secondary)', marginBottom: '6px', textTransform: 'uppercase' }}>Expected Crowd by Hour</p>
                   <div style={{ display: 'flex', alignItems: 'flex-end', gap: '3px', height: '40px' }}>
-                    {hourlyData.map((h, i) => (
+                    {cd.hourly.map((h, i) => (
                       <div key={i} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '2px' }}>
-                        <div style={{ width: '100%', height: `${(h.score || h) * 0.4}px`, borderRadius: '2px', backgroundColor: (h.score || h) > 70 ? colors.red : (h.score || h) > 40 ? colors.amber : colors.teal, opacity: i === 0 ? 1 : 0.6 }} />
-                        <span style={{ fontSize: '7px', color: 'var(--text-tertiary)' }}>{h.hour || `${6 + i} PM`}</span>
+                        <div style={{ width: '100%', height: `${h.score * 0.4}px`, borderRadius: '2px', backgroundColor: h.score > 70 ? colors.red : h.score > 40 ? colors.amber : colors.teal, opacity: i === 0 ? 1 : 0.6 }} />
+                        <span style={{ fontSize: '7px', color: 'var(--text-tertiary)' }}>{h.hour}</span>
                       </div>
                     ))}
                   </div>
@@ -5006,32 +5006,36 @@ const FlockAppInner = ({ authUser, onLogout }) => {
                       {Icons.trendingUp(colors.red, 10)}
                       <span style={{ fontSize: '8px', color: 'var(--text-secondary)', textTransform: 'uppercase' }}>Busiest Hours</span>
                     </div>
-                    <span style={{ fontSize: '11px', fontWeight: '700', color: colors.navy }}>{peakText}</span>
+                    <span style={{ fontSize: '11px', fontWeight: '700', color: colors.navy }}>{cd.peak}</span>
                   </div>
                   <div style={{ flex: 1, backgroundColor: 'var(--bg-card-solid)', borderRadius: '8px', padding: '6px 8px', border: '1px solid var(--border-subtle)' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '4px', marginBottom: '2px' }}>
                       {Icons.zap(colors.amber, 10)}
                       <span style={{ fontSize: '8px', color: 'var(--text-secondary)', textTransform: 'uppercase' }}>Est. Wait Right Now</span>
                     </div>
-                    <span style={{ fontSize: '11px', fontWeight: '700', color: colors.navy }}>{waitText}</span>
+                    <span style={{ fontSize: '11px', fontWeight: '700', color: colors.navy }}>{cd.waitEstimate}</span>
                   </div>
                 </div>
 
                 {/* Quieter Options */}
+                {crowdAlternatives.length > 0 && (
                 <div>
                   <p style={{ fontSize: '9px', fontWeight: '600', color: 'var(--text-secondary)', marginBottom: '6px', textTransform: 'uppercase' }}>Less Crowded Nearby</p>
                   <div style={{ display: 'flex', gap: '6px' }}>
-                    {(crowdAlternatives.length > 0 ? crowdAlternatives.slice(0, 2) : allVenues.filter(v => v.id !== activeVenue.id && v.category === activeVenue.category).slice(0, 2)).map((v, i) => (
-                      <button key={v.placeId || v.id || i} onClick={() => { if (v.placeId) openVenueDetail(v.placeId, null); else setActiveVenue(v); }} style={{ flex: 1, padding: '6px', backgroundColor: 'var(--bg-card-solid)', border: '1px solid var(--border-subtle)', borderRadius: '8px', cursor: 'pointer', textAlign: 'left' }}>
+                    {crowdAlternatives.slice(0, 2).map((v, i) => (
+                      <button key={v.placeId || i} onClick={() => { if (v.placeId) openVenueDetail(v.placeId, null); }} style={{ flex: 1, padding: '6px', backgroundColor: 'var(--bg-card-solid)', border: '1px solid var(--border-subtle)', borderRadius: '8px', cursor: 'pointer', textAlign: 'left' }}>
                         <p style={{ fontSize: '10px', fontWeight: '600', color: colors.navy, margin: 0 }}>{v.name}</p>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '4px', marginTop: '2px' }}>
-                          <div style={{ width: '6px', height: '6px', borderRadius: '3px', backgroundColor: (v.score || v.crowd) > 70 ? colors.red : (v.score || v.crowd) > 40 ? colors.amber : colors.teal }} />
-                          <span style={{ fontSize: '9px', color: 'var(--text-secondary)' }}>{v.label || `${v.score || v.crowd}% crowd`}</span>
+                          <div style={{ width: '6px', height: '6px', borderRadius: '3px', backgroundColor: v.score > 70 ? colors.red : v.score > 40 ? colors.amber : colors.teal }} />
+                          <span style={{ fontSize: '9px', color: 'var(--text-secondary)' }}>{v.label}</span>
                         </div>
                       </button>
                     ))}
                   </div>
                 </div>
+                )}
+                  </>
+                )}
               </div>
                 );
               })()}
@@ -9265,7 +9269,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
                               </span>
                             )}
                             <span style={{ fontSize: '10px', fontWeight: '600', color: colors.navy, display: 'flex', alignItems: 'center', gap: '3px' }}>
-                              {Icons.clock(colors.navy, 10)} Best: {venue.best}
+                              {Icons.clock(colors.navy, 10)} {venue.crowd > 70 ? 'Very Busy' : venue.crowd > 40 ? 'Moderate' : 'Not Busy'}
                             </span>
                           </div>
 

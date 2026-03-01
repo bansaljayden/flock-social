@@ -114,8 +114,9 @@ function getVenueTypeFactor(types, dayOfWeek, hour) {
   if (hasType(types, 'bar', 'night_club')) {
     if (weekend && hour >= 21 && hour <= 23) return 10;
     if (weekend && hour >= 18 && hour <= 20) return 6;
-    if (!weekend && hour >= 6 && hour <= 17) return -8;
-    if (!weekend && hour >= 18) return 3;
+    if (hour >= 21 && hour <= 23) return 8;
+    if (hour >= 18 && hour <= 20) return 3;
+    if (hour >= 6 && hour <= 17) return -8;
   }
 
   if (hasType(types, 'restaurant')) {
