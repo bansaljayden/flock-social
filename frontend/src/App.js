@@ -4944,38 +4944,63 @@ const FlockAppInner = ({ authUser, onLogout }) => {
                 const fmtH = (h24) => { const hh = ((h24 % 24) + 24) % 24; if (hh === 0) return '12 AM'; if (hh < 12) return `${hh} AM`; if (hh === 12) return '12 PM'; return `${hh - 12} PM`; };
                 const genHourly = () => {
                   const now = new Date().getHours();
-                  const isBar = (activeVenue.types || []).some(t => ['bar', 'night_club'].includes(t));
-                  const isCafe = (activeVenue.types || []).some(t => t === 'cafe');
+                  const types = activeVenue.types || [];
+                  const isBar = types.some(t => ['bar', 'night_club'].includes(t));
+                  const isCafe = types.some(t => t === 'cafe');
                   const day = new Date().getDay();
                   const wkend = day === 5 || day === 6;
                   return Array.from({ length: 12 }, (_, i) => {
                     const h = now + i;
                     const h24 = ((h % 24) + 24) % 24;
                     let s = score;
-                    if (isBar) { s = h24 >= 21 ? score + 20 : h24 >= 18 ? score + 5 : h24 >= 14 ? score - 20 : score - 30; }
-                    else if (isCafe) { s = h24 >= 7 && h24 <= 10 ? score + 15 : h24 >= 11 && h24 <= 14 ? score : h24 >= 20 ? score - 30 : score - 10; }
-                    else { s = (h24 >= 18 && h24 <= 20) ? score + 15 : (h24 >= 11 && h24 <= 13) ? score + 10 : (h24 >= 14 && h24 <= 17) ? score - 15 : (h24 >= 21) ? (wkend ? score + 5 : score - 10) : score - 25; }
-                    s = Math.max(5, Math.min(95, s));
-                    return { hour: fmtH(h), score: Math.round(s) };
+                    if (isBar) {
+                      if (wkend && h24 >= 21) s = score + 25;
+                      else if (h24 >= 21) s = score + 18;
+                      else if (wkend && h24 >= 18) s = score + 10;
+                      else if (h24 >= 18) s = score + 5;
+                      else if (h24 >= 14) s = score - 20;
+                      else s = score - 30;
+                    } else if (isCafe) {
+                      if (h24 >= 7 && h24 <= 9) s = score + 15;
+                      else if (h24 >= 10 && h24 <= 11) s = score + 5;
+                      else if (h24 >= 12 && h24 <= 14) s = score - 5;
+                      else if (h24 >= 15 && h24 <= 19) s = score - 15;
+                      else s = score - 30;
+                    } else {
+                      // Restaurant / default
+                      if (h24 >= 18 && h24 <= 20) s = score + 15;
+                      else if (h24 >= 11 && h24 <= 13) s = score + 10;
+                      else if (h24 >= 21 && h24 <= 22) s = wkend ? score + 5 : score - 5;
+                      else if (h24 >= 14 && h24 <= 17) s = score - 15;
+                      else s = score - 25;
+                    }
+                    return { hour: fmtH(h), score: Math.round(Math.max(5, Math.min(95, s))) };
                   });
                 };
 
                 const hourlyData = cd?.hourly || genHourly();
                 const waitText = cd ? cd.waitEstimate : (score > 70 ? '15-30 min' : score > 40 ? '~5 min' : 'No wait');
 
-                // Compute peak from hourly
+                // Compute peak & best from hourly data
                 let peakText = cd?.peak;
                 let bestText = cd?.bestTime;
+                let peakStartI = -1, peakEndI = -1;
                 if (!peakText) {
-                  let maxS = -1, maxI = 0, endI = 0;
+                  let maxS = -1, maxI = 0;
                   hourlyData.forEach((h, i) => { if (h.score > maxS) { maxS = h.score; maxI = i; } });
-                  endI = maxI;
-                  for (let i = maxI + 1; i < hourlyData.length; i++) { if (Math.abs(hourlyData[i].score - maxS) <= 3) endI = i; else break; }
-                  peakText = endI > maxI ? `${hourlyData[maxI].hour} - ${hourlyData[Math.min(endI + 1, hourlyData.length - 1)].hour}` : hourlyData[maxI].hour;
+                  peakStartI = maxI;
+                  peakEndI = maxI;
+                  for (let i = maxI + 1; i < hourlyData.length; i++) { if (Math.abs(hourlyData[i].score - maxS) <= 3) peakEndI = i; else break; }
+                  peakText = peakEndI > peakStartI ? `${hourlyData[peakStartI].hour} - ${hourlyData[peakEndI].hour}` : hourlyData[peakStartI].hour;
                 }
                 if (!bestText) {
-                  let minS = 999, minI = 0;
-                  hourlyData.forEach((h, i) => { if (h.score < minS) { minS = h.score; minI = i; } });
+                  // Find least crowded OUTSIDE peak hours
+                  let minS = 999, minI = -1;
+                  hourlyData.forEach((h, i) => {
+                    if (peakStartI >= 0 && i >= peakStartI && i <= peakEndI) return; // skip peak
+                    if (h.score < minS) { minS = h.score; minI = i; }
+                  });
+                  if (minI < 0) minI = 0;
                   bestText = (hourlyData[0].score <= minS + 5) ? 'Now is good' : hourlyData[minI].hour;
                 }
 

@@ -39,13 +39,7 @@ function formatHour(h) {
   return `${hour24 - 12} PM`;
 }
 
-function formatHourFull(h) {
-  const hour24 = ((h % 24) + 24) % 24;
-  if (hour24 === 0) return '12 AM';
-  if (hour24 < 12) return `${hour24} AM`;
-  if (hour24 === 12) return '12 PM';
-  return `${hour24 - 12} PM`;
-}
+
 
 // ---------------------------------------------------------------------------
 // Scoring factors
@@ -229,13 +223,12 @@ function generateHourlyForecast(venue, weather, startHour, count) {
   const forecast = [];
 
   for (let i = 0; i < hours; i++) {
-    const h = start + i;
-    const ts = new Date(now);
-    ts.setHours(h, 0, 0, 0);
+    const ts = new Date(now.getTime() + i * 60 * 60 * 1000);
+    ts.setMinutes(0, 0, 0);
 
     const result = calculateCrowdScore(venue, weather, ts);
     forecast.push({
-      hour: formatHour(h),
+      hour: formatHour(start + i),
       score: result.score,
       label: result.label,
     });
@@ -365,7 +358,7 @@ function findPeakTime(hourlyForecast) {
   const startLabel = hourlyForecast[maxIndex].hour;
   let text;
   if (endIndex > maxIndex) {
-    const endLabel = hourlyForecast[Math.min(endIndex + 1, hourlyForecast.length - 1)].hour;
+    const endLabel = hourlyForecast[endIndex].hour;
     text = `${startLabel} - ${endLabel}`;
   } else {
     text = startLabel;
