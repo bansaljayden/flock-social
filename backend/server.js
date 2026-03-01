@@ -22,6 +22,8 @@ const venueSearchRoutes = require('./routes/venueSearch');
 const storyRoutes = require('./routes/stories');
 const friendRoutes = require('./routes/friends');
 const safetyRoutes = require('./routes/safety');
+const crowdRoutes = require('./routes/crowd');
+const feedbackRoutes = require('./routes/feedback');
 
 const app = express();
 app.set('trust proxy', 1);
@@ -118,6 +120,8 @@ app.use('/api/flocks', apiLimiter, venueRoutes); // Handles /api/flocks/:id/vote
 app.use('/api/stories', apiLimiter, storyRoutes);     // Handles /api/stories
 app.use('/api/friends', apiLimiter, friendRoutes);    // Handles /api/friends, /api/friends/request, etc.
 app.use('/api/safety', apiLimiter, safetyRoutes);     // Handles /api/safety/contacts, /api/safety/alert, etc.
+app.use('/api/crowd', apiLimiter, crowdRoutes);       // Handles /api/crowd/:placeId, /api/crowd/batch, /api/crowd/:placeId/alternatives
+app.use('/api/feedback', apiLimiter, feedbackRoutes); // Handles /api/feedback, /api/feedback/venue/:placeId
 
 // Health check
 app.get('/api/health', (req, res) => {
@@ -258,6 +262,24 @@ async function runMigrations() {
       contacts_alerted INTEGER,
       created_at TIMESTAMP DEFAULT NOW()
     )`);
+
+    // Crowd Intelligence: venue feedback for calibration loop
+    await pool.query(`CREATE TABLE IF NOT EXISTS venue_feedback (
+      id SERIAL PRIMARY KEY,
+      user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+      flock_id UUID,
+      venue_place_id VARCHAR(255) NOT NULL,
+      venue_name VARCHAR(255) NOT NULL,
+      crowd_level SMALLINT NOT NULL CHECK (crowd_level BETWEEN 1 AND 3),
+      price_worth BOOLEAN,
+      rating SMALLINT CHECK (rating BETWEEN 1 AND 5),
+      predicted_score SMALLINT CHECK (predicted_score BETWEEN 0 AND 100),
+      day_of_week SMALLINT NOT NULL,
+      hour SMALLINT NOT NULL,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    )`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_venue_feedback_place ON venue_feedback(venue_place_id)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_venue_feedback_day_hour ON venue_feedback(venue_place_id, day_of_week, hour)`);
 
     // Keep demo stories alive — refresh expiration for seeded picsum stories
     await pool.query(
