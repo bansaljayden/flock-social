@@ -66,6 +66,21 @@ async function fetchVenueFromGoogle(placeId) {
   const p = await response.json();
   if (p.error) return null;
 
+  // Extract today's opening hours if available
+  let openHour = null;
+  let closeHour = null;
+  const periods = p.currentOpeningHours?.periods;
+  if (periods && periods.length) {
+    const today = new Date().getDay(); // 0=Sun
+    const todayPeriod = periods.find(pd => pd.open?.day === today);
+    if (todayPeriod) {
+      openHour = todayPeriod.open?.hour ?? null;
+      closeHour = todayPeriod.close?.hour ?? null;
+      // If close is 0, it means midnight
+      if (closeHour === 0) closeHour = 24;
+    }
+  }
+
   return {
     place_id: p.id,
     name: p.displayName?.text || '',
@@ -76,6 +91,8 @@ async function fetchVenueFromGoogle(placeId) {
     types: p.types || [],
     location: p.location || null,
     isOpen: p.currentOpeningHours?.openNow ?? null,
+    openHour,
+    closeHour,
   };
 }
 
@@ -147,6 +164,8 @@ router.get('/:placeId',
         peak: peakResult.text,
         waitEstimate: waitEstimateTyped,
         isOpen: venue.isOpen,
+        openHour: venue.openHour,
+        closeHour: venue.closeHour,
         hourly,
         factors: crowdResult.factors,
         dataSourcesUsed: crowdResult.dataSourcesUsed,

@@ -5119,13 +5119,19 @@ const FlockAppInner = ({ authUser, onLogout }) => {
                   <div style={{ display: 'flex', alignItems: 'flex-end', gap: '3px', height: '40px' }}>
                     {hourlyData.map((h, i) => {
                       const isNow = i === 0;
-                      // Determine if this hour is during closed time for venue type
                       const parsedH = (() => { const p = (h.hour || '').match(/^(\d+)\s*(AM|PM)$/i); if (!p) return 12; let hr = parseInt(p[1], 10); if (p[2].toUpperCase() === 'AM' && hr === 12) hr = 0; else if (p[2].toUpperCase() === 'PM' && hr !== 12) hr += 12; return hr; })();
-                      const vTypes = activeVenue.types || [];
-                      const isBarH = vTypes.some(t => ['bar', 'night_club'].includes(t));
-                      const isCafeH = vTypes.some(t => t === 'cafe');
-                      const isRestH = vTypes.some(t => t === 'restaurant');
-                      const hourClosed = isBarH ? (parsedH >= 3 && parsedH < 16) : isRestH ? (parsedH < 11 || parsedH > 22) : isCafeH ? (parsedH < 6 || parsedH > 21) : false;
+                      // Use real opening hours from API if available, else fall back to venue type
+                      const hourClosed = (() => {
+                        if (cd?.openHour != null && cd?.closeHour != null) return parsedH < cd.openHour || parsedH >= cd.closeHour;
+                        const vTypes = activeVenue.types || [];
+                        const isBarH = vTypes.some(t => ['bar', 'night_club'].includes(t));
+                        const isRestH = vTypes.some(t => t === 'restaurant');
+                        const isCafeH = vTypes.some(t => t === 'cafe');
+                        if (isBarH) return (parsedH >= 3 && parsedH < 16);
+                        if (isRestH) return (parsedH < 11 || parsedH > 22);
+                        if (isCafeH) return (parsedH < 6 || parsedH > 21);
+                        return false;
+                      })();
                       const barColor = hourClosed ? 'var(--text-tertiary)' : h.score > 70 ? colors.red : h.score > 40 ? colors.amber : colors.teal;
                       return (
                       <div key={i} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '2px' }}>
