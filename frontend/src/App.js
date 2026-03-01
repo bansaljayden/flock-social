@@ -994,7 +994,7 @@ const styles = makeStyles(colorsLight, false);
 
 const FlockAppInner = ({ authUser, onLogout }) => {
   // Theme — shadows the outer static colors/styles with reactive versions
-  const { toggleTheme, isDark } = useTheme();
+  const { toggleTheme, isDark, themeMode, isNightModeActive, setAutoMode } = useTheme();
   // eslint-disable-next-line no-unused-vars
   const colors = useMemo(() => isDark ? colorsDark : colorsLight, [isDark]);
   // eslint-disable-next-line no-unused-vars
@@ -4209,7 +4209,14 @@ const FlockAppInner = ({ authUser, onLogout }) => {
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
           <div>
             <p style={{ fontSize: '10px', color: 'rgba(255,255,255,0.6)', margin: 0, letterSpacing: '0.5px' }}>Good evening</p>
-            <h1 style={{ fontSize: '20px', fontWeight: '900', color: 'white', margin: 0 }}>Hey, {profileName}</h1>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <h1 style={{ fontSize: '20px', fontWeight: '900', color: 'white', margin: 0 }}>Hey, {profileName}</h1>
+              {themeMode === 'auto' && isNightModeActive && (
+                <span style={{ display: 'inline-flex', alignItems: 'center', gap: '3px', padding: '2px 8px', borderRadius: '8px', backgroundColor: 'rgba(167,139,250,0.2)', fontSize: '9px', fontWeight: '700', color: '#c4b5fd', letterSpacing: '0.3px' }}>
+                  {Icons.moon('#c4b5fd', 10)} NIGHT
+                </span>
+              )}
+            </div>
           </div>
           <button onClick={() => setCurrentTab('profile')} style={{ position: 'relative', background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}>
             <div style={{ width: '40px', height: '40px', borderRadius: '20px', backgroundColor: 'rgba(255,255,255,0.2)', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden' }}>
@@ -6933,11 +6940,31 @@ const FlockAppInner = ({ authUser, onLogout }) => {
                 <span style={{ color: 'var(--text-tertiary)' }}>›</span>
               </button>
             ))}
-            {/* Dark Mode Toggle */}
-            <div style={{ width: '100%', padding: '12px', display: 'flex', alignItems: 'center', gap: '12px', backgroundColor: 'var(--bg-card-solid)', borderTop: '1px solid var(--border-light)' }}>
-              <div style={{ width: '32px', height: '32px', borderRadius: '8px', backgroundColor: 'var(--icon-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{isDark ? Icons.moon(colors.navy, 18) : Icons.sun(colors.navy, 18)}</div>
-              <span style={{ flex: 1, fontWeight: '600', fontSize: '14px', color: colors.navy }}>Dark Mode</span>
-              <Toggle on={isDark} onChange={toggleTheme} />
+            {/* Smart Night Mode */}
+            <div style={{ width: '100%', padding: '12px', backgroundColor: 'var(--bg-card-solid)', borderTop: '1px solid var(--border-light)' }}>
+              {/* Auto Night Mode toggle */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                <div style={{ width: '32px', height: '32px', borderRadius: '8px', backgroundColor: 'var(--icon-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.moon(colors.navy, 18)}</div>
+                <div style={{ flex: 1 }}>
+                  <span style={{ fontWeight: '600', fontSize: '14px', color: colors.navy, display: 'block' }}>Smart Night Mode</span>
+                  <span style={{ fontSize: '11px', color: 'var(--text-tertiary)' }}>Auto dark at 8 PM, light at 6 AM</span>
+                </div>
+                <Toggle on={themeMode === 'auto'} onChange={() => setAutoMode(themeMode !== 'auto')} />
+              </div>
+              {/* Night mode active badge */}
+              {themeMode === 'auto' && isNightModeActive && (
+                <div style={{ marginTop: '8px', marginLeft: '44px', display: 'inline-flex', alignItems: 'center', gap: '4px', padding: '4px 10px', borderRadius: '8px', backgroundColor: 'var(--accent-purple-bg)', fontSize: '11px', fontWeight: '600', color: 'var(--accent-purple-text)' }}>
+                  {Icons.moon('var(--accent-purple-text)', 12)} Night mode active
+                </div>
+              )}
+              {/* Manual dark mode toggle — only when auto is off */}
+              {themeMode !== 'auto' && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginTop: '10px', paddingTop: '10px', borderTop: '1px solid var(--border-light)' }}>
+                  <div style={{ width: '32px', height: '32px', borderRadius: '8px', backgroundColor: 'var(--icon-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{isDark ? Icons.moon(colors.navy, 18) : Icons.sun(colors.navy, 18)}</div>
+                  <span style={{ flex: 1, fontWeight: '600', fontSize: '14px', color: colors.navy }}>Dark Mode</span>
+                  <Toggle on={isDark} onChange={toggleTheme} />
+                </div>
+              )}
             </div>
             <button onClick={() => { if (onLogout) onLogout(); }} style={{ width: '100%', padding: '12px', textAlign: 'left', display: 'flex', alignItems: 'center', gap: '12px', backgroundColor: 'var(--bg-card-solid)', border: 'none', cursor: 'pointer', color: colors.red }}>
               {Icons.logout(colors.red, 18)}
