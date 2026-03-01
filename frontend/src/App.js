@@ -5120,16 +5120,27 @@ const FlockAppInner = ({ authUser, onLogout }) => {
                     {hourlyData.map((h, i) => {
                       const isNow = i === 0;
                       const parsedH = (() => { const p = (h.hour || '').match(/^(\d+)\s*(AM|PM)$/i); if (!p) return 12; let hr = parseInt(p[1], 10); if (p[2].toUpperCase() === 'AM' && hr === 12) hr = 0; else if (p[2].toUpperCase() === 'PM' && hr !== 12) hr += 12; return hr; })();
-                      // Use real opening hours from API if available, else fall back to venue type
+                      // Use real opening hours from API, or isClosed status, or venue type fallback
                       const hourClosed = (() => {
+                        // If we have real open/close hours from Google, use those
                         if (cd?.openHour != null && cd?.closeHour != null) return parsedH < cd.openHour || parsedH >= cd.closeHour;
+                        // If venue says it's closed right now, at minimum the "Now" bar is closed
+                        // and estimate when it opens based on venue type
+                        if (isClosed && isNow) return true;
+                        if (isClosed) {
+                          const vTypes = activeVenue.types || [];
+                          // If closed now, grey out hours until typical open time for venue type
+                          const nowH = new Date().getHours();
+                          if (vTypes.some(t => t === 'restaurant')) return parsedH < 17 || parsedH > 22; // dinner restaurants typically open ~5 PM
+                          if (vTypes.some(t => ['bar', 'night_club'].includes(t))) return parsedH < 16;
+                          if (vTypes.some(t => t === 'cafe')) return parsedH < 6 || parsedH > 21;
+                          return parsedH <= nowH; // grey out hours up to and including now
+                        }
+                        // Fallback: type-based estimates for open venues
                         const vTypes = activeVenue.types || [];
-                        const isBarH = vTypes.some(t => ['bar', 'night_club'].includes(t));
-                        const isRestH = vTypes.some(t => t === 'restaurant');
-                        const isCafeH = vTypes.some(t => t === 'cafe');
-                        if (isBarH) return (parsedH >= 3 && parsedH < 16);
-                        if (isRestH) return (parsedH < 11 || parsedH > 22);
-                        if (isCafeH) return (parsedH < 6 || parsedH > 21);
+                        if (vTypes.some(t => ['bar', 'night_club'].includes(t))) return (parsedH >= 3 && parsedH < 16);
+                        if (vTypes.some(t => t === 'restaurant')) return (parsedH < 11 || parsedH > 22);
+                        if (vTypes.some(t => t === 'cafe')) return (parsedH < 6 || parsedH > 21);
                         return false;
                       })();
                       const barColor = hourClosed ? 'var(--text-tertiary)' : h.score > 70 ? colors.red : h.score > 40 ? colors.amber : colors.teal;
