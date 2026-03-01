@@ -128,7 +128,7 @@ router.delete('/contacts/:id', authenticate, async (req, res) => {
 // ── Send emergency alert (rate limited: 1 per 20 minutes) ──
 router.post('/alert', authenticate, async (req, res) => {
   try {
-    const { latitude, longitude, includeLocation } = req.body;
+    const { latitude, longitude, includeLocation, timezone } = req.body;
 
     // Check cooldown — 1 alert per 5 minutes
     const recent = await pool.query(
@@ -152,7 +152,10 @@ router.post('/alert', authenticate, async (req, res) => {
 
     const user = await pool.query('SELECT name FROM users WHERE id = $1', [req.user.id]);
     const userName = user.rows[0]?.name || 'A Flock user';
-    const time = new Date().toLocaleString('en-US', { timeZone: 'America/New_York' });
+    const tz = timezone || 'UTC';
+    let time;
+    try { time = new Date().toLocaleString('en-US', { timeZone: tz }); }
+    catch { time = new Date().toISOString(); }
 
     const locationBlock = includeLocation && latitude && longitude
       ? `<p style="margin:12px 0"><a href="https://maps.google.com/?q=${latitude},${longitude}" style="display:inline-block;padding:12px 24px;background:#ef4444;color:white;text-decoration:none;border-radius:8px;font-weight:bold">View Location on Map</a></p>
@@ -217,7 +220,7 @@ router.post('/alert', authenticate, async (req, res) => {
 // ── Share location with trusted contacts ──
 router.post('/share-location', authenticate, async (req, res) => {
   try {
-    const { latitude, longitude } = req.body;
+    const { latitude, longitude, timezone } = req.body;
     if (!latitude || !longitude) {
       return res.status(400).json({ error: 'Location required' });
     }
@@ -232,7 +235,10 @@ router.post('/share-location', authenticate, async (req, res) => {
 
     const user = await pool.query('SELECT name FROM users WHERE id = $1', [req.user.id]);
     const userName = user.rows[0]?.name || 'A Flock user';
-    const time = new Date().toLocaleString('en-US', { timeZone: 'America/New_York' });
+    const tz = timezone || 'UTC';
+    let time;
+    try { time = new Date().toLocaleString('en-US', { timeZone: tz }); }
+    catch { time = new Date().toISOString(); }
 
     const htmlBody = `
       <div style="font-family:Arial,sans-serif;max-width:500px;margin:0 auto;padding:20px">

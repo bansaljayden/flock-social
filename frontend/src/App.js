@@ -1020,6 +1020,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
   // Navigation
   const [currentTab, setCurrentTab] = useState('home');
   const [currentScreen, setCurrentScreen] = useState('main');
+  const [venueDetailReturnTo, setVenueDetailReturnTo] = useState(null);
   const [selectedFlockId, setSelectedFlockId] = useState(null);
   const [pickingVenueForCreate, setPickingVenueForCreate] = useState(false);
   const [pickingVenueForFlockId, setPickingVenueForFlockId] = useState(null); // existing flock ID when assigning venue
@@ -1048,6 +1049,8 @@ const FlockAppInner = ({ authUser, onLogout }) => {
   const [crowdData, setCrowdData] = useState(null);
   const [crowdLoading, setCrowdLoading] = useState(false);
   const [crowdAlternatives, setCrowdAlternatives] = useState([]);
+  const [venueDetailHistory, setVenueDetailHistory] = useState([]);
+  const skipCrowdFetchRef = useRef(false);
 
   // Geolocation state — restore last known location immediately so map isn't empty
   const [userLocation, setUserLocation] = useState(() => {
@@ -1173,7 +1176,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
   }, [enhanceQuery, venuesToMapPins, userLocation, showToast]);
 
   // Open the full venue details modal
-  const openVenueDetail = useCallback(async (placeId, fallbackData) => {
+  const openVenueDetail = useCallback(async (placeId, fallbackData, { panMap } = {}) => {
     setVenueDetailLoading(true);
     setVenueDetailPhotoIdx(0);
     setCrowdData(null);
@@ -1194,6 +1197,15 @@ const FlockAppInner = ({ authUser, onLogout }) => {
       else setVenueDetailModal(null);
 
       setCrowdData(crowd);
+
+      // Pan map to venue location once we have coordinates
+      if (panMap && venue && window.__flockPanToVenue) {
+        const lat = venue.location?.latitude || venue.geometry?.location?.lat;
+        const lng = venue.location?.longitude || venue.geometry?.location?.lng;
+        if (lat && lng) {
+          window.__flockPanToVenue({ place_id: placeId, lat, lng, name: venue.name || venue.displayName?.text, address: venue.formatted_address, rating: venue.rating, photo_url: (venue.photos && venue.photos[0]) || venue.photo_url });
+        }
+      }
 
       // Fetch quieter alternatives (non-blocking)
       if (crowd) {
@@ -1698,6 +1710,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
   // Fetch crowd data when activeVenue changes (map pin tapped)
   useEffect(() => {
     if (!activeVenue || !activeVenue.place_id) { setCrowdData(null); return; }
+    if (skipCrowdFetchRef.current) { skipCrowdFetchRef.current = false; return; }
     let cancelled = false;
     setCrowdLoading(true);
     setCrowdData(null);
@@ -3561,6 +3574,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
             <div style={{ display: 'flex', gap: '4px', flexShrink: 0 }}>
               <button
                 onClick={() => {
+                  setVenueDetailReturnTo({ tab: 'chats', screen: 'dmDetail', dmId: selectedDmId });
                   setCurrentTab('explore');
                   setCurrentScreen('main');
                   if (dmPinnedVenue.place_id) {
@@ -3925,7 +3939,12 @@ const FlockAppInner = ({ authUser, onLogout }) => {
                       const vd = m.venue_data;
                       const pid = vd.place_id;
                       if (pid) {
-                        openVenueDetail(pid, { name: vd.name, formatted_address: vd.addr, place_id: pid, rating: vd.stars || vd.rating, photo_url: vd.photo_url });
+                        setVenueDetailReturnTo({ tab: 'chats', screen: 'dmDetail', dmId: selectedDmId });
+                        setCurrentTab('explore');
+                        setCurrentScreen('main');
+                        setTimeout(() => {
+                          openVenueDetail(pid, { name: vd.name, formatted_address: vd.addr, place_id: pid, rating: vd.stars || vd.rating, photo_url: vd.photo_url }, { panMap: true });
+                        }, 500);
                       }
                     }}
                     onVote={() => {
@@ -5103,7 +5122,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
                   const wkendF = dayF === 5 || dayF === 6;
                   // Filter by actual operating hours (real Google hours first, then type estimates)
                   const isOpenH = (h24) => {
-                    if (venueOpenHour != null && venueCloseHour != null) return h24 >= venueOpenHour && h24 < venueCloseHour;
+                    if (venueOpenHour != null && venueCloseHour != null) return h24 >= venueOpenHour && h24 <= venueCloseHour;
                     if (isBarF) return (h24 >= 16 || h24 <= 2);
                     if (isDinerF) return (h24 >= 6 && h24 <= 21);
                     if (isRestF) return (h24 >= 11 && h24 <= 22);
@@ -5217,7 +5236,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
                         // Closed all day = everything is grey
                         if (closedAllDay) return true;
                         // If we have real open/close hours from Google, use those
-                        if (venueOpenHour != null && venueCloseHour != null) return parsedH < venueOpenHour || parsedH >= venueCloseHour;
+                        if (venueOpenHour != null && venueCloseHour != null) return parsedH < venueOpenHour || parsedH > venueCloseHour;
                         // If venue says it's closed right now, grey out "Now" and hours before typical open
                         if (isClosed && isNow) return true;
                         if (isClosed) {
@@ -5279,7 +5298,15 @@ const FlockAppInner = ({ authUser, onLogout }) => {
                   <p style={{ fontSize: '9px', fontWeight: '600', color: 'var(--text-secondary)', marginBottom: '6px', textTransform: 'uppercase' }}>Less Crowded Nearby</p>
                   <div style={{ display: 'flex', gap: '6px' }}>
                     {(crowdAlternatives.length > 0 ? crowdAlternatives.slice(0, 2) : allVenues.filter(v => v.id !== activeVenue.id && v.category === activeVenue.category && v.crowd < score).sort((a, b) => a.crowd - b.crowd).slice(0, 2)).map((v, i) => (
-                      <button key={v.placeId || v.id || i} onClick={() => { if (v.placeId) openVenueDetail(v.placeId, null); else if (v.place_id) openVenueDetail(v.place_id, null); else setActiveVenue(v); }} style={{ flex: 1, padding: '6px', backgroundColor: 'var(--bg-card-solid)', border: '1px solid var(--border-subtle)', borderRadius: '8px', cursor: 'pointer', textAlign: 'left' }}>
+                      <button key={v.placeId || v.id || i} onClick={() => {
+                        const pid = v.placeId || v.place_id;
+                        if (pid) {
+                          setVenueDetailHistory(prev => [...prev, { activeVenue, crowdData: cd, crowdAlternatives }]);
+                          openVenueDetail(pid, { name: v.name, place_id: pid }, { panMap: true });
+                        } else {
+                          setActiveVenue(v);
+                        }
+                      }} style={{ flex: 1, padding: '6px', backgroundColor: 'var(--bg-card-solid)', border: '1px solid var(--border-subtle)', borderRadius: '8px', cursor: 'pointer', textAlign: 'left' }}>
                         <p style={{ fontSize: '10px', fontWeight: '600', color: colors.navy, margin: 0 }}>{v.name}</p>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '4px', marginTop: '2px' }}>
                           <div style={{ width: '6px', height: '6px', borderRadius: '3px', backgroundColor: (v.score || v.crowd) > 70 ? colors.red : (v.score || v.crowd) > 40 ? colors.amber : colors.teal }} />
@@ -5289,6 +5316,26 @@ const FlockAppInner = ({ authUser, onLogout }) => {
                     ))}
                   </div>
                 </div>
+                )}
+
+                {/* Back to previous venue button */}
+                {venueDetailHistory.length > 0 && (
+                  <button onClick={() => {
+                    const prev = venueDetailHistory[venueDetailHistory.length - 1];
+                    setVenueDetailHistory(h => h.slice(0, -1));
+                    if (prev.activeVenue) {
+                      skipCrowdFetchRef.current = true;
+                      setActiveVenue(prev.activeVenue);
+                      setCrowdData(prev.crowdData);
+                      setCrowdAlternatives(prev.crowdAlternatives || []);
+                      if (window.__flockPanToVenue && prev.activeVenue.place_id) {
+                        const loc = prev.activeVenue.location;
+                        window.__flockPanToVenue({ place_id: prev.activeVenue.place_id, lat: loc?.latitude, lng: loc?.longitude, name: prev.activeVenue.name, address: prev.activeVenue.addr || prev.activeVenue.formatted_address, rating: prev.activeVenue.stars || prev.activeVenue.rating, photo_url: prev.activeVenue.photo_url });
+                      }
+                    }
+                  }} style={{ width: '100%', padding: '8px', marginTop: '8px', borderRadius: '10px', border: `1px solid ${colors.navy}30`, backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontSize: '11px', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px' }}>
+                    {Icons.arrowLeft(colors.navy, 14)} Back to {venueDetailHistory[venueDetailHistory.length - 1]?.activeVenue?.name || 'Previous Venue'}
+                  </button>
                 )}
               </div>
                 );
@@ -5324,6 +5371,17 @@ const FlockAppInner = ({ authUser, onLogout }) => {
                       setCurrentScreen('create');
                     }
                   }} style={{ flex: 1, padding: '10px', borderRadius: '8px', border: 'none', backgroundColor: colors.teal, color: 'white', fontWeight: 'bold', fontSize: '12px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px', position: 'relative', overflow: 'hidden' }}>{Icons.check('white', 14)} Select</button>
+                ) : venueDetailReturnTo ? (
+                  <button onClick={() => {
+                    setVenueDetailHistory([]);
+                    const ret = venueDetailReturnTo;
+                    setVenueDetailReturnTo(null);
+                    setActiveVenue(null);
+                    setCurrentTab(ret.tab);
+                    setCurrentScreen(ret.screen);
+                    if (ret.flockId) setSelectedFlockId(ret.flockId);
+                    if (ret.dmId) setSelectedDmId(ret.dmId);
+                  }} style={{ flex: 1, padding: '10px', borderRadius: '8px', border: 'none', background: `linear-gradient(90deg, ${colors.navyBg}, ${colors.navyMidBg})`, color: 'white', fontWeight: 'bold', fontSize: '12px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px', position: 'relative', overflow: 'hidden' }}>{Icons.arrowLeft('white', 14)} Back to Chat</button>
                 ) : (
                   <button onClick={(e) => { confirmClick(e); setSelectedVenueForCreate({ ...activeVenue, addr: activeVenue.addr || activeVenue.formatted_address, lat: activeVenue.location?.latitude, lng: activeVenue.location?.longitude }); setActiveVenue(null); setCurrentScreen('create'); }} style={{ flex: 1, padding: '10px', borderRadius: '8px', border: 'none', background: `linear-gradient(90deg, ${colors.navyBg}, ${colors.navyMidBg})`, color: 'white', fontWeight: 'bold', fontSize: '12px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px', position: 'relative', overflow: 'hidden' }}>{Icons.users('white', 14)} Start Flock Here</button>
                 )}
@@ -5923,6 +5981,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
               <div style={{ display: 'flex', gap: '4px', flexShrink: 0 }}>
                 <button
                   onClick={() => {
+                    setVenueDetailReturnTo({ tab: 'chats', screen: 'chatDetail', flockId: selectedFlockId });
                     setCurrentTab('explore');
                     setCurrentScreen('main');
                     if (flock.venueId || flock.venueLat) {
@@ -6063,16 +6122,13 @@ const FlockAppInner = ({ authUser, onLogout }) => {
                     onViewDetails={() => {
                       const vc = m.venue_data;
                       const pid = vc.place_id;
-                      setCurrentTab('explore');
-                      setCurrentScreen('main');
-                      if (pid || vc.lat || vc.latitude) {
-                        const lat = vc.lat || vc.latitude;
-                        const lng = vc.lng || vc.longitude;
+                      if (pid) {
+                        setVenueDetailReturnTo({ tab: 'chats', screen: 'chatDetail', flockId: selectedFlockId });
+                        setCurrentTab('explore');
+                        setCurrentScreen('main');
                         setTimeout(() => {
-                          if (window.__flockPanToVenue) {
-                            window.__flockPanToVenue({ place_id: pid, lat, lng, name: vc.name, address: vc.addr || vc.formatted_address, rating: vc.stars || vc.rating, photo_url: vc.photo_url });
-                          }
-                        }, 300);
+                          openVenueDetail(pid, { name: vc.name, formatted_address: vc.addr || vc.formatted_address, place_id: pid, rating: vc.stars || vc.rating, photo_url: vc.photo_url }, { panMap: true });
+                        }, 500);
                       }
                     }}
                     onVote={() => {
@@ -9589,9 +9645,23 @@ const FlockAppInner = ({ authUser, onLogout }) => {
       )}
 
       {/* Venue Details Modal */}
-      {venueDetailModal && (
+      {venueDetailModal && (() => {
+        const closeVenueDetail = () => { setVenueDetailModal(null); };
+        const returnToChat = () => {
+          setVenueDetailModal(null);
+          setVenueDetailHistory([]);
+          const ret = venueDetailReturnTo;
+          if (ret) {
+            setVenueDetailReturnTo(null);
+            setCurrentTab(ret.tab);
+            setCurrentScreen(ret.screen);
+            if (ret.flockId) setSelectedFlockId(ret.flockId);
+            if (ret.dmId) setSelectedDmId(ret.dmId);
+          }
+        };
+        return (
         <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.85)', zIndex: 9998, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
-          onClick={(e) => { if (e.target === e.currentTarget) setVenueDetailModal(null); }}
+          onClick={(e) => { if (e.target === e.currentTarget) closeVenueDetail(); }}
         >
           <div style={{ width: '100%', maxWidth: '420px', maxHeight: '92vh', backgroundColor: 'var(--bg-primary)', borderRadius: '20px', overflow: 'hidden', display: 'flex', flexDirection: 'column', boxShadow: '0 20px 60px rgba(0,0,0,0.5)' }}>
             {/* Photo area */}
@@ -9619,7 +9689,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
               {/* Overlay gradient */}
               <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: '80px', background: 'linear-gradient(transparent, rgba(0,0,0,0.7))' }} />
               {/* Close button */}
-              <button onClick={() => setVenueDetailModal(null)} style={{ position: 'absolute', top: '12px', right: '12px', width: '34px', height: '34px', borderRadius: '17px', backgroundColor: 'rgba(0,0,0,0.5)', border: 'none', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', backdropFilter: 'blur(10px)' }}>{Icons.x('white', 18)}</button>
+              <button onClick={closeVenueDetail} style={{ position: 'absolute', top: '12px', right: '12px', width: '34px', height: '34px', borderRadius: '17px', backgroundColor: 'rgba(0,0,0,0.5)', border: 'none', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', backdropFilter: 'blur(10px)' }}>{Icons.x('white', 18)}</button>
               {/* Name overlay */}
               <div style={{ position: 'absolute', bottom: '12px', left: '14px', right: '14px' }}>
                 <h2 style={{ color: 'white', fontSize: '20px', fontWeight: '900', margin: 0, textShadow: '0 2px 8px rgba(0,0,0,0.5)' }}>{venueDetailModal.name}</h2>
@@ -9747,18 +9817,21 @@ const FlockAppInner = ({ authUser, onLogout }) => {
                   setPickingVenueForFlockId(null);
                   setCurrentTab('chats');
                   setCurrentScreen('chatDetail');
+                } else if (venueDetailReturnTo) {
+                  returnToChat();
                 } else {
                   setSelectedVenueForCreate({ name: venueDetailModal.name, addr: venueDetailModal.formatted_address, place_id: venueDetailModal.place_id, rating: venueDetailModal.rating, stars: venueDetailModal.rating, price_level: venueDetailModal.price_level, price: venueDetailModal.price_level ? '$'.repeat(venueDetailModal.price_level) : null, photo_url: photoUrl, type: venueDetailModal.types?.[0]?.replace(/_/g, ' ')?.replace(/\b\w/g, c => c.toUpperCase()) || 'Venue', crowd: Math.round(20 + Math.random() * 60), lat: venueDetailModal.location?.latitude, lng: venueDetailModal.location?.longitude });
                   setVenueDetailModal(null);
                   setCurrentScreen('create');
                 }
               }} style={{ flex: 1, padding: '12px', borderRadius: '12px', border: 'none', background: `linear-gradient(135deg, ${colors.navyBg}, ${colors.navyMidBg})`, color: 'white', fontSize: '13px', fontWeight: '700', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', boxShadow: '0 4px 12px rgba(13,40,71,0.3)', position: 'relative', overflow: 'hidden' }}>
-                {Icons.plus('white', 16)} {pickingVenueForDm ? 'Pin to DM' : 'Add to Flock'}
+                {venueDetailReturnTo ? Icons.arrowLeft('white', 16) : Icons.plus('white', 16)} {pickingVenueForDm ? 'Pin to DM' : venueDetailReturnTo ? 'Back to Chat' : 'Add to Flock'}
               </button>
             </div>
           </div>
         </div>
-      )}
+        );
+      })()}
 
       {/* Story Viewer Overlay */}
       {viewingStory && viewingStory.storyData && viewingStory.storyData.length > 0 && (
