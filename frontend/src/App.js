@@ -5016,8 +5016,16 @@ const FlockAppInner = ({ authUser, onLogout }) => {
                   const types = activeVenue.types || [];
                   const isBarF = types.some(t => ['bar', 'night_club'].includes(t));
                   const isCafeF = types.some(t => t === 'cafe');
+                  const isRestF = types.some(t => t === 'restaurant');
                   const dayF = new Date().getDay();
                   const wkendF = dayF === 5 || dayF === 6;
+                  // Filter by typical operating hours
+                  const isOpenH = (h24) => {
+                    if (isBarF) return (h24 >= 16 || h24 <= 2);
+                    if (isRestF) return (h24 >= 11 && h24 <= 22);
+                    if (isCafeF) return (h24 >= 6 && h24 <= 21);
+                    return (h24 >= 8 && h24 <= 23);
+                  };
                   const fullDay = Array.from({ length: 24 }, (_, i) => {
                     const h24 = ((6 + i) % 24 + 24) % 24;
                     let s = score;
@@ -5028,20 +5036,19 @@ const FlockAppInner = ({ authUser, onLogout }) => {
                   });
                   if (!peakText) {
                     let maxS = -1, maxI = 0;
-                    fullDay.forEach((h, i) => { if (h.score > maxS) { maxS = h.score; maxI = i; } });
+                    fullDay.forEach((h, i) => { if (!isOpenH(h.h24)) return; if (h.score > maxS) { maxS = h.score; maxI = i; } });
                     let endI = maxI;
-                    for (let i = maxI + 1; i < fullDay.length; i++) { if (Math.abs(fullDay[i].score - maxS) <= 3) endI = i; else break; }
+                    for (let i = maxI + 1; i < fullDay.length; i++) { if (!isOpenH(fullDay[i].h24)) break; if (Math.abs(fullDay[i].score - maxS) <= 3) endI = i; else break; }
                     peakText = endI > maxI ? `${fullDay[maxI].hour} - ${fullDay[endI].hour}` : fullDay[maxI].hour;
                     if (!bestText) {
                       let minS = 999, minI = -1;
                       fullDay.forEach((h, i) => {
                         if (i >= maxI && i <= endI) return;
-                        if (types.some(t => t === 'restaurant') && (h.h24 < 11 || h.h24 > 22)) return;
-                        if (types.some(t => t === 'cafe') && (h.h24 < 6 || h.h24 > 21)) return;
+                        if (!isOpenH(h.h24)) return;
                         if (h.score < minS) { minS = h.score; minI = i; }
                       });
                       if (minI < 0) minI = 0;
-                      bestText = (score <= minS + 5) ? 'Now is good' : fullDay[minI].hour;
+                      bestText = isClosed ? fullDay[minI].hour : (score <= minS + 5) ? 'Now is good' : fullDay[minI].hour;
                     }
                   }
                 }
