@@ -21,7 +21,7 @@ function isWeekend(day) {
 
 function isIndoor(types) {
   if (!types || !types.length) return true;
-  return types.some(t => ['restaurant', 'bar', 'night_club', 'cafe', 'movie_theater', 'bowling_alley', 'shopping_mall', 'juice_shop', 'diner', 'american_restaurant', 'fast_food_restaurant'].includes(t));
+  return types.some(t => ['restaurant', 'bar', 'night_club', 'cafe', 'movie_theater', 'bowling_alley', 'shopping_mall', 'juice_shop', 'diner', 'american_restaurant', 'fast_food_restaurant', 'gym', 'fitness_center', 'library', 'museum'].includes(t));
 }
 
 function hasType(types, ...targets) {
@@ -178,6 +178,40 @@ function getVenueTypeFactor(types, dayOfWeek, hour) {
     if (hour >= 18 && hour <= 21) return 5;
     if (hour >= 6 && hour <= 11) return -10;
     return -3;
+  }
+
+  // Shopping malls — weekend afternoon peak, weekday lunch secondary
+  if (hasType(types, 'shopping_mall')) {
+    if (weekend && hour >= 12 && hour <= 17) return 15;
+    if (weekend && hour >= 10 && hour <= 11) return 10;
+    if (weekend && hour >= 18 && hour <= 20) return 8;
+    if (hour >= 12 && hour <= 14) return 8;  // Weekday lunch
+    if (hour >= 15 && hour <= 17) return 5;
+    if (hour >= 18 && hour <= 20) return 3;
+    if (hour >= 10 && hour <= 11) return 2;
+    if (hour >= 21 || hour <= 9) return -12;
+    return -5;
+  }
+
+  // Gyms & fitness — early morning and after-work peaks
+  if (hasType(types, 'gym', 'fitness_center')) {
+    if (hour >= 6 && hour <= 8) return weekend ? 5 : 12;   // Morning rush (bigger weekday)
+    if (hour >= 17 && hour <= 19) return weekend ? 5 : 15;  // After-work peak
+    if (hour >= 9 && hour <= 11) return weekend ? 10 : 3;   // Weekend morning
+    if (hour >= 12 && hour <= 14) return 3;                  // Lunch crowd
+    if (hour >= 20 && hour <= 21) return -3;
+    if (hour >= 22 || hour <= 5) return -15;
+    return -5;
+  }
+
+  // Libraries & museums — daytime only, quiet evenings
+  if (hasType(types, 'library', 'museum')) {
+    if (weekend && hour >= 11 && hour <= 15) return 10;
+    if (hour >= 11 && hour <= 14) return 6;
+    if (hour >= 15 && hour <= 17) return 3;
+    if (hour >= 9 && hour <= 10) return 2;
+    if (hour >= 18 || hour <= 8) return -12;
+    return -5;
   }
 
   // Parks
@@ -345,6 +379,14 @@ function estimateCapacity(venue, score) {
     max = reviews >= 2000 ? 200 : reviews >= 500 ? 120 : reviews >= 100 ? 60 : 40;
   } else if (isCafeLike(types)) {
     max = reviews >= 500 ? 80 : reviews >= 100 ? 40 : 25;
+  } else if (hasType(types, 'shopping_mall')) {
+    max = reviews >= 5000 ? 2000 : reviews >= 2000 ? 1000 : reviews >= 500 ? 500 : 200;
+  } else if (hasType(types, 'gym', 'fitness_center')) {
+    max = reviews >= 1000 ? 200 : reviews >= 500 ? 120 : reviews >= 100 ? 60 : 30;
+  } else if (hasType(types, 'library', 'museum')) {
+    max = reviews >= 2000 ? 300 : reviews >= 500 ? 150 : reviews >= 100 ? 80 : 40;
+  } else if (hasType(types, 'movie_theater')) {
+    max = reviews >= 2000 ? 400 : reviews >= 500 ? 200 : 100;
   } else {
     max = reviews >= 1000 ? 150 : reviews >= 200 ? 80 : 40;
   }
@@ -396,6 +438,39 @@ function estimateWait(score, types) {
     return '25+ min';
   }
 
+  // Shopping malls — no real "wait", describe crowd level
+  if (hasType(types, 'shopping_mall')) {
+    if (score < 30) return 'Uncrowded';
+    if (score <= 50) return 'Light crowds';
+    if (score <= 70) return 'Moderate crowds';
+    if (score <= 85) return 'Crowded';
+    return 'Very crowded';
+  }
+
+  // Gyms — equipment wait
+  if (hasType(types, 'gym', 'fitness_center')) {
+    if (score < 40) return 'Equipment open';
+    if (score <= 60) return 'Some equipment in use';
+    if (score <= 80) return 'Most equipment busy';
+    return 'Packed — expect waits';
+  }
+
+  // Libraries, museums — space availability
+  if (hasType(types, 'library', 'museum')) {
+    if (score < 40) return 'Plenty of space';
+    if (score <= 60) return 'Some seats taken';
+    if (score <= 80) return 'Getting full';
+    return 'Very full';
+  }
+
+  // Movie theaters — ticket line
+  if (hasType(types, 'movie_theater')) {
+    if (score < 40) return 'No line';
+    if (score <= 60) return 'Short line';
+    if (score <= 80) return '10-15 min line';
+    return '15-30 min line';
+  }
+
   // Restaurants: table waits
   if (score < 40) return 'No wait';
   if (score <= 55) return '~5 min';
@@ -416,6 +491,9 @@ function isOpenHour(h, types, openHour, closeHour) {
   if (isFastFoodLike(types)) return (h >= 6 && h <= 23);
   if (hasType(types, 'restaurant')) return (h >= 11 && h <= 22);
   if (isCafeLike(types)) return (h >= 6 && h <= 21);
+  if (hasType(types, 'shopping_mall')) return (h >= 10 && h <= 21);
+  if (hasType(types, 'gym', 'fitness_center')) return (h >= 5 && h <= 23);
+  if (hasType(types, 'library', 'museum')) return (h >= 9 && h <= 18);
   if (hasType(types, 'park')) return (h >= 6 && h <= 21);
   return (h >= 8 && h <= 23);
 }
