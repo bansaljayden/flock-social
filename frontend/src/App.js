@@ -4981,7 +4981,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
                     <p style={{ fontSize: '10px', color: 'var(--text-secondary)', margin: '2px 0' }}>{waitText === 'No wait' ? 'No wait expected' : `Est. wait: ${waitText}`}</p>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
                       {Icons.clock(colors.teal, 10)}
-                      <span style={{ fontSize: '10px', fontWeight: 'bold', color: colors.teal }}>Best time to go: {bestTimeText}</span>
+                      <span style={{ fontSize: '10px', fontWeight: 'bold', color: colors.teal }}>Least crowded: {bestTimeText}</span>
                     </div>
                   </div>
                 </div>
