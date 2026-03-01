@@ -1117,6 +1117,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
         photo_url: v.photo_url || null,
         location: v.location || null,
         types: v.types || [],
+        opening_hours: v.opening_hours || null,
       };
     });
   }, [categorizeVenue, crowdPredictions]);
@@ -5044,10 +5045,34 @@ const FlockAppInner = ({ authUser, onLogout }) => {
                 };
 
                 const hourlyData = cd?.hourly || genHourly();
-                const isOpen = cd?.isOpen;
+
+                // Extract real hours: prefer crowd API, fall back to venue search opening_hours
+                const venueOH = activeVenue.opening_hours;
+                const realIsOpen = cd?.isOpen ?? venueOH?.openNow ?? null;
+                const isOpen = realIsOpen;
                 const isClosed = isOpen === false;
+
+                // Extract today's open/close hours from venue search data as fallback
+                const venueOpenHour = cd?.openHour ?? (() => {
+                  const periods = venueOH?.periods;
+                  if (!periods || !periods.length) return null;
+                  const today = new Date().getDay();
+                  const tp = periods.find(pd => pd.open?.day === today);
+                  if (!tp) return null;
+                  return tp.open?.hour ?? null;
+                })();
+                const venueCloseHour = cd?.closeHour ?? (() => {
+                  const periods = venueOH?.periods;
+                  if (!periods || !periods.length) return null;
+                  const today = new Date().getDay();
+                  const tp = periods.find(pd => pd.open?.day === today);
+                  if (!tp) return null;
+                  const ch = tp.close?.hour ?? null;
+                  return ch === 0 ? 24 : ch;
+                })();
+
                 // Closed all day = venue says closed AND no opening hours for today
-                const closedAllDay = isClosed && cd?.openHour == null;
+                const closedAllDay = isClosed && venueOpenHour == null;
 
                 // Venue-type-aware wait estimate (client-side fallback)
                 const getWait = () => {
@@ -5076,8 +5101,9 @@ const FlockAppInner = ({ authUser, onLogout }) => {
                   const isRestF = types.some(t => t === 'restaurant');
                   const dayF = new Date().getDay();
                   const wkendF = dayF === 5 || dayF === 6;
-                  // Filter by typical operating hours
+                  // Filter by actual operating hours (real Google hours first, then type estimates)
                   const isOpenH = (h24) => {
+                    if (venueOpenHour != null && venueCloseHour != null) return h24 >= venueOpenHour && h24 < venueCloseHour;
                     if (isBarF) return (h24 >= 16 || h24 <= 2);
                     if (isDinerF) return (h24 >= 6 && h24 <= 21);
                     if (isRestF) return (h24 >= 11 && h24 <= 22);
@@ -5191,7 +5217,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
                         // Closed all day = everything is grey
                         if (closedAllDay) return true;
                         // If we have real open/close hours from Google, use those
-                        if (cd?.openHour != null && cd?.closeHour != null) return parsedH < cd.openHour || parsedH >= cd.closeHour;
+                        if (venueOpenHour != null && venueCloseHour != null) return parsedH < venueOpenHour || parsedH >= venueCloseHour;
                         // If venue says it's closed right now, grey out "Now" and hours before typical open
                         if (isClosed && isNow) return true;
                         if (isClosed) {
