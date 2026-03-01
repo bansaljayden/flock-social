@@ -4940,6 +4940,48 @@ const FlockAppInner = ({ authUser, onLogout }) => {
                 const label = cd ? cd.label : (score > 70 ? 'Very Busy' : score > 40 ? 'Moderate' : 'Not Busy');
                 const crowdColor = score > 70 ? colors.red : score > 40 ? colors.amber : colors.teal;
 
+                // Generate client-side hourly forecast when API data is unavailable
+                const fmtH = (h24) => { const hh = ((h24 % 24) + 24) % 24; if (hh === 0) return '12 AM'; if (hh < 12) return `${hh} AM`; if (hh === 12) return '12 PM'; return `${hh - 12} PM`; };
+                const genHourly = () => {
+                  const now = new Date().getHours();
+                  const isBar = (activeVenue.types || []).some(t => ['bar', 'night_club'].includes(t));
+                  const isCafe = (activeVenue.types || []).some(t => t === 'cafe');
+                  const day = new Date().getDay();
+                  const wkend = day === 5 || day === 6;
+                  return Array.from({ length: 12 }, (_, i) => {
+                    const h = now + i;
+                    const h24 = ((h % 24) + 24) % 24;
+                    let s = score;
+                    if (isBar) { s = h24 >= 21 ? score + 20 : h24 >= 18 ? score + 5 : h24 >= 14 ? score - 20 : score - 30; }
+                    else if (isCafe) { s = h24 >= 7 && h24 <= 10 ? score + 15 : h24 >= 11 && h24 <= 14 ? score : h24 >= 20 ? score - 30 : score - 10; }
+                    else { s = (h24 >= 18 && h24 <= 20) ? score + 15 : (h24 >= 11 && h24 <= 13) ? score + 10 : (h24 >= 14 && h24 <= 17) ? score - 15 : (h24 >= 21) ? (wkend ? score + 5 : score - 10) : score - 25; }
+                    s = Math.max(5, Math.min(95, s));
+                    return { hour: fmtH(h), score: Math.round(s) };
+                  });
+                };
+
+                const hourlyData = cd?.hourly || genHourly();
+                const waitText = cd ? cd.waitEstimate : (score > 70 ? '15-30 min' : score > 40 ? '~5 min' : 'No wait');
+
+                // Compute peak from hourly
+                let peakText = cd?.peak;
+                let bestText = cd?.bestTime;
+                if (!peakText) {
+                  let maxS = -1, maxI = 0, endI = 0;
+                  hourlyData.forEach((h, i) => { if (h.score > maxS) { maxS = h.score; maxI = i; } });
+                  endI = maxI;
+                  for (let i = maxI + 1; i < hourlyData.length; i++) { if (Math.abs(hourlyData[i].score - maxS) <= 3) endI = i; else break; }
+                  peakText = endI > maxI ? `${hourlyData[maxI].hour} - ${hourlyData[Math.min(endI + 1, hourlyData.length - 1)].hour}` : hourlyData[maxI].hour;
+                }
+                if (!bestText) {
+                  let minS = 999, minI = 0;
+                  hourlyData.forEach((h, i) => { if (h.score < minS) { minS = h.score; minI = i; } });
+                  bestText = (hourlyData[0].score <= minS + 5) ? 'Now is good' : hourlyData[minI].hour;
+                }
+
+                const hasWeather = cd?.weather != null;
+                const confidenceText = cd ? `${cd.confidence}%` : null;
+
                 return (
               <div style={{ backgroundColor: 'var(--bg-tertiary)', borderRadius: '12px', padding: '10px', marginBottom: '10px', border: '1px solid var(--border-subtle)' }}>
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
@@ -4950,18 +4992,18 @@ const FlockAppInner = ({ authUser, onLogout }) => {
                   <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
                     {crowdLoading ? (
                       <span style={{ fontSize: '9px', color: 'var(--text-secondary)' }}>Loading...</span>
-                    ) : cd ? (
+                    ) : (
                       <>
-                        <div style={{ width: '6px', height: '6px', borderRadius: '3px', backgroundColor: cd.weather ? '#22C55E' : colors.amber, animation: cd.weather ? 'pulse 2s ease-in-out infinite' : 'none' }} />
-                        <span style={{ fontSize: '9px', color: cd.weather ? '#22C55E' : colors.amber, fontWeight: '500' }}>{cd.weather ? 'LIVE' : 'ESTIMATED'}</span>
-                        <span style={{ fontSize: '9px', padding: '2px 6px', borderRadius: '10px', backgroundColor: 'var(--accent-blue-bg)', color: 'var(--accent-blue-text)', fontWeight: '600' }}>{cd.confidence}% confidence</span>
+                        <div style={{ width: '6px', height: '6px', borderRadius: '3px', backgroundColor: hasWeather ? '#22C55E' : colors.amber, animation: hasWeather ? 'pulse 2s ease-in-out infinite' : 'none' }} />
+                        <span style={{ fontSize: '9px', color: hasWeather ? '#22C55E' : colors.amber, fontWeight: '500' }}>{hasWeather ? 'LIVE' : 'ESTIMATED'}</span>
+                        {confidenceText && <span style={{ fontSize: '9px', padding: '2px 6px', borderRadius: '10px', backgroundColor: 'var(--accent-blue-bg)', color: 'var(--accent-blue-text)', fontWeight: '600' }}>{confidenceText} confidence</span>}
                       </>
-                    ) : null}
+                    )}
                   </div>
                 </div>
 
                 {/* Crowd Meter */}
-                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: cd ? '10px' : '0' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '10px' }}>
                   <div style={{ width: '50px', height: '50px', borderRadius: '25px', background: `conic-gradient(${crowdColor} ${score * 3.6}deg, var(--border-default) 0deg)`, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                     <div style={{ width: '40px', height: '40px', borderRadius: '20px', backgroundColor: 'var(--bg-card-solid)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column' }}>
                       <span style={{ fontSize: '14px', fontWeight: '900', color: crowdColor }}>{score}%</span>
@@ -4969,28 +5011,19 @@ const FlockAppInner = ({ authUser, onLogout }) => {
                   </div>
                   <div style={{ flex: 1 }}>
                     <p style={{ fontSize: '12px', fontWeight: '700', color: crowdColor, margin: 0 }}>{label}</p>
-                    {cd ? (
-                      <>
-                        <p style={{ fontSize: '10px', color: 'var(--text-secondary)', margin: '2px 0' }}>{cd.waitEstimate === 'No wait' ? 'No wait expected' : `Est. wait: ${cd.waitEstimate}`}</p>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                          {Icons.clock(colors.teal, 10)}
-                          <span style={{ fontSize: '10px', fontWeight: 'bold', color: colors.teal }}>Least crowded: {cd.bestTime}</span>
-                        </div>
-                      </>
-                    ) : (
-                      <p style={{ fontSize: '10px', color: 'var(--text-secondary)', margin: '2px 0' }}>Based on venue popularity</p>
-                    )}
+                    <p style={{ fontSize: '10px', color: 'var(--text-secondary)', margin: '2px 0' }}>{waitText === 'No wait' ? 'No wait expected' : `Est. wait: ${waitText}`}</p>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                      {Icons.clock(colors.teal, 10)}
+                      <span style={{ fontSize: '10px', fontWeight: 'bold', color: colors.teal }}>Least crowded: {bestText}</span>
+                    </div>
                   </div>
                 </div>
 
-                {/* Only show detailed forecast when we have real API data */}
-                {cd && (
-                  <>
                 {/* Hourly Forecast Graph */}
                 <div style={{ marginBottom: '10px' }}>
                   <p style={{ fontSize: '9px', fontWeight: '600', color: 'var(--text-secondary)', marginBottom: '6px', textTransform: 'uppercase' }}>Expected Crowd by Hour</p>
                   <div style={{ display: 'flex', alignItems: 'flex-end', gap: '3px', height: '40px' }}>
-                    {cd.hourly.map((h, i) => (
+                    {hourlyData.map((h, i) => (
                       <div key={i} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '2px' }}>
                         <div style={{ width: '100%', height: `${h.score * 0.4}px`, borderRadius: '2px', backgroundColor: h.score > 70 ? colors.red : h.score > 40 ? colors.amber : colors.teal, opacity: i === 0 ? 1 : 0.6 }} />
                         <span style={{ fontSize: '7px', color: 'var(--text-tertiary)' }}>{h.hour}</span>
@@ -5006,35 +5039,33 @@ const FlockAppInner = ({ authUser, onLogout }) => {
                       {Icons.trendingUp(colors.red, 10)}
                       <span style={{ fontSize: '8px', color: 'var(--text-secondary)', textTransform: 'uppercase' }}>Busiest Hours</span>
                     </div>
-                    <span style={{ fontSize: '11px', fontWeight: '700', color: colors.navy }}>{cd.peak}</span>
+                    <span style={{ fontSize: '11px', fontWeight: '700', color: colors.navy }}>{peakText}</span>
                   </div>
                   <div style={{ flex: 1, backgroundColor: 'var(--bg-card-solid)', borderRadius: '8px', padding: '6px 8px', border: '1px solid var(--border-subtle)' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '4px', marginBottom: '2px' }}>
                       {Icons.zap(colors.amber, 10)}
                       <span style={{ fontSize: '8px', color: 'var(--text-secondary)', textTransform: 'uppercase' }}>Est. Wait Right Now</span>
                     </div>
-                    <span style={{ fontSize: '11px', fontWeight: '700', color: colors.navy }}>{cd.waitEstimate}</span>
+                    <span style={{ fontSize: '11px', fontWeight: '700', color: colors.navy }}>{waitText}</span>
                   </div>
                 </div>
 
                 {/* Quieter Options */}
-                {crowdAlternatives.length > 0 && (
+                {(crowdAlternatives.length > 0 || (!cd && allVenues.filter(v => v.id !== activeVenue.id && v.category === activeVenue.category).length > 0)) && (
                 <div>
                   <p style={{ fontSize: '9px', fontWeight: '600', color: 'var(--text-secondary)', marginBottom: '6px', textTransform: 'uppercase' }}>Less Crowded Nearby</p>
                   <div style={{ display: 'flex', gap: '6px' }}>
-                    {crowdAlternatives.slice(0, 2).map((v, i) => (
-                      <button key={v.placeId || i} onClick={() => { if (v.placeId) openVenueDetail(v.placeId, null); }} style={{ flex: 1, padding: '6px', backgroundColor: 'var(--bg-card-solid)', border: '1px solid var(--border-subtle)', borderRadius: '8px', cursor: 'pointer', textAlign: 'left' }}>
+                    {(crowdAlternatives.length > 0 ? crowdAlternatives.slice(0, 2) : allVenues.filter(v => v.id !== activeVenue.id && v.category === activeVenue.category && v.crowd < score).sort((a, b) => a.crowd - b.crowd).slice(0, 2)).map((v, i) => (
+                      <button key={v.placeId || v.id || i} onClick={() => { if (v.placeId) openVenueDetail(v.placeId, null); else if (v.place_id) openVenueDetail(v.place_id, null); else setActiveVenue(v); }} style={{ flex: 1, padding: '6px', backgroundColor: 'var(--bg-card-solid)', border: '1px solid var(--border-subtle)', borderRadius: '8px', cursor: 'pointer', textAlign: 'left' }}>
                         <p style={{ fontSize: '10px', fontWeight: '600', color: colors.navy, margin: 0 }}>{v.name}</p>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '4px', marginTop: '2px' }}>
-                          <div style={{ width: '6px', height: '6px', borderRadius: '3px', backgroundColor: v.score > 70 ? colors.red : v.score > 40 ? colors.amber : colors.teal }} />
-                          <span style={{ fontSize: '9px', color: 'var(--text-secondary)' }}>{v.label}</span>
+                          <div style={{ width: '6px', height: '6px', borderRadius: '3px', backgroundColor: (v.score || v.crowd) > 70 ? colors.red : (v.score || v.crowd) > 40 ? colors.amber : colors.teal }} />
+                          <span style={{ fontSize: '9px', color: 'var(--text-secondary)' }}>{v.label || ((v.score || v.crowd) > 70 ? 'Very Busy' : (v.score || v.crowd) > 40 ? 'Moderate' : 'Not Busy')}</span>
                         </div>
                       </button>
                     ))}
                   </div>
                 </div>
-                )}
-                  </>
                 )}
               </div>
                 );
