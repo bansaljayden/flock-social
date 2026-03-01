@@ -33,18 +33,18 @@ function hasType(types, ...targets) {
 
 function formatHour(h) {
   const hour24 = ((h % 24) + 24) % 24;
-  if (hour24 === 0) return '12a';
-  if (hour24 < 12) return `${hour24}a`;
-  if (hour24 === 12) return '12p';
-  return `${hour24 - 12}p`;
+  if (hour24 === 0) return '12 AM';
+  if (hour24 < 12) return `${hour24} AM`;
+  if (hour24 === 12) return '12 PM';
+  return `${hour24 - 12} PM`;
 }
 
 function formatHourFull(h) {
   const hour24 = ((h % 24) + 24) % 24;
-  if (hour24 === 0) return '12:00 AM';
-  if (hour24 < 12) return `${hour24}:00 AM`;
-  if (hour24 === 12) return '12:00 PM';
-  return `${hour24 - 12}:00 PM`;
+  if (hour24 === 0) return '12 AM';
+  if (hour24 < 12) return `${hour24} AM`;
+  if (hour24 === 12) return '12 PM';
+  return `${hour24 - 12} PM`;
 }
 
 // ---------------------------------------------------------------------------
@@ -86,24 +86,24 @@ function getTimeFactor(dayOfWeek, hour) {
 }
 
 function getPopularityFactor(reviewCount) {
-  if (!reviewCount) return 2;
-  if (reviewCount >= 2000) return 20;
-  if (reviewCount >= 1000) return 17;
-  if (reviewCount >= 500) return 14;
-  if (reviewCount >= 200) return 10;
-  if (reviewCount >= 100) return 7;
-  if (reviewCount >= 50) return 4;
-  return 2;
+  if (!reviewCount) return 1;
+  if (reviewCount >= 2000) return 15;
+  if (reviewCount >= 1000) return 12;
+  if (reviewCount >= 500) return 10;
+  if (reviewCount >= 200) return 7;
+  if (reviewCount >= 100) return 5;
+  if (reviewCount >= 50) return 3;
+  return 1;
 }
 
 function getRatingFactor(rating) {
-  if (!rating) return 1;
-  if (rating >= 4.5) return 10;
-  if (rating >= 4.2) return 8;
-  if (rating >= 4.0) return 6;
-  if (rating >= 3.5) return 4;
-  if (rating >= 3.0) return 2;
-  return 1;
+  if (!rating) return 0;
+  if (rating >= 4.5) return 7;
+  if (rating >= 4.2) return 5;
+  if (rating >= 4.0) return 4;
+  if (rating >= 3.5) return 3;
+  if (rating >= 3.0) return 1;
+  return 0;
 }
 
 function getVenueTypeFactor(types, dayOfWeek, hour) {
@@ -121,7 +121,8 @@ function getVenueTypeFactor(types, dayOfWeek, hour) {
   if (hasType(types, 'restaurant')) {
     if (hour >= 18 && hour <= 20) return 8;
     if (hour >= 11 && hour <= 13) return 6;
-    if (hour >= 14 && hour <= 17) return -5;
+    if (hour >= 14 && hour <= 17) return -10;
+    if (hour >= 0 && hour <= 10) return -8;
   }
 
   if (hasType(types, 'cafe')) {
@@ -156,7 +157,7 @@ function getWeatherFactor(weather, types) {
 
   if (weather.isRaining) {
     if (hasType(types, 'park')) modifier += -15;
-    else if (indoor) modifier += 10;
+    else if (indoor) modifier += 5;
     else modifier += -5;
   }
 
@@ -170,7 +171,7 @@ function getWeatherFactor(weather, types) {
     if (!indoor) modifier += -8;
   }
 
-  return Math.max(-15, Math.min(10, modifier));
+  return Math.max(-15, Math.min(8, modifier));
 }
 
 // ---------------------------------------------------------------------------
@@ -282,27 +283,37 @@ function estimateWait(score) {
 // Best time (lowest score in reasonable future hours)
 // ---------------------------------------------------------------------------
 
-function findBestTime(hourlyForecast) {
+function findBestTime(hourlyForecast, venue) {
   if (!hourlyForecast || !hourlyForecast.length) return 'Right now';
 
   const currentScore = hourlyForecast[0].score;
+  const startHour = new Date().getHours();
+  const types = venue?.types || [];
 
-  // Filter to reasonable hours (skip 2a-5a unless bar/club context)
-  const candidates = hourlyForecast.filter((_, i) => i >= 0); // all are valid
+  // Filter to hours when venue is likely open
+  const candidates = hourlyForecast.filter((_, i) => {
+    const h = ((startHour + i) % 24 + 24) % 24;
+    if (hasType(types, 'restaurant')) return h >= 11 && h <= 22;
+    if (hasType(types, 'cafe')) return h >= 6 && h <= 21;
+    if (hasType(types, 'bar', 'night_club')) return h >= 16 || h <= 2;
+    return h >= 7 && h <= 23;
+  });
+
+  if (!candidates.length) return 'Right now';
+
   let minEntry = candidates[0];
-  let minIndex = 0;
+  let minOrigIdx = hourlyForecast.indexOf(minEntry);
 
   for (let i = 1; i < candidates.length; i++) {
     if (candidates[i].score < minEntry.score) {
       minEntry = candidates[i];
-      minIndex = i;
+      minOrigIdx = hourlyForecast.indexOf(candidates[i]);
     }
   }
 
-  // If current hour is within 5 points of the minimum, say "Right now"
   if (currentScore <= minEntry.score + 5) return 'Right now';
 
-  return formatHourFull(new Date().getHours() + minIndex);
+  return formatHourFull(startHour + minOrigIdx);
 }
 
 // ---------------------------------------------------------------------------
@@ -335,7 +346,7 @@ function findPeakTime(hourlyForecast) {
   const startHour = new Date().getHours() + maxIndex;
   if (endIndex > maxIndex) {
     const endHour = new Date().getHours() + endIndex + 1;
-    return `${formatHourFull(startHour).replace(':00 ', ' ')} - ${formatHourFull(endHour).replace(':00 ', ' ')}`;
+    return `${formatHourFull(startHour)} - ${formatHourFull(endHour)}`;
   }
 
   return formatHourFull(startHour);
