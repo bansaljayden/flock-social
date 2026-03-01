@@ -4995,6 +4995,8 @@ const FlockAppInner = ({ authUser, onLogout }) => {
                 const hourlyData = cd?.hourly || genHourly();
                 const isOpen = cd?.isOpen;
                 const isClosed = isOpen === false;
+                // Closed all day = venue says closed AND no opening hours for today
+                const closedAllDay = isClosed && cd?.openHour == null;
 
                 // Venue-type-aware wait estimate (client-side fallback)
                 const getWait = () => {
@@ -5094,11 +5096,13 @@ const FlockAppInner = ({ authUser, onLogout }) => {
                   <div style={{ flex: 1 }}>
                     {isClosed ? (
                       <>
-                        <p style={{ fontSize: '12px', fontWeight: '700', color: colors.red, margin: 0 }}>Currently Closed</p>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '4px', marginTop: '2px' }}>
-                          {Icons.clock(colors.teal, 10)}
-                          <span style={{ fontSize: '10px', fontWeight: 'bold', color: colors.teal }}>Best time to visit: {bestText}</span>
-                        </div>
+                        <p style={{ fontSize: '12px', fontWeight: '700', color: colors.red, margin: 0 }}>{closedAllDay ? 'Closed Today' : 'Currently Closed'}</p>
+                        {!closedAllDay && (
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '4px', marginTop: '2px' }}>
+                            {Icons.clock(colors.teal, 10)}
+                            <span style={{ fontSize: '10px', fontWeight: 'bold', color: colors.teal }}>Best time to visit: {bestText}</span>
+                          </div>
+                        )}
                       </>
                     ) : (
                       <>
@@ -5120,21 +5124,19 @@ const FlockAppInner = ({ authUser, onLogout }) => {
                     {hourlyData.map((h, i) => {
                       const isNow = i === 0;
                       const parsedH = (() => { const p = (h.hour || '').match(/^(\d+)\s*(AM|PM)$/i); if (!p) return 12; let hr = parseInt(p[1], 10); if (p[2].toUpperCase() === 'AM' && hr === 12) hr = 0; else if (p[2].toUpperCase() === 'PM' && hr !== 12) hr += 12; return hr; })();
-                      // Use real opening hours from API, or isClosed status, or venue type fallback
                       const hourClosed = (() => {
+                        // Closed all day = everything is grey
+                        if (closedAllDay) return true;
                         // If we have real open/close hours from Google, use those
                         if (cd?.openHour != null && cd?.closeHour != null) return parsedH < cd.openHour || parsedH >= cd.closeHour;
-                        // If venue says it's closed right now, at minimum the "Now" bar is closed
-                        // and estimate when it opens based on venue type
+                        // If venue says it's closed right now, grey out "Now" and hours before typical open
                         if (isClosed && isNow) return true;
                         if (isClosed) {
                           const vTypes = activeVenue.types || [];
-                          // If closed now, grey out hours until typical open time for venue type
-                          const nowH = new Date().getHours();
-                          if (vTypes.some(t => t === 'restaurant')) return parsedH < 17 || parsedH > 22; // dinner restaurants typically open ~5 PM
+                          if (vTypes.some(t => t === 'restaurant')) return parsedH < 17 || parsedH > 22;
                           if (vTypes.some(t => ['bar', 'night_club'].includes(t))) return parsedH < 16;
                           if (vTypes.some(t => t === 'cafe')) return parsedH < 6 || parsedH > 21;
-                          return parsedH <= nowH; // grey out hours up to and including now
+                          return parsedH <= new Date().getHours();
                         }
                         // Fallback: type-based estimates for open venues
                         const vTypes = activeVenue.types || [];
@@ -5161,7 +5163,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
                       {Icons.trendingUp(colors.red, 10)}
                       <span style={{ fontSize: '8px', color: 'var(--text-secondary)', textTransform: 'uppercase' }}>Busiest Hours</span>
                     </div>
-                    <span style={{ fontSize: '11px', fontWeight: '700', color: colors.navy }}>{peakText}</span>
+                    <span style={{ fontSize: '11px', fontWeight: '700', color: closedAllDay ? colors.red : colors.navy }}>{closedAllDay ? 'Closed Today' : peakText}</span>
                   </div>
                   <div style={{ flex: 1, backgroundColor: 'var(--bg-card-solid)', borderRadius: '8px', padding: '6px 8px', border: '1px solid var(--border-subtle)' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '4px', marginBottom: '2px' }}>
