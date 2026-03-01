@@ -485,7 +485,7 @@ function estimateWait(score, types) {
 
 function isOpenHour(h, types, openHour, closeHour) {
   // Use real hours from Google if available
-  if (openHour != null && closeHour != null) return h >= openHour && h < closeHour;
+  if (openHour != null && closeHour != null) return h >= openHour && h <= closeHour;
   if (hasType(types, 'bar', 'night_club')) return (h >= 16 || h <= 2);
   if (isDinerLike(types)) return (h >= 6 && h <= 21);
   if (isFastFoodLike(types)) return (h >= 6 && h <= 23);

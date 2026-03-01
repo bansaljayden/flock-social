@@ -248,9 +248,13 @@ router.get('/:placeId/alternatives',
 
       const placeId = req.params.placeId;
 
+      // Use client's local time if provided, else fall back to server time
+      const now = new Date();
+      const localHour = req.query.localHour != null ? parseInt(req.query.localHour, 10) : now.getHours();
+      const localDay = req.query.localDay != null ? parseInt(req.query.localDay, 10) : now.getDay();
+
       // Fetch target venue
-      const clientDay = req.query.localDay != null ? parseInt(req.query.localDay, 10) : undefined;
-      const target = await fetchVenueFromGoogle(placeId, clientDay);
+      const target = await fetchVenueFromGoogle(placeId, localDay);
       if (!target) {
         return res.status(502).json({ error: 'Failed to fetch venue data' });
       }
@@ -263,10 +267,14 @@ router.get('/:placeId/alternatives',
 
       // Get weather
       const weather = await getWeather(lat, lon);
+      const clientTime = new Date(now);
+      const serverDay = clientTime.getDay();
+      const dayDiff = localDay - serverDay;
+      clientTime.setDate(clientTime.getDate() + dayDiff);
+      clientTime.setHours(localHour, 0, 0, 0);
 
       // Score the target venue
-      const now = new Date();
-      const targetResult = calculateCrowdScore(target, weather, now);
+      const targetResult = calculateCrowdScore(target, weather, clientTime);
 
       // Search nearby venues of similar type
       const primaryType = target.types[0] || 'restaurant';
@@ -299,7 +307,7 @@ router.get('/:placeId/alternatives',
           location: p.location || null,
         }));
 
-      const alternatives = findQuieterAlternatives(nearby, targetResult.score, weather, now, 3);
+      const alternatives = findQuieterAlternatives(nearby, targetResult.score, weather, clientTime, 3);
 
       res.json({
         currentVenue: { name: target.name, score: targetResult.score },

@@ -297,16 +297,18 @@ export async function deleteTrustedContact(id) {
 }
 
 export async function sendEmergencyAlert({ latitude, longitude, includeLocation }) {
+  const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
   return request('/api/safety/alert', {
     method: 'POST',
-    body: JSON.stringify({ latitude, longitude, includeLocation }),
+    body: JSON.stringify({ latitude, longitude, includeLocation, timezone }),
   });
 }
 
 export async function shareLocationWithContacts({ latitude, longitude }) {
+  const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
   return request('/api/safety/share-location', {
     method: 'POST',
-    body: JSON.stringify({ latitude, longitude }),
+    body: JSON.stringify({ latitude, longitude, timezone }),
   });
 }
 
@@ -327,7 +329,8 @@ export async function getCrowdBatch(venues) {
 }
 
 export async function getCrowdAlternatives(placeId) {
-  return request(`/api/crowd/${encodeURIComponent(placeId)}/alternatives`);
+  const now = new Date();
+  return request(`/api/crowd/${encodeURIComponent(placeId)}/alternatives?localHour=${now.getHours()}&localDay=${now.getDay()}`);
 }
 
 // Venue Feedback
