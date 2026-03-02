@@ -151,7 +151,7 @@ router.get('/:placeId',
       const peakResult = findPeakTime(fullDay, venue);
       const bestTime = findBestTime(fullDay, venue, peakResult.startIdx, peakResult.endIdx, venue.isOpen);
 
-      const waitEstimateTyped = estimateWait(crowdResult.score, venue.types);
+      const waitEstimateTyped = estimateWait(crowdResult.score, venue.types, venue.price_level);
 
       const result = {
         placeId,
