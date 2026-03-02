@@ -5237,54 +5237,56 @@ const FlockAppInner = ({ authUser, onLogout }) => {
                   </div>
                 </div>
 
-                {/* Hourly Forecast Graph */}
-                <div style={{ marginBottom: '10px' }}>
-                  <p style={{ fontSize: '9px', fontWeight: '600', color: 'var(--text-secondary)', marginBottom: '6px', textTransform: 'uppercase' }}>Expected Crowd by Hour</p>
-                  <div style={{ display: 'flex', alignItems: 'flex-end', gap: '3px', height: '40px' }}>
-                    {hourlyData.map((h, i) => {
-                      const isNow = i === 0;
-                      const parsedH = (() => { const p = (h.hour || '').match(/^(\d+)\s*(AM|PM)$/i); if (!p) return 12; let hr = parseInt(p[1], 10); if (p[2].toUpperCase() === 'AM' && hr === 12) hr = 0; else if (p[2].toUpperCase() === 'PM' && hr !== 12) hr += 12; return hr; })();
-                      const hourClosed = (() => {
-                        // Closed all day = everything is grey
-                        if (closedAllDay) return true;
-                        // If we have real open/close hours from Google, use those
-                        if (venueOpenHour != null && venueCloseHour != null) return parsedH < venueOpenHour || parsedH > venueCloseHour;
-                        // If venue says it's closed right now, grey out "Now" and hours before typical open
-                        if (isClosed && isNow) return true;
-                        if (isClosed) {
-                          const vTypes = activeVenue.types || [];
-                          if (vTypes.some(t => ['diner', 'breakfast_restaurant', 'brunch_restaurant'].includes(t))) return parsedH < 6 || parsedH > 21;
-                          if (vTypes.some(t => t === 'restaurant')) return parsedH < 17 || parsedH > 22;
-                          if (vTypes.some(t => ['bar', 'night_club'].includes(t))) return parsedH < 16;
-                          if (vTypes.some(t => ['cafe', 'juice_shop', 'smoothie_shop', 'juice_bar', 'tea_house', 'coffee_shop'].includes(t))) return parsedH < 6 || parsedH > 21;
-                          if (vTypes.some(t => ['fast_food_restaurant', 'meal_takeaway'].includes(t))) return parsedH < 6 || parsedH > 23;
-                          if (vTypes.some(t => t === 'shopping_mall')) return parsedH < 10 || parsedH > 21;
-                          if (vTypes.some(t => ['gym', 'fitness_center'].includes(t))) return parsedH < 5 || parsedH > 23;
-                          if (vTypes.some(t => ['library', 'museum'].includes(t))) return parsedH < 9 || parsedH > 18;
-                          return parsedH <= new Date().getHours();
-                        }
-                        // Fallback: type-based estimates for open venues
-                        const vTypes = activeVenue.types || [];
-                        if (vTypes.some(t => ['bar', 'night_club'].includes(t))) return (parsedH >= 3 && parsedH < 16);
-                        if (vTypes.some(t => ['diner', 'breakfast_restaurant', 'brunch_restaurant'].includes(t))) return (parsedH < 6 || parsedH > 21);
-                        if (vTypes.some(t => ['fast_food_restaurant', 'meal_takeaway'].includes(t))) return (parsedH < 6 || parsedH > 23);
-                        if (vTypes.some(t => t === 'restaurant')) return (parsedH < 11 || parsedH > 22);
-                        if (vTypes.some(t => ['cafe', 'juice_shop', 'smoothie_shop', 'juice_bar', 'tea_house', 'coffee_shop'].includes(t))) return (parsedH < 6 || parsedH > 21);
-                        if (vTypes.some(t => t === 'shopping_mall')) return (parsedH < 10 || parsedH > 21);
-                        if (vTypes.some(t => ['gym', 'fitness_center'].includes(t))) return (parsedH < 5 || parsedH > 23);
-                        if (vTypes.some(t => ['library', 'museum'].includes(t))) return (parsedH < 9 || parsedH > 18);
-                        return false;
-                      })();
-                      const barColor = hourClosed ? 'var(--text-tertiary)' : h.score > 70 ? colors.red : h.score > 40 ? colors.amber : colors.teal;
-                      return (
-                      <div key={i} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '2px' }}>
-                        <div style={{ width: '100%', height: `${hourClosed ? 3 : Math.max(h.score * 0.4, 3)}px`, borderRadius: '2px', backgroundColor: barColor, opacity: hourClosed ? 0.3 : isNow ? 1 : 0.5, border: isNow && !hourClosed ? `1px solid ${barColor}` : 'none', boxShadow: isNow && !hourClosed ? `0 0 4px ${barColor}40` : 'none' }} />
-                        <span style={{ fontSize: '7px', color: hourClosed ? 'var(--text-tertiary)' : isNow ? colors.navy : 'var(--text-tertiary)', fontWeight: isNow ? '700' : '400', opacity: hourClosed ? 0.4 : 1 }}>{isNow ? 'Now' : h.hour}</span>
-                      </div>
-                      );
-                    })}
+                {/* Hourly Forecast Graph — only open hours */}
+                {(() => {
+                  const parseH = (lbl) => { const p = (lbl || '').match(/^(\d+)\s*(AM|PM)$/i); if (!p) return 12; let hr = parseInt(p[1], 10); if (p[2].toUpperCase() === 'AM' && hr === 12) hr = 0; else if (p[2].toUpperCase() === 'PM' && hr !== 12) hr += 12; return hr; };
+                  const nowH = new Date().getHours();
+
+                  // Determine open/close range for filtering
+                  const vTypes = activeVenue.types || [];
+                  let oH = venueOpenHour, cH = venueCloseHour;
+                  if (oH == null || cH == null) {
+                    if (vTypes.some(t => ['bar', 'night_club', 'sports_bar', 'pub', 'brewery', 'wine_bar', 'cocktail_bar'].includes(t))) { oH = 11; cH = 26; }
+                    else if (vTypes.some(t => ['diner', 'breakfast_restaurant', 'brunch_restaurant'].includes(t))) { oH = 6; cH = 21; }
+                    else if (vTypes.some(t => ['fast_food_restaurant', 'meal_takeaway', 'hamburger_restaurant'].includes(t))) { oH = 6; cH = 23; }
+                    else if (vTypes.some(t => t === 'restaurant' || t === 'steak_house' || t === 'seafood_restaurant' || t === 'sushi_restaurant')) { oH = 11; cH = 22; }
+                    else if (vTypes.some(t => ['cafe', 'juice_shop', 'smoothie_shop', 'coffee_shop', 'tea_house'].includes(t))) { oH = 6; cH = 21; }
+                    else if (vTypes.some(t => t === 'shopping_mall')) { oH = 10; cH = 21; }
+                    else if (vTypes.some(t => ['gym', 'fitness_center'].includes(t))) { oH = 5; cH = 23; }
+                    else if (vTypes.some(t => ['library', 'museum'].includes(t))) { oH = 9; cH = 18; }
+                    else { oH = 8; cH = 23; }
+                  }
+
+                  // Filter hourlyData to only open hours, tag with h24 and isNow
+                  const displayBars = hourlyData
+                    .map(h => ({ ...h, h24: parseH(h.hour), isNow: parseH(h.hour) === nowH }))
+                    .filter(h => {
+                      if (cH > 24) return h.h24 >= oH || h.h24 <= (cH - 24); // wraps past midnight
+                      return h.h24 >= oH && h.h24 <= cH;
+                    });
+
+                  if (!displayBars.length) return null;
+                  // Show every Nth label to prevent overlap
+                  const labelEvery = displayBars.length > 16 ? 3 : displayBars.length > 10 ? 2 : 1;
+
+                  return (
+                  <div style={{ marginBottom: '10px' }}>
+                    <p style={{ fontSize: '9px', fontWeight: '600', color: 'var(--text-secondary)', marginBottom: '6px', textTransform: 'uppercase' }}>Expected Crowd by Hour</p>
+                    <div style={{ display: 'flex', alignItems: 'flex-end', gap: '2px', height: '40px' }}>
+                      {displayBars.map((h, i) => {
+                        const barColor = h.score > 70 ? colors.red : h.score > 40 ? colors.amber : colors.teal;
+                        const showLabel = h.isNow || i % labelEvery === 0 || i === displayBars.length - 1;
+                        return (
+                        <div key={i} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '2px' }}>
+                          <div style={{ width: '100%', height: `${Math.max(h.score * 0.4, 3)}px`, borderRadius: '2px', backgroundColor: barColor, opacity: h.isNow ? 1 : 0.5, border: h.isNow ? `1px solid ${barColor}` : 'none', boxShadow: h.isNow ? `0 0 4px ${barColor}40` : 'none' }} />
+                          {showLabel && <span style={{ fontSize: '7px', color: h.isNow ? colors.navy : 'var(--text-tertiary)', fontWeight: h.isNow ? '700' : '400', whiteSpace: 'nowrap' }}>{h.isNow ? 'Now' : h.hour}</span>}
+                        </div>
+                        );
+                      })}
+                    </div>
                   </div>
-                </div>
+                  );
+                })()}
 
                 {/* Busiest Hours & Wait */}
                 <div style={{ display: 'flex', gap: '6px', marginBottom: '8px' }}>
