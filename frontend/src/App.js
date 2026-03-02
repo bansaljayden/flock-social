@@ -5309,7 +5309,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
                 <div>
                   <p style={{ fontSize: '9px', fontWeight: '600', color: 'var(--text-secondary)', marginBottom: '6px', textTransform: 'uppercase' }}>Less Crowded Nearby</p>
                   <div style={{ display: 'flex', gap: '6px' }}>
-                    {(crowdAlternatives.length > 0 ? crowdAlternatives.slice(0, 2) : allVenues.filter(v => v.id !== activeVenue.id && v.category === activeVenue.category && v.crowd < score).sort((a, b) => a.crowd - b.crowd).slice(0, 2)).map((v, i) => (
+                    {(crowdAlternatives.length > 0 ? crowdAlternatives.slice(0, 2) : allVenues.filter(v => v.id !== activeVenue.id && v.category === activeVenue.category && v.crowd < score && v.opening_hours?.openNow !== false).sort((a, b) => a.crowd - b.crowd).slice(0, 2)).map((v, i) => (
                       <button key={v.placeId || v.id || i} onClick={() => {
                         const pid = v.placeId || v.place_id;
                         if (pid) {

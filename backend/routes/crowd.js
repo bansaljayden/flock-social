@@ -283,7 +283,7 @@ router.get('/:placeId/alternatives',
         headers: {
           'Content-Type': 'application/json',
           'X-Goog-Api-Key': API_KEY,
-          'X-Goog-FieldMask': 'places.id,places.displayName,places.rating,places.userRatingCount,places.priceLevel,places.types,places.location',
+          'X-Goog-FieldMask': 'places.id,places.displayName,places.rating,places.userRatingCount,places.priceLevel,places.types,places.location,places.currentOpeningHours',
         },
         body: JSON.stringify({
           textQuery: primaryType,
@@ -297,6 +297,7 @@ router.get('/:placeId/alternatives',
       const searchData = await searchResponse.json();
       const nearby = (searchData.places || [])
         .filter(p => p.id !== placeId)
+        .filter(p => p.currentOpeningHours?.openNow !== false) // exclude closed venues
         .map(p => ({
           place_id: p.id,
           name: p.displayName?.text || '',
