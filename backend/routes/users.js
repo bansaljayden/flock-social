@@ -3,6 +3,7 @@ const bcrypt = require('bcryptjs');
 const { body, query, validationResult } = require('express-validator');
 const multer = require('multer');
 const path = require('path');
+const fs = require('fs');
 const pool = require('../config/database');
 const { authenticate } = require('../middleware/auth');
 const { stripHtml, sanitizeArray } = require('../utils/sanitize');
@@ -12,14 +13,40 @@ const SALT_ROUNDS = 10;
 
 router.use(authenticate);
 
+// Magic bytes for image validation
+const IMAGE_SIGNATURES = {
+  jpeg: [Buffer.from([0xFF, 0xD8, 0xFF])],
+  png:  [Buffer.from([0x89, 0x50, 0x4E, 0x47])],
+  gif:  [Buffer.from([0x47, 0x49, 0x46, 0x38])],
+  webp: [Buffer.from([0x52, 0x49, 0x46, 0x46])], // RIFF header
+};
+
+function isValidImage(filePath) {
+  try {
+    const fd = fs.openSync(filePath, 'r');
+    const buf = Buffer.alloc(12);
+    fs.readSync(fd, buf, 0, 12, 0);
+    fs.closeSync(fd);
+    for (const sigs of Object.values(IMAGE_SIGNATURES)) {
+      for (const sig of sigs) {
+        if (buf.subarray(0, sig.length).equals(sig)) return true;
+      }
+    }
+    return false;
+  } catch {
+    return false;
+  }
+}
+
 // Configure multer for profile image uploads
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
     cb(null, path.join(__dirname, '..', 'uploads'));
   },
   filename: (req, file, cb) => {
-    const ext = path.extname(file.originalname);
-    cb(null, `profile-${req.user.id}-${Date.now()}${ext}`);
+    const ext = path.extname(file.originalname).toLowerCase().replace(/[^a-z.]/g, '');
+    const safeExt = ['.jpg', '.jpeg', '.png', '.gif', '.webp'].includes(ext) ? ext : '.jpg';
+    cb(null, `profile-${req.user.id}-${Date.now()}${safeExt}`);
   },
 });
 
@@ -33,7 +60,7 @@ const upload = multer({
     if (extOk && mimeOk) {
       cb(null, true);
     } else {
-      cb(new Error('Only image files are allowed'));
+      cb(new Error('Only image files (JPEG, PNG, GIF, WebP) are allowed'));
     }
   },
 });
@@ -285,6 +312,12 @@ router.post('/upload-image', (req, res) => {
       return res.status(400).json({ error: 'No image file provided' });
     }
 
+    // Verify file content matches an actual image (magic bytes)
+    if (!isValidImage(req.file.path)) {
+      fs.unlink(req.file.path, () => {});
+      return res.status(400).json({ error: 'File is not a valid image' });
+    }
+
     try {
       const imageUrl = `/uploads/${req.file.filename}`;
 
@@ -300,5 +333,40 @@ router.post('/upload-image', (req, res) => {
     }
   });
 });
+
+// PUT /api/users/profile-image - Save an external avatar URL (e.g. DiceBear)
+router.put('/profile-image',
+  [
+    body('url').trim().isURL({ protocols: ['https'], require_protocol: true }).withMessage('Valid HTTPS URL required'),
+  ],
+  async (req, res) => {
+    try {
+      const errors = validationResult(req);
+      if (!errors.isEmpty()) {
+        return res.status(400).json({ error: errors.array()[0].msg });
+      }
+
+      const { url } = req.body;
+
+      // Only allow URLs from trusted avatar services
+      const allowedHosts = ['api.dicebear.com'];
+      let hostname;
+      try { hostname = new URL(url).hostname; } catch { return res.status(400).json({ error: 'Invalid URL' }); }
+      if (!allowedHosts.includes(hostname)) {
+        return res.status(400).json({ error: 'Avatar URL must be from a trusted provider' });
+      }
+
+      await pool.query(
+        'UPDATE users SET profile_image_url = $1, updated_at = NOW() WHERE id = $2',
+        [url, req.user.id]
+      );
+
+      res.json({ profile_image_url: url });
+    } catch (err) {
+      console.error('Save avatar URL error:', err);
+      res.status(500).json({ error: 'Failed to save avatar' });
+    }
+  }
+);
 
 module.exports = router;

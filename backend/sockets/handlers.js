@@ -132,6 +132,7 @@ function registerHandlers(io, socket) {
 
       const message = result.rows[0];
       message.sender_name = user.name;
+      message.sender_image = user.profile_image_url || null;
       message.reactions = [];
 
       // Broadcast to all members in the room (including sender)
@@ -340,6 +341,7 @@ function registerHandlers(io, socket) {
 
       const msg = result.rows[0];
       msg.sender_name = user.name;
+      msg.sender_image = user.profile_image_url || null;
       msg.reactions = [];
 
       // If replying, attach the reply-to info

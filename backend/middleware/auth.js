@@ -48,7 +48,7 @@ const authenticateSocket = async (socket, next) => {
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
 
     const result = await pool.query(
-      'SELECT id, email, name, role FROM users WHERE id = $1',
+      'SELECT id, email, name, role, profile_image_url FROM users WHERE id = $1',
       [decoded.userId]
     );
 

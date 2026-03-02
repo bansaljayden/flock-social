@@ -82,7 +82,6 @@ export function sendImageMessage(flockId, imageUrl) {
 }
 
 export function startTyping(flockId) {
-  console.log('Emitting typing:', { flockId });
   if (socket?.connected) {
     socket.emit('typing', flockId);
   }
@@ -95,18 +94,12 @@ export function stopTyping(flockId) {
 }
 
 export function onNewMessage(callback) {
-  if (socket) socket.on('new_message', (msg) => {
-    console.log('Received new_message:', msg);
-    callback(msg);
-  });
+  if (socket) socket.on('new_message', callback);
   return () => { if (socket) socket.off('new_message'); };
 }
 
 export function onUserTyping(callback) {
-  if (socket) socket.on('user_typing', (data) => {
-    console.log('Received user_typing:', data);
-    callback(data);
-  });
+  if (socket) socket.on('user_typing', callback);
   return () => { if (socket) socket.off('user_typing'); };
 }
 

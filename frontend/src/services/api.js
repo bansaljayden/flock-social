@@ -195,6 +195,28 @@ export async function getVenueDetails(placeId) {
   return data;
 }
 
+// Profile Image
+export async function uploadProfileImage(file) {
+  const token = getToken();
+  const formData = new FormData();
+  formData.append('image', file);
+  const res = await fetch(`${BASE_URL}/api/users/upload-image`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}` },
+    body: formData,
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Upload failed');
+  return data;
+}
+
+export async function saveProfileImageUrl(url) {
+  return request('/api/users/profile-image', {
+    method: 'PUT',
+    body: JSON.stringify({ url }),
+  });
+}
+
 // Users
 export async function searchUsers(query) {
   return request(`/api/users/search?q=${encodeURIComponent(query)}`);
