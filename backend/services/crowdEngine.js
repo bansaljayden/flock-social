@@ -911,6 +911,47 @@ function findPeakTime(hourlyForecast, venue) {
 }
 
 // ---------------------------------------------------------------------------
+// Calibration — adjusts engine score using real user feedback
+// ---------------------------------------------------------------------------
+
+const CROWD_LEVEL_TO_SCORE = { 1: 20, 2: 50, 3: 80 };
+
+function buildCalibrationAdjustment(feedbackRows, engineScore) {
+  if (!feedbackRows || feedbackRows.length === 0) {
+    return { adjustedScore: engineScore, feedbackUsed: false, reportCount: 0 };
+  }
+
+  // Convert crowd_level (1-3) to approximate 0-100 score and average
+  let sum = 0;
+  for (const row of feedbackRows) {
+    sum += CROWD_LEVEL_TO_SCORE[row.crowd_level] || 50;
+  }
+  const feedbackScore = sum / feedbackRows.length;
+
+  // Weight feedback more as reports accumulate
+  const n = feedbackRows.length;
+  let weight;
+  if (n <= 2) weight = 0.15;
+  else if (n <= 5) weight = 0.30;
+  else if (n <= 10) weight = 0.50;
+  else if (n <= 20) weight = 0.65;
+  else weight = 0.75;
+
+  const adjustedScore = Math.max(0, Math.min(100, Math.round(
+    engineScore * (1 - weight) + feedbackScore * weight
+  )));
+
+  return {
+    adjustedScore,
+    feedbackUsed: true,
+    reportCount: n,
+    feedbackWeight: weight,
+    avgFeedbackScore: Math.round(feedbackScore),
+    predictionDrift: Math.round(feedbackScore - engineScore),
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Quieter alternatives
 // ---------------------------------------------------------------------------
 
@@ -940,4 +981,6 @@ module.exports = {
   findBestTime,
   findPeakTime,
   findQuieterAlternatives,
+  buildCalibrationAdjustment,
+  getLabel,
 };

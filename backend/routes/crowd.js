@@ -10,7 +10,10 @@ const {
   findBestTime,
   findPeakTime,
   findQuieterAlternatives,
+  buildCalibrationAdjustment,
+  getLabel,
 } = require('../services/crowdEngine');
+const pool = require('../config/database');
 
 const router = express.Router();
 const API_KEY = process.env.GOOGLE_PLACES_API_KEY;
@@ -144,21 +147,44 @@ router.get('/:placeId',
 
       const crowdResult = calculateCrowdScore(venue, weather, clientTime);
       const hourly = generateHourlyForecast(venue, weather, localHour, 12, clientTime);
-      const capacity = estimateCapacity(venue, crowdResult.score);
 
       // Full-day forecast (6 AM - 5 AM) for accurate peak/best detection
       const fullDay = generateHourlyForecast(venue, weather, 6, 24, clientTime);
       const peakResult = findPeakTime(fullDay, venue);
       const bestTime = findBestTime(fullDay, venue, peakResult.startIdx, peakResult.endIdx, venue.isOpen);
 
-      const waitEstimateTyped = estimateWait(crowdResult.score, venue.types, venue.price_level);
+      // Query user feedback for calibration (non-blocking — fallback to raw score on failure)
+      let calibration = { adjustedScore: crowdResult.score, feedbackUsed: false, reportCount: 0 };
+      try {
+        const fbResult = await pool.query(
+          `SELECT crowd_level, predicted_score FROM venue_feedback
+           WHERE venue_place_id = $1 AND day_of_week = $2 AND hour BETWEEN $3 AND $4
+           ORDER BY created_at DESC LIMIT 50`,
+          [placeId, localDay, Math.max(0, localHour - 1), Math.min(23, localHour + 1)]
+        );
+        calibration = buildCalibrationAdjustment(fbResult.rows, crowdResult.score);
+      } catch (fbErr) {
+        console.error('[Crowd] Feedback query failed, using raw score:', fbErr.message);
+      }
+
+      const finalScore = calibration.adjustedScore;
+      const capacity = estimateCapacity(venue, finalScore);
+      const waitEstimateTyped = estimateWait(finalScore, venue.types, venue.price_level);
+
+      const dataSources = [...crowdResult.dataSourcesUsed];
+      if (calibration.feedbackUsed) dataSources.push('user_feedback');
+
+      const feedbackConfidenceBoost = calibration.feedbackUsed
+        ? Math.min(15, calibration.reportCount * 3)
+        : 0;
 
       const result = {
         placeId,
         name: venue.name,
-        score: crowdResult.score,
-        label: crowdResult.label,
-        confidence: crowdResult.confidence,
+        score: finalScore,
+        label: getLabel(finalScore),
+        rawEngineScore: crowdResult.score,
+        confidence: Math.min(100, crowdResult.confidence + feedbackConfidenceBoost),
         capacity,
         bestTime,
         peak: peakResult.text,
@@ -168,7 +194,12 @@ router.get('/:placeId',
         closeHour: venue.closeHour,
         hourly,
         factors: crowdResult.factors,
-        dataSourcesUsed: crowdResult.dataSourcesUsed,
+        calibration: {
+          feedbackUsed: calibration.feedbackUsed,
+          reportCount: calibration.reportCount,
+          predictionDrift: calibration.predictionDrift || 0,
+        },
+        dataSourcesUsed: dataSources,
         weather: weather ? { temp: weather.temp, conditions: weather.conditions } : null,
         lastUpdated: now.toISOString(),
       };
@@ -211,14 +242,43 @@ router.post('/batch',
         ? await getWeather(firstLoc.latitude, firstLoc.longitude)
         : null;
 
+      // Bulk query feedback for all venues at once (non-blocking)
+      const placeIds = venues.map(v => v.place_id).filter(Boolean);
+      const batchHour = localHour != null ? localHour : clientTime.getHours();
+      const batchDay = localDay != null ? localDay : clientTime.getDay();
+      let feedbackByVenue = {};
+      try {
+        const fbResult = await pool.query(
+          `SELECT venue_place_id, crowd_level, predicted_score FROM venue_feedback
+           WHERE venue_place_id = ANY($1::text[])
+             AND day_of_week = $2
+             AND hour BETWEEN $3 AND $4`,
+          [placeIds, batchDay, Math.max(0, batchHour - 1), Math.min(23, batchHour + 1)]
+        );
+        for (const row of fbResult.rows) {
+          if (!feedbackByVenue[row.venue_place_id]) feedbackByVenue[row.venue_place_id] = [];
+          feedbackByVenue[row.venue_place_id].push(row);
+        }
+      } catch (fbErr) {
+        console.error('[Crowd] Batch feedback query failed, using raw scores:', fbErr.message);
+      }
+
       const predictions = venues.map(v => {
         const result = calculateCrowdScore(v, weather, clientTime);
+        const cal = buildCalibrationAdjustment(feedbackByVenue[v.place_id] || [], result.score);
+        const boost = cal.feedbackUsed ? Math.min(15, cal.reportCount * 3) : 0;
         return {
           placeId: v.place_id,
           name: v.name,
-          score: result.score,
-          label: result.label,
-          confidence: result.confidence,
+          score: cal.adjustedScore,
+          label: getLabel(cal.adjustedScore),
+          rawEngineScore: result.score,
+          confidence: Math.min(100, result.confidence + boost),
+          calibration: {
+            feedbackUsed: cal.feedbackUsed,
+            reportCount: cal.reportCount,
+            predictionDrift: cal.predictionDrift || 0,
+          },
         };
       });
 
