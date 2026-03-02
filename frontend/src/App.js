@@ -1054,13 +1054,38 @@ const FlockAppInner = ({ authUser, onLogout }) => {
   const [liveWeather, setLiveWeather] = useState(null);
 
   // Geolocation state — restore last known location immediately so map isn't empty
+  const [locationEnabled, setLocationEnabled] = useState(() => localStorage.getItem('flock_location_enabled') !== 'false');
   const [userLocation, setUserLocation] = useState(() => {
+    if (localStorage.getItem('flock_location_enabled') === 'false') return null;
     const savedLat = localStorage.getItem('flock_user_lat');
     const savedLng = localStorage.getItem('flock_user_lng');
     if (savedLat && savedLng) return { lat: parseFloat(savedLat), lng: parseFloat(savedLng) };
     return null;
   });
   const [locationLoading, setLocationLoading] = useState(false);
+
+  const toggleLocation = useCallback((enable) => {
+    setLocationEnabled(enable);
+    localStorage.setItem('flock_location_enabled', enable ? 'true' : 'false');
+    if (enable) {
+      if (navigator.geolocation) {
+        navigator.geolocation.getCurrentPosition(
+          (pos) => {
+            const { latitude, longitude } = pos.coords;
+            setUserLocation({ lat: latitude, lng: longitude });
+            localStorage.setItem('flock_user_lat', latitude.toString());
+            localStorage.setItem('flock_user_lng', longitude.toString());
+          },
+          () => {},
+          { enableHighAccuracy: true, timeout: 10000 }
+        );
+      }
+    } else {
+      setUserLocation(null);
+      localStorage.removeItem('flock_user_lat');
+      localStorage.removeItem('flock_user_lng');
+    }
+  }, []);
 
   // Fetch weather when Plans tab is opened and location is available
   const weatherFetchedRef = useRef(false);
@@ -7367,6 +7392,17 @@ const FlockAppInner = ({ authUser, onLogout }) => {
                 <span style={{ color: 'var(--text-tertiary)' }}>›</span>
               </button>
             ))}
+            {/* Location Toggle */}
+            <div style={{ width: '100%', padding: '12px', backgroundColor: 'var(--bg-card-solid)', borderTop: '1px solid var(--border-light)' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                <div style={{ width: '32px', height: '32px', borderRadius: '8px', backgroundColor: 'var(--icon-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.mapPin(colors.navy, 18)}</div>
+                <div style={{ flex: 1 }}>
+                  <span style={{ fontWeight: '600', fontSize: '14px', color: colors.navy, display: 'block' }}>Location</span>
+                  <span style={{ fontSize: '11px', color: 'var(--text-tertiary)' }}>{locationEnabled ? 'Venues and maps use your location' : 'Location is turned off'}</span>
+                </div>
+                <Toggle on={locationEnabled} onChange={() => toggleLocation(!locationEnabled)} />
+              </div>
+            </div>
             {/* Smart Night Mode */}
             <div style={{ width: '100%', padding: '12px', backgroundColor: 'var(--bg-card-solid)', borderTop: '1px solid var(--border-light)' }}>
               {/* Auto Night Mode toggle */}
