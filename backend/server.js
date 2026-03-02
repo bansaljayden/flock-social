@@ -24,6 +24,7 @@ const friendRoutes = require('./routes/friends');
 const safetyRoutes = require('./routes/safety');
 const crowdRoutes = require('./routes/crowd');
 const feedbackRoutes = require('./routes/feedback');
+const weatherRoutes = require('./routes/weather');
 
 const app = express();
 app.set('trust proxy', 1);
@@ -122,6 +123,7 @@ app.use('/api/friends', apiLimiter, friendRoutes);    // Handles /api/friends, /
 app.use('/api/safety', apiLimiter, safetyRoutes);     // Handles /api/safety/contacts, /api/safety/alert, etc.
 app.use('/api/crowd', apiLimiter, crowdRoutes);       // Handles /api/crowd/:placeId, /api/crowd/batch, /api/crowd/:placeId/alternatives
 app.use('/api/feedback', apiLimiter, feedbackRoutes); // Handles /api/feedback, /api/feedback/venue/:placeId
+app.use('/api/weather', apiLimiter, weatherRoutes);   // Handles /api/weather?lat=...&lon=...
 
 // Health check
 app.get('/api/health', (req, res) => {
