@@ -341,5 +341,10 @@ export async function submitVenueFeedback(data) {
   });
 }
 
+// Weather
+export async function getWeather(lat, lon) {
+  return request(`/api/weather?lat=${lat}&lon=${lon}`);
+}
+
 export { getToken, BASE_URL };
 export default request;

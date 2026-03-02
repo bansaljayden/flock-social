@@ -11,7 +11,7 @@ import {
   formatCurrency,
   calculateProfitMargin
 } from './lib/finance';
-import { getCurrentUser, logout, isLoggedIn, getFlocks, getFlock, createFlock as apiCreateFlock, getMessages, sendMessage as apiSendMessage, updateProfile, searchVenues, searchUsers, getSuggestedUsers, sendFriendRequest, getStories, getVenueDetails, leaveFlock as apiLeaveFlock, getDMConversations, getDMs, getDmVenueVotes, getDmPinnedVenue, BASE_URL, inviteToFlock, acceptFlockInvite, declineFlockInvite, getFriends, acceptFriendRequest, declineFriendRequest, getPendingRequests, getOutgoingRequests, getFriendSuggestions, addFriendByCode, findFriendsByPhone, removeFriend, getTrustedContacts, addTrustedContact, updateTrustedContact, deleteTrustedContact, sendEmergencyAlert, shareLocationWithContacts, getUserStats, getCrowdPrediction, getCrowdBatch, getCrowdAlternatives } from './services/api';
+import { getCurrentUser, logout, isLoggedIn, getFlocks, getFlock, createFlock as apiCreateFlock, getMessages, sendMessage as apiSendMessage, updateProfile, searchVenues, searchUsers, getSuggestedUsers, sendFriendRequest, getStories, getVenueDetails, leaveFlock as apiLeaveFlock, getDMConversations, getDMs, getDmVenueVotes, getDmPinnedVenue, BASE_URL, inviteToFlock, acceptFlockInvite, declineFlockInvite, getFriends, acceptFriendRequest, declineFriendRequest, getPendingRequests, getOutgoingRequests, getFriendSuggestions, addFriendByCode, findFriendsByPhone, removeFriend, getTrustedContacts, addTrustedContact, updateTrustedContact, deleteTrustedContact, sendEmergencyAlert, shareLocationWithContacts, getUserStats, getCrowdPrediction, getCrowdBatch, getCrowdAlternatives, getWeather } from './services/api';
 import { connectSocket, disconnectSocket, getSocket, joinFlock, leaveFlock, sendMessage as socketSendMessage, sendImageMessage as socketSendImage, startTyping, stopTyping, onNewMessage, onUserTyping, onUserStoppedTyping, emitLocation, stopSharingLocation as socketStopSharing, onLocationUpdate, onMemberStoppedSharing, socketSendDm, onNewDm, dmStartTyping, dmStopTyping, onDmUserTyping, onDmUserStoppedTyping, dmReact, dmRemoveReact, onDmReactionAdded, onDmReactionRemoved, dmVoteVenue, onDmNewVote, dmShareLocation, dmStopSharingLocation, onDmLocationUpdate, onDmMemberStoppedSharing, dmPinVenue, onDmVenuePinned, emitFlockInvite, emitFlockInviteResponse, onFlockInviteReceived, onFlockInviteResponded, emitFriendRequest, emitFriendResponse, onFriendRequestReceived, onFriendRequestResponded } from './services/socket';
 import { QRCodeSVG } from 'qrcode.react';
 import { Html5Qrcode } from 'html5-qrcode';
@@ -1061,6 +1061,14 @@ const FlockAppInner = ({ authUser, onLogout }) => {
     return null;
   });
   const [locationLoading, setLocationLoading] = useState(false);
+
+  // Fetch weather on mount when location is available
+  useEffect(() => {
+    if (!userLocation || liveWeather) return;
+    getWeather(userLocation.lat, userLocation.lng)
+      .then(data => { if (data) setLiveWeather(data); })
+      .catch(() => {});
+  }, [userLocation, liveWeather]);
 
   // Search result cache: key -> { data, timestamp }
   const searchCacheRef = useRef({});
@@ -5475,15 +5483,9 @@ const FlockAppInner = ({ authUser, onLogout }) => {
       return upcoming.slice(0, 4);
     };
 
-    // Weather data — use live data for today, null for other dates
+    // Weather data — show live weather for today
     const isSelectedToday = selectedDateStr === todayStr;
-    const weather = isSelectedToday && liveWeather ? {
-      icon: liveWeather.conditions?.toLowerCase().includes('rain') || liveWeather.conditions?.toLowerCase().includes('drizzle') ? Icons.cloud
-        : liveWeather.conditions?.toLowerCase().includes('cloud') || liveWeather.conditions?.toLowerCase().includes('overcast') ? Icons.cloud
-        : Icons.sun,
-      temp: `${Math.round(liveWeather.temp)}°`,
-      condition: liveWeather.conditions ? liveWeather.conditions.charAt(0).toUpperCase() + liveWeather.conditions.slice(1) : 'Clear',
-    } : null;
+    const weatherReady = isSelectedToday && liveWeather;
 
     return (
       <div key="calendar-screen-container" style={{ display: 'flex', flexDirection: 'column', height: '100%', backgroundColor: 'var(--bg-primary)' }}>
@@ -5537,26 +5539,64 @@ const FlockAppInner = ({ authUser, onLogout }) => {
 
         {/* Events section */}
         <div style={{ flex: 1, padding: '12px', overflowY: 'auto' }}>
-          {/* Weather widget for selected date */}
-          {weather ? (
-          <div style={{ ...styles.card, display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px', background: isDark ? 'linear-gradient(135deg, #1e3a5c, #1a3a5c)' : 'linear-gradient(135deg, #dbeafe, #e0f2fe)' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-              {weather.icon('#F59E0B', 28)}
-              <div>
-                <p style={{ fontSize: '16px', fontWeight: '700', color: colors.navy, margin: 0 }}>{weather.temp}</p>
-                <p style={{ fontSize: '10px', color: 'var(--text-secondary)', margin: 0 }}>{weather.condition}</p>
+          {/* Weather module */}
+          {weatherReady ? (() => {
+            const w = liveWeather;
+            const cond = (w.conditions || '').toLowerCase();
+            const isRainy = cond.includes('rain') || cond.includes('drizzle') || cond.includes('thunderstorm');
+            const isCloudy = cond.includes('cloud') || cond.includes('overcast') || cond.includes('mist') || cond.includes('fog');
+            const isSnowy = cond.includes('snow');
+            const weatherIcon = isRainy ? Icons.cloud : isCloudy ? Icons.cloud : Icons.sun;
+            const weatherColor = isRainy ? '#60a5fa' : isCloudy ? '#94a3b8' : '#F59E0B';
+            const conditionText = w.conditions ? w.conditions.charAt(0).toUpperCase() + w.conditions.slice(1) : 'Clear';
+            return (
+              <div style={{ ...styles.card, marginBottom: '12px', padding: 0, overflow: 'hidden', background: isDark ? 'linear-gradient(135deg, #1e3a5c, #1a3a5c)' : 'linear-gradient(135deg, #dbeafe, #e0f2fe)' }}>
+                <div style={{ padding: '14px 16px 10px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                    {weatherIcon(weatherColor, 36)}
+                    <div>
+                      <p style={{ fontSize: '28px', fontWeight: '800', color: colors.navy, margin: 0, lineHeight: 1 }}>{Math.round(w.temp)}°</p>
+                      <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: '2px 0 0', fontWeight: '500' }}>{conditionText}</p>
+                    </div>
+                  </div>
+                  <div style={{ textAlign: 'right' }}>
+                    <p style={{ fontSize: '13px', fontWeight: '700', color: colors.navy, margin: 0 }}>{selectedDate.toLocaleDateString('en-US', { weekday: 'long' })}</p>
+                    <p style={{ fontSize: '10px', color: 'var(--text-secondary)', margin: '2px 0 0' }}>{selectedDate.toLocaleDateString('en-US', { month: 'long', day: 'numeric' })}</p>
+                    <div style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', marginTop: '4px', padding: '2px 8px', borderRadius: '10px', backgroundColor: 'rgba(16,185,129,0.15)' }}>
+                      <div style={{ width: '5px', height: '5px', borderRadius: '50%', backgroundColor: '#10b981' }} />
+                      <span style={{ fontSize: '9px', fontWeight: '700', color: '#10b981' }}>LIVE</span>
+                    </div>
+                  </div>
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '1px', backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)' }}>
+                  <div style={{ padding: '10px', textAlign: 'center', backgroundColor: isDark ? 'rgba(30,58,92,0.5)' : 'rgba(219,234,254,0.5)' }}>
+                    <p style={{ fontSize: '9px', color: 'var(--text-tertiary)', margin: 0, fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Feels Like</p>
+                    <p style={{ fontSize: '16px', fontWeight: '800', color: colors.navy, margin: '2px 0 0' }}>{Math.round(w.feelsLike)}°</p>
+                  </div>
+                  <div style={{ padding: '10px', textAlign: 'center', backgroundColor: isDark ? 'rgba(30,58,92,0.5)' : 'rgba(219,234,254,0.5)' }}>
+                    <p style={{ fontSize: '9px', color: 'var(--text-tertiary)', margin: 0, fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Humidity</p>
+                    <p style={{ fontSize: '16px', fontWeight: '800', color: colors.navy, margin: '2px 0 0' }}>{w.humidity}%</p>
+                  </div>
+                  <div style={{ padding: '10px', textAlign: 'center', backgroundColor: isDark ? 'rgba(30,58,92,0.5)' : 'rgba(219,234,254,0.5)' }}>
+                    <p style={{ fontSize: '9px', color: 'var(--text-tertiary)', margin: 0, fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Wind</p>
+                    <p style={{ fontSize: '16px', fontWeight: '800', color: colors.navy, margin: '2px 0 0' }}>{Math.round(w.windSpeed)}<span style={{ fontSize: '10px', fontWeight: '600' }}> mph</span></p>
+                  </div>
+                </div>
+                {(isRainy || isSnowy || w.windSpeed > 20) && (
+                  <div style={{ padding: '8px 16px', display: 'flex', alignItems: 'center', gap: '6px', backgroundColor: isDark ? 'rgba(251,191,36,0.1)' : 'rgba(251,191,36,0.12)' }}>
+                    {Icons.zap('#f59e0b', 12)}
+                    <span style={{ fontSize: '11px', color: '#b45309', fontWeight: '600' }}>
+                      {isRainy ? 'Rain expected — consider indoor venues' : isSnowy ? 'Snow expected — plan accordingly' : 'High winds — outdoor plans may be affected'}
+                    </span>
+                  </div>
+                )}
               </div>
-            </div>
-            <div style={{ textAlign: 'right' }}>
-              <p style={{ fontSize: '12px', fontWeight: '600', color: colors.navy, margin: 0 }}>{selectedDate.toLocaleDateString('en-US', { weekday: 'long' })}</p>
-              <p style={{ fontSize: '10px', color: 'var(--text-secondary)', margin: 0 }}>{selectedDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}</p>
-            </div>
-          </div>
-          ) : (
-          <div style={{ ...styles.card, display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: '12px', padding: '12px', background: isDark ? 'linear-gradient(135deg, #1e3a5c, #1a3a5c)' : 'linear-gradient(135deg, #dbeafe, #e0f2fe)' }}>
+            );
+          })() : (
+          <div style={{ ...styles.card, display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: '12px', padding: '14px', background: isDark ? 'linear-gradient(135deg, #1e3a5c, #1a3a5c)' : 'linear-gradient(135deg, #dbeafe, #e0f2fe)' }}>
             <div style={{ textAlign: 'center' }}>
-              <p style={{ fontSize: '12px', fontWeight: '600', color: colors.navy, margin: 0 }}>{selectedDate.toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' })}</p>
-              {isSelectedToday && <p style={{ fontSize: '10px', color: 'var(--text-secondary)', margin: '2px 0 0' }}>Search a venue to see live weather</p>}
+              <p style={{ fontSize: '13px', fontWeight: '600', color: colors.navy, margin: 0 }}>{selectedDate.toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' })}</p>
+              {isSelectedToday && !liveWeather && <p style={{ fontSize: '10px', color: 'var(--text-secondary)', margin: '4px 0 0' }}>Loading weather...</p>}
             </div>
           </div>
           )}
