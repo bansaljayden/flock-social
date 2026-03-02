@@ -1062,13 +1062,15 @@ const FlockAppInner = ({ authUser, onLogout }) => {
   });
   const [locationLoading, setLocationLoading] = useState(false);
 
-  // Fetch weather on mount when location is available
+  // Fetch weather when Plans tab is opened and location is available
+  const weatherFetchedRef = useRef(false);
   useEffect(() => {
-    if (!userLocation || liveWeather) return;
+    if (currentScreen !== 'calendar' || !userLocation || weatherFetchedRef.current) return;
+    weatherFetchedRef.current = true;
     getWeather(userLocation.lat, userLocation.lng)
       .then(data => { if (data) setLiveWeather(data); })
       .catch(() => {});
-  }, [userLocation, liveWeather]);
+  }, [currentScreen, userLocation]);
 
   // Search result cache: key -> { data, timestamp }
   const searchCacheRef = useRef({});
@@ -5596,7 +5598,6 @@ const FlockAppInner = ({ authUser, onLogout }) => {
           <div style={{ ...styles.card, display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: '12px', padding: '14px', background: isDark ? 'linear-gradient(135deg, #1e3a5c, #1a3a5c)' : 'linear-gradient(135deg, #dbeafe, #e0f2fe)' }}>
             <div style={{ textAlign: 'center' }}>
               <p style={{ fontSize: '13px', fontWeight: '600', color: colors.navy, margin: 0 }}>{selectedDate.toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' })}</p>
-              {isSelectedToday && !liveWeather && <p style={{ fontSize: '10px', color: 'var(--text-secondary)', margin: '4px 0 0' }}>Loading weather...</p>}
             </div>
           </div>
           )}
