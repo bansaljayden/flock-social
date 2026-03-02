@@ -143,9 +143,10 @@ router.get('/:placeId',
       clientTime.setHours(localHour, 0, 0, 0);
 
       const crowdResult = calculateCrowdScore(venue, weather, clientTime);
+      const hourly = generateHourlyForecast(venue, weather, localHour, 12, clientTime);
       const capacity = estimateCapacity(venue, crowdResult.score);
 
-      // Full-day forecast (6 AM - 5 AM next day) for graph + peak/best
+      // Full-day forecast (6 AM - 5 AM) for accurate peak/best detection
       const fullDay = generateHourlyForecast(venue, weather, 6, 24, clientTime);
       const peakResult = findPeakTime(fullDay, venue);
       const bestTime = findBestTime(fullDay, venue, peakResult.startIdx, peakResult.endIdx, venue.isOpen);
@@ -165,7 +166,7 @@ router.get('/:placeId',
         isOpen: venue.isOpen,
         openHour: venue.openHour,
         closeHour: venue.closeHour,
-        hourly: fullDay,
+        hourly,
         factors: crowdResult.factors,
         dataSourcesUsed: crowdResult.dataSourcesUsed,
         weather: weather ? { temp: weather.temp, conditions: weather.conditions } : null,
