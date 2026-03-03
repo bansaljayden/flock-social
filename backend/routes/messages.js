@@ -188,6 +188,17 @@ router.post('/messages/:id/react',
         return res.status(400).json({ error: 'Already reacted with this emoji' });
       }
 
+      // Notify flock members in real-time
+      const io = req.app.get('io');
+      if (io) {
+        io.to(`flock:${flockId}`).emit('flock_reaction_added', {
+          messageId: parseInt(messageId),
+          emoji,
+          userId: req.user.id,
+          userName: req.user.name,
+        });
+      }
+
       res.status(201).json({ reaction: result.rows[0] });
     } catch (err) {
       console.error('Add reaction error:', err);
@@ -204,6 +215,10 @@ router.delete('/messages/:id/react/:emoji',
       const messageId = req.params.id;
       const emoji = decodeURIComponent(req.params.emoji);
 
+      // Get flock_id for socket notification
+      const msgResult = await pool.query('SELECT flock_id FROM messages WHERE id = $1', [messageId]);
+      const flockId = msgResult.rows[0]?.flock_id;
+
       const result = await pool.query(
         'DELETE FROM emoji_reactions WHERE message_id = $1 AND user_id = $2 AND emoji = $3 RETURNING *',
         [messageId, req.user.id, emoji]
@@ -211,6 +226,18 @@ router.delete('/messages/:id/react/:emoji',
 
       if (result.rows.length === 0) {
         return res.status(404).json({ error: 'Reaction not found' });
+      }
+
+      // Notify flock members
+      if (flockId) {
+        const io = req.app.get('io');
+        if (io) {
+          io.to(`flock:${flockId}`).emit('flock_reaction_removed', {
+            messageId: parseInt(messageId),
+            emoji,
+            userId: req.user.id,
+          });
+        }
       }
 
       res.json({ message: 'Reaction removed' });

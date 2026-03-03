@@ -95,12 +95,12 @@ export function stopTyping(flockId) {
 
 export function onNewMessage(callback) {
   if (socket) socket.on('new_message', callback);
-  return () => { if (socket) socket.off('new_message'); };
+  return () => { if (socket) socket.off('new_message', callback); };
 }
 
 export function onUserTyping(callback) {
   if (socket) socket.on('user_typing', callback);
-  return () => { if (socket) socket.off('user_typing'); };
+  return () => { if (socket) socket.off('user_typing', callback); };
 }
 
 export function onUserStoppedTyping(callback) {
@@ -275,6 +275,49 @@ export function onFlockInviteReceived(callback) {
 export function onFlockInviteResponded(callback) {
   if (socket) socket.on('flock_invite_responded', callback);
   return () => { if (socket) socket.off('flock_invite_responded', callback); };
+}
+
+// --- Flock venue votes (real-time) ---
+
+export function onNewVote(callback) {
+  if (socket) socket.on('new_vote', callback);
+  return () => { if (socket) socket.off('new_vote', callback); };
+}
+
+// --- Venue confirmed ---
+
+export function onVenueSelected(callback) {
+  if (socket) socket.on('venue_selected', callback);
+  return () => { if (socket) socket.off('venue_selected', callback); };
+}
+
+// --- Flock message reactions (real-time) ---
+
+export function onFlockReactionAdded(callback) {
+  if (socket) socket.on('flock_reaction_added', callback);
+  return () => { if (socket) socket.off('flock_reaction_added', callback); };
+}
+
+export function onFlockReactionRemoved(callback) {
+  if (socket) socket.on('flock_reaction_removed', callback);
+  return () => { if (socket) socket.off('flock_reaction_removed', callback); };
+}
+
+// --- Flock lifecycle events ---
+
+export function onFlockDeleted(callback) {
+  if (socket) socket.on('flock_deleted', callback);
+  return () => { if (socket) socket.off('flock_deleted', callback); };
+}
+
+export function onFlockUpdated(callback) {
+  if (socket) socket.on('flock_updated', callback);
+  return () => { if (socket) socket.off('flock_updated', callback); };
+}
+
+export function onFlockMemberLeft(callback) {
+  if (socket) socket.on('flock_member_left', callback);
+  return () => { if (socket) socket.off('flock_member_left', callback); };
 }
 
 // --- Budget events ---

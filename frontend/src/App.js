@@ -12,7 +12,7 @@ import {
   calculateProfitMargin
 } from './lib/finance';
 import { getCurrentUser, logout, isLoggedIn, getFlocks, getFlock, createFlock as apiCreateFlock, getMessages, sendMessage as apiSendMessage, updateProfile, searchVenues, searchUsers, getSuggestedUsers, sendFriendRequest, getStories, getVenueDetails, leaveFlock as apiLeaveFlock, getDMConversations, getDMs, getDmVenueVotes, getDmPinnedVenue, BASE_URL, inviteToFlock, acceptFlockInvite, declineFlockInvite, getFriends, acceptFriendRequest, declineFriendRequest, getPendingRequests, getOutgoingRequests, getFriendSuggestions, addFriendByCode, findFriendsByPhone, removeFriend, getTrustedContacts, addTrustedContact, updateTrustedContact, deleteTrustedContact, sendEmergencyAlert, shareLocationWithContacts, getUserStats, getCrowdPrediction, getCrowdBatch, getCrowdAlternatives, getWeather, submitVenueFeedback, uploadProfileImage, saveProfileImageUrl, submitBudget, getBudgetStatus, lockBudget, sendBudgetReminder, createBillSplit, getBillSplit, settleShare, ghostCommit, updatePaymentMethods, getPaymentLinks } from './services/api';
-import { connectSocket, disconnectSocket, getSocket, joinFlock, leaveFlock, sendMessage as socketSendMessage, sendImageMessage as socketSendImage, startTyping, stopTyping, onNewMessage, onUserTyping, onUserStoppedTyping, emitLocation, stopSharingLocation as socketStopSharing, onLocationUpdate, onMemberStoppedSharing, socketSendDm, onNewDm, dmStartTyping, dmStopTyping, onDmUserTyping, onDmUserStoppedTyping, dmReact, dmRemoveReact, onDmReactionAdded, onDmReactionRemoved, dmVoteVenue, onDmNewVote, dmShareLocation, dmStopSharingLocation, onDmLocationUpdate, onDmMemberStoppedSharing, dmPinVenue, onDmVenuePinned, emitFlockInvite, emitFlockInviteResponse, onFlockInviteReceived, onFlockInviteResponded, emitFriendRequest, emitFriendResponse, onFriendRequestReceived, onFriendRequestResponded, onBudgetUpdated, onBudgetLocked, onBudgetReminder, onBillCreated, onShareSettled, onBillFullySettled, onGhostCommitted } from './services/socket';
+import { connectSocket, disconnectSocket, getSocket, joinFlock, leaveFlock, sendMessage as socketSendMessage, sendImageMessage as socketSendImage, startTyping, stopTyping, onNewMessage, onUserTyping, onUserStoppedTyping, emitLocation, stopSharingLocation as socketStopSharing, onLocationUpdate, onMemberStoppedSharing, socketSendDm, onNewDm, dmStartTyping, dmStopTyping, onDmUserTyping, onDmUserStoppedTyping, dmReact, dmRemoveReact, onDmReactionAdded, onDmReactionRemoved, dmVoteVenue, onDmNewVote, dmShareLocation, dmStopSharingLocation, onDmLocationUpdate, onDmMemberStoppedSharing, dmPinVenue, onDmVenuePinned, emitFlockInvite, emitFlockInviteResponse, onFlockInviteReceived, onFlockInviteResponded, emitFriendRequest, emitFriendResponse, onFriendRequestReceived, onFriendRequestResponded, onBudgetUpdated, onBudgetLocked, onBudgetReminder, onBillCreated, onShareSettled, onBillFullySettled, onGhostCommitted, onNewVote, onVenueSelected, onFlockReactionAdded, onFlockReactionRemoved, onFlockDeleted, onFlockUpdated, onFlockMemberLeft } from './services/socket';
 import { QRCodeSVG } from 'qrcode.react';
 import { Html5Qrcode } from 'html5-qrcode';
 import LoginScreen from './components/auth/LoginScreen';
@@ -2462,18 +2462,31 @@ const FlockAppInner = ({ authUser, onLogout }) => {
     return unsub;
   }, [authUser]);
 
-  // Listen for typing indicators via WebSocket
+  // Listen for typing indicators via WebSocket (scoped to current flock, multi-user)
+  const typingUsersRef = useRef({}); // { [userId]: name }
   useEffect(() => {
     const unsubTyping = onUserTyping((data) => {
-      setTypingUser(data.name);
-      setIsTyping(true);
+      if (data.flockId !== selectedFlockId) return; // scope to current flock
+      typingUsersRef.current = { ...typingUsersRef.current, [data.userId]: data.name };
+      const names = Object.values(typingUsersRef.current);
+      setIsTyping(names.length > 0);
+      setTypingUser(names.length === 1 ? names[0] : names.length === 2 ? `${names[0]} and ${names[1]}` : `${names[0]} and ${names.length - 1} others`);
     });
-    const unsubStop = onUserStoppedTyping(() => {
-      setIsTyping(false);
-      setTypingUser('');
+    const unsubStop = onUserStoppedTyping((data) => {
+      if (data.flockId !== selectedFlockId) return;
+      const next = { ...typingUsersRef.current };
+      delete next[data.userId];
+      typingUsersRef.current = next;
+      const names = Object.values(next);
+      setIsTyping(names.length > 0);
+      setTypingUser(names.length === 1 ? names[0] : names.length === 2 ? `${names[0]} and ${names[1]}` : names.length > 2 ? `${names[0]} and ${names.length - 1} others` : '');
     });
+    // Clear typing state when switching flocks
+    typingUsersRef.current = {};
+    setIsTyping(false);
+    setTypingUser('');
     return () => { unsubTyping(); unsubStop(); };
-  }, []);
+  }, [selectedFlockId]);
 
   // --- Live location sharing ---
 
@@ -2507,12 +2520,16 @@ const FlockAppInner = ({ authUser, onLogout }) => {
     return () => clearInterval(interval);
   }, [sharingLocationForFlock, userLocation]);
 
-  // Auto-stop sharing when flock status changes from confirmed
+  // Auto-stop sharing when flock status explicitly changes from confirmed
+  const sharingFlockStatusRef = useRef(null);
   useEffect(() => {
-    if (!sharingLocationForFlock) return;
+    if (!sharingLocationForFlock) { sharingFlockStatusRef.current = null; return; }
     const flock = flocks.find(f => f.id === sharingLocationForFlock);
-    if (!flock || flock.status !== 'confirmed') {
+    if (!flock) return; // flock not found during state rebuild — don't stop
+    if (sharingFlockStatusRef.current === null) { sharingFlockStatusRef.current = flock.status; return; } // first run — just record status
+    if (flock.status !== 'confirmed') {
       stopLocationSharing();
+      sharingFlockStatusRef.current = null;
     }
   }, [flocks, sharingLocationForFlock, stopLocationSharing]);
 
@@ -2568,9 +2585,15 @@ const FlockAppInner = ({ authUser, onLogout }) => {
 
     const unsubResponse = onFlockInviteResponded((data) => {
       if (data.action === 'accepted') {
-        setFlocks(prev => prev.map(f =>
-          f.id === data.flockId ? { ...f, memberCount: (f.memberCount || 0) + 1 } : f
-        ));
+        setFlocks(prev => prev.map(f => {
+          if (f.id !== data.flockId) return f;
+          const alreadyMember = (f.members || []).some(m => m.id === data.userId);
+          return {
+            ...f,
+            memberCount: (f.memberCount || 0) + 1,
+            members: alreadyMember ? f.members : [...(f.members || []), { id: data.userId, name: data.userName, image: data.userImage || null, status: 'accepted' }],
+          };
+        }));
       }
     });
 
@@ -2601,6 +2624,9 @@ const FlockAppInner = ({ authUser, onLogout }) => {
   // Money layer socket listeners
   useEffect(() => {
     const unsubBudget = onBudgetUpdated((data) => {
+      // Always update flock-level state
+      if (data.ceiling) setFlocks(prev => prev.map(f => f.id === data.flockId ? { ...f, budgetCeiling: data.ceiling } : f));
+      // Update detailed status if viewing this flock
       if (data.flockId === selectedFlockId) {
         setBudgetStatus(prev => {
           if (prev && !prev.isReady && data.isReady && data.ceiling) {
@@ -2608,13 +2634,13 @@ const FlockAppInner = ({ authUser, onLogout }) => {
           }
           return prev ? { ...prev, ceiling: data.ceiling, submissionCount: data.submissionCount, totalMembers: data.totalMembers, isReady: data.isReady, skipCount: data.skipCount } : prev;
         });
-        if (data.ceiling) setFlocks(prev => prev.map(f => f.id === data.flockId ? { ...f, budgetCeiling: data.ceiling } : f));
       }
     });
     const unsubLocked = onBudgetLocked((data) => {
+      // Always update flock-level state
+      setFlocks(prev => prev.map(f => f.id === data.flockId ? { ...f, budgetLocked: true } : f));
       if (data.flockId === selectedFlockId) {
         setBudgetStatus(prev => prev ? { ...prev, budgetLocked: true, ceiling: data.ceiling } : prev);
-        setFlocks(prev => prev.map(f => f.id === data.flockId ? { ...f, budgetLocked: true } : f));
       }
     });
     const unsubReminder = onBudgetReminder((data) => {
@@ -2638,6 +2664,111 @@ const FlockAppInner = ({ authUser, onLogout }) => {
     });
     return () => { unsubBudget(); unsubLocked(); unsubReminder(); unsubBillCreated(); unsubSettled(); unsubFullySettled(); unsubGhost(); };
   }, [selectedFlockId, showToast]);
+
+  // Listen for real-time venue votes
+  useEffect(() => {
+    const unsub = onNewVote((data) => {
+      setFlocks(prev => prev.map(f => {
+        if (f.id !== data.flockId) return f;
+        return { ...f, votes: data.votes };
+      }));
+    });
+    return unsub;
+  }, []);
+
+  // Listen for venue confirmed (flock status → confirmed)
+  useEffect(() => {
+    const unsub = onVenueSelected((data) => {
+      setFlocks(prev => prev.map(f => {
+        if (f.id !== data.flockId) return f;
+        return {
+          ...f,
+          venue: data.venue_name,
+          venueAddress: data.venue_address || null,
+          venueId: data.venue_id || null,
+          status: 'confirmed',
+        };
+      }));
+      showToast(`${data.selected_by.name} confirmed the venue: ${data.venue_name}`);
+    });
+    return unsub;
+  }, [showToast]);
+
+  // Listen for flock message reactions (real-time)
+  useEffect(() => {
+    const unsubAdd = onFlockReactionAdded((data) => {
+      setFlocks(prev => prev.map(f => ({
+        ...f,
+        messages: (f.messages || []).map(m => {
+          if (m.id !== data.messageId) return m;
+          const existing = (m.reactions || []);
+          if (existing.some(r => r.emoji === data.emoji && r.user_id === data.userId)) return m;
+          return { ...m, reactions: [...existing, { emoji: data.emoji, user_id: data.userId, user_name: data.userName }] };
+        }),
+      })));
+    });
+    const unsubRemove = onFlockReactionRemoved((data) => {
+      setFlocks(prev => prev.map(f => ({
+        ...f,
+        messages: (f.messages || []).map(m => {
+          if (m.id !== data.messageId) return m;
+          return { ...m, reactions: (m.reactions || []).filter(r => !(r.emoji === data.emoji && r.user_id === data.userId)) };
+        }),
+      })));
+    });
+    return () => { unsubAdd(); unsubRemove(); };
+  }, []);
+
+  // Listen for flock deleted
+  useEffect(() => {
+    const unsub = onFlockDeleted((data) => {
+      setFlocks(prev => prev.filter(f => f.id !== data.flockId));
+      if (selectedFlockId === data.flockId) {
+        setCurrentScreen('home');
+        setSelectedFlockId(null);
+      }
+      showToast(`${data.flockName || 'A flock'} was deleted by ${data.deletedBy}`);
+    });
+    return unsub;
+  }, [selectedFlockId, showToast]);
+
+  // Listen for flock updated (name, venue, time, status)
+  useEffect(() => {
+    const unsub = onFlockUpdated((data) => {
+      setFlocks(prev => prev.map(f => {
+        if (f.id !== data.flockId) return f;
+        return {
+          ...f,
+          name: data.name || f.name,
+          venue: data.venue_name || f.venue,
+          venueAddress: data.venue_address || f.venueAddress,
+          venueId: data.venue_id || f.venueId,
+          venueLat: data.venue_latitude || f.venueLat,
+          venueLng: data.venue_longitude || f.venueLng,
+          venueRating: data.venue_rating || f.venueRating,
+          venuePhoto: data.venue_photo_url || f.venuePhoto,
+          time: data.event_time ? new Date(data.event_time).toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' }) : f.time,
+          status: data.status === 'planning' ? 'voting' : (data.status || f.status),
+        };
+      }));
+    });
+    return unsub;
+  }, []);
+
+  // Listen for flock member left
+  useEffect(() => {
+    const unsub = onFlockMemberLeft((data) => {
+      setFlocks(prev => prev.map(f => {
+        if (f.id !== data.flockId) return f;
+        return {
+          ...f,
+          members: (f.members || []).filter(m => m.id !== data.userId),
+          memberCount: Math.max(0, (f.memberCount || 1) - 1),
+        };
+      }));
+    });
+    return unsub;
+  }, []);
 
   // Typing indicator — throttled: emit once, suppress until stopped
   const typingTimeoutRef = useRef(null);
