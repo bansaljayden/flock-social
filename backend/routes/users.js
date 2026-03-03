@@ -69,7 +69,7 @@ const upload = multer({
 router.get('/profile', async (req, res) => {
   try {
     const result = await pool.query(
-      `SELECT id, email, name, phone, interests, role, profile_image_url, venmo_username, created_at, updated_at
+      `SELECT id, email, name, phone, interests, role, profile_image_url, venmo_username, cashapp_cashtag, zelle_identifier, created_at, updated_at
        FROM users WHERE id = $1`,
       [req.user.id]
     );
@@ -395,6 +395,80 @@ router.put('/venmo-username',
     } catch (err) {
       console.error('Update venmo username error:', err);
       res.status(500).json({ error: 'Failed to update Venmo username' });
+    }
+  }
+);
+
+// PUT /api/users/payment-methods — Update all payment method handles
+router.put('/payment-methods',
+  [
+    body('venmo_username').optional({ nullable: true }).trim().isLength({ max: 50 })
+      .withMessage('Venmo username too long')
+      .matches(/^[a-zA-Z0-9_-]*$/).withMessage('Venmo username can only contain letters, numbers, hyphens, and underscores'),
+    body('cashapp_cashtag').optional({ nullable: true }).trim().isLength({ max: 50 })
+      .withMessage('Cash App cashtag too long')
+      .matches(/^[a-zA-Z0-9_]*$/).withMessage('Cashtag can only contain letters, numbers, and underscores'),
+    body('zelle_identifier').optional({ nullable: true }).trim().isLength({ max: 255 })
+      .withMessage('Zelle identifier too long'),
+  ],
+  async (req, res) => {
+    try {
+      const errors = validationResult(req);
+      if (!errors.isEmpty()) {
+        return res.status(400).json({ error: errors.array()[0].msg });
+      }
+
+      const { venmo_username, cashapp_cashtag, zelle_identifier } = req.body;
+
+      // Clean inputs — strip leading @ for venmo, $ for cashapp
+      const cleanVenmo = venmo_username !== undefined
+        ? (venmo_username ? venmo_username.replace(/^@/, '') : null)
+        : undefined;
+      const cleanCashapp = cashapp_cashtag !== undefined
+        ? (cashapp_cashtag ? cashapp_cashtag.replace(/^\$/, '') : null)
+        : undefined;
+      const cleanZelle = zelle_identifier !== undefined
+        ? (zelle_identifier || null)
+        : undefined;
+
+      // Build dynamic SET clause — only update fields that were sent
+      const sets = [];
+      const values = [];
+      let paramIdx = 1;
+
+      if (cleanVenmo !== undefined) {
+        sets.push(`venmo_username = $${paramIdx++}`);
+        values.push(cleanVenmo);
+      }
+      if (cleanCashapp !== undefined) {
+        sets.push(`cashapp_cashtag = $${paramIdx++}`);
+        values.push(cleanCashapp);
+      }
+      if (cleanZelle !== undefined) {
+        sets.push(`zelle_identifier = $${paramIdx++}`);
+        values.push(cleanZelle);
+      }
+
+      if (sets.length === 0) {
+        return res.status(400).json({ error: 'No payment methods provided' });
+      }
+
+      sets.push('updated_at = NOW()');
+      values.push(req.user.id);
+
+      await pool.query(
+        `UPDATE users SET ${sets.join(', ')} WHERE id = $${paramIdx}`,
+        values
+      );
+
+      res.json({
+        venmo_username: cleanVenmo !== undefined ? cleanVenmo : undefined,
+        cashapp_cashtag: cleanCashapp !== undefined ? cleanCashapp : undefined,
+        zelle_identifier: cleanZelle !== undefined ? cleanZelle : undefined,
+      });
+    } catch (err) {
+      console.error('Update payment methods error:', err);
+      res.status(500).json({ error: 'Failed to update payment methods' });
     }
   }
 );

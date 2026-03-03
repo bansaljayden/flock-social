@@ -298,6 +298,8 @@ async function runMigrations() {
       await pool.query(`ALTER TABLE flocks ADD COLUMN IF NOT EXISTS ghost_mode_enabled BOOLEAN DEFAULT false`);
 
       await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS venmo_username VARCHAR(50)`);
+      await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS cashapp_cashtag VARCHAR(50)`);
+      await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS zelle_identifier VARCHAR(255)`);
 
       await pool.query(`CREATE TABLE IF NOT EXISTS budget_submissions (
         id SERIAL PRIMARY KEY,

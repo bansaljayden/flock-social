@@ -101,7 +101,7 @@ router.post('/login', loginValidation, async (req, res) => {
 router.get('/me', authenticate, async (req, res) => {
   try {
     const result = await pool.query(
-      `SELECT id, email, name, phone, interests, role, profile_image_url, venmo_username, created_at, updated_at
+      `SELECT id, email, name, phone, interests, role, profile_image_url, venmo_username, cashapp_cashtag, zelle_identifier, created_at, updated_at
        FROM users WHERE id = $1`,
       [req.user.id]
     );

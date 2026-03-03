@@ -420,5 +420,17 @@ export async function updateVenmoUsername(username) {
   });
 }
 
+// Payment Methods (multi-provider)
+export async function updatePaymentMethods({ venmo_username, cashapp_cashtag, zelle_identifier }) {
+  return request('/api/users/payment-methods', {
+    method: 'PUT',
+    body: JSON.stringify({ venmo_username, cashapp_cashtag, zelle_identifier }),
+  });
+}
+
+export async function getPaymentLinks(flockId) {
+  return request(`/api/billing/${flockId}/payment-links`);
+}
+
 export { getToken, BASE_URL };
 export default request;
