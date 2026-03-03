@@ -273,8 +273,8 @@ async function runMigrations() {
     // Crowd Intelligence: venue feedback for calibration loop
     await pool.query(`CREATE TABLE IF NOT EXISTS venue_feedback (
       id SERIAL PRIMARY KEY,
-      user_id UUID REFERENCES users(id) ON DELETE CASCADE,
-      flock_id UUID,
+      user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+      flock_id INTEGER,
       venue_place_id VARCHAR(255) NOT NULL,
       venue_name VARCHAR(255) NOT NULL,
       crowd_level SMALLINT NOT NULL CHECK (crowd_level BETWEEN 1 AND 3),
@@ -289,57 +289,64 @@ async function runMigrations() {
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_venue_feedback_day_hour ON venue_feedback(venue_place_id, day_of_week, hour)`);
 
     // Money layer: budget matching, bill splits, Venmo settlement
-    await pool.query(`ALTER TABLE flocks ADD COLUMN IF NOT EXISTS budget_enabled BOOLEAN DEFAULT false`);
-    await pool.query(`ALTER TABLE flocks ADD COLUMN IF NOT EXISTS budget_context VARCHAR(100)`);
-    await pool.query(`ALTER TABLE flocks ADD COLUMN IF NOT EXISTS budget_locked BOOLEAN DEFAULT false`);
-    await pool.query(`ALTER TABLE flocks ADD COLUMN IF NOT EXISTS budget_ceiling DECIMAL(8,2)`);
-    await pool.query(`ALTER TABLE flocks ADD COLUMN IF NOT EXISTS ghost_mode_enabled BOOLEAN DEFAULT false`);
+    // Wrapped in own try/catch to ensure these run even if earlier migrations fail
+    try {
+      await pool.query(`ALTER TABLE flocks ADD COLUMN IF NOT EXISTS budget_enabled BOOLEAN DEFAULT false`);
+      await pool.query(`ALTER TABLE flocks ADD COLUMN IF NOT EXISTS budget_context VARCHAR(100)`);
+      await pool.query(`ALTER TABLE flocks ADD COLUMN IF NOT EXISTS budget_locked BOOLEAN DEFAULT false`);
+      await pool.query(`ALTER TABLE flocks ADD COLUMN IF NOT EXISTS budget_ceiling DECIMAL(8,2)`);
+      await pool.query(`ALTER TABLE flocks ADD COLUMN IF NOT EXISTS ghost_mode_enabled BOOLEAN DEFAULT false`);
 
-    await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS venmo_username VARCHAR(50)`);
+      await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS venmo_username VARCHAR(50)`);
 
-    await pool.query(`CREATE TABLE IF NOT EXISTS budget_submissions (
-      id SERIAL PRIMARY KEY,
-      flock_id INTEGER REFERENCES flocks(id) ON DELETE CASCADE,
-      user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
-      amount DECIMAL(8,2),
-      skipped BOOLEAN DEFAULT false,
-      submitted_at TIMESTAMPTZ DEFAULT NOW(),
-      updated_at TIMESTAMPTZ DEFAULT NOW(),
-      UNIQUE(flock_id, user_id)
-    )`);
-    await pool.query(`CREATE INDEX IF NOT EXISTS idx_budget_submissions_flock ON budget_submissions(flock_id)`);
-
-    await pool.query(`CREATE TABLE IF NOT EXISTS bill_splits (
-      id SERIAL PRIMARY KEY,
-      flock_id INTEGER REFERENCES flocks(id) ON DELETE CASCADE,
-      total_amount DECIMAL(8,2) NOT NULL,
-      split_type VARCHAR(20) DEFAULT 'equal',
-      paid_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
-      tip_percent DECIMAL(4,1) DEFAULT 0,
-      created_at TIMESTAMPTZ DEFAULT NOW(),
-      updated_at TIMESTAMPTZ DEFAULT NOW(),
-      UNIQUE(flock_id)
-    )`);
-
-    await pool.query(`CREATE TABLE IF NOT EXISTS bill_split_shares (
-      id SERIAL PRIMARY KEY,
-      bill_id INTEGER REFERENCES bill_splits(id) ON DELETE CASCADE,
-      user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
-      amount DECIMAL(8,2) NOT NULL,
-      committed BOOLEAN DEFAULT false,
-      settled BOOLEAN DEFAULT false,
-      settled_at TIMESTAMPTZ,
-      UNIQUE(bill_id, user_id)
-    )`);
-    await pool.query(`CREATE INDEX IF NOT EXISTS idx_bill_split_shares_bill ON bill_split_shares(bill_id)`);
-
-    // Cleanup: delete individual budget submissions 24h after flock completes (privacy)
-    await pool.query(`DELETE FROM budget_submissions
-      WHERE flock_id IN (
-        SELECT id FROM flocks
-        WHERE status IN ('completed', 'cancelled')
-        AND updated_at < NOW() - INTERVAL '24 hours'
+      await pool.query(`CREATE TABLE IF NOT EXISTS budget_submissions (
+        id SERIAL PRIMARY KEY,
+        flock_id INTEGER REFERENCES flocks(id) ON DELETE CASCADE,
+        user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+        amount DECIMAL(8,2),
+        skipped BOOLEAN DEFAULT false,
+        submitted_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW(),
+        UNIQUE(flock_id, user_id)
       )`);
+      await pool.query(`CREATE INDEX IF NOT EXISTS idx_budget_submissions_flock ON budget_submissions(flock_id)`);
+
+      await pool.query(`CREATE TABLE IF NOT EXISTS bill_splits (
+        id SERIAL PRIMARY KEY,
+        flock_id INTEGER REFERENCES flocks(id) ON DELETE CASCADE,
+        total_amount DECIMAL(8,2) NOT NULL,
+        split_type VARCHAR(20) DEFAULT 'equal',
+        paid_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+        tip_percent DECIMAL(4,1) DEFAULT 0,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW(),
+        UNIQUE(flock_id)
+      )`);
+
+      await pool.query(`CREATE TABLE IF NOT EXISTS bill_split_shares (
+        id SERIAL PRIMARY KEY,
+        bill_id INTEGER REFERENCES bill_splits(id) ON DELETE CASCADE,
+        user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+        amount DECIMAL(8,2) NOT NULL,
+        committed BOOLEAN DEFAULT false,
+        settled BOOLEAN DEFAULT false,
+        settled_at TIMESTAMPTZ,
+        UNIQUE(bill_id, user_id)
+      )`);
+      await pool.query(`CREATE INDEX IF NOT EXISTS idx_bill_split_shares_bill ON bill_split_shares(bill_id)`);
+
+      // Cleanup: delete individual budget submissions 24h after flock completes (privacy)
+      await pool.query(`DELETE FROM budget_submissions
+        WHERE flock_id IN (
+          SELECT id FROM flocks
+          WHERE status IN ('completed', 'cancelled')
+          AND updated_at < NOW() - INTERVAL '24 hours'
+        )`);
+
+      console.log('Money layer migrations complete');
+    } catch (moneyErr) {
+      console.error('Money layer migration error:', moneyErr.message);
+    }
 
     // Keep demo stories alive — refresh expiration for seeded picsum stories
     await pool.query(
