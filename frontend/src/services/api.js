@@ -85,10 +85,10 @@ export async function getFlock(id) {
   return request(`/api/flocks/${id}`);
 }
 
-export async function createFlock({ name, venue_name, venue_address, venue_id, venue_latitude, venue_longitude, venue_rating, venue_photo_url, event_time, invited_user_ids }) {
+export async function createFlock({ name, venue_name, venue_address, venue_id, venue_latitude, venue_longitude, venue_rating, venue_photo_url, event_time, invited_user_ids, budget_enabled, budget_context }) {
   return request('/api/flocks', {
     method: 'POST',
-    body: JSON.stringify({ name, venue_name, venue_address, venue_id, venue_latitude, venue_longitude, venue_rating, venue_photo_url, event_time, invited_user_ids }),
+    body: JSON.stringify({ name, venue_name, venue_address, venue_id, venue_latitude, venue_longitude, venue_rating, venue_photo_url, event_time, invited_user_ids, budget_enabled, budget_context }),
   });
 }
 
@@ -366,6 +366,58 @@ export async function submitVenueFeedback(data) {
 // Weather
 export async function getWeather(lat, lon) {
   return request(`/api/weather?lat=${lat}&lon=${lon}`);
+}
+
+// Budget Matching
+export async function submitBudget(flockId, { amount, skipped }) {
+  return request(`/api/budget/${flockId}/submit`, {
+    method: 'POST',
+    body: JSON.stringify({ amount, skipped }),
+  });
+}
+
+export async function getBudgetStatus(flockId) {
+  return request(`/api/budget/${flockId}`);
+}
+
+export async function lockBudget(flockId) {
+  return request(`/api/budget/${flockId}/lock`, { method: 'POST' });
+}
+
+export async function sendBudgetReminder(flockId) {
+  return request(`/api/budget/${flockId}/remind`, { method: 'POST' });
+}
+
+// Bill Splitting
+export async function createBillSplit(flockId, { totalAmount, tipPercent, splitType, paidBy, customShares }) {
+  return request(`/api/billing/${flockId}/create`, {
+    method: 'POST',
+    body: JSON.stringify({ totalAmount, tipPercent, splitType, paidBy, customShares }),
+  });
+}
+
+export async function getBillSplit(flockId) {
+  return request(`/api/billing/${flockId}`);
+}
+
+export async function settleShare(flockId) {
+  return request(`/api/billing/${flockId}/settle`, { method: 'POST' });
+}
+
+export async function ghostCommit(flockId) {
+  return request(`/api/billing/${flockId}/ghost-commit`, { method: 'POST' });
+}
+
+export async function getVenmoLink(flockId) {
+  return request(`/api/billing/${flockId}/venmo-link`);
+}
+
+// Venmo Username
+export async function updateVenmoUsername(username) {
+  return request('/api/users/venmo-username', {
+    method: 'PUT',
+    body: JSON.stringify({ venmo_username: username }),
+  });
 }
 
 export { getToken, BASE_URL };

@@ -25,6 +25,8 @@ const safetyRoutes = require('./routes/safety');
 const crowdRoutes = require('./routes/crowd');
 const feedbackRoutes = require('./routes/feedback');
 const weatherRoutes = require('./routes/weather');
+const budgetRoutes = require('./routes/budget');
+const billingRoutes = require('./routes/billing');
 
 const app = express();
 app.set('trust proxy', 1);
@@ -124,6 +126,8 @@ app.use('/api/safety', apiLimiter, safetyRoutes);     // Handles /api/safety/con
 app.use('/api/crowd', apiLimiter, crowdRoutes);       // Handles /api/crowd/:placeId, /api/crowd/batch, /api/crowd/:placeId/alternatives
 app.use('/api/feedback', apiLimiter, feedbackRoutes); // Handles /api/feedback, /api/feedback/venue/:placeId
 app.use('/api/weather', apiLimiter, weatherRoutes);   // Handles /api/weather?lat=...&lon=...
+app.use('/api/budget', apiLimiter, budgetRoutes);     // Handles /api/budget/:flockId/*
+app.use('/api/billing', apiLimiter, billingRoutes);   // Handles /api/billing/:flockId/*
 
 // Health check
 app.get('/api/health', (req, res) => {
@@ -161,6 +165,7 @@ const io = new Server(server, {
   pingTimeout: 60000,
   pingInterval: 25000,
 });
+app.set('io', io);
 
 // Rate limit WebSocket connections: 10 per minute per IP
 const socketConnections = new Map();
@@ -282,6 +287,59 @@ async function runMigrations() {
     )`);
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_venue_feedback_place ON venue_feedback(venue_place_id)`);
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_venue_feedback_day_hour ON venue_feedback(venue_place_id, day_of_week, hour)`);
+
+    // Money layer: budget matching, bill splits, Venmo settlement
+    await pool.query(`ALTER TABLE flocks ADD COLUMN IF NOT EXISTS budget_enabled BOOLEAN DEFAULT false`);
+    await pool.query(`ALTER TABLE flocks ADD COLUMN IF NOT EXISTS budget_context VARCHAR(100)`);
+    await pool.query(`ALTER TABLE flocks ADD COLUMN IF NOT EXISTS budget_locked BOOLEAN DEFAULT false`);
+    await pool.query(`ALTER TABLE flocks ADD COLUMN IF NOT EXISTS budget_ceiling DECIMAL(8,2)`);
+    await pool.query(`ALTER TABLE flocks ADD COLUMN IF NOT EXISTS ghost_mode_enabled BOOLEAN DEFAULT false`);
+
+    await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS venmo_username VARCHAR(50)`);
+
+    await pool.query(`CREATE TABLE IF NOT EXISTS budget_submissions (
+      id SERIAL PRIMARY KEY,
+      flock_id INTEGER REFERENCES flocks(id) ON DELETE CASCADE,
+      user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+      amount DECIMAL(8,2),
+      skipped BOOLEAN DEFAULT false,
+      submitted_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW(),
+      UNIQUE(flock_id, user_id)
+    )`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_budget_submissions_flock ON budget_submissions(flock_id)`);
+
+    await pool.query(`CREATE TABLE IF NOT EXISTS bill_splits (
+      id SERIAL PRIMARY KEY,
+      flock_id INTEGER REFERENCES flocks(id) ON DELETE CASCADE,
+      total_amount DECIMAL(8,2) NOT NULL,
+      split_type VARCHAR(20) DEFAULT 'equal',
+      paid_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+      tip_percent DECIMAL(4,1) DEFAULT 0,
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW(),
+      UNIQUE(flock_id)
+    )`);
+
+    await pool.query(`CREATE TABLE IF NOT EXISTS bill_split_shares (
+      id SERIAL PRIMARY KEY,
+      bill_id INTEGER REFERENCES bill_splits(id) ON DELETE CASCADE,
+      user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+      amount DECIMAL(8,2) NOT NULL,
+      committed BOOLEAN DEFAULT false,
+      settled BOOLEAN DEFAULT false,
+      settled_at TIMESTAMPTZ,
+      UNIQUE(bill_id, user_id)
+    )`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_bill_split_shares_bill ON bill_split_shares(bill_id)`);
+
+    // Cleanup: delete individual budget submissions 24h after flock completes (privacy)
+    await pool.query(`DELETE FROM budget_submissions
+      WHERE flock_id IN (
+        SELECT id FROM flocks
+        WHERE status IN ('completed', 'cancelled')
+        AND updated_at < NOW() - INTERVAL '24 hours'
+      )`);
 
     // Keep demo stories alive — refresh expiration for seeded picsum stories
     await pool.query(

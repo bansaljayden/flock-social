@@ -276,3 +276,42 @@ export function onFlockInviteResponded(callback) {
   if (socket) socket.on('flock_invite_responded', callback);
   return () => { if (socket) socket.off('flock_invite_responded', callback); };
 }
+
+// --- Budget events ---
+
+export function onBudgetUpdated(callback) {
+  if (socket) socket.on('budget_updated', callback);
+  return () => { if (socket) socket.off('budget_updated', callback); };
+}
+
+export function onBudgetLocked(callback) {
+  if (socket) socket.on('budget_locked', callback);
+  return () => { if (socket) socket.off('budget_locked', callback); };
+}
+
+export function onBudgetReminder(callback) {
+  if (socket) socket.on('budget_reminder', callback);
+  return () => { if (socket) socket.off('budget_reminder', callback); };
+}
+
+// --- Billing events ---
+
+export function onBillCreated(callback) {
+  if (socket) socket.on('bill_created', callback);
+  return () => { if (socket) socket.off('bill_created', callback); };
+}
+
+export function onShareSettled(callback) {
+  if (socket) socket.on('share_settled', callback);
+  return () => { if (socket) socket.off('share_settled', callback); };
+}
+
+export function onBillFullySettled(callback) {
+  if (socket) socket.on('bill_fully_settled', callback);
+  return () => { if (socket) socket.off('bill_fully_settled', callback); };
+}
+
+export function onGhostCommitted(callback) {
+  if (socket) socket.on('ghost_committed', callback);
+  return () => { if (socket) socket.off('ghost_committed', callback); };
+}
