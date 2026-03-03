@@ -11,8 +11,8 @@ import {
   formatCurrency,
   calculateProfitMargin
 } from './lib/finance';
-import { getCurrentUser, logout, isLoggedIn, getFlocks, getFlock, createFlock as apiCreateFlock, getMessages, sendMessage as apiSendMessage, updateProfile, searchVenues, searchUsers, getSuggestedUsers, sendFriendRequest, getStories, getVenueDetails, leaveFlock as apiLeaveFlock, getDMConversations, getDMs, getDmVenueVotes, getDmPinnedVenue, BASE_URL, inviteToFlock, acceptFlockInvite, declineFlockInvite, getFriends, acceptFriendRequest, declineFriendRequest, getPendingRequests, getOutgoingRequests, getFriendSuggestions, addFriendByCode, findFriendsByPhone, removeFriend, getTrustedContacts, addTrustedContact, updateTrustedContact, deleteTrustedContact, sendEmergencyAlert, shareLocationWithContacts, getUserStats, getCrowdPrediction, getCrowdBatch, getCrowdAlternatives, getWeather, submitVenueFeedback, uploadProfileImage, saveProfileImageUrl } from './services/api';
-import { connectSocket, disconnectSocket, getSocket, joinFlock, leaveFlock, sendMessage as socketSendMessage, sendImageMessage as socketSendImage, startTyping, stopTyping, onNewMessage, onUserTyping, onUserStoppedTyping, emitLocation, stopSharingLocation as socketStopSharing, onLocationUpdate, onMemberStoppedSharing, socketSendDm, onNewDm, dmStartTyping, dmStopTyping, onDmUserTyping, onDmUserStoppedTyping, dmReact, dmRemoveReact, onDmReactionAdded, onDmReactionRemoved, dmVoteVenue, onDmNewVote, dmShareLocation, dmStopSharingLocation, onDmLocationUpdate, onDmMemberStoppedSharing, dmPinVenue, onDmVenuePinned, emitFlockInvite, emitFlockInviteResponse, onFlockInviteReceived, onFlockInviteResponded, emitFriendRequest, emitFriendResponse, onFriendRequestReceived, onFriendRequestResponded } from './services/socket';
+import { getCurrentUser, logout, isLoggedIn, getFlocks, getFlock, createFlock as apiCreateFlock, getMessages, sendMessage as apiSendMessage, updateProfile, searchVenues, searchUsers, getSuggestedUsers, sendFriendRequest, getStories, getVenueDetails, leaveFlock as apiLeaveFlock, getDMConversations, getDMs, getDmVenueVotes, getDmPinnedVenue, BASE_URL, inviteToFlock, acceptFlockInvite, declineFlockInvite, getFriends, acceptFriendRequest, declineFriendRequest, getPendingRequests, getOutgoingRequests, getFriendSuggestions, addFriendByCode, findFriendsByPhone, removeFriend, getTrustedContacts, addTrustedContact, updateTrustedContact, deleteTrustedContact, sendEmergencyAlert, shareLocationWithContacts, getUserStats, getCrowdPrediction, getCrowdBatch, getCrowdAlternatives, getWeather, submitVenueFeedback, uploadProfileImage, saveProfileImageUrl, submitBudget, getBudgetStatus, lockBudget, sendBudgetReminder, createBillSplit, getBillSplit, settleShare, ghostCommit, getVenmoLink, updateVenmoUsername } from './services/api';
+import { connectSocket, disconnectSocket, getSocket, joinFlock, leaveFlock, sendMessage as socketSendMessage, sendImageMessage as socketSendImage, startTyping, stopTyping, onNewMessage, onUserTyping, onUserStoppedTyping, emitLocation, stopSharingLocation as socketStopSharing, onLocationUpdate, onMemberStoppedSharing, socketSendDm, onNewDm, dmStartTyping, dmStopTyping, onDmUserTyping, onDmUserStoppedTyping, dmReact, dmRemoveReact, onDmReactionAdded, onDmReactionRemoved, dmVoteVenue, onDmNewVote, dmShareLocation, dmStopSharingLocation, onDmLocationUpdate, onDmMemberStoppedSharing, dmPinVenue, onDmVenuePinned, emitFlockInvite, emitFlockInviteResponse, onFlockInviteReceived, onFlockInviteResponded, emitFriendRequest, emitFriendResponse, onFriendRequestReceived, onFriendRequestResponded, onBudgetUpdated, onBudgetLocked, onBudgetReminder, onBillCreated, onShareSettled, onBillFullySettled, onGhostCommitted } from './services/socket';
 import { QRCodeSVG } from 'qrcode.react';
 import { Html5Qrcode } from 'html5-qrcode';
 import LoginScreen from './components/auth/LoginScreen';
@@ -1145,6 +1145,15 @@ const FlockAppInner = ({ authUser, onLogout }) => {
   const [submittedFeedback, setSubmittedFeedback] = useState(new Set());
   const [feedbackState, setFeedbackState] = useState({ crowdLevel: null, priceWorth: null, rating: null });
   const [feedbackSubmitting, setFeedbackSubmitting] = useState(false);
+
+  // Budget-based venue filtering helper (frontend-only)
+  const getMaxPriceLevel = useCallback((ceiling) => {
+    if (!ceiling) return 4;
+    if (ceiling < 20) return 1;
+    if (ceiling <= 45) return 2;
+    if (ceiling <= 80) return 3;
+    return 4;
+  }, []);
   const [slideProgress, setSlideProgress] = useState(0);
   const slideRef = useRef(null);
   const slidingRef = useRef(false);
@@ -1251,6 +1260,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
         stars: v.rating || 4.0,
         addr: v.formatted_address || '',
         price: v.price_level ? '$'.repeat(v.price_level) : '$$',
+        price_level: v.price_level || null,
         trending: v.rating >= 4.5,
         photo_url: v.photo_url || null,
         location: v.location || null,
@@ -1773,6 +1783,10 @@ const FlockAppInner = ({ authUser, onLogout }) => {
           venueRating: f.venue_rating || null,
           venuePriceLevel: f.venue_price_level || null,
           cashPool: null,
+          budgetEnabled: f.budget_enabled || false,
+          budgetContext: f.budget_context || null,
+          budgetLocked: f.budget_locked || false,
+          budgetCeiling: f.budget_ceiling ? parseFloat(f.budget_ceiling) : null,
           votes: [],
           messages: [],
         }));
@@ -1819,8 +1833,21 @@ const FlockAppInner = ({ authUser, onLogout }) => {
   const [inviteSearching, setInviteSearching] = useState(false);
   const [suggestedUsers, setSuggestedUsers] = useState([]);
   const [flockCashPool, setFlockCashPool] = useState(false);
-  const [flockAmount, setFlockAmount] = useState(20);
+  const [flockBudgetContext, setFlockBudgetContext] = useState('dinner');
   const [joinCode, setJoinCode] = useState('');
+
+  // Money layer state
+  const [budgetStatus, setBudgetStatus] = useState(null);
+  const [budgetAmount, setBudgetAmount] = useState(null);
+  const [budgetCustom, setBudgetCustom] = useState('');
+  const [budgetSubmitting, setBudgetSubmitting] = useState(false);
+  const [billSplit, setBillSplit] = useState(null);
+  const [showCreateBill, setShowCreateBill] = useState(false);
+  const [billTotal, setBillTotal] = useState('');
+  const [billTip, setBillTip] = useState(18);
+  const [billPaidBy, setBillPaidBy] = useState(null);
+  const [venmoUsername, setVenmoUsername] = useState('');
+  const [venmoSaving, setVenmoSaving] = useState(false);
 
   // Explore
   // searchText removed — filtering handled by venue search
@@ -1867,7 +1894,6 @@ const FlockAppInner = ({ authUser, onLogout }) => {
   // Chat
   const [chatInput, setChatInput] = useState('');
   const [showChatPool, setShowChatPool] = useState(false);
-  const [chatPoolAmount, setChatPoolAmount] = useState(20);
   const chatEndRef = useRef(null);
   const aiInputRef = useRef(null);
   const [isTyping, setIsTyping] = useState(false);
@@ -2374,12 +2400,22 @@ const FlockAppInner = ({ authUser, onLogout }) => {
           .catch(() => {})
           .finally(() => setMessagesLoading(false));
       }
+      // Load budget status and bill split
+      getBudgetStatus(selectedFlockId)
+        .then(data => { if (data.budgetEnabled) setBudgetStatus(data); else setBudgetStatus(null); })
+        .catch(() => setBudgetStatus(null));
+      getBillSplit(selectedFlockId)
+        .then(data => setBillSplit(data.bill))
+        .catch(() => setBillSplit(null));
+
     } else if (currentScreen !== 'chatDetail' && prevFlockIdRef.current) {
       // Don't leave socket room if actively sharing location (need to keep receiving updates)
       if (!sharingLocationRef.current || sharingLocationRef.current !== prevFlockIdRef.current) {
         leaveFlock(prevFlockIdRef.current);
       }
       prevFlockIdRef.current = null;
+      setBudgetStatus(null);
+      setBillSplit(null);
     }
   }, [currentScreen, selectedFlockId, authUser?.id]);
 
@@ -2557,6 +2593,47 @@ const FlockAppInner = ({ authUser, onLogout }) => {
 
     return () => { unsubReq(); unsubResp(); };
   }, [showToast]);
+
+  // Money layer socket listeners
+  useEffect(() => {
+    const unsubBudget = onBudgetUpdated((data) => {
+      if (data.flockId === selectedFlockId) {
+        setBudgetStatus(prev => {
+          if (prev && !prev.isReady && data.isReady && data.ceiling) {
+            showToast('Budget set — showing spots that work for everyone');
+          }
+          return prev ? { ...prev, ceiling: data.ceiling, submissionCount: data.submissionCount, totalMembers: data.totalMembers, isReady: data.isReady, skipCount: data.skipCount } : prev;
+        });
+        if (data.ceiling) setFlocks(prev => prev.map(f => f.id === data.flockId ? { ...f, budgetCeiling: data.ceiling } : f));
+      }
+    });
+    const unsubLocked = onBudgetLocked((data) => {
+      if (data.flockId === selectedFlockId) {
+        setBudgetStatus(prev => prev ? { ...prev, budgetLocked: true, ceiling: data.ceiling } : prev);
+        setFlocks(prev => prev.map(f => f.id === data.flockId ? { ...f, budgetLocked: true } : f));
+      }
+    });
+    const unsubReminder = onBudgetReminder((data) => {
+      showToast(`Submit your budget for ${data.flockName}`);
+    });
+    const unsubBillCreated = onBillCreated((data) => {
+      if (data.flockId === selectedFlockId) setBillSplit(data.bill);
+    });
+    const unsubSettled = onShareSettled((data) => {
+      if (data.flockId === selectedFlockId) {
+        setBillSplit(prev => prev ? { ...prev, shares: prev.shares.map(s => s.userId === data.userId ? { ...s, settled: true } : s) } : prev);
+      }
+    });
+    const unsubFullySettled = onBillFullySettled((data) => {
+      if (data.flockId === selectedFlockId) showToast("Everyone's settled up");
+    });
+    const unsubGhost = onGhostCommitted((data) => {
+      if (data.flockId === selectedFlockId) {
+        setBillSplit(prev => prev ? { ...prev, shares: prev.shares.map(s => s.userId === data.userId ? { ...s, committed: true } : s) } : prev);
+      }
+    });
+    return () => { unsubBudget(); unsubLocked(); unsubReminder(); unsubBillCreated(); unsubSettled(); unsubFullySettled(); unsubGhost(); };
+  }, [selectedFlockId, showToast]);
 
   // Typing indicator — throttled: emit once, suppress until stopped
   const typingTimeoutRef = useRef(null);
@@ -4670,10 +4747,12 @@ const FlockAppInner = ({ authUser, onLogout }) => {
       const invitedIds = capturedFriends.map(f => f.id).filter(Boolean);
 
       // Clear form immediately for snappy feel
-      setFlockName(''); setFlockFriends([]); setInviteSearch(''); setInviteResults([]); setFlockCashPool(false); setSelectedVenueForCreate(null);
+      const capturedBudget = flockCashPool;
+      const capturedBudgetCtx = flockBudgetContext;
+      setFlockName(''); setFlockFriends([]); setInviteSearch(''); setInviteResults([]); setFlockCashPool(false); setFlockBudgetContext('dinner'); setSelectedVenueForCreate(null);
 
       try {
-        const data = await apiCreateFlock({ name: capturedName, venue_name: venueName, venue_address: venueAddr, venue_id: venueId, venue_latitude: venueLat || undefined, venue_longitude: venueLng || undefined, venue_rating: venueRating || undefined, venue_photo_url: venuePhoto || undefined, invited_user_ids: invitedIds.length > 0 ? invitedIds : undefined });
+        const data = await apiCreateFlock({ name: capturedName, venue_name: venueName, venue_address: venueAddr, venue_id: venueId, venue_latitude: venueLat || undefined, venue_longitude: venueLng || undefined, venue_rating: venueRating || undefined, venue_photo_url: venuePhoto || undefined, invited_user_ids: invitedIds.length > 0 ? invitedIds : undefined, budget_enabled: capturedBudget || undefined, budget_context: capturedBudget ? capturedBudgetCtx : undefined });
         const f = data.flock;
         const initialMessages = [];
         if (venueName) {
@@ -4691,7 +4770,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
           apiSendMessage(f.id, `Check out ${venueName}!`, { message_type: 'venue_card', venue_data: venueCardData }).catch(() => {});
         }
         const invitedNames = capturedFriends.map(fr => fr.name);
-        const newFlock = { id: f.id, name: f.name, host: authUser?.name || 'You', creatorId: f.creator_id, members: invitedNames, memberCount: 1 + invitedIds.length, time: f.event_time ? new Date(f.event_time).toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' }) : `${flockDate} ${flockTime}`, status: 'voting', venue: f.venue_name || 'TBD', venueAddress: venueAddr, venueId: venueId, venuePhoto: venuePhoto, venueRating: venueRating, venuePriceLevel: venuePriceLevel, venueLat: venueLat, venueLng: venueLng, cashPool: null, votes: [], messages: initialMessages };
+        const newFlock = { id: f.id, name: f.name, host: authUser?.name || 'You', creatorId: f.creator_id, members: invitedNames, memberCount: 1 + invitedIds.length, time: f.event_time ? new Date(f.event_time).toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' }) : `${flockDate} ${flockTime}`, status: 'voting', venue: f.venue_name || 'TBD', venueAddress: venueAddr, venueId: venueId, venuePhoto: venuePhoto, venueRating: venueRating, venuePriceLevel: venuePriceLevel, venueLat: venueLat, venueLng: venueLng, cashPool: null, budgetEnabled: f.budget_enabled || capturedBudget, budgetContext: f.budget_context || capturedBudgetCtx, budgetLocked: false, budgetCeiling: null, votes: [], messages: initialMessages };
 
         // Batch all state updates together — navigate immediately
         newlyCreatedFlockRef.current = f.id;
@@ -4851,20 +4930,21 @@ const FlockAppInner = ({ authUser, onLogout }) => {
 
           <div style={{ marginBottom: '16px' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
-              <label style={{ fontSize: '12px', fontWeight: 'bold', color: colors.navy, display: 'flex', alignItems: 'center', gap: '4px' }}>{Icons.dollar(colors.navy, 14)} Cash Pool</label>
+              <label style={{ fontSize: '12px', fontWeight: 'bold', color: colors.navy, display: 'flex', alignItems: 'center', gap: '4px' }}>{Icons.dollar(colors.navy, 14)} Group Budget</label>
               <Toggle on={flockCashPool} onChange={() => setFlockCashPool(!flockCashPool)} />
             </div>
             {flockCashPool && (
               <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', border: `1px solid ${colors.creamDark}` }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
-                  <span style={{ fontSize: '12px', fontWeight: '500' }}>Per person</span>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                    <button onClick={() => setFlockAmount(prev => Math.max(5, prev - 5))} style={{ width: '32px', height: '32px', borderRadius: '16px', border: `2px solid ${colors.navy}`, backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontWeight: 'bold', cursor: 'pointer' }}>−</button>
-                    <span style={{ fontSize: '20px', fontWeight: '900', width: '56px', textAlign: 'center', color: colors.navy }}>${flockAmount}</span>
-                    <button onClick={() => setFlockAmount(prev => prev + 5)} style={{ width: '32px', height: '32px', borderRadius: '16px', border: `2px solid ${colors.navy}`, backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontWeight: 'bold', cursor: 'pointer' }}>+</button>
-                  </div>
+                <p style={{ fontSize: '11px', color: 'var(--text-secondary)', marginBottom: '8px', margin: '0 0 8px' }}>What's this for?</p>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginBottom: '10px' }}>
+                  {['dinner', 'drinks', 'movie', 'concert', 'activity'].map(ctx => (
+                    <button key={ctx} onClick={() => setFlockBudgetContext(ctx)}
+                      style={{ padding: '6px 14px', borderRadius: '20px', border: flockBudgetContext === ctx ? `2px solid ${colors.teal}` : '1.5px solid var(--border-color)', backgroundColor: flockBudgetContext === ctx ? `${colors.teal}15` : 'var(--bg-card-solid)', fontSize: '12px', fontWeight: '600', color: flockBudgetContext === ctx ? colors.teal : colors.navy, cursor: 'pointer', textTransform: 'capitalize' }}>
+                      {ctx}
+                    </button>
+                  ))}
                 </div>
-                <p style={{ fontSize: '10px', color: 'var(--text-secondary)', textAlign: 'center', margin: 0 }}>Total: ${flockAmount * (flockFriends.length + 1)}</p>
+                <p style={{ fontSize: '10px', color: 'var(--text-tertiary)', margin: 0 }}>Members will set their own budget anonymously after joining</p>
               </div>
             )}
           </div>
@@ -4954,7 +5034,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
                 <span style={{ fontSize: '13px', fontWeight: '700', color: 'white' }}>See All Results ({venueResults.length})</span>
                 {Icons.arrowRight('white', 14)}
               </button>
-              {venueResults.slice(0, 4).map((venue) => (
+              {venueResults.filter(v => { const mp = budgetStatus?.isReady && budgetStatus?.ceiling ? getMaxPriceLevel(budgetStatus.ceiling) : 4; return !v.price_level || v.price_level <= mp; }).slice(0, 4).map((venue) => (
                 <button
                   key={venue.place_id}
                   onClick={() => {
@@ -6269,6 +6349,62 @@ const FlockAppInner = ({ authUser, onLogout }) => {
           </div>
         )}
 
+        {/* Budget status bar */}
+        {flock.budgetEnabled && budgetStatus && (
+          <div onClick={() => setShowChatPool(true)} style={{ padding: '8px 14px', background: `linear-gradient(135deg, ${colors.teal}08, ${colors.teal}15)`, borderBottom: `1px solid ${colors.teal}25`, flexShrink: 0, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+              {Icons.dollar(colors.teal, 13)}
+              {budgetStatus.isReady && budgetStatus.ceiling ? (
+                <p style={{ fontSize: '12px', fontWeight: '600', color: colors.navy, margin: 0 }}>
+                  {budgetStatus.budgetLocked ? 'Budget locked at ' : 'Group budget: up to '}
+                  <span style={{ color: colors.teal, fontWeight: '800' }}>${budgetStatus.ceiling}</span>
+                  <span style={{ color: 'var(--text-secondary)', fontWeight: '500' }}> per person</span>
+                </p>
+              ) : (
+                <p style={{ fontSize: '12px', fontWeight: '600', color: 'var(--text-secondary)', margin: 0 }}>
+                  Waiting for budgets · {budgetStatus.submissionCount || 0} of {budgetStatus.totalMembers || '?'} submitted
+                </p>
+              )}
+            </div>
+            <span style={{ fontSize: '10px', color: 'var(--text-tertiary)' }}>{Icons.arrowLeft(colors.textTertiary, 10)}</span>
+          </div>
+        )}
+
+        {/* Ghost Mode Card — after venue confirmed, before bill created */}
+        {flock.status === 'confirmed' && flock.budgetEnabled && budgetStatus?.ceiling && !billSplit && (
+          <div style={{ padding: '10px 14px', background: `linear-gradient(135deg, ${colors.amber}08, ${colors.amber}15)`, borderBottom: `1px solid ${colors.amber}25`, flexShrink: 0 }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <p style={{ fontSize: '12px', fontWeight: '700', color: colors.navy, margin: '0 0 2px' }}>Lock in your share?</p>
+                <p style={{ fontSize: '11px', color: 'var(--text-secondary)', margin: 0 }}>Pre-commit ${budgetStatus.ceiling} to tonight's plan</p>
+              </div>
+              <button onClick={async () => {
+                try {
+                  await ghostCommit(selectedFlockId);
+                  showToast('Committed');
+                } catch (err) { showToast(err.message, 'error'); }
+              }} style={{ padding: '6px 14px', borderRadius: '14px', border: 'none', background: `linear-gradient(90deg, ${colors.navyBg}, ${colors.navyMidBg})`, color: 'white', fontSize: '11px', fontWeight: '700', cursor: 'pointer', flexShrink: 0 }}>
+                Commit ${budgetStatus.ceiling}
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Bill summary bar — shows when bill exists */}
+        {billSplit && (
+          <div onClick={() => setShowChatPool(true)} style={{ padding: '8px 14px', background: billSplit.shares?.every(s => s.settled) ? 'linear-gradient(135deg, #ecfdf5, #d1fae5)' : `linear-gradient(135deg, ${colors.navy}06, ${colors.navy}12)`, borderBottom: '1px solid var(--divider)', flexShrink: 0, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+              {Icons.dollar(billSplit.shares?.every(s => s.settled) ? '#22C55E' : colors.navy, 13)}
+              <p style={{ fontSize: '12px', fontWeight: '600', color: colors.navy, margin: 0 }}>
+                {billSplit.shares?.every(s => s.settled)
+                  ? 'All settled up'
+                  : `Bill: $${billSplit.totalWithTip?.toFixed(2)} · ${billSplit.shares?.filter(s => s.settled).length}/${billSplit.shares?.length} settled`}
+              </p>
+            </div>
+            <span style={{ fontSize: '10px', color: 'var(--text-tertiary)' }}>View</span>
+          </div>
+        )}
+
         <div onScroll={() => document.activeElement?.blur()} style={{ flex: 1, padding: '16px', overflowY: 'auto', background: `linear-gradient(180deg, ${colors.cream} 0%, ${colors.cream}cc 100%)`, scrollBehavior: 'smooth' }}>
           {showChatSearch && chatSearch.trim() && flock.messages.filter(m => {
             const q = chatSearch.toLowerCase();
@@ -6565,24 +6701,273 @@ const FlockAppInner = ({ authUser, onLogout }) => {
           </div>
         )}
 
-        {/* Cash Pool Modal */}
-        {showChatPool && (
-          <div className="modal-backdrop" style={{ position: 'absolute', inset: 0, backgroundColor: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'flex-end', zIndex: 50 }}>
-            <div className="modal-content" style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '20px 20px 0 0', padding: '20px', width: '100%' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
-                <h2 style={{ fontSize: '18px', fontWeight: '900', color: colors.navy, margin: 0 }}>Cash Pool</h2>
-                <button onClick={() => setShowChatPool(false)} style={{ width: '32px', height: '32px', borderRadius: '16px', backgroundColor: 'var(--bg-hover)', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.x(colors.textSecondary, 18)}</button>
+        {/* Money Layer Modal — Budget Submit / Bill Split */}
+        {showChatPool && (() => {
+          const isCreator = flock.creatorId && String(flock.creatorId) === String(authUser?.id);
+          const isConfirmedOrComplete = flock.status === 'confirmed' || flock.status === 'completed';
+          const hasBudget = flock.budgetEnabled;
+          const ctx = budgetStatus?.budgetContext || flock.budgetContext || 'dinner';
+          const presets = ctx?.includes('movie') || ctx?.includes('film') ? [15, 25, 35, 50]
+            : ctx?.includes('drink') || ctx?.includes('bar') ? [15, 30, 50, 75]
+            : ctx?.includes('bowling') || ctx?.includes('activity') || ctx?.includes('arcade') ? [10, 20, 30, 50]
+            : ctx?.includes('concert') ? [30, 50, 75, 100]
+            : [20, 40, 60, 80];
+          const userSubmitted = budgetStatus?.userSubmitted;
+          const showBillCreate = isConfirmedOrComplete || billSplit;
+
+          return (
+            <div className="modal-backdrop" style={{ position: 'absolute', inset: 0, backgroundColor: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'flex-end', zIndex: 50 }}>
+              <div className="modal-content" style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '20px 20px 0 0', padding: '20px', width: '100%', maxHeight: '85%', overflowY: 'auto' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+                  <h2 style={{ fontSize: '18px', fontWeight: '900', color: colors.navy, margin: 0 }}>{showBillCreate && !hasBudget ? 'Split the Bill' : hasBudget ? 'Group Budget' : 'Split the Bill'}</h2>
+                  <button onClick={() => { setShowChatPool(false); setShowCreateBill(false); }} style={{ width: '32px', height: '32px', borderRadius: '16px', backgroundColor: 'var(--bg-hover)', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.x(colors.textSecondary, 18)}</button>
+                </div>
+
+                {/* Budget Submission Section */}
+                {hasBudget && !budgetStatus?.budgetLocked && !userSubmitted && !showCreateBill && (
+                  <div>
+                    <p style={{ fontSize: '14px', fontWeight: '700', color: colors.navy, margin: '0 0 4px' }}>What's your budget tonight?</p>
+                    {ctx && <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: '0 0 14px' }}>For {ctx}</p>}
+                    <div style={{ display: 'flex', gap: '8px', marginBottom: '12px' }}>
+                      {presets.map(p => (
+                        <button key={p} onClick={() => { setBudgetAmount(p); setBudgetCustom(''); }}
+                          style={{ flex: 1, padding: '12px 4px', borderRadius: '12px', border: budgetAmount === p ? `2px solid ${colors.teal}` : '1.5px solid var(--border-color)', backgroundColor: budgetAmount === p ? `${colors.teal}12` : 'var(--bg-card-solid)', fontSize: '15px', fontWeight: '800', color: budgetAmount === p ? colors.teal : colors.navy, cursor: 'pointer' }}>
+                          ${p}{p === presets[presets.length - 1] ? '+' : ''}
+                        </button>
+                      ))}
+                    </div>
+                    <div style={{ marginBottom: '14px' }}>
+                      <p style={{ fontSize: '11px', color: 'var(--text-secondary)', margin: '0 0 6px' }}>Or enter a custom amount</p>
+                      <div style={{ position: 'relative' }}>
+                        <span style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', fontSize: '15px', fontWeight: '700', color: colors.navy }}>$</span>
+                        <input type="number" value={budgetCustom} onChange={(e) => { setBudgetCustom(e.target.value); setBudgetAmount(null); }} placeholder="0" style={{ ...styles.input, paddingLeft: '28px', fontSize: '15px', fontWeight: '700' }} />
+                      </div>
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '16px' }}>
+                      {Icons.lock(colors.textTertiary, 12)}
+                      <p style={{ fontSize: '11px', color: 'var(--text-tertiary)', margin: 0 }}>This is anonymous. No one sees your answer.</p>
+                    </div>
+                    <button disabled={budgetSubmitting} onClick={async () => {
+                      const amt = budgetCustom ? parseFloat(budgetCustom) : budgetAmount;
+                      if (!amt || amt <= 0) { showToast('Select or enter an amount', 'error'); return; }
+                      setBudgetSubmitting(true);
+                      try {
+                        const data = await submitBudget(selectedFlockId, { amount: amt, skipped: false });
+                        setBudgetStatus(prev => ({ ...prev, ...data, userSubmitted: true, userAmount: amt }));
+                        if (data.ceiling) setFlocks(prev => prev.map(f => f.id === selectedFlockId ? { ...f, budgetCeiling: data.ceiling } : f));
+                        showToast('Budget submitted');
+                        setShowChatPool(false);
+                      } catch (err) { showToast(err.message, 'error'); }
+                      setBudgetSubmitting(false);
+                    }} style={{ ...styles.gradientButton, padding: '14px', opacity: budgetSubmitting ? 0.5 : 1 }}>
+                      {budgetSubmitting ? 'Submitting...' : 'Submit'}
+                    </button>
+                    <button onClick={async () => {
+                      setBudgetSubmitting(true);
+                      try {
+                        const data = await submitBudget(selectedFlockId, { amount: 0, skipped: true });
+                        setBudgetStatus(prev => ({ ...prev, ...data, userSubmitted: true, userSkipped: true }));
+                        showToast('Budget submitted');
+                        setShowChatPool(false);
+                      } catch (err) { showToast(err.message, 'error'); }
+                      setBudgetSubmitting(false);
+                    }} style={{ width: '100%', padding: '12px', marginTop: '8px', border: 'none', backgroundColor: 'transparent', color: 'var(--text-secondary)', fontSize: '13px', fontWeight: '600', cursor: 'pointer' }}>
+                      Skip — any budget works
+                    </button>
+                  </div>
+                )}
+
+                {/* Budget Status (already submitted or locked) */}
+                {hasBudget && (userSubmitted || budgetStatus?.budgetLocked) && !showCreateBill && (
+                  <div>
+                    {budgetStatus?.isReady && budgetStatus?.ceiling ? (
+                      <div style={{ padding: '14px', borderRadius: '12px', backgroundColor: `${colors.teal}10`, border: `1px solid ${colors.teal}30`, marginBottom: '14px' }}>
+                        <p style={{ fontSize: '15px', fontWeight: '800', color: colors.teal, margin: 0 }}>
+                          {budgetStatus.budgetLocked ? `Group budget locked at $${budgetStatus.ceiling}` : `Group budget: up to $${budgetStatus.ceiling} per person`}
+                        </p>
+                        <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: '4px 0 0' }}>{budgetStatus.submissionCount} of {budgetStatus.totalMembers} submitted</p>
+                      </div>
+                    ) : (
+                      <div style={{ padding: '14px', borderRadius: '12px', backgroundColor: 'var(--bg-primary)', marginBottom: '14px' }}>
+                        <p style={{ fontSize: '13px', fontWeight: '600', color: colors.navy, margin: 0 }}>Waiting for more responses to set group budget</p>
+                        <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: '4px 0 0' }}>{budgetStatus?.submissionCount || 0} of {budgetStatus?.totalMembers || '?'} submitted</p>
+                      </div>
+                    )}
+                    {!budgetStatus?.budgetLocked && budgetStatus?.userAmount && (
+                      <p style={{ fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '12px' }}>Your budget: ${budgetStatus.userAmount} — <button onClick={() => { setBudgetAmount(budgetStatus.userAmount); setBudgetCustom(''); setBudgetStatus(prev => ({ ...prev, userSubmitted: false })); }} style={{ background: 'none', border: 'none', color: colors.teal, fontWeight: '700', cursor: 'pointer', padding: 0, fontSize: '12px' }}>Change</button></p>
+                    )}
+                    {isCreator && !budgetStatus?.budgetLocked && (
+                      <div style={{ display: 'flex', gap: '8px', marginBottom: '12px' }}>
+                        <button onClick={async () => { try { await lockBudget(selectedFlockId); setBudgetStatus(prev => ({ ...prev, budgetLocked: true })); showToast('Budget locked'); } catch (err) { showToast(err.message, 'error'); } }} style={{ flex: 1, padding: '10px', borderRadius: '10px', border: `1.5px solid ${colors.navy}`, backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontWeight: '700', fontSize: '12px', cursor: 'pointer' }}>Lock Budget</button>
+                        <button onClick={async () => { try { const d = await sendBudgetReminder(selectedFlockId); showToast(`Reminded ${d.reminded} member${d.reminded !== 1 ? 's' : ''}`); } catch (err) { showToast(err.message, 'error'); } }} style={{ flex: 1, padding: '10px', borderRadius: '10px', border: `1.5px solid var(--border-color)`, backgroundColor: 'var(--bg-card-solid)', color: 'var(--text-secondary)', fontWeight: '700', fontSize: '12px', cursor: 'pointer' }}>Send Reminder</button>
+                      </div>
+                    )}
+                    {isConfirmedOrComplete && (
+                      <button onClick={() => setShowCreateBill(true)} style={{ ...styles.gradientButton, padding: '14px' }}>Split the Bill</button>
+                    )}
+                  </div>
+                )}
+
+                {/* Budget disabled — direct to bill split */}
+                {!hasBudget && !showCreateBill && !billSplit && (
+                  <div>
+                    <p style={{ fontSize: '13px', color: 'var(--text-secondary)', marginBottom: '16px' }}>Create a bill split after your hangout</p>
+                    <button onClick={() => setShowCreateBill(true)} style={{ ...styles.gradientButton, padding: '14px' }}>Split the Bill</button>
+                  </div>
+                )}
+
+                {/* Bill Split Creation Form */}
+                {showCreateBill && !billSplit && (
+                  <div>
+                    <div style={{ marginBottom: '14px' }}>
+                      <label style={{ display: 'block', fontSize: '12px', fontWeight: '700', color: colors.navy, marginBottom: '6px' }}>Who paid?</label>
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
+                        {[{ id: authUser?.id, name: 'Me' }, ...(flock.members || []).filter(m => typeof m === 'object' && m.id && String(m.id) !== String(authUser?.id)).map(m => ({ id: m.id, name: m.name || m }))].map(m => (
+                          <button key={m.id || m.name} onClick={() => setBillPaidBy(m.id || authUser?.id)}
+                            style={{ padding: '8px 14px', borderRadius: '20px', border: (billPaidBy || authUser?.id) === m.id ? `2px solid ${colors.teal}` : '1.5px solid var(--border-color)', backgroundColor: (billPaidBy || authUser?.id) === m.id ? `${colors.teal}12` : 'var(--bg-card-solid)', fontSize: '12px', fontWeight: '700', color: (billPaidBy || authUser?.id) === m.id ? colors.teal : colors.navy, cursor: 'pointer' }}>
+                            {m.name}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                    <div style={{ marginBottom: '14px' }}>
+                      <label style={{ display: 'block', fontSize: '12px', fontWeight: '700', color: colors.navy, marginBottom: '6px' }}>What was the total?</label>
+                      <div style={{ position: 'relative' }}>
+                        <span style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', fontSize: '16px', fontWeight: '800', color: colors.navy }}>$</span>
+                        <input type="number" value={billTotal} onChange={(e) => setBillTotal(e.target.value)} placeholder="0.00" style={{ ...styles.input, paddingLeft: '28px', fontSize: '16px', fontWeight: '800' }} />
+                      </div>
+                    </div>
+                    <div style={{ marginBottom: '14px' }}>
+                      <label style={{ display: 'block', fontSize: '12px', fontWeight: '700', color: colors.navy, marginBottom: '6px' }}>Add tip?</label>
+                      <div style={{ display: 'flex', gap: '6px' }}>
+                        {[0, 15, 18, 20, 25].map(t => (
+                          <button key={t} onClick={() => setBillTip(t)}
+                            style={{ flex: 1, padding: '8px 2px', borderRadius: '10px', border: billTip === t ? `2px solid ${colors.teal}` : '1.5px solid var(--border-color)', backgroundColor: billTip === t ? `${colors.teal}12` : 'var(--bg-card-solid)', fontSize: '12px', fontWeight: '700', color: billTip === t ? colors.teal : colors.navy, cursor: 'pointer' }}>
+                            {t === 0 ? 'None' : `${t}%`}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                    {billTotal && parseFloat(billTotal) > 0 && (
+                      <div style={{ padding: '12px', borderRadius: '12px', backgroundColor: 'var(--bg-primary)', marginBottom: '14px' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
+                          <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>Subtotal</span>
+                          <span style={{ fontSize: '12px', fontWeight: '700', color: colors.navy }}>${parseFloat(billTotal).toFixed(2)}</span>
+                        </div>
+                        {billTip > 0 && <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
+                          <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>Tip ({billTip}%)</span>
+                          <span style={{ fontSize: '12px', fontWeight: '700', color: colors.navy }}>${(parseFloat(billTotal) * billTip / 100).toFixed(2)}</span>
+                        </div>}
+                        <div style={{ height: '1px', backgroundColor: 'var(--divider)', margin: '6px 0' }} />
+                        <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                          <span style={{ fontSize: '13px', fontWeight: '800', color: colors.navy }}>Total</span>
+                          <span style={{ fontSize: '13px', fontWeight: '800', color: colors.teal }}>${(parseFloat(billTotal) * (1 + billTip / 100)).toFixed(2)}</span>
+                        </div>
+                        <p style={{ fontSize: '11px', color: 'var(--text-tertiary)', margin: '6px 0 0', textAlign: 'center' }}>Equal split — ~${(parseFloat(billTotal) * (1 + billTip / 100) / Math.max(1, flock.members?.length || flock.memberCount || 1)).toFixed(2)} each</p>
+                      </div>
+                    )}
+                    <button disabled={!billTotal || parseFloat(billTotal) <= 0} onClick={async () => {
+                      try {
+                        const data = await createBillSplit(selectedFlockId, {
+                          totalAmount: parseFloat(billTotal),
+                          tipPercent: billTip,
+                          splitType: 'equal',
+                          paidBy: billPaidBy || authUser?.id,
+                        });
+                        setBillSplit(data.bill);
+                        setShowCreateBill(false);
+                        showToast('Bill split created');
+                      } catch (err) { showToast(err.message, 'error'); }
+                    }} style={{ ...styles.gradientButton, padding: '14px', opacity: (!billTotal || parseFloat(billTotal) <= 0) ? 0.4 : 1 }}>
+                      Create Split
+                    </button>
+                  </div>
+                )}
+
+                {/* Bill Summary */}
+                {billSplit && (
+                  <div>
+                    <div style={{ padding: '14px', borderRadius: '12px', backgroundColor: 'var(--bg-primary)', marginBottom: '14px' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px' }}>
+                        <span style={{ fontSize: '13px', fontWeight: '800', color: colors.navy }}>Total: ${billSplit.totalWithTip?.toFixed(2)}</span>
+                        {billSplit.tipPercent > 0 && <span style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>includes {billSplit.tipPercent}% tip</span>}
+                      </div>
+                      <p style={{ fontSize: '11px', color: 'var(--text-secondary)', margin: '0 0 10px' }}>Paid by {billSplit.paidBy?.name || 'Unknown'}</p>
+                      <div style={{ borderTop: '1px solid var(--divider)', paddingTop: '8px' }}>
+                        {(billSplit.shares || []).map(s => (
+                          <div key={s.userId} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '6px 0' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                              <span style={{ fontSize: '13px', fontWeight: '600', color: colors.navy }}>{s.name}</span>
+                              {s.committed && !s.settled && <span style={{ fontSize: '9px', fontWeight: '700', color: colors.amber, backgroundColor: `${colors.amber}20`, padding: '1px 6px', borderRadius: '4px' }}>Pre-committed</span>}
+                            </div>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                              <span style={{ fontSize: '13px', fontWeight: '700', color: colors.navy }}>${s.amount?.toFixed(2)}</span>
+                              {s.settled ? (
+                                <span style={{ color: '#22C55E', fontSize: '14px' }}>{Icons.check('#22C55E', 16)}</span>
+                              ) : (
+                                <span style={{ fontSize: '10px', color: 'var(--text-tertiary)' }}>Owes</span>
+                              )}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                    {/* Settle Up button for current user if they owe */}
+                    {billSplit.shares?.find(s => String(s.userId) === String(authUser?.id) && !s.settled) && (
+                      <button onClick={async () => {
+                        try {
+                          const venmo = await getVenmoLink(selectedFlockId);
+                          if (venmo.deepLink) {
+                            window.open(venmo.deepLink, '_blank');
+                          } else if (venmo.webLink) {
+                            window.open(venmo.webLink, '_blank');
+                          }
+                          await settleShare(selectedFlockId);
+                          setBillSplit(prev => ({
+                            ...prev,
+                            shares: prev.shares.map(s => String(s.userId) === String(authUser?.id) ? { ...s, settled: true } : s),
+                          }));
+                          showToast('Settled up');
+                        } catch (err) {
+                          // If venmo link fails, still allow manual settle
+                          try {
+                            await settleShare(selectedFlockId);
+                            setBillSplit(prev => ({
+                              ...prev,
+                              shares: prev.shares.map(s => String(s.userId) === String(authUser?.id) ? { ...s, settled: true } : s),
+                            }));
+                            showToast('Marked as settled');
+                          } catch (e2) { showToast(e2.message, 'error'); }
+                        }
+                      }} style={{ ...styles.gradientButton, padding: '14px', marginBottom: '8px' }}>
+                        Settle Up — ${billSplit.shares.find(s => String(s.userId) === String(authUser?.id))?.amount?.toFixed(2)}
+                      </button>
+                    )}
+                    {billSplit.shares?.find(s => String(s.userId) === String(authUser?.id) && !s.settled) && (
+                      <button onClick={async () => {
+                        try {
+                          await settleShare(selectedFlockId);
+                          setBillSplit(prev => ({
+                            ...prev,
+                            shares: prev.shares.map(s => String(s.userId) === String(authUser?.id) ? { ...s, settled: true } : s),
+                          }));
+                          showToast('Marked as settled');
+                        } catch (err) { showToast(err.message, 'error'); }
+                      }} style={{ width: '100%', padding: '10px', border: 'none', backgroundColor: 'transparent', color: 'var(--text-secondary)', fontSize: '12px', fontWeight: '600', cursor: 'pointer' }}>
+                        Mark as Paid (cash or other)
+                      </button>
+                    )}
+                    {billSplit.shares?.every(s => s.settled) && (
+                      <div style={{ textAlign: 'center', padding: '12px' }}>
+                        <p style={{ fontSize: '14px', fontWeight: '800', color: '#22C55E', margin: 0 }}>All settled up</p>
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '16px', marginBottom: '16px' }}>
-                <button onClick={() => setChatPoolAmount(prev => Math.max(5, prev - 5))} style={{ width: '44px', height: '44px', borderRadius: '22px', border: `2px solid ${colors.navy}`, backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontWeight: 'bold', cursor: 'pointer', fontSize: '18px', transition: 'all 0.2s ease' }}>−</button>
-                <span style={{ fontSize: '36px', fontWeight: '900', width: '100px', textAlign: 'center', color: colors.navy }}>${chatPoolAmount}</span>
-                <button onClick={() => setChatPoolAmount(prev => prev + 5)} style={{ width: '44px', height: '44px', borderRadius: '22px', border: `2px solid ${colors.navy}`, backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontWeight: 'bold', cursor: 'pointer', fontSize: '18px', transition: 'all 0.2s ease' }}>+</button>
-              </div>
-              <p style={{ fontSize: '13px', color: 'var(--text-secondary)', textAlign: 'center', marginBottom: '20px' }}>Per person • Total: ${chatPoolAmount * (flock.members?.length || flock.memberCount || 1)}</p>
-              <button onClick={(e) => { confirmClick(e); addMessageToFlock(selectedFlockId, { id: Date.now(), sender: 'You', time: new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }), text: `Pool: $${chatPoolAmount}/person`, reactions: [] }); setShowChatPool(false); }} style={{ ...styles.gradientButton, padding: '14px', position: 'relative', overflow: 'hidden' }}>Create Pool</button>
             </div>
-          </div>
-        )}
+          );
+        })()}
 
         {/* Vote Panel */}
         {showVotePanel && (() => {
@@ -6640,7 +7025,9 @@ const FlockAppInner = ({ authUser, onLogout }) => {
           });
 
           // Popular chains nearby that aren't already vote options
-          const suggestedVenues = popularVenues.filter(v => !votesWithAssigned.find(fv => fv.venue === v.name)).slice(0, 8);
+          // Filter by budget ceiling when available
+          const budgetMaxPrice = budgetStatus?.isReady && budgetStatus?.ceiling ? getMaxPriceLevel(budgetStatus.ceiling) : 4;
+          const suggestedVenues = popularVenues.filter(v => !votesWithAssigned.find(fv => fv.venue === v.name)).filter(v => !v.price_level || v.price_level <= budgetMaxPrice).slice(0, 8);
 
           return (
             <div className="modal-backdrop" style={{ position: 'absolute', inset: 0, backgroundColor: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'flex-end', zIndex: 50 }}>
@@ -6765,7 +7152,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
 
               <p style={{ fontSize: '12px', fontWeight: '600', color: 'var(--text-secondary)', marginBottom: '12px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Or select a different venue:</p>
               <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                {allVenues.map(venue => (
+                {allVenues.filter(v => { const mp = budgetStatus?.isReady && budgetStatus?.ceiling ? getMaxPriceLevel(budgetStatus.ceiling) : 4; return !v.price_level || v.price_level <= mp; }).map(venue => (
                   <button
                     key={venue.id}
                     onClick={(e) => { confirmClick(e); shareVenueToChat(selectedFlockId, venue); }}
@@ -7558,6 +7945,25 @@ const FlockAppInner = ({ authUser, onLogout }) => {
             {profileScreen === 'payment' && (
               <div>
                 <div style={styles.card}>
+                  <h3 style={{ fontWeight: 'bold', fontSize: '14px', color: colors.navy, margin: '0 0 12px' }}>Venmo</h3>
+                  <p style={{ fontSize: '11px', color: 'var(--text-secondary)', marginBottom: '10px', margin: '0 0 10px' }}>Connect your Venmo so friends can pay you easily after a hangout</p>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <span style={{ fontSize: '14px', fontWeight: '600', color: colors.navy }}>@</span>
+                    <input type="text" value={venmoUsername} onChange={(e) => setVenmoUsername(e.target.value.replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 50))} placeholder="your-venmo-username" style={{ ...styles.input, flex: 1 }} autoComplete="off" />
+                  </div>
+                  <button disabled={venmoSaving} onClick={async (e) => {
+                    confirmClick(e);
+                    setVenmoSaving(true);
+                    try {
+                      await updateVenmoUsername(venmoUsername);
+                      showToast('Venmo username saved');
+                    } catch (err) { showToast(err.message, 'error'); }
+                    setVenmoSaving(false);
+                  }} style={{ ...styles.gradientButton, marginTop: '12px', opacity: venmoSaving ? 0.5 : 1 }}>
+                    {venmoSaving ? 'Saving...' : 'Save'}
+                  </button>
+                </div>
+                <div style={styles.card}>
                   <h3 style={{ fontWeight: 'bold', fontSize: '14px', color: colors.navy, margin: '0 0 12px' }}>Saved Cards</h3>
                   {paymentMethods.length === 0 ? (
                     <p style={{ fontSize: '13px', color: 'var(--text-secondary)', textAlign: 'center', padding: '16px 0' }}>No payment methods saved</p>
@@ -7658,7 +8064,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
               { l: 'Safety', s: 'safety', icon: Icons.shield },
               { l: 'Payment', s: 'payment', icon: Icons.creditCard },
             ].map(m => (
-              <button key={m.s} onClick={() => { setProfileScreen(m.s); if (m.s === 'safety') loadTrustedContacts(); }} style={{ width: '100%', padding: '12px', textAlign: 'left', borderBottom: '1px solid var(--border-light)', display: 'flex', alignItems: 'center', gap: '12px', backgroundColor: 'var(--bg-card-solid)', border: 'none', cursor: 'pointer' }}>
+              <button key={m.s} onClick={() => { setProfileScreen(m.s); if (m.s === 'safety') loadTrustedContacts(); if (m.s === 'payment') setVenmoUsername(authUser?.venmo_username || ''); }} style={{ width: '100%', padding: '12px', textAlign: 'left', borderBottom: '1px solid var(--border-light)', display: 'flex', alignItems: 'center', gap: '12px', backgroundColor: 'var(--bg-card-solid)', border: 'none', cursor: 'pointer' }}>
                 <div style={{ width: '32px', height: '32px', borderRadius: '8px', backgroundColor: 'var(--icon-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{m.icon(colors.navy, 18)}</div>
                 <span style={{ flex: 1, fontWeight: '600', fontSize: '14px', color: colors.navy }}>{m.l}</span>
                 <span style={{ color: 'var(--text-tertiary)' }}>›</span>
@@ -9790,7 +10196,9 @@ const FlockAppInner = ({ authUser, onLogout }) => {
               return 6371 * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
             };
 
-            const sorted = [...allVenues].sort((a, b) => {
+            const budgetMaxPL = budgetStatus?.isReady && budgetStatus?.ceiling ? getMaxPriceLevel(budgetStatus.ceiling) : 4;
+            const filtered = allVenues.filter(v => !v.price_level || v.price_level <= budgetMaxPL);
+            const sorted = [...filtered].sort((a, b) => {
               if (searchResultsSort === 'rating') return (b.stars || 0) - (a.stars || 0);
               if (searchResultsSort === 'distance') {
                 const dA = calcDist(a.location);

@@ -69,7 +69,7 @@ const upload = multer({
 router.get('/profile', async (req, res) => {
   try {
     const result = await pool.query(
-      `SELECT id, email, name, phone, interests, role, profile_image_url, created_at, updated_at
+      `SELECT id, email, name, phone, interests, role, profile_image_url, venmo_username, created_at, updated_at
        FROM users WHERE id = $1`,
       [req.user.id]
     );
@@ -365,6 +365,36 @@ router.put('/profile-image',
     } catch (err) {
       console.error('Save avatar URL error:', err);
       res.status(500).json({ error: 'Failed to save avatar' });
+    }
+  }
+);
+
+// PUT /api/users/venmo-username — Update Venmo username
+router.put('/venmo-username',
+  [
+    body('venmo_username').optional({ nullable: true }).trim().isLength({ max: 50 }).withMessage('Venmo username too long')
+      .matches(/^[a-zA-Z0-9_-]*$/).withMessage('Venmo username can only contain letters, numbers, hyphens, and underscores'),
+  ],
+  async (req, res) => {
+    try {
+      const errors = validationResult(req);
+      if (!errors.isEmpty()) {
+        return res.status(400).json({ error: errors.array()[0].msg });
+      }
+
+      const { venmo_username } = req.body;
+      // Strip leading @ if provided
+      const clean = venmo_username ? venmo_username.replace(/^@/, '') : null;
+
+      await pool.query(
+        'UPDATE users SET venmo_username = $1, updated_at = NOW() WHERE id = $2',
+        [clean, req.user.id]
+      );
+
+      res.json({ venmo_username: clean });
+    } catch (err) {
+      console.error('Update venmo username error:', err);
+      res.status(500).json({ error: 'Failed to update Venmo username' });
     }
   }
 );
