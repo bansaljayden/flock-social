@@ -1787,6 +1787,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
           budgetContext: f.budget_context || null,
           budgetLocked: f.budget_locked || false,
           budgetCeiling: f.budget_ceiling ? parseFloat(f.budget_ceiling) : null,
+          ghostModeEnabled: f.ghost_mode_enabled || false,
           votes: [],
           messages: [],
         }));
@@ -1834,6 +1835,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
   const [suggestedUsers, setSuggestedUsers] = useState([]);
   const [flockCashPool, setFlockCashPool] = useState(false);
   const [flockBudgetContext, setFlockBudgetContext] = useState('dinner');
+  const [flockGhostMode, setFlockGhostMode] = useState(true); // default on when budget is on
   const [joinCode, setJoinCode] = useState('');
 
   // Money layer state
@@ -4862,7 +4864,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
       if (invitedFriends.length === 1) {
         const friend = invitedFriends[0];
         startNewDmWithUser({ id: friend.id, name: friend.name, profile_image_url: friend.profile_image_url || null });
-        setFlockName(''); setFlockFriends([]); setInviteSearch(''); setInviteResults([]); setFlockCashPool(false); setSelectedVenueForCreate(null);
+        setFlockName(''); setFlockFriends([]); setInviteSearch(''); setInviteResults([]); setFlockCashPool(false); setFlockGhostMode(true); setSelectedVenueForCreate(null);
                return;
       }
       setIsLoading(true);
@@ -4884,10 +4886,11 @@ const FlockAppInner = ({ authUser, onLogout }) => {
       // Clear form immediately for snappy feel
       const capturedBudget = flockCashPool;
       const capturedBudgetCtx = flockBudgetContext;
-      setFlockName(''); setFlockFriends([]); setInviteSearch(''); setInviteResults([]); setFlockCashPool(false); setFlockBudgetContext('dinner'); setSelectedVenueForCreate(null);
+      const capturedGhostMode = flockGhostMode;
+      setFlockName(''); setFlockFriends([]); setInviteSearch(''); setInviteResults([]); setFlockCashPool(false); setFlockBudgetContext('dinner'); setFlockGhostMode(true); setSelectedVenueForCreate(null);
 
       try {
-        const data = await apiCreateFlock({ name: capturedName, venue_name: venueName, venue_address: venueAddr, venue_id: venueId, venue_latitude: venueLat || undefined, venue_longitude: venueLng || undefined, venue_rating: venueRating || undefined, venue_photo_url: venuePhoto || undefined, invited_user_ids: invitedIds.length > 0 ? invitedIds : undefined, budget_enabled: capturedBudget || undefined, budget_context: capturedBudget ? capturedBudgetCtx : undefined });
+        const data = await apiCreateFlock({ name: capturedName, venue_name: venueName, venue_address: venueAddr, venue_id: venueId, venue_latitude: venueLat || undefined, venue_longitude: venueLng || undefined, venue_rating: venueRating || undefined, venue_photo_url: venuePhoto || undefined, invited_user_ids: invitedIds.length > 0 ? invitedIds : undefined, budget_enabled: capturedBudget || undefined, budget_context: capturedBudget ? capturedBudgetCtx : undefined, ghost_mode_enabled: capturedBudget ? capturedGhostMode : undefined });
         const f = data.flock;
         const initialMessages = [];
         if (venueName) {
@@ -4905,7 +4908,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
           apiSendMessage(f.id, `Check out ${venueName}!`, { message_type: 'venue_card', venue_data: venueCardData }).catch(() => {});
         }
         const invitedNames = capturedFriends.map(fr => fr.name);
-        const newFlock = { id: f.id, name: f.name, host: authUser?.name || 'You', creatorId: f.creator_id, members: invitedNames, memberCount: 1 + invitedIds.length, time: f.event_time ? new Date(f.event_time).toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' }) : `${flockDate} ${flockTime}`, status: 'voting', venue: f.venue_name || 'TBD', venueAddress: venueAddr, venueId: venueId, venuePhoto: venuePhoto, venueRating: venueRating, venuePriceLevel: venuePriceLevel, venueLat: venueLat, venueLng: venueLng, cashPool: null, budgetEnabled: f.budget_enabled || capturedBudget, budgetContext: f.budget_context || capturedBudgetCtx, budgetLocked: false, budgetCeiling: null, votes: [], messages: initialMessages };
+        const newFlock = { id: f.id, name: f.name, host: authUser?.name || 'You', creatorId: f.creator_id, members: invitedNames, memberCount: 1 + invitedIds.length, time: f.event_time ? new Date(f.event_time).toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' }) : `${flockDate} ${flockTime}`, status: 'voting', venue: f.venue_name || 'TBD', venueAddress: venueAddr, venueId: venueId, venuePhoto: venuePhoto, venueRating: venueRating, venuePriceLevel: venuePriceLevel, venueLat: venueLat, venueLng: venueLng, cashPool: null, budgetEnabled: f.budget_enabled || capturedBudget, budgetContext: f.budget_context || capturedBudgetCtx, budgetLocked: false, budgetCeiling: null, ghostModeEnabled: f.ghost_mode_enabled || capturedGhostMode, votes: [], messages: initialMessages };
 
         // Batch all state updates together — navigate immediately
         newlyCreatedFlockRef.current = f.id;
@@ -5080,6 +5083,13 @@ const FlockAppInner = ({ authUser, onLogout }) => {
                   ))}
                 </div>
                 <p style={{ fontSize: '10px', color: 'var(--text-tertiary)', margin: 0 }}>Members will set their own budget anonymously after joining</p>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '10px', paddingTop: '10px', borderTop: '1px solid var(--divider)' }}>
+                  <div>
+                    <p style={{ fontSize: '11px', fontWeight: '600', color: colors.navy, margin: '0 0 1px' }}>Ghost Mode</p>
+                    <p style={{ fontSize: '10px', color: 'var(--text-tertiary)', margin: 0 }}>Let members pre-commit their share before going out</p>
+                  </div>
+                  <Toggle on={flockGhostMode} onChange={() => setFlockGhostMode(!flockGhostMode)} />
+                </div>
               </div>
             )}
           </div>
@@ -6506,7 +6516,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
         )}
 
         {/* Ghost Mode Card — after venue confirmed, before bill created */}
-        {flock.status === 'confirmed' && flock.budgetEnabled && budgetStatus?.ceiling && !billSplit && (
+        {flock.status === 'confirmed' && flock.budgetEnabled && flock.ghostModeEnabled && budgetStatus?.ceiling && !billSplit && (
           <div style={{ padding: '10px 14px', background: `linear-gradient(135deg, ${colors.amber}08, ${colors.amber}15)`, borderBottom: `1px solid ${colors.amber}25`, flexShrink: 0 }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
               <div style={{ flex: 1, minWidth: 0 }}>

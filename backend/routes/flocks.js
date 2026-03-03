@@ -46,6 +46,7 @@ router.post('/',
     body('invited_user_ids').optional().isArray().withMessage('invited_user_ids must be an array'),
     body('budget_enabled').optional().isBoolean(),
     body('budget_context').optional().trim().isLength({ max: 100 }),
+    body('ghost_mode_enabled').optional().isBoolean(),
   ],
   async (req, res) => {
     try {
@@ -55,7 +56,7 @@ router.post('/',
         return res.status(400).json({ error: errors.array()[0].msg });
       }
 
-      const { name, venue_name, venue_address, venue_id, venue_latitude, venue_longitude, venue_rating, venue_photo_url, event_time, invited_user_ids, budget_enabled, budget_context } = req.body;
+      const { name, venue_name, venue_address, venue_id, venue_latitude, venue_longitude, venue_rating, venue_photo_url, event_time, invited_user_ids, budget_enabled, budget_context, ghost_mode_enabled } = req.body;
       console.log('[Flock Create] User:', req.user.id, '| Name:', name, '| Venue:', venue_name || '(none)');
 
       const client = await pool.connect();
@@ -64,10 +65,10 @@ router.post('/',
 
         // Create the flock
         const flockResult = await client.query(
-          `INSERT INTO flocks (name, creator_id, venue_name, venue_address, venue_id, venue_latitude, venue_longitude, venue_rating, venue_photo_url, event_time, budget_enabled, budget_context)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+          `INSERT INTO flocks (name, creator_id, venue_name, venue_address, venue_id, venue_latitude, venue_longitude, venue_rating, venue_photo_url, event_time, budget_enabled, budget_context, ghost_mode_enabled)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
            RETURNING *`,
-          [name, req.user.id, venue_name || null, venue_address || null, venue_id || null, venue_latitude || null, venue_longitude || null, venue_rating || null, venue_photo_url || null, event_time || null, !!budget_enabled, budget_context || null]
+          [name, req.user.id, venue_name || null, venue_address || null, venue_id || null, venue_latitude || null, venue_longitude || null, venue_rating || null, venue_photo_url || null, event_time || null, !!budget_enabled, budget_context || null, budget_enabled ? !!ghost_mode_enabled : false]
         );
 
         const flock = flockResult.rows[0];
