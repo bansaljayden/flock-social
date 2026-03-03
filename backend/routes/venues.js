@@ -62,6 +62,17 @@ router.post('/:id/vote',
         [flockId]
       );
 
+      // Notify flock members in real-time
+      const io = req.app.get('io');
+      if (io) {
+        io.to(`flock:${flockId}`).emit('new_vote', {
+          flockId: parseInt(flockId),
+          voter: { userId: req.user.id, name: req.user.name },
+          venue_name,
+          votes: votes.rows,
+        });
+      }
+
       res.status(201).json({ vote: result.rows[0], votes: votes.rows });
     } catch (err) {
       console.error('Vote error:', err);

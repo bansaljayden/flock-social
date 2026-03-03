@@ -95,6 +95,23 @@ router.post('/',
 
         await client.query('COMMIT');
         console.log('[Flock Create] Success - flock id:', flock.id);
+
+        // Notify invited users via socket
+        if (invited_user_ids && invited_user_ids.length > 0) {
+          const io = req.app.get('io');
+          if (io) {
+            for (const userId of invited_user_ids) {
+              const uid = parseInt(userId);
+              if (!Number.isFinite(uid) || uid === req.user.id) continue;
+              io.to(`user:${uid}`).emit('flock_invite_received', {
+                flockId: flock.id,
+                flockName: flock.name,
+                invitedBy: { userId: req.user.id, name: req.user.name },
+              });
+            }
+          }
+        }
+
         res.status(201).json({ flock });
       } catch (err) {
         await client.query('ROLLBACK');
@@ -213,6 +230,26 @@ router.put('/:id',
         [name, venue_name, venue_address, venue_id, venue_latitude, venue_longitude, venue_rating, venue_photo_url, event_time, status, flockId]
       );
 
+      // Notify flock members of the update
+      const io = req.app.get('io');
+      if (io) {
+        const updated = result.rows[0];
+        io.to(`flock:${flockId}`).emit('flock_updated', {
+          flockId: parseInt(flockId),
+          name: updated.name,
+          venue_name: updated.venue_name,
+          venue_address: updated.venue_address,
+          venue_id: updated.venue_id,
+          venue_latitude: updated.venue_latitude,
+          venue_longitude: updated.venue_longitude,
+          venue_rating: updated.venue_rating,
+          venue_photo_url: updated.venue_photo_url,
+          event_time: updated.event_time,
+          status: updated.status,
+          updatedBy: req.user.name,
+        });
+      }
+
       res.json({ flock: result.rows[0] });
     } catch (err) {
       console.error('Update flock error:', err);
@@ -232,6 +269,13 @@ router.delete('/:id', param('id').isInt(), async (req, res) => {
     }
     if (flock.rows[0].creator_id !== req.user.id) {
       return res.status(403).json({ error: 'Only the creator can delete this flock' });
+    }
+
+    // Notify members before deleting
+    const io = req.app.get('io');
+    const nameResult = await pool.query('SELECT name FROM flocks WHERE id = $1', [flockId]);
+    if (io) {
+      io.to(`flock:${flockId}`).emit('flock_deleted', { flockId: parseInt(flockId), flockName: nameResult.rows[0]?.name, deletedBy: req.user.name });
     }
 
     await pool.query('DELETE FROM flocks WHERE id = $1', [flockId]);
@@ -262,6 +306,18 @@ router.post('/:id/join', param('id').isInt(), async (req, res) => {
        RETURNING *`,
       [flockId, req.user.id]
     );
+
+    // Notify flock members that someone joined
+    const io = req.app.get('io');
+    if (io) {
+      io.to(`flock:${flockId}`).emit('flock_invite_responded', {
+        flockId: parseInt(flockId),
+        userId: req.user.id,
+        userName: req.user.name,
+        userImage: req.user.profile_image_url || null,
+        action: 'accepted',
+      });
+    }
 
     res.json({ member: result.rows[0] });
   } catch (err) {
@@ -345,6 +401,26 @@ router.post('/:id/invite',
         }
       }
 
+      // Notify invited users via socket
+      if (invited.length > 0) {
+        const io = req.app.get('io');
+        if (io) {
+          const flockName = flockResult.rows[0].name;
+          for (const inv of invited) {
+            io.to(`user:${inv.user_id}`).emit('flock_invite_received', {
+              flockId,
+              flockName,
+              invitedBy: { userId: req.user.id, name: req.user.name },
+            });
+          }
+          io.to(`flock:${flockId}`).emit('flock_members_invited', {
+            flockId,
+            invitedBy: { userId: req.user.id, name: req.user.name },
+            invitedUserIds: invited.map(i => i.user_id),
+          });
+        }
+      }
+
       res.json({ message: `Invited ${invited.length} user(s)`, invited, flock: flockResult.rows[0] });
     } catch (err) {
       console.error('[Invite] Error:', err.message, err.detail || '');
@@ -370,6 +446,17 @@ router.post('/:id/decline', param('id').isInt(), async (req, res) => {
       return res.status(404).json({ error: 'No pending invite for this flock' });
     }
 
+    // Notify flock members
+    const io = req.app.get('io');
+    if (io) {
+      io.to(`flock:${flockId}`).emit('flock_invite_responded', {
+        flockId,
+        userId: req.user.id,
+        userName: req.user.name,
+        action: 'declined',
+      });
+    }
+
     res.json({ message: 'Invite declined' });
   } catch (err) {
     console.error('Decline flock error:', err);
@@ -390,10 +477,21 @@ router.post('/:id/leave', param('id').isInt(), async (req, res) => {
     const isCreator = flock.rows[0].creator_id === req.user.id;
     const flockName = flock.rows[0].name;
 
+    const io = req.app.get('io');
+
     if (isCreator) {
+      // Notify all members before deleting
+      if (io) {
+        io.to(`flock:${flockId}`).emit('flock_deleted', { flockId: parseInt(flockId), flockName, deletedBy: req.user.name });
+      }
       // Creator leaving deletes the entire flock (cascade removes members, messages, votes)
       await pool.query('DELETE FROM flocks WHERE id = $1', [flockId]);
       return res.json({ message: 'Left flock', flock_name: flockName, deleted: true });
+    }
+
+    // Notify flock that member left
+    if (io) {
+      io.to(`flock:${flockId}`).emit('flock_member_left', { flockId: parseInt(flockId), userId: req.user.id, userName: req.user.name });
     }
 
     // Remove member

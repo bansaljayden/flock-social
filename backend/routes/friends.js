@@ -53,6 +53,8 @@ router.post('/request',
         [req.user.id, user_id]
       );
 
+      const io = req.app.get('io');
+
       if (existing.rows.length > 0) {
         const row = existing.rows[0];
         if (row.status === 'accepted') {
@@ -62,6 +64,10 @@ router.post('/request',
           // If the OTHER person sent us a request, auto-accept
           if (row.requester_id === user_id) {
             await pool.query("UPDATE friendships SET status = 'accepted' WHERE id = $1", [row.id]);
+            // Notify both sides
+            if (io) {
+              io.to(`user:${user_id}`).emit('friend_request_responded', { fromUserId: req.user.id, fromUserName: req.user.name, action: 'accepted' });
+            }
             return res.json({ message: `You and ${userCheck.rows[0].name} are now friends!`, status: 'accepted' });
           }
           return res.json({ message: 'Friend request already sent', status: 'pending' });
@@ -71,6 +77,7 @@ router.post('/request',
           "UPDATE friendships SET status = 'pending', requester_id = $1, addressee_id = $2 WHERE id = $3",
           [req.user.id, user_id, row.id]
         );
+        if (io) io.to(`user:${user_id}`).emit('friend_request_received', { fromUserId: req.user.id, fromUserName: req.user.name });
         return res.json({ message: `Friend request sent to ${userCheck.rows[0].name}`, status: 'pending' });
       }
 
@@ -78,6 +85,9 @@ router.post('/request',
         "INSERT INTO friendships (requester_id, addressee_id, status) VALUES ($1, $2, 'pending')",
         [req.user.id, user_id]
       );
+
+      // Notify target user
+      if (io) io.to(`user:${user_id}`).emit('friend_request_received', { fromUserId: req.user.id, fromUserName: req.user.name });
 
       res.json({ message: `Friend request sent to ${userCheck.rows[0].name}`, status: 'pending' });
     } catch (err) {
@@ -108,6 +118,12 @@ router.post('/accept',
 
       if (result.rows.length === 0) {
         return res.status(404).json({ error: 'No pending request from this user' });
+      }
+
+      // Notify the requester
+      const io = req.app.get('io');
+      if (io) {
+        io.to(`user:${user_id}`).emit('friend_request_responded', { fromUserId: req.user.id, fromUserName: req.user.name, action: 'accepted' });
       }
 
       res.json({ message: 'Friend request accepted' });
@@ -326,6 +342,8 @@ router.post('/add-by-code',
         [req.user.id, targetUserId]
       );
 
+      const io = req.app.get('io');
+
       if (existing.rows.length > 0) {
         const row = existing.rows[0];
         if (row.status === 'accepted') {
@@ -333,12 +351,14 @@ router.post('/add-by-code',
         }
         if (row.status === 'pending' && row.requester_id === targetUserId) {
           await pool.query("UPDATE friendships SET status = 'accepted' WHERE id = $1", [row.id]);
+          if (io) io.to(`user:${targetUserId}`).emit('friend_request_responded', { fromUserId: req.user.id, fromUserName: req.user.name, action: 'accepted' });
           return res.json({ message: `You and ${userCheck.rows[0].name} are now friends!`, status: 'accepted', user: userCheck.rows[0] });
         }
         if (row.status === 'pending') {
           return res.json({ message: 'Friend request already sent', status: 'pending', user: userCheck.rows[0] });
         }
         await pool.query("UPDATE friendships SET status = 'pending', requester_id = $1, addressee_id = $2 WHERE id = $3", [req.user.id, targetUserId, row.id]);
+        if (io) io.to(`user:${targetUserId}`).emit('friend_request_received', { fromUserId: req.user.id, fromUserName: req.user.name });
         return res.json({ message: `Friend request sent to ${userCheck.rows[0].name}`, status: 'pending', user: userCheck.rows[0] });
       }
 
@@ -346,6 +366,7 @@ router.post('/add-by-code',
         "INSERT INTO friendships (requester_id, addressee_id, status) VALUES ($1, $2, 'pending')",
         [req.user.id, targetUserId]
       );
+      if (io) io.to(`user:${targetUserId}`).emit('friend_request_received', { fromUserId: req.user.id, fromUserName: req.user.name });
       res.json({ message: `Friend request sent to ${userCheck.rows[0].name}`, status: 'pending', user: userCheck.rows[0] });
     } catch (err) {
       console.error('Add by code error:', err);
