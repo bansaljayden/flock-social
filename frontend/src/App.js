@@ -11,7 +11,7 @@ import {
   formatCurrency,
   calculateProfitMargin
 } from './lib/finance';
-import { getCurrentUser, logout, isLoggedIn, getFlocks, getFlock, createFlock as apiCreateFlock, getMessages, sendMessage as apiSendMessage, updateProfile, searchVenues, searchUsers, getSuggestedUsers, sendFriendRequest, getStories, getVenueDetails, leaveFlock as apiLeaveFlock, getDMConversations, getDMs, getDmVenueVotes, getDmPinnedVenue, BASE_URL, inviteToFlock, acceptFlockInvite, declineFlockInvite, getFriends, acceptFriendRequest, declineFriendRequest, getPendingRequests, getOutgoingRequests, getFriendSuggestions, addFriendByCode, findFriendsByPhone, removeFriend, getTrustedContacts, addTrustedContact, updateTrustedContact, deleteTrustedContact, sendEmergencyAlert, shareLocationWithContacts, getUserStats, getCrowdPrediction, getCrowdBatch, getCrowdAlternatives, getWeather, submitVenueFeedback, uploadProfileImage, saveProfileImageUrl, submitBudget, getBudgetStatus, lockBudget, sendBudgetReminder, createBillSplit, getBillSplit, settleShare, ghostCommit, getVenmoLink, updateVenmoUsername } from './services/api';
+import { getCurrentUser, logout, isLoggedIn, getFlocks, getFlock, createFlock as apiCreateFlock, getMessages, sendMessage as apiSendMessage, updateProfile, searchVenues, searchUsers, getSuggestedUsers, sendFriendRequest, getStories, getVenueDetails, leaveFlock as apiLeaveFlock, getDMConversations, getDMs, getDmVenueVotes, getDmPinnedVenue, BASE_URL, inviteToFlock, acceptFlockInvite, declineFlockInvite, getFriends, acceptFriendRequest, declineFriendRequest, getPendingRequests, getOutgoingRequests, getFriendSuggestions, addFriendByCode, findFriendsByPhone, removeFriend, getTrustedContacts, addTrustedContact, updateTrustedContact, deleteTrustedContact, sendEmergencyAlert, shareLocationWithContacts, getUserStats, getCrowdPrediction, getCrowdBatch, getCrowdAlternatives, getWeather, submitVenueFeedback, uploadProfileImage, saveProfileImageUrl, submitBudget, getBudgetStatus, lockBudget, sendBudgetReminder, createBillSplit, getBillSplit, settleShare, ghostCommit, updatePaymentMethods, getPaymentLinks } from './services/api';
 import { connectSocket, disconnectSocket, getSocket, joinFlock, leaveFlock, sendMessage as socketSendMessage, sendImageMessage as socketSendImage, startTyping, stopTyping, onNewMessage, onUserTyping, onUserStoppedTyping, emitLocation, stopSharingLocation as socketStopSharing, onLocationUpdate, onMemberStoppedSharing, socketSendDm, onNewDm, dmStartTyping, dmStopTyping, onDmUserTyping, onDmUserStoppedTyping, dmReact, dmRemoveReact, onDmReactionAdded, onDmReactionRemoved, dmVoteVenue, onDmNewVote, dmShareLocation, dmStopSharingLocation, onDmLocationUpdate, onDmMemberStoppedSharing, dmPinVenue, onDmVenuePinned, emitFlockInvite, emitFlockInviteResponse, onFlockInviteReceived, onFlockInviteResponded, emitFriendRequest, emitFriendResponse, onFriendRequestReceived, onFriendRequestResponded, onBudgetUpdated, onBudgetLocked, onBudgetReminder, onBillCreated, onShareSettled, onBillFullySettled, onGhostCommitted } from './services/socket';
 import { QRCodeSVG } from 'qrcode.react';
 import { Html5Qrcode } from 'html5-qrcode';
@@ -1847,7 +1847,11 @@ const FlockAppInner = ({ authUser, onLogout }) => {
   const [billTip, setBillTip] = useState(18);
   const [billPaidBy, setBillPaidBy] = useState(null);
   const [venmoUsername, setVenmoUsername] = useState('');
-  const [venmoSaving, setVenmoSaving] = useState(false);
+  const [cashappCashtag, setCashappCashtag] = useState('');
+  const [zelleIdentifier, setZelleIdentifier] = useState('');
+  const [paymentSaving, setPaymentSaving] = useState(false);
+  const [paymentOptions, setPaymentOptions] = useState(null);
+  const [showPaymentPicker, setShowPaymentPicker] = useState(false);
 
   // Explore
   // searchText removed — filtering handled by venue search
@@ -6916,26 +6920,29 @@ const FlockAppInner = ({ authUser, onLogout }) => {
                     {billSplit.shares?.find(s => String(s.userId) === String(authUser?.id) && !s.settled) && (
                       <button onClick={async () => {
                         try {
-                          const venmo = await getVenmoLink(selectedFlockId);
-                          if (venmo.deepLink) {
-                            window.open(venmo.deepLink, '_blank');
-                          } else if (venmo.webLink) {
-                            window.open(venmo.webLink, '_blank');
+                          const result = await getPaymentLinks(selectedFlockId);
+                          if (result.methods && result.methods.length > 0) {
+                            if (result.methods.length === 1) {
+                              const m = result.methods[0];
+                              if (m.deepLink) window.open(m.deepLink, '_blank');
+                              else if (m.webLink) window.open(m.webLink, '_blank');
+                              else if (m.instructions) showToast(m.instructions);
+                              await settleShare(selectedFlockId);
+                              setBillSplit(prev => ({ ...prev, shares: prev.shares.map(s => String(s.userId) === String(authUser?.id) ? { ...s, settled: true } : s) }));
+                              showToast('Settled up');
+                            } else {
+                              setPaymentOptions(result);
+                              setShowPaymentPicker(true);
+                            }
+                          } else {
+                            await settleShare(selectedFlockId);
+                            setBillSplit(prev => ({ ...prev, shares: prev.shares.map(s => String(s.userId) === String(authUser?.id) ? { ...s, settled: true } : s) }));
+                            showToast('Marked as settled');
                           }
-                          await settleShare(selectedFlockId);
-                          setBillSplit(prev => ({
-                            ...prev,
-                            shares: prev.shares.map(s => String(s.userId) === String(authUser?.id) ? { ...s, settled: true } : s),
-                          }));
-                          showToast('Settled up');
                         } catch (err) {
-                          // If venmo link fails, still allow manual settle
                           try {
                             await settleShare(selectedFlockId);
-                            setBillSplit(prev => ({
-                              ...prev,
-                              shares: prev.shares.map(s => String(s.userId) === String(authUser?.id) ? { ...s, settled: true } : s),
-                            }));
+                            setBillSplit(prev => ({ ...prev, shares: prev.shares.map(s => String(s.userId) === String(authUser?.id) ? { ...s, settled: true } : s) }));
                             showToast('Marked as settled');
                           } catch (e2) { showToast(e2.message, 'error'); }
                         }
@@ -7945,22 +7952,44 @@ const FlockAppInner = ({ authUser, onLogout }) => {
             {profileScreen === 'payment' && (
               <div>
                 <div style={styles.card}>
-                  <h3 style={{ fontWeight: 'bold', fontSize: '14px', color: colors.navy, margin: '0 0 12px' }}>Venmo</h3>
-                  <p style={{ fontSize: '11px', color: 'var(--text-secondary)', marginBottom: '10px', margin: '0 0 10px' }}>Connect your Venmo so friends can pay you easily after a hangout</p>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                    <span style={{ fontSize: '14px', fontWeight: '600', color: colors.navy }}>@</span>
-                    <input type="text" value={venmoUsername} onChange={(e) => setVenmoUsername(e.target.value.replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 50))} placeholder="your-venmo-username" style={{ ...styles.input, flex: 1 }} autoComplete="off" />
+                  <h3 style={{ fontWeight: 'bold', fontSize: '14px', color: colors.navy, margin: '0 0 4px' }}>Payment Methods</h3>
+                  <p style={{ fontSize: '11px', color: 'var(--text-secondary)', margin: '0 0 16px' }}>Add your handles so friends can pay you after a hangout</p>
+
+                  {/* Venmo */}
+                  <div style={{ marginBottom: '16px' }}>
+                    <label style={{ fontSize: '12px', fontWeight: '700', color: colors.navy, marginBottom: '6px', display: 'block' }}>Venmo</label>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <span style={{ fontSize: '14px', fontWeight: '600', color: colors.navy }}>@</span>
+                      <input type="text" value={venmoUsername} onChange={(e) => setVenmoUsername(e.target.value.replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 50))} placeholder="your-venmo-username" style={{ ...styles.input, flex: 1 }} autoComplete="off" />
+                    </div>
                   </div>
-                  <button disabled={venmoSaving} onClick={async (e) => {
+
+                  {/* Cash App */}
+                  <div style={{ marginBottom: '16px' }}>
+                    <label style={{ fontSize: '12px', fontWeight: '700', color: colors.navy, marginBottom: '6px', display: 'block' }}>Cash App</label>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <span style={{ fontSize: '14px', fontWeight: '600', color: colors.navy }}>$</span>
+                      <input type="text" value={cashappCashtag} onChange={(e) => setCashappCashtag(e.target.value.replace(/[^a-zA-Z0-9_]/g, '').slice(0, 50))} placeholder="your-cashtag" style={{ ...styles.input, flex: 1 }} autoComplete="off" />
+                    </div>
+                  </div>
+
+                  {/* Zelle */}
+                  <div style={{ marginBottom: '16px' }}>
+                    <label style={{ fontSize: '12px', fontWeight: '700', color: colors.navy, marginBottom: '6px', display: 'block' }}>Zelle</label>
+                    <input type="text" value={zelleIdentifier} onChange={(e) => setZelleIdentifier(e.target.value.slice(0, 255))} placeholder="email or phone number" style={{ ...styles.input, width: '100%', boxSizing: 'border-box' }} autoComplete="off" />
+                    <p style={{ fontSize: '10px', color: 'var(--text-tertiary)', margin: '4px 0 0' }}>Enter the email or phone registered with your bank for Zelle</p>
+                  </div>
+
+                  <button disabled={paymentSaving} onClick={async (e) => {
                     confirmClick(e);
-                    setVenmoSaving(true);
+                    setPaymentSaving(true);
                     try {
-                      await updateVenmoUsername(venmoUsername);
-                      showToast('Venmo username saved');
+                      await updatePaymentMethods({ venmo_username: venmoUsername, cashapp_cashtag: cashappCashtag, zelle_identifier: zelleIdentifier });
+                      showToast('Payment methods saved');
                     } catch (err) { showToast(err.message, 'error'); }
-                    setVenmoSaving(false);
-                  }} style={{ ...styles.gradientButton, marginTop: '12px', opacity: venmoSaving ? 0.5 : 1 }}>
-                    {venmoSaving ? 'Saving...' : 'Save'}
+                    setPaymentSaving(false);
+                  }} style={{ ...styles.gradientButton, marginTop: '4px', opacity: paymentSaving ? 0.5 : 1 }}>
+                    {paymentSaving ? 'Saving...' : 'Save'}
                   </button>
                 </div>
                 <div style={styles.card}>
@@ -8064,7 +8093,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
               { l: 'Safety', s: 'safety', icon: Icons.shield },
               { l: 'Payment', s: 'payment', icon: Icons.creditCard },
             ].map(m => (
-              <button key={m.s} onClick={() => { setProfileScreen(m.s); if (m.s === 'safety') loadTrustedContacts(); if (m.s === 'payment') setVenmoUsername(authUser?.venmo_username || ''); }} style={{ width: '100%', padding: '12px', textAlign: 'left', borderBottom: '1px solid var(--border-light)', display: 'flex', alignItems: 'center', gap: '12px', backgroundColor: 'var(--bg-card-solid)', border: 'none', cursor: 'pointer' }}>
+              <button key={m.s} onClick={() => { setProfileScreen(m.s); if (m.s === 'safety') loadTrustedContacts(); if (m.s === 'payment') { setVenmoUsername(authUser?.venmo_username || ''); setCashappCashtag(authUser?.cashapp_cashtag || ''); setZelleIdentifier(authUser?.zelle_identifier || ''); } }} style={{ width: '100%', padding: '12px', textAlign: 'left', borderBottom: '1px solid var(--border-light)', display: 'flex', alignItems: 'center', gap: '12px', backgroundColor: 'var(--bg-card-solid)', border: 'none', cursor: 'pointer' }}>
                 <div style={{ width: '32px', height: '32px', borderRadius: '8px', backgroundColor: 'var(--icon-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{m.icon(colors.navy, 18)}</div>
                 <span style={{ flex: 1, fontWeight: '600', fontSize: '14px', color: colors.navy }}>{m.l}</span>
                 <span style={{ color: 'var(--text-tertiary)' }}>›</span>
@@ -10406,6 +10435,38 @@ const FlockAppInner = ({ authUser, onLogout }) => {
             <button onClick={capturePhoto} style={{ width: '72px', height: '72px', borderRadius: '36px', border: '4px solid white', backgroundColor: 'rgba(255,255,255,0.3)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'all 0.15s ease' }}>
               <div style={{ width: '56px', height: '56px', borderRadius: '28px', backgroundColor: 'var(--bg-card-solid)' }} />
             </button>
+          </div>
+        </div>
+      )}
+
+      {/* Payment Picker Modal */}
+      {showPaymentPicker && paymentOptions && (
+        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.5)', zIndex: 9999, display: 'flex', alignItems: 'flex-end', justifyContent: 'center' }} onClick={() => setShowPaymentPicker(false)}>
+          <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '16px 16px 0 0', padding: '20px', width: '100%', maxWidth: '420px' }} onClick={e => e.stopPropagation()}>
+            <h3 style={{ fontSize: '16px', fontWeight: '800', color: colors.navy, margin: '0 0 4px' }}>Pay {paymentOptions.payTo}</h3>
+            <p style={{ fontSize: '13px', color: 'var(--text-secondary)', margin: '0 0 16px' }}>${paymentOptions.amount.toFixed(2)} — {paymentOptions.note}</p>
+            {paymentOptions.methods.map(m => (
+              <button key={m.method} onClick={async () => {
+                if (m.deepLink) window.open(m.deepLink, '_blank');
+                else if (m.webLink) window.open(m.webLink, '_blank');
+                else if (m.instructions) showToast(m.instructions);
+                try {
+                  await settleShare(selectedFlockId);
+                  setBillSplit(prev => ({ ...prev, shares: prev.shares.map(s => String(s.userId) === String(authUser?.id) ? { ...s, settled: true } : s) }));
+                  showToast('Settled up');
+                } catch (err) { showToast(err.message, 'error'); }
+                setShowPaymentPicker(false);
+              }} style={{ width: '100%', padding: '14px', marginBottom: '8px', borderRadius: '12px', border: '1px solid var(--border-default)', backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '12px', textAlign: 'left' }}>
+                <span style={{ width: '40px', height: '40px', borderRadius: '10px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '18px', background: m.method === 'venmo' ? 'linear-gradient(135deg, #3D95CE, #008CFF)' : m.method === 'cashapp' ? 'linear-gradient(135deg, #00C244, #00D64B)' : 'linear-gradient(135deg, #6C1CD3, #8A2BE2)', flexShrink: 0 }}>
+                  <span style={{ color: 'white', fontWeight: '800', fontSize: '14px' }}>{m.method === 'venmo' ? 'V' : m.method === 'cashapp' ? '$' : 'Z'}</span>
+                </span>
+                <div>
+                  <div style={{ fontWeight: '700', fontSize: '14px', color: colors.navy }}>{m.label}</div>
+                  <div style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>{m.method === 'zelle' ? m.handle : `Pay ${m.handle}`}</div>
+                </div>
+              </button>
+            ))}
+            <button onClick={() => setShowPaymentPicker(false)} style={{ width: '100%', padding: '12px', border: 'none', backgroundColor: 'transparent', color: 'var(--text-secondary)', fontSize: '13px', fontWeight: '600', cursor: 'pointer', marginTop: '4px' }}>Cancel</button>
           </div>
         </div>
       )}

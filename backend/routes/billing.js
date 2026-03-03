@@ -494,4 +494,95 @@ router.get('/:flockId/venmo-link',
   }
 );
 
+// GET /api/billing/:flockId/payment-links — Generate all payment options for settle-up
+router.get('/:flockId/payment-links',
+  [param('flockId').isInt().withMessage('Invalid flock ID')],
+  async (req, res) => {
+    try {
+      const errors = validationResult(req);
+      if (!errors.isEmpty()) {
+        return res.status(400).json({ error: errors.array()[0].msg });
+      }
+
+      const flockId = parseInt(req.params.flockId);
+      const userId = req.user.id;
+
+      // Get the bill
+      const billResult = await pool.query(
+        `SELECT bs.id, bs.paid_by, bs.flock_id, f.name AS flock_name
+         FROM bill_splits bs
+         JOIN flocks f ON f.id = bs.flock_id
+         WHERE bs.flock_id = $1`,
+        [flockId]
+      );
+      if (billResult.rows.length === 0) {
+        return res.status(404).json({ error: 'No bill found for this flock' });
+      }
+      const bill = billResult.rows[0];
+
+      // Get the user's share amount
+      const shareResult = await pool.query(
+        'SELECT amount FROM bill_split_shares WHERE bill_id = $1 AND user_id = $2',
+        [bill.id, userId]
+      );
+      if (shareResult.rows.length === 0) {
+        return res.status(404).json({ error: 'No share found for you' });
+      }
+      const amount = parseFloat(shareResult.rows[0].amount);
+
+      // Get payer's payment details
+      const payerResult = await pool.query(
+        'SELECT name, venmo_username, cashapp_cashtag, zelle_identifier FROM users WHERE id = $1',
+        [bill.paid_by]
+      );
+      if (payerResult.rows.length === 0) {
+        return res.status(404).json({ error: 'Payer not found' });
+      }
+
+      const payer = payerResult.rows[0];
+      const note = `Flock - ${bill.flock_name}`;
+      const encodedNote = encodeURIComponent(note);
+      const methods = [];
+
+      if (payer.venmo_username) {
+        const u = payer.venmo_username;
+        methods.push({
+          method: 'venmo',
+          label: 'Venmo',
+          handle: `@${u}`,
+          deepLink: `venmo://paycharge?txn=pay&recipients=${u}&amount=${amount}&note=${encodedNote}`,
+          webLink: `https://venmo.com/${u}?txn=pay&amount=${amount}&note=${encodedNote}`,
+        });
+      }
+
+      if (payer.cashapp_cashtag) {
+        const tag = payer.cashapp_cashtag;
+        methods.push({
+          method: 'cashapp',
+          label: 'Cash App',
+          handle: `$${tag}`,
+          deepLink: `cashapp://cash.app/pay/$${tag}?amount=${amount}&note=${encodedNote}`,
+          webLink: `https://cash.app/$${tag}/${amount}`,
+        });
+      }
+
+      if (payer.zelle_identifier) {
+        methods.push({
+          method: 'zelle',
+          label: 'Zelle',
+          handle: payer.zelle_identifier,
+          deepLink: null,
+          webLink: null,
+          instructions: `Open your banking app and send $${amount.toFixed(2)} to ${payer.zelle_identifier} via Zelle`,
+        });
+      }
+
+      res.json({ amount, payTo: payer.name, note, methods });
+    } catch (err) {
+      console.error('Payment links error:', err);
+      res.status(500).json({ error: 'Failed to generate payment links' });
+    }
+  }
+);
+
 module.exports = router;
