@@ -22,13 +22,12 @@ Venues above the group budget are hidden automatically
 3-person minimum threshold protects anonymity
 Individual submissions are deleted 24 hours after the flock completes
 
-AI Crowd Intelligence
+AI Crowd Intelligence Agent
 
-Real-time crowd predictions for venues using Google Places data, OpenWeatherMap, and time pattern analysis
-Scores venues 0–100 with confidence ratings
+Autonomous agent that perceives real-time data from multiple sources — Google Places, OpenWeatherMap, and temporal patterns — reasons over them using a weighted multi-factor scoring algorithm, and generates crowd predictions, timing recommendations, and alternative venue suggestions
+Scores venues 0–100 with confidence ratings based on data source availability
 12-hour hourly forecast, capacity estimates, wait times, best time to visit
-Quieter alternative venue suggestions
-Learning loop: user feedback after hangouts calibrates future predictions
+Self-calibrating: user feedback after hangouts adjusts prediction weights over time, turning every completed flock into training data
 
 Bill Splitting + Venmo Settlement
 
@@ -83,12 +82,12 @@ flock-app/
 │   │   ├── venueSearch.js        # Google Places API proxy
 │   │   ├── venues.js             # Venue voting
 │   │   ├── stories.js            # 24-hour stories
-│   │   ├── crowd.js              # AI crowd predictions
-│   │   ├── feedback.js           # Post-hangout venue feedback
+│   │   ├── crowd.js              # AI Crowd Intelligence Agent
+│   │   ├── feedback.js           # Agent calibration feedback
 │   │   ├── budget.js             # Anonymous budget matching
 │   │   └── billing.js            # Bill splits + Venmo links
 │   ├── services/
-│   │   ├── crowdEngine.js        # Crowd scoring algorithm
+│   │   ├── crowdEngine.js        # AI agent scoring algorithm
 │   │   └── weatherService.js     # OpenWeatherMap wrapper + cache
 │   ├── middleware/
 │   │   └── auth.js               # JWT verification
@@ -106,7 +105,7 @@ Budget Matching
 MethodRouteDescriptionPOST/api/budget/:flockId/submitSubmit anonymous budgetGET/api/budget/:flockIdGet budget status (aggregate only)POST/api/budget/:flockId/lockLock budget (creator only)POST/api/budget/:flockId/remindRemind non-submitters
 Bill Splitting
 MethodRouteDescriptionPOST/api/billing/:flockId/createCreate bill splitGET/api/billing/:flockIdGet bill detailsPOST/api/billing/:flockId/settleMark share as settledPOST/api/billing/:flockId/ghost-commitPre-commit to shareGET/api/billing/:flockId/venmo-linkGet Venmo deep-link
-Crowd Intelligence
+AI Crowd Intelligence Agent
 MethodRouteDescriptionGET/api/crowd/:placeIdFull venue predictionPOST/api/crowd/batchBatch predictionsGET/api/crowd/:placeId/alternativesQuieter alternatives
 Messaging
 MethodRouteDescriptionGET/api/flocks/:id/messagesFlock messagesPOST/api/flocks/:id/messagesSend messageGET/api/dmAll DM conversationsGET/api/dm/:userIdDMs with userPOST/api/dm/:userIdSend DM
@@ -115,6 +114,7 @@ Full endpoint documentation in route files.
 
 Real-Time Events (Socket.io)
 Flock coordination: join_flock, leave_flock, send_message, typing, vote_venue, select_venue, update_location
+AI agent: crowd_update
 Budget: budget_updated, budget_locked, budget_reminder
 Billing: bill_created, share_settled, bill_fully_settled, ghost_committed
 Direct messages: dm_send_message, dm_typing, dm_react, dm_vote_venue, dm_share_location, dm_pin_venue
@@ -175,14 +175,14 @@ Database tables are created automatically on server startup via idempotent migra
 Architecture Decisions
 Why not Firebase/Supabase? PostgreSQL gives relational integrity for the complex relationships between users, flocks, venues, budgets, and votes. The data model is inherently relational.
 Why Socket.io over polling? Flock needs to feel alive. Instant message delivery, typing indicators, budget updates, and settlement notifications require persistent connections.
-Why rule-based crowd predictions over ML? The scoring engine runs in under 50ms with zero API cost. An LLM call takes 1-3 seconds and costs money per prediction. At scale, rule-based is faster and cheaper. The feedback loop is designed to transition to ML-based weight optimization once there's enough user data.
+Why a rule-based AI agent over ML? The agent runs in under 50ms with zero API cost. An LLM call takes 1-3 seconds and costs money per prediction. At scale, rule-based is faster and cheaper. The architecture is designed to evolve — as users complete flocks and provide feedback, the agent calibrates its scoring weights against real outcomes. Every completed hangout becomes training data.
 Why Venmo deep-links over Stripe? Zero transaction fees, zero regulatory exposure, zero payment processing liability. Stripe's 2.9% + $0.30 per transaction would exceed any viable fee structure. Flock calculates the split; Venmo moves the money.
 
 Roadmap
 
  Push notifications via Firebase Cloud Messaging
  React Native mobile app
- Post-hangout feedback system for crowd prediction calibration
+ Post-hangout feedback system for AI agent calibration
  Venue partnership onboarding (B2B revenue)
  App Store + Play Store submission
  Research analytics layer for behavioral study on group coordination
