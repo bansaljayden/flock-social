@@ -1,70 +1,198 @@
-# Getting Started with Create React App
+Flock — Social Coordination Simplified
+Flock is a real-time social coordination app that replaces the broken group chat planning process with structured decision-making. Create a flock, invite friends, vote on venues, match budgets anonymously, and go.
+Live app: flockcrop.com
 
-This project was bootstrapped with [Create React App](https://github.com/facebook/create-react-app).
+The Problem
+Group chats turn into indecisive people, and they idk what to do loops. Someone suggests somewhere expensive. Two people go silent because they can't afford it but won't say so. The plan dies. Everyone stays home.
+Flock fixes this with a structured coordination flow: create → invite → RSVP → vote → match budgets → confirm → go.
+Core Features
+Real-Time Coordination
 
-## Available Scripts
+Create flocks with time, date, and venue context
+Invite friends and track RSVPs (going / maybe / declined)
+Group venue voting with Google Places integration
+Real-time messaging with typing indicators, emoji reactions, image sharing, and venue cards
+Live location sharing within flocks
 
-In the project directory, you can run:
+Anonymous Budget Matching
 
-### `npm start`
+Every member privately submits their max budget — no one sees individual answers
+Server computes the group spending ceiling (minimum of all submissions)
+Venues above the group budget are hidden automatically
+3-person minimum threshold protects anonymity
+Individual submissions are deleted 24 hours after the flock completes
 
-Runs the app in the development mode.\
-Open [http://localhost:3000](http://localhost:3000) to view it in your browser.
+AI Crowd Intelligence
 
-The page will reload when you make changes.\
-You may also see any lint errors in the console.
+Real-time crowd predictions for venues using Google Places data, OpenWeatherMap, and time pattern analysis
+Scores venues 0–100 with confidence ratings
+12-hour hourly forecast, capacity estimates, wait times, best time to visit
+Quieter alternative venue suggestions
+Learning loop: user feedback after hangouts calibrates future predictions
 
-### `npm test`
+Bill Splitting + Venmo Settlement
 
-Launches the test runner in the interactive watch mode.\
-See the section about [running tests](https://facebook.github.io/create-react-app/docs/running-tests) for more information.
+Post-hangout bill split with equal or custom amounts
+Tip calculator (15% / 18% / 20% / custom)
+Venmo deep-link settlement — one tap opens Venmo pre-filled with the correct amount and recipient
+Ghost Mode pre-commitment — lock in your share before arriving to reduce flaking
+No payment processing, no APIs, no transaction fees
 
-### `npm run build`
+Social Layer
 
-Builds the app for production to the `build` folder.\
-It correctly bundles React in production mode and optimizes the build for the best performance.
+Friend system with QR code sharing and phone-based discovery
+Direct messages with venue cards, voting, pinning, replies, and reactions
+24-hour expiring stories
+User profiles with image upload
 
-The build is minified and the filenames include the hashes.\
-Your app is ready to be deployed!
+Safety
 
-See the section about [deployment](https://facebook.github.io/create-react-app/docs/deployment) for more information.
+Trusted emergency contacts management
+One-tap SOS alert sends GPS location to all contacts via email (Resend)
+Real-time location sharing within flocks and DMs
 
-### `npm run eject`
 
-**Note: this is a one-way operation. Once you `eject`, you can't go back!**
+Tech Stack
+LayerTechnologyFrontendReact 19 (Create React App)BackendNode.js + ExpressDatabasePostgreSQLReal-TimeSocket.io WebSocketsFrontend HostingVercelBackend HostingRailwayAuthenticationJWT (24h expiry, bcrypt password hashing)Venue DataGoogle Places API (New)Weather DataOpenWeatherMap APIEmailResend (HTTP-based)FontSatoshi (Fontshare CDN)
 
-If you aren't satisfied with the build tool and configuration choices, you can `eject` at any time. This command will remove the single build dependency from your project.
+Project Structure
+flock-app/
+├── frontend/
+│   ├── src/
+│   │   ├── App.js                # Main application component
+│   │   ├── App.css               # Global styles
+│   │   ├── LoginScreen.js        # Authentication - login
+│   │   ├── SignupScreen.js       # Authentication - signup
+│   │   ├── services/
+│   │   │   ├── api.js            # REST API client
+│   │   │   └── socket.js         # Socket.io client + event listeners
+│   │   ├── context/
+│   │   │   └── ThemeContext.js    # Dark/light mode
+│   │   └── utils/
+│   │       └── finance.js        # Revenue/subscription calculations
+│   └── package.json
+├── backend/
+│   ├── server.js                 # Express + Socket.io + migrations
+│   ├── routes/
+│   │   ├── auth.js               # Signup, login, JWT
+│   │   ├── flocks.js             # Flock CRUD, invites, RSVP
+│   │   ├── messages.js           # Flock messages + DMs
+│   │   ├── users.js              # Profiles, search, stats
+│   │   ├── friends.js            # Friend system + QR codes
+│   │   ├── safety.js             # Emergency contacts + SOS
+│   │   ├── venueSearch.js        # Google Places API proxy
+│   │   ├── venues.js             # Venue voting
+│   │   ├── stories.js            # 24-hour stories
+│   │   ├── crowd.js              # AI crowd predictions
+│   │   ├── feedback.js           # Post-hangout venue feedback
+│   │   ├── budget.js             # Anonymous budget matching
+│   │   └── billing.js            # Bill splits + Venmo links
+│   ├── services/
+│   │   ├── crowdEngine.js        # Crowd scoring algorithm
+│   │   └── weatherService.js     # OpenWeatherMap wrapper + cache
+│   ├── middleware/
+│   │   └── auth.js               # JWT verification
+│   ├── config/
+│   │   └── database.js           # PostgreSQL connection pool
+│   └── package.json
+└── README.md
 
-Instead, it will copy all the configuration files and the transitive dependencies (webpack, Babel, ESLint, etc) right into your project so you have full control over them. All of the commands except `eject` will still work, but they will point to the copied scripts so you can tweak them. At this point you're on your own.
+API Endpoints
+Authentication
+MethodRouteDescriptionPOST/api/auth/signupCreate accountPOST/api/auth/loginLogin, returns JWTGET/api/auth/meGet current user
+Flocks
+MethodRouteDescriptionGET/api/flocksList user's flocksPOST/api/flocksCreate flockGET/api/flocks/:idFlock detailsPUT/api/flocks/:idUpdate flockDELETE/api/flocks/:idDelete flockPOST/api/flocks/:id/joinAccept invitePOST/api/flocks/:id/inviteInvite usersPOST/api/flocks/:id/declineDecline invitePOST/api/flocks/:id/leaveLeave flock
+Budget Matching
+MethodRouteDescriptionPOST/api/budget/:flockId/submitSubmit anonymous budgetGET/api/budget/:flockIdGet budget status (aggregate only)POST/api/budget/:flockId/lockLock budget (creator only)POST/api/budget/:flockId/remindRemind non-submitters
+Bill Splitting
+MethodRouteDescriptionPOST/api/billing/:flockId/createCreate bill splitGET/api/billing/:flockIdGet bill detailsPOST/api/billing/:flockId/settleMark share as settledPOST/api/billing/:flockId/ghost-commitPre-commit to shareGET/api/billing/:flockId/venmo-linkGet Venmo deep-link
+Crowd Intelligence
+MethodRouteDescriptionGET/api/crowd/:placeIdFull venue predictionPOST/api/crowd/batchBatch predictionsGET/api/crowd/:placeId/alternativesQuieter alternatives
+Messaging
+MethodRouteDescriptionGET/api/flocks/:id/messagesFlock messagesPOST/api/flocks/:id/messagesSend messageGET/api/dmAll DM conversationsGET/api/dm/:userIdDMs with userPOST/api/dm/:userIdSend DM
+Friends, Venues, Safety, Stories
+Full endpoint documentation in route files.
 
-You don't have to ever use `eject`. The curated feature set is suitable for small and middle deployments, and you shouldn't feel obligated to use this feature. However we understand that this tool wouldn't be useful if you couldn't customize it when you are ready for it.
+Real-Time Events (Socket.io)
+Flock coordination: join_flock, leave_flock, send_message, typing, vote_venue, select_venue, update_location
+Budget: budget_updated, budget_locked, budget_reminder
+Billing: bill_created, share_settled, bill_fully_settled, ghost_committed
+Direct messages: dm_send_message, dm_typing, dm_react, dm_vote_venue, dm_share_location, dm_pin_venue
+Social: flock_invite, friend_request
 
-## Learn More
+Environment Variables
+Frontend (Vercel)
+REACT_APP_GOOGLE_MAPS_API_KEY=     # Google Maps JS API key (browser-restricted)
+Backend (Railway)
+DATABASE_URL=                       # PostgreSQL connection string
+JWT_SECRET=                         # JWT signing secret
+GOOGLE_PLACES_API_KEY=              # Google Places API key (server-restricted)
+WEATHER_API_KEY=                    # OpenWeatherMap API key
+RESEND_API_KEY=                     # Resend email service
+PORT=5000                           # Server port
+NODE_ENV=production                 # Environment
+FRONTEND_URL=                       # Frontend origin for CORS
 
-You can learn more in the [Create React App documentation](https://facebook.github.io/create-react-app/docs/getting-started).
+Security
 
-To learn React, check out the [React documentation](https://reactjs.org/).
+JWT authentication on all protected routes (24h token expiry)
+bcrypt password hashing (salt rounds: 12)
+Helmet.js HTTP security headers
+CORS restricted to flock-app*.vercel.app
+Rate limiting: 5/min on auth, 300/15min on API
+Parameterized queries on every database call
+Input validation via express-validator on all POST/PUT routes
+XSS protection and input sanitization
+Budget submissions are privacy-protected — individual amounts never leave the server
 
-### Code Splitting
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/code-splitting](https://facebook.github.io/create-react-app/docs/code-splitting)
+Development
+Prerequisites
 
-### Analyzing the Bundle Size
+Node.js 18+
+PostgreSQL 15+
+Google Places API key
+OpenWeatherMap API key (free tier)
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/analyzing-the-bundle-size](https://facebook.github.io/create-react-app/docs/analyzing-the-bundle-size)
+Local Setup
+bash# Clone
+git clone https://github.com/bansaljayden/Flock-app-.git
+cd Flock-app-
 
-### Making a Progressive Web App
+# Backend
+cd backend
+npm install
+cp .env.example .env    # Fill in environment variables
+npm start               # Runs on port 5000
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/making-a-progressive-web-app](https://facebook.github.io/create-react-app/docs/making-a-progressive-web-app)
+# Frontend (separate terminal)
+cd frontend
+npm install
+cp .env.example .env    # Fill in Google Maps key
+npm start               # Runs on port 3000
+Database tables are created automatically on server startup via idempotent migrations.
 
-### Advanced Configuration
+Architecture Decisions
+Why not Firebase/Supabase? PostgreSQL gives relational integrity for the complex relationships between users, flocks, venues, budgets, and votes. The data model is inherently relational.
+Why Socket.io over polling? Flock needs to feel alive. Instant message delivery, typing indicators, budget updates, and settlement notifications require persistent connections.
+Why rule-based crowd predictions over ML? The scoring engine runs in under 50ms with zero API cost. An LLM call takes 1-3 seconds and costs money per prediction. At scale, rule-based is faster and cheaper. The feedback loop is designed to transition to ML-based weight optimization once there's enough user data.
+Why Venmo deep-links over Stripe? Zero transaction fees, zero regulatory exposure, zero payment processing liability. Stripe's 2.9% + $0.30 per transaction would exceed any viable fee structure. Flock calculates the split; Venmo moves the money.
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/advanced-configuration](https://facebook.github.io/create-react-app/docs/advanced-configuration)
+Roadmap
 
-### Deployment
+ Push notifications via Firebase Cloud Messaging
+ React Native mobile app
+ Post-hangout feedback system for crowd prediction calibration
+ Venue partnership onboarding (B2B revenue)
+ App Store + Play Store submission
+ Research analytics layer for behavioral study on group coordination
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/deployment](https://facebook.github.io/create-react-app/docs/deployment)
 
-### `npm run build` fails to minify
+Author
+Jayden Bansal — Moravian Academy, Class of 2028
+1st Place, Pennsylvania DECA State Competition — Innovation Plan
+ICDC International Qualifier 2026
+flockcrop.com · GitHub
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/troubleshooting#npm-run-build-fails-to-minify](https://facebook.github.io/create-react-app/docs/troubleshooting#npm-run-build-fails-to-minify)
+License
+Proprietary. All rights reserved.
