@@ -23,14 +23,12 @@ async function fetchWeeklyForecast(venueName, venueAddress, existingVenueId) {
   if (!apiKey) return null;
 
   try {
-    const body = existingVenueId
-      ? { api_key_private: apiKey, venue_id: existingVenueId }
-      : { api_key_private: apiKey, venue_name: venueName, venue_address: venueAddress };
+    const params = existingVenueId
+      ? new URLSearchParams({ api_key_private: apiKey, venue_id: existingVenueId })
+      : new URLSearchParams({ api_key_private: apiKey, venue_name: venueName, venue_address: venueAddress });
 
-    const response = await fetch('https://besttime.app/api/v1/forecasts', {
+    const response = await fetch(`https://besttime.app/api/v1/forecasts?${params}`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
     });
 
     if (!response.ok) {
@@ -75,10 +73,9 @@ async function fetchLiveBusyness(venueId) {
   }
 
   try {
-    const response = await fetch('https://besttime.app/api/v1/forecasts/live', {
+    const params = new URLSearchParams({ api_key_private: apiKey, venue_id: venueId });
+    const response = await fetch(`https://besttime.app/api/v1/forecasts/live?${params}`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ api_key_private: apiKey, venue_id: venueId }),
     });
 
     if (!response.ok) {
