@@ -26,11 +26,32 @@ const pool = new Pool({
 });
 
 async function collectWeekly() {
-  const { rows: venues } = await pool.query(
-    'SELECT * FROM ml_venues WHERE is_active = true ORDER BY city, id'
-  );
+  // Support --city=lehigh and --limit=10 flags for testing
+  const cityArg = process.argv.find(a => a.startsWith('--city='));
+  const limitArg = process.argv.find(a => a.startsWith('--limit='));
+  const cityFilter = cityArg ? cityArg.split('=')[1] : null;
+  const limitFilter = limitArg ? parseInt(limitArg.split('=')[1], 10) : null;
 
-  console.log(`[ML:Weekly] Starting weekly collection for ${venues.length} venues...`);
+  const skipCollected = process.argv.includes('--skip-collected');
+
+  let query = 'SELECT * FROM ml_venues WHERE is_active = true';
+  const params = [];
+  if (cityFilter) {
+    params.push(cityFilter);
+    query += ` AND city = $${params.length}`;
+  }
+  if (skipCollected) {
+    query += ' AND besttime_venue_id IS NULL';
+  }
+  query += ' ORDER BY city, id';
+  if (limitFilter) {
+    params.push(limitFilter);
+    query += ` LIMIT $${params.length}`;
+  }
+
+  const { rows: venues } = await pool.query(query, params);
+
+  console.log(`[ML:Weekly] Starting weekly collection for ${venues.length} venues${cityFilter ? ` (city: ${cityFilter})` : ''}${limitFilter ? ` (limit: ${limitFilter})` : ''}...`);
 
   let totalRows = 0;
   let skipped = 0;
