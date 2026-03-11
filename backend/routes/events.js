@@ -50,6 +50,68 @@ function formatPriceRange(priceRanges) {
   return null;
 }
 
+// Get the best event image — prefer non-fallback, then check attractions, then fallback
+function getBestImage(event) {
+  const imgs = event.images || [];
+  // Prefer non-fallback 16:9 images
+  const real = imgs.filter(i => !i.fallback);
+  const best = real.find(i => i.ratio === '16_9' && i.width >= 500)
+    || real.find(i => i.ratio === '16_9')
+    || real[0];
+  if (best) return best.url;
+
+  // Check attraction images (artist/team photos)
+  const attractions = event._embedded?.attractions || [];
+  for (const a of attractions) {
+    const aImgs = (a.images || []).filter(i => !i.fallback);
+    const aBest = aImgs.find(i => i.ratio === '16_9' && i.width >= 500)
+      || aImgs.find(i => i.ratio === '16_9')
+      || aImgs[0];
+    if (aBest) return aBest.url;
+  }
+
+  // Last resort: any image including fallbacks
+  const fallback = imgs.find(i => i.ratio === '16_9' && i.width >= 500)
+    || imgs.find(i => i.ratio === '16_9')
+    || imgs[0];
+  return fallback?.url || null;
+}
+
+// Map a raw Ticketmaster event to our clean format
+function mapEvent(e) {
+  const venue = e._embedded?.venues?.[0];
+  const attraction = e._embedded?.attractions?.[0];
+
+  return {
+    id: e.id,
+    name: e.name,
+    category: mapEventCategory(e.classifications),
+    date: e.dates?.start?.localDate || null,
+    time: e.dates?.start?.localTime || null,
+    datetime_utc: e.dates?.start?.dateTime || null,
+    venue_name: venue?.name || null,
+    venue_address: [venue?.address?.line1, venue?.city?.name, venue?.state?.stateCode].filter(Boolean).join(', '),
+    venue_city: venue?.city?.name || null,
+    venue_state: venue?.state?.stateCode || null,
+    location: venue?.location ? {
+      latitude: parseFloat(venue.location.latitude),
+      longitude: parseFloat(venue.location.longitude),
+    } : null,
+    image_url: getBestImage(e),
+    price_range: formatPriceRange(e.priceRanges),
+    url: e.url || null,
+    status: e.dates?.status?.code || null,
+    genre: e.classifications?.[0]?.genre?.name || null,
+    subgenre: e.classifications?.[0]?.subGenre?.name || null,
+    segment: e.classifications?.[0]?.segment?.name || null,
+    attraction_name: attraction?.name || null,
+    seatmap_url: e.seatmap?.staticUrl || null,
+    info: e.info || null,
+    please_note: e.pleaseNote || null,
+    distance_miles: e.distance || null,
+  };
+}
+
 // All routes require auth
 router.use(authenticate);
 
@@ -126,32 +188,7 @@ router.get('/search',
       const seenIds = new Set(localEvents.map(e => e.id));
       const rawEvents = [...localEvents, ...wideEvents.filter(e => !seenIds.has(e.id))].slice(0, 30);
 
-      const events = rawEvents.map(e => {
-        const venue = e._embedded?.venues?.[0];
-        const image = e.images?.find(img => img.ratio === '16_9' && img.width >= 500)
-          || e.images?.find(img => img.ratio === '16_9')
-          || e.images?.[0];
-
-        return {
-          id: e.id,
-          name: e.name,
-          category: mapEventCategory(e.classifications),
-          date: e.dates?.start?.localDate || null,
-          time: e.dates?.start?.localTime || null,
-          datetime_utc: e.dates?.start?.dateTime || null,
-          venue_name: venue?.name || null,
-          venue_address: [venue?.address?.line1, venue?.city?.name, venue?.state?.stateCode].filter(Boolean).join(', '),
-          location: venue?.location ? {
-            latitude: parseFloat(venue.location.latitude),
-            longitude: parseFloat(venue.location.longitude),
-          } : null,
-          image_url: image?.url || null,
-          price_range: formatPriceRange(e.priceRanges),
-          url: e.url || null,
-          status: e.dates?.status?.code || null,
-          genre: e.classifications?.[0]?.genre?.name || null,
-        };
-      });
+      const events = rawEvents.map(mapEvent);
 
       const result = { events, total: events.length };
       setCache(cacheKey, result);
@@ -253,31 +290,7 @@ router.get('/featured',
         }
       }
 
-      const events = rawEvents.map(e => {
-        const venue = e._embedded?.venues?.[0];
-        const image = e.images?.find(img => img.ratio === '16_9' && img.width >= 500)
-          || e.images?.find(img => img.ratio === '16_9')
-          || e.images?.[0];
-
-        return {
-          id: e.id,
-          name: e.name,
-          category: mapEventCategory(e.classifications),
-          date: e.dates?.start?.localDate || null,
-          time: e.dates?.start?.localTime || null,
-          datetime_utc: e.dates?.start?.dateTime || null,
-          venue_name: venue?.name || null,
-          venue_address: [venue?.address?.line1, venue?.city?.name, venue?.state?.stateCode].filter(Boolean).join(', '),
-          location: venue?.location ? {
-            latitude: parseFloat(venue.location.latitude),
-            longitude: parseFloat(venue.location.longitude),
-          } : null,
-          image_url: image?.url || null,
-          price_range: formatPriceRange(e.priceRanges),
-          url: e.url || null,
-          genre: e.classifications?.[0]?.genre?.name || null,
-        };
-      });
+      const events = rawEvents.map(mapEvent);
 
       const result = { events, total: events.length };
       setCache(cacheKey, result);
@@ -285,6 +298,88 @@ router.get('/featured',
     } catch (err) {
       console.error('[Events] Featured error:', err);
       res.status(500).json({ error: 'Failed to get featured events' });
+    }
+  }
+);
+
+// GET /api/events/details?id=xxx — Full event details (like venue details page)
+router.get('/details',
+  query('id').trim().isLength({ min: 1 }).withMessage('Event ID is required'),
+  async (req, res) => {
+    try {
+      const errors = validationResult(req);
+      if (!errors.isEmpty()) {
+        return res.status(400).json({ error: errors.array()[0].msg });
+      }
+
+      if (!TM_API_KEY) {
+        return res.status(500).json({ error: 'Ticketmaster API key not configured' });
+      }
+
+      const eventId = req.query.id;
+      const cacheKey = `event_detail:${eventId}`;
+      const cached = getCached(cacheKey);
+      if (cached) return res.json(cached);
+
+      const response = await fetch(`https://app.ticketmaster.com/discovery/v2/events/${eventId}?apikey=${TM_API_KEY}`);
+
+      if (!response.ok) {
+        return res.status(response.status === 404 ? 404 : 502).json({ error: 'Event not found' });
+      }
+
+      const e = await response.json();
+      const venue = e._embedded?.venues?.[0];
+      const attraction = e._embedded?.attractions?.[0];
+
+      // Collect all good images (non-fallback first, then fallback)
+      const allImgs = (e.images || []).filter(i => !i.fallback);
+      const attractionImgs = (attraction?.images || []).filter(i => !i.fallback);
+      const fallbackImgs = (e.images || []).filter(i => i.fallback);
+      const uniqueUrls = new Set();
+      const photos = [...allImgs, ...attractionImgs, ...fallbackImgs]
+        .filter(i => i.ratio === '16_9' && i.width >= 400)
+        .filter(i => { if (uniqueUrls.has(i.url)) return false; uniqueUrls.add(i.url); return true; })
+        .slice(0, 6)
+        .map(i => i.url);
+
+      const result = {
+        event: {
+          ...mapEvent(e),
+          // Extended details
+          photos,
+          venue_details: venue ? {
+            name: venue.name,
+            address: venue.address?.line1 || null,
+            city: venue.city?.name || null,
+            state: venue.state?.stateCode || null,
+            postal_code: venue.postalCode || null,
+            country: venue.country?.name || null,
+            location: venue.location ? {
+              latitude: parseFloat(venue.location.latitude),
+              longitude: parseFloat(venue.location.longitude),
+            } : null,
+            upcoming_events: venue.upcomingEvents?._total || 0,
+          } : null,
+          attractions: (e._embedded?.attractions || []).map(a => ({
+            name: a.name,
+            url: a.url || null,
+            image_url: getBestImage({ images: a.images || [], _embedded: {} }),
+          })),
+          date_end: e.dates?.end?.localDate || null,
+          time_end: e.dates?.end?.localTime || null,
+          timezone: e.dates?.timezone || null,
+          on_sale: e.dates?.status?.code === 'onsale',
+          ticketing: e.ticketing ? {
+            safe_tix: e.ticketing.safeTix?.enabled || false,
+          } : null,
+        },
+      };
+
+      setCache(cacheKey, result);
+      res.json(result);
+    } catch (err) {
+      console.error('[Events] Details error:', err);
+      res.status(500).json({ error: 'Failed to get event details' });
     }
   }
 );

@@ -441,6 +441,10 @@ export async function searchEvents(location, query, options = {}) {
   return request(endpoint);
 }
 
+export async function getEventDetails(eventId) {
+  return request(`/api/events/details?id=${encodeURIComponent(eventId)}`);
+}
+
 export async function getFeaturedEvents(location, interests = []) {
   let endpoint = `/api/events/featured?location=${location}`;
   if (interests.length > 0) endpoint += `&interests=${encodeURIComponent(interests.join(','))}`;

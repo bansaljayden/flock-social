@@ -11,7 +11,7 @@ import {
   formatCurrency,
   calculateProfitMargin
 } from './lib/finance';
-import { getCurrentUser, logout, isLoggedIn, getFlocks, getFlock, createFlock as apiCreateFlock, getMessages, sendMessage as apiSendMessage, updateProfile, searchVenues, searchUsers, getSuggestedUsers, sendFriendRequest, getStories, getVenueDetails, leaveFlock as apiLeaveFlock, getDMConversations, getDMs, getDmVenueVotes, getDmPinnedVenue, BASE_URL, inviteToFlock, acceptFlockInvite, declineFlockInvite, getFriends, acceptFriendRequest, declineFriendRequest, getPendingRequests, getOutgoingRequests, getFriendSuggestions, addFriendByCode, findFriendsByPhone, removeFriend, getTrustedContacts, addTrustedContact, updateTrustedContact, deleteTrustedContact, sendEmergencyAlert, shareLocationWithContacts, getUserStats, getCrowdPrediction, getCrowdBatch, getCrowdAlternatives, getWeather, submitVenueFeedback, uploadProfileImage, saveProfileImageUrl, submitBudget, getBudgetStatus, lockBudget, sendBudgetReminder, createBillSplit, getBillSplit, settleShare, ghostCommit, updatePaymentMethods, getPaymentLinks, getFeaturedEvents, searchEvents } from './services/api';
+import { getCurrentUser, logout, isLoggedIn, getFlocks, getFlock, createFlock as apiCreateFlock, getMessages, sendMessage as apiSendMessage, updateProfile, searchVenues, searchUsers, getSuggestedUsers, sendFriendRequest, getStories, getVenueDetails, leaveFlock as apiLeaveFlock, getDMConversations, getDMs, getDmVenueVotes, getDmPinnedVenue, BASE_URL, inviteToFlock, acceptFlockInvite, declineFlockInvite, getFriends, acceptFriendRequest, declineFriendRequest, getPendingRequests, getOutgoingRequests, getFriendSuggestions, addFriendByCode, findFriendsByPhone, removeFriend, getTrustedContacts, addTrustedContact, updateTrustedContact, deleteTrustedContact, sendEmergencyAlert, shareLocationWithContacts, getUserStats, getCrowdPrediction, getCrowdBatch, getCrowdAlternatives, getWeather, submitVenueFeedback, uploadProfileImage, saveProfileImageUrl, submitBudget, getBudgetStatus, lockBudget, sendBudgetReminder, createBillSplit, getBillSplit, settleShare, ghostCommit, updatePaymentMethods, getPaymentLinks, getFeaturedEvents, searchEvents, getEventDetails } from './services/api';
 import { connectSocket, disconnectSocket, getSocket, joinFlock, leaveFlock, sendMessage as socketSendMessage, sendImageMessage as socketSendImage, startTyping, stopTyping, onNewMessage, onUserTyping, onUserStoppedTyping, emitLocation, stopSharingLocation as socketStopSharing, onLocationUpdate, onMemberStoppedSharing, socketSendDm, onNewDm, dmStartTyping, dmStopTyping, onDmUserTyping, onDmUserStoppedTyping, dmReact, dmRemoveReact, onDmReactionAdded, onDmReactionRemoved, dmVoteVenue, onDmNewVote, dmShareLocation, dmStopSharingLocation, onDmLocationUpdate, onDmMemberStoppedSharing, dmPinVenue, onDmVenuePinned, emitFlockInvite, emitFlockInviteResponse, onFlockInviteReceived, onFlockInviteResponded, emitFriendRequest, emitFriendResponse, onFriendRequestReceived, onFriendRequestResponded, onBudgetUpdated, onBudgetLocked, onBudgetReminder, onBillCreated, onShareSettled, onBillFullySettled, onGhostCommitted, onNewVote, onVenueSelected, onFlockReactionAdded, onFlockReactionRemoved, onFlockDeleted, onFlockUpdated, onFlockMemberLeft } from './services/socket';
 import { QRCodeSVG } from 'qrcode.react';
 import { Html5Qrcode } from 'html5-qrcode';
@@ -1144,6 +1144,8 @@ const FlockAppInner = ({ authUser, onLogout }) => {
   const [showEventsView, setShowEventsView] = useState(false);
   const [eventsSearchQuery, setEventsSearchQuery] = useState('');
   const eventsSearchTimerRef = useRef(null);
+  const [eventDetail, setEventDetail] = useState(null);
+  const [eventDetailLoading, setEventDetailLoading] = useState(false);
   const [crowdPredictions, setCrowdPredictions] = useState({});
   const [crowdData, setCrowdData] = useState(null);
   const [crowdLoading, setCrowdLoading] = useState(false);
@@ -5979,14 +5981,17 @@ const FlockAppInner = ({ authUser, onLogout }) => {
                       }} style={{ flex: 1, padding: '9px', borderRadius: '10px', border: 'none', background: `linear-gradient(135deg, ${colors.navyBg}, ${colors.navyMidBg})`, color: 'white', fontWeight: '700', fontSize: '12px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '5px' }}>
                         {Icons.users('white', 13)} Start Flock
                       </button>
-                      {event.url && (
-                        <button onClick={(e) => {
-                          e.stopPropagation();
-                          window.open(event.url, '_blank');
-                        }} style={{ padding: '9px 14px', borderRadius: '10px', border: `2px solid ${colors.navy}`, backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontWeight: '700', fontSize: '12px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '5px' }}>
-                          Tickets {Icons.arrowRight(colors.navy, 12)}
-                        </button>
-                      )}
+                      <button onClick={(e) => {
+                        e.stopPropagation();
+                        setEventDetailLoading(true);
+                        setEventDetail({ ...event, photos: [], venue_details: null });
+                        getEventDetails(event.id)
+                          .then(data => setEventDetail(data.event))
+                          .catch(() => {})
+                          .finally(() => setEventDetailLoading(false));
+                      }} style={{ padding: '9px 14px', borderRadius: '10px', border: `2px solid ${colors.navy}`, backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontWeight: '700', fontSize: '12px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '5px' }}>
+                        {Icons.eye(colors.navy, 13)} Details
+                      </button>
                     </div>
                   </div>
                 </div>
@@ -10756,6 +10761,138 @@ const FlockAppInner = ({ authUser, onLogout }) => {
           })()}
         </div>
       </div>
+      {/* Event Detail Overlay */}
+      {eventDetail && (
+        <div style={{ position: 'fixed', inset: 0, zIndex: 200, backgroundColor: 'var(--bg-primary)', display: 'flex', flexDirection: 'column', animation: 'fadeIn 0.2s ease' }}>
+          {/* Header image */}
+          <div style={{ position: 'relative', height: '220px', flexShrink: 0, backgroundColor: colors.navyBg }}>
+            {(eventDetail.photos?.[0] || eventDetail.image_url) && (
+              <img src={eventDetail.photos?.[0] || eventDetail.image_url} alt="" style={{ width: '100%', height: '220px', objectFit: 'cover' }} onError={(e) => { e.target.style.display = 'none'; }} />
+            )}
+            <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(transparent 30%, rgba(0,0,0,0.8) 100%)' }} />
+            <button onClick={() => setEventDetail(null)} style={{ position: 'absolute', top: '12px', left: '12px', width: '36px', height: '36px', borderRadius: '18px', border: 'none', backgroundColor: 'rgba(0,0,0,0.5)', backdropFilter: 'blur(8px)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.arrowLeft('white', 18)}</button>
+            {eventDetail.status === 'onsale' && (
+              <div style={{ position: 'absolute', top: '12px', right: '12px', padding: '5px 12px', borderRadius: '10px', backgroundColor: '#22C55E' }}>
+                <span style={{ fontSize: '11px', fontWeight: '800', color: 'white' }}>On Sale</span>
+              </div>
+            )}
+            <div style={{ position: 'absolute', bottom: '14px', left: '14px', right: '14px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '4px' }}>
+                {(() => { const cc = { concert: '#8B5CF6', sports: '#22C55E', arts: '#EC4899', comedy: '#F59E0B', festival: '#EF4444', film: '#3B82F6', other: 'white' }; return (
+                  <span style={{ fontSize: '10px', fontWeight: '800', color: cc[eventDetail.category] || 'white', textTransform: 'uppercase', letterSpacing: '1px' }}>{eventDetail.segment || eventDetail.category}</span>
+                ); })()}
+                {eventDetail.genre && <span style={{ fontSize: '10px', color: 'rgba(255,255,255,0.7)' }}>{eventDetail.genre}{eventDetail.subgenre && eventDetail.subgenre !== eventDetail.genre ? ` / ${eventDetail.subgenre}` : ''}</span>}
+              </div>
+              <h1 style={{ margin: 0, fontSize: '22px', fontWeight: '900', color: 'white', lineHeight: '1.2' }}>{eventDetail.name}</h1>
+            </div>
+          </div>
+
+          {/* Loading */}
+          {eventDetailLoading && (
+            <div style={{ padding: '20px', textAlign: 'center' }}>
+              <div style={{ display: 'inline-block', width: '20px', height: '20px', border: '3px solid var(--border-default)', borderTopColor: '#F59E0B', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
+            </div>
+          )}
+
+          {/* Content */}
+          <div style={{ flex: 1, overflowY: 'auto', padding: '16px' }}>
+            {/* Date & Time */}
+            <div style={{ display: 'flex', gap: '12px', marginBottom: '16px', flexWrap: 'wrap' }}>
+              {eventDetail.date && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '10px 14px', borderRadius: '12px', backgroundColor: 'var(--bg-tertiary)', flex: 1, minWidth: '140px' }}>
+                  {Icons.calendar(colors.navy, 18)}
+                  <div>
+                    <p style={{ margin: 0, fontSize: '13px', fontWeight: '700', color: colors.navy }}>{new Date(eventDetail.date + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}</p>
+                    {eventDetail.time && <p style={{ margin: '2px 0 0', fontSize: '12px', color: 'var(--text-secondary)', fontWeight: '600' }}>{new Date('2000-01-01T' + eventDetail.time).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}{eventDetail.time_end ? ` – ${new Date('2000-01-01T' + eventDetail.time_end).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}` : ''}</p>}
+                  </div>
+                </div>
+              )}
+              {eventDetail.price_range && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '10px 14px', borderRadius: '12px', backgroundColor: 'var(--bg-tertiary)' }}>
+                  {Icons.dollar(colors.navy, 18)}
+                  <div>
+                    <p style={{ margin: 0, fontSize: '13px', fontWeight: '700', color: colors.navy }}>${eventDetail.price_range.min}{eventDetail.price_range.max ? ` – $${eventDetail.price_range.max}` : '+'}</p>
+                    <p style={{ margin: '2px 0 0', fontSize: '11px', color: 'var(--text-tertiary)' }}>{eventDetail.price_range.currency}</p>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Venue info */}
+            {(eventDetail.venue_details || eventDetail.venue_name) && (
+              <div style={{ padding: '14px', borderRadius: '14px', backgroundColor: 'var(--bg-tertiary)', marginBottom: '16px' }}>
+                <div style={{ display: 'flex', alignItems: 'flex-start', gap: '10px' }}>
+                  {Icons.mapPin(colors.navy, 18)}
+                  <div style={{ flex: 1 }}>
+                    <p style={{ margin: 0, fontSize: '14px', fontWeight: '700', color: colors.navy }}>{eventDetail.venue_details?.name || eventDetail.venue_name}</p>
+                    <p style={{ margin: '3px 0 0', fontSize: '12px', color: 'var(--text-secondary)' }}>{eventDetail.venue_details ? [eventDetail.venue_details.address, eventDetail.venue_details.city, eventDetail.venue_details.state, eventDetail.venue_details.postal_code].filter(Boolean).join(', ') : eventDetail.venue_address}</p>
+                    {eventDetail.venue_details?.upcoming_events > 0 && (
+                      <p style={{ margin: '4px 0 0', fontSize: '11px', color: 'var(--text-tertiary)', fontWeight: '600' }}>{eventDetail.venue_details.upcoming_events} upcoming events at this venue</p>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Seatmap */}
+            {eventDetail.seatmap_url && (
+              <div style={{ marginBottom: '16px' }}>
+                <p style={{ fontSize: '13px', fontWeight: '700', color: colors.navy, margin: '0 0 8px' }}>Seat Map</p>
+                <img src={eventDetail.seatmap_url} alt="Seat map" style={{ width: '100%', borderRadius: '12px', border: '1px solid var(--border-default)' }} onError={(e) => { e.target.style.display = 'none'; }} />
+              </div>
+            )}
+
+            {/* Info / Notes */}
+            {eventDetail.info && (
+              <div style={{ marginBottom: '16px' }}>
+                <p style={{ fontSize: '13px', fontWeight: '700', color: colors.navy, margin: '0 0 6px' }}>About</p>
+                <p style={{ fontSize: '12px', color: 'var(--text-secondary)', lineHeight: '1.5', margin: 0 }}>{eventDetail.info}</p>
+              </div>
+            )}
+            {eventDetail.please_note && (
+              <div style={{ marginBottom: '16px', padding: '12px', borderRadius: '12px', backgroundColor: '#FEF3C7', border: '1px solid #FDE68A' }}>
+                <p style={{ fontSize: '12px', fontWeight: '700', color: '#92400E', margin: '0 0 4px' }}>Please Note</p>
+                <p style={{ fontSize: '11px', color: '#78350F', lineHeight: '1.4', margin: 0 }}>{eventDetail.please_note}</p>
+              </div>
+            )}
+
+            {/* Photos gallery */}
+            {eventDetail.photos?.length > 1 && (
+              <div style={{ marginBottom: '16px' }}>
+                <p style={{ fontSize: '13px', fontWeight: '700', color: colors.navy, margin: '0 0 8px' }}>Photos</p>
+                <div style={{ display: 'flex', gap: '8px', overflowX: 'auto', scrollbarWidth: 'none' }}>
+                  {eventDetail.photos.map((photo, i) => (
+                    <img key={i} src={photo} alt="" style={{ width: '180px', height: '100px', objectFit: 'cover', borderRadius: '10px', flexShrink: 0 }} onError={(e) => { e.target.style.display = 'none'; }} />
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Distance */}
+            {eventDetail.distance_miles && (
+              <p style={{ fontSize: '11px', color: 'var(--text-tertiary)', fontWeight: '600', marginBottom: '16px' }}>{Icons.mapPin(colors.teal, 11)} {eventDetail.distance_miles.toFixed(1)} miles away</p>
+            )}
+          </div>
+
+          {/* Bottom action bar */}
+          <div style={{ padding: '12px 16px', backgroundColor: 'var(--bg-card-solid)', borderTop: '1px solid var(--border-default)', display: 'flex', gap: '10px', flexShrink: 0 }}>
+            <button onClick={() => {
+              setSelectedVenueForCreate({ name: eventDetail.venue_name || eventDetail.name, addr: eventDetail.venue_address, lat: eventDetail.location?.latitude, lng: eventDetail.location?.longitude, photo_url: eventDetail.image_url, event_name: eventDetail.name });
+              setEventDetail(null);
+              setShowEventsView(false);
+              setCurrentScreen('create');
+            }} style={{ flex: 1, padding: '12px', borderRadius: '12px', border: 'none', background: `linear-gradient(135deg, ${colors.navyBg}, ${colors.navyMidBg})`, color: 'white', fontWeight: '700', fontSize: '14px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}>
+              {Icons.users('white', 16)} Start Flock
+            </button>
+            {eventDetail.url && (
+              <button onClick={() => window.open(eventDetail.url, '_blank')} style={{ padding: '12px 20px', borderRadius: '12px', border: `2px solid ${colors.navy}`, backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontWeight: '700', fontSize: '14px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}>
+                Tickets {Icons.arrowRight(colors.navy, 14)}
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+
       <Toast />
 
       {/* Camera Viewfinder */}
