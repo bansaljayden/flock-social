@@ -2115,7 +2115,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
     if (!featuredEventsFetchedRef.current) {
       featuredEventsFetchedRef.current = true;
       setFeaturedEventsLoading(true);
-      getFeaturedEvents(locStr)
+      getFeaturedEvents(locStr, userInterests)
         .then(data => setFeaturedEvents(data.events || []))
         .catch(err => console.error('[Events] Featured fetch failed:', err))
         .finally(() => setFeaturedEventsLoading(false));
@@ -5155,28 +5155,27 @@ const FlockAppInner = ({ authUser, onLogout }) => {
         </div>
       )}
 
-      <div style={{ padding: '10px 12px', display: 'flex', alignItems: 'center', gap: '10px', backgroundColor: 'var(--bg-card-solid)', boxShadow: '0 2px 12px rgba(0,0,0,0.08)', zIndex: 20, flexShrink: 0 }}>
+      <div style={{ padding: '10px 12px', display: 'flex', alignItems: 'center', gap: '6px', backgroundColor: 'var(--bg-card-solid)', boxShadow: '0 2px 12px rgba(0,0,0,0.08)', zIndex: 20, flexShrink: 0 }}>
         <div style={{ flex: 1, position: 'relative' }}>
-          <input key="search-input" id="search-input" type="text" value={venueQuery} onChange={(e) => handleVenueQueryChange(e.target.value)} placeholder="Search restaurants, bars, venues..." style={{ width: '100%', padding: '12px 14px 12px 38px', borderRadius: '14px', backgroundColor: 'var(--bg-tertiary)', color: 'var(--text-primary)', border: `2px solid ${venueQuery ? colors.navy : colors.borderDefault}`, fontSize: '13px', outline: 'none', boxSizing: 'border-box', transition: 'all 0.2s ease', fontWeight: '500' }} autoComplete="off" />
+          <input key="search-input" id="search-input" type="text" value={venueQuery} onChange={(e) => handleVenueQueryChange(e.target.value)} placeholder="Search restaurants, bars, venues..." style={{ width: '100%', padding: '12px 14px 12px 38px', paddingRight: venueQuery ? '36px' : '14px', borderRadius: '14px', backgroundColor: 'var(--bg-tertiary)', color: 'var(--text-primary)', border: `2px solid ${venueQuery ? colors.navy : colors.borderDefault}`, fontSize: '13px', outline: 'none', boxSizing: 'border-box', transition: 'all 0.2s ease', fontWeight: '500' }} autoComplete="off" />
           <span style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', transition: 'all 0.2s ease' }}>{Icons.search(venueQuery ? colors.navy : colors.textTertiary, 16)}</span>
+          {venueQuery && (
+            <button onClick={() => { setVenueQuery(''); setVenueResults([]); setShowSearchDropdown(false); setShowSearchResults(false); setActiveVenue(null); const lat = parseFloat(localStorage.getItem('flock_user_lat')); const lng = parseFloat(localStorage.getItem('flock_user_lng')); if (lat && lng) { setMapVenuesLoaded(false); loadVenuesAtLocation(lat, lng); } else { setMapVenuesLoaded(false); requestUserLocation(false); } }} title="Clear search" style={{ position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', padding: '2px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.x('#64748b', 16)}</button>
+          )}
         </div>
-        {venueQuery && (
-          <button onClick={() => { setVenueQuery(''); setVenueResults([]); setShowSearchDropdown(false); setShowSearchResults(false); setActiveVenue(null); const lat = parseFloat(localStorage.getItem('flock_user_lat')); const lng = parseFloat(localStorage.getItem('flock_user_lng')); if (lat && lng) { setMapVenuesLoaded(false); loadVenuesAtLocation(lat, lng); } else { setMapVenuesLoaded(false); requestUserLocation(false); } }} title="Clear search" style={{ width: '42px', height: '42px', borderRadius: '14px', border: 'none', backgroundColor: 'var(--bg-tertiary)', color: 'var(--text-secondary)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'all 0.2s ease', flexShrink: 0 }}>{Icons.x('#64748b', 18)}</button>
-        )}
-        <button onClick={() => { setMapVenuesLoaded(false); setVenueQuery(''); setVenueResults([]); setShowSearchDropdown(false); setShowSearchResults(false); setActiveVenue(null); requestUserLocation(true); }} title="Near Me" style={{ width: '42px', height: '42px', borderRadius: '14px', border: 'none', background: locationLoading ? `linear-gradient(135deg, ${colors.teal}, ${colors.skyBlue})` : `linear-gradient(135deg, ${colors.teal}, #0d9488)`, color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 4px 12px rgba(20,184,166,0.3)', transition: 'all 0.2s ease', animation: locationLoading ? 'spin 1s linear infinite' : 'none' }}>{Icons.crosshair('white', 18)}</button>
+        <button onClick={() => { setMapVenuesLoaded(false); setVenueQuery(''); setVenueResults([]); setShowSearchDropdown(false); setShowSearchResults(false); setActiveVenue(null); requestUserLocation(true); }} title="Near Me" style={{ width: '36px', height: '36px', borderRadius: '12px', border: 'none', background: locationLoading ? `linear-gradient(135deg, ${colors.teal}, ${colors.skyBlue})` : `linear-gradient(135deg, ${colors.teal}, #0d9488)`, color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 3px 10px rgba(20,184,166,0.3)', transition: 'all 0.2s ease', animation: locationLoading ? 'spin 1s linear infinite' : 'none', flexShrink: 0 }}>{Icons.crosshair('white', 16)}</button>
         <button onClick={() => {
           setShowEventsView(true);
           setActiveVenue(null);
-          // Refresh events if we have location
           if (userLocation && !featuredEventsLoading) {
             setFeaturedEventsLoading(true);
-            getFeaturedEvents(`${userLocation.lat},${userLocation.lng}`)
+            getFeaturedEvents(`${userLocation.lat},${userLocation.lng}`, userInterests)
               .then(data => setFeaturedEvents(data.events || []))
               .catch(err => console.error('[Events] Fetch failed:', err))
               .finally(() => setFeaturedEventsLoading(false));
           }
-        }} title="Live Events" style={{ width: '42px', height: '42px', borderRadius: '14px', border: 'none', background: 'linear-gradient(135deg, #F59E0B, #D97706)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 4px 12px rgba(245,158,11,0.3)', transition: 'all 0.2s ease', flexShrink: 0 }}>{Icons.zap('white', 18)}</button>
-        <button onClick={() => setShowConnectPanel(true)} style={{ width: '42px', height: '42px', borderRadius: '14px', border: 'none', background: `linear-gradient(135deg, ${colors.navyBg}, ${colors.navyMidBg})`, color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 4px 12px rgba(13,40,71,0.25)', transition: 'all 0.2s ease' }}>{Icons.users('white', 18)}</button>
+        }} title="Live Events" style={{ width: '36px', height: '36px', borderRadius: '12px', border: 'none', background: 'linear-gradient(135deg, #F59E0B, #D97706)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 3px 10px rgba(245,158,11,0.3)', transition: 'all 0.2s ease', flexShrink: 0 }}>{Icons.zap('white', 15)}</button>
+        <button onClick={() => setShowConnectPanel(true)} style={{ width: '36px', height: '36px', borderRadius: '12px', border: 'none', background: `linear-gradient(135deg, ${colors.navyBg}, ${colors.navyMidBg})`, color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 3px 10px rgba(13,40,71,0.25)', transition: 'all 0.2s ease', flexShrink: 0 }}>{Icons.users('white', 15)}</button>
       </div>
 
       {/* Location loading overlay */}
@@ -5887,7 +5886,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
                       }, 400);
                     } else if (e.target.value.length === 0 && userLocation) {
                       setFeaturedEventsLoading(true);
-                      getFeaturedEvents(`${userLocation.lat},${userLocation.lng}`)
+                      getFeaturedEvents(`${userLocation.lat},${userLocation.lng}`, userInterests)
                         .then(data => setFeaturedEvents(data.events || []))
                         .catch(() => {})
                         .finally(() => setFeaturedEventsLoading(false));
@@ -5902,7 +5901,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
                     setEventsSearchQuery('');
                     if (userLocation) {
                       setFeaturedEventsLoading(true);
-                      getFeaturedEvents(`${userLocation.lat},${userLocation.lng}`)
+                      getFeaturedEvents(`${userLocation.lat},${userLocation.lng}`, userInterests)
                         .then(data => setFeaturedEvents(data.events || []))
                         .catch(() => {})
                         .finally(() => setFeaturedEventsLoading(false));
