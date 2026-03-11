@@ -10763,7 +10763,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
       </div>
       {/* Event Detail Overlay */}
       {eventDetail && (
-        <div style={{ position: 'fixed', inset: 0, zIndex: 200, backgroundColor: 'var(--bg-primary)', display: 'flex', flexDirection: 'column', animation: 'fadeIn 0.2s ease' }}>
+        <div style={{ position: 'fixed', inset: 0, zIndex: 200, backgroundColor: 'var(--bg-primary)', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
           {/* Header image */}
           <div style={{ position: 'relative', height: '220px', flexShrink: 0, backgroundColor: colors.navyBg }}>
             {(eventDetail.photos?.[0] || eventDetail.image_url) && (
@@ -10856,7 +10856,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
               </div>
             )}
 
-            {/* Photos gallery */}
+            {/* Photos gallery — only show if multiple unique photos */}
             {eventDetail.photos?.length > 1 && (
               <div style={{ marginBottom: '16px' }}>
                 <p style={{ fontSize: '13px', fontWeight: '700', color: colors.navy, margin: '0 0 8px' }}>Photos</p>
