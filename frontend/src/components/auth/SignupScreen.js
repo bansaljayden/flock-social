@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { signup } from '../../services/api';
+import { Meteors } from '../ui/meteors';
 
 const colors = {
   navyDark: '#0f172a',
@@ -60,7 +61,7 @@ const SignupScreen = ({ onSignupSuccess, onSwitchToLogin }) => {
     fontWeight: '400',
     outline: 'none',
     boxSizing: 'border-box',
-    transition: 'all 0.2s ease',
+    transition: 'border-color 0.2s ease, box-shadow 0.2s ease',
     backgroundColor: 'rgba(15,23,42,0.6)',
     color: 'white',
   };
@@ -101,6 +102,7 @@ const SignupScreen = ({ onSignupSuccess, onSwitchToLogin }) => {
         pointerEvents: 'none',
       }}/>
 
+      <Meteors number={15} />
       <div style={{
         width: '100%',
         maxWidth: '380px',
@@ -177,7 +179,7 @@ const SignupScreen = ({ onSignupSuccess, onSwitchToLogin }) => {
               background: `linear-gradient(135deg, ${colors.cream} 0%, ${colors.creamDark} 100%)`,
               color: colors.navy, border: 'none', borderRadius: '12px', padding: '14px 24px', fontWeight: '700', fontSize: '15px',
               cursor: loading ? 'not-allowed' : 'pointer', width: '100%', boxShadow: '0 4px 16px rgba(241,237,224,0.15)',
-              transition: 'all 0.2s ease', opacity: loading ? 0.7 : 1, letterSpacing: '0.2px',
+              transition: 'border-color 0.2s ease, box-shadow 0.2s ease', opacity: loading ? 0.7 : 1, letterSpacing: '0.2px',
             }}>
               {loading ? 'Creating account...' : 'Create Account'}
             </button>

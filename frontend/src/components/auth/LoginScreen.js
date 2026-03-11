@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { login } from '../../services/api';
+import { Meteors } from '../ui/meteors';
 
 const colors = {
   navyDark: '#0f172a',
@@ -53,7 +54,7 @@ const LoginScreen = ({ onLoginSuccess, onSwitchToSignup }) => {
     fontWeight: '400',
     outline: 'none',
     boxSizing: 'border-box',
-    transition: 'all 0.2s ease',
+    transition: 'border-color 0.2s ease, box-shadow 0.2s ease',
     backgroundColor: 'rgba(15,23,42,0.6)',
     color: 'white',
   };
@@ -94,6 +95,7 @@ const LoginScreen = ({ onLoginSuccess, onSwitchToSignup }) => {
         pointerEvents: 'none',
       }}/>
 
+      <Meteors number={15} />
       <div style={{
         width: '100%',
         maxWidth: '380px',
@@ -209,7 +211,7 @@ const LoginScreen = ({ onLoginSuccess, onSwitchToSignup }) => {
                 cursor: loading ? 'not-allowed' : 'pointer',
                 width: '100%',
                 boxShadow: '0 4px 16px rgba(241,237,224,0.15)',
-                transition: 'all 0.2s ease',
+                transition: 'border-color 0.2s ease, box-shadow 0.2s ease',
                 opacity: loading ? 0.7 : 1,
                 letterSpacing: '0.2px',
               }}
