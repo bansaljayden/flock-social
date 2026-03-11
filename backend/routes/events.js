@@ -331,15 +331,20 @@ router.get('/details',
       const venue = e._embedded?.venues?.[0];
       const attraction = e._embedded?.attractions?.[0];
 
-      // Collect all good images (non-fallback first, then fallback)
+      // Collect unique images — TM serves same photo in many sizes, dedupe by base filename
+      const getImageKey = (url) => {
+        // Extract the unique image hash from URL (e.g. "c9d1f714-57de-4e29-9d62-cb403420d615")
+        const match = url.match(/\/([a-f0-9-]{20,})_/);
+        return match ? match[1] : url;
+      };
       const allImgs = (e.images || []).filter(i => !i.fallback);
       const attractionImgs = (attraction?.images || []).filter(i => !i.fallback);
-      const fallbackImgs = (e.images || []).filter(i => i.fallback);
-      const uniqueUrls = new Set();
-      const photos = [...allImgs, ...attractionImgs, ...fallbackImgs]
-        .filter(i => i.ratio === '16_9' && i.width >= 400)
-        .filter(i => { if (uniqueUrls.has(i.url)) return false; uniqueUrls.add(i.url); return true; })
-        .slice(0, 6)
+      const seenKeys = new Set();
+      const photos = [...allImgs, ...attractionImgs]
+        .filter(i => i.ratio === '16_9' && i.width >= 500)
+        .sort((a, b) => (b.width || 0) - (a.width || 0))
+        .filter(i => { const k = getImageKey(i.url); if (seenKeys.has(k)) return false; seenKeys.add(k); return true; })
+        .slice(0, 4)
         .map(i => i.url);
 
       const result = {
