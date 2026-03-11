@@ -18,6 +18,28 @@ import { Html5Qrcode } from 'html5-qrcode';
 import LoginScreen from './components/auth/LoginScreen';
 import SignupScreen from './components/auth/SignupScreen';
 import { MarkerClusterer } from '@googlemaps/markerclusterer';
+import { motion, AnimatePresence } from 'framer-motion';
+import { SplineScene } from './components/ui/spline-scene';
+
+// Scroll fade-in component using IntersectionObserver
+const ScrollFade = ({ children, delay = 0, className = '' }) => {
+  const ref = useRef(null);
+  const [visible, setVisible] = useState(false);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const observer = new IntersectionObserver(([entry]) => {
+      if (entry.isIntersecting) { setVisible(true); observer.unobserve(el); }
+    }, { threshold: 0.1 });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
+  return (
+    <div ref={ref} className={`scroll-fade${visible ? ' visible' : ''}${delay ? ` scroll-fade-delay-${delay}` : ''} ${className}`}>
+      {children}
+    </div>
+  );
+};
 
 // Load Google Maps dynamically from .env — API key never exposed in HTML
 const loadGoogleMapsScript = () => {
@@ -96,11 +118,11 @@ const VenueCard = React.memo(({ venue, onViewDetails, onVote, colors: c, Icons: 
 
         <div style={{ display: 'flex', gap: '8px' }}>
           {(venue.place_id || venue.id) && (
-            <button onClick={onViewDetails} style={{ flex: 1, padding: '10px', borderRadius: '10px', border: `2px solid ${c.navy}`, backgroundColor: 'var(--bg-card-solid)', color: c.navy, fontSize: '12px', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px', transition: 'all 0.2s ease' }}>
+            <button onClick={onViewDetails} style={{ flex: 1, padding: '10px', borderRadius: '10px', border: `2px solid ${c.navy}`, backgroundColor: 'var(--bg-card-solid)', color: c.navy, fontSize: '12px', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px', transition: 'opacity 0.2s ease' }}>
               {I.eye(c.navy, 14)} View Details
             </button>
           )}
-          <button onClick={(e) => { const btn = e.currentTarget; if (!btn.classList.contains('btn-confirmed')) { btn.classList.add('btn-confirmed'); setTimeout(() => btn.classList.remove('btn-confirmed'), 1100); } onVote(); }} style={{ flex: 1, padding: '10px', borderRadius: '10px', border: 'none', background: `linear-gradient(135deg, ${c.navy}, ${c.navyMid})`, color: 'white', fontSize: '12px', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px', boxShadow: '0 2px 8px rgba(13,40,71,0.25)', transition: 'all 0.2s ease', position: 'relative', overflow: 'hidden' }}>
+          <button onClick={(e) => { const btn = e.currentTarget; if (!btn.classList.contains('btn-confirmed')) { btn.classList.add('btn-confirmed'); setTimeout(() => btn.classList.remove('btn-confirmed'), 1100); } onVote(); }} style={{ flex: 1, padding: '10px', borderRadius: '10px', border: 'none', background: `linear-gradient(135deg, ${c.navy}, ${c.navyMid})`, color: 'white', fontSize: '12px', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px', boxShadow: '0 2px 8px rgba(13,40,71,0.25)', transition: 'opacity 0.2s ease', position: 'relative', overflow: 'hidden' }}>
               {I.vote('white', 14)} Vote for This
             </button>
         </div>
@@ -1052,7 +1074,7 @@ const makeStyles = (c, isDark) => ({
     boxShadow: isDark
       ? '0 4px 15px rgba(0,0,0,0.4)'
       : '0 4px 15px rgba(13,40,71,0.3), 0 2px 4px rgba(0,0,0,0.1)',
-    transition: 'all 0.2s ease',
+    transition: 'opacity 0.2s ease',
     letterSpacing: '0.3px',
     position: 'relative',
     overflow: 'hidden',
@@ -1074,7 +1096,7 @@ const makeStyles = (c, isDark) => ({
     fontSize: '14px',
     outline: 'none',
     boxSizing: 'border-box',
-    transition: 'all 0.2s ease',
+    transition: 'opacity 0.2s ease',
     backgroundColor: 'var(--bg-input)',
     color: 'var(--text-primary)',
     fontWeight: '500',
@@ -1900,6 +1922,9 @@ const FlockAppInner = ({ authUser, onLogout }) => {
   }, [venueDetailModal]);
 
   const [showConnectPanel, setShowConnectPanel] = useState(false);
+  const [discoverNavOpen, setDiscoverNavOpen] = useState(false);
+  const [chatNavOpen, setChatNavOpen] = useState(false);
+  const [dmNavOpen, setDmNavOpen] = useState(false);
   const [connectSearch, setConnectSearch] = useState('');
   const [connectResults, setConnectResults] = useState([]);
   const [connectSearching, setConnectSearching] = useState(false);
@@ -3211,12 +3236,12 @@ const FlockAppInner = ({ authUser, onLogout }) => {
             style={{
               ...styles.navItem,
               backgroundColor: currentTab === t.id ? 'var(--icon-bg)' : 'transparent',
-              transition: 'all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1)',
+              transition: 'transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1), color 0.2s ease',
               transform: currentTab === t.id ? 'scale(1.05)' : 'scale(1)',
               borderRadius: '14px',
               padding: '8px 14px'
             }}>
-            <div className={activeTabAnimation === t.id ? 'tab-bounce' : ''} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', transition: 'all 0.2s ease' }}>
+            <div className={activeTabAnimation === t.id ? 'tab-bounce' : ''} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', transition: 'opacity 0.2s ease' }}>
               <div style={{
                 transition: 'transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1)',
                 transform: currentTab === t.id ? 'scale(1.1)' : 'scale(1)'
@@ -3228,7 +3253,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
                 fontWeight: currentTab === t.id ? '700' : '500',
                 color: currentTab === t.id ? colors.navy : 'var(--text-tertiary)',
                 marginTop: '3px',
-                transition: 'all 0.2s ease'
+                transition: 'opacity 0.2s ease'
               }}>{t.label}</span>
               {currentTab === t.id && (
                 <div style={{
@@ -3603,7 +3628,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
             </button>
           </div>
           <div style={{ padding: '12px' }}>
-            <input type="text" value={dmSearchText} onChange={(e) => handleDmSearch(e.target.value)} placeholder="Search by name or email..." style={{ width: '100%', padding: '12px 16px', borderRadius: '12px', border: `1.5px solid ${dmSearchText ? colors.navy : colors.creamDark}`, fontSize: '14px', outline: 'none', boxSizing: 'border-box', backgroundColor: 'var(--bg-tertiary)', color: 'var(--text-primary)', fontWeight: '500', transition: 'all 0.2s ease' }} autoComplete="off" />
+            <input type="text" value={dmSearchText} onChange={(e) => handleDmSearch(e.target.value)} placeholder="Search by name or email..." style={{ width: '100%', padding: '12px 16px', borderRadius: '12px', border: `1.5px solid ${dmSearchText ? colors.navy : colors.creamDark}`, fontSize: '14px', outline: 'none', boxSizing: 'border-box', backgroundColor: 'var(--bg-tertiary)', color: 'var(--text-primary)', fontWeight: '500', transition: 'opacity 0.2s ease' }} autoComplete="off" />
           </div>
           <div style={{ flex: 1, overflowY: 'auto', padding: '0 12px 12px' }}>
             {!dmSearchText.trim() && usersToShow.length > 0 && (
@@ -3909,14 +3934,19 @@ const FlockAppInner = ({ authUser, onLogout }) => {
       {/* Header */}
       <div style={{ padding: '6px 10px 5px 4px', background: `linear-gradient(135deg, ${colors.navyBg}, ${colors.navyMidBg})`, flexShrink: 0, boxShadow: '0 2px 10px rgba(0,0,0,0.1)' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-          <button onClick={() => { setCurrentScreen('main'); setChatInput(''); setShowDmMenu(false); setShowDeleteDmConfirm(false); setShowDmChatSearch(false); setDmChatSearch(''); setShowDmVotePanel(false); setShowDmVenueSearch(false); setDmReplyingTo(null); if (dmSharingLocation) { dmStopSharingLocation(dmSharingLocation); setDmSharingLocation(null); } }} style={{ width: '34px', height: '34px', borderRadius: '17px', background: 'none', border: 'none', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{Icons.arrowLeft('white', 20)}</button>
+          <button onClick={() => { setCurrentScreen('main'); setChatInput(''); setShowDmMenu(false); setShowDeleteDmConfirm(false); setShowDmChatSearch(false); setDmChatSearch(''); setShowDmVotePanel(false); setShowDmVenueSearch(false); setDmReplyingTo(null); setDmNavOpen(false); if (dmSharingLocation) { dmStopSharingLocation(dmSharingLocation); setDmSharingLocation(null); } }} style={{ width: '34px', height: '34px', borderRadius: '17px', background: 'none', border: 'none', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{Icons.arrowLeft('white', 20)}</button>
           <div style={{ width: '34px', height: '34px', borderRadius: '17px', backgroundColor: 'rgba(255,255,255,0.2)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '13px', fontWeight: '700', color: 'white', overflow: 'hidden', flexShrink: 0 }}>
             {selectedDm.image ? <img src={selectedDm.image} alt="" style={{ width: '34px', height: '34px', borderRadius: '17px', objectFit: 'cover' }} /> : (selectedDm.name?.[0]?.toUpperCase() || '?')}
           </div>
           <h2 style={{ flex: 1, fontWeight: '800', color: 'white', fontSize: '15px', margin: 0, lineHeight: '1.3', minWidth: 0 }}>{selectedDm.name}</h2>
-          <button onClick={() => { setShowDmVotePanel(!showDmVotePanel); if (!showDmVotePanel) loadPopularVenues(); }} style={{ height: '34px', borderRadius: '17px', border: 'none', backgroundColor: 'rgba(255,255,255,0.15)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px', padding: '0 12px', fontSize: '12px', fontWeight: '700', flexShrink: 0 }}>{Icons.vote('white', 14)} Vote</button>
-          <button onClick={() => setShowDmChatSearch(!showDmChatSearch)} style={{ width: '34px', height: '34px', borderRadius: '17px', border: 'none', backgroundColor: showDmChatSearch ? 'rgba(255,255,255,0.35)' : 'rgba(255,255,255,0.15)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{Icons.search('white', 15)}</button>
-          <button onClick={() => setShowDmCashPool(true)} style={{ width: '34px', height: '34px', borderRadius: '17px', border: 'none', backgroundColor: 'var(--icon-bg)', color: colors.navy, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{Icons.dollar(colors.navy, 15)}</button>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '4px', flexShrink: 0 }}>
+            <div style={{ display: 'flex', gap: '4px', overflow: 'hidden', maxWidth: dmNavOpen ? '114px' : '0px', opacity: dmNavOpen ? 1 : 0, transition: 'max-width 0.3s ease, opacity 0.25s ease' }}>
+              <button onClick={() => { setDmNavOpen(false); setShowDmVotePanel(!showDmVotePanel); if (!showDmVotePanel) loadPopularVenues(); }} style={{ width: '34px', height: '34px', minWidth: '34px', borderRadius: '17px', border: 'none', backgroundColor: 'rgba(255,255,255,0.15)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.vote('white', 14)}</button>
+              <button onClick={() => { setDmNavOpen(false); setShowDmChatSearch(!showDmChatSearch); }} style={{ width: '34px', height: '34px', minWidth: '34px', borderRadius: '17px', border: 'none', backgroundColor: showDmChatSearch ? 'rgba(255,255,255,0.35)' : 'rgba(255,255,255,0.15)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.search('white', 15)}</button>
+              <button onClick={() => { setDmNavOpen(false); setShowDmCashPool(true); }} style={{ width: '34px', height: '34px', minWidth: '34px', borderRadius: '17px', border: 'none', backgroundColor: 'rgba(255,255,255,0.15)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.dollar('white', 15)}</button>
+            </div>
+            <button onClick={() => setDmNavOpen(!dmNavOpen)} style={{ height: '34px', minWidth: dmNavOpen ? '34px' : 'auto', width: dmNavOpen ? '34px' : 'auto', borderRadius: '17px', border: 'none', backgroundColor: dmNavOpen ? 'rgba(255,255,255,0.35)' : 'rgba(255,255,255,0.15)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px', padding: dmNavOpen ? '0' : '0 12px', fontSize: '12px', fontWeight: '700', flexShrink: 0, transition: 'all 0.3s ease' }}>{dmNavOpen ? Icons.x('white', 14) : <span style={{ fontSize: '12px', fontWeight: '700' }}>Features</span>}</button>
+          </div>
           <div style={{ position: 'relative', flexShrink: 0 }}>
             <button onClick={() => setShowDmMenu(!showDmMenu)} style={{ width: '34px', height: '34px', borderRadius: '17px', border: 'none', backgroundColor: 'rgba(255,255,255,0.15)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.moreVertical('white', 16)}</button>
             {showDmMenu && (
@@ -4108,7 +4138,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
                       ? `linear-gradient(135deg, ${colors.navyBg}, ${colors.navyMidBg})`
                       : isLeading ? `linear-gradient(135deg, ${colors.teal}, #0d9488)` : `linear-gradient(135deg, ${colors.navy}15, ${colors.navy}25)`;
                     return (
-                      <button key={v.venue_name} onClick={(e) => { confirmClick(e); isMyVote ? handleDmUnvote() : handleDmQuickVote(v.venue_name, v.venue_id); }} style={{ width: '100%', textAlign: 'left', padding: '12px 14px', borderRadius: '14px', border: v.isPinned ? `2px solid ${colors.navy}` : isMyVote ? `2px solid ${colors.navy}` : '1.5px solid var(--border-default)', backgroundColor: v.isPinned ? `${colors.navy}05` : isMyVote ? `${colors.navy}06` : 'var(--bg-card-solid)', cursor: 'pointer', position: 'relative', overflow: 'hidden', transition: 'all 0.2s' }}>
+                      <button key={v.venue_name} onClick={(e) => { confirmClick(e); isMyVote ? handleDmUnvote() : handleDmQuickVote(v.venue_name, v.venue_id); }} style={{ width: '100%', textAlign: 'left', padding: '12px 14px', borderRadius: '14px', border: v.isPinned ? `2px solid ${colors.navy}` : isMyVote ? `2px solid ${colors.navy}` : '1.5px solid var(--border-default)', backgroundColor: v.isPinned ? `${colors.navy}05` : isMyVote ? `${colors.navy}06` : 'var(--bg-card-solid)', cursor: 'pointer', position: 'relative', overflow: 'hidden', transition: 'opacity 0.2s' }}>
                         {/* Progress bar background */}
                         <div style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: `${votePercent}%`, backgroundColor: isMyVote ? `${colors.navy}10` : 'var(--bg-tertiary)', transition: 'width 0.4s ease', borderRadius: '14px' }} />
                         <div style={{ position: 'relative', display: 'flex', alignItems: 'center', gap: '10px' }}>
@@ -4144,7 +4174,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
                   <p style={{ fontSize: '12px', fontWeight: '700', color: 'var(--text-tertiary)', marginBottom: '10px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Popular Chains Nearby</p>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
                     {suggestedVenues.map(venue => (
-                      <button key={venue.id || venue.name} onClick={(e) => { confirmClick(e); handleDmQuickVote(venue.name, venue.place_id); }} style={{ width: '100%', textAlign: 'left', padding: '10px 12px', borderRadius: '12px', border: '1px solid var(--border-default)', backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '10px', transition: 'all 0.2s', position: 'relative', overflow: 'hidden' }}>
+                      <button key={venue.id || venue.name} onClick={(e) => { confirmClick(e); handleDmQuickVote(venue.name, venue.place_id); }} style={{ width: '100%', textAlign: 'left', padding: '10px 12px', borderRadius: '12px', border: '1px solid var(--border-default)', backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '10px', transition: 'opacity 0.2s', position: 'relative', overflow: 'hidden' }}>
                         {venue.photo_url ? (
                           <img src={venue.photo_url} alt="" style={{ width: '36px', height: '36px', borderRadius: '8px', objectFit: 'cover', flexShrink: 0 }} onError={(e) => { e.target.onerror = null; e.target.src = 'data:image/svg+xml,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="36" height="36"><rect fill="#1a3a5c" width="36" height="36" rx="8"/></svg>'); }} />
                         ) : (
@@ -4212,7 +4242,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
                     sendDmMessage({ text: `Check out ${venue.name}!`, message_type: 'venue_card', venue_data: { name: venue.name, addr: venue.addr, stars: venue.stars, rating: venue.rating || venue.stars, price: venue.price, price_level: venue.price_level, photo_url: venue.photo_url, place_id: venue.place_id, category: venue.category, type: venue.type, crowd: venue.crowd }, noReply: true });
                     setShowDmVenueSearch(false);
                   }}
-                  style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '12px', borderRadius: '14px', border: '1px solid var(--border-default)', backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer', textAlign: 'left', transition: 'all 0.2s ease' }}
+                  style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '12px', borderRadius: '14px', border: '1px solid var(--border-default)', backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer', textAlign: 'left', transition: 'opacity 0.2s ease' }}
                 >
                   <div style={{ width: '44px', height: '44px', borderRadius: '12px', background: `linear-gradient(135deg, ${getCategoryColor(venue.category)}, ${getCategoryColor(venue.category)}cc)`, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                     {venue.category === 'Food' ? Icons.pizza('white', 20) : venue.category === 'Nightlife' ? Icons.cocktail('white', 20) : venue.category === 'Live Music' ? Icons.music('white', 20) : Icons.sports('white', 20)}
@@ -4455,11 +4485,11 @@ const FlockAppInner = ({ authUser, onLogout }) => {
             <div style={{ width: '36px', height: '4px', borderRadius: '2px', backgroundColor: 'var(--toggle-off)', margin: '0 auto 16px' }} />
             <h3 style={{ fontSize: '16px', fontWeight: '800', color: colors.navy, margin: '0 0 16px', textAlign: 'center' }}>Add Photo</h3>
             <div style={{ display: 'flex', gap: '12px' }}>
-              <button onClick={() => openCameraViewfinder('dm')} style={{ flex: 1, padding: '16px', borderRadius: '16px', border: `2px solid ${colors.creamDark}`, backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px', transition: 'all 0.2s ease' }}>
+              <button onClick={() => openCameraViewfinder('dm')} style={{ flex: 1, padding: '16px', borderRadius: '16px', border: `2px solid ${colors.creamDark}`, backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px', transition: 'opacity 0.2s ease' }}>
                 {Icons.camera(colors.navy, 28)}
                 <span style={{ fontSize: '13px', fontWeight: '700', color: colors.navy }}>Take Photo</span>
               </button>
-              <button onClick={() => { setShowDmCameraPopup(false); setTimeout(() => dmGalleryInputRef.current?.click(), 100); }} style={{ flex: 1, padding: '16px', borderRadius: '16px', border: `2px solid ${colors.creamDark}`, backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px', transition: 'all 0.2s ease' }}>
+              <button onClick={() => { setShowDmCameraPopup(false); setTimeout(() => dmGalleryInputRef.current?.click(), 100); }} style={{ flex: 1, padding: '16px', borderRadius: '16px', border: `2px solid ${colors.creamDark}`, backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px', transition: 'opacity 0.2s ease' }}>
                 {Icons.image(colors.navy, 28)}
                 <span style={{ fontSize: '13px', fontWeight: '700', color: colors.navy }}>Gallery</span>
               </button>
@@ -4486,8 +4516,8 @@ const FlockAppInner = ({ authUser, onLogout }) => {
 
   // AI Assistant Modal - Inline JSX (not a component to prevent focus loss)
   const aiAssistantModal = showAiAssistant && (
-      <div style={{ position: 'absolute', inset: 0, backgroundColor: 'rgba(0,0,0,0.8)', display: 'flex', alignItems: 'flex-end', zIndex: 50 }}>
-        <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '24px 24px 0 0', width: '100%', height: '80%', display: 'flex', flexDirection: 'column' }}>
+      <div onClick={(e) => { if (e.target === e.currentTarget) setShowAiAssistant(false); }} style={{ position: 'absolute', inset: 0, backgroundColor: 'rgba(0,0,0,0.8)', display: 'flex', alignItems: 'flex-end', zIndex: 50 }}>
+        <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '24px 24px 0 0', width: '100%', height: '85%', display: 'flex', flexDirection: 'column' }}>
           {/* Header with animated AI avatar */}
           <div style={{ padding: '12px', borderBottom: '1px solid var(--divider)', background: `linear-gradient(90deg, ${colors.navyBg}, ${colors.navyMidBg})`, borderRadius: '24px 24px 0 0', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
@@ -4519,19 +4549,15 @@ const FlockAppInner = ({ authUser, onLogout }) => {
           </div>
 
           {/* Messages */}
-          <div style={{ flex: 1, padding: '12px', overflowY: 'auto' }}>
-            {aiMessages.length === 1 && (
-              <div style={{ textAlign: 'center', padding: '16px 0', marginBottom: '12px' }}>
-                <div style={{ width: '60px', height: '60px', borderRadius: '30px', background: 'linear-gradient(135deg, #4F46E5, #7C3AED)', margin: '0 auto 12px', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 8px 24px rgba(79,70,229,0.3)' }}>
-                  {Icons.robot('white', 30)}
-                </div>
-                <h3 style={{ fontSize: '16px', fontWeight: '700', color: colors.navy, margin: '0 0 4px' }}>How can I help?</h3>
-                <p style={{ fontSize: '11px', color: 'var(--text-secondary)', margin: 0 }}>Ask about venues, crowds, or plans.</p>
+          <div className="birdie-bg" style={{ flex: 1, padding: '12px', overflowY: 'auto' }}>
+            {aiMessages.length <= 1 && !aiTyping && (
+              <div style={{ position: 'absolute', inset: 0, zIndex: 0, filter: isDark ? 'drop-shadow(0 0 8px rgba(124,58,237,0.3))' : 'invert(1) hue-rotate(180deg) brightness(0.8) contrast(1.6) saturate(0.2) drop-shadow(0 0 12px rgba(0,0,0,0.2))' }}>
+                <SplineScene scene="https://prod.spline.design/kZDDjO5HuC9GJUM2/scene.splinecode" style={{ width: '100%', height: '100%' }} />
               </div>
             )}
 
             {aiMessages.map((msg, i) => (
-              <div key={i} style={{ display: 'flex', gap: '8px', marginBottom: '12px', flexDirection: msg.role === 'user' ? 'row-reverse' : 'row' }}>
+              <div key={i} style={{ display: 'flex', gap: '8px', marginBottom: '12px', flexDirection: msg.role === 'user' ? 'row-reverse' : 'row', position: 'relative', zIndex: 1 }}>
                 <div style={{ width: '30px', height: '30px', borderRadius: '15px', background: msg.role === 'user' ? `linear-gradient(135deg, ${colors.navyBg}, ${colors.navyMidBg})` : 'linear-gradient(135deg, #4F46E5, #7C3AED)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, boxShadow: '0 2px 8px rgba(0,0,0,0.1)' }}>
                   {msg.role === 'user' ? Icons.user('white', 14) : Icons.robot('white', 14)}
                 </div>
@@ -4550,7 +4576,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
             ))}
 
             {aiTyping && (
-              <div style={{ display: 'flex', gap: '8px' }}>
+              <div style={{ display: 'flex', gap: '8px', position: 'relative', zIndex: 1 }}>
                 <div style={{ width: '30px', height: '30px', borderRadius: '15px', background: 'linear-gradient(135deg, #4F46E5, #7C3AED)', display: 'flex', alignItems: 'center', justifyContent: 'center', animation: 'pulse 1.5s ease-in-out infinite' }}>
                   {Icons.robot('white', 14)}
                 </div>
@@ -4582,7 +4608,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
           <div style={{ padding: '10px 12px', borderTop: '1px solid var(--divider)', backgroundColor: 'var(--bg-card-solid)' }}>
             <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
               <input ref={aiInputRef} type="text" value={aiInput} onChange={(e) => setAiInput(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && sendAiMessage()} placeholder="Ask me anything..." style={{ flex: 1, padding: '12px 16px', borderRadius: '24px', backgroundColor: 'var(--bg-hover)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)', fontSize: '13px', outline: 'none', fontWeight: '500' }} autoComplete="off" />
-              <button onClick={sendAiMessage} disabled={!aiInput.trim()} style={{ width: '42px', height: '42px', borderRadius: '21px', border: 'none', background: aiInput.trim() ? `linear-gradient(135deg, ${colors.navyBg}, ${colors.navyMidBg})` : 'var(--pill-bg)', color: 'white', cursor: aiInput.trim() ? 'pointer' : 'default', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: aiInput.trim() ? '0 4px 12px rgba(13,40,71,0.3)' : 'none', transition: 'all 0.2s' }}>{Icons.send('white', 18)}</button>
+              <button onClick={sendAiMessage} disabled={!aiInput.trim()} style={{ width: '42px', height: '42px', borderRadius: '21px', border: 'none', background: aiInput.trim() ? `linear-gradient(135deg, ${colors.navyBg}, ${colors.navyMidBg})` : 'var(--pill-bg)', color: 'white', cursor: aiInput.trim() ? 'pointer' : 'default', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: aiInput.trim() ? '0 4px 12px rgba(13,40,71,0.3)' : 'none', transition: 'opacity 0.2s' }}>{Icons.send('white', 18)}</button>
             </div>
           </div>
         </div>
@@ -4699,9 +4725,9 @@ const FlockAppInner = ({ authUser, onLogout }) => {
       }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
           <div>
-            <p style={{ fontSize: '10px', color: 'rgba(255,255,255,0.6)', margin: 0, letterSpacing: '0.5px' }}>Good evening</p>
+            <p style={{ fontSize: '10px', color: 'rgba(255,255,255,0.6)', margin: 0, letterSpacing: '0.5px' }}>Good {new Date().getHours() < 12 ? 'morning' : new Date().getHours() < 17 ? 'afternoon' : 'evening'}</p>
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <h1 style={{ fontSize: '20px', fontWeight: '900', color: 'white', margin: 0 }}>Hey, {profileName}</h1>
+              <h1 className="shimmer-text" style={{ fontSize: '20px', fontWeight: '900', margin: 0 }}>Hey, {profileName}</h1>
               {themeMode === 'auto' && isNightModeActive && (
                 <span style={{ display: 'inline-flex', alignItems: 'center', gap: '3px', padding: '2px 8px', borderRadius: '8px', backgroundColor: 'rgba(167,139,250,0.2)', fontSize: '9px', fontWeight: '700', color: '#c4b5fd', letterSpacing: '0.3px' }}>
                   {Icons.moon('#c4b5fd', 10)} NIGHT
@@ -4735,27 +4761,53 @@ const FlockAppInner = ({ authUser, onLogout }) => {
 
       {/* Scrollable Content */}
       <div onScroll={handleScroll} style={{ flex: 1, padding: '12px', overflowY: 'auto', marginTop: '-8px', WebkitOverflowScrolling: 'touch' }}>
-        {/* Stories */}
-        {stories.length > 0 && (
-        <div style={{ display: 'flex', gap: '12px', marginBottom: '12px', overflowX: 'auto', paddingBottom: '4px' }}>
-          {stories.map(s => (
-            <button key={s.id} onClick={() => { setViewingStory(s); setStoryIndex(0); }} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '4px', background: 'none', border: 'none', cursor: 'pointer', flexShrink: 0 }}>
-              <div style={{ width: '56px', height: '56px', borderRadius: '28px', padding: '2.5px', background: s.hasNew ? `linear-gradient(135deg, ${colors.navy}, ${colors.skyBlue})` : 'var(--toggle-off)' }}>
-                {s.coverImage ? (
-                  <img src={s.coverImage} alt="" style={{ width: '100%', height: '100%', borderRadius: '26px', objectFit: 'cover', border: '2px solid var(--bg-card-solid)' }} />
-                ) : (
-                  <div style={{ width: '100%', height: '100%', borderRadius: '26px', backgroundColor: s.avatarColor || colors.navy, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '16px', fontWeight: '700', color: 'white', border: '2px solid var(--bg-card-solid)' }}>{s.avatar}</div>
-                )}
-              </div>
-              <span style={{ fontSize: '11px', fontWeight: '600', color: 'var(--text-primary)', maxWidth: '56px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.name}</span>
-            </button>
-          ))}
-        </div>
-        )}
+        {/* Quick Glance Cards */}
+        <ScrollFade><div style={{ display: 'flex', gap: '8px', marginBottom: '12px', overflowX: 'auto', paddingBottom: '6px' }}>
+          {/* Happening Now */}
+          <button onClick={() => { setCurrentTab('explore'); }} style={{ flexShrink: 0, padding: '8px 14px', borderRadius: '12px', border: '1px solid var(--border-default)', backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer', textAlign: 'left' }}>
+            <p style={{ fontSize: '11px', fontWeight: '800', color: 'var(--text-primary)', margin: '0 0 1px', whiteSpace: 'nowrap' }}>Happening Now</p>
+            <p style={{ fontSize: '9px', color: 'var(--text-tertiary)', margin: 0, whiteSpace: 'nowrap' }}>
+              {allVenues.filter(v => v.crowd > 60).length > 0 ? `${allVenues.filter(v => v.crowd > 60).length} busy spots` : 'See what\'s hot'}
+            </p>
+          </button>
+
+          {/* Needs You */}
+          {(() => {
+            const needsAction = flocks.filter(f => f.status === 'voting');
+            return (
+              <button onClick={() => { if (needsAction.length > 0) { setSelectedFlockId(needsAction[0].id); setCurrentScreen('detail'); } }} style={{ flexShrink: 0, padding: '8px 14px', borderRadius: '12px', border: needsAction.length > 0 ? `1px solid var(--accent-amber-text)` : '1px solid var(--border-default)', backgroundColor: needsAction.length > 0 ? 'var(--accent-amber-bg)' : 'var(--bg-card-solid)', cursor: 'pointer', textAlign: 'left' }}>
+                <p style={{ fontSize: '11px', fontWeight: '800', color: 'var(--text-primary)', margin: '0 0 1px', whiteSpace: 'nowrap' }}>Needs You</p>
+                <p style={{ fontSize: '9px', color: needsAction.length > 0 ? 'var(--accent-amber-text)' : 'var(--text-tertiary)', margin: 0, fontWeight: needsAction.length > 0 ? '700' : '400', whiteSpace: 'nowrap' }}>
+                  {needsAction.length > 0 ? `${needsAction.length} pending` : 'All caught up'}
+                </p>
+              </button>
+            );
+          })()}
+
+          {/* This Week */}
+          {(() => {
+            const confirmed = flocks.filter(f => f.status === 'confirmed' || f.status === 'locked');
+            return (
+              <button onClick={() => { if (confirmed.length > 0) { setSelectedFlockId(confirmed[0].id); setCurrentScreen('detail'); } }} style={{ flexShrink: 0, padding: '8px 14px', borderRadius: '12px', border: '1px solid var(--border-default)', backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer', textAlign: 'left' }}>
+                <p style={{ fontSize: '11px', fontWeight: '800', color: 'var(--text-primary)', margin: '0 0 1px', whiteSpace: 'nowrap' }}>This Week</p>
+                <p style={{ fontSize: '9px', color: 'var(--text-tertiary)', margin: 0, whiteSpace: 'nowrap' }}>
+                  {confirmed.length > 0 ? `${confirmed.length} plan${confirmed.length > 1 ? 's' : ''} set` : 'Nothing yet'}
+                </p>
+              </button>
+            );
+          })()}
+
+          {/* Friends */}
+          <button onClick={() => setCurrentScreen('addFriends')} style={{ flexShrink: 0, padding: '8px 14px', borderRadius: '12px', border: '1px solid var(--border-default)', backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer', textAlign: 'left' }}>
+            <p style={{ fontSize: '11px', fontWeight: '800', color: 'var(--text-primary)', margin: '0 0 1px', whiteSpace: 'nowrap' }}>Friends</p>
+            <p style={{ fontSize: '9px', color: 'var(--text-tertiary)', margin: 0, whiteSpace: 'nowrap' }}>{friendCount} connected</p>
+          </button>
+        </div></ScrollFade>
 
         {/* Action Buttons */}
-        <div style={{ display: 'flex', gap: '10px', marginBottom: '14px' }}>
+        <ScrollFade delay={1}><div style={{ display: 'flex', gap: '10px', marginBottom: '14px' }}>
           <button
+
             onClick={() => setCurrentScreen('create')}
             style={{
               flex: 1.2,
@@ -4768,14 +4820,14 @@ const FlockAppInner = ({ authUser, onLogout }) => {
               fontSize: '14px',
               cursor: 'pointer',
               boxShadow: '0 6px 20px rgba(13,40,71,0.3), 0 2px 4px rgba(0,0,0,0.1)',
-              transition: 'all 0.2s ease',
+              transition: 'opacity 0.2s ease',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
               gap: '6px'
             }}
           >
-            {Icons.plus('white', 16)} Start a Flock
+            {Icons.plus('white', 16)} <span className="shimmer-text">Start a Flock</span>
           </button>
           <button
             onClick={() => setCurrentScreen('addFriends')}
@@ -4789,7 +4841,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
               fontWeight: '700',
               fontSize: '13px',
               cursor: 'pointer',
-              transition: 'all 0.2s ease',
+              transition: 'opacity 0.2s ease',
               boxShadow: '0 2px 8px rgba(13,40,71,0.08)',
               display: 'flex',
               alignItems: 'center',
@@ -4797,12 +4849,12 @@ const FlockAppInner = ({ authUser, onLogout }) => {
               gap: '6px'
             }}
           >
-            {Icons.userPlus(colors.navy, 15)} Add Friends
+            {Icons.userPlus(colors.navy, 15)} <span className="shimmer-text" style={{ background: `linear-gradient(110deg, ${colors.navy} 0%, ${colors.navy} 35%, #60a5fa 50%, ${colors.navy} 65%, ${colors.navy} 100%)`, backgroundSize: '200% 100%', WebkitBackgroundClip: 'text', backgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>Add Friends</span>
           </button>
-        </div>
+        </div></ScrollFade>
 
         {/* Activity */}
-        <div style={styles.card}>
+        <ScrollFade delay={2}><div style={styles.card}>
           <h3 style={{ fontSize: '12px', fontWeight: 'bold', color: colors.navy, margin: '0 0 8px', display: 'flex', alignItems: 'center', gap: '6px' }}>{Icons.bell(colors.navy, 14)} Activity</h3>
           {activityFeed.map(a => (
             <div key={a.id} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 0', borderBottom: '1px solid var(--border-light)' }}>
@@ -4811,32 +4863,59 @@ const FlockAppInner = ({ authUser, onLogout }) => {
               <span style={{ fontSize: '10px', color: 'var(--text-tertiary)' }}>{a.time}</span>
             </div>
           ))}
-        </div>
+        </div></ScrollFade>
 
         {/* Flocks */}
-        <h2 style={{ fontSize: '12px', fontWeight: 'bold', color: colors.navy, margin: '0 0 8px' }}>Your Flocks</h2>
-        {flocks.map((f, idx) => (
-          <button key={f.id} className={`card-animate card-animate-${Math.min(idx + 1, 5)}`} onClick={() => { setSelectedFlockId(f.id); setCurrentScreen('detail'); }} style={{ width: '100%', textAlign: 'left', ...styles.card, border: 'none', cursor: 'pointer', padding: idx === 0 ? '18px' : '12px', marginBottom: idx === 0 ? '14px' : '10px', borderLeft: idx === 0 ? `4px solid ${colors.teal}` : 'none' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: idx === 0 ? '10px' : '6px' }}>
-              <div>
-                <h3 style={{ fontSize: idx === 0 ? '16px' : '14px', fontWeight: idx === 0 ? '800' : 'bold', color: colors.navy, margin: 0 }}>{f.name}</h3>
-                <p style={{ fontSize: idx === 0 ? '11px' : '10px', color: 'var(--text-secondary)', margin: '2px 0 0', display: 'flex', alignItems: 'center', gap: '3px' }}>{Icons.mapPin(colors.textSecondary, idx === 0 ? 12 : 10)} {f.venue}</p>
-              </div>
-              <span style={{ fontSize: '10px', padding: idx === 0 ? '4px 10px' : '2px 8px', borderRadius: '10px', fontWeight: '600', backgroundColor: f.status === 'voting' ? 'var(--accent-amber-bg)' : 'var(--accent-green-bg)', color: f.status === 'voting' ? 'var(--accent-amber-text)' : 'var(--accent-green-text)' }}>
-                <span style={{ display: 'flex', alignItems: 'center', gap: '3px' }}>{f.status === 'voting' ? Icons.vote('var(--accent-amber-text)', 10) : Icons.check('var(--accent-green-text)', 10)} {f.status === 'voting' ? 'Needs Votes' : 'Locked In'}</span>
-              </span>
-            </div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <div style={{ display: 'flex' }}>
-                {f.members.slice(0, idx === 0 ? 5 : 4).map((m, j) => (
-                  <div key={j} style={{ width: idx === 0 ? '28px' : '24px', height: idx === 0 ? '28px' : '24px', borderRadius: '50%', border: '2px solid var(--bg-card-solid)', backgroundColor: colors.navyMidBg, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: idx === 0 ? '10px' : '9px', fontWeight: 'bold', color: 'white', marginLeft: j > 0 ? '-6px' : 0 }}>{m[0]}</div>
-                ))}
-                {idx === 0 && f.members.length > 5 && <div style={{ width: '28px', height: '28px', borderRadius: '50%', border: '2px solid var(--bg-card-solid)', backgroundColor: 'var(--icon-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '9px', fontWeight: 'bold', color: colors.navy, marginLeft: '-6px' }}>+{f.members.length - 5}</div>}
-              </div>
-              <span style={{ fontSize: idx === 0 ? '11px' : '10px', fontWeight: '600', padding: '2px 8px', borderRadius: '10px', backgroundColor: 'var(--icon-bg)', color: colors.navy }}>{f.time}</span>
-            </div>
-          </button>
-        ))}
+        <ScrollFade delay={3}><h2 style={{ fontSize: '12px', fontWeight: 'bold', color: colors.navy, margin: '0 0 8px' }}>Your Flocks</h2></ScrollFade>
+        <div style={{ display: 'flex', flexDirection: 'column', marginBottom: '14px' }}>
+          {flocks.map((f, idx) => {
+            const rotation = idx * -1.5;
+            return (
+              <ScrollFade key={`fade-${f.id}`} delay={Math.min(idx + 4, 7)}><button
+                key={f.id}
+                onClick={() => { setSelectedFlockId(f.id); setCurrentScreen('detail'); }}
+                className="flock-stack-card"
+                style={{
+                  width: '100%',
+                  textAlign: 'left',
+                  padding: '14px 16px',
+                  borderRadius: '14px',
+                  border: '1px solid var(--border-default)',
+                  backgroundColor: 'var(--bg-card-solid)',
+                  boxShadow: 'var(--card-shadow)',
+                  cursor: 'pointer',
+                  transform: `rotate(${rotation}deg)`,
+                  transformOrigin: 'center center',
+                  transition: 'transform 0.3s ease, box-shadow 0.3s ease, border-color 0.3s ease',
+                  overflow: 'hidden',
+                  willChange: 'transform',
+                  marginTop: idx === 0 ? '0' : '-14px',
+                  zIndex: idx,
+                  position: 'relative',
+                }}
+              >
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '8px' }}>
+                  <div>
+                    <h3 style={{ fontSize: '15px', fontWeight: '800', color: colors.navy, margin: 0 }}>{f.name}</h3>
+                    <p style={{ fontSize: '10px', color: 'var(--text-secondary)', margin: '2px 0 0', display: 'flex', alignItems: 'center', gap: '3px' }}>{Icons.mapPin(colors.textSecondary, 10)} {f.venue}</p>
+                  </div>
+                  <span style={{ fontSize: '9px', padding: '3px 8px', borderRadius: '10px', fontWeight: '600', backgroundColor: f.status === 'voting' ? 'var(--accent-amber-bg)' : 'var(--accent-green-bg)', color: f.status === 'voting' ? 'var(--accent-amber-text)' : 'var(--accent-green-text)', display: 'flex', alignItems: 'center', gap: '3px' }}>
+                    {f.status === 'voting' ? Icons.vote('var(--accent-amber-text)', 9) : Icons.check('var(--accent-green-text)', 9)} {f.status === 'voting' ? 'Needs Votes' : 'Locked In'}
+                  </span>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <div style={{ display: 'flex' }}>
+                    {f.members.slice(0, 4).map((m, j) => (
+                      <div key={j} style={{ width: '24px', height: '24px', borderRadius: '50%', border: '2px solid var(--bg-card-solid)', backgroundColor: colors.navyMidBg, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '9px', fontWeight: 'bold', color: 'white', marginLeft: j > 0 ? '-6px' : 0 }}>{m[0]}</div>
+                    ))}
+                    {f.members.length > 4 && <div style={{ width: '24px', height: '24px', borderRadius: '50%', border: '2px solid var(--bg-card-solid)', backgroundColor: 'var(--icon-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '9px', fontWeight: 'bold', color: colors.navy, marginLeft: '-6px' }}>+{f.members.length - 4}</div>}
+                  </div>
+                  <span style={{ fontSize: '10px', fontWeight: '600', padding: '2px 8px', borderRadius: '10px', backgroundColor: 'var(--icon-bg)', color: colors.navy }}>{f.time}</span>
+                </div>
+              </button></ScrollFade>
+            );
+          })}
+        </div>
 
         {/* Safety Check-in */}
         <button onClick={() => setShowCheckin(true)} style={{ width: '100%', marginTop: '8px', padding: '14px', borderRadius: '14px', border: `2px dashed ${colors.teal}`, backgroundColor: 'rgba(20,184,166,0.05)', color: colors.teal, fontWeight: '700', fontSize: '13px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
@@ -5025,7 +5104,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
                 <p style={{ fontSize: '10px', fontWeight: '600', color: 'var(--text-tertiary)', margin: '0 0 6px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Suggested</p>
                 <div style={{ display: 'flex', gap: '6px', overflowX: 'auto', paddingBottom: '4px' }}>
                   {suggestedUsers.filter(u => !flockFriends.some(f => f.id === u.id)).slice(0, 5).map(user => (
-                    <button key={user.id} onClick={() => setFlockFriends(prev => [...prev, user])} style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '6px 10px', borderRadius: '20px', border: `1.5px solid ${colors.creamDark}`, backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer', flexShrink: 0, transition: 'all 0.15s ease' }}>
+                    <button key={user.id} onClick={() => setFlockFriends(prev => [...prev, user])} style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '6px 10px', borderRadius: '20px', border: `1.5px solid ${colors.creamDark}`, backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer', flexShrink: 0, transition: 'opacity 0.15s ease' }}>
                       <div style={{ width: '24px', height: '24px', borderRadius: '12px', backgroundColor: colors.navyMidBg, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '10px', fontWeight: '700', color: 'white', overflow: 'hidden', flexShrink: 0 }}>
                         {user.profile_image_url ? <img src={user.profile_image_url} alt="" style={{ width: '24px', height: '24px', borderRadius: '12px', objectFit: 'cover' }} /> : user.name[0]?.toUpperCase()}
                       </div>
@@ -5154,31 +5233,26 @@ const FlockAppInner = ({ authUser, onLogout }) => {
       {pickingVenueForCreate && (
         <div style={{ padding: '10px 14px', background: `linear-gradient(90deg, ${colors.navyBg}, ${colors.navyMidBg})`, display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0, boxShadow: '0 2px 8px rgba(13,40,71,0.3)' }}>
           <span style={{ color: 'white', fontSize: '12px', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '6px' }}>{Icons.mapPin('white', 14)} Tap venue to select</span>
-          <button onClick={() => { setPickingVenueForCreate(false); if (pickingVenueForDm) { setPickingVenueForDm(false); setCurrentTab('chats'); setCurrentScreen('dmDetail'); } else if (pickingVenueForFlockId) { setSelectedFlockId(pickingVenueForFlockId); setPickingVenueForFlockId(null); setCurrentTab('chats'); setCurrentScreen('chatDetail'); } else { setCurrentScreen('create'); } }} style={{ backgroundColor: 'rgba(255,255,255,0.2)', border: 'none', borderRadius: '12px', padding: '4px 12px', color: 'white', fontSize: '11px', cursor: 'pointer', fontWeight: '500', transition: 'all 0.2s ease' }}>Cancel</button>
+          <button onClick={() => { setPickingVenueForCreate(false); if (pickingVenueForDm) { setPickingVenueForDm(false); setCurrentTab('chats'); setCurrentScreen('dmDetail'); } else if (pickingVenueForFlockId) { setSelectedFlockId(pickingVenueForFlockId); setPickingVenueForFlockId(null); setCurrentTab('chats'); setCurrentScreen('chatDetail'); } else { setCurrentScreen('create'); } }} style={{ backgroundColor: 'rgba(255,255,255,0.2)', border: 'none', borderRadius: '12px', padding: '4px 12px', color: 'white', fontSize: '11px', cursor: 'pointer', fontWeight: '500', transition: 'opacity 0.2s ease' }}>Cancel</button>
         </div>
       )}
 
       <div style={{ padding: '10px 12px', display: 'flex', alignItems: 'center', gap: '6px', backgroundColor: 'var(--bg-card-solid)', boxShadow: '0 2px 12px rgba(0,0,0,0.08)', zIndex: 20, flexShrink: 0 }}>
         <div style={{ flex: 1, position: 'relative' }}>
-          <input key="search-input" id="search-input" type="text" value={venueQuery} onChange={(e) => handleVenueQueryChange(e.target.value)} placeholder="Search restaurants, bars, venues..." style={{ width: '100%', padding: '12px 14px 12px 38px', paddingRight: venueQuery ? '36px' : '14px', borderRadius: '14px', backgroundColor: 'var(--bg-tertiary)', color: 'var(--text-primary)', border: `2px solid ${venueQuery ? colors.navy : colors.borderDefault}`, fontSize: '13px', outline: 'none', boxSizing: 'border-box', transition: 'all 0.2s ease', fontWeight: '500' }} autoComplete="off" />
-          <span style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', transition: 'all 0.2s ease' }}>{Icons.search(venueQuery ? colors.navy : colors.textTertiary, 16)}</span>
+          <input key="search-input" id="search-input" type="text" value={venueQuery} onChange={(e) => handleVenueQueryChange(e.target.value)} placeholder="Search restaurants, bars, venues..." style={{ width: '100%', padding: '12px 14px 12px 38px', paddingRight: venueQuery ? '36px' : '14px', borderRadius: '14px', backgroundColor: 'var(--bg-tertiary)', color: 'var(--text-primary)', border: `2px solid ${venueQuery ? colors.navy : colors.borderDefault}`, fontSize: '13px', outline: 'none', boxSizing: 'border-box', transition: 'opacity 0.2s ease', fontWeight: '500' }} autoComplete="off" />
+          <span style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', transition: 'opacity 0.2s ease' }}>{Icons.search(venueQuery ? colors.navy : colors.textTertiary, 16)}</span>
           {venueQuery && (
             <button onClick={() => { setVenueQuery(''); setVenueResults([]); setShowSearchDropdown(false); setShowSearchResults(false); setActiveVenue(null); const lat = parseFloat(localStorage.getItem('flock_user_lat')); const lng = parseFloat(localStorage.getItem('flock_user_lng')); if (lat && lng) { setMapVenuesLoaded(false); loadVenuesAtLocation(lat, lng); } else { setMapVenuesLoaded(false); requestUserLocation(false); } }} title="Clear search" style={{ position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', padding: '2px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.x('#64748b', 16)}</button>
           )}
         </div>
-        <button onClick={() => { setMapVenuesLoaded(false); setVenueQuery(''); setVenueResults([]); setShowSearchDropdown(false); setShowSearchResults(false); setActiveVenue(null); requestUserLocation(true); }} title="Near Me" style={{ width: '36px', height: '36px', borderRadius: '12px', border: 'none', background: locationLoading ? `linear-gradient(135deg, ${colors.teal}, ${colors.skyBlue})` : `linear-gradient(135deg, ${colors.teal}, #0d9488)`, color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 3px 10px rgba(20,184,166,0.3)', transition: 'all 0.2s ease', animation: locationLoading ? 'spin 1s linear infinite' : 'none', flexShrink: 0 }}>{Icons.crosshair('white', 16)}</button>
-        <button onClick={() => {
-          setShowEventsView(true);
-          setActiveVenue(null);
-          if (userLocation && !featuredEventsLoading) {
-            setFeaturedEventsLoading(true);
-            getFeaturedEvents(`${userLocation.lat},${userLocation.lng}`, userInterests)
-              .then(data => setFeaturedEvents(data.events || []))
-              .catch(err => console.error('[Events] Fetch failed:', err))
-              .finally(() => setFeaturedEventsLoading(false));
-          }
-        }} title="Live Events" style={{ width: '36px', height: '36px', borderRadius: '12px', border: 'none', background: 'linear-gradient(135deg, #F59E0B, #D97706)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 3px 10px rgba(245,158,11,0.3)', transition: 'all 0.2s ease', flexShrink: 0 }}>{Icons.zap('white', 15)}</button>
-        <button onClick={() => setShowConnectPanel(true)} style={{ width: '36px', height: '36px', borderRadius: '12px', border: 'none', background: `linear-gradient(135deg, ${colors.navyBg}, ${colors.navyMidBg})`, color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 3px 10px rgba(13,40,71,0.25)', transition: 'all 0.2s ease', flexShrink: 0 }}>{Icons.users('white', 15)}</button>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '4px', flexShrink: 0 }}>
+          <div style={{ display: 'flex', gap: '4px', overflow: 'hidden', maxWidth: discoverNavOpen ? '124px' : '0px', opacity: discoverNavOpen ? 1 : 0, transition: 'max-width 0.3s ease, opacity 0.25s ease' }}>
+            <button onClick={() => { setDiscoverNavOpen(false); setMapVenuesLoaded(false); setVenueQuery(''); setVenueResults([]); setShowSearchDropdown(false); setShowSearchResults(false); setActiveVenue(null); requestUserLocation(true); }} style={{ width: '36px', height: '36px', minWidth: '36px', borderRadius: '12px', border: '1px solid var(--border-default)', background: 'var(--bg-card-solid)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', animation: locationLoading ? 'spin 1s linear infinite' : 'none' }}>{Icons.crosshair('var(--text-primary)', 15)}</button>
+            <button onClick={() => { setDiscoverNavOpen(false); setShowEventsView(true); setActiveVenue(null); if (userLocation && !featuredEventsLoading) { setFeaturedEventsLoading(true); getFeaturedEvents(`${userLocation.lat},${userLocation.lng}`, userInterests).then(data => setFeaturedEvents(data.events || [])).catch(err => console.error('[Events] Fetch failed:', err)).finally(() => setFeaturedEventsLoading(false)); } }} style={{ width: '36px', height: '36px', minWidth: '36px', borderRadius: '12px', border: '1px solid var(--border-default)', background: 'var(--bg-card-solid)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.zap('var(--text-primary)', 15)}</button>
+            <button onClick={() => { setDiscoverNavOpen(false); setShowConnectPanel(true); }} style={{ width: '36px', height: '36px', minWidth: '36px', borderRadius: '12px', border: '1px solid var(--border-default)', background: 'var(--bg-card-solid)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.users('var(--text-primary)', 15)}</button>
+          </div>
+          <button onClick={() => setDiscoverNavOpen(!discoverNavOpen)} style={{ height: '42px', minWidth: discoverNavOpen ? '42px' : 'auto', width: discoverNavOpen ? '42px' : 'auto', borderRadius: '14px', border: '1px solid var(--border-default)', background: 'var(--bg-card-solid)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px', padding: discoverNavOpen ? '0' : '0 14px', fontSize: '12px', fontWeight: '700', color: 'var(--text-primary)', flexShrink: 0, transition: 'all 0.3s ease' }}>{discoverNavOpen ? Icons.x('var(--text-primary)', 16) : <span style={{ fontSize: '12px', fontWeight: '700', whiteSpace: 'nowrap' }}>Features</span>}</button>
+        </div>
       </div>
 
       {/* Location loading overlay */}
@@ -5203,7 +5277,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
               {/* View All — first thing you see */}
               <button
                 onClick={() => { setShowSearchResults(true); setShowSearchDropdown(false); }}
-                style={{ width: '100%', padding: '11px 14px', borderRadius: '12px', border: 'none', background: `linear-gradient(135deg, ${colors.navyBg}, ${colors.navyMidBg})`, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', margin: '4px 0 8px', transition: 'all 0.2s', boxShadow: '0 2px 8px rgba(13,40,71,0.2)' }}
+                style={{ width: '100%', padding: '11px 14px', borderRadius: '12px', border: 'none', background: `linear-gradient(135deg, ${colors.navyBg}, ${colors.navyMidBg})`, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', margin: '4px 0 8px', transition: 'opacity 0.2s', boxShadow: '0 2px 8px rgba(13,40,71,0.2)' }}
               >
                 {Icons.filter('white', 13)}
                 <span style={{ fontSize: '13px', fontWeight: '700', color: 'white' }}>See All Results ({venueResults.length})</span>
@@ -5299,7 +5373,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
         {allVenues.length > 0 && !activeVenue && !showConnectPanel && !pickingVenueForCreate && (
           <button
             onClick={() => { setShowSearchResults(true); setShowSearchDropdown(false); }}
-            style={{ position: 'absolute', bottom: '14px', right: '12px', padding: '8px 14px', borderRadius: '12px', border: 'none', background: 'var(--bg-card-solid)', color: colors.navy, fontSize: '12px', fontWeight: '700', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px', boxShadow: '0 2px 12px rgba(0,0,0,0.15)', zIndex: 35, transition: 'all 0.2s ease' }}
+            style={{ position: 'absolute', bottom: '14px', right: '12px', padding: '8px 14px', borderRadius: '12px', border: 'none', background: 'var(--bg-card-solid)', color: colors.navy, fontSize: '12px', fontWeight: '700', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px', boxShadow: '0 2px 12px rgba(0,0,0,0.15)', zIndex: 35, transition: 'opacity 0.2s ease' }}
           >
             {Icons.filter(colors.navy, 13)} View All {allVenues.length} Results
           </button>
@@ -5324,7 +5398,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
                   value={connectSearch}
                   onChange={(e) => handleConnectSearch(e.target.value)}
                   placeholder="Search by name or email..."
-                  style={{ width: '100%', padding: '10px 12px 10px 34px', borderRadius: '10px', border: `1.5px solid ${connectSearch ? colors.navy : colors.borderDefault}`, fontSize: '13px', outline: 'none', boxSizing: 'border-box', backgroundColor: 'var(--bg-tertiary)', fontWeight: '500', transition: 'all 0.2s ease' }}
+                  style={{ width: '100%', padding: '10px 12px 10px 34px', borderRadius: '10px', border: `1.5px solid ${connectSearch ? colors.navy : colors.borderDefault}`, fontSize: '13px', outline: 'none', boxSizing: 'border-box', backgroundColor: 'var(--bg-tertiary)', fontWeight: '500', transition: 'opacity 0.2s ease' }}
                   autoComplete="off"
                 />
                 <span style={{ position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)' }}>{Icons.search(connectSearch ? colors.navy : colors.textTertiary, 14)}</span>
@@ -5387,9 +5461,16 @@ const FlockAppInner = ({ authUser, onLogout }) => {
         )}
 
         {/* Venue Popup with AI Crowd Forecast */}
+        <AnimatePresence>
         {activeVenue && !showConnectPanel && (
-          <div onClick={(e) => e.stopPropagation()} style={{ position: 'absolute', bottom: '12px', left: '8px', right: '8px', backgroundColor: 'var(--bg-card-solid)', borderRadius: '16px', boxShadow: '0 8px 32px rgba(0,0,0,0.25)', zIndex: 45, overflow: 'hidden', maxHeight: 'calc(100% - 24px)', overflowY: 'auto', WebkitOverflowScrolling: 'touch' }}>
-            <div style={{ height: '56px', background: `linear-gradient(135deg, ${getCategoryColor(activeVenue.category)}, ${activeVenue.crowd > 70 ? colors.red : colors.navyBg})`, position: 'relative', padding: '8px 12px', display: 'flex', alignItems: 'flex-end' }}>
+          <motion.div
+            key={activeVenue.id || activeVenue.place_id}
+            initial={{ y: 60, opacity: 0 }}
+            animate={{ y: 0, opacity: 1 }}
+            exit={{ y: 40, opacity: 0 }}
+            transition={{ type: 'spring', damping: 22, stiffness: 260, mass: 0.8 }}
+            onClick={(e) => e.stopPropagation()} style={{ position: 'absolute', bottom: '12px', left: '8px', right: '8px', backgroundColor: 'var(--bg-card-solid)', borderRadius: '16px', boxShadow: '0 8px 32px rgba(0,0,0,0.25)', zIndex: 45, overflow: 'hidden', maxHeight: 'calc(100% - 24px)', overflowY: 'auto', WebkitOverflowScrolling: 'touch' }}>
+            <motion.div initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.08, type: 'spring', damping: 20, stiffness: 300 }} style={{ height: '56px', background: `linear-gradient(135deg, ${getCategoryColor(activeVenue.category)}, ${activeVenue.crowd > 70 ? colors.red : colors.navyBg})`, position: 'relative', padding: '8px 12px', display: 'flex', alignItems: 'flex-end' }}>
               <button onClick={() => setActiveVenue(null)} style={{ position: 'absolute', top: '8px', right: '8px', width: '24px', height: '24px', borderRadius: '12px', backgroundColor: 'rgba(255,255,255,0.2)', border: 'none', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.x('white', 14)}</button>
               <div style={{ color: 'white' }}>
                 <h3 style={{ fontSize: '14px', fontWeight: '900', margin: 0 }}>{activeVenue.name}</h3>
@@ -5407,12 +5488,12 @@ const FlockAppInner = ({ authUser, onLogout }) => {
                 {Icons.party('#fbbf24', 10)}
                 <span style={{ color: 'white', fontSize: '10px', fontWeight: 'bold', marginLeft: '2px' }}>{activeVenue.stars}</span>
               </div>
-            </div>
+            </motion.div>
             <div style={{ padding: '12px' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '10px', color: 'var(--text-secondary)', marginBottom: '8px' }}>
+              <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.14, type: 'spring', damping: 18, stiffness: 280 }} style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '10px', color: 'var(--text-secondary)', marginBottom: '8px' }}>
                 {Icons.mapPin(colors.textSecondary, 12)}
                 <span>{activeVenue.addr}</span>
-              </div>
+              </motion.div>
 
               {/* AI Crowd Forecast Widget */}
               {(() => {
@@ -5592,7 +5673,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
                 const confidenceText = cd ? `${cd.confidence}%` : null;
 
                 return (
-              <div style={{ backgroundColor: 'var(--bg-tertiary)', borderRadius: '12px', padding: '10px', marginBottom: '10px', border: '1px solid var(--border-subtle)' }}>
+              <motion.div initial={{ opacity: 0, y: -14 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.2, type: 'spring', damping: 16, stiffness: 240 }} style={{ backgroundColor: 'var(--bg-tertiary)', borderRadius: '12px', padding: '10px', marginBottom: '10px', border: '1px solid var(--border-subtle)' }}>
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                     {Icons.robot(colors.navy, 14)}
@@ -5624,7 +5705,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
                 )}
 
                 {/* Crowd Meter */}
-                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '10px' }}>
+                <motion.div initial={{ opacity: 0, y: -12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.3, type: 'spring', damping: 15, stiffness: 220 }} style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '10px' }}>
                   {isClosed ? (
                     <div style={{ width: '50px', height: '50px', borderRadius: '25px', backgroundColor: 'var(--border-default)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                       <div style={{ width: '40px', height: '40px', borderRadius: '20px', backgroundColor: 'var(--bg-card-solid)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -5660,10 +5741,10 @@ const FlockAppInner = ({ authUser, onLogout }) => {
                       </>
                     )}
                   </div>
-                </div>
+                </motion.div>
 
                 {/* Hourly Forecast Graph */}
-                <div style={{ marginBottom: '10px' }}>
+                <motion.div initial={{ opacity: 0, y: -12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.4, type: 'spring', damping: 15, stiffness: 220 }} style={{ marginBottom: '10px' }}>
                   <p style={{ fontSize: '9px', fontWeight: '600', color: 'var(--text-secondary)', marginBottom: '6px', textTransform: 'uppercase' }}>Expected Crowd by Hour</p>
                   <div style={{ display: 'flex', alignItems: 'flex-end', gap: '3px', height: '40px' }}>
                     {hourlyData.map((h, i) => {
@@ -5709,10 +5790,10 @@ const FlockAppInner = ({ authUser, onLogout }) => {
                       );
                     })}
                   </div>
-                </div>
+                </motion.div>
 
                 {/* Busiest Hours & Wait */}
-                <div style={{ display: 'flex', gap: '6px', marginBottom: '8px' }}>
+                <motion.div initial={{ opacity: 0, y: -12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.5, type: 'spring', damping: 15, stiffness: 220 }} style={{ display: 'flex', gap: '6px', marginBottom: '8px' }}>
                   <div style={{ flex: 1, backgroundColor: 'var(--bg-card-solid)', borderRadius: '8px', padding: '6px 8px', border: '1px solid var(--border-subtle)' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '4px', marginBottom: '2px' }}>
                       {Icons.trendingUp(colors.red, 10)}
@@ -5727,11 +5808,11 @@ const FlockAppInner = ({ authUser, onLogout }) => {
                     </div>
                     <span style={{ fontSize: '11px', fontWeight: '700', color: isClosed ? colors.red : colors.navy }}>{isClosed ? 'Closed' : waitText}</span>
                   </div>
-                </div>
+                </motion.div>
 
                 {/* Quieter Options */}
                 {(crowdAlternatives.length > 0 || (!cd && allVenues.filter(v => v.id !== activeVenue.id && v.category === activeVenue.category).length > 0)) && (
-                <div>
+                <motion.div initial={{ opacity: 0, y: -12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.6, type: 'spring', damping: 15, stiffness: 220 }}>
                   <p style={{ fontSize: '9px', fontWeight: '600', color: 'var(--text-secondary)', marginBottom: '6px', textTransform: 'uppercase' }}>Less Crowded Nearby</p>
                   <div style={{ display: 'flex', gap: '6px' }}>
                     {(crowdAlternatives.length > 0 ? crowdAlternatives.slice(0, 2) : allVenues.filter(v => v.id !== activeVenue.id && v.category === activeVenue.category && v.crowd < score && v.opening_hours?.openNow !== false).sort((a, b) => a.crowd - b.crowd).slice(0, 2)).map((v, i) => (
@@ -5752,7 +5833,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
                       </button>
                     ))}
                   </div>
-                </div>
+                </motion.div>
                 )}
 
                 {/* Back to previous venue button */}
@@ -5774,11 +5855,11 @@ const FlockAppInner = ({ authUser, onLogout }) => {
                     {Icons.arrowLeft(colors.navy, 14)} Back to {venueDetailHistory[venueDetailHistory.length - 1]?.activeVenue?.name || 'Previous Venue'}
                   </button>
                 )}
-              </div>
+              </motion.div>
                 );
               })()}
 
-              <div style={{ display: 'flex', gap: '6px' }}>
+              <motion.div initial={{ opacity: 0, y: -12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.65, type: 'spring', damping: 15, stiffness: 220 }} style={{ display: 'flex', gap: '6px' }}>
                 {pickingVenueForCreate ? (
                   <button onClick={(e) => {
                     confirmClick(e);
@@ -5826,10 +5907,11 @@ const FlockAppInner = ({ authUser, onLogout }) => {
                   <button onClick={() => { openVenueDetail(activeVenue.place_id, { name: activeVenue.name, formatted_address: activeVenue.addr, place_id: activeVenue.place_id, rating: activeVenue.stars, photo_url: activeVenue.photo_url }); }} style={{ width: '40px', height: '40px', borderRadius: '8px', border: `2px solid ${colors.creamDark}`, backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.eye(colors.navy, 18)}</button>
                 )}
                 <button onClick={(e) => { confirmClick(e); addEventToCalendar(`Visit ${activeVenue.name}`, activeVenue.name, new Date(), '8 PM', getCategoryColor(activeVenue.category)); }} style={{ width: '40px', height: '40px', borderRadius: '8px', border: `2px solid ${colors.creamDark}`, backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', position: 'relative', overflow: 'hidden' }}>{Icons.calendar(colors.navy, 18)}</button>
-              </div>
+              </motion.div>
             </div>
-          </div>
+          </motion.div>
         )}
+        </AnimatePresence>
       </div>
 
       {/* Live Events Panel — slides in from right */}
@@ -5838,7 +5920,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
           {/* Events header */}
           <div style={{ backgroundColor: 'var(--bg-card-solid)', borderBottom: '1px solid var(--border-default)', flexShrink: 0 }}>
             <div style={{ padding: '12px 12px 8px', display: 'flex', alignItems: 'center', gap: '10px' }}>
-              <button onClick={() => { setShowEventsView(false); setEventsSearchQuery(''); }} style={{ width: '38px', height: '38px', borderRadius: '12px', border: 'none', backgroundColor: 'var(--bg-tertiary)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, transition: 'all 0.2s' }}>
+              <button onClick={() => { setShowEventsView(false); setEventsSearchQuery(''); }} style={{ width: '38px', height: '38px', borderRadius: '12px', border: 'none', backgroundColor: 'var(--bg-tertiary)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, transition: 'opacity 0.2s' }}>
                 {Icons.arrowLeft(colors.navy, 18)}
               </button>
               <div style={{ flex: 1, position: 'relative' }}>
@@ -5865,7 +5947,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
                         .finally(() => setFeaturedEventsLoading(false));
                     }
                   }}
-                  style={{ width: '100%', padding: '10px 14px 10px 36px', borderRadius: '12px', backgroundColor: 'var(--bg-tertiary)', color: 'var(--text-primary)', border: `2px solid ${eventsSearchQuery ? '#F59E0B' : colors.borderDefault}`, fontSize: '13px', outline: 'none', boxSizing: 'border-box', fontWeight: '500', transition: 'all 0.2s' }}
+                  style={{ width: '100%', padding: '10px 14px 10px 36px', borderRadius: '12px', backgroundColor: 'var(--bg-tertiary)', color: 'var(--text-primary)', border: `2px solid ${eventsSearchQuery ? '#F59E0B' : colors.borderDefault}`, fontSize: '13px', outline: 'none', boxSizing: 'border-box', fontWeight: '500', transition: 'opacity 0.2s' }}
                   autoComplete="off"
                 />
                 <span style={{ position: 'absolute', left: '11px', top: '50%', transform: 'translateY(-50%)' }}>{Icons.search(eventsSearchQuery ? '#F59E0B' : colors.textTertiary, 15)}</span>
@@ -6341,13 +6423,13 @@ const FlockAppInner = ({ authUser, onLogout }) => {
               <p style={{ fontSize: '11px', color: 'rgba(255,255,255,0.5)', margin: '2px 0 0', fontWeight: '500' }}>{totalConversations} conversation{totalConversations !== 1 ? 's' : ''}</p>
             </div>
             <div style={{ display: 'flex', gap: '6px' }}>
-              <button onClick={() => setEditingFlockList(!editingFlockList)} style={{ width: '36px', height: '36px', borderRadius: '12px', border: editingFlockList ? '2px solid white' : 'none', backgroundColor: editingFlockList ? 'rgba(255,255,255,0.25)' : 'rgba(255,255,255,0.12)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'all 0.2s' }}>
+              <button onClick={() => setEditingFlockList(!editingFlockList)} style={{ width: '36px', height: '36px', borderRadius: '12px', border: editingFlockList ? '2px solid white' : 'none', backgroundColor: editingFlockList ? 'rgba(255,255,255,0.25)' : 'rgba(255,255,255,0.12)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'opacity 0.2s' }}>
                 {Icons.gripVertical('white', 16)}
               </button>
-              <button onClick={() => setShowNewDmModal(true)} style={{ width: '36px', height: '36px', borderRadius: '12px', border: 'none', backgroundColor: 'var(--icon-bg)', color: colors.navy, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'all 0.2s', boxShadow: '0 2px 8px rgba(0,0,0,0.15)' }}>
+              <button onClick={() => setShowNewDmModal(true)} style={{ width: '36px', height: '36px', borderRadius: '12px', border: 'none', backgroundColor: 'var(--icon-bg)', color: colors.navy, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'opacity 0.2s', boxShadow: '0 2px 8px rgba(0,0,0,0.15)' }}>
                 {Icons.plus(colors.navy, 16)}
               </button>
-              <button onClick={() => { setShowChatSearch(!showChatSearch); if (!showChatSearch) setTimeout(() => chatListSearchRef.current?.focus(), 50); }} style={{ width: '36px', height: '36px', borderRadius: '12px', border: 'none', backgroundColor: showChatSearch ? 'rgba(255,255,255,0.25)' : 'rgba(255,255,255,0.12)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'all 0.2s' }}>
+              <button onClick={() => { setShowChatSearch(!showChatSearch); if (!showChatSearch) setTimeout(() => chatListSearchRef.current?.focus(), 50); }} style={{ width: '36px', height: '36px', borderRadius: '12px', border: 'none', backgroundColor: showChatSearch ? 'rgba(255,255,255,0.25)' : 'rgba(255,255,255,0.12)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'opacity 0.2s' }}>
                 {Icons.search('white', 16)}
               </button>
             </div>
@@ -6381,7 +6463,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
               {filteredDms.map((dm) => {
                 const lastMsg = dm.messages?.length > 0 ? dm.messages[dm.messages.length - 1] : (dm.lastMessage ? { text: dm.lastMessage, sender: dm.lastMessageIsYou ? 'You' : dm.name } : null);
                 return (
-                  <button key={`dm-${dm.userId}`} onClick={() => { setSelectedDmId(dm.userId); setCurrentScreen('dmDetail'); setDirectMessages(prev => prev.map(d => d.userId === dm.userId ? { ...d, unread: 0 } : d)); }} style={{ width: '100%', textAlign: 'left', backgroundColor: 'var(--bg-card-solid)', borderRadius: '16px', padding: '12px 14px', marginBottom: '6px', border: dm.unread ? `1.5px solid ${colors.navy}15` : `1px solid var(--border-default)`, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '12px', transition: 'all 0.2s', boxShadow: dm.unread ? '0 2px 12px rgba(13,40,71,0.08)' : '0 1px 4px rgba(0,0,0,0.03)' }}>
+                  <button key={`dm-${dm.userId}`} onClick={() => { setSelectedDmId(dm.userId); setCurrentScreen('dmDetail'); setDirectMessages(prev => prev.map(d => d.userId === dm.userId ? { ...d, unread: 0 } : d)); }} style={{ width: '100%', textAlign: 'left', backgroundColor: 'var(--bg-card-solid)', borderRadius: '16px', padding: '12px 14px', marginBottom: '6px', border: dm.unread ? `1.5px solid ${colors.navy}15` : `1px solid var(--border-default)`, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '12px', transition: 'opacity 0.2s', boxShadow: dm.unread ? '0 2px 12px rgba(13,40,71,0.08)' : '0 1px 4px rgba(0,0,0,0.03)' }}>
                     <div style={{ position: 'relative', flexShrink: 0 }}>
                       <div style={{ width: '46px', height: '46px', borderRadius: '23px', background: `linear-gradient(135deg, ${colors.navyBg}, ${colors.navyMidBg})`, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '18px', fontWeight: '700', color: 'white', overflow: 'hidden' }}>
                         {dm.image ? <img src={dm.image} alt="" style={{ width: '46px', height: '46px', borderRadius: '23px', objectFit: 'cover' }} /> : (dm.name?.[0]?.toUpperCase() || '?')}
@@ -6468,7 +6550,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
                     )}
 
                     {/* Flock card */}
-                    <button onClick={() => { if (editingFlockList) return; setSelectedFlockId(f.id); setCurrentScreen('chatDetail'); simulateTyping(); }} style={{ flex: 1, textAlign: 'left', backgroundColor: isPinned ? `${colors.navy}06` : 'var(--bg-card-solid)', borderRadius: '16px', padding: '12px 14px', border: isPinned ? `1.5px solid ${colors.navy}18` : `1px solid var(--border-default)`, cursor: editingFlockList ? 'default' : 'pointer', display: 'flex', alignItems: 'center', gap: '12px', transition: 'all 0.2s', boxShadow: isPinned ? '0 2px 12px rgba(13,40,71,0.06)' : '0 1px 4px rgba(0,0,0,0.03)', position: 'relative', overflow: 'hidden' }}>
+                    <button onClick={() => { if (editingFlockList) return; setSelectedFlockId(f.id); setCurrentScreen('chatDetail'); simulateTyping(); }} style={{ flex: 1, textAlign: 'left', backgroundColor: isPinned ? `${colors.navy}06` : 'var(--bg-card-solid)', borderRadius: '16px', padding: '12px 14px', border: isPinned ? `1.5px solid ${colors.navy}18` : `1px solid var(--border-default)`, cursor: editingFlockList ? 'default' : 'pointer', display: 'flex', alignItems: 'center', gap: '12px', transition: 'opacity 0.2s', boxShadow: isPinned ? '0 2px 12px rgba(13,40,71,0.06)' : '0 1px 4px rgba(0,0,0,0.03)', position: 'relative', overflow: 'hidden' }}>
                       {/* Avatar */}
                       <div style={{ position: 'relative', flexShrink: 0 }}>
                         <div style={{ width: '46px', height: '46px', borderRadius: '14px', background: `linear-gradient(135deg, ${colors.navyBg}, ${colors.navyMidBg})`, display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 2px 8px rgba(13,40,71,0.2)' }}>
@@ -6508,7 +6590,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
 
                       {/* Pin button (edit mode) or unread badge */}
                       {editingFlockList ? (
-                        <button onClick={(e) => { e.stopPropagation(); togglePin(f.id); }} style={{ width: '32px', height: '32px', borderRadius: '10px', border: 'none', backgroundColor: isPinned ? `${colors.navy}12` : 'var(--bg-tertiary)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, transition: 'all 0.2s' }}>
+                        <button onClick={(e) => { e.stopPropagation(); togglePin(f.id); }} style={{ width: '32px', height: '32px', borderRadius: '10px', border: 'none', backgroundColor: isPinned ? `${colors.navy}12` : 'var(--bg-tertiary)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, transition: 'opacity 0.2s' }}>
                           {isPinned ? Icons.pinFilled(colors.navy, 16) : Icons.pin(colors.textTertiary, 16)}
                         </button>
                       ) : hasUnread && (
@@ -6545,12 +6627,17 @@ const FlockAppInner = ({ authUser, onLogout }) => {
       <div key="chat-detail-screen-container" style={{ display: 'flex', flexDirection: 'column', height: '100%', backgroundColor: 'var(--bg-card-solid)' }}>
         <div style={{ padding: '6px 10px 5px 4px', background: `linear-gradient(135deg, ${colors.navyBg}, ${colors.navyMidBg})`, flexShrink: 0, boxShadow: '0 2px 10px rgba(0,0,0,0.1)' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-            <button onClick={() => { setCurrentScreen('main'); setChatInput(''); setReplyingTo(null); setShowFlockMenu(false); setShowLeaveConfirm(false); setShowChatSearch(false); setChatSearch(''); setShowVotePanel(false); }} style={{ width: '34px', height: '34px', borderRadius: '17px', background: 'none', border: 'none', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{Icons.arrowLeft('white', 20)}</button>
+            <button onClick={() => { setCurrentScreen('main'); setChatInput(''); setReplyingTo(null); setShowFlockMenu(false); setShowLeaveConfirm(false); setShowChatSearch(false); setChatSearch(''); setShowVotePanel(false); setChatNavOpen(false); }} style={{ width: '34px', height: '34px', borderRadius: '17px', background: 'none', border: 'none', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{Icons.arrowLeft('white', 20)}</button>
             <h2 style={{ flex: 1, fontWeight: '800', color: 'white', fontSize: '15px', margin: 0, lineHeight: '1.3', minWidth: 0 }}>{flock.name}</h2>
-            <button onClick={() => { setShowVotePanel(true); loadPopularVenues(); }} style={{ height: '34px', borderRadius: '17px', border: 'none', backgroundColor: flock.status === 'voting' ? colors.teal : 'rgba(255,255,255,0.15)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px', padding: '0 12px', fontSize: '12px', fontWeight: '700', flexShrink: 0 }}>{Icons.vote('white', 14)} Vote</button>
-            <button onClick={() => { setShowFlockInviteModal(true); setFlockInviteSelected([]); setFlockInviteSearch(''); setFlockInviteResults([]); }} style={{ width: '34px', height: '34px', borderRadius: '17px', border: 'none', backgroundColor: 'rgba(255,255,255,0.15)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{Icons.userPlus('white', 15)}</button>
-            <button onClick={() => setShowChatSearch(!showChatSearch)} style={{ width: '34px', height: '34px', borderRadius: '17px', border: 'none', backgroundColor: showChatSearch ? 'rgba(255,255,255,0.35)' : 'rgba(255,255,255,0.15)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{Icons.search('white', 15)}</button>
-            <button onClick={() => setShowChatPool(true)} style={{ width: '34px', height: '34px', borderRadius: '17px', border: 'none', backgroundColor: 'var(--icon-bg)', color: colors.navy, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{Icons.dollar(colors.navy, 15)}</button>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '4px', flexShrink: 0 }}>
+              <div style={{ display: 'flex', gap: '4px', overflow: 'hidden', maxWidth: chatNavOpen ? '152px' : '0px', opacity: chatNavOpen ? 1 : 0, transition: 'max-width 0.3s ease, opacity 0.25s ease' }}>
+                <button onClick={() => { setChatNavOpen(false); setShowVotePanel(true); loadPopularVenues(); }} style={{ width: '34px', height: '34px', minWidth: '34px', borderRadius: '17px', border: 'none', backgroundColor: flock.status === 'voting' ? colors.teal : 'rgba(255,255,255,0.15)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.vote('white', 14)}</button>
+                <button onClick={() => { setChatNavOpen(false); setShowFlockInviteModal(true); setFlockInviteSelected([]); setFlockInviteSearch(''); setFlockInviteResults([]); }} style={{ width: '34px', height: '34px', minWidth: '34px', borderRadius: '17px', border: 'none', backgroundColor: 'rgba(255,255,255,0.15)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.userPlus('white', 15)}</button>
+                <button onClick={() => { setChatNavOpen(false); setShowChatSearch(!showChatSearch); }} style={{ width: '34px', height: '34px', minWidth: '34px', borderRadius: '17px', border: 'none', backgroundColor: showChatSearch ? 'rgba(255,255,255,0.35)' : 'rgba(255,255,255,0.15)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.search('white', 15)}</button>
+                <button onClick={() => { setChatNavOpen(false); setShowChatPool(true); }} style={{ width: '34px', height: '34px', minWidth: '34px', borderRadius: '17px', border: 'none', backgroundColor: 'rgba(255,255,255,0.15)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.dollar('white', 15)}</button>
+              </div>
+              <button onClick={() => setChatNavOpen(!chatNavOpen)} style={{ height: '34px', minWidth: chatNavOpen ? '34px' : 'auto', width: chatNavOpen ? '34px' : 'auto', borderRadius: '17px', border: 'none', backgroundColor: chatNavOpen ? 'rgba(255,255,255,0.35)' : 'rgba(255,255,255,0.15)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px', padding: chatNavOpen ? '0' : '0 12px', fontSize: '12px', fontWeight: '700', flexShrink: 0, transition: 'all 0.3s ease' }}>{chatNavOpen ? Icons.x('white', 14) : <><span style={{ fontSize: '12px', fontWeight: '700' }}>Features</span></>}</button>
+            </div>
             <div style={{ position: 'relative', flexShrink: 0 }}>
               <button onClick={() => setShowFlockMenu(!showFlockMenu)} style={{ width: '34px', height: '34px', borderRadius: '17px', border: 'none', backgroundColor: 'rgba(255,255,255,0.15)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.moreVertical('white', 16)}</button>
               {showFlockMenu && (
@@ -7014,16 +7101,16 @@ const FlockAppInner = ({ authUser, onLogout }) => {
 
         {/* Input area */}
         <div style={{ padding: '10px 12px', backgroundColor: 'var(--bg-nav)', backdropFilter: 'blur(10px)', WebkitBackdropFilter: 'blur(10px)', borderTop: '1px solid var(--border-subtle)', display: 'flex', gap: '8px', alignItems: 'center', flexShrink: 0, boxShadow: 'var(--nav-shadow)' }}>
-          <button onClick={() => setShowCameraPopup(true)} style={{ width: '38px', height: '38px', borderRadius: '19px', border: 'none', backgroundColor: 'var(--bg-hover)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'all 0.2s ease', flexShrink: 0 }}>
+          <button onClick={() => setShowCameraPopup(true)} style={{ width: '38px', height: '38px', borderRadius: '19px', border: 'none', backgroundColor: 'var(--bg-hover)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'opacity 0.2s ease', flexShrink: 0 }}>
             {Icons.camera(colors.textSecondary, 18)}
           </button>
           <input ref={chatGalleryInputRef} type="file" accept="image/*" onChange={handleChatImageSelect} style={{ display: 'none' }} />
-          <button onClick={() => { if (sharingLocationForFlock === flock.id) { stopLocationSharing(); } else { const otherMembers = (flock.members || []).filter(m => m.id !== authUser?.id).length; if (otherMembers === 0) { showToast('No one else in this flock to share with', 'error'); return; } startSharingLocation(flock.id); } }} style={{ width: '38px', height: '38px', borderRadius: '19px', border: 'none', backgroundColor: sharingLocationForFlock === flock.id ? '#10b981' : 'var(--bg-hover)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'all 0.2s ease', flexShrink: 0 }}>{Icons.mapPin(sharingLocationForFlock === flock.id ? 'white' : colors.textSecondary, 16)}</button>
-          <input key="chat-input" id="chat-input" type="text" value={chatInput} onChange={handleChatInputChange} onKeyDown={(e) => e.key === 'Enter' && sendChatMessage()} placeholder={replyingTo ? 'Reply...' : 'Type a message...'} style={{ flex: 1, padding: '12px 16px', borderRadius: '22px', backgroundColor: 'var(--bg-hover)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)', fontSize: '14px', outline: 'none', fontWeight: '500', transition: 'all 0.2s ease' }} autoComplete="off" />
+          <button onClick={() => { if (sharingLocationForFlock === flock.id) { stopLocationSharing(); } else { const otherMembers = (flock.members || []).filter(m => m.id !== authUser?.id).length; if (otherMembers === 0) { showToast('No one else in this flock to share with', 'error'); return; } startSharingLocation(flock.id); } }} style={{ width: '38px', height: '38px', borderRadius: '19px', border: 'none', backgroundColor: sharingLocationForFlock === flock.id ? '#10b981' : 'var(--bg-hover)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'opacity 0.2s ease', flexShrink: 0 }}>{Icons.mapPin(sharingLocationForFlock === flock.id ? 'white' : colors.textSecondary, 16)}</button>
+          <input key="chat-input" id="chat-input" type="text" value={chatInput} onChange={handleChatInputChange} onKeyDown={(e) => e.key === 'Enter' && sendChatMessage()} placeholder={replyingTo ? 'Reply...' : 'Type a message...'} style={{ flex: 1, padding: '12px 16px', borderRadius: '22px', backgroundColor: 'var(--bg-hover)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)', fontSize: '14px', outline: 'none', fontWeight: '500', transition: 'opacity 0.2s ease' }} autoComplete="off" />
           {chatInput ? (
-            <button onClick={sendChatMessage} style={{ width: '42px', height: '42px', borderRadius: '21px', border: 'none', background: `linear-gradient(135deg, ${colors.navyBg}, ${colors.navyMidBg})`, color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 3px 10px rgba(13,40,71,0.25)', transition: 'all 0.2s ease' }}>{Icons.send('white', 18)}</button>
+            <button onClick={sendChatMessage} style={{ width: '42px', height: '42px', borderRadius: '21px', border: 'none', background: `linear-gradient(135deg, ${colors.navyBg}, ${colors.navyMidBg})`, color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 3px 10px rgba(13,40,71,0.25)', transition: 'opacity 0.2s ease' }}>{Icons.send('white', 18)}</button>
           ) : (
-            <button onClick={() => {}} style={{ width: '42px', height: '42px', borderRadius: '21px', border: 'none', background: `linear-gradient(135deg, ${colors.navyBg}, ${colors.navyMidBg})`, color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 3px 10px rgba(13,40,71,0.25)', transition: 'all 0.2s ease' }}>{Icons.mic('white', 18)}</button>
+            <button onClick={() => {}} style={{ width: '42px', height: '42px', borderRadius: '21px', border: 'none', background: `linear-gradient(135deg, ${colors.navyBg}, ${colors.navyMidBg})`, color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 3px 10px rgba(13,40,71,0.25)', transition: 'opacity 0.2s ease' }}>{Icons.mic('white', 18)}</button>
           )}
         </div>
 
@@ -7034,11 +7121,11 @@ const FlockAppInner = ({ authUser, onLogout }) => {
               <div style={{ width: '36px', height: '4px', borderRadius: '2px', backgroundColor: 'var(--toggle-off)', margin: '0 auto 16px' }} />
               <h3 style={{ fontSize: '16px', fontWeight: '800', color: colors.navy, margin: '0 0 16px', textAlign: 'center' }}>Add Photo</h3>
               <div style={{ display: 'flex', gap: '12px' }}>
-                <button onClick={() => openCameraViewfinder('flock')} style={{ flex: 1, padding: '16px', borderRadius: '16px', border: `2px solid ${colors.creamDark}`, backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px', transition: 'all 0.2s ease' }}>
+                <button onClick={() => openCameraViewfinder('flock')} style={{ flex: 1, padding: '16px', borderRadius: '16px', border: `2px solid ${colors.creamDark}`, backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px', transition: 'opacity 0.2s ease' }}>
                   {Icons.camera(colors.navy, 28)}
                   <span style={{ fontSize: '13px', fontWeight: '700', color: colors.navy }}>Take Photo</span>
                 </button>
-                <button onClick={() => { setShowCameraPopup(false); setTimeout(() => chatGalleryInputRef.current?.click(), 100); }} style={{ flex: 1, padding: '16px', borderRadius: '16px', border: `2px solid ${colors.creamDark}`, backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px', transition: 'all 0.2s ease' }}>
+                <button onClick={() => { setShowCameraPopup(false); setTimeout(() => chatGalleryInputRef.current?.click(), 100); }} style={{ flex: 1, padding: '16px', borderRadius: '16px', border: `2px solid ${colors.creamDark}`, backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px', transition: 'opacity 0.2s ease' }}>
                   {Icons.image(colors.navy, 28)}
                   <span style={{ fontSize: '13px', fontWeight: '700', color: colors.navy }}>Gallery</span>
                 </button>
@@ -7402,7 +7489,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
                         ? `linear-gradient(135deg, ${colors.navyBg}, ${colors.navyMidBg})`
                         : isLeading ? `linear-gradient(135deg, ${colors.teal}, #0d9488)` : `linear-gradient(135deg, ${colors.navy}15, ${colors.navy}25)`;
                       return (
-                        <button key={v.venue} onClick={(e) => { confirmClick(e); isMyVote ? handleUnvote() : handleQuickVote(v.venue, v.type); }} style={{ width: '100%', textAlign: 'left', padding: '12px 14px', borderRadius: '14px', border: isAssigned ? `2px solid ${colors.navy}` : isMyVote ? `2px solid ${colors.navy}` : `1.5px solid var(--border-default)`, backgroundColor: isAssigned ? `${colors.navy}05` : isMyVote ? `${colors.navy}06` : 'var(--bg-card-solid)', cursor: 'pointer', position: 'relative', overflow: 'hidden', transition: 'all 0.2s' }}>
+                        <button key={v.venue} onClick={(e) => { confirmClick(e); isMyVote ? handleUnvote() : handleQuickVote(v.venue, v.type); }} style={{ width: '100%', textAlign: 'left', padding: '12px 14px', borderRadius: '14px', border: isAssigned ? `2px solid ${colors.navy}` : isMyVote ? `2px solid ${colors.navy}` : `1.5px solid var(--border-default)`, backgroundColor: isAssigned ? `${colors.navy}05` : isMyVote ? `${colors.navy}06` : 'var(--bg-card-solid)', cursor: 'pointer', position: 'relative', overflow: 'hidden', transition: 'opacity 0.2s' }}>
                           {/* Progress bar background */}
                           <div style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: `${votePercent}%`, backgroundColor: isMyVote ? `${colors.navy}10` : 'var(--bg-tertiary)', transition: 'width 0.4s ease', borderRadius: '14px' }} />
                           <div style={{ position: 'relative', display: 'flex', alignItems: 'center', gap: '10px' }}>
@@ -7441,7 +7528,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
                     <p style={{ fontSize: '12px', fontWeight: '700', color: 'var(--text-tertiary)', marginBottom: '10px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Popular Chains Nearby</p>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
                       {suggestedVenues.map(venue => (
-                        <button key={venue.id || venue.name} onClick={(e) => { confirmClick(e); handleQuickVote(venue.name, venue.type || venue.category || 'Venue'); }} style={{ width: '100%', textAlign: 'left', padding: '10px 12px', borderRadius: '12px', border: '1px solid var(--border-default)', backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '10px', transition: 'all 0.2s', position: 'relative', overflow: 'hidden' }}>
+                        <button key={venue.id || venue.name} onClick={(e) => { confirmClick(e); handleQuickVote(venue.name, venue.type || venue.category || 'Venue'); }} style={{ width: '100%', textAlign: 'left', padding: '10px 12px', borderRadius: '12px', border: '1px solid var(--border-default)', backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '10px', transition: 'opacity 0.2s', position: 'relative', overflow: 'hidden' }}>
                           {venue.photo_url ? (
                             <img src={venue.photo_url} alt="" style={{ width: '36px', height: '36px', borderRadius: '8px', objectFit: 'cover', flexShrink: 0 }} onError={(e) => { e.target.onerror = null; e.target.src = 'data:image/svg+xml,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="36" height="36"><rect fill="#1a3a5c" width="36" height="36" rx="8"/></svg>'); }} />
                           ) : (
@@ -7515,7 +7602,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
                       backgroundColor: 'var(--bg-card-solid)',
                       cursor: 'pointer',
                       textAlign: 'left',
-                      transition: 'all 0.2s ease',
+                      transition: 'opacity 0.2s ease',
                       position: 'relative',
                       overflow: 'hidden'
                     }}
@@ -7838,7 +7925,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
               <p style={{ fontSize: '11px', color: 'var(--text-secondary)', margin: '0 0 8px', fontWeight: '600' }}>Was it busy?</p>
               <div style={{ display: 'flex', gap: '8px', marginBottom: '14px' }}>
                 {[{ level: 1, label: 'Quiet', color: colors.teal }, { level: 2, label: 'Moderate', color: colors.amber }, { level: 3, label: 'Packed', color: colors.red }].map(opt => (
-                  <button key={opt.level} onClick={() => setFeedbackState(prev => ({ ...prev, crowdLevel: opt.level }))} style={{ flex: 1, padding: '12px 6px', borderRadius: '10px', border: feedbackState.crowdLevel === opt.level ? `2px solid ${opt.color}` : '1.5px solid var(--border-default)', backgroundColor: feedbackState.crowdLevel === opt.level ? `${opt.color}15` : 'var(--bg-card-solid)', cursor: 'pointer', textAlign: 'center', transition: 'all 0.15s ease' }}>
+                  <button key={opt.level} onClick={() => setFeedbackState(prev => ({ ...prev, crowdLevel: opt.level }))} style={{ flex: 1, padding: '12px 6px', borderRadius: '10px', border: feedbackState.crowdLevel === opt.level ? `2px solid ${opt.color}` : '1.5px solid var(--border-default)', backgroundColor: feedbackState.crowdLevel === opt.level ? `${opt.color}15` : 'var(--bg-card-solid)', cursor: 'pointer', textAlign: 'center', transition: 'opacity 0.15s ease' }}>
                     <div style={{ width: '8px', height: '8px', borderRadius: '4px', backgroundColor: opt.color, margin: '0 auto 6px' }} />
                     <span style={{ fontSize: '12px', fontWeight: '700', color: feedbackState.crowdLevel === opt.level ? opt.color : colors.navy }}>{opt.label}</span>
                   </button>
@@ -7848,7 +7935,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
               <p style={{ fontSize: '11px', color: 'var(--text-secondary)', margin: '0 0 8px', fontWeight: '600' }}>Worth the price?</p>
               <div style={{ display: 'flex', gap: '8px', marginBottom: '14px' }}>
                 {[{ val: true, label: 'Yes', color: colors.teal }, { val: false, label: 'No', color: colors.red }].map(opt => (
-                  <button key={String(opt.val)} onClick={() => setFeedbackState(prev => ({ ...prev, priceWorth: opt.val }))} style={{ flex: 1, padding: '12px 6px', borderRadius: '10px', border: feedbackState.priceWorth === opt.val ? `2px solid ${opt.color}` : '1.5px solid var(--border-default)', backgroundColor: feedbackState.priceWorth === opt.val ? `${opt.color}15` : 'var(--bg-card-solid)', cursor: 'pointer', textAlign: 'center', transition: 'all 0.15s ease' }}>
+                  <button key={String(opt.val)} onClick={() => setFeedbackState(prev => ({ ...prev, priceWorth: opt.val }))} style={{ flex: 1, padding: '12px 6px', borderRadius: '10px', border: feedbackState.priceWorth === opt.val ? `2px solid ${opt.color}` : '1.5px solid var(--border-default)', backgroundColor: feedbackState.priceWorth === opt.val ? `${opt.color}15` : 'var(--bg-card-solid)', cursor: 'pointer', textAlign: 'center', transition: 'opacity 0.15s ease' }}>
                     <span style={{ fontSize: '12px', fontWeight: '700', color: feedbackState.priceWorth === opt.val ? opt.color : colors.navy }}>{opt.label}</span>
                   </button>
                 ))}
@@ -7942,7 +8029,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
               <p style={{ color: colors.navy, fontWeight: '800', fontSize: '13px', margin: '0 0 2px' }}>Chat</p>
               <p style={{ color: 'var(--text-tertiary)', fontSize: '10px', margin: 0 }}>{flock.messages?.length > 0 ? `${flock.messages.length} messages` : 'Start chatting'}</p>
             </button>
-            <button onClick={() => { setPickingVenueForFlockId(flock.id); setPickingVenueForCreate(true); setCurrentTab('explore'); }} style={{ ...styles.card, border: 'none', cursor: 'pointer', textAlign: 'center', padding: '16px 10px' }}>
+            <button onClick={() => { setPickingVenueForFlockId(flock.id); setPickingVenueForCreate(true); setCurrentTab('explore'); setCurrentScreen('main'); }} style={{ ...styles.card, border: 'none', cursor: 'pointer', textAlign: 'center', padding: '16px 10px' }}>
               <div style={{ width: '40px', height: '40px', borderRadius: '12px', background: 'linear-gradient(135deg, #f59e0b, #d97706)', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 8px' }}>{Icons.mapPin('white', 18)}</div>
               <p style={{ color: colors.navy, fontWeight: '800', fontSize: '13px', margin: '0 0 2px' }}>{hasVenue ? 'Change Venue' : 'Pick Venue'}</p>
               <p style={{ color: 'var(--text-tertiary)', fontSize: '10px', margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{hasVenue ? flock.venue : 'Search places'}</p>
@@ -8421,7 +8508,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
           <button onClick={() => setCurrentScreen('addFriends')} style={{ width: '100%', padding: '14px', borderRadius: '14px', border: 'none', background: `linear-gradient(135deg, ${colors.navyBg}, ${colors.navyMidBg})`, color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '12px', boxShadow: '0 4px 12px rgba(13,40,71,0.25)', position: 'relative', overflow: 'hidden' }}>
             <div style={{ width: '36px', height: '36px', borderRadius: '12px', backgroundColor: 'rgba(255,255,255,0.2)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.userPlus('white', 18)}</div>
             <div style={{ flex: 1, textAlign: 'left' }}>
-              <span style={{ fontWeight: '700', fontSize: '15px', display: 'block' }}>Add Friends</span>
+              <span className="shimmer-text" style={{ fontWeight: '700', fontSize: '15px', display: 'block' }}>Add Friends</span>
               <span style={{ fontSize: '11px', opacity: 0.7 }}>Find people, scan QR, sync contacts</span>
             </div>
             {pendingRequests.length > 0 && <span style={{ padding: '4px 10px', borderRadius: '12px', backgroundColor: colors.amber, fontSize: '12px', fontWeight: '700' }}>{pendingRequests.length}</span>}
@@ -8885,7 +8972,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
             <div style={{ display: 'flex', gap: '4px', alignItems: 'flex-end', height: '50px' }}>
               {venueData.peakHours.map((h, i) => (
                 <div key={i} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-                  <div style={{ width: '100%', height: `${h.value * 0.5}px`, backgroundColor: h.value > 80 ? colors.red : h.value > 50 ? colors.amber : colors.teal, borderRadius: '2px', transition: 'all 0.3s' }} />
+                  <div style={{ width: '100%', height: `${h.value * 0.5}px`, backgroundColor: h.value > 80 ? colors.red : h.value > 50 ? colors.amber : colors.teal, borderRadius: '2px', transition: 'height 0.3s ease' }} />
                   <span style={{ fontSize: '8px', color: 'var(--text-secondary)', marginTop: '4px' }}>{h.hour}</span>
                 </div>
               ))}
@@ -9479,7 +9566,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
         {/* Tab Navigation */}
         <div style={{ display: 'flex', backgroundColor: 'var(--bg-card-solid)', borderBottom: '1px solid var(--border-default)', flexShrink: 0, padding: '8px 4px', gap: '4px' }}>
           {adminTabs.map(tab => (
-            <button key={tab.id} onClick={() => setAdminTab(tab.id)} style={{ flex: 1, padding: '12px 4px', border: 'none', backgroundColor: adminTab === tab.id ? colors.navyBg : 'var(--bg-card-solid)', borderRadius: '10px', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '4px', transition: 'all 0.2s' }}>
+            <button key={tab.id} onClick={() => setAdminTab(tab.id)} style={{ flex: 1, padding: '12px 4px', border: 'none', backgroundColor: adminTab === tab.id ? colors.navyBg : 'var(--bg-card-solid)', borderRadius: '10px', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '4px', transition: 'opacity 0.2s' }}>
               {tab.icon(adminTab === tab.id ? 'white' : colors.navy, 18)}
               <span style={{ fontSize: '10px', fontWeight: '700', color: adminTab === tab.id ? 'white' : colors.navy }}>{tab.label}</span>
             </button>
@@ -10039,7 +10126,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
                 height: '4px',
                 borderRadius: '4px',
                 backgroundColor: step <= onboardingStep ? colors.navyBg : 'var(--border-subtle)',
-                transition: 'all 0.3s ease',
+                transition: 'opacity 0.3s ease',
                 transform: step <= onboardingStep ? 'scaleY(1.2)' : 'scaleY(1)'
               }}
             />
@@ -10110,7 +10197,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
                       fontSize: '14px',
                       fontWeight: '600',
                       cursor: 'pointer',
-                      transition: 'all 0.2s',
+                      transition: 'opacity 0.2s',
                       transform: isSelected ? 'scale(1.02)' : 'scale(1)'
                     }}
                   >
@@ -10220,7 +10307,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
           <div style={{ display: 'flex', gap: '4px', paddingBottom: '2px' }}>
             {tabs.map(tab => (
               <button key={tab.id} onClick={() => setAddFriendsTab(tab.id)} style={{
-                flex: 1, padding: '8px 4px', borderRadius: '16px', border: 'none', cursor: 'pointer', fontSize: '11px', fontWeight: '700', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '3px', transition: 'all 0.2s ease',
+                flex: 1, padding: '8px 4px', borderRadius: '16px', border: 'none', cursor: 'pointer', fontSize: '11px', fontWeight: '700', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '3px', transition: 'opacity 0.2s ease',
                 backgroundColor: addFriendsTab === tab.id ? 'white' : 'rgba(255,255,255,0.15)',
                 color: addFriendsTab === tab.id ? colors.navy : 'rgba(255,255,255,0.8)',
               }}>
@@ -10284,7 +10371,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
             <div>
               <div style={{ position: 'relative', marginBottom: '12px' }}>
                 <input type="text" value={addFriendsSearch} onChange={(e) => handleAddFriendsSearch(e.target.value)} placeholder="Search by name..." autoComplete="off"
-                  style={{ width: '100%', padding: '12px 12px 12px 38px', borderRadius: '14px', border: `1.5px solid ${addFriendsSearch ? colors.navy : colors.borderDefault}`, fontSize: '14px', outline: 'none', boxSizing: 'border-box', backgroundColor: 'var(--bg-card-solid)', color: 'var(--text-primary)', fontWeight: '500', transition: 'all 0.2s ease' }}
+                  style={{ width: '100%', padding: '12px 12px 12px 38px', borderRadius: '14px', border: `1.5px solid ${addFriendsSearch ? colors.navy : colors.borderDefault}`, fontSize: '14px', outline: 'none', boxSizing: 'border-box', backgroundColor: 'var(--bg-card-solid)', color: 'var(--text-primary)', fontWeight: '500', transition: 'opacity 0.2s ease' }}
                 />
                 <span style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)' }}>{Icons.search(addFriendsSearch ? colors.navy : colors.textTertiary, 16)}</span>
                 {addFriendsSearch && <button onClick={() => { setAddFriendsSearch(''); setAddFriendsResults([]); }} style={{ position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', padding: '4px' }}>{Icons.x(colors.textTertiary, 14)}</button>}
@@ -10597,7 +10684,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
                         value={venueQuery}
                         onChange={(e) => handleVenueQueryChange(e.target.value)}
                         placeholder="Search restaurants, bars, venues..."
-                        style={{ width: '100%', padding: '12px 40px 12px 38px', borderRadius: '14px', backgroundColor: 'var(--bg-tertiary)', color: 'var(--text-primary)', border: `2px solid ${venueQuery ? colors.navy : colors.borderDefault}`, fontSize: '13px', outline: 'none', boxSizing: 'border-box', transition: 'all 0.2s ease', fontWeight: '500' }}
+                        style={{ width: '100%', padding: '12px 40px 12px 38px', borderRadius: '14px', backgroundColor: 'var(--bg-tertiary)', color: 'var(--text-primary)', border: `2px solid ${venueQuery ? colors.navy : colors.borderDefault}`, fontSize: '13px', outline: 'none', boxSizing: 'border-box', transition: 'opacity 0.2s ease', fontWeight: '500' }}
                         autoComplete="off"
                         autoFocus
                       />
@@ -10623,7 +10710,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
                         { id: 'recommended', label: 'Recommended' },
                         { id: 'distance', label: 'Closest' },
                       ].map(s => (
-                        <button key={s.id} onClick={() => setSearchResultsSort(s.id)} style={{ padding: '5px 10px', borderRadius: '8px', border: 'none', backgroundColor: searchResultsSort === s.id ? colors.navyBg : 'var(--bg-hover)', color: searchResultsSort === s.id ? 'white' : 'var(--text-secondary)', fontSize: '10px', fontWeight: '700', cursor: 'pointer', transition: 'all 0.15s' }}>
+                        <button key={s.id} onClick={() => setSearchResultsSort(s.id)} style={{ padding: '5px 10px', borderRadius: '8px', border: 'none', backgroundColor: searchResultsSort === s.id ? colors.navyBg : 'var(--bg-hover)', color: searchResultsSort === s.id ? 'white' : 'var(--text-secondary)', fontSize: '10px', fontWeight: '700', cursor: 'pointer', transition: 'background-color 0.15s ease' }}>
                           {s.label}
                         </button>
                       ))}
@@ -10686,7 +10773,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
                           if (window.__flockPanToVenue) window.__flockPanToVenue(venue.place_id || venue);
                           openVenueDetail(venue.place_id, { name: venue.name, formatted_address: venue.addr, place_id: venue.place_id, rating: venue.stars, price_level: venue.price ? venue.price.length : null, photo_url: venue.photo_url });
                         }}
-                        style={{ width: '100%', textAlign: 'left', backgroundColor: 'var(--bg-card-solid)', borderRadius: '16px', border: `1px solid var(--border-default)`, padding: 0, marginBottom: '10px', cursor: 'pointer', overflow: 'hidden', boxShadow: '0 2px 10px rgba(0,0,0,0.04)', transition: 'all 0.2s' }}
+                        style={{ width: '100%', textAlign: 'left', backgroundColor: 'var(--bg-card-solid)', borderRadius: '16px', border: `1px solid var(--border-default)`, padding: 0, marginBottom: '10px', cursor: 'pointer', overflow: 'hidden', boxShadow: '0 2px 10px rgba(0,0,0,0.04)', transition: 'opacity 0.2s' }}
                       >
                         {/* Photo + overlay info */}
                         <div style={{ position: 'relative', height: venue.photo_url ? '120px' : '0' }}>
@@ -10895,7 +10982,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
           </div>
           <video ref={cameraVideoRef} autoPlay playsInline muted style={{ flex: 1, objectFit: 'cover', width: '100%' }} />
           <div style={{ padding: '24px 0 36px', display: 'flex', justifyContent: 'center', backgroundColor: 'rgba(0,0,0,0.6)' }}>
-            <button onClick={capturePhoto} style={{ width: '72px', height: '72px', borderRadius: '36px', border: '4px solid white', backgroundColor: 'rgba(255,255,255,0.3)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'all 0.15s ease' }}>
+            <button onClick={capturePhoto} style={{ width: '72px', height: '72px', borderRadius: '36px', border: '4px solid white', backgroundColor: 'rgba(255,255,255,0.3)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'opacity 0.15s ease' }}>
               <div style={{ width: '56px', height: '56px', borderRadius: '28px', backgroundColor: 'var(--bg-card-solid)' }} />
             </button>
           </div>
@@ -11123,55 +11210,6 @@ const FlockAppInner = ({ authUser, onLogout }) => {
         );
       })()}
 
-      {/* Story Viewer Overlay */}
-      {viewingStory && viewingStory.storyData && viewingStory.storyData.length > 0 && (
-        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.95)', zIndex: 9999, display: 'flex', flexDirection: 'column' }}
-          onClick={(e) => {
-            const rect = e.currentTarget.getBoundingClientRect();
-            const x = e.clientX - rect.left;
-            if (x > rect.width / 2) {
-              if (storyIndex < viewingStory.storyData.length - 1) setStoryIndex(storyIndex + 1);
-              else setViewingStory(null);
-            } else {
-              if (storyIndex > 0) setStoryIndex(storyIndex - 1);
-            }
-          }}
-        >
-          {/* Progress bars */}
-          <div style={{ display: 'flex', gap: '3px', padding: '12px 12px 0', flexShrink: 0 }}>
-            {viewingStory.storyData.map((_, i) => (
-              <div key={i} style={{ flex: 1, height: '3px', borderRadius: '2px', backgroundColor: i <= storyIndex ? 'white' : 'rgba(255,255,255,0.3)' }} />
-            ))}
-          </div>
-          {/* Header */}
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px', flexShrink: 0 }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-              {viewingStory.profileImage ? (
-                <img src={viewingStory.profileImage} alt="" style={{ width: '36px', height: '36px', borderRadius: '18px', objectFit: 'cover' }} />
-              ) : (
-                <div style={{ width: '36px', height: '36px', borderRadius: '18px', backgroundColor: viewingStory.avatarColor || colors.navyMidBg, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '14px', fontWeight: '700', color: 'white' }}>{viewingStory.avatar}</div>
-              )}
-              <div>
-                <p style={{ fontSize: '14px', fontWeight: '700', color: 'white', margin: 0 }}>{viewingStory.name}</p>
-                <p style={{ fontSize: '11px', color: 'rgba(255,255,255,0.6)', margin: 0 }}>
-                  {(() => { const h = Math.round((Date.now() - new Date(viewingStory.storyData[storyIndex].created_at).getTime()) / 3600000); return h < 1 ? 'Just now' : `${h}h ago`; })()}
-                </p>
-              </div>
-            </div>
-            <button onClick={(e) => { e.stopPropagation(); setViewingStory(null); }} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '8px' }}>{Icons.x('white', 24)}</button>
-          </div>
-          {/* Image */}
-          <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', padding: '0 8px' }}>
-            <img src={viewingStory.storyData[storyIndex].image_url} alt="" style={{ maxWidth: '100%', maxHeight: '100%', borderRadius: '12px', objectFit: 'contain' }} />
-          </div>
-          {/* Caption */}
-          {viewingStory.storyData[storyIndex].caption && (
-            <div style={{ padding: '16px', textAlign: 'center', flexShrink: 0 }}>
-              <p style={{ fontSize: '16px', fontWeight: '600', color: 'white', margin: 0, textShadow: '0 1px 4px rgba(0,0,0,0.5)' }}>{viewingStory.storyData[storyIndex].caption}</p>
-            </div>
-          )}
-        </div>
-      )}
       <SOSModal />
       <CheckinModal />
       <ProfilePicModal />

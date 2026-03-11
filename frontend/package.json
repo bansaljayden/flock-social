@@ -4,16 +4,21 @@
   "private": true,
   "dependencies": {
     "@googlemaps/markerclusterer": "^2.6.2",
+    "@splinetool/react-spline": "^4.1.0",
+    "@splinetool/runtime": "^1.12.68",
     "@testing-library/dom": "^10.4.1",
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.1",
     "@testing-library/user-event": "^13.5.0",
+    "clsx": "^2.1.1",
+    "framer-motion": "^12.35.2",
     "html5-qrcode": "^2.3.8",
     "qrcode.react": "^4.2.0",
     "react": "^19.2.3",
     "react-dom": "^19.2.3",
     "react-scripts": "5.0.1",
     "socket.io-client": "^4.8.3",
+    "tailwind-merge": "^3.5.0",
     "web-vitals": "^2.1.4"
   },
   "scripts": {
