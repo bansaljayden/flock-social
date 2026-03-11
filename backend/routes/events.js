@@ -83,30 +83,48 @@ router.get('/search',
 
       const [lat, lng] = location.split(',').map(Number);
 
-      const params = new URLSearchParams({
+      // Search with location bias
+      const localParams = new URLSearchParams({
         apikey: TM_API_KEY,
         latlong: `${lat},${lng}`,
         radius: radiusMiles,
         unit: 'miles',
-        size: 30,
+        size: 20,
         sort: 'date,asc',
       });
 
-      if (searchQuery) params.set('keyword', searchQuery);
+      if (searchQuery) localParams.set('keyword', searchQuery);
       if (categoryFilter) {
         const segMap = { concert: 'Music', sports: 'Sports', arts: 'Arts & Theatre', film: 'Film', comedy: 'Arts & Theatre' };
-        if (segMap[categoryFilter]) params.set('classificationName', segMap[categoryFilter]);
+        if (segMap[categoryFilter]) localParams.set('classificationName', segMap[categoryFilter]);
       }
 
-      const response = await fetch(`https://app.ticketmaster.com/discovery/v2/events.json?${params}`);
-
-      if (!response.ok) {
-        console.error('[Events] Ticketmaster API error:', response.status);
-        return res.status(502).json({ error: 'Event search failed' });
+      // If user typed a keyword, also search without location (catches team names, artists, etc.)
+      const fetches = [fetch(`https://app.ticketmaster.com/discovery/v2/events.json?${localParams}`)];
+      if (searchQuery) {
+        const wideParams = new URLSearchParams({
+          apikey: TM_API_KEY,
+          keyword: searchQuery,
+          size: 15,
+          sort: 'date,asc',
+          countryCode: 'US',
+        });
+        if (categoryFilter) {
+          const segMap = { concert: 'Music', sports: 'Sports', arts: 'Arts & Theatre', film: 'Film', comedy: 'Arts & Theatre' };
+          if (segMap[categoryFilter]) wideParams.set('classificationName', segMap[categoryFilter]);
+        }
+        fetches.push(fetch(`https://app.ticketmaster.com/discovery/v2/events.json?${wideParams}`));
       }
 
-      const data = await response.json();
-      const rawEvents = data._embedded?.events || [];
+      const responses = await Promise.all(fetches);
+      const localData = responses[0].ok ? await responses[0].json() : {};
+      const wideData = responses[1]?.ok ? await responses[1].json() : {};
+
+      // Merge: local results first, then wide results (deduped)
+      const localEvents = localData._embedded?.events || [];
+      const wideEvents = wideData._embedded?.events || [];
+      const seenIds = new Set(localEvents.map(e => e.id));
+      const rawEvents = [...localEvents, ...wideEvents.filter(e => !seenIds.has(e.id))].slice(0, 30);
 
       const events = rawEvents.map(e => {
         const venue = e._embedded?.venues?.[0];

@@ -5255,36 +5255,6 @@ const FlockAppInner = ({ authUser, onLogout }) => {
         </div>
       )}
 
-      {/* Featured Events Banner — horizontal scroll above map */}
-      {!venueQuery && featuredEvents.length > 0 && !showEventsView && (
-        <div style={{ backgroundColor: 'var(--bg-card-solid)', borderBottom: '1px solid var(--border-default)', flexShrink: 0, padding: '8px 0' }}>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 12px', marginBottom: '6px' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
-              {Icons.zap('#F59E0B', 13)}
-              <span style={{ fontSize: '12px', fontWeight: '800', color: colors.navy }}>Events Near You</span>
-            </div>
-            <button onClick={() => { setShowEventsView(true); setActiveVenue(null); }} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '11px', fontWeight: '700', color: '#F59E0B', padding: '2px 4px' }}>See All</button>
-          </div>
-          <div style={{ display: 'flex', gap: '8px', overflowX: 'auto', padding: '0 12px', scrollbarWidth: 'none' }}>
-            {featuredEvents.slice(0, 8).map(event => {
-              const dateStr = event.date ? new Date(event.date + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : '';
-              return (
-                <div key={event.id} onClick={() => { setShowEventsView(true); setActiveVenue(null); }} style={{ minWidth: '140px', maxWidth: '140px', borderRadius: '12px', overflow: 'hidden', border: '1px solid var(--border-default)', cursor: 'pointer', flexShrink: 0, backgroundColor: 'var(--bg-card-solid)', boxShadow: '0 1px 4px rgba(0,0,0,0.06)' }}>
-                  {event.image_url ? (
-                    <img src={event.image_url} alt="" style={{ width: '140px', height: '80px', objectFit: 'cover', display: 'block' }} onError={(e) => { e.target.style.display = 'none'; }} />
-                  ) : (
-                    <div style={{ width: '140px', height: '80px', background: `linear-gradient(135deg, ${colors.navyBg}, ${colors.navyMidBg})`, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.zap('rgba(255,255,255,0.4)', 24)}</div>
-                  )}
-                  <div style={{ padding: '6px 8px' }}>
-                    <p style={{ fontSize: '11px', fontWeight: '700', color: colors.navy, margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{event.name}</p>
-                    <p style={{ fontSize: '9px', fontWeight: '600', color: 'var(--text-tertiary)', margin: '2px 0 0' }}>{dateStr}{event.venue_name ? ` \u00B7 ${event.venue_name}` : ''}</p>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      )}
 
       {/* Premium Map */}
       <div onClick={() => { setShowSearchDropdown(false); }} style={{ flex: 1, position: 'relative', overflow: 'hidden' }}>
