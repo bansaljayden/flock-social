@@ -57,6 +57,13 @@ CREATE TABLE IF NOT EXISTS ml_training_data (
   weather_condition_code INTEGER,
   is_raining BOOLEAN,
 
+  -- Event features (Model 1.5 — Ticketmaster/SeatGeek)
+  event_nearby BOOLEAN DEFAULT false,
+  event_distance_km NUMERIC(5,1),          -- distance from venue to nearest event
+  event_size INTEGER,                       -- venue capacity / tickets sold
+  event_type VARCHAR(50),                   -- concert, sports, festival, conference
+  event_hours_until SMALLINT,               -- hours until event starts (negative = already started)
+
   -- Label (ground truth from BestTime)
   busyness_pct SMALLINT NOT NULL CHECK (busyness_pct BETWEEN 0 AND 100),
 

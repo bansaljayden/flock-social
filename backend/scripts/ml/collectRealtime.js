@@ -10,6 +10,7 @@ const { Pool } = require('pg');
 const { getWeather } = require('../../services/weatherService');
 const { fetchLiveBusyness } = require('./bestTimeService');
 const { CITIES, getLocalTime, isHoliday, isSchoolBreak, sleep } = require('./config');
+const { getNearestEvent } = require('./eventService');
 
 if (!process.env.DATABASE_URL && process.env.PGHOST) {
   const host = process.env.PGHOST;
@@ -72,14 +73,23 @@ async function collectRealtime() {
         continue;
       }
 
+      // Fetch nearby event data (graceful — nulls if no API key or error)
+      let eventData = { event_nearby: false, event_distance_km: null, event_size: null, event_type: null, event_hours_until: null };
+      try {
+        eventData = await getNearestEvent(venue.latitude, venue.longitude);
+      } catch (err) {
+        console.error(`  Event fetch error for ${venue.name}:`, err.message);
+      }
+
       try {
         await pool.query(
           `INSERT INTO ml_training_data
             (venue_id, collection_mode, day_of_week, hour, month, season, is_holiday, is_school_break,
              venue_category, price_level, rating, review_count,
              temperature, humidity, wind_speed, weather_condition, is_raining,
+             event_nearby, event_distance_km, event_size, event_type, event_hours_until,
              busyness_pct)
-          VALUES ($1, 'realtime', $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)`,
+          VALUES ($1, 'realtime', $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22)`,
           [
             venue.id,
             local.dayOfWeek,
@@ -97,6 +107,11 @@ async function collectRealtime() {
             weather?.windSpeed ?? null,
             weather?.conditions ?? null,
             weather?.isRaining ?? null,
+            eventData.event_nearby,
+            eventData.event_distance_km,
+            eventData.event_size,
+            eventData.event_type,
+            eventData.event_hours_until,
             Math.max(0, Math.min(100, busyness)),
           ]
         );
