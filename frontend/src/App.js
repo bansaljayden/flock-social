@@ -2122,6 +2122,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
         .catch(err => console.error('[Events] Featured fetch failed:', err))
         .finally(() => setFeaturedEventsLoading(false));
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [venuesToMapPins, seedVenues]);
 
   // Request user geolocation and load venues
