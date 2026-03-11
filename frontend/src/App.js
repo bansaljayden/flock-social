@@ -10856,17 +10856,6 @@ const FlockAppInner = ({ authUser, onLogout }) => {
               </div>
             )}
 
-            {/* Photos gallery — only show if multiple unique photos */}
-            {eventDetail.photos?.length > 1 && (
-              <div style={{ marginBottom: '16px' }}>
-                <p style={{ fontSize: '13px', fontWeight: '700', color: colors.navy, margin: '0 0 8px' }}>Photos</p>
-                <div style={{ display: 'flex', gap: '8px', overflowX: 'auto', scrollbarWidth: 'none' }}>
-                  {eventDetail.photos.map((photo, i) => (
-                    <img key={i} src={photo} alt="" style={{ width: '180px', height: '100px', objectFit: 'cover', borderRadius: '10px', flexShrink: 0 }} onError={(e) => { e.target.style.display = 'none'; }} />
-                  ))}
-                </div>
-              </div>
-            )}
 
             {/* Distance */}
             {eventDetail.distance_miles && (
