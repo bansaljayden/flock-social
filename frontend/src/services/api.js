@@ -432,5 +432,18 @@ export async function getPaymentLinks(flockId) {
   return request(`/api/billing/${flockId}/payment-links`);
 }
 
+// Events (Ticketmaster)
+export async function searchEvents(location, query, options = {}) {
+  let endpoint = `/api/events/search?location=${location}`;
+  if (query) endpoint += `&query=${encodeURIComponent(query)}`;
+  if (options.radius) endpoint += `&radius=${options.radius}`;
+  if (options.category) endpoint += `&category=${encodeURIComponent(options.category)}`;
+  return request(endpoint);
+}
+
+export async function getFeaturedEvents(location) {
+  return request(`/api/events/featured?location=${location}`);
+}
+
 export { getToken, BASE_URL };
 export default request;

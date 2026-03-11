@@ -11,7 +11,7 @@ import {
   formatCurrency,
   calculateProfitMargin
 } from './lib/finance';
-import { getCurrentUser, logout, isLoggedIn, getFlocks, getFlock, createFlock as apiCreateFlock, getMessages, sendMessage as apiSendMessage, updateProfile, searchVenues, searchUsers, getSuggestedUsers, sendFriendRequest, getStories, getVenueDetails, leaveFlock as apiLeaveFlock, getDMConversations, getDMs, getDmVenueVotes, getDmPinnedVenue, BASE_URL, inviteToFlock, acceptFlockInvite, declineFlockInvite, getFriends, acceptFriendRequest, declineFriendRequest, getPendingRequests, getOutgoingRequests, getFriendSuggestions, addFriendByCode, findFriendsByPhone, removeFriend, getTrustedContacts, addTrustedContact, updateTrustedContact, deleteTrustedContact, sendEmergencyAlert, shareLocationWithContacts, getUserStats, getCrowdPrediction, getCrowdBatch, getCrowdAlternatives, getWeather, submitVenueFeedback, uploadProfileImage, saveProfileImageUrl, submitBudget, getBudgetStatus, lockBudget, sendBudgetReminder, createBillSplit, getBillSplit, settleShare, ghostCommit, updatePaymentMethods, getPaymentLinks } from './services/api';
+import { getCurrentUser, logout, isLoggedIn, getFlocks, getFlock, createFlock as apiCreateFlock, getMessages, sendMessage as apiSendMessage, updateProfile, searchVenues, searchUsers, getSuggestedUsers, sendFriendRequest, getStories, getVenueDetails, leaveFlock as apiLeaveFlock, getDMConversations, getDMs, getDmVenueVotes, getDmPinnedVenue, BASE_URL, inviteToFlock, acceptFlockInvite, declineFlockInvite, getFriends, acceptFriendRequest, declineFriendRequest, getPendingRequests, getOutgoingRequests, getFriendSuggestions, addFriendByCode, findFriendsByPhone, removeFriend, getTrustedContacts, addTrustedContact, updateTrustedContact, deleteTrustedContact, sendEmergencyAlert, shareLocationWithContacts, getUserStats, getCrowdPrediction, getCrowdBatch, getCrowdAlternatives, getWeather, submitVenueFeedback, uploadProfileImage, saveProfileImageUrl, submitBudget, getBudgetStatus, lockBudget, sendBudgetReminder, createBillSplit, getBillSplit, settleShare, ghostCommit, updatePaymentMethods, getPaymentLinks, getFeaturedEvents, searchEvents } from './services/api';
 import { connectSocket, disconnectSocket, getSocket, joinFlock, leaveFlock, sendMessage as socketSendMessage, sendImageMessage as socketSendImage, startTyping, stopTyping, onNewMessage, onUserTyping, onUserStoppedTyping, emitLocation, stopSharingLocation as socketStopSharing, onLocationUpdate, onMemberStoppedSharing, socketSendDm, onNewDm, dmStartTyping, dmStopTyping, onDmUserTyping, onDmUserStoppedTyping, dmReact, dmRemoveReact, onDmReactionAdded, onDmReactionRemoved, dmVoteVenue, onDmNewVote, dmShareLocation, dmStopSharingLocation, onDmLocationUpdate, onDmMemberStoppedSharing, dmPinVenue, onDmVenuePinned, emitFlockInvite, emitFlockInviteResponse, onFlockInviteReceived, onFlockInviteResponded, emitFriendRequest, emitFriendResponse, onFriendRequestReceived, onFriendRequestResponded, onBudgetUpdated, onBudgetLocked, onBudgetReminder, onBillCreated, onShareSettled, onBillFullySettled, onGhostCommitted, onNewVote, onVenueSelected, onFlockReactionAdded, onFlockReactionRemoved, onFlockDeleted, onFlockUpdated, onFlockMemberLeft } from './services/socket';
 import { QRCodeSVG } from 'qrcode.react';
 import { Html5Qrcode } from 'html5-qrcode';
@@ -1138,6 +1138,12 @@ const FlockAppInner = ({ authUser, onLogout }) => {
   const [showSearchResults, setShowSearchResults] = useState(false);
   const [searchResultsSort, setSearchResultsSort] = useState('rating');
   const searchTimerRef = useRef(null);
+  const [featuredEvents, setFeaturedEvents] = useState([]);
+  const [featuredEventsLoading, setFeaturedEventsLoading] = useState(false);
+  const featuredEventsFetchedRef = useRef(false);
+  const [showEventsView, setShowEventsView] = useState(false);
+  const [eventsSearchQuery, setEventsSearchQuery] = useState('');
+  const eventsSearchTimerRef = useRef(null);
   const [crowdPredictions, setCrowdPredictions] = useState({});
   const [crowdData, setCrowdData] = useState(null);
   const [crowdLoading, setCrowdLoading] = useState(false);
@@ -2104,6 +2110,16 @@ const FlockAppInner = ({ authUser, onLogout }) => {
         setAllVenues(venuesToMapPins(seedVenues));
         setMapVenuesLoaded(true);
       });
+
+    // Fetch featured events (non-blocking)
+    if (!featuredEventsFetchedRef.current) {
+      featuredEventsFetchedRef.current = true;
+      setFeaturedEventsLoading(true);
+      getFeaturedEvents(locStr)
+        .then(data => setFeaturedEvents(data.events || []))
+        .catch(err => console.error('[Events] Featured fetch failed:', err))
+        .finally(() => setFeaturedEventsLoading(false));
+    }
   }, [venuesToMapPins, seedVenues]);
 
   // Request user geolocation and load venues
@@ -5148,6 +5164,18 @@ const FlockAppInner = ({ authUser, onLogout }) => {
           <button onClick={() => { setVenueQuery(''); setVenueResults([]); setShowSearchDropdown(false); setShowSearchResults(false); setActiveVenue(null); const lat = parseFloat(localStorage.getItem('flock_user_lat')); const lng = parseFloat(localStorage.getItem('flock_user_lng')); if (lat && lng) { setMapVenuesLoaded(false); loadVenuesAtLocation(lat, lng); } else { setMapVenuesLoaded(false); requestUserLocation(false); } }} title="Clear search" style={{ width: '42px', height: '42px', borderRadius: '14px', border: 'none', backgroundColor: 'var(--bg-tertiary)', color: 'var(--text-secondary)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'all 0.2s ease', flexShrink: 0 }}>{Icons.x('#64748b', 18)}</button>
         )}
         <button onClick={() => { setMapVenuesLoaded(false); setVenueQuery(''); setVenueResults([]); setShowSearchDropdown(false); setShowSearchResults(false); setActiveVenue(null); requestUserLocation(true); }} title="Near Me" style={{ width: '42px', height: '42px', borderRadius: '14px', border: 'none', background: locationLoading ? `linear-gradient(135deg, ${colors.teal}, ${colors.skyBlue})` : `linear-gradient(135deg, ${colors.teal}, #0d9488)`, color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 4px 12px rgba(20,184,166,0.3)', transition: 'all 0.2s ease', animation: locationLoading ? 'spin 1s linear infinite' : 'none' }}>{Icons.crosshair('white', 18)}</button>
+        <button onClick={() => {
+          setShowEventsView(true);
+          setActiveVenue(null);
+          // Refresh events if we have location
+          if (userLocation && !featuredEventsLoading) {
+            setFeaturedEventsLoading(true);
+            getFeaturedEvents(`${userLocation.lat},${userLocation.lng}`)
+              .then(data => setFeaturedEvents(data.events || []))
+              .catch(err => console.error('[Events] Fetch failed:', err))
+              .finally(() => setFeaturedEventsLoading(false));
+          }
+        }} title="Live Events" style={{ width: '42px', height: '42px', borderRadius: '14px', border: 'none', background: 'linear-gradient(135deg, #F59E0B, #D97706)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 4px 12px rgba(245,158,11,0.3)', transition: 'all 0.2s ease', flexShrink: 0 }}>{Icons.zap('white', 18)}</button>
         <button onClick={() => setShowConnectPanel(true)} style={{ width: '42px', height: '42px', borderRadius: '14px', border: 'none', background: `linear-gradient(135deg, ${colors.navyBg}, ${colors.navyMidBg})`, color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 4px 12px rgba(13,40,71,0.25)', transition: 'all 0.2s ease' }}>{Icons.users('white', 18)}</button>
       </div>
 
@@ -5225,6 +5253,37 @@ const FlockAppInner = ({ authUser, onLogout }) => {
               <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: 0 }}>No venues found. Try a different search.</p>
             </div>
           )}
+        </div>
+      )}
+
+      {/* Featured Events Banner — horizontal scroll above map */}
+      {!venueQuery && featuredEvents.length > 0 && !showEventsView && (
+        <div style={{ backgroundColor: 'var(--bg-card-solid)', borderBottom: '1px solid var(--border-default)', flexShrink: 0, padding: '8px 0' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 12px', marginBottom: '6px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
+              {Icons.zap('#F59E0B', 13)}
+              <span style={{ fontSize: '12px', fontWeight: '800', color: colors.navy }}>Events Near You</span>
+            </div>
+            <button onClick={() => { setShowEventsView(true); setActiveVenue(null); }} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '11px', fontWeight: '700', color: '#F59E0B', padding: '2px 4px' }}>See All</button>
+          </div>
+          <div style={{ display: 'flex', gap: '8px', overflowX: 'auto', padding: '0 12px', scrollbarWidth: 'none' }}>
+            {featuredEvents.slice(0, 8).map(event => {
+              const dateStr = event.date ? new Date(event.date + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : '';
+              return (
+                <div key={event.id} onClick={() => { setShowEventsView(true); setActiveVenue(null); }} style={{ minWidth: '140px', maxWidth: '140px', borderRadius: '12px', overflow: 'hidden', border: '1px solid var(--border-default)', cursor: 'pointer', flexShrink: 0, backgroundColor: 'var(--bg-card-solid)', boxShadow: '0 1px 4px rgba(0,0,0,0.06)' }}>
+                  {event.image_url ? (
+                    <img src={event.image_url} alt="" style={{ width: '140px', height: '80px', objectFit: 'cover', display: 'block' }} onError={(e) => { e.target.style.display = 'none'; }} />
+                  ) : (
+                    <div style={{ width: '140px', height: '80px', background: `linear-gradient(135deg, ${colors.navyBg}, ${colors.navyMidBg})`, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.zap('rgba(255,255,255,0.4)', 24)}</div>
+                  )}
+                  <div style={{ padding: '6px 8px' }}>
+                    <p style={{ fontSize: '11px', fontWeight: '700', color: colors.navy, margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{event.name}</p>
+                    <p style={{ fontSize: '9px', fontWeight: '600', color: 'var(--text-tertiary)', margin: '2px 0 0' }}>{dateStr}{event.venue_name ? ` \u00B7 ${event.venue_name}` : ''}</p>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
         </div>
       )}
 
@@ -5799,6 +5858,173 @@ const FlockAppInner = ({ authUser, onLogout }) => {
             </div>
           </div>
         )}
+      </div>
+
+      {/* Live Events Panel — slides in from right */}
+      <div style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, zIndex: showEventsView ? 45 : -1, pointerEvents: showEventsView ? 'auto' : 'none' }}>
+        <div style={{ position: 'absolute', inset: 0, backgroundColor: 'var(--bg-primary)', display: 'flex', flexDirection: 'column', transform: showEventsView ? 'translateX(0)' : 'translateX(100%)', transition: 'transform 0.35s cubic-bezier(0.4, 0, 0.2, 1)', willChange: 'transform' }}>
+          {/* Events header */}
+          <div style={{ backgroundColor: 'var(--bg-card-solid)', borderBottom: '1px solid var(--border-default)', flexShrink: 0 }}>
+            <div style={{ padding: '12px 12px 8px', display: 'flex', alignItems: 'center', gap: '10px' }}>
+              <button onClick={() => { setShowEventsView(false); setEventsSearchQuery(''); }} style={{ width: '38px', height: '38px', borderRadius: '12px', border: 'none', backgroundColor: 'var(--bg-tertiary)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, transition: 'all 0.2s' }}>
+                {Icons.arrowLeft(colors.navy, 18)}
+              </button>
+              <div style={{ flex: 1, position: 'relative' }}>
+                <input
+                  type="text"
+                  placeholder="Search concerts, games, shows..."
+                  value={eventsSearchQuery}
+                  onChange={(e) => {
+                    setEventsSearchQuery(e.target.value);
+                    if (e.target.value.length >= 2 && userLocation) {
+                      clearTimeout(eventsSearchTimerRef.current);
+                      eventsSearchTimerRef.current = setTimeout(() => {
+                        setFeaturedEventsLoading(true);
+                        searchEvents(`${userLocation.lat},${userLocation.lng}`, e.target.value)
+                          .then(data => setFeaturedEvents(data.events || []))
+                          .catch(err => console.error('[Events] Search failed:', err))
+                          .finally(() => setFeaturedEventsLoading(false));
+                      }, 400);
+                    } else if (e.target.value.length === 0 && userLocation) {
+                      setFeaturedEventsLoading(true);
+                      getFeaturedEvents(`${userLocation.lat},${userLocation.lng}`)
+                        .then(data => setFeaturedEvents(data.events || []))
+                        .catch(() => {})
+                        .finally(() => setFeaturedEventsLoading(false));
+                    }
+                  }}
+                  style={{ width: '100%', padding: '10px 14px 10px 36px', borderRadius: '12px', backgroundColor: 'var(--bg-tertiary)', color: 'var(--text-primary)', border: `2px solid ${eventsSearchQuery ? '#F59E0B' : colors.borderDefault}`, fontSize: '13px', outline: 'none', boxSizing: 'border-box', fontWeight: '500', transition: 'all 0.2s' }}
+                  autoComplete="off"
+                />
+                <span style={{ position: 'absolute', left: '11px', top: '50%', transform: 'translateY(-50%)' }}>{Icons.search(eventsSearchQuery ? '#F59E0B' : colors.textTertiary, 15)}</span>
+                {eventsSearchQuery && (
+                  <button onClick={() => {
+                    setEventsSearchQuery('');
+                    if (userLocation) {
+                      setFeaturedEventsLoading(true);
+                      getFeaturedEvents(`${userLocation.lat},${userLocation.lng}`)
+                        .then(data => setFeaturedEvents(data.events || []))
+                        .catch(() => {})
+                        .finally(() => setFeaturedEventsLoading(false));
+                    }
+                  }} style={{ position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', padding: '2px' }}>{Icons.x(colors.textTertiary, 14)}</button>
+                )}
+              </div>
+            </div>
+            {/* Header label */}
+            <div style={{ padding: '0 14px 10px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                {Icons.zap('#F59E0B', 16)}
+                <span style={{ fontSize: '14px', fontWeight: '800', color: colors.navy }}>Live Events</span>
+              </div>
+              <span style={{ fontSize: '11px', fontWeight: '600', color: 'var(--text-tertiary)' }}>{eventsSearchQuery ? 'Search results' : 'This week nearby'}</span>
+            </div>
+          </div>
+
+          {/* Events list */}
+          <div style={{ flex: 1, overflowY: 'auto', padding: '8px 12px 80px' }}>
+            {featuredEventsLoading && (
+              <div style={{ textAlign: 'center', padding: '32px 0' }}>
+                <div style={{ display: 'inline-block', width: '24px', height: '24px', border: '3px solid var(--border-default)', borderTopColor: '#F59E0B', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
+                <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: '10px 0 0', fontWeight: '500' }}>Finding events near you...</p>
+              </div>
+            )}
+            {!featuredEventsLoading && featuredEvents.length === 0 && (
+              <div style={{ textAlign: 'center', padding: '48px 20px' }}>
+                {Icons.zap('var(--text-tertiary)', 36)}
+                <p style={{ fontSize: '14px', fontWeight: '700', color: 'var(--text-secondary)', margin: '12px 0 4px' }}>No events found nearby</p>
+                <p style={{ fontSize: '12px', color: 'var(--text-tertiary)', margin: 0 }}>Try searching for a specific event or artist</p>
+              </div>
+            )}
+            {!featuredEventsLoading && featuredEvents.map(event => {
+              const eventDate = event.date ? new Date(event.date + 'T' + (event.time || '00:00:00')) : null;
+              const dateStr = eventDate ? eventDate.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }) : '';
+              const timeStr = event.time ? new Date('2000-01-01T' + event.time).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }) : '';
+              const categoryColors = { concert: '#8B5CF6', sports: '#22C55E', arts: '#EC4899', comedy: '#F59E0B', festival: '#EF4444', film: '#3B82F6', other: colors.navy };
+              const catColor = categoryColors[event.category] || colors.navy;
+              const dist = event.location && userLocation ? (() => {
+                const dLat = (event.location.latitude - userLocation.lat) * Math.PI / 180;
+                const dLng = (event.location.longitude - userLocation.lng) * Math.PI / 180;
+                const a = Math.sin(dLat/2)**2 + Math.cos(userLocation.lat*Math.PI/180)*Math.cos(event.location.latitude*Math.PI/180)*Math.sin(dLng/2)**2;
+                return 6371 * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+              })() : null;
+
+              return (
+                <div
+                  key={event.id}
+                  style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '16px', border: '1px solid var(--border-default)', marginBottom: '10px', overflow: 'hidden', boxShadow: '0 2px 10px rgba(0,0,0,0.04)' }}
+                >
+                  {/* Event image */}
+                  {event.image_url && (
+                    <div style={{ position: 'relative', height: '140px' }}>
+                      <img src={event.image_url} alt="" style={{ width: '100%', height: '140px', objectFit: 'cover', display: 'block' }} onError={(e) => { e.target.style.display = 'none'; e.target.parentElement.style.height = '0'; }} />
+                      <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(transparent 50%, rgba(0,0,0,0.7) 100%)' }} />
+                      {/* Category badge */}
+                      <div style={{ position: 'absolute', top: '10px', left: '10px', padding: '4px 10px', borderRadius: '10px', backgroundColor: catColor, display: 'flex', alignItems: 'center', gap: '4px' }}>
+                        <span style={{ fontSize: '10px', fontWeight: '800', color: 'white', textTransform: 'uppercase', letterSpacing: '0.5px' }}>{event.category}</span>
+                      </div>
+                      {/* Date badge */}
+                      <div style={{ position: 'absolute', top: '10px', right: '10px', padding: '4px 10px', borderRadius: '10px', backgroundColor: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(8px)' }}>
+                        <span style={{ fontSize: '10px', fontWeight: '700', color: 'white' }}>{dateStr}</span>
+                      </div>
+                    </div>
+                  )}
+                  {/* Event details */}
+                  <div style={{ padding: '12px 14px' }}>
+                    <h3 style={{ fontSize: '15px', fontWeight: '800', color: colors.navy, margin: '0 0 4px', lineHeight: '1.3' }}>{event.name}</h3>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap', marginBottom: '6px' }}>
+                      {event.venue_name && (
+                        <span style={{ fontSize: '12px', fontWeight: '600', color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', gap: '3px' }}>
+                          {Icons.mapPin('var(--text-tertiary)', 11)} {event.venue_name}
+                        </span>
+                      )}
+                      {dist != null && (
+                        <span style={{ fontSize: '10px', fontWeight: '700', color: colors.teal }}>{dist < 1 ? `${Math.round(dist*1000)}m` : `${dist.toFixed(1)}km`}</span>
+                      )}
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                      {timeStr && (
+                        <span style={{ fontSize: '11px', fontWeight: '600', color: colors.navy, display: 'flex', alignItems: 'center', gap: '3px' }}>
+                          {Icons.clock(colors.navy, 11)} {timeStr}
+                        </span>
+                      )}
+                      {!event.image_url && dateStr && (
+                        <span style={{ fontSize: '11px', fontWeight: '600', color: 'var(--text-secondary)' }}>{dateStr}</span>
+                      )}
+                      {event.genre && event.genre !== event.category && (
+                        <span style={{ fontSize: '10px', fontWeight: '600', color: catColor, backgroundColor: `${catColor}15`, padding: '2px 8px', borderRadius: '8px' }}>{event.genre}</span>
+                      )}
+                      {event.price_range && (
+                        <span style={{ fontSize: '10px', fontWeight: '700', color: 'var(--text-secondary)' }}>
+                          ${event.price_range.min}{event.price_range.max ? `\u2013$${event.price_range.max}` : '+'}
+                        </span>
+                      )}
+                    </div>
+                    {/* Action buttons */}
+                    <div style={{ display: 'flex', gap: '8px', marginTop: '10px' }}>
+                      <button onClick={(e) => {
+                        e.stopPropagation();
+                        setSelectedVenueForCreate({ name: event.venue_name || event.name, addr: event.venue_address, lat: event.location?.latitude, lng: event.location?.longitude, photo_url: event.image_url, event_name: event.name });
+                        setShowEventsView(false);
+                        setCurrentScreen('create');
+                      }} style={{ flex: 1, padding: '9px', borderRadius: '10px', border: 'none', background: `linear-gradient(135deg, ${colors.navyBg}, ${colors.navyMidBg})`, color: 'white', fontWeight: '700', fontSize: '12px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '5px' }}>
+                        {Icons.users('white', 13)} Start Flock
+                      </button>
+                      {event.url && (
+                        <button onClick={(e) => {
+                          e.stopPropagation();
+                          window.open(event.url, '_blank');
+                        }} style={{ padding: '9px 14px', borderRadius: '10px', border: `2px solid ${colors.navy}`, backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontWeight: '700', fontSize: '12px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '5px' }}>
+                          Tickets {Icons.arrowRight(colors.navy, 12)}
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
       </div>
 
       {/* Categories */}
