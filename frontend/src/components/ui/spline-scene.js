@@ -1,4 +1,4 @@
-import React, { Suspense, useRef, useState, useEffect, memo } from 'react';
+import React, { Suspense, useRef, useEffect, memo } from 'react';
 import { Application } from '@splinetool/runtime';
 
 const SplineCanvas = memo(function SplineCanvas({ scene, style }) {
