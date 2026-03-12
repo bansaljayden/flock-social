@@ -302,6 +302,37 @@ code {
   box-shadow: 0 2px 8px rgba(13,40,71,0.2);
 }
 
+/* Smooth fade + slide in */
+@keyframes fadeSlideIn {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* FAB press animation */
+.fab-press {
+  transition: transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1), box-shadow 0.3s ease;
+  will-change: transform;
+}
+.fab-press:hover {
+  transform: scale(1.08);
+}
+.fab-press:active {
+  transform: scale(0.88) !important;
+  transition: transform 0.1s ease !important;
+}
+
+/* Global smooth interactions */
+button, a, [role="button"] {
+  -webkit-tap-highlight-color: transparent;
+  transition: transform 0.25s cubic-bezier(0.34, 1.56, 0.64, 1),
+              opacity 0.2s ease,
+              box-shadow 0.25s ease,
+              background-color 0.2s ease;
+}
+button:active, [role="button"]:active {
+  transform: scale(0.96);
+}
+
 .shimmer-btn, .shimmer-btn-light {
   transition: transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1),
               box-shadow 0.25s ease;

@@ -2272,16 +2272,8 @@ const FlockAppInner = ({ authUser, onLogout }) => {
     setAiTyping(true);
 
     try {
-      // Get user location if available
-      let location = null;
-      if (navigator.geolocation) {
-        try {
-          const pos = await new Promise((resolve, reject) =>
-            navigator.geolocation.getCurrentPosition(resolve, reject, { timeout: 3000 })
-          );
-          location = { lat: pos.coords.latitude, lng: pos.coords.longitude };
-        } catch (_) { /* location not available, that's ok */ }
-      }
+      // Use app's existing location state
+      const location = userLocation ? { lat: userLocation.lat, lng: userLocation.lng } : null;
 
       // Send conversation history (skip the initial greeting to keep it clean)
       const messagesToSend = newMessages.filter(m => m.role !== 'assistant' || newMessages.indexOf(m) !== 0 || newMessages.length <= 2)
@@ -3311,10 +3303,11 @@ const FlockAppInner = ({ authUser, onLogout }) => {
   // Safety Button - Enhanced with pulse animation
   const SafetyButton = () => safetyOn && currentScreen === 'main' && !showSOS && (
     <button
+      className="fab-press"
       onClick={() => setShowSOS(true)}
       style={{
         position: 'absolute',
-        bottom: '75px',
+        bottom: '95px',
         right: '12px',
         width: '52px',
         height: '52px',
@@ -3337,26 +3330,29 @@ const FlockAppInner = ({ authUser, onLogout }) => {
   // AI Button - Enhanced with floating animation
   const AIButton = () => currentScreen === 'main' && currentTab === 'home' && (
     <button
+      className="fab-press"
       onClick={() => setShowAiAssistant(true)}
       style={{
         position: 'absolute',
-        bottom: '75px',
+        bottom: '95px',
         left: '12px',
         width: '52px',
         height: '52px',
         borderRadius: '26px',
         border: 'none',
-        background: `linear-gradient(135deg, ${colors.navyBg}, ${colors.navyMidBg})`,
+        background: isDark ? 'linear-gradient(135deg, #0d1b3e, #162046)' : 'linear-gradient(135deg, #e8eaf0, #dde0e8)',
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
         cursor: 'pointer',
-        boxShadow: '0 6px 20px rgba(13,40,71,0.35), 0 2px 6px rgba(0,0,0,0.1)',
+        boxShadow: isDark ? '0 6px 20px rgba(79,70,229,0.4), 0 2px 6px rgba(0,0,0,0.2)' : '0 6px 20px rgba(13,40,71,0.25), 0 2px 6px rgba(0,0,0,0.1)',
         zIndex: 20,
         transition: 'opacity 0.2s ease',
+        overflow: 'hidden',
+        border: isDark ? '2px solid rgba(124,58,237,0.6)' : '2px solid rgba(13,40,71,0.2)',
       }}
     >
-      {Icons.robot('white', 24)}
+      <img src={isDark ? "/birdie-avatar.png" : "/birdie-avatar-light.png"} alt="Birdie" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
     </button>
   );
 
@@ -4447,8 +4443,8 @@ const FlockAppInner = ({ authUser, onLogout }) => {
           <div style={{ padding: '12px', borderBottom: '1px solid var(--divider)', background: `linear-gradient(90deg, ${colors.navyBg}, ${colors.navyMidBg})`, borderRadius: '24px 24px 0 0', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
               <div style={{ position: 'relative' }}>
-                <div style={{ width: '40px', height: '40px', borderRadius: '20px', background: 'linear-gradient(135deg, #4F46E5, #7C3AED)', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 4px 12px rgba(79,70,229,0.4)' }}>
-                  {Icons.robot('white', 22)}
+                <div style={{ width: '40px', height: '40px', borderRadius: '20px', background: isDark ? 'linear-gradient(135deg, #0d1b3e, #162046)' : 'linear-gradient(135deg, #e8eaf0, #dde0e8)', overflow: 'hidden', boxShadow: '0 4px 12px rgba(79,70,229,0.4)', border: '2px solid rgba(124,58,237,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  <img src={isDark ? "/birdie-avatar.png" : "/birdie-avatar-light.png"} alt="Birdie" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
                 </div>
                 <div style={{ position: 'absolute', bottom: '-2px', right: '-2px', width: '14px', height: '14px', borderRadius: '7px', backgroundColor: '#22C55E', border: '2px solid var(--bg-card-solid)', animation: 'pulse 2s ease-in-out infinite' }} />
               </div>
@@ -4475,10 +4471,10 @@ const FlockAppInner = ({ authUser, onLogout }) => {
 
           {/* Messages */}
           <div className="birdie-bg" onPointerMove={(e) => {
+            if (e.target.tagName === 'CANVAS') return;
             const canvas = e.currentTarget.querySelector('[data-spline-wrapper] canvas');
             if (canvas) {
-              canvas.dispatchEvent(new PointerEvent('pointermove', { clientX: e.clientX, clientY: e.clientY, bubbles: true, pointerId: e.pointerId, pointerType: e.pointerType }));
-              canvas.dispatchEvent(new MouseEvent('mousemove', { clientX: e.clientX, clientY: e.clientY, bubbles: true }));
+              canvas.dispatchEvent(new PointerEvent('pointermove', { clientX: e.clientX, clientY: e.clientY, bubbles: false, pointerId: e.pointerId, pointerType: e.pointerType }));
             }
           }} style={{ flex: 1, padding: '12px', overflowY: 'auto', position: 'relative' }}>
             <div
@@ -4490,8 +4486,8 @@ const FlockAppInner = ({ authUser, onLogout }) => {
 
             {aiMessages.map((msg, i) => (
               <div key={i} style={{ display: 'flex', gap: '8px', marginBottom: '12px', flexDirection: msg.role === 'user' ? 'row-reverse' : 'row', position: 'relative', zIndex: 2 }}>
-                <div style={{ width: '30px', height: '30px', borderRadius: '15px', background: msg.role === 'user' ? `linear-gradient(135deg, ${colors.navyBg}, ${colors.navyMidBg})` : 'linear-gradient(135deg, #4F46E5, #7C3AED)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, boxShadow: '0 2px 8px rgba(0,0,0,0.1)' }}>
-                  {msg.role === 'user' ? Icons.user('white', 14) : Icons.robot('white', 14)}
+                <div style={{ width: '30px', height: '30px', borderRadius: '15px', background: msg.role === 'user' ? `linear-gradient(135deg, ${colors.navyBg}, ${colors.navyMidBg})` : isDark ? 'linear-gradient(135deg, #0d1b3e, #162046)' : 'linear-gradient(135deg, #e8eaf0, #dde0e8)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, boxShadow: '0 2px 8px rgba(0,0,0,0.1)', overflow: 'hidden', border: msg.role === 'user' ? 'none' : '1.5px solid rgba(124,58,237,0.4)' }}>
+                  {msg.role === 'user' ? Icons.user('white', 14) : <img src={isDark ? "/birdie-avatar.png" : "/birdie-avatar-light.png"} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />}
                 </div>
                 <div style={{ maxWidth: '78%' }}>
                   <div style={{ borderRadius: '16px', padding: '10px 12px', fontSize: '13px', backgroundColor: msg.role === 'user' ? colors.navyBg : 'var(--bg-hover)', color: msg.role === 'user' ? 'white' : colors.navy, borderTopRightRadius: msg.role === 'user' ? '4px' : '16px', borderTopLeftRadius: msg.role === 'user' ? '16px' : '4px', boxShadow: msg.role === 'user' ? '0 2px 8px rgba(13,40,71,0.2)' : '0 1px 3px rgba(0,0,0,0.05)', whiteSpace: 'pre-wrap' }}>
@@ -4514,35 +4510,79 @@ const FlockAppInner = ({ authUser, onLogout }) => {
                     </button>
                   )}
                   {msg.venues && msg.venues.length > 0 && (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '8px' }}>
-                      {msg.venues.map((v, vi) => (
-                        <div key={vi} style={{ borderRadius: '12px', border: '1px solid var(--border-default)', backgroundColor: 'var(--bg-card-solid)', overflow: 'hidden', boxShadow: '0 1px 4px rgba(0,0,0,0.06)' }}>
-                          <div style={{ padding: '10px 12px' }}>
-                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                              <div style={{ flex: 1 }}>
-                                <h4 style={{ fontSize: '13px', fontWeight: '700', color: 'var(--text-primary)', margin: '0 0 2px' }}>{v.name}</h4>
-                                <p style={{ fontSize: '10px', color: 'var(--text-secondary)', margin: 0 }}>{v.address?.split(',').slice(0, 2).join(',')}</p>
-                              </div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginTop: '8px' }}>
+                      {msg.venues.map((v, vi) => {
+                        const crowd = typeof v.crowd === 'number' ? v.crowd : Math.round(20 + ((((v.place_id || v.name || '').charCodeAt(0) || 0) * 37) % 60));
+                        const crowdColor = crowd > 70 ? '#EF4444' : crowd > 40 ? '#F59E0B' : '#22C55E';
+                        const photoUrl = v.place_id ? `https://flock-app-production.up.railway.app/api/venues/photo/${v.place_id}` : null;
+                        return (
+                        <div key={vi} style={{ borderRadius: '16px', border: '1px solid var(--border-subtle)', backgroundColor: 'var(--bg-card-solid)', overflow: 'hidden', boxShadow: '0 4px 20px rgba(0,0,0,0.12)', maxWidth: '280px', animation: `fadeSlideIn 0.4s ease-out ${vi * 0.1}s both` }}>
+                          {/* Venue Photo */}
+                          {photoUrl && (
+                            <img src={photoUrl} alt={v.name} style={{ width: '100%', height: '140px', objectFit: 'cover', display: 'block' }} onError={(e) => { e.target.style.display = 'none'; }} />
+                          )}
+
+                          <div style={{ padding: '12px' }}>
+                            {/* Name + Open/Closed */}
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '4px' }}>
+                              <h4 style={{ fontSize: '14px', fontWeight: '700', color: colors.navy, margin: 0 }}>{v.name}</h4>
                               {v.is_open != null && (
-                                <span style={{ fontSize: '9px', fontWeight: '600', padding: '2px 6px', borderRadius: '6px', backgroundColor: v.is_open ? 'var(--accent-green-bg)' : 'var(--accent-red-bg)', color: v.is_open ? 'var(--accent-green-text)' : 'var(--accent-red-text)' }}>{v.is_open ? 'Open' : 'Closed'}</span>
+                                <span style={{ fontSize: '9px', fontWeight: '600', padding: '2px 6px', borderRadius: '6px', backgroundColor: v.is_open ? 'var(--accent-green-bg)' : 'var(--accent-red-bg)', color: v.is_open ? 'var(--accent-green-text)' : 'var(--accent-red-text)', flexShrink: 0, marginLeft: '6px' }}>{v.is_open ? 'Open' : 'Closed'}</span>
                               )}
                             </div>
-                            <div style={{ display: 'flex', gap: '8px', marginTop: '6px', alignItems: 'center', flexWrap: 'wrap' }}>
-                              {v.rating && <span style={{ fontSize: '11px', fontWeight: '600', color: 'var(--text-primary)' }}>⭐ {v.rating}</span>}
-                              {v.price_level != null && <span style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>{'$'.repeat(v.price_level || 1)}</span>}
-                              {v.crowd_label && <span style={{ fontSize: '10px', fontWeight: '600', padding: '1px 6px', borderRadius: '6px', backgroundColor: v.crowd <= 40 ? 'var(--accent-green-bg)' : v.crowd <= 70 ? 'var(--accent-amber-bg)' : 'var(--accent-red-bg)', color: v.crowd <= 40 ? 'var(--accent-green-text)' : v.crowd <= 70 ? 'var(--accent-amber-text)' : 'var(--accent-red-text)' }}>{v.crowd_label}</span>}
+
+                            {/* Address */}
+                            {v.address && (
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '4px', marginBottom: '8px' }}>
+                                {Icons.mapPin('var(--text-secondary)', 11)}
+                                <span style={{ fontSize: '10px', color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{v.address.split(',').slice(0, 2).join(',')}</span>
+                              </div>
+                            )}
+
+                            {/* Rating + Price */}
+                            <div style={{ display: 'flex', gap: '10px', marginBottom: '10px', alignItems: 'center' }}>
+                              {v.price_level != null && <span style={{ fontSize: '12px', color: colors.navy, fontWeight: '600' }}>{'$'.repeat(v.price_level || 1)}</span>}
+                              {v.rating && (
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '3px' }}>
+                                  {Icons.starFilled('#fbbf24', 12)}
+                                  <span style={{ fontSize: '12px', color: colors.navy, fontWeight: '600' }}>{v.rating}</span>
+                                </div>
+                              )}
                             </div>
-                          </div>
-                          <div style={{ display: 'flex', borderTop: '1px solid var(--border-light)' }}>
-                            <button onClick={() => setAiShareVenue(v)} style={{ flex: 1, padding: '8px', border: 'none', borderRight: '1px solid var(--border-light)', backgroundColor: 'transparent', cursor: 'pointer', fontSize: '11px', fontWeight: '600', color: colors.navy, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px' }}>
-                              {Icons.send(colors.navy, 12)} Send to Flock
-                            </button>
-                            <button onClick={() => setAiShareVenue({ ...v, _shareToDm: true })} style={{ flex: 1, padding: '8px', border: 'none', backgroundColor: 'transparent', cursor: 'pointer', fontSize: '11px', fontWeight: '600', color: '#7C3AED', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px' }}>
-                              {Icons.messageCircle('#7C3AED', 12)} Send as DM
+
+                            {/* Crowd Bar */}
+                            <div style={{ backgroundColor: 'var(--bg-tertiary)', borderRadius: '10px', padding: '8px 10px', marginBottom: '10px', border: '1px solid var(--border-default)' }}>
+                              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '5px' }}>
+                                <span style={{ fontSize: '10px', color: 'var(--text-secondary)', fontWeight: '500' }}>Current Crowd</span>
+                                <div style={{ backgroundColor: `${crowdColor}20`, color: crowdColor, padding: '1px 7px', borderRadius: '8px', fontSize: '10px', fontWeight: '700' }}>{crowd}%</div>
+                              </div>
+                              <div style={{ width: '100%', height: '5px', backgroundColor: 'var(--pill-bg)', borderRadius: '3px', overflow: 'hidden' }}>
+                                <div style={{ height: '100%', width: `${crowd}%`, backgroundColor: crowdColor, borderRadius: '3px', transition: 'width 0.6s ease-out' }} />
+                              </div>
+                            </div>
+
+                            {/* Action Buttons */}
+                            <div style={{ display: 'flex', gap: '6px' }}>
+                              {v.place_id && (
+                                <button className="fab-press" onClick={() => {
+                                  openVenueDetail(v.place_id, { name: v.name, formatted_address: v.address, place_id: v.place_id, rating: v.rating });
+                                }} style={{ flex: 1, padding: '9px', borderRadius: '10px', border: `1.5px solid ${colors.navy}`, backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontSize: '11px', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px' }}>
+                                  {Icons.eye(colors.navy, 13)} View Details
+                                </button>
+                              )}
+                              <button className="fab-press" onClick={() => setAiShareVenue(v)} style={{ flex: 1, padding: '9px', borderRadius: '10px', border: 'none', background: `linear-gradient(135deg, ${colors.navyBg}, ${colors.navyMidBg})`, color: 'white', fontSize: '11px', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px', boxShadow: '0 2px 8px rgba(13,40,71,0.25)' }}>
+                                {Icons.send('white', 12)} Share
+                              </button>
+                            </div>
+
+                            {/* DM share link */}
+                            <button className="fab-press" onClick={() => setAiShareVenue({ ...v, _shareToDm: true })} style={{ width: '100%', marginTop: '6px', padding: '7px', borderRadius: '10px', border: '1px solid var(--border-subtle)', backgroundColor: 'transparent', cursor: 'pointer', fontSize: '10px', fontWeight: '600', color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px' }}>
+                              {Icons.chat('var(--text-secondary)', 11)} Send as DM
                             </button>
                           </div>
                         </div>
-                      ))}
+                        );
+                      })}
                     </div>
                   )}
                 </div>
@@ -4550,14 +4590,25 @@ const FlockAppInner = ({ authUser, onLogout }) => {
             ))}
 
             {aiTyping && (
-              <div style={{ display: 'flex', gap: '8px', position: 'relative', zIndex: 1 }}>
-                <div style={{ width: '30px', height: '30px', borderRadius: '15px', background: 'linear-gradient(135deg, #4F46E5, #7C3AED)', display: 'flex', alignItems: 'center', justifyContent: 'center', animation: 'pulse 1.5s ease-in-out infinite' }}>
-                  {Icons.robot('white', 14)}
+              <div style={{ display: 'flex', gap: '8px', position: 'relative', zIndex: 1, animation: 'fadeSlideIn 0.3s ease-out' }}>
+                <div style={{ width: '30px', height: '30px', borderRadius: '15px', background: isDark ? 'linear-gradient(135deg, #0d1b3e, #162046)' : 'linear-gradient(135deg, #e8eaf0, #dde0e8)', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', border: '1.5px solid rgba(124,58,237,0.4)' }}>
+                  <img src={isDark ? "/birdie-avatar.png" : "/birdie-avatar-light.png"} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
                 </div>
-                <div style={{ backgroundColor: 'var(--bg-hover)', borderRadius: '16px', borderTopLeftRadius: '4px', padding: '12px 16px', display: 'flex', gap: '6px', alignItems: 'center' }}>
-                  <div style={{ width: '8px', height: '8px', borderRadius: '4px', backgroundColor: '#4F46E5', animation: 'bounce 1.4s ease-in-out infinite' }} />
-                  <div style={{ width: '8px', height: '8px', borderRadius: '4px', backgroundColor: '#7C3AED', animation: 'bounce 1.4s ease-in-out 0.15s infinite' }} />
-                  <div style={{ width: '8px', height: '8px', borderRadius: '4px', backgroundColor: '#4F46E5', animation: 'bounce 1.4s ease-in-out 0.3s infinite' }} />
+                <div style={{ backgroundColor: 'var(--bg-hover)', borderRadius: '16px', borderTopLeftRadius: '4px', padding: '10px 16px', display: 'flex', alignItems: 'center', boxShadow: '0 1px 3px rgba(0,0,0,0.05)' }}>
+                  <svg width="32" height="24" viewBox="0 0 32 24" xmlns="http://www.w3.org/2000/svg">
+                    <circle cx="6" cy="12" r="3" fill={isDark ? '#e8e4df' : '#9a958f'} opacity="0.9">
+                      <animate id="b1" begin="0;b3.end+0.2s" attributeName="cy" calcMode="spline" dur="0.6s" values="12;6;12" keySplines=".33,.66,.66,1;.33,0,.66,.33" />
+                      <animate begin="0;b3.end+0.2s" attributeName="opacity" dur="0.6s" values="0.35;1;0.35" />
+                    </circle>
+                    <circle cx="16" cy="12" r="3" fill={isDark ? '#d5d0c9' : '#8a857f'} opacity="0.9">
+                      <animate begin="b1.begin+0.1s" attributeName="cy" calcMode="spline" dur="0.6s" values="12;6;12" keySplines=".33,.66,.66,1;.33,0,.66,.33" />
+                      <animate begin="b1.begin+0.1s" attributeName="opacity" dur="0.6s" values="0.35;1;0.35" />
+                    </circle>
+                    <circle cx="26" cy="12" r="3" fill={isDark ? '#c2bdb6' : '#7a756f'} opacity="0.9">
+                      <animate id="b3" begin="b1.begin+0.2s" attributeName="cy" calcMode="spline" dur="0.6s" values="12;6;12" keySplines=".33,.66,.66,1;.33,0,.66,.33" />
+                      <animate begin="b1.begin+0.2s" attributeName="opacity" dur="0.6s" values="0.35;1;0.35" />
+                    </circle>
+                  </svg>
                 </div>
               </div>
             )}
@@ -4579,10 +4630,46 @@ const FlockAppInner = ({ authUser, onLogout }) => {
           )}
 
           {/* Input */}
-          <div style={{ padding: '10px 12px', borderTop: '1px solid var(--divider)', backgroundColor: 'var(--bg-card-solid)' }}>
-            <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-              <input ref={aiInputRef} type="text" defaultValue="" onChange={(e) => { aiInputValueRef.current = e.target.value; const has = !!e.target.value; setAiInputHasText(prev => prev !== has ? has : prev); }} onKeyDown={(e) => e.key === 'Enter' && sendAiMessage()} placeholder="Ask me anything..." style={{ flex: 1, padding: '12px 16px', borderRadius: '24px', backgroundColor: 'var(--bg-hover)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)', fontSize: '13px', outline: 'none', fontWeight: '500' }} autoComplete="off" />
-              <button onClick={sendAiMessage} disabled={!aiInputHasText} style={{ width: '42px', height: '42px', borderRadius: '21px', border: 'none', background: aiInputHasText ? `linear-gradient(135deg, ${colors.navyBg}, ${colors.navyMidBg})` : 'var(--pill-bg)', color: 'white', cursor: aiInputHasText ? 'pointer' : 'default', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: aiInputHasText ? '0 4px 12px rgba(13,40,71,0.3)' : 'none', transition: 'opacity 0.2s' }}>{Icons.send('white', 18)}</button>
+          <div style={{ padding: '8px 12px 10px', backgroundColor: 'var(--bg-card-solid)' }}>
+            <div style={{ borderRadius: '20px', backgroundColor: 'var(--bg-hover)', border: '1.5px solid var(--border-subtle)', padding: '6px', transition: 'border-color 0.3s ease, box-shadow 0.3s ease', boxShadow: aiInputHasText ? '0 0 0 1px rgba(79,70,229,0.15), 0 4px 16px rgba(0,0,0,0.08)' : '0 2px 8px rgba(0,0,0,0.04)', borderColor: aiInputHasText ? 'rgba(79,70,229,0.3)' : 'var(--border-subtle)' }}>
+              {/* Text input row */}
+              <div style={{ display: 'flex', alignItems: 'flex-end', gap: '0', padding: '0 2px 0 10px' }}>
+                <input ref={aiInputRef} type="text" defaultValue="" onChange={(e) => { aiInputValueRef.current = e.target.value; const has = !!e.target.value; setAiInputHasText(prev => prev !== has ? has : prev); }} onKeyDown={(e) => e.key === 'Enter' && sendAiMessage()} placeholder="Ask me anything..." style={{ flex: 1, padding: '8px 0', backgroundColor: 'transparent', color: 'var(--text-primary)', border: 'none', fontSize: '13px', outline: 'none', fontWeight: '500', lineHeight: '1.4' }} autoComplete="off" />
+                <button className="fab-press" onClick={sendAiMessage} disabled={!aiInputHasText && !aiTyping} style={{ width: '34px', height: '34px', minWidth: '34px', borderRadius: '17px', border: 'none', background: aiInputHasText ? 'linear-gradient(135deg, #4F46E5, #7C3AED)' : 'transparent', color: 'white', cursor: aiInputHasText ? 'pointer' : 'default', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1)', transform: aiInputHasText ? 'scale(1)' : 'scale(0.85)', opacity: aiInputHasText ? 1 : 0.4, boxShadow: aiInputHasText ? '0 4px 12px rgba(79,70,229,0.35)' : 'none' }}>
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ transition: 'transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1)', transform: aiInputHasText ? 'translateY(-1px)' : 'translateY(0)' }}>
+                    <line x1="12" y1="19" x2="12" y2="5" /><polyline points="5 12 12 5 19 12" />
+                  </svg>
+                </button>
+              </div>
+              {/* Action buttons row */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: '2px', padding: '2px 4px 0', borderTop: '1px solid var(--border-subtle)', marginTop: '4px', paddingTop: '6px' }}>
+                {[
+                  { icon: Icons.search, label: 'Search', prefix: 'Find me ', color: '#1EAEDB' },
+                  { icon: Icons.mapPin, label: 'Crowds', prefix: 'How busy is ', color: '#8B5CF6' },
+                  { icon: Icons.users, label: 'My Flocks', prefix: 'What are my upcoming plans?', color: '#F97316' },
+                ].map((action, i) => (
+                  <button key={i} className="fab-press" onClick={() => {
+                    if (action.prefix.endsWith('?')) {
+                      aiInputValueRef.current = action.prefix;
+                      setAiInputHasText(true);
+                      if (aiInputRef.current) aiInputRef.current.value = action.prefix;
+                      setTimeout(() => sendAiMessage(), 50);
+                    } else {
+                      aiInputValueRef.current = action.prefix;
+                      setAiInputHasText(true);
+                      if (aiInputRef.current) { aiInputRef.current.value = action.prefix; aiInputRef.current.focus(); }
+                    }
+                  }} style={{ display: 'flex', alignItems: 'center', gap: '4px', padding: '4px 10px', borderRadius: '12px', border: 'none', backgroundColor: 'transparent', cursor: 'pointer', transition: 'all 0.25s ease', fontSize: '11px', fontWeight: '600', color: 'var(--text-tertiary)' }}
+                  onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = `${action.color}15`; e.currentTarget.style.color = action.color; }}
+                  onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = 'transparent'; e.currentTarget.style.color = 'var(--text-tertiary)'; }}
+                  >
+                    {action.icon('currentColor', 13)}
+                    <span>{action.label}</span>
+                  </button>
+                ))}
+                <div style={{ flex: 1 }} />
+                <span style={{ fontSize: '9px', color: 'var(--text-tertiary)', fontWeight: '500', opacity: 0.6 }}>Birdie AI</span>
+              </div>
             </div>
           </div>
 
