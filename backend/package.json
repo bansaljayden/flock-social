@@ -9,6 +9,7 @@
     "db:init": "psql $DATABASE_URL -f database/schema.sql"
   },
   "dependencies": {
+    "@google/generative-ai": "^0.24.1",
     "bcryptjs": "^3.0.3",
     "cors": "^2.8.5",
     "dotenv": "^16.3.1",

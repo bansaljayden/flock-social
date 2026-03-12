@@ -28,6 +28,7 @@ const weatherRoutes = require('./routes/weather');
 const budgetRoutes = require('./routes/budget');
 const billingRoutes = require('./routes/billing');
 const eventRoutes = require('./routes/events');
+const aiRoutes = require('./routes/ai');
 
 const app = express();
 app.set('trust proxy', 1);
@@ -130,6 +131,7 @@ app.use('/api/weather', apiLimiter, weatherRoutes);   // Handles /api/weather?la
 app.use('/api/budget', apiLimiter, budgetRoutes);     // Handles /api/budget/:flockId/*
 app.use('/api/billing', apiLimiter, billingRoutes);   // Handles /api/billing/:flockId/*
 app.use('/api/events', apiLimiter, eventRoutes);      // Handles /api/events/search, /api/events/featured
+app.use('/api/ai', apiLimiter, aiRoutes);             // Handles /api/ai/chat (Birdie AI assistant)
 
 // Health check
 app.get('/api/health', (req, res) => {
