@@ -3397,7 +3397,10 @@ const FlockAppInner = ({ authUser, onLogout }) => {
         zIndex: 20,
         touchAction: 'none',
         cursor: 'grab',
+        userSelect: 'none',
+        WebkitUserSelect: 'none',
       }}
+      onDragStart={(e) => e.preventDefault()}
     >
       <div className="fab-press" style={{
         width: '52px',
@@ -3409,6 +3412,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
         alignItems: 'center',
         justifyContent: 'center',
         boxShadow: '0 6px 20px rgba(239,68,68,0.4), 0 2px 6px rgba(0,0,0,0.1)',
+        pointerEvents: 'none',
       }}>
         {Icons.shield('white', 24)}
       </div>
@@ -3435,7 +3439,10 @@ const FlockAppInner = ({ authUser, onLogout }) => {
         zIndex: 20,
         animation: 'fadeSlideIn 0.3s ease-out',
         touchAction: 'none',
+        userSelect: 'none',
+        WebkitUserSelect: 'none',
       }}
+      onDragStart={(e) => e.preventDefault()}
     >
       {/* Robot head */}
       <div className="fab-press" style={{
@@ -3452,7 +3459,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
         border: isDark ? '2px solid rgba(124,58,237,0.6)' : '2px solid rgba(13,40,71,0.2)',
         position: 'relative',
       }}>
-        <img src={isDark ? "/birdie-avatar.png" : "/birdie-avatar-light.png"} alt="Birdie" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+        <img draggable="false" src={isDark ? "/birdie-avatar.png" : "/birdie-avatar-light.png"} alt="Birdie" style={{ width: '100%', height: '100%', objectFit: 'cover', pointerEvents: 'none' }} />
         {/* Online dot */}
         <div style={{ position: 'absolute', bottom: '0px', right: '0px', width: '14px', height: '14px', borderRadius: '7px', backgroundColor: '#22C55E', border: '2px solid var(--bg-primary)' }} />
       </div>
