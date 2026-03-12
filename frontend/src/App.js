@@ -6434,7 +6434,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
                       display: 'flex', alignItems: 'center', gap: '4px', flexShrink: 0,
                       animation: 'fadeSlideIn 0.2s ease-out both',
                     }}>
-                      {c.icon(category === c.id)} {c.id}
+                      {c.id}
                     </button>
                   ))}
                   <button onClick={() => setCategoryExpanded(false)} style={{
@@ -6454,7 +6454,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
                   display: 'flex', alignItems: 'center', gap: '4px',
                   boxShadow: 'var(--card-shadow-sm)',
                 }}>
-                  {selectedCat.icon(false)} {selectedCat.id}
+                  {selectedCat.id}
                   <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" style={{ marginLeft: '2px', opacity: 0.6 }}><polyline points="6 9 12 15 18 9" /></svg>
                 </button>
               )}
