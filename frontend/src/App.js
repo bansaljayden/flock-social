@@ -6420,42 +6420,38 @@ const FlockAppInner = ({ authUser, onLogout }) => {
         };
         const selectedCat = cats.find(c => c.id === category) || cats[0];
         return (
-          <div style={{ padding: '6px 12px', backgroundColor: 'var(--bg-card-solid)', boxShadow: '0 -2px 4px rgba(0,0,0,0.1)', flexShrink: 0 }}>
-            <div style={{ display: 'flex', gap: '5px', alignItems: 'center', overflowX: 'auto', WebkitOverflowScrolling: 'touch', scrollbarWidth: 'none', msOverflowStyle: 'none' }}>
+          <div style={{ padding: '5px 12px', backgroundColor: 'var(--bg-card-solid)', borderTop: '1px solid var(--border-light)', flexShrink: 0 }}>
+            <div style={{ display: 'flex', gap: '6px', alignItems: 'center', overflowX: 'auto', WebkitOverflowScrolling: 'touch', scrollbarWidth: 'none', msOverflowStyle: 'none' }}>
               {categoryExpanded ? (
                 <>
                   {cats.map(c => (
                     <button key={c.id} onClick={() => selectCategory(c)} style={{
-                      padding: '6px 10px', borderRadius: '16px',
-                      border: category === c.id ? 'none' : '1px solid var(--border-default)',
-                      backgroundColor: category === c.id ? colors.navyBg : 'var(--bg-card-solid)',
+                      padding: '5px 12px', borderRadius: '14px', border: 'none',
+                      backgroundColor: category === c.id ? colors.navyBg : 'var(--bg-hover)',
                       color: category === c.id ? colors.cream : 'var(--text-primary)',
                       fontWeight: '600', fontSize: '11px', cursor: 'pointer', whiteSpace: 'nowrap',
-                      display: 'flex', alignItems: 'center', gap: '4px', flexShrink: 0,
-                      animation: 'fadeSlideIn 0.2s ease-out both',
+                      flexShrink: 0, animation: 'fadeSlideIn 0.2s ease-out both',
                     }}>
                       {c.id}
                     </button>
                   ))}
                   <button onClick={() => setCategoryExpanded(false)} style={{
-                    width: '24px', height: '24px', borderRadius: '50%', border: '1px solid var(--border-default)',
-                    backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer',
-                    display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
+                    padding: '5px 8px', borderRadius: '14px', border: 'none',
+                    backgroundColor: 'var(--bg-hover)', cursor: 'pointer', flexShrink: 0,
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
                   }}>
-                    <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="var(--text-secondary)" strokeWidth="2.5" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                    <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="var(--text-secondary)" strokeWidth="2.5" strokeLinecap="round"><polyline points="18 15 12 9 6 15" /></svg>
                   </button>
                 </>
               ) : (
                 <button onClick={() => setCategoryExpanded(true)} style={{
-                  padding: '6px 12px', borderRadius: '16px',
-                  border: '1px solid var(--border-default)',
-                  backgroundColor: 'var(--bg-card-solid)', color: 'var(--text-primary)',
+                  padding: '5px 12px', borderRadius: '14px', border: 'none',
+                  backgroundColor: 'var(--bg-hover)', color: 'var(--text-primary)',
                   fontWeight: '600', fontSize: '11px', cursor: 'pointer', whiteSpace: 'nowrap',
-                  display: 'flex', alignItems: 'center', gap: '4px',
-                  boxShadow: 'var(--card-shadow-sm)',
+                  display: 'flex', alignItems: 'center', gap: '3px',
                 }}>
                   {selectedCat.id}
-                  <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" style={{ marginLeft: '2px', opacity: 0.6 }}><polyline points="6 9 12 15 18 9" /></svg>
+                  <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" style={{ opacity: 0.5 }}><polyline points="6 9 12 15 18 9" /></svg>
                 </button>
               )}
             </div>
