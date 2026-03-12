@@ -2981,12 +2981,17 @@ const FlockAppInner = ({ authUser, onLogout }) => {
     gripVertical: (color = 'currentColor', size = 18) => <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="9" cy="5" r="1"></circle><circle cx="9" cy="12" r="1"></circle><circle cx="9" cy="19" r="1"></circle><circle cx="15" cy="5" r="1"></circle><circle cx="15" cy="12" r="1"></circle><circle cx="15" cy="19" r="1"></circle></svg>,
   };
 
-  // Fetch activity feed
+  // Fetch activity feed (fallback to demo data for empty state)
+  const demoActivity = useRef([
+    { action: 'created', user_id: 0, user_name: 'Mike Rodriguez', flock_name: 'Weekend Brunch Crew', flock_id: 0, happened_at: new Date(Date.now() - 2 * 3600000).toISOString() },
+    { action: 'joined', user_id: 0, user_name: 'Emma Taylor', flock_name: 'Friday Night Out', flock_id: 0, happened_at: new Date(Date.now() - 5 * 3600000).toISOString() },
+    { action: 'joined', user_id: 0, user_name: 'Jayden Bansal', flock_name: 'DECA Nationals Prep', flock_id: 0, happened_at: new Date(Date.now() - 8 * 3600000).toISOString() },
+  ]).current;
   useEffect(() => {
     getActivityFeed()
-      .then(data => setActivityFeed(data.activity || []))
-      .catch(() => {});
-  }, [flocks]);
+      .then(data => setActivityFeed((data.activity && data.activity.length > 0) ? data.activity : demoActivity))
+      .catch(() => setActivityFeed(demoActivity));
+  }, [flocks, demoActivity]);
 
   // Add reaction to message
   const addReactionToMessage = useCallback((flockId, messageId, reaction) => {
