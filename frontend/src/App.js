@@ -3438,7 +3438,6 @@ const FlockAppInner = ({ authUser, onLogout }) => {
         gap: '8px',
         cursor: 'grab',
         zIndex: 20,
-        animation: 'fadeSlideIn 0.3s ease-out',
         touchAction: 'none',
         userSelect: 'none',
         WebkitUserSelect: 'none',
@@ -3475,7 +3474,6 @@ const FlockAppInner = ({ authUser, onLogout }) => {
           backgroundColor: 'var(--bg-card-solid)',
           boxShadow: '0 4px 16px rgba(0,0,0,0.12)',
           border: '1px solid var(--border-subtle)',
-          animation: 'fadeSlideIn 0.4s ease-out 0.1s both',
         }}>
           <p style={{ margin: 0, fontSize: '11px', color: 'var(--text-primary)', fontWeight: '500', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
             {lastAiMessage.text.length > 50 ? lastAiMessage.text.slice(0, 50) + '...' : lastAiMessage.text}
