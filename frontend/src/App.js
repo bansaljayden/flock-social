@@ -1746,6 +1746,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
     { role: 'assistant', text: "Hey! I'm your Flock assistant. I can help you find venues, check crowd levels, and coordinate plans with friends. What can I help you with?" }
   ]);
   const [aiInputHasText, setAiInputHasText] = useState(false);
+  const aiInputHasTextRef = useRef(false);
   const aiInputValueRef = useRef('');
   const [aiTyping, setAiTyping] = useState(false);
   const [showAiAssistant, setShowAiAssistant] = useState(false);
@@ -1924,6 +1925,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
   const [showChatPool, setShowChatPool] = useState(false);
   const chatEndRef = useRef(null);
   const aiInputRef = useRef(null);
+  const aiChatEndRef = useRef(null);
   const [isTyping, setIsTyping] = useState(false);
   const [typingUser, setTypingUser] = useState('');
   const [chatSearch, setChatSearch] = useState('');
@@ -2275,9 +2277,15 @@ const FlockAppInner = ({ authUser, onLogout }) => {
       // Use app's existing location state
       const location = userLocation ? { lat: userLocation.lat, lng: userLocation.lng } : null;
 
-      // Send conversation history (skip the initial greeting to keep it clean)
-      const messagesToSend = newMessages.filter(m => m.role !== 'assistant' || newMessages.indexOf(m) !== 0 || newMessages.length <= 2)
-        .map(m => ({ role: m.role, text: m.text }));
+      // Send conversation history — skip initial greeting, include venue context
+      const messagesToSend = newMessages.slice(1).map(m => {
+        let text = m.text;
+        // Include venue names in assistant messages so Birdie remembers what it recommended
+        if (m.role === 'assistant' && m.venues && m.venues.length > 0) {
+          text += '\n[Venues shown: ' + m.venues.map(v => `${v.name} (${v.crowd_label || 'crowd unknown'}, ${v.is_open ? 'open' : 'closed'})`).join(', ') + ']';
+        }
+        return { role: m.role, text };
+      });
 
       const response = await sendAiChat(messagesToSend, location);
       setAiMessages(prev => [...prev, { role: 'assistant', text: response.text, venues: response.venues || [], navigate: response.navigate || null }]);
@@ -2288,6 +2296,13 @@ const FlockAppInner = ({ authUser, onLogout }) => {
       if (aiInputRef.current) aiInputRef.current.focus();
     }
   }, [aiMessages]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Auto-scroll AI chat to bottom when messages change
+  useEffect(() => {
+    if (showAiAssistant && aiChatEndRef.current) {
+      setTimeout(() => aiChatEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 50);
+    }
+  }, [aiMessages, aiTyping, showAiAssistant]);
 
   // Auto-scroll chat to bottom when messages change
   const selectedFlock = flocks.find(f => f.id === selectedFlockId) || flocks[0];
@@ -4612,6 +4627,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
                 </div>
               </div>
             )}
+            <div ref={aiChatEndRef} />
           </div>
 
           {/* Suggested Questions */}
@@ -4634,7 +4650,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
             <div style={{ borderRadius: '20px', backgroundColor: 'var(--bg-hover)', border: '1.5px solid var(--border-subtle)', padding: '6px', transition: 'border-color 0.3s ease, box-shadow 0.3s ease', boxShadow: aiInputHasText ? '0 0 0 1px rgba(79,70,229,0.15), 0 4px 16px rgba(0,0,0,0.08)' : '0 2px 8px rgba(0,0,0,0.04)', borderColor: aiInputHasText ? 'rgba(79,70,229,0.3)' : 'var(--border-subtle)' }}>
               {/* Text input row */}
               <div style={{ display: 'flex', alignItems: 'flex-end', gap: '0', padding: '0 2px 0 10px' }}>
-                <input ref={aiInputRef} type="text" defaultValue="" onChange={(e) => { aiInputValueRef.current = e.target.value; const has = !!e.target.value; setAiInputHasText(prev => prev !== has ? has : prev); }} onKeyDown={(e) => e.key === 'Enter' && sendAiMessage()} placeholder="Ask me anything..." style={{ flex: 1, padding: '8px 0', backgroundColor: 'transparent', color: 'var(--text-primary)', border: 'none', fontSize: '13px', outline: 'none', fontWeight: '500', lineHeight: '1.4' }} autoComplete="off" />
+                <input ref={aiInputRef} type="text" defaultValue="" onInput={(e) => { aiInputValueRef.current = e.target.value; const has = !!e.target.value; if (has !== aiInputHasTextRef.current) { aiInputHasTextRef.current = has; setAiInputHasText(has); } }} onKeyDown={(e) => e.key === 'Enter' && sendAiMessage()} placeholder="Ask me anything..." style={{ flex: 1, padding: '8px 0', backgroundColor: 'transparent', color: 'var(--text-primary)', border: 'none', fontSize: '13px', outline: 'none', fontWeight: '500', lineHeight: '1.4' }} autoComplete="off" />
                 <button className="fab-press" onClick={sendAiMessage} disabled={!aiInputHasText && !aiTyping} style={{ width: '34px', height: '34px', minWidth: '34px', borderRadius: '17px', border: 'none', background: aiInputHasText ? 'linear-gradient(135deg, #4F46E5, #7C3AED)' : 'transparent', color: 'white', cursor: aiInputHasText ? 'pointer' : 'default', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1)', transform: aiInputHasText ? 'scale(1)' : 'scale(0.85)', opacity: aiInputHasText ? 1 : 0.4, boxShadow: aiInputHasText ? '0 4px 12px rgba(79,70,229,0.35)' : 'none' }}>
                   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ transition: 'transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1)', transform: aiInputHasText ? 'translateY(-1px)' : 'translateY(0)' }}>
                     <line x1="12" y1="19" x2="12" y2="5" /><polyline points="5 12 12 5 19 12" />
