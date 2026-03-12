@@ -1747,11 +1747,6 @@ const FlockAppInner = ({ authUser, onLogout }) => {
   ]);
   const [aiInputHasText, setAiInputHasText] = useState(false);
   const aiInputValueRef = useRef('');
-  const setAiInput = useCallback((val) => {
-    aiInputValueRef.current = val;
-    setAiInputHasText(!!val);
-    if (!val && aiInputRef.current) aiInputRef.current.value = '';
-  }, []);
   const [aiTyping, setAiTyping] = useState(false);
   const [showAiAssistant, setShowAiAssistant] = useState(false);
   const [aiShareVenue, setAiShareVenue] = useState(null); // venue to share to flock/DM
@@ -2293,7 +2288,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
         .map(m => ({ role: m.role, text: m.text }));
 
       const response = await sendAiChat(messagesToSend, location);
-      setAiMessages(prev => [...prev, { role: 'assistant', text: response.text, venues: response.venues || [] }]);
+      setAiMessages(prev => [...prev, { role: 'assistant', text: response.text, venues: response.venues || [], navigate: response.navigate || null }]);
     } catch (err) {
       setAiMessages(prev => [...prev, { role: 'assistant', text: "Sorry, I'm having trouble connecting right now. Try again in a sec!" }]);
     } finally {
@@ -4433,9 +4428,9 @@ const FlockAppInner = ({ authUser, onLogout }) => {
   // AI Assistant Modal - Data
   const aiSuggestedQuestions = [
     { text: "Where's poppin rn?", icon: Icons.activity },
-    { text: "When should we hit Blue Heron?", icon: Icons.clock },
     { text: "Pick a bar for us", icon: Icons.cocktail },
-    { text: "I'm hungry tho", icon: Icons.pizza },
+    { text: "How do I add friends?", icon: Icons.users },
+    { text: "How do I split a bill?", icon: Icons.dollar },
   ];
 
   const aiQuickActions = [
@@ -4496,6 +4491,21 @@ const FlockAppInner = ({ authUser, onLogout }) => {
                     {msg.text}
                   </div>
                   {/* Venue Cards from AI */}
+                  {/* Navigation button from AI */}
+                  {msg.navigate && (
+                    <button onClick={() => {
+                      const nav = msg.navigate;
+                      if (nav.screen) setCurrentScreen(nav.screen);
+                      else setCurrentScreen('main');
+                      if (nav.tab) setCurrentTab(nav.tab);
+                      if (nav.profile_section === 'safety') { setProfileScreen('safety'); loadTrustedContacts(); }
+                      else if (nav.profile_section === 'payment') setProfileScreen('payment');
+                      else if (nav.profile_section === 'edit') setProfileScreen('edit');
+                      setShowAiAssistant(false);
+                    }} style={{ marginTop: '8px', padding: '10px 16px', borderRadius: '12px', border: 'none', background: `linear-gradient(135deg, #4F46E5, #7C3AED)`, color: 'white', fontSize: '12px', fontWeight: '700', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px', boxShadow: '0 2px 8px rgba(79,70,229,0.3)' }}>
+                      {Icons.arrowRight ? Icons.arrowRight('white', 14) : '→'} Take me there
+                    </button>
+                  )}
                   {msg.venues && msg.venues.length > 0 && (
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '8px' }}>
                       {msg.venues.map((v, vi) => (
@@ -4552,7 +4562,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
               <p style={{ fontSize: '9px', fontWeight: '600', color: 'var(--text-secondary)', marginBottom: '6px', textTransform: 'uppercase' }}>Try asking</p>
               <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
                 {aiSuggestedQuestions.map((q, i) => (
-                  <button key={i} onClick={() => { setAiInput(q.text); }} style={{ padding: '6px 10px', borderRadius: '16px', border: '1px solid var(--border-subtle)', backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer', fontSize: '11px', color: colors.navy, fontWeight: '500', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                  <button key={i} onClick={() => { aiInputValueRef.current = q.text; setAiInputHasText(true); if (aiInputRef.current) aiInputRef.current.value = q.text; setTimeout(() => sendAiMessage(), 50); }} style={{ padding: '6px 10px', borderRadius: '16px', border: '1px solid var(--border-subtle)', backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer', fontSize: '11px', color: colors.navy, fontWeight: '500', display: 'flex', alignItems: 'center', gap: '4px' }}>
                     {q.icon(colors.navy, 12)}
                     {q.text}
                   </button>
