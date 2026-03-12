@@ -1866,6 +1866,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
   // Explore
   // searchText removed — filtering handled by venue search
   const [category, setCategory] = useState('All');
+  const [categoryExpanded, setCategoryExpanded] = useState(false);
   const [activeVenue, setActiveVenue] = useState(null);
   const [venueDetailModal, setVenueDetailModal] = useState(null); // full venue details for modal
   const [, setVenueDetailLoading] = useState(false);
@@ -6387,46 +6388,91 @@ const FlockAppInner = ({ authUser, onLogout }) => {
         </div>
       </div>
 
-      {/* Categories */}
-      <div style={{ padding: '8px', backgroundColor: 'var(--bg-card-solid)', boxShadow: '0 -2px 4px rgba(0,0,0,0.1)', flexShrink: 0 }}>
-        <div style={{ display: 'flex', gap: '6px', overflowX: 'auto' }}>
-          {[
-              { id: 'All', icon: () => Icons.sparkles(category === 'All' ? colors.cream : colors.navy, 14) },
-              { id: 'Food', icon: () => Icons.pizza(category === 'Food' ? colors.cream : colors.food, 14) },
-              { id: 'Nightlife', icon: () => Icons.cocktail(category === 'Nightlife' ? colors.cream : colors.nightlife, 14) },
-              { id: 'Live Music', icon: () => Icons.music(category === 'Live Music' ? colors.cream : colors.music, 14) },
-              { id: 'Sports', icon: () => Icons.sports(category === 'Sports' ? colors.cream : colors.sports, 14) }
-            ].map(c => (
-            <button key={c.id} onClick={() => {
-              setActiveVenue(null);
-              if (c.id === 'All') {
-                // Reset: reload all venues near user (not just popular chains)
-                setCategory('All');
-                setVenueQuery('');
-                requestUserLocation(true); // force reload all nearby venues + re-center map
-                return;
-              }
-              // Category filter — uses types-based matching
-              const matches = allVenues.filter(v => {
-                const t = (v.types || []).join(' ').toLowerCase();
-                const nm = (v.name || '').toLowerCase();
-                if (c.id === 'Food') return t.includes('restaurant') || t.includes('cafe') || t.includes('food') || t.includes('bakery') || t.includes('bar') || t.includes('diner') || t.includes('juice') || t.includes('smoothie') || t.includes('brunch') || t.includes('breakfast') || v.category === 'Food';
-                if (c.id === 'Nightlife') return t.includes('bar') || t.includes('night_club') || t.includes('club') || t.includes('liquor') || v.category === 'Nightlife';
-                if (c.id === 'Live Music') return t.includes('music') || t.includes('concert') || t.includes('performing_arts') || nm.includes('music') || v.category === 'Live Music';
-                if (c.id === 'Sports') return t.includes('stadium') || t.includes('gym') || t.includes('sports') || t.includes('bowling') || v.category === 'Sports';
-                return true;
-              });
-              if (matches.length === 0) {
-                               setCategory('All');
-                return;
-              }
-              setCategory(c.id);
-            }} style={{ padding: '8px 12px', borderRadius: '20px', border: `2px solid ${colors.navy}`, backgroundColor: category === c.id ? colors.navyBg : 'var(--bg-card-solid)', color: category === c.id ? colors.cream : colors.navy, fontWeight: 'bold', fontSize: '11px', cursor: 'pointer', whiteSpace: 'nowrap', display: 'flex', alignItems: 'center', gap: '4px', flexShrink: 0 }}>
-              {c.icon()} {c.id}
-            </button>
-          ))}
-        </div>
-      </div>
+      {/* Categories — expandable pill bar */}
+      {(() => {
+        const cats = [
+          { id: 'All', icon: (sel) => Icons.sparkles(sel ? colors.cream : colors.navy, 14) },
+          { id: 'Food', icon: (sel) => Icons.pizza(sel ? colors.cream : colors.food, 14) },
+          { id: 'Nightlife', icon: (sel) => Icons.cocktail(sel ? colors.cream : colors.nightlife, 14) },
+          { id: 'Live Music', icon: (sel) => Icons.music(sel ? colors.cream : colors.music, 14) },
+          { id: 'Sports', icon: (sel) => Icons.sports(sel ? colors.cream : colors.sports, 14) },
+        ];
+        const selectCategory = (c) => {
+          setActiveVenue(null);
+          setCategoryExpanded(false);
+          if (c.id === 'All') {
+            setCategory('All');
+            setVenueQuery('');
+            requestUserLocation(true);
+            return;
+          }
+          const matches = allVenues.filter(v => {
+            const t = (v.types || []).join(' ').toLowerCase();
+            const nm = (v.name || '').toLowerCase();
+            if (c.id === 'Food') return t.includes('restaurant') || t.includes('cafe') || t.includes('food') || t.includes('bakery') || t.includes('bar') || t.includes('diner') || t.includes('juice') || t.includes('smoothie') || t.includes('brunch') || t.includes('breakfast') || v.category === 'Food';
+            if (c.id === 'Nightlife') return t.includes('bar') || t.includes('night_club') || t.includes('club') || t.includes('liquor') || v.category === 'Nightlife';
+            if (c.id === 'Live Music') return t.includes('music') || t.includes('concert') || t.includes('performing_arts') || nm.includes('music') || v.category === 'Live Music';
+            if (c.id === 'Sports') return t.includes('stadium') || t.includes('gym') || t.includes('sports') || t.includes('bowling') || v.category === 'Sports';
+            return true;
+          });
+          if (matches.length === 0) { setCategory('All'); return; }
+          setCategory(c.id);
+        };
+        const selectedCat = cats.find(c => c.id === category) || cats[0];
+        return (
+          <div style={{ padding: '8px 12px', backgroundColor: 'var(--bg-card-solid)', boxShadow: '0 -2px 4px rgba(0,0,0,0.1)', flexShrink: 0 }}>
+            <div style={{ display: 'flex', gap: '6px', alignItems: 'center', overflow: 'hidden', transition: 'all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1)' }}>
+              {categoryExpanded ? (
+                /* Expanded — show all categories */
+                cats.map(c => (
+                  <button key={c.id} onClick={() => selectCategory(c)} style={{
+                    padding: '8px 12px', borderRadius: '20px',
+                    border: category === c.id ? 'none' : '1.5px solid var(--border-default)',
+                    backgroundColor: category === c.id ? colors.navyBg : 'var(--bg-card-solid)',
+                    color: category === c.id ? colors.cream : colors.navy,
+                    fontWeight: '700', fontSize: '11px', cursor: 'pointer', whiteSpace: 'nowrap',
+                    display: 'flex', alignItems: 'center', gap: '5px', flexShrink: 0,
+                    animation: 'fadeSlideIn 0.25s ease-out both',
+                    boxShadow: category === c.id ? '0 2px 8px rgba(13,40,71,0.25)' : 'none',
+                  }}>
+                    {c.icon(category === c.id)} {c.id}
+                  </button>
+                ))
+              ) : (
+                /* Collapsed — show selected + expand button */
+                <>
+                  <button onClick={() => setCategoryExpanded(true)} style={{
+                    padding: '8px 14px', borderRadius: '20px', border: 'none',
+                    backgroundColor: colors.navyBg, color: colors.cream,
+                    fontWeight: '700', fontSize: '11px', cursor: 'pointer', whiteSpace: 'nowrap',
+                    display: 'flex', alignItems: 'center', gap: '5px', flexShrink: 0,
+                    boxShadow: '0 2px 8px rgba(13,40,71,0.25)',
+                  }}>
+                    {selectedCat.icon(true)} {selectedCat.id}
+                    <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" style={{ marginLeft: '2px', opacity: 0.7 }}><polyline points="6 9 12 15 18 9" /></svg>
+                  </button>
+                  {/* Show other categories as ghost pills */}
+                  {cats.filter(c => c.id !== category).map(c => (
+                    <button key={c.id} onClick={() => selectCategory(c)} style={{
+                      padding: '7px 10px', borderRadius: '16px',
+                      border: '1.5px solid var(--border-default)',
+                      backgroundColor: 'transparent', color: 'var(--text-secondary)',
+                      fontWeight: '600', fontSize: '10px', cursor: 'pointer', whiteSpace: 'nowrap',
+                      display: 'flex', alignItems: 'center', gap: '4px', flexShrink: 0,
+                      opacity: 0.7, transition: 'opacity 0.2s ease, background-color 0.2s ease',
+                    }}
+                    onMouseEnter={(e) => { e.currentTarget.style.opacity = '1'; e.currentTarget.style.backgroundColor = 'var(--bg-hover)'; }}
+                    onMouseLeave={(e) => { e.currentTarget.style.opacity = '0.7'; e.currentTarget.style.backgroundColor = 'transparent'; }}
+                    >
+                      {c.icon(false)} {c.id}
+                    </button>
+                  ))}
+                </>
+              )}
+            </div>
+          </div>
+        );
+      })()}
 
       <SafetyButton />
       <BottomNav />
