@@ -343,7 +343,7 @@ router.post('/chat',
 
       const genAI = getGenAI();
       if (!genAI) {
-        return res.status(500).json({ error: 'AI service not configured' });
+        return res.status(500).json({ error: 'AI service not configured — GEMINI_API_KEY missing' });
       }
 
       const { messages, location } = req.body;
@@ -477,7 +477,7 @@ router.post('/chat',
       if (err.status === 429 || err.message?.includes('quota')) {
         return res.status(429).json({ error: 'AI is busy right now, try again in a sec' });
       }
-      res.status(500).json({ error: 'Something went wrong with Birdie' });
+      res.status(500).json({ error: 'Something went wrong with Birdie', debug: err.message });
     }
   }
 );
