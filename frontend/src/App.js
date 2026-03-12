@@ -5677,7 +5677,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
             onClick={() => { setShowSearchResults(true); setShowSearchDropdown(false); }}
             style={{ position: 'absolute', bottom: '14px', right: '12px', padding: '8px 14px', borderRadius: '12px', border: 'none', background: 'var(--bg-card-solid)', color: colors.navy, fontSize: '12px', fontWeight: '700', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px', boxShadow: '0 2px 12px rgba(0,0,0,0.15)', zIndex: 35, transition: 'opacity 0.2s ease' }}
           >
-            {Icons.filter(colors.navy, 13)} View All {allVenues.length} Results
+            View All {allVenues.length} Results
           </button>
         )}
 
