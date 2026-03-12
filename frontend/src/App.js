@@ -1712,12 +1712,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
   const [swipeState, setSwipeState] = useState({ id: null, x: 0, startX: 0 });
 
   const headerRef = useRef(null);
-  const handleScroll = useCallback((e) => {
-    if (headerRef.current) {
-      const scale = Math.max(1 - e.target.scrollTop * 0.002, 0.95);
-      headerRef.current.style.transform = `scale(${scale})`;
-    }
-  }, []);
+  const handleScroll = useCallback(() => {}, []);
 
   // Swipe gesture handlers
   const handleTouchStart = useCallback((id, e) => {
@@ -5057,7 +5052,6 @@ const FlockAppInner = ({ authUser, onLogout }) => {
         background: `linear-gradient(135deg, ${colors.navyBg} 0%, ${colorsLight.navyLight} 50%, ${colors.navyMidBg} 100%)`,
         flexShrink: 0,
         transformOrigin: 'top center',
-        willChange: 'transform',
       }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
           <div>
