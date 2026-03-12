@@ -2012,33 +2012,32 @@ const FlockAppInner = ({ authUser, onLogout }) => {
   const [trustedContacts, setTrustedContacts] = useState([]);
   const [safetyOn, setSafetyOn] = useState(true);
 
-  // Draggable FAB positions — persisted in localStorage
-  const [birdiePos, setBirdiePos] = useState(() => {
-    try { const s = localStorage.getItem('flock_birdie_pos'); return s ? JSON.parse(s) : { bottom: 95, left: 12 }; } catch { return { bottom: 95, left: 12 }; }
-  });
-  const [sosPos, setSosPos] = useState(() => {
-    try { const s = localStorage.getItem('flock_sos_pos'); return s ? JSON.parse(s) : { bottom: 95, right: 12 }; } catch { return { bottom: 95, right: 12 }; }
-  });
-  const dragRef = useRef(null); // { id, el, startX, startY, origLeft, origTop, moved }
-  const birdieFabRef = useRef(null);
-  const sosFabRef = useRef(null);
+  // Draggable FAB positions — snap to corners, persisted in localStorage
+  // corner format: 'bottom-left' | 'bottom-right' | 'top-left' | 'top-right'
+  const [birdieCorner, setBirdieCorner] = useState(() => localStorage.getItem('flock_birdie_corner') || 'bottom-left');
+  const [sosCorner, setSosCorner] = useState(() => localStorage.getItem('flock_sos_corner') || 'bottom-right');
+  const dragRef = useRef(null);
   const [showAddContact, setShowAddContact] = useState(false);
   const [editingContact, setEditingContact] = useState(null);
   const [newContact, setNewContact] = useState({ name: '', phone: '', email: '', relationship: '' });
   const [safetyLoading, setSafetyLoading] = useState(false);
   const [sosAlertSending, setSosAlertSending] = useState(false);
 
-  // Smooth 60fps drag for FABs — manipulates DOM directly, commits to state on release
+  // Corner positions for FABs
+  const cornerStyle = useCallback((corner, side) => {
+    const isTop = corner.startsWith('top');
+    const isLeft = corner.includes('left');
+    const pos = {};
+    if (isTop) { pos.top = '60px'; } else { pos.bottom = '95px'; }
+    if (isLeft) { pos.left = '12px'; } else { pos.right = '12px'; }
+    return pos;
+  }, []);
+
+  // Drag FABs — smooth 60fps transform, snap to nearest corner on release
   const handleFabPointerDown = useCallback((e, id) => {
     const el = e.currentTarget;
     el.setPointerCapture(e.pointerId);
-    const rect = el.getBoundingClientRect();
-    dragRef.current = {
-      id, el,
-      startX: e.clientX, startY: e.clientY,
-      origLeft: rect.left, origTop: rect.top,
-      moved: false,
-    };
+    dragRef.current = { id, el, startX: e.clientX, startY: e.clientY, moved: false };
     el.style.transition = 'none';
     el.style.willChange = 'transform';
     el.style.zIndex = '30';
@@ -2059,35 +2058,31 @@ const FlockAppInner = ({ authUser, onLogout }) => {
     const d = dragRef.current;
     if (!d) return false;
     const wasDrag = d.moved;
+    // Reset transform — CSS transition in .fab-corner handles the snap animation
+    d.el.style.transform = '';
+    d.el.style.willChange = '';
+    d.el.style.cursor = 'grab';
+    d.el.style.zIndex = '20';
     if (wasDrag) {
-      const finalRect = d.el.getBoundingClientRect();
+      // Snap to nearest corner based on pointer position
       const container = d.el.parentElement;
-      const containerRect = container.getBoundingClientRect();
-      const clampedLeft = Math.max(4, Math.min(containerRect.width - 60, finalRect.left - containerRect.left));
-      const clampedBottom = Math.max(70, Math.min(containerRect.height - 60, containerRect.bottom - finalRect.top - 52));
-      // Spring back animation
-      d.el.style.transform = '';
-      d.el.style.transition = 'transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1)';
-      d.el.style.willChange = '';
-      d.el.style.cursor = 'grab';
-      d.el.style.zIndex = '20';
+      const rect = container.getBoundingClientRect();
+      const cx = e.clientX - rect.left;
+      const cy = e.clientY - rect.top;
+      const isLeft = cx < rect.width / 2;
+      const isTop = cy < rect.height / 2;
+      const corner = `${isTop ? 'top' : 'bottom'}-${isLeft ? 'left' : 'right'}`;
       if (d.id === 'birdie') {
-        const newPos = { bottom: Math.round(clampedBottom), left: Math.round(clampedLeft) };
-        setBirdiePos(newPos);
-        localStorage.setItem('flock_birdie_pos', JSON.stringify(newPos));
+        setBirdieCorner(corner);
+        localStorage.setItem('flock_birdie_corner', corner);
       } else {
-        const newRight = Math.round(Math.max(4, containerRect.right - finalRect.right));
-        const newPos = { bottom: Math.round(clampedBottom), right: newRight };
-        setSosPos(newPos);
-        localStorage.setItem('flock_sos_pos', JSON.stringify(newPos));
+        setSosCorner(corner);
+        localStorage.setItem('flock_sos_corner', corner);
       }
-    } else {
-      d.el.style.transform = '';
-      d.el.style.zIndex = '20';
     }
     dragRef.current = null;
     return wasDrag;
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, []);
 
   // Interests
   const [userInterests, setUserInterests] = useState(['Live Music', 'Cocktails', 'Nightlife']);
@@ -3387,16 +3382,16 @@ const FlockAppInner = ({ authUser, onLogout }) => {
     }
   }, [trustedContacts, showToast]);
 
-  // Safety Button - Draggable
+  // Safety Button - Draggable, snaps to corners
   const SafetyButton = () => safetyOn && currentScreen === 'main' && !showSOS && (
     <div
+      className="fab-corner"
       onPointerDown={(e) => handleFabPointerDown(e, 'sos')}
       onPointerMove={handleFabPointerMove}
       onPointerUp={(e) => { const wasDrag = handleFabPointerUp(e); if (!wasDrag) setShowSOS(true); }}
       style={{
         position: 'absolute',
-        bottom: `${sosPos.bottom}px`,
-        right: `${sosPos.right}px`,
+        ...cornerStyle(sosCorner),
         width: '52px',
         height: '52px',
         zIndex: 20,
@@ -3420,18 +3415,20 @@ const FlockAppInner = ({ authUser, onLogout }) => {
     </div>
   );
 
-  // AI Bubble — draggable floating widget with last message preview
+  // AI Bubble — draggable floating widget, snaps to corners
   const lastAiMessage = aiMessages.length > 1 ? aiMessages[aiMessages.length - 1] : null;
+  const birdieIsRight = birdieCorner.includes('right');
   const AIBubble = () => currentScreen === 'main' && currentTab === 'home' && aiChatMode === 'bubble' && (
     <div
+      className="fab-corner"
       onPointerDown={(e) => handleFabPointerDown(e, 'birdie')}
       onPointerMove={handleFabPointerMove}
       onPointerUp={(e) => { const wasDrag = handleFabPointerUp(e); if (!wasDrag) setAiChatMode('panel'); }}
       style={{
         position: 'absolute',
-        bottom: `${birdiePos.bottom}px`,
-        left: `${birdiePos.left}px`,
+        ...cornerStyle(birdieCorner),
         display: 'flex',
+        flexDirection: birdieIsRight ? 'row-reverse' : 'row',
         alignItems: 'center',
         gap: '8px',
         cursor: 'grab',
@@ -3465,7 +3462,8 @@ const FlockAppInner = ({ authUser, onLogout }) => {
           maxWidth: '180px',
           padding: '8px 12px',
           borderRadius: '16px',
-          borderTopLeftRadius: '4px',
+          borderTopLeftRadius: birdieIsRight ? '16px' : '4px',
+          borderTopRightRadius: birdieIsRight ? '4px' : '16px',
           backgroundColor: 'var(--bg-card-solid)',
           boxShadow: '0 4px 16px rgba(0,0,0,0.12)',
           border: '1px solid var(--border-subtle)',
@@ -4588,8 +4586,10 @@ const FlockAppInner = ({ authUser, onLogout }) => {
           display: 'flex',
           flexDirection: 'column',
           position: isAiPanel ? 'absolute' : 'relative',
-          bottom: isAiPanel ? `${birdiePos.bottom}px` : 0,
-          left: isAiPanel ? `${birdiePos.left}px` : undefined,
+          bottom: isAiPanel ? (birdieCorner.startsWith('bottom') ? '95px' : undefined) : 0,
+          top: isAiPanel ? (birdieCorner.startsWith('top') ? '60px' : undefined) : undefined,
+          left: isAiPanel ? (birdieCorner.includes('left') ? '12px' : undefined) : undefined,
+          right: isAiPanel ? (birdieCorner.includes('right') ? '12px' : undefined) : undefined,
           boxShadow: isAiPanel ? '0 12px 48px rgba(0,0,0,0.25), 0 4px 16px rgba(0,0,0,0.12)' : 'none',
           border: isAiPanel ? '1px solid var(--border-subtle)' : 'none',
           pointerEvents: 'auto',
