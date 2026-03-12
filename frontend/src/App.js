@@ -11,7 +11,7 @@ import {
   formatCurrency,
   calculateProfitMargin
 } from './lib/finance';
-import { getCurrentUser, logout, isLoggedIn, getFlocks, getFlock, createFlock as apiCreateFlock, getMessages, sendMessage as apiSendMessage, updateProfile, searchVenues, searchUsers, getSuggestedUsers, sendFriendRequest, getVenueDetails, leaveFlock as apiLeaveFlock, getDMConversations, getDMs, getDmVenueVotes, getDmPinnedVenue, BASE_URL, inviteToFlock, acceptFlockInvite, declineFlockInvite, getFriends, acceptFriendRequest, declineFriendRequest, getPendingRequests, getOutgoingRequests, getFriendSuggestions, addFriendByCode, findFriendsByPhone, removeFriend, getTrustedContacts, addTrustedContact, updateTrustedContact, deleteTrustedContact, sendEmergencyAlert, shareLocationWithContacts, getUserStats, getCrowdPrediction, getCrowdBatch, getCrowdAlternatives, getWeather, submitVenueFeedback, uploadProfileImage, saveProfileImageUrl, submitBudget, getBudgetStatus, lockBudget, sendBudgetReminder, createBillSplit, getBillSplit, settleShare, ghostCommit, updatePaymentMethods, getPaymentLinks, getFeaturedEvents, searchEvents, getEventDetails, sendAiChat } from './services/api';
+import { getCurrentUser, logout, isLoggedIn, getFlocks, getFlock, createFlock as apiCreateFlock, getMessages, sendMessage as apiSendMessage, updateProfile, searchVenues, searchUsers, getSuggestedUsers, sendFriendRequest, getVenueDetails, leaveFlock as apiLeaveFlock, getDMConversations, getDMs, getDmVenueVotes, getDmPinnedVenue, BASE_URL, inviteToFlock, acceptFlockInvite, declineFlockInvite, getFriends, acceptFriendRequest, declineFriendRequest, getPendingRequests, getOutgoingRequests, getFriendSuggestions, addFriendByCode, findFriendsByPhone, removeFriend, getTrustedContacts, addTrustedContact, updateTrustedContact, deleteTrustedContact, sendEmergencyAlert, shareLocationWithContacts, getUserStats, getCrowdPrediction, getCrowdBatch, getCrowdAlternatives, getWeather, submitVenueFeedback, uploadProfileImage, saveProfileImageUrl, submitBudget, getBudgetStatus, lockBudget, sendBudgetReminder, createBillSplit, getBillSplit, settleShare, ghostCommit, updatePaymentMethods, getPaymentLinks, getFeaturedEvents, searchEvents, getEventDetails, sendAiChat, getActivityFeed } from './services/api';
 import { connectSocket, disconnectSocket, getSocket, joinFlock, leaveFlock, sendMessage as socketSendMessage, sendImageMessage as socketSendImage, startTyping, stopTyping, onNewMessage, onUserTyping, onUserStoppedTyping, emitLocation, stopSharingLocation as socketStopSharing, onLocationUpdate, onMemberStoppedSharing, socketSendDm, onNewDm, dmStartTyping, dmStopTyping, onDmUserTyping, onDmUserStoppedTyping, dmReact, dmRemoveReact, onDmReactionAdded, onDmReactionRemoved, dmVoteVenue, onDmNewVote, dmShareLocation, dmStopSharingLocation, onDmLocationUpdate, onDmMemberStoppedSharing, dmPinVenue, onDmVenuePinned, emitFlockInvite, emitFlockInviteResponse, onFlockInviteReceived, onFlockInviteResponded, emitFriendRequest, emitFriendResponse, onFriendRequestReceived, onFriendRequestResponded, onBudgetUpdated, onBudgetLocked, onBudgetReminder, onBillCreated, onShareSettled, onBillFullySettled, onGhostCommitted, onNewVote, onVenueSelected, onFlockReactionAdded, onFlockReactionRemoved, onFlockDeleted, onFlockUpdated, onFlockMemberLeft } from './services/socket';
 import { QRCodeSVG } from 'qrcode.react';
 import { Html5Qrcode } from 'html5-qrcode';
@@ -1761,7 +1761,8 @@ const FlockAppInner = ({ authUser, onLogout }) => {
   const [newEventVenue, setNewEventVenue] = useState('');
 
 
-  // Activity feed (defined after Icons object below)
+  // Activity feed
+  const [activityFeed, setActivityFeed] = useState([]);
 
   // Flocks
   const [flocks, setFlocks] = useState([]);
@@ -2964,12 +2965,12 @@ const FlockAppInner = ({ authUser, onLogout }) => {
     gripVertical: (color = 'currentColor', size = 18) => <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="9" cy="5" r="1"></circle><circle cx="9" cy="12" r="1"></circle><circle cx="9" cy="19" r="1"></circle><circle cx="15" cy="5" r="1"></circle><circle cx="15" cy="12" r="1"></circle><circle cx="15" cy="19" r="1"></circle></svg>,
   };
 
-  // Activity feed
-  const activityFeed = [
-    { id: 1, icon: Icons.plus(colors.teal, 14), user: 'Mike Rodriguez', action: 'created', target: 'Weekend Brunch Crew', time: '2h ago' },
-    { id: 2, icon: Icons.users(colors.navyMid, 14), user: 'Emma Taylor', action: 'joined', target: 'Friday Night Out', time: '5h ago' },
-    { id: 3, icon: Icons.check(colors.sports, 14), user: 'Jayden Bansal', action: 'confirmed', target: 'DECA Nationals Prep', time: '8h ago' },
-  ];
+  // Fetch activity feed
+  useEffect(() => {
+    getActivityFeed()
+      .then(data => setActivityFeed(data.activity || []))
+      .catch(() => {});
+  }, [flocks]);
 
   // Add reaction to message
   const addReactionToMessage = useCallback((flockId, messageId, reaction) => {
@@ -5156,16 +5157,24 @@ const FlockAppInner = ({ authUser, onLogout }) => {
         </div></ScrollFade>
 
         {/* Activity */}
+        {activityFeed.length > 0 && (
         <ScrollFade delay={2}><div style={styles.card}>
           <h3 style={{ fontSize: '12px', fontWeight: 'bold', color: colors.navy, margin: '0 0 8px', display: 'flex', alignItems: 'center', gap: '6px' }}>{Icons.bell(colors.navy, 14)} Activity</h3>
-          {activityFeed.map(a => (
-            <div key={a.id} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 0', borderBottom: '1px solid var(--border-light)' }}>
-              <span>{a.icon}</span>
-              <p style={{ fontSize: '11px', flex: 1, margin: 0 }}><span style={{ fontWeight: 'bold' }}>{a.user}</span> {a.action} <span style={{ color: colors.navyMid }}>{a.target}</span></p>
-              <span style={{ fontSize: '10px', color: 'var(--text-tertiary)' }}>{a.time}</span>
-            </div>
-          ))}
+          {activityFeed.map((a, i) => {
+            const icon = a.action === 'created' ? Icons.plus(colors.teal, 14) : a.action === 'joined' ? Icons.users(colors.navyMid, 14) : Icons.check(colors.sports, 14);
+            const elapsed = Date.now() - new Date(a.happened_at).getTime();
+            const mins = Math.floor(elapsed / 60000);
+            const timeStr = mins < 60 ? `${mins}m ago` : mins < 1440 ? `${Math.floor(mins / 60)}h ago` : `${Math.floor(mins / 1440)}d ago`;
+            return (
+              <div key={`${a.action}-${a.flock_id}-${a.user_id}-${i}`} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 0', borderBottom: '1px solid var(--border-light)' }}>
+                <span>{icon}</span>
+                <p style={{ fontSize: '11px', flex: 1, margin: 0 }}><span style={{ fontWeight: 'bold' }}>{a.user_name}</span> {a.action} <span style={{ color: colors.navyMid, fontStyle: 'italic' }}>{a.flock_name}</span></p>
+                <span style={{ fontSize: '10px', color: 'var(--text-tertiary)', whiteSpace: 'nowrap' }}>{timeStr}</span>
+              </div>
+            );
+          })}
         </div></ScrollFade>
+        )}
 
         {/* Flocks */}
         <ScrollFade delay={3}><h2 style={{ fontSize: '12px', fontWeight: 'bold', color: colors.navy, margin: '0 0 8px' }}>Your Flocks</h2></ScrollFade>

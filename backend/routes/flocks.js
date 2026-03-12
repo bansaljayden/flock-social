@@ -128,6 +128,43 @@ router.post('/',
   }
 );
 
+// GET /api/flocks/activity - Recent activity from user's flocks
+router.get('/activity', async (req, res) => {
+  try {
+    const result = await pool.query(
+      `(
+        SELECT 'created' AS action, f.creator_id AS user_id, u.name AS user_name,
+               f.name AS flock_name, f.id AS flock_id, f.created_at AS happened_at
+        FROM flocks f
+        JOIN users u ON u.id = f.creator_id
+        JOIN flock_members fm ON fm.flock_id = f.id AND fm.user_id = $1
+        WHERE f.created_at > NOW() - INTERVAL '7 days'
+      )
+      UNION ALL
+      (
+        SELECT
+          CASE WHEN fm2.status = 'accepted' THEN 'joined' ELSE 'declined' END AS action,
+          fm2.user_id, u2.name AS user_name,
+          f2.name AS flock_name, f2.id AS flock_id, fm2.joined_at AS happened_at
+        FROM flock_members fm2
+        JOIN users u2 ON u2.id = fm2.user_id
+        JOIN flocks f2 ON f2.id = fm2.flock_id
+        JOIN flock_members my ON my.flock_id = f2.id AND my.user_id = $1
+        WHERE fm2.user_id != $1
+          AND fm2.joined_at > NOW() - INTERVAL '7 days'
+          AND fm2.status IN ('accepted', 'declined')
+      )
+      ORDER BY happened_at DESC
+      LIMIT 20`,
+      [req.user.id]
+    );
+    res.json({ activity: result.rows });
+  } catch (err) {
+    console.error('Get activity error:', err);
+    res.status(500).json({ error: 'Failed to get activity' });
+  }
+});
+
 // GET /api/flocks/:id - Get a specific flock with members
 router.get('/:id', param('id').isInt(), async (req, res) => {
   try {

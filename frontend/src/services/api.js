@@ -451,6 +451,11 @@ export async function getFeaturedEvents(location, interests = []) {
   return request(endpoint);
 }
 
+// Activity feed
+export async function getActivityFeed() {
+  return request('/api/flocks/activity');
+}
+
 // AI Assistant (Birdie)
 export async function sendAiChat(messages, location) {
   return request('/api/ai/chat', {
