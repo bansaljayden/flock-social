@@ -5157,10 +5157,11 @@ const FlockAppInner = ({ authUser, onLogout }) => {
         </div></ScrollFade>
 
         {/* Activity */}
-        {activityFeed.length > 0 && (
         <ScrollFade delay={2}><div style={styles.card}>
           <h3 style={{ fontSize: '12px', fontWeight: 'bold', color: colors.navy, margin: '0 0 8px', display: 'flex', alignItems: 'center', gap: '6px' }}>{Icons.bell(colors.navy, 14)} Activity</h3>
-          {activityFeed.map((a, i) => {
+          {activityFeed.length === 0 ? (
+            <p style={{ fontSize: '11px', color: 'var(--text-tertiary)', margin: '8px 0 4px', textAlign: 'center' }}>No recent activity</p>
+          ) : activityFeed.map((a, i) => {
             const icon = a.action === 'created' ? Icons.plus(colors.teal, 14) : a.action === 'joined' ? Icons.users(colors.navyMid, 14) : Icons.check(colors.sports, 14);
             const elapsed = Date.now() - new Date(a.happened_at).getTime();
             const mins = Math.floor(elapsed / 60000);
@@ -5174,7 +5175,6 @@ const FlockAppInner = ({ authUser, onLogout }) => {
             );
           })}
         </div></ScrollFade>
-        )}
 
         {/* Flocks */}
         <ScrollFade delay={3}><h2 style={{ fontSize: '12px', fontWeight: 'bold', color: colors.navy, margin: '0 0 8px' }}>Your Flocks</h2></ScrollFade>
