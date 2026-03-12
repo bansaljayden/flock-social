@@ -88,9 +88,13 @@ async function discover() {
     process.exit(1);
   }
 
+  const cityArg = process.argv.find(a => a.startsWith('--city='));
+  const cityFilter = cityArg ? cityArg.split('=')[1].split(',') : null;
+
   let totalInserted = 0;
 
   for (const [cityKey, city] of Object.entries(CITIES)) {
+    if (cityFilter && !cityFilter.includes(cityKey)) continue;
     let cityCount = 0;
     console.log(`\n[ML:Discover] Searching ${city.name}...`);
 

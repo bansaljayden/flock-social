@@ -2478,13 +2478,13 @@ const FlockAppInner = ({ authUser, onLogout }) => {
     }
   }, [currentScreen, selectedFlockId, authUser?.id]);
 
-  // Fetch flock members when opening flock detail overview
+  // Fetch flock members + momentum when opening flock detail overview
   useEffect(() => {
     if (currentScreen === 'detail' && selectedFlockId) {
       getFlock(selectedFlockId)
         .then((data) => {
           const members = (data.members || []).map(m => ({ id: m.id, name: m.name, image: m.profile_image_url || null, status: m.status }));
-          setFlocks(prev => prev.map(f => f.id === selectedFlockId ? { ...f, members, memberCount: members.filter(m => m.status === 'accepted').length } : f));
+          setFlocks(prev => prev.map(f => f.id === selectedFlockId ? { ...f, members, memberCount: members.filter(m => m.status === 'accepted').length, momentum: data.momentum || null } : f));
         })
         .catch(() => {});
     }
@@ -8147,6 +8147,51 @@ const FlockAppInner = ({ authUser, onLogout }) => {
               </span>
             )}
           </div>
+
+          {/* ── Momentum Meter ── */}
+          {!isCompleted && flock.momentum && (() => {
+            const m = flock.momentum;
+            const stages = [
+              { key: 'idea', label: 'Idea', color: '#94a3b8' },
+              { key: 'building', label: 'Building', color: '#f59e0b' },
+              { key: 'almost_there', label: 'Almost There', color: '#f97316' },
+              { key: 'locked_in', label: 'Locked In', color: '#22c55e' },
+              { key: 'lets_go', label: "Let's Go", color: '#8b5cf6' },
+            ];
+            const activeIdx = stages.findIndex(s => s.key === m.stage);
+            const activeColor = stages[activeIdx]?.color || '#94a3b8';
+            return (
+              <div style={{ marginTop: '12px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '6px' }}>
+                  <span style={{ fontSize: '11px', fontWeight: '700', color: 'rgba(255,255,255,0.6)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Momentum</span>
+                  <span style={{ fontSize: '12px', fontWeight: '800', color: activeColor }}>{stages[activeIdx]?.label}</span>
+                </div>
+                {/* Progress bar */}
+                <div style={{ display: 'flex', gap: '3px', height: '6px' }}>
+                  {stages.map((s, i) => (
+                    <div key={s.key} style={{ flex: 1, borderRadius: '3px', background: i <= activeIdx ? activeColor : 'rgba(255,255,255,0.15)', transition: 'background 0.4s ease' }} />
+                  ))}
+                </div>
+                {/* Signal summary */}
+                <div style={{ display: 'flex', gap: '10px', marginTop: '8px', flexWrap: 'wrap' }}>
+                  <span style={{ fontSize: '11px', color: m.accepted === m.totalMembers ? 'rgba(134,239,172,0.9)' : 'rgba(255,255,255,0.5)' }}>
+                    {m.accepted}/{m.totalMembers} RSVPs
+                  </span>
+                  <span style={{ fontSize: '11px', color: m.hasVenue ? 'rgba(134,239,172,0.9)' : 'rgba(255,255,255,0.5)' }}>
+                    {m.hasVenue ? 'Venue set' : 'No venue'}
+                  </span>
+                  <span style={{ fontSize: '11px', color: m.hasTime ? 'rgba(134,239,172,0.9)' : 'rgba(255,255,255,0.5)' }}>
+                    {m.hasTime ? 'Time set' : 'No time'}
+                  </span>
+                  {m.uniqueVoters > 0 && (
+                    <span style={{ fontSize: '11px', color: 'rgba(255,255,255,0.5)' }}>
+                      {m.uniqueVoters} voted
+                    </span>
+                  )}
+                </div>
+              </div>
+            );
+          })()}
         </div>
 
         {/* Slide to complete bar — only for confirmed flocks */}

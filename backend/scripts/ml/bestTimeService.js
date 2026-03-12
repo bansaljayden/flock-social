@@ -27,9 +27,13 @@ async function fetchWeeklyForecast(venueName, venueAddress, existingVenueId) {
       ? new URLSearchParams({ api_key_private: apiKey, venue_id: existingVenueId })
       : new URLSearchParams({ api_key_private: apiKey, venue_name: venueName, venue_address: venueAddress });
 
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 30000);
     const response = await fetch(`https://besttime.app/api/v1/forecasts?${params}`, {
       method: 'POST',
+      signal: controller.signal,
     });
+    clearTimeout(timeout);
 
     if (!response.ok) {
       console.error(`[ML:BestTime] Weekly forecast failed (${response.status}) for ${venueName}`);
@@ -74,9 +78,13 @@ async function fetchLiveBusyness(venueId) {
 
   try {
     const params = new URLSearchParams({ api_key_private: apiKey, venue_id: venueId });
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 30000);
     const response = await fetch(`https://besttime.app/api/v1/forecasts/live?${params}`, {
       method: 'POST',
+      signal: controller.signal,
     });
+    clearTimeout(timeout);
 
     if (!response.ok) {
       console.error(`[ML:BestTime] Live query failed (${response.status}) for ${venueId}`);

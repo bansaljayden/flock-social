@@ -205,9 +205,76 @@ router.get('/:id', param('id').isInt(), async (req, res) => {
       [flockId]
     );
 
+    // ── Momentum Meter calculation ──
+    const flock = flockResult.rows[0];
+    const members = membersResult.rows;
+    const totalMembers = members.length;
+    const accepted = members.filter(m => m.status === 'accepted').length;
+    const declined = members.filter(m => m.status === 'declined').length;
+    const responded = accepted + declined;
+
+    let score = 0;
+
+    // RSVP progress (0-30 pts) — based on response rate
+    if (totalMembers > 0) {
+      score += Math.round((responded / totalMembers) * 15); // responses
+      score += Math.round((accepted / totalMembers) * 15);  // acceptances
+    }
+
+    // Venue set (20 pts)
+    const hasVenue = flock.venue_name && flock.venue_name !== 'TBD';
+    if (hasVenue) score += 20;
+
+    // Venue votes cast (0-10 pts)
+    const votesResult = await pool.query(
+      'SELECT COUNT(DISTINCT user_id) AS voters FROM venue_votes WHERE flock_id = $1',
+      [flockId]
+    );
+    const uniqueVoters = parseInt(votesResult.rows[0].voters || 0);
+    if (accepted > 0) {
+      score += Math.min(10, Math.round((uniqueVoters / accepted) * 10));
+    }
+
+    // Event time set (10 pts)
+    if (flock.event_time) score += 10;
+
+    // Budget progress (0-20 pts, only if budget enabled)
+    if (flock.budget_enabled) {
+      const budgetResult = await pool.query(
+        'SELECT COUNT(*) AS submissions FROM budget_submissions WHERE flock_id = $1',
+        [flockId]
+      );
+      const submissions = parseInt(budgetResult.rows[0].submissions || 0);
+      if (accepted > 0) {
+        score += Math.min(10, Math.round((submissions / accepted) * 10));
+      }
+      if (flock.budget_locked) score += 10;
+    } else {
+      // No budget = auto-fill those 20 pts based on other signals
+      score += 20;
+    }
+
+    // Flock confirmed (10 pts)
+    if (flock.status === 'confirmed' || flock.status === 'locked') score += 10;
+
+    // Cap at 100
+    score = Math.min(100, score);
+
+    // Map score to stage
+    let stage;
+    if (flock.status === 'completed') stage = 'complete';
+    else if (score >= 85) stage = 'lets_go';
+    else if (score >= 65) stage = 'locked_in';
+    else if (score >= 40) stage = 'almost_there';
+    else if (score >= 15) stage = 'building';
+    else stage = 'idea';
+
+    const momentum = { score, stage, accepted, totalMembers, responded, hasVenue, hasTime: !!flock.event_time, uniqueVoters };
+
     res.json({
-      flock: flockResult.rows[0],
-      members: membersResult.rows,
+      flock,
+      members,
+      momentum,
     });
   } catch (err) {
     console.error('Get flock error:', err);
