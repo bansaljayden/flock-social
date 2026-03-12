@@ -105,6 +105,14 @@ const authLimiter = isDev ? (_req, _res, next) => next() : rateLimit({
   message: { error: 'Too many login attempts, please try again later' },
 });
 
+const aiLimiter = isDev ? (_req, _res, next) => next() : rateLimit({
+  windowMs: 60 * 1000,
+  max: 15,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many AI requests, please slow down' },
+});
+
 const venueSearchLimiter = isDev ? (_req, _res, next) => next() : rateLimit({
   windowMs: 60 * 1000,
   max: 20,
@@ -131,7 +139,7 @@ app.use('/api/weather', apiLimiter, weatherRoutes);   // Handles /api/weather?la
 app.use('/api/budget', apiLimiter, budgetRoutes);     // Handles /api/budget/:flockId/*
 app.use('/api/billing', apiLimiter, billingRoutes);   // Handles /api/billing/:flockId/*
 app.use('/api/events', apiLimiter, eventRoutes);      // Handles /api/events/search, /api/events/featured
-app.use('/api/ai', apiLimiter, aiRoutes);             // Handles /api/ai/chat (Birdie AI assistant)
+app.use('/api/ai', aiLimiter, aiRoutes);             // Handles /api/ai/chat (Birdie AI assistant)
 
 // Health check
 app.get('/api/health', (req, res) => {
