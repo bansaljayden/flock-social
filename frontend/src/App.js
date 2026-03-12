@@ -1905,17 +1905,16 @@ const FlockAppInner = ({ authUser, onLogout }) => {
   }, [activeVenue]);
 
   // Auto-refresh crowd data every 5 minutes when venue detail modal is open
+  const venueDetailPlaceId = venueDetailModal?.place_id;
   useEffect(() => {
-    if (!venueDetailModal || venueDetailModal.loading) return;
-    const placeId = venueDetailModal.place_id;
-    if (!placeId) return;
+    if (!venueDetailPlaceId) return;
     const interval = setInterval(() => {
-      getCrowdPrediction(placeId)
+      getCrowdPrediction(venueDetailPlaceId)
         .then(data => setCrowdData(data))
         .catch(() => {});
     }, 5 * 60 * 1000);
     return () => clearInterval(interval);
-  }, [venueDetailModal]);
+  }, [venueDetailPlaceId]);
 
   const [showConnectPanel, setShowConnectPanel] = useState(false);
   const [discoverNavOpen, setDiscoverNavOpen] = useState(false);
@@ -2383,17 +2382,25 @@ const FlockAppInner = ({ authUser, onLogout }) => {
   }, [aiMessages]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Auto-scroll AI chat to bottom when messages change
+  const aiMsgCountRef = useRef(0);
   useEffect(() => {
     if ((aiChatMode === 'panel' || aiChatMode === 'fullscreen') && aiChatEndRef.current) {
-      setTimeout(() => aiChatEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 50);
+      const isNew = aiMessages.length !== aiMsgCountRef.current;
+      aiMsgCountRef.current = aiMessages.length;
+      requestAnimationFrame(() => aiChatEndRef.current?.scrollIntoView({ behavior: isNew ? 'auto' : 'auto' }));
     }
   }, [aiMessages, aiTyping, aiChatMode]);
 
   // Auto-scroll chat to bottom when messages change
   const selectedFlock = flocks.find(f => f.id === selectedFlockId) || flocks[0];
+  const chatMsgCountRef = useRef(0);
   useEffect(() => {
     if (currentScreen === 'chatDetail' && chatEndRef.current) {
-      chatEndRef.current.scrollIntoView({ behavior: 'smooth' });
+      const msgs = selectedFlock?.messages || [];
+      if (msgs.length !== chatMsgCountRef.current) {
+        chatMsgCountRef.current = msgs.length;
+        requestAnimationFrame(() => chatEndRef.current?.scrollIntoView({ behavior: 'auto' }));
+      }
     }
   }, [selectedFlock?.messages, currentScreen]);
 
@@ -2558,16 +2565,17 @@ const FlockAppInner = ({ authUser, onLogout }) => {
   }, [sharingLocationForFlock]);
 
   // Emit location every 10 seconds while sharing is active
+  const userLocationRef = useRef(userLocation);
+  userLocationRef.current = userLocation;
   useEffect(() => {
     if (!sharingLocationForFlock || !userLocation) return;
-    const interval = setInterval(() => {
-      console.log('[Location] Emitting position:', userLocation.lat, userLocation.lng);
-      emitLocation(sharingLocationForFlock, userLocation.lat, userLocation.lng);
-    }, 10000);
-    // Emit immediately on location change
     emitLocation(sharingLocationForFlock, userLocation.lat, userLocation.lng);
+    const interval = setInterval(() => {
+      const loc = userLocationRef.current;
+      if (loc) emitLocation(sharingLocationForFlock, loc.lat, loc.lng);
+    }, 10000);
     return () => clearInterval(interval);
-  }, [sharingLocationForFlock, userLocation]);
+  }, [sharingLocationForFlock]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Auto-stop sharing when flock status explicitly changes from confirmed
   const sharingFlockStatusRef = useRef(null);
@@ -3935,12 +3943,13 @@ const FlockAppInner = ({ authUser, onLogout }) => {
   // Emit DM location periodically when sharing
   useEffect(() => {
     if (!dmSharingLocation || !userLocation) return;
-    const interval = setInterval(() => {
-      dmShareLocation(dmSharingLocation, userLocation.lat, userLocation.lng);
-    }, 10000);
     dmShareLocation(dmSharingLocation, userLocation.lat, userLocation.lng);
+    const interval = setInterval(() => {
+      const loc = userLocationRef.current;
+      if (loc) dmShareLocation(dmSharingLocation, loc.lat, loc.lng);
+    }, 10000);
     return () => clearInterval(interval);
-  }, [dmSharingLocation, userLocation]);
+  }, [dmSharingLocation]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // DM typing indicators
   useEffect(() => {
@@ -3974,9 +3983,12 @@ const FlockAppInner = ({ authUser, onLogout }) => {
   }, [selectedDmId]);
 
   // Auto-scroll DM chat to bottom
+  const dmMsgCountRef = useRef(0);
   useEffect(() => {
-    if (currentScreen === 'dmDetail' && selectedDm?.messages?.length) {
-      setTimeout(() => dmChatEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 50);
+    const len = selectedDm?.messages?.length || 0;
+    if (currentScreen === 'dmDetail' && len > 0 && len !== dmMsgCountRef.current) {
+      dmMsgCountRef.current = len;
+      requestAnimationFrame(() => dmChatEndRef.current?.scrollIntoView({ behavior: 'auto' }));
     }
   }, [currentScreen, selectedDm?.messages?.length]); // eslint-disable-line react-hooks/exhaustive-deps
 
