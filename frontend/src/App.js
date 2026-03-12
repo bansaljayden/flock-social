@@ -1745,7 +1745,13 @@ const FlockAppInner = ({ authUser, onLogout }) => {
   const [aiMessages, setAiMessages] = useState([
     { role: 'assistant', text: "Hey! I'm your Flock assistant. I can help you find venues, check crowd levels, and coordinate plans with friends. What can I help you with?" }
   ]);
-  const [aiInput, setAiInput] = useState('');
+  const [aiInputHasText, setAiInputHasText] = useState(false);
+  const aiInputValueRef = useRef('');
+  const setAiInput = useCallback((val) => {
+    aiInputValueRef.current = val;
+    setAiInputHasText(!!val);
+    if (!val && aiInputRef.current) aiInputRef.current.value = '';
+  }, []);
   const [aiTyping, setAiTyping] = useState(false);
   const [showAiAssistant, setShowAiAssistant] = useState(false);
   const [aiShareVenue, setAiShareVenue] = useState(null); // venue to share to flock/DM
@@ -1906,8 +1912,20 @@ const FlockAppInner = ({ authUser, onLogout }) => {
   const [connectSearching, setConnectSearching] = useState(false);
   const [friendStatuses, setFriendStatuses] = useState({}); // { [userId]: 'pending' | 'accepted' }
 
-  // Chat
-  const [chatInput, setChatInput] = useState('');
+  // Chat — use refs for input values to avoid full re-renders on every keystroke
+  const [chatInputHasText, setChatInputHasText] = useState(false);
+  const chatInputRef = useRef('');
+  const setChatInput = useCallback((val) => {
+    chatInputRef.current = val;
+    setChatInputHasText(!!val);
+    // Also sync DOM inputs when clearing
+    if (!val) {
+      const el = document.getElementById('chat-input');
+      if (el) el.value = '';
+      const dmEl = document.querySelector('[data-dm-input]');
+      if (dmEl) dmEl.value = '';
+    }
+  }, []);
   const [showChatPool, setShowChatPool] = useState(false);
   const chatEndRef = useRef(null);
   const aiInputRef = useRef(null);
@@ -2246,13 +2264,16 @@ const FlockAppInner = ({ authUser, onLogout }) => {
     }
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // AI Response - powered by Claude via backend
+  // AI Response - powered by Gemini via backend
   const sendAiMessage = useCallback(async () => {
-    if (!aiInput.trim()) return;
-    const userMessage = aiInput.trim();
+    const currentAiInput = aiInputValueRef.current;
+    if (!currentAiInput.trim()) return;
+    const userMessage = currentAiInput.trim();
     const newMessages = [...aiMessages, { role: 'user', text: userMessage }];
     setAiMessages(newMessages);
-    setAiInput('');
+    aiInputValueRef.current = '';
+    setAiInputHasText(false);
+    if (aiInputRef.current) aiInputRef.current.value = '';
     setAiTyping(true);
 
     try {
@@ -2279,7 +2300,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
       setAiTyping(false);
       if (aiInputRef.current) aiInputRef.current.focus();
     }
-  }, [aiInput, aiMessages]);
+  }, [aiMessages]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Auto-scroll chat to bottom when messages change
   const selectedFlock = flocks.find(f => f.id === selectedFlockId) || flocks[0];
@@ -2715,7 +2736,9 @@ const FlockAppInner = ({ authUser, onLogout }) => {
   const typingTimeoutRef = useRef(null);
   const typingActiveRef = useRef(false);
   const handleChatInputChange = useCallback((e) => {
-    setChatInput(e.target.value);
+    chatInputRef.current = e.target.value;
+    const hasText = !!e.target.value;
+    setChatInputHasText(prev => prev !== hasText ? hasText : prev);
     if (selectedFlockId) {
       if (!typingActiveRef.current) {
         typingActiveRef.current = true;
@@ -2731,9 +2754,14 @@ const FlockAppInner = ({ authUser, onLogout }) => {
 
   // Send chat message — emit via WebSocket, fall back to HTTP
   const sendChatMessage = useCallback(async () => {
-    if (chatInput.trim()) {
-      const text = chatInput;
-      setChatInput('');
+    const currentInput = chatInputRef.current;
+    if (currentInput.trim()) {
+      const text = currentInput;
+      chatInputRef.current = '';
+      setChatInputHasText(false);
+      // Clear the DOM input element
+      const inputEl = document.getElementById('chat-input');
+      if (inputEl) inputEl.value = '';
       if (typingTimeoutRef.current) {
         clearTimeout(typingTimeoutRef.current);
         stopTyping(selectedFlockId);
@@ -2751,7 +2779,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
         // WebSocket already sent it, HTTP is just backup persistence
       }
     }
-  }, [chatInput, selectedFlockId, addMessageToFlock, authUser]);
+  }, [selectedFlockId, addMessageToFlock, authUser]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const getCategoryColor = (cat) => {
     switch(cat) {
@@ -3619,11 +3647,16 @@ const FlockAppInner = ({ authUser, onLogout }) => {
   }, [currentScreen, selectedDmId, authUser]);
 
   const sendDmMessage = useCallback((opts = {}) => {
-    const text = (opts.text || chatInput).trim();
+    const text = (opts.text || chatInputRef.current).trim();
     const msgType = opts.message_type || 'text';
     if (!text && msgType !== 'image') return;
     if (!selectedDm) return;
-    if (!opts.text) setChatInput('');
+    if (!opts.text) {
+      chatInputRef.current = '';
+      setChatInputHasText(false);
+      const inputEl = document.querySelector('[data-dm-input]');
+      if (inputEl) inputEl.value = '';
+    }
     // Stop typing indicator
     if (dmTypingTimeoutRef.current) {
       clearTimeout(dmTypingTimeoutRef.current);
@@ -3653,7 +3686,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
       image_url: opts.image_url,
       reply_to_id: replyTo && !opts.noReply ? replyTo.id : null,
     });
-  }, [chatInput, selectedDm, selectedDmId, dmReplyingTo, authUser]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [selectedDm, selectedDmId, dmReplyingTo, authUser]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Listen for real-time DMs
   useEffect(() => {
@@ -3787,7 +3820,9 @@ const FlockAppInner = ({ authUser, onLogout }) => {
 
   // DM input change with typing indicator
   const handleDmInputChange = useCallback((e) => {
-    setChatInput(e.target.value);
+    chatInputRef.current = e.target.value;
+    const hasText = !!e.target.value;
+    setChatInputHasText(prev => prev !== hasText ? hasText : prev);
     if (selectedDmId) {
       dmStartTyping(selectedDmId);
       clearTimeout(dmTypingTimeoutRef.current);
@@ -4368,8 +4403,8 @@ const FlockAppInner = ({ authUser, onLogout }) => {
           <input ref={dmGalleryInputRef} type="file" accept="image/*" onChange={handleDmImageSelect} style={{ display: 'none' }} />
           {/* Location share button */}
           <button onClick={() => { if (dmSharingLocation) { dmStopSharingLocation(dmSharingLocation); setDmSharingLocation(null); setDmMemberLocation(null); } else { setDmSharingLocation(selectedDmId); } }} style={{ width: '36px', height: '36px', borderRadius: '18px', backgroundColor: dmSharingLocation ? '#10b981' : 'var(--bg-hover)', border: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', flexShrink: 0 }}>{Icons.mapPin(dmSharingLocation ? 'white' : colors.textSecondary, 16)}</button>
-          <input type="text" value={chatInput} onChange={handleDmInputChange} onKeyDown={(e) => e.key === 'Enter' && sendDmMessage()} placeholder={dmReplyingTo ? `Reply...` : `Message ${selectedDm.name}...`} style={{ flex: 1, padding: '12px 16px', borderRadius: '24px', backgroundColor: 'var(--bg-hover)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)', fontSize: '13px', outline: 'none' }} autoComplete="off" />
-          <button onClick={() => sendDmMessage()} disabled={!chatInput.trim()} style={{ width: '42px', height: '42px', borderRadius: '21px', border: 'none', background: chatInput.trim() ? `linear-gradient(135deg, ${colors.navyBg}, ${colors.navyMidBg})` : 'var(--pill-bg)', color: 'white', cursor: chatInput.trim() ? 'pointer' : 'default', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.send('white', 18)}</button>
+          <input data-dm-input type="text" defaultValue="" onChange={handleDmInputChange} onKeyDown={(e) => e.key === 'Enter' && sendDmMessage()} placeholder={dmReplyingTo ? `Reply...` : `Message ${selectedDm.name}...`} style={{ flex: 1, padding: '12px 16px', borderRadius: '24px', backgroundColor: 'var(--bg-hover)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)', fontSize: '13px', outline: 'none' }} autoComplete="off" />
+          <button onClick={() => sendDmMessage()} disabled={!chatInputHasText} style={{ width: '42px', height: '42px', borderRadius: '21px', border: 'none', background: chatInputHasText ? `linear-gradient(135deg, ${colors.navyBg}, ${colors.navyMidBg})` : 'var(--pill-bg)', color: 'white', cursor: chatInputHasText ? 'pointer' : 'default', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.send('white', 18)}</button>
         </div>
       </div>
 
@@ -4529,8 +4564,8 @@ const FlockAppInner = ({ authUser, onLogout }) => {
           {/* Input */}
           <div style={{ padding: '10px 12px', borderTop: '1px solid var(--divider)', backgroundColor: 'var(--bg-card-solid)' }}>
             <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-              <input ref={aiInputRef} type="text" value={aiInput} onChange={(e) => setAiInput(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && sendAiMessage()} placeholder="Ask me anything..." style={{ flex: 1, padding: '12px 16px', borderRadius: '24px', backgroundColor: 'var(--bg-hover)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)', fontSize: '13px', outline: 'none', fontWeight: '500' }} autoComplete="off" />
-              <button onClick={sendAiMessage} disabled={!aiInput.trim()} style={{ width: '42px', height: '42px', borderRadius: '21px', border: 'none', background: aiInput.trim() ? `linear-gradient(135deg, ${colors.navyBg}, ${colors.navyMidBg})` : 'var(--pill-bg)', color: 'white', cursor: aiInput.trim() ? 'pointer' : 'default', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: aiInput.trim() ? '0 4px 12px rgba(13,40,71,0.3)' : 'none', transition: 'opacity 0.2s' }}>{Icons.send('white', 18)}</button>
+              <input ref={aiInputRef} type="text" defaultValue="" onChange={(e) => { aiInputValueRef.current = e.target.value; const has = !!e.target.value; setAiInputHasText(prev => prev !== has ? has : prev); }} onKeyDown={(e) => e.key === 'Enter' && sendAiMessage()} placeholder="Ask me anything..." style={{ flex: 1, padding: '12px 16px', borderRadius: '24px', backgroundColor: 'var(--bg-hover)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)', fontSize: '13px', outline: 'none', fontWeight: '500' }} autoComplete="off" />
+              <button onClick={sendAiMessage} disabled={!aiInputHasText} style={{ width: '42px', height: '42px', borderRadius: '21px', border: 'none', background: aiInputHasText ? `linear-gradient(135deg, ${colors.navyBg}, ${colors.navyMidBg})` : 'var(--pill-bg)', color: 'white', cursor: aiInputHasText ? 'pointer' : 'default', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: aiInputHasText ? '0 4px 12px rgba(13,40,71,0.3)' : 'none', transition: 'opacity 0.2s' }}>{Icons.send('white', 18)}</button>
             </div>
           </div>
 
@@ -7085,8 +7120,8 @@ const FlockAppInner = ({ authUser, onLogout }) => {
           </button>
           <input ref={chatGalleryInputRef} type="file" accept="image/*" onChange={handleChatImageSelect} style={{ display: 'none' }} />
           <button onClick={() => { if (sharingLocationForFlock === flock.id) { stopLocationSharing(); } else { const otherMembers = (flock.members || []).filter(m => m.id !== authUser?.id).length; if (otherMembers === 0) { showToast('No one else in this flock to share with', 'error'); return; } startSharingLocation(flock.id); } }} style={{ width: '38px', height: '38px', borderRadius: '19px', border: 'none', backgroundColor: sharingLocationForFlock === flock.id ? '#10b981' : 'var(--bg-hover)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'opacity 0.2s ease', flexShrink: 0 }}>{Icons.mapPin(sharingLocationForFlock === flock.id ? 'white' : colors.textSecondary, 16)}</button>
-          <input key="chat-input" id="chat-input" type="text" value={chatInput} onChange={handleChatInputChange} onKeyDown={(e) => e.key === 'Enter' && sendChatMessage()} placeholder={replyingTo ? 'Reply...' : 'Type a message...'} style={{ flex: 1, padding: '12px 16px', borderRadius: '22px', backgroundColor: 'var(--bg-hover)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)', fontSize: '14px', outline: 'none', fontWeight: '500', transition: 'opacity 0.2s ease' }} autoComplete="off" />
-          {chatInput ? (
+          <input key="chat-input" id="chat-input" type="text" defaultValue="" onChange={handleChatInputChange} onKeyDown={(e) => e.key === 'Enter' && sendChatMessage()} placeholder={replyingTo ? 'Reply...' : 'Type a message...'} style={{ flex: 1, padding: '12px 16px', borderRadius: '22px', backgroundColor: 'var(--bg-hover)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)', fontSize: '14px', outline: 'none', fontWeight: '500', transition: 'opacity 0.2s ease' }} autoComplete="off" />
+          {chatInputHasText ? (
             <button onClick={sendChatMessage} style={{ width: '42px', height: '42px', borderRadius: '21px', border: 'none', background: `linear-gradient(135deg, ${colors.navyBg}, ${colors.navyMidBg})`, color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 3px 10px rgba(13,40,71,0.25)', transition: 'opacity 0.2s ease' }}>{Icons.send('white', 18)}</button>
           ) : (
             <button onClick={() => {}} style={{ width: '42px', height: '42px', borderRadius: '21px', border: 'none', background: `linear-gradient(135deg, ${colors.navyBg}, ${colors.navyMidBg})`, color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 3px 10px rgba(13,40,71,0.25)', transition: 'opacity 0.2s ease' }}>{Icons.mic('white', 18)}</button>
