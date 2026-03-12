@@ -2426,11 +2426,11 @@ const FlockAppInner = ({ authUser, onLogout }) => {
       // Join socket room
       joinFlock(selectedFlockId);
 
-      // Fetch flock members
+      // Fetch flock members + momentum
       getFlock(selectedFlockId)
         .then((data) => {
           const members = (data.members || []).filter(m => m.status === 'accepted').map(m => ({ id: m.id, name: m.name, image: m.profile_image_url || null }));
-          setFlocks(prev => prev.map(f => f.id === selectedFlockId ? { ...f, members, memberCount: members.length } : f));
+          setFlocks(prev => prev.map(f => f.id === selectedFlockId ? { ...f, members, memberCount: members.length, momentum: data.momentum || null } : f));
         })
         .catch(() => {});
 
@@ -7002,6 +7002,40 @@ const FlockAppInner = ({ authUser, onLogout }) => {
         {showFlockMenu && (
           <div onClick={() => setShowFlockMenu(false)} style={{ position: 'absolute', inset: 0, zIndex: 55 }} />
         )}
+
+        {/* ── Momentum Meter (compact) ── */}
+        {flock.momentum && flock.status !== 'completed' && (() => {
+          const m = flock.momentum;
+          const stages = [
+            { key: 'idea', label: 'Idea', color: '#94a3b8' },
+            { key: 'building', label: 'Building', color: '#f59e0b' },
+            { key: 'almost_there', label: 'Almost There', color: '#f97316' },
+            { key: 'locked_in', label: 'Locked In', color: '#22c55e' },
+            { key: 'lets_go', label: "Let's Go", color: '#8b5cf6' },
+          ];
+          const activeIdx = stages.findIndex(s => s.key === m.stage);
+          const activeColor = stages[activeIdx]?.color || '#94a3b8';
+          return (
+            <div style={{ padding: '8px 14px 10px', background: 'var(--bg-card-solid)', borderBottom: '1px solid var(--border-subtle)', flexShrink: 0 }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '6px' }}>
+                <span style={{ fontSize: '10px', fontWeight: '700', color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Momentum</span>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <span style={{ fontSize: '10px', color: 'var(--text-secondary)' }}>
+                    {m.accepted}/{m.totalMembers} RSVPs
+                    {m.hasVenue ? ' · Venue set' : ''}
+                    {m.hasTime ? ' · Time set' : ''}
+                  </span>
+                  <span style={{ fontSize: '11px', fontWeight: '800', color: activeColor }}>{stages[activeIdx]?.label}</span>
+                </div>
+              </div>
+              <div style={{ display: 'flex', gap: '3px', height: '4px' }}>
+                {stages.map((s, i) => (
+                  <div key={s.key} style={{ flex: 1, borderRadius: '2px', background: i <= activeIdx ? activeColor : 'var(--bg-tertiary)', transition: 'background 0.4s ease' }} />
+                ))}
+              </div>
+            </div>
+          );
+        })()}
 
         {/* Chat message search bar */}
         {showChatSearch && (
