@@ -1749,7 +1749,6 @@ const FlockAppInner = ({ authUser, onLogout }) => {
   const aiInputHasTextRef = useRef(false);
   const aiInputValueRef = useRef('');
   const [aiTyping, setAiTyping] = useState(false);
-  const [showAiAssistant, setShowAiAssistant] = useState(false);
   const [aiChatMode, setAiChatMode] = useState('bubble'); // 'bubble' | 'panel' | 'fullscreen'
   const [aiShareVenue, setAiShareVenue] = useState(null); // venue to share to flock/DM
 
@@ -3347,7 +3346,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
   const lastAiMessage = aiMessages.length > 1 ? aiMessages[aiMessages.length - 1] : null;
   const AIBubble = () => currentScreen === 'main' && currentTab === 'home' && aiChatMode === 'bubble' && (
     <div
-      onClick={() => { setAiChatMode('panel'); setShowAiAssistant(true); }}
+      onClick={() => setAiChatMode('panel')}
       style={{
         position: 'absolute',
         bottom: '95px',
@@ -4482,7 +4481,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
   // AI Assistant — Expandable Chat (panel / fullscreen)
   const isAiPanel = aiChatMode === 'panel';
   const isAiFullscreen = aiChatMode === 'fullscreen';
-  const closeAiChat = () => { setAiChatMode('bubble'); setShowAiAssistant(false); };
+  const closeAiChat = () => setAiChatMode('bubble');
   const toggleAiFullscreen = () => setAiChatMode(prev => prev === 'fullscreen' ? 'panel' : 'fullscreen');
 
   const aiAssistantModal = (isAiPanel || isAiFullscreen) && (
