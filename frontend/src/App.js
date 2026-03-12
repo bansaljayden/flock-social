@@ -1764,6 +1764,22 @@ const FlockAppInner = ({ authUser, onLogout }) => {
   // Activity feed
   const [activityFeed, setActivityFeed] = useState([]);
 
+  // Cycling greeting messages (slot machine style)
+  const [greetingIdx, setGreetingIdx] = useState(0);
+  const greetings = useRef([
+    () => `Good ${new Date().getHours() < 12 ? 'morning' : new Date().getHours() < 17 ? 'afternoon' : 'evening'}`,
+    () => 'What\'s the move?',
+    () => 'Ready to flock up?',
+    () => 'Let\'s make plans',
+    () => 'Who\'s free tonight?',
+    () => 'Time to link up',
+    () => 'Squad goals loading...',
+  ]).current;
+  useEffect(() => {
+    const iv = setInterval(() => setGreetingIdx(i => (i + 1) % greetings.length), 3000);
+    return () => clearInterval(iv);
+  }, [greetings]);
+
   // Flocks
   const [flocks, setFlocks] = useState([]);
   const [, setFlocksLoading] = useState(true);
@@ -5028,7 +5044,9 @@ const FlockAppInner = ({ authUser, onLogout }) => {
       }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
           <div>
-            <p style={{ fontSize: '10px', color: 'rgba(255,255,255,0.6)', margin: 0, letterSpacing: '0.5px' }}>Good {new Date().getHours() < 12 ? 'morning' : new Date().getHours() < 17 ? 'afternoon' : 'evening'}</p>
+            <div style={{ height: '14px', overflow: 'hidden', position: 'relative' }}>
+              <div key={greetingIdx} style={{ fontSize: '10px', color: 'rgba(255,255,255,0.6)', margin: 0, letterSpacing: '0.5px', animation: 'slotSpin 0.4s cubic-bezier(0.34, 1.56, 0.64, 1)' }}>{greetings[greetingIdx]()}</div>
+            </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
               <h1 className="shimmer-text" style={{ fontSize: '20px', fontWeight: '900', margin: 0 }}>Hey, {profileName}</h1>
               {themeMode === 'auto' && isNightModeActive && (

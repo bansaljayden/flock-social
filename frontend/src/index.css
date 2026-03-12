@@ -302,6 +302,12 @@ code {
   box-shadow: 0 2px 8px rgba(13,40,71,0.2);
 }
 
+/* Slot machine spin for greeting text */
+@keyframes slotSpin {
+  0% { opacity: 0; transform: translateY(-100%); }
+  100% { opacity: 1; transform: translateY(0); }
+}
+
 /* Smooth fade + slide in */
 @keyframes fadeSlideIn {
   from { opacity: 0; transform: translateY(8px); }
