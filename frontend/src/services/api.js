@@ -451,6 +451,11 @@ export async function getFeaturedEvents(location, interests = []) {
   return request(endpoint);
 }
 
+// Weather forecast (5-day)
+export async function getWeatherForecast(lat, lon) {
+  return request(`/api/weather/forecast?lat=${lat}&lon=${lon}`);
+}
+
 // Activity feed
 export async function getActivityFeed() {
   return request('/api/flocks/activity');
