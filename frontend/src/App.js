@@ -6389,52 +6389,39 @@ const FlockAppInner = ({ authUser, onLogout }) => {
       </div>
 
 
-      {/* Categories — expandable pill bar */}
-      {(() => {
-        const cats = ['All', 'Food', 'Nightlife', 'Live Music', 'Sports'];
-        const handleCatSelect = (id) => {
-          setActiveVenue(null);
-          setCategoryExpanded(false);
-          if (id === 'All') { setCategory('All'); setVenueQuery(''); requestUserLocation(true); return; }
-          setCategory(id);
-        };
-        return (
-          <div style={{ padding: '6px 12px', backgroundColor: 'var(--bg-card-solid)', borderTop: '1px solid var(--border-light)', flexShrink: 0 }}>
-            {categoryExpanded ? (
-              <div style={{ display: 'flex', gap: '6px', alignItems: 'center', overflowX: 'auto', scrollbarWidth: 'none', msOverflowStyle: 'none', WebkitOverflowScrolling: 'touch' }}>
-                {cats.map(c => (
-                  <button key={c} onClick={() => handleCatSelect(c)} style={{
-                    padding: '6px 12px', borderRadius: '14px', border: 'none',
-                    backgroundColor: category === c ? colors.navyBg : 'var(--bg-hover)',
-                    color: category === c ? colors.cream : 'var(--text-primary)',
-                    fontWeight: '600', fontSize: '11px', cursor: 'pointer', whiteSpace: 'nowrap',
-                    flexShrink: 0, animation: 'fadeSlideIn 0.2s ease-out both',
-                  }}>
-                    {c}
-                  </button>
-                ))}
-                <button onClick={() => setCategoryExpanded(false)} style={{
-                  padding: '6px 8px', borderRadius: '14px', border: 'none',
-                  backgroundColor: 'var(--bg-hover)', cursor: 'pointer', flexShrink: 0,
-                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+      {/* Categories — expandable filter bar (matches Features button pattern) */}
+      <div style={{ padding: '6px 12px', backgroundColor: 'var(--bg-card-solid)', borderTop: '1px solid var(--border-light)', flexShrink: 0 }}>
+        <div style={{ display: 'flex', gap: '6px', alignItems: 'center', justifyContent: categoryExpanded ? 'flex-start' : 'center' }}>
+          {categoryExpanded && (
+            <div style={{ display: 'flex', gap: '6px', alignItems: 'center', overflowX: 'auto', scrollbarWidth: 'none', msOverflowStyle: 'none', WebkitOverflowScrolling: 'touch', flex: 1 }}>
+              {['All', 'Food', 'Nightlife', 'Live Music', 'Sports'].map(c => (
+                <button key={c} onClick={() => {
+                  setActiveVenue(null); setCategoryExpanded(false);
+                  if (c === 'All') { setCategory('All'); setVenueQuery(''); requestUserLocation(true); return; }
+                  setCategory(c);
+                }} style={{
+                  padding: '6px 12px', borderRadius: '14px', border: 'none',
+                  backgroundColor: category === c ? colors.navyBg : 'var(--bg-hover)',
+                  color: category === c ? colors.cream : 'var(--text-primary)',
+                  fontWeight: '600', fontSize: '11px', cursor: 'pointer', whiteSpace: 'nowrap',
+                  flexShrink: 0, animation: 'fadeSlideIn 0.2s ease-out both',
                 }}>
-                  <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="var(--text-secondary)" strokeWidth="2.5" strokeLinecap="round"><polyline points="18 15 12 9 6 15" /></svg>
+                  {c}
                 </button>
-              </div>
-            ) : (
-              <button onClick={() => setCategoryExpanded(true)} style={{
-                padding: '6px 12px', borderRadius: '14px', border: 'none',
-                backgroundColor: 'var(--bg-hover)', color: 'var(--text-primary)',
-                fontWeight: '600', fontSize: '11px', cursor: 'pointer',
-                display: 'flex', alignItems: 'center', gap: '3px',
-              }}>
-                {category}
-                <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" style={{ opacity: 0.5 }}><polyline points="6 9 12 15 18 9" /></svg>
-              </button>
-            )}
-          </div>
-        );
-      })()}
+              ))}
+            </div>
+          )}
+          <button onClick={() => setCategoryExpanded(!categoryExpanded)} style={{
+            height: '36px', minWidth: categoryExpanded ? '36px' : 'auto', width: categoryExpanded ? '36px' : '100%',
+            borderRadius: '14px', border: '1px solid var(--border-default)', background: 'var(--bg-card-solid)',
+            cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px',
+            padding: categoryExpanded ? '0' : '0 14px', fontSize: '12px', fontWeight: '700', color: 'var(--text-primary)',
+            flexShrink: 0, transition: 'all 0.3s ease',
+          }}>
+            {categoryExpanded ? Icons.x('var(--text-primary)', 16) : <span style={{ fontSize: '12px', fontWeight: '700', whiteSpace: 'nowrap' }}>Filters{category !== 'All' ? ` · ${category}` : ''}</span>}
+          </button>
+        </div>
+      </div>
 
       <SafetyButton />
       <BottomNav />
