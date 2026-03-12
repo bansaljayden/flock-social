@@ -1,198 +1,325 @@
-Flock — Social Coordination Simplified
-Flock is a real-time social coordination app that replaces the broken group chat planning process with structured decision-making. Create a flock, invite friends, vote on venues, match budgets anonymously, and go.
-Live app: flockcrop.com
+  # Flock — Social Coordination Simplified
 
-The Problem
-Group chats turn into indecisive people, and they idk what to do loops. Someone suggests somewhere expensive. Two people go silent because they can't afford it but won't say so. The plan dies. Everyone stays home.
-Flock fixes this with a structured coordination flow: create → invite → RSVP → vote → match budgets → confirm → go.
-Core Features
-Real-Time Coordination
+  Flock is a real-time social coordination app that replaces the broken group chat planning process with structured decision-making. Create a flock, invite friends, vote on venues, match budgets anonymously,
+  and go.
 
-Create flocks with time, date, and venue context
-Invite friends and track RSVPs (going / maybe / declined)
-Group venue voting with Google Places integration
-Real-time messaging with typing indicators, emoji reactions, image sharing, and venue cards
-Live location sharing within flocks
+  **Live app:** [flockcorp.com](https://flockcorp.com)
 
-Anonymous Budget Matching
+  ---
 
-Every member privately submits their max budget — no one sees individual answers
-Server computes the group spending ceiling (minimum of all submissions)
-Venues above the group budget are hidden automatically
-3-person minimum threshold protects anonymity
-Individual submissions are deleted 24 hours after the flock completes
+  ## The Problem
 
-AI Crowd Intelligence Agent
+  Group chats turn into indecisive "idk what do you want to do" loops. Someone suggests somewhere expensive. Two people go silent because they can't afford it but won't say so. The plan dies. Everyone stays
+  home.
 
-Autonomous agent that perceives real-time data from multiple sources — Google Places, OpenWeatherMap, and temporal patterns — reasons over them using a weighted multi-factor scoring algorithm, and generates crowd predictions, timing recommendations, and alternative venue suggestions
-Scores venues 0–100 with confidence ratings based on data source availability
-12-hour hourly forecast, capacity estimates, wait times, best time to visit
-Self-calibrating: user feedback after hangouts adjusts prediction weights over time, turning every completed flock into training data
+  Flock fixes this with a structured coordination flow: **create → invite → RSVP → vote → match budgets → confirm → go.**
 
-Bill Splitting + Venmo Settlement
+  ---
 
-Post-hangout bill split with equal or custom amounts
-Tip calculator (15% / 18% / 20% / custom)
-Venmo deep-link settlement — one tap opens Venmo pre-filled with the correct amount and recipient
-Ghost Mode pre-commitment — lock in your share before arriving to reduce flaking
-No payment processing, no APIs, no transaction fees
+  ## Core Features
 
-Social Layer
+  ### Real-Time Coordination
+  - Create flocks with time, date, and venue context
+  - Invite friends and track RSVPs (going / maybe / declined)
+  - Group venue voting with Google Places integration
+  - Real-time messaging with typing indicators, emoji reactions, image sharing, and venue cards
+  - Live location sharing within flocks
 
-Friend system with QR code sharing and phone-based discovery
-Direct messages with venue cards, voting, pinning, replies, and reactions
-24-hour expiring stories
-User profiles with image upload
+  ### Anonymous Budget Matching
+  - Every member privately submits their max budget — no one sees individual answers
+  - Server computes the group spending ceiling (minimum of all submissions)
+  - Venues above the group budget are hidden automatically
+  - 3-person minimum threshold protects anonymity
+  - Individual submissions are deleted 24 hours after the flock completes
 
-Safety
+  ### Birdie — AI Assistant
+  - Conversational AI assistant powered by Gemini 2.5 Flash with function calling
+  - Searches venues, checks crowd levels, and coordinates plans through natural language
+  - Understands Gen Z slang ("what's poppin", "the move", "lit", "dead")
+  - Returns interactive venue cards with photos, crowd bars, ratings, and share actions
+  - Expandable chat widget — compact floating bubble, mid-size panel, or fullscreen mode
+  - 3D Spline robot avatar with head tracking
 
-Trusted emergency contacts management
-One-tap SOS alert sends GPS location to all contacts via email (Resend)
-Real-time location sharing within flocks and DMs
+  ### AI Crowd Intelligence Engine
+  - Autonomous engine that perceives real-time data from multiple sources — Google Places, OpenWeatherMap, and temporal patterns — reasons over them using a weighted multi-factor scoring algorithm, and
+  generates crowd predictions, timing recommendations, and alternative venue suggestions
+  - Scores venues 0–100 with confidence ratings based on data source availability
+  - 12-hour hourly forecast, capacity estimates, wait times, best time to visit
+  - Self-calibrating: user feedback after hangouts adjusts prediction weights over time, turning every completed flock into training data
 
+  ### ML Crowd Forecasting (In Development)
+  - XGBoost/Random Forest model trained on BestTime foot traffic data, weather signals, venue metadata, and user feedback
+  - 6,000+ venues discovered across 7 cities with automated data collection pipeline
+  - Event awareness via Ticketmaster API for nearby concert/sports impact on crowd levels
+  - Designed to replace the rule-based engine with learned predictions
 
-Tech Stack
-LayerTechnologyFrontendReact 19 (Create React App)BackendNode.js + ExpressDatabasePostgreSQLReal-TimeSocket.io WebSocketsFrontend HostingVercelBackend HostingRailwayAuthenticationJWT (24h expiry, bcrypt password hashing)Venue DataGoogle Places API (New)Weather DataOpenWeatherMap APIEmailResend (HTTP-based)FontSatoshi (Fontshare CDN)
+  ### Bill Splitting + Venmo Settlement
+  - Post-hangout bill split with equal or custom amounts
+  - Tip calculator (15% / 18% / 20% / custom)
+  - Venmo deep-link settlement — one tap opens Venmo pre-filled with the correct amount and recipient
+  - Ghost Mode pre-commitment — lock in your share before arriving to reduce flaking
+  - No payment processing, no APIs, no transaction fees
 
-Project Structure
-flock-app/
-├── frontend/
-│   ├── src/
-│   │   ├── App.js                # Main application component
-│   │   ├── App.css               # Global styles
-│   │   ├── LoginScreen.js        # Authentication - login
-│   │   ├── SignupScreen.js       # Authentication - signup
-│   │   ├── services/
-│   │   │   ├── api.js            # REST API client
-│   │   │   └── socket.js         # Socket.io client + event listeners
-│   │   ├── context/
-│   │   │   └── ThemeContext.js    # Dark/light mode
-│   │   └── utils/
-│   │       └── finance.js        # Revenue/subscription calculations
-│   └── package.json
-├── backend/
-│   ├── server.js                 # Express + Socket.io + migrations
-│   ├── routes/
-│   │   ├── auth.js               # Signup, login, JWT
-│   │   ├── flocks.js             # Flock CRUD, invites, RSVP
-│   │   ├── messages.js           # Flock messages + DMs
-│   │   ├── users.js              # Profiles, search, stats
-│   │   ├── friends.js            # Friend system + QR codes
-│   │   ├── safety.js             # Emergency contacts + SOS
-│   │   ├── venueSearch.js        # Google Places API proxy
-│   │   ├── venues.js             # Venue voting
-│   │   ├── stories.js            # 24-hour stories
-│   │   ├── crowd.js              # AI Crowd Intelligence Agent
-│   │   ├── feedback.js           # Agent calibration feedback
-│   │   ├── budget.js             # Anonymous budget matching
-│   │   └── billing.js            # Bill splits + Venmo links
-│   ├── services/
-│   │   ├── crowdEngine.js        # AI agent scoring algorithm
-│   │   └── weatherService.js     # OpenWeatherMap wrapper + cache
-│   ├── middleware/
-│   │   └── auth.js               # JWT verification
-│   ├── config/
-│   │   └── database.js           # PostgreSQL connection pool
-│   └── package.json
-└── README.md
+  ### Social Layer
+  - Friend system with QR code sharing and phone-based discovery
+  - Direct messages with venue cards, voting, pinning, replies, and reactions
+  - 24-hour expiring stories
+  - User profiles with image upload
 
-API Endpoints
-Authentication
-MethodRouteDescriptionPOST/api/auth/signupCreate accountPOST/api/auth/loginLogin, returns JWTGET/api/auth/meGet current user
-Flocks
-MethodRouteDescriptionGET/api/flocksList user's flocksPOST/api/flocksCreate flockGET/api/flocks/:idFlock detailsPUT/api/flocks/:idUpdate flockDELETE/api/flocks/:idDelete flockPOST/api/flocks/:id/joinAccept invitePOST/api/flocks/:id/inviteInvite usersPOST/api/flocks/:id/declineDecline invitePOST/api/flocks/:id/leaveLeave flock
-Budget Matching
-MethodRouteDescriptionPOST/api/budget/:flockId/submitSubmit anonymous budgetGET/api/budget/:flockIdGet budget status (aggregate only)POST/api/budget/:flockId/lockLock budget (creator only)POST/api/budget/:flockId/remindRemind non-submitters
-Bill Splitting
-MethodRouteDescriptionPOST/api/billing/:flockId/createCreate bill splitGET/api/billing/:flockIdGet bill detailsPOST/api/billing/:flockId/settleMark share as settledPOST/api/billing/:flockId/ghost-commitPre-commit to shareGET/api/billing/:flockId/venmo-linkGet Venmo deep-link
-AI Crowd Intelligence Agent
-MethodRouteDescriptionGET/api/crowd/:placeIdFull venue predictionPOST/api/crowd/batchBatch predictionsGET/api/crowd/:placeId/alternativesQuieter alternatives
-Messaging
-MethodRouteDescriptionGET/api/flocks/:id/messagesFlock messagesPOST/api/flocks/:id/messagesSend messageGET/api/dmAll DM conversationsGET/api/dm/:userIdDMs with userPOST/api/dm/:userIdSend DM
-Friends, Venues, Safety, Stories
-Full endpoint documentation in route files.
+  ### Safety
+  - Trusted emergency contacts management
+  - One-tap SOS alert sends GPS location to all contacts via email (Resend)
+  - Real-time location sharing within flocks and DMs
 
-Real-Time Events (Socket.io)
-Flock coordination: join_flock, leave_flock, send_message, typing, vote_venue, select_venue, update_location
-AI agent: crowd_update
-Budget: budget_updated, budget_locked, budget_reminder
-Billing: bill_created, share_settled, bill_fully_settled, ghost_committed
-Direct messages: dm_send_message, dm_typing, dm_react, dm_vote_venue, dm_share_location, dm_pin_venue
-Social: flock_invite, friend_request
+  ---
 
-Environment Variables
-Frontend (Vercel)
-REACT_APP_GOOGLE_MAPS_API_KEY=     # Google Maps JS API key (browser-restricted)
-Backend (Railway)
-DATABASE_URL=                       # PostgreSQL connection string
-JWT_SECRET=                         # JWT signing secret
-GOOGLE_PLACES_API_KEY=              # Google Places API key (server-restricted)
-WEATHER_API_KEY=                    # OpenWeatherMap API key
-RESEND_API_KEY=                     # Resend email service
-PORT=5000                           # Server port
-NODE_ENV=production                 # Environment
-FRONTEND_URL=                       # Frontend origin for CORS
+  ## Tech Stack
 
-Security
+  | Layer | Technology |
+  |-------|-----------|
+  | Frontend | React 19 (Create React App) |
+  | Backend | Node.js + Express |
+  | Database | PostgreSQL |
+  | Real-Time | Socket.io WebSockets |
+  | Frontend Hosting | Vercel |
+  | Backend Hosting | Railway |
+  | Authentication | JWT (24h expiry, bcrypt password hashing) |
+  | AI Assistant | Gemini 2.5 Flash-Lite (function calling) |
+  | Venue Data | Google Places API (New) |
+  | Weather Data | OpenWeatherMap API |
+  | Crowd Data | BestTime API |
+  | Event Data | Ticketmaster Discovery API |
+  | Email | Resend (HTTP-based) |
+  | 3D | Spline |
+  | Font | Satoshi (Fontshare CDN) |
 
-JWT authentication on all protected routes (24h token expiry)
-bcrypt password hashing (salt rounds: 12)
-Helmet.js HTTP security headers
-CORS restricted to flock-app*.vercel.app
-Rate limiting: 5/min on auth, 300/15min on API
-Parameterized queries on every database call
-Input validation via express-validator on all POST/PUT routes
-XSS protection and input sanitization
-Budget submissions are privacy-protected — individual amounts never leave the server
+  ---
 
+  ## Project Structure
 
-Development
-Prerequisites
+  flock-app/
+  ├── frontend/
+  │   ├── src/
+  │   │   ├── App.js                # Main application component
+  │   │   ├── index.css             # Global styles + animations
+  │   │   ├── LoginScreen.js        # Authentication - login
+  │   │   ├── SignupScreen.js       # Authentication - signup
+  │   │   ├── components/ui/
+  │   │   │   └── spline-scene.js   # Spline 3D robot wrapper
+  │   │   ├── services/
+  │   │   │   ├── api.js            # REST API client
+  │   │   │   └── socket.js         # Socket.io client + event listeners
+  │   │   ├── context/
+  │   │   │   └── ThemeContext.js    # Dark/light mode
+  │   │   └── utils/
+  │   │       └── finance.js        # Revenue/subscription calculations
+  │   └── package.json
+  ├── backend/
+  │   ├── server.js                 # Express + Socket.io + migrations
+  │   ├── routes/
+  │   │   ├── auth.js               # Signup, login, JWT
+  │   │   ├── flocks.js             # Flock CRUD, invites, RSVP
+  │   │   ├── messages.js           # Flock messages + DMs
+  │   │   ├── ai.js                 # Birdie AI assistant (Gemini)
+  │   │   ├── users.js              # Profiles, search, stats
+  │   │   ├── friends.js            # Friend system + QR codes
+  │   │   ├── safety.js             # Emergency contacts + SOS
+  │   │   ├── venueSearch.js        # Google Places API proxy
+  │   │   ├── venues.js             # Venue voting + photo proxy
+  │   │   ├── stories.js            # 24-hour stories
+  │   │   ├── crowd.js              # AI Crowd Intelligence Engine
+  │   │   ├── feedback.js           # Agent calibration feedback
+  │   │   ├── budget.js             # Anonymous budget matching
+  │   │   └── billing.js            # Bill splits + Venmo links
+  │   ├── services/
+  │   │   ├── crowdEngine.js        # AI agent scoring algorithm
+  │   │   └── weatherService.js     # OpenWeatherMap wrapper + cache
+  │   ├── scripts/ml/
+  │   │   ├── collectRealtime.js    # Automated data collection (cron)
+  │   │   ├── eventService.js       # Ticketmaster + SeatGeek integration
+  │   │   └── config.js             # ML pipeline configuration
+  │   ├── middleware/
+  │   │   └── auth.js               # JWT verification
+  │   ├── config/
+  │   │   └── database.js           # PostgreSQL connection pool
+  │   └── package.json
+  └── README.md
 
-Node.js 18+
-PostgreSQL 15+
-Google Places API key
-OpenWeatherMap API key (free tier)
+  ---
 
-Local Setup
-bash# Clone
-git clone https://github.com/bansaljayden/Flock-app-.git
-cd Flock-app-
+  ## API Endpoints
 
-# Backend
-cd backend
-npm install
-cp .env.example .env    # Fill in environment variables
-npm start               # Runs on port 5000
+  ### Authentication
+  | Method | Route | Description |
+  |--------|-------|-------------|
+  | POST | `/api/auth/signup` | Create account |
+  | POST | `/api/auth/login` | Login, returns JWT |
+  | GET | `/api/auth/me` | Get current user |
 
-# Frontend (separate terminal)
-cd frontend
-npm install
-cp .env.example .env    # Fill in Google Maps key
-npm start               # Runs on port 3000
-Database tables are created automatically on server startup via idempotent migrations.
+  ### Flocks
+  | Method | Route | Description |
+  |--------|-------|-------------|
+  | GET | `/api/flocks` | List user's flocks |
+  | POST | `/api/flocks` | Create flock |
+  | GET | `/api/flocks/:id` | Flock details |
+  | PUT | `/api/flocks/:id` | Update flock |
+  | DELETE | `/api/flocks/:id` | Delete flock |
+  | POST | `/api/flocks/:id/join` | Accept invite |
+  | POST | `/api/flocks/:id/invite` | Invite users |
+  | POST | `/api/flocks/:id/decline` | Decline invite |
+  | POST | `/api/flocks/:id/leave` | Leave flock |
 
-Architecture Decisions
-Why not Firebase/Supabase? PostgreSQL gives relational integrity for the complex relationships between users, flocks, venues, budgets, and votes. The data model is inherently relational.
-Why Socket.io over polling? Flock needs to feel alive. Instant message delivery, typing indicators, budget updates, and settlement notifications require persistent connections.
-Why a rule-based AI agent over ML? The agent runs in under 50ms with zero API cost. An LLM call takes 1-3 seconds and costs money per prediction. At scale, rule-based is faster and cheaper. The architecture is designed to evolve — as users complete flocks and provide feedback, the agent calibrates its scoring weights against real outcomes. Every completed hangout becomes training data.
-Why Venmo deep-links over Stripe? Zero transaction fees, zero regulatory exposure, zero payment processing liability. Stripe's 2.9% + $0.30 per transaction would exceed any viable fee structure. Flock calculates the split; Venmo moves the money.
+  ### Budget Matching
+  | Method | Route | Description |
+  |--------|-------|-------------|
+  | POST | `/api/budget/:flockId/submit` | Submit anonymous budget |
+  | GET | `/api/budget/:flockId` | Get budget status (aggregate only) |
+  | POST | `/api/budget/:flockId/lock` | Lock budget (creator only) |
+  | POST | `/api/budget/:flockId/remind` | Remind non-submitters |
 
-Roadmap
+  ### Bill Splitting
+  | Method | Route | Description |
+  |--------|-------|-------------|
+  | POST | `/api/billing/:flockId/create` | Create bill split |
+  | GET | `/api/billing/:flockId` | Get bill details |
+  | POST | `/api/billing/:flockId/settle` | Mark share as settled |
+  | POST | `/api/billing/:flockId/ghost-commit` | Pre-commit to share |
+  | GET | `/api/billing/:flockId/venmo-link` | Get Venmo deep-link |
 
- Push notifications via Firebase Cloud Messaging
- React Native mobile app
- Post-hangout feedback system for AI agent calibration
- Venue partnership onboarding (B2B revenue)
- App Store + Play Store submission
- Research analytics layer for behavioral study on group coordination
+  ### AI Assistant
+  | Method | Route | Description |
+  |--------|-------|-------------|
+  | POST | `/api/ai/chat` | Send message to Birdie |
 
+  ### AI Crowd Intelligence
+  | Method | Route | Description |
+  |--------|-------|-------------|
+  | GET | `/api/crowd/:placeId` | Full venue prediction |
+  | POST | `/api/crowd/batch` | Batch predictions |
+  | GET | `/api/crowd/:placeId/alternatives` | Quieter alternatives |
 
-Author
-Jayden Bansal — Moravian Academy, Class of 2028
-1st Place, Pennsylvania DECA State Competition — Innovation Plan
-ICDC International Qualifier 2026
-flockcrop.com · GitHub
+  ### Messaging
+  | Method | Route | Description |
+  |--------|-------|-------------|
+  | GET | `/api/flocks/:id/messages` | Flock messages |
+  | POST | `/api/flocks/:id/messages` | Send message |
+  | GET | `/api/dm` | All DM conversations |
+  | GET | `/api/dm/:userId` | DMs with user |
+  | POST | `/api/dm/:userId` | Send DM |
+
+  ---
+
+  ## Real-Time Events (Socket.io)
+
+  - **Flock coordination:** `join_flock`, `leave_flock`, `send_message`, `typing`, `vote_venue`, `select_venue`, `update_location`
+  - **AI agent:** `crowd_update`
+  - **Budget:** `budget_updated`, `budget_locked`, `budget_reminder`
+  - **Billing:** `bill_created`, `share_settled`, `bill_fully_settled`, `ghost_committed`
+  - **Direct messages:** `dm_send_message`, `dm_typing`, `dm_react`, `dm_vote_venue`, `dm_share_location`, `dm_pin_venue`
+  - **Social:** `flock_invite`, `friend_request`
+
+  ---
+
+  ## Environment Variables
+
+  ### Frontend (Vercel)
+  REACT_APP_GOOGLE_MAPS_API_KEY=     # Google Maps JS API key (browser-restricted)
+
+  ### Backend (Railway)
+  DATABASE_URL=                       # PostgreSQL connection string
+  JWT_SECRET=                         # JWT signing secret
+  GOOGLE_PLACES_API_KEY=              # Google Places API key (server-restricted)
+  GOOGLE_GEMINI_API_KEY=              # Gemini API key (Birdie AI)
+  WEATHER_API_KEY=                    # OpenWeatherMap API key
+  BESTTIME_API_KEY=                   # BestTime foot traffic API
+  TICKETMASTER_API_KEY=               # Ticketmaster Discovery API
+  RESEND_API_KEY=                     # Resend email service
+  PORT=5000                           # Server port
+  NODE_ENV=production                 # Environment
+  FRONTEND_URL=                       # Frontend origin for CORS
+
+  ---
+
+  ## Security
+
+  - JWT authentication on all protected routes (24h token expiry)
+  - bcrypt password hashing (salt rounds: 12)
+  - Helmet.js HTTP security headers
+  - CORS restricted to `flock-app*.vercel.app`
+  - Rate limiting: 5/min on auth, 300/15min on API
+  - Parameterized queries on every database call
+  - Input validation via express-validator on all POST/PUT routes
+  - XSS protection and input sanitization
+  - Budget submissions are privacy-protected — individual amounts never leave the server
+
+  ---
+
+  ## Development
+
+  ### Prerequisites
+  - Node.js 18+
+  - PostgreSQL 15+
+  - Google Places API key
+  - OpenWeatherMap API key (free tier)
+
+  ### Local Setup
+  ```bash
+  # Clone
+  git clone https://github.com/bansaljayden/Flock-app-.git
+  cd Flock-app-
+
+  # Backend
+  cd backend
+  npm install
+  cp .env.example .env    # Fill in environment variables
+  npm start               # Runs on port 5000
+
+  # Frontend (separate terminal)
+  cd frontend
+  npm install
+  cp .env.example .env    # Fill in Google Maps key
+  npm start               # Runs on port 3000
+
+  Database tables are created automatically on server startup via idempotent migrations.
+
+  ---
+  Architecture Decisions
+
+  Why not Firebase/Supabase? PostgreSQL gives relational integrity for the complex relationships between users, flocks, venues, budgets, and votes. The data model is inherently relational.
+
+  Why Socket.io over polling? Flock needs to feel alive. Instant message delivery, typing indicators, budget updates, and settlement notifications require persistent connections.
+
+  Why a rule-based crowd engine + ML pipeline? The rule-based engine runs in under 50ms with zero API cost. The ML model (in development) will learn from real foot traffic data, weather patterns, and user
+  feedback to improve accuracy over time. Both approaches coexist — the rule-based engine serves predictions now while the ML model trains on collected data.
+
+  Why Venmo deep-links over Stripe? Zero transaction fees, zero regulatory exposure, zero payment processing liability. Stripe's 2.9% + $0.30 per transaction would exceed any viable fee structure. Flock
+  calculates the split; Venmo moves the money.
+
+  Why Gemini for the AI assistant? Gemini 2.5 Flash-Lite offers function calling at low latency and cost. Birdie uses structured tool definitions to search venues, check crowds, and navigate the app — not just
+   generate text.
+
+  ---
+  Roadmap
+
+  - Push notifications via Firebase Cloud Messaging
+  - React Native mobile app
+  - ML crowd forecasting model (XGBoost, training data collected)
+  - Event-aware predictions (Ticketmaster integration built)
+  - Post-hangout feedback system for AI agent calibration
+  - Venue partnership onboarding (B2B revenue)
+  - App Store + Play Store submission
+  - Research analytics layer for behavioral study on group coordination
+
+  ---
+  Author
+
+  Jayden Bansal — Moravian Academy, Class of 2028
+
+  1st Place, Pennsylvania DECA State Competition — Innovation Plan
+  ICDC International Qualifier 2026
+
+  https://flockcorp.com · https://github.com/bansaljayden/Flock-app-
+  ```
 
 License
 Proprietary. All rights reserved.
