@@ -4474,13 +4474,16 @@ const FlockAppInner = ({ authUser, onLogout }) => {
           </div>
 
           {/* Messages */}
-          <div className="birdie-bg" onMouseMove={(e) => {
+          <div className="birdie-bg" onPointerMove={(e) => {
             const canvas = e.currentTarget.querySelector('[data-spline-wrapper] canvas');
-            if (canvas) canvas.dispatchEvent(new MouseEvent('mousemove', { clientX: e.clientX, clientY: e.clientY, bubbles: false }));
+            if (canvas) {
+              canvas.dispatchEvent(new PointerEvent('pointermove', { clientX: e.clientX, clientY: e.clientY, bubbles: true, pointerId: e.pointerId, pointerType: e.pointerType }));
+              canvas.dispatchEvent(new MouseEvent('mousemove', { clientX: e.clientX, clientY: e.clientY, bubbles: true }));
+            }
           }} style={{ flex: 1, padding: '12px', overflowY: 'auto', position: 'relative' }}>
             <div
               data-spline-wrapper
-              style={{ position: 'absolute', inset: 0, zIndex: 0, filter: isDark ? 'drop-shadow(0 0 8px rgba(124,58,237,0.3))' : 'invert(1) hue-rotate(180deg) brightness(0.8) contrast(1.6) saturate(0.2) drop-shadow(0 0 12px rgba(0,0,0,0.2))', opacity: aiMessages.length <= 1 ? 1 : 0.15, transition: 'opacity 0.5s ease', pointerEvents: aiMessages.length <= 1 ? 'auto' : 'none' }}
+              style={{ position: 'absolute', inset: 0, zIndex: 0, filter: isDark ? 'drop-shadow(0 0 8px rgba(124,58,237,0.3))' : 'invert(1) hue-rotate(180deg) brightness(0.8) contrast(1.6) saturate(0.2) drop-shadow(0 0 12px rgba(0,0,0,0.2))', opacity: aiMessages.length <= 1 ? 1 : 0.12, transition: 'opacity 0.2s ease', pointerEvents: aiMessages.length <= 1 ? 'auto' : 'none' }}
             >
               <SplineScene scene="https://prod.spline.design/kZDDjO5HuC9GJUM2/scene.splinecode" style={{ width: '100%', height: '100%' }} />
             </div>
