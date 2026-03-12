@@ -6391,9 +6391,9 @@ const FlockAppInner = ({ authUser, onLogout }) => {
 
       {/* Categories — expandable filter bar (matches Features button pattern) */}
       <div style={{ padding: '6px 12px', backgroundColor: 'var(--bg-card-solid)', borderTop: '1px solid var(--border-light)', flexShrink: 0 }}>
-        <div style={{ display: 'flex', gap: '6px', alignItems: 'center', justifyContent: categoryExpanded ? 'flex-start' : 'center' }}>
+        <div style={{ display: 'flex', gap: '6px', alignItems: 'center', justifyContent: categoryExpanded ? 'flex-start' : 'center', overflow: 'hidden' }}>
           {categoryExpanded && (
-            <div style={{ display: 'flex', gap: '6px', alignItems: 'center', overflowX: 'auto', scrollbarWidth: 'none', msOverflowStyle: 'none', WebkitOverflowScrolling: 'touch', flex: 1 }}>
+            <div style={{ display: 'flex', gap: '6px', alignItems: 'center', overflowX: 'auto', scrollbarWidth: 'none', msOverflowStyle: 'none', WebkitOverflowScrolling: 'touch', flex: 1, minWidth: 0 }}>
               {['All', 'Food', 'Nightlife', 'Live Music', 'Sports'].map(c => (
                 <button key={c} onClick={() => {
                   setActiveVenue(null); setCategoryExpanded(false);
