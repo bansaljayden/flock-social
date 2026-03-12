@@ -11,7 +11,7 @@ import {
   formatCurrency,
   calculateProfitMargin
 } from './lib/finance';
-import { getCurrentUser, logout, isLoggedIn, getFlocks, getFlock, createFlock as apiCreateFlock, getMessages, sendMessage as apiSendMessage, updateProfile, searchVenues, searchUsers, getSuggestedUsers, sendFriendRequest, getVenueDetails, leaveFlock as apiLeaveFlock, getDMConversations, getDMs, getDmVenueVotes, getDmPinnedVenue, BASE_URL, inviteToFlock, acceptFlockInvite, declineFlockInvite, getFriends, acceptFriendRequest, declineFriendRequest, getPendingRequests, getOutgoingRequests, getFriendSuggestions, addFriendByCode, findFriendsByPhone, removeFriend, getTrustedContacts, addTrustedContact, updateTrustedContact, deleteTrustedContact, sendEmergencyAlert, shareLocationWithContacts, getUserStats, getCrowdPrediction, getCrowdBatch, getCrowdAlternatives, getWeather, submitVenueFeedback, uploadProfileImage, saveProfileImageUrl, submitBudget, getBudgetStatus, lockBudget, sendBudgetReminder, createBillSplit, getBillSplit, settleShare, ghostCommit, updatePaymentMethods, getPaymentLinks, getFeaturedEvents, searchEvents, getEventDetails, sendAiChat, getActivityFeed } from './services/api';
+import { getCurrentUser, logout, isLoggedIn, getFlocks, getFlock, createFlock as apiCreateFlock, getMessages, sendMessage as apiSendMessage, updateProfile, searchVenues, searchUsers, getSuggestedUsers, sendFriendRequest, getVenueDetails, leaveFlock as apiLeaveFlock, getDMConversations, getDMs, getDmVenueVotes, getDmPinnedVenue, BASE_URL, inviteToFlock, acceptFlockInvite, declineFlockInvite, getFriends, acceptFriendRequest, declineFriendRequest, getPendingRequests, getOutgoingRequests, getFriendSuggestions, addFriendByCode, findFriendsByPhone, removeFriend, getTrustedContacts, addTrustedContact, updateTrustedContact, deleteTrustedContact, sendEmergencyAlert, shareLocationWithContacts, getUserStats, getCrowdPrediction, getCrowdBatch, getCrowdAlternatives, getWeather, submitVenueFeedback, uploadProfileImage, saveProfileImageUrl, submitBudget, getBudgetStatus, lockBudget, sendBudgetReminder, createBillSplit, getBillSplit, settleShare, ghostCommit, updatePaymentMethods, getPaymentLinks, getFeaturedEvents, searchEvents, getEventDetails, sendAiChat, getActivityFeed, getWeatherForecast } from './services/api';
 import { connectSocket, disconnectSocket, getSocket, joinFlock, leaveFlock, sendMessage as socketSendMessage, sendImageMessage as socketSendImage, startTyping, stopTyping, onNewMessage, onUserTyping, onUserStoppedTyping, emitLocation, stopSharingLocation as socketStopSharing, onLocationUpdate, onMemberStoppedSharing, socketSendDm, onNewDm, dmStartTyping, dmStopTyping, onDmUserTyping, onDmUserStoppedTyping, dmReact, dmRemoveReact, onDmReactionAdded, onDmReactionRemoved, dmVoteVenue, onDmNewVote, dmShareLocation, dmStopSharingLocation, onDmLocationUpdate, onDmMemberStoppedSharing, dmPinVenue, onDmVenuePinned, emitFlockInvite, emitFlockInviteResponse, onFlockInviteReceived, onFlockInviteResponded, emitFriendRequest, emitFriendResponse, onFriendRequestReceived, onFriendRequestResponded, onBudgetUpdated, onBudgetLocked, onBudgetReminder, onBillCreated, onShareSettled, onBillFullySettled, onGhostCommitted, onNewVote, onVenueSelected, onFlockReactionAdded, onFlockReactionRemoved, onFlockDeleted, onFlockUpdated, onFlockMemberLeft } from './services/socket';
 import { QRCodeSVG } from 'qrcode.react';
 import { Html5Qrcode } from 'html5-qrcode';
@@ -1225,13 +1225,17 @@ const FlockAppInner = ({ authUser, onLogout }) => {
     }
   }, []);
 
-  // Fetch weather when Plans tab is opened and location is available
+  // Fetch weather + forecast when Plans tab is opened and location is available
   const weatherFetchedRef = useRef(false);
+  const [weatherForecast, setWeatherForecast] = useState([]);
   useEffect(() => {
     if (currentTab !== 'calendar' || !userLocation || weatherFetchedRef.current) return;
     weatherFetchedRef.current = true;
     getWeather(userLocation.lat, userLocation.lng)
       .then(data => { if (data) setLiveWeather(data); })
+      .catch(() => {});
+    getWeatherForecast(userLocation.lat, userLocation.lng)
+      .then(data => { if (data?.forecast) setWeatherForecast(data.forecast); })
       .catch(() => {});
   }, [currentTab, userLocation]);
 
@@ -6497,9 +6501,12 @@ const FlockAppInner = ({ authUser, onLogout }) => {
       return upcoming.slice(0, 4);
     };
 
-    // Weather data — show live weather for today
+    // Weather data — live for today, forecast for future dates
     const isSelectedToday = selectedDateStr === todayStr;
-    const weatherReady = isSelectedToday && liveWeather;
+    const forecastForDate = weatherForecast.find(f => f.date === selectedDateStr);
+    const weatherData = isSelectedToday ? liveWeather : forecastForDate;
+    const weatherReady = !!weatherData;
+    const isLive = isSelectedToday && !!liveWeather;
 
     return (
       <div key="calendar-screen-container" style={{ display: 'flex', flexDirection: 'column', height: '100%', backgroundColor: 'var(--bg-primary)' }}>
@@ -6555,7 +6562,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
         <div style={{ flex: 1, padding: '12px', overflowY: 'auto' }}>
           {/* Weather module */}
           {weatherReady ? (() => {
-            const w = liveWeather;
+            const w = weatherData;
             const cond = (w.conditions || '').toLowerCase();
             const isRainy = cond.includes('rain') || cond.includes('drizzle') || cond.includes('thunderstorm');
             const isCloudy = cond.includes('cloud') || cond.includes('overcast') || cond.includes('mist') || cond.includes('fog');
@@ -6578,9 +6585,9 @@ const FlockAppInner = ({ authUser, onLogout }) => {
                   <div style={{ textAlign: 'right' }}>
                     <p style={{ fontSize: '13px', fontWeight: '700', color: colors.navy, margin: 0 }}>{selectedDate.toLocaleDateString('en-US', { weekday: 'long' })}</p>
                     <p style={{ fontSize: '10px', color: 'var(--text-secondary)', margin: '2px 0 0' }}>{selectedDate.toLocaleDateString('en-US', { month: 'long', day: 'numeric' })}</p>
-                    <div style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', marginTop: '4px', padding: '2px 8px', borderRadius: '10px', backgroundColor: 'rgba(16,185,129,0.15)' }}>
-                      <div style={{ width: '5px', height: '5px', borderRadius: '50%', backgroundColor: '#10b981' }} />
-                      <span style={{ fontSize: '9px', fontWeight: '700', color: '#10b981' }}>LIVE</span>
+                    <div style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', marginTop: '4px', padding: '2px 8px', borderRadius: '10px', backgroundColor: isLive ? 'rgba(16,185,129,0.15)' : 'rgba(59,130,246,0.15)' }}>
+                      <div style={{ width: '5px', height: '5px', borderRadius: '50%', backgroundColor: isLive ? '#10b981' : '#3b82f6', animation: isLive ? 'pulse 2s ease-in-out infinite' : 'none' }} />
+                      <span style={{ fontSize: '9px', fontWeight: '700', color: isLive ? '#10b981' : '#3b82f6' }}>{isLive ? 'LIVE' : 'FORECAST'}</span>
                     </div>
                   </div>
                 </div>
