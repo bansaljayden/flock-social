@@ -131,6 +131,30 @@ const toolDeclarations = [
       required: ['lat', 'lng'],
     },
   },
+  {
+    name: 'navigate_app',
+    description: 'Navigate the user to a specific screen or tab in the Flock app. Use this when the user asks how to do something, where to find a feature, or wants to go somewhere in the app.',
+    parameters: {
+      type: 'object',
+      properties: {
+        tab: {
+          type: 'string',
+          description: 'The tab to switch to: "home", "explore", "chats", "calendar", "profile"',
+          enum: ['home', 'explore', 'chats', 'calendar', 'profile'],
+        },
+        screen: {
+          type: 'string',
+          description: 'The screen to navigate to: "create" (create a flock), "addFriends" (add friends), "profile" (profile/settings). Leave empty to just switch tabs.',
+          enum: ['create', 'addFriends', 'profile'],
+        },
+        profile_section: {
+          type: 'string',
+          description: 'If navigating to profile, which section to open: "safety" (trusted contacts/SOS), "payment" (payment methods), "edit" (edit profile)',
+          enum: ['safety', 'payment', 'edit'],
+        },
+      },
+    },
+  },
 ];
 
 // ---------------------------------------------------------------------------
@@ -281,6 +305,11 @@ async function executeTool(toolName, toolInput, userId) {
       return weather || { error: 'Weather data unavailable' };
     }
 
+    case 'navigate_app': {
+      // This is handled client-side — we just pass the navigation intent back
+      return { success: true, navigated: true, tab: toolInput.tab, screen: toolInput.screen, profile_section: toolInput.profile_section };
+    }
+
     default:
       return { error: `Unknown tool: ${toolName}` };
   }
@@ -290,7 +319,7 @@ async function executeTool(toolName, toolInput, userId) {
 // System prompt
 // ---------------------------------------------------------------------------
 function buildSystemPrompt(userName) {
-  return `You are Birdie, the AI assistant for Flock — a social coordination app for Gen Z (ages 15-22). You help users find venues, check how busy places are, and coordinate plans with friends.
+  return `You are Birdie, the AI assistant for Flock — a social coordination app for Gen Z (ages 15-22). You help users find venues, check how busy places are, coordinate plans with friends, and navigate the app.
 
 Your personality:
 - Casual, friendly, concise — talk like a chill friend, not a corporate bot
@@ -307,6 +336,28 @@ What you can do:
 - Look at the user's flocks (group plans) and friends
 - Check the weather
 - Help plan outings and coordinate with friends
+- Navigate the user to any screen in the app using the navigate_app tool
+
+App navigation — you know the app inside out. Here are the screens and features:
+- **Home** (tab: home) — Activity feed, pending flocks, quick actions
+- **Explore** (tab: explore) — Map view with nearby venues, search, crowd levels, venue details
+- **Calendar** (tab: calendar) — Upcoming plans and events
+- **Chats** (tab: chats) — Flock group chats and DMs with friends
+- **Profile** (tab: profile) — Edit profile, settings, payment methods, trusted contacts
+- **Create a Flock** (screen: create) — Start a new group plan, pick a venue, invite friends
+- **Add Friends** (screen: addFriends) — Search for people, add by friend code, find contacts
+- **Safety** (profile > safety) — Set up trusted contacts, SOS emergency alert, location sharing
+- **Budget** — Inside a flock, members submit anonymous budgets that get matched
+- **Bill Split** — After a hangout, split the bill and settle via Venmo/CashApp/Zelle
+- **DMs** — Direct messages with friends, share venues, vote on spots, share location
+
+When users ask how to do something or where to find a feature:
+- Explain briefly, then USE the navigate_app tool to take them there directly
+- Examples: "How do I add friends?" → explain + navigate to addFriends screen
+- "Where do I change my profile?" → navigate to profile tab
+- "How do I create a plan?" → navigate to create screen
+- "How do I split a bill?" → explain it's inside a flock after the hangout
+- "Where are my messages?" → navigate to chats tab
 
 When searching for venues:
 - If the user gives a location or you have their coordinates, always pass location to search_venues
@@ -321,7 +372,8 @@ When checking crowds:
 Important:
 - Never make up venue data — always use the tools to get real info
 - If you don't know the user's location, ask for it or suggest they search for a specific area
-- Don't be overly verbose — Gen Z users want quick, useful answers`;
+- Don't be overly verbose — Gen Z users want quick, useful answers
+- When the user asks about app features, ALWAYS use navigate_app to take them there — don't just explain`;
 }
 
 // ---------------------------------------------------------------------------
@@ -400,6 +452,7 @@ router.post('/chat',
       let response = await chat.sendMessage(userText);
       let iterations = 0;
       const collectedVenues = []; // Track venues for card display
+      let navigationAction = null; // Track navigation commands
 
       while (iterations < 5) {
         iterations++;
@@ -420,6 +473,9 @@ router.post('/chat',
             // Collect venue data for cards
             if (name === 'search_venues' && result.venues) {
               collectedVenues.push(...result.venues);
+            }
+            if (name === 'navigate_app' && result.navigated) {
+              navigationAction = { tab: result.tab, screen: result.screen, profile_section: result.profile_section };
             }
             if (name === 'get_crowd_prediction' && result.venue_name) {
               // Enrich any matching venue with crowd data
@@ -478,7 +534,9 @@ router.post('/chat',
         }
       }
 
-      res.json({ text: responseText, venues: venueCards, remaining: rateCheck.remaining });
+      const result = { text: responseText, venues: venueCards, remaining: rateCheck.remaining };
+      if (navigationAction) result.navigate = navigationAction;
+      res.json(result);
     } catch (err) {
       console.error('[AI] Chat error:', err);
       if (err.status === 429 || err.message?.includes('quota')) {
