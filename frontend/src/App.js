@@ -1750,6 +1750,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
   const aiInputValueRef = useRef('');
   const [aiTyping, setAiTyping] = useState(false);
   const [showAiAssistant, setShowAiAssistant] = useState(false);
+  const [aiChatMode, setAiChatMode] = useState('bubble'); // 'bubble' | 'panel' | 'fullscreen'
   const [aiShareVenue, setAiShareVenue] = useState(null); // venue to share to flock/DM
 
   // Calendar
@@ -2053,12 +2054,12 @@ const FlockAppInner = ({ authUser, onLogout }) => {
     }
   }, []);
 
-  // Focus AI input when modal opens
+  // Focus AI input when chat opens
   useEffect(() => {
-    if (showAiAssistant && aiInputRef.current) {
-      setTimeout(() => aiInputRef.current?.focus(), 100);
+    if ((aiChatMode === 'panel' || aiChatMode === 'fullscreen') && aiInputRef.current) {
+      setTimeout(() => aiInputRef.current?.focus(), 200);
     }
-  }, [showAiAssistant]);
+  }, [aiChatMode]);
 
   // Map venues loaded from Google Places API
   // Start empty — venues load from API based on user's actual location
@@ -2299,10 +2300,10 @@ const FlockAppInner = ({ authUser, onLogout }) => {
 
   // Auto-scroll AI chat to bottom when messages change
   useEffect(() => {
-    if (showAiAssistant && aiChatEndRef.current) {
+    if ((aiChatMode === 'panel' || aiChatMode === 'fullscreen') && aiChatEndRef.current) {
       setTimeout(() => aiChatEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 50);
     }
-  }, [aiMessages, aiTyping, showAiAssistant]);
+  }, [aiMessages, aiTyping, aiChatMode]);
 
   // Auto-scroll chat to bottom when messages change
   const selectedFlock = flocks.find(f => f.id === selectedFlockId) || flocks[0];
@@ -3342,33 +3343,61 @@ const FlockAppInner = ({ authUser, onLogout }) => {
     </button>
   );
 
-  // AI Button - Enhanced with floating animation
-  const AIButton = () => currentScreen === 'main' && currentTab === 'home' && (
-    <button
-      className="fab-press"
-      onClick={() => setShowAiAssistant(true)}
+  // AI Bubble — compact floating widget with last message preview
+  const lastAiMessage = aiMessages.length > 1 ? aiMessages[aiMessages.length - 1] : null;
+  const AIBubble = () => currentScreen === 'main' && currentTab === 'home' && aiChatMode === 'bubble' && (
+    <div
+      onClick={() => { setAiChatMode('panel'); setShowAiAssistant(true); }}
       style={{
         position: 'absolute',
         bottom: '95px',
         left: '12px',
+        display: 'flex',
+        alignItems: 'center',
+        gap: '8px',
+        cursor: 'pointer',
+        zIndex: 20,
+        animation: 'fadeSlideIn 0.3s ease-out',
+      }}
+    >
+      {/* Robot head */}
+      <div className="fab-press" style={{
         width: '52px',
         height: '52px',
+        minWidth: '52px',
         borderRadius: '26px',
-        border: 'none',
         background: isDark ? 'linear-gradient(135deg, #0d1b3e, #162046)' : 'linear-gradient(135deg, #e8eaf0, #dde0e8)',
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
-        cursor: 'pointer',
         boxShadow: isDark ? '0 6px 20px rgba(79,70,229,0.4), 0 2px 6px rgba(0,0,0,0.2)' : '0 6px 20px rgba(13,40,71,0.25), 0 2px 6px rgba(0,0,0,0.1)',
-        zIndex: 20,
-        transition: 'opacity 0.2s ease',
         overflow: 'hidden',
         border: isDark ? '2px solid rgba(124,58,237,0.6)' : '2px solid rgba(13,40,71,0.2)',
-      }}
-    >
-      <img src={isDark ? "/birdie-avatar.png" : "/birdie-avatar-light.png"} alt="Birdie" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-    </button>
+        position: 'relative',
+      }}>
+        <img src={isDark ? "/birdie-avatar.png" : "/birdie-avatar-light.png"} alt="Birdie" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+        {/* Online dot */}
+        <div style={{ position: 'absolute', bottom: '0px', right: '0px', width: '14px', height: '14px', borderRadius: '7px', backgroundColor: '#22C55E', border: '2px solid var(--bg-primary)' }} />
+      </div>
+      {/* Last message preview pill */}
+      {lastAiMessage && lastAiMessage.role === 'assistant' && (
+        <div style={{
+          maxWidth: '180px',
+          padding: '8px 12px',
+          borderRadius: '16px',
+          borderTopLeftRadius: '4px',
+          backgroundColor: 'var(--bg-card-solid)',
+          boxShadow: '0 4px 16px rgba(0,0,0,0.12)',
+          border: '1px solid var(--border-subtle)',
+          animation: 'fadeSlideIn 0.4s ease-out 0.1s both',
+        }}>
+          <p style={{ margin: 0, fontSize: '11px', color: 'var(--text-primary)', fontWeight: '500', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {lastAiMessage.text.length > 50 ? lastAiMessage.text.slice(0, 50) + '...' : lastAiMessage.text}
+          </p>
+          <p style={{ margin: '2px 0 0', fontSize: '9px', color: 'var(--text-tertiary)', fontWeight: '500' }}>Tap to chat</p>
+        </div>
+      )}
+    </div>
   );
 
   // Toast — lightweight, GPU-accelerated
@@ -4445,37 +4474,89 @@ const FlockAppInner = ({ authUser, onLogout }) => {
   ];
 
   const aiQuickActions = [
-    { label: 'Scout Spots', icon: Icons.compass, action: () => { setShowAiAssistant(false); setCurrentTab('explore'); } },
-    { label: 'Rally the Flock', icon: Icons.users, action: () => { setShowAiAssistant(false); setCurrentScreen('create'); } },
-    { label: 'Check Plans', icon: Icons.calendar, action: () => { setShowAiAssistant(false); setCurrentTab('calendar'); } },
+    { label: 'Scout Spots', icon: Icons.compass, action: () => { closeAiChat(); setCurrentTab('explore'); } },
+    { label: 'Rally the Flock', icon: Icons.users, action: () => { closeAiChat(); setCurrentScreen('create'); } },
+    { label: 'Check Plans', icon: Icons.calendar, action: () => { closeAiChat(); setCurrentTab('calendar'); } },
   ];
 
-  // AI Assistant Modal - Inline JSX (not a component to prevent focus loss)
-  const aiAssistantModal = showAiAssistant && (
-      <div onClick={(e) => { if (e.target === e.currentTarget) setShowAiAssistant(false); }} style={{ position: 'absolute', inset: 0, backgroundColor: 'rgba(0,0,0,0.8)', display: 'flex', alignItems: 'flex-end', zIndex: 50 }}>
-        <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '24px 24px 0 0', width: '100%', height: '85%', display: 'flex', flexDirection: 'column' }}>
-          {/* Header with animated AI avatar */}
-          <div style={{ padding: '12px', borderBottom: '1px solid var(--divider)', background: `linear-gradient(90deg, ${colors.navyBg}, ${colors.navyMidBg})`, borderRadius: '24px 24px 0 0', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+  // AI Assistant — Expandable Chat (panel / fullscreen)
+  const isAiPanel = aiChatMode === 'panel';
+  const isAiFullscreen = aiChatMode === 'fullscreen';
+  const closeAiChat = () => { setAiChatMode('bubble'); setShowAiAssistant(false); };
+  const toggleAiFullscreen = () => setAiChatMode(prev => prev === 'fullscreen' ? 'panel' : 'fullscreen');
+
+  const aiAssistantModal = (isAiPanel || isAiFullscreen) && (
+      <div onClick={(e) => { if (e.target === e.currentTarget) closeAiChat(); }} style={{
+        position: 'absolute',
+        inset: 0,
+        backgroundColor: isAiFullscreen ? 'rgba(0,0,0,0.8)' : 'transparent',
+        display: 'flex',
+        alignItems: isAiFullscreen ? 'flex-end' : 'flex-end',
+        justifyContent: isAiPanel ? 'flex-start' : 'stretch',
+        zIndex: 50,
+        pointerEvents: isAiPanel ? 'none' : 'auto',
+        transition: 'background-color 0.3s ease',
+      }}>
+        <div style={{
+          backgroundColor: 'var(--bg-card-solid)',
+          borderRadius: isAiFullscreen ? '24px 24px 0 0' : '20px',
+          width: isAiFullscreen ? '100%' : 'calc(100% - 24px)',
+          maxWidth: isAiPanel ? '360px' : '100%',
+          height: isAiFullscreen ? '85%' : '55%',
+          minHeight: isAiPanel ? '380px' : undefined,
+          maxHeight: isAiPanel ? '520px' : undefined,
+          display: 'flex',
+          flexDirection: 'column',
+          position: isAiPanel ? 'absolute' : 'relative',
+          bottom: isAiPanel ? '95px' : 0,
+          left: isAiPanel ? '12px' : undefined,
+          boxShadow: isAiPanel ? '0 12px 48px rgba(0,0,0,0.25), 0 4px 16px rgba(0,0,0,0.12)' : 'none',
+          border: isAiPanel ? '1px solid var(--border-subtle)' : 'none',
+          pointerEvents: 'auto',
+          transition: 'all 0.35s cubic-bezier(0.34, 1.56, 0.64, 1)',
+          animation: 'birdieExpand 0.35s cubic-bezier(0.34, 1.56, 0.64, 1)',
+          overflow: 'hidden',
+        }}>
+          {/* Header */}
+          <div style={{ padding: isAiPanel ? '10px 12px' : '12px', borderBottom: '1px solid var(--divider)', background: `linear-gradient(90deg, ${colors.navyBg}, ${colors.navyMidBg})`, borderRadius: isAiFullscreen ? '24px 24px 0 0' : '20px 20px 0 0', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
               <div style={{ position: 'relative' }}>
-                <div style={{ width: '40px', height: '40px', borderRadius: '20px', background: isDark ? 'linear-gradient(135deg, #0d1b3e, #162046)' : 'linear-gradient(135deg, #e8eaf0, #dde0e8)', overflow: 'hidden', boxShadow: '0 4px 12px rgba(79,70,229,0.4)', border: '2px solid rgba(124,58,237,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <div style={{ width: isAiPanel ? '34px' : '40px', height: isAiPanel ? '34px' : '40px', borderRadius: '50%', background: isDark ? 'linear-gradient(135deg, #0d1b3e, #162046)' : 'linear-gradient(135deg, #e8eaf0, #dde0e8)', overflow: 'hidden', boxShadow: '0 4px 12px rgba(79,70,229,0.4)', border: '2px solid rgba(124,58,237,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                   <img src={isDark ? "/birdie-avatar.png" : "/birdie-avatar-light.png"} alt="Birdie" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
                 </div>
-                <div style={{ position: 'absolute', bottom: '-2px', right: '-2px', width: '14px', height: '14px', borderRadius: '7px', backgroundColor: '#22C55E', border: '2px solid var(--bg-card-solid)', animation: 'pulse 2s ease-in-out infinite' }} />
+                <div style={{ position: 'absolute', bottom: '-2px', right: '-2px', width: '12px', height: '12px', borderRadius: '6px', backgroundColor: '#22C55E', border: '2px solid var(--bg-card-solid)' }} />
               </div>
               <div>
-                <h2 style={{ fontSize: '15px', fontWeight: 'bold', color: 'white', margin: 0 }}>Birdie</h2>
+                <h2 style={{ fontSize: isAiPanel ? '14px' : '15px', fontWeight: 'bold', color: 'white', margin: 0 }}>Birdie</h2>
                 <p style={{ fontSize: '10px', color: 'rgba(255,255,255,0.7)', margin: 0, display: 'flex', alignItems: 'center', gap: '4px' }}>
                   {Icons.sparkles('rgba(255,255,255,0.7)', 10)}
                   <span>your personal wingman</span>
                 </p>
               </div>
             </div>
-            <button onClick={() => setShowAiAssistant(false)} style={{ width: '28px', height: '28px', borderRadius: '14px', backgroundColor: 'rgba(255,255,255,0.2)', border: 'none', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.x('white', 16)}</button>
+            <div style={{ display: 'flex', gap: '6px' }}>
+              {/* Expand/Collapse toggle */}
+              <button onClick={toggleAiFullscreen} style={{ width: '28px', height: '28px', borderRadius: '14px', backgroundColor: 'rgba(255,255,255,0.15)', border: 'none', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'background-color 0.2s ease' }}
+                onMouseEnter={e => e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.25)'}
+                onMouseLeave={e => e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.15)'}
+              >
+                {isAiFullscreen ? (
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round"><polyline points="4 14 10 14 10 20" /><polyline points="20 10 14 10 14 4" /><line x1="14" y1="10" x2="21" y2="3" /><line x1="3" y1="21" x2="10" y2="14" /></svg>
+                ) : (
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round"><polyline points="15 3 21 3 21 9" /><polyline points="9 21 3 21 3 15" /><line x1="21" y1="3" x2="14" y2="10" /><line x1="3" y1="21" x2="10" y2="14" /></svg>
+                )}
+              </button>
+              {/* Close */}
+              <button onClick={closeAiChat} style={{ width: '28px', height: '28px', borderRadius: '14px', backgroundColor: 'rgba(255,255,255,0.15)', border: 'none', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'background-color 0.2s ease' }}
+                onMouseEnter={e => e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.25)'}
+                onMouseLeave={e => e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.15)'}
+              >{Icons.x('white', 14)}</button>
+            </div>
           </div>
 
-          {/* Quick Actions */}
-          <div style={{ padding: '10px 12px', backgroundColor: 'var(--bg-tertiary)', borderBottom: '1px solid var(--divider)', display: 'flex', gap: '8px' }}>
+          {/* Quick Actions — only in fullscreen */}
+          {isAiFullscreen && (
+          <div style={{ padding: '10px 12px', backgroundColor: 'var(--bg-tertiary)', borderBottom: '1px solid var(--divider)', display: 'flex', gap: '8px', flexShrink: 0 }}>
             {aiQuickActions.map((action, i) => (
               <button key={i} onClick={action.action} style={{ flex: 1, padding: '8px', borderRadius: '10px', border: '1px solid var(--border-subtle)', backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '4px' }}>
                 {action.icon(colors.navy, 16)}
@@ -4483,6 +4564,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
               </button>
             ))}
           </div>
+          )}
 
           {/* Messages */}
           <div className="birdie-bg" onPointerMove={(e) => {
@@ -4519,7 +4601,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
                       if (nav.profile_section === 'safety') { setProfileScreen('safety'); loadTrustedContacts(); }
                       else if (nav.profile_section === 'payment') setProfileScreen('payment');
                       else if (nav.profile_section === 'edit') setProfileScreen('edit');
-                      setShowAiAssistant(false);
+                      closeAiChat();
                     }} style={{ marginTop: '8px', padding: '10px 16px', borderRadius: '12px', border: 'none', background: `linear-gradient(135deg, #4F46E5, #7C3AED)`, color: 'white', fontSize: '12px', fontWeight: '700', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px', boxShadow: '0 2px 8px rgba(79,70,229,0.3)' }}>
                       {Icons.arrowRight ? Icons.arrowRight('white', 14) : '→'} Take me there
                     </button>
@@ -4630,14 +4712,14 @@ const FlockAppInner = ({ authUser, onLogout }) => {
             <div ref={aiChatEndRef} />
           </div>
 
-          {/* Suggested Questions */}
+          {/* Suggested Questions — show in both modes but compact in panel */}
           {!aiTyping && (
-            <div style={{ padding: '8px 12px', borderTop: '1px solid var(--divider)', backgroundColor: 'var(--bg-tertiary)' }}>
-              <p style={{ fontSize: '9px', fontWeight: '600', color: 'var(--text-secondary)', marginBottom: '6px', textTransform: 'uppercase' }}>Try asking</p>
+            <div style={{ padding: isAiPanel ? '6px 10px' : '8px 12px', borderTop: '1px solid var(--divider)', backgroundColor: 'var(--bg-tertiary)', flexShrink: 0 }}>
+              {isAiFullscreen && <p style={{ fontSize: '9px', fontWeight: '600', color: 'var(--text-secondary)', marginBottom: '6px', textTransform: 'uppercase' }}>Try asking</p>}
               <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
-                {aiSuggestedQuestions.map((q, i) => (
-                  <button key={i} onClick={() => { aiInputValueRef.current = q.text; setAiInputHasText(true); if (aiInputRef.current) aiInputRef.current.value = q.text; setTimeout(() => sendAiMessage(), 50); }} style={{ padding: '6px 10px', borderRadius: '16px', border: '1px solid var(--border-subtle)', backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer', fontSize: '11px', color: colors.navy, fontWeight: '500', display: 'flex', alignItems: 'center', gap: '4px' }}>
-                    {q.icon(colors.navy, 12)}
+                {(isAiPanel ? aiSuggestedQuestions.slice(0, 2) : aiSuggestedQuestions).map((q, i) => (
+                  <button key={i} onClick={() => { aiInputValueRef.current = q.text; setAiInputHasText(true); aiInputHasTextRef.current = true; if (aiInputRef.current) aiInputRef.current.value = q.text; setTimeout(() => sendAiMessage(), 50); }} style={{ padding: isAiPanel ? '5px 8px' : '6px 10px', borderRadius: '16px', border: '1px solid var(--border-subtle)', backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer', fontSize: isAiPanel ? '10px' : '11px', color: colors.navy, fontWeight: '500', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                    {q.icon(colors.navy, isAiPanel ? 10 : 12)}
                     {q.text}
                   </button>
                 ))}
@@ -4711,7 +4793,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
                       <p style={{ fontSize: '13px', color: 'var(--text-secondary)', marginBottom: '12px' }}>Open your DMs to share <strong>{aiShareVenue.name}</strong></p>
                       <button onClick={() => {
                         setAiShareVenue(null);
-                        setShowAiAssistant(false);
+                        closeAiChat();
                         setCurrentTab('chat');
                         setCurrentScreen('main');
                       }} style={{ padding: '10px 24px', borderRadius: '12px', border: 'none', background: 'linear-gradient(135deg, #7C3AED, #5B21B6)', color: 'white', fontWeight: '600', fontSize: '13px', cursor: 'pointer' }}>
@@ -4727,7 +4809,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
                           await apiSendMessage(f.id, `Check out ${aiShareVenue.name}!`, { message_type: 'venue_card', venue_data: venueData });
                         } catch {}
                         setAiShareVenue(null);
-                        setShowAiAssistant(false);
+                        closeAiChat();
                         setSelectedFlockId(f.id);
                         setCurrentScreen('chatDetail');
                       }} style={{ width: '100%', padding: '10px 12px', borderRadius: '10px', border: 'none', backgroundColor: 'transparent', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '10px', textAlign: 'left' }}>
@@ -5057,7 +5139,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
         </button>
       </div>
 
-      <AIButton />
+      <AIBubble />
       <SafetyButton />
       <BottomNav />
     </div>
