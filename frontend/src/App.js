@@ -6420,46 +6420,42 @@ const FlockAppInner = ({ authUser, onLogout }) => {
         };
         const selectedCat = cats.find(c => c.id === category) || cats[0];
         return (
-          <div style={{ padding: '8px 12px', backgroundColor: 'var(--bg-card-solid)', boxShadow: '0 -2px 4px rgba(0,0,0,0.1)', flexShrink: 0 }}>
-            <div style={{ display: 'flex', gap: '6px', alignItems: 'center', flexWrap: 'wrap', transition: 'all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1)' }}>
+          <div style={{ padding: '6px 12px', backgroundColor: 'var(--bg-card-solid)', boxShadow: '0 -2px 4px rgba(0,0,0,0.1)', flexShrink: 0 }}>
+            <div style={{ display: 'flex', gap: '5px', alignItems: 'center', overflowX: 'auto', WebkitOverflowScrolling: 'touch', scrollbarWidth: 'none', msOverflowStyle: 'none' }}>
               {categoryExpanded ? (
-                /* Expanded — show all categories */
                 <>
                   {cats.map(c => (
                     <button key={c.id} onClick={() => selectCategory(c)} style={{
-                      padding: '8px 14px', borderRadius: '20px',
-                      border: category === c.id ? 'none' : '1.5px solid var(--border-default)',
+                      padding: '6px 10px', borderRadius: '16px',
+                      border: category === c.id ? 'none' : '1px solid var(--border-default)',
                       backgroundColor: category === c.id ? colors.navyBg : 'var(--bg-card-solid)',
                       color: category === c.id ? colors.cream : 'var(--text-primary)',
-                      fontWeight: '700', fontSize: '11px', cursor: 'pointer', whiteSpace: 'nowrap',
-                      display: 'flex', alignItems: 'center', gap: '5px', flexShrink: 0,
-                      animation: 'fadeSlideIn 0.25s ease-out both',
-                      boxShadow: category === c.id ? '0 2px 8px rgba(13,40,71,0.25)' : 'none',
+                      fontWeight: '600', fontSize: '11px', cursor: 'pointer', whiteSpace: 'nowrap',
+                      display: 'flex', alignItems: 'center', gap: '4px', flexShrink: 0,
+                      animation: 'fadeSlideIn 0.2s ease-out both',
                     }}>
                       {c.icon(category === c.id)} {c.id}
                     </button>
                   ))}
                   <button onClick={() => setCategoryExpanded(false)} style={{
-                    width: '28px', height: '28px', borderRadius: '50%', border: '1.5px solid var(--border-default)',
+                    width: '24px', height: '24px', borderRadius: '50%', border: '1px solid var(--border-default)',
                     backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer',
                     display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
-                    animation: 'fadeSlideIn 0.25s ease-out both',
                   }}>
-                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--text-secondary)" strokeWidth="2.5" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                    <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="var(--text-secondary)" strokeWidth="2.5" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
                   </button>
                 </>
               ) : (
-                /* Collapsed — just the single button */
                 <button onClick={() => setCategoryExpanded(true)} style={{
-                  padding: '8px 16px', borderRadius: '20px',
-                  border: '1.5px solid var(--border-default)',
+                  padding: '6px 12px', borderRadius: '16px',
+                  border: '1px solid var(--border-default)',
                   backgroundColor: 'var(--bg-card-solid)', color: 'var(--text-primary)',
-                  fontWeight: '700', fontSize: '11px', cursor: 'pointer', whiteSpace: 'nowrap',
-                  display: 'flex', alignItems: 'center', gap: '5px',
+                  fontWeight: '600', fontSize: '11px', cursor: 'pointer', whiteSpace: 'nowrap',
+                  display: 'flex', alignItems: 'center', gap: '4px',
                   boxShadow: 'var(--card-shadow-sm)',
                 }}>
                   {selectedCat.icon(false)} {selectedCat.id}
-                  <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" style={{ marginLeft: '2px', opacity: 0.7 }}><polyline points="6 9 12 15 18 9" /></svg>
+                  <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" style={{ marginLeft: '2px', opacity: 0.6 }}><polyline points="6 9 12 15 18 9" /></svg>
                 </button>
               )}
             </div>
