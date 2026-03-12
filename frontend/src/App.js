@@ -5656,33 +5656,6 @@ const FlockAppInner = ({ authUser, onLogout }) => {
           calcDistance={calcDistance}
         />
 
-        {/* Category filter chips on map */}
-        {!pickingVenueForCreate && !showConnectPanel && (
-          <div style={{ position: 'absolute', bottom: allVenues.length > 0 && !activeVenue ? '52px' : '14px', left: '12px', display: 'flex', gap: '5px', zIndex: 35, transition: 'bottom 0.2s ease' }}>
-            {[
-              { id: 'All', label: 'All' },
-              { id: 'Food', label: 'Food' },
-              { id: 'Nightlife', label: 'Nightlife' },
-              { id: 'Live Music', label: 'Live Music' },
-              { id: 'Sports', label: 'Sports' },
-            ].map(c => (
-              <button key={c.id} onClick={() => {
-                setActiveVenue(null);
-                if (c.id === 'All') { setCategory('All'); setVenueQuery(''); requestUserLocation(true); }
-                else setCategory(c.id);
-              }} style={{
-                padding: '6px 12px', borderRadius: '14px', border: 'none',
-                backgroundColor: category === c.id ? colors.navyBg : 'var(--bg-card-solid)',
-                color: category === c.id ? colors.cream : 'var(--text-primary)',
-                fontWeight: '600', fontSize: '11px', cursor: 'pointer', whiteSpace: 'nowrap',
-                boxShadow: '0 2px 8px rgba(0,0,0,0.15)',
-              }}>
-                {c.label}
-              </button>
-            ))}
-          </div>
-        )}
-
         {/* Live location sharing indicator on map */}
         {sharingLocationForFlock && (
           <div style={{
@@ -6415,6 +6388,53 @@ const FlockAppInner = ({ authUser, onLogout }) => {
         </div>
       </div>
 
+
+      {/* Categories — expandable pill bar */}
+      {(() => {
+        const cats = ['All', 'Food', 'Nightlife', 'Live Music', 'Sports'];
+        const handleCatSelect = (id) => {
+          setActiveVenue(null);
+          setCategoryExpanded(false);
+          if (id === 'All') { setCategory('All'); setVenueQuery(''); requestUserLocation(true); return; }
+          setCategory(id);
+        };
+        return (
+          <div style={{ padding: '6px 12px', backgroundColor: 'var(--bg-card-solid)', borderTop: '1px solid var(--border-light)', flexShrink: 0 }}>
+            {categoryExpanded ? (
+              <div style={{ display: 'flex', gap: '6px', alignItems: 'center', overflowX: 'auto', scrollbarWidth: 'none', msOverflowStyle: 'none', WebkitOverflowScrolling: 'touch' }}>
+                {cats.map(c => (
+                  <button key={c} onClick={() => handleCatSelect(c)} style={{
+                    padding: '6px 12px', borderRadius: '14px', border: 'none',
+                    backgroundColor: category === c ? colors.navyBg : 'var(--bg-hover)',
+                    color: category === c ? colors.cream : 'var(--text-primary)',
+                    fontWeight: '600', fontSize: '11px', cursor: 'pointer', whiteSpace: 'nowrap',
+                    flexShrink: 0, animation: 'fadeSlideIn 0.2s ease-out both',
+                  }}>
+                    {c}
+                  </button>
+                ))}
+                <button onClick={() => setCategoryExpanded(false)} style={{
+                  padding: '6px 8px', borderRadius: '14px', border: 'none',
+                  backgroundColor: 'var(--bg-hover)', cursor: 'pointer', flexShrink: 0,
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                }}>
+                  <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="var(--text-secondary)" strokeWidth="2.5" strokeLinecap="round"><polyline points="18 15 12 9 6 15" /></svg>
+                </button>
+              </div>
+            ) : (
+              <button onClick={() => setCategoryExpanded(true)} style={{
+                padding: '6px 12px', borderRadius: '14px', border: 'none',
+                backgroundColor: 'var(--bg-hover)', color: 'var(--text-primary)',
+                fontWeight: '600', fontSize: '11px', cursor: 'pointer',
+                display: 'flex', alignItems: 'center', gap: '3px',
+              }}>
+                {category}
+                <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" style={{ opacity: 0.5 }}><polyline points="6 9 12 15 18 9" /></svg>
+              </button>
+            )}
+          </div>
+        );
+      })()}
 
       <SafetyButton />
       <BottomNav />
