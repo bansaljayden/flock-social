@@ -1,7 +1,7 @@
 // ---------------------------------------------------------------------------
 // Event Data Service — Ticketmaster + SeatGeek
 // Enriches ML training data with nearby event signals.
-// STATUS: Skeleton — needs API keys and integration into collectRealtime.js
+// STATUS: Active — Ticketmaster integrated into collectRealtime.js pipeline
 // ---------------------------------------------------------------------------
 
 const { sleep } = require('./config');
