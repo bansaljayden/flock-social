@@ -5656,6 +5656,33 @@ const FlockAppInner = ({ authUser, onLogout }) => {
           calcDistance={calcDistance}
         />
 
+        {/* Category filter chips on map */}
+        {!pickingVenueForCreate && !showConnectPanel && (
+          <div style={{ position: 'absolute', bottom: allVenues.length > 0 && !activeVenue ? '52px' : '14px', left: '12px', display: 'flex', gap: '5px', zIndex: 35, transition: 'bottom 0.2s ease' }}>
+            {[
+              { id: 'All', label: 'All' },
+              { id: 'Food', label: 'Food' },
+              { id: 'Nightlife', label: 'Nightlife' },
+              { id: 'Live Music', label: 'Live Music' },
+              { id: 'Sports', label: 'Sports' },
+            ].map(c => (
+              <button key={c.id} onClick={() => {
+                setActiveVenue(null);
+                if (c.id === 'All') { setCategory('All'); setVenueQuery(''); requestUserLocation(true); }
+                else setCategory(c.id);
+              }} style={{
+                padding: '6px 12px', borderRadius: '14px', border: 'none',
+                backgroundColor: category === c.id ? colors.navyBg : 'var(--bg-card-solid)',
+                color: category === c.id ? colors.cream : 'var(--text-primary)',
+                fontWeight: '600', fontSize: '11px', cursor: 'pointer', whiteSpace: 'nowrap',
+                boxShadow: '0 2px 8px rgba(0,0,0,0.15)',
+              }}>
+                {c.label}
+              </button>
+            ))}
+          </div>
+        )}
+
         {/* Live location sharing indicator on map */}
         {sharingLocationForFlock && (
           <div style={{
