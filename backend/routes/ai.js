@@ -248,15 +248,15 @@ async function executeTool(toolName, toolInput, userId) {
 
     case 'get_user_flocks': {
       const result = await pool.query(
-        `SELECT f.id, f.title, f.venue_name, f.venue_address, f.date, f.time, f.status,
-                json_agg(json_build_object('name', u.display_name, 'status', fm.status)) as members
+        `SELECT f.id, f.name, f.venue_name, f.venue_address, f.event_time, f.status,
+                json_agg(json_build_object('name', u.name, 'status', fm.status)) as members
          FROM flocks f
          JOIN flock_members fm ON fm.flock_id = f.id
          JOIN users u ON u.id = fm.user_id
          WHERE f.id IN (SELECT flock_id FROM flock_members WHERE user_id = $1)
            AND f.status IN ('active', 'confirmed')
          GROUP BY f.id
-         ORDER BY f.date DESC NULLS LAST
+         ORDER BY f.event_time DESC NULLS LAST
          LIMIT 10`,
         [userId]
       );
@@ -265,11 +265,11 @@ async function executeTool(toolName, toolInput, userId) {
 
     case 'get_user_friends': {
       const result = await pool.query(
-        `SELECT u.id, u.display_name, u.username
+        `SELECT u.id, u.name
          FROM friendships fr
-         JOIN users u ON (u.id = CASE WHEN fr.user_id = $1 THEN fr.friend_id ELSE fr.user_id END)
-         WHERE (fr.user_id = $1 OR fr.friend_id = $1) AND fr.status = 'accepted'
-         ORDER BY u.display_name
+         JOIN users u ON (u.id = CASE WHEN fr.requester_id = $1 THEN fr.addressee_id ELSE fr.requester_id END)
+         WHERE (fr.requester_id = $1 OR fr.addressee_id = $1) AND fr.status = 'accepted'
+         ORDER BY u.name
          LIMIT 50`,
         [userId]
       );
@@ -356,8 +356,8 @@ router.post('/chat',
       }
 
       // Get user name
-      const userResult = await pool.query('SELECT display_name FROM users WHERE id = $1', [userId]);
-      const userName = userResult.rows[0]?.display_name || 'friend';
+      const userResult = await pool.query('SELECT name FROM users WHERE id = $1', [userId]);
+      const userName = userResult.rows[0]?.name || 'friend';
 
       // Build Gemini chat history
       const history = [];
