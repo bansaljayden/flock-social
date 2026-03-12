@@ -4475,11 +4475,9 @@ const FlockAppInner = ({ authUser, onLogout }) => {
 
           {/* Messages */}
           <div className="birdie-bg" style={{ flex: 1, padding: '12px', overflowY: 'auto' }}>
-            {aiMessages.length <= 1 && !aiTyping && (
-              <div style={{ position: 'absolute', inset: 0, zIndex: 0, filter: isDark ? 'drop-shadow(0 0 8px rgba(124,58,237,0.3))' : 'invert(1) hue-rotate(180deg) brightness(0.8) contrast(1.6) saturate(0.2) drop-shadow(0 0 12px rgba(0,0,0,0.2))' }}>
-                <SplineScene scene="https://prod.spline.design/kZDDjO5HuC9GJUM2/scene.splinecode" style={{ width: '100%', height: '100%' }} />
-              </div>
-            )}
+            <div style={{ position: 'absolute', inset: 0, zIndex: 0, filter: isDark ? 'drop-shadow(0 0 8px rgba(124,58,237,0.3))' : 'invert(1) hue-rotate(180deg) brightness(0.8) contrast(1.6) saturate(0.2) drop-shadow(0 0 12px rgba(0,0,0,0.2))', opacity: aiMessages.length <= 1 ? 1 : 0.15, transition: 'opacity 0.5s ease', pointerEvents: 'none' }}>
+              <SplineScene scene="https://prod.spline.design/kZDDjO5HuC9GJUM2/scene.splinecode" style={{ width: '100%', height: '100%' }} />
+            </div>
 
             {aiMessages.map((msg, i) => (
               <div key={i} style={{ display: 'flex', gap: '8px', marginBottom: '12px', flexDirection: msg.role === 'user' ? 'row-reverse' : 'row', position: 'relative', zIndex: 1 }}>
@@ -4557,7 +4555,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
           </div>
 
           {/* Suggested Questions */}
-          {aiMessages.length <= 2 && !aiTyping && (
+          {!aiTyping && (
             <div style={{ padding: '8px 12px', borderTop: '1px solid var(--divider)', backgroundColor: 'var(--bg-tertiary)' }}>
               <p style={{ fontSize: '9px', fontWeight: '600', color: 'var(--text-secondary)', marginBottom: '6px', textTransform: 'uppercase' }}>Try asking</p>
               <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
