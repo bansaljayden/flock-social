@@ -3172,7 +3172,8 @@ const FlockAppInner = ({ authUser, onLogout }) => {
     // Upload to backend
     try {
       const data = await uploadProfileImage(file);
-      setProfilePic(`${BASE_URL}${data.profile_image_url}`);
+      const url = data.profile_image_url;
+      setProfilePic(url.startsWith('data:') || url.startsWith('http') ? url : `${BASE_URL}${url}`);
     } catch (err) {
       console.error('Profile pic upload failed:', err);
     }
