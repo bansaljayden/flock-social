@@ -5069,7 +5069,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
           </div>
           <button onClick={() => setCurrentTab('profile')} style={{ position: 'relative', background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}>
             <div style={{ width: '40px', height: '40px', borderRadius: '20px', backgroundColor: 'rgba(255,255,255,0.2)', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden' }}>
-              {profilePic ? <img src={profilePic} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : Icons.user('white', 22)}
+              {profilePic ? <img src={profilePic} alt="" style={{ width: '40px', height: '40px', minWidth: '40px', minHeight: '40px', objectFit: 'cover', display: 'block' }} /> : Icons.user('white', 22)}
             </div>
           </button>
         </div>
