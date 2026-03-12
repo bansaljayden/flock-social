@@ -319,14 +319,20 @@ router.post('/upload-image', (req, res) => {
     }
 
     try {
-      const imageUrl = `/uploads/${req.file.filename}`;
+      // Convert to base64 data URL and store in DB (survives Railway redeploys)
+      const fileBuffer = fs.readFileSync(req.file.path);
+      const mimeType = req.file.mimetype || 'image/jpeg';
+      const dataUrl = `data:${mimeType};base64,${fileBuffer.toString('base64')}`;
+
+      // Clean up temp file
+      fs.unlink(req.file.path, () => {});
 
       await pool.query(
         'UPDATE users SET profile_image_url = $1, updated_at = NOW() WHERE id = $2',
-        [imageUrl, req.user.id]
+        [dataUrl, req.user.id]
       );
 
-      res.json({ profile_image_url: imageUrl });
+      res.json({ profile_image_url: dataUrl });
     } catch (dbErr) {
       console.error('Upload image error:', dbErr);
       res.status(500).json({ error: 'Failed to save image' });
