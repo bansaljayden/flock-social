@@ -6,6 +6,11 @@ const router = express.Router();
 
 const API_KEY = process.env.GOOGLE_PLACES_API_KEY;
 
+// In-memory photo cache (avoids re-fetching from Google on every page load)
+const photoCache = new Map();
+const PHOTO_CACHE_TTL = 60 * 60 * 1000; // 1 hour
+const MAX_PHOTO_CACHE = 500;
+
 // Photo proxy — streams image bytes through our server so the browser
 // never has to follow a cross-origin redirect (avoids CORP / 401 blocks).
 router.get('/photo',
@@ -18,6 +23,16 @@ router.get('/photo',
 
       const photoRef = req.query.ref;
       const maxWidth = parseInt(req.query.maxwidth) || 400;
+      const cacheKey = `${photoRef}|${maxWidth}`;
+
+      // Check cache first
+      const cached = photoCache.get(cacheKey);
+      if (cached && Date.now() - cached.ts < PHOTO_CACHE_TTL) {
+        res.set('Content-Type', cached.contentType);
+        res.set('Cache-Control', 'public, max-age=86400');
+        res.set('Cross-Origin-Resource-Policy', 'cross-origin');
+        return res.send(cached.buffer);
+      }
 
       // Step 1: ask Google for the actual CDN url (JSON response)
       const metaUrl = `https://places.googleapis.com/v1/${photoRef}/media?maxWidthPx=${maxWidth}&key=${API_KEY}&skipHttpRedirect=true`;
@@ -39,9 +54,25 @@ router.get('/photo',
         return res.status(502).json({ error: 'CDN fetch failed' });
       }
 
-      // Step 3: send the image bytes straight to the client
+      // Step 3: cache and send the image bytes
       const buffer = Buffer.from(await imgRes.arrayBuffer());
-      res.set('Content-Type', imgRes.headers.get('content-type') || 'image/jpeg');
+      const contentType = imgRes.headers.get('content-type') || 'image/jpeg';
+
+      // Store in cache (evict old entries if too large)
+      if (photoCache.size >= MAX_PHOTO_CACHE) {
+        const now = Date.now();
+        for (const [k, v] of photoCache) {
+          if (now - v.ts > PHOTO_CACHE_TTL) photoCache.delete(k);
+        }
+        // If still too large, delete oldest
+        if (photoCache.size >= MAX_PHOTO_CACHE) {
+          const firstKey = photoCache.keys().next().value;
+          photoCache.delete(firstKey);
+        }
+      }
+      photoCache.set(cacheKey, { buffer, contentType, ts: Date.now() });
+
+      res.set('Content-Type', contentType);
       res.set('Cache-Control', 'public, max-age=86400');
       res.set('Cross-Origin-Resource-Policy', 'cross-origin');
       res.send(buffer);
