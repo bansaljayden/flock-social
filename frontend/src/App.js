@@ -4474,13 +4474,19 @@ const FlockAppInner = ({ authUser, onLogout }) => {
           </div>
 
           {/* Messages */}
-          <div className="birdie-bg" style={{ flex: 1, padding: '12px', overflowY: 'auto' }}>
-            <div style={{ position: 'absolute', inset: 0, zIndex: aiMessages.length <= 1 ? 1 : 0, filter: isDark ? 'drop-shadow(0 0 8px rgba(124,58,237,0.3))' : 'invert(1) hue-rotate(180deg) brightness(0.8) contrast(1.6) saturate(0.2) drop-shadow(0 0 12px rgba(0,0,0,0.2))', opacity: aiMessages.length <= 1 ? 1 : 0.15, transition: 'opacity 0.5s ease', pointerEvents: aiMessages.length <= 1 ? 'auto' : 'none' }}>
+          <div className="birdie-bg" onMouseMove={(e) => {
+            const canvas = e.currentTarget.querySelector('[data-spline-wrapper] canvas');
+            if (canvas) canvas.dispatchEvent(new MouseEvent('mousemove', { clientX: e.clientX, clientY: e.clientY, bubbles: false }));
+          }} style={{ flex: 1, padding: '12px', overflowY: 'auto', position: 'relative' }}>
+            <div
+              data-spline-wrapper
+              style={{ position: 'absolute', inset: 0, zIndex: 0, filter: isDark ? 'drop-shadow(0 0 8px rgba(124,58,237,0.3))' : 'invert(1) hue-rotate(180deg) brightness(0.8) contrast(1.6) saturate(0.2) drop-shadow(0 0 12px rgba(0,0,0,0.2))', opacity: aiMessages.length <= 1 ? 1 : 0.15, transition: 'opacity 0.5s ease', pointerEvents: aiMessages.length <= 1 ? 'auto' : 'none' }}
+            >
               <SplineScene scene="https://prod.spline.design/kZDDjO5HuC9GJUM2/scene.splinecode" style={{ width: '100%', height: '100%' }} />
             </div>
 
             {aiMessages.map((msg, i) => (
-              <div key={i} style={{ display: 'flex', gap: '8px', marginBottom: '12px', flexDirection: msg.role === 'user' ? 'row-reverse' : 'row', position: 'relative', zIndex: 1 }}>
+              <div key={i} style={{ display: 'flex', gap: '8px', marginBottom: '12px', flexDirection: msg.role === 'user' ? 'row-reverse' : 'row', position: 'relative', zIndex: 2 }}>
                 <div style={{ width: '30px', height: '30px', borderRadius: '15px', background: msg.role === 'user' ? `linear-gradient(135deg, ${colors.navyBg}, ${colors.navyMidBg})` : 'linear-gradient(135deg, #4F46E5, #7C3AED)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, boxShadow: '0 2px 8px rgba(0,0,0,0.1)' }}>
                   {msg.role === 'user' ? Icons.user('white', 14) : Icons.robot('white', 14)}
                 </div>
