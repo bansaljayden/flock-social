@@ -359,13 +359,20 @@ router.post('/chat',
       const userResult = await pool.query('SELECT name FROM users WHERE id = $1', [userId]);
       const userName = userResult.rows[0]?.name || 'friend';
 
-      // Build Gemini chat history
+      // Build Gemini chat history (must start with 'user' role, no consecutive same-role)
       const history = [];
       for (const m of messages.slice(0, -1)) {
-        history.push({
-          role: m.role === 'assistant' ? 'model' : 'user',
-          parts: [{ text: m.text }],
-        });
+        if (!m.text) continue;
+        const role = m.role === 'assistant' ? 'model' : 'user';
+        // Skip if this would be a model message before any user message
+        if (history.length === 0 && role === 'model') continue;
+        // Skip consecutive same-role messages
+        if (history.length > 0 && history[history.length - 1].role === role) continue;
+        history.push({ role, parts: [{ text: m.text }] });
+      }
+      // Ensure history ends with model (if it ends with user, Gemini expects the next to be model)
+      if (history.length > 0 && history[history.length - 1].role === 'user') {
+        history.pop();
       }
 
       // The last message is the current user input
