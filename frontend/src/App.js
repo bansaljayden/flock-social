@@ -2011,11 +2011,61 @@ const FlockAppInner = ({ authUser, onLogout }) => {
   const [showPicModal, setShowPicModal] = useState(false);
   const [trustedContacts, setTrustedContacts] = useState([]);
   const [safetyOn, setSafetyOn] = useState(true);
+
+  // Draggable FAB positions — persisted in localStorage
+  const [birdiePos, setBirdiePos] = useState(() => {
+    try { const s = localStorage.getItem('flock_birdie_pos'); return s ? JSON.parse(s) : { bottom: 95, left: 12 }; } catch { return { bottom: 95, left: 12 }; }
+  });
+  const [sosPos, setSosPos] = useState(() => {
+    try { const s = localStorage.getItem('flock_sos_pos'); return s ? JSON.parse(s) : { bottom: 95, right: 12 }; } catch { return { bottom: 95, right: 12 }; }
+  });
+  const dragRef = useRef(null); // { id, startX, startY, startPos, moved }
   const [showAddContact, setShowAddContact] = useState(false);
   const [editingContact, setEditingContact] = useState(null); // null or contact object
   const [newContact, setNewContact] = useState({ name: '', phone: '', email: '', relationship: '' });
   const [safetyLoading, setSafetyLoading] = useState(false);
   const [sosAlertSending, setSosAlertSending] = useState(false);
+
+  // Drag handlers for FABs (Birdie + SOS)
+  const handleFabPointerDown = useCallback((e, id) => {
+    e.currentTarget.setPointerCapture(e.pointerId);
+    const pos = id === 'birdie' ? birdiePos : sosPos;
+    dragRef.current = { id, startX: e.clientX, startY: e.clientY, startPos: { ...pos }, moved: false };
+  }, [birdiePos, sosPos]);
+
+  const handleFabPointerMove = useCallback((e) => {
+    if (!dragRef.current) return;
+    const dx = e.clientX - dragRef.current.startX;
+    const dy = e.clientY - dragRef.current.startY;
+    if (!dragRef.current.moved && Math.abs(dx) < 5 && Math.abs(dy) < 5) return;
+    dragRef.current.moved = true;
+    const { id, startPos } = dragRef.current;
+    const container = e.currentTarget.parentElement;
+    if (!container) return;
+    const rect = container.getBoundingClientRect();
+    if (id === 'birdie') {
+      const newPos = {
+        bottom: Math.max(70, Math.min(rect.height - 60, startPos.bottom - dy)),
+        left: Math.max(4, Math.min(rect.width - 60, startPos.left + dx)),
+      };
+      setBirdiePos(newPos);
+      localStorage.setItem('flock_birdie_pos', JSON.stringify(newPos));
+    } else {
+      const newPos = {
+        bottom: Math.max(70, Math.min(rect.height - 60, startPos.bottom - dy)),
+        right: Math.max(4, Math.min(rect.width - 60, startPos.right - dx)),
+      };
+      setSosPos(newPos);
+      localStorage.setItem('flock_sos_pos', JSON.stringify(newPos));
+    }
+  }, []);
+
+  const handleFabPointerUp = useCallback((e) => {
+    if (!dragRef.current) return false;
+    const wasDrag = dragRef.current.moved;
+    dragRef.current = null;
+    return wasDrag;
+  }, []);
 
   // Interests
   const [userInterests, setUserInterests] = useState(['Live Music', 'Cocktails', 'Nightlife']);
@@ -3315,15 +3365,24 @@ const FlockAppInner = ({ authUser, onLogout }) => {
     }
   }, [trustedContacts, showToast]);
 
-  // Safety Button - Enhanced with pulse animation
+  // Safety Button - Draggable
   const SafetyButton = () => safetyOn && currentScreen === 'main' && !showSOS && (
-    <button
-      className="fab-press"
-      onClick={() => setShowSOS(true)}
+    <div
+      onPointerDown={(e) => handleFabPointerDown(e, 'sos')}
+      onPointerMove={handleFabPointerMove}
+      onPointerUp={(e) => { const wasDrag = handleFabPointerUp(e); if (!wasDrag) setShowSOS(true); }}
       style={{
         position: 'absolute',
-        bottom: '95px',
-        right: '12px',
+        bottom: `${sosPos.bottom}px`,
+        right: `${sosPos.right}px`,
+        width: '52px',
+        height: '52px',
+        zIndex: 20,
+        touchAction: 'none',
+        cursor: 'grab',
+      }}
+    >
+      <div className="fab-press" style={{
         width: '52px',
         height: '52px',
         borderRadius: '26px',
@@ -3332,31 +3391,31 @@ const FlockAppInner = ({ authUser, onLogout }) => {
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
-        cursor: 'pointer',
         boxShadow: '0 6px 20px rgba(239,68,68,0.4), 0 2px 6px rgba(0,0,0,0.1)',
-        zIndex: 20,
-        transition: 'opacity 0.2s ease',
-      }}
-    >
-      {Icons.shield('white', 24)}
-    </button>
+      }}>
+        {Icons.shield('white', 24)}
+      </div>
+    </div>
   );
 
-  // AI Bubble — compact floating widget with last message preview
+  // AI Bubble — draggable floating widget with last message preview
   const lastAiMessage = aiMessages.length > 1 ? aiMessages[aiMessages.length - 1] : null;
   const AIBubble = () => currentScreen === 'main' && currentTab === 'home' && aiChatMode === 'bubble' && (
     <div
-      onClick={() => setAiChatMode('panel')}
+      onPointerDown={(e) => handleFabPointerDown(e, 'birdie')}
+      onPointerMove={handleFabPointerMove}
+      onPointerUp={(e) => { const wasDrag = handleFabPointerUp(e); if (!wasDrag) setAiChatMode('panel'); }}
       style={{
         position: 'absolute',
-        bottom: '95px',
-        left: '12px',
+        bottom: `${birdiePos.bottom}px`,
+        left: `${birdiePos.left}px`,
         display: 'flex',
         alignItems: 'center',
         gap: '8px',
-        cursor: 'pointer',
+        cursor: 'grab',
         zIndex: 20,
         animation: 'fadeSlideIn 0.3s ease-out',
+        touchAction: 'none',
       }}
     >
       {/* Robot head */}
@@ -4507,8 +4566,8 @@ const FlockAppInner = ({ authUser, onLogout }) => {
           display: 'flex',
           flexDirection: 'column',
           position: isAiPanel ? 'absolute' : 'relative',
-          bottom: isAiPanel ? '95px' : 0,
-          left: isAiPanel ? '12px' : undefined,
+          bottom: isAiPanel ? `${birdiePos.bottom}px` : 0,
+          left: isAiPanel ? `${birdiePos.left}px` : undefined,
           boxShadow: isAiPanel ? '0 12px 48px rgba(0,0,0,0.25), 0 4px 16px rgba(0,0,0,0.12)' : 'none',
           border: isAiPanel ? '1px solid var(--border-subtle)' : 'none',
           pointerEvents: 'auto',
