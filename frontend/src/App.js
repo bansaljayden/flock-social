@@ -2019,53 +2019,75 @@ const FlockAppInner = ({ authUser, onLogout }) => {
   const [sosPos, setSosPos] = useState(() => {
     try { const s = localStorage.getItem('flock_sos_pos'); return s ? JSON.parse(s) : { bottom: 95, right: 12 }; } catch { return { bottom: 95, right: 12 }; }
   });
-  const dragRef = useRef(null); // { id, startX, startY, startPos, moved }
+  const dragRef = useRef(null); // { id, el, startX, startY, origLeft, origTop, moved }
+  const birdieFabRef = useRef(null);
+  const sosFabRef = useRef(null);
   const [showAddContact, setShowAddContact] = useState(false);
-  const [editingContact, setEditingContact] = useState(null); // null or contact object
+  const [editingContact, setEditingContact] = useState(null);
   const [newContact, setNewContact] = useState({ name: '', phone: '', email: '', relationship: '' });
   const [safetyLoading, setSafetyLoading] = useState(false);
   const [sosAlertSending, setSosAlertSending] = useState(false);
 
-  // Drag handlers for FABs (Birdie + SOS)
+  // Smooth 60fps drag for FABs — manipulates DOM directly, commits to state on release
   const handleFabPointerDown = useCallback((e, id) => {
-    e.currentTarget.setPointerCapture(e.pointerId);
-    const pos = id === 'birdie' ? birdiePos : sosPos;
-    dragRef.current = { id, startX: e.clientX, startY: e.clientY, startPos: { ...pos }, moved: false };
-  }, [birdiePos, sosPos]);
+    const el = e.currentTarget;
+    el.setPointerCapture(e.pointerId);
+    const rect = el.getBoundingClientRect();
+    dragRef.current = {
+      id, el,
+      startX: e.clientX, startY: e.clientY,
+      origLeft: rect.left, origTop: rect.top,
+      moved: false,
+    };
+    el.style.transition = 'none';
+    el.style.willChange = 'transform';
+    el.style.zIndex = '30';
+  }, []);
 
   const handleFabPointerMove = useCallback((e) => {
-    if (!dragRef.current) return;
-    const dx = e.clientX - dragRef.current.startX;
-    const dy = e.clientY - dragRef.current.startY;
-    if (!dragRef.current.moved && Math.abs(dx) < 5 && Math.abs(dy) < 5) return;
-    dragRef.current.moved = true;
-    const { id, startPos } = dragRef.current;
-    const container = e.currentTarget.parentElement;
-    if (!container) return;
-    const rect = container.getBoundingClientRect();
-    if (id === 'birdie') {
-      const newPos = {
-        bottom: Math.max(70, Math.min(rect.height - 60, startPos.bottom - dy)),
-        left: Math.max(4, Math.min(rect.width - 60, startPos.left + dx)),
-      };
-      setBirdiePos(newPos);
-      localStorage.setItem('flock_birdie_pos', JSON.stringify(newPos));
-    } else {
-      const newPos = {
-        bottom: Math.max(70, Math.min(rect.height - 60, startPos.bottom - dy)),
-        right: Math.max(4, Math.min(rect.width - 60, startPos.right - dx)),
-      };
-      setSosPos(newPos);
-      localStorage.setItem('flock_sos_pos', JSON.stringify(newPos));
-    }
+    const d = dragRef.current;
+    if (!d) return;
+    const dx = e.clientX - d.startX;
+    const dy = e.clientY - d.startY;
+    if (!d.moved && Math.abs(dx) < 6 && Math.abs(dy) < 6) return;
+    d.moved = true;
+    d.el.style.transform = `translate(${dx}px, ${dy}px) scale(1.08)`;
+    d.el.style.cursor = 'grabbing';
   }, []);
 
   const handleFabPointerUp = useCallback((e) => {
-    if (!dragRef.current) return false;
-    const wasDrag = dragRef.current.moved;
+    const d = dragRef.current;
+    if (!d) return false;
+    const wasDrag = d.moved;
+    if (wasDrag) {
+      const finalRect = d.el.getBoundingClientRect();
+      const container = d.el.parentElement;
+      const containerRect = container.getBoundingClientRect();
+      const clampedLeft = Math.max(4, Math.min(containerRect.width - 60, finalRect.left - containerRect.left));
+      const clampedBottom = Math.max(70, Math.min(containerRect.height - 60, containerRect.bottom - finalRect.top - 52));
+      // Spring back animation
+      d.el.style.transform = '';
+      d.el.style.transition = 'transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1)';
+      d.el.style.willChange = '';
+      d.el.style.cursor = 'grab';
+      d.el.style.zIndex = '20';
+      if (d.id === 'birdie') {
+        const newPos = { bottom: Math.round(clampedBottom), left: Math.round(clampedLeft) };
+        setBirdiePos(newPos);
+        localStorage.setItem('flock_birdie_pos', JSON.stringify(newPos));
+      } else {
+        const newRight = Math.round(Math.max(4, containerRect.right - finalRect.right));
+        const newPos = { bottom: Math.round(clampedBottom), right: newRight };
+        setSosPos(newPos);
+        localStorage.setItem('flock_sos_pos', JSON.stringify(newPos));
+      }
+    } else {
+      d.el.style.transform = '';
+      d.el.style.zIndex = '20';
+    }
     dragRef.current = null;
     return wasDrag;
-  }, []);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Interests
   const [userInterests, setUserInterests] = useState(['Live Music', 'Cocktails', 'Nightlife']);
