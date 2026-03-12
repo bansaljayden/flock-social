@@ -11,7 +11,7 @@ import {
   formatCurrency,
   calculateProfitMargin
 } from './lib/finance';
-import { getCurrentUser, logout, isLoggedIn, getFlocks, getFlock, createFlock as apiCreateFlock, getMessages, sendMessage as apiSendMessage, updateProfile, searchVenues, searchUsers, getSuggestedUsers, sendFriendRequest, getVenueDetails, leaveFlock as apiLeaveFlock, getDMConversations, getDMs, getDmVenueVotes, getDmPinnedVenue, BASE_URL, inviteToFlock, acceptFlockInvite, declineFlockInvite, getFriends, acceptFriendRequest, declineFriendRequest, getPendingRequests, getOutgoingRequests, getFriendSuggestions, addFriendByCode, findFriendsByPhone, removeFriend, getTrustedContacts, addTrustedContact, updateTrustedContact, deleteTrustedContact, sendEmergencyAlert, shareLocationWithContacts, getUserStats, getCrowdPrediction, getCrowdBatch, getCrowdAlternatives, getWeather, submitVenueFeedback, uploadProfileImage, saveProfileImageUrl, submitBudget, getBudgetStatus, lockBudget, sendBudgetReminder, createBillSplit, getBillSplit, settleShare, ghostCommit, updatePaymentMethods, getPaymentLinks, getFeaturedEvents, searchEvents, getEventDetails } from './services/api';
+import { getCurrentUser, logout, isLoggedIn, getFlocks, getFlock, createFlock as apiCreateFlock, getMessages, sendMessage as apiSendMessage, updateProfile, searchVenues, searchUsers, getSuggestedUsers, sendFriendRequest, getVenueDetails, leaveFlock as apiLeaveFlock, getDMConversations, getDMs, getDmVenueVotes, getDmPinnedVenue, BASE_URL, inviteToFlock, acceptFlockInvite, declineFlockInvite, getFriends, acceptFriendRequest, declineFriendRequest, getPendingRequests, getOutgoingRequests, getFriendSuggestions, addFriendByCode, findFriendsByPhone, removeFriend, getTrustedContacts, addTrustedContact, updateTrustedContact, deleteTrustedContact, sendEmergencyAlert, shareLocationWithContacts, getUserStats, getCrowdPrediction, getCrowdBatch, getCrowdAlternatives, getWeather, submitVenueFeedback, uploadProfileImage, saveProfileImageUrl, submitBudget, getBudgetStatus, lockBudget, sendBudgetReminder, createBillSplit, getBillSplit, settleShare, ghostCommit, updatePaymentMethods, getPaymentLinks, getFeaturedEvents, searchEvents, getEventDetails, sendAiChat } from './services/api';
 import { connectSocket, disconnectSocket, getSocket, joinFlock, leaveFlock, sendMessage as socketSendMessage, sendImageMessage as socketSendImage, startTyping, stopTyping, onNewMessage, onUserTyping, onUserStoppedTyping, emitLocation, stopSharingLocation as socketStopSharing, onLocationUpdate, onMemberStoppedSharing, socketSendDm, onNewDm, dmStartTyping, dmStopTyping, onDmUserTyping, onDmUserStoppedTyping, dmReact, dmRemoveReact, onDmReactionAdded, onDmReactionRemoved, dmVoteVenue, onDmNewVote, dmShareLocation, dmStopSharingLocation, onDmLocationUpdate, onDmMemberStoppedSharing, dmPinVenue, onDmVenuePinned, emitFlockInvite, emitFlockInviteResponse, onFlockInviteReceived, onFlockInviteResponded, emitFriendRequest, emitFriendResponse, onFriendRequestReceived, onFriendRequestResponded, onBudgetUpdated, onBudgetLocked, onBudgetReminder, onBillCreated, onShareSettled, onBillFullySettled, onGhostCommitted, onNewVote, onVenueSelected, onFlockReactionAdded, onFlockReactionRemoved, onFlockDeleted, onFlockUpdated, onFlockMemberLeft } from './services/socket';
 import { QRCodeSVG } from 'qrcode.react';
 import { Html5Qrcode } from 'html5-qrcode';
@@ -1748,6 +1748,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
   const [aiInput, setAiInput] = useState('');
   const [aiTyping, setAiTyping] = useState(false);
   const [showAiAssistant, setShowAiAssistant] = useState(false);
+  const [aiShareVenue, setAiShareVenue] = useState(null); // venue to share to flock/DM
 
   // Calendar
   const [calendarMonth, setCalendarMonth] = useState(new Date());
@@ -2245,121 +2246,40 @@ const FlockAppInner = ({ authUser, onLogout }) => {
     }
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // AI Response Generation - Professional but friendly assistant
-  const generateAiResponse = useCallback((userMsg, venueList, flockList, friendsList) => {
-    const msg = userMsg.toLowerCase();
-    const findVenue = (name) => venueList.find(v => v.name.toLowerCase().includes(name.toLowerCase()));
-    const busyVenues = venueList.filter(v => v.crowd >= 70).sort((a, b) => b.crowd - a.crowd);
-    const quietVenues = venueList.filter(v => v.crowd < 50).sort((a, b) => a.crowd - b.crowd);
-
-    // VENUE QUESTIONS - Busy/Crowded
-    if (msg.includes('busy') || msg.includes('crowded') || msg.includes('packed') || msg.includes('crowd') || msg.includes('poppin')) {
-      if (busyVenues.length > 0) {
-        const busy = busyVenues[0];
-        const quiet = quietVenues[0];
-        return { text: `${busy.name} is currently at ${busy.crowd}% capacity - quite busy! ${quiet ? `If you'd prefer somewhere quieter, ${quiet.name} is only at ${quiet.crowd}%.` : 'Most other venues have moderate crowds.'}`, confidence: 94 };
-      }
-      return { text: "Most venues have light crowds right now - you should be able to get in anywhere without a wait.", confidence: 85 };
-    }
-
-    // VENUE QUESTIONS - Recommendations
-    if (msg.includes('where should') || msg.includes('recommend') || msg.includes('suggestion') || msg.includes('what venue') || msg.includes('where to go') || msg.includes('pick')) {
-      const topRated = venueList.filter(v => v.stars >= 4.5).sort((a, b) => b.stars - a.stars)[0];
-      const trending = venueList.find(v => v.trending);
-      if (trending) {
-        return { text: `${trending.name} is trending tonight. ${topRated && topRated.name !== trending.name ? `Alternatively, ${topRated.name} has excellent reviews (${topRated.stars} stars) if you prefer a smaller crowd.` : ''}`, confidence: 91 };
-      }
-      if (topRated) {
-        return { text: `I'd recommend ${topRated.name} - it has a ${topRated.stars}-star rating, currently at ${topRated.crowd}% capacity. Great ${topRated.type} spot.`, confidence: 89 };
-      }
-    }
-
-    // PLANNING QUESTIONS
-    if (msg.includes('plan') || msg.includes('organize') || msg.includes('coordinate') || msg.includes('create') || msg.includes('start a flock') || msg.includes('make a flock') || msg.includes('rally')) {
-      const upcomingFlock = flockList.find(f => f.status === 'voting');
-      return { text: `Ready to coordinate plans! ${upcomingFlock ? `Note: "${upcomingFlock.name}" still needs votes from your group.` : 'Tap "Start a Flock" to create a new plan and invite friends.'}`, confidence: 95 };
-    }
-
-    // FOOD QUESTIONS
-    if (msg.includes('food') || msg.includes('eat') || msg.includes('hungry') || msg.includes('restaurant') || msg.includes('pizza') || msg.includes('taco')) {
-      const foodVenues = venueList.filter(v => v.category === 'Food').sort((a, b) => b.stars - a.stars);
-      if (foodVenues.length > 0) {
-        const top = foodVenues[0];
-        return { text: `For food, I'd suggest ${top.name} - ${top.stars} stars, ${top.price} price range, currently at ${top.crowd}% capacity.`, confidence: 92 };
-      }
-    }
-
-    // NIGHTLIFE QUESTIONS
-    if (msg.includes('bar') || msg.includes('drink') || msg.includes('nightlife') || msg.includes('club') || msg.includes('party')) {
-      const nightlife = venueList.filter(v => v.category === 'Nightlife').sort((a, b) => b.stars - a.stars);
-      if (nightlife.length > 0) {
-        const top = nightlife[0];
-        return { text: `${top.name} is a great option - ${top.stars} stars, currently at ${top.crowd}% capacity.`, confidence: 90 };
-      }
-    }
-
-    // SPECIFIC VENUE QUESTIONS
-    const venueNames = ['blue heron', 'bookstore', 'godfrey', 'apollo', 'tulum', 'dime', 'rooftop', 'porters'];
-    for (const name of venueNames) {
-      if (msg.includes(name)) {
-        const venue = findVenue(name);
-        if (venue) {
-          const crowdComment = venue.crowd > 70 ? 'Currently very busy.' : venue.crowd > 40 ? 'Moderate crowd.' : 'Light crowd right now.';
-          return { text: `${venue.name}: ${crowdComment} (${venue.crowd}% capacity). ${venue.stars} stars. Located at ${venue.addr}.`, confidence: 96 };
-        }
-      }
-    }
-
-    // FRIEND QUESTIONS
-    if (msg.includes('friend') || msg.includes('who') || friendsList.some(f => msg.includes(f.toLowerCase()))) {
-      const mentionedFriend = friendsList.find(f => msg.includes(f.toLowerCase()));
-      if (mentionedFriend) {
-        const randomVenue = venueList[Math.floor(Math.random() * venueList.length)];
-        return { text: `${mentionedFriend} was last active near ${randomVenue.name}. Would you like to start a flock and invite them?`, confidence: 78 };
-      }
-      return { text: `Your friends: ${friendsList.slice(0, 3).join(', ')} are available. Would you like to start coordinating plans?`, confidence: 82 };
-    }
-
-    // TIME/SCHEDULE QUESTIONS
-    if (msg.includes('time') || msg.includes('when') || msg.includes('schedule') || msg.includes('tonight') || msg.includes('best time')) {
-      const bestVenue = venueList.sort((a, b) => a.crowd - b.crowd)[0];
-      return { text: `${bestVenue.name} is the least crowded right now at ${bestVenue.crowd}%. Generally, arriving earlier helps avoid wait times.`, confidence: 87 };
-    }
-
-    // HELP QUESTIONS
-    if (msg.includes('help') || msg.includes('how do') || msg.includes('how does') || msg.includes('what can you')) {
-      return { text: "I can help you with:\n\n• Check crowd levels at venues\n• Get venue recommendations\n• Coordinate plans with friends\n• Find the best time to arrive\n• See where friends are\n\nJust ask and I'll assist!", confidence: 100 };
-    }
-
-    // GREETING
-    if (msg.includes('hi') || msg.includes('hello') || msg.includes('hey') || msg.includes('sup') || msg === 'yo') {
-      const greetings = ["Hey there!", "Hello!", "Hi! How can I help?"];
-      return { text: `${greetings[Math.floor(Math.random() * greetings.length)]} I can help you find venues, check crowds, or coordinate plans with friends. What would you like to do?`, confidence: 100 };
-    }
-
-    // THANKS
-    if (msg.includes('thank') || msg.includes('thanks') || msg.includes('awesome') || msg.includes('great') || msg.includes('perfect')) {
-      const responses = ["Happy to help!", "You're welcome! Have a great time.", "Glad I could assist!"];
-      return { text: responses[Math.floor(Math.random() * responses.length)], confidence: 100 };
-    }
-
-    // DEFAULT
-    return { text: "I'm not sure I understood that. I can help you with: finding venues, checking crowd levels, and coordinating plans with friends. Try asking \"where should we go?\" or \"how busy is it?\"", confidence: 65 };
-  }, []);
-
-  const sendAiMessage = useCallback(() => {
+  // AI Response - powered by Claude via backend
+  const sendAiMessage = useCallback(async () => {
     if (!aiInput.trim()) return;
     const userMessage = aiInput.trim();
-    setAiMessages(prev => [...prev, { role: 'user', text: userMessage }]);
+    const newMessages = [...aiMessages, { role: 'user', text: userMessage }];
+    setAiMessages(newMessages);
     setAiInput('');
     setAiTyping(true);
-    setTimeout(() => {
-      const response = generateAiResponse(userMessage, allVenues, flocks, []);
-      setAiMessages(prev => [...prev, { role: 'assistant', text: response.text, confidence: response.confidence }]);
+
+    try {
+      // Get user location if available
+      let location = null;
+      if (navigator.geolocation) {
+        try {
+          const pos = await new Promise((resolve, reject) =>
+            navigator.geolocation.getCurrentPosition(resolve, reject, { timeout: 3000 })
+          );
+          location = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+        } catch (_) { /* location not available, that's ok */ }
+      }
+
+      // Send conversation history (skip the initial greeting to keep it clean)
+      const messagesToSend = newMessages.filter(m => m.role !== 'assistant' || newMessages.indexOf(m) !== 0 || newMessages.length <= 2)
+        .map(m => ({ role: m.role, text: m.text }));
+
+      const response = await sendAiChat(messagesToSend, location);
+      setAiMessages(prev => [...prev, { role: 'assistant', text: response.text, venues: response.venues || [] }]);
+    } catch (err) {
+      setAiMessages(prev => [...prev, { role: 'assistant', text: "Sorry, I'm having trouble connecting right now. Try again in a sec!" }]);
+    } finally {
       setAiTyping(false);
       if (aiInputRef.current) aiInputRef.current.focus();
-    }, 1200 + Math.random() * 800);
-  }, [aiInput, generateAiResponse, allVenues, flocks]);
+    }
+  }, [aiInput, aiMessages]);
 
   // Auto-scroll chat to bottom when messages change
   const selectedFlock = flocks.find(f => f.id === selectedFlockId) || flocks[0];
@@ -4537,13 +4457,40 @@ const FlockAppInner = ({ authUser, onLogout }) => {
                   {msg.role === 'user' ? Icons.user('white', 14) : Icons.robot('white', 14)}
                 </div>
                 <div style={{ maxWidth: '78%' }}>
-                  <div style={{ borderRadius: '16px', padding: '10px 12px', fontSize: '13px', backgroundColor: msg.role === 'user' ? colors.navyBg : 'var(--bg-hover)', color: msg.role === 'user' ? 'white' : colors.navy, borderTopRightRadius: msg.role === 'user' ? '4px' : '16px', borderTopLeftRadius: msg.role === 'user' ? '16px' : '4px', boxShadow: msg.role === 'user' ? '0 2px 8px rgba(13,40,71,0.2)' : '0 1px 3px rgba(0,0,0,0.05)' }}>
+                  <div style={{ borderRadius: '16px', padding: '10px 12px', fontSize: '13px', backgroundColor: msg.role === 'user' ? colors.navyBg : 'var(--bg-hover)', color: msg.role === 'user' ? 'white' : colors.navy, borderTopRightRadius: msg.role === 'user' ? '4px' : '16px', borderTopLeftRadius: msg.role === 'user' ? '16px' : '4px', boxShadow: msg.role === 'user' ? '0 2px 8px rgba(13,40,71,0.2)' : '0 1px 3px rgba(0,0,0,0.05)', whiteSpace: 'pre-wrap' }}>
                     {msg.text}
                   </div>
-                  {msg.role === 'assistant' && msg.confidence && (
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '4px', marginTop: '4px', paddingLeft: '4px' }}>
-                      {Icons.activity(colors.textTertiary, 10)}
-                      <span style={{ fontSize: '9px', color: 'var(--text-tertiary)' }}>{msg.confidence}% confidence</span>
+                  {/* Venue Cards from AI */}
+                  {msg.venues && msg.venues.length > 0 && (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '8px' }}>
+                      {msg.venues.map((v, vi) => (
+                        <div key={vi} style={{ borderRadius: '12px', border: '1px solid var(--border-default)', backgroundColor: 'var(--bg-card-solid)', overflow: 'hidden', boxShadow: '0 1px 4px rgba(0,0,0,0.06)' }}>
+                          <div style={{ padding: '10px 12px' }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                              <div style={{ flex: 1 }}>
+                                <h4 style={{ fontSize: '13px', fontWeight: '700', color: 'var(--text-primary)', margin: '0 0 2px' }}>{v.name}</h4>
+                                <p style={{ fontSize: '10px', color: 'var(--text-secondary)', margin: 0 }}>{v.address?.split(',').slice(0, 2).join(',')}</p>
+                              </div>
+                              {v.is_open != null && (
+                                <span style={{ fontSize: '9px', fontWeight: '600', padding: '2px 6px', borderRadius: '6px', backgroundColor: v.is_open ? 'var(--accent-green-bg)' : 'var(--accent-red-bg)', color: v.is_open ? 'var(--accent-green-text)' : 'var(--accent-red-text)' }}>{v.is_open ? 'Open' : 'Closed'}</span>
+                              )}
+                            </div>
+                            <div style={{ display: 'flex', gap: '8px', marginTop: '6px', alignItems: 'center', flexWrap: 'wrap' }}>
+                              {v.rating && <span style={{ fontSize: '11px', fontWeight: '600', color: 'var(--text-primary)' }}>⭐ {v.rating}</span>}
+                              {v.price_level != null && <span style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>{'$'.repeat(v.price_level || 1)}</span>}
+                              {v.crowd_label && <span style={{ fontSize: '10px', fontWeight: '600', padding: '1px 6px', borderRadius: '6px', backgroundColor: v.crowd <= 40 ? 'var(--accent-green-bg)' : v.crowd <= 70 ? 'var(--accent-amber-bg)' : 'var(--accent-red-bg)', color: v.crowd <= 40 ? 'var(--accent-green-text)' : v.crowd <= 70 ? 'var(--accent-amber-text)' : 'var(--accent-red-text)' }}>{v.crowd_label}</span>}
+                            </div>
+                          </div>
+                          <div style={{ display: 'flex', borderTop: '1px solid var(--border-light)' }}>
+                            <button onClick={() => setAiShareVenue(v)} style={{ flex: 1, padding: '8px', border: 'none', borderRight: '1px solid var(--border-light)', backgroundColor: 'transparent', cursor: 'pointer', fontSize: '11px', fontWeight: '600', color: colors.navy, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px' }}>
+                              {Icons.send(colors.navy, 12)} Send to Flock
+                            </button>
+                            <button onClick={() => setAiShareVenue({ ...v, _shareToDm: true })} style={{ flex: 1, padding: '8px', border: 'none', backgroundColor: 'transparent', cursor: 'pointer', fontSize: '11px', fontWeight: '600', color: '#7C3AED', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px' }}>
+                              {Icons.messageCircle('#7C3AED', 12)} Send as DM
+                            </button>
+                          </div>
+                        </div>
+                      ))}
                     </div>
                   )}
                 </div>
@@ -4586,6 +4533,63 @@ const FlockAppInner = ({ authUser, onLogout }) => {
               <button onClick={sendAiMessage} disabled={!aiInput.trim()} style={{ width: '42px', height: '42px', borderRadius: '21px', border: 'none', background: aiInput.trim() ? `linear-gradient(135deg, ${colors.navyBg}, ${colors.navyMidBg})` : 'var(--pill-bg)', color: 'white', cursor: aiInput.trim() ? 'pointer' : 'default', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: aiInput.trim() ? '0 4px 12px rgba(13,40,71,0.3)' : 'none', transition: 'opacity 0.2s' }}>{Icons.send('white', 18)}</button>
             </div>
           </div>
+
+          {/* Venue Share Picker */}
+          {aiShareVenue && (
+            <div onClick={(e) => { if (e.target === e.currentTarget) setAiShareVenue(null); }} style={{ position: 'absolute', inset: 0, backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'flex-end', zIndex: 60, borderRadius: '24px 24px 0 0' }}>
+              <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '20px 20px 0 0', width: '100%', maxHeight: '60%', display: 'flex', flexDirection: 'column' }}>
+                <div style={{ padding: '14px 16px', borderBottom: '1px solid var(--divider)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <div>
+                    <h3 style={{ fontSize: '15px', fontWeight: '700', color: 'var(--text-primary)', margin: 0 }}>
+                      Send {aiShareVenue.name}
+                    </h3>
+                    <p style={{ fontSize: '11px', color: 'var(--text-secondary)', margin: '2px 0 0' }}>
+                      {aiShareVenue._shareToDm ? 'Choose a friend' : 'Choose a flock'}
+                    </p>
+                  </div>
+                  <button onClick={() => setAiShareVenue(null)} style={{ width: '28px', height: '28px', borderRadius: '14px', backgroundColor: 'var(--bg-hover)', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.x('var(--text-secondary)', 14)}</button>
+                </div>
+                <div style={{ flex: 1, overflowY: 'auto', padding: '8px' }}>
+                  {aiShareVenue._shareToDm ? (
+                    /* DM — navigate to DM tab with venue in clipboard */
+                    <div style={{ padding: '20px', textAlign: 'center' }}>
+                      <p style={{ fontSize: '13px', color: 'var(--text-secondary)', marginBottom: '12px' }}>Open your DMs to share <strong>{aiShareVenue.name}</strong></p>
+                      <button onClick={() => {
+                        setAiShareVenue(null);
+                        setShowAiAssistant(false);
+                        setCurrentTab('chat');
+                        setCurrentScreen('main');
+                      }} style={{ padding: '10px 24px', borderRadius: '12px', border: 'none', background: 'linear-gradient(135deg, #7C3AED, #5B21B6)', color: 'white', fontWeight: '600', fontSize: '13px', cursor: 'pointer' }}>
+                        Go to DMs
+                      </button>
+                    </div>
+                  ) : (
+                    /* Flocks list */
+                    flocks.length > 0 ? flocks.filter(f => f.status === 'active' || f.status === 'confirmed').map(f => (
+                      <button key={f.id} onClick={async () => {
+                        const venueData = { name: aiShareVenue.name, addr: aiShareVenue.address, stars: aiShareVenue.rating, rating: aiShareVenue.rating, price_level: aiShareVenue.price_level, place_id: aiShareVenue.place_id };
+                        try {
+                          await apiSendMessage(f.id, `Check out ${aiShareVenue.name}!`, { message_type: 'venue_card', venue_data: venueData });
+                        } catch {}
+                        setAiShareVenue(null);
+                        setShowAiAssistant(false);
+                        setSelectedFlockId(f.id);
+                        setCurrentScreen('chatDetail');
+                      }} style={{ width: '100%', padding: '10px 12px', borderRadius: '10px', border: 'none', backgroundColor: 'transparent', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '10px', textAlign: 'left' }}>
+                        <div style={{ width: '36px', height: '36px', borderRadius: '10px', backgroundColor: colors.navyBg, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                          {Icons.users('white', 16)}
+                        </div>
+                        <div>
+                          <span style={{ fontSize: '13px', fontWeight: '600', color: 'var(--text-primary)', display: 'block' }}>{f.title || f.name}</span>
+                          <span style={{ fontSize: '10px', color: 'var(--text-secondary)' }}>{f.members?.length || 0} members</span>
+                        </div>
+                      </button>
+                    )) : <p style={{ fontSize: '12px', color: 'var(--text-secondary)', textAlign: 'center', padding: '20px' }}>No active flocks</p>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       </div>
   );
@@ -4824,7 +4828,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
               gap: '6px'
             }}
           >
-            {Icons.userPlus(colors.navy, 15)} <span className="shimmer-text" style={{ background: `linear-gradient(110deg, ${colors.navy} 0%, ${colors.navy} 35%, #60a5fa 50%, ${colors.navy} 65%, ${colors.navy} 100%)`, backgroundSize: '200% 100%', WebkitBackgroundClip: 'text', backgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>Add Friends</span>
+            {Icons.userPlus(colors.navy, 15)} <span className="shimmer-text" style={{ backgroundImage: `linear-gradient(110deg, ${colors.navy} 0%, ${colors.navy} 35%, #60a5fa 50%, ${colors.navy} 65%, ${colors.navy} 100%)`, backgroundSize: '200% 100%', WebkitBackgroundClip: 'text', backgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>Add Friends</span>
           </button>
         </div></ScrollFade>
 

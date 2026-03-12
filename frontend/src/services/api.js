@@ -451,5 +451,13 @@ export async function getFeaturedEvents(location, interests = []) {
   return request(endpoint);
 }
 
+// AI Assistant (Birdie)
+export async function sendAiChat(messages, location) {
+  return request('/api/ai/chat', {
+    method: 'POST',
+    body: JSON.stringify({ messages, location }),
+  });
+}
+
 export { getToken, BASE_URL };
 export default request;
