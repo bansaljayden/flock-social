@@ -112,8 +112,10 @@ const LoginScreen = ({ onLoginSuccess, onSwitchToSignup }) => {
               width: '220px',
               height: '220px',
               borderRadius: '50%',
+              objectFit: 'cover',
+              display: 'block',
+              margin: '0 auto 12px',
               boxShadow: '0 8px 32px rgba(0,0,0,0.25)',
-              marginBottom: '12px',
               animation: 'floatIn 0.8s ease-out',
             }}
           />
