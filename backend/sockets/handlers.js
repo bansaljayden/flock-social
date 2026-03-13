@@ -1,5 +1,6 @@
 const pool = require('../config/database');
 const { stripHtml } = require('../utils/sanitize');
+const { pushIfOfflineDebounced } = require('../services/pushHelper');
 
 // Track which users are in which rooms for presence
 const roomUsers = new Map(); // flockId -> Set of { socketId, userId, name }
@@ -137,6 +138,26 @@ function registerHandlers(io, socket) {
 
       // Broadcast to all members in the room (including sender)
       io.to(`flock:${flockId}`).emit('new_message', message);
+
+      // Push notifications to offline flock members
+      try {
+        const flockInfo = await pool.query('SELECT name FROM flocks WHERE id = $1', [flockId]);
+        const flockName = flockInfo.rows[0]?.name || 'Flock';
+        const members = await pool.query(
+          "SELECT user_id FROM flock_members WHERE flock_id = $1 AND status = 'accepted' AND user_id != $2",
+          [flockId, user.id]
+        );
+        const preview = (message_text || '').substring(0, 100);
+        for (const m of members.rows) {
+          pushIfOfflineDebounced(io, m.user_id,
+            `${user.name} in ${flockName}`,
+            preview,
+            { type: 'flock_message', flockId: String(flockId) }
+          );
+        }
+      } catch (pushErr) {
+        console.error('Push notification error (flock msg):', pushErr.message);
+      }
     } catch (err) {
       console.error('send_message error:', err);
       socket.emit('error', { message: 'Failed to send message' });
@@ -357,6 +378,14 @@ function registerHandlers(io, socket) {
       socket.to(`user:${receiverId}`).emit('new_dm', msg);
       // Also send back to sender for confirmation
       socket.emit('new_dm', msg);
+
+      // Push notification for offline DM recipient
+      const preview = (text || '').substring(0, 100);
+      pushIfOfflineDebounced(io, receiverId,
+        user.name,
+        preview,
+        { type: 'dm_message', senderId: String(user.id) }
+      ).catch(() => {});
     } catch (err) {
       console.error('send_dm error:', err);
     }

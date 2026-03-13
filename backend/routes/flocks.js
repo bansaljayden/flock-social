@@ -4,6 +4,8 @@ const pool = require('../config/database');
 const { authenticate } = require('../middleware/auth');
 const { stripHtml } = require('../utils/sanitize');
 
+const { pushIfOffline } = require('../services/pushHelper');
+
 const router = express.Router();
 
 // All flock routes require authentication
@@ -337,8 +339,8 @@ router.put('/:id',
 
       // Notify flock members of the update
       const io = req.app.get('io');
+      const updated = result.rows[0];
       if (io) {
-        const updated = result.rows[0];
         io.to(`flock:${flockId}`).emit('flock_updated', {
           flockId: parseInt(flockId),
           name: updated.name,
@@ -353,6 +355,23 @@ router.put('/:id',
           status: updated.status,
           updatedBy: req.user.name,
         });
+      }
+
+      // Push "It's happening!" when flock is confirmed
+      if (status === 'confirmed') {
+        const membersResult = await pool.query(
+          "SELECT user_id FROM flock_members WHERE flock_id = $1 AND status = 'accepted' AND user_id != $2",
+          [flockId, req.user.id]
+        );
+        const timeStr = updated.event_time ? new Date(updated.event_time).toLocaleString('en-US', { weekday: 'short', hour: 'numeric', minute: '2-digit' }) : '';
+        const bodyText = [updated.name, updated.venue_name, timeStr].filter(Boolean).join(' — ');
+        for (const m of membersResult.rows) {
+          pushIfOffline(io, m.user_id,
+            "It's happening!",
+            bodyText,
+            { type: 'flock_confirmed', flockId: String(flockId) }
+          );
+        }
       }
 
       res.json({ flock: result.rows[0] });
@@ -422,6 +441,16 @@ router.post('/:id/join', param('id').isInt(), async (req, res) => {
         userImage: req.user.profile_image_url || null,
         action: 'accepted',
       });
+    }
+
+    // Push notification to flock creator
+    const flockData = await pool.query('SELECT creator_id, name FROM flocks WHERE id = $1', [flockId]);
+    if (flockData.rows.length > 0 && flockData.rows[0].creator_id !== req.user.id) {
+      pushIfOffline(io, flockData.rows[0].creator_id,
+        `${req.user.name} is going!`,
+        flockData.rows[0].name,
+        { type: 'flock_rsvp', flockId: String(flockId) }
+      );
     }
 
     res.json({ member: result.rows[0] });
@@ -523,6 +552,15 @@ router.post('/:id/invite',
             invitedBy: { userId: req.user.id, name: req.user.name },
             invitedUserIds: invited.map(i => i.user_id),
           });
+
+          // Push notifications for offline invited users
+          for (const inv of invited) {
+            pushIfOffline(io, inv.user_id,
+              `${req.user.name} invited you to a flock`,
+              flockName,
+              { type: 'flock_invite', flockId: String(flockId) }
+            );
+          }
         }
       }
 

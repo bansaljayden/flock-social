@@ -13,6 +13,8 @@ import {
 } from './lib/finance';
 import { getCurrentUser, logout, isLoggedIn, getFlocks, getFlock, createFlock as apiCreateFlock, getMessages, sendMessage as apiSendMessage, updateProfile, searchVenues, searchUsers, getSuggestedUsers, sendFriendRequest, getVenueDetails, leaveFlock as apiLeaveFlock, getDMConversations, getDMs, getDmVenueVotes, getDmPinnedVenue, BASE_URL, inviteToFlock, acceptFlockInvite, declineFlockInvite, getFriends, acceptFriendRequest, declineFriendRequest, getPendingRequests, getOutgoingRequests, getFriendSuggestions, addFriendByCode, findFriendsByPhone, removeFriend, getTrustedContacts, addTrustedContact, updateTrustedContact, deleteTrustedContact, sendEmergencyAlert, shareLocationWithContacts, getUserStats, getCrowdPrediction, getCrowdBatch, getCrowdAlternatives, getWeather, submitVenueFeedback, uploadProfileImage, saveProfileImageUrl, submitBudget, getBudgetStatus, lockBudget, sendBudgetReminder, createBillSplit, getBillSplit, settleShare, ghostCommit, updatePaymentMethods, getPaymentLinks, getFeaturedEvents, searchEvents, getEventDetails, sendAiChat, getActivityFeed, getWeatherForecast } from './services/api';
 import { connectSocket, disconnectSocket, getSocket, joinFlock, leaveFlock, sendMessage as socketSendMessage, sendImageMessage as socketSendImage, startTyping, stopTyping, onNewMessage, onUserTyping, onUserStoppedTyping, emitLocation, stopSharingLocation as socketStopSharing, onLocationUpdate, onMemberStoppedSharing, socketSendDm, onNewDm, dmStartTyping, dmStopTyping, onDmUserTyping, onDmUserStoppedTyping, dmReact, dmRemoveReact, onDmReactionAdded, onDmReactionRemoved, dmVoteVenue, onDmNewVote, dmShareLocation, dmStopSharingLocation, onDmLocationUpdate, onDmMemberStoppedSharing, dmPinVenue, onDmVenuePinned, emitFlockInvite, emitFlockInviteResponse, onFlockInviteReceived, onFlockInviteResponded, emitFriendRequest, emitFriendResponse, onFriendRequestReceived, onFriendRequestResponded, onBudgetUpdated, onBudgetLocked, onBudgetReminder, onBillCreated, onShareSettled, onBillFullySettled, onGhostCommitted, onNewVote, onVenueSelected, onFlockReactionAdded, onFlockReactionRemoved, onFlockDeleted, onFlockUpdated, onFlockMemberLeft } from './services/socket';
+import { requestNotificationPermission, onForegroundMessage, getNotificationStatus } from './services/firebase';
+import { unregisterAllTokens } from './services/api';
 import { QRCodeSVG } from 'qrcode.react';
 import { Html5Qrcode } from 'html5-qrcode';
 import LoginScreen from './components/auth/LoginScreen';
@@ -1119,6 +1121,17 @@ const FlockAppInner = ({ authUser, onLogout }) => {
   useEffect(() => {
     connectSocket();
     return () => disconnectSocket();
+  }, []);
+
+  // Foreground push notification listener
+  useEffect(() => {
+    const unsubscribe = onForegroundMessage((notification) => {
+      // Show as toast — the user is in the app but maybe on a different screen
+      if (notification.title || notification.body) {
+        window.dispatchEvent(new CustomEvent('flock-toast', { detail: { message: notification.body || notification.title, type: 'info' } }));
+      }
+    });
+    return () => { if (typeof unsubscribe === 'function') unsubscribe(); };
   }, []);
 
   // User Mode Selection
@@ -8986,6 +8999,20 @@ const FlockAppInner = ({ authUser, onLogout }) => {
                 </div>
               )}
             </div>
+            {/* Notifications */}
+            <div style={{ ...styles.card, marginBottom: '12px', padding: '14px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                <div style={{ width: '32px', height: '32px', borderRadius: '8px', backgroundColor: 'var(--icon-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.bell(colors.navy, 18)}</div>
+                <span style={{ flex: 1, fontWeight: '600', fontSize: '14px', color: colors.navy }}>Push Notifications</span>
+                {getNotificationStatus() === 'granted' ? (
+                  <span style={{ fontSize: '12px', fontWeight: '600', color: '#22c55e' }}>On</span>
+                ) : getNotificationStatus() === 'denied' ? (
+                  <span style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>Blocked in browser</span>
+                ) : (
+                  <button onClick={() => requestNotificationPermission().then(() => showToast('Notifications enabled!')).catch(() => {})} style={{ padding: '6px 12px', borderRadius: '8px', border: `1px solid ${colors.navy}`, backgroundColor: 'var(--icon-bg)', color: colors.navy, fontSize: '12px', fontWeight: '700', cursor: 'pointer' }}>Enable</button>
+                )}
+              </div>
+            </div>
             <button onClick={() => { if (onLogout) onLogout(); }} style={{ width: '100%', padding: '12px', textAlign: 'left', display: 'flex', alignItems: 'center', gap: '12px', backgroundColor: 'var(--bg-card-solid)', border: 'none', cursor: 'pointer', color: colors.red }}>
               {Icons.logout(colors.red, 18)}
               <span style={{ fontWeight: '600', fontSize: '14px' }}>Log Out</span>
@@ -12044,7 +12071,13 @@ const FlockApp = () => {
       return;
     }
     getCurrentUser()
-      .then((data) => setAuthUser(data.user || data))
+      .then((data) => {
+        setAuthUser(data.user || data);
+        // Request push notification permission after login
+        if (localStorage.getItem('flock_notif_denied') !== 'true') {
+          requestNotificationPermission().catch(() => {});
+        }
+      })
       .catch(() => {
         logout();
         setAuthUser(null);
@@ -12087,7 +12120,7 @@ const FlockApp = () => {
     );
   }
 
-  return <FlockAppInner authUser={authUser} onLogout={() => { disconnectSocket(); logout(); setAuthUser(null); setAuthScreen('login'); }} />;
+  return <FlockAppInner authUser={authUser} onLogout={() => { unregisterAllTokens().catch(() => {}); disconnectSocket(); logout(); setAuthUser(null); setAuthScreen('login'); }} />;
 };
 
 export default FlockApp;

@@ -3,6 +3,8 @@ const { body, param, validationResult } = require('express-validator');
 const pool = require('../config/database');
 const { authenticate } = require('../middleware/auth');
 
+const { pushIfOffline, pushAlways } = require('../services/pushHelper');
+
 const router = express.Router();
 router.use(authenticate);
 
@@ -114,6 +116,23 @@ router.post('/:flockId/submit',
           isReady,
           skipCount,
         });
+      }
+
+      // Push "Budget set!" when ceiling is first available
+      if (isReady && visibleCeiling) {
+        const flockNameResult = await pool.query('SELECT name FROM flocks WHERE id = $1', [flockId]);
+        const flockName = flockNameResult.rows[0]?.name || 'Flock';
+        const membersResult = await pool.query(
+          "SELECT user_id FROM flock_members WHERE flock_id = $1 AND status = 'accepted' AND user_id != $2",
+          [flockId, userId]
+        );
+        for (const m of membersResult.rows) {
+          pushIfOffline(io, m.user_id,
+            'Budget set!',
+            `Group budget: up to $${Math.floor(visibleCeiling)} for ${flockName}`,
+            { type: 'budget_ready', flockId: String(flockId) }
+          );
+        }
       }
 
       res.json({
@@ -312,14 +331,24 @@ router.post('/:flockId/remind',
       );
 
       const io = req.app.get('io');
+      const flockName = flockResult.rows[0].name;
       if (io) {
         for (const member of missingResult.rows) {
           io.to(`user:${member.id}`).emit('budget_reminder', {
             flockId,
-            flockName: flockResult.rows[0].name,
+            flockName,
             message: "Don't forget to submit your budget!",
           });
         }
+      }
+
+      // Push regardless of online status — explicit creator action
+      for (const member of missingResult.rows) {
+        pushAlways(member.id,
+          'Budget reminder',
+          `Submit your budget for ${flockName}`,
+          { type: 'budget_reminder', flockId: String(flockId) }
+        );
       }
 
       reminderCooldowns.set(cooldownKey, Date.now());
