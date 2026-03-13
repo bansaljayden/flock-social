@@ -396,6 +396,12 @@ const PORT = process.env.PORT || 5000;
 server.listen(PORT, async () => {
   console.log(`Flock API running on port ${PORT} [${process.env.NODE_ENV || 'development'}]`);
   await runMigrations();
+
+  // Proactive crowd alerts — check every 15 minutes
+  const { checkCrowdAlerts } = require('./services/crowdAlerts');
+  setInterval(checkCrowdAlerts, 15 * 60 * 1000);
+  // Run once after a short delay on startup
+  setTimeout(checkCrowdAlerts, 30 * 1000);
 });
 
 module.exports = { app, server, io };
