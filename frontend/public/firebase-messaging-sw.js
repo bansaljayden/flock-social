@@ -51,7 +51,7 @@ self.addEventListener('notificationclick', (event) => {
 
   if (data.type === 'flock_invite' || data.type === 'flock_message' || data.type === 'flock_rsvp' ||
       data.type === 'flock_confirmed' || data.type === 'budget_reminder' || data.type === 'budget_ready' ||
-      data.type === 'bill_created') {
+      data.type === 'bill_created' || data.type === 'crowd_alert') {
     url = `/?flock=${data.flockId}`;
   } else if (data.type === 'dm_message') {
     url = `/?dm=${data.senderId}`;
