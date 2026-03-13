@@ -3,6 +3,8 @@ const { body, validationResult } = require('express-validator');
 const pool = require('../config/database');
 const { authenticate } = require('../middleware/auth');
 
+const { pushIfOffline } = require('../services/pushHelper');
+
 const router = express.Router();
 router.use(authenticate);
 
@@ -88,6 +90,13 @@ router.post('/request',
 
       // Notify target user
       if (io) io.to(`user:${user_id}`).emit('friend_request_received', { fromUserId: req.user.id, fromUserName: req.user.name });
+
+      // Push notification
+      pushIfOffline(io, user_id,
+        'New friend request',
+        `${req.user.name} wants to be friends`,
+        { type: 'friend_request', fromUserId: String(req.user.id) }
+      );
 
       res.json({ message: `Friend request sent to ${userCheck.rows[0].name}`, status: 'pending' });
     } catch (err) {

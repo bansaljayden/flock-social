@@ -29,6 +29,7 @@ const budgetRoutes = require('./routes/budget');
 const billingRoutes = require('./routes/billing');
 const eventRoutes = require('./routes/events');
 const aiRoutes = require('./routes/ai');
+const notificationRoutes = require('./routes/notifications');
 
 const app = express();
 app.set('trust proxy', 1);
@@ -140,6 +141,7 @@ app.use('/api/budget', apiLimiter, budgetRoutes);     // Handles /api/budget/:fl
 app.use('/api/billing', apiLimiter, billingRoutes);   // Handles /api/billing/:flockId/*
 app.use('/api/events', apiLimiter, eventRoutes);      // Handles /api/events/search, /api/events/featured
 app.use('/api/ai', aiLimiter, aiRoutes);             // Handles /api/ai/chat (Birdie AI assistant)
+app.use('/api/notifications', apiLimiter, notificationRoutes); // Handles /api/notifications/register, unregister
 
 // Health check
 app.get('/api/health', (req, res) => {
@@ -361,6 +363,18 @@ async function runMigrations() {
     } catch (moneyErr) {
       console.error('Money layer migration error:', moneyErr.message);
     }
+
+    // Push notifications: device token storage
+    await pool.query(`CREATE TABLE IF NOT EXISTS device_tokens (
+      id SERIAL PRIMARY KEY,
+      user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+      token TEXT NOT NULL,
+      device_type VARCHAR(20) DEFAULT 'web',
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW(),
+      UNIQUE(user_id, token)
+    )`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_device_tokens_user ON device_tokens(user_id)`);
 
     // Keep demo stories alive — refresh expiration for seeded picsum stories
     await pool.query(

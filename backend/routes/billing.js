@@ -3,6 +3,8 @@ const { body, param, validationResult } = require('express-validator');
 const pool = require('../config/database');
 const { authenticate } = require('../middleware/auth');
 
+const { pushIfOffline } = require('../services/pushHelper');
+
 const router = express.Router();
 router.use(authenticate);
 
@@ -167,6 +169,17 @@ router.post('/:flockId/create',
         const io = req.app.get('io');
         if (io) {
           io.to(`flock:${flockId}`).emit('bill_created', { flockId, bill });
+        }
+
+        // Push notifications for bill split
+        const payerName = payer?.name || 'Someone';
+        for (const share of shares) {
+          if (share.userId === payerId) continue; // Don't notify the payer
+          pushIfOffline(io, share.userId,
+            'Bill split created',
+            `You owe ${payerName} $${share.amount.toFixed(2)} for ${flockName}`,
+            { type: 'bill_created', flockId: String(flockId) }
+          );
         }
 
         res.status(201).json({ bill });

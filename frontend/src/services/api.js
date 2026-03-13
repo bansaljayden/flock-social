@@ -469,5 +469,24 @@ export async function sendAiChat(messages, location) {
   });
 }
 
+// Push Notifications
+export async function registerDeviceToken(token, deviceType = 'web') {
+  return request('/api/notifications/register', {
+    method: 'POST',
+    body: JSON.stringify({ token, deviceType }),
+  });
+}
+
+export async function unregisterDeviceToken(token) {
+  return request('/api/notifications/unregister', {
+    method: 'DELETE',
+    body: JSON.stringify({ token }),
+  });
+}
+
+export async function unregisterAllTokens() {
+  return request('/api/notifications/unregister-all', { method: 'DELETE' });
+}
+
 export { getToken, BASE_URL };
 export default request;
