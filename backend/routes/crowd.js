@@ -2,9 +2,11 @@ const express = require('express');
 const { param, body, validationResult } = require('express-validator');
 const { authenticate } = require('../middleware/auth');
 const { getWeather } = require('../services/weatherService');
+const crowdEngine = require('../services/crowdEngine');
+const mlPredictor = require('../services/mlPredictor');
+
+// Use ML predictor when available, fall back to rule engine
 const {
-  calculateCrowdScore,
-  generateHourlyForecast,
   estimateCapacity,
   estimateWait,
   findBestTime,
@@ -12,7 +14,7 @@ const {
   findQuieterAlternatives,
   buildCalibrationAdjustment,
   getLabel,
-} = require('../services/crowdEngine');
+} = mlPredictor;
 const pool = require('../config/database');
 
 const router = express.Router();
@@ -145,11 +147,11 @@ router.get('/:placeId',
       clientTime.setDate(clientTime.getDate() + dayDiff);
       clientTime.setHours(localHour, 0, 0, 0);
 
-      const crowdResult = calculateCrowdScore(venue, weather, clientTime);
-      const hourly = generateHourlyForecast(venue, weather, localHour, 12, clientTime);
+      const crowdResult = await mlPredictor.predictBusyness(venue, weather, clientTime);
+      const hourly = await mlPredictor.predictHourlyForecast(venue, weather, localHour, 12, clientTime);
 
       // Full-day forecast (6 AM - 5 AM) for accurate peak/best detection
-      const fullDay = generateHourlyForecast(venue, weather, 6, 24, clientTime);
+      const fullDay = await mlPredictor.predictHourlyForecast(venue, weather, 6, 24, clientTime);
       const peakResult = findPeakTime(fullDay, venue);
       const bestTime = findBestTime(fullDay, venue, peakResult.startIdx, peakResult.endIdx, venue.isOpen);
 
@@ -263,8 +265,8 @@ router.post('/batch',
         console.error('[Crowd] Batch feedback query failed, using raw scores:', fbErr.message);
       }
 
-      const predictions = venues.map(v => {
-        const result = calculateCrowdScore(v, weather, clientTime);
+      const predictions = await Promise.all(venues.map(async v => {
+        const result = await mlPredictor.predictBusyness(v, weather, clientTime);
         const cal = buildCalibrationAdjustment(feedbackByVenue[v.place_id] || [], result.score);
         const boost = cal.feedbackUsed ? Math.min(15, cal.reportCount * 3) : 0;
         return {
@@ -280,7 +282,7 @@ router.post('/batch',
             predictionDrift: cal.predictionDrift || 0,
           },
         };
-      });
+      }));
 
       res.json({
         predictions,
@@ -334,7 +336,7 @@ router.get('/:placeId/alternatives',
       clientTime.setHours(localHour, 0, 0, 0);
 
       // Score the target venue
-      const targetResult = calculateCrowdScore(target, weather, clientTime);
+      const targetResult = await mlPredictor.predictBusyness(target, weather, clientTime);
 
       // Search nearby venues of similar type
       const primaryType = target.types[0] || 'restaurant';

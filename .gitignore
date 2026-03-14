@@ -29,3 +29,9 @@ yarn-error.log*
 
 # database backups (contain user data)
 backend/backups/
+
+# ML training artifacts
+backend/scripts/ml/train/*.csv
+backend/scripts/ml/train/*.pkl
+backend/scripts/ml/train/plots/
+backend/scripts/ml/models/crowd_model.onnx
