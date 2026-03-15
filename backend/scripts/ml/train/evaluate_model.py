@@ -204,26 +204,32 @@ def main():
     feature_cols = model_data['feature_cols']
     logger.info(f'Model: {model_name}, Features: {len(feature_cols)}')
 
-    # Load validation split
-    with open(SCRIPT_DIR / 'train_val_split.pkl', 'rb') as f:
-        split = pickle.load(f)
-    X_val, y_val = split['X_val'], split['y_val']
+    # Load training features for city-based CV evaluation
+    with open(SCRIPT_DIR / 'features_train.pkl', 'rb') as f:
+        train_data = pickle.load(f)
+    X_train_all, y_train_all = train_data['X'], train_data['y']
+    train_cities = train_data.get('cities')
 
-    # Load raw training data for category/city/hour info
+    # Load raw training data for category/hour info
     train_df = pd.read_csv(SCRIPT_DIR / 'training_data.csv')
-    # Get the same val indices (reproduce the split)
-    from sklearn.model_selection import train_test_split
     train_df = train_df.dropna(subset=['busyness_pct'])
-    _, val_indices = train_test_split(
-        range(len(train_df)), test_size=0.2, random_state=42,
-    )
 
-    val_raw = train_df.iloc[val_indices].reset_index(drop=True)
+    # =================== CITY-BASED CV EVALUATION ===================
+    logger.info('\n=== Leave-One-City-Out CV Evaluation ===')
+    from sklearn.base import clone
+    from sklearn.model_selection import GroupKFold
 
-    # =================== VALIDATION SET ===================
-    logger.info('\n=== Validation Set Evaluation ===')
-    val_pred = np.clip(model.predict(X_val), 0, 100)
-    val_metrics = compute_metrics(y_val, val_pred)
+    unique_cities = np.unique(train_cities)
+    cv = GroupKFold(n_splits=len(unique_cities))
+
+    val_pred_all = np.full(len(y_train_all), np.nan)
+    for train_idx, val_idx in cv.split(X_train_all, y_train_all, groups=train_cities):
+        m = clone(model)
+        m.fit(X_train_all[train_idx], y_train_all[train_idx])
+        val_pred_all[val_idx] = m.predict(X_train_all[val_idx])
+    val_pred_all = np.clip(val_pred_all, 0, 100)
+
+    val_metrics = compute_metrics(y_train_all, val_pred_all)
 
     logger.info(f'RMSE: {val_metrics["rmse"]}')
     logger.info(f'MAE: {val_metrics["mae"]}')
@@ -233,21 +239,28 @@ def main():
     logger.info(f'Within 10 pts: {val_metrics["within_10"]}%')
     logger.info(f'Within 15 pts: {val_metrics["within_15"]}%')
 
-    logger.info('\nGenerating validation plots...')
-    plot_residuals(y_val, val_pred, 'Validation: Predicted vs Actual', 'val_residuals.png')
-    plot_error_distribution(val_pred - y_val, 'Validation: Error Distribution', 'val_error_dist.png')
+    # Per-city CV breakdown
+    logger.info('\nPer-city CV results:')
+    for city in unique_cities:
+        mask = train_cities == city
+        city_metrics = compute_metrics(y_train_all[mask], val_pred_all[mask])
+        logger.info(f'  {city}: RMSE={city_metrics["rmse"]}, MAE={city_metrics["mae"]}, R²={city_metrics["r2"]}')
 
-    if 'hour' in val_raw.columns:
-        plot_per_hour(y_val, val_pred, val_raw['hour'].values[:len(y_val)],
-                      'Validation: MAE by Hour', 'val_per_hour.png')
+    logger.info('\nGenerating CV plots...')
+    plot_residuals(y_train_all, val_pred_all, 'City CV: Predicted vs Actual', 'val_residuals.png')
+    plot_error_distribution(val_pred_all - y_train_all, 'City CV: Error Distribution', 'val_error_dist.png')
 
-    if 'venue_category' in val_raw.columns:
-        plot_per_category(y_val, val_pred, val_raw['venue_category'].values[:len(y_val)],
-                          'Validation: MAE by Category', 'val_per_category.png')
+    if 'hour' in train_df.columns:
+        plot_per_hour(y_train_all, val_pred_all, train_df['hour'].values[:len(y_train_all)],
+                      'City CV: MAE by Hour', 'val_per_hour.png')
 
-    if 'city' in val_raw.columns:
-        plot_per_city(y_val, val_pred, val_raw['city'].values[:len(y_val)],
-                      'Validation: MAE by City', 'val_per_city.png')
+    if 'venue_category' in train_df.columns:
+        plot_per_category(y_train_all, val_pred_all, train_df['venue_category'].values[:len(y_train_all)],
+                          'City CV: MAE by Category', 'val_per_category.png')
+
+    if train_cities is not None:
+        plot_per_city(y_train_all, val_pred_all, train_cities,
+                      'City CV: MAE by City', 'val_per_city.png')
 
     # =================== HOLDOUT SET ===================
     holdout_path = SCRIPT_DIR / 'features_holdout.pkl'
@@ -294,7 +307,7 @@ def main():
 
     # =================== SHAP ANALYSIS ===================
     logger.info('\n=== SHAP Analysis ===')
-    run_shap_analysis(model, X_val, feature_cols)
+    run_shap_analysis(model, X_train_all, feature_cols)
 
     # =================== SAVE METRICS ===================
     meta_path = MODELS_DIR / 'model_metadata.json'
@@ -312,12 +325,13 @@ def main():
 
     logger.info('\n=== Summary ===')
     logger.info(f'Model: {model_name}')
-    logger.info(f'Validation RMSE: {val_metrics["rmse"]}')
-    logger.info(f'Validation R²: {val_metrics["r2"]}')
-    logger.info(f'Predictions within 10 pts: {val_metrics["within_10"]}%')
+    logger.info(f'City CV RMSE: {val_metrics["rmse"]}')
+    logger.info(f'City CV R²: {val_metrics["r2"]}')
+    logger.info(f'City CV within 10 pts: {val_metrics["within_10"]}%')
     if holdout_metrics:
         logger.info(f'Holdout RMSE: {holdout_metrics["rmse"]}')
         logger.info(f'Holdout R²: {holdout_metrics["r2"]}')
+        logger.info(f'Holdout within 10 pts: {holdout_metrics["within_10"]}%')
     logger.info('Evaluation complete!')
 
 

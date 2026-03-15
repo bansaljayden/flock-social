@@ -160,6 +160,36 @@ def add_geographic_features(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+def add_event_features(df: pd.DataFrame) -> pd.DataFrame:
+    """Add Ticketmaster event proximity features."""
+    # Core event features — fill missing with 0
+    df['has_nearby_event'] = df['has_nearby_event'].fillna(0).astype(int)
+    df['nearest_event_attendance'] = df['nearest_event_attendance'].fillna(0)
+    df['log_nearest_event_attendance'] = np.log1p(df['nearest_event_attendance'])
+    df['total_nearby_events'] = df['total_nearby_events'].fillna(0)
+    df['total_nearby_attendance'] = df['total_nearby_attendance'].fillna(0)
+    df['log_total_nearby_attendance'] = np.log1p(df['total_nearby_attendance'])
+    df['nearest_event_distance_km'] = df['nearest_event_distance_km'].fillna(0)
+
+    # Large event flag
+    df['large_event_nearby'] = (df['nearest_event_attendance'] > 5000).astype(int)
+
+    # Interaction features
+    df['event_x_weekend'] = (df['has_nearby_event'] * df.get('is_weekend', 0)).astype(int)
+    df['event_x_dinner'] = (df['has_nearby_event'] * df.get('is_dinner_hour', 0)).astype(int)
+    df['event_x_bar'] = (
+        df['has_nearby_event'] *
+        df['venue_category'].isin(['bar', 'nightclub']).astype(int)
+    ).astype(int)
+
+    # Event type one-hot encoding
+    event_types = ['music', 'sports', 'arts', 'family', 'other']
+    for etype in event_types:
+        df[f'etype_{etype}'] = (df['nearest_event_type'] == etype).astype(int)
+
+    return df
+
+
 def get_feature_columns(df: pd.DataFrame) -> List[str]:
     """Return the list of feature columns (excluding label, identifiers)."""
     exclude = {
@@ -167,7 +197,10 @@ def get_feature_columns(df: pd.DataFrame) -> List[str]:
         'city', 'season', 'venue_category',  # raw categorical (encoded versions used)
         'weather_condition', 'weather_condition_code', 'weather_group',  # raw (encoded)
         'google_type_1', 'google_type_2', 'google_type_3',  # raw (one-hot encoded)
-        'event_type',  # sparse, skip for Model 1
+        'event_type',  # raw string from old pipeline (one-hot encoded as etype_*)
+        'event_nearby', 'event_distance_km', 'event_size', 'event_hours_until',  # old sparse event cols
+        'nearest_event_type',  # raw string (one-hot encoded as etype_*)
+        'latitude', 'longitude', 'lat_bin', 'lng_bin',  # dropped to prevent geographic overfitting
     }
     feature_cols = [c for c in df.columns if c not in exclude]
     return sorted(feature_cols)
@@ -204,7 +237,7 @@ def main():
     train_df = add_temporal_features(train_df)
     train_df, venue_metadata = add_venue_features(train_df)
     train_df = add_weather_features(train_df)
-    train_df = add_geographic_features(train_df)
+    train_df = add_event_features(train_df)
 
     # Feature engineering — holdout data (same transforms)
     if holdout_df is not None:
@@ -229,7 +262,7 @@ def main():
                     holdout_df.loc[holdout_df[tc] == t, col_name] = 1
 
         holdout_df = add_weather_features(holdout_df)
-        holdout_df = add_geographic_features(holdout_df)
+        holdout_df = add_event_features(holdout_df)
 
     # Get feature columns
     feature_cols = get_feature_columns(train_df)
