@@ -203,6 +203,7 @@ router.get('/:placeId',
         },
         dataSourcesUsed: dataSources,
         weather: weather ? { temp: weather.temp, conditions: weather.conditions } : null,
+        eventAlert: crowdResult.eventAlert || null,
         lastUpdated: now.toISOString(),
       };
 

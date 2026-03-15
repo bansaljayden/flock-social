@@ -76,3 +76,31 @@ CREATE INDEX IF NOT EXISTS idx_ml_training_venue ON ml_training_data(venue_id);
 CREATE INDEX IF NOT EXISTS idx_ml_training_mode ON ml_training_data(collection_mode);
 CREATE INDEX IF NOT EXISTS idx_ml_training_day_hour ON ml_training_data(day_of_week, hour);
 CREATE INDEX IF NOT EXISTS idx_ml_training_collected ON ml_training_data(collected_at);
+
+-- Ticketmaster events for ML enrichment
+CREATE TABLE IF NOT EXISTS ml_events (
+  id SERIAL PRIMARY KEY,
+  ticketmaster_id VARCHAR(255) UNIQUE,
+  name VARCHAR(500),
+  city VARCHAR(100),
+  venue_name VARCHAR(255),
+  venue_lat DECIMAL(10,7),
+  venue_lng DECIMAL(10,7),
+  event_date DATE,
+  event_start_hour INTEGER CHECK (event_start_hour BETWEEN 0 AND 23),
+  event_end_hour INTEGER CHECK (event_end_hour BETWEEN 0 AND 23),
+  event_type VARCHAR(50),
+  estimated_attendance INTEGER,
+  collected_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_ml_events_city ON ml_events(city);
+CREATE INDEX IF NOT EXISTS idx_ml_events_date ON ml_events(event_date);
+
+-- Event enrichment columns on ml_training_data
+ALTER TABLE ml_training_data ADD COLUMN IF NOT EXISTS has_nearby_event BOOLEAN DEFAULT false;
+ALTER TABLE ml_training_data ADD COLUMN IF NOT EXISTS nearest_event_distance_km DECIMAL(5,2);
+ALTER TABLE ml_training_data ADD COLUMN IF NOT EXISTS nearest_event_attendance INTEGER DEFAULT 0;
+ALTER TABLE ml_training_data ADD COLUMN IF NOT EXISTS total_nearby_events INTEGER DEFAULT 0;
+ALTER TABLE ml_training_data ADD COLUMN IF NOT EXISTS total_nearby_attendance INTEGER DEFAULT 0;
+ALTER TABLE ml_training_data ADD COLUMN IF NOT EXISTS nearest_event_type VARCHAR(50);

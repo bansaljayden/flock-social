@@ -30,6 +30,7 @@ const billingRoutes = require('./routes/billing');
 const eventRoutes = require('./routes/events');
 const aiRoutes = require('./routes/ai');
 const notificationRoutes = require('./routes/notifications');
+const waitlistRoutes = require('./routes/waitlist');
 
 const app = express();
 app.set('trust proxy', 1);
@@ -142,6 +143,7 @@ app.use('/api/billing', apiLimiter, billingRoutes);   // Handles /api/billing/:f
 app.use('/api/events', apiLimiter, eventRoutes);      // Handles /api/events/search, /api/events/featured
 app.use('/api/ai', aiLimiter, aiRoutes);             // Handles /api/ai/chat (Birdie AI assistant)
 app.use('/api/notifications', apiLimiter, notificationRoutes); // Handles /api/notifications/register, unregister
+app.use('/api/waitlist', apiLimiter, waitlistRoutes);          // Handles /api/waitlist (public, no auth)
 
 // Health check
 app.get('/api/health', (req, res) => {

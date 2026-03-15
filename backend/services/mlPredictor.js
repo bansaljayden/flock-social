@@ -16,6 +16,10 @@ let metadata = null;
 let loadAttempted = false;
 let useML = false;
 
+// Event cache: key = "lat,lng,hour" → { data, ts }
+const eventCache = new Map();
+const EVENT_CACHE_TTL = 60 * 60 * 1000; // 1 hour
+
 // ---------------------------------------------------------------------------
 // Initialization
 // ---------------------------------------------------------------------------
@@ -67,7 +71,136 @@ function groupWeatherCode(code) {
   return 'other';
 }
 
-function buildFeatureVector(venue, weather, timestamp) {
+// ---------------------------------------------------------------------------
+// Live Ticketmaster Event Lookup
+// ---------------------------------------------------------------------------
+
+function distanceKm(lat1, lon1, lat2, lon2) {
+  const R = 6371;
+  const dLat = (lat2 - lat1) * Math.PI / 180;
+  const dLon = (lon2 - lon1) * Math.PI / 180;
+  const a = Math.sin(dLat / 2) ** 2 +
+    Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+    Math.sin(dLon / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+function mapTmEventType(classifications) {
+  if (!classifications || !classifications.length) return 'other';
+  const seg = (classifications[0].segment?.name || '').toLowerCase();
+  if (seg.includes('music')) return 'music';
+  if (seg.includes('sport')) return 'sports';
+  if (seg.includes('arts') || seg.includes('theatre')) return 'arts';
+  if (seg.includes('family')) return 'family';
+  return 'other';
+}
+
+function estimateTmAttendance(event) {
+  const venues = event._embedded?.venues || [];
+  for (const v of venues) {
+    const cap = parseInt(v.generalInfo?.capacity, 10) ||
+                parseInt(v.boxOfficeInfo?.capacity, 10) || 0;
+    if (cap > 0) return cap;
+  }
+  const venueName = (venues[0]?.name || '').toLowerCase();
+  const isArena = venueName.includes('arena') || venueName.includes('stadium') ||
+                  venueName.includes('center') || venueName.includes('centre');
+  const type = mapTmEventType(event.classifications);
+  if (type === 'sports') return isArena ? 25000 : 5000;
+  if (type === 'music') return isArena ? 20000 : 500;
+  return 500;
+}
+
+async function getNearbyEvents(lat, lng, timestamp) {
+  const apiKey = process.env.TICKETMASTER_API_KEY;
+  const noEvents = {
+    hasEvent: false, nearestAttendance: 0, totalEvents: 0,
+    totalAttendance: 0, nearestType: null, nearestDistance: 0,
+    nearestName: null,
+  };
+  if (!apiKey || !lat || !lng) return noEvents;
+
+  const cacheKey = `${lat.toFixed(3)},${lng.toFixed(3)},${new Date(timestamp).getHours()}`;
+  const cached = eventCache.get(cacheKey);
+  if (cached && Date.now() - cached.ts < EVENT_CACHE_TTL) return cached.data;
+
+  try {
+    const ts = timestamp ? new Date(timestamp) : new Date();
+    const startDt = ts.toISOString().replace(/\.\d{3}Z$/, 'Z');
+    const endTs = new Date(ts.getTime() + 3 * 60 * 60 * 1000);
+    const endDt = endTs.toISOString().replace(/\.\d{3}Z$/, 'Z');
+
+    const params = new URLSearchParams({
+      apikey: apiKey,
+      latlong: `${lat},${lng}`,
+      radius: '2',
+      unit: 'km',
+      startDateTime: startDt,
+      endDateTime: endDt,
+      size: '20',
+      sort: 'date,asc',
+    });
+
+    const response = await fetch(
+      `https://app.ticketmaster.com/discovery/v2/events.json?${params}`
+    );
+
+    if (!response.ok) {
+      eventCache.set(cacheKey, { data: noEvents, ts: Date.now() });
+      return noEvents;
+    }
+
+    const data = await response.json();
+    const events = data._embedded?.events || [];
+
+    if (events.length === 0) {
+      eventCache.set(cacheKey, { data: noEvents, ts: Date.now() });
+      return noEvents;
+    }
+
+    let nearestDist = Infinity;
+    let nearestEvent = null;
+    let totalAttendance = 0;
+
+    for (const e of events) {
+      const eLat = parseFloat(e._embedded?.venues?.[0]?.location?.latitude) || 0;
+      const eLng = parseFloat(e._embedded?.venues?.[0]?.location?.longitude) || 0;
+      if (!eLat || !eLng) continue;
+
+      const dist = distanceKm(lat, lng, eLat, eLng);
+      const attendance = estimateTmAttendance(e);
+      totalAttendance += attendance;
+
+      if (dist < nearestDist) {
+        nearestDist = dist;
+        nearestEvent = { name: e.name, type: mapTmEventType(e.classifications), attendance };
+      }
+    }
+
+    const result = nearestEvent ? {
+      hasEvent: true,
+      nearestAttendance: nearestEvent.attendance,
+      totalEvents: events.length,
+      totalAttendance,
+      nearestType: nearestEvent.type,
+      nearestDistance: Math.round(nearestDist * 100) / 100,
+      nearestName: nearestEvent.name,
+    } : noEvents;
+
+    eventCache.set(cacheKey, { data: result, ts: Date.now() });
+    return result;
+  } catch (err) {
+    console.error('[MLPredictor] Event lookup failed:', err.message);
+    eventCache.set(cacheKey, { data: noEvents, ts: Date.now() });
+    return noEvents;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Feature Engineering (mirrors prepare_features.py)
+// ---------------------------------------------------------------------------
+
+function buildFeatureVector(venue, weather, timestamp, eventData) {
   const ts = timestamp ? new Date(timestamp) : new Date();
   const dayOfWeek = ts.getDay(); // 0=Sun
   const hour = ts.getHours();
@@ -108,6 +241,16 @@ function buildFeatureVector(venue, weather, timestamp) {
   const isLateNight = (hour >= 22 || hour <= 3) ? 1 : 0;
   const isMorning = (hour >= 6 && hour <= 10) ? 1 : 0;
 
+  // Event data (from live Ticketmaster lookup)
+  const ev = eventData || {};
+  const hasEvent = ev.hasEvent ? 1 : 0;
+  const nearestAttendance = ev.nearestAttendance || 0;
+  const totalEvents = ev.totalEvents || 0;
+  const totalAttendance = ev.totalAttendance || 0;
+  const nearestDistance = ev.nearestDistance || 0;
+  const nearestType = ev.nearestType || null;
+  const isBar = (venueCategory === 'bar' || venueCategory === 'nightclub') ? 1 : 0;
+
   // Build feature dict
   const features = {
     day_of_week: dayOfWeek,
@@ -122,13 +265,6 @@ function buildFeatureVector(venue, weather, timestamp) {
     humidity: humidity,
     wind_speed: windSpeed,
     is_raining: isRaining,
-    event_nearby: 0,
-    event_distance_km: 0,
-    event_size: 0,
-    event_hours_until: 0,
-    latitude: lat,
-    longitude: lng,
-    busyness_pct: 0, // placeholder, not used for inference but may be in feature list
     hour_sin: Math.sin(2 * Math.PI * hour / 24),
     hour_cos: Math.cos(2 * Math.PI * hour / 24),
     month_sin: Math.sin(2 * Math.PI * month / 12),
@@ -147,11 +283,26 @@ function buildFeatureVector(venue, weather, timestamp) {
     season_winter: season === 'winter' ? 1 : 0,
     venue_category_encoded: categoryEncoded,
     log_review_count: Math.log(reviewCount + 1),
-    lat_bin: Math.round(lat * 10) / 10,
-    lng_bin: Math.round(lng * 10) / 10,
     rain_x_weekend: isRaining * isWeekend,
     rain_x_dinner: isRaining * isDinner,
     cold_outdoor: (temp < 5 && weatherGroup === 'clear') ? 1 : 0,
+    // Event features
+    has_nearby_event: hasEvent,
+    nearest_event_attendance: nearestAttendance,
+    log_nearest_event_attendance: Math.log(nearestAttendance + 1),
+    nearest_event_distance_km: nearestDistance,
+    total_nearby_events: totalEvents,
+    total_nearby_attendance: totalAttendance,
+    log_total_nearby_attendance: Math.log(totalAttendance + 1),
+    large_event_nearby: nearestAttendance > 5000 ? 1 : 0,
+    event_x_weekend: hasEvent * isWeekend,
+    event_x_dinner: hasEvent * isDinner,
+    event_x_bar: hasEvent * isBar,
+    etype_music: nearestType === 'music' ? 1 : 0,
+    etype_sports: nearestType === 'sports' ? 1 : 0,
+    etype_arts: nearestType === 'arts' ? 1 : 0,
+    etype_family: nearestType === 'family' ? 1 : 0,
+    etype_other: nearestType === 'other' ? 1 : 0,
   };
 
   // Weather group one-hot
@@ -206,8 +357,13 @@ async function predictBusyness(venue, weather, timestamp) {
   }
 
   try {
+    // Fetch nearby events for event-aware prediction
+    const lat = venue.location?.latitude || venue.latitude || venue.lat || 0;
+    const lng = venue.location?.longitude || venue.longitude || venue.lng || 0;
+    const eventData = await getNearbyEvents(lat, lng, timestamp);
+
     const ort = require('onnxruntime-node');
-    const vector = buildFeatureVector(venue, weather, timestamp);
+    const vector = buildFeatureVector(venue, weather, timestamp, eventData);
     const inputName = metadata.onnx_input_name || 'input';
     const tensor = new ort.Tensor('float32', vector, [1, vector.length]);
     const results = await session.run({ [inputName]: tensor });
@@ -223,15 +379,30 @@ async function predictBusyness(venue, weather, timestamp) {
     if (venue.rating && venue.user_ratings_total) confidence += 15;
     confidence = Math.min(95, confidence);
 
-    return {
+    const dataSources = ['ml_model', weather ? 'weather' : null, 'venue_data'];
+    if (eventData.hasEvent) dataSources.push('ticketmaster_events');
+
+    const response = {
       score,
       label,
       confidence,
       factors: {},
-      dataSourcesUsed: ['ml_model', weather ? 'weather' : null, 'venue_data'].filter(Boolean),
+      dataSourcesUsed: dataSources.filter(Boolean),
       predictionMethod: 'ml',
-      modelVersion: metadata.model_version || '1.0.0',
+      modelVersion: metadata.model_version || '2.1.0',
     };
+
+    // Add event alert when large event nearby
+    if (eventData.hasEvent && eventData.nearestAttendance > 5000) {
+      response.eventAlert = {
+        hasEvent: true,
+        eventName: eventData.nearestName,
+        estimatedAttendance: eventData.nearestAttendance,
+        distance: `${eventData.nearestDistance} km away`,
+      };
+    }
+
+    return response;
   } catch (err) {
     console.error('[MLPredictor] Prediction error, falling back:', err.message);
     const result = crowdEngine.calculateCrowdScore(venue, weather, timestamp);

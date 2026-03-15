@@ -67,7 +67,7 @@ def main():
     dummy = np.zeros((1, n_features), dtype=np.float32)
     input_name = session.get_inputs()[0].name
     result = session.run(None, {input_name: dummy})
-    pred = float(result[0][0])
+    pred = float(np.asarray(result[0]).flat[0])
     logger.info(f'ONNX test prediction (zeros input): {pred:.2f}')
 
     # Update metadata with final info
@@ -75,7 +75,7 @@ def main():
     with open(meta_path, 'r') as f:
         metadata = json.load(f)
 
-    metadata['model_version'] = '1.0.0'
+    metadata['model_version'] = '2.1.0'
     metadata['model_type'] = model_name
     metadata['onnx_input_name'] = input_name
     metadata['trained_at'] = datetime.now(timezone.utc).isoformat()
