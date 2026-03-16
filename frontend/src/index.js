@@ -5,9 +5,9 @@ import reportWebVitals from './reportWebVitals';
 
 const root = ReactDOM.createRoot(document.getElementById('root'));
 
-// Landing page at "/" — everything else renders the app
-if (window.location.pathname === '/') {
-  const LandingPage = React.lazy(() => import('./landing/LandingPage'));
+// Landing page only at /landing — everything else renders the app
+if (window.location.pathname === '/landing') {
+  const LandingPage = React.lazy(() => import('./website/LandingPage'));
   root.render(
     <React.StrictMode>
       <React.Suspense fallback={null}>

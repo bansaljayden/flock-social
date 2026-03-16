@@ -104,7 +104,7 @@ async function main() {
   const totalRows = parseInt(countResult[0].count, 10);
   console.log(`[Enrich] Processing ${totalRows} training rows...`);
 
-  const CHUNK_SIZE = 1000;
+  const CHUNK_SIZE = 5000;
   let processed = 0;
   let enriched = 0;
   let offset = 0;
@@ -183,33 +183,46 @@ async function main() {
       }
     }
 
-    // Batch update
-    for (const u of updates) {
-      if (u.hasEvent) {
-        await pool.query(
-          `UPDATE ml_training_data SET
-            has_nearby_event = true,
-            nearest_event_distance_km = $1,
-            nearest_event_attendance = $2,
-            total_nearby_events = $3,
-            total_nearby_attendance = $4,
-            nearest_event_type = $5
-           WHERE id = $6`,
-          [u.nearestDist, u.nearestAttendance, u.totalNearby, u.totalAttendance, u.nearestType, u.id]
-        );
-      } else {
-        await pool.query(
-          `UPDATE ml_training_data SET
-            has_nearby_event = false,
-            nearest_event_distance_km = NULL,
-            nearest_event_attendance = 0,
-            total_nearby_events = 0,
-            total_nearby_attendance = 0,
-            nearest_event_type = NULL
-           WHERE id = $1`,
-          [u.id]
-        );
+    // Batch update — build a single query for all event-matched rows
+    const withEvents = updates.filter(u => u.hasEvent);
+    if (withEvents.length > 0) {
+      // Build VALUES list for batch update
+      const vals = [];
+      const params = [];
+      let idx = 1;
+      for (const u of withEvents) {
+        vals.push(`($${idx}::int, $${idx+1}::numeric, $${idx+2}::int, $${idx+3}::int, $${idx+4}::int, $${idx+5}::varchar)`);
+        params.push(u.id, u.nearestDist, u.nearestAttendance, u.totalNearby, u.totalAttendance, u.nearestType);
+        idx += 6;
       }
+      await pool.query(
+        `UPDATE ml_training_data AS t SET
+          has_nearby_event = true,
+          nearest_event_distance_km = v.dist,
+          nearest_event_attendance = v.att,
+          total_nearby_events = v.cnt,
+          total_nearby_attendance = v.tot_att,
+          nearest_event_type = v.etype
+         FROM (VALUES ${vals.join(',')}) AS v(id, dist, att, cnt, tot_att, etype)
+         WHERE t.id = v.id`,
+        params
+      );
+    }
+
+    // Batch reset rows without events
+    const noEvents = updates.filter(u => !u.hasEvent).map(u => u.id);
+    if (noEvents.length > 0) {
+      await pool.query(
+        `UPDATE ml_training_data SET
+          has_nearby_event = false,
+          nearest_event_distance_km = NULL,
+          nearest_event_attendance = 0,
+          total_nearby_events = 0,
+          total_nearby_attendance = 0,
+          nearest_event_type = NULL
+         WHERE id = ANY($1::int[])`,
+        [noEvents]
+      );
     }
 
     processed += chunk.length;
