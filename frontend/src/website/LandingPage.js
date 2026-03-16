@@ -53,12 +53,6 @@ function BirdLogo({ size = 28, color = '#f5f0e8' }) {
 function IcoCheck({ size = 16 }) {
   return <svg width={size} height={size} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M3 8.5l3 3 7-7.5" /></svg>;
 }
-function IcoShield({ size = 16 }) {
-  return <svg width={size} height={size} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M8 1.5L2 4v4c0 4 2.7 7.5 6 8.5 3.3-1 6-4.5 6-8.5V4L8 1.5z" /></svg>;
-}
-function IcoArrow({ size = 14 }) {
-  return <svg width={size} height={size} viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M3 7h8m-3-3l3 3-3 3" /></svg>;
-}
 function IcoPin({ size = 22 }) {
   return <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z" /></svg>;
 }
@@ -124,62 +118,6 @@ function StarField() {
       }} />
     ))}
   </>;
-}
-
-function VenueCard({ name, cat, rating, dist, votes, selected, gradient, label }) {
-  return (
-    <div className={`lp-venue-card${selected ? ' lp-venue-card--selected' : ''}`}>
-      <div className="lp-venue-thumb" style={{ background: gradient }}>{label}</div>
-      <div className="lp-venue-info">
-        <div className="lp-venue-name">{name}</div>
-        <div className="lp-venue-meta">{cat}</div>
-        <div className="lp-venue-rating"><span className="lp-venue-rating-star">*</span> {rating} · {dist}</div>
-      </div>
-      <span className={`lp-vote-pill ${selected ? 'lp-vote-pill--active' : 'lp-vote-pill--muted'}`}>{votes}</span>
-    </div>
-  );
-}
-
-function ChatBubble({ side, avatar, color, text, time }) {
-  if (side === 'right') {
-    return (
-      <div>
-        <div className="lp-bubble-row lp-bubble-row--right">
-          <div className="lp-bubble lp-bubble--out">{text}</div>
-        </div>
-        <div style={{ textAlign: 'right' }}><span className="lp-bubble-time">{time}</span></div>
-      </div>
-    );
-  }
-  return (
-    <div>
-      <div className="lp-bubble-row">
-        <div className="lp-bubble-avatar" style={{ background: color }}>{avatar}</div>
-        <div className="lp-bubble lp-bubble--in">{text}</div>
-      </div>
-      <div style={{ marginLeft: 32 }}><span className="lp-bubble-time">{time}</span></div>
-    </div>
-  );
-}
-
-function SystemBubble({ text }) {
-  return (
-    <div className="lp-bubble-row">
-      <div className="lp-bubble-system-icon"><IcoCheck size={12} /></div>
-      <div className="lp-bubble lp-bubble--system">{text}</div>
-    </div>
-  );
-}
-
-function TypingBubble({ avatar, color }) {
-  return (
-    <div className="lp-bubble-row">
-      <div className="lp-bubble-avatar" style={{ background: color }}>{avatar}</div>
-      <div className="lp-bubble lp-bubble--in lp-typing-dots">
-        <div className="lp-typing-dot" /><div className="lp-typing-dot" /><div className="lp-typing-dot" />
-      </div>
-    </div>
-  );
 }
 
 /* ─── How It Works Step Cards ─── */
