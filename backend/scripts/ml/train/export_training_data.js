@@ -21,6 +21,7 @@ function cityQuery(city) {
         t.event_nearby, t.event_distance_km, t.event_size, t.event_type, t.event_hours_until,
         t.has_nearby_event, t.nearest_event_distance_km, t.nearest_event_attendance,
         t.total_nearby_events, t.total_nearby_attendance, t.nearest_event_type,
+        t.baseline_busyness, t.collection_mode,
         t.busyness_pct,
         v.city, v.google_types, v.latitude, v.longitude
       FROM ml_training_data t
@@ -71,6 +72,8 @@ function rowToCsv(row) {
     row.total_nearby_events,
     row.total_nearby_attendance,
     row.nearest_event_type,
+    row.baseline_busyness,
+    row.collection_mode === 'realtime' ? 1 : 0,
     row.busyness_pct,
     row.city,
     types[0] || '',
@@ -90,6 +93,7 @@ const HEADER = [
   'event_nearby', 'event_distance_km', 'event_size', 'event_type', 'event_hours_until',
   'has_nearby_event', 'nearest_event_distance_km', 'nearest_event_attendance',
   'total_nearby_events', 'total_nearby_attendance', 'nearest_event_type',
+  'baseline_busyness', 'is_realtime',
   'busyness_pct',
   'city',
   'google_type_1', 'google_type_2', 'google_type_3',

@@ -160,6 +160,20 @@ def add_geographic_features(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+def add_baseline_features(df: pd.DataFrame) -> pd.DataFrame:
+    """Add baseline busyness and data freshness features."""
+    # Baseline busyness — the venue's typical busyness at this day/hour
+    df['baseline_busyness'] = df['baseline_busyness'].fillna(0)
+
+    # Deviation potential — model learns how much actual differs from baseline
+    # Don't compute actual deviation (that would leak the label), just give the baseline
+
+    # Data freshness — realtime observations are more reliable
+    df['is_realtime'] = df['is_realtime'].fillna(0).astype(int)
+
+    return df
+
+
 def add_event_features(df: pd.DataFrame) -> pd.DataFrame:
     """Add Ticketmaster event proximity features."""
     # Core event features — fill missing with 0
@@ -201,6 +215,7 @@ def get_feature_columns(df: pd.DataFrame) -> List[str]:
         'event_nearby', 'event_distance_km', 'event_size', 'event_hours_until',  # old sparse event cols
         'nearest_event_type',  # raw string (one-hot encoded as etype_*)
         'latitude', 'longitude', 'lat_bin', 'lng_bin',  # dropped to prevent geographic overfitting
+        'baseline_busyness',  # BestTime's own output — data leakage, always exclude
     }
     feature_cols = [c for c in df.columns if c not in exclude]
     return sorted(feature_cols)
@@ -237,6 +252,7 @@ def main():
     train_df = add_temporal_features(train_df)
     train_df, venue_metadata = add_venue_features(train_df)
     train_df = add_weather_features(train_df)
+    train_df = add_baseline_features(train_df)
     train_df = add_event_features(train_df)
 
     # Feature engineering — holdout data (same transforms)
@@ -262,6 +278,7 @@ def main():
                     holdout_df.loc[holdout_df[tc] == t, col_name] = 1
 
         holdout_df = add_weather_features(holdout_df)
+        holdout_df = add_baseline_features(holdout_df)
         holdout_df = add_event_features(holdout_df)
 
     # Get feature columns
