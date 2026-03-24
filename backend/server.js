@@ -93,7 +93,7 @@ const isDev = process.env.NODE_ENV === 'development';
 
 const apiLimiter = isDev ? (_req, _res, next) => next() : rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 300,
+  max: 1000,
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: 'Too many requests, please try again later' },
@@ -101,7 +101,7 @@ const apiLimiter = isDev ? (_req, _res, next) => next() : rateLimit({
 
 const authLimiter = isDev ? (_req, _res, next) => next() : rateLimit({
   windowMs: 60 * 1000,
-  max: 5,
+  max: 10,
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: 'Too many login attempts, please try again later' },
@@ -109,7 +109,7 @@ const authLimiter = isDev ? (_req, _res, next) => next() : rateLimit({
 
 const aiLimiter = isDev ? (_req, _res, next) => next() : rateLimit({
   windowMs: 60 * 1000,
-  max: 15,
+  max: 30,
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: 'Too many AI requests, please slow down' },
@@ -117,7 +117,7 @@ const aiLimiter = isDev ? (_req, _res, next) => next() : rateLimit({
 
 const venueSearchLimiter = isDev ? (_req, _res, next) => next() : rateLimit({
   windowMs: 60 * 1000,
-  max: 20,
+  max: 60,
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: 'Too many venue searches, please try again later' },
