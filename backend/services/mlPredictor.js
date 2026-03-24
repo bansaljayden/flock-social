@@ -286,6 +286,9 @@ function buildFeatureVector(venue, weather, timestamp, eventData) {
     rain_x_weekend: isRaining * isWeekend,
     rain_x_dinner: isRaining * isDinner,
     cold_outdoor: (temp < 5 && weatherGroup === 'clear') ? 1 : 0,
+    // Baseline + freshness
+    baseline_busyness: venue.baseline_busyness || venue.popular_times_avg || 0,
+    is_realtime: 1, // live predictions are always "realtime" quality
     // Event features
     has_nearby_event: hasEvent,
     nearest_event_attendance: nearestAttendance,
