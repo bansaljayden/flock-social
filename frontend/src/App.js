@@ -1420,7 +1420,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
     setVenueQuery(val);
     if (!showSearchResults) setShowSearchDropdown(true);
     if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
-    searchTimerRef.current = setTimeout(() => doVenueSearch(val), 400);
+    searchTimerRef.current = setTimeout(() => doVenueSearch(val), 800);
   }, [doVenueSearch, showSearchResults]);
 
   // Invite user search with debounce
