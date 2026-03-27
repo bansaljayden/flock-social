@@ -11,7 +11,7 @@ import {
   formatCurrency,
   calculateProfitMargin
 } from './lib/finance';
-import { getCurrentUser, logout, isLoggedIn, getFlocks, getFlock, createFlock as apiCreateFlock, getMessages, sendMessage as apiSendMessage, updateProfile, searchVenues, searchUsers, getSuggestedUsers, sendFriendRequest, getVenueDetails, leaveFlock as apiLeaveFlock, getDMConversations, getDMs, getDmVenueVotes, getDmPinnedVenue, BASE_URL, inviteToFlock, acceptFlockInvite, declineFlockInvite, getFriends, acceptFriendRequest, declineFriendRequest, getPendingRequests, getOutgoingRequests, getFriendSuggestions, addFriendByCode, findFriendsByPhone, removeFriend, getTrustedContacts, addTrustedContact, updateTrustedContact, deleteTrustedContact, sendEmergencyAlert, shareLocationWithContacts, getUserStats, getCrowdPrediction, getCrowdBatch, getCrowdAlternatives, getWeather, submitVenueFeedback, uploadProfileImage, saveProfileImageUrl, submitBudget, getBudgetStatus, lockBudget, sendBudgetReminder, createBillSplit, getBillSplit, settleShare, ghostCommit, updatePaymentMethods, getPaymentLinks, getFeaturedEvents, searchEvents, getEventDetails, sendAiChat, getActivityFeed, getWeatherForecast } from './services/api';
+import { getCurrentUser, logout, isLoggedIn, getFlocks, getFlock, createFlock as apiCreateFlock, getMessages, sendMessage as apiSendMessage, updateProfile, searchVenues, searchUsers, getSuggestedUsers, sendFriendRequest, getVenueDetails, leaveFlock as apiLeaveFlock, getDMConversations, getDMs, getDmVenueVotes, getDmPinnedVenue, BASE_URL, inviteToFlock, acceptFlockInvite, declineFlockInvite, getFriends, acceptFriendRequest, declineFriendRequest, getPendingRequests, getOutgoingRequests, getFriendSuggestions, addFriendByCode, findFriendsByPhone, removeFriend, getTrustedContacts, addTrustedContact, updateTrustedContact, deleteTrustedContact, sendEmergencyAlert, shareLocationWithContacts, getUserStats, getCrowdPrediction, getCrowdBatch, getCrowdAlternatives, getWeather, submitVenueFeedback, uploadProfileImage, saveProfileImageUrl, submitBudget, getBudgetStatus, lockBudget, sendBudgetReminder, createBillSplit, getBillSplit, settleShare, ghostCommit, updatePaymentMethods, getPaymentLinks, getFeaturedEvents, searchEvents, getEventDetails, sendAiChat, getActivityFeed, getWeatherForecast, submitAttendance, getAdminAnalytics } from './services/api';
 import { connectSocket, disconnectSocket, getSocket, joinFlock, leaveFlock, sendMessage as socketSendMessage, sendImageMessage as socketSendImage, startTyping, stopTyping, onNewMessage, onUserTyping, onUserStoppedTyping, emitLocation, stopSharingLocation as socketStopSharing, onLocationUpdate, onMemberStoppedSharing, socketSendDm, onNewDm, dmStartTyping, dmStopTyping, onDmUserTyping, onDmUserStoppedTyping, dmReact, dmRemoveReact, onDmReactionAdded, onDmReactionRemoved, dmVoteVenue, onDmNewVote, dmShareLocation, dmStopSharingLocation, onDmLocationUpdate, onDmMemberStoppedSharing, dmPinVenue, onDmVenuePinned, emitFlockInvite, emitFlockInviteResponse, onFlockInviteReceived, onFlockInviteResponded, emitFriendRequest, emitFriendResponse, onFriendRequestReceived, onFriendRequestResponded, onBudgetUpdated, onBudgetLocked, onBudgetReminder, onBillCreated, onShareSettled, onBillFullySettled, onGhostCommitted, onNewVote, onVenueSelected, onFlockReactionAdded, onFlockReactionRemoved, onFlockDeleted, onFlockUpdated, onFlockMemberLeft } from './services/socket';
 import { requestNotificationPermission, onForegroundMessage } from './services/firebase';
 import { unregisterAllTokens } from './services/api';
@@ -1264,6 +1264,17 @@ const FlockAppInner = ({ authUser, onLogout }) => {
     toastTimerRef.current = setTimeout(() => setToast(null), 2000);
   }, []);
 
+  const fetchResearchLive = useCallback(() => {
+    setResearchLoading(true);
+    getAdminAnalytics().then(d => {
+      setResearchLiveData(d);
+      setResearchDemoMode(false);
+    }).catch(err => {
+      console.error('[Research] Fetch error:', err);
+      showToast('Could not load live data', 'error');
+    }).finally(() => setResearchLoading(false));
+  }, [showToast]);
+
   // Confirm click — shows a ✓ overlay on the button, no state/re-renders (pure DOM + CSS)
   const confirmClick = useCallback((e) => {
     const btn = e.currentTarget;
@@ -1845,6 +1856,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
     getUserStats().then(d => {
       setStreak(d.streak || 0);
       setFriendCount(d.friendCount || 0);
+      setReliabilityScore(d.reliabilityScore || null);
     }).catch(() => {});
   }, []);
 
@@ -1898,6 +1910,17 @@ const FlockAppInner = ({ authUser, onLogout }) => {
   const [categoryExpanded, setCategoryExpanded] = useState(false);
   const [activeVenue, setActiveVenue] = useState(null);
   const [venueDetailModal, setVenueDetailModal] = useState(null); // full venue details for modal
+  // Reliability + Attendance
+  const [showAttendanceModal, setShowAttendanceModal] = useState(false);
+  const [attendanceFlockId, setAttendanceFlockId] = useState(null);
+  const [attendanceMembers, setAttendanceMembers] = useState([]);
+  const [attendanceChecks, setAttendanceChecks] = useState({});
+  const [attendanceSubmitting, setAttendanceSubmitting] = useState(false);
+  const [reliabilityScore, setReliabilityScore] = useState(null);
+  // Research analytics
+  const [researchDemoMode, setResearchDemoMode] = useState(true);
+  const [researchLiveData, setResearchLiveData] = useState(null);
+  const [researchLoading, setResearchLoading] = useState(false);
   const [, setVenueDetailLoading] = useState(false);
   const [venueDetailPhotoIdx, setVenueDetailPhotoIdx] = useState(0);
 
@@ -2354,9 +2377,22 @@ const FlockAppInner = ({ authUser, onLogout }) => {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify({ status: 'completed' }),
+      }).then(() => {
+        const flock = flocks.find(f => f.id === flockId);
+        if (flock && String(flock.creatorId) === String(authUser?.id)) {
+          const accepted = (flock.members || []).filter(m => m.status === 'accepted');
+          if (accepted.length > 0) {
+            setAttendanceFlockId(flockId);
+            setAttendanceMembers(accepted);
+            const checks = {};
+            accepted.forEach(m => { checks[m.id] = true; });
+            setAttendanceChecks(checks);
+            setShowAttendanceModal(true);
+          }
+        }
       }).catch(err => console.error('Failed to mark flock completed:', err));
     }
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [flocks, authUser]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // AI Response - powered by Gemini via backend
   const sendAiMessage = useCallback(async () => {
@@ -8931,7 +8967,7 @@ const FlockAppInner = ({ authUser, onLogout }) => {
 
         <div style={{ flex: 1, padding: '12px', overflowY: 'auto', marginTop: '-8px' }}>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '6px', marginBottom: '12px' }}>
-            {[{ l: 'Flocks', v: flocks.length }, { l: 'Friends', v: friendCount }, { l: 'Streak', v: streak, hasIcon: true }, { l: 'Events', v: calendarEvents.length }].map(s => (
+            {[{ l: 'Flocks', v: flocks.length }, { l: 'Friends', v: friendCount }, { l: 'Streak', v: streak, hasIcon: true }, { l: 'Reliable', v: reliabilityScore != null ? `${Math.round(reliabilityScore)}%` : '--' }].map(s => (
               <div key={s.l} style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '8px', textAlign: 'center', boxShadow: 'var(--card-shadow-sm)' }}>
                 <p style={{ fontSize: '18px', fontWeight: '900', color: colors.navy, margin: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px' }}>{s.v}{s.hasIcon && Icons.flame('#F59E0B', 16)}</p>
                 <p style={{ fontSize: '9px', color: 'var(--text-secondary)', margin: 0 }}>{s.l}</p>
@@ -9906,7 +9942,8 @@ const FlockAppInner = ({ authUser, onLogout }) => {
       { id: 'venues', label: 'Venues', icon: Icons.building },
       { id: 'cities', label: 'Cities', icon: Icons.map },
       { id: 'transactions', label: 'Txns', icon: Icons.creditCard },
-      { id: 'projections', label: 'Project', icon: Icons.barChart }
+      { id: 'projections', label: 'Project', icon: Icons.barChart },
+      { id: 'research', label: 'Research', icon: Icons.barChart }
     ];
 
     // Mock data for admin dashboard
@@ -10510,6 +10547,85 @@ const FlockAppInner = ({ authUser, onLogout }) => {
               </div>
             </div>
           )}
+
+          {adminTab === 'research' && (() => {
+            const demoMode = researchDemoMode;
+            const data = demoMode ? {
+              totalFlocks: 847, completionRate: 73, avgGroupSize: 4.2, budgetAdoptionRate: 68,
+              avgTimeToConfirmation: 42, totalUsers: 3247, newUsersThisWeek: 89,
+              stallPointDistribution: [
+                { stall_point: 'completed', count: 618 }, { stall_point: 'venue', count: 89 },
+                { stall_point: 'rsvp', count: 72 }, { stall_point: 'confirmation', count: 41 },
+                { stall_point: 'budget', count: 27 },
+              ],
+              reliabilityDistribution: { reliable: 412, moderate: 187, flaky: 43, unscored: 2605 },
+            } : (researchLiveData || {});
+            const stallColors = { completed: colors.teal, venue: '#F59E0B', rsvp: '#EF4444', confirmation: '#8B5CF6', budget: '#3B82F6' };
+            const stallTotal = (data.stallPointDistribution || []).reduce((s, p) => s + parseInt(p.count), 0) || 1;
+            const statCards = [
+              { label: 'Total Flocks', value: data.totalFlocks || 0, color: colors.navy },
+              { label: 'Completion Rate', value: `${data.completionRate || 0}%`, color: colors.teal },
+              { label: 'Avg Group Size', value: data.avgGroupSize || 0, color: colors.navy },
+              { label: 'Budget Adoption', value: `${data.budgetAdoptionRate || 0}%`, color: colors.teal },
+              { label: 'Time to Confirm', value: `${data.avgTimeToConfirmation || 0}m`, color: colors.navy },
+              { label: 'Total Users', value: (data.totalUsers || 0).toLocaleString(), color: colors.navy },
+            ];
+            return (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                {researchLoading && <p style={{ textAlign: 'center', fontSize: '11px', color: 'var(--text-secondary)' }}>Loading...</p>}
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '8px' }}>
+                  {statCards.map(s => (
+                    <div key={s.label} style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', textAlign: 'center', boxShadow: 'var(--card-shadow-sm)' }}>
+                      <p style={{ fontSize: '20px', fontWeight: '900', color: s.color, margin: '0 0 2px' }}>{s.value}</p>
+                      <p style={{ fontSize: '9px', fontWeight: '600', color: 'var(--text-secondary)', margin: 0, textTransform: 'uppercase', letterSpacing: '0.5px' }}>{s.label}</p>
+                    </div>
+                  ))}
+                </div>
+                <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
+                  <h3 style={{ fontSize: '12px', fontWeight: '700', color: colors.navy, margin: '0 0 10px' }}>Where Flocks Stall</h3>
+                  {(data.stallPointDistribution || []).map(p => {
+                    const pct = Math.round((parseInt(p.count) / stallTotal) * 100);
+                    return (
+                      <div key={p.stall_point} style={{ marginBottom: '8px' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '3px' }}>
+                          <span style={{ fontSize: '11px', fontWeight: '600', color: colors.navy, textTransform: 'capitalize' }}>{p.stall_point}</span>
+                          <span style={{ fontSize: '10px', color: 'var(--text-secondary)' }}>{p.count} ({pct}%)</span>
+                        </div>
+                        <div style={{ height: '8px', backgroundColor: 'var(--bg-tertiary)', borderRadius: '4px', overflow: 'hidden' }}>
+                          <div style={{ height: '100%', width: `${pct}%`, backgroundColor: stallColors[p.stall_point] || colors.navy, borderRadius: '4px' }} />
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+                <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
+                  <h3 style={{ fontSize: '12px', fontWeight: '700', color: colors.navy, margin: '0 0 10px' }}>User Reliability</h3>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '6px' }}>
+                    {[
+                      { label: '80%+', value: data.reliabilityDistribution?.reliable || 0, color: colors.teal },
+                      { label: '50-79%', value: data.reliabilityDistribution?.moderate || 0, color: '#F59E0B' },
+                      { label: '<50%', value: data.reliabilityDistribution?.flaky || 0, color: '#EF4444' },
+                      { label: 'New', value: data.reliabilityDistribution?.unscored || 0, color: 'var(--text-secondary)' },
+                    ].map(item => (
+                      <div key={item.label} style={{ textAlign: 'center', padding: '8px 4px', borderRadius: '8px', backgroundColor: 'var(--bg-tertiary)' }}>
+                        <p style={{ fontSize: '18px', fontWeight: '900', color: item.color, margin: '0 0 2px' }}>{item.value}</p>
+                        <p style={{ fontSize: '8px', fontWeight: '600', color: 'var(--text-secondary)', margin: 0 }}>{item.label}</p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+                <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', boxShadow: 'var(--card-shadow-sm)', textAlign: 'center' }}>
+                  <p style={{ fontSize: '11px', fontWeight: '600', color: 'var(--text-secondary)', margin: '0 0 4px' }}>New Users This Week</p>
+                  <p style={{ fontSize: '28px', fontWeight: '900', color: colors.teal, margin: 0 }}>+{data.newUsersThisWeek || 0}</p>
+                </div>
+                <button onClick={() => { if (demoMode) fetchResearchLive(); else setResearchDemoMode(true); }}
+                  style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', padding: '6px', width: '100%', border: 'none', background: 'transparent', cursor: 'pointer' }}>
+                  <span style={{ width: '6px', height: '6px', borderRadius: '3px', background: demoMode ? '#D97706' : colors.teal }} />
+                  <span style={{ fontSize: '9px', fontWeight: '600', color: 'var(--text-tertiary)' }}>{researchLoading ? 'Loading...' : demoMode ? 'Demo data · Tap for live' : 'Live data · Tap for demo'}</span>
+                </button>
+              </div>
+            );
+          })()}
         </div>
       </div>
     );
@@ -11660,6 +11776,44 @@ const FlockAppInner = ({ authUser, onLogout }) => {
       })()}
 
       <SOSModal />
+      {showAttendanceModal && (
+        <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(8px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 60, padding: '16px' }}>
+          <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '24px', padding: '24px', width: '100%', maxWidth: '340px', maxHeight: '80vh', overflow: 'auto' }}>
+            <div style={{ textAlign: 'center', marginBottom: '16px' }}>
+              <h2 style={{ fontSize: '18px', fontWeight: '900', color: 'var(--text-primary)', margin: '0 0 4px' }}>Who showed up?</h2>
+              <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: 0 }}>Updates everyone's reliability score</p>
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '20px' }}>
+              {attendanceMembers.map(m => (
+                <button key={m.id} onClick={() => setAttendanceChecks(prev => ({ ...prev, [m.id]: !prev[m.id] }))}
+                  style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '12px', borderRadius: '14px', border: `1.5px solid ${attendanceChecks[m.id] ? 'rgba(13,148,136,0.4)' : 'var(--border-default)'}`, background: attendanceChecks[m.id] ? 'rgba(13,148,136,0.06)' : 'var(--bg-card-solid)', cursor: 'pointer', width: '100%', textAlign: 'left' }}>
+                  <div style={{ width: '36px', height: '36px', borderRadius: '18px', background: `linear-gradient(135deg, ${colors.teal}, ${colors.navy})`, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: '14px', fontWeight: '700', flexShrink: 0 }}>
+                    {(m.name || '?')[0].toUpperCase()}
+                  </div>
+                  <span style={{ flex: 1, fontSize: '14px', fontWeight: '600', color: 'var(--text-primary)' }}>{m.name}</span>
+                  <div style={{ width: '24px', height: '24px', borderRadius: '12px', border: `2px solid ${attendanceChecks[m.id] ? colors.teal : 'var(--border-default)'}`, background: attendanceChecks[m.id] ? colors.teal : 'transparent', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                    {attendanceChecks[m.id] && <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="#fff" strokeWidth="2.5" strokeLinecap="round"><path d="M3 8.5l3 3 7-7.5"/></svg>}
+                  </div>
+                </button>
+              ))}
+            </div>
+            <div style={{ display: 'flex', gap: '8px' }}>
+              <button disabled={attendanceSubmitting} onClick={async () => {
+                setAttendanceSubmitting(true);
+                try {
+                  await submitAttendance(attendanceFlockId, attendanceMembers.map(m => ({ userId: m.id, attended: !!attendanceChecks[m.id] })));
+                  showToast('Attendance recorded');
+                  getUserStats().then(d => setReliabilityScore(d.reliabilityScore || null)).catch(() => {});
+                } catch (err) { showToast('Failed to record', 'error'); }
+                finally { setAttendanceSubmitting(false); setShowAttendanceModal(false); }
+              }} style={{ flex: 1, padding: '13px', borderRadius: '14px', border: 'none', background: `linear-gradient(135deg, ${colors.teal}, ${colors.navy})`, color: '#fff', fontSize: '14px', fontWeight: '700', cursor: 'pointer', opacity: attendanceSubmitting ? 0.6 : 1 }}>
+                {attendanceSubmitting ? 'Saving...' : 'Confirm'}
+              </button>
+              <button onClick={() => setShowAttendanceModal(false)} style={{ padding: '13px 18px', borderRadius: '14px', border: '1.5px solid var(--border-default)', background: 'var(--bg-card-solid)', color: 'var(--text-secondary)', fontSize: '14px', fontWeight: '600', cursor: 'pointer' }}>Skip</button>
+            </div>
+          </div>
+        </div>
+      )}
       <CheckinModal />
       <ProfilePicModal />
       {aiAssistantModal}
