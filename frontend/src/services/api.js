@@ -115,6 +115,17 @@ export async function declineFlockInvite(flockId) {
   return request(`/api/flocks/${flockId}/decline`, { method: 'POST' });
 }
 
+export async function submitAttendance(flockId, attendance) {
+  return request(`/api/flocks/${flockId}/attendance`, {
+    method: 'POST',
+    body: JSON.stringify({ attendance }),
+  });
+}
+
+export async function getAdminAnalytics() {
+  return request('/api/admin/analytics');
+}
+
 // Messages
 export async function getMessages(flockId) {
   return request(`/api/flocks/${flockId}/messages`);

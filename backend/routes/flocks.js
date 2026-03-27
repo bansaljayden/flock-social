@@ -199,7 +199,7 @@ router.get('/:id', param('id').isInt(), async (req, res) => {
     }
 
     const membersResult = await pool.query(
-      `SELECT u.id, u.name, u.email, u.profile_image_url, fm.status, fm.joined_at
+      `SELECT u.id, u.name, u.email, u.profile_image_url, u.reliability_score, fm.status, fm.attendance, fm.joined_at
        FROM flock_members fm
        JOIN users u ON u.id = fm.user_id
        WHERE fm.flock_id = $1
@@ -371,6 +371,54 @@ router.put('/:id',
             bodyText,
             { type: 'flock_confirmed', flockId: String(flockId) }
           );
+        }
+      }
+
+      // Auto-populate research analytics on completion or cancellation
+      if (status === 'completed' || status === 'cancelled') {
+        try {
+          const memberCount = await pool.query(
+            "SELECT COUNT(*) AS cnt FROM flock_members WHERE flock_id = $1 AND status = 'accepted'",
+            [flockId]
+          );
+          const budgetInfo = await pool.query(
+            `SELECT COUNT(*) AS sub_count, COUNT(*) FILTER (WHERE skipped = true) AS skip_count
+             FROM budget_submissions WHERE flock_id = $1`,
+            [flockId]
+          );
+          const ff = updated;
+          const minutesElapsed = Math.round((Date.now() - new Date(ff.created_at).getTime()) / 60000);
+
+          let stallPoint = 'completed';
+          if (status === 'cancelled') {
+            const accepted = parseInt(memberCount.rows[0].cnt);
+            if (accepted < 2) stallPoint = 'rsvp';
+            else if (ff.budget_enabled && !ff.budget_locked) stallPoint = 'budget';
+            else if (!ff.venue_name) stallPoint = 'venue';
+            else stallPoint = 'confirmation';
+          }
+
+          await pool.query(
+            `INSERT INTO research_analytics
+              (flock_id, group_size, budget_enabled, budget_ceiling, submission_count, skip_count,
+               flock_completed, venue_price_level_selected, time_to_confirmation, stall_point)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+             ON CONFLICT (flock_id) DO NOTHING`,
+            [
+              flockId,
+              parseInt(memberCount.rows[0].cnt),
+              ff.budget_enabled || false,
+              ff.budget_ceiling ? parseFloat(ff.budget_ceiling) : null,
+              parseInt(budgetInfo.rows[0].sub_count),
+              parseInt(budgetInfo.rows[0].skip_count),
+              status === 'completed',
+              null,
+              minutesElapsed,
+              stallPoint,
+            ]
+          );
+        } catch (analyticsErr) {
+          console.error('Research analytics error (non-fatal):', analyticsErr.message);
         }
       }
 
@@ -690,5 +738,107 @@ router.get('/:id/members', param('id').isInt(), async (req, res) => {
     res.status(500).json({ error: 'Failed to get members' });
   }
 });
+
+// POST /api/flocks/:id/attendance - Mark who attended (creator only, completed flocks)
+router.post('/:id/attendance',
+  [
+    param('id').isInt(),
+    body('attendance').isArray({ min: 1 }).withMessage('Attendance array required'),
+  ],
+  async (req, res) => {
+    try {
+      const errors = validationResult(req);
+      if (!errors.isEmpty()) {
+        return res.status(400).json({ error: errors.array()[0].msg });
+      }
+
+      const flockId = req.params.id;
+      const { attendance } = req.body;
+
+      // Verify creator + completed status
+      const flock = await pool.query('SELECT creator_id, status, name FROM flocks WHERE id = $1', [flockId]);
+      if (flock.rows.length === 0) return res.status(404).json({ error: 'Flock not found' });
+      if (flock.rows[0].creator_id !== req.user.id) return res.status(403).json({ error: 'Only the creator can mark attendance' });
+      if (flock.rows[0].status !== 'completed') return res.status(400).json({ error: 'Flock must be completed to mark attendance' });
+
+      const client = await pool.connect();
+      const results = [];
+      try {
+        await client.query('BEGIN');
+
+        for (const entry of attendance) {
+          const { userId, attended } = entry;
+          if (!userId) continue;
+          const status = attended ? 'attended' : 'no_show';
+
+          await client.query(
+            `UPDATE flock_members SET attendance = $1 WHERE flock_id = $2 AND user_id = $3 AND status = 'accepted'`,
+            [status, flockId, userId]
+          );
+        }
+
+        // Recalculate reliability for each affected user
+        const affectedUserIds = attendance.map(a => a.userId).filter(Boolean);
+        for (const userId of affectedUserIds) {
+          const joined = await client.query(
+            `SELECT COUNT(*) AS cnt FROM flock_members fm
+             JOIN flocks f ON f.id = fm.flock_id
+             WHERE fm.user_id = $1 AND fm.status = 'accepted' AND f.status = 'completed' AND fm.attendance != 'unmarked'`,
+            [userId]
+          );
+          const attended = await client.query(
+            `SELECT COUNT(*) AS cnt FROM flock_members WHERE user_id = $1 AND attendance = 'attended'`,
+            [userId]
+          );
+          const totalJoined = parseInt(joined.rows[0].cnt);
+          const totalAttended = parseInt(attended.rows[0].cnt);
+          const score = totalJoined > 0 ? Math.round((totalAttended / totalJoined) * 100 * 100) / 100 : null;
+
+          await client.query(
+            `UPDATE users SET reliability_score = $1, total_plans_joined = $2, total_plans_attended = $3 WHERE id = $4`,
+            [score, totalJoined, totalAttended, userId]
+          );
+          results.push({ userId, reliabilityScore: score, totalPlansJoined: totalJoined, totalPlansAttended: totalAttended });
+        }
+
+        await client.query('COMMIT');
+      } catch (txErr) {
+        await client.query('ROLLBACK');
+        throw txErr;
+      } finally {
+        client.release();
+      }
+
+      // Socket notifications
+      const io = req.app.get('io');
+      if (io) {
+        io.to(`flock:${flockId}`).emit('attendance_marked', { flockId: parseInt(flockId), attendance: results });
+        for (const r of results) {
+          io.to(`user:${r.userId}`).emit('reliability_updated', {
+            reliabilityScore: r.reliabilityScore,
+            totalPlansJoined: r.totalPlansJoined,
+            totalPlansAttended: r.totalPlansAttended,
+          });
+        }
+      }
+
+      // Push to offline users
+      for (const r of results) {
+        if (r.userId !== req.user.id) {
+          pushIfOffline(io, r.userId,
+            'Attendance recorded',
+            `${flock.rows[0].name} — your reliability score updated`,
+            { type: 'attendance_marked', flockId: String(flockId) }
+          );
+        }
+      }
+
+      res.json({ success: true, results });
+    } catch (err) {
+      console.error('Attendance error:', err);
+      res.status(500).json({ error: 'Failed to record attendance' });
+    }
+  }
+);
 
 module.exports = router;

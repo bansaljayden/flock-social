@@ -242,7 +242,19 @@ router.get('/stats', async (req, res) => {
       }
     }
 
-    res.json({ friendCount, flockCount, flocksCreated, messageCount, xp, level, streak });
+    // Reliability score
+    const reliabilityResult = await pool.query(
+      'SELECT reliability_score, total_plans_joined, total_plans_attended FROM users WHERE id = $1',
+      [userId]
+    );
+    const rel = reliabilityResult.rows[0] || {};
+
+    res.json({
+      friendCount, flockCount, flocksCreated, messageCount, xp, level, streak,
+      reliabilityScore: rel.reliability_score ? parseFloat(rel.reliability_score) : null,
+      totalPlansJoined: rel.total_plans_joined || 0,
+      totalPlansAttended: rel.total_plans_attended || 0,
+    });
   } catch (err) {
     console.error('Get user stats error:', err);
     res.status(500).json({ error: 'Failed to get stats' });

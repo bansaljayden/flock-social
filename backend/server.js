@@ -31,6 +31,7 @@ const eventRoutes = require('./routes/events');
 const aiRoutes = require('./routes/ai');
 const notificationRoutes = require('./routes/notifications');
 const waitlistRoutes = require('./routes/waitlist');
+const adminRoutes = require('./routes/admin');
 
 const app = express();
 app.set('trust proxy', 1);
@@ -144,6 +145,7 @@ app.use('/api/events', apiLimiter, eventRoutes);      // Handles /api/events/sea
 app.use('/api/ai', aiLimiter, aiRoutes);             // Handles /api/ai/chat (Birdie AI assistant)
 app.use('/api/notifications', apiLimiter, notificationRoutes); // Handles /api/notifications/register, unregister
 app.use('/api/waitlist', apiLimiter, waitlistRoutes);          // Handles /api/waitlist (public, no auth)
+app.use('/api/admin', apiLimiter, adminRoutes);               // Handles /api/admin/* (admin only)
 
 // Health check
 app.get('/api/health', (req, res) => {
@@ -377,6 +379,42 @@ async function runMigrations() {
       UNIQUE(user_id, token)
     )`);
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_device_tokens_user ON device_tokens(user_id)`);
+
+    // Reliability scoring columns
+    try {
+      await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS reliability_score DECIMAL(5,2)`);
+      await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS total_plans_joined INTEGER DEFAULT 0`);
+      await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS total_plans_attended INTEGER DEFAULT 0`);
+      await pool.query(`ALTER TABLE flock_members ADD COLUMN IF NOT EXISTS attendance VARCHAR(20) DEFAULT 'unmarked'`);
+      await pool.query(`CREATE INDEX IF NOT EXISTS idx_flock_members_attendance ON flock_members(attendance)`);
+      console.log('Reliability scoring migrations complete');
+    } catch (relErr) {
+      console.error('Reliability migration error:', relErr.message);
+    }
+
+    // Research analytics table
+    try {
+      await pool.query(`CREATE TABLE IF NOT EXISTS research_analytics (
+        id SERIAL PRIMARY KEY,
+        flock_id INTEGER REFERENCES flocks(id) ON DELETE SET NULL,
+        group_size INTEGER,
+        budget_enabled BOOLEAN DEFAULT false,
+        budget_ceiling DECIMAL(8,2),
+        submission_count INTEGER DEFAULT 0,
+        skip_count INTEGER DEFAULT 0,
+        flock_completed BOOLEAN DEFAULT false,
+        venue_price_level_selected INTEGER,
+        time_to_confirmation INTEGER,
+        stall_point VARCHAR(30),
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        UNIQUE(flock_id)
+      )`);
+      await pool.query(`CREATE INDEX IF NOT EXISTS idx_research_analytics_created ON research_analytics(created_at)`);
+      await pool.query(`CREATE INDEX IF NOT EXISTS idx_research_analytics_stall ON research_analytics(stall_point)`);
+      console.log('Research analytics migrations complete');
+    } catch (analyticsErr) {
+      console.error('Research analytics migration error:', analyticsErr.message);
+    }
 
     // Keep demo stories alive — refresh expiration for seeded picsum stories
     await pool.query(
