@@ -81,7 +81,7 @@ async function fetchLiveBusyness(venueId) {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 30000);
     const response = await fetch(`https://besttime.app/api/v1/forecasts/live?${params}`, {
-      method: 'POST',
+      method: 'GET',
       signal: controller.signal,
     });
     clearTimeout(timeout);
