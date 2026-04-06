@@ -174,6 +174,16 @@ def add_baseline_features(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+def add_user_feedback_features(df: pd.DataFrame) -> pd.DataFrame:
+    """Add user feedback signals — crowd_level reports and prediction error."""
+    df['avg_user_crowd'] = df['avg_user_crowd'].fillna(0)
+    df['user_feedback_count'] = df['user_feedback_count'].fillna(0)
+    df['log_user_feedback_count'] = np.log1p(df['user_feedback_count'])
+    df['has_user_feedback'] = (df['user_feedback_count'] > 0).astype(int)
+    df['avg_prediction_error'] = df['avg_prediction_error'].fillna(0)
+    return df
+
+
 def add_event_features(df: pd.DataFrame) -> pd.DataFrame:
     """Add Ticketmaster event proximity features."""
     # Core event features — fill missing with 0
@@ -215,7 +225,8 @@ def get_feature_columns(df: pd.DataFrame) -> List[str]:
         'event_nearby', 'event_distance_km', 'event_size', 'event_hours_until',  # old sparse event cols
         'nearest_event_type',  # raw string (one-hot encoded as etype_*)
         'latitude', 'longitude', 'lat_bin', 'lng_bin',  # dropped to prevent geographic overfitting
-        'baseline_busyness',  # BestTime's own output — data leakage, always exclude
+        # baseline_busyness is Google popular_times — kept as a distillation input
+        'user_feedback_count',  # raw count — use log_user_feedback_count instead
     }
     feature_cols = [c for c in df.columns if c not in exclude]
     return sorted(feature_cols)
@@ -253,6 +264,7 @@ def main():
     train_df, venue_metadata = add_venue_features(train_df)
     train_df = add_weather_features(train_df)
     train_df = add_baseline_features(train_df)
+    train_df = add_user_feedback_features(train_df)
     train_df = add_event_features(train_df)
 
     # Feature engineering — holdout data (same transforms)
@@ -279,6 +291,7 @@ def main():
 
         holdout_df = add_weather_features(holdout_df)
         holdout_df = add_baseline_features(holdout_df)
+        holdout_df = add_user_feedback_features(holdout_df)
         holdout_df = add_event_features(holdout_df)
 
     # Get feature columns

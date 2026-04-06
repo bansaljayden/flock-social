@@ -73,6 +73,19 @@ async function collectRealtime() {
         continue;
       }
 
+      // Look up weekly baseline for this venue at current day/hour
+      let baseline = null;
+      try {
+        const { rows: baselineRows } = await pool.query(
+          `SELECT ROUND(AVG(busyness_pct)) AS avg
+           FROM ml_training_data
+           WHERE venue_id = $1 AND collection_mode = 'weekly'
+             AND day_of_week = $2 AND hour = $3 AND busyness_pct IS NOT NULL`,
+          [venue.id, local.dayOfWeek, local.hour]
+        );
+        baseline = baselineRows[0]?.avg ?? null;
+      } catch (_) {}
+
       // Fetch nearby event data (graceful — nulls if no API key or error)
       let eventData = { event_nearby: false, event_distance_km: null, event_size: null, event_type: null, event_hours_until: null };
       try {
@@ -88,8 +101,8 @@ async function collectRealtime() {
              venue_category, price_level, rating, review_count,
              temperature, humidity, wind_speed, weather_condition, is_raining,
              event_nearby, event_distance_km, event_size, event_type, event_hours_until,
-             busyness_pct)
-          VALUES ($1, 'realtime', $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22)`,
+             baseline_busyness, busyness_pct)
+          VALUES ($1, 'realtime', $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23)`,
           [
             venue.id,
             local.dayOfWeek,
@@ -112,6 +125,7 @@ async function collectRealtime() {
             eventData.event_size,
             eventData.event_type,
             eventData.event_hours_until,
+            baseline,
             Math.max(0, Math.min(100, busyness)),
           ]
         );
@@ -125,11 +139,11 @@ async function collectRealtime() {
   }
 
   console.log(`\n[ML:Realtime] Done. ${totalRows} rows inserted. ${skipped} venues skipped.`);
-  await pool.end();
 }
 
 async function run() {
   await collectRealtime();
+  await pool.end();
 }
 
 module.exports = { run };
