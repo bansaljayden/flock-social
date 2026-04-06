@@ -3,9 +3,25 @@
 // Splits into training set (10 cities) and holdout set (Miami, Tokyo, Barcelona)
 // ---------------------------------------------------------------------------
 
+require('dotenv').config({ path: require('path').join(__dirname, '..', '..', '..', '.env') });
+
 const fs = require('fs');
 const path = require('path');
-const pool = require('../../../config/database');
+const { Pool } = require('pg');
+
+if (!process.env.DATABASE_URL && process.env.PGHOST) {
+  const host = process.env.PGHOST;
+  const port = process.env.PGPORT || 5432;
+  const user = process.env.PGUSER || 'postgres';
+  const pass = process.env.PGPASSWORD || '';
+  const db = process.env.PGDATABASE || 'railway';
+  process.env.DATABASE_URL = `postgresql://${user}:${pass}@${host}:${port}/${db}`;
+}
+
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  ssl: { rejectUnauthorized: false },
+});
 
 const HOLDOUT_CITIES = ['miami', 'tokyo', 'barcelona'];
 
@@ -23,9 +39,21 @@ function cityQuery(city) {
         t.total_nearby_events, t.total_nearby_attendance, t.nearest_event_type,
         t.baseline_busyness, t.collection_mode,
         t.busyness_pct,
-        v.city, v.google_types, v.latitude, v.longitude
+        v.city, v.google_types, v.latitude, v.longitude,
+        -- User feedback aggregates per venue
+        COALESCE(fb.avg_user_crowd, 0) AS avg_user_crowd,
+        COALESCE(fb.user_feedback_count, 0) AS user_feedback_count,
+        COALESCE(fb.avg_prediction_error, 0) AS avg_prediction_error
       FROM ml_training_data t
       JOIN ml_venues v ON t.venue_id = v.id
+      LEFT JOIN (
+        SELECT venue_place_id,
+          AVG(crowd_level)::numeric(4,1) AS avg_user_crowd,
+          COUNT(*)::int AS user_feedback_count,
+          AVG(crowd_level - predicted_score)::numeric(5,2) AS avg_prediction_error
+        FROM venue_feedback
+        GROUP BY venue_place_id
+      ) fb ON fb.venue_place_id = v.google_place_id
       WHERE t.busyness_pct IS NOT NULL AND v.city = $1
       ORDER BY t.venue_id, t.day_of_week, t.hour
     `,
@@ -81,6 +109,9 @@ function rowToCsv(row) {
     types[2] || '',
     row.latitude,
     row.longitude,
+    row.avg_user_crowd,
+    row.user_feedback_count,
+    row.avg_prediction_error,
   ].map(escapeCsv).join(',');
 }
 
@@ -98,6 +129,7 @@ const HEADER = [
   'city',
   'google_type_1', 'google_type_2', 'google_type_3',
   'latitude', 'longitude',
+  'avg_user_crowd', 'user_feedback_count', 'avg_prediction_error',
 ].join(',');
 
 async function main() {

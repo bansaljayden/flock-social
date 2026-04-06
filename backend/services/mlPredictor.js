@@ -11,6 +11,9 @@ const MODEL_DIR = path.join(__dirname, '..', 'scripts', 'ml', 'models');
 const ONNX_PATH = path.join(MODEL_DIR, 'crowd_model.onnx');
 const META_PATH = path.join(MODEL_DIR, 'model_metadata.json');
 
+let pool = null;
+try { pool = require('../config/database'); } catch (_) {}
+
 let session = null;
 let metadata = null;
 let loadAttempted = false;
@@ -19,6 +22,10 @@ let useML = false;
 // Event cache: key = "lat,lng,hour" → { data, ts }
 const eventCache = new Map();
 const EVENT_CACHE_TTL = 60 * 60 * 1000; // 1 hour
+
+// User feedback cache: key = venue_place_id → { data, ts }
+const feedbackCache = new Map();
+const FEEDBACK_CACHE_TTL = 60 * 60 * 1000; // 1 hour
 
 // ---------------------------------------------------------------------------
 // Initialization
@@ -43,6 +50,40 @@ async function init() {
   } catch (err) {
     console.warn('[MLPredictor] Failed to load model:', err.message);
     return false;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// User Feedback Lookup
+// ---------------------------------------------------------------------------
+
+async function getUserFeedback(placeId) {
+  const noFeedback = { avgCrowd: 0, count: 0, avgError: 0 };
+  if (!pool || !placeId) return noFeedback;
+
+  const cached = feedbackCache.get(placeId);
+  if (cached && Date.now() - cached.ts < FEEDBACK_CACHE_TTL) return cached.data;
+
+  try {
+    const { rows } = await pool.query(
+      `SELECT
+        AVG(crowd_level)::numeric(4,1) AS avg_crowd,
+        COUNT(*)::int AS count,
+        AVG(crowd_level - predicted_score)::numeric(5,2) AS avg_error
+      FROM venue_feedback WHERE venue_place_id = $1`,
+      [placeId]
+    );
+    const r = rows[0];
+    const result = {
+      avgCrowd: parseFloat(r?.avg_crowd) || 0,
+      count: parseInt(r?.count) || 0,
+      avgError: parseFloat(r?.avg_error) || 0,
+    };
+    feedbackCache.set(placeId, { data: result, ts: Date.now() });
+    return result;
+  } catch (err) {
+    console.error('[MLPredictor] Feedback lookup failed:', err.message);
+    return noFeedback;
   }
 }
 
@@ -200,7 +241,7 @@ async function getNearbyEvents(lat, lng, timestamp) {
 // Feature Engineering (mirrors prepare_features.py)
 // ---------------------------------------------------------------------------
 
-function buildFeatureVector(venue, weather, timestamp, eventData) {
+function buildFeatureVector(venue, weather, timestamp, eventData, feedback) {
   const ts = timestamp ? new Date(timestamp) : new Date();
   const dayOfWeek = ts.getDay(); // 0=Sun
   const hour = ts.getHours();
@@ -306,6 +347,11 @@ function buildFeatureVector(venue, weather, timestamp, eventData) {
     etype_arts: nearestType === 'arts' ? 1 : 0,
     etype_family: nearestType === 'family' ? 1 : 0,
     etype_other: nearestType === 'other' ? 1 : 0,
+    // User feedback features
+    avg_user_crowd: feedback?.avgCrowd || 0,
+    log_user_feedback_count: Math.log((feedback?.count || 0) + 1),
+    has_user_feedback: (feedback?.count > 0) ? 1 : 0,
+    avg_prediction_error: feedback?.avgError || 0,
   };
 
   // Weather group one-hot
@@ -360,13 +406,17 @@ async function predictBusyness(venue, weather, timestamp) {
   }
 
   try {
-    // Fetch nearby events for event-aware prediction
+    // Fetch nearby events + user feedback in parallel
     const lat = venue.location?.latitude || venue.latitude || venue.lat || 0;
     const lng = venue.location?.longitude || venue.longitude || venue.lng || 0;
-    const eventData = await getNearbyEvents(lat, lng, timestamp);
+    const placeId = venue.place_id || venue.google_place_id || null;
+    const [eventData, feedback] = await Promise.all([
+      getNearbyEvents(lat, lng, timestamp),
+      getUserFeedback(placeId),
+    ]);
 
     const ort = require('onnxruntime-node');
-    const vector = buildFeatureVector(venue, weather, timestamp, eventData);
+    const vector = buildFeatureVector(venue, weather, timestamp, eventData, feedback);
     const inputName = metadata.onnx_input_name || 'input';
     const tensor = new ort.Tensor('float32', vector, [1, vector.length]);
     const results = await session.run({ [inputName]: tensor });
