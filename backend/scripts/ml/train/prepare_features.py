@@ -165,8 +165,13 @@ def add_baseline_features(df: pd.DataFrame) -> pd.DataFrame:
     # Baseline busyness — the venue's typical busyness at this day/hour
     df['baseline_busyness'] = df['baseline_busyness'].fillna(0)
 
-    # Deviation potential — model learns how much actual differs from baseline
-    # Don't compute actual deviation (that would leak the label), just give the baseline
+    # Category-level baseline — average busyness for this venue type at this day/hour
+    # Works for ANY venue, even unseen ones, since we only need the category + time
+    cat_baseline = df.groupby(['venue_category', 'day_of_week', 'hour'])['busyness_pct'].transform('mean')
+    df['category_baseline'] = cat_baseline.round(1)
+
+    # Flag whether we have a venue-specific baseline or are using category fallback
+    df['has_venue_baseline'] = (df['baseline_busyness'] > 0).astype(int)
 
     # Data freshness — realtime observations are more reliable
     df['is_realtime'] = df['is_realtime'].fillna(0).astype(int)
@@ -352,6 +357,14 @@ def main():
         with open(SCRIPT_DIR / 'features_holdout.pkl', 'wb') as f:
             pickle.dump(holdout_data, f)
 
+    # Compute category baseline lookup table (category × day × hour → avg busyness)
+    cat_baselines = train_df.groupby(['venue_category', 'day_of_week', 'hour'])['busyness_pct'].mean()
+    cat_baseline_dict = {}
+    for (cat, dow, hour), val in cat_baselines.items():
+        key = f'{cat}_{int(dow)}_{int(hour)}'
+        cat_baseline_dict[key] = round(float(val), 1)
+    logger.info(f'Category baseline lookup: {len(cat_baseline_dict)} entries')
+
     # Save metadata
     MODELS_DIR.mkdir(parents=True, exist_ok=True)
     metadata = {
@@ -359,6 +372,7 @@ def main():
         'feature_count': len(feature_cols),
         **venue_metadata,
         'weather_code_groups': {k: str(v) for k, v in WEATHER_GROUPS.items()},
+        'category_baselines': cat_baseline_dict,
         'training_rows': len(train_df),
         'holdout_rows': len(holdout_df) if holdout_df is not None else 0,
     }
