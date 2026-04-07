@@ -97,6 +97,20 @@ CREATE TABLE IF NOT EXISTS ml_events (
 CREATE INDEX IF NOT EXISTS idx_ml_events_city ON ml_events(city);
 CREATE INDEX IF NOT EXISTS idx_ml_events_date ON ml_events(event_date);
 
+-- Precomputed venue baselines for ML inference (no live API calls needed)
+-- 168 rows per venue (7 days x 24 hours)
+CREATE TABLE IF NOT EXISTS ml_venue_baselines (
+  google_place_id VARCHAR(255) NOT NULL,
+  day_of_week SMALLINT NOT NULL CHECK (day_of_week BETWEEN 0 AND 6),
+  hour SMALLINT NOT NULL CHECK (hour BETWEEN 0 AND 23),
+  baseline SMALLINT NOT NULL DEFAULT 0,
+  source VARCHAR(20) NOT NULL DEFAULT 'collected',
+  updated_at TIMESTAMPTZ DEFAULT NOW(),
+  PRIMARY KEY (google_place_id, day_of_week, hour)
+);
+
+CREATE INDEX IF NOT EXISTS idx_ml_baselines_place ON ml_venue_baselines(google_place_id);
+
 -- Event enrichment columns on ml_training_data
 ALTER TABLE ml_training_data ADD COLUMN IF NOT EXISTS has_nearby_event BOOLEAN DEFAULT false;
 ALTER TABLE ml_training_data ADD COLUMN IF NOT EXISTS nearest_event_distance_km DECIMAL(5,2);

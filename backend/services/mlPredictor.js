@@ -23,6 +23,10 @@ let useML = false;
 const eventCache = new Map();
 const EVENT_CACHE_TTL = 60 * 60 * 1000; // 1 hour
 
+// Baseline cache: key = "placeId_dow_hour" → baseline value
+const baselineCache = new Map();
+const BASELINE_CACHE_TTL = 24 * 60 * 60 * 1000; // 24 hours (static data)
+
 // User feedback cache: key = venue_place_id → { data, ts }
 const feedbackCache = new Map();
 const FEEDBACK_CACHE_TTL = 60 * 60 * 1000; // 1 hour
@@ -50,6 +54,56 @@ async function init() {
   } catch (err) {
     console.warn('[MLPredictor] Failed to load model:', err.message);
     return false;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Baseline Lookup (from precomputed ml_venue_baselines table)
+// ---------------------------------------------------------------------------
+
+async function getBaseline(placeId, dayOfWeek, hour) {
+  if (!pool || !placeId) return 0;
+
+  const cacheKey = `${placeId}_${dayOfWeek}_${hour}`;
+  const cached = baselineCache.get(cacheKey);
+  if (cached && Date.now() - cached.ts < BASELINE_CACHE_TTL) return cached.data;
+
+  try {
+    const { rows } = await pool.query(
+      `SELECT baseline FROM ml_venue_baselines
+       WHERE google_place_id = $1 AND day_of_week = $2 AND hour = $3`,
+      [placeId, dayOfWeek, hour]
+    );
+    const val = rows.length > 0 ? parseInt(rows[0].baseline) : 0;
+    baselineCache.set(cacheKey, { data: val, ts: Date.now() });
+    return val;
+  } catch (err) {
+    console.error('[MLPredictor] Baseline lookup failed:', err.message);
+    return 0;
+  }
+}
+
+// Store Google popular_times as baselines on first encounter
+async function storeGoogleBaselines(placeId, popularTimes) {
+  if (!pool || !placeId || !popularTimes || !Array.isArray(popularTimes)) return;
+  try {
+    for (const day of popularTimes) {
+      const dow = day.day != null ? day.day : null;
+      const hours = day.data || day.hours || [];
+      if (dow == null || !hours.length) continue;
+      for (let h = 0; h < hours.length && h < 24; h++) {
+        const val = hours[h];
+        if (val == null) continue;
+        await pool.query(
+          `INSERT INTO ml_venue_baselines (google_place_id, day_of_week, hour, baseline, source)
+           VALUES ($1, $2, $3, $4, 'google')
+           ON CONFLICT (google_place_id, day_of_week, hour) DO NOTHING`,
+          [placeId, dow, h, Math.max(0, Math.min(100, Math.round(val)))]
+        );
+      }
+    }
+  } catch (err) {
+    console.error('[MLPredictor] Store Google baselines failed:', err.message);
   }
 }
 
@@ -241,7 +295,7 @@ async function getNearbyEvents(lat, lng, timestamp) {
 // Feature Engineering (mirrors prepare_features.py)
 // ---------------------------------------------------------------------------
 
-function buildFeatureVector(venue, weather, timestamp, eventData, feedback) {
+function buildFeatureVector(venue, weather, timestamp, eventData, feedback, baseline) {
   const ts = timestamp ? new Date(timestamp) : new Date();
   const dayOfWeek = ts.getDay(); // 0=Sun
   const hour = ts.getHours();
@@ -327,8 +381,10 @@ function buildFeatureVector(venue, weather, timestamp, eventData, feedback) {
     rain_x_weekend: isRaining * isWeekend,
     rain_x_dinner: isRaining * isDinner,
     cold_outdoor: (temp < 5 && weatherGroup === 'clear') ? 1 : 0,
-    // Baseline + freshness
-    baseline_busyness: venue.baseline_busyness || venue.popular_times_avg || 0,
+    // Baseline + freshness — venue-specific if available, category fallback otherwise
+    baseline_busyness: baseline || 0,
+    category_baseline: (metadata.category_baselines || {})[`${venueCategory}_${dayOfWeek}_${hour}`] || 0,
+    has_venue_baseline: baseline > 0 ? 1 : 0,
     is_realtime: 1, // live predictions are always "realtime" quality
     // Event features
     has_nearby_event: hasEvent,
@@ -406,17 +462,24 @@ async function predictBusyness(venue, weather, timestamp) {
   }
 
   try {
-    // Fetch nearby events + user feedback in parallel
+    // Fetch events, feedback, and baseline in parallel — all from local DB/cache
     const lat = venue.location?.latitude || venue.latitude || venue.lat || 0;
     const lng = venue.location?.longitude || venue.longitude || venue.lng || 0;
     const placeId = venue.place_id || venue.google_place_id || null;
-    const [eventData, feedback] = await Promise.all([
+    const ts = timestamp ? new Date(timestamp) : new Date();
+    const [eventData, feedback, baseline] = await Promise.all([
       getNearbyEvents(lat, lng, timestamp),
       getUserFeedback(placeId),
+      getBaseline(placeId, ts.getDay(), ts.getHours()),
     ]);
 
     const ort = require('onnxruntime-node');
-    const vector = buildFeatureVector(venue, weather, timestamp, eventData, feedback);
+    const vector = buildFeatureVector(venue, weather, timestamp, eventData, feedback, baseline);
+
+    // If venue has Google popular_times and no baseline stored yet, save it
+    if (baseline === 0 && venue.popular_times) {
+      storeGoogleBaselines(placeId, venue.popular_times).catch(() => {});
+    }
     const inputName = metadata.onnx_input_name || 'input';
     const tensor = new ort.Tensor('float32', vector, [1, vector.length]);
     const results = await session.run({ [inputName]: tensor });
@@ -426,11 +489,8 @@ async function predictBusyness(venue, weather, timestamp) {
     score = Math.max(0, Math.min(100, Math.round(score)));
     const label = getLabel(score);
 
-    // Confidence
-    let confidence = 70;
-    if (weather && (weather.temp || weather.temperature)) confidence += 15;
-    if (venue.rating && venue.user_ratings_total) confidence += 15;
-    confidence = Math.min(95, confidence);
+    // Real accuracy from training metrics (within_15 = % of predictions within 15 pts)
+    const confidence = Math.round(metadata.training_metrics?.within_15 || 58);
 
     const dataSources = ['ml_model', weather ? 'weather' : null, 'venue_data'];
     if (eventData.hasEvent) dataSources.push('ticketmaster_events');
@@ -521,6 +581,7 @@ module.exports = {
   findPeakTime,
   findQuieterAlternatives,
   buildCalibrationAdjustment,
+  storeGoogleBaselines,
   getLabel,
   init,
 };
