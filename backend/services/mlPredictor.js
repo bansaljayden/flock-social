@@ -384,6 +384,12 @@ function buildFeatureVector(venue, weather, timestamp, eventData, feedback, base
     // Baseline + freshness — venue-specific if available, category fallback otherwise
     baseline_busyness: baseline || 0,
     category_baseline: (metadata.category_baselines || {})[`${venueCategory}_${dayOfWeek}_${hour}`] || 0,
+    refined_category_baseline: (() => {
+      const pt = priceLevel >= 2 ? 1 : 0;
+      const pop = rating >= 4.3 ? 1 : 0;
+      return (metadata.refined_baselines || {})[`${venueCategory}_${pt}_${pop}_${dayOfWeek}_${hour}`]
+        || (metadata.category_baselines || {})[`${venueCategory}_${dayOfWeek}_${hour}`] || 0;
+    })(),
     has_venue_baseline: baseline > 0 ? 1 : 0,
     is_realtime: 1, // live predictions are always "realtime" quality
     // Event features

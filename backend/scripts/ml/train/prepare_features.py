@@ -166,9 +166,18 @@ def add_baseline_features(df: pd.DataFrame) -> pd.DataFrame:
     df['baseline_busyness'] = df['baseline_busyness'].fillna(0)
 
     # Category-level baseline — average busyness for this venue type at this day/hour
-    # Works for ANY venue, even unseen ones, since we only need the category + time
     cat_baseline = df.groupby(['venue_category', 'day_of_week', 'hour'])['busyness_pct'].transform('mean')
     df['category_baseline'] = cat_baseline.round(1)
+
+    # Refined category baseline — sliced by price tier and popularity
+    # Splits venues into budget ($0-1) vs premium ($2+) and popular (rating>=4.3) vs average
+    df['_price_tier'] = (df['price_level'].fillna(2) >= 2).astype(str)
+    df['_popularity'] = (df['rating'].fillna(4.0) >= 4.3).astype(str)
+    refined_baseline = df.groupby(['venue_category', '_price_tier', '_popularity', 'day_of_week', 'hour'])['busyness_pct'].transform('mean')
+    df['refined_category_baseline'] = refined_baseline.round(1)
+    # Fill gaps where a specific slice has too few samples — fall back to broad category
+    df['refined_category_baseline'] = df['refined_category_baseline'].fillna(df['category_baseline'])
+    df.drop(columns=['_price_tier', '_popularity'], inplace=True)
 
     # Flag whether we have a venue-specific baseline or are using category fallback
     df['has_venue_baseline'] = (df['baseline_busyness'] > 0).astype(int)
@@ -365,6 +374,17 @@ def main():
         cat_baseline_dict[key] = round(float(val), 1)
     logger.info(f'Category baseline lookup: {len(cat_baseline_dict)} entries')
 
+    # Refined baseline lookup (category × price_tier × popularity × day × hour)
+    train_df['_pt'] = (train_df['price_level'].fillna(2) >= 2).astype(int)
+    train_df['_pop'] = (train_df['rating'].fillna(4.0) >= 4.3).astype(int)
+    ref_baselines = train_df.groupby(['venue_category', '_pt', '_pop', 'day_of_week', 'hour'])['busyness_pct'].mean()
+    ref_baseline_dict = {}
+    for (cat, pt, pop, dow, hour), val in ref_baselines.items():
+        key = f'{cat}_{int(pt)}_{int(pop)}_{int(dow)}_{int(hour)}'
+        ref_baseline_dict[key] = round(float(val), 1)
+    train_df.drop(columns=['_pt', '_pop'], inplace=True)
+    logger.info(f'Refined baseline lookup: {len(ref_baseline_dict)} entries')
+
     # Save metadata
     MODELS_DIR.mkdir(parents=True, exist_ok=True)
     metadata = {
@@ -373,6 +393,7 @@ def main():
         **venue_metadata,
         'weather_code_groups': {k: str(v) for k, v in WEATHER_GROUPS.items()},
         'category_baselines': cat_baseline_dict,
+        'refined_baselines': ref_baseline_dict,
         'training_rows': len(train_df),
         'holdout_rows': len(holdout_df) if holdout_df is not None else 0,
     }
