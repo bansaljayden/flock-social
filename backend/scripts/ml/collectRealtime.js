@@ -143,6 +143,24 @@ async function collectRealtime() {
 
 async function run() {
   await collectRealtime();
+  // Refresh baselines with latest realtime data
+  try {
+    console.log('[ML:Realtime] Refreshing venue baselines...');
+    await pool.query(`
+      INSERT INTO ml_venue_baselines (google_place_id, day_of_week, hour, baseline, source, updated_at)
+      SELECT v.google_place_id, t.day_of_week, t.hour,
+        ROUND(AVG(t.busyness_pct))::smallint, 'collected', NOW()
+      FROM ml_training_data t
+      JOIN ml_venues v ON t.venue_id = v.id
+      WHERE t.busyness_pct IS NOT NULL
+      GROUP BY v.google_place_id, t.day_of_week, t.hour
+      ON CONFLICT (google_place_id, day_of_week, hour)
+      DO UPDATE SET baseline = EXCLUDED.baseline, updated_at = NOW()
+    `);
+    console.log('[ML:Realtime] Baselines refreshed');
+  } catch (err) {
+    console.error('[ML:Realtime] Baseline refresh failed:', err.message);
+  }
   await pool.end();
 }
 
