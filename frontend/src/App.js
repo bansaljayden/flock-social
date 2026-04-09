@@ -510,19 +510,22 @@ const GoogleMapView = React.memo(({ venues, filterCategory, userLocation, active
       heatmapRef.current = new window.google.maps.visualization.HeatmapLayer({
         data: heatData,
         map: mapInstanceRef.current,
-        radius: 50,
-        opacity: 0.8,
+        radius: 80,
+        opacity: 0.85,
         dissipating: true,
-        maxIntensity: 1,
+        maxIntensity: 0.5,
         gradient: [
           'rgba(0, 0, 0, 0)',
-          'rgba(10, 120, 50, 0.55)',
-          'rgba(14, 140, 58, 0.72)',
-          'rgba(60, 155, 30, 0.8)',
-          'rgba(200, 140, 0, 0.84)',
-          'rgba(220, 110, 0, 0.88)',
-          'rgba(200, 45, 45, 0.92)',
-          'rgba(180, 20, 20, 0.96)',
+          'rgba(34, 197, 94, 0.6)',
+          'rgba(34, 197, 94, 0.7)',
+          'rgba(160, 220, 40, 0.75)',
+          'rgba(250, 204, 21, 0.8)',
+          'rgba(251, 191, 36, 0.82)',
+          'rgba(245, 158, 11, 0.85)',
+          'rgba(249, 115, 22, 0.88)',
+          'rgba(239, 68, 68, 0.9)',
+          'rgba(220, 38, 38, 0.94)',
+          'rgba(185, 28, 28, 0.97)',
         ],
       });
     }
@@ -12409,4 +12412,14 @@ const FlockApp = () => {
   return <FlockAppInner authUser={authUser} onLogout={() => { unregisterAllTokens().catch(() => {}); disconnectSocket(); logout(); setAuthUser(null); setAuthScreen('login'); }} />;
 };
 
-export default FlockApp;
+// Wrap with Google OAuth provider
+const { GoogleOAuthProvider } = require('@react-oauth/google');
+const GOOGLE_CLIENT_ID = process.env.REACT_APP_GOOGLE_CLIENT_ID || '';
+
+const FlockAppWithProviders = () => (
+  <GoogleOAuthProvider clientId={GOOGLE_CLIENT_ID}>
+    <FlockApp />
+  </GoogleOAuthProvider>
+);
+
+export default FlockAppWithProviders;
