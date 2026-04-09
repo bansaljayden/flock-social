@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
-import { signup } from '../../services/api';
+import { signup, googleLogin } from '../../services/api';
+import { GoogleLogin } from '@react-oauth/google';
 import { Meteors } from '../ui/meteors';
 
 const colors = {
@@ -185,7 +186,36 @@ const SignupScreen = ({ onSignupSuccess, onSwitchToLogin }) => {
             </button>
           </form>
 
-          <div style={{ textAlign: 'center', marginTop: '24px', paddingTop: '20px', borderTop: '1px solid rgba(148,163,184,0.08)', fontSize: '14px', color: 'rgba(148,163,184,0.6)' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '12px', margin: '20px 0' }}>
+            <div style={{ flex: 1, height: '1px', backgroundColor: 'rgba(148,163,184,0.12)' }} />
+            <span style={{ fontSize: '12px', color: 'rgba(148,163,184,0.4)', fontWeight: '500' }}>or</span>
+            <div style={{ flex: 1, height: '1px', backgroundColor: 'rgba(148,163,184,0.12)' }} />
+          </div>
+
+          <div style={{ display: 'flex', justifyContent: 'center' }}>
+            <GoogleLogin
+              onSuccess={async (response) => {
+                setError('');
+                setLoading(true);
+                try {
+                  const data = await googleLogin(response.credential);
+                  onSignupSuccess(data.user);
+                } catch (err) {
+                  setError(err.message || 'Google sign-in failed');
+                } finally {
+                  setLoading(false);
+                }
+              }}
+              onError={() => setError('Google sign-up failed')}
+              theme="filled_black"
+              shape="pill"
+              size="large"
+              width="332"
+              text="continue_with"
+            />
+          </div>
+
+          <div style={{ textAlign: 'center', marginTop: '20px', paddingTop: '20px', borderTop: '1px solid rgba(148,163,184,0.08)', fontSize: '14px', color: 'rgba(148,163,184,0.6)' }}>
             Already have an account?{' '}
             <button onClick={onSwitchToLogin} style={{ background: 'none', border: 'none', color: colors.cream, fontWeight: '600', cursor: 'pointer', fontSize: '14px', padding: 0 }}>Sign In</button>
           </div>

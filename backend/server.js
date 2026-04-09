@@ -416,6 +416,16 @@ async function runMigrations() {
       console.error('Research analytics migration error:', analyticsErr.message);
     }
 
+    // OAuth columns
+    try {
+      await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS oauth_provider VARCHAR(20)`);
+      await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS oauth_id VARCHAR(255)`);
+      await pool.query(`ALTER TABLE users ALTER COLUMN password DROP NOT NULL`);
+      console.log('OAuth migrations complete');
+    } catch (oauthErr) {
+      console.error('OAuth migration error:', oauthErr.message);
+    }
+
     // Keep demo stories alive — refresh expiration for seeded picsum stories
     await pool.query(
       `UPDATE stories SET expires_at = NOW() + INTERVAL '24 hours'

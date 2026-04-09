@@ -56,6 +56,15 @@ export async function login(email, password) {
   return data;
 }
 
+export async function googleLogin(credential) {
+  const data = await request('/api/auth/google', {
+    method: 'POST',
+    body: JSON.stringify({ credential }),
+  });
+  setToken(data.token);
+  return data;
+}
+
 export async function getCurrentUser() {
   return request('/api/auth/me');
 }
