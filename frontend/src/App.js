@@ -2280,6 +2280,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
     if (wasDrag) {
       // Snap to nearest corner based on pointer position
       const container = d.el.parentElement;
+      if (!container) return;
       const rect = container.getBoundingClientRect();
       const cx = e.clientX - rect.left;
       const cy = e.clientY - rect.top;
