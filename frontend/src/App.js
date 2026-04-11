@@ -11,7 +11,7 @@ import {
   formatCurrency,
   calculateProfitMargin
 } from './lib/finance';
-import { getCurrentUser, logout, isLoggedIn, getFlocks, getFlock, createFlock as apiCreateFlock, getMessages, sendMessage as apiSendMessage, updateProfile, searchVenues, searchUsers, getSuggestedUsers, sendFriendRequest, getVenueDetails, leaveFlock as apiLeaveFlock, getDMConversations, getDMs, getDmVenueVotes, getDmPinnedVenue, BASE_URL, inviteToFlock, acceptFlockInvite, declineFlockInvite, getFriends, acceptFriendRequest, declineFriendRequest, getPendingRequests, getOutgoingRequests, getFriendSuggestions, addFriendByCode, findFriendsByPhone, removeFriend, getTrustedContacts, addTrustedContact, updateTrustedContact, deleteTrustedContact, sendEmergencyAlert, shareLocationWithContacts, getUserStats, getCrowdPrediction, getCrowdBatch, getCrowdAlternatives, getWeather, submitVenueFeedback, uploadProfileImage, saveProfileImageUrl, submitBudget, getBudgetStatus, lockBudget, sendBudgetReminder, createBillSplit, getBillSplit, settleShare, ghostCommit, updatePaymentMethods, getPaymentLinks, getFeaturedEvents, searchEvents, getEventDetails, sendAiChat, getActivityFeed, getWeatherForecast, submitAttendance, getAdminAnalytics } from './services/api';
+import { getCurrentUser, logout, isLoggedIn, getFlocks, getFlock, createFlock as apiCreateFlock, getMessages, sendMessage as apiSendMessage, updateProfile, searchVenues, searchUsers, getSuggestedUsers, sendFriendRequest, getVenueDetails, leaveFlock as apiLeaveFlock, getDMConversations, getDMs, getDmVenueVotes, getDmPinnedVenue, BASE_URL, inviteToFlock, acceptFlockInvite, declineFlockInvite, getFriends, acceptFriendRequest, declineFriendRequest, getPendingRequests, getOutgoingRequests, getFriendSuggestions, addFriendByCode, findFriendsByPhone, removeFriend, getTrustedContacts, addTrustedContact, updateTrustedContact, deleteTrustedContact, sendEmergencyAlert, shareLocationWithContacts, getUserStats, getCrowdPrediction, getCrowdBatch, getCrowdAlternatives, getWeather, submitVenueFeedback, uploadProfileImage, saveProfileImageUrl, submitBudget, getBudgetStatus, lockBudget, sendBudgetReminder, createBillSplit, getBillSplit, settleShare, ghostCommit, updatePaymentMethods, getPaymentLinks, getFeaturedEvents, searchEvents, getEventDetails, sendAiChat, getActivityFeed, getWeatherForecast, submitAttendance, getAdminAnalytics, createVenueProfile, getVenueProfile } from './services/api';
 import { connectSocket, disconnectSocket, getSocket, joinFlock, leaveFlock, sendMessage as socketSendMessage, sendImageMessage as socketSendImage, startTyping, stopTyping, onNewMessage, onUserTyping, onUserStoppedTyping, emitLocation, stopSharingLocation as socketStopSharing, onLocationUpdate, onMemberStoppedSharing, socketSendDm, onNewDm, dmStartTyping, dmStopTyping, onDmUserTyping, onDmUserStoppedTyping, dmReact, dmRemoveReact, onDmReactionAdded, onDmReactionRemoved, dmVoteVenue, onDmNewVote, dmShareLocation, dmStopSharingLocation, onDmLocationUpdate, onDmMemberStoppedSharing, dmPinVenue, onDmVenuePinned, emitFlockInvite, emitFlockInviteResponse, onFlockInviteReceived, onFlockInviteResponded, emitFriendRequest, emitFriendResponse, onFriendRequestReceived, onFriendRequestResponded, onBudgetUpdated, onBudgetLocked, onBudgetReminder, onBillCreated, onShareSettled, onBillFullySettled, onGhostCommitted, onNewVote, onVenueSelected, onFlockReactionAdded, onFlockReactionRemoved, onFlockDeleted, onFlockUpdated, onFlockMemberLeft } from './services/socket';
 import { requestNotificationPermission, onForegroundMessage } from './services/firebase';
 import { unregisterAllTokens } from './services/api';
@@ -19,6 +19,7 @@ import { QRCodeSVG } from 'qrcode.react';
 import { Html5Qrcode } from 'html5-qrcode';
 import LoginScreen from './components/auth/LoginScreen';
 import SignupScreen from './components/auth/SignupScreen';
+import VenueLoginScreen from './components/auth/VenueLoginScreen';
 import { MarkerClusterer } from '@googlemaps/markerclusterer';
 import { motion, AnimatePresence } from 'framer-motion';
 import { SplineScene } from './components/ui/spline-scene';
@@ -1234,7 +1235,7 @@ function getGroupAdmission(crowdScore, partySize, venue) {
   return { text: 'Reservation needed', color: '#EF4444', icon: 'alert' };
 }
 
-const FlockAppInner = ({ authUser, onLogout }) => {
+const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   // Theme — shadows the outer static colors/styles with reactive versions
   const { toggleTheme, isDark, themeMode, isNightModeActive, setAutoMode } = useTheme();
   // eslint-disable-next-line no-unused-vars
@@ -1269,6 +1270,24 @@ const FlockAppInner = ({ authUser, onLogout }) => {
   // onboardingName removed — name comes from signup
   const [onboardingVibes, setOnboardingVibes] = useState([]);
   const [onboardingAnimating, setOnboardingAnimating] = useState(false);
+
+  // Venue onboarding
+  const [showVenueOnboarding, setShowVenueOnboarding] = useState(false);
+  const [venueOnboardingStep, setVenueOnboardingStep] = useState(0);
+  const [venueOnboardingData, setVenueOnboardingData] = useState({ businessName: '', category: '', location: '', description: '', goals: [] });
+  const hasCompletedVenueOnboarding = localStorage.getItem('flockVenueOnboardingComplete') === 'true';
+
+  // If user came from venue login, always force venue mode
+  React.useEffect(() => {
+    if (venueLoginFlag) {
+      // Clear any stale state
+      localStorage.removeItem('flockVenueOnboardingComplete');
+      setUserMode('venue');
+      setShowModeSelection(false);
+      setShowVenueOnboarding(true);
+      localStorage.setItem('flockUserMode', 'venue');
+    }
+  }, [venueLoginFlag]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Navigation
   const [currentTab, setCurrentTab] = useState('home');
@@ -3397,10 +3416,10 @@ const FlockAppInner = ({ authUser, onLogout }) => {
     return icons[id] || null;
   };
 
-  // Bottom Navigation (Regular users only - hidden in admin/venue modes)
+  // Bottom Navigation — hidden only when actually on venue/admin dashboard screens
   const BottomNav = () => {
-    // Hide bottom nav for admin and venue modes
-    if (userMode === 'admin' || userMode === 'venue') return null;
+    if (currentScreen === 'venueDashboard' || currentScreen === 'adminRevenue') return null;
+    if (showVenueOnboarding || showModeSelection) return null;
 
     const handleTabClick = (tabId) => {
       setActiveTabAnimation(tabId);
@@ -9339,6 +9358,13 @@ const FlockAppInner = ({ authUser, onLogout }) => {
   const VenueDashboard = () => {
     // venueTab state is now at App level to persist across re-renders
     const [showUpgradeModal, setShowUpgradeModal] = useState(false);
+    const [venueProfile, setVenueProfile] = useState(null);
+    const [showMockData, setShowMockData] = useState(false);
+
+    // Load venue profile from backend
+    React.useEffect(() => {
+      getVenueProfile().then(p => setVenueProfile(p)).catch(() => {});
+    }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
     // Promotion state
     const [promotions, setPromotions] = useState([
@@ -9446,11 +9472,8 @@ const FlockAppInner = ({ authUser, onLogout }) => {
       setVenueEventsList(prev => prev.filter(e => e.id !== id));
          };
 
-    // Mock venue data
-    const venueData = {
-      name: "The Blue Heron Bar",
-      logo: null,
-      tier: venueTier,
+    // Venue data — real profile + optional mock analytics
+    const mockAnalytics = {
       todayCheckins: 47,
       weekTraffic: 312,
       crowdForecast: 78,
@@ -9466,6 +9489,25 @@ const FlockAppInner = ({ authUser, onLogout }) => {
       topInterests: ['Live Music', 'Cocktails', 'Sports'],
       repeatRate: 34,
       demographics: { '21-25': 35, '26-30': 40, '31-35': 15, '36+': 10 },
+    };
+    const emptyAnalytics = {
+      todayCheckins: 0,
+      weekTraffic: 0,
+      crowdForecast: 0,
+      peakHours: [
+        { hour: '6pm', value: 0 }, { hour: '7pm', value: 0 }, { hour: '8pm', value: 0 },
+        { hour: '9pm', value: 0 }, { hour: '10pm', value: 0 }, { hour: '11pm', value: 0 }, { hour: '12am', value: 0 },
+      ],
+      topInterests: [],
+      repeatRate: 0,
+      demographics: { '21-25': 0, '26-30': 0, '31-35': 0, '36+': 0 },
+    };
+    const analytics = showMockData ? mockAnalytics : emptyAnalytics;
+    const venueData = {
+      name: venueProfile?.business_name || authUser?.name || 'Your Venue',
+      logo: null,
+      tier: venueTier,
+      ...analytics,
     };
 
     const tierBadge = {
@@ -9503,11 +9545,14 @@ const FlockAppInner = ({ authUser, onLogout }) => {
             <div style={{ width: '48px', height: '48px', borderRadius: '12px', backgroundColor: 'rgba(255,255,255,0.2)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
               {Icons.home('white', 24)}
             </div>
-            <div>
+            <div style={{ flex: 1 }}>
               <h1 style={{ fontSize: '18px', fontWeight: '900', color: 'white', margin: 0 }}>Welcome, {venueData.name}</h1>
-              <p style={{ fontSize: '10px', color: 'rgba(255,255,255,0.7)', margin: 0 }}>Venue Dashboard</p>
+              <p style={{ fontSize: '10px', color: 'rgba(255,255,255,0.7)', margin: 0 }}>{venueProfile?.category || 'Venue Dashboard'}{venueProfile?.location ? ` · ${venueProfile.location}` : ''}</p>
             </div>
           </div>
+          <button onClick={() => setShowMockData(!showMockData)} style={{ marginTop: '10px', padding: '6px 12px', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.2)', backgroundColor: showMockData ? 'rgba(20,184,166,0.3)' : 'rgba(255,255,255,0.1)', color: 'white', fontSize: '10px', fontWeight: '600', cursor: 'pointer', width: '100%' }}>
+            {showMockData ? 'Showing Mock Data' : 'Load Mock Data'}
+          </button>
         </div>
 
         {/* Tab Navigation */}
@@ -10801,6 +10846,198 @@ const FlockAppInner = ({ authUser, onLogout }) => {
     }, 300);
   };
 
+  // VENUE ONBOARDING SCREEN
+  const venueCategories = ['Bar / Nightclub', 'Restaurant', 'Cafe / Coffee', 'Lounge', 'Rooftop', 'Brewery / Winery', 'Event Space', 'Other'];
+  const venueGoals = ['Increase foot traffic', 'Fill slow nights', 'Reach Gen Z audience', 'Promote events', 'Track crowd analytics', 'Offer deals & promos'];
+
+  // eslint-disable-next-line no-unused-vars
+  const VenueNameStep = () => {
+    const [query, setQuery] = useState(venueOnboardingData.businessName);
+    const [suggestions, setSuggestions] = useState([]);
+    const [showSuggestions, setShowSuggestions] = useState(false);
+    const debounceRef = React.useRef(null);
+
+    const handleChange = (val) => {
+      setQuery(val);
+      setVenueOnboardingData(d => ({ ...d, businessName: val }));
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+      if (val.length < 2) { setSuggestions([]); setShowSuggestions(false); return; }
+      debounceRef.current = setTimeout(async () => {
+        try {
+          const data = await searchVenues(val);
+          setSuggestions((data.venues || []).slice(0, 5));
+          setShowSuggestions(true);
+        } catch (e) { /* ignore */ }
+      }, 300);
+    };
+
+    const pickVenue = (v) => {
+      const cat = (v.types || [])[0]?.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()) || '';
+      const categoryMap = { 'Bar': 'Bar / Nightclub', 'Night Club': 'Bar / Nightclub', 'Restaurant': 'Restaurant', 'Cafe': 'Cafe / Coffee', 'Brewery': 'Brewery / Winery', 'Winery': 'Brewery / Winery', 'Lodging': 'Lounge' };
+      const matchedCat = Object.entries(categoryMap).find(([k]) => cat.toLowerCase().includes(k.toLowerCase()));
+      setVenueOnboardingData(d => ({
+        ...d,
+        businessName: v.name,
+        location: v.formatted_address || v.vicinity || d.location,
+        category: matchedCat ? matchedCat[1] : d.category,
+        googlePlaceId: v.place_id,
+      }));
+      setQuery(v.name);
+      setShowSuggestions(false);
+      setSuggestions([]);
+    };
+
+    return (
+      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center', padding: '24px' }}>
+        <h2 style={{ fontSize: '20px', fontWeight: '800', color: '#f0ead8', margin: '0 0 6px' }}>What's your venue called?</h2>
+        <p style={{ fontSize: '13px', color: 'rgba(148,163,184,0.6)', margin: '0 0 24px' }}>Search for your venue or type the name.</p>
+        <div style={{ position: 'relative' }}>
+          <input value={query} onChange={(e) => handleChange(e.target.value)}
+            onFocus={() => suggestions.length > 0 && setShowSuggestions(true)}
+            placeholder="e.g. The Blue Heron Bar"
+            style={{ width: '100%', padding: '14px 16px', borderRadius: '12px', border: '1.5px solid rgba(148,163,184,0.15)', fontSize: '16px', fontWeight: '500', outline: 'none', boxSizing: 'border-box', backgroundColor: 'rgba(255,255,255,0.06)', color: 'white' }} autoFocus />
+          {showSuggestions && suggestions.length > 0 && (
+            <div style={{ position: 'absolute', top: '100%', left: 0, right: 0, marginTop: '4px', borderRadius: '12px', overflow: 'hidden', border: '1px solid rgba(148,163,184,0.15)', backgroundColor: 'rgba(15,23,42,0.95)', backdropFilter: 'blur(12px)', zIndex: 10 }}>
+              {suggestions.map((v, i) => (
+                <button key={v.place_id || i} onClick={() => pickVenue(v)} style={{
+                  width: '100%', padding: '12px 16px', border: 'none', borderBottom: i < suggestions.length - 1 ? '1px solid rgba(148,163,184,0.08)' : 'none',
+                  background: 'transparent', cursor: 'pointer', textAlign: 'left', display: 'flex', flexDirection: 'column', gap: '2px',
+                }}>
+                  <span style={{ fontSize: '14px', fontWeight: '600', color: '#f0ead8' }}>{v.name}</span>
+                  <span style={{ fontSize: '11px', color: 'rgba(148,163,184,0.5)' }}>{v.formatted_address || v.vicinity || ''}</span>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  };
+
+  const VenueOnboardingScreen = () => {
+    const steps = [
+      // Step 0: Welcome
+      () => (
+        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', padding: '24px', textAlign: 'center' }}>
+          <img src="/flock-logo.png" alt="Flock" style={{ width: '120px', height: '120px', borderRadius: '50%', objectFit: 'cover', marginBottom: '24px', boxShadow: '0 8px 32px rgba(0,0,0,0.3)' }} />
+          <h1 style={{ fontSize: '24px', fontWeight: '900', color: '#f0ead8', margin: '0 0 8px' }}>Welcome to Flock for Venues</h1>
+          <p style={{ fontSize: '14px', color: 'rgba(148,163,184,0.7)', lineHeight: 1.5, maxWidth: '300px' }}>Let's set up your venue profile so you can start reaching customers and tracking performance.</p>
+        </div>
+      ),
+      // Step 1: Business name with Google Places autocomplete
+      () => <VenueNameStep />,
+      // Step 2: Category
+      () => (
+        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center', padding: '24px' }}>
+          <h2 style={{ fontSize: '20px', fontWeight: '800', color: '#f0ead8', margin: '0 0 6px' }}>What type of venue?</h2>
+          <p style={{ fontSize: '13px', color: 'rgba(148,163,184,0.6)', margin: '0 0 20px' }}>Pick the best fit. You can change this later.</p>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
+            {venueCategories.map(cat => (
+              <button key={cat} onClick={() => setVenueOnboardingData(d => ({ ...d, category: cat }))} style={{ padding: '10px 16px', borderRadius: '20px', border: venueOnboardingData.category === cat ? '2px solid #f0ead8' : '1.5px solid rgba(148,163,184,0.15)', backgroundColor: venueOnboardingData.category === cat ? 'rgba(240,234,216,0.12)' : 'rgba(255,255,255,0.04)', color: venueOnboardingData.category === cat ? '#f0ead8' : 'rgba(148,163,184,0.7)', fontSize: '13px', fontWeight: '600', cursor: 'pointer', transition: 'all 0.15s' }}>
+                {cat}
+              </button>
+            ))}
+          </div>
+        </div>
+      ),
+      // Step 3: Location
+      () => (
+        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center', padding: '24px' }}>
+          <h2 style={{ fontSize: '20px', fontWeight: '800', color: '#f0ead8', margin: '0 0 6px' }}>Where are you located?</h2>
+          <p style={{ fontSize: '13px', color: 'rgba(148,163,184,0.6)', margin: '0 0 24px' }}>City or full address — helps us connect you with nearby customers.</p>
+          <input value={venueOnboardingData.location} onChange={(e) => setVenueOnboardingData(d => ({ ...d, location: e.target.value }))} placeholder="e.g. Austin, TX or 123 Main St" style={{ width: '100%', padding: '14px 16px', borderRadius: '12px', border: '1.5px solid rgba(148,163,184,0.15)', fontSize: '16px', fontWeight: '500', outline: 'none', boxSizing: 'border-box', backgroundColor: 'rgba(255,255,255,0.06)', color: 'white' }} autoFocus />
+        </div>
+      ),
+      // Step 4: Goals
+      () => (
+        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center', padding: '24px' }}>
+          <h2 style={{ fontSize: '20px', fontWeight: '800', color: '#f0ead8', margin: '0 0 6px' }}>What are your goals?</h2>
+          <p style={{ fontSize: '13px', color: 'rgba(148,163,184,0.6)', margin: '0 0 20px' }}>Pick all that apply. We'll customize your dashboard.</p>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+            {venueGoals.map(goal => {
+              const selected = venueOnboardingData.goals.includes(goal);
+              return (
+                <button key={goal} onClick={() => setVenueOnboardingData(d => ({ ...d, goals: selected ? d.goals.filter(g => g !== goal) : [...d.goals, goal] }))} style={{ padding: '12px 16px', borderRadius: '12px', border: selected ? '2px solid #f0ead8' : '1.5px solid rgba(148,163,184,0.15)', backgroundColor: selected ? 'rgba(240,234,216,0.1)' : 'rgba(255,255,255,0.04)', color: selected ? '#f0ead8' : 'rgba(148,163,184,0.7)', fontSize: '14px', fontWeight: '600', cursor: 'pointer', textAlign: 'left', display: 'flex', alignItems: 'center', gap: '10px', transition: 'all 0.15s' }}>
+                  <div style={{ width: '20px', height: '20px', borderRadius: '6px', border: selected ? '2px solid #f0ead8' : '2px solid rgba(148,163,184,0.2)', backgroundColor: selected ? '#f0ead8' : 'transparent', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                    {selected && <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#0f172a" strokeWidth="3"><polyline points="20 6 9 17 4 12"/></svg>}
+                  </div>
+                  {goal}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      ),
+      // Step 5: Quick description
+      () => (
+        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center', padding: '24px' }}>
+          <h2 style={{ fontSize: '20px', fontWeight: '800', color: '#f0ead8', margin: '0 0 6px' }}>Describe your venue in a line</h2>
+          <p style={{ fontSize: '13px', color: 'rgba(148,163,184,0.6)', margin: '0 0 24px' }}>What makes your place special? This shows on your Flock listing.</p>
+          <textarea value={venueOnboardingData.description} onChange={(e) => setVenueOnboardingData(d => ({ ...d, description: e.target.value }))} placeholder="e.g. Craft cocktail bar with live jazz on weekends" rows={3} style={{ width: '100%', padding: '14px 16px', borderRadius: '12px', border: '1.5px solid rgba(148,163,184,0.15)', fontSize: '15px', fontWeight: '500', outline: 'none', boxSizing: 'border-box', backgroundColor: 'rgba(255,255,255,0.06)', color: 'white', resize: 'none', fontFamily: 'inherit' }} autoFocus />
+        </div>
+      ),
+    ];
+
+    const canAdvance = () => {
+      if (venueOnboardingStep === 0) return true;
+      if (venueOnboardingStep === 1) return venueOnboardingData.businessName.trim().length > 0;
+      if (venueOnboardingStep === 2) return venueOnboardingData.category !== '';
+      if (venueOnboardingStep === 3) return venueOnboardingData.location.trim().length > 0;
+      if (venueOnboardingStep === 4) return venueOnboardingData.goals.length > 0;
+      if (venueOnboardingStep === 5) return true; // description is optional
+      return true;
+    };
+
+    const handleNext = async () => {
+      if (venueOnboardingStep < steps.length - 1) {
+        setVenueOnboardingStep(s => s + 1);
+      } else {
+        // Complete onboarding — save to backend
+        try {
+          await createVenueProfile(venueOnboardingData);
+        } catch (err) {
+          console.error('Failed to save venue profile:', err);
+        }
+        localStorage.setItem('flockVenueOnboardingComplete', 'true');
+        setShowVenueOnboarding(false);
+        setCurrentScreen('venueDashboard');
+      }
+    };
+
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', height: '100%', backgroundColor: '#0f172a' }}>
+        {/* Progress bar */}
+        <div style={{ padding: '16px 24px 0', flexShrink: 0 }}>
+          <div style={{ display: 'flex', gap: '4px' }}>
+            {steps.map((_, i) => (
+              <div key={i} style={{ flex: 1, height: '3px', borderRadius: '2px', backgroundColor: i <= venueOnboardingStep ? '#f0ead8' : 'rgba(148,163,184,0.15)', transition: 'background-color 0.3s' }} />
+            ))}
+          </div>
+          {venueOnboardingStep > 0 && (
+            <button onClick={() => setVenueOnboardingStep(s => s - 1)} style={{ background: 'none', border: 'none', color: 'rgba(148,163,184,0.6)', fontSize: '13px', cursor: 'pointer', padding: '8px 0', fontWeight: '500' }}>Back</button>
+          )}
+        </div>
+
+        {/* Step content */}
+        {steps[venueOnboardingStep]()}
+
+        {/* Next button */}
+        <div style={{ padding: '16px 24px 24px', flexShrink: 0 }}>
+          <button onClick={handleNext} disabled={!canAdvance()} style={{
+            width: '100%', padding: '14px', borderRadius: '14px', border: 'none',
+            background: canAdvance() ? 'linear-gradient(135deg, #f0ead8 0%, #d4c9a8 100%)' : 'rgba(148,163,184,0.1)',
+            color: canAdvance() ? '#1a2744' : 'rgba(148,163,184,0.3)',
+            fontSize: '15px', fontWeight: '800', cursor: canAdvance() ? 'pointer' : 'not-allowed',
+            boxShadow: canAdvance() ? '0 4px 16px rgba(240,234,216,0.15)' : 'none',
+            transition: 'all 0.2s', letterSpacing: '0.3px',
+          }}>
+            {venueOnboardingStep === steps.length - 1 ? 'Launch Dashboard' : venueOnboardingStep === 0 ? "Let's Go" : 'Continue'}
+          </button>
+        </div>
+      </div>
+    );
+  };
+
   const OnboardingScreen = () => (
     <div style={{
       display: 'flex',
@@ -11292,6 +11529,8 @@ const FlockAppInner = ({ authUser, onLogout }) => {
   const renderScreen = () => {
     // Show welcome screen for mode selection
     if (showModeSelection) return <WelcomeScreen />;
+    // Show venue onboarding for venue logins
+    if (showVenueOnboarding) return <VenueOnboardingScreen />;
     // Show onboarding for new users
     if (userMode === 'user' && !hasCompletedOnboarding) return <OnboardingScreen />;
     if (currentScreen === 'addFriends') return AddFriendsScreen();
@@ -12353,6 +12592,7 @@ const FlockApp = () => {
   const [authUser, setAuthUser] = useState(null);
   const [authScreen, setAuthScreen] = useState('login');
   const [authChecking, setAuthChecking] = useState(true);
+  const [venueLoginFlag, setVenueLoginFlag] = useState(false);
 
   useEffect(() => {
     if (!isLoggedIn()) {
@@ -12401,15 +12641,27 @@ const FlockApp = () => {
         />
       );
     }
+    if (authScreen === 'venue-login') {
+      return (
+        <VenueLoginScreen
+          onLoginSuccess={(user) => {
+            setAuthUser(user);
+            setVenueLoginFlag(true);
+          }}
+          onSwitchToUserLogin={() => setAuthScreen('login')}
+        />
+      );
+    }
     return (
       <LoginScreen
         onLoginSuccess={(user) => setAuthUser(user)}
         onSwitchToSignup={() => setAuthScreen('signup')}
+        onSwitchToVenueLogin={() => setAuthScreen('venue-login')}
       />
     );
   }
 
-  return <FlockAppInner authUser={authUser} onLogout={() => { unregisterAllTokens().catch(() => {}); disconnectSocket(); logout(); setAuthUser(null); setAuthScreen('login'); }} />;
+  return <FlockAppInner authUser={authUser} venueLoginFlag={venueLoginFlag} onLogout={() => { unregisterAllTokens().catch(() => {}); disconnectSocket(); logout(); setAuthUser(null); setAuthScreen('login'); setVenueLoginFlag(false); localStorage.removeItem('flockUserMode'); localStorage.removeItem('flockVenueOnboardingComplete'); }} />;
 };
 
 // Wrap with Google OAuth provider

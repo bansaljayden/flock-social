@@ -32,6 +32,7 @@ const aiRoutes = require('./routes/ai');
 const notificationRoutes = require('./routes/notifications');
 const waitlistRoutes = require('./routes/waitlist');
 const adminRoutes = require('./routes/admin');
+const venueProfileRoutes = require('./routes/venueProfile');
 
 const app = express();
 app.set('trust proxy', 1);
@@ -146,6 +147,7 @@ app.use('/api/ai', aiLimiter, aiRoutes);             // Handles /api/ai/chat (Bi
 app.use('/api/notifications', apiLimiter, notificationRoutes); // Handles /api/notifications/register, unregister
 app.use('/api/waitlist', apiLimiter, waitlistRoutes);          // Handles /api/waitlist (public, no auth)
 app.use('/api/admin', apiLimiter, adminRoutes);               // Handles /api/admin/* (admin only)
+app.use('/api/venue-profile', apiLimiter, venueProfileRoutes); // Handles /api/venue-profile (venue owners)
 
 // Health check
 app.get('/api/health', (req, res) => {
@@ -424,6 +426,28 @@ async function runMigrations() {
       console.log('OAuth migrations complete');
     } catch (oauthErr) {
       console.error('OAuth migration error:', oauthErr.message);
+    }
+
+    // Venue profiles table
+    try {
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS venue_profiles (
+          id SERIAL PRIMARY KEY,
+          user_id INTEGER UNIQUE REFERENCES users(id) ON DELETE CASCADE,
+          business_name VARCHAR(255) NOT NULL,
+          category VARCHAR(100),
+          location VARCHAR(255),
+          description TEXT,
+          goals TEXT[],
+          google_place_id VARCHAR(255),
+          photo_url TEXT,
+          created_at TIMESTAMPTZ DEFAULT NOW(),
+          updated_at TIMESTAMPTZ DEFAULT NOW()
+        )
+      `);
+      console.log('Venue profiles migration complete');
+    } catch (venueErr) {
+      console.error('Venue profiles migration error:', venueErr.message);
     }
 
     // Keep demo stories alive — refresh expiration for seeded picsum stories
