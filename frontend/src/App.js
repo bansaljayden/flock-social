@@ -9357,6 +9357,44 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   };
 
   // VENUE DASHBOARD SCREEN (For Venue Owners)
+  // Parse Google weekdayDescriptions into grouped operating hours
+  const parseGoogleHours = (descriptions) => {
+    if (!descriptions || !Array.isArray(descriptions)) return [];
+    // descriptions = ["Monday: 11:00 AM – 10:00 PM", "Tuesday: 11:00 AM – 10:00 PM", ...]
+    const dayOrder = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+    const dayAbbr = { Monday: 'Mon', Tuesday: 'Tue', Wednesday: 'Wed', Thursday: 'Thu', Friday: 'Fri', Saturday: 'Sat', Sunday: 'Sun' };
+    const parsed = descriptions.map(d => {
+      const [dayPart, ...timeParts] = d.split(': ');
+      const time = timeParts.join(': ').trim();
+      return { day: dayPart.trim(), time };
+    }).filter(d => dayOrder.includes(d.day));
+
+    // Group consecutive days with the same hours
+    const groups = [];
+    for (const entry of parsed) {
+      const last = groups[groups.length - 1];
+      if (last && last.time === entry.time) {
+        last.days.push(entry.day);
+      } else {
+        groups.push({ days: [entry.day], time: entry.time });
+      }
+    }
+
+    return groups.map(g => {
+      const daysLabel = g.days.length === 1
+        ? dayAbbr[g.days[0]]
+        : `${dayAbbr[g.days[0]]}-${dayAbbr[g.days[g.days.length - 1]]}`;
+      if (g.time === 'Closed' || g.time === 'Open 24 hours') {
+        return { days: daysLabel, open: g.time, close: '' };
+      }
+      const match = g.time.match(/^(.+?)\s*[–-]\s*(.+)$/);
+      if (match) {
+        return { days: daysLabel, open: match[1].trim(), close: match[2].trim() };
+      }
+      return { days: daysLabel, open: g.time, close: '' };
+    });
+  };
+
   // Venue Dashboard state — hoisted to FlockAppInner so VenueDashboard can be a plain function
   const [showUpgradeModal, setShowUpgradeModal] = useState(false);
   const [venueProfile, setVenueProfile] = useState(null);
@@ -9372,33 +9410,43 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   const [venueDashProfileLoaded, setVenueDashProfileLoaded] = useState(false);
   const [venueInfo, setVenueInfo] = useState({ name: '', address: '', phone: '' });
   const [editingVenueInfo, setEditingVenueInfo] = useState(false);
-  const [operatingHours, setOperatingHours] = useState([
-    { days: 'Mon-Thu', open: '4:00 PM', close: '12:00 AM' },
-    { days: 'Fri-Sat', open: '4:00 PM', close: '2:00 AM' },
-    { days: 'Sunday', open: '12:00 PM', close: '10:00 PM' }
-  ]);
+  const [operatingHours, setOperatingHours] = useState([]);
   const [showHoursModal, setShowHoursModal] = useState(false);
   const [venueNotifications, setVenueNotifications] = useState({ bookings: true, reviews: true, weekly: false });
   const [dealDescription, setDealDescription] = useState('');
   const [dealTimeSlot, setDealTimeSlot] = useState('Happy Hour');
 
-  // Load venue profile once when entering dashboard — sync venueInfo from profile/onboarding
+  // Load venue profile once when entering dashboard — sync venueInfo from profile/onboarding + Google
   React.useEffect(() => {
     if (currentScreen === 'venueDashboard' && !venueDashProfileLoaded) {
-      getVenueProfile().then(p => {
+      getVenueProfile().then(async (p) => {
         setVenueProfile(p);
         setVenueDashProfileLoaded(true);
-        // Populate settings fields from backend profile
         if (p) {
           setVenueInfo(prev => ({
             name: p.business_name || prev.name,
             address: p.location || prev.address,
             phone: p.phone || prev.phone,
           }));
+          // Fetch phone + hours from Google if we have a place ID
+          const placeId = p.google_place_id || venueOnboardingData.googlePlaceId;
+          if (placeId) {
+            try {
+              const data = await getVenueDetails(placeId);
+              const venue = data.venue || data;
+              if (venue.formatted_phone_number) {
+                setVenueInfo(prev => ({ ...prev, phone: prev.phone || venue.formatted_phone_number }));
+              }
+              if (venue.opening_hours?.weekdayDescriptions) {
+                const parsed = parseGoogleHours(venue.opening_hours.weekdayDescriptions);
+                if (parsed.length > 0) setOperatingHours(parsed);
+              }
+            } catch (e) { /* Google details optional */ }
+          }
         }
       }).catch(() => setVenueDashProfileLoaded(true));
     }
-  }, [currentScreen, venueDashProfileLoaded]);
+  }, [currentScreen, venueDashProfileLoaded]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Seed venueInfo from onboarding data if backend profile hasn't loaded yet
   React.useEffect(() => {
@@ -9907,12 +9955,14 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
               {/* Operating Hours */}
               <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
                 <h3 style={{ fontSize: '12px', fontWeight: '700', color: colors.navy, margin: '0 0 10px', display: 'flex', alignItems: 'center', gap: '6px' }}>{Icons.clock(colors.navy, 14)} Operating Hours</h3>
-                {operatingHours.map((slot, i) => (
+                {operatingHours.length > 0 ? operatingHours.map((slot, i) => (
                   <div key={slot.days} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 0', borderBottom: i < operatingHours.length - 1 ? `1px solid ${colors.cream}` : 'none' }}>
                     <span style={{ fontSize: '11px', fontWeight: '500', color: colors.navy }}>{slot.days}</span>
-                    <span style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>{slot.open} - {slot.close}</span>
+                    <span style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>{slot.close ? `${slot.open} - ${slot.close}` : slot.open}</span>
                   </div>
-                ))}
+                )) : (
+                  <p style={{ fontSize: '11px', color: 'var(--text-secondary)', margin: '4px 0', fontStyle: 'italic' }}>No hours set — tap Edit Hours to add</p>
+                )}
                 <button onClick={() => setShowHoursModal(true)} style={{ marginTop: '8px', width: '100%', padding: '8px', borderRadius: '6px', border: `1px solid ${colors.creamDark}`, backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontSize: '11px', fontWeight: '500', cursor: 'pointer' }}>
                   Edit Hours
                 </button>
@@ -10921,6 +10971,19 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
       setQuery(v.name);
       setShowSuggestions(false);
       setSuggestions([]);
+      // Fetch phone + hours from Google Places
+      if (v.place_id) {
+        getVenueDetails(v.place_id).then(data => {
+          const venue = data.venue || data;
+          if (venue.formatted_phone_number) {
+            setVenueInfo(prev => ({ ...prev, name: v.name, address: v.formatted_address || v.vicinity || prev.address, phone: venue.formatted_phone_number }));
+          }
+          if (venue.opening_hours?.weekdayDescriptions) {
+            const parsed = parseGoogleHours(venue.opening_hours.weekdayDescriptions);
+            if (parsed.length > 0) setOperatingHours(parsed);
+          }
+        }).catch(() => {});
+      }
     };
 
     return (
@@ -11001,6 +11064,19 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                     }));
                     setVenueSearchQuery(v.name);
                     setVenueSearchResults([]);
+                    // Fetch phone + hours from Google Places
+                    if (v.place_id) {
+                      getVenueDetails(v.place_id).then(data => {
+                        const venue = data.venue || data;
+                        if (venue.formatted_phone_number) {
+                          setVenueInfo(prev => ({ ...prev, name: v.name, address: v.formatted_address || v.vicinity || prev.address, phone: venue.formatted_phone_number }));
+                        }
+                        if (venue.opening_hours?.weekdayDescriptions) {
+                          const parsed = parseGoogleHours(venue.opening_hours.weekdayDescriptions);
+                          if (parsed.length > 0) setOperatingHours(parsed);
+                        }
+                      }).catch(() => {});
+                    }
                   }} style={{
                     width: '100%', padding: '12px 16px', border: 'none', borderBottom: i < venueSearchResults.length - 1 ? '1px solid rgba(148,163,184,0.08)' : 'none',
                     background: 'transparent', cursor: 'pointer', textAlign: 'left', display: 'flex', flexDirection: 'column', gap: '2px',
