@@ -86,6 +86,53 @@ export async function updateVenueProfile(data) {
   return request('/api/venue-profile', { method: 'PUT', body: JSON.stringify(data) });
 }
 
+// Venue dashboard CRUD
+export async function getVenuePromotions() {
+  return request('/api/venue-dashboard/promotions');
+}
+export async function createVenuePromotion(data) {
+  return request('/api/venue-dashboard/promotions', { method: 'POST', body: JSON.stringify(data) });
+}
+export async function updateVenuePromotion(id, data) {
+  return request(`/api/venue-dashboard/promotions/${id}`, { method: 'PUT', body: JSON.stringify(data) });
+}
+export async function deleteVenuePromotion(id) {
+  return request(`/api/venue-dashboard/promotions/${id}`, { method: 'DELETE' });
+}
+
+export async function getVenueEvents() {
+  return request('/api/venue-dashboard/events');
+}
+export async function createVenueEvent(data) {
+  return request('/api/venue-dashboard/events', { method: 'POST', body: JSON.stringify(data) });
+}
+export async function updateVenueEvent(id, data) {
+  return request(`/api/venue-dashboard/events/${id}`, { method: 'PUT', body: JSON.stringify(data) });
+}
+export async function deleteVenueEvent(id) {
+  return request(`/api/venue-dashboard/events/${id}`, { method: 'DELETE' });
+}
+
+export async function getIncomingFlocks() {
+  return request('/api/venue-dashboard/incoming-flocks');
+}
+
+export async function getVenueReviews() {
+  return request('/api/venue-dashboard/reviews');
+}
+export async function replyToReview(id, reply) {
+  return request(`/api/venue-dashboard/reviews/${id}/reply`, { method: 'POST', body: JSON.stringify({ reply }) });
+}
+export async function submitVenueReview(googlePlaceId, rating, text) {
+  return request('/api/venue-dashboard/submit-review', { method: 'POST', body: JSON.stringify({ googlePlaceId, rating, text }) });
+}
+export async function getPublicReviews(placeId) {
+  return request(`/api/venue-dashboard/public-reviews/${encodeURIComponent(placeId)}`);
+}
+export async function getPublicPromotions(placeId) {
+  return request(`/api/venue-dashboard/public-promotions/${encodeURIComponent(placeId)}`);
+}
+
 export function isLoggedIn() {
   return !!getToken();
 }
