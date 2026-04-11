@@ -447,6 +447,10 @@ async function runMigrations() {
           updated_at TIMESTAMPTZ DEFAULT NOW()
         )
       `);
+      // Add settings columns if missing
+      await pool.query(`ALTER TABLE venue_profiles ADD COLUMN IF NOT EXISTS phone VARCHAR(50)`).catch(() => {});
+      await pool.query(`ALTER TABLE venue_profiles ADD COLUMN IF NOT EXISTS operating_hours JSONB DEFAULT '[]'`).catch(() => {});
+      await pool.query(`ALTER TABLE venue_profiles ADD COLUMN IF NOT EXISTS notification_prefs JSONB DEFAULT '{"bookings":true,"reviews":true,"weekly":false}'`).catch(() => {});
       console.log('Venue profiles migration complete');
     } catch (venueErr) {
       console.error('Venue profiles migration error:', venueErr.message);

@@ -11,7 +11,7 @@ import {
   formatCurrency,
   calculateProfitMargin
 } from './lib/finance';
-import { getCurrentUser, logout, isLoggedIn, getFlocks, getFlock, createFlock as apiCreateFlock, getMessages, sendMessage as apiSendMessage, updateProfile, searchVenues, searchUsers, getSuggestedUsers, sendFriendRequest, getVenueDetails, leaveFlock as apiLeaveFlock, getDMConversations, getDMs, getDmVenueVotes, getDmPinnedVenue, BASE_URL, inviteToFlock, acceptFlockInvite, declineFlockInvite, getFriends, acceptFriendRequest, declineFriendRequest, getPendingRequests, getOutgoingRequests, getFriendSuggestions, addFriendByCode, findFriendsByPhone, removeFriend, getTrustedContacts, addTrustedContact, updateTrustedContact, deleteTrustedContact, sendEmergencyAlert, shareLocationWithContacts, getUserStats, getCrowdPrediction, getCrowdBatch, getCrowdAlternatives, getWeather, submitVenueFeedback, uploadProfileImage, saveProfileImageUrl, submitBudget, getBudgetStatus, lockBudget, sendBudgetReminder, createBillSplit, getBillSplit, settleShare, ghostCommit, updatePaymentMethods, getPaymentLinks, getFeaturedEvents, searchEvents, getEventDetails, sendAiChat, getActivityFeed, getWeatherForecast, submitAttendance, getAdminAnalytics, createVenueProfile, getVenueProfile, getVenuePromotions, createVenuePromotion, updateVenuePromotion, deleteVenuePromotion, getVenueEvents, createVenueEvent, updateVenueEvent, deleteVenueEvent, getIncomingFlocks, getVenueReviews, replyToReview, submitVenueReview, getPublicReviews, getPublicPromotions } from './services/api';
+import { getCurrentUser, logout, isLoggedIn, getFlocks, getFlock, createFlock as apiCreateFlock, getMessages, sendMessage as apiSendMessage, updateProfile, searchVenues, searchUsers, getSuggestedUsers, sendFriendRequest, getVenueDetails, leaveFlock as apiLeaveFlock, getDMConversations, getDMs, getDmVenueVotes, getDmPinnedVenue, BASE_URL, inviteToFlock, acceptFlockInvite, declineFlockInvite, getFriends, acceptFriendRequest, declineFriendRequest, getPendingRequests, getOutgoingRequests, getFriendSuggestions, addFriendByCode, findFriendsByPhone, removeFriend, getTrustedContacts, addTrustedContact, updateTrustedContact, deleteTrustedContact, sendEmergencyAlert, shareLocationWithContacts, getUserStats, getCrowdPrediction, getCrowdBatch, getCrowdAlternatives, getWeather, submitVenueFeedback, uploadProfileImage, saveProfileImageUrl, submitBudget, getBudgetStatus, lockBudget, sendBudgetReminder, createBillSplit, getBillSplit, settleShare, ghostCommit, updatePaymentMethods, getPaymentLinks, getFeaturedEvents, searchEvents, getEventDetails, sendAiChat, getActivityFeed, getWeatherForecast, submitAttendance, getAdminAnalytics, createVenueProfile, getVenueProfile, updateVenueProfile, getVenuePromotions, createVenuePromotion, updateVenuePromotion, deleteVenuePromotion, getVenueEvents, createVenueEvent, updateVenueEvent, deleteVenueEvent, getIncomingFlocks, getVenueReviews, replyToReview, submitVenueReview, getPublicReviews, getPublicPromotions } from './services/api';
 import { connectSocket, disconnectSocket, getSocket, joinFlock, leaveFlock, sendMessage as socketSendMessage, sendImageMessage as socketSendImage, startTyping, stopTyping, onNewMessage, onUserTyping, onUserStoppedTyping, emitLocation, stopSharingLocation as socketStopSharing, onLocationUpdate, onMemberStoppedSharing, socketSendDm, onNewDm, dmStartTyping, dmStopTyping, onDmUserTyping, onDmUserStoppedTyping, dmReact, dmRemoveReact, onDmReactionAdded, onDmReactionRemoved, dmVoteVenue, onDmNewVote, dmShareLocation, dmStopSharingLocation, onDmLocationUpdate, onDmMemberStoppedSharing, dmPinVenue, onDmVenuePinned, emitFlockInvite, emitFlockInviteResponse, onFlockInviteReceived, onFlockInviteResponded, emitFriendRequest, emitFriendResponse, onFriendRequestReceived, onFriendRequestResponded, onBudgetUpdated, onBudgetLocked, onBudgetReminder, onBillCreated, onShareSettled, onBillFullySettled, onGhostCommitted, onNewVote, onVenueSelected, onFlockReactionAdded, onFlockReactionRemoved, onFlockDeleted, onFlockUpdated, onFlockMemberLeft } from './services/socket';
 import { requestNotificationPermission, onForegroundMessage } from './services/firebase';
 import { unregisterAllTokens } from './services/api';
@@ -9446,18 +9446,33 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
             address: p.location || prev.address,
             phone: p.phone || prev.phone,
           }));
-          // Fetch phone + hours from Google if we have a place ID
+          // Load saved operating hours and notification prefs
+          if (p.operating_hours && Array.isArray(p.operating_hours) && p.operating_hours.length > 0) {
+            setOperatingHours(p.operating_hours);
+          }
+          if (p.notification_prefs && typeof p.notification_prefs === 'object') {
+            setVenueNotifications(p.notification_prefs);
+          }
+          // Fetch phone + hours from Google if we have a place ID and no saved hours
           const placeId = p.google_place_id || venueOnboardingData.googlePlaceId;
-          if (placeId) {
+          const needsGoogleData = !p.phone || !(p.operating_hours && p.operating_hours.length > 0);
+          if (placeId && needsGoogleData) {
             try {
               const data = await getVenueDetails(placeId);
               const venue = data.venue || data;
-              if (venue.formatted_phone_number) {
-                setVenueInfo(prev => ({ ...prev, phone: prev.phone || venue.formatted_phone_number }));
+              if (venue.formatted_phone_number && !p.phone) {
+                const phone = venue.formatted_phone_number;
+                setVenueInfo(prev => ({ ...prev, phone }));
+                // Save to backend so we don't fetch again
+                updateVenueProfile({ phone }).catch(() => {});
               }
-              if (venue.opening_hours?.weekdayDescriptions) {
+              if (venue.opening_hours?.weekdayDescriptions && !(p.operating_hours && p.operating_hours.length > 0)) {
                 const parsed = parseGoogleHours(venue.opening_hours.weekdayDescriptions);
-                if (parsed.length > 0) setOperatingHours(parsed);
+                if (parsed.length > 0) {
+                  setOperatingHours(parsed);
+                  // Save to backend
+                  updateVenueProfile({ operatingHours: parsed }).catch(() => {});
+                }
               }
             } catch (e) { /* Google details optional */ }
           }
@@ -10009,7 +10024,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                   {!editingVenueInfo ? (
                     <button onClick={() => setEditingVenueInfo(true)} style={{ padding: '4px 8px', borderRadius: '6px', border: 'none', backgroundColor: 'var(--icon-bg)', color: colors.navy, fontSize: '10px', fontWeight: '500', cursor: 'pointer' }}>Edit</button>
                   ) : (
-                    <button onClick={() => { setEditingVenueInfo(false); }} style={{ padding: '4px 8px', borderRadius: '6px', border: 'none', backgroundColor: colors.teal, color: 'white', fontSize: '10px', fontWeight: '500', cursor: 'pointer' }}>Save</button>
+                    <button onClick={() => {
+                      setEditingVenueInfo(false);
+                      updateVenueProfile({ businessName: venueInfo.name, location: venueInfo.address, phone: venueInfo.phone }).catch(() => {});
+                    }} style={{ padding: '4px 8px', borderRadius: '6px', border: 'none', backgroundColor: colors.teal, color: 'white', fontSize: '10px', fontWeight: '500', cursor: 'pointer' }}>Save</button>
                   )}
                 </div>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
@@ -10052,7 +10070,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                     <p style={{ fontSize: '11px', fontWeight: '500', color: colors.navy, margin: 0 }}>New bookings</p>
                     <p style={{ fontSize: '9px', color: 'var(--text-tertiary)', margin: 0 }}>Get notified when a flock books</p>
                   </div>
-                  <div onClick={() => { setNotifications({...notifications, bookings: !notifications.bookings}); }} style={{ width: '36px', height: '20px', borderRadius: '10px', backgroundColor: notifications.bookings ? colors.teal : 'var(--toggle-off)', cursor: 'pointer', position: 'relative' }}>
+                  <div onClick={() => { const next = {...notifications, bookings: !notifications.bookings}; setNotifications(next); updateVenueProfile({ notificationPrefs: next }).catch(() => {}); }} style={{ width: '36px', height: '20px', borderRadius: '10px', backgroundColor: notifications.bookings ? colors.teal : 'var(--toggle-off)', cursor: 'pointer', position: 'relative' }}>
                     <div style={{ position: 'absolute', top: '2px', left: notifications.bookings ? '18px' : '2px', width: '16px', height: '16px', borderRadius: '8px', backgroundColor: 'var(--bg-card-solid)', transition: 'left 0.2s' }} />
                   </div>
                 </div>
@@ -10061,7 +10079,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                     <p style={{ fontSize: '11px', fontWeight: '500', color: colors.navy, margin: 0 }}>New reviews</p>
                     <p style={{ fontSize: '9px', color: 'var(--text-tertiary)', margin: 0 }}>Alerts for customer reviews</p>
                   </div>
-                  <div onClick={() => { setNotifications({...notifications, reviews: !notifications.reviews}); }} style={{ width: '36px', height: '20px', borderRadius: '10px', backgroundColor: notifications.reviews ? colors.teal : 'var(--toggle-off)', cursor: 'pointer', position: 'relative' }}>
+                  <div onClick={() => { const next = {...notifications, reviews: !notifications.reviews}; setNotifications(next); updateVenueProfile({ notificationPrefs: next }).catch(() => {}); }} style={{ width: '36px', height: '20px', borderRadius: '10px', backgroundColor: notifications.reviews ? colors.teal : 'var(--toggle-off)', cursor: 'pointer', position: 'relative' }}>
                     <div style={{ position: 'absolute', top: '2px', left: notifications.reviews ? '18px' : '2px', width: '16px', height: '16px', borderRadius: '8px', backgroundColor: 'var(--bg-card-solid)', transition: 'left 0.2s' }} />
                   </div>
                 </div>
@@ -10070,7 +10088,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                     <p style={{ fontSize: '11px', fontWeight: '500', color: colors.navy, margin: 0 }}>Weekly reports</p>
                     <p style={{ fontSize: '9px', color: 'var(--text-tertiary)', margin: 0 }}>Performance summary emails</p>
                   </div>
-                  <div onClick={() => { setNotifications({...notifications, weekly: !notifications.weekly}); }} style={{ width: '36px', height: '20px', borderRadius: '10px', backgroundColor: notifications.weekly ? colors.teal : 'var(--toggle-off)', cursor: 'pointer', position: 'relative' }}>
+                  <div onClick={() => { const next = {...notifications, weekly: !notifications.weekly}; setNotifications(next); updateVenueProfile({ notificationPrefs: next }).catch(() => {}); }} style={{ width: '36px', height: '20px', borderRadius: '10px', backgroundColor: notifications.weekly ? colors.teal : 'var(--toggle-off)', cursor: 'pointer', position: 'relative' }}>
                     <div style={{ position: 'absolute', top: '2px', left: notifications.weekly ? '18px' : '2px', width: '16px', height: '16px', borderRadius: '8px', backgroundColor: 'var(--bg-card-solid)', transition: 'left 0.2s' }} />
                   </div>
                 </div>
@@ -10239,29 +10257,19 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 <h2 style={{ fontSize: '18px', fontWeight: '900', color: colors.navy, margin: '0 0 16px', textAlign: 'center' }}>Edit Operating Hours</h2>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
                   {operatingHours.map((slot, index) => (
-                    <div key={slot.days} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '8px', backgroundColor: 'var(--bg-card-solid)', borderRadius: '8px' }}>
-                      <span style={{ fontSize: '11px', fontWeight: '600', color: colors.navy, width: '70px' }}>{slot.days}</span>
-                      <select value={slot.open} onChange={(e) => { const updated = [...operatingHours]; updated[index].open = e.target.value; setOperatingHours(updated); }} style={{ flex: 1, padding: '6px', borderRadius: '6px', border: `1px solid ${colors.creamDark}`, fontSize: '11px', backgroundColor: 'var(--bg-card-solid)' }}>
-                        <option value="11:00 AM">11:00 AM</option>
-                        <option value="12:00 PM">12:00 PM</option>
-                        <option value="2:00 PM">2:00 PM</option>
-                        <option value="4:00 PM">4:00 PM</option>
-                        <option value="5:00 PM">5:00 PM</option>
-                      </select>
+                    <div key={index} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '8px', backgroundColor: 'var(--bg-card-solid)', borderRadius: '8px' }}>
+                      <input value={slot.days} onChange={(e) => { const updated = [...operatingHours]; updated[index] = {...updated[index], days: e.target.value}; setOperatingHours(updated); }} style={{ width: '70px', padding: '6px', borderRadius: '6px', border: `1px solid ${colors.creamDark}`, fontSize: '11px', backgroundColor: 'var(--bg-card-solid)', color: 'var(--text-primary)' }} />
+                      <input value={slot.open} onChange={(e) => { const updated = [...operatingHours]; updated[index] = {...updated[index], open: e.target.value}; setOperatingHours(updated); }} style={{ flex: 1, padding: '6px', borderRadius: '6px', border: `1px solid ${colors.creamDark}`, fontSize: '11px', backgroundColor: 'var(--bg-card-solid)', color: 'var(--text-primary)' }} />
                       <span style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>to</span>
-                      <select value={slot.close} onChange={(e) => { const updated = [...operatingHours]; updated[index].close = e.target.value; setOperatingHours(updated); }} style={{ flex: 1, padding: '6px', borderRadius: '6px', border: `1px solid ${colors.creamDark}`, fontSize: '11px', backgroundColor: 'var(--bg-card-solid)' }}>
-                        <option value="10:00 PM">10:00 PM</option>
-                        <option value="11:00 PM">11:00 PM</option>
-                        <option value="12:00 AM">12:00 AM</option>
-                        <option value="1:00 AM">1:00 AM</option>
-                        <option value="2:00 AM">2:00 AM</option>
-                      </select>
+                      <input value={slot.close} onChange={(e) => { const updated = [...operatingHours]; updated[index] = {...updated[index], close: e.target.value}; setOperatingHours(updated); }} style={{ flex: 1, padding: '6px', borderRadius: '6px', border: `1px solid ${colors.creamDark}`, fontSize: '11px', backgroundColor: 'var(--bg-card-solid)', color: 'var(--text-primary)' }} />
+                      <button onClick={() => setOperatingHours(operatingHours.filter((_, i) => i !== index))} style={{ padding: '4px', border: 'none', background: 'none', cursor: 'pointer' }}>{Icons.trash(colors.red, 14)}</button>
                     </div>
                   ))}
+                  <button onClick={() => setOperatingHours([...operatingHours, { days: '', open: '', close: '' }])} style={{ padding: '8px', borderRadius: '6px', border: `1px dashed ${colors.creamDark}`, backgroundColor: 'transparent', color: colors.navy, fontSize: '11px', fontWeight: '500', cursor: 'pointer' }}>+ Add Hours</button>
                 </div>
                 <div style={{ display: 'flex', gap: '10px', marginTop: '20px' }}>
                   <button onClick={() => setShowHoursModal(false)} style={{ flex: 1, padding: '12px', borderRadius: '8px', border: '1px solid var(--border-mid)', backgroundColor: 'var(--bg-card-solid)', color: 'var(--text-secondary)', fontWeight: '600', cursor: 'pointer' }}>Cancel</button>
-                  <button onClick={() => { setShowHoursModal(false); }} style={{ flex: 1, padding: '12px', borderRadius: '8px', border: 'none', backgroundColor: colors.navyBg, color: 'white', fontWeight: '600', cursor: 'pointer' }}>Save Hours</button>
+                  <button onClick={() => { setShowHoursModal(false); updateVenueProfile({ operatingHours }).catch(() => {}); }} style={{ flex: 1, padding: '12px', borderRadius: '8px', border: 'none', backgroundColor: colors.navyBg, color: 'white', fontWeight: '600', cursor: 'pointer' }}>Save Hours</button>
                 </div>
               </div>
             </div>
