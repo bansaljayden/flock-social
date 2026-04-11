@@ -9357,40 +9357,62 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   };
 
   // VENUE DASHBOARD SCREEN (For Venue Owners)
+  // Venue Dashboard state — hoisted to FlockAppInner so VenueDashboard can be a plain function
+  const [showUpgradeModal, setShowUpgradeModal] = useState(false);
+  const [venueProfile, setVenueProfile] = useState(null);
+  const [showMockData, setShowMockData] = useState(false);
+  const [promotions, setPromotions] = useState([]);
+  const [showPromoModal, setShowPromoModal] = useState(false);
+  const [editingPromo, setEditingPromo] = useState(null);
+  const [promoForm, setPromoForm] = useState({ title: '', desc: '', time: 'Happy Hour', days: 'Daily' });
+  const [venueEventsList, setVenueEventsList] = useState([]);
+  const [showEventModal, setShowEventModal] = useState(false);
+  const [editingEvent, setEditingEvent] = useState(null);
+  const [eventForm, setEventForm] = useState({ title: '', date: '', time: '', capacity: '' });
+  const [venueDashProfileLoaded, setVenueDashProfileLoaded] = useState(false);
+  const [venueInfo, setVenueInfo] = useState({ name: 'The Blue Heron Bar', address: '123 Main St, Easton PA', phone: '(610) 555-0123' });
+  const [editingVenueInfo, setEditingVenueInfo] = useState(false);
+  const [operatingHours, setOperatingHours] = useState([
+    { days: 'Mon-Thu', open: '4:00 PM', close: '12:00 AM' },
+    { days: 'Fri-Sat', open: '4:00 PM', close: '2:00 AM' },
+    { days: 'Sunday', open: '12:00 PM', close: '10:00 PM' }
+  ]);
+  const [showHoursModal, setShowHoursModal] = useState(false);
+  const [venueNotifications, setVenueNotifications] = useState({ bookings: true, reviews: true, weekly: false });
+  const [dealDescription, setDealDescription] = useState('');
+  const [dealTimeSlot, setDealTimeSlot] = useState('Happy Hour');
+
+  // Load venue profile once when entering dashboard
+  React.useEffect(() => {
+    if (currentScreen === 'venueDashboard' && !venueDashProfileLoaded) {
+      getVenueProfile().then(p => { setVenueProfile(p); setVenueDashProfileLoaded(true); }).catch(() => setVenueDashProfileLoaded(true));
+    }
+  }, [currentScreen, venueDashProfileLoaded]);
+
   const VenueDashboard = () => {
-    // venueTab state is now at App level to persist across re-renders
-    const [showUpgradeModal, setShowUpgradeModal] = useState(false);
-    const [venueProfile, setVenueProfile] = useState(null);
-    const [showMockData, setShowMockData] = useState(false);
-
-    // Load venue profile from backend
-    React.useEffect(() => {
-      getVenueProfile().then(p => setVenueProfile(p)).catch(() => {});
-    }, []); // eslint-disable-line react-hooks/exhaustive-deps
-
-    // Promotion state
-    const [promotions, setPromotions] = useState([
-      { id: 1, title: 'Happy Hour Special', desc: '50% off drinks', time: '5-7 PM', days: 'Mon-Fri', views: 234, claims: 89 },
-      { id: 2, title: 'Late Night Bites', desc: '$5 appetizers', time: '10PM-Close', days: 'Daily', views: 156, claims: 45 }
-    ]);
-    const [showPromoModal, setShowPromoModal] = useState(false);
-    const [editingPromo, setEditingPromo] = useState(null);
-    const [promoForm, setPromoForm] = useState({ title: '', desc: '', time: 'Happy Hour', days: 'Daily' });
-
-    // Event state
-    const [venueEventsList, setVenueEventsList] = useState([
-      { id: 1, title: 'Live Jazz Night', date: 'Jan 24', time: '9:00 PM', rsvps: 45, capacity: 60 },
-      { id: 2, title: 'Trivia Tuesday', date: 'Jan 21', time: '7:00 PM', rsvps: 28, capacity: 40 }
-    ]);
-    const [showEventModal, setShowEventModal] = useState(false);
-    const [editingEvent, setEditingEvent] = useState(null);
-    const [eventForm, setEventForm] = useState({ title: '', date: '', time: '', capacity: '' });
 
     // Incoming flocks
-    const incomingFlocks = [
+    const incomingFlocks = showMockData ? [
       { id: 1, name: "Alex's Birthday Party", time: 'Saturday 8 PM', members: 12, status: 'confirmed' },
       { id: 2, name: 'Friday Night Out', time: 'Friday 10 PM', members: 6, status: 'pending' }
+    ] : [];
+
+    // Mock data loader
+    const mockPromos = [
+      { id: 1, title: 'Happy Hour Special', desc: '50% off drinks', time: '5-7 PM', days: 'Mon-Fri', views: 234, claims: 89 },
+      { id: 2, title: 'Late Night Bites', desc: '$5 appetizers', time: '10PM-Close', days: 'Daily', views: 156, claims: 45 }
     ];
+    const mockEvents = [
+      { id: 1, title: 'Live Jazz Night', date: 'Jan 24', time: '9:00 PM', rsvps: 45, capacity: 60 },
+      { id: 2, title: 'Trivia Tuesday', date: 'Jan 21', time: '7:00 PM', rsvps: 28, capacity: 40 }
+    ];
+
+    const toggleMockData = () => {
+      const next = !showMockData;
+      setShowMockData(next);
+      setPromotions(next ? mockPromos : []);
+      setVenueEventsList(next ? mockEvents : []);
+    };
 
     // Reviews (read-only)
     const reviews = [
@@ -9399,20 +9421,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
       { id: 3, user: 'Emma L.', rating: 5, text: 'Perfect spot for our flock meetup! Staff was super friendly.', date: '2 weeks ago', replied: true }
     ];
 
-    // Settings state
-    const [venueInfo, setVenueInfo] = useState({ name: 'The Blue Heron Bar', address: '123 Main St, Easton PA', phone: '(610) 555-0123' });
-    const [editingVenueInfo, setEditingVenueInfo] = useState(false);
-    const [operatingHours, setOperatingHours] = useState([
-      { days: 'Mon-Thu', open: '4:00 PM', close: '12:00 AM' },
-      { days: 'Fri-Sat', open: '4:00 PM', close: '2:00 AM' },
-      { days: 'Sunday', open: '12:00 PM', close: '10:00 PM' }
-    ]);
-    const [showHoursModal, setShowHoursModal] = useState(false);
-    const [notifications, setNotifications] = useState({ bookings: true, reviews: true, weekly: false });
-
-    // Deal posting state (for quick deals on analytics tab)
-    const [dealDescription, setDealDescription] = useState('');
-    const [dealTimeSlot, setDealTimeSlot] = useState('Happy Hour');
+    // Settings state — hoisted to FlockAppInner
+    const notifications = venueNotifications;
+    const setNotifications = setVenueNotifications;
 
     const venueTabs = [
       { id: 'analytics', label: 'Analytics', icon: Icons.barChart },
@@ -9552,8 +9563,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
               <p style={{ fontSize: '10px', color: 'rgba(255,255,255,0.7)', margin: 0 }}>{venueProfile?.category || 'Venue Dashboard'}{venueProfile?.location ? ` · ${venueProfile.location}` : ''}</p>
             </div>
           </div>
-          <button onClick={() => setShowMockData(!showMockData)} style={{ marginTop: '10px', padding: '6px 12px', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.2)', backgroundColor: showMockData ? 'rgba(20,184,166,0.3)' : 'rgba(255,255,255,0.1)', color: 'white', fontSize: '10px', fontWeight: '600', cursor: 'pointer', width: '100%' }}>
-            {showMockData ? 'Showing Mock Data' : 'Load Mock Data'}
+          <button onClick={toggleMockData} style={{ marginTop: '10px', padding: '6px 12px', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.2)', backgroundColor: showMockData ? 'rgba(20,184,166,0.3)' : 'rgba(255,255,255,0.1)', color: 'white', fontSize: '10px', fontWeight: '600', cursor: 'pointer', width: '100%' }}>
+            {showMockData ? 'Showing Mock Data — tap to clear' : 'Load Mock Data'}
           </button>
         </div>
 
@@ -11585,7 +11596,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
     // Show welcome screen for mode selection
     if (showModeSelection) return <WelcomeScreen />;
     // Show venue onboarding for venue logins
-    if (showVenueOnboarding) return <VenueOnboardingScreen />;
+    if (showVenueOnboarding) return VenueOnboardingScreen();
     // Show onboarding for new users
     if (userMode === 'user' && !hasCompletedOnboarding) return <OnboardingScreen />;
     if (currentScreen === 'addFriends') return AddFriendsScreen();
@@ -11594,7 +11605,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
     if (currentScreen === 'detail') return FlockDetailScreen();
     if (currentScreen === 'chatDetail') return ChatDetailScreen();
     if (currentScreen === 'dmDetail') return dmDetailScreen;
-    if (currentScreen === 'venueDashboard') return <VenueDashboard />;
+    if (currentScreen === 'venueDashboard') return VenueDashboard();
     if (currentScreen === 'adminRevenue') return <RevenueScreen />;
     switch (currentTab) {
       case 'explore': return null; // Rendered persistently below
