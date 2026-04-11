@@ -1275,7 +1275,6 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   const [showVenueOnboarding, setShowVenueOnboarding] = useState(false);
   const [venueOnboardingStep, setVenueOnboardingStep] = useState(0);
   const [venueOnboardingData, setVenueOnboardingData] = useState({ businessName: '', category: '', location: '', description: '', goals: [] });
-  const hasCompletedVenueOnboarding = localStorage.getItem('flockVenueOnboardingComplete') === 'true';
 
   // If user came from venue login, always force venue mode
   React.useEffect(() => {
