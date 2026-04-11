@@ -73,6 +73,19 @@ export function logout() {
   clearToken();
 }
 
+// Venue profile
+export async function createVenueProfile(data) {
+  return request('/api/venue-profile', { method: 'POST', body: JSON.stringify(data) });
+}
+
+export async function getVenueProfile() {
+  return request('/api/venue-profile');
+}
+
+export async function updateVenueProfile(data) {
+  return request('/api/venue-profile', { method: 'PUT', body: JSON.stringify(data) });
+}
+
 export function isLoggedIn() {
   return !!getToken();
 }

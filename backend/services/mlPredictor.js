@@ -473,14 +473,26 @@ async function predictBusyness(venue, weather, timestamp) {
     const lng = venue.location?.longitude || venue.longitude || venue.lng || 0;
     const placeId = venue.place_id || venue.google_place_id || null;
     const ts = timestamp ? new Date(timestamp) : new Date();
-    const [eventData, feedback, baseline] = await Promise.all([
+    const minutes = ts.getMinutes();
+    const currentHour = ts.getHours();
+    const nextHour = (currentHour + 1) % 24;
+    const nextDay = nextHour === 0 ? (ts.getDay() + 1) % 7 : ts.getDay();
+
+    const [eventData, feedback, baseline, baselineNext] = await Promise.all([
       getNearbyEvents(lat, lng, timestamp),
       getUserFeedback(placeId),
-      getBaseline(placeId, ts.getDay(), ts.getHours()),
+      getBaseline(placeId, ts.getDay(), currentHour),
+      getBaseline(placeId, nextDay, nextHour),
     ]);
 
     const ort = require('onnxruntime-node');
-    const vector = buildFeatureVector(venue, weather, timestamp, eventData, feedback, baseline);
+
+    // Interpolate: blend current hour prediction with next hour prediction
+    // based on how many minutes past the hour we are
+    const blendFactor = minutes / 60; // 0.0 at :00, ~1.0 at :59
+    const blendedBaseline = Math.round(baseline * (1 - blendFactor) + baselineNext * blendFactor);
+
+    const vector = buildFeatureVector(venue, weather, timestamp, eventData, feedback, blendedBaseline);
 
     // If venue has Google popular_times and no baseline stored yet, save it
     if (baseline === 0 && venue.popular_times) {
