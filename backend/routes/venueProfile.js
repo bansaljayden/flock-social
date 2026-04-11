@@ -20,24 +20,25 @@ router.post('/', [
       return res.status(400).json({ error: errors.array()[0].msg });
     }
 
-    const { businessName, category, location, description, goals } = req.body;
+    const { businessName, category, location, description, goals, googlePlaceId } = req.body;
 
     // Set user role to venue_owner
     await pool.query('UPDATE users SET role = $1 WHERE id = $2', ['venue_owner', req.user.id]);
 
     // Upsert venue profile
     const result = await pool.query(
-      `INSERT INTO venue_profiles (user_id, business_name, category, location, description, goals)
-       VALUES ($1, $2, $3, $4, $5, $6)
+      `INSERT INTO venue_profiles (user_id, business_name, category, location, description, goals, google_place_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
        ON CONFLICT (user_id) DO UPDATE SET
          business_name = EXCLUDED.business_name,
          category = EXCLUDED.category,
          location = EXCLUDED.location,
          description = EXCLUDED.description,
          goals = EXCLUDED.goals,
+         google_place_id = COALESCE(EXCLUDED.google_place_id, venue_profiles.google_place_id),
          updated_at = NOW()
        RETURNING *`,
-      [req.user.id, businessName, category || null, location || null, description || null, goals || []]
+      [req.user.id, businessName, category || null, location || null, description || null, goals || [], googlePlaceId || null]
     );
 
     res.status(201).json(result.rows[0]);
