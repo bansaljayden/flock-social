@@ -67,16 +67,19 @@ router.get('/', async (req, res) => {
   }
 });
 
-// PUT /api/venue-profile — update venue profile
+// PUT /api/venue-profile — update venue profile (all settings)
 router.put('/', [
   body('businessName').optional().trim(),
   body('category').optional().trim(),
   body('location').optional().trim(),
   body('description').optional().trim(),
   body('goals').optional().isArray(),
+  body('phone').optional().trim(),
+  body('operatingHours').optional().isArray(),
+  body('notificationPrefs').optional().isObject(),
 ], async (req, res) => {
   try {
-    const { businessName, category, location, description, goals } = req.body;
+    const { businessName, category, location, description, goals, phone, operatingHours, notificationPrefs } = req.body;
 
     const result = await pool.query(
       `UPDATE venue_profiles SET
@@ -85,10 +88,15 @@ router.put('/', [
         location = COALESCE($3, location),
         description = COALESCE($4, description),
         goals = COALESCE($5, goals),
+        phone = COALESCE($6, phone),
+        operating_hours = COALESCE($7, operating_hours),
+        notification_prefs = COALESCE($8, notification_prefs),
         updated_at = NOW()
-      WHERE user_id = $6
+      WHERE user_id = $9
       RETURNING *`,
-      [businessName || null, category || null, location || null, description || null, goals || null, req.user.id]
+      [businessName || null, category || null, location || null, description || null, goals || null,
+       phone || null, operatingHours ? JSON.stringify(operatingHours) : null,
+       notificationPrefs ? JSON.stringify(notificationPrefs) : null, req.user.id]
     );
 
     if (result.rows.length === 0) {
