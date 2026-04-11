@@ -162,12 +162,32 @@ def add_geographic_features(df: pd.DataFrame) -> pd.DataFrame:
 
 def add_baseline_features(df: pd.DataFrame) -> pd.DataFrame:
     """Add baseline busyness and data freshness features."""
-    # Baseline busyness — the venue's typical busyness at this day/hour
+    # Baseline busyness — smooth with adjacent hours so model learns gradual transitions
     df['baseline_busyness'] = df['baseline_busyness'].fillna(0)
+    if 'venue_id' in df.columns:
+        df = df.sort_values(['venue_id', 'day_of_week', 'hour'])
+        df['_bl_prev'] = df.groupby(['venue_id', 'day_of_week'])['baseline_busyness'].shift(1)
+        df['_bl_next'] = df.groupby(['venue_id', 'day_of_week'])['baseline_busyness'].shift(-1)
+        df['_bl_prev'] = df['_bl_prev'].fillna(df['baseline_busyness'])
+        df['_bl_next'] = df['_bl_next'].fillna(df['baseline_busyness'])
+        mask = df['baseline_busyness'] > 0
+        df.loc[mask, 'baseline_busyness'] = (df.loc[mask, 'baseline_busyness'] * 0.6 + df.loc[mask, '_bl_prev'] * 0.2 + df.loc[mask, '_bl_next'] * 0.2).round(1)
+        df.drop(columns=['_bl_prev', '_bl_next'], inplace=True)
 
     # Category-level baseline — average busyness for this venue type at this day/hour
     cat_baseline = df.groupby(['venue_category', 'day_of_week', 'hour'])['busyness_pct'].transform('mean')
     df['category_baseline'] = cat_baseline.round(1)
+    # Smooth category baselines: blend with adjacent hours via shift
+    cat_lookup = df.groupby(['venue_category', 'day_of_week', 'hour'])['category_baseline'].first().reset_index()
+    cat_lookup = cat_lookup.sort_values(['venue_category', 'day_of_week', 'hour'])
+    cat_lookup['_prev'] = cat_lookup.groupby(['venue_category', 'day_of_week'])['category_baseline'].shift(1)
+    cat_lookup['_next'] = cat_lookup.groupby(['venue_category', 'day_of_week'])['category_baseline'].shift(-1)
+    cat_lookup['_prev'] = cat_lookup['_prev'].fillna(cat_lookup['category_baseline'])
+    cat_lookup['_next'] = cat_lookup['_next'].fillna(cat_lookup['category_baseline'])
+    cat_lookup['category_baseline_smooth'] = (cat_lookup['category_baseline'] * 0.6 + cat_lookup['_prev'] * 0.2 + cat_lookup['_next'] * 0.2).round(1)
+    smooth_map = cat_lookup.set_index(['venue_category', 'day_of_week', 'hour'])['category_baseline_smooth']
+    df['category_baseline'] = df.set_index(['venue_category', 'day_of_week', 'hour']).index.map(smooth_map).values
+    df['category_baseline'] = df['category_baseline'].fillna(cat_baseline.round(1))
 
     # Refined category baseline — sliced by price tier and popularity
     # Splits venues into budget ($0-1) vs premium ($2+) and popular (rating>=4.3) vs average

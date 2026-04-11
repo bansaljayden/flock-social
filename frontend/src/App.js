@@ -1275,6 +1275,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   const [showVenueOnboarding, setShowVenueOnboarding] = useState(false);
   const [venueOnboardingStep, setVenueOnboardingStep] = useState(0);
   const [venueOnboardingData, setVenueOnboardingData] = useState({ businessName: '', category: '', location: '', description: '', goals: [] });
+  const [venueSearchQuery, setVenueSearchQuery] = useState('');
+  const [venueSearchResults, setVenueSearchResults] = useState([]);
+  const venueSearchTimer = React.useRef(null);
 
   // If user came from venue login, always force venue mode
   React.useEffect(() => {
@@ -10864,9 +10867,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
       debounceRef.current = setTimeout(async () => {
         try {
           const data = await searchVenues(val);
-          setSuggestions((data.venues || []).slice(0, 5));
+          console.log('[VenueSearch]', val, JSON.stringify(Object.keys(data)), Array.isArray(data.venues) ? data.venues.length : 'no venues key');
+          setSuggestions((data.venues || data.results || []).slice(0, 5));
           setShowSuggestions(true);
-        } catch (e) { /* ignore */ }
+        } catch (e) { console.error('[VenueSearch] Error:', e); }
       }, 300);
     };
 
@@ -10894,6 +10898,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           <input value={query} onChange={(e) => handleChange(e.target.value)}
             onFocus={() => suggestions.length > 0 && setShowSuggestions(true)}
             placeholder="e.g. The Blue Heron Bar"
+            autoComplete="off" data-lpignore="true" data-form-type="other"
             style={{ width: '100%', padding: '14px 16px', borderRadius: '12px', border: '1.5px solid rgba(148,163,184,0.15)', fontSize: '16px', fontWeight: '500', outline: 'none', boxSizing: 'border-box', backgroundColor: 'rgba(255,255,255,0.06)', color: 'white' }} autoFocus />
           {showSuggestions && suggestions.length > 0 && (
             <div style={{ position: 'absolute', top: '100%', left: 0, right: 0, marginTop: '4px', borderRadius: '12px', overflow: 'hidden', border: '1px solid rgba(148,163,184,0.15)', backgroundColor: 'rgba(15,23,42,0.95)', backdropFilter: 'blur(12px)', zIndex: 10 }}>
@@ -10914,6 +10919,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   };
 
   const VenueOnboardingScreen = () => {
+
     const steps = [
       // Step 0: Welcome
       () => (
@@ -10924,7 +10930,57 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
         </div>
       ),
       // Step 1: Business name with Google Places autocomplete
-      () => <VenueNameStep />,
+      () => (
+        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center', padding: '24px' }}>
+          <h2 style={{ fontSize: '20px', fontWeight: '800', color: '#f0ead8', margin: '0 0 6px' }}>What's your venue called?</h2>
+          <p style={{ fontSize: '13px', color: 'rgba(148,163,184,0.6)', margin: '0 0 24px' }}>Search for your venue or type the name.</p>
+          <div style={{ position: 'relative' }}>
+            <input value={venueSearchQuery} onChange={(e) => {
+              const val = e.target.value;
+              setVenueSearchQuery(val);
+              setVenueOnboardingData(d => ({ ...d, businessName: val }));
+              if (venueSearchTimer.current) clearTimeout(venueSearchTimer.current);
+              if (val.length < 2) { setVenueSearchResults([]); return; }
+              venueSearchTimer.current = setTimeout(async () => {
+                try {
+                  const loc = userLocation ? `${userLocation.lat},${userLocation.lng}` : null;
+                  const data = await searchVenues(val, loc);
+                  setVenueSearchResults((data.venues || []).slice(0, 5));
+                } catch (e) { /* ignore */ }
+              }, 300);
+            }}
+            placeholder="e.g. The Blue Heron Bar"
+            autoComplete="off" data-lpignore="true" data-form-type="other"
+            style={{ width: '100%', padding: '14px 16px', borderRadius: '12px', border: '1.5px solid rgba(148,163,184,0.15)', fontSize: '16px', fontWeight: '500', outline: 'none', boxSizing: 'border-box', backgroundColor: 'rgba(255,255,255,0.06)', color: 'white' }} autoFocus />
+            {venueSearchResults.length > 0 && (
+              <div style={{ position: 'absolute', top: '100%', left: 0, right: 0, marginTop: '4px', borderRadius: '12px', overflow: 'hidden', border: '1px solid rgba(148,163,184,0.15)', backgroundColor: 'rgba(15,23,42,0.95)', backdropFilter: 'blur(12px)', zIndex: 10 }}>
+                {venueSearchResults.map((v, i) => (
+                  <button key={v.place_id || i} onClick={() => {
+                    const cat = (v.types || [])[0]?.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()) || '';
+                    const categoryMap = { 'Bar': 'Bar / Nightclub', 'Night Club': 'Bar / Nightclub', 'Restaurant': 'Restaurant', 'Cafe': 'Cafe / Coffee', 'Brewery': 'Brewery / Winery', 'Winery': 'Brewery / Winery' };
+                    const matchedCat = Object.entries(categoryMap).find(([k]) => cat.toLowerCase().includes(k.toLowerCase()));
+                    setVenueOnboardingData(d => ({
+                      ...d,
+                      businessName: v.name,
+                      location: v.formatted_address || v.vicinity || d.location,
+                      category: matchedCat ? matchedCat[1] : d.category,
+                      googlePlaceId: v.place_id,
+                    }));
+                    setVenueSearchQuery(v.name);
+                    setVenueSearchResults([]);
+                  }} style={{
+                    width: '100%', padding: '12px 16px', border: 'none', borderBottom: i < venueSearchResults.length - 1 ? '1px solid rgba(148,163,184,0.08)' : 'none',
+                    background: 'transparent', cursor: 'pointer', textAlign: 'left', display: 'flex', flexDirection: 'column', gap: '2px',
+                  }}>
+                    <span style={{ fontSize: '14px', fontWeight: '600', color: '#f0ead8' }}>{v.name}</span>
+                    <span style={{ fontSize: '11px', color: 'rgba(148,163,184,0.5)' }}>{v.formatted_address || v.vicinity || ''}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      ),
       // Step 2: Category
       () => (
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center', padding: '24px' }}>
@@ -10944,7 +11000,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center', padding: '24px' }}>
           <h2 style={{ fontSize: '20px', fontWeight: '800', color: '#f0ead8', margin: '0 0 6px' }}>Where are you located?</h2>
           <p style={{ fontSize: '13px', color: 'rgba(148,163,184,0.6)', margin: '0 0 24px' }}>City or full address — helps us connect you with nearby customers.</p>
-          <input value={venueOnboardingData.location} onChange={(e) => setVenueOnboardingData(d => ({ ...d, location: e.target.value }))} placeholder="e.g. Austin, TX or 123 Main St" style={{ width: '100%', padding: '14px 16px', borderRadius: '12px', border: '1.5px solid rgba(148,163,184,0.15)', fontSize: '16px', fontWeight: '500', outline: 'none', boxSizing: 'border-box', backgroundColor: 'rgba(255,255,255,0.06)', color: 'white' }} autoFocus />
+          <input value={venueOnboardingData.location} onChange={(e) => setVenueOnboardingData(d => ({ ...d, location: e.target.value }))} placeholder="e.g. Austin, TX or 123 Main St" autoComplete="off" data-lpignore="true" data-form-type="other" style={{ width: '100%', padding: '14px 16px', borderRadius: '12px', border: '1.5px solid rgba(148,163,184,0.15)', fontSize: '16px', fontWeight: '500', outline: 'none', boxSizing: 'border-box', backgroundColor: 'rgba(255,255,255,0.06)', color: 'white' }} autoFocus />
         </div>
       ),
       // Step 4: Goals
@@ -10972,7 +11028,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center', padding: '24px' }}>
           <h2 style={{ fontSize: '20px', fontWeight: '800', color: '#f0ead8', margin: '0 0 6px' }}>Describe your venue in a line</h2>
           <p style={{ fontSize: '13px', color: 'rgba(148,163,184,0.6)', margin: '0 0 24px' }}>What makes your place special? This shows on your Flock listing.</p>
-          <textarea value={venueOnboardingData.description} onChange={(e) => setVenueOnboardingData(d => ({ ...d, description: e.target.value }))} placeholder="e.g. Craft cocktail bar with live jazz on weekends" rows={3} style={{ width: '100%', padding: '14px 16px', borderRadius: '12px', border: '1.5px solid rgba(148,163,184,0.15)', fontSize: '15px', fontWeight: '500', outline: 'none', boxSizing: 'border-box', backgroundColor: 'rgba(255,255,255,0.06)', color: 'white', resize: 'none', fontFamily: 'inherit' }} autoFocus />
+          <textarea value={venueOnboardingData.description} onChange={(e) => setVenueOnboardingData(d => ({ ...d, description: e.target.value }))} placeholder="e.g. Craft cocktail bar with live jazz on weekends" rows={3} autoComplete="off" data-lpignore="true" data-form-type="other" style={{ width: '100%', padding: '14px 16px', borderRadius: '12px', border: '1.5px solid rgba(148,163,184,0.15)', fontSize: '15px', fontWeight: '500', outline: 'none', boxSizing: 'border-box', backgroundColor: 'rgba(255,255,255,0.06)', color: 'white', resize: 'none', fontFamily: 'inherit' }} autoFocus />
         </div>
       ),
     ];
