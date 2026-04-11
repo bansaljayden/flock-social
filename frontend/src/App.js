@@ -9370,7 +9370,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   const [editingEvent, setEditingEvent] = useState(null);
   const [eventForm, setEventForm] = useState({ title: '', date: '', time: '', capacity: '' });
   const [venueDashProfileLoaded, setVenueDashProfileLoaded] = useState(false);
-  const [venueInfo, setVenueInfo] = useState({ name: 'The Blue Heron Bar', address: '123 Main St, Easton PA', phone: '(610) 555-0123' });
+  const [venueInfo, setVenueInfo] = useState({ name: '', address: '', phone: '' });
   const [editingVenueInfo, setEditingVenueInfo] = useState(false);
   const [operatingHours, setOperatingHours] = useState([
     { days: 'Mon-Thu', open: '4:00 PM', close: '12:00 AM' },
@@ -9382,12 +9382,34 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   const [dealDescription, setDealDescription] = useState('');
   const [dealTimeSlot, setDealTimeSlot] = useState('Happy Hour');
 
-  // Load venue profile once when entering dashboard
+  // Load venue profile once when entering dashboard — sync venueInfo from profile/onboarding
   React.useEffect(() => {
     if (currentScreen === 'venueDashboard' && !venueDashProfileLoaded) {
-      getVenueProfile().then(p => { setVenueProfile(p); setVenueDashProfileLoaded(true); }).catch(() => setVenueDashProfileLoaded(true));
+      getVenueProfile().then(p => {
+        setVenueProfile(p);
+        setVenueDashProfileLoaded(true);
+        // Populate settings fields from backend profile
+        if (p) {
+          setVenueInfo(prev => ({
+            name: p.business_name || prev.name,
+            address: p.location || prev.address,
+            phone: p.phone || prev.phone,
+          }));
+        }
+      }).catch(() => setVenueDashProfileLoaded(true));
     }
   }, [currentScreen, venueDashProfileLoaded]);
+
+  // Seed venueInfo from onboarding data if backend profile hasn't loaded yet
+  React.useEffect(() => {
+    if (venueOnboardingData.businessName && !venueInfo.name) {
+      setVenueInfo(prev => ({
+        name: venueOnboardingData.businessName || prev.name,
+        address: venueOnboardingData.location || prev.address,
+        phone: prev.phone,
+      }));
+    }
+  }, [venueOnboardingData.businessName]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const VenueDashboard = () => {
 
@@ -9560,7 +9582,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
             </div>
             <div style={{ flex: 1 }}>
               <h1 style={{ fontSize: '18px', fontWeight: '900', color: 'white', margin: 0 }}>Welcome, {venueData.name}</h1>
-              <p style={{ fontSize: '10px', color: 'rgba(255,255,255,0.7)', margin: 0 }}>{venueProfile?.category || 'Venue Dashboard'}{venueProfile?.location ? ` · ${venueProfile.location}` : ''}</p>
+              <p style={{ fontSize: '10px', color: 'rgba(255,255,255,0.7)', margin: 0 }}>{venueProfile?.category || venueOnboardingData.category || 'Venue Dashboard'}{(venueProfile?.location || venueOnboardingData.location) ? ` · ${venueProfile?.location || venueOnboardingData.location}` : ''}</p>
             </div>
           </div>
           <button onClick={toggleMockData} style={{ marginTop: '10px', padding: '6px 12px', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.2)', backgroundColor: showMockData ? 'rgba(20,184,166,0.3)' : 'rgba(255,255,255,0.1)', color: 'white', fontSize: '10px', fontWeight: '600', cursor: 'pointer', width: '100%' }}>
