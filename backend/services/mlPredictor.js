@@ -31,6 +31,10 @@ const BASELINE_CACHE_TTL = 24 * 60 * 60 * 1000; // 24 hours (static data)
 const feedbackCache = new Map();
 const FEEDBACK_CACHE_TTL = 60 * 60 * 1000; // 1 hour
 
+// Live prediction smoothing — cache last score per venue to prevent cliff drops
+const lastPrediction = new Map();
+const MAX_LIVE_CHANGE = 15; // max points per hour for live predictions
+
 // ---------------------------------------------------------------------------
 // Initialization
 // ---------------------------------------------------------------------------
@@ -505,6 +509,20 @@ async function predictBusyness(venue, weather, timestamp) {
     const outputName = session.outputNames[0];
     let score = results[outputName].data[0];
     score = Math.max(0, Math.min(100, Math.round(score)));
+
+    // Smooth live prediction — don't let score jump more than 15 pts from last known
+    if (placeId) {
+      const prev = lastPrediction.get(placeId);
+      if (prev && Math.abs(score - prev.score) > MAX_LIVE_CHANGE) {
+        const elapsed = (Date.now() - prev.ts) / (60 * 60 * 1000); // hours since last
+        const maxDelta = Math.max(MAX_LIVE_CHANGE, Math.round(MAX_LIVE_CHANGE * elapsed));
+        const diff = score - prev.score;
+        score = prev.score + Math.sign(diff) * Math.min(Math.abs(diff), maxDelta);
+        score = Math.max(0, Math.min(100, score));
+      }
+      lastPrediction.set(placeId, { score, ts: Date.now() });
+    }
+
     const label = getLabel(score);
 
     // Real accuracy from training metrics (within_15 = % of predictions within 15 pts)
@@ -557,6 +575,8 @@ async function predictHourlyForecast(venue, weather, startHour, count, baseTimes
   const base = baseTimestamp ? new Date(baseTimestamp) : new Date();
   base.setHours(start, 0, 0, 0);
 
+  const MAX_HOURLY_CHANGE = 15; // max points a score can change per hour
+
   for (let i = 0; i < hours; i++) {
     const ts = new Date(base.getTime() + i * 60 * 60 * 1000);
     try {
@@ -580,6 +600,16 @@ async function predictHourlyForecast(venue, weather, startHour, count, baseTimes
         score: fallback.score,
         label: fallback.label,
       });
+    }
+  }
+
+  // Smooth forecast — cap max change between consecutive hours
+  for (let i = 1; i < forecast.length; i++) {
+    const diff = forecast[i].score - forecast[i - 1].score;
+    if (Math.abs(diff) > MAX_HOURLY_CHANGE) {
+      forecast[i].score = forecast[i - 1].score + (diff > 0 ? MAX_HOURLY_CHANGE : -MAX_HOURLY_CHANGE);
+      forecast[i].score = Math.max(0, Math.min(100, forecast[i].score));
+      forecast[i].label = getLabel(forecast[i].score);
     }
   }
 
