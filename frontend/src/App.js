@@ -11,7 +11,7 @@ import {
   formatCurrency,
   calculateProfitMargin
 } from './lib/finance';
-import { getCurrentUser, logout, isLoggedIn, getFlocks, getFlock, createFlock as apiCreateFlock, getMessages, sendMessage as apiSendMessage, updateProfile, searchVenues, searchUsers, getSuggestedUsers, sendFriendRequest, getVenueDetails, leaveFlock as apiLeaveFlock, getDMConversations, getDMs, getDmVenueVotes, getDmPinnedVenue, BASE_URL, inviteToFlock, acceptFlockInvite, declineFlockInvite, getFriends, acceptFriendRequest, declineFriendRequest, getPendingRequests, getOutgoingRequests, getFriendSuggestions, addFriendByCode, findFriendsByPhone, removeFriend, getTrustedContacts, addTrustedContact, updateTrustedContact, deleteTrustedContact, sendEmergencyAlert, shareLocationWithContacts, getUserStats, getCrowdPrediction, getCrowdBatch, getCrowdAlternatives, getWeather, submitVenueFeedback, uploadProfileImage, saveProfileImageUrl, submitBudget, getBudgetStatus, lockBudget, sendBudgetReminder, createBillSplit, getBillSplit, settleShare, ghostCommit, updatePaymentMethods, getPaymentLinks, getFeaturedEvents, searchEvents, getEventDetails, sendAiChat, getActivityFeed, getWeatherForecast, submitAttendance, getAdminAnalytics, createVenueProfile, getVenueProfile } from './services/api';
+import { getCurrentUser, logout, isLoggedIn, getFlocks, getFlock, createFlock as apiCreateFlock, getMessages, sendMessage as apiSendMessage, updateProfile, searchVenues, searchUsers, getSuggestedUsers, sendFriendRequest, getVenueDetails, leaveFlock as apiLeaveFlock, getDMConversations, getDMs, getDmVenueVotes, getDmPinnedVenue, BASE_URL, inviteToFlock, acceptFlockInvite, declineFlockInvite, getFriends, acceptFriendRequest, declineFriendRequest, getPendingRequests, getOutgoingRequests, getFriendSuggestions, addFriendByCode, findFriendsByPhone, removeFriend, getTrustedContacts, addTrustedContact, updateTrustedContact, deleteTrustedContact, sendEmergencyAlert, shareLocationWithContacts, getUserStats, getCrowdPrediction, getCrowdBatch, getCrowdAlternatives, getWeather, submitVenueFeedback, uploadProfileImage, saveProfileImageUrl, submitBudget, getBudgetStatus, lockBudget, sendBudgetReminder, createBillSplit, getBillSplit, settleShare, ghostCommit, updatePaymentMethods, getPaymentLinks, getFeaturedEvents, searchEvents, getEventDetails, sendAiChat, getActivityFeed, getWeatherForecast, submitAttendance, getAdminAnalytics, createVenueProfile, getVenueProfile, getVenuePromotions, createVenuePromotion, updateVenuePromotion, deleteVenuePromotion, getVenueEvents, createVenueEvent, updateVenueEvent, deleteVenueEvent, getIncomingFlocks, getVenueReviews, replyToReview, submitVenueReview, getPublicReviews, getPublicPromotions } from './services/api';
 import { connectSocket, disconnectSocket, getSocket, joinFlock, leaveFlock, sendMessage as socketSendMessage, sendImageMessage as socketSendImage, startTyping, stopTyping, onNewMessage, onUserTyping, onUserStoppedTyping, emitLocation, stopSharingLocation as socketStopSharing, onLocationUpdate, onMemberStoppedSharing, socketSendDm, onNewDm, dmStartTyping, dmStopTyping, onDmUserTyping, onDmUserStoppedTyping, dmReact, dmRemoveReact, onDmReactionAdded, onDmReactionRemoved, dmVoteVenue, onDmNewVote, dmShareLocation, dmStopSharingLocation, onDmLocationUpdate, onDmMemberStoppedSharing, dmPinVenue, onDmVenuePinned, emitFlockInvite, emitFlockInviteResponse, onFlockInviteReceived, onFlockInviteResponded, emitFriendRequest, emitFriendResponse, onFriendRequestReceived, onFriendRequestResponded, onBudgetUpdated, onBudgetLocked, onBudgetReminder, onBillCreated, onShareSettled, onBillFullySettled, onGhostCommitted, onNewVote, onVenueSelected, onFlockReactionAdded, onFlockReactionRemoved, onFlockDeleted, onFlockUpdated, onFlockMemberLeft } from './services/socket';
 import { requestNotificationPermission, onForegroundMessage } from './services/firebase';
 import { unregisterAllTokens } from './services/api';
@@ -2056,6 +2056,12 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   const [categoryExpanded, setCategoryExpanded] = useState(false);
   const [activeVenue, setActiveVenue] = useState(null);
   const [venueDetailModal, setVenueDetailModal] = useState(null); // full venue details for modal
+  const [venueDetailReviews, setVenueDetailReviews] = useState([]);
+  const [showReviewForm, setShowReviewForm] = useState(false);
+  const [reviewRating, setReviewRating] = useState(0);
+  const [reviewText, setReviewText] = useState('');
+  const [reviewSubmitting, setReviewSubmitting] = useState(false);
+  const [venueDetailPromos, setVenueDetailPromos] = useState([]);
   // Group admission party size (auto-pulls from active flock, user can adjust)
   const [partySize, setPartySize] = useState(null); // null = not set, shows prompt
   // Reliability + Attendance
@@ -2097,6 +2103,13 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
         .catch(() => {});
     }, 5 * 60 * 1000);
     return () => clearInterval(interval);
+  }, [venueDetailPlaceId]);
+
+  // Load Flock reviews + promotions when venue detail modal opens
+  useEffect(() => {
+    if (!venueDetailPlaceId) { setVenueDetailReviews([]); setVenueDetailPromos([]); setShowReviewForm(false); return; }
+    getPublicReviews(venueDetailPlaceId).then(d => setVenueDetailReviews(d.reviews || [])).catch(() => {});
+    getPublicPromotions(venueDetailPlaceId).then(d => setVenueDetailPromos(d.promotions || [])).catch(() => {});
   }, [venueDetailPlaceId]);
 
   const [showConnectPanel, setShowConnectPanel] = useState(false);
@@ -9415,8 +9428,12 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   const [venueNotifications, setVenueNotifications] = useState({ bookings: true, reviews: true, weekly: false });
   const [dealDescription, setDealDescription] = useState('');
   const [dealTimeSlot, setDealTimeSlot] = useState('Happy Hour');
+  const [realIncomingFlocks, setRealIncomingFlocks] = useState([]);
+  const [venueReviewsData, setVenueReviewsData] = useState({ reviews: [], stats: null });
+  const [replyingToReview, setReplyingToReview] = useState(null);
+  const [replyText, setReplyText] = useState('');
 
-  // Load venue profile once when entering dashboard — sync venueInfo from profile/onboarding + Google
+  // Load venue profile + all dashboard data when entering
   React.useEffect(() => {
     if (currentScreen === 'venueDashboard' && !venueDashProfileLoaded) {
       getVenueProfile().then(async (p) => {
@@ -9444,6 +9461,21 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
             } catch (e) { /* Google details optional */ }
           }
         }
+        // Load all dashboard data in parallel
+        Promise.all([
+          getVenuePromotions().catch(() => ({ promotions: [] })),
+          getVenueEvents().catch(() => ({ events: [] })),
+          getIncomingFlocks().catch(() => ({ flocks: [] })),
+          getVenueReviews().catch(() => ({ reviews: [], stats: null })),
+        ]).then(([promoData, eventData, flockData, reviewData]) => {
+          setPromotions(promoData.promotions || []);
+          setVenueEventsList((eventData.events || []).map(e => ({
+            id: e.id, title: e.title, date: e.event_date, time: e.event_time,
+            capacity: e.capacity, rsvps: e.rsvps || 0
+          })));
+          setRealIncomingFlocks(flockData.flocks || []);
+          setVenueReviewsData(reviewData);
+        });
       }).catch(() => setVenueDashProfileLoaded(true));
     }
   }, [currentScreen, venueDashProfileLoaded]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -9461,35 +9493,20 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
 
   const VenueDashboard = () => {
 
-    // Incoming flocks
-    const incomingFlocks = showMockData ? [
-      { id: 1, name: "Alex's Birthday Party", time: 'Saturday 8 PM', members: 12, status: 'confirmed' },
-      { id: 2, name: 'Friday Night Out', time: 'Friday 10 PM', members: 6, status: 'pending' }
-    ] : [];
+    // Incoming flocks — real data from backend
+    const incomingFlocks = realIncomingFlocks;
 
-    // Mock data loader
-    const mockPromos = [
-      { id: 1, title: 'Happy Hour Special', desc: '50% off drinks', time: '5-7 PM', days: 'Mon-Fri', views: 234, claims: 89 },
-      { id: 2, title: 'Late Night Bites', desc: '$5 appetizers', time: '10PM-Close', days: 'Daily', views: 156, claims: 45 }
-    ];
-    const mockEvents = [
-      { id: 1, title: 'Live Jazz Night', date: 'Jan 24', time: '9:00 PM', rsvps: 45, capacity: 60 },
-      { id: 2, title: 'Trivia Tuesday', date: 'Jan 21', time: '7:00 PM', rsvps: 28, capacity: 40 }
-    ];
-
-    const toggleMockData = () => {
-      const next = !showMockData;
-      setShowMockData(next);
-      setPromotions(next ? mockPromos : []);
-      setVenueEventsList(next ? mockEvents : []);
-    };
-
-    // Reviews (read-only)
-    const reviews = [
-      { id: 1, user: 'Sarah M.', rating: 5, text: 'Great atmosphere and amazing cocktails!', date: '2 days ago', replied: true },
-      { id: 2, user: 'Mike J.', rating: 4, text: 'Good drinks, bit crowded on weekends.', date: '1 week ago', replied: false },
-      { id: 3, user: 'Emma L.', rating: 5, text: 'Perfect spot for our flock meetup! Staff was super friendly.', date: '2 weeks ago', replied: true }
-    ];
+    // Reviews from backend
+    const reviews = (venueReviewsData.reviews || []).map(r => ({
+      id: r.id,
+      user: r.display_name || r.username || 'Anonymous',
+      rating: r.rating,
+      text: r.text || '',
+      date: r.created_at ? new Date(r.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : '',
+      replied: !!r.venue_reply,
+      reply: r.venue_reply || null,
+    }));
+    const reviewStats = venueReviewsData.stats;
 
     // Settings state — hoisted to FlockAppInner
     const notifications = venueNotifications;
@@ -9503,11 +9520,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
       { id: 'settings', label: 'Settings', icon: Icons.settings }
     ];
 
-    // Promotion handlers
+    // Promotion handlers — real API
     const openPromoModal = (promo = null) => {
       if (promo) {
         setEditingPromo(promo);
-        setPromoForm({ title: promo.title, desc: promo.desc, time: promo.time, days: promo.days });
+        setPromoForm({ title: promo.title, desc: promo.description || promo.desc || '', time: promo.time_slot || promo.time || 'Happy Hour', days: promo.days || 'Daily' });
       } else {
         setEditingPromo(null);
         setPromoForm({ title: '', desc: '', time: 'Happy Hour', days: 'Daily' });
@@ -9515,25 +9532,36 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
       setShowPromoModal(true);
     };
 
-    const savePromo = () => {
+    const savePromo = async () => {
       if (!promoForm.title.trim()) return;
-      if (editingPromo) {
-        setPromotions(prev => prev.map(p => p.id === editingPromo.id ? { ...p, ...promoForm } : p));
-             } else {
-        setPromotions(prev => [...prev, { id: Date.now(), ...promoForm, views: 0, claims: 0 }]);
-             }
+      try {
+        if (editingPromo) {
+          const updated = await updateVenuePromotion(editingPromo.id, {
+            title: promoForm.title, description: promoForm.desc, timeSlot: promoForm.time, days: promoForm.days
+          });
+          setPromotions(prev => prev.map(p => p.id === editingPromo.id ? updated : p));
+        } else {
+          const created = await createVenuePromotion({
+            title: promoForm.title, description: promoForm.desc, timeSlot: promoForm.time, days: promoForm.days
+          });
+          setPromotions(prev => [...prev, created]);
+        }
+      } catch (e) { console.error('Save promo failed:', e); }
       setShowPromoModal(false);
     };
 
-    const deletePromo = (id) => {
-      setPromotions(prev => prev.filter(p => p.id !== id));
-         };
+    const deletePromo = async (id) => {
+      try {
+        await deleteVenuePromotion(id);
+        setPromotions(prev => prev.filter(p => p.id !== id));
+      } catch (e) { console.error('Delete promo failed:', e); }
+    };
 
-    // Event handlers
+    // Event handlers — real API
     const openEventModal = (event = null) => {
       if (event) {
         setEditingEvent(event);
-        setEventForm({ title: event.title, date: event.date, time: event.time, capacity: event.capacity.toString() });
+        setEventForm({ title: event.title, date: event.date || event.event_date || '', time: event.time || event.event_time || '', capacity: (event.capacity || '').toString() });
       } else {
         setEditingEvent(null);
         setEventForm({ title: '', date: '', time: '', capacity: '' });
@@ -9541,19 +9569,50 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
       setShowEventModal(true);
     };
 
-    const saveEvent = () => {
+    const saveEvent = async () => {
       if (!eventForm.title.trim()) return;
-      if (editingEvent) {
-        setVenueEventsList(prev => prev.map(e => e.id === editingEvent.id ? { ...e, ...eventForm, capacity: parseInt(eventForm.capacity) || 50 } : e));
-             } else {
-        setVenueEventsList(prev => [...prev, { id: Date.now(), ...eventForm, capacity: parseInt(eventForm.capacity) || 50, rsvps: 0 }]);
-             }
+      try {
+        if (editingEvent) {
+          const updated = await updateVenueEvent(editingEvent.id, {
+            title: eventForm.title, eventDate: eventForm.date, eventTime: eventForm.time, capacity: parseInt(eventForm.capacity) || 50
+          });
+          setVenueEventsList(prev => prev.map(e => e.id === editingEvent.id ? {
+            id: updated.id, title: updated.title, date: updated.event_date, time: updated.event_time,
+            capacity: updated.capacity, rsvps: updated.rsvps || 0
+          } : e));
+        } else {
+          const created = await createVenueEvent({
+            title: eventForm.title, eventDate: eventForm.date, eventTime: eventForm.time, capacity: parseInt(eventForm.capacity) || 50
+          });
+          setVenueEventsList(prev => [...prev, {
+            id: created.id, title: created.title, date: created.event_date, time: created.event_time,
+            capacity: created.capacity, rsvps: 0
+          }]);
+        }
+      } catch (e) { console.error('Save event failed:', e); }
       setShowEventModal(false);
     };
 
-    const deleteEvent = (id) => {
-      setVenueEventsList(prev => prev.filter(e => e.id !== id));
-         };
+    const deleteEvent = async (id) => {
+      try {
+        await deleteVenueEvent(id);
+        setVenueEventsList(prev => prev.filter(e => e.id !== id));
+      } catch (e) { console.error('Delete event failed:', e); }
+    };
+
+    // Reply to review handler
+    const handleReplyToReview = async (reviewId) => {
+      if (!replyText.trim()) return;
+      try {
+        const updated = await replyToReview(reviewId, replyText);
+        setVenueReviewsData(prev => ({
+          ...prev,
+          reviews: prev.reviews.map(r => r.id === reviewId ? { ...r, venue_reply: updated.venue_reply, venue_replied_at: updated.venue_replied_at } : r)
+        }));
+        setReplyingToReview(null);
+        setReplyText('');
+      } catch (e) { console.error('Reply failed:', e); }
+    };
 
     // Venue data — real profile + optional mock analytics
     const mockAnalytics = {
@@ -9633,9 +9692,6 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
               <p style={{ fontSize: '10px', color: 'rgba(255,255,255,0.7)', margin: 0 }}>{venueProfile?.category || venueOnboardingData.category || 'Venue Dashboard'}{(venueProfile?.location || venueOnboardingData.location) ? ` · ${venueProfile?.location || venueOnboardingData.location}` : ''}</p>
             </div>
           </div>
-          <button onClick={toggleMockData} style={{ marginTop: '10px', padding: '6px 12px', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.2)', backgroundColor: showMockData ? 'rgba(20,184,166,0.3)' : 'rgba(255,255,255,0.1)', color: 'white', fontSize: '10px', fontWeight: '600', cursor: 'pointer', width: '100%' }}>
-            {showMockData ? 'Showing Mock Data — tap to clear' : 'Load Mock Data'}
-          </button>
         </div>
 
         {/* Tab Navigation */}
@@ -9765,8 +9821,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
                       <div style={{ flex: 1 }}>
                         <h4 style={{ fontSize: '13px', fontWeight: '700', color: colors.navy, margin: 0 }}>{promo.title}</h4>
-                        <p style={{ fontSize: '11px', color: 'var(--text-secondary)', margin: '2px 0' }}>{promo.desc}</p>
-                        <p style={{ fontSize: '10px', color: 'var(--text-tertiary)', margin: 0 }}>{promo.time} - {promo.days}</p>
+                        <p style={{ fontSize: '11px', color: 'var(--text-secondary)', margin: '2px 0' }}>{promo.description || promo.desc}</p>
+                        <p style={{ fontSize: '10px', color: 'var(--text-tertiary)', margin: 0 }}>{promo.time_slot || promo.time} - {promo.days}</p>
                       </div>
                       <div style={{ display: 'flex', gap: '6px' }}>
                         <button onClick={() => openPromoModal(promo)} style={{ padding: '6px', borderRadius: '6px', border: 'none', backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer' }}>{Icons.edit(colors.navy, 14)}</button>
@@ -9814,15 +9870,15 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                   <div key={flock.id} style={{ padding: '10px', backgroundColor: 'var(--bg-card-solid)', borderRadius: '8px', marginBottom: '8px' }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                       <div>
-                        <h4 style={{ fontSize: '13px', fontWeight: '700', color: colors.navy, margin: 0 }}>{flock.name}</h4>
-                        <p style={{ fontSize: '10px', color: 'var(--text-secondary)', margin: '2px 0' }}>{flock.members} members - {flock.time}</p>
+                        <h4 style={{ fontSize: '13px', fontWeight: '700', color: colors.navy, margin: 0 }}>{flock.title || flock.name}</h4>
+                        <p style={{ fontSize: '10px', color: 'var(--text-secondary)', margin: '2px 0' }}>{flock.member_count || flock.members || 0} members{flock.date ? ` - ${new Date(flock.date).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}` : ''}{flock.time ? ` ${flock.time}` : ''}</p>
                       </div>
                       <span style={{ padding: '4px 8px', borderRadius: '12px', backgroundColor: flock.status === 'confirmed' ? colors.teal : colors.amber, color: 'white', fontSize: '9px', fontWeight: '600' }}>
-                        {flock.status === 'confirmed' ? 'Confirmed' : 'Pending'}
+                        {flock.status === 'confirmed' ? 'Confirmed' : 'Active'}
                       </span>
                     </div>
                   </div>
-                )) : <p style={{ fontSize: '11px', color: 'var(--text-tertiary)', textAlign: 'center', padding: '20px' }}>No incoming flocks scheduled</p>}
+                )) : <p style={{ fontSize: '11px', color: 'var(--text-tertiary)', textAlign: 'center', padding: '20px' }}>No incoming flocks yet</p>}
               </div>
 
               {/* Your Events */}
@@ -9870,56 +9926,75 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
             <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
               {/* Rating Overview */}
               <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
-                  <div style={{ textAlign: 'center' }}>
-                    <p style={{ fontSize: '32px', fontWeight: '900', color: colors.navy, margin: 0 }}>4.7</p>
-                    <div style={{ display: 'flex', gap: '2px', justifyContent: 'center', margin: '4px 0' }}>
-                      {[1, 2, 3, 4, 5].map(s => s <= 4 ? Icons.starFilled(colors.amber, 14) : Icons.star(colors.amber, 14))}
-                    </div>
-                    <p style={{ fontSize: '10px', color: 'var(--text-secondary)', margin: 0 }}>156 reviews</p>
-                  </div>
-                  <div style={{ flex: 1 }}>
-                    {[5, 4, 3, 2, 1].map(rating => (
-                      <div key={rating} style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '4px' }}>
-                        <span style={{ fontSize: '10px', color: 'var(--text-secondary)', width: '12px' }}>{rating}</span>
-                        <div style={{ flex: 1, height: '6px', backgroundColor: 'var(--bg-tertiary)', borderRadius: '3px', overflow: 'hidden' }}>
-                          <div style={{ height: '100%', width: `${rating === 5 ? 60 : rating === 4 ? 25 : rating === 3 ? 10 : rating === 2 ? 3 : 2}%`, backgroundColor: colors.amber, borderRadius: '3px' }} />
-                        </div>
+                {reviewStats && reviewStats.total > 0 ? (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+                    <div style={{ textAlign: 'center' }}>
+                      <p style={{ fontSize: '32px', fontWeight: '900', color: colors.navy, margin: 0 }}>{reviewStats.average}</p>
+                      <div style={{ display: 'flex', gap: '2px', justifyContent: 'center', margin: '4px 0' }}>
+                        {[1, 2, 3, 4, 5].map(s => s <= Math.round(reviewStats.average) ? Icons.starFilled(colors.amber, 14) : Icons.star(colors.amber, 14))}
                       </div>
-                    ))}
-                  </div>
-                </div>
-              </div>
-
-              {/* Recent Reviews */}
-              <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
-                <h3 style={{ fontSize: '12px', fontWeight: '700', color: colors.navy, margin: '0 0 10px' }}>Recent Reviews</h3>
-                {reviews.map(review => (
-                  <div key={review.id} style={{ padding: '10px', backgroundColor: 'var(--bg-card-solid)', borderRadius: '8px', marginBottom: '8px' }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                        <div style={{ width: '32px', height: '32px', borderRadius: '16px', backgroundColor: colors.navyBg, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', fontSize: '12px', fontWeight: '700' }}>
-                          {review.user.charAt(0)}
-                        </div>
-                        <div>
-                          <p style={{ fontSize: '12px', fontWeight: '600', color: colors.navy, margin: 0 }}>{review.user}</p>
-                          <div style={{ display: 'flex', gap: '1px' }}>
-                            {[1, 2, 3, 4, 5].map(s => s <= review.rating ? Icons.starFilled(colors.amber, 10) : Icons.star(colors.disabled, 10))}
+                      <p style={{ fontSize: '10px', color: 'var(--text-secondary)', margin: 0 }}>{reviewStats.total} review{reviewStats.total !== 1 ? 's' : ''}</p>
+                    </div>
+                    <div style={{ flex: 1 }}>
+                      {[5, 4, 3, 2, 1].map(rating => (
+                        <div key={rating} style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '4px' }}>
+                          <span style={{ fontSize: '10px', color: 'var(--text-secondary)', width: '12px' }}>{rating}</span>
+                          <div style={{ flex: 1, height: '6px', backgroundColor: 'var(--bg-tertiary)', borderRadius: '3px', overflow: 'hidden' }}>
+                            <div style={{ height: '100%', width: `${reviewStats.total > 0 ? (reviewStats.distribution[rating - 1] / reviewStats.total * 100) : 0}%`, backgroundColor: colors.amber, borderRadius: '3px' }} />
                           </div>
                         </div>
-                      </div>
-                      <span style={{ fontSize: '9px', color: 'var(--text-tertiary)' }}>{review.date}</span>
+                      ))}
                     </div>
-                    <p style={{ fontSize: '11px', color: '#4b5563', margin: '8px 0 0', lineHeight: '1.4' }}>{review.text}</p>
-                    {!review.replied && (
-                      <button onClick={() => {}} style={{ marginTop: '8px', padding: '6px 10px', borderRadius: '6px', border: `1px solid ${colors.navy}`, backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontSize: '10px', fontWeight: '500', cursor: 'pointer' }}>
-                        Reply
-                      </button>
-                    )}
-                    {review.replied && <p style={{ fontSize: '10px', color: colors.teal, margin: '8px 0 0', display: 'flex', alignItems: 'center', gap: '4px' }}>{Icons.checkCircle(colors.teal, 12)} Replied</p>}
                   </div>
-                ))}
+                ) : (
+                  <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: 0, textAlign: 'center', padding: '12px 0' }}>No reviews yet. Reviews from Flock users will appear here.</p>
+                )}
               </div>
+
+              {/* Reviews List */}
+              {reviews.length > 0 && (
+                <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
+                  <h3 style={{ fontSize: '12px', fontWeight: '700', color: colors.navy, margin: '0 0 10px' }}>Recent Reviews</h3>
+                  {reviews.map(review => (
+                    <div key={review.id} style={{ padding: '10px', backgroundColor: 'var(--bg-card-solid)', borderRadius: '8px', marginBottom: '8px' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                          <div style={{ width: '32px', height: '32px', borderRadius: '16px', backgroundColor: colors.navyBg, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', fontSize: '12px', fontWeight: '700' }}>
+                            {review.user.charAt(0)}
+                          </div>
+                          <div>
+                            <p style={{ fontSize: '12px', fontWeight: '600', color: colors.navy, margin: 0 }}>{review.user}</p>
+                            <div style={{ display: 'flex', gap: '1px' }}>
+                              {[1, 2, 3, 4, 5].map(s => s <= review.rating ? Icons.starFilled(colors.amber, 10) : Icons.star(colors.disabled, 10))}
+                            </div>
+                          </div>
+                        </div>
+                        <span style={{ fontSize: '9px', color: 'var(--text-tertiary)' }}>{review.date}</span>
+                      </div>
+                      <p style={{ fontSize: '11px', color: '#4b5563', margin: '8px 0 0', lineHeight: '1.4' }}>{review.text}</p>
+                      {review.reply && (
+                        <div style={{ marginTop: '8px', padding: '8px', backgroundColor: 'var(--bg-tertiary)', borderRadius: '6px', borderLeft: `3px solid ${colors.teal}` }}>
+                          <p style={{ fontSize: '10px', fontWeight: '600', color: colors.teal, margin: '0 0 2px' }}>Owner Reply</p>
+                          <p style={{ fontSize: '11px', color: 'var(--text-secondary)', margin: 0 }}>{review.reply}</p>
+                        </div>
+                      )}
+                      {!review.replied && replyingToReview !== review.id && (
+                        <button onClick={() => { setReplyingToReview(review.id); setReplyText(''); }} style={{ marginTop: '8px', padding: '6px 10px', borderRadius: '6px', border: `1px solid ${colors.navy}`, backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontSize: '10px', fontWeight: '500', cursor: 'pointer' }}>
+                          Reply
+                        </button>
+                      )}
+                      {replyingToReview === review.id && (
+                        <div style={{ marginTop: '8px', display: 'flex', gap: '6px' }}>
+                          <input value={replyText} onChange={(e) => setReplyText(e.target.value)} placeholder="Write your reply..." autoFocus style={{ flex: 1, padding: '6px 10px', borderRadius: '6px', border: `1px solid ${colors.creamDark}`, fontSize: '11px', backgroundColor: 'var(--bg-card-solid)', color: 'var(--text-primary)' }} />
+                          <button onClick={() => handleReplyToReview(review.id)} style={{ padding: '6px 12px', borderRadius: '6px', border: 'none', backgroundColor: colors.navy, color: 'white', fontSize: '10px', fontWeight: '600', cursor: 'pointer' }}>Send</button>
+                          <button onClick={() => setReplyingToReview(null)} style={{ padding: '6px 8px', borderRadius: '6px', border: `1px solid ${colors.creamDark}`, backgroundColor: 'var(--bg-card-solid)', color: 'var(--text-secondary)', fontSize: '10px', cursor: 'pointer' }}>Cancel</button>
+                        </div>
+                      )}
+                      {review.replied && !review.reply && <p style={{ fontSize: '10px', color: colors.teal, margin: '8px 0 0', display: 'flex', alignItems: 'center', gap: '4px' }}>{Icons.checkCircle(colors.teal, 12)} Replied</p>}
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           )}
 
@@ -12262,6 +12337,88 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                     </div>
                   )}
                 </>
+              )}
+            </div>
+
+            {/* Active Promotions */}
+            {venueDetailPromos.length > 0 && (
+              <div style={{ padding: '0 16px 12px' }}>
+                <h4 style={{ fontSize: '13px', fontWeight: '700', color: 'var(--text-primary)', margin: '0 0 8px', display: 'flex', alignItems: 'center', gap: '6px' }}>{Icons.gift(colors.teal, 14)} Deals & Promotions</h4>
+                {venueDetailPromos.map(p => (
+                  <div key={p.id} style={{ padding: '10px', backgroundColor: 'var(--bg-tertiary)', borderRadius: '10px', marginBottom: '6px', border: `1px solid ${colors.teal}33` }}>
+                    <p style={{ fontSize: '12px', fontWeight: '700', color: 'var(--text-primary)', margin: 0 }}>{p.title}</p>
+                    {p.description && <p style={{ fontSize: '11px', color: 'var(--text-secondary)', margin: '2px 0 0' }}>{p.description}</p>}
+                    <p style={{ fontSize: '10px', color: 'var(--text-tertiary)', margin: '2px 0 0' }}>{p.time_slot}{p.days ? ` · ${p.days}` : ''}</p>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* Flock Reviews */}
+            <div style={{ padding: '0 16px 12px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                <h4 style={{ fontSize: '13px', fontWeight: '700', color: 'var(--text-primary)', margin: 0 }}>{Icons.star(colors.amber, 14)} Flock Reviews ({venueDetailReviews.length})</h4>
+                {!showReviewForm && (
+                  <button onClick={() => { setShowReviewForm(true); setReviewRating(0); setReviewText(''); }} style={{ padding: '4px 10px', borderRadius: '6px', border: `1px solid ${colors.navy}`, backgroundColor: 'transparent', color: colors.navy, fontSize: '10px', fontWeight: '600', cursor: 'pointer' }}>
+                    Write Review
+                  </button>
+                )}
+              </div>
+
+              {/* Review Form */}
+              {showReviewForm && (
+                <div style={{ padding: '12px', backgroundColor: 'var(--bg-tertiary)', borderRadius: '10px', marginBottom: '8px' }}>
+                  <p style={{ fontSize: '11px', fontWeight: '600', color: 'var(--text-primary)', margin: '0 0 6px' }}>Your Rating</p>
+                  <div style={{ display: 'flex', gap: '4px', marginBottom: '8px' }}>
+                    {[1, 2, 3, 4, 5].map(s => (
+                      <button key={s} onClick={() => setReviewRating(s)} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '2px' }}>
+                        {s <= reviewRating ? Icons.starFilled(colors.amber, 22) : Icons.star(colors.disabled, 22)}
+                      </button>
+                    ))}
+                  </div>
+                  <textarea value={reviewText} onChange={(e) => setReviewText(e.target.value)} placeholder="How was your experience?" rows={3} style={{ width: '100%', padding: '8px 10px', borderRadius: '8px', border: '1px solid var(--border-subtle)', fontSize: '12px', backgroundColor: 'var(--bg-card-solid)', color: 'var(--text-primary)', resize: 'none', fontFamily: 'inherit', boxSizing: 'border-box' }} />
+                  <div style={{ display: 'flex', gap: '6px', marginTop: '8px' }}>
+                    <button disabled={!reviewRating || reviewSubmitting} onClick={async () => {
+                      setReviewSubmitting(true);
+                      try {
+                        await submitVenueReview(venueDetailModal.place_id, reviewRating, reviewText);
+                        const updated = await getPublicReviews(venueDetailModal.place_id);
+                        setVenueDetailReviews(updated.reviews || []);
+                        setShowReviewForm(false);
+                      } catch (e) { console.error('Review submit failed:', e); }
+                      setReviewSubmitting(false);
+                    }} style={{ flex: 1, padding: '8px', borderRadius: '8px', border: 'none', backgroundColor: reviewRating ? colors.navy : colors.disabled, color: 'white', fontSize: '12px', fontWeight: '600', cursor: reviewRating ? 'pointer' : 'not-allowed' }}>
+                      {reviewSubmitting ? 'Submitting...' : 'Submit Review'}
+                    </button>
+                    <button onClick={() => setShowReviewForm(false)} style={{ padding: '8px 12px', borderRadius: '8px', border: '1px solid var(--border-subtle)', backgroundColor: 'var(--bg-card-solid)', color: 'var(--text-secondary)', fontSize: '12px', cursor: 'pointer' }}>Cancel</button>
+                  </div>
+                </div>
+              )}
+
+              {/* Review List */}
+              {venueDetailReviews.length > 0 ? venueDetailReviews.slice(0, 5).map(r => (
+                <div key={r.id} style={{ padding: '10px', backgroundColor: 'var(--bg-tertiary)', borderRadius: '8px', marginBottom: '6px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                      <div style={{ width: '24px', height: '24px', borderRadius: '12px', backgroundColor: colors.navyBg, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', fontSize: '10px', fontWeight: '700' }}>
+                        {(r.display_name || r.username || '?').charAt(0).toUpperCase()}
+                      </div>
+                      <span style={{ fontSize: '11px', fontWeight: '600', color: 'var(--text-primary)' }}>{r.display_name || r.username}</span>
+                    </div>
+                    <div style={{ display: 'flex', gap: '1px' }}>
+                      {[1, 2, 3, 4, 5].map(s => s <= r.rating ? Icons.starFilled(colors.amber, 10) : Icons.star(colors.disabled, 10))}
+                    </div>
+                  </div>
+                  {r.text && <p style={{ fontSize: '11px', color: 'var(--text-secondary)', margin: '4px 0 0', lineHeight: '1.4' }}>{r.text}</p>}
+                  {r.venue_reply && (
+                    <div style={{ marginTop: '6px', padding: '6px 8px', backgroundColor: 'var(--bg-card-solid)', borderRadius: '6px', borderLeft: `2px solid ${colors.teal}` }}>
+                      <p style={{ fontSize: '9px', fontWeight: '600', color: colors.teal, margin: '0 0 1px' }}>Owner Reply</p>
+                      <p style={{ fontSize: '10px', color: 'var(--text-secondary)', margin: 0 }}>{r.venue_reply}</p>
+                    </div>
+                  )}
+                </div>
+              )) : !showReviewForm && (
+                <p style={{ fontSize: '11px', color: 'var(--text-tertiary)', textAlign: 'center', padding: '12px' }}>No reviews yet. Be the first!</p>
               )}
             </div>
 

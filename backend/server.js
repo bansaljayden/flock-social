@@ -33,6 +33,7 @@ const notificationRoutes = require('./routes/notifications');
 const waitlistRoutes = require('./routes/waitlist');
 const adminRoutes = require('./routes/admin');
 const venueProfileRoutes = require('./routes/venueProfile');
+const venueDashboardRoutes = require('./routes/venueDashboard');
 
 const app = express();
 app.set('trust proxy', 1);
@@ -148,6 +149,7 @@ app.use('/api/notifications', apiLimiter, notificationRoutes); // Handles /api/n
 app.use('/api/waitlist', apiLimiter, waitlistRoutes);          // Handles /api/waitlist (public, no auth)
 app.use('/api/admin', apiLimiter, adminRoutes);               // Handles /api/admin/* (admin only)
 app.use('/api/venue-profile', apiLimiter, venueProfileRoutes); // Handles /api/venue-profile (venue owners)
+app.use('/api/venue-dashboard', apiLimiter, venueDashboardRoutes); // Handles promotions, events, reviews CRUD
 
 // Health check
 app.get('/api/health', (req, res) => {
@@ -449,6 +451,67 @@ async function runMigrations() {
     } catch (venueErr) {
       console.error('Venue profiles migration error:', venueErr.message);
     }
+
+    // Venue promotions table
+    try {
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS venue_promotions (
+          id SERIAL PRIMARY KEY,
+          venue_user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+          google_place_id VARCHAR(255),
+          title VARCHAR(255) NOT NULL,
+          description TEXT,
+          time_slot VARCHAR(100),
+          days VARCHAR(100),
+          active BOOLEAN DEFAULT true,
+          views INTEGER DEFAULT 0,
+          claims INTEGER DEFAULT 0,
+          created_at TIMESTAMPTZ DEFAULT NOW(),
+          updated_at TIMESTAMPTZ DEFAULT NOW()
+        )
+      `);
+      await pool.query('CREATE INDEX IF NOT EXISTS idx_venue_promos_place ON venue_promotions(google_place_id)');
+      console.log('Venue promotions migration complete');
+    } catch (e) { console.error('Venue promotions migration error:', e.message); }
+
+    // Venue events table
+    try {
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS venue_events (
+          id SERIAL PRIMARY KEY,
+          venue_user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+          google_place_id VARCHAR(255),
+          title VARCHAR(255) NOT NULL,
+          event_date VARCHAR(50),
+          event_time VARCHAR(50),
+          capacity INTEGER DEFAULT 50,
+          rsvps INTEGER DEFAULT 0,
+          created_at TIMESTAMPTZ DEFAULT NOW(),
+          updated_at TIMESTAMPTZ DEFAULT NOW()
+        )
+      `);
+      await pool.query('CREATE INDEX IF NOT EXISTS idx_venue_events_place ON venue_events(google_place_id)');
+      console.log('Venue events migration complete');
+    } catch (e) { console.error('Venue events migration error:', e.message); }
+
+    // Venue reviews table (Flock user reviews, separate from Google)
+    try {
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS venue_reviews (
+          id SERIAL PRIMARY KEY,
+          google_place_id VARCHAR(255) NOT NULL,
+          user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+          rating INTEGER NOT NULL CHECK (rating >= 1 AND rating <= 5),
+          text TEXT,
+          venue_reply TEXT,
+          venue_replied_at TIMESTAMPTZ,
+          created_at TIMESTAMPTZ DEFAULT NOW(),
+          UNIQUE(google_place_id, user_id)
+        )
+      `);
+      await pool.query('CREATE INDEX IF NOT EXISTS idx_venue_reviews_place ON venue_reviews(google_place_id)');
+      console.log('Venue reviews migration complete');
+    } catch (e) { console.error('Venue reviews migration error:', e.message); }
 
     // Keep demo stories alive — refresh expiration for seeded picsum stories
     await pool.query(
