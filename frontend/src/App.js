@@ -9453,8 +9453,23 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           if (p.notification_prefs && typeof p.notification_prefs === 'object') {
             setVenueNotifications(p.notification_prefs);
           }
-          // Fetch phone + hours from Google if we have a place ID and no saved hours
-          const placeId = p.google_place_id || venueOnboardingData.googlePlaceId;
+          // Resolve Google place ID — try profile, onboarding data, or search by name
+          let placeId = p.google_place_id || venueOnboardingData.googlePlaceId;
+          if (!placeId && p.business_name) {
+            try {
+              const searchData = await searchVenues(p.business_name, p.location ? null : null);
+              const match = (searchData.venues || []).find(v =>
+                v.name.toLowerCase() === p.business_name.toLowerCase()
+              ) || (searchData.venues || [])[0];
+              if (match?.place_id) {
+                placeId = match.place_id;
+                // Save place_id to profile for future loads
+                updateVenueProfile({ googlePlaceId: placeId }).catch(() => {});
+              }
+            } catch (e) { /* search optional */ }
+          }
+
+          // Fetch phone + hours from Google
           const needsGoogleData = !p.phone || !(p.operating_hours && p.operating_hours.length > 0);
           if (placeId && needsGoogleData) {
             try {
@@ -9463,14 +9478,12 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
               if (venue.formatted_phone_number && !p.phone) {
                 const phone = venue.formatted_phone_number;
                 setVenueInfo(prev => ({ ...prev, phone }));
-                // Save to backend so we don't fetch again
                 updateVenueProfile({ phone }).catch(() => {});
               }
               if (venue.opening_hours?.weekdayDescriptions && !(p.operating_hours && p.operating_hours.length > 0)) {
                 const parsed = parseGoogleHours(venue.opening_hours.weekdayDescriptions);
                 if (parsed.length > 0) {
                   setOperatingHours(parsed);
-                  // Save to backend
                   updateVenueProfile({ operatingHours: parsed }).catch(() => {});
                 }
               }
