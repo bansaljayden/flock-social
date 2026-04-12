@@ -9419,7 +9419,6 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   // Venue Dashboard state — hoisted to FlockAppInner so VenueDashboard can be a plain function
   const [showUpgradeModal, setShowUpgradeModal] = useState(false);
   const [venueProfile, setVenueProfile] = useState(null);
-  const [showMockData, setShowMockData] = useState(false);
   const [promotions, setPromotions] = useState([]);
   const [showPromoModal, setShowPromoModal] = useState(false);
   const [editingPromo, setEditingPromo] = useState(null);
@@ -9654,24 +9653,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
       } catch (e) { console.error('Reply failed:', e); }
     };
 
-    // Venue data — real profile + optional mock analytics
-    const mockAnalytics = {
-      todayCheckins: 47,
-      weekTraffic: 312,
-      crowdForecast: 78,
-      peakHours: [
-        { hour: '6pm', value: 30 },
-        { hour: '7pm', value: 45 },
-        { hour: '8pm', value: 65 },
-        { hour: '9pm', value: 85 },
-        { hour: '10pm', value: 95 },
-        { hour: '11pm', value: 80 },
-        { hour: '12am', value: 55 },
-      ],
-      topInterests: ['Live Music', 'Cocktails', 'Sports'],
-      repeatRate: 34,
-      demographics: { '21-25': 35, '26-30': 40, '31-35': 15, '36+': 10 },
-    };
+    // Venue analytics (placeholder — will be real when analytics backend is built)
     const emptyAnalytics = {
       todayCheckins: 0,
       weekTraffic: 0,
@@ -9684,7 +9666,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
       repeatRate: 0,
       demographics: { '21-25': 0, '26-30': 0, '31-35': 0, '36+': 0 },
     };
-    const analytics = showMockData ? mockAnalytics : emptyAnalytics;
+    const analytics = emptyAnalytics;
     const venueData = {
       name: venueProfile?.business_name || authUser?.name || 'Your Venue',
       logo: null,
