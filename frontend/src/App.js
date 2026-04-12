@@ -5197,74 +5197,92 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   const [easterEggTaps, setEasterEggTaps] = useState(0);
 
   // WELCOME SCREEN - Mode Selection
-  const WelcomeScreen = () => (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', backgroundColor: 'var(--bg-primary)', padding: '20px', boxSizing: 'border-box' }}>
-      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center' }}>
-        {/* Logo */}
-        <div
-          onClick={() => {
-            setEasterEggTaps(prev => {
-              const newCount = prev + 1;
-              if (newCount === 7) {
-                // Easter egg found
-                return 0;
-              }
-              // Easter egg hint at 5 taps
-              return newCount;
-            });
-          }}
-          style={{ width: '80px', height: '80px', borderRadius: '24px', overflow: 'hidden', marginBottom: '16px', boxShadow: '0 8px 32px rgba(13,40,71,0.3)', cursor: 'pointer' }}
-        >
-          <img src="/flock-logo.png" alt="Flock" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+  const WelcomeScreen = () => {
+    const glassCard = {
+      position: 'relative', borderRadius: '28px', padding: '32px 28px',
+    };
+    const glassOverlay = {
+      position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', borderRadius: '28px', zIndex: 0,
+      background: 'linear-gradient(145deg, rgba(255,255,255,0.1) 0%, rgba(255,255,255,0.03) 50%, rgba(255,255,255,0.05) 100%)',
+      border: '1px solid rgba(255,255,255,0.15)', borderTop: '1px solid rgba(255,255,255,0.25)', borderLeft: '1px solid rgba(255,255,255,0.18)',
+      pointerEvents: 'none',
+      boxShadow: '0 0 6px rgba(0,0,0,0.03), 0 2px 6px rgba(0,0,0,0.08), inset 3px 3px 0.5px -3.5px rgba(255,255,255,0.09), inset -3px -3px 0.5px -3.5px rgba(255,255,255,0.85), inset 1px 1px 1px -0.5px rgba(255,255,255,0.6), inset -1px -1px 1px -0.5px rgba(255,255,255,0.6), inset 0 0 6px 6px rgba(255,255,255,0.12)',
+    };
+    const modeBtn = {
+      width: '100%', padding: '16px 20px', borderRadius: '16px', border: '1px solid rgba(255,255,255,0.1)',
+      background: 'rgba(255,255,255,0.06)', marginBottom: '10px', cursor: 'pointer', textAlign: 'left',
+      display: 'flex', alignItems: 'center', gap: '14px', transition: 'background 0.2s',
+    };
+
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', height: '100%', position: 'relative', overflow: 'hidden' }}>
+        {/* City video background — same as login */}
+        <div style={{ position: 'absolute', inset: 0, overflow: 'hidden', pointerEvents: 'none' }}>
+          <video autoPlay muted loop playsInline style={{ position: 'absolute', width: '100%', height: '100%', objectFit: 'cover', filter: 'brightness(0.65) saturate(1)' }}>
+            <source src="/bg-city.mp4" type="video/mp4" />
+          </video>
+          <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(180deg, rgba(6,10,20,0.45) 0%, rgba(10,21,40,0.15) 40%, rgba(6,10,20,0.4) 100%)' }} />
         </div>
-        <h1 style={{ fontSize: '28px', fontWeight: '900', color: colors.navy, margin: '0 0 4px', textAlign: 'center' }}>Flock</h1>
-        <p style={{ fontSize: '13px', color: colors.navyMid, margin: '0 0 28px', textAlign: 'center', fontWeight: '500' }}>Social Coordination Simplified</p>
 
-        {/* Mode Cards */}
-        <div style={{ width: '100%', maxWidth: '320px' }}>
-          {/* User Mode */}
-          <button onClick={() => selectMode('user')} style={{ width: '100%', padding: '20px', borderRadius: '16px', border: 'none', background: 'var(--bg-card-solid)', marginBottom: '12px', cursor: 'pointer', textAlign: 'left', boxShadow: '0 4px 12px rgba(0,0,0,0.08)', display: 'flex', alignItems: 'center', gap: '16px', transition: 'transform 0.2s, box-shadow 0.2s' }}>
-            <div style={{ width: '56px', height: '56px', borderRadius: '16px', overflow: 'hidden', flexShrink: 0 }}>
-              <img src="/flock-logo.png" alt="Flock" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', position: 'relative', zIndex: 1, padding: '20px' }}>
+          {/* Logo */}
+          <img src="/flock-logo.png" alt="Flock" style={{ width: '120px', height: '120px', borderRadius: '50%', objectFit: 'cover', marginBottom: '12px', boxShadow: '0 8px 40px rgba(0,0,0,0.4)' }} />
+          <h1 style={{ fontSize: '28px', fontWeight: '900', color: colors.cream, margin: '0 0 2px', letterSpacing: '-0.5px' }}>Welcome, {authUser?.name?.split(' ')[0] || 'back'}</h1>
+          <p style={{ fontSize: '14px', color: 'rgba(148,163,184,0.5)', fontWeight: '400', margin: '0 0 24px' }}>Choose how you want to use Flock</p>
+
+          {/* Glass card with mode options */}
+          <div style={{ width: '100%', maxWidth: '340px' }}>
+            <div style={glassCard}>
+              <div style={glassOverlay} />
+              <div style={{ position: 'relative', zIndex: 1 }}>
+                {/* User Mode */}
+                <button onClick={() => selectMode('user')} style={modeBtn}>
+                  <div style={{ width: '44px', height: '44px', borderRadius: '12px', overflow: 'hidden', flexShrink: 0 }}>
+                    <img src="/flock-logo.png" alt="Flock" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                  </div>
+                  <div style={{ flex: 1 }}>
+                    <h3 style={{ fontSize: '15px', fontWeight: '800', color: colors.cream, margin: '0 0 2px' }}>I'm Going Out</h3>
+                    <p style={{ fontSize: '11px', color: 'rgba(148,163,184,0.5)', margin: 0 }}>Coordinate with friends, find venues</p>
+                  </div>
+                  <span style={{ fontSize: '18px', color: 'rgba(255,255,255,0.4)' }}>›</span>
+                </button>
+
+                {/* Venue Owner Mode */}
+                {(authUser?.role === 'venue_owner' || authUser?.role === 'admin') && (
+                  <button onClick={() => selectMode('venue')} style={modeBtn}>
+                    <div style={{ width: '44px', height: '44px', borderRadius: '12px', background: 'linear-gradient(135deg, #7C3AED, #5B21B6)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                      {Icons.home('white', 22)}
+                    </div>
+                    <div style={{ flex: 1 }}>
+                      <h3 style={{ fontSize: '15px', fontWeight: '800', color: colors.cream, margin: '0 0 2px' }}>Venue Dashboard</h3>
+                      <p style={{ fontSize: '11px', color: 'rgba(148,163,184,0.5)', margin: 0 }}>Manage your venue, see traffic</p>
+                    </div>
+                    <span style={{ fontSize: '18px', color: 'rgba(255,255,255,0.4)' }}>›</span>
+                  </button>
+                )}
+
+                {/* Admin Mode */}
+                {authUser?.role === 'admin' && (
+                  <button onClick={() => selectMode('admin')} style={modeBtn}>
+                    <div style={{ width: '44px', height: '44px', borderRadius: '12px', background: 'linear-gradient(135deg, #059669, #047857)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                      {Icons.briefcase('white', 22)}
+                    </div>
+                    <div style={{ flex: 1 }}>
+                      <h3 style={{ fontSize: '15px', fontWeight: '800', color: colors.cream, margin: '0 0 2px' }}>Admin Dashboard</h3>
+                      <p style={{ fontSize: '11px', color: 'rgba(148,163,184,0.5)', margin: 0 }}>Platform analytics & revenue</p>
+                    </div>
+                    <span style={{ fontSize: '18px', color: 'rgba(255,255,255,0.4)' }}>›</span>
+                  </button>
+                )}
+              </div>
             </div>
-            <div style={{ flex: 1 }}>
-              <h3 style={{ fontSize: '16px', fontWeight: '800', color: colors.navy, margin: '0 0 4px' }}>I'm Going Out</h3>
-              <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: 0 }}>Coordinate with friends, find venues</p>
-            </div>
-            <span style={{ fontSize: '20px', color: colors.navy }}>›</span>
-          </button>
-
-          {/* Venue Owner Mode — only for venue_owner or admin roles */}
-          {(authUser?.role === 'venue_owner' || authUser?.role === 'admin') && (
-            <button onClick={() => selectMode('venue')} style={{ width: '100%', padding: '20px', borderRadius: '16px', border: 'none', background: 'var(--bg-card-solid)', marginBottom: '12px', cursor: 'pointer', textAlign: 'left', boxShadow: '0 4px 12px rgba(0,0,0,0.08)', display: 'flex', alignItems: 'center', gap: '16px', transition: 'transform 0.2s, box-shadow 0.2s' }}>
-              <div style={{ flex: 1 }}>
-                <h3 style={{ fontSize: '16px', fontWeight: '800', color: colors.navy, margin: '0 0 4px' }}>Venue Dashboard</h3>
-                <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: 0 }}>Manage your venue, see traffic</p>
-              </div>
-              <span style={{ fontSize: '20px', color: colors.navy }}>›</span>
-            </button>
-          )}
-
-          {/* Admin Mode — only for admin role */}
-          {authUser?.role === 'admin' && (
-            <button onClick={() => selectMode('admin')} style={{ width: '100%', padding: '20px', borderRadius: '16px', border: 'none', background: 'var(--bg-card-solid)', marginBottom: '12px', cursor: 'pointer', textAlign: 'left', boxShadow: '0 4px 12px rgba(0,0,0,0.08)', display: 'flex', alignItems: 'center', gap: '16px', transition: 'transform 0.2s, box-shadow 0.2s' }}>
-              <div style={{ width: '56px', height: '56px', borderRadius: '16px', background: 'linear-gradient(135deg, #059669, #047857)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                {Icons.briefcase('white', 28)}
-              </div>
-              <div style={{ flex: 1 }}>
-                <h3 style={{ fontSize: '16px', fontWeight: '800', color: colors.navy, margin: '0 0 4px' }}>Admin Dashboard</h3>
-                <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: 0 }}>Platform analytics & revenue</p>
-              </div>
-              <span style={{ fontSize: '20px', color: colors.navy }}>›</span>
-            </button>
-          )}
+          </div>
         </div>
+
+        <p style={{ fontSize: '11px', color: 'rgba(148,163,184,0.3)', textAlign: 'center', margin: '0 0 16px', position: 'relative', zIndex: 1 }}>You can switch modes anytime in your profile</p>
       </div>
-
-      {/* Footer */}
-      <p style={{ fontSize: '11px', color: 'var(--text-tertiary)', textAlign: 'center', margin: 0 }}>You can switch modes anytime in your profile</p>
-    </div>
-  );
+    );
+  };
 
   // HOME SCREEN
   const HomeScreen = () => {
