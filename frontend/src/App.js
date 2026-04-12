@@ -26,57 +26,26 @@ import { SplineScene } from './components/ui/spline-scene';
 
 // Animated crowd dial — fills from 0 to target score with counting number
 const AnimatedDial = React.memo(function AnimatedDial({ score, color }) {
-  // SVG ring animated entirely via CSS (GPU) — zero React state churn during the sweep.
-  // Only one render when `score` changes; the stroke-dashoffset transitions smoothly.
-  const size = 84;
-  const stroke = 8;
-  const radius = (size - stroke) / 2;
-  const circumference = 2 * Math.PI * radius;
-  const [displayedNum, setDisplayedNum] = React.useState(0);
+  const [displayed, setDisplayed] = React.useState(0);
 
-  // Animate the number with a small number of stepped updates (not 60fps) so React doesn't
-  // thrash. The ring itself transitions via CSS on GPU — fully smooth regardless.
   React.useEffect(() => {
+    let raf;
+    const start = performance.now();
     const duration = 1200;
-    const steps = 20; // ~60ms per update — feels continuous, cheap on React
-    const stepMs = duration / steps;
-    const ease = t => 1 - Math.pow(1 - t, 3);
-    let i = 0;
-    setDisplayedNum(0);
-    const id = setInterval(() => {
-      i++;
-      const t = Math.min(i / steps, 1);
-      setDisplayedNum(Math.round(ease(t) * score));
-      if (t >= 1) clearInterval(id);
-    }, stepMs);
-    return () => clearInterval(id);
+    const ease = t => 1 - Math.pow(1 - t, 3); // ease-out cubic
+    const tick = now => {
+      const t = Math.min((now - start) / duration, 1);
+      setDisplayed(Math.round(ease(t) * score));
+      if (t < 1) raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
   }, [score]);
 
-  const pct = Math.max(0, Math.min(100, score));
-  // Dash offset: full circumference = 0%, 0 offset = 100%
-  const dashOffset = circumference * (1 - pct / 100);
-
   return (
-    <div style={{ width: `${size}px`, height: `${size}px`, position: 'relative', flexShrink: 0 }}>
-      <svg width={size} height={size} style={{ transform: 'rotate(-90deg)' }}>
-        {/* Track */}
-        <circle cx={size / 2} cy={size / 2} r={radius} fill="none" stroke="var(--border-default)" strokeWidth={stroke} />
-        {/* Progress — GPU-animated via CSS transition */}
-        <circle
-          cx={size / 2}
-          cy={size / 2}
-          r={radius}
-          fill="none"
-          stroke={color}
-          strokeWidth={stroke}
-          strokeLinecap="round"
-          strokeDasharray={circumference}
-          strokeDashoffset={dashOffset}
-          style={{ transition: 'stroke-dashoffset 1200ms cubic-bezier(0.33, 1, 0.68, 1), stroke 300ms ease' }}
-        />
-      </svg>
-      <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column', pointerEvents: 'none' }}>
-        <span style={{ fontSize: '22px', fontWeight: '900', color, lineHeight: 1 }}>{displayedNum}%</span>
+    <div style={{ width: '84px', height: '84px', borderRadius: '42px', background: `conic-gradient(${color} ${displayed * 3.6}deg, var(--border-default) 0deg)`, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, boxShadow: `0 4px 16px rgba(0,0,0,0.4), 0 8px 24px rgba(0,0,0,0.2), 0 0 12px ${color}30` }}>
+      <div style={{ width: '68px', height: '68px', borderRadius: '34px', backgroundColor: 'var(--bg-card-solid)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column' }}>
+        <span style={{ fontSize: '22px', fontWeight: '900', color, lineHeight: 1 }}>{displayed}%</span>
       </div>
     </div>
   );
