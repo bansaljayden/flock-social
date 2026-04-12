@@ -9454,8 +9454,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
             phone: p.phone || prev.phone,
           }));
           // Load saved operating hours and notification prefs
-          if (p.operating_hours && Array.isArray(p.operating_hours) && p.operating_hours.length > 0) {
-            setOperatingHours(p.operating_hours);
+          // Validate hours have real open/close times (not just "Open 24 hours" from bad parse)
+          const savedHours = p.operating_hours && Array.isArray(p.operating_hours) ? p.operating_hours : [];
+          const hoursValid = savedHours.length > 0 && savedHours.some(h => h.open && h.close && h.open !== 'Open 24 hours' && h.open !== 'Closed');
+          if (hoursValid) {
+            setOperatingHours(savedHours);
           }
           if (p.notification_prefs && typeof p.notification_prefs === 'object') {
             setVenueNotifications(p.notification_prefs);
@@ -9477,8 +9480,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
             } catch (e) { /* search optional */ }
           }
 
-          // Fetch phone + hours from Google
-          const needsGoogleData = !p.phone || !(p.operating_hours && p.operating_hours.length > 0);
+          // Fetch phone + hours from Google if missing or invalid
+          const needsGoogleData = !p.phone || !hoursValid;
           if (placeId && needsGoogleData) {
             try {
               const data = await getVenueDetails(placeId);
@@ -9488,7 +9491,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 setVenueInfo(prev => ({ ...prev, phone }));
                 updateVenueProfile({ phone }).catch(() => {});
               }
-              if (venue.opening_hours?.weekdayDescriptions && !(p.operating_hours && p.operating_hours.length > 0)) {
+              if (venue.opening_hours?.weekdayDescriptions && !hoursValid) {
                 const parsed = parseGoogleHours(venue.opening_hours.weekdayDescriptions);
                 if (parsed.length > 0) {
                   setOperatingHours(parsed);
