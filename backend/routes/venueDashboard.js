@@ -201,15 +201,15 @@ router.get('/incoming-flocks', async (req, res) => {
     const venue = await getVenueCtx(req.user.id);
     if (!venue || !venue.google_place_id) return res.json({ flocks: [] });
 
-    // Find flocks where venue_votes reference this venue's place_id or name
+    // Find flocks where venue_votes reference this venue's place_id (venue_id column)
     const { rows } = await pool.query(
-      `SELECT DISTINCT f.id, f.title, f.date, f.time, f.status,
-              (SELECT COUNT(*) FROM flock_members fm WHERE fm.flock_id = f.id AND fm.status = 'accepted') as member_count
+      `SELECT DISTINCT f.id, f.name AS title, f.event_time, f.status,
+              (SELECT COUNT(*) FROM flock_members fm WHERE fm.flock_id = f.id AND fm.status = 'accepted') AS member_count
        FROM flocks f
        JOIN venue_votes vv ON vv.flock_id = f.id
-       WHERE (vv.venue_data->>'place_id' = $1 OR vv.venue_data->>'google_place_id' = $1)
-         AND f.status IN ('active', 'confirmed')
-       ORDER BY f.date DESC NULLS LAST
+       WHERE vv.venue_id = $1
+         AND (f.status IS NULL OR f.status IN ('active', 'confirmed'))
+       ORDER BY f.event_time DESC NULLS LAST
        LIMIT 20`,
       [venue.google_place_id]
     );
@@ -229,7 +229,7 @@ router.get('/reviews', async (req, res) => {
     if (!venue || !venue.google_place_id) return res.json({ reviews: [], stats: null });
 
     const { rows } = await pool.query(
-      `SELECT vr.*, u.username, u.display_name, u.avatar_url
+      `SELECT vr.*, u.name, u.profile_image_url
        FROM venue_reviews vr
        JOIN users u ON u.id = vr.user_id
        WHERE vr.google_place_id = $1
@@ -313,7 +313,7 @@ router.get('/public-reviews/:placeId', async (req, res) => {
   try {
     const { rows } = await pool.query(
       `SELECT vr.id, vr.rating, vr.text, vr.venue_reply, vr.venue_replied_at, vr.created_at,
-              u.username, u.display_name, u.avatar_url
+              u.name, u.profile_image_url
        FROM venue_reviews vr
        JOIN users u ON u.id = vr.user_id
        WHERE vr.google_place_id = $1
