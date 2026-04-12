@@ -5215,7 +5215,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           }}
           style={{ width: '80px', height: '80px', borderRadius: '24px', background: `linear-gradient(135deg, ${colors.navyBg}, ${colors.navyMidBg})`, display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: '16px', boxShadow: '0 8px 32px rgba(13,40,71,0.3)', cursor: 'pointer' }}
         >
-          {Icons.users('white', 40)}
+          <span style={{ fontSize: '36px', fontWeight: '900', color: 'white', fontFamily: 'inherit' }}>F</span>
         </div>
         <h1 style={{ fontSize: '28px', fontWeight: '900', color: colors.navy, margin: '0 0 4px', textAlign: 'center' }}>Flock</h1>
         <p style={{ fontSize: '13px', color: colors.navyMid, margin: '0 0 28px', textAlign: 'center', fontWeight: '500' }}>Social Coordination Simplified</p>
@@ -5225,7 +5225,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           {/* User Mode */}
           <button onClick={() => selectMode('user')} style={{ width: '100%', padding: '20px', borderRadius: '16px', border: 'none', background: 'var(--bg-card-solid)', marginBottom: '12px', cursor: 'pointer', textAlign: 'left', boxShadow: '0 4px 12px rgba(0,0,0,0.08)', display: 'flex', alignItems: 'center', gap: '16px', transition: 'transform 0.2s, box-shadow 0.2s' }}>
             <div style={{ width: '56px', height: '56px', borderRadius: '16px', background: `linear-gradient(135deg, ${colors.navyBg}, ${colors.navyMidBg})`, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-              {Icons.users('white', 28)}
+              <span style={{ fontSize: '24px', fontWeight: '900', color: 'white', fontFamily: 'inherit' }}>F</span>
             </div>
             <div style={{ flex: 1 }}>
               <h3 style={{ fontSize: '16px', fontWeight: '800', color: colors.navy, margin: '0 0 4px' }}>I'm Going Out</h3>
@@ -5237,9 +5237,6 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           {/* Venue Owner Mode — only for venue_owner or admin roles */}
           {(authUser?.role === 'venue_owner' || authUser?.role === 'admin') && (
             <button onClick={() => selectMode('venue')} style={{ width: '100%', padding: '20px', borderRadius: '16px', border: 'none', background: 'var(--bg-card-solid)', marginBottom: '12px', cursor: 'pointer', textAlign: 'left', boxShadow: '0 4px 12px rgba(0,0,0,0.08)', display: 'flex', alignItems: 'center', gap: '16px', transition: 'transform 0.2s, box-shadow 0.2s' }}>
-              <div style={{ width: '56px', height: '56px', borderRadius: '16px', background: 'linear-gradient(135deg, #7C3AED, #5B21B6)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                {Icons.building('white', 28)}
-              </div>
               <div style={{ flex: 1 }}>
                 <h3 style={{ fontSize: '16px', fontWeight: '800', color: colors.navy, margin: '0 0 4px' }}>Venue Dashboard</h3>
                 <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: 0 }}>Manage your venue, see traffic</p>
