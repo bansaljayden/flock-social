@@ -6412,6 +6412,13 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                         <span style={{ fontSize: '14px', fontWeight: '900', color: 'var(--text-tertiary)' }}>---</span>
                       </div>
                     </div>
+                  ) : crowdLoading && !cd ? (
+                    // Wait for real crowd data before animating — prevents double animation (rule score → real score)
+                    <div style={{ width: '84px', height: '84px', borderRadius: '42px', backgroundColor: 'var(--border-default)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                      <div style={{ width: '68px', height: '68px', borderRadius: '34px', backgroundColor: 'var(--bg-card-solid)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                        <span style={{ fontSize: '11px', fontWeight: '700', color: 'var(--text-tertiary)' }}>···</span>
+                      </div>
+                    </div>
                   ) : (
                     <AnimatedDial score={score} color={crowdColor} />
                   )}
