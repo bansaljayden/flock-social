@@ -9510,43 +9510,63 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           // Fetch phone + hours from Google if missing or invalid
           const needsGoogleData = !p.phone || !hoursValid;
           if (needsGoogleData && p.business_name) {
-            const tryFetchDetails = async (placeId, savePlaceId = false) => {
-              if (!placeId) return false;
+            const expectedName = p.business_name.toLowerCase();
+            // Returns venue object if place_id resolves to correct venue, else null
+            const fetchAndVerify = async (placeId) => {
+              if (!placeId) return null;
               try {
                 const data = await getVenueDetails(placeId);
                 const venue = data.venue || data;
-                if (!venue) return false;
-                let gotSomething = false;
-                if (venue.formatted_phone_number) {
-                  const phone = venue.formatted_phone_number;
-                  setVenueInfo(prev => ({ ...prev, phone }));
-                  updateVenueProfile({ phone, ...(savePlaceId ? { googlePlaceId: placeId } : {}) }).catch(() => {});
-                  gotSomething = true;
-                }
-                if (venue.opening_hours?.weekdayDescriptions) {
-                  const parsed = parseGoogleHours(venue.opening_hours.weekdayDescriptions);
-                  if (parsed.length > 0) {
-                    setOperatingHours(parsed);
-                    updateVenueProfile({ operatingHours: parsed, ...(savePlaceId ? { googlePlaceId: placeId } : {}) }).catch(() => {});
-                    gotSomething = true;
-                  }
-                }
-                return gotSomething;
-              } catch (e) { return false; }
+                if (!venue?.name) return null;
+                // Verify the fetched venue name matches our business name (fuzzy: one contains the other)
+                const fetchedName = venue.name.toLowerCase();
+                const matches = fetchedName.includes(expectedName) || expectedName.includes(fetchedName);
+                return matches ? venue : null;
+              } catch (e) { return null; }
             };
+
+            const applyVenue = (venue, placeId, savePlaceId) => {
+              let got = false;
+              if (venue.formatted_phone_number) {
+                const phone = venue.formatted_phone_number;
+                setVenueInfo(prev => ({ ...prev, phone }));
+                updateVenueProfile({ phone, ...(savePlaceId ? { googlePlaceId: placeId } : {}) }).catch(() => {});
+                got = true;
+              }
+              if (venue.opening_hours?.weekdayDescriptions) {
+                const parsed = parseGoogleHours(venue.opening_hours.weekdayDescriptions);
+                if (parsed.length > 0) {
+                  setOperatingHours(parsed);
+                  updateVenueProfile({ operatingHours: parsed, ...(savePlaceId ? { googlePlaceId: placeId } : {}) }).catch(() => {});
+                  got = true;
+                }
+              }
+              return got;
+            };
+
+            // 1) Try saved place ID — only trust result if venue name matches
             const savedPlaceId = p.google_place_id || venueOnboardingData.googlePlaceId;
-            const savedWorked = await tryFetchDetails(savedPlaceId, false);
-            if (!savedWorked) {
+            let verifiedVenue = await fetchAndVerify(savedPlaceId);
+            let resolvedPlaceId = savedPlaceId;
+
+            // 2) If saved place_id points to wrong venue OR no data, search by name for correct one
+            if (!verifiedVenue) {
               try {
                 const query = p.location ? `${p.business_name} ${p.location}` : p.business_name;
                 const searchData = await searchVenues(query);
                 const match = (searchData.venues || []).find(v =>
-                  v.name.toLowerCase() === p.business_name.toLowerCase()
+                  v.name.toLowerCase() === expectedName
                 ) || (searchData.venues || [])[0];
                 if (match?.place_id && match.place_id !== savedPlaceId) {
-                  await tryFetchDetails(match.place_id, true);
+                  verifiedVenue = await fetchAndVerify(match.place_id);
+                  if (verifiedVenue) resolvedPlaceId = match.place_id;
                 }
               } catch (e) { /* search optional */ }
+            }
+
+            if (verifiedVenue) {
+              // Save the correct place_id if it differs from saved
+              applyVenue(verifiedVenue, resolvedPlaceId, resolvedPlaceId !== savedPlaceId);
             }
           }
         }
