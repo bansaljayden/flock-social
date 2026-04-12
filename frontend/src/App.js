@@ -9507,42 +9507,55 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           if (p.notification_prefs && typeof p.notification_prefs === 'object') {
             setVenueNotifications(p.notification_prefs);
           }
-          // Resolve Google place ID — try profile, onboarding data, or search by name
-          let placeId = p.google_place_id || venueOnboardingData.googlePlaceId;
-          if (!placeId && p.business_name) {
-            try {
-              const query = p.location ? `${p.business_name} ${p.location}` : p.business_name;
-              const searchData = await searchVenues(query);
-              const match = (searchData.venues || []).find(v =>
-                v.name.toLowerCase() === p.business_name.toLowerCase()
-              ) || (searchData.venues || [])[0];
-              if (match?.place_id) {
-                placeId = match.place_id;
-                // Save place_id to profile for future loads
-                updateVenueProfile({ googlePlaceId: placeId }).catch(() => {});
-              }
-            } catch (e) { /* search optional */ }
-          }
-
           // Fetch phone + hours from Google if missing or invalid
           const needsGoogleData = !p.phone || !hoursValid;
-          if (placeId && needsGoogleData) {
-            try {
-              const data = await getVenueDetails(placeId);
-              const venue = data.venue || data;
-              if (venue.formatted_phone_number && !p.phone) {
-                const phone = venue.formatted_phone_number;
-                setVenueInfo(prev => ({ ...prev, phone }));
-                updateVenueProfile({ phone }).catch(() => {});
-              }
-              if (venue.opening_hours?.weekdayDescriptions && !hoursValid) {
-                const parsed = parseGoogleHours(venue.opening_hours.weekdayDescriptions);
-                if (parsed.length > 0) {
-                  setOperatingHours(parsed);
-                  updateVenueProfile({ operatingHours: parsed }).catch(() => {});
+          if (needsGoogleData && p.business_name) {
+            // Helper to try fetching details and apply them
+            const tryFetchDetails = async (placeId, savePlaceId = false) => {
+              if (!placeId) return false;
+              try {
+                const data = await getVenueDetails(placeId);
+                const venue = data.venue || data;
+                if (!venue) return false;
+                let gotSomething = false;
+                if (venue.formatted_phone_number) {
+                  const phone = venue.formatted_phone_number;
+                  setVenueInfo(prev => ({ ...prev, phone }));
+                  updateVenueProfile({ phone, ...(savePlaceId ? { googlePlaceId: placeId } : {}) }).catch(() => {});
+                  gotSomething = true;
                 }
+                if (venue.opening_hours?.weekdayDescriptions) {
+                  const parsed = parseGoogleHours(venue.opening_hours.weekdayDescriptions);
+                  if (parsed.length > 0) {
+                    setOperatingHours(parsed);
+                    updateVenueProfile({ operatingHours: parsed, ...(savePlaceId ? { googlePlaceId: placeId } : {}) }).catch(() => {});
+                    gotSomething = true;
+                  }
+                }
+                return gotSomething;
+              } catch (e) {
+                console.warn('[Venue] Details fetch failed for', placeId, e?.message);
+                return false;
               }
-            } catch (e) { /* Google details optional */ }
+            };
+
+            // 1) Try saved place ID first
+            const savedPlaceId = p.google_place_id || venueOnboardingData.googlePlaceId;
+            const savedWorked = await tryFetchDetails(savedPlaceId, false);
+
+            // 2) If saved ID failed (stale/invalid), search by name to get a fresh ID
+            if (!savedWorked) {
+              try {
+                const query = p.location ? `${p.business_name} ${p.location}` : p.business_name;
+                const searchData = await searchVenues(query);
+                const match = (searchData.venues || []).find(v =>
+                  v.name.toLowerCase() === p.business_name.toLowerCase()
+                ) || (searchData.venues || [])[0];
+                if (match?.place_id && match.place_id !== savedPlaceId) {
+                  await tryFetchDetails(match.place_id, true); // save the fresh place_id
+                }
+              } catch (e) { /* search optional */ }
+            }
           }
         }
         // Load all dashboard data in parallel
