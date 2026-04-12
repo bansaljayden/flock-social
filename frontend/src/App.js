@@ -9374,11 +9374,18 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   // Parse Google weekdayDescriptions into grouped operating hours
   const parseGoogleHours = (descriptions) => {
     if (!descriptions || !Array.isArray(descriptions)) return [];
-    // descriptions = ["Monday: 11:00 AM – 10:00 PM", "Tuesday: 11:00 AM – 10:00 PM", ...]
+    // descriptions = ["Monday: 11:00 AM – 10:00 PM", ...]
+    // Google sometimes returns garbled UTF-8 for dashes/spaces — normalize them
+    const clean = (s) => s
+      .replace(/\u202f|\u00a0|\u2009|\u2008/g, ' ')  // narrow/non-breaking spaces
+      .replace(/\u2013|\u2014|\u00e2\u20ac\u201c/g, '–')  // en-dash variants
+      .replace(/[^\x20-\x7E–]/g, '')  // strip remaining non-ASCII except en-dash
+      .replace(/\s+/g, ' ').trim();
     const dayOrder = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
     const dayAbbr = { Monday: 'Mon', Tuesday: 'Tue', Wednesday: 'Wed', Thursday: 'Thu', Friday: 'Fri', Saturday: 'Sat', Sunday: 'Sun' };
     const parsed = descriptions.map(d => {
-      const [dayPart, ...timeParts] = d.split(': ');
+      const c = clean(d);
+      const [dayPart, ...timeParts] = c.split(': ');
       const time = timeParts.join(': ').trim();
       return { day: dayPart.trim(), time };
     }).filter(d => dayOrder.includes(d.day));
@@ -9457,7 +9464,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           let placeId = p.google_place_id || venueOnboardingData.googlePlaceId;
           if (!placeId && p.business_name) {
             try {
-              const searchData = await searchVenues(p.business_name, p.location ? null : null);
+              const query = p.location ? `${p.business_name} ${p.location}` : p.business_name;
+              const searchData = await searchVenues(query);
               const match = (searchData.venues || []).find(v =>
                 v.name.toLowerCase() === p.business_name.toLowerCase()
               ) || (searchData.venues || [])[0];
