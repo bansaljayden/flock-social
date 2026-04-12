@@ -1322,21 +1322,25 @@ const SearchInputLocal = React.memo(function SearchInputLocal({
   onCommit,
   debounceMs = 120,
   inputRef,
+  as = 'input',          // 'input' | 'textarea'
+  transform,             // optional (value) => transformedValue applied before state + commit
   ...inputProps
 }) {
-  const [val, setVal] = React.useState(initialValue);
+  const [val, setVal] = React.useState(() => (transform ? transform(initialValue) : initialValue));
   const timerRef = React.useRef(null);
-  // Clean up pending commit on unmount
   React.useEffect(() => () => { if (timerRef.current) clearTimeout(timerRef.current); }, []);
-  // If the parent resets the committed value externally, sync local state.
-  // Only runs when the parent prop actually changes (React compares).
-  React.useEffect(() => { setVal(initialValue); }, [initialValue]);
+  // Sync when parent pushes a different initialValue (e.g. modal re-open with new data)
+  React.useEffect(() => { setVal(transform ? transform(initialValue) : initialValue); }, [initialValue, transform]);
   const handleChange = (e) => {
-    const next = e.target.value;
+    const raw = e.target.value;
+    const next = transform ? transform(raw) : raw;
     setVal(next);
     if (timerRef.current) clearTimeout(timerRef.current);
     timerRef.current = setTimeout(() => onCommit(next), debounceMs);
   };
+  if (as === 'textarea') {
+    return <textarea {...inputProps} ref={inputRef} value={val} onChange={handleChange} />;
+  }
   return <input {...inputProps} ref={inputRef} value={val} onChange={handleChange} />;
 });
 
@@ -5737,7 +5741,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
         <div style={{ flex: 1, padding: '16px', overflowY: 'auto', backgroundColor: 'var(--bg-primary)' }}>
           <div style={{ marginBottom: '16px' }}>
             <label style={{ display: 'block', fontSize: '12px', fontWeight: 'bold', color: colors.navy, marginBottom: '6px' }}>What's the plan?</label>
-            <input key="flock-name-input" id="flock-name-input" type="text" value={flockName} onChange={(e) => setFlockName(e.target.value)} placeholder="Movie night, dinner, party..." style={styles.input} autoComplete="off" />
+            <SearchInputLocal key="flock-name-input" id="flock-name-input" type="text" initialValue={flockName} onCommit={setFlockName} placeholder="Movie night, dinner, party..." style={styles.input} autoComplete="off" />
           </div>
 
           {/* VENUE PICKER — Browse on Discover tab */}
@@ -5919,7 +5923,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
       <div style={{ flex: 1, padding: '16px', backgroundColor: 'var(--bg-primary)' }}>
         <div style={{ marginBottom: '16px' }}>
           <label style={{ display: 'block', fontSize: '12px', fontWeight: 'bold', color: colors.navy, marginBottom: '6px' }}>Enter Code</label>
-          <input key="join-code-input" id="join-code-input" type="text" value={joinCode} onChange={(e) => setJoinCode(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 6))} placeholder="ABC123" maxLength={6} style={{ ...styles.input, fontSize: '20px', textAlign: 'center', letterSpacing: '8px', textTransform: 'uppercase' }} autoComplete="off" />
+          <SearchInputLocal key="join-code-input" id="join-code-input" type="text" initialValue={joinCode} onCommit={setJoinCode} transform={(v) => v.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 6)} placeholder="ABC123" maxLength={6} style={{ ...styles.input, fontSize: '20px', textAlign: 'center', letterSpacing: '8px', textTransform: 'uppercase' }} autoComplete="off" />
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px', margin: '24px 0' }}>
           <div style={{ flex: 1, height: '1px', backgroundColor: 'var(--toggle-off)' }} />
@@ -7034,8 +7038,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           {showAddEvent && (
             <div style={{ ...styles.card, marginTop: '12px', border: `2px solid ${colors.navy}` }}>
               <h4 style={{ fontSize: '13px', fontWeight: 'bold', color: colors.navy, margin: '0 0 10px', display: 'flex', alignItems: 'center', gap: '6px' }}>{Icons.plus(colors.navy, 14)} New Event</h4>
-              <input key="event-title" id="event-title" type="text" value={newEventTitle} onChange={(e) => setNewEventTitle(e.target.value)} placeholder="Event title" style={{ ...styles.input, marginBottom: '8px' }} autoComplete="off" />
-              <input key="event-venue" id="event-venue" type="text" value={newEventVenue} onChange={(e) => setNewEventVenue(e.target.value)} placeholder="Venue (optional)" style={{ ...styles.input, marginBottom: '10px' }} autoComplete="off" />
+              <SearchInputLocal key="event-title" id="event-title" type="text" initialValue={newEventTitle} onCommit={setNewEventTitle} placeholder="Event title" style={{ ...styles.input, marginBottom: '8px' }} autoComplete="off" />
+              <SearchInputLocal key="event-venue" id="event-venue" type="text" initialValue={newEventVenue} onCommit={setNewEventVenue} placeholder="Venue (optional)" style={{ ...styles.input, marginBottom: '10px' }} autoComplete="off" />
               {/* Event categories */}
               <p style={{ fontSize: '10px', fontWeight: '600', color: 'var(--text-secondary)', marginBottom: '6px' }}>Category</p>
               <div style={{ display: 'flex', gap: '6px', marginBottom: '10px', flexWrap: 'wrap' }}>
@@ -7922,7 +7926,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                       <p style={{ fontSize: '11px', color: 'var(--text-secondary)', margin: '0 0 6px' }}>Or enter a custom amount</p>
                       <div style={{ position: 'relative' }}>
                         <span style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', fontSize: '15px', fontWeight: '700', color: colors.navy }}>$</span>
-                        <input type="number" value={budgetCustom} onChange={(e) => { setBudgetCustom(e.target.value); setBudgetAmount(null); }} placeholder="0" style={{ ...styles.input, paddingLeft: '28px', fontSize: '15px', fontWeight: '700' }} />
+                        <SearchInputLocal type="number" initialValue={budgetCustom} onCommit={(v) => { setBudgetCustom(v); setBudgetAmount(null); }} placeholder="0" style={{ ...styles.input, paddingLeft: '28px', fontSize: '15px', fontWeight: '700' }} />
                       </div>
                     </div>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '16px' }}>
@@ -8016,7 +8020,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                       <label style={{ display: 'block', fontSize: '12px', fontWeight: '700', color: colors.navy, marginBottom: '6px' }}>What was the total?</label>
                       <div style={{ position: 'relative' }}>
                         <span style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', fontSize: '16px', fontWeight: '800', color: colors.navy }}>$</span>
-                        <input type="number" value={billTotal} onChange={(e) => setBillTotal(e.target.value)} placeholder="0.00" style={{ ...styles.input, paddingLeft: '28px', fontSize: '16px', fontWeight: '800' }} />
+                        <SearchInputLocal type="number" initialValue={billTotal} onCommit={setBillTotal} placeholder="0.00" style={{ ...styles.input, paddingLeft: '28px', fontSize: '16px', fontWeight: '800' }} />
                       </div>
                     </div>
                     <div style={{ marginBottom: '14px' }}>
@@ -9108,17 +9112,17 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
 
                       <div style={{ marginBottom: '10px' }}>
                         <label style={{ display: 'block', fontSize: '11px', fontWeight: '600', color: 'var(--text-secondary)', marginBottom: '4px' }}>Name *</label>
-                        <input type="text" value={newContact.name} onChange={(e) => setNewContact({ ...newContact, name: e.target.value })} placeholder="Contact name" style={{ ...styles.input, width: '100%' }} autoComplete="off" />
+                        <SearchInputLocal type="text" initialValue={newContact.name} onCommit={(v) => setNewContact(prev => ({ ...prev, name: v }))} placeholder="Contact name" style={{ ...styles.input, width: '100%' }} autoComplete="off" />
                       </div>
 
                       <div style={{ marginBottom: '10px' }}>
                         <label style={{ display: 'block', fontSize: '11px', fontWeight: '600', color: 'var(--text-secondary)', marginBottom: '4px' }}>Phone Number *</label>
-                        <input type="tel" value={newContact.phone} onChange={(e) => setNewContact({ ...newContact, phone: e.target.value })} placeholder="+1 234 567 8900" style={{ ...styles.input, width: '100%' }} autoComplete="off" />
+                        <SearchInputLocal type="tel" initialValue={newContact.phone} onCommit={(v) => setNewContact(prev => ({ ...prev, phone: v }))} placeholder="+1 234 567 8900" style={{ ...styles.input, width: '100%' }} autoComplete="off" />
                       </div>
 
                       <div style={{ marginBottom: '10px' }}>
                         <label style={{ display: 'block', fontSize: '11px', fontWeight: '600', color: 'var(--text-secondary)', marginBottom: '4px' }}>Email * <span style={{ fontWeight: '400', color: 'var(--text-tertiary)' }}>(alerts sent here)</span></label>
-                        <input type="email" value={newContact.email} onChange={(e) => setNewContact({ ...newContact, email: e.target.value })} placeholder="email@example.com" style={{ ...styles.input, width: '100%' }} autoComplete="off" />
+                        <SearchInputLocal type="email" initialValue={newContact.email} onCommit={(v) => setNewContact(prev => ({ ...prev, email: v }))} placeholder="email@example.com" style={{ ...styles.input, width: '100%' }} autoComplete="off" />
                       </div>
 
                       <div style={{ marginBottom: '16px' }}>
@@ -9156,7 +9160,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                     ))}
                   </div>
                   <div style={{ display: 'flex', gap: '8px' }}>
-                    <input type="text" value={newInterest} onChange={(e) => setNewInterest(e.target.value)} placeholder="Add an interest..." style={{ ...styles.input, flex: 1 }} autoComplete="off" />
+                    <SearchInputLocal type="text" initialValue={newInterest} onCommit={setNewInterest} placeholder="Add an interest..." style={{ ...styles.input, flex: 1 }} autoComplete="off" />
                     <button onClick={(e) => { if (newInterest.trim() && !userInterests.includes(newInterest.trim())) { confirmClick(e); setUserInterests([...userInterests, newInterest.trim()]); setNewInterest(''); }}} style={{ padding: '0 16px', borderRadius: '8px', border: 'none', background: `linear-gradient(90deg, ${colors.navyBg}, ${colors.navyMidBg})`, color: 'white', fontWeight: 'bold', fontSize: '14px', cursor: 'pointer', position: 'relative', overflow: 'hidden' }}>Add</button>
                   </div>
                 </div>
@@ -9183,7 +9187,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                     <label style={{ fontSize: '12px', fontWeight: '700', color: colors.navy, marginBottom: '6px', display: 'block' }}>Venmo</label>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                       <span style={{ fontSize: '14px', fontWeight: '600', color: colors.navy }}>@</span>
-                      <input type="text" value={venmoUsername} onChange={(e) => setVenmoUsername(e.target.value.replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 50))} placeholder="your-venmo-username" style={{ ...styles.input, flex: 1 }} autoComplete="off" />
+                      <SearchInputLocal type="text" initialValue={venmoUsername} onCommit={setVenmoUsername} transform={(v) => v.replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 50)} placeholder="your-venmo-username" style={{ ...styles.input, flex: 1 }} autoComplete="off" />
                     </div>
                   </div>
 
@@ -9192,14 +9196,14 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                     <label style={{ fontSize: '12px', fontWeight: '700', color: colors.navy, marginBottom: '6px', display: 'block' }}>Cash App</label>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                       <span style={{ fontSize: '14px', fontWeight: '600', color: colors.navy }}>$</span>
-                      <input type="text" value={cashappCashtag} onChange={(e) => setCashappCashtag(e.target.value.replace(/[^a-zA-Z0-9_]/g, '').slice(0, 50))} placeholder="your-cashtag" style={{ ...styles.input, flex: 1 }} autoComplete="off" />
+                      <SearchInputLocal type="text" initialValue={cashappCashtag} onCommit={setCashappCashtag} transform={(v) => v.replace(/[^a-zA-Z0-9_]/g, '').slice(0, 50)} placeholder="your-cashtag" style={{ ...styles.input, flex: 1 }} autoComplete="off" />
                     </div>
                   </div>
 
                   {/* Zelle */}
                   <div style={{ marginBottom: '16px' }}>
                     <label style={{ fontSize: '12px', fontWeight: '700', color: colors.navy, marginBottom: '6px', display: 'block' }}>Zelle</label>
-                    <input type="text" value={zelleIdentifier} onChange={(e) => setZelleIdentifier(e.target.value.slice(0, 255))} placeholder="email or phone number" style={{ ...styles.input, width: '100%', boxSizing: 'border-box' }} autoComplete="off" />
+                    <SearchInputLocal type="text" initialValue={zelleIdentifier} onCommit={setZelleIdentifier} transform={(v) => v.slice(0, 255)} placeholder="email or phone number" style={{ ...styles.input, width: '100%', boxSizing: 'border-box' }} autoComplete="off" />
                     <p style={{ fontSize: '10px', color: 'var(--text-tertiary)', margin: '4px 0 0' }}>Enter the email or phone registered with your bank for Zelle</p>
                   </div>
 
@@ -9243,21 +9247,21 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                       <h4 style={{ fontSize: '13px', fontWeight: '700', color: colors.navy, margin: '0 0 12px' }}>Add New Card</h4>
                       <div style={{ marginBottom: '10px' }}>
                         <label style={{ display: 'block', fontSize: '11px', fontWeight: '600', color: 'var(--text-secondary)', marginBottom: '4px' }}>Card Number</label>
-                        <input type="text" value={newCard.number} onChange={(e) => { const v = e.target.value.replace(/\D/g, '').slice(0, 16); const formatted = v.replace(/(\d{4})/g, '$1 ').trim(); setNewCard({ ...newCard, number: formatted }); }} placeholder="1234 5678 9012 3456" style={{ ...styles.input, letterSpacing: '1px' }} autoComplete="off" />
+                        <SearchInputLocal type="text" initialValue={newCard.number} onCommit={(v) => setNewCard(prev => ({ ...prev, number: v }))} transform={(raw) => { const v = raw.replace(/\D/g, '').slice(0, 16); return v.replace(/(\d{4})/g, '$1 ').trim(); }} placeholder="1234 5678 9012 3456" style={{ ...styles.input, letterSpacing: '1px' }} autoComplete="off" />
                       </div>
                       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', marginBottom: '10px' }}>
                         <div>
                           <label style={{ display: 'block', fontSize: '11px', fontWeight: '600', color: 'var(--text-secondary)', marginBottom: '4px' }}>Expiry</label>
-                          <input type="text" value={newCard.expiry} onChange={(e) => { let v = e.target.value.replace(/\D/g, '').slice(0, 4); if (v.length > 2) v = v.slice(0, 2) + '/' + v.slice(2); setNewCard({ ...newCard, expiry: v }); }} placeholder="MM/YY" style={styles.input} autoComplete="off" />
+                          <SearchInputLocal type="text" initialValue={newCard.expiry} onCommit={(v) => setNewCard(prev => ({ ...prev, expiry: v }))} transform={(raw) => { let v = raw.replace(/\D/g, '').slice(0, 4); if (v.length > 2) v = v.slice(0, 2) + '/' + v.slice(2); return v; }} placeholder="MM/YY" style={styles.input} autoComplete="off" />
                         </div>
                         <div>
                           <label style={{ display: 'block', fontSize: '11px', fontWeight: '600', color: 'var(--text-secondary)', marginBottom: '4px' }}>CVV</label>
-                          <input type="text" value={newCard.cvv} onChange={(e) => setNewCard({ ...newCard, cvv: e.target.value.replace(/\D/g, '').slice(0, 3) })} placeholder="123" style={styles.input} autoComplete="off" />
+                          <SearchInputLocal type="text" initialValue={newCard.cvv} onCommit={(v) => setNewCard(prev => ({ ...prev, cvv: v }))} transform={(raw) => raw.replace(/\D/g, '').slice(0, 3)} placeholder="123" style={styles.input} autoComplete="off" />
                         </div>
                       </div>
                       <div style={{ marginBottom: '12px' }}>
                         <label style={{ display: 'block', fontSize: '11px', fontWeight: '600', color: 'var(--text-secondary)', marginBottom: '4px' }}>Cardholder Name</label>
-                        <input type="text" value={newCard.name} onChange={(e) => setNewCard({ ...newCard, name: e.target.value })} placeholder="John Doe" style={styles.input} autoComplete="off" />
+                        <SearchInputLocal type="text" initialValue={newCard.name} onCommit={(v) => setNewCard(prev => ({ ...prev, name: v }))} placeholder="John Doe" style={styles.input} autoComplete="off" />
                       </div>
                       <div style={{ display: 'flex', gap: '8px' }}>
                         <button onClick={() => { setShowAddCard(false); setNewCard({ number: '', expiry: '', cvv: '', name: '' }); }} style={{ flex: 1, padding: '12px', borderRadius: '8px', border: '1px solid var(--border-mid)', backgroundColor: 'var(--bg-card-solid)', fontWeight: '600', cursor: 'pointer' }}>Cancel</button>
@@ -9994,10 +9998,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           {/* Post a Deal */}
           <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', marginBottom: '12px', boxShadow: 'var(--card-shadow-sm)', position: 'relative' }}>
             <h3 style={{ fontSize: '12px', fontWeight: '700', color: colors.navy, margin: '0 0 10px', display: 'flex', alignItems: 'center', gap: '6px' }}>{Icons.zap(colors.amber, 14)} Post a Deal</h3>
-            <input
+            <SearchInputLocal
               type="text"
-              value={dealDescription}
-              onChange={(e) => setDealDescription(e.target.value)}
+              initialValue={dealDescription}
+              onCommit={setDealDescription}
               placeholder="e.g., 2-for-1 drinks until 8pm"
               style={{ width: '100%', padding: '10px', borderRadius: '8px', border: `1px solid ${colors.creamDark}`, fontSize: '12px', marginBottom: '8px', boxSizing: 'border-box', backgroundColor: 'var(--bg-tertiary)', color: 'var(--text-primary)' }}
               disabled={isFeatureLocked('Post deals')}
@@ -10254,7 +10258,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                       )}
                       {replyingToReview === review.id && (
                         <div style={{ marginTop: '8px', display: 'flex', gap: '6px' }}>
-                          <input value={replyText} onChange={(e) => setReplyText(e.target.value)} placeholder="Write your reply..." autoFocus style={{ flex: 1, padding: '6px 10px', borderRadius: '6px', border: `1px solid ${colors.creamDark}`, fontSize: '11px', backgroundColor: 'var(--bg-card-solid)', color: 'var(--text-primary)' }} />
+                          <SearchInputLocal initialValue={replyText} onCommit={setReplyText} placeholder="Write your reply..." autoFocus style={{ flex: 1, padding: '6px 10px', borderRadius: '6px', border: `1px solid ${colors.creamDark}`, fontSize: '11px', backgroundColor: 'var(--bg-card-solid)', color: 'var(--text-primary)' }} />
                           <button onClick={() => handleReplyToReview(review.id)} style={{ padding: '6px 12px', borderRadius: '6px', border: 'none', backgroundColor: colors.navy, color: 'white', fontSize: '10px', fontWeight: '600', cursor: 'pointer' }}>Send</button>
                           <button onClick={() => setReplyingToReview(null)} style={{ padding: '6px 8px', borderRadius: '6px', border: `1px solid ${colors.creamDark}`, backgroundColor: 'var(--bg-card-solid)', color: 'var(--text-secondary)', fontSize: '10px', cursor: 'pointer' }}>Cancel</button>
                         </div>
@@ -10286,15 +10290,15 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                   <div>
                     <label style={{ fontSize: '10px', fontWeight: '600', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px' }}>Venue Name</label>
-                    <input type="text" value={venueInfo.name} onChange={(e) => setVenueInfo({...venueInfo, name: e.target.value})} disabled={!editingVenueInfo} style={{ width: '100%', padding: '8px', borderRadius: '6px', border: `1px solid ${editingVenueInfo ? colors.navy : colors.creamDark}`, fontSize: '12px', boxSizing: 'border-box', backgroundColor: editingVenueInfo ? 'var(--bg-card-solid)' : 'var(--bg-tertiary)', color: 'var(--text-primary)' }} />
+                    <SearchInputLocal type="text" initialValue={venueInfo.name} onCommit={(v) => setVenueInfo(prev => ({ ...prev, name: v }))} disabled={!editingVenueInfo} style={{ width: '100%', padding: '8px', borderRadius: '6px', border: `1px solid ${editingVenueInfo ? colors.navy : colors.creamDark}`, fontSize: '12px', boxSizing: 'border-box', backgroundColor: editingVenueInfo ? 'var(--bg-card-solid)' : 'var(--bg-tertiary)', color: 'var(--text-primary)' }} />
                   </div>
                   <div>
                     <label style={{ fontSize: '10px', fontWeight: '600', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px' }}>Address</label>
-                    <input type="text" value={venueInfo.address} onChange={(e) => setVenueInfo({...venueInfo, address: e.target.value})} disabled={!editingVenueInfo} style={{ width: '100%', padding: '8px', borderRadius: '6px', border: `1px solid ${editingVenueInfo ? colors.navy : colors.creamDark}`, fontSize: '12px', boxSizing: 'border-box', backgroundColor: editingVenueInfo ? 'var(--bg-card-solid)' : 'var(--bg-tertiary)', color: 'var(--text-primary)' }} />
+                    <SearchInputLocal type="text" initialValue={venueInfo.address} onCommit={(v) => setVenueInfo(prev => ({ ...prev, address: v }))} disabled={!editingVenueInfo} style={{ width: '100%', padding: '8px', borderRadius: '6px', border: `1px solid ${editingVenueInfo ? colors.navy : colors.creamDark}`, fontSize: '12px', boxSizing: 'border-box', backgroundColor: editingVenueInfo ? 'var(--bg-card-solid)' : 'var(--bg-tertiary)', color: 'var(--text-primary)' }} />
                   </div>
                   <div>
                     <label style={{ fontSize: '10px', fontWeight: '600', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px' }}>Phone</label>
-                    <input type="text" value={venueInfo.phone} onChange={(e) => setVenueInfo({...venueInfo, phone: e.target.value})} disabled={!editingVenueInfo} style={{ width: '100%', padding: '8px', borderRadius: '6px', border: `1px solid ${editingVenueInfo ? colors.navy : colors.creamDark}`, fontSize: '12px', boxSizing: 'border-box', backgroundColor: editingVenueInfo ? 'var(--bg-card-solid)' : 'var(--bg-tertiary)', color: 'var(--text-primary)' }} />
+                    <SearchInputLocal type="text" initialValue={venueInfo.phone} onCommit={(v) => setVenueInfo(prev => ({ ...prev, phone: v }))} disabled={!editingVenueInfo} style={{ width: '100%', padding: '8px', borderRadius: '6px', border: `1px solid ${editingVenueInfo ? colors.navy : colors.creamDark}`, fontSize: '12px', boxSizing: 'border-box', backgroundColor: editingVenueInfo ? 'var(--bg-card-solid)' : 'var(--bg-tertiary)', color: 'var(--text-primary)' }} />
                   </div>
                 </div>
               </div>
@@ -12625,7 +12629,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                       </button>
                     ))}
                   </div>
-                  <textarea value={reviewText} onChange={(e) => setReviewText(e.target.value)} placeholder="How was your experience?" rows={3} style={{ width: '100%', padding: '8px 10px', borderRadius: '8px', border: '1px solid var(--border-subtle)', fontSize: '12px', backgroundColor: 'var(--bg-card-solid)', color: 'var(--text-primary)', resize: 'none', fontFamily: 'inherit', boxSizing: 'border-box' }} />
+                  <SearchInputLocal as="textarea" initialValue={reviewText} onCommit={setReviewText} placeholder="How was your experience?" rows={3} style={{ width: '100%', padding: '8px 10px', borderRadius: '8px', border: '1px solid var(--border-subtle)', fontSize: '12px', backgroundColor: 'var(--bg-card-solid)', color: 'var(--text-primary)', resize: 'none', fontFamily: 'inherit', boxSizing: 'border-box' }} />
                   <div style={{ display: 'flex', gap: '6px', marginTop: '8px' }}>
                     <button disabled={!reviewRating || reviewSubmitting} onClick={async () => {
                       setReviewSubmitting(true);
