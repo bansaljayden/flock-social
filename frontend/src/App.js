@@ -5234,29 +5234,33 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
             <span style={{ fontSize: '20px', color: colors.navy }}>›</span>
           </button>
 
-          {/* Venue Owner Mode */}
-          <button onClick={() => selectMode('venue')} style={{ width: '100%', padding: '20px', borderRadius: '16px', border: 'none', background: 'var(--bg-card-solid)', marginBottom: '12px', cursor: 'pointer', textAlign: 'left', boxShadow: '0 4px 12px rgba(0,0,0,0.08)', display: 'flex', alignItems: 'center', gap: '16px', transition: 'transform 0.2s, box-shadow 0.2s' }}>
-            <div style={{ width: '56px', height: '56px', borderRadius: '16px', background: 'linear-gradient(135deg, #7C3AED, #5B21B6)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-              {Icons.building('white', 28)}
-            </div>
-            <div style={{ flex: 1 }}>
-              <h3 style={{ fontSize: '16px', fontWeight: '800', color: colors.navy, margin: '0 0 4px' }}>Venue Dashboard</h3>
-              <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: 0 }}>Manage your venue, see traffic</p>
-            </div>
-            <span style={{ fontSize: '20px', color: colors.navy }}>›</span>
-          </button>
+          {/* Venue Owner Mode — only for venue_owner or admin roles */}
+          {(authUser?.role === 'venue_owner' || authUser?.role === 'admin') && (
+            <button onClick={() => selectMode('venue')} style={{ width: '100%', padding: '20px', borderRadius: '16px', border: 'none', background: 'var(--bg-card-solid)', marginBottom: '12px', cursor: 'pointer', textAlign: 'left', boxShadow: '0 4px 12px rgba(0,0,0,0.08)', display: 'flex', alignItems: 'center', gap: '16px', transition: 'transform 0.2s, box-shadow 0.2s' }}>
+              <div style={{ width: '56px', height: '56px', borderRadius: '16px', background: 'linear-gradient(135deg, #7C3AED, #5B21B6)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                {Icons.building('white', 28)}
+              </div>
+              <div style={{ flex: 1 }}>
+                <h3 style={{ fontSize: '16px', fontWeight: '800', color: colors.navy, margin: '0 0 4px' }}>Venue Dashboard</h3>
+                <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: 0 }}>Manage your venue, see traffic</p>
+              </div>
+              <span style={{ fontSize: '20px', color: colors.navy }}>›</span>
+            </button>
+          )}
 
-          {/* Admin Mode */}
-          <button onClick={() => selectMode('admin')} style={{ width: '100%', padding: '20px', borderRadius: '16px', border: 'none', background: 'var(--bg-card-solid)', marginBottom: '12px', cursor: 'pointer', textAlign: 'left', boxShadow: '0 4px 12px rgba(0,0,0,0.08)', display: 'flex', alignItems: 'center', gap: '16px', transition: 'transform 0.2s, box-shadow 0.2s' }}>
-            <div style={{ width: '56px', height: '56px', borderRadius: '16px', background: 'linear-gradient(135deg, #059669, #047857)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-              {Icons.briefcase('white', 28)}
-            </div>
-            <div style={{ flex: 1 }}>
-              <h3 style={{ fontSize: '16px', fontWeight: '800', color: colors.navy, margin: '0 0 4px' }}>Admin Dashboard</h3>
-              <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: 0 }}>Platform analytics & revenue</p>
-            </div>
-            <span style={{ fontSize: '9px', color: 'var(--text-tertiary)', backgroundColor: 'var(--bg-hover)', padding: '2px 6px', borderRadius: '4px' }}>Locked</span>
-          </button>
+          {/* Admin Mode — only for admin role */}
+          {authUser?.role === 'admin' && (
+            <button onClick={() => selectMode('admin')} style={{ width: '100%', padding: '20px', borderRadius: '16px', border: 'none', background: 'var(--bg-card-solid)', marginBottom: '12px', cursor: 'pointer', textAlign: 'left', boxShadow: '0 4px 12px rgba(0,0,0,0.08)', display: 'flex', alignItems: 'center', gap: '16px', transition: 'transform 0.2s, box-shadow 0.2s' }}>
+              <div style={{ width: '56px', height: '56px', borderRadius: '16px', background: 'linear-gradient(135deg, #059669, #047857)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                {Icons.briefcase('white', 28)}
+              </div>
+              <div style={{ flex: 1 }}>
+                <h3 style={{ fontSize: '16px', fontWeight: '800', color: colors.navy, margin: '0 0 4px' }}>Admin Dashboard</h3>
+                <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: 0 }}>Platform analytics & revenue</p>
+              </div>
+              <span style={{ fontSize: '20px', color: colors.navy }}>›</span>
+            </button>
+          )}
         </div>
       </div>
 
@@ -9237,49 +9241,54 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           </div>
 
           {/* Admin Access Button - Small and subtle at bottom */}
-          <button
-            onClick={() => setShowAdminPrompt(true)}
-            style={{
-              marginTop: '16px',
-              padding: '8px 12px',
-              borderRadius: '8px',
-              border: `1px dashed ${colors.creamDark}`,
-              backgroundColor: 'transparent',
-              color: 'var(--text-tertiary)',
-              fontSize: '10px',
-              cursor: 'pointer',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '4px',
-              justifyContent: 'center'
-            }}
-          >
-            {Icons.settings(colors.textTertiary, 12)} Admin
-          </button>
+          {/* Admin Access — admin role only */}
+          {authUser?.role === 'admin' && (
+            <button
+              onClick={() => setShowAdminPrompt(true)}
+              style={{
+                marginTop: '16px',
+                padding: '8px 12px',
+                borderRadius: '8px',
+                border: `1px dashed ${colors.creamDark}`,
+                backgroundColor: 'transparent',
+                color: 'var(--text-tertiary)',
+                fontSize: '10px',
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '4px',
+                justifyContent: 'center'
+              }}
+            >
+              {Icons.settings(colors.textTertiary, 12)} Admin
+            </button>
+          )}
 
-          {/* Venue Owner Access Button */}
-          <button
-            onClick={() => setCurrentScreen('venueDashboard')}
-            style={{
-              marginTop: '8px',
-              padding: '8px 12px',
-              borderRadius: '8px',
-              border: `1px dashed ${colors.creamDark}`,
-              backgroundColor: 'transparent',
-              color: 'var(--text-tertiary)',
-              fontSize: '10px',
-              cursor: 'pointer',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '4px',
-              justifyContent: 'center'
-            }}
-          >
-            {Icons.home(colors.textTertiary, 12)} Venue Dashboard
-          </button>
+          {/* Venue Dashboard — venue_owner or admin only */}
+          {(authUser?.role === 'venue_owner' || authUser?.role === 'admin') && (
+            <button
+              onClick={() => setCurrentScreen('venueDashboard')}
+              style={{
+                marginTop: '8px',
+                padding: '8px 12px',
+                borderRadius: '8px',
+                border: `1px dashed ${colors.creamDark}`,
+                backgroundColor: 'transparent',
+                color: 'var(--text-tertiary)',
+                fontSize: '10px',
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '4px',
+                justifyContent: 'center'
+              }}
+            >
+              {Icons.home(colors.textTertiary, 12)} Venue Dashboard
+            </button>
+          )}
 
-          {/* Switch Mode Button */}
-          {userMode && (
+          {/* Switch Mode Button — only show if user has multiple modes */}
+          {userMode && (authUser?.role === 'venue_owner' || authUser?.role === 'admin') && (
             <button
               onClick={switchMode}
               style={{
@@ -11792,8 +11801,17 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   const isExploreVisible = currentTab === 'explore' && currentScreen === 'main' && !showModeSelection && (userMode !== 'user' || hasCompletedOnboarding);
 
   const renderScreen = () => {
-    // Show welcome screen for mode selection
-    if (showModeSelection) return <WelcomeScreen />;
+    // Show welcome screen for mode selection — skip for regular users (only one mode)
+    if (showModeSelection) {
+      if (authUser?.role !== 'venue_owner' && authUser?.role !== 'admin') {
+        // Regular user — auto-select user mode, no need to show mode picker
+        setUserMode('user');
+        setShowModeSelection(false);
+        localStorage.setItem('flockUserMode', 'user');
+        return null;
+      }
+      return <WelcomeScreen />;
+    }
     // Show venue onboarding for venue logins
     if (showVenueOnboarding) return VenueOnboardingScreen();
     // Show onboarding for new users
@@ -11804,8 +11822,18 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
     if (currentScreen === 'detail') return FlockDetailScreen();
     if (currentScreen === 'chatDetail') return ChatDetailScreen();
     if (currentScreen === 'dmDetail') return dmDetailScreen;
-    if (currentScreen === 'venueDashboard') return VenueDashboard();
-    if (currentScreen === 'adminRevenue') return <RevenueScreen />;
+    if (currentScreen === 'venueDashboard') {
+      if (authUser?.role !== 'venue_owner' && authUser?.role !== 'admin') {
+        setCurrentScreen('main'); return null;
+      }
+      return VenueDashboard();
+    }
+    if (currentScreen === 'adminRevenue') {
+      if (authUser?.role !== 'admin') {
+        setCurrentScreen('main'); return null;
+      }
+      return <RevenueScreen />;
+    }
     switch (currentTab) {
       case 'explore': return null; // Rendered persistently below
       case 'calendar': return CalendarScreen();
