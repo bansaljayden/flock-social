@@ -9509,52 +9509,62 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           }
           // Fetch phone + hours from Google if missing or invalid
           const needsGoogleData = !p.phone || !hoursValid;
+          console.log('[Venue DEBUG] Profile loaded:', { phone: p.phone, hours: p.operating_hours, hoursValid, needsGoogleData, place_id: p.google_place_id, name: p.business_name });
           if (needsGoogleData && p.business_name) {
             // Helper to try fetching details and apply them
             const tryFetchDetails = async (placeId, savePlaceId = false) => {
               if (!placeId) return false;
+              console.log('[Venue DEBUG] Fetching details for place_id:', placeId);
               try {
                 const data = await getVenueDetails(placeId);
+                console.log('[Venue DEBUG] Details response:', data);
                 const venue = data.venue || data;
-                if (!venue) return false;
+                if (!venue) { console.warn('[Venue DEBUG] No venue in response'); return false; }
+                console.log('[Venue DEBUG] Phone:', venue.formatted_phone_number, 'Hours:', venue.opening_hours);
                 let gotSomething = false;
                 if (venue.formatted_phone_number) {
                   const phone = venue.formatted_phone_number;
                   setVenueInfo(prev => ({ ...prev, phone }));
-                  updateVenueProfile({ phone, ...(savePlaceId ? { googlePlaceId: placeId } : {}) }).catch(() => {});
+                  updateVenueProfile({ phone, ...(savePlaceId ? { googlePlaceId: placeId } : {}) }).catch((err) => console.warn('[Venue] save phone failed', err));
                   gotSomething = true;
                 }
                 if (venue.opening_hours?.weekdayDescriptions) {
                   const parsed = parseGoogleHours(venue.opening_hours.weekdayDescriptions);
+                  console.log('[Venue DEBUG] Parsed hours:', parsed);
                   if (parsed.length > 0) {
                     setOperatingHours(parsed);
-                    updateVenueProfile({ operatingHours: parsed, ...(savePlaceId ? { googlePlaceId: placeId } : {}) }).catch(() => {});
+                    updateVenueProfile({ operatingHours: parsed, ...(savePlaceId ? { googlePlaceId: placeId } : {}) }).catch((err) => console.warn('[Venue] save hours failed', err));
                     gotSomething = true;
                   }
                 }
                 return gotSomething;
               } catch (e) {
-                console.warn('[Venue] Details fetch failed for', placeId, e?.message);
+                console.warn('[Venue DEBUG] Details fetch failed for', placeId, e?.message, e);
                 return false;
               }
             };
 
             // 1) Try saved place ID first
             const savedPlaceId = p.google_place_id || venueOnboardingData.googlePlaceId;
+            console.log('[Venue DEBUG] Saved place_id:', savedPlaceId);
             const savedWorked = await tryFetchDetails(savedPlaceId, false);
+            console.log('[Venue DEBUG] Saved worked:', savedWorked);
 
             // 2) If saved ID failed (stale/invalid), search by name to get a fresh ID
             if (!savedWorked) {
               try {
                 const query = p.location ? `${p.business_name} ${p.location}` : p.business_name;
+                console.log('[Venue DEBUG] Searching by name:', query);
                 const searchData = await searchVenues(query);
+                console.log('[Venue DEBUG] Search results:', searchData);
                 const match = (searchData.venues || []).find(v =>
                   v.name.toLowerCase() === p.business_name.toLowerCase()
                 ) || (searchData.venues || [])[0];
+                console.log('[Venue DEBUG] Match:', match);
                 if (match?.place_id && match.place_id !== savedPlaceId) {
                   await tryFetchDetails(match.place_id, true); // save the fresh place_id
                 }
-              } catch (e) { /* search optional */ }
+              } catch (e) { console.warn('[Venue DEBUG] Search failed', e); }
             }
           }
         }
