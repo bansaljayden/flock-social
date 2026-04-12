@@ -5185,9 +5185,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   };
 
   const switchMode = () => {
-    localStorage.setItem('flockUserMode', 'user');
-    setUserMode('user');
-    setShowModeSelection(false);
+    localStorage.removeItem('flockUserMode');
+    setUserMode(null);
+    setShowModeSelection(true);
     setCurrentScreen('main');
     setCurrentTab('home');
   };
