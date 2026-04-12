@@ -136,6 +136,15 @@ textarea,
 select {
   color: var(--text-primary);
   caret-color: var(--text-primary);
+  background-color: var(--bg-tertiary);
+}
+
+/* In light mode keep legacy white inputs where explicitly set; in dark mode force readable bg */
+[data-theme="dark"] input:not([type="checkbox"]):not([type="radio"]):not([type="file"]):not([type="color"]):not([type="range"]):not([type="submit"]):not([type="button"]),
+[data-theme="dark"] textarea,
+[data-theme="dark"] select {
+  background-color: var(--bg-tertiary);
+  color: var(--text-primary);
 }
 
 /* Make placeholder text consistently muted in both light/dark modes */

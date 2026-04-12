@@ -10368,11 +10368,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
                   <div>
                     <label style={{ fontSize: '11px', fontWeight: '600', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px' }}>Title</label>
-                    <input type="text" value={promoForm.title} onChange={(e) => setPromoForm({...promoForm, title: e.target.value})} placeholder="e.g., Half-Price Apps" style={{ width: '100%', padding: '10px', borderRadius: '8px', border: `1px solid ${colors.creamDark}`, fontSize: '13px', boxSizing: 'border-box' }} />
+                    <input type="text" value={promoForm.title} onChange={(e) => setPromoForm({...promoForm, title: e.target.value})} placeholder="e.g., Half-Price Apps" style={{ width: '100%', padding: '10px', borderRadius: '8px', border: `1px solid ${colors.creamDark}`, fontSize: '13px', boxSizing: 'border-box', backgroundColor: 'var(--bg-tertiary)', color: 'var(--text-primary)' }} />
                   </div>
                   <div>
                     <label style={{ fontSize: '11px', fontWeight: '600', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px' }}>Description</label>
-                    <input type="text" value={promoForm.desc} onChange={(e) => setPromoForm({...promoForm, desc: e.target.value})} placeholder="e.g., 50% off all appetizers" style={{ width: '100%', padding: '10px', borderRadius: '8px', border: `1px solid ${colors.creamDark}`, fontSize: '13px', boxSizing: 'border-box' }} />
+                    <input type="text" value={promoForm.desc} onChange={(e) => setPromoForm({...promoForm, desc: e.target.value})} placeholder="e.g., 50% off all appetizers" style={{ width: '100%', padding: '10px', borderRadius: '8px', border: `1px solid ${colors.creamDark}`, fontSize: '13px', boxSizing: 'border-box', backgroundColor: 'var(--bg-tertiary)', color: 'var(--text-primary)' }} />
                   </div>
                   <div>
                     <label style={{ fontSize: '11px', fontWeight: '600', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px' }}>Time Slot</label>
@@ -12027,9 +12027,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           <div style={styles.notchInner} />
         </div>
         <div style={styles.content}>
-          {/* Persistent map layer — hidden via CSS, never unmounted */}
+          {/* Persistent map layer — hidden via CSS, never unmounted. Only render when visible to avoid lag on other screens */}
           <div style={{ position: 'absolute', inset: 0, zIndex: isExploreVisible ? 1 : -1, visibility: isExploreVisible ? 'visible' : 'hidden', pointerEvents: isExploreVisible ? 'auto' : 'none' }}>
-            {ExploreScreen()}
+            {isExploreVisible && ExploreScreen()}
           </div>
           {renderScreen()}
 
