@@ -2715,7 +2715,20 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   }, [aiMessages, aiTyping, aiChatMode]);
 
   // Auto-scroll chat to bottom when messages change
-  const selectedFlock = flocks.find(f => f.id === selectedFlockId) || flocks[0];
+  const selectedFlock = useMemo(
+    () => flocks.find(f => f.id === selectedFlockId) || flocks[0],
+    [flocks, selectedFlockId]
+  );
+  // Shared budget-filtered venue list — used in search results overlay and share-to-chat modal.
+  // Placed high so unrelated state changes (typing) don't recompute.
+  const budgetMaxPL = useMemo(
+    () => (budgetStatus?.isReady && budgetStatus?.ceiling ? getMaxPriceLevel(budgetStatus.ceiling) : 4),
+    [budgetStatus, getMaxPriceLevel]
+  );
+  const budgetFilteredVenues = useMemo(
+    () => allVenues.filter(v => !v.price_level || v.price_level <= budgetMaxPL),
+    [allVenues, budgetMaxPL]
+  );
   const chatMsgCountRef = useRef(0);
   useEffect(() => {
     if (currentScreen === 'chatDetail' && chatEndRef.current) {
@@ -8296,7 +8309,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
 
               <p style={{ fontSize: '12px', fontWeight: '600', color: 'var(--text-secondary)', marginBottom: '12px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Or select a different venue:</p>
               <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                {allVenues.filter(v => { const mp = budgetStatus?.isReady && budgetStatus?.ceiling ? getMaxPriceLevel(budgetStatus.ceiling) : 4; return !v.price_level || v.price_level <= mp; }).map(venue => (
+                {budgetFilteredVenues.map(venue => (
                   <button
                     key={venue.id}
                     onClick={(e) => { confirmClick(e); shareVenueToChat(selectedFlockId, venue); }}
@@ -12027,8 +12040,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
               return 6371 * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
             };
 
-            const budgetMaxPL = budgetStatus?.isReady && budgetStatus?.ceiling ? getMaxPriceLevel(budgetStatus.ceiling) : 4;
-            const filtered = allVenues.filter(v => !v.price_level || v.price_level <= budgetMaxPL);
+            const filtered = budgetFilteredVenues;
             const sorted = [...filtered].sort((a, b) => {
               if (searchResultsSort === 'rating') return (b.stars || 0) - (a.stars || 0);
               if (searchResultsSort === 'distance') {
