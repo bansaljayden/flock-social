@@ -9509,62 +9509,44 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           }
           // Fetch phone + hours from Google if missing or invalid
           const needsGoogleData = !p.phone || !hoursValid;
-          console.log('[Venue DEBUG] Profile loaded:', { phone: p.phone, hours: p.operating_hours, hoursValid, needsGoogleData, place_id: p.google_place_id, name: p.business_name });
           if (needsGoogleData && p.business_name) {
-            // Helper to try fetching details and apply them
             const tryFetchDetails = async (placeId, savePlaceId = false) => {
               if (!placeId) return false;
-              console.log('[Venue DEBUG] Fetching details for place_id:', placeId);
               try {
                 const data = await getVenueDetails(placeId);
-                console.log('[Venue DEBUG] Details response:', data);
                 const venue = data.venue || data;
-                if (!venue) { console.warn('[Venue DEBUG] No venue in response'); return false; }
-                console.log('[Venue DEBUG] Phone:', venue.formatted_phone_number, 'Hours:', venue.opening_hours);
+                if (!venue) return false;
                 let gotSomething = false;
                 if (venue.formatted_phone_number) {
                   const phone = venue.formatted_phone_number;
                   setVenueInfo(prev => ({ ...prev, phone }));
-                  updateVenueProfile({ phone, ...(savePlaceId ? { googlePlaceId: placeId } : {}) }).catch((err) => console.warn('[Venue] save phone failed', err));
+                  updateVenueProfile({ phone, ...(savePlaceId ? { googlePlaceId: placeId } : {}) }).catch(() => {});
                   gotSomething = true;
                 }
                 if (venue.opening_hours?.weekdayDescriptions) {
                   const parsed = parseGoogleHours(venue.opening_hours.weekdayDescriptions);
-                  console.log('[Venue DEBUG] Parsed hours:', parsed);
                   if (parsed.length > 0) {
                     setOperatingHours(parsed);
-                    updateVenueProfile({ operatingHours: parsed, ...(savePlaceId ? { googlePlaceId: placeId } : {}) }).catch((err) => console.warn('[Venue] save hours failed', err));
+                    updateVenueProfile({ operatingHours: parsed, ...(savePlaceId ? { googlePlaceId: placeId } : {}) }).catch(() => {});
                     gotSomething = true;
                   }
                 }
                 return gotSomething;
-              } catch (e) {
-                console.warn('[Venue DEBUG] Details fetch failed for', placeId, e?.message, e);
-                return false;
-              }
+              } catch (e) { return false; }
             };
-
-            // 1) Try saved place ID first
             const savedPlaceId = p.google_place_id || venueOnboardingData.googlePlaceId;
-            console.log('[Venue DEBUG] Saved place_id:', savedPlaceId);
             const savedWorked = await tryFetchDetails(savedPlaceId, false);
-            console.log('[Venue DEBUG] Saved worked:', savedWorked);
-
-            // 2) If saved ID failed (stale/invalid), search by name to get a fresh ID
             if (!savedWorked) {
               try {
                 const query = p.location ? `${p.business_name} ${p.location}` : p.business_name;
-                console.log('[Venue DEBUG] Searching by name:', query);
                 const searchData = await searchVenues(query);
-                console.log('[Venue DEBUG] Search results:', searchData);
                 const match = (searchData.venues || []).find(v =>
                   v.name.toLowerCase() === p.business_name.toLowerCase()
                 ) || (searchData.venues || [])[0];
-                console.log('[Venue DEBUG] Match:', match);
                 if (match?.place_id && match.place_id !== savedPlaceId) {
-                  await tryFetchDetails(match.place_id, true); // save the fresh place_id
+                  await tryFetchDetails(match.place_id, true);
                 }
-              } catch (e) { console.warn('[Venue DEBUG] Search failed', e); }
+              } catch (e) { /* search optional */ }
             }
           }
         }
@@ -9606,7 +9588,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
     // Reviews from backend
     const reviews = (venueReviewsData.reviews || []).map(r => ({
       id: r.id,
-      user: r.display_name || r.username || 'Anonymous',
+      user: r.name || 'Anonymous',
       rating: r.rating,
       text: r.text || '',
       date: r.created_at ? new Date(r.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : '',
@@ -12552,9 +12534,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                       <div style={{ width: '24px', height: '24px', borderRadius: '12px', backgroundColor: colors.navyBg, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', fontSize: '10px', fontWeight: '700' }}>
-                        {(r.display_name || r.username || '?').charAt(0).toUpperCase()}
+                        {(r.name || '?').charAt(0).toUpperCase()}
                       </div>
-                      <span style={{ fontSize: '11px', fontWeight: '600', color: 'var(--text-primary)' }}>{r.display_name || r.username}</span>
+                      <span style={{ fontSize: '11px', fontWeight: '600', color: 'var(--text-primary)' }}>{r.name || 'Anonymous'}</span>
                     </div>
                     <div style={{ display: 'flex', gap: '1px' }}>
                       {[1, 2, 3, 4, 5].map(s => s <= r.rating ? Icons.starFilled(colors.amber, 10) : Icons.star(colors.disabled, 10))}
