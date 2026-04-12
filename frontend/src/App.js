@@ -5213,9 +5213,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
               return newCount;
             });
           }}
-          style={{ width: '80px', height: '80px', borderRadius: '24px', background: `linear-gradient(135deg, ${colors.navyBg}, ${colors.navyMidBg})`, display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: '16px', boxShadow: '0 8px 32px rgba(13,40,71,0.3)', cursor: 'pointer' }}
+          style={{ width: '80px', height: '80px', borderRadius: '24px', overflow: 'hidden', marginBottom: '16px', boxShadow: '0 8px 32px rgba(13,40,71,0.3)', cursor: 'pointer' }}
         >
-          <span style={{ fontSize: '36px', fontWeight: '900', color: 'white', fontFamily: 'inherit' }}>F</span>
+          <img src="/flock-logo.png" alt="Flock" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
         </div>
         <h1 style={{ fontSize: '28px', fontWeight: '900', color: colors.navy, margin: '0 0 4px', textAlign: 'center' }}>Flock</h1>
         <p style={{ fontSize: '13px', color: colors.navyMid, margin: '0 0 28px', textAlign: 'center', fontWeight: '500' }}>Social Coordination Simplified</p>
@@ -5224,8 +5224,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
         <div style={{ width: '100%', maxWidth: '320px' }}>
           {/* User Mode */}
           <button onClick={() => selectMode('user')} style={{ width: '100%', padding: '20px', borderRadius: '16px', border: 'none', background: 'var(--bg-card-solid)', marginBottom: '12px', cursor: 'pointer', textAlign: 'left', boxShadow: '0 4px 12px rgba(0,0,0,0.08)', display: 'flex', alignItems: 'center', gap: '16px', transition: 'transform 0.2s, box-shadow 0.2s' }}>
-            <div style={{ width: '56px', height: '56px', borderRadius: '16px', background: `linear-gradient(135deg, ${colors.navyBg}, ${colors.navyMidBg})`, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-              <span style={{ fontSize: '24px', fontWeight: '900', color: 'white', fontFamily: 'inherit' }}>F</span>
+            <div style={{ width: '56px', height: '56px', borderRadius: '16px', overflow: 'hidden', flexShrink: 0 }}>
+              <img src="/flock-logo.png" alt="Flock" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
             </div>
             <div style={{ flex: 1 }}>
               <h3 style={{ fontSize: '16px', fontWeight: '800', color: colors.navy, margin: '0 0 4px' }}>I'm Going Out</h3>
