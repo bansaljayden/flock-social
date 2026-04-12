@@ -1274,12 +1274,19 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
 
   // Auto-set user mode for regular users (handles race condition with authUser loading)
   React.useEffect(() => {
-    if (showModeSelection && authUser && authUser.role !== 'venue_owner' && authUser.role !== 'admin') {
+    if (!authUser) return;
+    const isPrivileged = authUser.role === 'venue_owner' || authUser.role === 'admin';
+    // Regular users are forced to user mode — clear any stale venue/admin mode
+    if (!isPrivileged && (userMode === 'venue' || userMode === 'admin')) {
+      setUserMode('user');
+      localStorage.setItem('flockUserMode', 'user');
+    }
+    if (showModeSelection && !isPrivileged) {
       setUserMode('user');
       setShowModeSelection(false);
       localStorage.setItem('flockUserMode', 'user');
     }
-  }, [showModeSelection, authUser]);
+  }, [showModeSelection, authUser, userMode]);
 
   // Onboarding
   const [hasCompletedOnboarding, setHasCompletedOnboarding] = useState(() => localStorage.getItem('flockOnboardingComplete') === 'true');
@@ -2351,17 +2358,17 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   const [venueTab, setVenueTab] = useState('analytics'); // Lifted to App level to persist across re-renders
   const [adminTab, setAdminTab] = useState('revenue'); // Lifted to App level to persist across re-renders
 
-  // Check URL for admin/venue mode on mount
+  // Check URL for admin/venue mode on mount — gated by role
   useEffect(() => {
     const urlParams = new URLSearchParams(window.location.search);
-    if (urlParams.get('admin') === 'true') {
+    if (urlParams.get('admin') === 'true' && authUser?.role === 'admin') {
       setCurrentScreen('adminRevenue');
     }
-    if (urlParams.get('venue') === 'true') {
+    if (urlParams.get('venue') === 'true' && (authUser?.role === 'venue_owner' || authUser?.role === 'admin')) {
       setVenueTier(urlParams.get('tier') || 'free');
       setCurrentScreen('venueDashboard');
     }
-  }, []);
+  }, [authUser]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Focus AI input when chat opens
   useEffect(() => {
