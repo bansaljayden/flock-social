@@ -12027,9 +12027,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           <div style={styles.notchInner} />
         </div>
         <div style={styles.content}>
-          {/* Persistent map layer — hidden via CSS, never unmounted. Only render when visible to avoid lag on other screens */}
+          {/* Persistent map layer — hidden via CSS, never unmounted */}
           <div style={{ position: 'absolute', inset: 0, zIndex: isExploreVisible ? 1 : -1, visibility: isExploreVisible ? 'visible' : 'hidden', pointerEvents: isExploreVisible ? 'auto' : 'none' }}>
-            {isExploreVisible && ExploreScreen()}
+            {ExploreScreen()}
           </div>
           {renderScreen()}
 
