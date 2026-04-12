@@ -1262,7 +1262,24 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
 
   // User Mode Selection
   const [userMode, setUserMode] = useState(() => localStorage.getItem('flockUserMode') || null);
-  const [showModeSelection, setShowModeSelection] = useState(!localStorage.getItem('flockUserMode'));
+  const [showModeSelection, setShowModeSelection] = useState(() => {
+    if (localStorage.getItem('flockUserMode')) return false;
+    // Regular users auto-select user mode — no mode picker shown
+    if (authUser?.role !== 'venue_owner' && authUser?.role !== 'admin') {
+      localStorage.setItem('flockUserMode', 'user');
+      return false;
+    }
+    return true;
+  });
+
+  // Auto-set user mode for regular users (handles race condition with authUser loading)
+  React.useEffect(() => {
+    if (showModeSelection && authUser && authUser.role !== 'venue_owner' && authUser.role !== 'admin') {
+      setUserMode('user');
+      setShowModeSelection(false);
+      localStorage.setItem('flockUserMode', 'user');
+    }
+  }, [showModeSelection, authUser]);
 
   // Onboarding
   const [hasCompletedOnboarding, setHasCompletedOnboarding] = useState(() => localStorage.getItem('flockOnboardingComplete') === 'true');
@@ -5199,10 +5216,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   // WELCOME SCREEN - Mode Selection
   const WelcomeScreen = () => {
     const modeBtn = {
-      width: '100%', padding: '16px 20px', borderRadius: '16px', border: '1px solid rgba(255,255,255,0.12)',
-      background: 'rgba(10,20,40,0.7)', backdropFilter: 'blur(12px)', WebkitBackdropFilter: 'blur(12px)',
+      width: '100%', padding: '16px 20px', borderRadius: '16px', border: '1px solid rgba(255,255,255,0.08)',
+      background: 'rgba(6,12,24,0.85)',
       marginBottom: '10px', cursor: 'pointer', textAlign: 'left',
-      display: 'flex', alignItems: 'center', gap: '14px', transition: 'background 0.2s',
+      display: 'flex', alignItems: 'center', gap: '14px',
     };
 
     return (
@@ -11801,15 +11818,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   const isExploreVisible = currentTab === 'explore' && currentScreen === 'main' && !showModeSelection && (userMode !== 'user' || hasCompletedOnboarding);
 
   const renderScreen = () => {
-    // Show welcome screen for mode selection — skip for regular users (only one mode)
+    // Show welcome screen for mode selection
     if (showModeSelection) {
-      if (authUser?.role !== 'venue_owner' && authUser?.role !== 'admin') {
-        // Regular user — auto-select user mode, no need to show mode picker
-        setUserMode('user');
-        setShowModeSelection(false);
-        localStorage.setItem('flockUserMode', 'user');
-        return null;
-      }
       return <WelcomeScreen />;
     }
     // Show venue onboarding for venue logins
