@@ -5198,19 +5198,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
 
   // WELCOME SCREEN - Mode Selection
   const WelcomeScreen = () => {
-    const glassCard = {
-      position: 'relative', borderRadius: '28px', padding: '32px 28px',
-    };
-    const glassOverlay = {
-      position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', borderRadius: '28px', zIndex: 0,
-      background: 'linear-gradient(145deg, rgba(255,255,255,0.1) 0%, rgba(255,255,255,0.03) 50%, rgba(255,255,255,0.05) 100%)',
-      border: '1px solid rgba(255,255,255,0.15)', borderTop: '1px solid rgba(255,255,255,0.25)', borderLeft: '1px solid rgba(255,255,255,0.18)',
-      pointerEvents: 'none',
-      boxShadow: '0 0 6px rgba(0,0,0,0.03), 0 2px 6px rgba(0,0,0,0.08), inset 3px 3px 0.5px -3.5px rgba(255,255,255,0.09), inset -3px -3px 0.5px -3.5px rgba(255,255,255,0.85), inset 1px 1px 1px -0.5px rgba(255,255,255,0.6), inset -1px -1px 1px -0.5px rgba(255,255,255,0.6), inset 0 0 6px 6px rgba(255,255,255,0.12)',
-    };
     const modeBtn = {
-      width: '100%', padding: '16px 20px', borderRadius: '16px', border: '1px solid rgba(255,255,255,0.1)',
-      background: 'rgba(255,255,255,0.06)', marginBottom: '10px', cursor: 'pointer', textAlign: 'left',
+      width: '100%', padding: '16px 20px', borderRadius: '16px', border: '1px solid rgba(255,255,255,0.12)',
+      background: 'rgba(10,20,40,0.7)', backdropFilter: 'blur(12px)', WebkitBackdropFilter: 'blur(12px)',
+      marginBottom: '10px', cursor: 'pointer', textAlign: 'left',
       display: 'flex', alignItems: 'center', gap: '14px', transition: 'background 0.2s',
     };
 
@@ -5230,52 +5221,41 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           <h1 style={{ fontSize: '28px', fontWeight: '900', color: colors.cream, margin: '0 0 2px', letterSpacing: '-0.5px' }}>Welcome, {authUser?.name?.split(' ')[0] || 'back'}</h1>
           <p style={{ fontSize: '14px', color: 'rgba(148,163,184,0.5)', fontWeight: '400', margin: '0 0 24px' }}>Choose how you want to use Flock</p>
 
-          {/* Glass card with mode options */}
+          {/* Mode options */}
           <div style={{ width: '100%', maxWidth: '340px' }}>
-            <div style={glassCard}>
-              <div style={glassOverlay} />
-              <div style={{ position: 'relative', zIndex: 1 }}>
-                {/* User Mode */}
-                <button onClick={() => selectMode('user')} style={modeBtn}>
-                  <div style={{ width: '44px', height: '44px', borderRadius: '12px', overflow: 'hidden', flexShrink: 0 }}>
-                    <img src="/flock-logo.png" alt="Flock" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                  </div>
-                  <div style={{ flex: 1 }}>
-                    <h3 style={{ fontSize: '15px', fontWeight: '800', color: colors.cream, margin: '0 0 2px' }}>I'm Going Out</h3>
-                    <p style={{ fontSize: '11px', color: 'rgba(148,163,184,0.5)', margin: 0 }}>Coordinate with friends, find venues</p>
-                  </div>
-                  <span style={{ fontSize: '18px', color: 'rgba(255,255,255,0.4)' }}>›</span>
-                </button>
-
-                {/* Venue Owner Mode */}
-                {(authUser?.role === 'venue_owner' || authUser?.role === 'admin') && (
-                  <button onClick={() => selectMode('venue')} style={modeBtn}>
-                    <div style={{ width: '44px', height: '44px', borderRadius: '12px', background: 'linear-gradient(135deg, #7C3AED, #5B21B6)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                      {Icons.home('white', 22)}
-                    </div>
-                    <div style={{ flex: 1 }}>
-                      <h3 style={{ fontSize: '15px', fontWeight: '800', color: colors.cream, margin: '0 0 2px' }}>Venue Dashboard</h3>
-                      <p style={{ fontSize: '11px', color: 'rgba(148,163,184,0.5)', margin: 0 }}>Manage your venue, see traffic</p>
-                    </div>
-                    <span style={{ fontSize: '18px', color: 'rgba(255,255,255,0.4)' }}>›</span>
-                  </button>
-                )}
-
-                {/* Admin Mode */}
-                {authUser?.role === 'admin' && (
-                  <button onClick={() => selectMode('admin')} style={modeBtn}>
-                    <div style={{ width: '44px', height: '44px', borderRadius: '12px', background: 'linear-gradient(135deg, #059669, #047857)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                      {Icons.briefcase('white', 22)}
-                    </div>
-                    <div style={{ flex: 1 }}>
-                      <h3 style={{ fontSize: '15px', fontWeight: '800', color: colors.cream, margin: '0 0 2px' }}>Admin Dashboard</h3>
-                      <p style={{ fontSize: '11px', color: 'rgba(148,163,184,0.5)', margin: 0 }}>Platform analytics & revenue</p>
-                    </div>
-                    <span style={{ fontSize: '18px', color: 'rgba(255,255,255,0.4)' }}>›</span>
-                  </button>
-                )}
+            {/* User Mode */}
+            <button onClick={() => selectMode('user')} style={modeBtn}>
+              <div style={{ width: '44px', height: '44px', borderRadius: '12px', overflow: 'hidden', flexShrink: 0 }}>
+                <img src="/flock-logo.png" alt="Flock" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
               </div>
-            </div>
+              <div style={{ flex: 1 }}>
+                <h3 style={{ fontSize: '15px', fontWeight: '800', color: 'white', margin: '0 0 2px' }}>I'm Going Out</h3>
+                <p style={{ fontSize: '11px', color: 'rgba(200,210,220,0.6)', margin: 0 }}>Coordinate with friends, find venues</p>
+              </div>
+              <span style={{ fontSize: '18px', color: 'rgba(255,255,255,0.5)' }}>›</span>
+            </button>
+
+            {/* Venue Owner Mode */}
+            {(authUser?.role === 'venue_owner' || authUser?.role === 'admin') && (
+              <button onClick={() => selectMode('venue')} style={modeBtn}>
+                <div style={{ flex: 1 }}>
+                  <h3 style={{ fontSize: '15px', fontWeight: '800', color: 'white', margin: '0 0 2px' }}>Venue Dashboard</h3>
+                  <p style={{ fontSize: '11px', color: 'rgba(200,210,220,0.6)', margin: 0 }}>Manage your venue, see traffic</p>
+                </div>
+                <span style={{ fontSize: '18px', color: 'rgba(255,255,255,0.5)' }}>›</span>
+              </button>
+            )}
+
+            {/* Admin Mode */}
+            {authUser?.role === 'admin' && (
+              <button onClick={() => selectMode('admin')} style={modeBtn}>
+                <div style={{ flex: 1 }}>
+                  <h3 style={{ fontSize: '15px', fontWeight: '800', color: 'white', margin: '0 0 2px' }}>Admin Dashboard</h3>
+                  <p style={{ fontSize: '11px', color: 'rgba(200,210,220,0.6)', margin: 0 }}>Platform analytics & revenue</p>
+                </div>
+                <span style={{ fontSize: '18px', color: 'rgba(255,255,255,0.5)' }}>›</span>
+              </button>
+            )}
           </div>
         </div>
 
