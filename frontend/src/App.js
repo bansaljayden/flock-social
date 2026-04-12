@@ -1279,15 +1279,26 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   const [venueSearchResults, setVenueSearchResults] = useState([]);
   const venueSearchTimer = React.useRef(null);
 
-  // If user came from venue login, always force venue mode
+  // If user came from venue login, check if they already have a profile
   React.useEffect(() => {
     if (venueLoginFlag) {
-      // Clear any stale state
-      localStorage.removeItem('flockVenueOnboardingComplete');
       setUserMode('venue');
       setShowModeSelection(false);
-      setShowVenueOnboarding(true);
       localStorage.setItem('flockUserMode', 'venue');
+      // Check if venue profile already exists — skip onboarding if so
+      getVenueProfile().then(p => {
+        if (p && p.business_name) {
+          // Already onboarded — go straight to dashboard
+          setShowVenueOnboarding(false);
+          setCurrentScreen('venueDashboard');
+        } else {
+          // New venue owner — show onboarding
+          setShowVenueOnboarding(true);
+        }
+      }).catch(() => {
+        // No profile found — show onboarding
+        setShowVenueOnboarding(true);
+      });
     }
   }, [venueLoginFlag]); // eslint-disable-line react-hooks/exhaustive-deps
 
