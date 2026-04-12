@@ -9937,7 +9937,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
               value={dealDescription}
               onChange={(e) => setDealDescription(e.target.value)}
               placeholder="e.g., 2-for-1 drinks until 8pm"
-              style={{ width: '100%', padding: '10px', borderRadius: '8px', border: `1px solid ${colors.creamDark}`, fontSize: '12px', marginBottom: '8px', boxSizing: 'border-box' }}
+              style={{ width: '100%', padding: '10px', borderRadius: '8px', border: `1px solid ${colors.creamDark}`, fontSize: '12px', marginBottom: '8px', boxSizing: 'border-box', backgroundColor: 'var(--bg-tertiary)', color: 'var(--text-primary)' }}
               disabled={isFeatureLocked('Post deals')}
             />
             <div style={{ display: 'flex', gap: '6px', marginBottom: '8px' }}>
