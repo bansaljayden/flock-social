@@ -79,9 +79,10 @@ router.put('/', [
   body('notificationPrefs').optional().isObject(),
   body('googlePlaceId').optional().trim(),
   body('tier').optional().isIn(['free', 'premium', 'pro']),
+  body('photoUrl').optional().trim(),
 ], async (req, res) => {
   try {
-    const { businessName, category, location, description, goals, phone, operatingHours, notificationPrefs, googlePlaceId, tier } = req.body;
+    const { businessName, category, location, description, goals, phone, operatingHours, notificationPrefs, googlePlaceId, tier, photoUrl } = req.body;
 
     const result = await pool.query(
       `UPDATE venue_profiles SET
@@ -95,12 +96,13 @@ router.put('/', [
         notification_prefs = COALESCE($8, notification_prefs),
         google_place_id = COALESCE($9, google_place_id),
         tier = COALESCE($10, tier),
+        photo_url = COALESCE($11, photo_url),
         updated_at = NOW()
-      WHERE user_id = $11
+      WHERE user_id = $12
       RETURNING *`,
       [businessName || null, category || null, location || null, description || null, goals || null,
        phone || null, operatingHours ? JSON.stringify(operatingHours) : null,
-       notificationPrefs ? JSON.stringify(notificationPrefs) : null, googlePlaceId || null, tier || null, req.user.id]
+       notificationPrefs ? JSON.stringify(notificationPrefs) : null, googlePlaceId || null, tier || null, photoUrl || null, req.user.id]
     );
 
     if (result.rows.length === 0) {

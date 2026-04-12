@@ -9480,6 +9480,29 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   const [venueReviewsData, setVenueReviewsData] = useState({ reviews: [], stats: null });
   const [replyingToReview, setReplyingToReview] = useState(null);
   const [replyText, setReplyText] = useState('');
+  const [venueLogoUrl, setVenueLogoUrl] = useState(null);
+  const [venueLogoUploading, setVenueLogoUploading] = useState(false);
+  const venueLogoInputRef = React.useRef(null);
+
+  // Handler for uploading a venue logo
+  const handleVenueLogoUpload = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    // Show preview immediately
+    const reader = new FileReader();
+    reader.onload = (ev) => setVenueLogoUrl(ev.target.result);
+    reader.readAsDataURL(file);
+    try {
+      setVenueLogoUploading(true);
+      const { url } = await uploadProfileImage(file);
+      setVenueLogoUrl(url);
+      await updateVenueProfile({ photoUrl: url });
+    } catch (err) {
+      console.error('Logo upload failed:', err);
+    } finally {
+      setVenueLogoUploading(false);
+    }
+  };
 
   // Load venue profile + all dashboard data when entering
   React.useEffect(() => {
@@ -9497,6 +9520,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           if (p.tier && ['free', 'premium', 'pro'].includes(p.tier)) {
             setVenueTier(p.tier);
           }
+          // Load saved logo
+          if (p.photo_url) setVenueLogoUrl(p.photo_url);
           // Load saved operating hours and notification prefs
           // Validate hours have real open/close times (not just "Open 24 hours" from bad parse)
           const savedHours = p.operating_hours && Array.isArray(p.operating_hours) ? p.operating_hours : [];
@@ -9823,8 +9848,25 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
             </div>
           </div>
           <div style={{ marginTop: '12px', display: 'flex', alignItems: 'center', gap: '12px' }}>
-            <div style={{ width: '48px', height: '48px', borderRadius: '12px', backgroundColor: 'rgba(255,255,255,0.2)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-              {Icons.home('white', 24)}
+            <div
+              onClick={() => venueLogoInputRef.current?.click()}
+              title="Upload venue logo"
+              style={{ width: '48px', height: '48px', borderRadius: '12px', backgroundColor: 'rgba(255,255,255,0.2)', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', overflow: 'hidden', position: 'relative', flexShrink: 0 }}
+            >
+              {venueLogoUrl ? (
+                <img src={venueLogoUrl} alt="Logo" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+              ) : (
+                <span style={{ fontSize: '20px', fontWeight: '900', color: 'white' }}>
+                  {(venueData.name || 'V').charAt(0).toUpperCase()}
+                </span>
+              )}
+              {venueLogoUploading && (
+                <div style={{ position: 'absolute', inset: 0, backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '9px', color: 'white' }}>…</div>
+              )}
+              <div style={{ position: 'absolute', bottom: -2, right: -2, width: '18px', height: '18px', borderRadius: '9px', backgroundColor: colors.teal, display: 'flex', alignItems: 'center', justifyContent: 'center', border: '2px solid var(--bg-primary)' }}>
+                {Icons.camera('white', 10)}
+              </div>
+              <input ref={venueLogoInputRef} type="file" accept="image/*" onChange={handleVenueLogoUpload} style={{ display: 'none' }} />
             </div>
             <div style={{ flex: 1 }}>
               <h1 style={{ fontSize: '18px', fontWeight: '900', color: 'white', margin: 0 }}>Welcome, {venueData.name}</h1>
