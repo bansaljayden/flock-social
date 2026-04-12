@@ -6282,9 +6282,6 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
 
                 // Extract real hours: prefer crowd API, fall back to venue search opening_hours
                 const venueOH = activeVenue.opening_hours;
-                const realIsOpen = cd?.isOpen ?? venueOH?.openNow ?? null;
-                const isOpen = realIsOpen;
-                const isClosed = isOpen === false;
 
                 // Extract today's open/close hours from venue search data as fallback
                 const venueOpenHour = cd?.openHour ?? (() => {
@@ -6305,7 +6302,18 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                   return ch === 0 ? 24 : ch;
                 })();
 
-                // Closed all day = venue says closed AND no opening hours for today
+                // Compute isOpen — prefer explicit API signal, fall back to today's hours, then null
+                const nowHour = new Date().getHours();
+                const computedIsOpen = (venueOpenHour != null && venueCloseHour != null)
+                  ? (venueCloseHour > venueOpenHour
+                      ? (nowHour >= venueOpenHour && nowHour < venueCloseHour)       // normal hours e.g. 9–18
+                      : (nowHour >= venueOpenHour || nowHour < venueCloseHour))      // overnight e.g. 17–02
+                  : null;
+                const realIsOpen = cd?.isOpen ?? venueOH?.openNow ?? computedIsOpen;
+                const isOpen = realIsOpen;
+                const isClosed = isOpen === false;
+
+                // Closed all day = venue is closed AND we have no opening window for today
                 const closedAllDay = isClosed && venueOpenHour == null;
 
                 // Venue-type-aware wait estimate (client-side fallback)
