@@ -9493,6 +9493,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
             address: p.location || prev.address,
             phone: p.phone || prev.phone,
           }));
+          // Load saved tier
+          if (p.tier && ['free', 'premium', 'pro'].includes(p.tier)) {
+            setVenueTier(p.tier);
+          }
           // Load saved operating hours and notification prefs
           // Validate hours have real open/close times (not just "Open 24 hours" from bad parse)
           const savedHours = p.operating_hours && Array.isArray(p.operating_hours) ? p.operating_hours : [];
@@ -9722,17 +9726,59 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
     };
 
     const features = {
-      free: ['Basic listing', 'Venue info', 'User reviews'],
-      premium: ['Enhanced visibility', 'Post deals', 'Event promotion', 'Basic analytics'],
-      pro: ['Everything in Premium', 'Detailed insights', 'Push notifications', 'AI recommendations'],
+      free: [
+        'Basic listing on the map',
+        'Venue information display',
+        'User reviews and ratings',
+      ],
+      premium: [
+        'Enhanced visibility on the map',
+        'Post deals and specials',
+        'Event promotion tools',
+        'Basic analytics dashboard',
+      ],
+      pro: [
+        'Everything in Premium',
+        'Detailed customer insights (demographics, peak times, interests)',
+        'Targeted push notifications to nearby users',
+        'Sponsored placement during slow hours',
+        'AI-powered crowd optimization recommendations',
+        'Direct booking and reservation system',
+      ],
     };
 
     const isFeatureLocked = (feature) => {
       if (venueTier === 'pro') return false;
-      if (venueTier === 'premium' && ['Post deals', 'Event promotion', 'Basic analytics', 'Enhanced visibility'].includes(feature)) return false;
-      if (['Basic listing', 'Venue info', 'User reviews'].includes(feature)) return false;
+      if (venueTier === 'premium' && features.premium.includes(feature)) return false;
+      if (features.free.includes(feature)) return false;
       return true;
     };
+
+    // Capability gates by tier — used elsewhere in the dashboard
+    const can = {
+      postDeals: venueTier === 'premium' || venueTier === 'pro',
+      events: venueTier === 'premium' || venueTier === 'pro',
+      analytics: venueTier === 'premium' || venueTier === 'pro',
+      enhancedVisibility: venueTier === 'premium' || venueTier === 'pro',
+      detailedInsights: venueTier === 'pro',
+      pushNotifications: venueTier === 'pro',
+      sponsoredPlacement: venueTier === 'pro',
+      aiRecommendations: venueTier === 'pro',
+      booking: venueTier === 'pro',
+    };
+
+    // Locked tab placeholder — shown when feature isn't available on current tier
+    const LockedTab = ({ requiredTier, featureName, description }) => (
+      <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '16px', padding: '32px 20px', textAlign: 'center', margin: '12px 0', border: `2px dashed ${requiredTier === 'pro' ? '#7c3aed' : 'var(--accent-amber-text)'}` }}>
+        <div style={{ fontSize: '40px', marginBottom: '8px' }}>🔒</div>
+        <h3 style={{ fontSize: '16px', fontWeight: '800', color: 'var(--text-primary)', margin: '0 0 6px' }}>{featureName}</h3>
+        <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: '0 0 16px', lineHeight: '1.5' }}>{description}</p>
+        <p style={{ fontSize: '11px', color: requiredTier === 'pro' ? 'var(--accent-purple-text)' : 'var(--accent-amber-text)', fontWeight: '700', margin: '0 0 12px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Requires {requiredTier === 'pro' ? 'Pro · $75/mo' : 'Premium · $35/mo'}</p>
+        <button onClick={() => setShowUpgradeModal(true)} style={{ padding: '10px 20px', borderRadius: '10px', border: 'none', background: requiredTier === 'pro' ? 'linear-gradient(90deg, #7c3aed, #a78bfa)' : 'var(--accent-amber-text)', color: 'white', fontWeight: '700', fontSize: '12px', cursor: 'pointer' }}>
+          Upgrade to {requiredTier === 'pro' ? 'Pro' : 'Premium'}
+        </button>
+      </div>
+    );
 
     return (
       <div key="venue-dashboard-container" style={{ display: 'flex', flexDirection: 'column', height: '100%', backgroundColor: 'var(--bg-primary)' }}>
@@ -9776,7 +9822,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
         <div style={{ flex: 1, overflowY: 'auto', padding: '12px' }}>
 
           {/* ANALYTICS TAB */}
-          {venueTab === 'analytics' && (<>
+          {venueTab === 'analytics' && !can.analytics && (
+            <LockedTab requiredTier="premium" featureName="Analytics Dashboard" description="Track check-ins, peak hours, and customer traffic with real-time insights." />
+          )}
+          {venueTab === 'analytics' && can.analytics && (<>
           {/* Key Metrics */}
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '8px', marginBottom: '12px' }}>
             <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
@@ -9872,7 +9921,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           </>)}
 
           {/* PROMOTIONS TAB */}
-          {venueTab === 'promotions' && (
+          {venueTab === 'promotions' && !can.postDeals && (
+            <LockedTab requiredTier="premium" featureName="Deals & Promotions" description="Post happy hours, specials, and discounts that show up on user venue cards." />
+          )}
+          {venueTab === 'promotions' && can.postDeals && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
               {/* Create New Promotion Button */}
               <button onClick={() => openPromoModal()} style={{ width: '100%', padding: '14px', borderRadius: '12px', border: 'none', background: `linear-gradient(90deg, ${colors.navyBg}, ${colors.navyMidBg})`, color: 'white', fontWeight: '700', fontSize: '14px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
@@ -9924,7 +9976,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           )}
 
           {/* EVENTS TAB */}
-          {venueTab === 'events' && (
+          {venueTab === 'events' && !can.events && (
+            <LockedTab requiredTier="premium" featureName="Event Promotion" description="Promote live music, trivia nights, and special events with capacity tracking and RSVPs." />
+          )}
+          {venueTab === 'events' && can.events && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
               {/* Create Event Button */}
               <button onClick={() => openEventModal()} style={{ width: '100%', padding: '14px', borderRadius: '12px', border: 'none', background: `linear-gradient(90deg, ${colors.navyBg}, ${colors.navyMidBg})`, color: 'white', fontWeight: '700', fontSize: '14px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
@@ -10199,7 +10254,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                   <ul style={{ margin: 0, paddingLeft: '16px', fontSize: '11px', color: 'var(--text-secondary)' }}>
                     {features.premium.map(f => <li key={f} style={{ marginBottom: '2px' }}>{f}</li>)}
                   </ul>
-                  {venueTier === 'premium' ? <span style={{ display: 'block', textAlign: 'center', fontSize: '10px', color: 'var(--accent-amber-text)', fontWeight: '600', marginTop: '8px' }}>Current Plan</span> : venueTier === 'free' && <button onClick={() => { setVenueTier('premium'); setShowUpgradeModal(false); }} style={{ width: '100%', padding: '8px', borderRadius: '8px', border: 'none', backgroundColor: 'var(--accent-amber-text)', color: 'white', fontWeight: '600', fontSize: '12px', cursor: 'pointer', marginTop: '8px' }}>Upgrade</button>}
+                  {venueTier === 'premium' ? <span style={{ display: 'block', textAlign: 'center', fontSize: '10px', color: 'var(--accent-amber-text)', fontWeight: '600', marginTop: '8px' }}>Current Plan</span> : venueTier === 'free' && <button onClick={() => { setVenueTier('premium'); updateVenueProfile({ tier: 'premium' }).catch(() => {}); setShowUpgradeModal(false); }} style={{ width: '100%', padding: '8px', borderRadius: '8px', border: 'none', backgroundColor: 'var(--accent-amber-text)', color: 'white', fontWeight: '600', fontSize: '12px', cursor: 'pointer', marginTop: '8px' }}>Upgrade</button>}
                 </div>
 
                 {/* Pro Tier */}
@@ -10211,7 +10266,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                   <ul style={{ margin: 0, paddingLeft: '16px', fontSize: '11px', color: 'var(--text-secondary)' }}>
                     {features.pro.map(f => <li key={f} style={{ marginBottom: '2px' }}>{f}</li>)}
                   </ul>
-                  <button onClick={() => { setVenueTier('pro'); setShowUpgradeModal(false); }} style={{ width: '100%', padding: '8px', borderRadius: '8px', border: 'none', background: 'linear-gradient(90deg, #7c3aed, #a78bfa)', color: 'white', fontWeight: '600', fontSize: '12px', cursor: 'pointer', marginTop: '8px' }}>Upgrade to Pro</button>
+                  {venueTier === 'pro' ? <span style={{ display: 'block', textAlign: 'center', fontSize: '10px', color: 'var(--accent-purple-text)', fontWeight: '600', marginTop: '8px' }}>Current Plan</span> : <button onClick={() => { setVenueTier('pro'); updateVenueProfile({ tier: 'pro' }).catch(() => {}); setShowUpgradeModal(false); }} style={{ width: '100%', padding: '8px', borderRadius: '8px', border: 'none', background: 'linear-gradient(90deg, #7c3aed, #a78bfa)', color: 'white', fontWeight: '600', fontSize: '12px', cursor: 'pointer', marginTop: '8px' }}>Upgrade to Pro</button>}
                 </div>
 
                 <button onClick={() => setShowUpgradeModal(false)} style={{ width: '100%', padding: '10px', borderRadius: '8px', border: '1px solid var(--border-mid)', backgroundColor: 'var(--bg-card-solid)', color: 'var(--text-secondary)', fontWeight: '500', cursor: 'pointer' }}>Cancel</button>
