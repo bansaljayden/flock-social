@@ -9947,7 +9947,24 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 </button>
               ))}
             </div>
-            <button onClick={() => { setDealDescription(''); }} style={{ width: '100%', padding: '10px', borderRadius: '8px', border: 'none', background: `linear-gradient(90deg, ${colors.navyBg}, ${colors.navyMidBg})`, color: 'white', fontWeight: '600', fontSize: '12px', cursor: 'pointer' }} disabled={isFeatureLocked('Post deals') || !dealDescription.trim()}>
+            <button onClick={async () => {
+              if (!dealDescription.trim()) return;
+              try {
+                const created = await createVenuePromotion({
+                  title: dealDescription.trim(),
+                  description: dealDescription.trim(),
+                  timeSlot: dealTimeSlot,
+                  days: 'Daily',
+                });
+                setPromotions(prev => [created, ...prev]);
+                setDealDescription('');
+                showToast('Deal posted!', 'success');
+                setVenueTab('promotions');
+              } catch (e) {
+                console.error('Post deal failed:', e);
+                showToast('Failed to post deal', 'error');
+              }
+            }} style={{ width: '100%', padding: '10px', borderRadius: '8px', border: 'none', background: `linear-gradient(90deg, ${colors.navyBg}, ${colors.navyMidBg})`, color: 'white', fontWeight: '600', fontSize: '12px', cursor: 'pointer' }} disabled={isFeatureLocked('Post deals') || !dealDescription.trim()}>
               Post Deal
             </button>
             {isFeatureLocked('Post deals') && <div style={{ position: 'absolute', inset: 0, backgroundColor: 'var(--locked-overlay)', borderRadius: '12px', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>{Icons.shield(colors.textTertiary, 24)}<span style={{ fontSize: '10px', color: 'var(--text-secondary)', marginTop: '4px' }}>Premium Feature</span></div>}
