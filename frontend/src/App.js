@@ -1235,6 +1235,83 @@ function getGroupAdmission(crowdScore, partySize, venue) {
   return { text: 'Reservation needed', color: '#EF4444', icon: 'alert' };
 }
 
+// ─── ISOLATED MODAL COMPONENTS ────────────────────────────────────────────
+// These manage their own local state so typing doesn't re-render the parent.
+// Only onSave and onCancel callbacks escape.
+
+const PromoModal = React.memo(function PromoModal({ editing, onSave, onCancel, colors }) {
+  const [form, setForm] = React.useState(() => editing
+    ? { title: editing.title || '', desc: editing.description || editing.desc || '', time: editing.time_slot || editing.time || 'Happy Hour', days: editing.days || 'Daily' }
+    : { title: '', desc: '', time: 'Happy Hour', days: 'Daily' });
+
+  const input = { width: '100%', padding: '10px', borderRadius: '8px', border: `1px solid ${colors.creamDark}`, fontSize: '13px', boxSizing: 'border-box', backgroundColor: 'var(--bg-tertiary)', color: 'var(--text-primary)' };
+  const label = { fontSize: '11px', fontWeight: '600', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px' };
+
+  return (
+    <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.8)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 50, padding: '16px' }}>
+      <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '24px', padding: '20px', width: '100%', maxWidth: '320px' }}>
+        <h2 style={{ fontSize: '18px', fontWeight: '900', color: colors.navy, margin: '0 0 16px', textAlign: 'center' }}>{editing ? 'Edit Promotion' : 'New Promotion'}</h2>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+          <div><label style={label}>Title</label>
+            <input type="text" value={form.title} onChange={(e) => setForm(f => ({ ...f, title: e.target.value }))} placeholder="e.g., Half-Price Apps" style={input} autoFocus /></div>
+          <div><label style={label}>Description</label>
+            <input type="text" value={form.desc} onChange={(e) => setForm(f => ({ ...f, desc: e.target.value }))} placeholder="e.g., 50% off all appetizers" style={input} /></div>
+          <div><label style={label}>Time Slot</label>
+            <select value={form.time} onChange={(e) => setForm(f => ({ ...f, time: e.target.value }))} style={input}>
+              <option value="Happy Hour">Happy Hour (4-7pm)</option>
+              <option value="Late Night">Late Night (10pm-close)</option>
+              <option value="Weekend Brunch">Weekend Brunch (10am-2pm)</option>
+              <option value="All Day">All Day</option>
+            </select></div>
+          <div><label style={label}>Days Active</label>
+            <select value={form.days} onChange={(e) => setForm(f => ({ ...f, days: e.target.value }))} style={input}>
+              <option value="Daily">Daily</option>
+              <option value="Weekdays">Weekdays</option>
+              <option value="Weekends">Weekends</option>
+              <option value="Mon-Fri">Mon-Fri</option>
+              <option value="Fri-Sun">Fri-Sun</option>
+            </select></div>
+        </div>
+        <div style={{ display: 'flex', gap: '10px', marginTop: '20px' }}>
+          <button onClick={onCancel} style={{ flex: 1, padding: '12px', borderRadius: '8px', border: '1px solid var(--border-mid)', backgroundColor: 'var(--bg-card-solid)', color: 'var(--text-secondary)', fontWeight: '600', cursor: 'pointer' }}>Cancel</button>
+          <button onClick={() => onSave(form)} disabled={!form.title || !form.desc} style={{ flex: 1, padding: '12px', borderRadius: '8px', border: 'none', backgroundColor: form.title && form.desc ? colors.navyBg : 'var(--toggle-off)', color: 'white', fontWeight: '600', cursor: form.title && form.desc ? 'pointer' : 'not-allowed' }}>{editing ? 'Save Changes' : 'Create'}</button>
+        </div>
+      </div>
+    </div>
+  );
+});
+
+const EventModal = React.memo(function EventModal({ editing, onSave, onCancel, colors }) {
+  const [form, setForm] = React.useState(() => editing
+    ? { title: editing.title || '', date: editing.date || editing.event_date || '', time: editing.time || editing.event_time || '', capacity: (editing.capacity || '').toString() }
+    : { title: '', date: '', time: '', capacity: '' });
+
+  const input = { width: '100%', padding: '10px', borderRadius: '8px', border: `1px solid ${colors.creamDark}`, fontSize: '13px', boxSizing: 'border-box', backgroundColor: 'var(--bg-tertiary)', color: 'var(--text-primary)' };
+  const label = { fontSize: '11px', fontWeight: '600', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px' };
+
+  return (
+    <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.8)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 50, padding: '16px' }}>
+      <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '24px', padding: '20px', width: '100%', maxWidth: '320px' }}>
+        <h2 style={{ fontSize: '18px', fontWeight: '900', color: colors.navy, margin: '0 0 16px', textAlign: 'center' }}>{editing ? 'Edit Event' : 'New Event'}</h2>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+          <div><label style={label}>Event Title</label>
+            <input type="text" value={form.title} onChange={(e) => setForm(f => ({ ...f, title: e.target.value }))} placeholder="e.g., Live Jazz Night" style={input} autoFocus /></div>
+          <div><label style={label}>Date</label>
+            <input type="text" value={form.date} onChange={(e) => setForm(f => ({ ...f, date: e.target.value }))} placeholder="e.g., Jan 24" style={input} /></div>
+          <div><label style={label}>Time</label>
+            <input type="text" value={form.time} onChange={(e) => setForm(f => ({ ...f, time: e.target.value }))} placeholder="e.g., 9:00 PM" style={input} /></div>
+          <div><label style={label}>Capacity</label>
+            <input type="number" value={form.capacity} onChange={(e) => setForm(f => ({ ...f, capacity: e.target.value }))} placeholder="e.g., 60" style={input} /></div>
+        </div>
+        <div style={{ display: 'flex', gap: '10px', marginTop: '20px' }}>
+          <button onClick={onCancel} style={{ flex: 1, padding: '12px', borderRadius: '8px', border: '1px solid var(--border-mid)', backgroundColor: 'var(--bg-card-solid)', color: 'var(--text-secondary)', fontWeight: '600', cursor: 'pointer' }}>Cancel</button>
+          <button onClick={() => onSave(form)} disabled={!form.title} style={{ flex: 1, padding: '12px', borderRadius: '8px', border: 'none', backgroundColor: form.title ? colors.navyBg : 'var(--toggle-off)', color: 'white', fontWeight: '600', cursor: form.title ? 'pointer' : 'not-allowed' }}>{editing ? 'Save Changes' : 'Create'}</button>
+        </div>
+      </div>
+    </div>
+  );
+});
+
 const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   // Theme — shadows the outer static colors/styles with reactive versions
   const { toggleTheme, isDark, themeMode, isNightModeActive, setAutoMode } = useTheme();
@@ -9463,11 +9540,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   const [promotions, setPromotions] = useState([]);
   const [showPromoModal, setShowPromoModal] = useState(false);
   const [editingPromo, setEditingPromo] = useState(null);
-  const [promoForm, setPromoForm] = useState({ title: '', desc: '', time: 'Happy Hour', days: 'Daily' });
   const [venueEventsList, setVenueEventsList] = useState([]);
   const [showEventModal, setShowEventModal] = useState(false);
   const [editingEvent, setEditingEvent] = useState(null);
-  const [eventForm, setEventForm] = useState({ title: '', date: '', time: '', capacity: '' });
   const [venueDashProfileLoaded, setVenueDashProfileLoaded] = useState(false);
   const [venueInfo, setVenueInfo] = useState({ name: '', address: '', phone: '' });
   const [editingVenueInfo, setEditingVenueInfo] = useState(false);
@@ -9656,32 +9731,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
 
     // Promotion handlers — real API
     const openPromoModal = (promo = null) => {
-      if (promo) {
-        setEditingPromo(promo);
-        setPromoForm({ title: promo.title, desc: promo.description || promo.desc || '', time: promo.time_slot || promo.time || 'Happy Hour', days: promo.days || 'Daily' });
-      } else {
-        setEditingPromo(null);
-        setPromoForm({ title: '', desc: '', time: 'Happy Hour', days: 'Daily' });
-      }
+      setEditingPromo(promo);
       setShowPromoModal(true);
-    };
-
-    const savePromo = async () => {
-      if (!promoForm.title.trim()) return;
-      try {
-        if (editingPromo) {
-          const updated = await updateVenuePromotion(editingPromo.id, {
-            title: promoForm.title, description: promoForm.desc, timeSlot: promoForm.time, days: promoForm.days
-          });
-          setPromotions(prev => prev.map(p => p.id === editingPromo.id ? updated : p));
-        } else {
-          const created = await createVenuePromotion({
-            title: promoForm.title, description: promoForm.desc, timeSlot: promoForm.time, days: promoForm.days
-          });
-          setPromotions(prev => [...prev, created]);
-        }
-      } catch (e) { console.error('Save promo failed:', e); }
-      setShowPromoModal(false);
     };
 
     const deletePromo = async (id) => {
@@ -9693,38 +9744,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
 
     // Event handlers — real API
     const openEventModal = (event = null) => {
-      if (event) {
-        setEditingEvent(event);
-        setEventForm({ title: event.title, date: event.date || event.event_date || '', time: event.time || event.event_time || '', capacity: (event.capacity || '').toString() });
-      } else {
-        setEditingEvent(null);
-        setEventForm({ title: '', date: '', time: '', capacity: '' });
-      }
+      setEditingEvent(event);
       setShowEventModal(true);
-    };
-
-    const saveEvent = async () => {
-      if (!eventForm.title.trim()) return;
-      try {
-        if (editingEvent) {
-          const updated = await updateVenueEvent(editingEvent.id, {
-            title: eventForm.title, eventDate: eventForm.date, eventTime: eventForm.time, capacity: parseInt(eventForm.capacity) || 50
-          });
-          setVenueEventsList(prev => prev.map(e => e.id === editingEvent.id ? {
-            id: updated.id, title: updated.title, date: updated.event_date, time: updated.event_time,
-            capacity: updated.capacity, rsvps: updated.rsvps || 0
-          } : e));
-        } else {
-          const created = await createVenueEvent({
-            title: eventForm.title, eventDate: eventForm.date, eventTime: eventForm.time, capacity: parseInt(eventForm.capacity) || 50
-          });
-          setVenueEventsList(prev => [...prev, {
-            id: created.id, title: created.title, date: created.event_date, time: created.event_time,
-            capacity: created.capacity, rsvps: 0
-          }]);
-        }
-      } catch (e) { console.error('Save event failed:', e); }
-      setShowEventModal(false);
     };
 
     const deleteEvent = async (id) => {
@@ -10358,87 +10379,50 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
             </div>
           )}
 
-          {/* Promotion Modal */}
+          {/* Promotion Modal — isolated component, typing doesn't re-render parent */}
           {showPromoModal && (
-            <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.8)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 50, padding: '16px' }}>
-              <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '24px', padding: '20px', width: '100%', maxWidth: '320px' }}>
-                <h2 style={{ fontSize: '18px', fontWeight: '900', color: colors.navy, margin: '0 0 16px', textAlign: 'center' }}>
-                  {editingPromo ? 'Edit Promotion' : 'New Promotion'}
-                </h2>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                  <div>
-                    <label style={{ fontSize: '11px', fontWeight: '600', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px' }}>Title</label>
-                    <input type="text" value={promoForm.title} onChange={(e) => setPromoForm({...promoForm, title: e.target.value})} placeholder="e.g., Half-Price Apps" style={{ width: '100%', padding: '10px', borderRadius: '8px', border: `1px solid ${colors.creamDark}`, fontSize: '13px', boxSizing: 'border-box', backgroundColor: 'var(--bg-tertiary)', color: 'var(--text-primary)' }} />
-                  </div>
-                  <div>
-                    <label style={{ fontSize: '11px', fontWeight: '600', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px' }}>Description</label>
-                    <input type="text" value={promoForm.desc} onChange={(e) => setPromoForm({...promoForm, desc: e.target.value})} placeholder="e.g., 50% off all appetizers" style={{ width: '100%', padding: '10px', borderRadius: '8px', border: `1px solid ${colors.creamDark}`, fontSize: '13px', boxSizing: 'border-box', backgroundColor: 'var(--bg-tertiary)', color: 'var(--text-primary)' }} />
-                  </div>
-                  <div>
-                    <label style={{ fontSize: '11px', fontWeight: '600', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px' }}>Time Slot</label>
-                    <select value={promoForm.time} onChange={(e) => setPromoForm({...promoForm, time: e.target.value})} style={{ width: '100%', padding: '10px', borderRadius: '8px', border: `1px solid ${colors.creamDark}`, fontSize: '13px', boxSizing: 'border-box', backgroundColor: 'var(--bg-card-solid)' }}>
-                      <option value="Happy Hour">Happy Hour (4-7pm)</option>
-                      <option value="Late Night">Late Night (10pm-close)</option>
-                      <option value="Weekend Brunch">Weekend Brunch (10am-2pm)</option>
-                      <option value="All Day">All Day</option>
-                    </select>
-                  </div>
-                  <div>
-                    <label style={{ fontSize: '11px', fontWeight: '600', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px' }}>Days Active</label>
-                    <select value={promoForm.days} onChange={(e) => setPromoForm({...promoForm, days: e.target.value})} style={{ width: '100%', padding: '10px', borderRadius: '8px', border: `1px solid ${colors.creamDark}`, fontSize: '13px', boxSizing: 'border-box', backgroundColor: 'var(--bg-card-solid)' }}>
-                      <option value="Daily">Daily</option>
-                      <option value="Weekdays">Weekdays</option>
-                      <option value="Weekends">Weekends</option>
-                      <option value="Mon-Fri">Mon-Fri</option>
-                      <option value="Fri-Sun">Fri-Sun</option>
-                    </select>
-                  </div>
-                </div>
-                <div style={{ display: 'flex', gap: '10px', marginTop: '20px' }}>
-                  <button onClick={() => { setShowPromoModal(false); setEditingPromo(null); setPromoForm({ title: '', desc: '', time: 'Happy Hour', days: 'Daily' }); }} style={{ flex: 1, padding: '12px', borderRadius: '8px', border: '1px solid var(--border-mid)', backgroundColor: 'var(--bg-card-solid)', color: 'var(--text-secondary)', fontWeight: '600', cursor: 'pointer' }}>Cancel</button>
-                  <button onClick={savePromo} disabled={!promoForm.title || !promoForm.desc} style={{ flex: 1, padding: '12px', borderRadius: '8px', border: 'none', backgroundColor: promoForm.title && promoForm.desc ? colors.navyBg : 'var(--toggle-off)', color: 'white', fontWeight: '600', cursor: promoForm.title && promoForm.desc ? 'pointer' : 'not-allowed' }}>
-                    {editingPromo ? 'Save Changes' : 'Create'}
-                  </button>
-                </div>
-              </div>
-            </div>
+            <PromoModal
+              editing={editingPromo}
+              colors={colors}
+              onCancel={() => { setShowPromoModal(false); setEditingPromo(null); }}
+              onSave={async (form) => {
+                if (!form.title.trim()) return;
+                try {
+                  if (editingPromo) {
+                    const updated = await updateVenuePromotion(editingPromo.id, { title: form.title, description: form.desc, timeSlot: form.time, days: form.days });
+                    setPromotions(prev => prev.map(p => p.id === editingPromo.id ? updated : p));
+                  } else {
+                    const created = await createVenuePromotion({ title: form.title, description: form.desc, timeSlot: form.time, days: form.days });
+                    setPromotions(prev => [created, ...prev]);
+                  }
+                } catch (e) { console.error('Save promo failed:', e); }
+                setShowPromoModal(false);
+                setEditingPromo(null);
+              }}
+            />
           )}
 
           {/* Event Modal */}
           {showEventModal && (
-            <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.8)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 50, padding: '16px' }}>
-              <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '24px', padding: '20px', width: '100%', maxWidth: '320px' }}>
-                <h2 style={{ fontSize: '18px', fontWeight: '900', color: colors.navy, margin: '0 0 16px', textAlign: 'center' }}>
-                  {editingEvent ? 'Edit Event' : 'New Event'}
-                </h2>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                  <div>
-                    <label style={{ fontSize: '11px', fontWeight: '600', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px' }}>Event Title</label>
-                    <input type="text" value={eventForm.title} onChange={(e) => setEventForm({...eventForm, title: e.target.value})} placeholder="e.g., Live Jazz Night" style={{ width: '100%', padding: '10px', borderRadius: '8px', border: `1px solid ${colors.creamDark}`, fontSize: '13px', boxSizing: 'border-box' }} />
-                  </div>
-                  <div style={{ display: 'flex', gap: '10px' }}>
-                    <div style={{ flex: 1 }}>
-                      <label style={{ fontSize: '11px', fontWeight: '600', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px' }}>Date</label>
-                      <input type="text" value={eventForm.date} onChange={(e) => setEventForm({...eventForm, date: e.target.value})} placeholder="Jan 25" style={{ width: '100%', padding: '10px', borderRadius: '8px', border: `1px solid ${colors.creamDark}`, fontSize: '13px', boxSizing: 'border-box' }} />
-                    </div>
-                    <div style={{ flex: 1 }}>
-                      <label style={{ fontSize: '11px', fontWeight: '600', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px' }}>Time</label>
-                      <input type="text" value={eventForm.time} onChange={(e) => setEventForm({...eventForm, time: e.target.value})} placeholder="8:00 PM" style={{ width: '100%', padding: '10px', borderRadius: '8px', border: `1px solid ${colors.creamDark}`, fontSize: '13px', boxSizing: 'border-box' }} />
-                    </div>
-                  </div>
-                  <div>
-                    <label style={{ fontSize: '11px', fontWeight: '600', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px' }}>Capacity</label>
-                    <input type="number" value={eventForm.capacity} onChange={(e) => setEventForm({...eventForm, capacity: e.target.value})} placeholder="50" style={{ width: '100%', padding: '10px', borderRadius: '8px', border: `1px solid ${colors.creamDark}`, fontSize: '13px', boxSizing: 'border-box' }} />
-                  </div>
-                </div>
-                <div style={{ display: 'flex', gap: '10px', marginTop: '20px' }}>
-                  <button onClick={() => { setShowEventModal(false); setEditingEvent(null); setEventForm({ title: '', date: '', time: '', capacity: '' }); }} style={{ flex: 1, padding: '12px', borderRadius: '8px', border: '1px solid var(--border-mid)', backgroundColor: 'var(--bg-card-solid)', color: 'var(--text-secondary)', fontWeight: '600', cursor: 'pointer' }}>Cancel</button>
-                  <button onClick={saveEvent} disabled={!eventForm.title || !eventForm.date || !eventForm.time} style={{ flex: 1, padding: '12px', borderRadius: '8px', border: 'none', backgroundColor: eventForm.title && eventForm.date && eventForm.time ? colors.navyBg : 'var(--toggle-off)', color: 'white', fontWeight: '600', cursor: eventForm.title && eventForm.date && eventForm.time ? 'pointer' : 'not-allowed' }}>
-                    {editingEvent ? 'Save Changes' : 'Create'}
-                  </button>
-                </div>
-              </div>
-            </div>
+            <EventModal
+              editing={editingEvent}
+              colors={colors}
+              onCancel={() => { setShowEventModal(false); setEditingEvent(null); }}
+              onSave={async (form) => {
+                if (!form.title.trim()) return;
+                try {
+                  if (editingEvent) {
+                    const updated = await updateVenueEvent(editingEvent.id, { title: form.title, eventDate: form.date, eventTime: form.time, capacity: parseInt(form.capacity) || 50 });
+                    setVenueEventsList(prev => prev.map(e => e.id === editingEvent.id ? { id: updated.id, title: updated.title, date: updated.event_date, time: updated.event_time, capacity: updated.capacity, rsvps: updated.rsvps || 0 } : e));
+                  } else {
+                    const created = await createVenueEvent({ title: form.title, eventDate: form.date, eventTime: form.time, capacity: parseInt(form.capacity) || 50 });
+                    setVenueEventsList(prev => [...prev, { id: created.id, title: created.title, date: created.event_date, time: created.event_time, capacity: created.capacity, rsvps: 0 }]);
+                  }
+                } catch (e) { console.error('Save event failed:', e); }
+                setShowEventModal(false);
+                setEditingEvent(null);
+              }}
+            />
           )}
 
           {/* Hours Modal */}
