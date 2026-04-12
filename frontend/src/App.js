@@ -11962,6 +11962,18 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   // RENDER - Call functions directly instead of JSX to prevent component recreation
   const isExploreVisible = currentTab === 'explore' && currentScreen === 'main' && !showModeSelection && (userMode !== 'user' || hasCompletedOnboarding);
 
+  // Cache the ExploreScreen JSX so typing on other screens doesn't rebuild the map tree.
+  // When the map is visible, rebuild (so it stays live with fresh state).
+  // When hidden, reuse the last rendered subtree — React reconciles against identical
+  // elements and skips the heavy GoogleMapView work.
+  const exploreNodeCache = useRef(null);
+  if (isExploreVisible) {
+    exploreNodeCache.current = ExploreScreen();
+  } else if (exploreNodeCache.current === null) {
+    // First mount and not visible — render once so the map exists in the DOM
+    exploreNodeCache.current = ExploreScreen();
+  }
+
   const renderScreen = () => {
     // Show welcome screen for mode selection
     if (showModeSelection) {
@@ -12024,9 +12036,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           <div style={styles.notchInner} />
         </div>
         <div style={styles.content}>
-          {/* Persistent map layer — hidden via CSS, never unmounted */}
+          {/* Persistent map layer — hidden via CSS, never unmounted.
+              Cached JSX: only rebuilds when the Explore tab is visible. */}
           <div style={{ position: 'absolute', inset: 0, zIndex: isExploreVisible ? 1 : -1, visibility: isExploreVisible ? 'visible' : 'hidden', pointerEvents: isExploreVisible ? 'auto' : 'none' }}>
-            {ExploreScreen()}
+            {exploreNodeCache.current}
           </div>
           {renderScreen()}
 
