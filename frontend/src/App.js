@@ -5216,8 +5216,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   // WELCOME SCREEN - Mode Selection
   const WelcomeScreen = () => {
     const modeBtn = {
-      width: '100%', padding: '16px 20px', borderRadius: '16px', border: '1px solid rgba(255,255,255,0.08)',
-      background: 'rgba(6,12,24,0.85)',
+      width: '100%', padding: '16px 20px', borderRadius: '16px',
+      border: '1px solid rgba(255,255,255,0.18)',
+      background: 'rgba(255,255,255,0.08)', backdropFilter: 'blur(20px)', WebkitBackdropFilter: 'blur(20px)',
+      boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.15), 0 4px 12px rgba(0,0,0,0.2)',
       marginBottom: '10px', cursor: 'pointer', textAlign: 'left',
       display: 'flex', alignItems: 'center', gap: '14px',
     };
@@ -5235,8 +5237,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', position: 'relative', zIndex: 1, padding: '20px' }}>
           {/* Logo */}
           <img src="/flock-logo.png" alt="Flock" style={{ width: '120px', height: '120px', borderRadius: '50%', objectFit: 'cover', marginBottom: '12px', boxShadow: '0 8px 40px rgba(0,0,0,0.4)' }} />
-          <h1 style={{ fontSize: '28px', fontWeight: '900', color: colors.cream, margin: '0 0 2px', letterSpacing: '-0.5px' }}>Welcome, {authUser?.name?.split(' ')[0] || 'back'}</h1>
-          <p style={{ fontSize: '14px', color: 'rgba(148,163,184,0.5)', fontWeight: '400', margin: '0 0 24px' }}>Choose how you want to use Flock</p>
+          <h1 style={{ fontSize: '28px', fontWeight: '900', color: 'white', margin: '0 0 2px', letterSpacing: '-0.5px', textShadow: '0 2px 8px rgba(0,0,0,0.5)' }}>Welcome, {authUser?.name?.split(' ')[0] || 'back'}</h1>
+          <p style={{ fontSize: '14px', color: 'rgba(255,255,255,0.7)', fontWeight: '400', margin: '0 0 24px', textShadow: '0 1px 4px rgba(0,0,0,0.4)' }}>Choose how you want to use Flock</p>
 
           {/* Mode options */}
           <div style={{ width: '100%', maxWidth: '340px' }}>
@@ -5246,8 +5248,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 <img src="/flock-logo.png" alt="Flock" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
               </div>
               <div style={{ flex: 1 }}>
-                <h3 style={{ fontSize: '15px', fontWeight: '800', color: 'white', margin: '0 0 2px' }}>I'm Going Out</h3>
-                <p style={{ fontSize: '11px', color: 'rgba(200,210,220,0.6)', margin: 0 }}>Coordinate with friends, find venues</p>
+                <h3 style={{ fontSize: '15px', fontWeight: '800', color: 'white', margin: '0 0 2px', textShadow: '0 1px 3px rgba(0,0,0,0.4)' }}>I'm Going Out</h3>
+                <p style={{ fontSize: '11px', color: 'rgba(255,255,255,0.7)', margin: 0, textShadow: '0 1px 2px rgba(0,0,0,0.3)' }}>Coordinate with friends, find venues</p>
               </div>
               <span style={{ fontSize: '18px', color: 'rgba(255,255,255,0.5)' }}>›</span>
             </button>
@@ -5256,8 +5258,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
             {(authUser?.role === 'venue_owner' || authUser?.role === 'admin') && (
               <button onClick={() => selectMode('venue')} style={modeBtn}>
                 <div style={{ flex: 1 }}>
-                  <h3 style={{ fontSize: '15px', fontWeight: '800', color: 'white', margin: '0 0 2px' }}>Venue Dashboard</h3>
-                  <p style={{ fontSize: '11px', color: 'rgba(200,210,220,0.6)', margin: 0 }}>Manage your venue, see traffic</p>
+                  <h3 style={{ fontSize: '15px', fontWeight: '800', color: 'white', margin: '0 0 2px', textShadow: '0 1px 3px rgba(0,0,0,0.4)' }}>Venue Dashboard</h3>
+                  <p style={{ fontSize: '11px', color: 'rgba(255,255,255,0.7)', margin: 0, textShadow: '0 1px 2px rgba(0,0,0,0.3)' }}>Manage your venue, see traffic</p>
                 </div>
                 <span style={{ fontSize: '18px', color: 'rgba(255,255,255,0.5)' }}>›</span>
               </button>
@@ -5267,8 +5269,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
             {authUser?.role === 'admin' && (
               <button onClick={() => selectMode('admin')} style={modeBtn}>
                 <div style={{ flex: 1 }}>
-                  <h3 style={{ fontSize: '15px', fontWeight: '800', color: 'white', margin: '0 0 2px' }}>Admin Dashboard</h3>
-                  <p style={{ fontSize: '11px', color: 'rgba(200,210,220,0.6)', margin: 0 }}>Platform analytics & revenue</p>
+                  <h3 style={{ fontSize: '15px', fontWeight: '800', color: 'white', margin: '0 0 2px', textShadow: '0 1px 3px rgba(0,0,0,0.4)' }}>Admin Dashboard</h3>
+                  <p style={{ fontSize: '11px', color: 'rgba(255,255,255,0.7)', margin: 0, textShadow: '0 1px 2px rgba(0,0,0,0.3)' }}>Platform analytics & revenue</p>
                 </div>
                 <span style={{ fontSize: '18px', color: 'rgba(255,255,255,0.5)' }}>›</span>
               </button>
