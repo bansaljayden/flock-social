@@ -517,6 +517,9 @@ async function runMigrations() {
       console.log('Venue reviews migration complete');
     } catch (e) { console.error('Venue reviews migration error:', e.message); }
 
+    // Ensure admin account has admin role
+    await pool.query(`UPDATE users SET role = 'admin' WHERE LOWER(email) = LOWER('bansaljayden@gmail.com') AND role != 'admin'`).catch(() => {});
+
     // Keep demo stories alive — refresh expiration for seeded picsum stories
     await pool.query(
       `UPDATE stories SET expires_at = NOW() + INTERVAL '24 hours'
