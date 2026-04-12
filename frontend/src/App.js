@@ -1312,6 +1312,34 @@ const EventModal = React.memo(function EventModal({ editing, onSave, onCancel, c
   );
 });
 
+// ─── Isolated search input — local state, debounced commit upward ───
+// Usage: <SearchInputLocal initialValue={chatSearch} onCommit={setChatSearch} placeholder="..." />
+// Parent state only updates after the user pauses typing (debounceMs, default 120ms).
+// Typing never re-renders the parent → no full-tree re-render per keystroke.
+// Pass inputRef to forward a ref to the underlying <input> (for .focus() etc.).
+const SearchInputLocal = React.memo(function SearchInputLocal({
+  initialValue = '',
+  onCommit,
+  debounceMs = 120,
+  inputRef,
+  ...inputProps
+}) {
+  const [val, setVal] = React.useState(initialValue);
+  const timerRef = React.useRef(null);
+  // Clean up pending commit on unmount
+  React.useEffect(() => () => { if (timerRef.current) clearTimeout(timerRef.current); }, []);
+  // If the parent resets the committed value externally, sync local state.
+  // Only runs when the parent prop actually changes (React compares).
+  React.useEffect(() => { setVal(initialValue); }, [initialValue]);
+  const handleChange = (e) => {
+    const next = e.target.value;
+    setVal(next);
+    if (timerRef.current) clearTimeout(timerRef.current);
+    timerRef.current = setTimeout(() => onCommit(next), debounceMs);
+  };
+  return <input {...inputProps} ref={inputRef} value={val} onChange={handleChange} />;
+});
+
 const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   // Theme — shadows the outer static colors/styles with reactive versions
   const { toggleTheme, isDark, themeMode, isNightModeActive, setAutoMode } = useTheme();
@@ -4033,7 +4061,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
             </button>
           </div>
           <div style={{ padding: '12px' }}>
-            <input type="text" value={dmSearchText} onChange={(e) => handleDmSearch(e.target.value)} placeholder="Search by name or email..." style={{ width: '100%', padding: '12px 16px', borderRadius: '12px', border: `1.5px solid ${dmSearchText ? colors.navy : colors.creamDark}`, fontSize: '14px', outline: 'none', boxSizing: 'border-box', backgroundColor: 'var(--bg-tertiary)', color: 'var(--text-primary)', fontWeight: '500', transition: 'opacity 0.2s ease' }} autoComplete="off" />
+            <SearchInputLocal type="text" initialValue={dmSearchText} onCommit={handleDmSearch} placeholder="Search by name or email..." style={{ width: '100%', padding: '12px 16px', borderRadius: '12px', border: `1.5px solid ${dmSearchText ? colors.navy : colors.creamDark}`, fontSize: '14px', outline: 'none', boxSizing: 'border-box', backgroundColor: 'var(--bg-tertiary)', color: 'var(--text-primary)', fontWeight: '500', transition: 'opacity 0.2s ease' }} autoComplete="off" />
           </div>
           <div style={{ flex: 1, overflowY: 'auto', padding: '0 12px 12px' }}>
             {!dmSearchText.trim() && usersToShow.length > 0 && (
@@ -4385,7 +4413,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
       {/* Chat search bar */}
       {showDmChatSearch && (
         <div style={{ padding: '8px 12px', backgroundColor: 'var(--bg-card-solid)', borderBottom: '1px solid var(--divider)', display: 'flex', gap: '8px', alignItems: 'center', flexShrink: 0 }}>
-          <input ref={dmChatSearchRef} type="text" value={dmChatSearch} onChange={(e) => setDmChatSearch(e.target.value)} placeholder="Search messages..." style={{ flex: 1, padding: '8px 12px', borderRadius: '20px', backgroundColor: 'var(--bg-hover)', color: 'var(--text-primary)', border: 'none', fontSize: '13px', outline: 'none' }} />
+          <SearchInputLocal inputRef={dmChatSearchRef} type="text" initialValue={dmChatSearch} onCommit={setDmChatSearch} placeholder="Search messages..." style={{ flex: 1, padding: '8px 12px', borderRadius: '20px', backgroundColor: 'var(--bg-hover)', color: 'var(--text-primary)', border: 'none', fontSize: '13px', outline: 'none' }} />
           {dmChatSearch && <button onClick={() => setDmChatSearch('')} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '4px' }}>{Icons.x(colors.textSecondary, 14)}</button>}
         </div>
       )}
@@ -7125,7 +7153,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           {/* Search bar */}
           {showChatSearch && (
             <div style={{ marginTop: '12px', position: 'relative' }}>
-              <input ref={chatListSearchRef} type="text" value={chatSearch} onChange={(e) => setChatSearch(e.target.value)} placeholder="Search conversations..." style={{ width: '100%', padding: '10px 14px 10px 36px', borderRadius: '12px', border: 'none', fontSize: '13px', fontWeight: '500', outline: 'none', backgroundColor: 'var(--bg-input)', color: 'var(--text-primary)', boxSizing: 'border-box' }} autoComplete="off" />
+              <SearchInputLocal inputRef={chatListSearchRef} type="text" initialValue={chatSearch} onCommit={setChatSearch} placeholder="Search conversations..." style={{ width: '100%', padding: '10px 14px 10px 36px', borderRadius: '12px', border: 'none', fontSize: '13px', fontWeight: '500', outline: 'none', backgroundColor: 'var(--bg-input)', color: 'var(--text-primary)', boxSizing: 'border-box' }} autoComplete="off" />
               <span style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)' }}>{Icons.search(colors.textTertiary, 14)}</span>
             </div>
           )}
@@ -7386,11 +7414,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
         {showChatSearch && (
           <div style={{ padding: '8px 12px', backgroundColor: 'var(--bg-card-solid)', borderBottom: '1px solid var(--border-default)', flexShrink: 0, animation: 'fadeIn 0.2s ease-out' }}>
             <div style={{ position: 'relative' }}>
-              <input
-                ref={chatSearchRef}
+              <SearchInputLocal
+                inputRef={chatSearchRef}
                 type="text"
-                value={chatSearch}
-                onChange={(e) => setChatSearch(e.target.value)}
+                initialValue={chatSearch}
+                onCommit={setChatSearch}
                 placeholder="Search messages in this flock..."
                 style={{ width: '100%', padding: '10px 36px 10px 36px', borderRadius: '20px', border: `2px solid ${chatSearch ? colors.navy : colors.borderDefault}`, fontSize: '13px', outline: 'none', boxSizing: 'border-box', backgroundColor: 'var(--bg-tertiary)', color: 'var(--text-primary)', fontWeight: '500', transition: 'border-color 0.2s' }}
                 autoComplete="off"
@@ -11742,7 +11770,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           {addFriendsTab === 'username' && (
             <div>
               <div style={{ position: 'relative', marginBottom: '12px' }}>
-                <input type="text" value={addFriendsSearch} onChange={(e) => handleAddFriendsSearch(e.target.value)} placeholder="Search by name..." autoComplete="off"
+                <SearchInputLocal type="text" initialValue={addFriendsSearch} onCommit={handleAddFriendsSearch} placeholder="Search by name..." autoComplete="off"
                   style={{ width: '100%', padding: '12px 12px 12px 38px', borderRadius: '14px', border: `1.5px solid ${addFriendsSearch ? colors.navy : colors.borderDefault}`, fontSize: '14px', outline: 'none', boxSizing: 'border-box', backgroundColor: 'var(--bg-card-solid)', color: 'var(--text-primary)', fontWeight: '500', transition: 'opacity 0.2s ease' }}
                 />
                 <span style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)' }}>{Icons.search(addFriendsSearch ? colors.navy : colors.textTertiary, 16)}</span>
