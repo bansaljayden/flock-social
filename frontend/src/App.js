@@ -5628,10 +5628,6 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           })}
         </div>
 
-        {/* Safety Check-in */}
-        <button onClick={() => setShowCheckin(true)} style={{ width: '100%', marginTop: '8px', padding: '14px', borderRadius: '14px', border: `2px dashed ${colors.teal}`, backgroundColor: 'rgba(20,184,166,0.05)', color: colors.teal, fontWeight: '700', fontSize: '13px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
-          {Icons.shield(colors.teal, 16)} Safety Check-in
-        </button>
       </div>
 
       <AIBubble />
