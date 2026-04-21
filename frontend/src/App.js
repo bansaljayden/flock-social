@@ -8935,11 +8935,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
               <h4 style={{ color: colors.navy, margin: 0, fontSize: '14px', fontWeight: '800' }}>
                 Members ({acceptedMembers.length})
               </h4>
-              {typeof setShowFlockInviteModal === 'function' && (
-                <button onClick={() => setShowFlockInviteModal(true)} style={{ padding: '5px 12px', background: `linear-gradient(135deg, ${colors.navyBg}, ${colors.navyMidBg})`, border: 'none', borderRadius: '16px', color: 'white', fontSize: '11px', fontWeight: '700', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }}>
-                  {Icons.userPlus('white', 11)} Invite
-                </button>
-              )}
+              <button onClick={() => { setCurrentScreen('chatDetail'); setTimeout(() => { setShowFlockInviteModal(true); setFlockInviteSelected([]); setFlockInviteSearch(''); setFlockInviteResults([]); }, 100); }} style={{ padding: '5px 12px', background: `linear-gradient(135deg, ${colors.navyBg}, ${colors.navyMidBg})`, border: 'none', borderRadius: '16px', color: 'white', fontSize: '11px', fontWeight: '700', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                {Icons.userPlus('white', 11)} Invite
+              </button>
             </div>
             {acceptedMembers.length > 0 ? (
               <div style={{ display: 'flex', gap: '12px', overflowX: 'auto', paddingBottom: '4px' }}>
