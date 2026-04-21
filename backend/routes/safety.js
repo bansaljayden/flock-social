@@ -45,7 +45,8 @@ router.get('/test-email', authenticate, async (req, res) => {
     );
     res.json({ ok: result.sent || false, error: result.error });
   } catch (err) {
-    res.json({ ok: false, error: err.message });
+    console.error('[Safety] Error:', err.message);
+    res.json({ ok: false, error: 'Failed to process request' });
   }
 });
 
