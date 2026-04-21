@@ -317,7 +317,8 @@ router.post('/upload-image', (req, res) => {
       if (err instanceof multer.MulterError && err.code === 'LIMIT_FILE_SIZE') {
         return res.status(400).json({ error: 'File too large. Maximum size is 5 MB.' });
       }
-      return res.status(400).json({ error: err.message });
+      console.error('[Upload] Error:', err.message);
+      return res.status(400).json({ error: 'Upload failed. Please try a different image.' });
     }
 
     if (!req.file) {

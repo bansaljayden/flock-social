@@ -553,7 +553,8 @@ router.post('/chat',
       if (err.status === 429 || err.message?.includes('quota')) {
         return res.status(429).json({ error: 'AI is busy right now, try again in a sec' });
       }
-      res.status(500).json({ error: 'Something went wrong with Birdie', debug: err.message });
+      console.error('[AI] Chat error:', err.message);
+      res.status(500).json({ error: 'Something went wrong with Birdie' });
     }
   }
 );
