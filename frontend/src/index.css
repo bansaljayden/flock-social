@@ -264,6 +264,14 @@ code {
   cursor: not-allowed;
 }
 
+/* ─── Stacked cards (flock list) — opaque enough to not bleed through each other ─── */
+[data-theme="dark"] .flock-stack-card.glass-secondary {
+  background: rgba(20, 30, 50, 0.92) !important;
+}
+[data-theme="light"] .flock-stack-card.glass-secondary {
+  background: rgba(255, 255, 255, 0.88) !important;
+}
+
 /* Scroll fade-in animations */
 .scroll-fade {
   opacity: 0;
