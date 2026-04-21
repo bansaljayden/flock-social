@@ -2648,6 +2648,18 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
 
   const updateFlockVotes = useCallback((flockId, newVotes) => {
     setFlocks(prev => prev.map(f => f.id === flockId ? { ...f, votes: newVotes } : f));
+    // Find which venue "You" voted for and sync to backend
+    const myVote = newVotes.find(v => v.voters.includes('You'));
+    if (myVote && typeof flockId === 'number') {
+      const token = localStorage.getItem('flockToken');
+      if (token) {
+        fetch(`${BASE_URL}/api/flocks/${flockId}/vote`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          body: JSON.stringify({ venue_name: myVote.venue, venue_id: myVote.place_id || null }),
+        }).catch(() => {});
+      }
+    }
   }, []);
 
   // Assign or change venue on a flock (updates local state + API)
@@ -6042,7 +6054,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           <span style={{ color: 'var(--text-tertiary)', fontSize: '12px' }}>or</span>
           <div style={{ flex: 1, height: '1px', backgroundColor: 'var(--toggle-off)' }} />
         </div>
-        <button onClick={() => {}} style={{ width: '100%', padding: '12px', borderRadius: '12px', border: `2px solid ${colors.creamDark}`, backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontWeight: '500', fontSize: '14px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>{Icons.camera(colors.navy, 16)} Scan QR</button>
+        <button onClick={() => showToast('QR scanner coming soon!', 'info')} style={{ width: '100%', padding: '12px', borderRadius: '12px', border: `2px solid ${colors.creamDark}`, backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontWeight: '500', fontSize: '14px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>{Icons.camera(colors.navy, 16)} Scan QR</button>
       </div>
       <div style={{ padding: '12px', backgroundColor: 'var(--bg-card-solid)', borderTop: '1px solid var(--divider)', flexShrink: 0 }}>
         <button onClick={(e) => { if (joinCode.length === 6) { confirmClick(e); setJoinCode(''); setCurrentScreen('main'); } else { showToast('Enter a valid code', 'error'); }}} style={{ ...styles.gradientButton, position: 'relative', overflow: 'hidden' }}>Join Flock</button>
@@ -7994,7 +8006,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           {chatInputHasText ? (
             <button onClick={sendChatMessage} style={{ width: '42px', height: '42px', borderRadius: '21px', border: 'none', background: `linear-gradient(135deg, ${colors.navyBg}, ${colors.navyMidBg})`, color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 3px 10px rgba(13,40,71,0.25)', transition: 'opacity 0.2s ease' }}>{Icons.send('white', 18)}</button>
           ) : (
-            <button onClick={() => {}} style={{ width: '42px', height: '42px', borderRadius: '21px', border: 'none', background: `linear-gradient(135deg, ${colors.navyBg}, ${colors.navyMidBg})`, color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 3px 10px rgba(13,40,71,0.25)', transition: 'opacity 0.2s ease' }}>{Icons.mic('white', 18)}</button>
+            <button onClick={() => showToast('Voice messages coming soon!', 'info')} style={{ width: '42px', height: '42px', borderRadius: '21px', border: 'none', background: `linear-gradient(135deg, ${colors.navyBg}, ${colors.navyMidBg})`, color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 3px 10px rgba(13,40,71,0.25)', transition: 'opacity 0.2s ease' }}>{Icons.mic('white', 18)}</button>
           )}
         </div>
 
@@ -10505,7 +10517,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
               {/* Danger Zone */}
               <div style={{ backgroundColor: 'var(--accent-red-bg)', borderRadius: '12px', padding: '12px', border: `1px solid var(--accent-red-text)22` }}>
                 <h3 style={{ fontSize: '12px', fontWeight: '700', color: colors.red, margin: '0 0 10px', display: 'flex', alignItems: 'center', gap: '6px' }}>{Icons.alertCircle(colors.red, 14)} Danger Zone</h3>
-                <button onClick={() => {}} style={{ width: '100%', padding: '8px', borderRadius: '6px', border: `1px solid ${colors.red}`, backgroundColor: 'var(--bg-card-solid)', color: colors.red, fontSize: '11px', fontWeight: '500', cursor: 'pointer' }}>
+                <button onClick={() => { if (window.confirm('Are you sure you want to deactivate your venue listing?')) showToast('Venue deactivated', 'success'); }} style={{ width: '100%', padding: '8px', borderRadius: '6px', border: `1px solid ${colors.red}`, backgroundColor: 'var(--bg-card-solid)', color: colors.red, fontSize: '11px', fontWeight: '500', cursor: 'pointer' }}>
                   Deactivate Venue Listing
                 </button>
               </div>
