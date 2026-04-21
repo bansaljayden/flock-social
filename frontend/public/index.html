@@ -17,7 +17,12 @@
     <meta name="twitter:description" content="The app that turns 'idk what do you wanna do' into a confirmed plan." />
     <meta name="twitter:image" content="%PUBLIC_URL%/og-image.png" />
 
-    <link rel="apple-touch-icon" href="%PUBLIC_URL%/flock-logo.png" />
+    <!-- PWA: Apple-specific — makes it look native on iPhone -->
+    <link rel="apple-touch-icon" href="%PUBLIC_URL%/apple-touch-icon.png" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="Flock" />
+
     <link rel="manifest" href="%PUBLIC_URL%/manifest.json" />
     <title>Flock — Social Coordination Simplified</title>
     <link rel="preconnect" href="https://api.fontshare.com" crossorigin />
