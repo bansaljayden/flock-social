@@ -6,9 +6,9 @@ const router = express.Router();
 
 const TM_API_KEY = process.env.TICKETMASTER_API_KEY;
 
-// Server-side event cache (10 min TTL — events don't change often)
+// Server-side event cache (1 hour TTL — Ticketmaster free tier has 5K calls/day limit)
 const eventCache = new Map();
-const CACHE_TTL = 10 * 60 * 1000;
+const CACHE_TTL = 60 * 60 * 1000;
 
 function getCached(key) {
   const entry = eventCache.get(key);
@@ -179,6 +179,15 @@ router.get('/search',
       }
 
       const responses = await Promise.all(fetches);
+
+      // Handle Ticketmaster rate limits gracefully — return empty instead of 500
+      if (responses[0].status === 429) {
+        console.warn('[Events] Ticketmaster rate limited — returning empty');
+        const empty = { events: [], total: 0 };
+        setCache(cacheKey, empty); // cache the empty result so we don't re-hit
+        return res.json(empty);
+      }
+
       const localData = responses[0].ok ? await responses[0].json() : {};
       const wideData = responses[1]?.ok ? await responses[1].json() : {};
 
@@ -195,7 +204,7 @@ router.get('/search',
       res.json(result);
     } catch (err) {
       console.error('[Events] Search error:', err);
-      res.status(500).json({ error: 'Failed to search events' });
+      res.json({ events: [], total: 0 }); // graceful degradation — never 500 for events
     }
   }
 );
@@ -270,8 +279,12 @@ router.get('/featured',
 
       const response = await fetch(`https://app.ticketmaster.com/discovery/v2/events.json?${params}`);
 
-      if (!response.ok) {
-        return res.status(502).json({ error: 'Event search failed' });
+      if (response.status === 429 || !response.ok) {
+        // Rate limited or failed — gracefully return empty, cache it
+        console.warn('[Events] Featured: Ticketmaster', response.status, '— returning empty');
+        const empty = { events: [], total: 0 };
+        setCache(cacheKey, empty);
+        return res.json(empty);
       }
 
       const data = await response.json();
