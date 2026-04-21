@@ -11671,8 +11671,21 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
       <div style={{ position: 'absolute', top: '-100px', right: '-100px', width: '250px', height: '250px', borderRadius: '50%', background: `linear-gradient(135deg, ${colors.navy}10, ${colors.navyMid}05)`, pointerEvents: 'none' }} />
       <div style={{ position: 'absolute', bottom: '-50px', left: '-50px', width: '150px', height: '150px', borderRadius: '50%', background: `linear-gradient(135deg, ${colors.teal}10, ${colors.teal}05)`, pointerEvents: 'none' }} />
 
-      {/* Progress indicator */}
-      <div style={{ padding: '24px 24px 0', flexShrink: 0, position: 'relative', zIndex: 1 }}>
+      {/* Back button + Progress indicator */}
+      <div style={{ padding: '16px 24px 0', flexShrink: 0, position: 'relative', zIndex: 1 }}>
+        <button
+          onClick={() => {
+            if (onboardingStep > 0) {
+              setOnboardingAnimating(true);
+              setTimeout(() => { setOnboardingStep(prev => prev - 1); setOnboardingAnimating(false); }, 300);
+            } else {
+              if (onLogout) onLogout();
+            }
+          }}
+          style={{ display: 'flex', alignItems: 'center', gap: '6px', background: 'none', border: 'none', cursor: 'pointer', padding: '4px 0', marginBottom: '12px', color: 'var(--text-secondary)', fontSize: '13px', fontWeight: '600' }}
+        >
+          {Icons.arrowLeft('var(--text-secondary)', 16)} {onboardingStep > 0 ? 'Back' : 'Log out'}
+        </button>
         <div style={{ display: 'flex', gap: '8px' }}>
           {[0, 1].map(step => (
             <div
