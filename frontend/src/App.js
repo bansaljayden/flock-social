@@ -5763,7 +5763,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
       </div>
 
       <AIBubble />
-      <SafetyButton />
+      {SafetyButton()}
       <BottomNav />
     </div>
   );
@@ -6986,7 +6986,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
         </div>
       </div>
 
-      <SafetyButton />
+      {SafetyButton()}
       <BottomNav />
     </div>
   );
@@ -7223,7 +7223,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           )}
         </div>
 
-        <SafetyButton />
+        {SafetyButton()}
         <BottomNav />
       </div>
     );
@@ -7476,7 +7476,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
             </div>
           )}
         </div>
-        <SafetyButton />
+        {SafetyButton()}
         <BottomNav />
       </div>
     );
@@ -9680,7 +9680,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
 
         </div>
 
-        <SafetyButton />
+        {SafetyButton()}
         <BottomNav />
       </div>
     );
@@ -12870,7 +12870,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
         );
       })()}
 
-      <SOSModal />
+      {SOSModal()}
       {showAttendanceModal && (
         <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(8px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 60, padding: '16px' }}>
           <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '24px', padding: '24px', width: '100%', maxWidth: '340px', maxHeight: '80vh', overflow: 'auto' }}>
@@ -12909,7 +12909,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           </div>
         </div>
       )}
-      <CheckinModal />
+      {CheckinModal()}
       {ProfilePicModal()}
       {CropModal()}
       {aiAssistantModal}
