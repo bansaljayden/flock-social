@@ -3232,7 +3232,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
 
       // Optimistic local update
       const tempId = Date.now();
-      addMessageToFlock(selectedFlockId, { id: tempId, sender: authUser?.name || 'You', time: 'Now', text, reactions: [] });
+      addMessageToFlock(selectedFlockId, { id: tempId, sender: 'You', senderId: authUser?.id, senderImage: profilePic, time: 'Now', text, reactions: [] });
 
       // Send via WebSocket (instant) + HTTP (persistent)
       socketSendMessage(selectedFlockId, text);
@@ -3415,7 +3415,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
     // Optimistic local update
     addMessageToFlock(flockId, {
       id: Date.now(),
-      sender: authUser?.name || 'You',
+      sender: 'You',
+      senderId: authUser?.id,
+      senderImage: profilePic,
       time: new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }),
       text: msgText,
       reactions: [],
@@ -3430,7 +3432,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
     } catch {}
 
     setShowVenueShareModal(false);
-  }, [addMessageToFlock, authUser]);
+  }, [addMessageToFlock, authUser, profilePic]);
 
   // Share image to chat
   const shareImageToChat = useCallback((flockId) => {
