@@ -508,10 +508,20 @@ const GoogleMapView = React.memo(({ venues, filterCategory, userLocation, active
         location: new window.google.maps.LatLng(pt.lat, pt.lng),
         weight: pt.weight,
       }));
+      // Radius scales with zoom so heatmap doesn't blob at low zoom
+      const getHeatRadius = (zoom) => {
+        if (zoom >= 16) return 60;
+        if (zoom >= 14) return 45;
+        if (zoom >= 12) return 30;
+        if (zoom >= 10) return 18;
+        if (zoom >= 8) return 10;
+        return 5;
+      };
+      const currentZoom = mapInstanceRef.current.getZoom() || 14;
       heatmapRef.current = new window.google.maps.visualization.HeatmapLayer({
         data: heatData,
         map: mapInstanceRef.current,
-        radius: 80,
+        radius: getHeatRadius(currentZoom),
         opacity: 0.85,
         dissipating: true,
         maxIntensity: 0.5,
@@ -528,6 +538,12 @@ const GoogleMapView = React.memo(({ venues, filterCategory, userLocation, active
           'rgba(220, 38, 38, 0.94)',
           'rgba(185, 28, 28, 0.97)',
         ],
+      });
+      // Update heatmap radius on zoom change
+      mapInstanceRef.current.addListener('zoom_changed', () => {
+        if (heatmapRef.current) {
+          heatmapRef.current.set('radius', getHeatRadius(mapInstanceRef.current.getZoom()));
+        }
       });
     }
 
