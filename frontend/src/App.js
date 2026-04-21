@@ -9106,9 +9106,12 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
 
                 return (
                   <div>
-                    <div style={{ display: 'flex', justifyContent: 'center', marginBottom: '16px' }}>
-                      <button onClick={() => setShowPicModal(true)} style={{ width: '80px', height: '80px', borderRadius: '40px', background: `linear-gradient(135deg, ${colors.navyBg}, ${colors.navyMidBg})`, border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden' }}>
+                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', marginBottom: '16px' }}>
+                      <button onClick={() => setShowPicModal(true)} style={{ width: '80px', height: '80px', borderRadius: '40px', background: `linear-gradient(135deg, ${colors.navyBg}, ${colors.navyMidBg})`, border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', position: 'relative' }}>
                         {profilePic ? <img src={profilePic} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : Icons.user('white', 32)}
+                      </button>
+                      <button onClick={() => setShowPicModal(true)} style={{ marginTop: '6px', padding: '4px 12px', borderRadius: '8px', border: 'none', backgroundColor: 'transparent', color: colors.teal, fontSize: '11px', fontWeight: '600', cursor: 'pointer' }}>
+                        Edit Photo
                       </button>
                     </div>
 
@@ -9410,9 +9413,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
     return (
       <div key="profile-main-container" style={{ display: 'flex', flexDirection: 'column', height: '100%', backgroundColor: 'var(--bg-primary)' }}>
         <div style={{ padding: '20px', textAlign: 'center', background: `linear-gradient(135deg, ${colors.navyBg} 0%, ${colorsLight.navyLight} 50%, ${colors.navyMidBg} 100%)`, flexShrink: 0 }}>
-          <button onClick={() => setShowPicModal(true)} style={{ width: '80px', height: '80px', borderRadius: '40px', margin: '0 auto 8px', backgroundColor: 'rgba(255,255,255,0.2)', border: '4px solid rgba(255,255,255,0.3)', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', cursor: 'pointer' }}>
+          <button onClick={() => setShowPicModal(true)} style={{ width: '80px', height: '80px', borderRadius: '40px', margin: '0 auto', backgroundColor: 'rgba(255,255,255,0.2)', border: '4px solid rgba(255,255,255,0.3)', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', cursor: 'pointer' }}>
             {profilePic ? <img src={profilePic} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : Icons.user('white', 32)}
           </button>
+          <button onClick={() => setShowPicModal(true)} style={{ display: 'block', margin: '4px auto 8px', padding: '2px 10px', borderRadius: '6px', border: 'none', backgroundColor: 'transparent', color: 'rgba(255,255,255,0.7)', fontSize: '10px', fontWeight: '600', cursor: 'pointer' }}>Edit Photo</button>
           <h1 style={{ fontSize: '20px', fontWeight: '900', color: 'white', margin: 0 }}>{profileName}</h1>
           <p style={{ fontSize: '12px', color: 'rgba(255,255,255,0.6)', margin: 0 }}>@{profileHandle}</p>
         </div>
