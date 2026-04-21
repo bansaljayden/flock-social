@@ -171,6 +171,99 @@ code {
     monospace;
 }
 
+/* ═══════════════════════════════════════════════════════════════════
+   GLASS BUTTON SYSTEM
+   Tactile glass elements — transparent, reflective, with depth.
+   Apply via className: "glass-btn glass-primary" (or secondary/danger)
+   ═══════════════════════════════════════════════════════════════════ */
+
+.glass-btn {
+  backdrop-filter: blur(12px) !important;
+  -webkit-backdrop-filter: blur(12px) !important;
+  transition: transform 0.15s ease, box-shadow 0.15s ease, background 0.15s ease !important;
+  cursor: pointer;
+}
+.glass-btn:hover {
+  transform: scale(1.02);
+}
+.glass-btn:active {
+  transform: scale(0.98) !important;
+}
+
+/* ─── Primary CTA (teal actions: Start a Flock, Submit, Confirm, Send) ─── */
+.glass-primary {
+  background: rgba(13, 148, 136, 0.75) !important;
+  border: 1px solid rgba(255, 255, 255, 0.2) !important;
+  box-shadow: 0 4px 20px rgba(13, 148, 136, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.25), inset 0 -1px 0 rgba(0, 0, 0, 0.15) !important;
+  color: white !important;
+}
+.glass-primary:hover {
+  box-shadow: 0 6px 28px rgba(13, 148, 136, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.35), inset 0 -1px 0 rgba(0, 0, 0, 0.15) !important;
+}
+.glass-primary:active {
+  box-shadow: 0 2px 8px rgba(13, 148, 136, 0.3), inset 0 1px 0 rgba(0, 0, 0, 0.1), inset 0 -1px 0 rgba(255, 255, 255, 0.1) !important;
+}
+
+/* ─── Secondary (default interactive) — auto dark/light ─── */
+[data-theme="dark"] .glass-secondary {
+  background: rgba(255, 255, 255, 0.08) !important;
+  border: 1px solid rgba(255, 255, 255, 0.12) !important;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.15), inset 0 -1px 0 rgba(0, 0, 0, 0.1) !important;
+  color: var(--text-primary) !important;
+}
+[data-theme="dark"] .glass-secondary:hover {
+  background: rgba(255, 255, 255, 0.12) !important;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.25), inset 0 1px 0 rgba(255, 255, 255, 0.25), inset 0 -1px 0 rgba(0, 0, 0, 0.1) !important;
+}
+[data-theme="dark"] .glass-secondary:active {
+  background: rgba(255, 255, 255, 0.05) !important;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2), inset 0 1px 0 rgba(0, 0, 0, 0.05), inset 0 -1px 0 rgba(255, 255, 255, 0.05) !important;
+}
+
+.glass-secondary,
+[data-theme="light"] .glass-secondary {
+  background: rgba(255, 255, 255, 0.45) !important;
+  border: 1px solid rgba(255, 255, 255, 0.6) !important;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.08), inset 0 1px 0 rgba(255, 255, 255, 0.8), inset 0 -1px 0 rgba(0, 0, 0, 0.05) !important;
+  color: var(--text-primary) !important;
+}
+[data-theme="light"] .glass-secondary:hover {
+  background: rgba(255, 255, 255, 0.55) !important;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.1), inset 0 1px 0 rgba(255, 255, 255, 0.9), inset 0 -1px 0 rgba(0, 0, 0, 0.05) !important;
+}
+
+/* ─── Danger (delete, leave, destructive) ─── */
+.glass-danger {
+  background: rgba(239, 68, 68, 0.7) !important;
+  border: 1px solid rgba(255, 255, 255, 0.15) !important;
+  box-shadow: 0 4px 20px rgba(239, 68, 68, 0.25), inset 0 1px 0 rgba(255, 255, 255, 0.2), inset 0 -1px 0 rgba(0, 0, 0, 0.15) !important;
+  color: white !important;
+}
+.glass-danger:hover {
+  background: rgba(239, 68, 68, 0.8) !important;
+  box-shadow: 0 6px 28px rgba(239, 68, 68, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.3), inset 0 -1px 0 rgba(0, 0, 0, 0.15) !important;
+}
+
+/* ─── Navy CTA (existing navy gradient buttons that should keep color but add glass) ─── */
+.glass-navy {
+  border: 1px solid rgba(255, 255, 255, 0.15) !important;
+  box-shadow: 0 4px 20px rgba(13, 40, 71, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.2), inset 0 -1px 0 rgba(0, 0, 0, 0.2) !important;
+  color: white !important;
+}
+.glass-navy:hover {
+  box-shadow: 0 6px 28px rgba(13, 40, 71, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.3), inset 0 -1px 0 rgba(0, 0, 0, 0.2) !important;
+}
+.glass-navy:active {
+  box-shadow: 0 2px 8px rgba(13, 40, 71, 0.3), inset 0 1px 0 rgba(0, 0, 0, 0.1) !important;
+}
+
+/* ─── Disabled state — mutes the glass ─── */
+.glass-btn:disabled {
+  opacity: 0.5;
+  transform: none !important;
+  cursor: not-allowed;
+}
+
 /* Scroll fade-in animations */
 .scroll-fade {
   opacity: 0;

@@ -148,11 +148,11 @@ const VenueCard = React.memo(({ venue, onViewDetails, onVote, colors: c, Icons: 
 
         <div style={{ display: 'flex', gap: '8px' }}>
           {(venue.place_id || venue.id) && (
-            <button onClick={onViewDetails} style={{ flex: 1, padding: '10px', borderRadius: '10px', border: `2px solid ${c.navy}`, backgroundColor: 'var(--bg-card-solid)', color: c.navy, fontSize: '12px', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px', transition: 'opacity 0.2s ease' }}>
+            <button className="glass-btn glass-secondary" onClick={onViewDetails} style={{ flex: 1, padding: '10px', borderRadius: '10px', border: `2px solid ${c.navy}`, backgroundColor: 'var(--bg-card-solid)', color: c.navy, fontSize: '12px', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px', transition: 'opacity 0.2s ease' }}>
               {I.eye(c.navy, 14)} View Details
             </button>
           )}
-          <button onClick={(e) => { const btn = e.currentTarget; if (!btn.classList.contains('btn-confirmed')) { btn.classList.add('btn-confirmed'); setTimeout(() => btn.classList.remove('btn-confirmed'), 1100); } onVote(); }} style={{ flex: 1, padding: '10px', borderRadius: '10px', border: 'none', background: `linear-gradient(135deg, ${c.navy}, ${c.navyMid})`, color: 'white', fontSize: '12px', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px', boxShadow: '0 2px 8px rgba(13,40,71,0.25)', transition: 'opacity 0.2s ease', position: 'relative', overflow: 'hidden' }}>
+          <button className="glass-btn glass-navy" onClick={(e) => { const btn = e.currentTarget; if (!btn.classList.contains('btn-confirmed')) { btn.classList.add('btn-confirmed'); setTimeout(() => btn.classList.remove('btn-confirmed'), 1100); } onVote(); }} style={{ flex: 1, padding: '10px', borderRadius: '10px', border: 'none', background: `linear-gradient(135deg, ${c.navy}, ${c.navyMid})`, color: 'white', fontSize: '12px', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px', boxShadow: '0 2px 8px rgba(13,40,71,0.25)', transition: 'opacity 0.2s ease', position: 'relative', overflow: 'hidden' }}>
               {I.vote('white', 14)} Vote for This
             </button>
         </div>
@@ -1273,8 +1273,8 @@ const PromoModal = React.memo(function PromoModal({ editing, onSave, onCancel, c
             </select></div>
         </div>
         <div style={{ display: 'flex', gap: '10px', marginTop: '20px' }}>
-          <button onClick={onCancel} style={{ flex: 1, padding: '12px', borderRadius: '8px', border: '1px solid var(--border-mid)', backgroundColor: 'var(--bg-card-solid)', color: 'var(--text-secondary)', fontWeight: '600', cursor: 'pointer' }}>Cancel</button>
-          <button onClick={() => onSave(form)} disabled={!form.title || !form.desc} style={{ flex: 1, padding: '12px', borderRadius: '8px', border: 'none', backgroundColor: form.title && form.desc ? colors.navyBg : 'var(--toggle-off)', color: 'white', fontWeight: '600', cursor: form.title && form.desc ? 'pointer' : 'not-allowed' }}>{editing ? 'Save Changes' : 'Create'}</button>
+          <button className="glass-btn glass-secondary" onClick={onCancel} style={{ flex: 1, padding: '12px', borderRadius: '8px', border: '1px solid var(--border-mid)', backgroundColor: 'var(--bg-card-solid)', color: 'var(--text-secondary)', fontWeight: '600', cursor: 'pointer' }}>Cancel</button>
+          <button className="glass-btn glass-navy" onClick={() => onSave(form)} disabled={!form.title || !form.desc} style={{ flex: 1, padding: '12px', borderRadius: '8px', border: 'none', backgroundColor: form.title && form.desc ? colors.navyBg : 'var(--toggle-off)', color: 'white', fontWeight: '600', cursor: form.title && form.desc ? 'pointer' : 'not-allowed' }}>{editing ? 'Save Changes' : 'Create'}</button>
         </div>
       </div>
     </div>
@@ -1304,8 +1304,8 @@ const EventModal = React.memo(function EventModal({ editing, onSave, onCancel, c
             <input type="number" value={form.capacity} onChange={(e) => setForm(f => ({ ...f, capacity: e.target.value }))} placeholder="e.g., 60" style={input} /></div>
         </div>
         <div style={{ display: 'flex', gap: '10px', marginTop: '20px' }}>
-          <button onClick={onCancel} style={{ flex: 1, padding: '12px', borderRadius: '8px', border: '1px solid var(--border-mid)', backgroundColor: 'var(--bg-card-solid)', color: 'var(--text-secondary)', fontWeight: '600', cursor: 'pointer' }}>Cancel</button>
-          <button onClick={() => onSave(form)} disabled={!form.title} style={{ flex: 1, padding: '12px', borderRadius: '8px', border: 'none', backgroundColor: form.title ? colors.navyBg : 'var(--toggle-off)', color: 'white', fontWeight: '600', cursor: form.title ? 'pointer' : 'not-allowed' }}>{editing ? 'Save Changes' : 'Create'}</button>
+          <button className="glass-btn glass-secondary" onClick={onCancel} style={{ flex: 1, padding: '12px', borderRadius: '8px', border: '1px solid var(--border-mid)', backgroundColor: 'var(--bg-card-solid)', color: 'var(--text-secondary)', fontWeight: '600', cursor: 'pointer' }}>Cancel</button>
+          <button className="glass-btn glass-navy" onClick={() => onSave(form)} disabled={!form.title} style={{ flex: 1, padding: '12px', borderRadius: '8px', border: 'none', backgroundColor: form.title ? colors.navyBg : 'var(--toggle-off)', color: 'white', fontWeight: '600', cursor: form.title ? 'pointer' : 'not-allowed' }}>{editing ? 'Save Changes' : 'Create'}</button>
         </div>
       </div>
     </div>
@@ -3989,10 +3989,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
         </div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
           <a href="tel:911" style={{ ...styles.gradientButton, background: colors.red, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', textDecoration: 'none', color: 'white', fontWeight: '700' }}>{Icons.phone('white', 16)} Call 911</a>
-          <button disabled={sosAlertSending} onClick={handleEmergencyAlert} style={{ ...styles.gradientButton, background: `linear-gradient(90deg, ${colors.red}, #f97316)`, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', position: 'relative', overflow: 'hidden', opacity: sosAlertSending ? 0.6 : 1 }}>{Icons.shield('white', 16)} {sosAlertSending ? 'Sending...' : 'Alert Contacts'}</button>
-          <button disabled={sosAlertSending} onClick={handleShareLocationWithContacts} style={{ ...styles.gradientButton, background: 'var(--bg-card-solid)', color: colors.navy, border: `2px solid ${colors.navy}`, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', opacity: sosAlertSending ? 0.6 : 1 }}>{Icons.mapPin(colors.navy, 16)} {sosAlertSending ? 'Sending...' : 'Share Location'}</button>
+          <button className="glass-btn glass-danger" disabled={sosAlertSending} onClick={handleEmergencyAlert} style={{ ...styles.gradientButton, background: `linear-gradient(90deg, ${colors.red}, #f97316)`, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', position: 'relative', overflow: 'hidden', opacity: sosAlertSending ? 0.6 : 1 }}>{Icons.shield('white', 16)} {sosAlertSending ? 'Sending...' : 'Alert Contacts'}</button>
+          <button className="glass-btn glass-secondary" disabled={sosAlertSending} onClick={handleShareLocationWithContacts} style={{ ...styles.gradientButton, background: 'var(--bg-card-solid)', color: colors.navy, border: `2px solid ${colors.navy}`, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', opacity: sosAlertSending ? 0.6 : 1 }}>{Icons.mapPin(colors.navy, 16)} {sosAlertSending ? 'Sending...' : 'Share Location'}</button>
           {trustedContacts.length === 0 && (
-            <button onClick={() => { setShowSOS(false); setProfileScreen('safety'); setCurrentScreen('profile'); loadTrustedContacts(); }} style={{ ...styles.gradientButton, background: 'var(--icon-bg)', color: colors.navy, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', fontSize: '13px' }}>Set Up Trusted Contacts</button>
+            <button className="glass-btn glass-secondary" onClick={() => { setShowSOS(false); setProfileScreen('safety'); setCurrentScreen('profile'); loadTrustedContacts(); }} style={{ ...styles.gradientButton, background: 'var(--icon-bg)', color: colors.navy, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', fontSize: '13px' }}>Set Up Trusted Contacts</button>
           )}
           <button disabled={sosAlertSending} onClick={() => setShowSOS(false)} style={{ background: 'none', border: 'none', color: 'var(--text-tertiary)', padding: '8px', cursor: 'pointer' }}>Cancel</button>
         </div>
@@ -4009,8 +4009,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           <h2 style={{ fontSize: '20px', fontWeight: '900', color: colors.navy, margin: 0 }}>Check-in</h2>
         </div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-          <button onClick={(e) => { confirmClick(e); setShowCheckin(false); }} style={{ ...styles.gradientButton, backgroundColor: colors.teal, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', position: 'relative', overflow: 'hidden' }}>{Icons.check('white', 16)} I'm Safe</button>
-          <button onClick={() => { setShowCheckin(false); setShowSOS(true); }} style={{ ...styles.gradientButton, backgroundColor: colors.red, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}>{Icons.shield('white', 16)} Need Help</button>
+          <button className="glass-btn glass-primary" onClick={(e) => { confirmClick(e); setShowCheckin(false); }} style={{ ...styles.gradientButton, backgroundColor: colors.teal, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', position: 'relative', overflow: 'hidden' }}>{Icons.check('white', 16)} I'm Safe</button>
+          <button className="glass-btn glass-danger" onClick={() => { setShowCheckin(false); setShowSOS(true); }} style={{ ...styles.gradientButton, backgroundColor: colors.red, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}>{Icons.shield('white', 16)} Need Help</button>
           <button onClick={() => setShowCheckin(false)} style={{ background: 'none', border: 'none', color: 'var(--text-tertiary)', padding: '8px', cursor: 'pointer' }}>Dismiss</button>
         </div>
       </div>
@@ -4027,8 +4027,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
             {Icons.camera('white', 16)} Upload Photo
             <input type="file" accept="image/*" onChange={handlePhotoUpload} style={{ display: 'none' }} />
           </label>
-          <button onClick={generateAIAvatar} style={{ ...styles.gradientButton, background: 'var(--bg-card-solid)', color: colors.navy, border: `2px solid ${colors.navy}`, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}>{Icons.robot(colors.navy, 16)} Generate AI Avatar</button>
-          <button onClick={() => setShowPicModal(false)} style={{ background: 'none', border: 'none', color: 'var(--text-tertiary)', padding: '8px', cursor: 'pointer' }}>Cancel</button>
+          <button className="glass-btn glass-secondary" onClick={generateAIAvatar} style={{ ...styles.gradientButton, background: 'var(--bg-card-solid)', color: colors.navy, border: `2px solid ${colors.navy}`, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}>{Icons.robot(colors.navy, 16)} Generate AI Avatar</button>
+          <button className="glass-btn glass-secondary" onClick={() => setShowPicModal(false)} style={{ background: 'none', border: 'none', color: 'var(--text-tertiary)', padding: '8px', cursor: 'pointer' }}>Cancel</button>
         </div>
       </div>
     </div>
@@ -4081,8 +4081,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
 
       {/* Action buttons */}
       <div style={{ display: 'flex', gap: '12px', marginTop: '20px', width: '280px' }}>
-        <button onClick={() => setCropImageSrc(null)} style={{ flex: 1, padding: '14px', borderRadius: '14px', border: '1px solid rgba(255,255,255,0.2)', backgroundColor: 'transparent', color: 'white', fontWeight: '700', fontSize: '14px', cursor: 'pointer' }}>Cancel</button>
-        <button onClick={confirmCrop} style={{ flex: 1, padding: '14px', borderRadius: '14px', border: 'none', background: `linear-gradient(90deg, ${colors.navyBg}, ${colors.navyMidBg})`, color: 'white', fontWeight: '700', fontSize: '14px', cursor: 'pointer' }}>Confirm</button>
+        <button className="glass-btn glass-secondary" onClick={() => setCropImageSrc(null)} style={{ flex: 1, padding: '14px', borderRadius: '14px', border: '1px solid rgba(255,255,255,0.2)', backgroundColor: 'transparent', color: 'white', fontWeight: '700', fontSize: '14px', cursor: 'pointer' }}>Cancel</button>
+        <button className="glass-btn glass-navy" onClick={confirmCrop} style={{ flex: 1, padding: '14px', borderRadius: '14px', border: 'none', background: `linear-gradient(90deg, ${colors.navyBg}, ${colors.navyMidBg})`, color: 'white', fontWeight: '700', fontSize: '14px', cursor: 'pointer' }}>Confirm</button>
       </div>
     </div>
   );
@@ -4113,9 +4113,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: '4px 0 0' }}>{authUser?.role === 'admin' ? 'Switch to admin mode?' : 'Admin access is restricted'}</p>
         </div>
         <div style={{ display: 'flex', gap: '8px' }}>
-          <button onClick={() => setShowAdminPrompt(false)} style={{ flex: 1, padding: '12px', borderRadius: '12px', border: '1px solid var(--border-mid)', backgroundColor: 'var(--bg-card-solid)', fontWeight: '600', cursor: 'pointer' }}>Cancel</button>
+          <button className="glass-btn glass-secondary" onClick={() => setShowAdminPrompt(false)} style={{ flex: 1, padding: '12px', borderRadius: '12px', border: '1px solid var(--border-mid)', backgroundColor: 'var(--bg-card-solid)', fontWeight: '600', cursor: 'pointer' }}>Cancel</button>
           {authUser?.role === 'admin' && (
-            <button onClick={handleAdminModeSelect} style={{ flex: 1, padding: '12px', borderRadius: '12px', border: 'none', background: `linear-gradient(90deg, ${colors.navyBg}, ${colors.navyMidBg})`, color: 'white', fontWeight: '600', cursor: 'pointer' }}>Access</button>
+            <button className="glass-btn glass-navy" onClick={handleAdminModeSelect} style={{ flex: 1, padding: '12px', borderRadius: '12px', border: 'none', background: `linear-gradient(90deg, ${colors.navyBg}, ${colors.navyMidBg})`, color: 'white', fontWeight: '600', cursor: 'pointer' }}>Access</button>
           )}
         </div>
       </div>
@@ -4517,9 +4517,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           <h2 style={{ flex: 1, fontWeight: '800', color: 'white', fontSize: '15px', margin: 0, lineHeight: '1.3', minWidth: 0 }}>{selectedDm.name}</h2>
           <div style={{ display: 'flex', alignItems: 'center', gap: '4px', flexShrink: 0 }}>
             <div style={{ display: 'flex', gap: '4px', overflow: 'hidden', maxWidth: dmNavOpen ? '114px' : '0px', opacity: dmNavOpen ? 1 : 0, transition: 'max-width 0.3s ease, opacity 0.25s ease' }}>
-              <button onClick={() => { setDmNavOpen(false); setShowDmVotePanel(!showDmVotePanel); if (!showDmVotePanel) loadPopularVenues(); }} style={{ width: '34px', height: '34px', minWidth: '34px', borderRadius: '17px', border: 'none', backgroundColor: 'rgba(255,255,255,0.15)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.vote('white', 14)}</button>
-              <button onClick={() => { setDmNavOpen(false); setShowDmChatSearch(!showDmChatSearch); }} style={{ width: '34px', height: '34px', minWidth: '34px', borderRadius: '17px', border: 'none', backgroundColor: showDmChatSearch ? 'rgba(255,255,255,0.35)' : 'rgba(255,255,255,0.15)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.search('white', 15)}</button>
-              <button onClick={() => { setDmNavOpen(false); setShowDmCashPool(true); }} style={{ width: '34px', height: '34px', minWidth: '34px', borderRadius: '17px', border: 'none', backgroundColor: 'rgba(255,255,255,0.15)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.dollar('white', 15)}</button>
+              <button className="glass-btn" onClick={() => { setDmNavOpen(false); setShowDmVotePanel(!showDmVotePanel); if (!showDmVotePanel) loadPopularVenues(); }} style={{ width: '34px', height: '34px', minWidth: '34px', borderRadius: '17px', border: 'none', backgroundColor: 'rgba(255,255,255,0.15)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.vote('white', 14)}</button>
+              <button className="glass-btn" onClick={() => { setDmNavOpen(false); setShowDmChatSearch(!showDmChatSearch); }} style={{ width: '34px', height: '34px', minWidth: '34px', borderRadius: '17px', border: 'none', backgroundColor: showDmChatSearch ? 'rgba(255,255,255,0.35)' : 'rgba(255,255,255,0.15)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.search('white', 15)}</button>
+              <button className="glass-btn" onClick={() => { setDmNavOpen(false); setShowDmCashPool(true); }} style={{ width: '34px', height: '34px', minWidth: '34px', borderRadius: '17px', border: 'none', backgroundColor: 'rgba(255,255,255,0.15)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.dollar('white', 15)}</button>
             </div>
             <button onClick={() => setDmNavOpen(!dmNavOpen)} style={{ height: '34px', minWidth: dmNavOpen ? '34px' : 'auto', width: dmNavOpen ? '34px' : 'auto', borderRadius: '12px', border: '1px solid rgba(255,255,255,0.18)', backgroundColor: dmNavOpen ? 'rgba(255,255,255,0.25)' : 'rgba(255,255,255,0.1)', backdropFilter: 'blur(12px)', WebkitBackdropFilter: 'blur(12px)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px', padding: dmNavOpen ? '0' : '0 12px', fontSize: '12px', fontWeight: '700', flexShrink: 0, transition: 'all 0.3s ease', boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.12)' }}>{dmNavOpen ? Icons.x('white', 14) : <span style={{ fontSize: '12px', fontWeight: '700' }}>Features</span>}</button>
           </div>
@@ -4527,7 +4527,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
             <button onClick={() => setShowDmMenu(!showDmMenu)} style={{ width: '34px', height: '34px', borderRadius: '17px', border: 'none', backgroundColor: 'rgba(255,255,255,0.15)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.moreVertical('white', 16)}</button>
             {showDmMenu && (
               <div style={{ position: 'absolute', top: '38px', right: 0, backgroundColor: 'var(--bg-card-solid)', borderRadius: '14px', boxShadow: '0 8px 30px rgba(0,0,0,0.18)', minWidth: '200px', zIndex: 60, overflow: 'hidden', border: '1px solid var(--border-subtle)' }}>
-                <button onClick={() => { setShowDmMenu(false); setShowDeleteDmConfirm(true); }} style={{ width: '100%', padding: '14px 16px', display: 'flex', alignItems: 'center', gap: '10px', border: 'none', backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer', fontSize: '14px', fontWeight: '600', color: '#EF4444' }}>
+                <button className="glass-btn glass-danger" onClick={() => { setShowDmMenu(false); setShowDeleteDmConfirm(true); }} style={{ width: '100%', padding: '14px 16px', display: 'flex', alignItems: 'center', gap: '10px', border: 'none', backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer', fontSize: '14px', fontWeight: '600', color: '#EF4444' }}>
                   {Icons.x('#EF4444', 16)} Delete Conversation
                 </button>
               </div>
@@ -4580,6 +4580,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
             </div>
             <div style={{ display: 'flex', gap: '4px', flexShrink: 0 }}>
               <button
+                className="glass-btn glass-navy"
                 onClick={() => {
                   setVenueDetailReturnTo({ tab: 'chats', screen: 'dmDetail', dmId: selectedDmId });
                   setCurrentTab('explore');
@@ -4596,14 +4597,14 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
               >
                 {Icons.mapPin('white', 12)} Map
               </button>
-              <button onClick={() => { setPickingVenueForDm(true); setPickingVenueForCreate(true); setCurrentTab('explore'); setCurrentScreen('main'); }} style={{ padding: '8px 10px', borderRadius: '10px', border: `1px solid ${colors.creamDark}`, background: 'var(--bg-card-solid)', color: colors.navy, fontSize: '10px', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '3px' }}>
+              <button className="glass-btn glass-secondary" onClick={() => { setPickingVenueForDm(true); setPickingVenueForCreate(true); setCurrentTab('explore'); setCurrentScreen('main'); }} style={{ padding: '8px 10px', borderRadius: '10px', border: `1px solid ${colors.creamDark}`, background: 'var(--bg-card-solid)', color: colors.navy, fontSize: '10px', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '3px' }}>
                 Change
               </button>
             </div>
           </div>
         </div>
       ) : (
-        <button onClick={() => { setPickingVenueForDm(true); setPickingVenueForCreate(true); setCurrentTab('explore'); setCurrentScreen('main'); }} style={{ margin: '0', padding: '10px 14px', background: `linear-gradient(135deg, var(--bg-primary), var(--bg-card-solid))`, borderBottom: `1px solid ${colors.creamDark}`, border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '10px', width: '100%', flexShrink: 0 }}>
+        <button className="glass-btn glass-secondary" onClick={() => { setPickingVenueForDm(true); setPickingVenueForCreate(true); setCurrentTab('explore'); setCurrentScreen('main'); }} style={{ margin: '0', padding: '10px 14px', background: `linear-gradient(135deg, var(--bg-primary), var(--bg-card-solid))`, borderBottom: `1px solid ${colors.creamDark}`, border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '10px', width: '100%', flexShrink: 0 }}>
           <div style={{ width: '40px', height: '40px', borderRadius: '12px', border: `2px dashed ${colors.teal}`, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.mapPin(colors.teal, 18)}</div>
           <div style={{ flex: 1, textAlign: 'left' }}>
             <p style={{ fontSize: '13px', fontWeight: '700', color: colors.navy, margin: 0 }}>Add a Venue</p>
@@ -4626,7 +4627,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
             <div style={{ height: '100%', width: `${(dmCashPool.collected / dmCashPool.total) * 100}%`, background: `linear-gradient(90deg, ${colors.navyBg}, ${colors.navyMidBg})`, borderRadius: '4px', transition: 'width 0.6s ease-out', boxShadow: dmCashPool.collected >= dmCashPool.total ? '0 0 12px rgba(13,40,71,0.4)' : 'none' }} />
           </div>
           {!dmCashPool.paid.includes('You') ? (
-            <button onClick={(e) => { confirmClick(e); setDmCashPool(prev => ({ ...prev, paid: [...prev.paid, 'You'], collected: prev.collected + prev.perPerson })); sendDmMessage({ text: `I paid $${dmCashPool.perPerson} to the pool!`, noReply: true }); }} style={{ width: '100%', padding: '8px', borderRadius: '12px', border: 'none', background: `linear-gradient(90deg, ${colors.navyBg}, ${colors.navyMidBg})`, color: 'white', fontWeight: '700', fontSize: '13px', cursor: 'pointer', position: 'relative', overflow: 'hidden' }}>Pay ${dmCashPool.perPerson}</button>
+            <button className="glass-btn glass-primary" onClick={(e) => { confirmClick(e); setDmCashPool(prev => ({ ...prev, paid: [...prev.paid, 'You'], collected: prev.collected + prev.perPerson })); sendDmMessage({ text: `I paid $${dmCashPool.perPerson} to the pool!`, noReply: true }); }} style={{ width: '100%', padding: '8px', borderRadius: '12px', border: 'none', background: `linear-gradient(90deg, ${colors.navyBg}, ${colors.navyMidBg})`, color: 'white', fontWeight: '700', fontSize: '13px', cursor: 'pointer', position: 'relative', overflow: 'hidden' }}>Pay ${dmCashPool.perPerson}</button>
           ) : (
             <div style={{ textAlign: 'center', padding: '4px', color: colors.teal, fontWeight: '600', fontSize: '12px' }}>Paid</div>
           )}
@@ -4772,7 +4773,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
               )}
 
               {/* Browse more button */}
-              <button onClick={() => { setShowDmVotePanel(false); setShowDmVenueSearch(true); }} style={{ width: '100%', padding: '12px', borderRadius: '12px', border: `2px dashed ${colors.creamDark}`, backgroundColor: 'transparent', color: 'var(--text-tertiary)', fontSize: '13px', fontWeight: '600', cursor: 'pointer', marginTop: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}>
+              <button className="glass-btn glass-secondary" onClick={() => { setShowDmVotePanel(false); setShowDmVenueSearch(true); }} style={{ width: '100%', padding: '12px', borderRadius: '12px', border: `2px dashed ${colors.creamDark}`, backgroundColor: 'transparent', color: 'var(--text-tertiary)', fontSize: '13px', fontWeight: '600', cursor: 'pointer', marginTop: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}>
                 {Icons.plus(colors.textTertiary, 14)} Share a venue to chat
               </button>
             </div>
@@ -4800,7 +4801,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                   <p style={{ fontSize: '14px', fontWeight: '700', color: colors.navy, margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{dmPinnedVenue.name}</p>
                   {dmPinnedVenue.addr && <p style={{ fontSize: '11px', color: 'var(--text-secondary)', margin: '2px 0 0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{dmPinnedVenue.addr}</p>}
                 </div>
-                <button onClick={(e) => { confirmClick(e); sendDmMessage({ text: `Check out ${dmPinnedVenue.name}!`, message_type: 'venue_card', venue_data: { name: dmPinnedVenue.name, addr: dmPinnedVenue.addr, stars: dmPinnedVenue.rating, rating: dmPinnedVenue.rating, photo_url: dmPinnedVenue.photo_url, place_id: dmPinnedVenue.place_id }, noReply: true }); setShowDmVenueSearch(false); }} style={{ padding: '8px 12px', borderRadius: '10px', border: 'none', background: `linear-gradient(135deg, ${colors.teal}, #0d9488)`, color: 'white', fontSize: '11px', fontWeight: '700', cursor: 'pointer', whiteSpace: 'nowrap', position: 'relative', overflow: 'hidden' }}>Share This</button>
+                <button className="glass-btn glass-primary" onClick={(e) => { confirmClick(e); sendDmMessage({ text: `Check out ${dmPinnedVenue.name}!`, message_type: 'venue_card', venue_data: { name: dmPinnedVenue.name, addr: dmPinnedVenue.addr, stars: dmPinnedVenue.rating, rating: dmPinnedVenue.rating, photo_url: dmPinnedVenue.photo_url, place_id: dmPinnedVenue.place_id }, noReply: true }); setShowDmVenueSearch(false); }} style={{ padding: '8px 12px', borderRadius: '10px', border: 'none', background: `linear-gradient(135deg, ${colors.teal}, #0d9488)`, color: 'white', fontSize: '11px', fontWeight: '700', cursor: 'pointer', whiteSpace: 'nowrap', position: 'relative', overflow: 'hidden' }}>Share This</button>
               </div>
             ) : (
               <div style={{ padding: '10px 12px', borderRadius: '12px', backgroundColor: 'var(--bg-tertiary)', border: '1px solid var(--border-default)', marginBottom: '16px' }}>
@@ -4846,12 +4847,12 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
               <button onClick={() => setShowDmCashPool(false)} style={{ width: '32px', height: '32px', borderRadius: '16px', backgroundColor: 'var(--bg-hover)', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.x(colors.textSecondary, 18)}</button>
             </div>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '16px', marginBottom: '16px' }}>
-              <button onClick={() => setDmCashPoolAmount(prev => Math.max(5, prev - 5))} style={{ width: '44px', height: '44px', borderRadius: '22px', border: `2px solid ${colors.navy}`, backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontWeight: 'bold', cursor: 'pointer', fontSize: '18px' }}>−</button>
+              <button className="glass-btn glass-secondary" onClick={() => setDmCashPoolAmount(prev => Math.max(5, prev - 5))} style={{ width: '44px', height: '44px', borderRadius: '22px', border: `2px solid ${colors.navy}`, backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontWeight: 'bold', cursor: 'pointer', fontSize: '18px' }}>−</button>
               <span style={{ fontSize: '36px', fontWeight: '900', width: '100px', textAlign: 'center', color: colors.navy }}>${dmCashPoolAmount}</span>
-              <button onClick={() => setDmCashPoolAmount(prev => prev + 5)} style={{ width: '44px', height: '44px', borderRadius: '22px', border: `2px solid ${colors.navy}`, backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontWeight: 'bold', cursor: 'pointer', fontSize: '18px' }}>+</button>
+              <button className="glass-btn glass-secondary" onClick={() => setDmCashPoolAmount(prev => prev + 5)} style={{ width: '44px', height: '44px', borderRadius: '22px', border: `2px solid ${colors.navy}`, backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontWeight: 'bold', cursor: 'pointer', fontSize: '18px' }}>+</button>
             </div>
             <p style={{ fontSize: '13px', color: 'var(--text-secondary)', textAlign: 'center', marginBottom: '20px' }}>Per person • Total: ${dmCashPoolAmount * 2}</p>
-            <button onClick={(e) => {
+            <button className="glass-btn glass-navy" onClick={(e) => {
               confirmClick(e);
               setDmCashPool({ perPerson: dmCashPoolAmount, total: dmCashPoolAmount * 2, collected: 0, paid: [] });
               sendDmMessage({ text: `Cash Pool: $${dmCashPoolAmount}/person — let's split it!`, noReply: true });
@@ -4871,8 +4872,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
               <p style={{ fontSize: '13px', color: 'var(--text-secondary)', margin: 0, lineHeight: '1.4' }}>Delete this conversation with {selectedDm.name}? Messages will be removed from your view.</p>
             </div>
             <div style={{ display: 'flex', gap: '8px' }}>
-              <button onClick={() => setShowDeleteDmConfirm(false)} style={{ flex: 1, padding: '12px', borderRadius: '12px', border: `2px solid ${colors.creamDark}`, backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontWeight: '700', fontSize: '14px', cursor: 'pointer' }}>Cancel</button>
-              <button onClick={() => {
+              <button className="glass-btn glass-secondary" onClick={() => setShowDeleteDmConfirm(false)} style={{ flex: 1, padding: '12px', borderRadius: '12px', border: `2px solid ${colors.creamDark}`, backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontWeight: '700', fontSize: '14px', cursor: 'pointer' }}>Cancel</button>
+              <button className="glass-btn glass-danger" onClick={() => {
                 const dmUserId = selectedDm.userId;
                 setDirectMessages(prev => prev.filter(d => d.userId !== dmUserId));
                 const updated = [...deletedDmUserIds, dmUserId];
@@ -4892,8 +4893,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
         <div style={{ position: 'absolute', inset: 0, backgroundColor: 'rgba(0,0,0,0.9)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', zIndex: 50, padding: '20px' }}>
           <img src={dmPendingImage} alt="Preview" style={{ maxWidth: '100%', maxHeight: '60%', borderRadius: '12px', objectFit: 'contain' }} />
           <div style={{ display: 'flex', gap: '12px', marginTop: '20px' }}>
-            <button onClick={() => { setShowDmImagePreview(false); setDmPendingImage(null); }} style={{ padding: '12px 24px', borderRadius: '24px', border: '2px solid var(--bg-card-solid)', backgroundColor: 'transparent', color: 'white', fontSize: '14px', fontWeight: '700', cursor: 'pointer' }}>Cancel</button>
-            <button onClick={() => { sendDmMessage({ text: 'Photo', message_type: 'image', image_url: dmPendingImage, noReply: true }); setShowDmImagePreview(false); setDmPendingImage(null); }} style={{ padding: '12px 24px', borderRadius: '24px', border: 'none', background: `linear-gradient(135deg, ${colors.navyBg}, ${colors.navyMidBg})`, color: 'white', fontSize: '14px', fontWeight: '700', cursor: 'pointer' }}>Send</button>
+            <button className="glass-btn glass-secondary" onClick={() => { setShowDmImagePreview(false); setDmPendingImage(null); }} style={{ padding: '12px 24px', borderRadius: '24px', border: '2px solid var(--bg-card-solid)', backgroundColor: 'transparent', color: 'white', fontSize: '14px', fontWeight: '700', cursor: 'pointer' }}>Cancel</button>
+            <button className="glass-btn glass-navy" onClick={() => { sendDmMessage({ text: 'Photo', message_type: 'image', image_url: dmPendingImage, noReply: true }); setShowDmImagePreview(false); setDmPendingImage(null); }} style={{ padding: '12px 24px', borderRadius: '24px', border: 'none', background: `linear-gradient(135deg, ${colors.navyBg}, ${colors.navyMidBg})`, color: 'white', fontSize: '14px', fontWeight: '700', cursor: 'pointer' }}>Send</button>
           </div>
         </div>
       )}
@@ -5050,7 +5051,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           {/* Location share button */}
           <button onClick={() => { if (dmSharingLocation) { dmStopSharingLocation(dmSharingLocation); setDmSharingLocation(null); setDmMemberLocation(null); } else { setDmSharingLocation(selectedDmId); } }} style={{ width: '36px', height: '36px', borderRadius: '18px', backgroundColor: dmSharingLocation ? '#10b981' : 'var(--bg-hover)', border: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', flexShrink: 0 }}>{Icons.mapPin(dmSharingLocation ? 'white' : colors.textSecondary, 16)}</button>
           <input data-dm-input type="text" defaultValue="" onChange={handleDmInputChange} onKeyDown={(e) => e.key === 'Enter' && sendDmMessage()} placeholder={dmReplyingTo ? `Reply...` : `Message ${selectedDm.name}...`} style={{ flex: 1, padding: '12px 16px', borderRadius: '24px', backgroundColor: 'var(--bg-hover)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)', fontSize: '13px', outline: 'none' }} autoComplete="off" />
-          <button onClick={() => sendDmMessage()} disabled={!chatInputHasText} style={{ width: '42px', height: '42px', borderRadius: '21px', border: 'none', background: chatInputHasText ? `linear-gradient(135deg, ${colors.navyBg}, ${colors.navyMidBg})` : 'var(--pill-bg)', color: 'white', cursor: chatInputHasText ? 'pointer' : 'default', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.send('white', 18)}</button>
+          <button className="glass-btn glass-navy" onClick={() => sendDmMessage()} disabled={!chatInputHasText} style={{ width: '42px', height: '42px', borderRadius: '21px', border: 'none', background: chatInputHasText ? `linear-gradient(135deg, ${colors.navyBg}, ${colors.navyMidBg})` : 'var(--pill-bg)', color: 'white', cursor: chatInputHasText ? 'pointer' : 'default', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.send('white', 18)}</button>
         </div>
       </div>
 
@@ -5061,11 +5062,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
             <div style={{ width: '36px', height: '4px', borderRadius: '2px', backgroundColor: 'var(--toggle-off)', margin: '0 auto 16px' }} />
             <h3 style={{ fontSize: '16px', fontWeight: '800', color: colors.navy, margin: '0 0 16px', textAlign: 'center' }}>Add Photo</h3>
             <div style={{ display: 'flex', gap: '12px' }}>
-              <button onClick={() => openCameraViewfinder('dm')} style={{ flex: 1, padding: '16px', borderRadius: '16px', border: `2px solid ${colors.creamDark}`, backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px', transition: 'opacity 0.2s ease' }}>
+              <button className="glass-btn glass-secondary" onClick={() => openCameraViewfinder('dm')} style={{ flex: 1, padding: '16px', borderRadius: '16px', border: `2px solid ${colors.creamDark}`, backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px', transition: 'opacity 0.2s ease' }}>
                 {Icons.camera(colors.navy, 28)}
                 <span style={{ fontSize: '13px', fontWeight: '700', color: colors.navy }}>Take Photo</span>
               </button>
-              <button onClick={() => { setShowDmCameraPopup(false); setTimeout(() => dmGalleryInputRef.current?.click(), 100); }} style={{ flex: 1, padding: '16px', borderRadius: '16px', border: `2px solid ${colors.creamDark}`, backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px', transition: 'opacity 0.2s ease' }}>
+              <button className="glass-btn glass-secondary" onClick={() => { setShowDmCameraPopup(false); setTimeout(() => dmGalleryInputRef.current?.click(), 100); }} style={{ flex: 1, padding: '16px', borderRadius: '16px', border: `2px solid ${colors.creamDark}`, backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px', transition: 'opacity 0.2s ease' }}>
                 {Icons.image(colors.navy, 28)}
                 <span style={{ fontSize: '13px', fontWeight: '700', color: colors.navy }}>Gallery</span>
               </button>
@@ -5593,7 +5594,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
         {/* Quick Glance Cards */}
         <ScrollFade><div style={{ display: 'flex', gap: '8px', marginBottom: '12px', overflowX: 'auto', paddingBottom: '6px' }}>
           {/* Happening Now */}
-          <button onClick={() => { setCurrentTab('explore'); }} style={{ flexShrink: 0, padding: '8px 14px', borderRadius: '12px', border: '1px solid rgba(255,255,255,0.12)', backgroundColor: 'rgba(255,255,255,0.06)', backdropFilter: 'blur(12px)', WebkitBackdropFilter: 'blur(12px)', cursor: 'pointer', textAlign: 'left', boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.08), 0 2px 8px rgba(0,0,0,0.06)' }}>
+          <button className="glass-btn glass-secondary" onClick={() => { setCurrentTab('explore'); }} style={{ flexShrink: 0, padding: '8px 14px', borderRadius: '12px', border: '1px solid rgba(255,255,255,0.12)', backgroundColor: 'rgba(255,255,255,0.06)', backdropFilter: 'blur(12px)', WebkitBackdropFilter: 'blur(12px)', cursor: 'pointer', textAlign: 'left', boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.08), 0 2px 8px rgba(0,0,0,0.06)' }}>
             <p style={{ fontSize: '11px', fontWeight: '800', color: 'var(--text-primary)', margin: '0 0 1px', whiteSpace: 'nowrap' }}>Happening Now</p>
             <p style={{ fontSize: '9px', color: 'var(--text-tertiary)', margin: 0, whiteSpace: 'nowrap' }}>
               {allVenues.filter(v => v.crowd > 60).length > 0 ? `${allVenues.filter(v => v.crowd > 60).length} busy spots` : 'See what\'s hot'}
@@ -5604,7 +5605,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           {(() => {
             const needsAction = flocks.filter(f => f.status === 'voting');
             return (
-              <button onClick={() => { if (needsAction.length > 0) { setSelectedFlockId(needsAction[0].id); setCurrentScreen('detail'); } }} style={{ flexShrink: 0, padding: '8px 14px', borderRadius: '12px', border: needsAction.length > 0 ? `1px solid var(--accent-amber-text)` : '1px solid rgba(255,255,255,0.12)', backgroundColor: needsAction.length > 0 ? 'var(--accent-amber-bg)' : 'rgba(255,255,255,0.06)', backdropFilter: 'blur(12px)', WebkitBackdropFilter: 'blur(12px)', cursor: 'pointer', textAlign: 'left', boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.08), 0 2px 8px rgba(0,0,0,0.06)' }}>
+              <button className="glass-btn glass-secondary" onClick={() => { if (needsAction.length > 0) { setSelectedFlockId(needsAction[0].id); setCurrentScreen('detail'); } }} style={{ flexShrink: 0, padding: '8px 14px', borderRadius: '12px', border: needsAction.length > 0 ? `1px solid var(--accent-amber-text)` : '1px solid rgba(255,255,255,0.12)', backgroundColor: needsAction.length > 0 ? 'var(--accent-amber-bg)' : 'rgba(255,255,255,0.06)', backdropFilter: 'blur(12px)', WebkitBackdropFilter: 'blur(12px)', cursor: 'pointer', textAlign: 'left', boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.08), 0 2px 8px rgba(0,0,0,0.06)' }}>
                 <p style={{ fontSize: '11px', fontWeight: '800', color: 'var(--text-primary)', margin: '0 0 1px', whiteSpace: 'nowrap' }}>Needs You</p>
                 <p style={{ fontSize: '9px', color: needsAction.length > 0 ? 'var(--accent-amber-text)' : 'var(--text-tertiary)', margin: 0, fontWeight: needsAction.length > 0 ? '700' : '400', whiteSpace: 'nowrap' }}>
                   {needsAction.length > 0 ? `${needsAction.length} pending` : 'All caught up'}
@@ -5617,7 +5618,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           {(() => {
             const confirmed = flocks.filter(f => f.status === 'confirmed' || f.status === 'locked');
             return (
-              <button onClick={() => { if (confirmed.length > 0) { setSelectedFlockId(confirmed[0].id); setCurrentScreen('detail'); } }} style={{ flexShrink: 0, padding: '8px 14px', borderRadius: '12px', border: '1px solid rgba(255,255,255,0.12)', backgroundColor: 'rgba(255,255,255,0.06)', backdropFilter: 'blur(12px)', WebkitBackdropFilter: 'blur(12px)', cursor: 'pointer', textAlign: 'left', boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.08), 0 2px 8px rgba(0,0,0,0.06)' }}>
+              <button className="glass-btn glass-secondary" onClick={() => { if (confirmed.length > 0) { setSelectedFlockId(confirmed[0].id); setCurrentScreen('detail'); } }} style={{ flexShrink: 0, padding: '8px 14px', borderRadius: '12px', border: '1px solid rgba(255,255,255,0.12)', backgroundColor: 'rgba(255,255,255,0.06)', backdropFilter: 'blur(12px)', WebkitBackdropFilter: 'blur(12px)', cursor: 'pointer', textAlign: 'left', boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.08), 0 2px 8px rgba(0,0,0,0.06)' }}>
                 <p style={{ fontSize: '11px', fontWeight: '800', color: 'var(--text-primary)', margin: '0 0 1px', whiteSpace: 'nowrap' }}>This Week</p>
                 <p style={{ fontSize: '9px', color: 'var(--text-tertiary)', margin: 0, whiteSpace: 'nowrap' }}>
                   {confirmed.length > 0 ? `${confirmed.length} plan${confirmed.length > 1 ? 's' : ''} set` : 'Nothing yet'}
@@ -5627,7 +5628,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           })()}
 
           {/* Friends */}
-          <button onClick={() => setCurrentScreen('addFriends')} style={{ flexShrink: 0, padding: '8px 14px', borderRadius: '12px', border: '1px solid rgba(255,255,255,0.12)', backgroundColor: 'rgba(255,255,255,0.06)', backdropFilter: 'blur(12px)', WebkitBackdropFilter: 'blur(12px)', cursor: 'pointer', textAlign: 'left', boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.08), 0 2px 8px rgba(0,0,0,0.06)' }}>
+          <button className="glass-btn glass-secondary" onClick={() => setCurrentScreen('addFriends')} style={{ flexShrink: 0, padding: '8px 14px', borderRadius: '12px', border: '1px solid rgba(255,255,255,0.12)', backgroundColor: 'rgba(255,255,255,0.06)', backdropFilter: 'blur(12px)', WebkitBackdropFilter: 'blur(12px)', cursor: 'pointer', textAlign: 'left', boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.08), 0 2px 8px rgba(0,0,0,0.06)' }}>
             <p style={{ fontSize: '11px', fontWeight: '800', color: 'var(--text-primary)', margin: '0 0 1px', whiteSpace: 'nowrap' }}>Friends</p>
             <p style={{ fontSize: '9px', color: 'var(--text-tertiary)', margin: 0, whiteSpace: 'nowrap' }}>{friendCount} connected</p>
           </button>
@@ -5636,7 +5637,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
         {/* Action Buttons */}
         <ScrollFade delay={1}><div style={{ display: 'flex', gap: '10px', marginBottom: '14px' }}>
           <button
-
+            className="glass-btn glass-navy"
             onClick={() => setCurrentScreen('create')}
             style={{
               flex: 1.2,
@@ -5661,6 +5662,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
             {Icons.plus('white', 16)} <span className="shimmer-text">Start a Flock</span>
           </button>
           <button
+            className="glass-btn glass-secondary"
             onClick={() => setCurrentScreen('addFriends')}
             style={{
               flex: 0.8,
@@ -5715,7 +5717,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
               <ScrollFade key={`fade-${f.id}`} delay={Math.min(idx + 4, 7)}><button
                 key={f.id}
                 onClick={() => { setSelectedFlockId(f.id); setCurrentScreen('detail'); }}
-                className="flock-stack-card"
+                className="flock-stack-card glass-btn glass-secondary"
                 style={{
                   width: '100%',
                   textAlign: 'left',
@@ -5890,10 +5892,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                   </div>
                   <p style={{ fontSize: '10px', color: 'var(--text-secondary)', margin: '2px 0 0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{selectedVenueForCreate.addr}</p>
                 </div>
-                <button onClick={() => { setPickingVenueForCreate(true); setCurrentTab('explore'); setCurrentScreen('main'); }} style={{ padding: '4px 10px', borderRadius: '8px', border: `1px solid ${colors.creamDark}`, backgroundColor: 'var(--icon-bg)', color: colors.navy, fontWeight: '600', fontSize: '11px', cursor: 'pointer', flexShrink: 0 }}>Change</button>
+                <button className="glass-btn glass-secondary" onClick={() => { setPickingVenueForCreate(true); setCurrentTab('explore'); setCurrentScreen('main'); }} style={{ padding: '4px 10px', borderRadius: '8px', border: `1px solid ${colors.creamDark}`, backgroundColor: 'var(--icon-bg)', color: colors.navy, fontWeight: '600', fontSize: '11px', cursor: 'pointer', flexShrink: 0 }}>Change</button>
               </div>
             ) : (
-              <button onClick={() => { setPickingVenueForCreate(true); setCurrentTab('explore'); setCurrentScreen('main'); }} style={{ width: '100%', padding: '14px', borderRadius: '12px', border: `2px dashed ${colors.creamDark}`, backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontWeight: '700', fontSize: '14px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
+              <button className="glass-btn glass-secondary" onClick={() => { setPickingVenueForCreate(true); setCurrentTab('explore'); setCurrentScreen('main'); }} style={{ width: '100%', padding: '14px', borderRadius: '12px', border: `2px dashed ${colors.creamDark}`, backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontWeight: '700', fontSize: '14px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
                 {Icons.mapPin(colors.teal, 18)} Browse Venues
               </button>
             )}
@@ -6011,7 +6013,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 <p style={{ fontSize: '11px', color: 'var(--text-secondary)', marginBottom: '8px', margin: '0 0 8px' }}>What's this for?</p>
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginBottom: '10px' }}>
                   {['dinner', 'drinks', 'movie', 'concert', 'activity'].map(ctx => (
-                    <button key={ctx} onClick={() => setFlockBudgetContext(ctx)}
+                    <button key={ctx} className="glass-btn glass-secondary" onClick={() => setFlockBudgetContext(ctx)}
                       style={{ padding: '6px 14px', borderRadius: '20px', border: flockBudgetContext === ctx ? `2px solid ${colors.teal}` : '1.5px solid var(--border-color)', backgroundColor: flockBudgetContext === ctx ? `${colors.teal}15` : 'var(--bg-card-solid)', fontSize: '12px', fontWeight: '600', color: flockBudgetContext === ctx ? colors.teal : colors.navy, cursor: 'pointer', textTransform: 'capitalize' }}>
                       {ctx}
                     </button>
@@ -6031,7 +6033,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
         </div>
 
         <div style={{ padding: '12px', backgroundColor: 'var(--bg-card-solid)', borderTop: '1px solid var(--divider)', flexShrink: 0 }}>
-          <button onClick={handleCreate} disabled={isLoading} style={{ ...styles.gradientButton, opacity: isLoading ? 0.5 : 1 }}>
+          <button className="glass-btn glass-navy" onClick={handleCreate} disabled={isLoading} style={{ ...styles.gradientButton, opacity: isLoading ? 0.5 : 1 }}>
             {isLoading ? <><span style={{ display: 'inline-flex', animation: 'spin 1s linear infinite' }}>{Icons.activity('white', 16)}</span> Creating...</> : <>{Icons.users('white', 16)} Create Flock</>}
           </button>
         </div>
@@ -6056,10 +6058,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           <span style={{ color: 'var(--text-tertiary)', fontSize: '12px' }}>or</span>
           <div style={{ flex: 1, height: '1px', backgroundColor: 'var(--toggle-off)' }} />
         </div>
-        <button onClick={() => showToast('QR scanner coming soon!', 'info')} style={{ width: '100%', padding: '12px', borderRadius: '12px', border: `2px solid ${colors.creamDark}`, backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontWeight: '500', fontSize: '14px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>{Icons.camera(colors.navy, 16)} Scan QR</button>
+        <button className="glass-btn glass-secondary" onClick={() => showToast('QR scanner coming soon!', 'info')} style={{ width: '100%', padding: '12px', borderRadius: '12px', border: `2px solid ${colors.creamDark}`, backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontWeight: '500', fontSize: '14px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>{Icons.camera(colors.navy, 16)} Scan QR</button>
       </div>
       <div style={{ padding: '12px', backgroundColor: 'var(--bg-card-solid)', borderTop: '1px solid var(--divider)', flexShrink: 0 }}>
-        <button onClick={(e) => { if (joinCode.length === 6) { confirmClick(e); setJoinCode(''); setCurrentScreen('main'); } else { showToast('Enter a valid code', 'error'); }}} style={{ ...styles.gradientButton, position: 'relative', overflow: 'hidden' }}>Join Flock</button>
+        <button className="glass-btn glass-navy" onClick={(e) => { if (joinCode.length === 6) { confirmClick(e); setJoinCode(''); setCurrentScreen('main'); } else { showToast('Enter a valid code', 'error'); }}} style={{ ...styles.gradientButton, position: 'relative', overflow: 'hidden' }}>Join Flock</button>
       </div>
     </div>
   );
@@ -6275,7 +6277,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                       ) : status === 'pending' ? (
                         <span style={{ padding: '6px 12px', borderRadius: '20px', backgroundColor: 'var(--pill-bg)', color: 'var(--text-secondary)', fontSize: '11px', fontWeight: '700' }}>Pending</span>
                       ) : (
-                        <button onClick={(e) => { confirmClick(e); handleSendFriendRequest(user); }} style={{ padding: '6px 12px', borderRadius: '20px', border: 'none', backgroundColor: colors.navyBg, color: 'white', fontSize: '11px', fontWeight: '700', cursor: 'pointer', position: 'relative', overflow: 'hidden' }}>Add Friend</button>
+                        <button className="glass-btn glass-navy" onClick={(e) => { confirmClick(e); handleSendFriendRequest(user); }} style={{ padding: '6px 12px', borderRadius: '20px', border: 'none', backgroundColor: colors.navyBg, color: 'white', fontSize: '11px', fontWeight: '700', cursor: 'pointer', position: 'relative', overflow: 'hidden' }}>Add Friend</button>
                       )}
                       <button onClick={() => {
                         setShowConnectPanel(false); setConnectSearch(''); setConnectResults([]);
@@ -6762,13 +6764,13 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                     if (ret.dmId) setSelectedDmId(ret.dmId);
                   }} style={{ width: '100%', padding: '14px', borderRadius: '12px', border: 'none', background: `linear-gradient(135deg, ${colors.navyBg}, ${colors.navyMidBg})`, color: 'white', fontWeight: '800', fontSize: '14px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}>{Icons.arrowLeft('white', 16)} Back to Chat</button>
                 ) : (
-                  <button onClick={(e) => { confirmClick(e); setSelectedVenueForCreate({ ...activeVenue, addr: activeVenue.addr || activeVenue.formatted_address, lat: activeVenue.location?.latitude, lng: activeVenue.location?.longitude }); setActiveVenue(null); setCurrentScreen('create'); }} style={{ width: '100%', padding: '10px', borderRadius: '10px', border: 'none', background: `linear-gradient(135deg, ${colors.navyBg}, ${colors.navyMidBg})`, color: 'white', fontWeight: '700', fontSize: '12px', cursor: 'pointer', textAlign: 'center' }}>Start Flock Here</button>
+                  <button className="glass-btn glass-navy" onClick={(e) => { confirmClick(e); setSelectedVenueForCreate({ ...activeVenue, addr: activeVenue.addr || activeVenue.formatted_address, lat: activeVenue.location?.latitude, lng: activeVenue.location?.longitude }); setActiveVenue(null); setCurrentScreen('create'); }} style={{ width: '100%', padding: '10px', borderRadius: '10px', border: 'none', background: `linear-gradient(135deg, ${colors.navyBg}, ${colors.navyMidBg})`, color: 'white', fontWeight: '700', fontSize: '12px', cursor: 'pointer', textAlign: 'center' }}>Start Flock Here</button>
                 )}
                 <div style={{ display: 'flex', gap: '8px' }}>
                   {activeVenue.place_id && (
-                    <button onClick={() => { openVenueDetail(activeVenue.place_id, { name: activeVenue.name, formatted_address: activeVenue.addr, place_id: activeVenue.place_id, rating: activeVenue.stars, photo_url: activeVenue.photo_url }); }} style={{ flex: 1, padding: '10px', borderRadius: '10px', border: '1.5px solid var(--border-default)', backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', fontSize: '11px', fontWeight: '600', color: 'var(--text-secondary)' }}>{Icons.eye('var(--text-secondary)', 14)} Details</button>
+                    <button className="glass-btn glass-secondary" onClick={() => { openVenueDetail(activeVenue.place_id, { name: activeVenue.name, formatted_address: activeVenue.addr, place_id: activeVenue.place_id, rating: activeVenue.stars, photo_url: activeVenue.photo_url }); }} style={{ flex: 1, padding: '10px', borderRadius: '10px', border: '1.5px solid var(--border-default)', backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', fontSize: '11px', fontWeight: '600', color: 'var(--text-secondary)' }}>{Icons.eye('var(--text-secondary)', 14)} Details</button>
                   )}
-                  <button onClick={(e) => { confirmClick(e); addEventToCalendar(`Visit ${activeVenue.name}`, activeVenue.name, new Date(), '8 PM', getCategoryColor(activeVenue.category)); }} style={{ flex: 1, padding: '10px', borderRadius: '10px', border: '1.5px solid var(--border-default)', backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', fontSize: '11px', fontWeight: '600', color: 'var(--text-secondary)' }}>{Icons.calendar('var(--text-secondary)', 14)} Add to Calendar</button>
+                  <button className="glass-btn glass-secondary" onClick={(e) => { confirmClick(e); addEventToCalendar(`Visit ${activeVenue.name}`, activeVenue.name, new Date(), '8 PM', getCategoryColor(activeVenue.category)); }} style={{ flex: 1, padding: '10px', borderRadius: '10px', border: '1.5px solid var(--border-default)', backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', fontSize: '11px', fontWeight: '600', color: 'var(--text-secondary)' }}>{Icons.calendar('var(--text-secondary)', 14)} Add to Calendar</button>
                 </div>
               </motion.div>
             </div>
@@ -7500,10 +7502,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
             )}
             <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flex: chatNavOpen ? 1 : 'none', justifyContent: chatNavOpen ? 'center' : 'flex-end', flexShrink: 0 }}>
               <div style={{ display: 'flex', gap: '6px', overflow: 'hidden', maxWidth: chatNavOpen ? '300px' : '0px', opacity: chatNavOpen ? 1 : 0, transition: 'max-width 0.3s ease, opacity 0.25s ease' }}>
-                <button onClick={() => { setChatNavOpen(false); setShowVotePanel(true); loadPopularVenues(); }} style={{ width: '36px', height: '36px', minWidth: '36px', borderRadius: '10px', border: '1px solid rgba(255,255,255,0.15)', backgroundColor: flock.status === 'voting' ? colors.teal : 'rgba(255,255,255,0.08)', backdropFilter: 'blur(8px)', WebkitBackdropFilter: 'blur(8px)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.vote('white', 15)}</button>
-                <button onClick={() => { setChatNavOpen(false); setShowFlockInviteModal(true); setFlockInviteSelected([]); setFlockInviteSearch(''); setFlockInviteResults([]); }} style={{ width: '36px', height: '36px', minWidth: '36px', borderRadius: '10px', border: '1px solid rgba(255,255,255,0.15)', backgroundColor: 'rgba(255,255,255,0.08)', backdropFilter: 'blur(8px)', WebkitBackdropFilter: 'blur(8px)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.userPlus('white', 15)}</button>
-                <button onClick={() => { setChatNavOpen(false); setShowChatSearch(!showChatSearch); }} style={{ width: '36px', height: '36px', minWidth: '36px', borderRadius: '10px', border: '1px solid rgba(255,255,255,0.15)', backgroundColor: showChatSearch ? 'rgba(255,255,255,0.25)' : 'rgba(255,255,255,0.08)', backdropFilter: 'blur(8px)', WebkitBackdropFilter: 'blur(8px)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.search('white', 15)}</button>
-                <button onClick={() => { setChatNavOpen(false); setShowChatPool(true); }} style={{ width: '36px', height: '36px', minWidth: '36px', borderRadius: '10px', border: '1px solid rgba(255,255,255,0.15)', backgroundColor: 'rgba(255,255,255,0.08)', backdropFilter: 'blur(8px)', WebkitBackdropFilter: 'blur(8px)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.dollar('white', 15)}</button>
+                <button className="glass-btn" onClick={() => { setChatNavOpen(false); setShowVotePanel(true); loadPopularVenues(); }} style={{ width: '36px', height: '36px', minWidth: '36px', borderRadius: '10px', border: '1px solid rgba(255,255,255,0.15)', backgroundColor: flock.status === 'voting' ? colors.teal : 'rgba(255,255,255,0.08)', backdropFilter: 'blur(8px)', WebkitBackdropFilter: 'blur(8px)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.vote('white', 15)}</button>
+                <button className="glass-btn" onClick={() => { setChatNavOpen(false); setShowFlockInviteModal(true); setFlockInviteSelected([]); setFlockInviteSearch(''); setFlockInviteResults([]); }} style={{ width: '36px', height: '36px', minWidth: '36px', borderRadius: '10px', border: '1px solid rgba(255,255,255,0.15)', backgroundColor: 'rgba(255,255,255,0.08)', backdropFilter: 'blur(8px)', WebkitBackdropFilter: 'blur(8px)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.userPlus('white', 15)}</button>
+                <button className="glass-btn" onClick={() => { setChatNavOpen(false); setShowChatSearch(!showChatSearch); }} style={{ width: '36px', height: '36px', minWidth: '36px', borderRadius: '10px', border: '1px solid rgba(255,255,255,0.15)', backgroundColor: showChatSearch ? 'rgba(255,255,255,0.25)' : 'rgba(255,255,255,0.08)', backdropFilter: 'blur(8px)', WebkitBackdropFilter: 'blur(8px)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.search('white', 15)}</button>
+                <button className="glass-btn" onClick={() => { setChatNavOpen(false); setShowChatPool(true); }} style={{ width: '36px', height: '36px', minWidth: '36px', borderRadius: '10px', border: '1px solid rgba(255,255,255,0.15)', backgroundColor: 'rgba(255,255,255,0.08)', backdropFilter: 'blur(8px)', WebkitBackdropFilter: 'blur(8px)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.dollar('white', 15)}</button>
               </div>
               <button onClick={() => setChatNavOpen(!chatNavOpen)} style={{ height: '42px', minWidth: chatNavOpen ? '42px' : 'auto', width: chatNavOpen ? '42px' : 'auto', borderRadius: '14px', border: '1px solid rgba(255,255,255,0.18)', backgroundColor: chatNavOpen ? 'rgba(255,255,255,0.25)' : 'rgba(255,255,255,0.1)', backdropFilter: 'blur(12px)', WebkitBackdropFilter: 'blur(12px)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px', padding: chatNavOpen ? '0' : '0 18px', fontSize: '14px', fontWeight: '700', flexShrink: 0, transition: 'all 0.3s ease', boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.12)' }}>{chatNavOpen ? Icons.x('white', 16) : <span style={{ fontSize: '14px', fontWeight: '700' }}>Features</span>}</button>
             </div>
@@ -7511,7 +7513,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
               <button onClick={() => setShowFlockMenu(!showFlockMenu)} style={{ width: '42px', height: '42px', borderRadius: '14px', border: '1px solid rgba(255,255,255,0.18)', backgroundColor: 'rgba(255,255,255,0.1)', backdropFilter: 'blur(12px)', WebkitBackdropFilter: 'blur(12px)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.12)' }}>{Icons.moreVertical('white', 18)}</button>
               {showFlockMenu && (
                 <div style={{ position: 'absolute', top: '38px', right: 0, backgroundColor: 'var(--bg-card-solid)', borderRadius: '14px', boxShadow: '0 8px 30px rgba(0,0,0,0.18)', minWidth: '180px', zIndex: 60, overflow: 'hidden', border: '1px solid var(--border-subtle)' }}>
-                  <button onClick={() => { setShowFlockMenu(false); setShowLeaveConfirm(true); }} style={{ width: '100%', padding: '14px 16px', display: 'flex', alignItems: 'center', gap: '10px', border: 'none', backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer', fontSize: '14px', fontWeight: '600', color: '#EF4444' }}>
+                  <button className="glass-btn glass-danger" onClick={() => { setShowFlockMenu(false); setShowLeaveConfirm(true); }} style={{ width: '100%', padding: '14px 16px', display: 'flex', alignItems: 'center', gap: '10px', border: 'none', backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer', fontSize: '14px', fontWeight: '600', color: '#EF4444' }}>
                     {Icons.doorOpen('#EF4444', 16)} Leave Flock
                   </button>
                 </div>
@@ -8006,7 +8008,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           <button onClick={() => { if (sharingLocationForFlock === flock.id) { stopLocationSharing(); } else { const otherMembers = (flock.members || []).filter(m => m.id !== authUser?.id).length; if (otherMembers === 0) { showToast('No one else in this flock to share with', 'error'); return; } startSharingLocation(flock.id); } }} style={{ width: '38px', height: '38px', borderRadius: '19px', border: 'none', backgroundColor: sharingLocationForFlock === flock.id ? '#10b981' : 'var(--bg-hover)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'opacity 0.2s ease', flexShrink: 0 }}>{Icons.mapPin(sharingLocationForFlock === flock.id ? 'white' : colors.textSecondary, 16)}</button>
           <input key="chat-input" id="chat-input" type="text" defaultValue="" onChange={handleChatInputChange} onKeyDown={(e) => e.key === 'Enter' && sendChatMessage()} placeholder={replyingTo ? 'Reply...' : 'Type a message...'} style={{ flex: 1, padding: '12px 16px', borderRadius: '22px', backgroundColor: 'var(--bg-hover)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)', fontSize: '14px', outline: 'none', fontWeight: '500', transition: 'opacity 0.2s ease' }} autoComplete="off" />
           {chatInputHasText ? (
-            <button onClick={sendChatMessage} style={{ width: '42px', height: '42px', borderRadius: '21px', border: 'none', background: `linear-gradient(135deg, ${colors.navyBg}, ${colors.navyMidBg})`, color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 3px 10px rgba(13,40,71,0.25)', transition: 'opacity 0.2s ease' }}>{Icons.send('white', 18)}</button>
+            <button className="glass-btn glass-navy" onClick={sendChatMessage} style={{ width: '42px', height: '42px', borderRadius: '21px', border: 'none', background: `linear-gradient(135deg, ${colors.navyBg}, ${colors.navyMidBg})`, color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 3px 10px rgba(13,40,71,0.25)', transition: 'opacity 0.2s ease' }}>{Icons.send('white', 18)}</button>
           ) : (
             <button onClick={() => showToast('Voice messages coming soon!', 'info')} style={{ width: '42px', height: '42px', borderRadius: '21px', border: 'none', background: `linear-gradient(135deg, ${colors.navyBg}, ${colors.navyMidBg})`, color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 3px 10px rgba(13,40,71,0.25)', transition: 'opacity 0.2s ease' }}>{Icons.mic('white', 18)}</button>
           )}
@@ -8019,11 +8021,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
               <div style={{ width: '36px', height: '4px', borderRadius: '2px', backgroundColor: 'var(--toggle-off)', margin: '0 auto 16px' }} />
               <h3 style={{ fontSize: '16px', fontWeight: '800', color: colors.navy, margin: '0 0 16px', textAlign: 'center' }}>Add Photo</h3>
               <div style={{ display: 'flex', gap: '12px' }}>
-                <button onClick={() => openCameraViewfinder('flock')} style={{ flex: 1, padding: '16px', borderRadius: '16px', border: `2px solid ${colors.creamDark}`, backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px', transition: 'opacity 0.2s ease' }}>
+                <button className="glass-btn glass-secondary" onClick={() => openCameraViewfinder('flock')} style={{ flex: 1, padding: '16px', borderRadius: '16px', border: `2px solid ${colors.creamDark}`, backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px', transition: 'opacity 0.2s ease' }}>
                   {Icons.camera(colors.navy, 28)}
                   <span style={{ fontSize: '13px', fontWeight: '700', color: colors.navy }}>Take Photo</span>
                 </button>
-                <button onClick={() => { setShowCameraPopup(false); setTimeout(() => chatGalleryInputRef.current?.click(), 100); }} style={{ flex: 1, padding: '16px', borderRadius: '16px', border: `2px solid ${colors.creamDark}`, backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px', transition: 'opacity 0.2s ease' }}>
+                <button className="glass-btn glass-secondary" onClick={() => { setShowCameraPopup(false); setTimeout(() => chatGalleryInputRef.current?.click(), 100); }} style={{ flex: 1, padding: '16px', borderRadius: '16px', border: `2px solid ${colors.creamDark}`, backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px', transition: 'opacity 0.2s ease' }}>
                   {Icons.image(colors.navy, 28)}
                   <span style={{ fontSize: '13px', fontWeight: '700', color: colors.navy }}>Gallery</span>
                 </button>
@@ -8061,7 +8063,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                     {ctx && <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: '0 0 14px' }}>For {ctx}</p>}
                     <div style={{ display: 'flex', gap: '8px', marginBottom: '12px' }}>
                       {presets.map(p => (
-                        <button key={p} onClick={() => { setBudgetAmount(p); setBudgetCustom(''); }}
+                        <button key={p} className="glass-btn glass-secondary" onClick={() => { setBudgetAmount(p); setBudgetCustom(''); }}
                           style={{ flex: 1, padding: '12px 4px', borderRadius: '12px', border: budgetAmount === p ? `2px solid ${colors.teal}` : '1.5px solid var(--border-color)', backgroundColor: budgetAmount === p ? `${colors.teal}12` : 'var(--bg-card-solid)', fontSize: '15px', fontWeight: '800', color: budgetAmount === p ? colors.teal : colors.navy, cursor: 'pointer' }}>
                           ${p}{p === presets[presets.length - 1] ? '+' : ''}
                         </button>
@@ -8078,7 +8080,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                       {Icons.lock(colors.textTertiary, 12)}
                       <p style={{ fontSize: '11px', color: 'var(--text-tertiary)', margin: 0 }}>This is anonymous. No one sees your answer.</p>
                     </div>
-                    <button disabled={budgetSubmitting} onClick={async () => {
+                    <button className="glass-btn glass-primary" disabled={budgetSubmitting} onClick={async () => {
                       const amt = budgetCustom ? parseFloat(budgetCustom) : budgetAmount;
                       if (!amt || amt <= 0) { showToast('Select or enter an amount', 'error'); return; }
                       setBudgetSubmitting(true);
@@ -8129,12 +8131,12 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                     )}
                     {isCreator && !budgetStatus?.budgetLocked && (
                       <div style={{ display: 'flex', gap: '8px', marginBottom: '12px' }}>
-                        <button onClick={async () => { try { await lockBudget(selectedFlockId); setBudgetStatus(prev => ({ ...prev, budgetLocked: true })); showToast('Budget locked'); } catch (err) { showToast(err.message, 'error'); } }} style={{ flex: 1, padding: '10px', borderRadius: '10px', border: `1.5px solid ${colors.navy}`, backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontWeight: '700', fontSize: '12px', cursor: 'pointer' }}>Lock Budget</button>
-                        <button onClick={async () => { try { const d = await sendBudgetReminder(selectedFlockId); showToast(`Reminded ${d.reminded} member${d.reminded !== 1 ? 's' : ''}`); } catch (err) { showToast(err.message, 'error'); } }} style={{ flex: 1, padding: '10px', borderRadius: '10px', border: `1.5px solid var(--border-color)`, backgroundColor: 'var(--bg-card-solid)', color: 'var(--text-secondary)', fontWeight: '700', fontSize: '12px', cursor: 'pointer' }}>Send Reminder</button>
+                        <button className="glass-btn glass-primary" onClick={async () => { try { await lockBudget(selectedFlockId); setBudgetStatus(prev => ({ ...prev, budgetLocked: true })); showToast('Budget locked'); } catch (err) { showToast(err.message, 'error'); } }} style={{ flex: 1, padding: '10px', borderRadius: '10px', border: `1.5px solid ${colors.navy}`, backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontWeight: '700', fontSize: '12px', cursor: 'pointer' }}>Lock Budget</button>
+                        <button className="glass-btn glass-secondary" onClick={async () => { try { const d = await sendBudgetReminder(selectedFlockId); showToast(`Reminded ${d.reminded} member${d.reminded !== 1 ? 's' : ''}`); } catch (err) { showToast(err.message, 'error'); } }} style={{ flex: 1, padding: '10px', borderRadius: '10px', border: `1.5px solid var(--border-color)`, backgroundColor: 'var(--bg-card-solid)', color: 'var(--text-secondary)', fontWeight: '700', fontSize: '12px', cursor: 'pointer' }}>Send Reminder</button>
                       </div>
                     )}
                     {isConfirmedOrComplete && (
-                      <button onClick={() => setShowCreateBill(true)} style={{ ...styles.gradientButton, padding: '14px' }}>Split the Bill</button>
+                      <button className="glass-btn glass-primary" onClick={() => setShowCreateBill(true)} style={{ ...styles.gradientButton, padding: '14px' }}>Split the Bill</button>
                     )}
                   </div>
                 )}
@@ -8143,7 +8145,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 {!hasBudget && !showCreateBill && !billSplit && (
                   <div>
                     <p style={{ fontSize: '13px', color: 'var(--text-secondary)', marginBottom: '16px' }}>Create a bill split after your hangout</p>
-                    <button onClick={() => setShowCreateBill(true)} style={{ ...styles.gradientButton, padding: '14px' }}>Split the Bill</button>
+                    <button className="glass-btn glass-primary" onClick={() => setShowCreateBill(true)} style={{ ...styles.gradientButton, padding: '14px' }}>Split the Bill</button>
                   </div>
                 )}
 
@@ -8197,7 +8199,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                         <p style={{ fontSize: '11px', color: 'var(--text-tertiary)', margin: '6px 0 0', textAlign: 'center' }}>Equal split — ~${(parseFloat(billTotal) * (1 + billTip / 100) / Math.max(1, flock.members?.length || flock.memberCount || 1)).toFixed(2)} each</p>
                       </div>
                     )}
-                    <button disabled={!billTotal || parseFloat(billTotal) <= 0} onClick={async () => {
+                    <button className="glass-btn glass-primary" disabled={!billTotal || parseFloat(billTotal) <= 0} onClick={async () => {
                       try {
                         const data = await createBillSplit(selectedFlockId, {
                           totalAmount: parseFloat(billTotal),
@@ -8245,7 +8247,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                     </div>
                     {/* Settle Up button for current user if they owe */}
                     {billSplit.shares?.find(s => String(s.userId) === String(authUser?.id) && !s.settled) && (
-                      <button onClick={async () => {
+                      <button className="glass-btn glass-primary" onClick={async () => {
                         try {
                           const result = await getPaymentLinks(selectedFlockId);
                           if (result.methods && result.methods.length > 0) {
@@ -8278,7 +8280,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                       </button>
                     )}
                     {billSplit.shares?.find(s => String(s.userId) === String(authUser?.id) && !s.settled) && (
-                      <button onClick={async () => {
+                      <button className="glass-btn glass-secondary" onClick={async () => {
                         try {
                           await settleShare(selectedFlockId);
                           setBillSplit(prev => ({
@@ -8406,7 +8408,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                               {v.voters.length > 0 && <span style={{ fontSize: '16px', fontWeight: '900', color: isMyVote ? colors.navy : colors.textTertiary }}>{v.voters.length}</span>}
                               {isMyVote && <div style={{ width: '20px', height: '20px', borderRadius: '10px', backgroundColor: colors.navyBg, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.check('white', 12)}</div>}
                               {isCreator && !isAssigned && (
-                                <button onClick={(e) => { e.stopPropagation(); confirmClick(e); handleConfirmVenue(v.venue); }} style={{ padding: '4px 8px', borderRadius: '8px', border: 'none', background: `linear-gradient(135deg, ${colors.teal}, #0d9488)`, color: 'white', fontSize: '10px', fontWeight: '700', cursor: 'pointer', position: 'relative', overflow: 'hidden' }}>Confirm</button>
+                                <button className="glass-btn glass-primary" onClick={(e) => { e.stopPropagation(); confirmClick(e); handleConfirmVenue(v.venue); }} style={{ padding: '4px 8px', borderRadius: '8px', border: 'none', background: `linear-gradient(135deg, ${colors.teal}, #0d9488)`, color: 'white', fontSize: '10px', fontWeight: '700', cursor: 'pointer', position: 'relative', overflow: 'hidden' }}>Confirm</button>
                               )}
                             </div>
                           </div>
@@ -8448,7 +8450,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 )}
 
                 {/* Browse more button */}
-                <button onClick={() => { setShowVotePanel(false); setShowVenueShareModal(true); }} style={{ width: '100%', padding: '12px', borderRadius: '12px', border: `2px dashed ${colors.creamDark}`, backgroundColor: 'transparent', color: 'var(--text-tertiary)', fontSize: '13px', fontWeight: '600', cursor: 'pointer', marginTop: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}>
+                <button className="glass-btn glass-secondary" onClick={() => { setShowVotePanel(false); setShowVenueShareModal(true); }} style={{ width: '100%', padding: '12px', borderRadius: '12px', border: `2px dashed ${colors.creamDark}`, backgroundColor: 'transparent', color: 'var(--text-tertiary)', fontSize: '13px', fontWeight: '600', cursor: 'pointer', marginTop: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}>
                   {Icons.plus(colors.textTertiary, 14)} Share a venue to chat
                 </button>
               </div>
@@ -8476,7 +8478,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                     <p style={{ fontSize: '14px', fontWeight: '700', color: colors.navy, margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{flock.venue}</p>
                     {flock.venueAddress && <p style={{ fontSize: '11px', color: 'var(--text-secondary)', margin: '2px 0 0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{flock.venueAddress}</p>}
                   </div>
-                  <button onClick={(e) => { confirmClick(e); shareVenueToChat(selectedFlockId, { name: flock.venue, addr: flock.venueAddress, place_id: flock.venueId, stars: flock.venueRating, photo_url: flock.venuePhoto, category: 'Food', crowd: 50, price: '$$' }); }} style={{ padding: '8px 12px', borderRadius: '10px', border: 'none', background: `linear-gradient(135deg, ${colors.teal}, #0d9488)`, color: 'white', fontSize: '11px', fontWeight: '700', cursor: 'pointer', whiteSpace: 'nowrap', position: 'relative', overflow: 'hidden' }}>Share This</button>
+                  <button className="glass-btn glass-primary" onClick={(e) => { confirmClick(e); shareVenueToChat(selectedFlockId, { name: flock.venue, addr: flock.venueAddress, place_id: flock.venueId, stars: flock.venueRating, photo_url: flock.venuePhoto, category: 'Food', crowd: 50, price: '$$' }); }} style={{ padding: '8px 12px', borderRadius: '10px', border: 'none', background: `linear-gradient(135deg, ${colors.teal}, #0d9488)`, color: 'white', fontSize: '11px', fontWeight: '700', cursor: 'pointer', whiteSpace: 'nowrap', position: 'relative', overflow: 'hidden' }}>Share This</button>
                 </div>
               ) : (
                 <div style={{ padding: '10px 12px', borderRadius: '12px', backgroundColor: 'var(--bg-tertiary)', border: '1px solid var(--border-default)', marginBottom: '16px' }}>
@@ -9307,14 +9309,14 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                   </div>
                   <div style={{ display: 'flex', gap: '8px' }}>
                     <SearchInputLocal type="text" initialValue={newInterest} onCommit={setNewInterest} placeholder="Add an interest..." style={{ ...styles.input, flex: 1 }} autoComplete="off" />
-                    <button onClick={(e) => { if (newInterest.trim() && !userInterests.includes(newInterest.trim())) { confirmClick(e); setUserInterests([...userInterests, newInterest.trim()]); setNewInterest(''); }}} style={{ padding: '0 16px', borderRadius: '8px', border: 'none', background: `linear-gradient(90deg, ${colors.navyBg}, ${colors.navyMidBg})`, color: 'white', fontWeight: 'bold', fontSize: '14px', cursor: 'pointer', position: 'relative', overflow: 'hidden' }}>Add</button>
+                    <button className="glass-btn glass-navy" onClick={(e) => { if (newInterest.trim() && !userInterests.includes(newInterest.trim())) { confirmClick(e); setUserInterests([...userInterests, newInterest.trim()]); setNewInterest(''); }}} style={{ padding: '0 16px', borderRadius: '8px', border: 'none', background: `linear-gradient(90deg, ${colors.navyBg}, ${colors.navyMidBg})`, color: 'white', fontWeight: 'bold', fontSize: '14px', cursor: 'pointer', position: 'relative', overflow: 'hidden' }}>Add</button>
                   </div>
                 </div>
                 <div style={styles.card}>
                   <h3 style={{ fontWeight: 'bold', fontSize: '14px', color: colors.navy, margin: '0 0 12px' }}>Suggested Interests</h3>
                   <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
                     {suggestedInterests.filter(s => !userInterests.includes(s)).map(interest => (
-                      <button key={interest} onClick={(e) => { confirmClick(e); setUserInterests([...userInterests, interest]); }} style={{ padding: '6px 12px', borderRadius: '20px', border: `1px solid ${colors.creamDark}`, backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontSize: '12px', fontWeight: '500', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px', position: 'relative', overflow: 'hidden' }}>
+                      <button key={interest} className="glass-btn glass-secondary" onClick={(e) => { confirmClick(e); setUserInterests([...userInterests, interest]); }} style={{ padding: '6px 12px', borderRadius: '20px', border: `1px solid ${colors.creamDark}`, backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontSize: '12px', fontWeight: '500', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px', position: 'relative', overflow: 'hidden' }}>
                         {Icons.plus(colors.navy, 12)} {interest}
                       </button>
                     ))}
@@ -9353,7 +9355,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                     <p style={{ fontSize: '10px', color: 'var(--text-tertiary)', margin: '4px 0 0' }}>Enter the email or phone registered with your bank for Zelle</p>
                   </div>
 
-                  <button disabled={paymentSaving} onClick={async (e) => {
+                  <button className="glass-btn glass-primary" disabled={paymentSaving} onClick={async (e) => {
                     confirmClick(e);
                     setPaymentSaving(true);
                     try {
@@ -9385,7 +9387,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                     ))
                   )}
                   {!showAddCard ? (
-                    <button onClick={() => setShowAddCard(true)} style={{ width: '100%', padding: '12px', borderRadius: '12px', border: `2px dashed ${colors.creamDark}`, backgroundColor: 'transparent', color: colors.navy, fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', marginTop: '8px' }}>
+                    <button className="glass-btn glass-secondary" onClick={() => setShowAddCard(true)} style={{ width: '100%', padding: '12px', borderRadius: '12px', border: `2px dashed ${colors.creamDark}`, backgroundColor: 'transparent', color: colors.navy, fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', marginTop: '8px' }}>
                       {Icons.plus(colors.navy, 16)} Add New Card
                     </button>
                   ) : (
@@ -9410,8 +9412,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                         <SearchInputLocal type="text" initialValue={newCard.name} onCommit={(v) => setNewCard(prev => ({ ...prev, name: v }))} placeholder="John Doe" style={styles.input} autoComplete="off" />
                       </div>
                       <div style={{ display: 'flex', gap: '8px' }}>
-                        <button onClick={() => { setShowAddCard(false); setNewCard({ number: '', expiry: '', cvv: '', name: '' }); }} style={{ flex: 1, padding: '12px', borderRadius: '8px', border: '1px solid var(--border-mid)', backgroundColor: 'var(--bg-card-solid)', fontWeight: '600', cursor: 'pointer' }}>Cancel</button>
-                        <button onClick={(e) => { if (newCard.number.length >= 19 && newCard.expiry.length === 5 && newCard.cvv.length === 3 && newCard.name.trim()) { confirmClick(e); const brand = newCard.number.startsWith('4') ? 'Visa' : 'MC'; setPaymentMethods([...paymentMethods, { id: Date.now(), brand, last4: newCard.number.slice(-4), expiry: newCard.expiry, isDefault: paymentMethods.length === 0 }]); setNewCard({ number: '', expiry: '', cvv: '', name: '' }); setShowAddCard(false); } else { showToast('Please fill all fields', 'error'); }}} style={{ flex: 1, padding: '12px', borderRadius: '8px', border: 'none', background: `linear-gradient(90deg, ${colors.navyBg}, ${colors.navyMidBg})`, color: 'white', fontWeight: '600', cursor: 'pointer', position: 'relative', overflow: 'hidden' }}>Add Card</button>
+                        <button className="glass-btn glass-secondary" onClick={() => { setShowAddCard(false); setNewCard({ number: '', expiry: '', cvv: '', name: '' }); }} style={{ flex: 1, padding: '12px', borderRadius: '8px', border: '1px solid var(--border-mid)', backgroundColor: 'var(--bg-card-solid)', fontWeight: '600', cursor: 'pointer' }}>Cancel</button>
+                        <button className="glass-btn glass-navy" onClick={(e) => { if (newCard.number.length >= 19 && newCard.expiry.length === 5 && newCard.cvv.length === 3 && newCard.name.trim()) { confirmClick(e); const brand = newCard.number.startsWith('4') ? 'Visa' : 'MC'; setPaymentMethods([...paymentMethods, { id: Date.now(), brand, last4: newCard.number.slice(-4), expiry: newCard.expiry, isDefault: paymentMethods.length === 0 }]); setNewCard({ number: '', expiry: '', cvv: '', name: '' }); setShowAddCard(false); } else { showToast('Please fill all fields', 'error'); }}} style={{ flex: 1, padding: '12px', borderRadius: '8px', border: 'none', background: `linear-gradient(90deg, ${colors.navyBg}, ${colors.navyMidBg})`, color: 'white', fontWeight: '600', cursor: 'pointer', position: 'relative', overflow: 'hidden' }}>Add Card</button>
                       </div>
                     </div>
                   )}
@@ -9421,7 +9423,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           </div>
           {profileScreen !== 'edit' && (
             <div style={{ padding: '12px', backgroundColor: 'var(--bg-card-solid)', borderTop: '1px solid var(--divider)', flexShrink: 0 }}>
-              <button onClick={(e) => { confirmClick(e); setProfileScreen('main'); }} style={{ ...styles.gradientButton, position: 'relative', overflow: 'hidden' }}>Save</button>
+              <button className="glass-btn glass-primary" onClick={(e) => { confirmClick(e); setProfileScreen('main'); }} style={{ ...styles.gradientButton, position: 'relative', overflow: 'hidden' }}>Save</button>
             </div>
           )}
         </div>
@@ -9450,7 +9452,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           </div>
 
           {/* Add Friends Button */}
-          <button onClick={() => setCurrentScreen('addFriends')} style={{ width: '100%', padding: '14px', borderRadius: '14px', border: 'none', background: `linear-gradient(135deg, ${colors.navyBg}, ${colors.navyMidBg})`, color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '12px', boxShadow: '0 4px 12px rgba(13,40,71,0.25)', position: 'relative', overflow: 'hidden' }}>
+          <button className="glass-btn glass-secondary" onClick={() => setCurrentScreen('addFriends')} style={{ width: '100%', padding: '14px', borderRadius: '14px', border: 'none', background: `linear-gradient(135deg, ${colors.navyBg}, ${colors.navyMidBg})`, color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '12px', boxShadow: '0 4px 12px rgba(13,40,71,0.25)', position: 'relative', overflow: 'hidden' }}>
             <div style={{ width: '36px', height: '36px', borderRadius: '12px', backgroundColor: 'rgba(255,255,255,0.2)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.userPlus('white', 18)}</div>
             <div style={{ flex: 1, textAlign: 'left' }}>
               <span className="shimmer-text" style={{ fontWeight: '700', fontSize: '15px', display: 'block' }}>Add Friends</span>
@@ -9467,7 +9469,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
               { l: 'Safety', s: 'safety', icon: Icons.shield },
               { l: 'Payment', s: 'payment', icon: Icons.creditCard },
             ].map(m => (
-              <button key={m.s} onClick={() => { setProfileScreen(m.s); if (m.s === 'safety') loadTrustedContacts(); if (m.s === 'payment') { setVenmoUsername(authUser?.venmo_username || ''); setCashappCashtag(authUser?.cashapp_cashtag || ''); setZelleIdentifier(authUser?.zelle_identifier || ''); } }} style={{ width: '100%', padding: '12px', textAlign: 'left', borderBottom: '1px solid var(--border-light)', display: 'flex', alignItems: 'center', gap: '12px', backgroundColor: 'var(--bg-card-solid)', border: 'none', cursor: 'pointer' }}>
+              <button key={m.s} className="glass-btn glass-secondary" onClick={() => { setProfileScreen(m.s); if (m.s === 'safety') loadTrustedContacts(); if (m.s === 'payment') { setVenmoUsername(authUser?.venmo_username || ''); setCashappCashtag(authUser?.cashapp_cashtag || ''); setZelleIdentifier(authUser?.zelle_identifier || ''); } }} style={{ width: '100%', padding: '12px', textAlign: 'left', borderBottom: '1px solid var(--border-light)', display: 'flex', alignItems: 'center', gap: '12px', backgroundColor: 'var(--bg-card-solid)', border: 'none', cursor: 'pointer' }}>
                 <div style={{ width: '32px', height: '32px', borderRadius: '8px', backgroundColor: 'var(--icon-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{m.icon(colors.navy, 18)}</div>
                 <span style={{ flex: 1, fontWeight: '600', fontSize: '14px', color: colors.navy }}>{m.l}</span>
                 <span style={{ color: 'var(--text-tertiary)' }}>›</span>
@@ -9520,11 +9522,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 ) : notifStatus === 'denied' ? (
                   <span style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>Blocked in browser</span>
                 ) : (
-                    <button onClick={() => requestNotificationPermission().then(() => { setNotifStatus('granted'); showToast('Notifications enabled!'); }).catch(() => {})} style={{ padding: '6px 12px', borderRadius: '8px', border: `1px solid ${colors.navy}`, backgroundColor: 'var(--icon-bg)', color: colors.navy, fontSize: '12px', fontWeight: '700', cursor: 'pointer' }}>Enable</button>
+                    <button className="glass-btn glass-secondary" onClick={() => requestNotificationPermission().then(() => { setNotifStatus('granted'); showToast('Notifications enabled!'); }).catch(() => {})} style={{ padding: '6px 12px', borderRadius: '8px', border: `1px solid ${colors.navy}`, backgroundColor: 'var(--icon-bg)', color: colors.navy, fontSize: '12px', fontWeight: '700', cursor: 'pointer' }}>Enable</button>
                 )}
               </div>
             </div>
-            <button onClick={() => { if (onLogout) onLogout(); }} style={{ width: '100%', padding: '12px', textAlign: 'left', display: 'flex', alignItems: 'center', gap: '12px', backgroundColor: 'var(--bg-card-solid)', border: 'none', cursor: 'pointer', color: colors.red }}>
+            <button className="glass-btn glass-danger" onClick={() => { if (onLogout) onLogout(); }} style={{ width: '100%', padding: '12px', textAlign: 'left', display: 'flex', alignItems: 'center', gap: '12px', backgroundColor: 'var(--bg-card-solid)', border: 'none', cursor: 'pointer', color: colors.red }}>
               {Icons.logout(colors.red, 18)}
               <span style={{ fontWeight: '600', fontSize: '14px' }}>Log Out</span>
             </button>
@@ -11963,9 +11965,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                       ) : status === 'pending' ? (
                         <span style={{ padding: '6px 14px', borderRadius: '20px', backgroundColor: 'var(--pill-bg)', color: 'var(--text-secondary)', fontSize: '12px', fontWeight: '700' }}>Pending</span>
                       ) : (
-                        <button onClick={(e) => { confirmClick(e); handleSendFriendRequest(user); }} style={{ padding: '8px 16px', borderRadius: '20px', border: 'none', background: `linear-gradient(135deg, ${colors.navyBg}, ${colors.navyMidBg})`, color: 'white', fontSize: '12px', fontWeight: '700', cursor: 'pointer', position: 'relative', overflow: 'hidden' }}>Add</button>
+                        <button className="glass-btn glass-navy" onClick={(e) => { confirmClick(e); handleSendFriendRequest(user); }} style={{ padding: '8px 16px', borderRadius: '20px', border: 'none', background: `linear-gradient(135deg, ${colors.navyBg}, ${colors.navyMidBg})`, color: 'white', fontSize: '12px', fontWeight: '700', cursor: 'pointer', position: 'relative', overflow: 'hidden' }}>Add</button>
                       )}
-                      <button onClick={() => { setCurrentScreen('main'); startNewDmWithUser(user); }} style={{ padding: '8px 12px', borderRadius: '20px', border: `1.5px solid ${colors.creamDark}`, backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontSize: '12px', fontWeight: '600', cursor: 'pointer' }}>{Icons.messageSquare(colors.navy, 14)}</button>
+                      <button className="glass-btn glass-secondary" onClick={() => { setCurrentScreen('main'); startNewDmWithUser(user); }} style={{ padding: '8px 12px', borderRadius: '20px', border: `1.5px solid ${colors.creamDark}`, backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontSize: '12px', fontWeight: '600', cursor: 'pointer' }}>{Icons.messageSquare(colors.navy, 14)}</button>
                     </div>
                   </div>
                 );
@@ -12038,14 +12040,14 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 {myFriendCode && (
                   <div style={{ marginTop: '14px' }}>
                     <p style={{ fontSize: '10px', color: 'var(--text-tertiary)', margin: '0 0 6px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Your Code</p>
-                    <button onClick={() => { navigator.clipboard?.writeText(myFriendCode); showToast('Code copied!'); }} style={{ padding: '8px 20px', borderRadius: '10px', border: `2px solid ${colors.cream}`, backgroundColor: 'var(--icon-bg)', color: colors.navy, fontSize: '16px', fontWeight: '800', cursor: 'pointer', letterSpacing: '2px', fontFamily: 'monospace' }}>{myFriendCode}</button>
+                    <button className="glass-btn glass-secondary" onClick={() => { navigator.clipboard?.writeText(myFriendCode); showToast('Code copied!'); }} style={{ padding: '8px 20px', borderRadius: '10px', border: `2px solid ${colors.cream}`, backgroundColor: 'var(--icon-bg)', color: colors.navy, fontSize: '16px', fontWeight: '800', cursor: 'pointer', letterSpacing: '2px', fontFamily: 'monospace' }}>{myFriendCode}</button>
                     <p style={{ fontSize: '10px', color: 'var(--text-tertiary)', margin: '6px 0 0' }}>Tap to copy</p>
                   </div>
                 )}
               </div>
 
               {/* Scan button */}
-              <button onClick={startQrScanner} style={{ width: '100%', padding: '14px', borderRadius: '14px', border: 'none', background: `linear-gradient(135deg, ${colors.navyBg}, ${colors.navyMidBg})`, color: 'white', fontSize: '15px', fontWeight: '700', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', marginBottom: '16px', boxShadow: '0 4px 12px rgba(13,40,71,0.2)' }}>
+              <button className="glass-btn glass-navy" onClick={startQrScanner} style={{ width: '100%', padding: '14px', borderRadius: '14px', border: 'none', background: `linear-gradient(135deg, ${colors.navyBg}, ${colors.navyMidBg})`, color: 'white', fontSize: '15px', fontWeight: '700', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', marginBottom: '16px', boxShadow: '0 4px 12px rgba(13,40,71,0.2)' }}>
                 {Icons.camera('white', 18)} Scan a Friend's Code
               </button>
 
@@ -12057,7 +12059,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                   <input type="text" value={friendCodeInput} onChange={(e) => setFriendCodeInput(e.target.value.toUpperCase())} placeholder="FLOCK-XXXX" maxLength={15}
                     style={{ flex: 1, padding: '12px', borderRadius: '12px', border: `1.5px solid ${friendCodeInput ? colors.navy : colors.borderDefault}`, fontSize: '15px', fontWeight: '600', fontFamily: 'monospace', letterSpacing: '1px', outline: 'none', boxSizing: 'border-box', textAlign: 'center' }}
                   />
-                  <button onClick={(e) => { if (!friendCodeLoading) { confirmClick(e); handleAddByCode(); } }} disabled={friendCodeLoading || !friendCodeInput.trim()}
+                  <button className="glass-btn glass-navy" onClick={(e) => { if (!friendCodeLoading) { confirmClick(e); handleAddByCode(); } }} disabled={friendCodeLoading || !friendCodeInput.trim()}
                     style={{ padding: '12px 20px', borderRadius: '12px', border: 'none', background: friendCodeInput.trim() ? `linear-gradient(135deg, ${colors.navyBg}, ${colors.navyMidBg})` : 'var(--pill-bg)', color: friendCodeInput.trim() ? 'white' : 'var(--text-tertiary)', fontSize: '14px', fontWeight: '700', cursor: friendCodeInput.trim() ? 'pointer' : 'default', position: 'relative', overflow: 'hidden', opacity: friendCodeLoading ? 0.7 : 1 }}>
                     {friendCodeLoading ? '...' : 'Add'}
                   </button>
@@ -12754,7 +12756,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
                 <h4 style={{ fontSize: '13px', fontWeight: '700', color: 'var(--text-primary)', margin: 0 }}>{Icons.star(colors.amber, 14)} Flock Reviews ({venueDetailReviews.length})</h4>
                 {!showReviewForm && (
-                  <button onClick={() => { setShowReviewForm(true); setReviewRating(0); setReviewText(''); }} style={{ padding: '4px 10px', borderRadius: '6px', border: `1px solid ${colors.navy}`, backgroundColor: 'transparent', color: colors.navy, fontSize: '10px', fontWeight: '600', cursor: 'pointer' }}>
+                  <button className="glass-btn glass-secondary" onClick={() => { setShowReviewForm(true); setReviewRating(0); setReviewText(''); }} style={{ padding: '4px 10px', borderRadius: '6px', border: `1px solid ${colors.navy}`, backgroundColor: 'transparent', color: colors.navy, fontSize: '10px', fontWeight: '600', cursor: 'pointer' }}>
                     Write Review
                   </button>
                 )}
@@ -12773,7 +12775,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                   </div>
                   <SearchInputLocal as="textarea" initialValue={reviewText} onCommit={setReviewText} placeholder="How was your experience?" rows={3} style={{ width: '100%', padding: '8px 10px', borderRadius: '8px', border: '1px solid var(--border-subtle)', fontSize: '12px', backgroundColor: 'var(--bg-card-solid)', color: 'var(--text-primary)', resize: 'none', fontFamily: 'inherit', boxSizing: 'border-box' }} />
                   <div style={{ display: 'flex', gap: '6px', marginTop: '8px' }}>
-                    <button disabled={!reviewRating || reviewSubmitting} onClick={async () => {
+                    <button className="glass-btn glass-primary" disabled={!reviewRating || reviewSubmitting} onClick={async () => {
                       setReviewSubmitting(true);
                       try {
                         await submitVenueReview(venueDetailModal.place_id, reviewRating, reviewText);
@@ -12785,7 +12787,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                     }} style={{ flex: 1, padding: '8px', borderRadius: '8px', border: 'none', backgroundColor: reviewRating ? colors.navy : colors.disabled, color: 'white', fontSize: '12px', fontWeight: '600', cursor: reviewRating ? 'pointer' : 'not-allowed' }}>
                       {reviewSubmitting ? 'Submitting...' : 'Submit Review'}
                     </button>
-                    <button onClick={() => setShowReviewForm(false)} style={{ padding: '8px 12px', borderRadius: '8px', border: '1px solid var(--border-subtle)', backgroundColor: 'var(--bg-card-solid)', color: 'var(--text-secondary)', fontSize: '12px', cursor: 'pointer' }}>Cancel</button>
+                    <button className="glass-btn glass-secondary" onClick={() => setShowReviewForm(false)} style={{ padding: '8px 12px', borderRadius: '8px', border: '1px solid var(--border-subtle)', backgroundColor: 'var(--bg-card-solid)', color: 'var(--text-secondary)', fontSize: '12px', cursor: 'pointer' }}>Cancel</button>
                   </div>
                 </div>
               )}
@@ -12855,7 +12857,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                   setVenueDetailModal(null);
                   setCurrentScreen('create');
                 }
-              }} style={{ flex: 1, padding: '12px', borderRadius: '12px', border: 'none', background: `linear-gradient(135deg, ${colors.navyBg}, ${colors.navyMidBg})`, color: 'white', fontSize: '13px', fontWeight: '700', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', boxShadow: '0 4px 12px rgba(13,40,71,0.3)', position: 'relative', overflow: 'hidden' }}>
+              }} className="glass-btn glass-primary" style={{ flex: 1, padding: '12px', borderRadius: '12px', border: 'none', background: `linear-gradient(135deg, ${colors.navyBg}, ${colors.navyMidBg})`, color: 'white', fontSize: '13px', fontWeight: '700', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', boxShadow: '0 4px 12px rgba(13,40,71,0.3)', position: 'relative', overflow: 'hidden' }}>
                 {venueDetailReturnTo ? Icons.arrowLeft('white', 16) : Icons.plus('white', 16)} {pickingVenueForDm ? 'Pin to DM' : venueDetailReturnTo ? 'Back to Chat' : 'Add to Flock'}
               </button>
             </div>
@@ -12895,10 +12897,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                   getUserStats().then(d => setReliabilityScore(d.reliabilityScore || null)).catch(() => {});
                 } catch (err) { showToast('Failed to record', 'error'); }
                 finally { setAttendanceSubmitting(false); setShowAttendanceModal(false); }
-              }} style={{ flex: 1, padding: '13px', borderRadius: '14px', border: 'none', background: `linear-gradient(135deg, ${colors.teal}, ${colors.navy})`, color: '#fff', fontSize: '14px', fontWeight: '700', cursor: 'pointer', opacity: attendanceSubmitting ? 0.6 : 1 }}>
+              }} className="glass-btn glass-primary" style={{ flex: 1, padding: '13px', borderRadius: '14px', border: 'none', background: `linear-gradient(135deg, ${colors.teal}, ${colors.navy})`, color: '#fff', fontSize: '14px', fontWeight: '700', cursor: 'pointer', opacity: attendanceSubmitting ? 0.6 : 1 }}>
                 {attendanceSubmitting ? 'Saving...' : 'Confirm'}
               </button>
-              <button onClick={() => setShowAttendanceModal(false)} style={{ padding: '13px 18px', borderRadius: '14px', border: '1.5px solid var(--border-default)', background: 'var(--bg-card-solid)', color: 'var(--text-secondary)', fontSize: '14px', fontWeight: '600', cursor: 'pointer' }}>Skip</button>
+              <button className="glass-btn glass-secondary" onClick={() => setShowAttendanceModal(false)} style={{ padding: '13px 18px', borderRadius: '14px', border: '1.5px solid var(--border-default)', background: 'var(--bg-card-solid)', color: 'var(--text-secondary)', fontSize: '14px', fontWeight: '600', cursor: 'pointer' }}>Skip</button>
             </div>
           </div>
         </div>
