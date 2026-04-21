@@ -3530,6 +3530,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
 
   const handlePhotoUpload = useCallback((e) => {
     const file = e.target.files?.[0];
+    console.log('[PhotoUpload] file:', file?.name, file?.type, file?.size);
     if (!file) return;
 
     const allowedTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
@@ -3544,10 +3545,15 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
 
     const reader = new FileReader();
     reader.onload = () => {
+      console.log('[PhotoUpload] FileReader loaded, opening crop modal');
       setCropImageSrc(reader.result);
       setCropZoom(1);
       setCropOffset({ x: 0, y: 0 });
       setShowPicModal(false);
+    };
+    reader.onerror = () => {
+      console.error('[PhotoUpload] FileReader error:', reader.error);
+      showToast('Failed to read image', 'error');
     };
     reader.readAsDataURL(file);
   }, [showToast]);
@@ -12868,8 +12874,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
         </div>
       )}
       <CheckinModal />
-      <ProfilePicModal />
-      <CropModal />
+      {ProfilePicModal()}
+      {CropModal()}
       {aiAssistantModal}
       {adminPromptModal}
       <NewDmModal />
