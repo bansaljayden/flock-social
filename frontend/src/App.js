@@ -1364,15 +1364,22 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   }, []);
 
   // User Mode Selection
-  const [userMode, setUserMode] = useState(() => localStorage.getItem('flockUserMode') || null);
-  const [showModeSelection, setShowModeSelection] = useState(() => {
-    if (localStorage.getItem('flockUserMode')) return false;
-    // Regular users auto-select user mode — no mode picker shown
+  const [userMode, setUserMode] = useState(() => {
+    const saved = localStorage.getItem('flockUserMode');
+    if (saved) return saved;
+    // No saved mode — auto-select 'user' for regular users immediately (no flash)
     if (authUser?.role !== 'venue_owner' && authUser?.role !== 'admin') {
       localStorage.setItem('flockUserMode', 'user');
-      return false;
+      return 'user';
     }
-    return true;
+    return null;
+  });
+  const [showModeSelection, setShowModeSelection] = useState(() => {
+    // If we already have a mode (from localStorage or auto-selected above), skip
+    if (localStorage.getItem('flockUserMode')) return false;
+    // Only show mode picker for privileged users who haven't chosen yet
+    if (authUser?.role === 'venue_owner' || authUser?.role === 'admin') return true;
+    return false;
   });
 
   // Auto-set user mode for regular users (handles race condition with authUser loading)
@@ -5749,7 +5756,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
 
       <AIBubble />
       {SafetyButton()}
-      <BottomNav />
+      {BottomNav()}
     </div>
   );
   };
@@ -6972,7 +6979,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
       </div>
 
       {SafetyButton()}
-      <BottomNav />
+      {BottomNav()}
     </div>
   );
 
@@ -7209,7 +7216,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
         </div>
 
         {SafetyButton()}
-        <BottomNav />
+        {BottomNav()}
       </div>
     );
   };
@@ -7462,7 +7469,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           )}
         </div>
         {SafetyButton()}
-        <BottomNav />
+        {BottomNav()}
       </div>
     );
   };
@@ -9666,7 +9673,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
         </div>
 
         {SafetyButton()}
-        <BottomNav />
+        {BottomNav()}
       </div>
     );
   };
@@ -12131,7 +12138,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           )}
         </div>
 
-        <BottomNav />
+        {BottomNav()}
       </div>
     );
   };
@@ -12150,14 +12157,14 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   const isExploreVisible = currentTab === 'explore' && currentScreen === 'main' && !showModeSelection && (userMode !== 'user' || hasCompletedOnboarding);
 
   const renderScreen = () => {
-    // Show welcome screen for mode selection
+    // Show welcome screen for mode selection — only for privileged users
     if (showModeSelection) {
-      return <WelcomeScreen />;
+      return WelcomeScreen();
     }
     // Show venue onboarding for venue logins
     if (showVenueOnboarding) return VenueOnboardingScreen();
-    // Show onboarding for new users
-    if (userMode === 'user' && !hasCompletedOnboarding) return <OnboardingScreen />;
+    // Show onboarding for new users who haven't completed it
+    if (userMode === 'user' && !hasCompletedOnboarding) return OnboardingScreen();
     if (currentScreen === 'addFriends') return AddFriendsScreen();
     if (currentScreen === 'create') return CreateScreen();
     if (currentScreen === 'join') return JoinScreen();
