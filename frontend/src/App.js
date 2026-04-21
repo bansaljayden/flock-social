@@ -10661,9 +10661,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
     ];
 
     const adminCities = [
-      { name: 'Easton', users: 847, venues: 31, revenue: 14823, growth: 17 },
-      { name: 'Bethlehem', users: 1089, venues: 38, revenue: 16247, growth: 14 },
-      { name: 'Allentown', users: 623, venues: 19, revenue: 8934, growth: 11 },
+      { name: 'Lehigh Valley', users: 2450, venues: 48, revenue: 18240, growth: 22 },
+      { name: 'Philadelphia', users: 1870, venues: 35, revenue: 14875, growth: 18 },
+      { name: 'New York City', users: 3200, venues: 62, revenue: 28500, growth: 25 },
+      { name: 'Dallas', users: 980, venues: 22, revenue: 9350, growth: 15 },
     ];
 
     const adminTransactions = [
@@ -10674,12 +10675,12 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
       { id: 'TXN-4817', date: 'Jan 17', venue: 'Rooftop @ The Grand', amount: 423, type: 'booking', status: 'completed' },
     ];
 
-    // Revenue simulator state
+    // Revenue simulator state — defaults match pitch deck projections
     const [numVenues, setNumVenues] = useState(20);
-    const [subscriptionPrice, setSubscriptionPrice] = useState(50);
+    const [subscriptionPrice, setSubscriptionPrice] = useState(50); // avg of $35 Premium + $75 Pro
     const [eventsPerVenue, setEventsPerVenue] = useState(12);
     const [avgSpend, setAvgSpend] = useState(120);
-    const [takeRate, setTakeRate] = useState(2.5);
+    const [takeRate, setTakeRate] = useState(2.5); // pitch deck: 2.5% transaction fee
     const [operatingCosts, setOperatingCosts] = useState(2000);
 
     // Calculate all metrics
@@ -11047,7 +11048,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                     <div style={{ textAlign: 'right' }}>
                       <p style={{ fontSize: '12px', fontWeight: '700', color: colors.navy, margin: 0 }}>${venue.revenue}</p>
                       <span style={{ padding: '2px 6px', borderRadius: '8px', backgroundColor: venue.tier === 'pro' ? 'var(--accent-purple-bg)' : venue.tier === 'premium' ? 'var(--accent-amber-bg)' : 'var(--icon-bg)', color: venue.tier === 'pro' ? 'var(--accent-purple-text)' : venue.tier === 'premium' ? 'var(--accent-amber-text)' : 'var(--text-secondary)', fontSize: '9px', fontWeight: '600' }}>
-                        {venue.tier}
+                        {venue.tier === 'pro' ? 'Pro $75' : venue.tier === 'premium' ? 'Premium $35' : 'Free'}
                       </span>
                     </div>
                   </div>
@@ -11129,15 +11130,22 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
 
               {/* Transaction Type Breakdown */}
               <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
-                <h3 style={{ fontSize: '12px', fontWeight: '700', color: colors.navy, margin: '0 0 10px' }}>By Type</h3>
-                <div style={{ display: 'flex', gap: '12px' }}>
+                <h3 style={{ fontSize: '12px', fontWeight: '700', color: colors.navy, margin: '0 0 10px' }}>Revenue Streams</h3>
+                <div style={{ display: 'flex', gap: '8px' }}>
                   <div style={{ flex: 1, textAlign: 'center', padding: '10px', backgroundColor: 'var(--bg-card-solid)', borderRadius: '8px' }}>
-                    <p style={{ fontSize: '16px', fontWeight: '900', color: colors.navy, margin: 0 }}>68%</p>
-                    <p style={{ fontSize: '9px', color: 'var(--text-secondary)', margin: '4px 0 0' }}>Bookings</p>
+                    <p style={{ fontSize: '14px', fontWeight: '900', color: colors.navy, margin: 0 }}>69%</p>
+                    <p style={{ fontSize: '9px', color: 'var(--text-secondary)', margin: '4px 0 0' }}>Venue Subs</p>
+                    <p style={{ fontSize: '8px', color: 'var(--text-tertiary)', margin: '2px 0 0' }}>$35-75/mo</p>
                   </div>
                   <div style={{ flex: 1, textAlign: 'center', padding: '10px', backgroundColor: 'var(--bg-card-solid)', borderRadius: '8px' }}>
-                    <p style={{ fontSize: '16px', fontWeight: '900', color: colors.navy, margin: 0 }}>32%</p>
-                    <p style={{ fontSize: '9px', color: 'var(--text-secondary)', margin: '4px 0 0' }}>Subscriptions</p>
+                    <p style={{ fontSize: '14px', fontWeight: '900', color: colors.navy, margin: 0 }}>23%</p>
+                    <p style={{ fontSize: '9px', color: 'var(--text-secondary)', margin: '4px 0 0' }}>Txn Fees</p>
+                    <p style={{ fontSize: '8px', color: 'var(--text-tertiary)', margin: '2px 0 0' }}>2.5%</p>
+                  </div>
+                  <div style={{ flex: 1, textAlign: 'center', padding: '10px', backgroundColor: 'var(--bg-card-solid)', borderRadius: '8px' }}>
+                    <p style={{ fontSize: '14px', fontWeight: '900', color: colors.navy, margin: 0 }}>8%</p>
+                    <p style={{ fontSize: '9px', color: 'var(--text-secondary)', margin: '4px 0 0' }}>User Subs</p>
+                    <p style={{ fontSize: '8px', color: 'var(--text-tertiary)', margin: '2px 0 0' }}>$15-30/mo</p>
                   </div>
                 </div>
               </div>
@@ -11177,12 +11185,12 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                     <div key={q} style={{ textAlign: 'center' }}>
                       <div style={{ height: `${40 + i * 20}px`, backgroundColor: colors.navyBg, borderRadius: '4px', marginBottom: '4px', opacity: 0.3 + i * 0.2 }} />
                       <p style={{ fontSize: '10px', fontWeight: '600', color: colors.navy, margin: 0 }}>{q}</p>
-                      <p style={{ fontSize: '9px', color: 'var(--text-secondary)', margin: 0 }}>${[52, 78, 112, 156][i]}K</p>
+                      <p style={{ fontSize: '9px', color: 'var(--text-secondary)', margin: 0 }}>${[18, 28, 38, 46][i]}K</p>
                     </div>
                   ))}
                 </div>
                 <div style={{ padding: '8px', backgroundColor: 'var(--accent-green-bg)', borderRadius: '8px', textAlign: 'center' }}>
-                  <p style={{ fontSize: '10px', fontWeight: '700', color: 'var(--accent-green-text)', margin: 0 }}>Projected ARR: $624K (+200% YoY)</p>
+                  <p style={{ fontSize: '10px', fontWeight: '700', color: 'var(--accent-green-text)', margin: 0 }}>Y1 Projected: $130K | Y2: $435K | Y3: $1.14M</p>
                 </div>
               </div>
 
@@ -11190,10 +11198,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
               <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
                 <h3 style={{ fontSize: '12px', fontWeight: '700', color: colors.navy, margin: '0 0 10px' }}>EOY Targets</h3>
                 {[
-                  { metric: 'Total Users', current: '3,200', target: '15,000', progress: 21 },
-                  { metric: 'Active Venues', current: '117', target: '500', progress: 23 },
+                  { metric: 'Total Users', current: '8,500', target: '75,000', progress: 11 },
+                  { metric: 'Venue Partners', current: '167', target: '650', progress: 26 },
                   { metric: 'Cities', current: '4', target: '12', progress: 33 },
-                  { metric: 'Monthly Revenue', current: '$18K', target: '$52K', progress: 35 },
+                  { metric: 'Monthly Revenue', current: '$10.8K', target: '$36K', progress: 30 },
                 ].map(item => (
                   <div key={item.metric} style={{ marginBottom: '10px' }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
@@ -11248,14 +11256,14 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           {adminTab === 'research' && (() => {
             const demoMode = researchDemoMode;
             const data = demoMode ? {
-              totalFlocks: 847, completionRate: 73, avgGroupSize: 4.2, budgetAdoptionRate: 68,
-              avgTimeToConfirmation: 42, totalUsers: 3247, newUsersThisWeek: 89,
+              totalFlocks: 2340, completionRate: 78, avgGroupSize: 4.8, budgetAdoptionRate: 72,
+              avgTimeToConfirmation: 5, totalUsers: 8500, newUsersThisWeek: 247,
               stallPointDistribution: [
-                { stall_point: 'completed', count: 618 }, { stall_point: 'venue', count: 89 },
-                { stall_point: 'rsvp', count: 72 }, { stall_point: 'confirmation', count: 41 },
-                { stall_point: 'budget', count: 27 },
+                { stall_point: 'completed', count: 1825 }, { stall_point: 'venue', count: 198 },
+                { stall_point: 'rsvp', count: 164 }, { stall_point: 'confirmation', count: 98 },
+                { stall_point: 'budget', count: 55 },
               ],
-              reliabilityDistribution: { reliable: 412, moderate: 187, flaky: 43, unscored: 2605 },
+              reliabilityDistribution: { reliable: 3240, moderate: 1870, flaky: 390, unscored: 3000 },
             } : (researchLiveData || {});
             const stallColors = { completed: colors.teal, venue: '#F59E0B', rsvp: '#EF4444', confirmation: '#8B5CF6', budget: '#3B82F6' };
             const stallTotal = (data.stallPointDistribution || []).reduce((s, p) => s + parseInt(p.count), 0) || 1;
