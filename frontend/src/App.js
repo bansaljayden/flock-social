@@ -5573,20 +5573,18 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           </button>
         </div>
 
-        {/* Stats */}
+        {/* Stats — glass cards */}
         <div style={{ display: 'flex', gap: '8px' }}>
-          <div style={{ flex: 1, borderRadius: '12px', padding: '12px 10px', backgroundColor: 'rgba(255,255,255,0.1)' }}>
-            <p style={{ fontSize: '9px', color: 'rgba(255,255,255,0.5)', margin: 0, textTransform: 'uppercase', letterSpacing: '0.5px' }}>Active Flocks</p>
-            <p style={{ fontSize: '20px', fontWeight: '800', color: 'white', margin: '4px 0 0' }}>{flocks.length}</p>
-          </div>
-          <div style={{ flex: 1, borderRadius: '12px', padding: '12px 10px', backgroundColor: 'rgba(255,255,255,0.1)' }}>
-            <p style={{ fontSize: '9px', color: 'rgba(255,255,255,0.5)', margin: 0, textTransform: 'uppercase', letterSpacing: '0.5px' }}>Friends</p>
-            <p style={{ fontSize: '20px', fontWeight: '800', color: 'white', margin: '4px 0 0' }}>{friendCount}</p>
-          </div>
-          <div style={{ flex: 1, borderRadius: '12px', padding: '12px 10px', backgroundColor: 'rgba(255,255,255,0.1)' }}>
-            <p style={{ fontSize: '9px', color: 'rgba(255,255,255,0.5)', margin: 0, textTransform: 'uppercase', letterSpacing: '0.5px' }}>Day Streak</p>
-            <p style={{ fontSize: '20px', fontWeight: '800', color: 'white', margin: '4px 0 0' }}>{streak}</p>
-          </div>
+          {[
+            { label: 'Active Flocks', value: flocks.length },
+            { label: 'Friends', value: friendCount },
+            { label: 'Day Streak', value: streak },
+          ].map(stat => (
+            <div key={stat.label} style={{ flex: 1, borderRadius: '14px', padding: '12px 10px', backgroundColor: 'rgba(255,255,255,0.08)', backdropFilter: 'blur(16px)', WebkitBackdropFilter: 'blur(16px)', border: '1px solid rgba(255,255,255,0.15)', boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.1), 0 4px 12px rgba(0,0,0,0.1)' }}>
+              <p style={{ fontSize: '9px', color: 'rgba(255,255,255,0.55)', margin: 0, textTransform: 'uppercase', letterSpacing: '0.5px' }}>{stat.label}</p>
+              <p style={{ fontSize: '20px', fontWeight: '800', color: 'white', margin: '4px 0 0' }}>{stat.value}</p>
+            </div>
+          ))}
         </div>
       </div>
 
@@ -5595,7 +5593,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
         {/* Quick Glance Cards */}
         <ScrollFade><div style={{ display: 'flex', gap: '8px', marginBottom: '12px', overflowX: 'auto', paddingBottom: '6px' }}>
           {/* Happening Now */}
-          <button onClick={() => { setCurrentTab('explore'); }} style={{ flexShrink: 0, padding: '8px 14px', borderRadius: '12px', border: '1px solid var(--border-default)', backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer', textAlign: 'left' }}>
+          <button onClick={() => { setCurrentTab('explore'); }} style={{ flexShrink: 0, padding: '8px 14px', borderRadius: '12px', border: '1px solid rgba(255,255,255,0.12)', backgroundColor: 'rgba(255,255,255,0.06)', backdropFilter: 'blur(12px)', WebkitBackdropFilter: 'blur(12px)', cursor: 'pointer', textAlign: 'left', boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.08), 0 2px 8px rgba(0,0,0,0.06)' }}>
             <p style={{ fontSize: '11px', fontWeight: '800', color: 'var(--text-primary)', margin: '0 0 1px', whiteSpace: 'nowrap' }}>Happening Now</p>
             <p style={{ fontSize: '9px', color: 'var(--text-tertiary)', margin: 0, whiteSpace: 'nowrap' }}>
               {allVenues.filter(v => v.crowd > 60).length > 0 ? `${allVenues.filter(v => v.crowd > 60).length} busy spots` : 'See what\'s hot'}
@@ -5606,7 +5604,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           {(() => {
             const needsAction = flocks.filter(f => f.status === 'voting');
             return (
-              <button onClick={() => { if (needsAction.length > 0) { setSelectedFlockId(needsAction[0].id); setCurrentScreen('detail'); } }} style={{ flexShrink: 0, padding: '8px 14px', borderRadius: '12px', border: needsAction.length > 0 ? `1px solid var(--accent-amber-text)` : '1px solid var(--border-default)', backgroundColor: needsAction.length > 0 ? 'var(--accent-amber-bg)' : 'var(--bg-card-solid)', cursor: 'pointer', textAlign: 'left' }}>
+              <button onClick={() => { if (needsAction.length > 0) { setSelectedFlockId(needsAction[0].id); setCurrentScreen('detail'); } }} style={{ flexShrink: 0, padding: '8px 14px', borderRadius: '12px', border: needsAction.length > 0 ? `1px solid var(--accent-amber-text)` : '1px solid rgba(255,255,255,0.12)', backgroundColor: needsAction.length > 0 ? 'var(--accent-amber-bg)' : 'rgba(255,255,255,0.06)', backdropFilter: 'blur(12px)', WebkitBackdropFilter: 'blur(12px)', cursor: 'pointer', textAlign: 'left', boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.08), 0 2px 8px rgba(0,0,0,0.06)' }}>
                 <p style={{ fontSize: '11px', fontWeight: '800', color: 'var(--text-primary)', margin: '0 0 1px', whiteSpace: 'nowrap' }}>Needs You</p>
                 <p style={{ fontSize: '9px', color: needsAction.length > 0 ? 'var(--accent-amber-text)' : 'var(--text-tertiary)', margin: 0, fontWeight: needsAction.length > 0 ? '700' : '400', whiteSpace: 'nowrap' }}>
                   {needsAction.length > 0 ? `${needsAction.length} pending` : 'All caught up'}
@@ -5619,7 +5617,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           {(() => {
             const confirmed = flocks.filter(f => f.status === 'confirmed' || f.status === 'locked');
             return (
-              <button onClick={() => { if (confirmed.length > 0) { setSelectedFlockId(confirmed[0].id); setCurrentScreen('detail'); } }} style={{ flexShrink: 0, padding: '8px 14px', borderRadius: '12px', border: '1px solid var(--border-default)', backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer', textAlign: 'left' }}>
+              <button onClick={() => { if (confirmed.length > 0) { setSelectedFlockId(confirmed[0].id); setCurrentScreen('detail'); } }} style={{ flexShrink: 0, padding: '8px 14px', borderRadius: '12px', border: '1px solid rgba(255,255,255,0.12)', backgroundColor: 'rgba(255,255,255,0.06)', backdropFilter: 'blur(12px)', WebkitBackdropFilter: 'blur(12px)', cursor: 'pointer', textAlign: 'left', boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.08), 0 2px 8px rgba(0,0,0,0.06)' }}>
                 <p style={{ fontSize: '11px', fontWeight: '800', color: 'var(--text-primary)', margin: '0 0 1px', whiteSpace: 'nowrap' }}>This Week</p>
                 <p style={{ fontSize: '9px', color: 'var(--text-tertiary)', margin: 0, whiteSpace: 'nowrap' }}>
                   {confirmed.length > 0 ? `${confirmed.length} plan${confirmed.length > 1 ? 's' : ''} set` : 'Nothing yet'}
@@ -5629,7 +5627,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           })()}
 
           {/* Friends */}
-          <button onClick={() => setCurrentScreen('addFriends')} style={{ flexShrink: 0, padding: '8px 14px', borderRadius: '12px', border: '1px solid var(--border-default)', backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer', textAlign: 'left' }}>
+          <button onClick={() => setCurrentScreen('addFriends')} style={{ flexShrink: 0, padding: '8px 14px', borderRadius: '12px', border: '1px solid rgba(255,255,255,0.12)', backgroundColor: 'rgba(255,255,255,0.06)', backdropFilter: 'blur(12px)', WebkitBackdropFilter: 'blur(12px)', cursor: 'pointer', textAlign: 'left', boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.08), 0 2px 8px rgba(0,0,0,0.06)' }}>
             <p style={{ fontSize: '11px', fontWeight: '800', color: 'var(--text-primary)', margin: '0 0 1px', whiteSpace: 'nowrap' }}>Friends</p>
             <p style={{ fontSize: '9px', color: 'var(--text-tertiary)', margin: 0, whiteSpace: 'nowrap' }}>{friendCount} connected</p>
           </button>
@@ -5644,14 +5642,16 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
               flex: 1.2,
               padding: '16px',
               borderRadius: '16px',
-              border: 'none',
+              border: '1px solid rgba(255,255,255,0.15)',
               background: `linear-gradient(135deg, ${colors.navyBg}, ${colors.navyMidBg})`,
               color: 'white',
               fontWeight: '800',
               fontSize: '14px',
               cursor: 'pointer',
-              boxShadow: '0 6px 20px rgba(13,40,71,0.3), 0 2px 4px rgba(0,0,0,0.1)',
-              transition: 'opacity 0.2s ease',
+              boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.15), 0 6px 20px rgba(13,40,71,0.3), 0 2px 4px rgba(0,0,0,0.1)',
+              backdropFilter: 'blur(12px)',
+              WebkitBackdropFilter: 'blur(12px)',
+              transition: 'transform 0.2s ease, box-shadow 0.2s ease',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
@@ -5666,14 +5666,16 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
               flex: 0.8,
               padding: '14px',
               borderRadius: '14px',
-              border: `2px solid ${colors.navy}`,
-              backgroundColor: 'var(--bg-card-solid)',
+              border: '1px solid rgba(255,255,255,0.12)',
+              backgroundColor: 'rgba(255,255,255,0.06)',
+              backdropFilter: 'blur(16px)',
+              WebkitBackdropFilter: 'blur(16px)',
               color: colors.navy,
               fontWeight: '700',
               fontSize: '13px',
               cursor: 'pointer',
-              transition: 'opacity 0.2s ease',
-              boxShadow: '0 2px 8px rgba(13,40,71,0.08)',
+              transition: 'transform 0.2s ease, box-shadow 0.2s ease',
+              boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.1), 0 4px 12px rgba(0,0,0,0.06)',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
