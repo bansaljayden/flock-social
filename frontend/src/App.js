@@ -3521,36 +3521,91 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
     }
   }, [showCameraViewfinder, closeCameraViewfinder]);
 
-  const handlePhotoUpload = useCallback(async (e) => {
+  // Crop flow state
+  const [cropImageSrc, setCropImageSrc] = useState(null); // raw image data URL for cropping
+  const [cropZoom, setCropZoom] = useState(1);
+  const [cropOffset, setCropOffset] = useState({ x: 0, y: 0 });
+  const cropDragRef = useRef(null);
+  const cropImgRef = useRef(null);
+
+  const handlePhotoUpload = useCallback((e) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    // Client-side validation
     const allowedTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
     if (!allowedTypes.includes(file.type)) {
-      alert('Please upload a JPEG, PNG, GIF, or WebP image.');
+      showToast('Please upload a JPEG, PNG, GIF, or WebP image.', 'error');
       return;
     }
     if (file.size > 5 * 1024 * 1024) {
-      alert('Image must be under 5 MB.');
+      showToast('Image must be under 5 MB.', 'error');
       return;
     }
 
-    // Show preview immediately
     const reader = new FileReader();
-    reader.onload = () => setProfilePic(reader.result);
+    reader.onload = () => {
+      setCropImageSrc(reader.result);
+      setCropZoom(1);
+      setCropOffset({ x: 0, y: 0 });
+      setShowPicModal(false);
+    };
     reader.readAsDataURL(file);
-    setShowPicModal(false);
+  }, [showToast]);
 
-    // Upload to backend
-    try {
-      const data = await uploadProfileImage(file);
-      const url = data.profile_image_url;
-      setProfilePic(url.startsWith('data:') || url.startsWith('http') ? url : `${BASE_URL}${url}`);
-    } catch (err) {
-      console.error('Profile pic upload failed:', err);
+  const confirmCrop = useCallback(async () => {
+    const img = cropImgRef.current;
+    if (!img || !cropImageSrc) return;
+
+    // Draw cropped region to a square canvas
+    const canvas = document.createElement('canvas');
+    const outputSize = 400;
+    canvas.width = outputSize;
+    canvas.height = outputSize;
+    const ctx = canvas.getContext('2d');
+
+    // Calculate crop area from zoom + offset
+    const imgAspect = img.naturalWidth / img.naturalHeight;
+    const containerSize = 280; // crop preview container
+    let drawW, drawH;
+    if (imgAspect > 1) {
+      drawH = containerSize * cropZoom;
+      drawW = drawH * imgAspect;
+    } else {
+      drawW = containerSize * cropZoom;
+      drawH = drawW / imgAspect;
     }
-  }, []);
+    // The visible circle is centered in the container; compute source coords
+    const visibleCenterX = containerSize / 2;
+    const visibleCenterY = containerSize / 2;
+    const imgDrawX = (containerSize - drawW) / 2 + cropOffset.x;
+    const imgDrawY = (containerSize - drawH) / 2 + cropOffset.y;
+    // Source pixels
+    const sx = ((visibleCenterX - containerSize / 2) - imgDrawX) / drawW * img.naturalWidth;
+    const sy = ((visibleCenterY - containerSize / 2) - imgDrawY) / drawH * img.naturalHeight;
+    const sSize = (containerSize / drawW) * img.naturalWidth;
+
+    ctx.drawImage(img, sx, sy, sSize, sSize, 0, 0, outputSize, outputSize);
+
+    canvas.toBlob(async (blob) => {
+      if (!blob) return;
+      // Preview immediately
+      const previewUrl = URL.createObjectURL(blob);
+      setProfilePic(previewUrl);
+      setCropImageSrc(null);
+
+      // Upload
+      try {
+        const file = new File([blob], 'profile.jpg', { type: 'image/jpeg' });
+        const data = await uploadProfileImage(file);
+        const url = data.profile_image_url;
+        setProfilePic(url.startsWith('data:') || url.startsWith('http') ? url : `${BASE_URL}${url}`);
+        showToast('Profile picture updated!', 'success');
+      } catch (err) {
+        console.error('Profile pic upload failed:', err);
+        showToast('Upload failed', 'error');
+      }
+    }, 'image/jpeg', 0.9);
+  }, [cropImageSrc, cropZoom, cropOffset, showToast]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const generateAIAvatar = useCallback(async () => {
     const avatarStyles = ['adventurer', 'avataaars', 'bottts', 'personas', 'pixel-art'];
@@ -3955,6 +4010,59 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           <button onClick={generateAIAvatar} style={{ ...styles.gradientButton, background: 'var(--bg-card-solid)', color: colors.navy, border: `2px solid ${colors.navy}`, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}>{Icons.robot(colors.navy, 16)} Generate AI Avatar</button>
           <button onClick={() => setShowPicModal(false)} style={{ background: 'none', border: 'none', color: 'var(--text-tertiary)', padding: '8px', cursor: 'pointer' }}>Cancel</button>
         </div>
+      </div>
+    </div>
+  );
+
+  // Crop modal — shown after selecting a photo, before uploading
+  const CropModal = () => cropImageSrc && (
+    <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.9)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', zIndex: 60, padding: '16px' }}>
+      <h2 style={{ fontSize: '18px', fontWeight: '900', color: 'white', margin: '0 0 16px', textAlign: 'center' }}>Crop Photo</h2>
+      <p style={{ fontSize: '12px', color: 'rgba(255,255,255,0.5)', margin: '0 0 12px' }}>Drag to reposition, pinch/scroll to zoom</p>
+
+      {/* Crop area — circular preview */}
+      <div
+        style={{ width: '280px', height: '280px', borderRadius: '50%', overflow: 'hidden', position: 'relative', cursor: 'grab', border: '3px solid rgba(255,255,255,0.3)', touchAction: 'none' }}
+        onPointerDown={(e) => {
+          cropDragRef.current = { startX: e.clientX - cropOffset.x, startY: e.clientY - cropOffset.y };
+          e.currentTarget.setPointerCapture(e.pointerId);
+          e.currentTarget.style.cursor = 'grabbing';
+        }}
+        onPointerMove={(e) => {
+          if (!cropDragRef.current) return;
+          setCropOffset({ x: e.clientX - cropDragRef.current.startX, y: e.clientY - cropDragRef.current.startY });
+        }}
+        onPointerUp={(e) => { cropDragRef.current = null; e.currentTarget.style.cursor = 'grab'; }}
+        onWheel={(e) => { e.preventDefault(); setCropZoom(z => Math.max(0.5, Math.min(4, z + (e.deltaY > 0 ? -0.1 : 0.1)))); }}
+      >
+        <img
+          ref={cropImgRef}
+          src={cropImageSrc}
+          alt="Crop"
+          draggable={false}
+          style={{
+            position: 'absolute',
+            top: '50%', left: '50%',
+            transform: `translate(calc(-50% + ${cropOffset.x}px), calc(-50% + ${cropOffset.y}px)) scale(${cropZoom})`,
+            maxWidth: 'none', maxHeight: 'none',
+            width: '100%', height: 'auto',
+            objectFit: 'contain',
+            pointerEvents: 'none',
+          }}
+        />
+      </div>
+
+      {/* Zoom slider */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginTop: '16px', width: '280px' }}>
+        <span style={{ fontSize: '14px', color: 'white' }}>-</span>
+        <input type="range" min="0.5" max="4" step="0.05" value={cropZoom} onChange={(e) => setCropZoom(parseFloat(e.target.value))} style={{ flex: 1, accentColor: colors.teal }} />
+        <span style={{ fontSize: '14px', color: 'white' }}>+</span>
+      </div>
+
+      {/* Action buttons */}
+      <div style={{ display: 'flex', gap: '12px', marginTop: '20px', width: '280px' }}>
+        <button onClick={() => setCropImageSrc(null)} style={{ flex: 1, padding: '14px', borderRadius: '14px', border: '1px solid rgba(255,255,255,0.2)', backgroundColor: 'transparent', color: 'white', fontWeight: '700', fontSize: '14px', cursor: 'pointer' }}>Cancel</button>
+        <button onClick={confirmCrop} style={{ flex: 1, padding: '14px', borderRadius: '14px', border: 'none', background: `linear-gradient(90deg, ${colors.navyBg}, ${colors.navyMidBg})`, color: 'white', fontWeight: '700', fontSize: '14px', cursor: 'pointer' }}>Confirm</button>
       </div>
     </div>
   );
@@ -12761,6 +12869,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
       )}
       <CheckinModal />
       <ProfilePicModal />
+      <CropModal />
       {aiAssistantModal}
       {adminPromptModal}
       <NewDmModal />
