@@ -175,7 +175,7 @@ router.post('/:flockId/create',
         const payerName = payer?.name || 'Someone';
         for (const share of shares) {
           if (share.userId === payerId) continue; // Don't notify the payer
-          pushIfOffline(io, share.userId,
+          await pushIfOffline(io, share.userId,
             'Bill split created',
             `You owe ${payerName} $${share.amount.toFixed(2)} for ${flockName}`,
             { type: 'bill_created', flockId: String(flockId) }

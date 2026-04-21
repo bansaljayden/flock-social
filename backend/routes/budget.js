@@ -127,7 +127,7 @@ router.post('/:flockId/submit',
           [flockId, userId]
         );
         for (const m of membersResult.rows) {
-          pushIfOffline(io, m.user_id,
+          await pushIfOffline(io, m.user_id,
             'Budget set!',
             `Group budget: up to $${Math.floor(visibleCeiling)} for ${flockName}`,
             { type: 'budget_ready', flockId: String(flockId) }
@@ -344,7 +344,7 @@ router.post('/:flockId/remind',
 
       // Push regardless of online status — explicit creator action
       for (const member of missingResult.rows) {
-        pushAlways(member.id,
+        await pushAlways(member.id,
           'Budget reminder',
           `Submit your budget for ${flockName}`,
           { type: 'budget_reminder', flockId: String(flockId) }

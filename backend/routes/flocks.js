@@ -366,7 +366,7 @@ router.put('/:id',
         const timeStr = updated.event_time ? new Date(updated.event_time).toLocaleString('en-US', { weekday: 'short', hour: 'numeric', minute: '2-digit' }) : '';
         const bodyText = [updated.name, updated.venue_name, timeStr].filter(Boolean).join(' — ');
         for (const m of membersResult.rows) {
-          pushIfOffline(io, m.user_id,
+          await pushIfOffline(io, m.user_id,
             "It's happening!",
             bodyText,
             { type: 'flock_confirmed', flockId: String(flockId) }
@@ -494,7 +494,7 @@ router.post('/:id/join', param('id').isInt(), async (req, res) => {
     // Push notification to flock creator
     const flockData = await pool.query('SELECT creator_id, name FROM flocks WHERE id = $1', [flockId]);
     if (flockData.rows.length > 0 && flockData.rows[0].creator_id !== req.user.id) {
-      pushIfOffline(io, flockData.rows[0].creator_id,
+      await pushIfOffline(io, flockData.rows[0].creator_id,
         `${req.user.name} is going!`,
         flockData.rows[0].name,
         { type: 'flock_rsvp', flockId: String(flockId) }
@@ -603,7 +603,7 @@ router.post('/:id/invite',
 
           // Push notifications for offline invited users
           for (const inv of invited) {
-            pushIfOffline(io, inv.user_id,
+            await pushIfOffline(io, inv.user_id,
               `${req.user.name} invited you to a flock`,
               flockName,
               { type: 'flock_invite', flockId: String(flockId) }
@@ -825,7 +825,7 @@ router.post('/:id/attendance',
       // Push to offline users
       for (const r of results) {
         if (r.userId !== req.user.id) {
-          pushIfOffline(io, r.userId,
+          await pushIfOffline(io, r.userId,
             'Attendance recorded',
             `${flock.rows[0].name} — your reliability score updated`,
             { type: 'attendance_marked', flockId: String(flockId) }
