@@ -92,7 +92,7 @@ router.post('/request',
       if (io) io.to(`user:${user_id}`).emit('friend_request_received', { fromUserId: req.user.id, fromUserName: req.user.name });
 
       // Push notification
-      pushIfOffline(io, user_id,
+      await pushIfOffline(io, user_id,
         'New friend request',
         `${req.user.name} wants to be friends`,
         { type: 'friend_request', fromUserId: String(req.user.id) }

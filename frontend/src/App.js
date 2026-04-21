@@ -220,17 +220,14 @@ const GoogleMapView = React.memo(({ venues, filterCategory, userLocation, active
               lat: position.coords.latitude,
               lng: position.coords.longitude
             };
-            console.log('[Map] User location:', userLoc);
             resolve(userLoc);
           },
           (error) => {
-            console.log('[Map] Geolocation denied/failed:', error.message, '- using Hellertown fallback');
             resolve({ lat: 40.5798, lng: -75.2932 });
           },
           { enableHighAccuracy: true, timeout: 8000, maximumAge: 0 }
         );
       } else {
-        console.log('[Map] Geolocation not supported - using Hellertown fallback');
         resolve({ lat: 40.5798, lng: -75.2932 });
       }
     });
@@ -305,7 +302,6 @@ const GoogleMapView = React.memo(({ venues, filterCategory, userLocation, active
       // Get user's REAL location (wherever they are!)
       const userLoc = await getUserLocation();
 
-      console.log('[Map] Initializing map at:', userLoc);
 
       // Create map centered on THEIR location
       const savedMapType = localStorage.getItem('flock_map_type') || 'roadmap';
@@ -327,7 +323,6 @@ const GoogleMapView = React.memo(({ venues, filterCategory, userLocation, active
       setMapReady(true);
       map.addListener('click', () => { setActiveVenue(null); });
 
-      console.log('[Map] Map created, centered on user at', userLoc.lat, userLoc.lng);
 
       // Listen for permission changes (denied → granted)
       if (navigator.permissions) {
@@ -337,7 +332,6 @@ const GoogleMapView = React.memo(({ venues, filterCategory, userLocation, active
               navigator.geolocation.getCurrentPosition(
                 (pos) => {
                   const newLoc = { lat: pos.coords.latitude, lng: pos.coords.longitude };
-                  console.log('[Map] Permission changed to granted, re-centering:', newLoc);
                   map.panTo(newLoc);
                   map.setZoom(DEFAULT_ZOOM);
                 },
@@ -1905,7 +1899,6 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           { fps: 10, qrbox: { width: 250, height: 250 } },
           async (decodedText) => {
             // Successfully scanned
-            console.log('[QR Scan] Raw:', decodedText);
             try {
               const parsed = JSON.parse(decodedText);
               if (parsed.type === 'flock_friend' && parsed.code) {
@@ -2527,7 +2520,6 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
 
   // Core venue loading function
   const loadVenuesAtLocation = useCallback((lat, lng) => {
-    console.log('[Geo] Loading venues near:', lat, lng);
     setUserLocation({ lat, lng });
     localStorage.setItem('flock_user_lat', String(lat));
     localStorage.setItem('flock_user_lng', String(lng));
@@ -2535,7 +2527,6 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
     const cacheKey = `nearby|${locStr}`;
     const cached = searchCacheRef.current[cacheKey];
     if (cached && Date.now() - cached.timestamp < 300000) {
-      console.log('[Geo] Using cached nearby venues');
       setAllVenues(venuesToMapPins(cached.data));
       setMapVenuesLoaded(true);
       return;
@@ -2592,7 +2583,6 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
     navigator.geolocation.getCurrentPosition(
       (pos) => {
         const { latitude, longitude } = pos.coords;
-        console.log('[Geo] Got position:', latitude, longitude);
         setLocationLoading(false);
         loadVenuesAtLocation(latitude, longitude);
         if (forceRefresh && window.__flockGoToMyLocation) {
@@ -2931,14 +2921,12 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
       // Toast removed — banner shows location status
       return;
     }
-    console.log('[Location] Started sharing for flock:', flockId);
     emitLocation(flockId, userLocation.lat, userLocation.lng);
     setSharingLocationForFlock(flockId);
   }, [userLocation]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const stopLocationSharing = useCallback(() => {
     if (!sharingLocationForFlock) return;
-    console.log('[Location] Stopped sharing');
     socketStopSharing(sharingLocationForFlock);
     setSharingLocationForFlock(null);
     setFlockMemberLocations({});
@@ -2973,7 +2961,6 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   // Listen for member location updates
   useEffect(() => {
     const unsubLocation = onLocationUpdate((data) => {
-      console.log('[Location] Received member location:', data);
       setFlockMemberLocations(prev => ({
         ...prev,
         [data.userId]: { lat: data.lat, lng: data.lng, name: data.name, timestamp: data.timestamp },
@@ -3544,7 +3531,6 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
 
   const handlePhotoUpload = useCallback((e) => {
     const file = e.target.files?.[0];
-    console.log('[PhotoUpload] file:', file?.name, file?.type, file?.size);
     if (!file) return;
 
     const allowedTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
@@ -3559,7 +3545,6 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
 
     const reader = new FileReader();
     reader.onload = () => {
-      console.log('[PhotoUpload] FileReader loaded, opening crop modal');
       setCropImageSrc(reader.result);
       setCropZoom(1);
       setCropOffset({ x: 0, y: 0 });
@@ -11415,7 +11400,6 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
       debounceRef.current = setTimeout(async () => {
         try {
           const data = await searchVenues(val);
-          console.log('[VenueSearch]', val, JSON.stringify(Object.keys(data)), Array.isArray(data.venues) ? data.venues.length : 'no venues key');
           setSuggestions((data.venues || data.results || []).slice(0, 5));
           setShowSuggestions(true);
         } catch (e) { console.error('[VenueSearch] Error:', e); }
@@ -12152,6 +12136,16 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
     );
   };
 
+  // Redirect unauthorized users away from protected screens (in useEffect, not render)
+  React.useEffect(() => {
+    if (currentScreen === 'venueDashboard' && authUser?.role !== 'venue_owner' && authUser?.role !== 'admin') {
+      setCurrentScreen('main');
+    }
+    if (currentScreen === 'adminRevenue' && authUser?.role !== 'admin') {
+      setCurrentScreen('main');
+    }
+  }, [currentScreen, authUser]);
+
   // RENDER - Call functions directly instead of JSX to prevent component recreation
   const isExploreVisible = currentTab === 'explore' && currentScreen === 'main' && !showModeSelection && (userMode !== 'user' || hasCompletedOnboarding);
 
@@ -12172,13 +12166,13 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
     if (currentScreen === 'dmDetail') return dmDetailScreen;
     if (currentScreen === 'venueDashboard') {
       if (authUser?.role !== 'venue_owner' && authUser?.role !== 'admin') {
-        setCurrentScreen('main'); return null;
+        return null; // useEffect below will redirect
       }
       return VenueDashboard();
     }
     if (currentScreen === 'adminRevenue') {
       if (authUser?.role !== 'admin') {
-        setCurrentScreen('main'); return null;
+        return null; // useEffect below will redirect
       }
       return <RevenueScreen />;
     }

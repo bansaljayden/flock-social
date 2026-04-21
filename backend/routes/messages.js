@@ -463,7 +463,7 @@ router.post('/dm/messages/:id/react',
       }
 
       const result = await pool.query(
-        `INSERT INTO dm_emoji_reactions (dm_id, user_id, emoji) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING RETURNING *`,
+        `INSERT INTO dm_emoji_reactions (dm_id, user_id, emoji) VALUES ($1, $2, $3) ON CONFLICT (dm_id, user_id, emoji) DO NOTHING RETURNING *`,
         [dmId, req.user.id, emoji]
       );
       if (result.rows.length === 0) return res.status(400).json({ error: 'Already reacted' });

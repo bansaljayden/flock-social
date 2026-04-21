@@ -83,6 +83,10 @@ router.post('/login', loginValidation, async (req, res) => {
     }
 
     const user = result.rows[0];
+    // OAuth users have null password — they must use Google login
+    if (!user.password) {
+      return res.status(401).json({ error: 'This account uses Google Sign-In' });
+    }
     const validPassword = await bcrypt.compare(password, user.password);
     if (!validPassword) {
       console.warn(`Failed login attempt for ${email} from ${req.ip} at ${new Date().toISOString()}`);
