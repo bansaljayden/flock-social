@@ -3926,7 +3926,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
         justifyContent: 'center',
         boxShadow: isDark ? '0 6px 20px rgba(79,70,229,0.4), 0 2px 6px rgba(0,0,0,0.2)' : '0 6px 20px rgba(13,40,71,0.25), 0 2px 6px rgba(0,0,0,0.1)',
         overflow: 'hidden',
-        border: isDark ? '2px solid rgba(124,58,237,0.6)' : '2px solid rgba(13,40,71,0.2)',
+        border: isDark ? '2px solid #3b82f6' : '2px solid #3b82f6',
         position: 'relative',
       }}>
         <img draggable="false" src={isDark ? "/birdie-avatar.png" : "/birdie-avatar-light.png"} alt="Birdie" style={{ width: '100%', height: '100%', objectFit: 'cover', pointerEvents: 'none' }} />
@@ -9437,7 +9437,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
     return (
       <div key="profile-main-container" style={{ display: 'flex', flexDirection: 'column', height: '100%', backgroundColor: 'var(--bg-primary)' }}>
         <div style={{ padding: '20px', textAlign: 'center', background: `linear-gradient(135deg, ${colors.navyBg} 0%, ${colorsLight.navyLight} 50%, ${colors.navyMidBg} 100%)`, flexShrink: 0 }}>
-          <button onClick={() => setShowPicModal(true)} style={{ width: '80px', height: '80px', borderRadius: '40px', margin: '0 auto', backgroundColor: 'rgba(255,255,255,0.2)', border: '4px solid #3b82f6', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', cursor: 'pointer', boxShadow: '0 0 12px rgba(59,130,246,0.4)' }}>
+          <button onClick={() => setShowPicModal(true)} style={{ width: '80px', height: '80px', borderRadius: '40px', margin: '0 auto', backgroundColor: 'rgba(255,255,255,0.2)', border: '4px solid rgba(255,255,255,0.3)', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', cursor: 'pointer' }}>
             {profilePic ? <img src={profilePic} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : Icons.user('white', 32)}
           </button>
           <button onClick={() => { if (profilePic) { setCropImageSrc(profilePic); setCropZoom(1); setCropOffset({ x: 0, y: 0 }); } else { setShowPicModal(true); } }} style={{ display: 'block', margin: '4px auto 8px', padding: '2px 10px', borderRadius: '6px', border: 'none', backgroundColor: 'transparent', color: 'rgba(255,255,255,0.7)', fontSize: '10px', fontWeight: '600', cursor: 'pointer' }}>Edit Photo</button>
