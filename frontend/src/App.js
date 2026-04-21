@@ -7471,10 +7471,17 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
 
     return (
       <div key="chat-detail-screen-container" style={{ display: 'flex', flexDirection: 'column', height: '100%', backgroundColor: 'var(--bg-card-solid)' }}>
-        <div style={{ padding: '6px 10px 5px 4px', background: `linear-gradient(135deg, ${colors.navyBg}, ${colors.navyMidBg})`, flexShrink: 0, boxShadow: '0 2px 10px rgba(0,0,0,0.1)' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-            <button onClick={() => { setCurrentScreen('main'); setChatInput(''); setReplyingTo(null); setShowFlockMenu(false); setShowLeaveConfirm(false); setShowChatSearch(false); setChatSearch(''); setShowVotePanel(false); setChatNavOpen(false); }} style={{ width: '34px', height: '34px', borderRadius: '10px', background: 'none', border: 'none', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{Icons.arrowLeft('white', 20)}</button>
-            <h2 style={{ flex: 1, fontWeight: '800', color: 'white', fontSize: '15px', margin: 0, lineHeight: '1.3', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{flock.name}</h2>
+        <div style={{ padding: '10px 10px 8px 6px', background: `linear-gradient(135deg, ${colors.navyBg}, ${colors.navyMidBg})`, flexShrink: 0, boxShadow: '0 2px 10px rgba(0,0,0,0.1)' }}>
+          <div style={{ display: 'flex', alignItems: 'stretch', gap: '6px' }}>
+            <button onClick={() => { setCurrentScreen('main'); setChatInput(''); setReplyingTo(null); setShowFlockMenu(false); setShowLeaveConfirm(false); setShowChatSearch(false); setChatSearch(''); setShowVotePanel(false); setChatNavOpen(false); }} style={{ width: '34px', borderRadius: '10px', background: 'none', border: 'none', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{Icons.arrowLeft('white', 20)}</button>
+            <div style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center', minWidth: 0 }}>
+              <h2 style={{ fontWeight: '800', color: 'white', fontSize: '15px', margin: 0, lineHeight: '1.2', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{flock.name}</h2>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '5px', marginTop: '2px' }}>
+                <span style={{ fontSize: '11px', color: 'rgba(255,255,255,0.55)', fontWeight: '500' }}>{flock.members?.length || flock.memberCount || 0} members</span>
+                <span style={{ fontSize: '11px', color: 'rgba(255,255,255,0.3)' }}>•</span>
+                {isTyping ? <span style={{ fontSize: '11px', color: '#86EFAC', fontWeight: '600' }}>{typingUser} is typing...</span> : <><span style={{ width: '5px', height: '5px', borderRadius: '3px', backgroundColor: '#22c55e', boxShadow: '0 0 6px #22c55e' }} /><span style={{ fontSize: '11px', color: 'rgba(255,255,255,0.55)', fontWeight: '500' }}>online</span></>}
+              </div>
+            </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexShrink: 0 }}>
               <div style={{ display: 'flex', gap: '5px', overflow: 'hidden', maxWidth: chatNavOpen ? '160px' : '0px', opacity: chatNavOpen ? 1 : 0, transition: 'max-width 0.3s ease, opacity 0.25s ease' }}>
                 <button onClick={() => { setChatNavOpen(false); setShowVotePanel(true); loadPopularVenues(); }} style={{ width: '36px', height: '36px', minWidth: '36px', borderRadius: '10px', border: '1px solid rgba(255,255,255,0.15)', backgroundColor: flock.status === 'voting' ? colors.teal : 'rgba(255,255,255,0.08)', backdropFilter: 'blur(8px)', WebkitBackdropFilter: 'blur(8px)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.vote('white', 15)}</button>
@@ -7494,11 +7501,6 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 </div>
               )}
             </div>
-          </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '5px', paddingLeft: '40px', marginTop: '2px' }}>
-            <span style={{ fontSize: '11px', color: 'rgba(255,255,255,0.55)', fontWeight: '500' }}>{flock.members?.length || flock.memberCount || 0} members</span>
-            <span style={{ fontSize: '11px', color: 'rgba(255,255,255,0.3)' }}>•</span>
-            {isTyping ? <span style={{ fontSize: '11px', color: '#86EFAC', fontWeight: '600' }}>{typingUser} is typing...</span> : <><span style={{ width: '5px', height: '5px', borderRadius: '3px', backgroundColor: '#22c55e', boxShadow: '0 0 6px #22c55e' }} /><span style={{ fontSize: '11px', color: 'rgba(255,255,255,0.55)', fontWeight: '500' }}>online</span></>}
           </div>
         </div>
 
