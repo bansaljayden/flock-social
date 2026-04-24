@@ -193,6 +193,44 @@ const ESRI_SATELLITE_STYLE = {
   layers: [{ id: 'esri-imagery', type: 'raster', source: 'esri-imagery' }],
 };
 
+// AI crowd heatmap paint — matches the old Google HeatmapLayer gradient/radius/opacity.
+// MapLibre heatmap-intensity: 2 ≈ Google maxIntensity: 0.5 (1/0.5 = 2× per-point contribution).
+const VENUE_HEAT_PAINT = {
+  'heatmap-weight': ['coalesce', ['get', 'weight'], 0.5],
+  'heatmap-intensity': 2,
+  'heatmap-radius': 80,
+  'heatmap-opacity': 0.85,
+  'heatmap-color': [
+    'interpolate', ['linear'], ['heatmap-density'],
+    0,    'rgba(0, 0, 0, 0)',
+    0.1,  'rgba(34, 197, 94, 0.6)',
+    0.2,  'rgba(34, 197, 94, 0.7)',
+    0.3,  'rgba(160, 220, 40, 0.75)',
+    0.4,  'rgba(250, 204, 21, 0.8)',
+    0.5,  'rgba(251, 191, 36, 0.82)',
+    0.6,  'rgba(245, 158, 11, 0.85)',
+    0.7,  'rgba(249, 115, 22, 0.88)',
+    0.8,  'rgba(239, 68, 68, 0.9)',
+    0.9,  'rgba(220, 38, 38, 0.94)',
+    1,    'rgba(185, 28, 28, 0.97)',
+  ],
+};
+
+// Add accuracy ring + venue heatmap. Inserts UNDER the first symbol layer so
+// road/place labels stay readable on top of the heat.
+function addOverlayLayers(map) {
+  const firstSymbolId = (map.getStyle().layers || []).find(l => l.type === 'symbol')?.id;
+  if (!map.getSource('user-accuracy')) {
+    map.addSource('user-accuracy', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
+    map.addLayer({ id: 'user-accuracy-fill', type: 'fill', source: 'user-accuracy', paint: { 'fill-color': '#3b82f6', 'fill-opacity': 0.1 } }, firstSymbolId);
+    map.addLayer({ id: 'user-accuracy-line', type: 'line', source: 'user-accuracy', paint: { 'line-color': '#3b82f6', 'line-opacity': 0.3, 'line-width': 1 } }, firstSymbolId);
+  }
+  if (!map.getSource('venue-heat')) {
+    map.addSource('venue-heat', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
+    map.addLayer({ id: 'venue-heat', type: 'heatmap', source: 'venue-heat', paint: VENUE_HEAT_PAINT }, firstSymbolId);
+  }
+}
+
 // True-meters circle as a GeoJSON polygon for the user's accuracy ring
 function metersCirclePolygon(lat, lng, radiusMeters, points = 64) {
   const coords = [];
@@ -218,6 +256,7 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
   const prevActiveRef = useRef(null);
   const watchIdRef = useRef(null);
   const mapLibreRef = useRef(null); // holds the maplibre-gl module after dynamic import
+  const venuesRef = useRef([]);     // latest venues for non-React consumers (toggleMapType, etc.)
   const [mapReady, setMapReady] = useState(false);
   const [mapType, setMapType] = useState(() => localStorage.getItem('flock_map_type') || 'roadmap');
 
@@ -354,22 +393,7 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
       mapInstanceRef.current = map;
 
       map.on('load', () => {
-        // Accuracy circle source (empty until userLocation arrives)
-        if (!map.getSource('user-accuracy')) {
-          map.addSource('user-accuracy', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
-          map.addLayer({
-            id: 'user-accuracy-fill',
-            type: 'fill',
-            source: 'user-accuracy',
-            paint: { 'fill-color': '#3b82f6', 'fill-opacity': 0.1 },
-          });
-          map.addLayer({
-            id: 'user-accuracy-line',
-            type: 'line',
-            source: 'user-accuracy',
-            paint: { 'line-color': '#3b82f6', 'line-opacity': 0.3, 'line-width': 1 },
-          });
-        }
+        addOverlayLayers(map);
         setMapReady(true);
       });
 
@@ -407,16 +431,19 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
     localStorage.setItem('flock_map_type', newType);
     map.setStyle(newType === 'roadmap' ? OPENFREEMAP_DARK : ESRI_SATELLITE_STYLE);
     map.once('styledata', () => {
-      // Re-add accuracy circle source after style change
-      if (!map.getSource('user-accuracy')) {
-        map.addSource('user-accuracy', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
-        map.addLayer({ id: 'user-accuracy-fill', type: 'fill', source: 'user-accuracy', paint: { 'fill-color': '#3b82f6', 'fill-opacity': 0.1 } });
-        map.addLayer({ id: 'user-accuracy-line', type: 'line', source: 'user-accuracy', paint: { 'line-color': '#3b82f6', 'line-opacity': 0.3, 'line-width': 1 } });
-      }
-      // Refresh accuracy data
+      addOverlayLayers(map);
+      // Re-feed accuracy data
       if (userLocation) {
         const src = map.getSource('user-accuracy');
         if (src) src.setData({ type: 'FeatureCollection', features: [metersCirclePolygon(userLocation.lat, userLocation.lng, userLocation.accuracy || 50)] });
+      }
+      // Re-feed heatmap data from current venues
+      const heatSrc = map.getSource('venue-heat');
+      if (heatSrc) {
+        const features = (venuesRef.current || [])
+          .filter(v => typeof v.crowd === 'number' && v.location?.latitude && v.location?.longitude)
+          .map(v => ({ type: 'Feature', geometry: { type: 'Point', coordinates: [v.location.longitude, v.location.latitude] }, properties: { weight: v.crowd / 100 } }));
+        heatSrc.setData({ type: 'FeatureCollection', features });
       }
     });
   }, [mapType, userLocation]);
@@ -479,13 +506,26 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
 
     const ml = mapLibreRef.current;
     if (!ml) return;
-    // Clear previous
+    venuesRef.current = venues;
+
+    // Clear previous markers
     markersRef.current.forEach(({ marker }) => marker.remove());
     markersRef.current = [];
 
+    const heatFeatures = [];
     venues.forEach(v => {
       const loc = v.location;
       if (!loc?.latitude || !loc?.longitude) return;
+
+      // Heatmap point — weighted by crowd score (0-100 → 0-1)
+      if (typeof v.crowd === 'number') {
+        heatFeatures.push({
+          type: 'Feature',
+          geometry: { type: 'Point', coordinates: [loc.longitude, loc.latitude] },
+          properties: { weight: v.crowd / 100 },
+        });
+      }
+
       const isActive = activeVenue?.id === v.id;
       const el = buildMarkerEl(v, isActive);
       el.addEventListener('click', (e) => {
@@ -497,6 +537,10 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
       const marker = new ml.Marker({ element: el, anchor }).setLngLat([loc.longitude, loc.latitude]).addTo(map);
       markersRef.current.push({ marker, el, venue: v });
     });
+
+    // Push heat data to the source
+    const heatSrc = map.getSource('venue-heat');
+    if (heatSrc) heatSrc.setData({ type: 'FeatureCollection', features: heatFeatures });
   }, [venues, mapReady, buildMarkerEl]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ---------- active venue highlight (only resize the 2 changed markers) ----------
