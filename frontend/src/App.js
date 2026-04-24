@@ -26,28 +26,61 @@ import { SplineScene } from './components/ui/spline-scene';
 
 // Animated crowd dial — fills from 0 to target score with counting number
 const AnimatedDial = React.memo(function AnimatedDial({ score, color }) {
-  const ringRef = React.useRef(null);
   const textRef = React.useRef(null);
+  const canvasRef = React.useRef(null);
+
   React.useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    const size = 168; // 2x for retina
+    const center = size / 2;
+    const radius = 76;
+    const lineWidth = 16;
+    canvas.width = size;
+    canvas.height = size;
+
     let raf;
     const start = performance.now();
     const ease = t => 1 - Math.pow(1 - t, 3);
+
+    const draw = (val) => {
+      ctx.clearRect(0, 0, size, size);
+      // Track
+      ctx.beginPath();
+      ctx.arc(center, center, radius, 0, Math.PI * 2);
+      ctx.strokeStyle = getComputedStyle(document.documentElement).getPropertyValue('--border-default').trim() || '#334155';
+      ctx.lineWidth = lineWidth;
+      ctx.stroke();
+      // Fill arc
+      if (val > 0) {
+        ctx.beginPath();
+        ctx.arc(center, center, radius, -Math.PI / 2, -Math.PI / 2 + (val / 100) * Math.PI * 2);
+        ctx.strokeStyle = color;
+        ctx.lineWidth = lineWidth;
+        ctx.lineCap = 'round';
+        ctx.stroke();
+      }
+    };
+
     const tick = now => {
       const t = Math.min((now - start) / 1200, 1);
-      const val = Math.round(ease(t) * score);
-      if (ringRef.current) ringRef.current.style.background = `conic-gradient(${color} ${val * 3.6}deg, var(--border-default) 0deg)`;
-      if (textRef.current) textRef.current.textContent = `${val}%`;
+      const val = ease(t) * score;
+      draw(val);
+      if (textRef.current) textRef.current.textContent = `${Math.round(val)}%`;
       if (t < 1) raf = requestAnimationFrame(tick);
     };
-    if (ringRef.current) ringRef.current.style.background = `conic-gradient(${color} 0deg, var(--border-default) 0deg)`;
+
+    draw(0);
     if (textRef.current) textRef.current.textContent = '0%';
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
   }, [score, color]);
 
   return (
-    <div ref={ringRef} style={{ width: '84px', height: '84px', borderRadius: '42px', background: `conic-gradient(${color} 0deg, var(--border-default) 0deg)`, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, boxShadow: `0 4px 16px rgba(0,0,0,0.4), 0 8px 24px rgba(0,0,0,0.2), 0 0 12px ${color}30` }}>
-      <div style={{ width: '68px', height: '68px', borderRadius: '34px', backgroundColor: 'var(--bg-card-solid)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column' }}>
+    <div style={{ width: '84px', height: '84px', position: 'relative', flexShrink: 0, filter: `drop-shadow(0 4px 12px rgba(0,0,0,0.3)) drop-shadow(0 0 8px ${color}30)` }}>
+      <canvas ref={canvasRef} style={{ width: '84px', height: '84px', position: 'absolute', top: 0, left: 0 }} />
+      <div style={{ position: 'absolute', inset: '8px', borderRadius: '34px', backgroundColor: 'var(--bg-card-solid)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
         <span ref={textRef} style={{ fontSize: '22px', fontWeight: '900', color, lineHeight: 1 }}>0%</span>
       </div>
     </div>
