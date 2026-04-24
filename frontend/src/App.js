@@ -12926,9 +12926,21 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
       {adminPromptModal}
       <NewDmModal />
       <style>{`
-        /* Crowd bars render their inline height directly — no entrance animation
-           gating. Previous transform: scaleY(0) base state could leave bars
-           invisible if the keyframe animation never reached its end. */
+        @keyframes crowd-bar-grow {
+          from { transform: scaleY(0); }
+          to   { transform: scaleY(1); }
+        }
+        /* Animation uses 'backwards' fill so the hidden state is only applied
+           DURING the delay. Default state (no transform) is visible — if the
+           animation ever fails to run, bars still render full size. */
+        .crowd-bar {
+          transform-origin: bottom;
+          animation: crowd-bar-grow 0.5s cubic-bezier(0.34, 1.56, 0.64, 1) backwards;
+          will-change: transform;
+        }
+        @media (prefers-reduced-motion: reduce) {
+          .crowd-bar { animation: none; }
+        }
         @keyframes pulse {
           0%, 100% { opacity: 0.4; transform: translate(-50%, -50%) scale(1); }
           50% { opacity: 0.8; transform: translate(-50%, -50%) scale(1.2); }
