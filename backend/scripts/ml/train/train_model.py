@@ -76,11 +76,11 @@ def train_xgboost(X, y, cv, groups) -> tuple:
 
     search = RandomizedSearchCV(
         base_model, param_dist,
-        n_iter=10,
+        n_iter=8,
         cv=cv,
         scoring='neg_root_mean_squared_error',
         random_state=RANDOM_STATE,
-        n_jobs=-1,
+        n_jobs=1,
         verbose=0,
     )
     search.fit(X, y, groups=groups)
