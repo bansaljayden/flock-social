@@ -27,11 +27,11 @@ function getGenAI() {
 }
 
 // ---------------------------------------------------------------------------
-// Per-user rate limiting (30 messages/day per user, 3/min)
+// Per-user rate limiting (150 messages/day per user, 15/min)
 // ---------------------------------------------------------------------------
 const userRateLimits = new Map();
-const USER_DAILY_LIMIT = 30;
-const USER_PER_MIN_LIMIT = 3;
+const USER_DAILY_LIMIT = 150;
+const USER_PER_MIN_LIMIT = 15;
 
 function checkUserRateLimit(userId) {
   const now = Date.now();
@@ -51,14 +51,14 @@ function checkUserRateLimit(userId) {
 
   // Check daily limit
   if (limit.dailyCount >= USER_DAILY_LIMIT) {
-    return { allowed: false, error: `You've used all ${USER_DAILY_LIMIT} messages for today. Resets at midnight!` };
+    return { allowed: false, error: `you've been chatting up a storm 🐦 catch up tomorrow!` };
   }
 
   // Check per-minute limit
   const oneMinAgo = now - 60000;
   limit.recentTimestamps = limit.recentTimestamps.filter(ts => ts > oneMinAgo);
   if (limit.recentTimestamps.length >= USER_PER_MIN_LIMIT) {
-    return { allowed: false, error: 'Slow down! Wait a few seconds before sending another message.' };
+    return { allowed: false, error: 'easy there — gimme a sec to catch up' };
   }
 
   // Allow and record
@@ -318,7 +318,28 @@ async function executeTool(toolName, toolInput, userId) {
 // ---------------------------------------------------------------------------
 // System prompt
 // ---------------------------------------------------------------------------
-function buildSystemPrompt(userName) {
+function buildContextLine(ctx) {
+  if (!ctx || typeof ctx !== 'object') return '';
+  const parts = [];
+  if (ctx.screen) parts.push(`screen=${ctx.screen}`);
+  if (ctx.tab) parts.push(`tab=${ctx.tab}`);
+  if (ctx.flock?.name) {
+    const f = ctx.flock;
+    let s = `viewing flock "${f.name}"`;
+    if (f.venue) s += ` (venue: ${f.venue})`;
+    if (f.status) s += ` [${f.status}]`;
+    parts.push(s);
+  }
+  if (ctx.venue?.name) {
+    const v = ctx.venue;
+    let s = `looking at venue "${v.name}"`;
+    if (v.place_id) s += ` (place_id: ${v.place_id})`;
+    parts.push(s);
+  }
+  return parts.length ? `\n\nWHAT THE USER IS DOING RIGHT NOW (use this for "this place", "this flock", etc.):\n- ${parts.join('\n- ')}` : '';
+}
+
+function buildSystemPrompt(userName, ctx) {
   return `You are Birdie, the AI assistant for Flock — a social coordination app for Gen Z (ages 15-22). You help users find venues, check how busy places are, coordinate plans with friends, and navigate the app.
 
 Your personality:
@@ -384,7 +405,8 @@ Important:
 - Never make up venue data — always use the tools to get real info
 - If you don't know the user's location, ask for it or suggest they search for a specific area
 - Don't be overly verbose — Gen Z users want quick, useful answers
-- When the user asks about app features, ALWAYS use navigate_app to take them there — don't just explain`;
+- When the user asks about app features, ALWAYS use navigate_app to take them there — don't just explain
+- NEVER say things like "I'm broken", "I'm not working", "I can't do that right now", "I'm having trouble", or apologize for being down. If a tool errors, just try a different angle or ask a clarifying question.${buildContextLine(ctx)}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -396,6 +418,7 @@ router.post('/chat',
   [
     body('messages').isArray({ min: 1 }).withMessage('messages array is required'),
     body('location').optional(),
+    body('currentContext').optional(),
   ],
   async (req, res) => {
     try {
@@ -406,10 +429,10 @@ router.post('/chat',
 
       const genAI = getGenAI();
       if (!genAI) {
-        return res.status(500).json({ error: 'AI service not configured — GEMINI_API_KEY missing' });
+        return res.status(500).json({ error: 'hold up, gimme a sec' });
       }
 
-      const { messages, location } = req.body;
+      const { messages, location, currentContext } = req.body;
       const userId = req.user.id;
 
       // Per-user rate limit
@@ -447,10 +470,10 @@ router.post('/chat',
         userText = `[My location: ${location.lat},${location.lng}]\n${userText}`;
       }
 
-      // Create model with system instruction (includes user name)
+      // Create model with system instruction (includes user name + current app context)
       const gemini = genAI.getGenerativeModel({
         model: 'gemini-2.5-flash-lite',
-        systemInstruction: buildSystemPrompt(userName),
+        systemInstruction: buildSystemPrompt(userName, currentContext),
       });
 
       // Start chat with tools
@@ -459,8 +482,20 @@ router.post('/chat',
         tools: [{ functionDeclarations: toolDeclarations }],
       });
 
+      // Helper: send to Gemini with one retry on transient upstream errors
+      async function sendWithRetry(payload) {
+        try {
+          return await chat.sendMessage(payload);
+        } catch (e) {
+          const transient = e.status === 429 || e.status >= 500 || /quota|overloaded|unavailable|fetch failed/i.test(e.message || '');
+          if (!transient) throw e;
+          await new Promise(r => setTimeout(r, 800));
+          return await chat.sendMessage(payload);
+        }
+      }
+
       // Send message and handle tool calls
-      let response = await chat.sendMessage(userText);
+      let response = await sendWithRetry(userText);
       let iterations = 0;
       const collectedVenues = []; // Track venues for card display
       let navigationAction = null; // Track navigation commands
@@ -515,13 +550,13 @@ router.post('/chat',
         }
 
         // Send tool results back to Gemini
-        response = await chat.sendMessage(functionResponses);
+        response = await sendWithRetry(functionResponses);
       }
 
       // Extract final text
       const candidate = response.response.candidates?.[0];
       const textParts = candidate?.content?.parts?.filter(p => p.text) || [];
-      const responseText = textParts.map(p => p.text).join('') || "Sorry, I couldn't process that. Try again?";
+      const responseText = textParts.map(p => p.text).join('') || "say that one more time?";
 
       // Collect venue data from tool results to send as cards
       const venueCards = [];
@@ -551,10 +586,9 @@ router.post('/chat',
     } catch (err) {
       console.error('[AI] Chat error:', err);
       if (err.status === 429 || err.message?.includes('quota')) {
-        return res.status(429).json({ error: 'AI is busy right now, try again in a sec' });
+        return res.status(429).json({ error: 'one sec, lots of people chatting rn — try that again' });
       }
-      console.error('[AI] Chat error:', err.message);
-      res.status(500).json({ error: 'Something went wrong with Birdie' });
+      res.status(500).json({ error: 'hmm gimme a sec, hit me again' });
     }
   }
 );
