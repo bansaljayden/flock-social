@@ -26,27 +26,33 @@ import { SplineScene } from './components/ui/spline-scene';
 
 // Animated crowd dial — fills from 0 to target score with counting number
 const AnimatedDial = React.memo(function AnimatedDial({ score, color }) {
-  const [displayed, setDisplayed] = React.useState(0);
+  const ringRef = React.useRef(null);
+  const textRef = React.useRef(null);
 
+  // Animate via direct DOM manipulation — zero React re-renders during the sweep
   React.useEffect(() => {
     let raf;
-    setDisplayed(0);
     const start = performance.now();
     const duration = 1200;
     const ease = t => 1 - Math.pow(1 - t, 3);
     const tick = now => {
       const t = Math.min((now - start) / duration, 1);
-      setDisplayed(Math.round(ease(t) * score));
+      const val = Math.round(ease(t) * score);
+      if (ringRef.current) ringRef.current.style.background = `conic-gradient(${color} ${val * 3.6}deg, var(--border-default) 0deg)`;
+      if (textRef.current) textRef.current.textContent = `${val}%`;
       if (t < 1) raf = requestAnimationFrame(tick);
     };
+    // Reset to 0 before starting
+    if (ringRef.current) ringRef.current.style.background = `conic-gradient(${color} 0deg, var(--border-default) 0deg)`;
+    if (textRef.current) textRef.current.textContent = '0%';
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
-  }, [score]);
+  }, [score, color]);
 
   return (
-    <div style={{ width: '84px', height: '84px', borderRadius: '42px', background: `conic-gradient(${color} ${displayed * 3.6}deg, var(--border-default) 0deg)`, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, boxShadow: `0 4px 16px rgba(0,0,0,0.4), 0 8px 24px rgba(0,0,0,0.2), 0 0 12px ${color}30` }}>
+    <div ref={ringRef} style={{ width: '84px', height: '84px', borderRadius: '42px', background: `conic-gradient(${color} 0deg, var(--border-default) 0deg)`, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, boxShadow: `0 4px 16px rgba(0,0,0,0.4), 0 8px 24px rgba(0,0,0,0.2), 0 0 12px ${color}30` }}>
       <div style={{ width: '68px', height: '68px', borderRadius: '34px', backgroundColor: 'var(--bg-card-solid)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column' }}>
-        <span style={{ fontSize: '22px', fontWeight: '900', color, lineHeight: 1 }}>{displayed}%</span>
+        <span ref={textRef} style={{ fontSize: '22px', fontWeight: '900', color, lineHeight: 1 }}>0%</span>
       </div>
     </div>
   );
