@@ -6636,18 +6636,16 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                       const safeScore = Number.isFinite(h.score) ? h.score : 0;
                       const barColor = hourClosed ? 'var(--text-tertiary)' : safeScore > 70 ? colors.red : safeScore > 40 ? colors.amber : colors.teal;
                       const barH = hourClosed ? 6 : Math.max(safeScore * 0.45, 10);
+                      // TEMP DEBUG — remove once chart renders
+                      if (i === 0) console.log('[CROWD-BAR-DEBUG]', { cdLoaded: !!cd, cdHasHourly: !!cd?.hourly, hourlyLen: hourlyData?.length, sample: hourlyData?.[0], barH, safeScore, hourClosed, barColor });
                       return (
                       <div key={i} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '2px', minWidth: 0 }}>
-                        {/* Plain div with inline height — simplest possible render path.
-                            No state, no animation, no class, no conditional unless cd is null. */}
+                        {/* TEMP: bright MAGENTA fallback at fixed 24px so we can see if the div renders at all */}
                         <div style={{
                           width: '100%',
-                          height: `${cd ? barH : 0}px`,
+                          height: '24px',
                           borderRadius: '3px 3px 1px 1px',
-                          backgroundColor: cd ? barColor : 'transparent',
-                          opacity: hourClosed ? 0.35 : isNow ? 1 : 0.75,
-                          boxShadow: isNow && !hourClosed && cd ? `0 0 6px ${barColor}50` : 'none',
-                          transition: `height 0.5s cubic-bezier(0.34, 1.56, 0.64, 1) ${i * 0.035}s`,
+                          backgroundColor: '#ff00ff',
                           flexShrink: 0,
                         }} />
                         <span style={{ fontSize: '7px', color: hourClosed ? 'var(--text-tertiary)' : isNow ? 'var(--text-primary)' : 'var(--text-tertiary)', fontWeight: isNow ? '800' : '400', opacity: hourClosed ? 0.4 : 1 }}>{isNow ? 'Now' : h.hour}</span>
