@@ -2319,6 +2319,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   const chatEndRef = useRef(null);
   const aiInputRef = useRef(null);
   const aiChatEndRef = useRef(null);
+  // Always-fresh snapshot for Birdie context (sendAiMessage useCallback would otherwise capture stale values)
+  const birdieContextRef = useRef({});
   const [isTyping, setIsTyping] = useState(false);
   const [typingUser, setTypingUser] = useState('');
   const [chatSearch, setChatSearch] = useState('');
@@ -2758,8 +2760,30 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
     setAiTyping(true);
 
     try {
-      // Use app's existing location state
-      const location = userLocation ? { lat: userLocation.lat, lng: userLocation.lng } : null;
+      // Use app's existing location state (read fresh from ref to avoid stale closure)
+      const ctx = birdieContextRef.current || {};
+      const loc = ctx.userLocation;
+      const location = loc ? { lat: loc.lat, lng: loc.lng } : null;
+
+      // Snapshot of where the user is in the app right now — lets Birdie answer
+      // questions like "is this place busy?" or "who's in this flock?"
+      const currentContext = {
+        screen: ctx.currentScreen,
+        tab: ctx.currentTab,
+      };
+      if (ctx.flock) {
+        currentContext.flock = {
+          name: ctx.flock.name || ctx.flock.title,
+          venue: ctx.flock.venue || null,
+          status: ctx.flock.status || null,
+        };
+      }
+      if (ctx.activeVenue) {
+        currentContext.venue = {
+          name: ctx.activeVenue.name,
+          place_id: ctx.activeVenue.place_id || null,
+        };
+      }
 
       // Send conversation history — skip initial greeting, include venue context
       const messagesToSend = newMessages.slice(1).map(m => {
@@ -2771,15 +2795,32 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
         return { role: m.role, text };
       });
 
-      const response = await sendAiChat(messagesToSend, location);
+      const response = await sendAiChat(messagesToSend, location, currentContext);
       setAiMessages(prev => [...prev, { role: 'assistant', text: response.text, venues: response.venues || [], navigate: response.navigate || null }]);
     } catch (err) {
-      setAiMessages(prev => [...prev, { role: 'assistant', text: "Sorry, I'm having trouble connecting right now. Try again in a sec!" }]);
+      // Surface the server's friendly text when present (rate-limit, busy, etc.).
+      // Never show "I'm broken" / "trouble connecting" — Birdie stays in character.
+      const serverMsg = err?.message && err.message !== 'Something went wrong' ? err.message : null;
+      const fallback = serverMsg || 'hmm gimme a sec, hit me again';
+      setAiMessages(prev => [...prev, { role: 'assistant', text: fallback }]);
     } finally {
       setAiTyping(false);
       if (aiInputRef.current) aiInputRef.current.focus();
     }
   }, [aiMessages]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Keep Birdie's context ref fresh — sendAiMessage's useCallback closure
+  // would otherwise capture stale screen/flock/venue values.
+  useEffect(() => {
+    const flock = flocks.find(f => f.id === selectedFlockId) || null;
+    birdieContextRef.current = {
+      currentScreen,
+      currentTab,
+      userLocation,
+      flock,
+      activeVenue,
+    };
+  }, [currentScreen, currentTab, userLocation, selectedFlockId, flocks, activeVenue]);
 
   // Auto-scroll AI chat to bottom when messages change
   const aiMsgCountRef = useRef(0);
