@@ -193,11 +193,14 @@ const VenueCard = React.memo(({ venue, onViewDetails, onVote, colors: c, Icons: 
 
 // =============================================================================
 // MapLibre GL JS — Snap Map-style vector basemap (smooth GPU-rendered)
-// Uses CARTO's Dark Matter vector style (free, no API key, much richer
-// POI/label/road detail than OpenFreeMap dark).
-// Drop-in replacement for GoogleMapView with same prop interface.
+// Prefers MapTiler Streets v2 Dark when REACT_APP_MAPTILER_KEY is set
+// (denser POIs, road hierarchies, neighborhood labels). Falls back to
+// CARTO Dark Matter (free, no key) when the env var is missing.
 // =============================================================================
-const DARK_VECTOR_STYLE = 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json';
+const MAPTILER_KEY = process.env.REACT_APP_MAPTILER_KEY;
+const DARK_VECTOR_STYLE = MAPTILER_KEY
+  ? `https://api.maptiler.com/maps/streets-v2-dark/style.json?key=${MAPTILER_KEY}`
+  : 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json';
 const ESRI_SATELLITE_STYLE = {
   version: 8,
   sources: {
