@@ -6344,7 +6344,6 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
               {/* AI Crowd Forecast Widget */}
               {(() => {
                 const cd = crowdData;
-                const hasRealData = !!cd;
                 const score = cd ? cd.score : activeVenue.crowd;
                 const label = cd ? cd.label : (score > 70 ? 'Very Busy' : score > 40 ? 'Moderate' : 'Not Busy');
                 const crowdColor = score > 70 ? colors.red : score > 40 ? colors.amber : colors.teal;
