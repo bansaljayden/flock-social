@@ -201,19 +201,23 @@ const MAPTILER_KEY = process.env.REACT_APP_MAPTILER_KEY;
 const DARK_VECTOR_STYLE = MAPTILER_KEY
   ? `https://api.maptiler.com/maps/streets-v2-dark/style.json?key=${MAPTILER_KEY}`
   : 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json';
-const ESRI_SATELLITE_STYLE = {
-  version: 8,
-  sources: {
-    'esri-imagery': {
-      type: 'raster',
-      tiles: ['https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'],
-      tileSize: 256,
-      attribution: 'Tiles © Esri',
-      maxzoom: 19,
-    },
-  },
-  layers: [{ id: 'esri-imagery', type: 'raster', source: 'esri-imagery' }],
-};
+// Satellite: prefer MapTiler "hybrid" (imagery + roads + place labels overlaid)
+// when key is set; falls back to bare ESRI raster imagery if not.
+const SATELLITE_STYLE = MAPTILER_KEY
+  ? `https://api.maptiler.com/maps/hybrid/style.json?key=${MAPTILER_KEY}`
+  : {
+      version: 8,
+      sources: {
+        'esri-imagery': {
+          type: 'raster',
+          tiles: ['https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'],
+          tileSize: 256,
+          attribution: 'Tiles © Esri',
+          maxzoom: 19,
+        },
+      },
+      layers: [{ id: 'esri-imagery', type: 'raster', source: 'esri-imagery' }],
+    };
 
 // AI crowd heatmap paint — matches the old Google HeatmapLayer gradient/radius/opacity.
 // MapLibre heatmap-intensity: 2 ≈ Google maxIntensity: 0.5 (1/0.5 = 2× per-point contribution).
@@ -441,7 +445,7 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
 
       const map = new maplibregl.Map({
         container: mapRef.current,
-        style: savedMapType === 'roadmap' ? DARK_VECTOR_STYLE : ESRI_SATELLITE_STYLE,
+        style: savedMapType === 'roadmap' ? DARK_VECTOR_STYLE : SATELLITE_STYLE,
         center: [userLoc.lng, userLoc.lat],
         zoom: DEFAULT_ZOOM,
         minZoom: 3,
@@ -508,7 +512,7 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
     const newType = mapType === 'roadmap' ? 'hybrid' : 'roadmap';
     setMapType(newType);
     localStorage.setItem('flock_map_type', newType);
-    map.setStyle(newType === 'roadmap' ? DARK_VECTOR_STYLE : ESRI_SATELLITE_STYLE);
+    map.setStyle(newType === 'roadmap' ? DARK_VECTOR_STYLE : SATELLITE_STYLE);
     map.once('styledata', () => {
       addOverlayLayers(map);
       // Re-feed accuracy data
