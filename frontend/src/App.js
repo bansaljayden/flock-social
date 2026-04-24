@@ -5670,7 +5670,6 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
         {/* Action Buttons */}
         <ScrollFade delay={1}><div style={{ display: 'flex', gap: '10px', marginBottom: '14px' }}>
           <button
-            className="glass-btn glass-navy"
             onClick={() => setCurrentScreen('create')}
             className="glass-btn"
             style={{
