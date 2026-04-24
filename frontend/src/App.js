@@ -2859,10 +2859,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
       } else {
         // Fetch message history via HTTP
         setMessagesLoading(true);
-        console.log('[DEBUG] Fetching messages for flock:', selectedFlockId);
         getMessages(selectedFlockId)
           .then((data) => {
-            console.log('[DEBUG] Got messages:', data?.messages?.length || 0, data?.error || '');
             const msgs = (data.messages || []).map(m => ({
               id: m.id,
               sender: String(m.sender_id) === String(authUser?.id) ? 'You' : (m.sender_name || 'Unknown'),
@@ -2877,7 +2875,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
             }));
             setFlocks(prev => prev.map(f => f.id === selectedFlockId ? { ...f, messages: msgs } : f));
           })
-          .catch((err) => console.error('[DEBUG] Message fetch FAILED:', err))
+          .catch(() => {})
           .finally(() => setMessagesLoading(false));
       }
       // Load budget status and bill split
