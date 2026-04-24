@@ -542,10 +542,10 @@ export async function getActivityFeed() {
 }
 
 // AI Assistant (Birdie)
-export async function sendAiChat(messages, location) {
+export async function sendAiChat(messages, location, currentContext) {
   return request('/api/ai/chat', {
     method: 'POST',
-    body: JSON.stringify({ messages, location }),
+    body: JSON.stringify({ messages, location, currentContext }),
   });
 }
 
