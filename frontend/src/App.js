@@ -6454,16 +6454,17 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 // Closed all day = venue is closed AND we have no opening window for today
                 const closedAllDay = isClosed && venueOpenHour == null;
 
-                // Venue-type-aware wait estimate (client-side fallback)
+                // Wait estimate — only show actual wait if busy (70%+). Under 70% = no meaningful wait.
                 const getWait = () => {
                   if (isClosed) return 'Closed';
-                  if (cd) return cd.waitEstimate;
+                  if (cd && cd.waitEstimate) return cd.waitEstimate;
+                  if (score < 70) return 'No wait';
                   const types = activeVenue.types || [];
                   const isBarType = types.some(t => ['bar', 'night_club'].includes(t));
                   const isCafeType = types.some(t => ['cafe', 'juice_shop', 'smoothie_shop', 'juice_bar', 'tea_house', 'coffee_shop'].includes(t));
-                  if (isBarType) return score < 50 ? 'No wait' : score <= 70 ? '~5 min' : score <= 85 ? '5-10 min' : '10-15 min';
-                  if (isCafeType) return score < 50 ? 'No wait' : score <= 70 ? '~3 min' : score <= 85 ? '5-10 min' : '10-15 min';
-                  return score < 40 ? 'No wait' : score <= 55 ? '~5 min' : score <= 70 ? '10-20 min' : score <= 85 ? '20-35 min' : '35+ min';
+                  if (isBarType) return score <= 85 ? '5-10 min' : '10-15 min';
+                  if (isCafeType) return score <= 85 ? '5-10 min' : '10-15 min';
+                  return score <= 85 ? '10-20 min' : '20-35 min';
                 };
                 const waitText = getWait();
 
@@ -6593,7 +6594,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                       <div style={{ display: 'flex', gap: '4px', flex: 1 }}>
                         {[1, 2, 3, 4, 5, 6, '7+'].map(n => (
                           <button key={n} onClick={() => setPartySize(typeof n === 'number' ? n : 7)}
-                            style={{ flex: 1, padding: '4px 0', borderRadius: '6px', border: '1px solid var(--border-default)', background: 'var(--bg-card-solid)', color: 'var(--text-primary)', fontSize: '10px', fontWeight: '700', cursor: 'pointer' }}>
+                            style={{ flex: 1, padding: '6px 0', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.12)', background: 'rgba(255,255,255,0.06)', backdropFilter: 'blur(8px)', WebkitBackdropFilter: 'blur(8px)', color: 'white', fontSize: '11px', fontWeight: '700', cursor: 'pointer', transition: 'all 0.15s ease', boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.1)' }}
+                            onMouseEnter={e => { e.currentTarget.style.background = 'rgba(20,184,166,0.3)'; e.currentTarget.style.borderColor = '#14b8a6'; }}
+                            onMouseLeave={e => { e.currentTarget.style.background = 'rgba(255,255,255,0.06)'; e.currentTarget.style.borderColor = 'rgba(255,255,255,0.12)'; }}>
                             {n}
                           </button>
                         ))}
