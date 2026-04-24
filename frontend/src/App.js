@@ -104,6 +104,28 @@ const AnimatedDial = React.memo(function AnimatedDial({ score, color }) {
   );
 });
 
+// Single crowd-forecast bar with a guaranteed-visible bouncy entrance.
+// State-driven (not CSS keyframe) so the failure mode is "instant render" not
+// "stuck invisible". Mounts at height 0, transitions to barH after `delay` ms.
+const CrowdBar = React.memo(function CrowdBar({ barH, color, opacity, glow, delay }) {
+  const [h, setH] = React.useState(0);
+  React.useEffect(() => {
+    const t = setTimeout(() => setH(barH), delay);
+    return () => clearTimeout(t);
+  }, [barH, delay]);
+  return (
+    <div style={{
+      width: '100%',
+      height: `${h}px`,
+      borderRadius: '3px 3px 1px 1px',
+      backgroundColor: color,
+      opacity,
+      boxShadow: glow,
+      transition: 'height 0.5s cubic-bezier(0.34, 1.56, 0.64, 1)',
+    }} />
+  );
+});
+
 // Scroll fade-in component using IntersectionObserver
 const ScrollFade = ({ children, delay = 0, className = '' }) => {
   const ref = useRef(null);
@@ -6638,10 +6660,12 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                       const barH = hourClosed ? 6 : Math.max(safeScore * 0.45, 10);
                       return (
                       <div key={i} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '2px' }}>
-                        {/* Only render the bar when real ML data is loaded — avoids the "wrong bars
-                            flash then correct bars" effect from the synthetic genHourly fallback. */}
+                        {/* React-state-driven entrance: bar starts at height 0, transitions to
+                            barH after a per-bar delay. CSS transition handles the bouncy easing.
+                            No CSS class with hidden initial state — failure mode is "no animation,
+                            bar still appears", never "bar invisible forever". */}
                         {cd ? (
-                          <div className="crowd-bar" style={{ width: '100%', height: `${barH}px`, borderRadius: '3px 3px 1px 1px', backgroundColor: barColor, opacity: hourClosed ? 0.35 : isNow ? 1 : 0.75, boxShadow: isNow && !hourClosed ? `0 0 6px ${barColor}50` : 'none', animationDelay: `${0.4 + i * 0.04}s` }} />
+                          <CrowdBar barH={barH} color={barColor} opacity={hourClosed ? 0.35 : isNow ? 1 : 0.75} glow={isNow && !hourClosed ? `0 0 6px ${barColor}50` : 'none'} delay={400 + i * 40} />
                         ) : (
                           <div style={{ width: '100%', height: '0px' }} />
                         )}
@@ -12932,21 +12956,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
       {adminPromptModal}
       <NewDmModal />
       <style>{`
-        @keyframes crowd-bar-grow {
-          from { transform: scaleY(0); }
-          to   { transform: scaleY(1); }
-        }
-        /* Animation uses 'backwards' fill so the hidden state is only applied
-           DURING the delay. Default state (no transform) is visible — if the
-           animation ever fails to run, bars still render full size. */
-        .crowd-bar {
-          transform-origin: bottom;
-          animation: crowd-bar-grow 0.5s cubic-bezier(0.34, 1.56, 0.64, 1) backwards;
-          will-change: transform;
-        }
-        @media (prefers-reduced-motion: reduce) {
-          .crowd-bar { animation: none; }
-        }
+        /* CrowdBar component now drives its own height via useState + CSS
+           transition — no global keyframe needed. */
         @keyframes pulse {
           0%, 100% { opacity: 0.4; transform: translate(-50%, -50%) scale(1); }
           50% { opacity: 0.8; transform: translate(-50%, -50%) scale(1.2); }
