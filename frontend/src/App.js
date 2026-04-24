@@ -217,6 +217,7 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
   const photoCacheRef = useRef({}); // place_id -> dataURL
   const prevActiveRef = useRef(null);
   const watchIdRef = useRef(null);
+  const mapLibreRef = useRef(null); // holds the maplibre-gl module after dynamic import
   const [mapReady, setMapReady] = useState(false);
   const [mapType, setMapType] = useState(() => localStorage.getItem('flock_map_type') || 'roadmap');
 
@@ -332,6 +333,7 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
     const init = async () => {
       const maplibregl = (await import('maplibre-gl')).default;
       await import('maplibre-gl/dist/maplibre-gl.css');
+      mapLibreRef.current = maplibregl;
       if (cancelled) return;
       const userLoc = await getUserLocation();
       if (cancelled) return;
@@ -437,8 +439,8 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
       el.style.boxShadow = '0 0 0 3px rgba(59,130,246,0.25)';
       el.style.willChange = 'transform';
       userElRef.current = el;
-      // eslint-disable-next-line no-undef
-      const ml = window.maplibregl || require('maplibre-gl').default;
+      const ml = mapLibreRef.current;
+      if (!ml) return;
       userMarkerRef.current = new ml.Marker({ element: el, anchor: 'center' }).setLngLat([lng, lat]).addTo(map);
     } else {
       userMarkerRef.current.setLngLat([lng, lat]);
@@ -475,34 +477,26 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
     const map = mapInstanceRef.current;
     if (!mapReady || !map) return;
 
-    // Lazy access to maplibregl module (already loaded by init effect)
-    let ml = window.maplibregl;
-    const placeMarkers = (mlMod) => {
-      // Clear previous
-      markersRef.current.forEach(({ marker }) => marker.remove());
-      markersRef.current = [];
+    const ml = mapLibreRef.current;
+    if (!ml) return;
+    // Clear previous
+    markersRef.current.forEach(({ marker }) => marker.remove());
+    markersRef.current = [];
 
-      venues.forEach(v => {
-        const loc = v.location;
-        if (!loc?.latitude || !loc?.longitude) return;
-        const isActive = activeVenue?.id === v.id;
-        const el = buildMarkerEl(v, isActive);
-        el.addEventListener('click', (e) => {
-          e.stopPropagation();
-          setActiveVenue(v);
-          map.flyTo({ center: [loc.longitude, loc.latitude], zoom: Math.max(map.getZoom(), 15), duration: 600 });
-        });
-        const anchor = (photoCacheRef.current[v.place_id] || v.photo_url) ? 'center' : 'bottom';
-        const marker = new mlMod.Marker({ element: el, anchor }).setLngLat([loc.longitude, loc.latitude]).addTo(map);
-        markersRef.current.push({ marker, el, venue: v });
+    venues.forEach(v => {
+      const loc = v.location;
+      if (!loc?.latitude || !loc?.longitude) return;
+      const isActive = activeVenue?.id === v.id;
+      const el = buildMarkerEl(v, isActive);
+      el.addEventListener('click', (e) => {
+        e.stopPropagation();
+        setActiveVenue(v);
+        map.flyTo({ center: [loc.longitude, loc.latitude], zoom: Math.max(map.getZoom(), 15), duration: 600 });
       });
-    };
-
-    if (ml) {
-      placeMarkers(ml);
-    } else {
-      import('maplibre-gl').then((mod) => { window.maplibregl = mod.default; placeMarkers(mod.default); });
-    }
+      const anchor = (photoCacheRef.current[v.place_id] || v.photo_url) ? 'center' : 'bottom';
+      const marker = new ml.Marker({ element: el, anchor }).setLngLat([loc.longitude, loc.latitude]).addTo(map);
+      markersRef.current.push({ marker, el, venue: v });
+    });
   }, [venues, mapReady, buildMarkerEl]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ---------- active venue highlight (only resize the 2 changed markers) ----------
@@ -616,7 +610,7 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
             location: { latitude: fLat, longitude: fLng },
             types: [],
           };
-          const ml = window.maplibregl;
+          const ml = mapLibreRef.current;
           if (ml) {
             const el = buildMarkerEl(tempVenue, true);
             el.addEventListener('click', (e) => { e.stopPropagation(); setActiveVenue(tempVenue); map.flyTo({ center: [fLng, fLat], zoom: 17 }); });
@@ -660,7 +654,8 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
   useEffect(() => {
     const map = mapInstanceRef.current;
     if (!mapReady || !map || !flockMemberLocations) return;
-    let ml = window.maplibregl;
+    const ml = mapLibreRef.current;
+    if (!ml) return;
     const run = (mlMod) => {
       const currentIds = new Set(Object.keys(flockMemberLocations));
       // Remove gone
@@ -708,8 +703,7 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
         }
       });
     };
-    if (ml) run(ml);
-    else import('maplibre-gl').then((mod) => { window.maplibregl = mod.default; run(mod.default); });
+    run(ml);
   }, [mapReady, flockMemberLocations, userLocation, calcDistance]);
 
   // ---------- render ----------
