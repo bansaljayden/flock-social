@@ -20,7 +20,6 @@ import { Html5Qrcode } from 'html5-qrcode';
 import LoginScreen from './components/auth/LoginScreen';
 import SignupScreen from './components/auth/SignupScreen';
 import VenueLoginScreen from './components/auth/VenueLoginScreen';
-import { MarkerClusterer } from '@googlemaps/markerclusterer';
 import { motion, AnimatePresence } from 'framer-motion';
 import { SplineScene } from './components/ui/spline-scene';
 
@@ -107,29 +106,6 @@ const ScrollFade = ({ children, delay = 0, className = '' }) => {
   );
 };
 
-// Load Google Maps dynamically from .env — API key never exposed in HTML
-const loadGoogleMapsScript = () => {
-  return new Promise((resolve, reject) => {
-    if (window.google && window.google.maps) {
-      resolve();
-      return;
-    }
-    const existing = document.querySelector('script[src*="maps.googleapis.com"]');
-    if (existing) {
-      existing.addEventListener('load', () => resolve());
-      if (window.google?.maps) resolve();
-      return;
-    }
-    const script = document.createElement('script');
-    script.src = `https://maps.googleapis.com/maps/api/js?key=${process.env.REACT_APP_GOOGLE_MAPS_API_KEY}&libraries=places,visualization`;
-    script.async = true;
-    script.defer = true;
-    script.onload = () => resolve();
-    script.onerror = () => reject(new Error('Failed to load Google Maps'));
-    document.head.appendChild(script);
-  });
-};
-
 // Memoized VenueCard — unified design for both DMs and Flocks
 const VenueCard = React.memo(({ venue, onViewDetails, onVote, colors: c, Icons: I, getCategoryColor: gcc }) => {
   const rating = venue.stars || venue.rating || null;
@@ -197,86 +173,75 @@ const VenueCard = React.memo(({ venue, onViewDetails, onVote, colors: c, Icons: 
   );
 });
 
-// Google Maps dark theme matching Flock's navy aesthetic
-const FLOCK_MAP_STYLES = [
-  { elementType: 'geometry', stylers: [{ color: '#1a2a3a' }] },
-  { elementType: 'labels.text.stroke', stylers: [{ color: '#1a2a3a' }] },
-  { elementType: 'labels.text.fill', stylers: [{ color: '#8ec3b9' }] },
-  { featureType: 'administrative.locality', elementType: 'labels.text.fill', stylers: [{ color: '#b8d4e3' }] },
-  { featureType: 'poi', elementType: 'labels.text.fill', stylers: [{ color: '#6b8a9e' }] },
-  { featureType: 'poi.park', elementType: 'geometry', stylers: [{ color: '#1e3a2a' }] },
-  { featureType: 'poi.park', elementType: 'labels.text.fill', stylers: [{ color: '#4a8c6f' }] },
-  { featureType: 'road', elementType: 'geometry', stylers: [{ color: '#2d4a5c' }] },
-  { featureType: 'road', elementType: 'geometry.stroke', stylers: [{ color: '#1a3045' }] },
-  { featureType: 'road.highway', elementType: 'geometry', stylers: [{ color: '#3a5a70' }] },
-  { featureType: 'road.highway', elementType: 'geometry.stroke', stylers: [{ color: '#1f3a4f' }] },
-  { featureType: 'road.highway', elementType: 'labels.text.fill', stylers: [{ color: '#b8c8d8' }] },
-  { featureType: 'transit', elementType: 'geometry', stylers: [{ color: '#2a3a4a' }] },
-  { featureType: 'transit.station', elementType: 'labels.text.fill', stylers: [{ color: '#7a9ab0' }] },
-  { featureType: 'water', elementType: 'geometry', stylers: [{ color: '#0e1f30' }] },
-  { featureType: 'water', elementType: 'labels.text.fill', stylers: [{ color: '#3a6080' }] },
-];
+// =============================================================================
+// MapLibre GL JS — Snap Map-style vector basemap (smooth GPU-rendered)
+// Uses OpenFreeMap dark vector tiles (free, no API key, no signup).
+// Drop-in replacement for GoogleMapView with same prop interface.
+// =============================================================================
+const OPENFREEMAP_DARK = 'https://tiles.openfreemap.org/styles/dark';
+const ESRI_SATELLITE_STYLE = {
+  version: 8,
+  sources: {
+    'esri-imagery': {
+      type: 'raster',
+      tiles: ['https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'],
+      tileSize: 256,
+      attribution: 'Tiles © Esri',
+      maxzoom: 19,
+    },
+  },
+  layers: [{ id: 'esri-imagery', type: 'raster', source: 'esri-imagery' }],
+};
 
-// Google Maps wrapper — Flock-branded pins + AI crowd heatmap
-const GoogleMapView = React.memo(({ venues, filterCategory, userLocation, activeVenue, setActiveVenue, getCategoryColor, pickingVenueForCreate, setPickingVenueForCreate, setSelectedVenueForCreate, setCurrentScreen, openVenueDetail, flockMemberLocations, calcDistance }) => {
+// True-meters circle as a GeoJSON polygon for the user's accuracy ring
+function metersCirclePolygon(lat, lng, radiusMeters, points = 64) {
+  const coords = [];
+  const earthR = 6378137;
+  const latRad = (lat * Math.PI) / 180;
+  for (let i = 0; i <= points; i++) {
+    const angle = (i / points) * Math.PI * 2;
+    const dLat = (radiusMeters * Math.cos(angle)) / earthR;
+    const dLng = (radiusMeters * Math.sin(angle)) / (earthR * Math.cos(latRad));
+    coords.push([lng + (dLng * 180) / Math.PI, lat + (dLat * 180) / Math.PI]);
+  }
+  return { type: 'Feature', geometry: { type: 'Polygon', coordinates: [coords] }, properties: {} };
+}
+
+const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, activeVenue, setActiveVenue, getCategoryColor, pickingVenueForCreate, setPickingVenueForCreate, setSelectedVenueForCreate, setCurrentScreen, openVenueDetail, flockMemberLocations, calcDistance }) => {
   const mapRef = useRef(null);
   const mapInstanceRef = useRef(null);
-  const markersRef = useRef([]); // each entry: { marker, venue }
-  const clustererRef = useRef(null);
-  const heatmapRef = useRef(null);
+  const markersRef = useRef([]); // [{ marker, el, venue }]
   const userMarkerRef = useRef(null);
-  const memberMarkersRef = useRef({}); // userId -> { marker, infoWindow }
-  const prevVenueCountRef = useRef(0);
-  const pinCacheRef = useRef({}); // place_id -> data URL
-  const prevActiveRef = useRef(null); // track previous active venue id
-  const [mapReady, setMapReady] = useState(false); // tracks when Google Map instance is initialized
+  const userElRef = useRef(null);
+  const memberMarkersRef = useRef({}); // userId -> { marker, popup }
+  const photoCacheRef = useRef({}); // place_id -> dataURL
+  const prevActiveRef = useRef(null);
+  const watchIdRef = useRef(null);
+  const [mapReady, setMapReady] = useState(false);
   const [mapType, setMapType] = useState(() => localStorage.getItem('flock_map_type') || 'roadmap');
-
-  const toggleMapType = useCallback(() => {
-    const newType = mapType === 'roadmap' ? 'hybrid' : 'roadmap';
-    setMapType(newType);
-    localStorage.setItem('flock_map_type', newType);
-    if (mapInstanceRef.current) {
-      mapInstanceRef.current.setMapTypeId(newType);
-      // Apply custom styles only on roadmap, satellite looks better without them
-      mapInstanceRef.current.setOptions({ styles: newType === 'roadmap' ? FLOCK_MAP_STYLES : [] });
-    }
-  }, [mapType]);
 
   const DEFAULT_ZOOM = 12;
 
-  // Get user's REAL location — works anywhere (PA, KY, CA, anywhere!)
-  // Only falls back to Hellertown if geolocation is denied/unsupported
-  const getUserLocation = () => {
-    return new Promise((resolve) => {
-      if (navigator.geolocation) {
-        navigator.geolocation.getCurrentPosition(
-          (position) => {
-            const userLoc = {
-              lat: position.coords.latitude,
-              lng: position.coords.longitude
-            };
-            resolve(userLoc);
-          },
-          (error) => {
-            resolve({ lat: 40.5798, lng: -75.2932 });
-          },
-          { enableHighAccuracy: true, timeout: 8000, maximumAge: 0 }
-        );
-      } else {
-        resolve({ lat: 40.5798, lng: -75.2932 });
-      }
-    });
-  };
+  // ---------- helpers ----------
+  const getUserLocation = () => new Promise((resolve) => {
+    if (navigator.geolocation) {
+      navigator.geolocation.getCurrentPosition(
+        (p) => resolve({ lat: p.coords.latitude, lng: p.coords.longitude }),
+        () => resolve({ lat: 40.5798, lng: -75.2932 }),
+        { enableHighAccuracy: true, timeout: 8000, maximumAge: 0 },
+      );
+    } else {
+      resolve({ lat: 40.5798, lng: -75.2932 });
+    }
+  });
 
-  // Build fallback pin SVG (no photo available)
+  // SVG fallback pin (no photo)
   const buildPinSvg = useCallback((isActive, category) => {
     const fill = isActive ? '#14B8A6' : '#1e293b';
     const stroke = '#f1ede0';
-    const size = isActive ? 44 : 32;
     const initialMap = { Food: 'F', Nightlife: 'N', 'Live Music': 'M', Sports: 'S' };
     const initial = initialMap[category] || 'P';
-    return `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${Math.round(size * 1.32)}" viewBox="0 0 32 42">` +
+    return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 42">` +
       `<defs><filter id="s" x="-20%" y="-10%" width="140%" height="140%"><feDropShadow dx="0" dy="2" stdDeviation="2" flood-opacity="0.35"/></filter></defs>` +
       `<path d="M16 0C7.16 0 0 7.16 0 16c0 12 16 26 16 26s16-14 16-26C32 7.16 24.84 0 16 0z" fill="${fill}" stroke="${stroke}" stroke-width="2" filter="url(#s)"/>` +
       `<circle cx="16" cy="14.5" r="9" fill="white"/>` +
@@ -284,7 +249,7 @@ const GoogleMapView = React.memo(({ venues, filterCategory, userLocation, active
       `</svg>`;
   }, []);
 
-  // Build circular photo pin using canvas
+  // Circular photo pin via canvas (same trick as the old impl, returns dataURL)
   const buildPhotoPin = useCallback((photoUrl, isActive) => {
     const size = isActive ? 54 : 44;
     const border = isActive ? 3.5 : 2.5;
@@ -300,22 +265,18 @@ const GoogleMapView = React.memo(({ venues, filterCategory, userLocation, active
       const img = new Image();
       img.crossOrigin = 'anonymous';
       img.onload = () => {
-        // Border ring
         ctx.beginPath();
         ctx.arc(r, r, r - 0.5, 0, Math.PI * 2);
         ctx.fillStyle = borderColor;
         ctx.fill();
-        // Clip to inner circle for photo
         ctx.beginPath();
         ctx.arc(r, r, r - border, 0, Math.PI * 2);
         ctx.clip();
-        // Draw photo scaled to cover
         const aspect = img.width / img.height;
         let sx = 0, sy = 0, sw = img.width, sh = img.height;
         if (aspect > 1) { sx = (img.width - img.height) / 2; sw = img.height; }
         else { sy = (img.height - img.width) / 2; sh = img.width; }
         ctx.drawImage(img, sx, sy, sw, sh, border, border, size - border * 2, size - border * 2);
-        ctx.restore();
         resolve(canvas.toDataURL('image/png'));
       };
       img.onerror = () => resolve(null);
@@ -323,324 +284,261 @@ const GoogleMapView = React.memo(({ venues, filterCategory, userLocation, active
     });
   }, []);
 
-  // Crowd color helper — used by map popup & venue cards
-  const getCrowdColor = (crowd) => crowd > 70 ? '#EF4444' : crowd > 40 ? '#F59E0B' : '#10B981'; // eslint-disable-line no-unused-vars
+  // Build a marker DOM element (pin or photo) at the right size
+  const buildMarkerEl = useCallback((venue, isActive) => {
+    const el = document.createElement('div');
+    el.className = 'mlb-venue-marker';
+    el.style.cursor = 'pointer';
+    el.style.willChange = 'transform';
+    el.style.transition = 'transform 0.18s ease';
+    const size = isActive ? 54 : 44;
+    el.style.width = size + 'px';
+    el.style.height = size + 'px';
 
-  // Initialize map ONCE — load Google Maps script, get user location, then create map
+    const cached = photoCacheRef.current[venue.place_id];
+    if (cached) {
+      el.style.backgroundImage = `url("${cached}")`;
+      el.style.backgroundSize = 'cover';
+      el.style.borderRadius = '50%';
+    } else if (venue.photo_url) {
+      // Show fallback while photo loads
+      const svg = buildPinSvg(isActive, venue.category);
+      el.innerHTML = svg;
+      const svgEl = el.querySelector('svg');
+      if (svgEl) { svgEl.setAttribute('width', size); svgEl.setAttribute('height', Math.round(size * 1.32)); }
+      // Async upgrade to photo pin
+      buildPhotoPin(venue.photo_url, isActive).then(dataUrl => {
+        if (dataUrl) {
+          photoCacheRef.current[venue.place_id] = dataUrl;
+          el.innerHTML = '';
+          el.style.backgroundImage = `url("${dataUrl}")`;
+          el.style.backgroundSize = 'cover';
+          el.style.borderRadius = '50%';
+        }
+      });
+    } else {
+      const svg = buildPinSvg(isActive, venue.category);
+      el.innerHTML = svg;
+      const svgEl = el.querySelector('svg');
+      if (svgEl) { svgEl.setAttribute('width', size); svgEl.setAttribute('height', Math.round(size * 1.32)); }
+    }
+    return el;
+  }, [buildPinSvg, buildPhotoPin]);
+
+  // ---------- init map (once) ----------
   useEffect(() => {
-    if (!mapRef.current) return;
-    if (mapInstanceRef.current) return;
-
-    const initMap = async () => {
-      // Load Google Maps script first (from .env, not index.html)
-      await loadGoogleMapsScript();
-
-      // Get user's REAL location (wherever they are!)
+    if (!mapRef.current || mapInstanceRef.current) return;
+    let cancelled = false;
+    const init = async () => {
+      const maplibregl = (await import('maplibre-gl')).default;
+      await import('maplibre-gl/dist/maplibre-gl.css');
+      if (cancelled) return;
       const userLoc = await getUserLocation();
-
-
-      // Create map centered on THEIR location
+      if (cancelled) return;
       const savedMapType = localStorage.getItem('flock_map_type') || 'roadmap';
-      const map = new window.google.maps.Map(mapRef.current, {
-        center: userLoc,
+
+      const map = new maplibregl.Map({
+        container: mapRef.current,
+        style: savedMapType === 'roadmap' ? OPENFREEMAP_DARK : ESRI_SATELLITE_STYLE,
+        center: [userLoc.lng, userLoc.lat],
         zoom: DEFAULT_ZOOM,
         minZoom: 3,
         maxZoom: 18,
-        styles: savedMapType === 'roadmap' ? FLOCK_MAP_STYLES : [],
-        mapTypeId: savedMapType,
-        disableDefaultUI: true,
-        zoomControl: false,
-        fullscreenControl: false,
-        mapTypeControl: false,
-        streetViewControl: false,
-        gestureHandling: 'greedy',
+        attributionControl: { compact: true },
+        // Snap-style smoothness
+        fadeDuration: 200,
+        antialias: true,
       });
       mapInstanceRef.current = map;
-      setMapReady(true);
-      map.addListener('click', () => { setActiveVenue(null); });
 
+      map.on('load', () => {
+        // Accuracy circle source (empty until userLocation arrives)
+        if (!map.getSource('user-accuracy')) {
+          map.addSource('user-accuracy', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
+          map.addLayer({
+            id: 'user-accuracy-fill',
+            type: 'fill',
+            source: 'user-accuracy',
+            paint: { 'fill-color': '#3b82f6', 'fill-opacity': 0.1 },
+          });
+          map.addLayer({
+            id: 'user-accuracy-line',
+            type: 'line',
+            source: 'user-accuracy',
+            paint: { 'line-color': '#3b82f6', 'line-opacity': 0.3, 'line-width': 1 },
+          });
+        }
+        setMapReady(true);
+      });
 
-      // Listen for permission changes (denied → granted)
+      // Click on empty map — clear active venue
+      map.on('click', (e) => {
+        if (e.originalEvent?.target?.closest?.('.mlb-venue-marker')) return;
+        setActiveVenue(null);
+      });
+
+      // Re-pan when geolocation permission flips to granted
       if (navigator.permissions) {
-        navigator.permissions.query({ name: 'geolocation' }).then((permStatus) => {
-          permStatus.addEventListener('change', () => {
-            if (permStatus.state === 'granted') {
+        navigator.permissions.query({ name: 'geolocation' }).then((perm) => {
+          perm.addEventListener('change', () => {
+            if (perm.state === 'granted') {
               navigator.geolocation.getCurrentPosition(
-                (pos) => {
-                  const newLoc = { lat: pos.coords.latitude, lng: pos.coords.longitude };
-                  map.panTo(newLoc);
-                  map.setZoom(DEFAULT_ZOOM);
-                },
+                (pos) => map.flyTo({ center: [pos.coords.longitude, pos.coords.latitude], zoom: DEFAULT_ZOOM }),
                 () => {},
-                { enableHighAccuracy: true, timeout: 8000, maximumAge: 0 }
+                { enableHighAccuracy: true, timeout: 8000, maximumAge: 0 },
               );
             }
           });
         }).catch(() => {});
       }
     };
-
-    initMap();
+    init();
+    return () => { cancelled = true; };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // User location blue dot with accuracy circle + live tracking
-  const accuracyCircleRef = useRef(null);
-  const watchIdRef = useRef(null);
+  // ---------- map type toggle (vector dark <-> satellite) ----------
+  const toggleMapType = useCallback(async () => {
+    const map = mapInstanceRef.current;
+    if (!map) return;
+    const newType = mapType === 'roadmap' ? 'hybrid' : 'roadmap';
+    setMapType(newType);
+    localStorage.setItem('flock_map_type', newType);
+    map.setStyle(newType === 'roadmap' ? OPENFREEMAP_DARK : ESRI_SATELLITE_STYLE);
+    map.once('styledata', () => {
+      // Re-add accuracy circle source after style change
+      if (!map.getSource('user-accuracy')) {
+        map.addSource('user-accuracy', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
+        map.addLayer({ id: 'user-accuracy-fill', type: 'fill', source: 'user-accuracy', paint: { 'fill-color': '#3b82f6', 'fill-opacity': 0.1 } });
+        map.addLayer({ id: 'user-accuracy-line', type: 'line', source: 'user-accuracy', paint: { 'line-color': '#3b82f6', 'line-opacity': 0.3, 'line-width': 1 } });
+      }
+      // Refresh accuracy data
+      if (userLocation) {
+        const src = map.getSource('user-accuracy');
+        if (src) src.setData({ type: 'FeatureCollection', features: [metersCirclePolygon(userLocation.lat, userLocation.lng, userLocation.accuracy || 50)] });
+      }
+    });
+  }, [mapType, userLocation]);
 
+  // ---------- user blue dot + accuracy ring ----------
   useEffect(() => {
-    if (!mapReady || !mapInstanceRef.current || !userLocation) return;
-    const pos = { lat: userLocation.lat, lng: userLocation.lng };
-    if (userMarkerRef.current) {
-      userMarkerRef.current.setPosition(pos);
+    const map = mapInstanceRef.current;
+    if (!mapReady || !map || !userLocation) return;
+    const lng = userLocation.lng, lat = userLocation.lat;
+    const acc = userLocation.accuracy || 50;
+
+    // Blue dot
+    if (!userMarkerRef.current) {
+      const el = document.createElement('div');
+      el.style.width = '20px';
+      el.style.height = '20px';
+      el.style.borderRadius = '50%';
+      el.style.background = '#3b82f6';
+      el.style.border = '3px solid #fff';
+      el.style.boxShadow = '0 0 0 3px rgba(59,130,246,0.25)';
+      el.style.willChange = 'transform';
+      userElRef.current = el;
+      // eslint-disable-next-line no-undef
+      const ml = window.maplibregl || require('maplibre-gl').default;
+      userMarkerRef.current = new ml.Marker({ element: el, anchor: 'center' }).setLngLat([lng, lat]).addTo(map);
     } else {
-      userMarkerRef.current = new window.google.maps.Marker({
-        position: pos,
-        map: mapInstanceRef.current,
-        icon: {
-          path: window.google.maps.SymbolPath.CIRCLE,
-          scale: 10,
-          fillColor: '#3b82f6',
-          fillOpacity: 1,
-          strokeColor: '#ffffff',
-          strokeWeight: 3,
-        },
-        zIndex: 999,
-        title: 'You are here',
-      });
+      userMarkerRef.current.setLngLat([lng, lat]);
     }
 
-    // Accuracy circle
-    const accuracy = userLocation.accuracy || 50;
-    if (accuracyCircleRef.current) {
-      accuracyCircleRef.current.setCenter(pos);
-      accuracyCircleRef.current.setRadius(accuracy);
-    } else {
-      accuracyCircleRef.current = new window.google.maps.Circle({
-        map: mapInstanceRef.current,
-        center: pos,
-        radius: accuracy,
-        fillColor: '#3b82f6',
-        fillOpacity: 0.1,
-        strokeColor: '#3b82f6',
-        strokeOpacity: 0.3,
-        strokeWeight: 1,
-        clickable: false,
-        zIndex: 998,
-      });
+    // Accuracy circle data
+    const src = map.getSource('user-accuracy');
+    if (src) {
+      src.setData({ type: 'FeatureCollection', features: [metersCirclePolygon(lat, lng, acc)] });
     }
   }, [userLocation, mapReady]);
 
-  // Live position tracking — update blue dot every 10 seconds
+  // Live position tracking
   useEffect(() => {
     if (!mapReady || !navigator.geolocation) return;
     if (watchIdRef.current !== null) navigator.geolocation.clearWatch(watchIdRef.current);
     watchIdRef.current = navigator.geolocation.watchPosition(
       (pos) => {
-        const newLoc = { lat: pos.coords.latitude, lng: pos.coords.longitude, accuracy: pos.coords.accuracy };
-        if (userMarkerRef.current) userMarkerRef.current.setPosition({ lat: newLoc.lat, lng: newLoc.lng });
-        if (accuracyCircleRef.current) {
-          accuracyCircleRef.current.setCenter({ lat: newLoc.lat, lng: newLoc.lng });
-          accuracyCircleRef.current.setRadius(newLoc.accuracy || 50);
-        }
+        const map = mapInstanceRef.current;
+        if (!map) return;
+        const lat = pos.coords.latitude, lng = pos.coords.longitude;
+        if (userMarkerRef.current) userMarkerRef.current.setLngLat([lng, lat]);
+        const src = map.getSource('user-accuracy');
+        if (src) src.setData({ type: 'FeatureCollection', features: [metersCirclePolygon(lat, lng, pos.coords.accuracy || 50)] });
       },
       () => {},
-      { enableHighAccuracy: true, timeout: 15000, maximumAge: 10000 }
+      { enableHighAccuracy: true, timeout: 15000, maximumAge: 10000 },
     );
     return () => { if (watchIdRef.current !== null) navigator.geolocation.clearWatch(watchIdRef.current); };
   }, [mapReady]);
 
-  // Venue markers + heatmap — rebuild ONLY when venue data actually changes (not on activeVenue!)
+  // ---------- venue markers ----------
   useEffect(() => {
-    if (!mapInstanceRef.current || !window.google?.maps) return;
+    const map = mapInstanceRef.current;
+    if (!mapReady || !map) return;
 
-    // Clear previous markers + clusterer + heatmap
-    if (clustererRef.current) {
-      clustererRef.current.clearMarkers();
-      clustererRef.current = null;
-    }
-    if (heatmapRef.current) {
-      heatmapRef.current.setMap(null);
-      heatmapRef.current = null;
-    }
-    markersRef.current.forEach(entry => {
-      entry.marker.setMap(null);
-    });
-    markersRef.current = [];
+    // Lazy access to maplibregl module (already loaded by init effect)
+    let ml = window.maplibregl;
+    const placeMarkers = (mlMod) => {
+      // Clear previous
+      markersRef.current.forEach(({ marker }) => marker.remove());
+      markersRef.current = [];
 
-    const bounds = new window.google.maps.LatLngBounds();
-    prevVenueCountRef.current = venues.length;
-    const allMarkers = [];
-    const heatPoints = [];
-
-    venues.forEach(v => {
-      const loc = v.location;
-      if (!loc || !loc.latitude || !loc.longitude) return;
-
-      const position = { lat: loc.latitude, lng: loc.longitude };
-
-      // Collect heatmap data points weighted by crowd level
-      if (typeof v.crowd === 'number') {
-        heatPoints.push({ lat: loc.latitude, lng: loc.longitude, weight: v.crowd / 100 });
-      }
-
-      // --- Start with fallback SVG pin ---
-      const pinSvg = buildPinSvg(false, v.category);
-      const pinSize = 32;
-      const pinHeight = Math.round(pinSize * 1.32);
-
-      const marker = new window.google.maps.Marker({
-        position,
-        title: v.name,
-        icon: {
-          url: 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(pinSvg),
-          scaledSize: new window.google.maps.Size(pinSize, pinHeight),
-          anchor: new window.google.maps.Point(pinSize / 2, pinHeight),
-        },
-        optimized: true,
-        zIndex: v.trending ? 50 : 10,
-      });
-
-      marker.addListener('click', () => {
-        setActiveVenue(v);
-        mapInstanceRef.current.panTo(position);
-      });
-
-      markersRef.current.push({ marker, venue: v });
-      allMarkers.push(marker);
-      bounds.extend(position);
-
-      // Async: load venue photo into circular pin with crowd glow
-      if (v.photo_url && !pinCacheRef.current[v.place_id]) {
-        buildPhotoPin(v.photo_url, false).then(dataUrl => {
-          if (dataUrl) {
-            pinCacheRef.current[v.place_id] = dataUrl;
-            const photoSize = 44;
-            marker.setIcon({
-              url: dataUrl,
-              scaledSize: new window.google.maps.Size(photoSize, photoSize),
-              anchor: new window.google.maps.Point(photoSize / 2, photoSize / 2),
-            });
-          }
+      venues.forEach(v => {
+        const loc = v.location;
+        if (!loc?.latitude || !loc?.longitude) return;
+        const isActive = activeVenue?.id === v.id;
+        const el = buildMarkerEl(v, isActive);
+        el.addEventListener('click', (e) => {
+          e.stopPropagation();
+          setActiveVenue(v);
+          map.flyTo({ center: [loc.longitude, loc.latitude], zoom: Math.max(map.getZoom(), 15), duration: 600 });
         });
-      } else if (pinCacheRef.current[v.place_id]) {
-        const photoSize = 44;
-        marker.setIcon({
-          url: pinCacheRef.current[v.place_id],
-          scaledSize: new window.google.maps.Size(photoSize, photoSize),
-          anchor: new window.google.maps.Point(photoSize / 2, photoSize / 2),
-        });
-      }
-    });
-
-    // Heatmap overlay — Google HeatmapLayer
-    if (heatPoints.length > 0 && window.google.maps.visualization) {
-      const heatData = heatPoints.map(pt => ({
-        location: new window.google.maps.LatLng(pt.lat, pt.lng),
-        weight: pt.weight,
-      }));
-      heatmapRef.current = new window.google.maps.visualization.HeatmapLayer({
-        data: heatData,
-        map: mapInstanceRef.current,
-        radius: 80,
-        opacity: 0.85,
-        dissipating: true,
-        maxIntensity: 0.5,
-        gradient: [
-          'rgba(0, 0, 0, 0)',
-          'rgba(34, 197, 94, 0.6)',
-          'rgba(34, 197, 94, 0.7)',
-          'rgba(160, 220, 40, 0.75)',
-          'rgba(250, 204, 21, 0.8)',
-          'rgba(251, 191, 36, 0.82)',
-          'rgba(245, 158, 11, 0.85)',
-          'rgba(249, 115, 22, 0.88)',
-          'rgba(239, 68, 68, 0.9)',
-          'rgba(220, 38, 38, 0.94)',
-          'rgba(185, 28, 28, 0.97)',
-        ],
+        const anchor = (photoCacheRef.current[v.place_id] || v.photo_url) ? 'center' : 'bottom';
+        const marker = new mlMod.Marker({ element: el, anchor }).setLngLat([loc.longitude, loc.latitude]).addTo(map);
+        markersRef.current.push({ marker, el, venue: v });
       });
-    }
+    };
 
-    // Create clusterer — groups overlapping pins into numbered clusters
-    if (allMarkers.length > 0) {
-      clustererRef.current = new MarkerClusterer({
-        map: mapInstanceRef.current,
-        markers: allMarkers,
-        renderer: {
-          render: ({ count, position }) => {
-            return new window.google.maps.Marker({
-              position,
-              label: { text: String(count), color: 'white', fontSize: '12px', fontWeight: '700' },
-              icon: {
-                path: window.google.maps.SymbolPath.CIRCLE,
-                scale: 20,
-                fillColor: '#1e293b',
-                fillOpacity: 0.9,
-                strokeColor: '#f1ede0',
-                strokeWeight: 2,
-              },
-              zIndex: 1000,
-            });
-          },
-        },
-      });
+    if (ml) {
+      placeMarkers(ml);
+    } else {
+      import('maplibre-gl').then((mod) => { window.maplibregl = mod.default; placeMarkers(mod.default); });
     }
-  }, [venues, buildPinSvg, buildPhotoPin]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [venues, mapReady, buildMarkerEl]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Active venue highlight — only update the 2 affected markers (previous + new)
+  // ---------- active venue highlight (only resize the 2 changed markers) ----------
   useEffect(() => {
     const prevId = prevActiveRef.current;
     const newId = activeVenue?.id;
     if (prevId === newId) return;
     prevActiveRef.current = newId;
-
-    markersRef.current.forEach(entry => {
-      const vid = entry.venue.id;
-      if (vid !== prevId && vid !== newId) return; // skip unchanged markers
-      const isActive = vid === newId;
-      const cached = pinCacheRef.current[entry.venue.place_id];
-
-      if (cached || entry.venue.photo_url) {
-        // Photo pin — resize for active/inactive
-        if (cached) {
-          const photoSize = isActive ? 54 : 44;
-          entry.marker.setIcon({
-            url: cached,
-            scaledSize: new window.google.maps.Size(photoSize, photoSize),
-            anchor: new window.google.maps.Point(photoSize / 2, photoSize / 2),
-          });
-        } else if (isActive && entry.venue.photo_url) {
-          // Generate active photo pin on demand
-          buildPhotoPin(entry.venue.photo_url, true).then(dataUrl => {
+    markersRef.current.forEach(({ el, venue }) => {
+      if (venue.id !== prevId && venue.id !== newId) return;
+      const isActive = venue.id === newId;
+      const size = isActive ? 54 : 44;
+      el.style.width = size + 'px';
+      el.style.height = size + 'px';
+      el.style.zIndex = isActive ? '100' : (venue.trending ? '50' : '10');
+      const svgEl = el.querySelector('svg');
+      if (svgEl) {
+        svgEl.setAttribute('width', size);
+        svgEl.setAttribute('height', Math.round(size * 1.32));
+      } else if (photoCacheRef.current[venue.place_id]) {
+        // Already photo — optionally regenerate at active size for sharper border
+        if (isActive && venue.photo_url) {
+          buildPhotoPin(venue.photo_url, true).then(dataUrl => {
             if (dataUrl) {
-              entry.marker.setIcon({
-                url: dataUrl,
-                scaledSize: new window.google.maps.Size(54, 54),
-                anchor: new window.google.maps.Point(27, 27),
-              });
+              photoCacheRef.current[venue.place_id] = dataUrl;
+              el.style.backgroundImage = `url("${dataUrl}")`;
             }
           });
         }
-      } else {
-        // Fallback SVG pin
-        const pinSvg = buildPinSvg(isActive, entry.venue.category);
-        const pinSize = isActive ? 44 : 32;
-        const pinHeight = Math.round(pinSize * 1.32);
-        entry.marker.setIcon({
-          url: 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(pinSvg),
-          scaledSize: new window.google.maps.Size(pinSize, pinHeight),
-          anchor: new window.google.maps.Point(pinSize / 2, pinHeight),
-        });
       }
-      entry.marker.setZIndex(isActive ? 100 : entry.venue.trending ? 50 : 10);
     });
-  }, [activeVenue, buildPinSvg, buildPhotoPin]);
+  }, [activeVenue, buildPhotoPin]);
 
-  // Filter visibility — show/hide markers by category WITHOUT moving the map
-  // Uses actual Google Places types for broader, more accurate matching
+  // ---------- category filter (toggle visibility) ----------
   useEffect(() => {
-    markersRef.current.forEach(entry => {
-      const v = entry.venue;
+    markersRef.current.forEach(({ el, venue: v }) => {
       const t = (v.types || []).join(' ').toLowerCase();
       const nm = (v.name || '').toLowerCase();
       let show = true;
@@ -655,63 +553,53 @@ const GoogleMapView = React.memo(({ venues, filterCategory, userLocation, active
           show = t.includes('stadium') || t.includes('gym') || t.includes('sports') || t.includes('bowling') || t.includes('fitness') || nm.includes('sport') || v.category === 'Sports';
         }
       }
-      entry.marker.setVisible(show);
+      el.style.display = show ? '' : 'none';
     });
   }, [filterCategory]);
 
-  // Expose global helpers for external venue navigation
+  // ---------- external imperative API ----------
   useEffect(() => {
+    const map = mapInstanceRef.current;
+
     window.__flockOpenVenue = (placeId) => {
       const v = venues.find(venue => venue.place_id === placeId);
       if (v) openVenueDetail(placeId, { name: v.name, formatted_address: v.addr, place_id: placeId, rating: v.stars, photo_url: v.photo_url });
     };
-    // Pan to a specific venue from outside (chat, search, etc.)
-    // Accepts placeId string OR object { place_id, lat, lng } for coordinate-based fallback
-    window.__flockPanToVenue = (target) => {
-      if (!mapInstanceRef.current) return;
-      const placeId = typeof target === 'string' ? target : target?.place_id;
-      const fallbackLat = typeof target === 'object' ? parseFloat(target?.lat) : NaN;
-      const fallbackLng = typeof target === 'object' ? parseFloat(target?.lng) : NaN;
 
-      // Try to find existing marker by place_id
+    window.__flockPanToVenue = (target) => {
+      if (!map) return;
+      const placeId = typeof target === 'string' ? target : target?.place_id;
+      const fLat = typeof target === 'object' ? parseFloat(target?.lat) : NaN;
+      const fLng = typeof target === 'object' ? parseFloat(target?.lng) : NaN;
+
       const entry = placeId ? markersRef.current.find(e => e.venue.place_id === placeId) : null;
       if (entry) {
         const loc = entry.venue.location;
-        mapInstanceRef.current.panTo({ lat: loc.latitude, lng: loc.longitude });
-        mapInstanceRef.current.setZoom(17);
+        map.flyTo({ center: [loc.longitude, loc.latitude], zoom: 17, duration: 700 });
         setActiveVenue(entry.venue);
-        entry.marker.setAnimation(window.google.maps.Animation.BOUNCE);
-        setTimeout(() => entry.marker.setAnimation(null), 1500);
-      } else if (!isNaN(fallbackLat) && !isNaN(fallbackLng)) {
-        // Fallback: use raw coordinates (venue not in current markers)
-        mapInstanceRef.current.panTo({ lat: fallbackLat, lng: fallbackLng });
-        mapInstanceRef.current.setZoom(17);
-        // Try to find by proximity (within ~100m)
+        // bounce
+        entry.el.style.transition = 'transform 0.4s cubic-bezier(0.34, 1.56, 0.64, 1)';
+        entry.el.style.transform = 'translateY(-12px)';
+        setTimeout(() => { entry.el.style.transform = ''; }, 600);
+      } else if (!isNaN(fLat) && !isNaN(fLng)) {
+        map.flyTo({ center: [fLng, fLat], zoom: 17, duration: 700 });
         const nearby = markersRef.current.find(e => {
           const loc = e.venue.location;
           if (!loc) return false;
-          const dist = Math.sqrt(Math.pow(loc.latitude - fallbackLat, 2) + Math.pow(loc.longitude - fallbackLng, 2)) * 111000;
-          return dist < 100;
+          const d = Math.sqrt(Math.pow(loc.latitude - fLat, 2) + Math.pow(loc.longitude - fLng, 2)) * 111000;
+          return d < 100;
         });
         if (nearby) {
           setActiveVenue(nearby.venue);
-          nearby.marker.setAnimation(window.google.maps.Animation.BOUNCE);
-          setTimeout(() => nearby.marker.setAnimation(null), 1500);
         } else {
-          // No existing marker — create a temporary pin at these coordinates
+          // Drop a temp pin
           const venueName = target?.name || 'Venue';
           const venueAddr = target?.address || '';
           const venueRating = target?.rating ? parseFloat(target.rating) : 4.0;
           const venuePhoto = target?.photo_url || null;
-          const seed = ((placeId || venueName || '').charCodeAt(0) || 0) + Math.floor(fallbackLat * 100);
+          const seed = ((placeId || venueName || '').charCodeAt(0) || 0) + Math.floor(fLat * 100);
           const crowd = Math.round(20 + ((seed * 37) % 70));
           const bestTimes = ['6-8 PM', '7-9 PM', '8-10 PM', '5-7 PM', '9-11 PM'];
-
-          const tempPinSvg = buildPinSvg(true, 'Food');
-          const tempPinSize = 44;
-          const tempPinHeight = Math.round(tempPinSize * 1.32);
-
-          // Create a complete venue object with all fields the info card needs
           const tempVenue = {
             id: 'temp_nav_' + Date.now(),
             place_id: placeId || null,
@@ -725,172 +613,124 @@ const GoogleMapView = React.memo(({ venues, filterCategory, userLocation, active
             best: bestTimes[seed % bestTimes.length],
             trending: false,
             photo_url: venuePhoto,
-            location: { latitude: fallbackLat, longitude: fallbackLng },
+            location: { latitude: fLat, longitude: fLng },
             types: [],
           };
-
-          const tempMarker = new window.google.maps.Marker({
-            position: { lat: fallbackLat, lng: fallbackLng },
-            map: mapInstanceRef.current,
-            title: venueName,
-            icon: {
-              url: 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(tempPinSvg),
-              scaledSize: new window.google.maps.Size(tempPinSize, tempPinHeight),
-              anchor: new window.google.maps.Point(tempPinSize / 2, tempPinHeight),
-            },
-            animation: window.google.maps.Animation.DROP,
-            zIndex: 200,
-          });
-
-          // Click listener so pin is re-clickable
-          tempMarker.addListener('click', () => {
-            setActiveVenue(tempVenue);
-            mapInstanceRef.current.panTo({ lat: fallbackLat, lng: fallbackLng });
-          });
-
-          setTimeout(() => {
-            tempMarker.setAnimation(window.google.maps.Animation.BOUNCE);
-            setTimeout(() => tempMarker.setAnimation(null), 1500);
-          }, 400);
-
-          markersRef.current.push({ marker: tempMarker, venue: tempVenue });
-          setActiveVenue(tempVenue);
-
-          // Auto-open venue detail if we have a place_id
-          if (placeId) {
-            openVenueDetail(placeId, { name: venueName, formatted_address: venueAddr, place_id: placeId, rating: venueRating, photo_url: venuePhoto });
+          const ml = window.maplibregl;
+          if (ml) {
+            const el = buildMarkerEl(tempVenue, true);
+            el.addEventListener('click', (e) => { e.stopPropagation(); setActiveVenue(tempVenue); map.flyTo({ center: [fLng, fLat], zoom: 17 }); });
+            const anchor = venuePhoto ? 'center' : 'bottom';
+            const marker = new ml.Marker({ element: el, anchor }).setLngLat([fLng, fLat]).addTo(map);
+            markersRef.current.push({ marker, el, venue: tempVenue });
           }
+          setActiveVenue(tempVenue);
+          if (placeId) openVenueDetail(placeId, { name: venueName, formatted_address: venueAddr, place_id: placeId, rating: venueRating, photo_url: venuePhoto });
         }
       }
     };
-    // My Location: instantly pan to the blue dot (no GPS request needed — just go to where the dot already is)
+
     window.__flockGoToMyLocation = () => {
-      if (!mapInstanceRef.current) return;
-
-      // If we have a blue dot, just pan to it instantly
+      if (!map) return;
       if (userMarkerRef.current) {
-        const pos = userMarkerRef.current.getPosition();
-        mapInstanceRef.current.panTo(pos);
-        mapInstanceRef.current.setZoom(15);
-
-        // Pulse animation on blue dot so user sees it
-        const pulseScales = [14, 16, 14, 12, 10];
-        pulseScales.forEach((s, i) => {
+        const ll = userMarkerRef.current.getLngLat();
+        map.flyTo({ center: [ll.lng, ll.lat], zoom: 15, duration: 600 });
+        // Pulse the dot
+        if (userElRef.current) {
+          userElRef.current.style.transition = 'box-shadow 0.4s ease, transform 0.4s ease';
+          userElRef.current.style.boxShadow = '0 0 0 12px rgba(59,130,246,0.35)';
+          userElRef.current.style.transform = 'scale(1.2)';
           setTimeout(() => {
-            if (userMarkerRef.current) {
-              userMarkerRef.current.setIcon({
-                path: window.google.maps.SymbolPath.CIRCLE,
-                scale: s,
-                fillColor: '#3b82f6',
-                fillOpacity: i < 2 ? 0.7 : 1,
-                strokeColor: '#ffffff',
-                strokeWeight: 3,
-              });
+            if (userElRef.current) {
+              userElRef.current.style.boxShadow = '0 0 0 3px rgba(59,130,246,0.25)';
+              userElRef.current.style.transform = '';
             }
-          }, i * 400);
-        });
+          }, 500);
+        }
         return;
       }
-
-      // No blue dot yet — fall back to map center
-      const center = mapInstanceRef.current.getCenter();
-      if (center) {
-        mapInstanceRef.current.panTo(center);
-        mapInstanceRef.current.setZoom(15);
-      }
+      const center = map.getCenter();
+      if (center) map.flyTo({ center: [center.lng, center.lat], zoom: 15 });
     };
+
     return () => { delete window.__flockOpenVenue; delete window.__flockPanToVenue; delete window.__flockGoToMyLocation; };
-  }, [venues, openVenueDetail, setActiveVenue, buildPinSvg]);
+  }, [venues, openVenueDetail, setActiveVenue, buildMarkerEl]);
 
-  // Render flock member location markers
+  // ---------- flock member live location markers ----------
   useEffect(() => {
-    if (!mapReady || !mapInstanceRef.current || !flockMemberLocations) return;
     const map = mapInstanceRef.current;
-    const currentIds = new Set(Object.keys(flockMemberLocations));
-
-    // Remove markers for members who stopped sharing
-    Object.keys(memberMarkersRef.current).forEach(uid => {
-      if (!currentIds.has(uid)) {
-        memberMarkersRef.current[uid].marker.setMap(null);
-        memberMarkersRef.current[uid].infoWindow.close();
-        delete memberMarkersRef.current[uid];
-      }
-    });
-
-    // Add/update markers for sharing members
-    Object.entries(flockMemberLocations).forEach(([uid, loc]) => {
-      const pos = { lat: loc.lat, lng: loc.lng };
-      const dist = userLocation ? calcDistance(userLocation.lat, userLocation.lng, loc.lat, loc.lng) : '';
-      const age = Math.round((Date.now() - loc.timestamp) / 1000);
-      const ageStr = age < 10 ? 'just now' : age < 60 ? `${age}s ago` : `${Math.round(age / 60)}m ago`;
-      const initial = (loc.name || '?')[0].toUpperCase();
-      const cardHtml = `<div style="font-family:'Satoshi',-apple-system,system-ui,BlinkMacSystemFont,sans-serif;display:flex;align-items:center;gap:10px;padding:6px 4px;min-width:160px">
-        <div style="width:36px;height:36px;border-radius:18px;background:linear-gradient(135deg,#1e293b,#1a3a5c);display:flex;align-items:center;justify-content:center;flex-shrink:0;box-shadow:0 2px 6px rgba(13,40,71,0.3)">
-          <span style="color:white;font-size:15px;font-weight:700;line-height:1">${initial}</span>
-        </div>
-        <div style="flex:1;min-width:0">
-          <div style="font-size:13px;font-weight:700;color:#1e293b;margin:0 0 2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${loc.name}</div>
-          <div style="display:flex;align-items:center;gap:4px">
-            <span style="width:6px;height:6px;border-radius:3px;background:#22c55e;display:inline-block;flex-shrink:0"></span>
-            <span style="font-size:11px;color:#6b7280;font-weight:500">${dist ? dist + ' away' : 'Live'}${dist ? ' · ' + ageStr : ''}</span>
+    if (!mapReady || !map || !flockMemberLocations) return;
+    let ml = window.maplibregl;
+    const run = (mlMod) => {
+      const currentIds = new Set(Object.keys(flockMemberLocations));
+      // Remove gone
+      Object.keys(memberMarkersRef.current).forEach(uid => {
+        if (!currentIds.has(uid)) {
+          memberMarkersRef.current[uid].marker.remove();
+          delete memberMarkersRef.current[uid];
+        }
+      });
+      Object.entries(flockMemberLocations).forEach(([uid, loc]) => {
+        const lng = loc.lng, lat = loc.lat;
+        const initial = (loc.name || '?')[0].toUpperCase();
+        const dist = userLocation ? calcDistance(userLocation.lat, userLocation.lng, loc.lat, loc.lng) : '';
+        const age = Math.round((Date.now() - loc.timestamp) / 1000);
+        const ageStr = age < 10 ? 'just now' : age < 60 ? `${age}s ago` : `${Math.round(age / 60)}m ago`;
+        const popupHtml = `<div style="font-family:'Satoshi',-apple-system,system-ui,sans-serif;display:flex;align-items:center;gap:10px;padding:6px 4px;min-width:160px">
+          <div style="width:36px;height:36px;border-radius:18px;background:linear-gradient(135deg,#1e293b,#1a3a5c);display:flex;align-items:center;justify-content:center;flex-shrink:0">
+            <span style="color:white;font-size:15px;font-weight:700">${initial}</span>
           </div>
-        </div>
-      </div>`;
+          <div style="flex:1;min-width:0">
+            <div style="font-size:13px;font-weight:700;color:#1e293b;margin:0 0 2px">${loc.name}</div>
+            <div style="display:flex;align-items:center;gap:4px">
+              <span style="width:6px;height:6px;border-radius:3px;background:#22c55e;display:inline-block"></span>
+              <span style="font-size:11px;color:#6b7280;font-weight:500">${dist ? dist + ' away · ' + ageStr : 'Live'}</span>
+            </div>
+          </div>
+        </div>`;
 
-      if (memberMarkersRef.current[uid]) {
-        memberMarkersRef.current[uid].marker.setPosition(pos);
-        memberMarkersRef.current[uid].infoWindow.setContent(cardHtml);
-      } else {
-        const svgIcon = `<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 40 40">
-          <circle cx="20" cy="20" r="18" fill="#1e293b" stroke="white" stroke-width="3"/>
-          <circle cx="20" cy="20" r="18" fill="none" stroke="#22c55e" stroke-width="2" stroke-dasharray="4 4" opacity="0.6"/>
-          <text x="20" y="26" text-anchor="middle" fill="white" font-size="16" font-weight="bold" font-family="Satoshi,sans-serif">${initial}</text>
-        </svg>`;
-        const marker = new window.google.maps.Marker({
-          position: pos,
-          map,
-          icon: {
-            url: 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(svgIcon),
-            scaledSize: new window.google.maps.Size(40, 40),
-            anchor: new window.google.maps.Point(20, 20),
-          },
-          zIndex: 998,
-          title: loc.name,
-        });
-        const infoWindow = new window.google.maps.InfoWindow({ content: cardHtml });
-        marker.addListener('click', () => {
-          Object.values(memberMarkersRef.current).forEach(m => m.infoWindow.close());
-          infoWindow.open(map, marker);
-        });
-        memberMarkersRef.current[uid] = { marker, infoWindow };
-      }
-    });
+        if (memberMarkersRef.current[uid]) {
+          memberMarkersRef.current[uid].marker.setLngLat([lng, lat]);
+          if (memberMarkersRef.current[uid].popup) memberMarkersRef.current[uid].popup.setHTML(popupHtml);
+        } else {
+          const el = document.createElement('div');
+          el.style.width = '40px';
+          el.style.height = '40px';
+          el.style.cursor = 'pointer';
+          el.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 40 40">
+            <circle cx="20" cy="20" r="18" fill="#1e293b" stroke="white" stroke-width="3"/>
+            <circle cx="20" cy="20" r="18" fill="none" stroke="#22c55e" stroke-width="2" stroke-dasharray="4 4" opacity="0.6"/>
+            <text x="20" y="26" text-anchor="middle" fill="white" font-size="16" font-weight="bold" font-family="Satoshi,sans-serif">${initial}</text>
+          </svg>`;
+          const popup = new mlMod.Popup({ offset: 25, closeButton: false }).setHTML(popupHtml);
+          const marker = new mlMod.Marker({ element: el, anchor: 'center' }).setLngLat([lng, lat]).setPopup(popup).addTo(map);
+          memberMarkersRef.current[uid] = { marker, popup };
+        }
+      });
+    };
+    if (ml) run(ml);
+    else import('maplibre-gl').then((mod) => { window.maplibregl = mod.default; run(mod.default); });
   }, [mapReady, flockMemberLocations, userLocation, calcDistance]);
 
+  // ---------- render ----------
   return (
     <div style={{ position: 'absolute', inset: 0 }}>
-      {/* Map loading overlay — shown until Google Map initializes */}
       {!mapReady && (
         <div style={{ position: 'absolute', inset: 0, zIndex: 10, backgroundColor: '#1a2a3a', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '12px' }}>
           <div style={{ width: '32px', height: '32px', border: '3px solid rgba(255,255,255,0.15)', borderTopColor: '#14B8A6', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
           <p style={{ color: '#8ec3b9', fontSize: '13px', fontWeight: '500', margin: 0 }}>Loading map...</p>
         </div>
       )}
-      {/* Minimize Google branding — legal but nearly invisible. Zoom controls always work. */}
       <style>{`
-        .gm-style-cc { opacity: 0.1 !important; pointer-events: none; transition: opacity 0.3s; font-size: 7px !important; }
-        .gm-style-cc:hover { opacity: 0.4 !important; pointer-events: auto; }
-        .gm-style-cc a, .gm-style-cc span { font-size: 7px !important; }
-        .gm-style a[href^="https://maps.google"] { opacity: 0.1 !important; transform: scale(0.7); transform-origin: bottom left; transition: opacity 0.3s; }
-        .gm-style a[href^="https://maps.google"]:hover { opacity: 0.35 !important; }
-        .gm-style a[title="Open this area in Google Maps (opens a new window)"] img { opacity: 0.15 !important; }
-        .gm-style .gm-bundled-control { display: none !important; }
+        .maplibregl-ctrl-attrib { font-size: 9px !important; opacity: 0.4; }
+        .maplibregl-ctrl-attrib:hover { opacity: 0.9; }
+        .maplibregl-ctrl-logo { display: none !important; }
+        .mlb-venue-marker { user-select: none; -webkit-user-select: none; }
       `}</style>
       <div ref={mapRef} style={{ width: '100%', height: '100%' }} />
 
-      {/* My Location button — Snap Maps style */}
+      {/* My Location button */}
       <button
-        id="flock-my-location-btn"
         onClick={() => window.__flockGoToMyLocation && window.__flockGoToMyLocation()}
         style={{
           position: 'absolute', bottom: '80px', right: '12px',
@@ -898,7 +738,7 @@ const GoogleMapView = React.memo(({ venues, filterCategory, userLocation, active
           border: 'none', background: 'var(--bg-card-solid)', cursor: 'pointer',
           boxShadow: '0 2px 8px rgba(0,0,0,0.25)',
           display: 'flex', alignItems: 'center', justifyContent: 'center',
-          zIndex: 5, transition: 'transform 0.2s ease, opacity 0.3s ease',
+          zIndex: 5, transition: 'transform 0.2s ease',
         }}
         onMouseEnter={(e) => { e.currentTarget.style.transform = 'scale(1.1)'; }}
         onMouseLeave={(e) => { e.currentTarget.style.transform = 'scale(1)'; }}
@@ -917,14 +757,8 @@ const GoogleMapView = React.memo(({ venues, filterCategory, userLocation, active
         boxShadow: '0 2px 8px rgba(0,0,0,0.25)', zIndex: 5,
       }}>
         <button
-          onClick={() => mapInstanceRef.current && mapInstanceRef.current.setZoom(mapInstanceRef.current.getZoom() + 1)}
-          style={{
-            width: '44px', height: '40px', border: 'none', background: 'var(--bg-card-solid)', cursor: 'pointer',
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            transition: 'background 0.15s ease',
-          }}
-          onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--bg-hover)'; }}
-          onMouseLeave={(e) => { e.currentTarget.style.background = 'var(--bg-card-solid)'; }}
+          onClick={() => mapInstanceRef.current && mapInstanceRef.current.zoomIn()}
+          style={{ width: '44px', height: '40px', border: 'none', background: 'var(--bg-card-solid)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
           title="Zoom in"
         >
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--text-primary)" strokeWidth="2.5" strokeLinecap="round">
@@ -933,14 +767,8 @@ const GoogleMapView = React.memo(({ venues, filterCategory, userLocation, active
         </button>
         <div style={{ height: '1px', background: 'var(--border-default)' }} />
         <button
-          onClick={() => mapInstanceRef.current && mapInstanceRef.current.setZoom(mapInstanceRef.current.getZoom() - 1)}
-          style={{
-            width: '44px', height: '40px', border: 'none', background: 'var(--bg-card-solid)', cursor: 'pointer',
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            transition: 'background 0.15s ease',
-          }}
-          onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--bg-hover)'; }}
-          onMouseLeave={(e) => { e.currentTarget.style.background = 'var(--bg-card-solid)'; }}
+          onClick={() => mapInstanceRef.current && mapInstanceRef.current.zoomOut()}
+          style={{ width: '44px', height: '40px', border: 'none', background: 'var(--bg-card-solid)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
           title="Zoom out"
         >
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--text-primary)" strokeWidth="2.5" strokeLinecap="round">
@@ -949,7 +777,7 @@ const GoogleMapView = React.memo(({ venues, filterCategory, userLocation, active
         </button>
       </div>
 
-      {/* Satellite / Map toggle — Snapchat-style */}
+      {/* Map / Satellite toggle */}
       <button
         onClick={toggleMapType}
         style={{
@@ -974,7 +802,6 @@ const GoogleMapView = React.memo(({ venues, filterCategory, userLocation, active
           </svg>
         )}
       </button>
-
     </div>
   );
 });
@@ -6253,8 +6080,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
 
       {/* Premium Map */}
       <div onClick={() => { setShowSearchDropdown(false); }} style={{ flex: 1, position: 'relative', overflow: 'hidden' }}>
-        {/* Real Google Maps */}
-        <GoogleMapView
+        {/* MapLibre GL — Snap Map-style vector tiles (smooth, free, no API key) */}
+        <MapLibreMapView
           venues={allVenues}
           filterCategory={category}
           userLocation={userLocation}
