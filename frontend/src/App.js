@@ -2811,8 +2811,16 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
     if (currentScreen === 'chatDetail' && chatEndRef.current) {
       const msgs = selectedFlock?.messages || [];
       if (msgs.length !== chatMsgCountRef.current) {
+        const isInitialLoad = chatMsgCountRef.current === 0;
         chatMsgCountRef.current = msgs.length;
-        requestAnimationFrame(() => chatEndRef.current?.scrollIntoView({ behavior: 'auto' }));
+        // Instant scroll on initial load (no animation), smooth on new messages
+        if (isInitialLoad) {
+          chatEndRef.current?.scrollIntoView({ behavior: 'instant', block: 'end' });
+          // Double-tap after render settles
+          setTimeout(() => chatEndRef.current?.scrollIntoView({ behavior: 'instant', block: 'end' }), 50);
+        } else {
+          requestAnimationFrame(() => chatEndRef.current?.scrollIntoView({ behavior: 'smooth' }));
+        }
       }
     }
   }, [selectedFlock?.messages, currentScreen]);
