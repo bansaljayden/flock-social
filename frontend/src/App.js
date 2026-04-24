@@ -28,20 +28,19 @@ import { SplineScene } from './components/ui/spline-scene';
 const AnimatedDial = React.memo(function AnimatedDial({ score, color }) {
   const ringRef = React.useRef(null);
   const textRef = React.useRef(null);
-  const currentRef = React.useRef(0);
-  const firstMount = React.useRef(true);
+  const animatedRef = React.useRef(false);
 
   React.useEffect(() => {
+    // Only animate once — from 0 to score. Ignore subsequent score changes.
+    if (animatedRef.current) return;
+    if (!score) return;
+    animatedRef.current = true;
     let raf;
-    const from = firstMount.current ? 0 : currentRef.current;
-    const duration = firstMount.current ? 1200 : 400;
-    firstMount.current = false;
     const start = performance.now();
     const ease = t => 1 - Math.pow(1 - t, 3);
     const tick = now => {
-      const t = Math.min((now - start) / duration, 1);
-      const val = Math.round(from + (score - from) * ease(t));
-      currentRef.current = val;
+      const t = Math.min((now - start) / 1200, 1);
+      const val = Math.round(ease(t) * score);
       if (ringRef.current) ringRef.current.style.background = `conic-gradient(${color} ${val * 3.6}deg, var(--border-default) 0deg)`;
       if (textRef.current) textRef.current.textContent = `${val}%`;
       if (t < 1) raf = requestAnimationFrame(tick);
