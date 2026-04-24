@@ -2818,8 +2818,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
       } else {
         // Fetch message history via HTTP
         setMessagesLoading(true);
+        console.log('[DEBUG] Fetching messages for flock:', selectedFlockId);
         getMessages(selectedFlockId)
           .then((data) => {
+            console.log('[DEBUG] Got messages:', data?.messages?.length || 0, data?.error || '');
             const msgs = (data.messages || []).map(m => ({
               id: m.id,
               sender: String(m.sender_id) === String(authUser?.id) ? 'You' : (m.sender_name || 'Unknown'),
@@ -6547,13 +6549,6 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                     <div style={{ width: '84px', height: '84px', borderRadius: '42px', backgroundColor: 'var(--border-default)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
                       <div style={{ width: '68px', height: '68px', borderRadius: '34px', backgroundColor: 'var(--bg-card-solid)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                         <span style={{ fontSize: '14px', fontWeight: '900', color: 'var(--text-tertiary)' }}>---</span>
-                      </div>
-                    </div>
-                  ) : crowdLoading && !cd ? (
-                    // Wait for real crowd data before animating — prevents double animation (rule score → real score)
-                    <div style={{ width: '84px', height: '84px', borderRadius: '42px', backgroundColor: 'var(--border-default)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                      <div style={{ width: '68px', height: '68px', borderRadius: '34px', backgroundColor: 'var(--bg-card-solid)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                        <span style={{ fontSize: '11px', fontWeight: '700', color: 'var(--text-tertiary)' }}>···</span>
                       </div>
                     </div>
                   ) : (
