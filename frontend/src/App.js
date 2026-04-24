@@ -22,6 +22,7 @@ import SignupScreen from './components/auth/SignupScreen';
 import VenueLoginScreen from './components/auth/VenueLoginScreen';
 import { motion, AnimatePresence } from 'framer-motion';
 import { SplineScene } from './components/ui/spline-scene';
+import 'maplibre-gl/dist/maplibre-gl.css';
 
 // Animated crowd dial — fills from 0 to target score with counting number
 const AnimatedDial = React.memo(function AnimatedDial({ score, color }) {
@@ -324,44 +325,50 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
     });
   }, []);
 
-  // Build a marker DOM element (pin or photo) at the right size
+  // Build a marker DOM element (pin or photo). The OUTER el is owned by MapLibre
+  // (it sets transform every frame), so all visual styling + transitions live on
+  // an INNER div. Touching transform on the outer el causes pin lag / wrong position.
   const buildMarkerEl = useCallback((venue, isActive) => {
     const el = document.createElement('div');
     el.className = 'mlb-venue-marker';
     el.style.cursor = 'pointer';
-    el.style.willChange = 'transform';
-    el.style.transition = 'transform 0.18s ease';
+    // No transition / transform on the outer el — MapLibre owns it.
+
+    const inner = document.createElement('div');
+    inner.className = 'mlb-marker-inner';
+    inner.style.transition = 'width 0.2s ease, height 0.2s ease, box-shadow 0.2s ease';
+    inner.style.willChange = 'auto';
     const size = isActive ? 54 : 44;
-    el.style.width = size + 'px';
-    el.style.height = size + 'px';
+    inner.style.width = size + 'px';
+    inner.style.height = size + 'px';
+    inner.style.display = 'block';
 
     const cached = photoCacheRef.current[venue.place_id];
     if (cached) {
-      el.style.backgroundImage = `url("${cached}")`;
-      el.style.backgroundSize = 'cover';
-      el.style.borderRadius = '50%';
+      inner.style.backgroundImage = `url("${cached}")`;
+      inner.style.backgroundSize = 'cover';
+      inner.style.borderRadius = '50%';
     } else if (venue.photo_url) {
-      // Show fallback while photo loads
       const svg = buildPinSvg(isActive, venue.category);
-      el.innerHTML = svg;
-      const svgEl = el.querySelector('svg');
+      inner.innerHTML = svg;
+      const svgEl = inner.querySelector('svg');
       if (svgEl) { svgEl.setAttribute('width', size); svgEl.setAttribute('height', Math.round(size * 1.32)); }
-      // Async upgrade to photo pin
       buildPhotoPin(venue.photo_url, isActive).then(dataUrl => {
         if (dataUrl) {
           photoCacheRef.current[venue.place_id] = dataUrl;
-          el.innerHTML = '';
-          el.style.backgroundImage = `url("${dataUrl}")`;
-          el.style.backgroundSize = 'cover';
-          el.style.borderRadius = '50%';
+          inner.innerHTML = '';
+          inner.style.backgroundImage = `url("${dataUrl}")`;
+          inner.style.backgroundSize = 'cover';
+          inner.style.borderRadius = '50%';
         }
       });
     } else {
       const svg = buildPinSvg(isActive, venue.category);
-      el.innerHTML = svg;
-      const svgEl = el.querySelector('svg');
+      inner.innerHTML = svg;
+      const svgEl = inner.querySelector('svg');
       if (svgEl) { svgEl.setAttribute('width', size); svgEl.setAttribute('height', Math.round(size * 1.32)); }
     }
+    el.appendChild(inner);
     return el;
   }, [buildPinSvg, buildPhotoPin]);
 
@@ -371,7 +378,6 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
     let cancelled = false;
     const init = async () => {
       const maplibregl = (await import('maplibre-gl')).default;
-      await import('maplibre-gl/dist/maplibre-gl.css');
       mapLibreRef.current = maplibregl;
       if (cancelled) return;
       const userLoc = await getUserLocation();
@@ -455,17 +461,22 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
     const lng = userLocation.lng, lat = userLocation.lat;
     const acc = userLocation.accuracy || 50;
 
-    // Blue dot
+    // Blue dot — outer el is owned by MapLibre; pulse animations target the inner div.
     if (!userMarkerRef.current) {
       const el = document.createElement('div');
       el.style.width = '20px';
       el.style.height = '20px';
-      el.style.borderRadius = '50%';
-      el.style.background = '#3b82f6';
-      el.style.border = '3px solid #fff';
-      el.style.boxShadow = '0 0 0 3px rgba(59,130,246,0.25)';
-      el.style.willChange = 'transform';
-      userElRef.current = el;
+      const inner = document.createElement('div');
+      inner.className = 'mlb-user-dot-inner';
+      inner.style.width = '20px';
+      inner.style.height = '20px';
+      inner.style.borderRadius = '50%';
+      inner.style.background = '#3b82f6';
+      inner.style.border = '3px solid #fff';
+      inner.style.boxShadow = '0 0 0 3px rgba(59,130,246,0.25)';
+      inner.style.transition = 'box-shadow 0.4s ease';
+      el.appendChild(inner);
+      userElRef.current = inner; // pulse helper writes to the inner div
       const ml = mapLibreRef.current;
       if (!ml) return;
       userMarkerRef.current = new ml.Marker({ element: el, anchor: 'center' }).setLngLat([lng, lat]).addTo(map);
@@ -553,23 +564,23 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
       if (venue.id !== prevId && venue.id !== newId) return;
       const isActive = venue.id === newId;
       const size = isActive ? 54 : 44;
-      el.style.width = size + 'px';
-      el.style.height = size + 'px';
-      el.style.zIndex = isActive ? '100' : (venue.trending ? '50' : '10');
-      const svgEl = el.querySelector('svg');
+      const inner = el.querySelector('.mlb-marker-inner') || el;
+      inner.style.width = size + 'px';
+      inner.style.height = size + 'px';
+      // Tiny z-index range — the venue card overlay must always sit above markers.
+      // (Active = 3, trending = 2, normal = 1.)
+      el.style.zIndex = isActive ? '3' : (venue.trending ? '2' : '1');
+      const svgEl = inner.querySelector('svg');
       if (svgEl) {
         svgEl.setAttribute('width', size);
         svgEl.setAttribute('height', Math.round(size * 1.32));
-      } else if (photoCacheRef.current[venue.place_id]) {
-        // Already photo — optionally regenerate at active size for sharper border
-        if (isActive && venue.photo_url) {
-          buildPhotoPin(venue.photo_url, true).then(dataUrl => {
-            if (dataUrl) {
-              photoCacheRef.current[venue.place_id] = dataUrl;
-              el.style.backgroundImage = `url("${dataUrl}")`;
-            }
-          });
-        }
+      } else if (photoCacheRef.current[venue.place_id] && isActive && venue.photo_url) {
+        buildPhotoPin(venue.photo_url, true).then(dataUrl => {
+          if (dataUrl) {
+            photoCacheRef.current[venue.place_id] = dataUrl;
+            inner.style.backgroundImage = `url("${dataUrl}")`;
+          }
+        });
       }
     });
   }, [activeVenue, buildPhotoPin]);
@@ -615,10 +626,15 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
         const loc = entry.venue.location;
         map.flyTo({ center: [loc.longitude, loc.latitude], zoom: 17, duration: 700 });
         setActiveVenue(entry.venue);
-        // bounce
-        entry.el.style.transition = 'transform 0.4s cubic-bezier(0.34, 1.56, 0.64, 1)';
-        entry.el.style.transform = 'translateY(-12px)';
-        setTimeout(() => { entry.el.style.transform = ''; }, 600);
+        // Bounce — animate the INNER div's top offset (outer transform is MapLibre's)
+        const inner = entry.el.querySelector('.mlb-marker-inner');
+        if (inner) {
+          inner.style.transition = 'top 0.4s cubic-bezier(0.34, 1.56, 0.64, 1)';
+          inner.style.position = 'relative';
+          inner.style.top = '-12px';
+          setTimeout(() => { inner.style.top = '0px'; }, 250);
+          setTimeout(() => { inner.style.transition = 'width 0.2s ease, height 0.2s ease, box-shadow 0.2s ease'; inner.style.position = ''; inner.style.top = ''; }, 700);
+        }
       } else if (!isNaN(fLat) && !isNaN(fLng)) {
         map.flyTo({ center: [fLng, fLat], zoom: 17, duration: 700 });
         const nearby = markersRef.current.find(e => {
@@ -673,16 +689,11 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
       if (userMarkerRef.current) {
         const ll = userMarkerRef.current.getLngLat();
         map.flyTo({ center: [ll.lng, ll.lat], zoom: 15, duration: 600 });
-        // Pulse the dot
+        // Pulse the dot — box-shadow on the inner div only (transform is owned by MapLibre on the outer)
         if (userElRef.current) {
-          userElRef.current.style.transition = 'box-shadow 0.4s ease, transform 0.4s ease';
           userElRef.current.style.boxShadow = '0 0 0 12px rgba(59,130,246,0.35)';
-          userElRef.current.style.transform = 'scale(1.2)';
           setTimeout(() => {
-            if (userElRef.current) {
-              userElRef.current.style.boxShadow = '0 0 0 3px rgba(59,130,246,0.25)';
-              userElRef.current.style.transform = '';
-            }
+            if (userElRef.current) userElRef.current.style.boxShadow = '0 0 0 3px rgba(59,130,246,0.25)';
           }, 500);
         }
         return;
@@ -764,6 +775,9 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
         .maplibregl-ctrl-attrib:hover { opacity: 0.9; }
         .maplibregl-ctrl-logo { display: none !important; }
         .mlb-venue-marker { user-select: none; -webkit-user-select: none; }
+        /* Markers must never bleed above overlay UI (venue cards, sheets, etc.) */
+        .maplibregl-marker { z-index: 1; }
+        .maplibregl-canvas-container { z-index: 0; }
       `}</style>
       <div ref={mapRef} style={{ width: '100%', height: '100%' }} />
 
