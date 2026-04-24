@@ -24,7 +24,10 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { SplineScene } from './components/ui/spline-scene';
 import 'maplibre-gl/dist/maplibre-gl.css';
 
-// Animated crowd dial — fills from 0 to target score with counting number
+// Animated crowd dial — fills from 0 to target score with counting number.
+// Perf notes: caches getComputedStyle (was called every frame), pre-renders the
+// static track to an offscreen canvas, and keeps the parent drop-shadow filter
+// on a SIBLING glow div so the canvas itself isn't re-rasterized 60×/sec.
 const AnimatedDial = React.memo(function AnimatedDial({ score, color }) {
   const textRef = React.useRef(null);
   const canvasRef = React.useRef(null);
@@ -32,13 +35,30 @@ const AnimatedDial = React.memo(function AnimatedDial({ score, color }) {
   React.useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
-    const ctx = canvas.getContext('2d');
-    const size = 168; // 2x for retina
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    const cssSize = 84;
+    const size = Math.round(cssSize * dpr);
     const center = size / 2;
-    const radius = 76;
-    const lineWidth = 16;
+    const radius = Math.round(38 * dpr);
+    const lineWidth = Math.round(8 * dpr);
     canvas.width = size;
     canvas.height = size;
+
+    const ctx = canvas.getContext('2d');
+
+    // Cache the track color ONCE (was a getComputedStyle call per frame — expensive style recalc)
+    const trackColor = getComputedStyle(document.documentElement).getPropertyValue('--border-default').trim() || '#334155';
+
+    // Pre-render the static gray ring to an offscreen canvas — drawn once, blitted each frame.
+    const trackCanvas = document.createElement('canvas');
+    trackCanvas.width = size;
+    trackCanvas.height = size;
+    const tctx = trackCanvas.getContext('2d');
+    tctx.beginPath();
+    tctx.arc(center, center, radius, 0, Math.PI * 2);
+    tctx.strokeStyle = trackColor;
+    tctx.lineWidth = lineWidth;
+    tctx.stroke();
 
     let raf;
     const start = performance.now();
@@ -46,13 +66,7 @@ const AnimatedDial = React.memo(function AnimatedDial({ score, color }) {
 
     const draw = (val) => {
       ctx.clearRect(0, 0, size, size);
-      // Track
-      ctx.beginPath();
-      ctx.arc(center, center, radius, 0, Math.PI * 2);
-      ctx.strokeStyle = getComputedStyle(document.documentElement).getPropertyValue('--border-default').trim() || '#334155';
-      ctx.lineWidth = lineWidth;
-      ctx.stroke();
-      // Fill arc
+      ctx.drawImage(trackCanvas, 0, 0);
       if (val > 0) {
         ctx.beginPath();
         ctx.arc(center, center, radius, -Math.PI / 2, -Math.PI / 2 + (val / 100) * Math.PI * 2);
@@ -78,8 +92,11 @@ const AnimatedDial = React.memo(function AnimatedDial({ score, color }) {
   }, [score, color]);
 
   return (
-    <div style={{ width: '84px', height: '84px', position: 'relative', flexShrink: 0, filter: `drop-shadow(0 4px 12px rgba(0,0,0,0.3)) drop-shadow(0 0 8px ${color}30)` }}>
-      <canvas ref={canvasRef} style={{ width: '84px', height: '84px', position: 'absolute', top: 0, left: 0 }} />
+    <div style={{ width: '84px', height: '84px', position: 'relative', flexShrink: 0 }}>
+      {/* Glow lives on a SIBLING div — not on a parent of the canvas. Otherwise every
+          canvas frame would force the browser to re-rasterize the drop-shadow. */}
+      <div aria-hidden style={{ position: 'absolute', inset: 0, borderRadius: '50%', boxShadow: `0 4px 12px rgba(0,0,0,0.3), 0 0 8px ${color}30`, pointerEvents: 'none' }} />
+      <canvas ref={canvasRef} style={{ width: '84px', height: '84px', position: 'absolute', top: 0, left: 0, transform: 'translateZ(0)' }} />
       <div style={{ position: 'absolute', inset: '8px', borderRadius: '34px', backgroundColor: 'var(--bg-card-solid)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
         <span ref={textRef} style={{ fontSize: '22px', fontWeight: '900', color, lineHeight: 1 }}>0%</span>
       </div>
