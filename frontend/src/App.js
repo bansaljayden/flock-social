@@ -28,13 +28,7 @@ import { SplineScene } from './components/ui/spline-scene';
 const AnimatedDial = React.memo(function AnimatedDial({ score, color }) {
   const ringRef = React.useRef(null);
   const textRef = React.useRef(null);
-  const animatedRef = React.useRef(false);
-
   React.useEffect(() => {
-    // Only animate once — from 0 to score. Ignore subsequent score changes.
-    if (animatedRef.current) return;
-    if (!score) return;
-    animatedRef.current = true;
     let raf;
     const start = performance.now();
     const ease = t => 1 - Math.pow(1 - t, 3);
@@ -45,6 +39,8 @@ const AnimatedDial = React.memo(function AnimatedDial({ score, color }) {
       if (textRef.current) textRef.current.textContent = `${val}%`;
       if (t < 1) raf = requestAnimationFrame(tick);
     };
+    if (ringRef.current) ringRef.current.style.background = `conic-gradient(${color} 0deg, var(--border-default) 0deg)`;
+    if (textRef.current) textRef.current.textContent = '0%';
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
   }, [score, color]);
@@ -6343,9 +6339,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
               {/* AI Crowd Forecast Widget */}
               {(() => {
                 const cd = crowdData;
-                const score = cd ? cd.score : activeVenue.crowd;
+                const score = cd ? cd.score : (activeVenue.crowd || 0);
                 const label = cd ? cd.label : (score > 70 ? 'Very Busy' : score > 40 ? 'Moderate' : 'Not Busy');
                 const crowdColor = score > 70 ? colors.red : score > 40 ? colors.amber : colors.teal;
+                // Only pass real ML score to the dial — rule-engine score of 0 means "still loading"
+                const dialScore = cd ? cd.score : 0;
 
                 // Generate client-side hourly forecast when API data is unavailable
                 const fmtH = (h24) => { const hh = ((h24 % 24) + 24) % 24; if (hh === 0) return '12 AM'; if (hh < 12) return `${hh} AM`; if (hh === 12) return '12 PM'; return `${hh - 12} PM`; };
@@ -6560,7 +6558,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                       </div>
                     </div>
                   ) : (
-                    <AnimatedDial score={score} color={crowdColor} />
+                    <AnimatedDial score={dialScore} color={crowdColor} />
                   )}
                   <div style={{ flex: 1, minWidth: 0 }}>
                     {isClosed ? (
