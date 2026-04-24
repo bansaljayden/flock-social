@@ -235,10 +235,15 @@ const VENUE_HEAT_PAINT = {
   ],
 };
 
-// Add accuracy ring + venue heatmap. Inserts UNDER the first symbol layer so
-// road/place labels stay readable on top of the heat.
+// Add accuracy ring + venue heatmap + 3D buildings.
+// Inserts heat UNDER the first symbol layer so road/place labels stay readable
+// on top of the heat. 3D building extrusion uses the basemap's existing
+// building vector tiles (free, no extra fetch) — gives the map Snap-Map-style
+// city depth when zoomed in.
 function addOverlayLayers(map) {
-  const firstSymbolId = (map.getStyle().layers || []).find(l => l.type === 'symbol')?.id;
+  const layers = map.getStyle().layers || [];
+  const firstSymbolId = layers.find(l => l.type === 'symbol')?.id;
+
   if (!map.getSource('user-accuracy')) {
     map.addSource('user-accuracy', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
     map.addLayer({ id: 'user-accuracy-fill', type: 'fill', source: 'user-accuracy', paint: { 'fill-color': '#3b82f6', 'fill-opacity': 0.1 } }, firstSymbolId);
@@ -247,6 +252,34 @@ function addOverlayLayers(map) {
   if (!map.getSource('venue-heat')) {
     map.addSource('venue-heat', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
     map.addLayer({ id: 'venue-heat', type: 'heatmap', source: 'venue-heat', paint: VENUE_HEAT_PAINT }, firstSymbolId);
+  }
+
+  // 3D building extrusion. Reuses whichever building source-layer the basemap
+  // exposes (CARTO/OMT call it 'building'). Skipped when basemap doesn't ship
+  // building geometry (e.g. raster satellite style).
+  if (!map.getLayer('flock-3d-buildings')) {
+    const buildingLayer = layers.find(l => l['source-layer'] === 'building' && (l.type === 'fill' || l.type === 'fill-extrusion'));
+    if (buildingLayer) {
+      try {
+        map.addLayer({
+          id: 'flock-3d-buildings',
+          source: buildingLayer.source,
+          'source-layer': 'building',
+          type: 'fill-extrusion',
+          minzoom: 14,
+          paint: {
+            'fill-extrusion-color': '#243651',
+            'fill-extrusion-height': [
+              'interpolate', ['linear'], ['zoom'],
+              14, 0,
+              16, ['coalesce', ['get', 'render_height'], ['get', 'height'], 8],
+            ],
+            'fill-extrusion-base': ['coalesce', ['get', 'render_min_height'], ['get', 'min_height'], 0],
+            'fill-extrusion-opacity': 0.75,
+          },
+        }, firstSymbolId);
+      } catch {}
+    }
   }
 }
 
