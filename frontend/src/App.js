@@ -2811,7 +2811,6 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
     if (currentScreen === 'chatDetail' && chatEndRef.current) {
       const msgs = selectedFlock?.messages || [];
       if (msgs.length !== chatMsgCountRef.current || chatMsgCountRef.current === 0) {
-        const isEntering = chatMsgCountRef.current === 0 || msgs.length !== chatMsgCountRef.current;
         chatMsgCountRef.current = msgs.length;
         // Always instant scroll when entering the chat
         chatEndRef.current?.scrollIntoView({ behavior: 'instant', block: 'end' });
@@ -2878,7 +2877,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
             }));
             setFlocks(prev => prev.map(f => f.id === selectedFlockId ? { ...f, messages: msgs } : f));
           })
-          .catch(() => {})
+          .catch((err) => console.error('[DEBUG] Message fetch FAILED:', err))
           .finally(() => setMessagesLoading(false));
       }
       // Load budget status and bill split
