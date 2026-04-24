@@ -5672,28 +5672,25 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           <button
             className="glass-btn glass-navy"
             onClick={() => setCurrentScreen('create')}
+            className="glass-btn"
             style={{
               flex: 1.2,
-              padding: '18px 20px',
+              padding: '16px',
               borderRadius: '16px',
-              border: '1px solid rgba(255,255,255,0.2)',
-              background: 'linear-gradient(135deg, #0d9488, #14b8a6)',
+              border: '1px solid rgba(255,255,255,0.18)',
+              background: 'rgba(255,255,255,0.08)',
+              backdropFilter: 'blur(16px)',
+              WebkitBackdropFilter: 'blur(16px)',
               color: 'white',
-              fontWeight: '800',
-              fontSize: '16px',
               cursor: 'pointer',
-              boxShadow: '0 6px 24px rgba(13,148,136,0.35), inset 0 1px 0 rgba(255,255,255,0.25), inset 0 -1px 0 rgba(0,0,0,0.1)',
-              backdropFilter: 'blur(12px)',
-              WebkitBackdropFilter: 'blur(12px)',
-              transition: 'transform 0.2s ease, box-shadow 0.2s ease',
+              boxShadow: '0 4px 16px rgba(0,0,0,0.2), inset 0 1px 0 rgba(255,255,255,0.15), inset 0 -1px 0 rgba(0,0,0,0.1)',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
-              gap: '8px',
-              letterSpacing: '-0.3px'
+              gap: '8px'
             }}
           >
-            {Icons.plus('white', 20)} <span style={{ fontSize: '16px', fontWeight: '800' }}>Start a Flock</span>
+            {Icons.plus('white', 18)} <span style={{ fontSize: '16px', fontWeight: '800' }}>Start a Flock</span>
           </button>
           <button
             className="glass-btn glass-secondary"
