@@ -7829,7 +7829,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 </div>
                 {m.sender !== 'You' && idx === 0 && <div style={{ position: 'absolute', bottom: '-1px', right: '-1px', width: '10px', height: '10px', borderRadius: '5px', backgroundColor: '#22C55E', border: '2px solid var(--bg-card-solid)' }} />}
               </div>
-              <div style={{ maxWidth: '72%', display: 'flex', flexDirection: 'column', alignItems: m.sender === 'You' ? 'flex-end' : 'flex-start' }}>
+              <div style={{ maxWidth: '72%', display: 'inline-flex', flexDirection: 'column', alignItems: m.sender === 'You' ? 'flex-end' : 'flex-start' }}>
                 {/* Sender name and timestamp */}
                 <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '4px', padding: '0 4px' }}>
                   <span style={{ fontSize: '11px', color: colors.navy, fontWeight: '600' }}>{m.sender}</span>
