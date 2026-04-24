@@ -6632,12 +6632,13 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                         if (vTypes.some(t => ['library', 'museum'].includes(t))) return (parsedH < 9 || parsedH > 18);
                         return false;
                       })();
-                      const barColor = hourClosed ? 'var(--text-tertiary)' : h.score > 70 ? colors.red : h.score > 40 ? colors.amber : colors.teal;
-                      // Min heights: closed bars 6px (clearly visible footprint), open bars 10px floor
-                      const barH = hourClosed ? 6 : Math.max(h.score * 0.45, 10);
+                      // Defend against null / NaN scores from the ML predictor
+                      const safeScore = Number.isFinite(h.score) ? h.score : 0;
+                      const barColor = hourClosed ? 'var(--text-tertiary)' : safeScore > 70 ? colors.red : safeScore > 40 ? colors.amber : colors.teal;
+                      const barH = hourClosed ? 6 : Math.max(safeScore * 0.45, 10);
                       return (
                       <div key={i} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '2px' }}>
-                        <motion.div initial={{ height: 0 }} animate={{ height: barH }} transition={{ delay: 0.4 + i * 0.04, type: 'spring', damping: 14, stiffness: 300 }} style={{ width: '100%', borderRadius: '3px 3px 1px 1px', backgroundColor: barColor, opacity: hourClosed ? 0.35 : isNow ? 1 : 0.75, boxShadow: isNow && !hourClosed ? `0 0 6px ${barColor}50` : 'none' }} />
+                        <div className="crowd-bar" style={{ width: '100%', height: `${barH}px`, borderRadius: '3px 3px 1px 1px', backgroundColor: barColor, opacity: hourClosed ? 0.35 : isNow ? 1 : 0.75, boxShadow: isNow && !hourClosed ? `0 0 6px ${barColor}50` : 'none', animationDelay: `${0.4 + i * 0.04}s` }} />
                         <span style={{ fontSize: '7px', color: hourClosed ? 'var(--text-tertiary)' : isNow ? 'var(--text-primary)' : 'var(--text-tertiary)', fontWeight: isNow ? '800' : '400', opacity: hourClosed ? 0.4 : 1 }}>{isNow ? 'Now' : h.hour}</span>
                       </div>
                       );
@@ -12925,6 +12926,16 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
       {adminPromptModal}
       <NewDmModal />
       <style>{`
+        @keyframes crowd-bar-grow {
+          from { transform: scaleY(0); }
+          to   { transform: scaleY(1); }
+        }
+        .crowd-bar {
+          transform-origin: bottom;
+          transform: scaleY(0);
+          animation: crowd-bar-grow 0.5s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+          will-change: transform;
+        }
         @keyframes pulse {
           0%, 100% { opacity: 0.4; transform: translate(-50%, -50%) scale(1); }
           50% { opacity: 0.8; transform: translate(-50%, -50%) scale(1.2); }
