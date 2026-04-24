@@ -2810,18 +2810,16 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   useEffect(() => {
     if (currentScreen === 'chatDetail' && chatEndRef.current) {
       const msgs = selectedFlock?.messages || [];
-      if (msgs.length !== chatMsgCountRef.current) {
-        const isInitialLoad = chatMsgCountRef.current === 0;
+      if (msgs.length !== chatMsgCountRef.current || chatMsgCountRef.current === 0) {
+        const isEntering = chatMsgCountRef.current === 0 || msgs.length !== chatMsgCountRef.current;
         chatMsgCountRef.current = msgs.length;
-        // Instant scroll on initial load (no animation), smooth on new messages
-        if (isInitialLoad) {
-          chatEndRef.current?.scrollIntoView({ behavior: 'instant', block: 'end' });
-          // Double-tap after render settles
-          setTimeout(() => chatEndRef.current?.scrollIntoView({ behavior: 'instant', block: 'end' }), 50);
-        } else {
-          requestAnimationFrame(() => chatEndRef.current?.scrollIntoView({ behavior: 'smooth' }));
-        }
+        // Always instant scroll when entering the chat
+        chatEndRef.current?.scrollIntoView({ behavior: 'instant', block: 'end' });
+        setTimeout(() => chatEndRef.current?.scrollIntoView({ behavior: 'instant', block: 'end' }), 50);
       }
+    } else {
+      // Reset counter when leaving chat so re-entering triggers instant scroll
+      chatMsgCountRef.current = 0;
     }
   }, [selectedFlock?.messages, currentScreen]);
 
