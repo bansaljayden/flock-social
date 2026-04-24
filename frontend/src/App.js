@@ -5674,25 +5674,26 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
             onClick={() => setCurrentScreen('create')}
             style={{
               flex: 1.2,
-              padding: '16px',
+              padding: '18px 20px',
               borderRadius: '16px',
-              border: '1px solid rgba(255,255,255,0.15)',
-              background: `linear-gradient(135deg, ${colors.navyBg}, ${colors.navyMidBg})`,
+              border: '1px solid rgba(255,255,255,0.2)',
+              background: 'linear-gradient(135deg, #0d9488, #14b8a6)',
               color: 'white',
               fontWeight: '800',
-              fontSize: '14px',
+              fontSize: '16px',
               cursor: 'pointer',
-              boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.15), 0 6px 20px rgba(13,40,71,0.3), 0 2px 4px rgba(0,0,0,0.1)',
+              boxShadow: '0 6px 24px rgba(13,148,136,0.35), inset 0 1px 0 rgba(255,255,255,0.25), inset 0 -1px 0 rgba(0,0,0,0.1)',
               backdropFilter: 'blur(12px)',
               WebkitBackdropFilter: 'blur(12px)',
               transition: 'transform 0.2s ease, box-shadow 0.2s ease',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
-              gap: '6px'
+              gap: '8px',
+              letterSpacing: '-0.3px'
             }}
           >
-            {Icons.plus('white', 16)} <span className="shimmer-text">Start a Flock</span>
+            {Icons.plus('white', 20)} <span style={{ fontSize: '16px', fontWeight: '800' }}>Start a Flock</span>
           </button>
           <button
             className="glass-btn glass-secondary"
