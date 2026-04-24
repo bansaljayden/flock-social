@@ -394,6 +394,7 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
   useEffect(() => {
     if (!mapRef.current || mapInstanceRef.current) return;
     let cancelled = false;
+    let resizeObs = null;
     const init = async () => {
       const maplibregl = (await import('maplibre-gl')).default;
       mapLibreRef.current = maplibregl;
@@ -415,6 +416,18 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
         antialias: true,
       });
       mapInstanceRef.current = map;
+
+      // Track container size — MapLibre locks canvas dimensions at construction,
+      // so if the parent flex layout settles AFTER init the canvas stays short
+      // (leaves a navy gap below the map). ResizeObserver fixes that for good
+      // and also handles orientation changes / window resize.
+      if (typeof ResizeObserver !== 'undefined') {
+        resizeObs = new ResizeObserver(() => { try { map.resize(); } catch {} });
+        resizeObs.observe(mapRef.current);
+      } else {
+        // Fallback: nudge once after layout settles
+        setTimeout(() => { try { map.resize(); } catch {} }, 0);
+      }
 
       map.on('load', () => {
         addOverlayLayers(map);
@@ -443,7 +456,7 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
       }
     };
     init();
-    return () => { cancelled = true; };
+    return () => { cancelled = true; if (resizeObs) resizeObs.disconnect(); };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ---------- map type toggle (vector dark <-> satellite) ----------
