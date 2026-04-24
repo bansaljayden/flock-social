@@ -28,23 +28,24 @@ import { SplineScene } from './components/ui/spline-scene';
 const AnimatedDial = React.memo(function AnimatedDial({ score, color }) {
   const ringRef = React.useRef(null);
   const textRef = React.useRef(null);
+  const currentRef = React.useRef(0);
+  const firstMount = React.useRef(true);
 
-  // Animate via direct DOM manipulation — zero React re-renders during the sweep
   React.useEffect(() => {
     let raf;
+    const from = firstMount.current ? 0 : currentRef.current;
+    const duration = firstMount.current ? 1200 : 400;
+    firstMount.current = false;
     const start = performance.now();
-    const duration = 1200;
     const ease = t => 1 - Math.pow(1 - t, 3);
     const tick = now => {
       const t = Math.min((now - start) / duration, 1);
-      const val = Math.round(ease(t) * score);
+      const val = Math.round(from + (score - from) * ease(t));
+      currentRef.current = val;
       if (ringRef.current) ringRef.current.style.background = `conic-gradient(${color} ${val * 3.6}deg, var(--border-default) 0deg)`;
       if (textRef.current) textRef.current.textContent = `${val}%`;
       if (t < 1) raf = requestAnimationFrame(tick);
     };
-    // Reset to 0 before starting
-    if (ringRef.current) ringRef.current.style.background = `conic-gradient(${color} 0deg, var(--border-default) 0deg)`;
-    if (textRef.current) textRef.current.textContent = '0%';
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
   }, [score, color]);
@@ -6560,14 +6561,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                         <span style={{ fontSize: '14px', fontWeight: '900', color: 'var(--text-tertiary)' }}>---</span>
                       </div>
                     </div>
-                  ) : !hasRealData ? (
-                    <div style={{ width: '84px', height: '84px', borderRadius: '42px', background: `conic-gradient(var(--border-default) 0deg)`, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, boxShadow: `0 4px 16px rgba(0,0,0,0.4)`, animation: 'pulse 1.5s ease-in-out infinite' }}>
-                      <div style={{ width: '68px', height: '68px', borderRadius: '34px', backgroundColor: 'var(--bg-card-solid)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                        <span style={{ fontSize: '11px', fontWeight: '700', color: 'var(--text-tertiary)', animation: 'pulse 1.5s ease-in-out infinite' }}>Loading</span>
-                      </div>
-                    </div>
                   ) : (
-                    <AnimatedDial key={`dial-${activeVenue?.place_id}-${score}`} score={score} color={crowdColor} />
+                    <AnimatedDial score={score} color={crowdColor} />
                   )}
                   <div style={{ flex: 1, minWidth: 0 }}>
                     {isClosed ? (
