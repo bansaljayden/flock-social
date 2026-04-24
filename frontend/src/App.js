@@ -5897,7 +5897,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
             <label style={{ display: 'block', fontSize: '12px', fontWeight: 'bold', color: colors.navy, marginBottom: '6px' }}>When</label>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '6px' }}>
               {['Tonight', 'Tomorrow', 'This Weekend', 'Next Week'].map(d => (
-                <button key={d} className="glass-btn glass-secondary" onClick={() => setFlockDate(d)} style={{ padding: '10px', borderRadius: '10px', border: flockDate === d ? '2px solid #22c55e' : '1.5px solid var(--border-default)', backgroundColor: flockDate === d ? 'rgba(34,197,94,0.15)' : 'var(--bg-card-solid)', color: flockDate === d ? '#22c55e' : 'var(--text-primary)', fontWeight: '700', fontSize: '13px', cursor: 'pointer', transition: 'all 0.2s ease', boxShadow: flockDate === d ? '0 0 12px rgba(34,197,94,0.2)' : 'none' }}>{flockDate === d ? '✓ ' : ''}{d}</button>
+                <button key={d} onClick={() => setFlockDate(d)} style={{ padding: '10px', borderRadius: '10px', border: flockDate === d ? '2px solid #22c55e' : '1.5px solid var(--border-default)', backgroundColor: flockDate === d ? 'rgba(34,197,94,0.15)' : 'var(--bg-card-solid)', color: flockDate === d ? '#22c55e' : 'var(--text-primary)', fontWeight: '700', fontSize: '13px', cursor: 'pointer', transition: 'all 0.2s ease', boxShadow: flockDate === d ? '0 0 12px rgba(34,197,94,0.2)' : 'none' }}>{flockDate === d ? '✓ ' : ''}{d}</button>
               ))}
             </div>
           </div>
@@ -5906,7 +5906,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
             <label style={{ display: 'block', fontSize: '12px', fontWeight: 'bold', color: colors.navy, marginBottom: '6px' }}>Time</label>
             <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
               {['7 PM', '8 PM', '9 PM', '10 PM', '11 PM'].map(t => (
-                <button key={t} className="glass-btn glass-secondary" onClick={() => setFlockTime(t)} style={{ padding: '6px 14px', borderRadius: '20px', border: flockTime === t ? '2px solid #22c55e' : '1.5px solid var(--border-default)', backgroundColor: flockTime === t ? 'rgba(34,197,94,0.15)' : 'var(--bg-card-solid)', color: flockTime === t ? '#22c55e' : 'var(--text-primary)', fontWeight: '700', fontSize: '12px', cursor: 'pointer', transition: 'all 0.2s ease', boxShadow: flockTime === t ? '0 0 10px rgba(34,197,94,0.2)' : 'none' }}>{t}</button>
+                <button key={t} onClick={() => setFlockTime(t)} style={{ padding: '6px 14px', borderRadius: '20px', border: flockTime === t ? '2px solid #22c55e' : '1.5px solid var(--border-default)', backgroundColor: flockTime === t ? 'rgba(34,197,94,0.15)' : 'var(--bg-card-solid)', color: flockTime === t ? '#22c55e' : 'var(--text-primary)', fontWeight: '700', fontSize: '12px', cursor: 'pointer', transition: 'all 0.2s ease', boxShadow: flockTime === t ? '0 0 10px rgba(34,197,94,0.2)' : 'none' }}>{t}</button>
               ))}
             </div>
           </div>
