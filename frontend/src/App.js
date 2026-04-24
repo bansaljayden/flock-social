@@ -7892,7 +7892,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                     onClick={() => setShowReactionPicker(showReactionPicker === m.id ? null : m.id)}
                     style={{
                       borderRadius: '18px',
-                      padding: '10px 14px',
+                      padding: '8px 12px',
+                      display: 'inline-block',
                       background: m.sender === 'You' ? (isDark ? 'linear-gradient(135deg, #1e3a5c 0%, #2d5a87 100%)' : `linear-gradient(135deg, ${colorsLight.navy} 0%, ${colorsLight.navyMid} 100%)`) : 'var(--msg-received-bg)',
                       color: m.sender === 'You' ? 'white' : 'var(--msg-received-text)',
                       borderBottomRightRadius: m.sender === 'You' ? '4px' : '18px',
