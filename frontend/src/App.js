@@ -6607,7 +6607,15 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                       const parsedH = (() => { const p = (h.hour || '').match(/^(\d+)\s*(AM|PM)$/i); if (!p) return 12; let hr = parseInt(p[1], 10); if (p[2].toUpperCase() === 'AM' && hr === 12) hr = 0; else if (p[2].toUpperCase() === 'PM' && hr !== 12) hr += 12; return hr; })();
                       const hourClosed = (() => {
                         if (closedAllDay) return true;
-                        if (venueOpenHour != null && venueCloseHour != null) return parsedH < venueOpenHour || parsedH > venueCloseHour;
+                        if (venueOpenHour != null && venueCloseHour != null) {
+                          // Handle venues that close after midnight (close < open).
+                          // Open period for "regular" days  : [open, close]   → closed = h<open || h>close
+                          // Open period for "wraparound" days: [open, 24) ∪ [0, close] → closed = h>close && h<open
+                          if (venueCloseHour > venueOpenHour) {
+                            return parsedH < venueOpenHour || parsedH > venueCloseHour;
+                          }
+                          return parsedH > venueCloseHour && parsedH < venueOpenHour;
+                        }
                         if (isClosed && isNow) return true;
                         if (isClosed) {
                           const vTypes = activeVenue.types || [];
@@ -6636,16 +6644,16 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                       const safeScore = Number.isFinite(h.score) ? h.score : 0;
                       const barColor = hourClosed ? 'var(--text-tertiary)' : safeScore > 70 ? colors.red : safeScore > 40 ? colors.amber : colors.teal;
                       const barH = hourClosed ? 6 : Math.max(safeScore * 0.45, 10);
-                      // TEMP DEBUG — remove once chart renders
-                      if (i === 0) console.log('[CROWD-BAR-DEBUG]', { cdLoaded: !!cd, cdHasHourly: !!cd?.hourly, hourlyLen: hourlyData?.length, sample: hourlyData?.[0], barH, safeScore, hourClosed, barColor });
                       return (
                       <div key={i} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '2px', minWidth: 0 }}>
-                        {/* TEMP: bright MAGENTA fallback at fixed 24px so we can see if the div renders at all */}
                         <div style={{
                           width: '100%',
-                          height: '24px',
+                          height: `${cd ? barH : 0}px`,
                           borderRadius: '3px 3px 1px 1px',
-                          backgroundColor: '#ff00ff',
+                          backgroundColor: cd ? barColor : 'transparent',
+                          opacity: hourClosed ? 0.35 : isNow ? 1 : 0.75,
+                          boxShadow: isNow && !hourClosed && cd ? `0 0 6px ${barColor}50` : 'none',
+                          transition: `height 0.5s cubic-bezier(0.34, 1.56, 0.64, 1) ${i * 0.035}s`,
                           flexShrink: 0,
                         }} />
                         <span style={{ fontSize: '7px', color: hourClosed ? 'var(--text-tertiary)' : isNow ? 'var(--text-primary)' : 'var(--text-tertiary)', fontWeight: isNow ? '800' : '400', opacity: hourClosed ? 0.4 : 1 }}>{isNow ? 'Now' : h.hour}</span>
