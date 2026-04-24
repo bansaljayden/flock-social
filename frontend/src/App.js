@@ -36,11 +36,11 @@ const AnimatedDial = React.memo(function AnimatedDial({ score, color }) {
     const canvas = canvasRef.current;
     if (!canvas) return;
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
-    const cssSize = 84;
+    const cssSize = 60;
     const size = Math.round(cssSize * dpr);
     const center = size / 2;
-    const radius = Math.round(38 * dpr);
-    const lineWidth = Math.round(8 * dpr);
+    const radius = Math.round(26 * dpr);
+    const lineWidth = Math.round(6 * dpr);
     canvas.width = size;
     canvas.height = size;
 
@@ -92,13 +92,13 @@ const AnimatedDial = React.memo(function AnimatedDial({ score, color }) {
   }, [score, color]);
 
   return (
-    <div style={{ width: '84px', height: '84px', position: 'relative', flexShrink: 0 }}>
+    <div style={{ width: '60px', height: '60px', position: 'relative', flexShrink: 0 }}>
       {/* Glow lives on a SIBLING div — not on a parent of the canvas. Otherwise every
           canvas frame would force the browser to re-rasterize the drop-shadow. */}
       <div aria-hidden style={{ position: 'absolute', inset: 0, borderRadius: '50%', boxShadow: `0 4px 12px rgba(0,0,0,0.3), 0 0 8px ${color}30`, pointerEvents: 'none' }} />
-      <canvas ref={canvasRef} style={{ width: '84px', height: '84px', position: 'absolute', top: 0, left: 0, transform: 'translateZ(0)' }} />
-      <div style={{ position: 'absolute', inset: '8px', borderRadius: '34px', backgroundColor: 'var(--bg-card-solid)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-        <span ref={textRef} style={{ fontSize: '22px', fontWeight: '900', color, lineHeight: 1 }}>0%</span>
+      <canvas ref={canvasRef} style={{ width: '60px', height: '60px', position: 'absolute', top: 0, left: 0, transform: 'translateZ(0)' }} />
+      <div style={{ position: 'absolute', inset: '6px', borderRadius: '24px', backgroundColor: 'var(--bg-card-solid)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+        <span ref={textRef} style={{ fontSize: '15px', fontWeight: '900', color, lineHeight: 1 }}>0%</span>
       </div>
     </div>
   );
@@ -223,8 +223,8 @@ const SATELLITE_STYLE = MAPTILER_KEY
 // MapLibre heatmap-intensity: 2 ≈ Google maxIntensity: 0.5 (1/0.5 = 2× per-point contribution).
 const VENUE_HEAT_PAINT = {
   'heatmap-weight': ['coalesce', ['get', 'weight'], 0.5],
-  'heatmap-intensity': 2,
-  'heatmap-radius': 80,
+  'heatmap-intensity': 4,
+  'heatmap-radius': 60,
   'heatmap-opacity': 0.85,
   'heatmap-color': [
     'interpolate', ['linear'], ['heatmap-density'],
@@ -2222,8 +2222,19 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
     setCrowdLoading(true);
     setCrowdData(null);
     setCrowdAlternatives([]);
-    getCrowdPrediction(activeVenue.place_id)
-      .then(data => { if (!cancelled) { setCrowdData(data); if (data?.weather) setLiveWeather(data.weather); if (data) getCrowdAlternatives(activeVenue.place_id).then(res => { if (!cancelled) setCrowdAlternatives(res.alternatives || []); }).catch(() => {}); } })
+    const pid = activeVenue.place_id;
+    getCrowdPrediction(pid)
+      .then(data => {
+        if (cancelled) return;
+        setCrowdData(data);
+        if (data?.weather) setLiveWeather(data.weather);
+        if (data && typeof data.score === 'number') {
+          // Sync fresh score into the venue list so the map heatmap matches the dial
+          setAllVenues(prev => prev.map(v => v.place_id === pid ? { ...v, crowd: data.score, crowdLabel: data.label || v.crowdLabel } : v));
+          setCrowdPredictions(prev => ({ ...prev, [pid]: { ...(prev[pid] || {}), placeId: pid, score: data.score, label: data.label } }));
+        }
+        if (data) getCrowdAlternatives(pid).then(res => { if (!cancelled) setCrowdAlternatives(res.alternatives || []); }).catch(() => {});
+      })
       .catch(() => {})
       .finally(() => { if (!cancelled) setCrowdLoading(false); });
     return () => { cancelled = true; };
@@ -5673,13 +5684,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
               flex: 1.2,
               padding: '16px',
               borderRadius: '16px',
-              border: '1px solid rgba(255,255,255,0.18)',
-              background: 'rgba(255,255,255,0.08)',
-              backdropFilter: 'blur(16px)',
-              WebkitBackdropFilter: 'blur(16px)',
+              border: 'none',
+              background: `linear-gradient(135deg, ${colors.navy}, ${colors.navyMid || colors.navy})`,
               color: 'white',
               cursor: 'pointer',
-              boxShadow: '0 4px 16px rgba(0,0,0,0.2), inset 0 1px 0 rgba(255,255,255,0.15), inset 0 -1px 0 rgba(0,0,0,0.1)',
+              boxShadow: '0 4px 16px rgba(0,0,0,0.2), inset 0 1px 0 rgba(255,255,255,0.15)',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
@@ -5695,23 +5704,21 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
               flex: 0.8,
               padding: '14px',
               borderRadius: '14px',
-              border: '1px solid rgba(255,255,255,0.12)',
-              backgroundColor: 'rgba(255,255,255,0.06)',
-              backdropFilter: 'blur(16px)',
-              WebkitBackdropFilter: 'blur(16px)',
-              color: colors.navy,
+              border: '1.5px solid var(--border-default)',
+              backgroundColor: 'var(--bg-card-solid)',
+              color: 'var(--text-primary)',
               fontWeight: '700',
               fontSize: '13px',
               cursor: 'pointer',
               transition: 'transform 0.2s ease, box-shadow 0.2s ease',
-              boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.1), 0 4px 12px rgba(0,0,0,0.06)',
+              boxShadow: '0 4px 12px rgba(0,0,0,0.06)',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
               gap: '6px'
             }}
           >
-            {Icons.userPlus(colors.navy, 15)} <span className="shimmer-text" style={{ backgroundImage: `linear-gradient(110deg, ${colors.navy} 0%, ${colors.navy} 35%, #60a5fa 50%, ${colors.navy} 65%, ${colors.navy} 100%)`, backgroundSize: '200% 100%', WebkitBackgroundClip: 'text', backgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>Add Friends</span>
+            {Icons.userPlus('currentColor', 15)} <span style={{ fontWeight: '700' }}>Add Friends</span>
           </button>
         </div></ScrollFade>
 
@@ -6556,7 +6563,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 const hasWeather = cd?.weather != null;
 
                 return (
-              <motion.div initial={{ opacity: 0, y: 20, scale: 0.97 }} animate={{ opacity: 1, y: 0, scale: 1 }} transition={{ delay: 0.15, type: 'spring', damping: 20, stiffness: 300 }} style={{ backgroundColor: 'var(--bg-tertiary)', borderRadius: '12px', padding: '8px 10px', marginBottom: '10px', border: '1px solid var(--border-subtle)' }}>
+              <motion.div initial={{ opacity: 0, y: 20, scale: 0.97 }} animate={{ opacity: 1, y: 0, scale: 1 }} transition={{ delay: 0.15, type: 'spring', damping: 20, stiffness: 300 }} style={{ backgroundColor: 'var(--bg-tertiary)', borderRadius: '12px', padding: '6px 10px 8px', marginBottom: '6px', border: '1px solid var(--border-subtle)' }}>
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', marginBottom: '4px', gap: '4px' }}>
                   {crowdLoading ? (
                     <span style={{ fontSize: '9px', color: 'var(--text-secondary)' }}>Loading...</span>
@@ -6580,11 +6587,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 )}
 
                 {/* Crowd Meter */}
-                <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.25, type: 'spring', damping: 18, stiffness: 260 }} style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '10px' }}>
+                <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.25, type: 'spring', damping: 18, stiffness: 260 }} style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '6px' }}>
                   {isClosed ? (
-                    <div style={{ width: '84px', height: '84px', borderRadius: '42px', backgroundColor: 'var(--border-default)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                      <div style={{ width: '68px', height: '68px', borderRadius: '34px', backgroundColor: 'var(--bg-card-solid)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                        <span style={{ fontSize: '14px', fontWeight: '900', color: 'var(--text-tertiary)' }}>---</span>
+                    <div style={{ width: '60px', height: '60px', borderRadius: '30px', backgroundColor: 'var(--border-default)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                      <div style={{ width: '48px', height: '48px', borderRadius: '24px', backgroundColor: 'var(--bg-card-solid)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                        <span style={{ fontSize: '11px', fontWeight: '900', color: 'var(--text-tertiary)' }}>---</span>
                       </div>
                     </div>
                   ) : (
@@ -6615,16 +6622,16 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 </motion.div>
 
                 {/* Group Admission */}
-                <motion.div initial={{ opacity: 0, y: 16, scale: 0.95 }} animate={{ opacity: 1, y: 0, scale: 1 }} transition={{ delay: 0.4, type: 'spring', damping: 20, stiffness: 280 }} style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
+                <motion.div initial={{ opacity: 0, y: 16, scale: 0.95 }} animate={{ opacity: 1, y: 0, scale: 1 }} transition={{ delay: 0.4, type: 'spring', damping: 20, stiffness: 280 }} style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '6px' }}>
                   {partySize === null ? (
                     <>
                       <span style={{ fontSize: '9px', fontWeight: '600', color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>Group:</span>
                       <div style={{ display: 'flex', gap: '4px', flex: 1 }}>
                         {[1, 2, 3, 4, 5, 6, '7+'].map(n => (
                           <button key={n} onClick={() => setPartySize(typeof n === 'number' ? n : 7)}
-                            style={{ flex: 1, padding: '6px 0', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.12)', background: 'rgba(255,255,255,0.06)', backdropFilter: 'blur(8px)', WebkitBackdropFilter: 'blur(8px)', color: 'white', fontSize: '11px', fontWeight: '700', cursor: 'pointer', transition: 'all 0.15s ease', boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.1)' }}
-                            onMouseEnter={e => { e.currentTarget.style.background = 'rgba(20,184,166,0.3)'; e.currentTarget.style.borderColor = '#14b8a6'; }}
-                            onMouseLeave={e => { e.currentTarget.style.background = 'rgba(255,255,255,0.06)'; e.currentTarget.style.borderColor = 'rgba(255,255,255,0.12)'; }}>
+                            style={{ flex: 1, padding: '3px 0', borderRadius: '6px', border: '1px solid var(--border-default)', background: 'var(--bg-card-solid)', color: 'var(--text-primary)', fontSize: '9px', fontWeight: '700', cursor: 'pointer', transition: 'all 0.15s ease' }}
+                            onMouseEnter={e => { e.currentTarget.style.background = 'rgba(20,184,166,0.18)'; e.currentTarget.style.borderColor = '#14b8a6'; e.currentTarget.style.color = '#14b8a6'; }}
+                            onMouseLeave={e => { e.currentTarget.style.background = 'var(--bg-card-solid)'; e.currentTarget.style.borderColor = 'var(--border-default)'; e.currentTarget.style.color = 'var(--text-primary)'; }}>
                             {n}
                           </button>
                         ))}
@@ -6645,13 +6652,15 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 </motion.div>
 
                 {/* Hourly Forecast Graph — fades in immediately, bars animate up */}
-                <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.2, duration: 0.4, ease: 'easeOut' }} style={{ marginBottom: '10px' }}>
-                  <p style={{ fontSize: '9px', fontWeight: '600', color: 'var(--text-secondary)', marginBottom: '6px', textTransform: 'uppercase' }}>Expected Crowd by Hour</p>
-                  <div style={{ display: 'flex', alignItems: 'flex-end', gap: '2px', height: '56px' }}>
+                <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.2, duration: 0.4, ease: 'easeOut' }} style={{ marginBottom: '6px' }}>
+                  <p style={{ fontSize: '9px', fontWeight: '600', color: 'var(--text-secondary)', marginBottom: '4px', textTransform: 'uppercase' }}>Expected Crowd by Hour</p>
+                  <div style={{ display: 'flex', alignItems: 'flex-end', gap: '2px', height: '44px' }}>
                     {hourlyData.map((h, i) => {
                       const isNow = i === 0;
                       const parsedH = (() => { const p = (h.hour || '').match(/^(\d+)\s*(AM|PM)$/i); if (!p) return 12; let hr = parseInt(p[1], 10); if (p[2].toUpperCase() === 'AM' && hr === 12) hr = 0; else if (p[2].toUpperCase() === 'PM' && hr !== 12) hr += 12; return hr; })();
-                      const hourClosed = (() => {
+                      // When the API supplies hourly data, the score itself encodes openness — skip the Google-hours heuristic.
+                      const apiHourly = !!cd?.hourly;
+                      const hourClosed = apiHourly ? false : (() => {
                         if (closedAllDay) return true;
                         if (venueOpenHour != null && venueCloseHour != null) {
                           // Handle venues that close after midnight (close < open).
@@ -6689,9 +6698,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                       // Defend against null / NaN scores from the ML predictor
                       const safeScore = Number.isFinite(h.score) ? h.score : 0;
                       const barColor = hourClosed ? 'var(--text-tertiary)' : safeScore > 70 ? colors.red : safeScore > 40 ? colors.amber : colors.teal;
-                      const barH = hourClosed ? 6 : Math.max(safeScore * 0.45, 10);
+                      const barH = hourClosed ? 4 : Math.max(Math.min(safeScore, 100) * 0.42, 10);
                       return (
-                      <div key={i} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '2px', minWidth: 0 }}>
+                      <div key={i} style={{ flex: 1, display: 'flex', alignItems: 'flex-end', justifyContent: 'center', minWidth: 0, height: '100%' }}>
                         <div style={{
                           width: '100%',
                           height: `${cd ? barH : 0}px`,
@@ -6702,23 +6711,30 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                           transition: `height 0.5s cubic-bezier(0.34, 1.56, 0.64, 1) ${i * 0.035}s`,
                           flexShrink: 0,
                         }} />
-                        <span style={{ fontSize: '7px', color: hourClosed ? 'var(--text-tertiary)' : isNow ? 'var(--text-primary)' : 'var(--text-tertiary)', fontWeight: isNow ? '800' : '400', opacity: hourClosed ? 0.4 : 1 }}>{isNow ? 'Now' : h.hour}</span>
                       </div>
+                      );
+                    })}
+                  </div>
+                  <div style={{ display: 'flex', gap: '2px', marginTop: '2px' }}>
+                    {hourlyData.map((h, i) => {
+                      const isNow = i === 0;
+                      return (
+                        <span key={i} style={{ flex: 1, textAlign: 'center', fontSize: '7px', color: isNow ? 'var(--text-primary)' : 'var(--text-tertiary)', fontWeight: isNow ? '800' : '400', minWidth: 0, overflow: 'hidden' }}>{isNow ? 'Now' : h.hour}</span>
                       );
                     })}
                   </div>
                 </motion.div>
 
                 {/* Busiest Hours & Wait */}
-                <motion.div initial={{ opacity: 0, y: 14 }} animate={cd ? { opacity: 1, y: 0 } : { opacity: 0, y: 14 }} transition={{ delay: 0.8, duration: 0.4, ease: 'easeOut' }} style={{ display: 'flex', gap: '6px', marginBottom: '8px' }}>
-                  <div style={{ flex: 1, backgroundColor: 'var(--bg-card-solid)', borderRadius: '8px', padding: '6px 8px', border: '1px solid var(--border-subtle)' }}>
+                <motion.div initial={{ opacity: 0, y: 14 }} animate={cd ? { opacity: 1, y: 0 } : { opacity: 0, y: 14 }} transition={{ delay: 0.8, duration: 0.4, ease: 'easeOut' }} style={{ display: 'flex', gap: '6px', marginBottom: '6px' }}>
+                  <div style={{ flex: 1, backgroundColor: 'var(--bg-card-solid)', borderRadius: '8px', padding: '4px 8px', border: '1px solid var(--border-subtle)' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '4px', marginBottom: '2px' }}>
                       {Icons.trendingUp(colors.red, 10)}
                       <span style={{ fontSize: '8px', color: 'var(--text-secondary)', textTransform: 'uppercase' }}>Busiest Hours</span>
                     </div>
                     <span style={{ fontSize: '11px', fontWeight: '700', color: closedAllDay ? colors.red : colors.navy }}>{closedAllDay ? 'Closed Today' : peakText}</span>
                   </div>
-                  <div style={{ flex: 1, backgroundColor: 'var(--bg-card-solid)', borderRadius: '8px', padding: '6px 8px', border: '1px solid var(--border-subtle)' }}>
+                  <div style={{ flex: 1, backgroundColor: 'var(--bg-card-solid)', borderRadius: '8px', padding: '4px 8px', border: '1px solid var(--border-subtle)' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '4px', marginBottom: '2px' }}>
                       {Icons.zap(colors.amber, 10)}
                       <span style={{ fontSize: '8px', color: 'var(--text-secondary)', textTransform: 'uppercase' }}>{isClosed ? 'Status' : /^\d|^~|wait/i.test(waitText) ? 'Est. Wait Right Now' : 'Crowd Level'}</span>
@@ -6730,7 +6746,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 {/* Quieter Options */}
                 {(crowdAlternatives.length > 0 || (!cd && allVenues.filter(v => v.id !== activeVenue.id && v.category === activeVenue.category).length > 0)) && (
                 <motion.div initial={{ opacity: 0, y: 14 }} animate={cd ? { opacity: 1, y: 0 } : { opacity: 0, y: 14 }} transition={{ delay: 1.0, duration: 0.4, ease: 'easeOut' }}>
-                  <p style={{ fontSize: '9px', fontWeight: '600', color: 'var(--text-secondary)', marginBottom: '6px', textTransform: 'uppercase' }}>Less Crowded Nearby</p>
+                  <p style={{ fontSize: '9px', fontWeight: '600', color: 'var(--text-secondary)', marginBottom: '4px', textTransform: 'uppercase' }}>Less Crowded Nearby</p>
                   <div style={{ display: 'flex', gap: '6px' }}>
                     {(crowdAlternatives.length > 0 ? crowdAlternatives.slice(0, 2) : allVenues.filter(v => v.id !== activeVenue.id && v.category === activeVenue.category && v.crowd < score && v.opening_hours?.openNow !== false).sort((a, b) => a.crowd - b.crowd).slice(0, 2)).map((v, i) => (
                       <button key={v.placeId || v.id || i} className="glass-btn glass-secondary" onClick={() => {
@@ -6776,7 +6792,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 );
               })()}
 
-              <motion.div initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 1.1, type: 'spring', damping: 20, stiffness: 280 }} style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+              <motion.div initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 1.1, type: 'spring', damping: 20, stiffness: 280 }} style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
                 {pickingVenueForCreate ? (
                   <button onClick={(e) => {
                     confirmClick(e);
@@ -6804,7 +6820,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                       setPickingVenueForCreate(false);
                       setCurrentScreen('create');
                     }
-                  }} className="glass-btn glass-primary" style={{ width: '100%', padding: '14px', borderRadius: '12px', border: 'none', backgroundColor: colors.teal, color: 'white', fontWeight: '800', fontSize: '14px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}>{Icons.check('white', 16)} Select Venue</button>
+                  }} className="glass-btn glass-primary" style={{ width: '100%', padding: '9px', borderRadius: '10px', border: 'none', backgroundColor: colors.teal, color: 'white', fontWeight: '700', fontSize: '12px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}>{Icons.check('white', 14)} Select Venue</button>
                 ) : venueDetailReturnTo ? (
                   <button onClick={() => {
                     setVenueDetailHistory([]);
