@@ -417,6 +417,12 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
       });
       mapInstanceRef.current = map;
 
+      // Snappier scroll-wheel zoom — default 1/300 feels sluggish vs Snap Map.
+      if (map.scrollZoom) {
+        map.scrollZoom.setZoomRate(1 / 100);   // 3× faster per pixel
+        map.scrollZoom.setWheelZoomRate(1 / 80); // 5× faster per wheel notch
+      }
+
       // Track container size — MapLibre locks canvas dimensions at construction,
       // so if the parent flex layout settles AFTER init the canvas stays short
       // (leaves a navy gap below the map). ResizeObserver fixes that for good
@@ -840,7 +846,7 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
         boxShadow: '0 2px 8px rgba(0,0,0,0.25)', zIndex: 5,
       }}>
         <button
-          onClick={() => mapInstanceRef.current && mapInstanceRef.current.zoomIn()}
+          onClick={() => mapInstanceRef.current && mapInstanceRef.current.zoomIn({ duration: 150 })}
           style={{ width: '44px', height: '40px', border: 'none', background: 'var(--bg-card-solid)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
           title="Zoom in"
         >
@@ -850,7 +856,7 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
         </button>
         <div style={{ height: '1px', background: 'var(--border-default)' }} />
         <button
-          onClick={() => mapInstanceRef.current && mapInstanceRef.current.zoomOut()}
+          onClick={() => mapInstanceRef.current && mapInstanceRef.current.zoomOut({ duration: 150 })}
           style={{ width: '44px', height: '40px', border: 'none', background: 'var(--bg-card-solid)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
           title="Zoom out"
         >
