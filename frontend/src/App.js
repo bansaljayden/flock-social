@@ -6598,10 +6598,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                   })()}
                 </motion.div>
 
-                {/* Hourly Forecast Graph — slides in when data loads */}
-                <motion.div initial={{ opacity: 0, y: 16 }} animate={cd ? { opacity: 1, y: 0 } : { opacity: 0, y: 16 }} transition={{ delay: 0.3, duration: 0.5, ease: 'easeOut' }} style={{ marginBottom: '10px' }}>
+                {/* Hourly Forecast Graph — fades in immediately, bars animate up */}
+                <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.2, duration: 0.4, ease: 'easeOut' }} style={{ marginBottom: '10px' }}>
                   <p style={{ fontSize: '9px', fontWeight: '600', color: 'var(--text-secondary)', marginBottom: '6px', textTransform: 'uppercase' }}>Expected Crowd by Hour</p>
-                  <div style={{ display: 'flex', alignItems: 'flex-end', gap: '2px', height: '44px' }}>
+                  <div style={{ display: 'flex', alignItems: 'flex-end', gap: '2px', height: '56px' }}>
                     {hourlyData.map((h, i) => {
                       const isNow = i === 0;
                       const parsedH = (() => { const p = (h.hour || '').match(/^(\d+)\s*(AM|PM)$/i); if (!p) return 12; let hr = parseInt(p[1], 10); if (p[2].toUpperCase() === 'AM' && hr === 12) hr = 0; else if (p[2].toUpperCase() === 'PM' && hr !== 12) hr += 12; return hr; })();
@@ -6633,11 +6633,12 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                         return false;
                       })();
                       const barColor = hourClosed ? 'var(--text-tertiary)' : h.score > 70 ? colors.red : h.score > 40 ? colors.amber : colors.teal;
-                      const barH = hourClosed ? 2 : Math.max(h.score * 0.42, 4);
+                      // Min heights: closed bars 6px (clearly visible footprint), open bars 10px floor
+                      const barH = hourClosed ? 6 : Math.max(h.score * 0.45, 10);
                       return (
                       <div key={i} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '2px' }}>
-                        <motion.div initial={{ height: 0 }} animate={cd ? { height: barH } : { height: 0 }} transition={{ delay: 0.5 + i * 0.04, type: 'spring', damping: 14, stiffness: 300 }} style={{ width: '100%', borderRadius: '3px 3px 1px 1px', backgroundColor: barColor, opacity: hourClosed ? 0.2 : isNow ? 1 : 0.6, boxShadow: isNow && !hourClosed ? `0 0 6px ${barColor}50` : 'none' }} />
-                        <span style={{ fontSize: '7px', color: hourClosed ? 'var(--text-tertiary)' : isNow ? 'var(--text-primary)' : 'var(--text-tertiary)', fontWeight: isNow ? '800' : '400', opacity: hourClosed ? 0.3 : 1 }}>{isNow ? 'Now' : h.hour}</span>
+                        <motion.div initial={{ height: 0 }} animate={{ height: barH }} transition={{ delay: 0.4 + i * 0.04, type: 'spring', damping: 14, stiffness: 300 }} style={{ width: '100%', borderRadius: '3px 3px 1px 1px', backgroundColor: barColor, opacity: hourClosed ? 0.35 : isNow ? 1 : 0.75, boxShadow: isNow && !hourClosed ? `0 0 6px ${barColor}50` : 'none' }} />
+                        <span style={{ fontSize: '7px', color: hourClosed ? 'var(--text-tertiary)' : isNow ? 'var(--text-primary)' : 'var(--text-tertiary)', fontWeight: isNow ? '800' : '400', opacity: hourClosed ? 0.4 : 1 }}>{isNow ? 'Now' : h.hour}</span>
                       </div>
                       );
                     })}
