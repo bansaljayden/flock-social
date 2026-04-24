@@ -6343,6 +6343,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
               {/* AI Crowd Forecast Widget */}
               {(() => {
                 const cd = crowdData;
+                const hasRealData = !!cd;
                 const score = cd ? cd.score : activeVenue.crowd;
                 const label = cd ? cd.label : (score > 70 ? 'Very Busy' : score > 40 ? 'Moderate' : 'Not Busy');
                 const crowdColor = score > 70 ? colors.red : score > 40 ? colors.amber : colors.teal;
@@ -6559,8 +6560,14 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                         <span style={{ fontSize: '14px', fontWeight: '900', color: 'var(--text-tertiary)' }}>---</span>
                       </div>
                     </div>
+                  ) : !hasRealData ? (
+                    <div style={{ width: '84px', height: '84px', borderRadius: '42px', background: `conic-gradient(var(--border-default) 0deg)`, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, boxShadow: `0 4px 16px rgba(0,0,0,0.4)`, animation: 'pulse 1.5s ease-in-out infinite' }}>
+                      <div style={{ width: '68px', height: '68px', borderRadius: '34px', backgroundColor: 'var(--bg-card-solid)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                        <span style={{ fontSize: '11px', fontWeight: '700', color: 'var(--text-tertiary)', animation: 'pulse 1.5s ease-in-out infinite' }}>Loading</span>
+                      </div>
+                    </div>
                   ) : (
-                    <AnimatedDial score={score} color={crowdColor} />
+                    <AnimatedDial key={`dial-${activeVenue?.place_id}-${score}`} score={score} color={crowdColor} />
                   )}
                   <div style={{ flex: 1, minWidth: 0 }}>
                     {isClosed ? (
