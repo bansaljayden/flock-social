@@ -6638,7 +6638,13 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                       const barH = hourClosed ? 6 : Math.max(safeScore * 0.45, 10);
                       return (
                       <div key={i} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '2px' }}>
-                        <div className="crowd-bar" style={{ width: '100%', height: `${barH}px`, borderRadius: '3px 3px 1px 1px', backgroundColor: barColor, opacity: hourClosed ? 0.35 : isNow ? 1 : 0.75, boxShadow: isNow && !hourClosed ? `0 0 6px ${barColor}50` : 'none', animationDelay: `${0.4 + i * 0.04}s` }} />
+                        {/* Only render the bar when real ML data is loaded — avoids the "wrong bars
+                            flash then correct bars" effect from the synthetic genHourly fallback. */}
+                        {cd ? (
+                          <div className="crowd-bar" style={{ width: '100%', height: `${barH}px`, borderRadius: '3px 3px 1px 1px', backgroundColor: barColor, opacity: hourClosed ? 0.35 : isNow ? 1 : 0.75, boxShadow: isNow && !hourClosed ? `0 0 6px ${barColor}50` : 'none', animationDelay: `${0.4 + i * 0.04}s` }} />
+                        ) : (
+                          <div style={{ width: '100%', height: '0px' }} />
+                        )}
                         <span style={{ fontSize: '7px', color: hourClosed ? 'var(--text-tertiary)' : isNow ? 'var(--text-primary)' : 'var(--text-tertiary)', fontWeight: isNow ? '800' : '400', opacity: hourClosed ? 0.4 : 1 }}>{isNow ? 'Now' : h.hour}</span>
                       </div>
                       );
