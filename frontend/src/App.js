@@ -104,28 +104,6 @@ const AnimatedDial = React.memo(function AnimatedDial({ score, color }) {
   );
 });
 
-// Single crowd-forecast bar with a guaranteed-visible bouncy entrance.
-// State-driven (not CSS keyframe) so the failure mode is "instant render" not
-// "stuck invisible". Mounts at height 0, transitions to barH after `delay` ms.
-const CrowdBar = React.memo(function CrowdBar({ barH, color, opacity, glow, delay }) {
-  const [h, setH] = React.useState(0);
-  React.useEffect(() => {
-    const t = setTimeout(() => setH(barH), delay);
-    return () => clearTimeout(t);
-  }, [barH, delay]);
-  return (
-    <div style={{
-      width: '100%',
-      height: `${h}px`,
-      borderRadius: '3px 3px 1px 1px',
-      backgroundColor: color,
-      opacity,
-      boxShadow: glow,
-      transition: 'height 0.5s cubic-bezier(0.34, 1.56, 0.64, 1)',
-    }} />
-  );
-});
-
 // Scroll fade-in component using IntersectionObserver
 const ScrollFade = ({ children, delay = 0, className = '' }) => {
   const ref = useRef(null);
@@ -6659,16 +6637,19 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                       const barColor = hourClosed ? 'var(--text-tertiary)' : safeScore > 70 ? colors.red : safeScore > 40 ? colors.amber : colors.teal;
                       const barH = hourClosed ? 6 : Math.max(safeScore * 0.45, 10);
                       return (
-                      <div key={i} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '2px' }}>
-                        {/* React-state-driven entrance: bar starts at height 0, transitions to
-                            barH after a per-bar delay. CSS transition handles the bouncy easing.
-                            No CSS class with hidden initial state — failure mode is "no animation,
-                            bar still appears", never "bar invisible forever". */}
-                        {cd ? (
-                          <CrowdBar barH={barH} color={barColor} opacity={hourClosed ? 0.35 : isNow ? 1 : 0.75} glow={isNow && !hourClosed ? `0 0 6px ${barColor}50` : 'none'} delay={400 + i * 40} />
-                        ) : (
-                          <div style={{ width: '100%', height: '0px' }} />
-                        )}
+                      <div key={i} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '2px', minWidth: 0 }}>
+                        {/* Plain div with inline height — simplest possible render path.
+                            No state, no animation, no class, no conditional unless cd is null. */}
+                        <div style={{
+                          width: '100%',
+                          height: `${cd ? barH : 0}px`,
+                          borderRadius: '3px 3px 1px 1px',
+                          backgroundColor: cd ? barColor : 'transparent',
+                          opacity: hourClosed ? 0.35 : isNow ? 1 : 0.75,
+                          boxShadow: isNow && !hourClosed && cd ? `0 0 6px ${barColor}50` : 'none',
+                          transition: `height 0.5s cubic-bezier(0.34, 1.56, 0.64, 1) ${i * 0.035}s`,
+                          flexShrink: 0,
+                        }} />
                         <span style={{ fontSize: '7px', color: hourClosed ? 'var(--text-tertiary)' : isNow ? 'var(--text-primary)' : 'var(--text-tertiary)', fontWeight: isNow ? '800' : '400', opacity: hourClosed ? 0.4 : 1 }}>{isNow ? 'Now' : h.hour}</span>
                       </div>
                       );
