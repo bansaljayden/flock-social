@@ -176,10 +176,11 @@ const VenueCard = React.memo(({ venue, onViewDetails, onVote, colors: c, Icons: 
 
 // =============================================================================
 // MapLibre GL JS — Snap Map-style vector basemap (smooth GPU-rendered)
-// Uses OpenFreeMap dark vector tiles (free, no API key, no signup).
+// Uses CARTO's Dark Matter vector style (free, no API key, much richer
+// POI/label/road detail than OpenFreeMap dark).
 // Drop-in replacement for GoogleMapView with same prop interface.
 // =============================================================================
-const OPENFREEMAP_DARK = 'https://tiles.openfreemap.org/styles/dark';
+const DARK_VECTOR_STYLE = 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json';
 const ESRI_SATELLITE_STYLE = {
   version: 8,
   sources: {
@@ -386,7 +387,7 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
 
       const map = new maplibregl.Map({
         container: mapRef.current,
-        style: savedMapType === 'roadmap' ? OPENFREEMAP_DARK : ESRI_SATELLITE_STYLE,
+        style: savedMapType === 'roadmap' ? DARK_VECTOR_STYLE : ESRI_SATELLITE_STYLE,
         center: [userLoc.lng, userLoc.lat],
         zoom: DEFAULT_ZOOM,
         minZoom: 3,
@@ -435,7 +436,7 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
     const newType = mapType === 'roadmap' ? 'hybrid' : 'roadmap';
     setMapType(newType);
     localStorage.setItem('flock_map_type', newType);
-    map.setStyle(newType === 'roadmap' ? OPENFREEMAP_DARK : ESRI_SATELLITE_STYLE);
+    map.setStyle(newType === 'roadmap' ? DARK_VECTOR_STYLE : ESRI_SATELLITE_STYLE);
     map.once('styledata', () => {
       addOverlayLayers(map);
       // Re-feed accuracy data
