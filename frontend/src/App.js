@@ -27,15 +27,20 @@ import { SplineScene } from './components/ui/spline-scene';
 // Animated crowd dial — fills from 0 to target score with counting number
 const AnimatedDial = React.memo(function AnimatedDial({ score, color }) {
   const [displayed, setDisplayed] = React.useState(0);
+  const prevScoreRef = React.useRef(0);
+  const mountedRef = React.useRef(false);
 
   React.useEffect(() => {
+    const from = mountedRef.current ? prevScoreRef.current : 0;
+    mountedRef.current = true;
+    prevScoreRef.current = score;
     let raf;
     const start = performance.now();
-    const duration = 1200;
-    const ease = t => 1 - Math.pow(1 - t, 3); // ease-out cubic
+    const duration = from === 0 ? 1200 : 600; // full sweep on mount, quick transition on update
+    const ease = t => 1 - Math.pow(1 - t, 3);
     const tick = now => {
       const t = Math.min((now - start) / duration, 1);
-      setDisplayed(Math.round(ease(t) * score));
+      setDisplayed(Math.round(from + (score - from) * ease(t)));
       if (t < 1) raf = requestAnimationFrame(tick);
     };
     raf = requestAnimationFrame(tick);
