@@ -10006,20 +10006,19 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
       } catch (e) { console.error('Reply failed:', e); }
     };
 
-    // Venue analytics (placeholder — will be real when analytics backend is built)
-    const emptyAnalytics = {
-      todayCheckins: 0,
-      weekTraffic: 0,
-      crowdForecast: 0,
+    // Venue analytics — demo data for ICDC (will be replaced by real analytics backend)
+    const analytics = {
+      todayCheckins: 47,
+      weekTraffic: 312,
+      crowdForecast: 62,
       peakHours: [
-        { hour: '6pm', value: 0 }, { hour: '7pm', value: 0 }, { hour: '8pm', value: 0 },
-        { hour: '9pm', value: 0 }, { hour: '10pm', value: 0 }, { hour: '11pm', value: 0 }, { hour: '12am', value: 0 },
+        { hour: '6pm', value: 25 }, { hour: '7pm', value: 45 }, { hour: '8pm', value: 68 },
+        { hour: '9pm', value: 85 }, { hour: '10pm', value: 92 }, { hour: '11pm', value: 78 }, { hour: '12am', value: 45 },
       ],
-      topInterests: [],
-      repeatRate: 0,
-      demographics: { '21-25': 0, '26-30': 0, '31-35': 0, '36+': 0 },
+      topInterests: ['Live Music', 'Cocktails', 'Sports'],
+      repeatRate: 34,
+      demographics: { '21-25': 38, '26-30': 32, '31-35': 18, '36+': 12 },
     };
-    const analytics = emptyAnalytics;
     const venueData = {
       name: venueProfile?.business_name || authUser?.name || 'Your Venue',
       logo: null,
@@ -10436,7 +10435,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                         </div>
                         <span style={{ fontSize: '9px', color: 'var(--text-tertiary)' }}>{review.date}</span>
                       </div>
-                      <p style={{ fontSize: '11px', color: '#4b5563', margin: '8px 0 0', lineHeight: '1.4' }}>{review.text}</p>
+                      <p style={{ fontSize: '11px', color: 'var(--text-secondary)', margin: '8px 0 0', lineHeight: '1.4' }}>{review.text}</p>
                       {review.reply && (
                         <div style={{ marginTop: '8px', padding: '8px', backgroundColor: 'var(--bg-tertiary)', borderRadius: '6px', borderLeft: `3px solid ${colors.teal}` }}>
                           <p style={{ fontSize: '10px', fontWeight: '600', color: colors.teal, margin: '0 0 2px' }}>Owner Reply</p>
