@@ -32,11 +32,41 @@ export function queueSync(partial) {
   }, 600);
 }
 
+function readLocalSettings() {
+  const out = {};
+  for (const [key, lsKey] of Object.entries(SYNCED_KEYS)) {
+    const raw = localStorage.getItem(lsKey);
+    if (raw === null || raw === undefined) continue;
+    if (JSON_KEYS.has(key)) {
+      try { out[key] = JSON.parse(raw); } catch { /* ignore malformed JSON */ }
+    } else {
+      out[key] = raw;
+    }
+  }
+  return out;
+}
+
 export async function pullSettings() {
   if (!localStorage.getItem('flockToken')) return null;
   try {
     const { settings } = await getUserSettings();
-    if (!settings || typeof settings !== 'object') return null;
+    const serverHasSettings = settings && typeof settings === 'object' && Object.keys(settings).length > 0;
+
+    if (!serverHasSettings) {
+      // First-time sync: this account has no saved settings on the server.
+      // If localStorage has anything, push it up so this device's state becomes the source of truth.
+      const local = readLocalSettings();
+      if (Object.keys(local).length > 0) {
+        try {
+          await updateUserSettings(local);
+        } catch (err) {
+          console.warn('[settings] initial push failed:', err.message);
+        }
+      }
+      window.dispatchEvent(new CustomEvent('flock-settings-loaded', { detail: local }));
+      return local;
+    }
+
     for (const [key, lsKey] of Object.entries(SYNCED_KEYS)) {
       if (settings[key] === undefined || settings[key] === null) continue;
       const value = JSON_KEYS.has(key) ? JSON.stringify(settings[key]) : String(settings[key]);
