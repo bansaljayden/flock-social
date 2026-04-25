@@ -6519,6 +6519,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 // Compute peak & best from full-day forecast (6 AM - 5 AM)
                 let peakText = cd?.peak;
                 let bestText = cd?.bestTime;
+                // Closed venue can never have "Now is good" — force a recompute so we surface the next/least-busy open hour.
+                if (isClosed && bestText === 'Now is good') bestText = null;
                 if (!peakText || !bestText) {
                   const types = activeVenue.types || [];
                   const isBarF = types.some(t => ['bar', 'night_club'].includes(t));
@@ -6554,22 +6556,22 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                     else { s += (h24 >= 18 && h24 <= 20 ? (wkendF ? 20 : 15) : h24 >= 11 && h24 <= 13 ? 10 : h24 >= 21 && h24 <= 22 ? 5 : h24 >= 14 && h24 <= 17 ? -12 : -18); }
                     return { hour: fmtH(6 + i), score: Math.round(Math.max(5, Math.min(95, s))), h24 };
                   });
+                  let maxS = -1, maxI = 0;
+                  fullDay.forEach((h, i) => { if (!isOpenH(h.h24)) return; if (h.score > maxS) { maxS = h.score; maxI = i; } });
+                  let endI = maxI;
+                  for (let i = maxI + 1; i < fullDay.length; i++) { if (!isOpenH(fullDay[i].h24)) break; if (Math.abs(fullDay[i].score - maxS) <= 3) endI = i; else break; }
                   if (!peakText) {
-                    let maxS = -1, maxI = 0;
-                    fullDay.forEach((h, i) => { if (!isOpenH(h.h24)) return; if (h.score > maxS) { maxS = h.score; maxI = i; } });
-                    let endI = maxI;
-                    for (let i = maxI + 1; i < fullDay.length; i++) { if (!isOpenH(fullDay[i].h24)) break; if (Math.abs(fullDay[i].score - maxS) <= 3) endI = i; else break; }
                     peakText = endI > maxI ? `${fullDay[maxI].hour} - ${fullDay[endI].hour}` : fullDay[maxI].hour;
-                    if (!bestText) {
-                      let minS = 999, minI = -1;
-                      fullDay.forEach((h, i) => {
-                        if (i >= maxI && i <= endI) return;
-                        if (!isOpenH(h.h24)) return;
-                        if (h.score < minS) { minS = h.score; minI = i; }
-                      });
-                      if (minI < 0) minI = 0;
-                      bestText = isClosed ? fullDay[minI].hour : (score <= minS + 5) ? 'Now is good' : fullDay[minI].hour;
-                    }
+                  }
+                  if (!bestText) {
+                    let minS = 999, minI = -1;
+                    fullDay.forEach((h, i) => {
+                      if (i >= maxI && i <= endI) return;
+                      if (!isOpenH(h.h24)) return;
+                      if (h.score < minS) { minS = h.score; minI = i; }
+                    });
+                    if (minI < 0) minI = 0;
+                    bestText = isClosed ? fullDay[minI].hour : (score <= minS + 5) ? 'Now is good' : fullDay[minI].hour;
                   }
                 }
 
@@ -6671,9 +6673,16 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                     {hourlyData.map((h, i) => {
                       const isNow = i === 0;
                       const parsedH = (() => { const p = (h.hour || '').match(/^(\d+)\s*(AM|PM)$/i); if (!p) return 12; let hr = parseInt(p[1], 10); if (p[2].toUpperCase() === 'AM' && hr === 12) hr = 0; else if (p[2].toUpperCase() === 'PM' && hr !== 12) hr += 12; return hr; })();
-                      // When the API supplies hourly data, the score itself encodes openness — skip the Google-hours heuristic.
+                      // When the API supplies hourly data, the score itself encodes openness — skip the Google-hours heuristic,
+                      // EXCEPT: closedAllDay greys every bar, explicit Google open/close hours grey bars outside the window,
+                      // and a closed-now venue must grey its "Now" bar regardless.
                       const apiHourly = !!cd?.hourly;
-                      const hourClosed = apiHourly ? false : (() => {
+                      const closedByGoogleHours = (venueOpenHour != null && venueCloseHour != null) ? (
+                        venueCloseHour > venueOpenHour
+                          ? (parsedH < venueOpenHour || parsedH >= venueCloseHour)
+                          : (parsedH >= venueCloseHour && parsedH < venueOpenHour)
+                      ) : false;
+                      const hourClosed = closedAllDay ? true : (apiHourly ? (closedByGoogleHours || (isNow && isClosed)) : (() => {
                         if (closedAllDay) return true;
                         if (venueOpenHour != null && venueCloseHour != null) {
                           // Handle venues that close after midnight (close < open).
@@ -6707,7 +6716,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                         if (vTypes.some(t => ['gym', 'fitness_center'].includes(t))) return (parsedH < 5 || parsedH > 23);
                         if (vTypes.some(t => ['library', 'museum'].includes(t))) return (parsedH < 9 || parsedH > 18);
                         return false;
-                      })();
+                      })());
                       // Defend against null / NaN scores from the ML predictor
                       const safeScore = Number.isFinite(h.score) ? h.score : 0;
                       const barColor = hourClosed ? 'var(--text-tertiary)' : safeScore > 70 ? colors.red : safeScore > 40 ? colors.amber : colors.teal;
@@ -6716,11 +6725,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                       <div key={i} style={{ flex: 1, display: 'flex', alignItems: 'flex-end', justifyContent: 'center', minWidth: 0, height: '100%' }}>
                         <div style={{
                           width: '100%',
-                          height: `${cd ? barH : 0}px`,
+                          height: `${barH}px`,
                           borderRadius: '3px 3px 1px 1px',
-                          backgroundColor: cd ? barColor : 'transparent',
+                          backgroundColor: barColor,
                           opacity: hourClosed ? 0.35 : isNow ? 1 : 0.75,
-                          boxShadow: isNow && !hourClosed && cd ? `0 0 6px ${barColor}50` : 'none',
+                          boxShadow: isNow && !hourClosed ? `0 0 6px ${barColor}50` : 'none',
                           transition: `height 0.5s cubic-bezier(0.34, 1.56, 0.64, 1) ${i * 0.035}s`,
                           flexShrink: 0,
                         }} />
