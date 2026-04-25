@@ -2101,6 +2101,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           creatorId: f.creator_id,
           memberStatus: f.member_status,
           members: [],
+          memberPreviews: Array.isArray(f.member_previews) ? f.member_previews : [],
           memberCount: f.member_count || 1,
           time: f.event_time ? new Date(f.event_time).toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' }) : 'TBD',
           status: f.status === 'planning' ? 'voting' : f.status,
@@ -7488,11 +7489,19 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
 
                     {/* Flock card */}
                     <button onClick={() => { if (editingFlockList) return; setSelectedFlockId(f.id); setCurrentScreen('chatDetail'); simulateTyping(); }} style={{ flex: 1, textAlign: 'left', backgroundColor: isPinned ? `${colors.navy}06` : 'var(--bg-card-solid)', borderRadius: '16px', padding: '12px 14px', border: isPinned ? `1.5px solid ${colors.navy}18` : `1px solid var(--border-default)`, cursor: editingFlockList ? 'default' : 'pointer', display: 'flex', alignItems: 'center', gap: '12px', transition: 'opacity 0.2s', boxShadow: isPinned ? '0 2px 12px rgba(13,40,71,0.06)' : '0 1px 4px rgba(0,0,0,0.03)', position: 'relative', overflow: 'hidden' }}>
-                      {/* Avatar */}
+                      {/* Avatar — group chat photo */}
                       <div style={{ position: 'relative', flexShrink: 0 }}>
-                        <div style={{ width: '46px', height: '46px', borderRadius: '14px', background: `linear-gradient(135deg, ${colors.navyBg}, ${colors.navyMidBg})`, display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 2px 8px rgba(13,40,71,0.2)' }}>
-                          {Icons.users('white', 20)}
-                        </div>
+                        {(() => {
+                          const seed = String(f.id || f.name || '');
+                          let hash = 0;
+                          for (let i = 0; i < seed.length; i++) hash = (hash * 31 + seed.charCodeAt(i)) >>> 0;
+                          const pic = `/group-avatars/flock-${(hash % 5) + 1}.jpg`;
+                          return (
+                            <div style={{ width: '46px', height: '46px', borderRadius: '14px', overflow: 'hidden', boxShadow: '0 2px 10px rgba(13,40,71,0.18)', backgroundColor: 'var(--bg-tertiary)' }}>
+                              <img src={pic} alt={f.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                            </div>
+                          );
+                        })()}
                         {/* Status dot */}
                         <div style={{ position: 'absolute', bottom: '-1px', right: '-1px', width: '14px', height: '14px', borderRadius: '7px', backgroundColor: statusColor, border: '2px solid var(--bg-card-solid)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                           {f.status === 'confirmed' && <span style={{ fontSize: '7px', color: 'white', fontWeight: '900' }}>&#10003;</span>}
