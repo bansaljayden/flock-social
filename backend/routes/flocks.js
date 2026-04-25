@@ -18,7 +18,17 @@ router.get('/', async (req, res) => {
       `SELECT f.*,
               u.name AS creator_name,
               fm.status AS member_status,
-              (SELECT COUNT(*) FROM flock_members WHERE flock_id = f.id AND status = 'accepted') AS member_count
+              (SELECT COUNT(*) FROM flock_members WHERE flock_id = f.id AND status = 'accepted') AS member_count,
+              (SELECT json_agg(row_to_json(m) ORDER BY m.is_creator DESC, m.id)
+                 FROM (
+                   SELECT mu.id, mu.name, mu.profile_image_url, (mu.id = f.creator_id) AS is_creator
+                   FROM flock_members mfm
+                   JOIN users mu ON mu.id = mfm.user_id
+                   WHERE mfm.flock_id = f.id AND mfm.status = 'accepted'
+                   ORDER BY (mu.id = f.creator_id) DESC, mfm.id
+                   LIMIT 4
+                 ) m
+              ) AS member_previews
        FROM flocks f
        JOIN flock_members fm ON fm.flock_id = f.id AND fm.user_id = $1
        JOIN users u ON u.id = f.creator_id
