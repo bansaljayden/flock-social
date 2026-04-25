@@ -1,4 +1,5 @@
 import React, { createContext, useState, useEffect, useContext, useCallback } from 'react';
+import { queueSync } from '../services/userSettings';
 
 const ThemeContext = createContext();
 
@@ -60,6 +61,7 @@ export const ThemeProvider = ({ children }) => {
     applyTheme(newTheme);
     localStorage.setItem('flock-theme', newTheme);
     localStorage.setItem('flock-theme-mode', 'manual');
+    queueSync({ theme: newTheme, themeMode: 'manual' });
   }, [theme, applyTheme]);
 
   const setAutoMode = useCallback((auto) => {
@@ -71,11 +73,33 @@ export const ThemeProvider = ({ children }) => {
       const nightTime = isNightTime();
       setIsNightModeActive(nightTime);
       applyTheme(nightTime ? 'dark' : 'light');
+      queueSync({ themeMode: 'auto' });
     } else {
       setIsNightModeActive(false);
       localStorage.setItem('flock-theme', theme);
+      queueSync({ themeMode: 'manual', theme });
     }
   }, [theme, applyTheme]);
+
+  // Re-apply theme settings when user logs in and server settings are pulled.
+  // The pullSettings() helper writes to localStorage, then dispatches this event.
+  useEffect(() => {
+    const onSync = () => {
+      const savedMode = localStorage.getItem('flock-theme-mode') || 'auto';
+      const savedTheme = localStorage.getItem('flock-theme') || 'light';
+      setThemeMode(savedMode);
+      if (savedMode === 'auto') {
+        const nightTime = isNightTime();
+        setIsNightModeActive(nightTime);
+        applyTheme(nightTime ? 'dark' : 'light');
+      } else {
+        setIsNightModeActive(false);
+        applyTheme(savedTheme);
+      }
+    };
+    window.addEventListener('flock-settings-loaded', onSync);
+    return () => window.removeEventListener('flock-settings-loaded', onSync);
+  }, [applyTheme]);
 
   return (
     <ThemeContext.Provider value={{

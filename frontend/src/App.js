@@ -15,6 +15,7 @@ import { getCurrentUser, logout, isLoggedIn, getFlocks, getFlock, createFlock as
 import { connectSocket, disconnectSocket, getSocket, joinFlock, leaveFlock, sendMessage as socketSendMessage, sendImageMessage as socketSendImage, startTyping, stopTyping, onNewMessage, onUserTyping, onUserStoppedTyping, emitLocation, stopSharingLocation as socketStopSharing, onLocationUpdate, onMemberStoppedSharing, socketSendDm, onNewDm, dmStartTyping, dmStopTyping, onDmUserTyping, onDmUserStoppedTyping, dmReact, dmRemoveReact, onDmReactionAdded, onDmReactionRemoved, dmVoteVenue, onDmNewVote, dmShareLocation, dmStopSharingLocation, onDmLocationUpdate, onDmMemberStoppedSharing, dmPinVenue, onDmVenuePinned, emitFlockInvite, emitFlockInviteResponse, onFlockInviteReceived, onFlockInviteResponded, emitFriendRequest, emitFriendResponse, onFriendRequestReceived, onFriendRequestResponded, onBudgetUpdated, onBudgetLocked, onBudgetReminder, onBillCreated, onShareSettled, onBillFullySettled, onGhostCommitted, onNewVote, onVenueSelected, onFlockReactionAdded, onFlockReactionRemoved, onFlockDeleted, onFlockUpdated, onFlockMemberLeft } from './services/socket';
 import { requestNotificationPermission, onForegroundMessage } from './services/firebase';
 import { unregisterAllTokens } from './services/api';
+import { pullSettings, queueSync } from './services/userSettings';
 import { QRCodeSVG } from 'qrcode.react';
 import { Html5Qrcode } from 'html5-qrcode';
 import LoginScreen from './components/auth/LoginScreen';
@@ -512,6 +513,7 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
     const newType = mapType === 'roadmap' ? 'hybrid' : 'roadmap';
     setMapType(newType);
     localStorage.setItem('flock_map_type', newType);
+    queueSync({ mapType: newType });
     map.setStyle(newType === 'roadmap' ? DARK_VECTOR_STYLE : SATELLITE_STYLE);
     map.once('styledata', () => {
       addOverlayLayers(map);
@@ -1501,6 +1503,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   const toggleLocation = useCallback((enable) => {
     setLocationEnabled(enable);
     localStorage.setItem('flock_location_enabled', enable ? 'true' : 'false');
+    queueSync({ locationEnabled: enable ? 'true' : 'false' });
     if (enable) {
       if (navigator.geolocation) {
         navigator.geolocation.getCurrentPosition(
@@ -2153,8 +2156,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   const [editingFlockList, setEditingFlockList] = useState(false);
 
   // Persist pin/order changes
-  useEffect(() => { localStorage.setItem('flock_pinned', JSON.stringify(pinnedFlockIds)); }, [pinnedFlockIds]);
-  useEffect(() => { localStorage.setItem('flock_order', JSON.stringify(flockOrder)); }, [flockOrder]);
+  useEffect(() => { localStorage.setItem('flock_pinned', JSON.stringify(pinnedFlockIds)); queueSync({ pinnedFlockIds }); }, [pinnedFlockIds]);
+  useEffect(() => { localStorage.setItem('flock_order', JSON.stringify(flockOrder)); queueSync({ flockOrder }); }, [flockOrder]);
 
   // Create Flock form
   const [flockName, setFlockName] = useState('');
@@ -2440,9 +2443,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
       if (d.id === 'birdie') {
         setBirdieCorner(corner);
         localStorage.setItem('flock_birdie_corner', corner);
+        queueSync({ birdieCorner: corner });
       } else {
         setSosCorner(corner);
         localStorage.setItem('flock_sos_corner', corner);
+        queueSync({ sosCorner: corner });
       }
     }
     dragRef.current = null;
@@ -5493,6 +5498,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
       setShowAdminPrompt(true);
     } else {
       localStorage.setItem('flockUserMode', mode);
+      queueSync({ userMode: mode });
       setUserMode(mode);
       setShowModeSelection(false);
       if (mode === 'venue') {
@@ -11462,6 +11468,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
     setOnboardingAnimating(true);
     setTimeout(() => {
       localStorage.setItem('flockOnboardingComplete', 'true');
+      queueSync({ onboardingComplete: 'true' });
       if (onboardingVibes.length > 0) {
         setUserInterests(onboardingVibes);
       }
@@ -13428,8 +13435,8 @@ const FlockApp = () => {
       setAuthChecking(false);
       return;
     }
-    getCurrentUser()
-      .then((data) => {
+    Promise.all([getCurrentUser(), pullSettings()])
+      .then(([data]) => {
         setAuthUser(data.user || data);
         // Request push notification permission after login
         if (localStorage.getItem('flock_notif_denied') !== 'true') {
