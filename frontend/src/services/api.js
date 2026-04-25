@@ -310,6 +310,17 @@ export async function getUserStats() {
   return request('/api/users/stats');
 }
 
+export async function getUserSettings() {
+  return request('/api/users/settings');
+}
+
+export async function updateUserSettings(partial) {
+  return request('/api/users/settings', {
+    method: 'PATCH',
+    body: JSON.stringify(partial),
+  });
+}
+
 // Friends
 export async function sendFriendRequest(userId) {
   return request('/api/friends/request', {

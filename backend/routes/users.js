@@ -13,6 +13,21 @@ const SALT_ROUNDS = 10;
 
 router.use(authenticate);
 
+// Auto-create user_settings table for cross-device preference sync
+(async () => {
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS user_settings (
+        user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+        settings JSONB NOT NULL DEFAULT '{}',
+        updated_at TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+  } catch (err) {
+    console.error('Failed to ensure user_settings table:', err.message);
+  }
+})();
+
 // Magic bytes for image validation
 const IMAGE_SIGNATURES = {
   jpeg: [Buffer.from([0xFF, 0xD8, 0xFF])],
@@ -491,5 +506,39 @@ router.put('/payment-methods',
     }
   }
 );
+
+// GET /api/users/settings - Fetch user's synced app settings
+router.get('/settings', async (req, res) => {
+  try {
+    const result = await pool.query(
+      'SELECT settings FROM user_settings WHERE user_id = $1',
+      [req.user.id]
+    );
+    res.json({ settings: result.rows[0]?.settings || {} });
+  } catch (err) {
+    console.error('Get user settings error:', err);
+    res.status(500).json({ error: 'Failed to get settings' });
+  }
+});
+
+// PATCH /api/users/settings - Merge partial settings into stored JSONB
+router.patch('/settings', async (req, res) => {
+  try {
+    const partial = req.body && typeof req.body === 'object' ? req.body : {};
+    const result = await pool.query(
+      `INSERT INTO user_settings (user_id, settings, updated_at)
+       VALUES ($1, $2::jsonb, NOW())
+       ON CONFLICT (user_id) DO UPDATE
+       SET settings = user_settings.settings || EXCLUDED.settings,
+           updated_at = NOW()
+       RETURNING settings`,
+      [req.user.id, JSON.stringify(partial)]
+    );
+    res.json({ settings: result.rows[0].settings });
+  } catch (err) {
+    console.error('Update user settings error:', err);
+    res.status(500).json({ error: 'Failed to update settings' });
+  }
+});
 
 module.exports = router;
