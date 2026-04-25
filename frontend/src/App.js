@@ -5684,11 +5684,17 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
               flex: 1.2,
               padding: '16px',
               borderRadius: '16px',
-              border: 'none',
-              background: `linear-gradient(135deg, ${colors.navy}, ${colors.navyMid || colors.navy})`,
+              border: isDark ? '1px solid rgba(255,255,255,0.18)' : 'none',
+              background: isDark
+                ? 'rgba(255,255,255,0.08)'
+                : `linear-gradient(135deg, ${colors.navy}, ${colors.navyMid || colors.navy})`,
+              backdropFilter: 'blur(16px)',
+              WebkitBackdropFilter: 'blur(16px)',
               color: 'white',
               cursor: 'pointer',
-              boxShadow: '0 4px 16px rgba(0,0,0,0.2), inset 0 1px 0 rgba(255,255,255,0.15)',
+              boxShadow: isDark
+                ? '0 4px 16px rgba(0,0,0,0.2), inset 0 1px 0 rgba(255,255,255,0.15), inset 0 -1px 0 rgba(0,0,0,0.1)'
+                : '0 4px 16px rgba(0,0,0,0.2), inset 0 1px 0 rgba(255,255,255,0.15)',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
@@ -6047,8 +6053,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 <p style={{ fontSize: '11px', color: 'var(--text-secondary)', marginBottom: '8px', margin: '0 0 8px' }}>What's this for?</p>
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginBottom: '10px' }}>
                   {['dinner', 'drinks', 'movie', 'concert', 'activity'].map(ctx => (
-                    <button key={ctx} className="glass-btn glass-secondary" onClick={() => setFlockBudgetContext(ctx)}
-                      style={{ padding: '6px 14px', borderRadius: '20px', border: flockBudgetContext === ctx ? `2px solid ${colors.teal}` : '1.5px solid var(--border-color)', backgroundColor: flockBudgetContext === ctx ? `${colors.teal}15` : 'var(--bg-card-solid)', fontSize: '12px', fontWeight: '600', color: flockBudgetContext === ctx ? colors.teal : colors.navy, cursor: 'pointer', textTransform: 'capitalize' }}>
+                    <button key={ctx} className={flockBudgetContext === ctx ? '' : 'glass-btn glass-secondary'} onClick={() => setFlockBudgetContext(ctx)}
+                      style={{ padding: '6px 14px', borderRadius: '20px', border: flockBudgetContext === ctx ? `2px solid ${colors.teal}` : '1.5px solid var(--border-color)', backgroundColor: flockBudgetContext === ctx ? `${colors.teal}B3` : 'var(--bg-card-solid)', fontSize: '12px', fontWeight: flockBudgetContext === ctx ? '800' : '600', color: flockBudgetContext === ctx ? '#ffffff' : colors.navy, cursor: 'pointer', textTransform: 'capitalize', transition: 'all 0.2s ease', boxShadow: flockBudgetContext === ctx ? `0 0 12px ${colors.teal}66` : 'none' }}>
                       {ctx}
                     </button>
                   ))}
