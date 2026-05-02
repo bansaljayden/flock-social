@@ -33,6 +33,8 @@ async function collectWeekly() {
   const limitFilter = limitArg ? parseInt(limitArg.split('=')[1], 10) : null;
 
   const skipCollected = process.argv.includes('--skip-collected');
+  const skipAttempted = process.argv.includes('--skip-attempted') || skipCollected;
+  const retry404 = process.argv.includes('--retry-404');
 
   let query = 'SELECT * FROM ml_venues WHERE is_active = true';
   const params = [];
@@ -42,6 +44,9 @@ async function collectWeekly() {
   }
   if (skipCollected) {
     query += ' AND besttime_venue_id IS NULL';
+  }
+  if (skipAttempted && !retry404) {
+    query += ' AND besttime_attempted_at IS NULL';
   }
   query += ' ORDER BY city, id';
   if (limitFilter) {
@@ -63,16 +68,35 @@ async function collectWeekly() {
     // Fetch BestTime weekly forecast
     const forecast = await fetchWeeklyForecast(venue.name, venue.address, venue.besttime_venue_id);
     if (!forecast) {
-      console.log('  Skipped — no BestTime data');
+      await pool.query(
+        `UPDATE ml_venues
+         SET besttime_attempted_at = NOW(),
+             besttime_status = COALESCE(besttime_status, '404')
+         WHERE id = $1`,
+        [venue.id]
+      );
+      console.log('  Skipped — no BestTime data (marked 404)');
       skipped++;
       continue;
     }
 
-    // Update besttime_venue_id if we got one
+    // Update besttime_venue_id if we got one + mark found
     if (forecast.venueId && !venue.besttime_venue_id) {
       await pool.query(
-        'UPDATE ml_venues SET besttime_venue_id = $1 WHERE id = $2',
+        `UPDATE ml_venues
+         SET besttime_venue_id = $1,
+             besttime_attempted_at = NOW(),
+             besttime_status = 'found'
+         WHERE id = $2`,
         [forecast.venueId, venue.id]
+      );
+    } else {
+      await pool.query(
+        `UPDATE ml_venues
+         SET besttime_attempted_at = NOW(),
+             besttime_status = 'found'
+         WHERE id = $1`,
+        [venue.id]
       );
     }
 
