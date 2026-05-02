@@ -34,6 +34,7 @@ const waitlistRoutes = require('./routes/waitlist');
 const adminRoutes = require('./routes/admin');
 const venueProfileRoutes = require('./routes/venueProfile');
 const venueDashboardRoutes = require('./routes/venueDashboard');
+const availabilityRoutes = require('./routes/availability');
 
 const app = express();
 app.set('trust proxy', 1);
@@ -150,6 +151,7 @@ app.use('/api/waitlist', apiLimiter, waitlistRoutes);          // Handles /api/w
 app.use('/api/admin', apiLimiter, adminRoutes);               // Handles /api/admin/* (admin only)
 app.use('/api/venue-profile', apiLimiter, venueProfileRoutes); // Handles /api/venue-profile (venue owners)
 app.use('/api/venue-dashboard', apiLimiter, venueDashboardRoutes); // Handles promotions, events, reviews CRUD
+app.use('/api/availability', apiLimiter, availabilityRoutes); // 3-tap status pulse: down / maybe / not
 
 // Health check
 app.get('/api/health', (req, res) => {
