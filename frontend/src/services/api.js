@@ -579,5 +579,25 @@ export async function unregisterAllTokens() {
   return request('/api/notifications/unregister-all', { method: 'DELETE' });
 }
 
+// Availability Pulse — 3-tap status: down / maybe / not
+export async function setAvailability({ status, note, expiresAt }) {
+  return request('/api/availability', {
+    method: 'POST',
+    body: JSON.stringify({ status, note, expires_at: expiresAt }),
+  });
+}
+
+export async function clearAvailability() {
+  return request('/api/availability', { method: 'DELETE' });
+}
+
+export async function getMyAvailability() {
+  return request('/api/availability/me');
+}
+
+export async function getFriendsAvailability() {
+  return request('/api/availability/friends');
+}
+
 export { getToken, BASE_URL };
 export default request;

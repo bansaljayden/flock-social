@@ -11,10 +11,10 @@ import {
   formatCurrency,
   calculateProfitMargin
 } from './lib/finance';
-import { getCurrentUser, logout, isLoggedIn, getFlocks, getFlock, createFlock as apiCreateFlock, getMessages, sendMessage as apiSendMessage, updateProfile, searchVenues, searchUsers, getSuggestedUsers, sendFriendRequest, getVenueDetails, leaveFlock as apiLeaveFlock, getDMConversations, getDMs, getDmVenueVotes, getDmPinnedVenue, BASE_URL, inviteToFlock, acceptFlockInvite, declineFlockInvite, getFriends, acceptFriendRequest, declineFriendRequest, getPendingRequests, getOutgoingRequests, getFriendSuggestions, addFriendByCode, findFriendsByPhone, removeFriend, getTrustedContacts, addTrustedContact, updateTrustedContact, deleteTrustedContact, sendEmergencyAlert, shareLocationWithContacts, getUserStats, getCrowdPrediction, getCrowdBatch, getCrowdAlternatives, getWeather, submitVenueFeedback, uploadProfileImage, saveProfileImageUrl, submitBudget, getBudgetStatus, lockBudget, sendBudgetReminder, createBillSplit, getBillSplit, settleShare, ghostCommit, updatePaymentMethods, getPaymentLinks, getFeaturedEvents, searchEvents, getEventDetails, sendAiChat, getActivityFeed, getWeatherForecast, submitAttendance, getAdminAnalytics, createVenueProfile, getVenueProfile, updateVenueProfile, getVenuePromotions, createVenuePromotion, updateVenuePromotion, deleteVenuePromotion, getVenueEvents, createVenueEvent, updateVenueEvent, deleteVenueEvent, getIncomingFlocks, getVenueReviews, replyToReview, submitVenueReview, getPublicReviews, getPublicPromotions } from './services/api';
+import { getCurrentUser, logout, isLoggedIn, getFlocks, getFlock, createFlock as apiCreateFlock, getMessages, sendMessage as apiSendMessage, updateProfile, searchVenues, searchUsers, getSuggestedUsers, sendFriendRequest, getVenueDetails, leaveFlock as apiLeaveFlock, getDMConversations, getDMs, getDmVenueVotes, getDmPinnedVenue, BASE_URL, inviteToFlock, acceptFlockInvite, declineFlockInvite, getFriends, acceptFriendRequest, declineFriendRequest, getPendingRequests, getOutgoingRequests, getFriendSuggestions, addFriendByCode, findFriendsByPhone, removeFriend, getTrustedContacts, addTrustedContact, updateTrustedContact, deleteTrustedContact, sendEmergencyAlert, shareLocationWithContacts, getUserStats, getCrowdPrediction, getCrowdBatch, getCrowdAlternatives, getWeather, submitVenueFeedback, uploadProfileImage, saveProfileImageUrl, submitBudget, getBudgetStatus, lockBudget, sendBudgetReminder, createBillSplit, getBillSplit, settleShare, ghostCommit, updatePaymentMethods, getPaymentLinks, getFeaturedEvents, searchEvents, getEventDetails, sendAiChat, getWeatherForecast, submitAttendance, getAdminAnalytics, createVenueProfile, getVenueProfile, updateVenueProfile, getVenuePromotions, createVenuePromotion, updateVenuePromotion, deleteVenuePromotion, getVenueEvents, createVenueEvent, updateVenueEvent, deleteVenueEvent, getIncomingFlocks, getVenueReviews, replyToReview, submitVenueReview, getPublicReviews, getPublicPromotions } from './services/api';
 import { connectSocket, disconnectSocket, getSocket, joinFlock, leaveFlock, sendMessage as socketSendMessage, sendImageMessage as socketSendImage, startTyping, stopTyping, onNewMessage, onUserTyping, onUserStoppedTyping, emitLocation, stopSharingLocation as socketStopSharing, onLocationUpdate, onMemberStoppedSharing, socketSendDm, onNewDm, dmStartTyping, dmStopTyping, onDmUserTyping, onDmUserStoppedTyping, dmReact, dmRemoveReact, onDmReactionAdded, onDmReactionRemoved, dmVoteVenue, onDmNewVote, dmShareLocation, dmStopSharingLocation, onDmLocationUpdate, onDmMemberStoppedSharing, dmPinVenue, onDmVenuePinned, emitFlockInvite, emitFlockInviteResponse, onFlockInviteReceived, onFlockInviteResponded, emitFriendRequest, emitFriendResponse, onFriendRequestReceived, onFriendRequestResponded, onBudgetUpdated, onBudgetLocked, onBudgetReminder, onBillCreated, onShareSettled, onBillFullySettled, onGhostCommitted, onNewVote, onVenueSelected, onFlockReactionAdded, onFlockReactionRemoved, onFlockDeleted, onFlockUpdated, onFlockMemberLeft } from './services/socket';
 import { requestNotificationPermission, onForegroundMessage } from './services/firebase';
-import { unregisterAllTokens } from './services/api';
+import { unregisterAllTokens, setAvailability, clearAvailability, getMyAvailability, getFriendsAvailability } from './services/api';
 import { pullSettings, queueSync } from './services/userSettings';
 import { QRCodeSVG } from 'qrcode.react';
 import { Html5Qrcode } from 'html5-qrcode';
@@ -2019,6 +2019,44 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   const [streak, setStreak] = useState(0);
   const [friendCount, setFriendCount] = useState(0);
 
+  // Availability Pulse — 3-tap status: down / maybe / not (or null = unset)
+  const [myPulse, setMyPulse] = useState(null);
+  const [friendsPulses, setFriendsPulses] = useState([]); // [{id, name, profile_image_url, status, note, set_at, expires_at}]
+  const [pulseSaving, setPulseSaving] = useState(false);
+
+  const refreshFriendsPulses = useCallback(async () => {
+    try {
+      const data = await getFriendsAvailability();
+      setFriendsPulses(data.friends || []);
+    } catch { /* ignore */ }
+  }, []);
+
+  const handleSetPulse = useCallback(async (status) => {
+    if (pulseSaving) return;
+    setPulseSaving(true);
+    try {
+      // Expire at 4am local tomorrow (i.e. "tonight")
+      const now = new Date();
+      const tomorrow4am = new Date(now);
+      tomorrow4am.setDate(now.getDate() + (now.getHours() < 4 ? 0 : 1));
+      tomorrow4am.setHours(4, 0, 0, 0);
+      const expiresAt = tomorrow4am.toISOString();
+
+      if (myPulse?.status === status) {
+        // Tapping the same status clears it
+        await clearAvailability();
+        setMyPulse(null);
+      } else {
+        const data = await setAvailability({ status, expiresAt });
+        setMyPulse(data.pulse);
+      }
+    } catch (err) {
+      showToast(err.message || 'Failed to update status', 'error');
+    } finally {
+      setPulseSaving(false);
+    }
+  }, [myPulse, pulseSaving, showToast]);
+
   // Animations
   const [activeTabAnimation, setActiveTabAnimation] = useState(null);
   // scrollY removed — parallax now uses direct DOM manipulation via headerRef
@@ -2070,7 +2108,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
 
 
   // Activity feed
-  const [activityFeed, setActivityFeed] = useState([]);
+  // Activity feed removed from home (redesign) — re-enable here if surfacing elsewhere
+  // const [activityFeed, setActivityFeed] = useState([]);
 
   // Cycling greeting messages (slot machine style)
   const [greetingIdx, setGreetingIdx] = useState(0);
@@ -2145,6 +2184,38 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
       setReliabilityScore(d.reliabilityScore || null);
     }).catch(() => {});
   }, []);
+
+  // Availability pulse: load my current + friends' on mount, listen for updates
+  useEffect(() => {
+    getMyAvailability().then(d => setMyPulse(d.pulse || null)).catch(() => {});
+    refreshFriendsPulses();
+
+    const sock = getSocket && getSocket();
+    if (!sock) return;
+    const onUpdate = (payload) => {
+      if (!payload || !payload.userId) return;
+      setFriendsPulses(prev => {
+        const next = prev.filter(f => f.id !== payload.userId);
+        if (payload.status) {
+          next.push({
+            id: payload.userId,
+            name: payload.name,
+            profile_image_url: payload.profile_image_url || null,
+            status: payload.status,
+            note: payload.note,
+            set_at: payload.setAt,
+            expires_at: payload.expiresAt,
+          });
+        }
+        return next.sort((a, b) => {
+          const order = { down: 1, maybe: 2, not: 3 };
+          return (order[a.status] || 9) - (order[b.status] || 9);
+        });
+      });
+    };
+    sock.on('availability_updated', onUpdate);
+    return () => { sock.off('availability_updated', onUpdate); };
+  }, [refreshFriendsPulses]);
 
   // Flock ordering & pinning (persisted in localStorage)
   const [pinnedFlockIds, setPinnedFlockIds] = useState(() => {
@@ -3418,17 +3489,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
     gripVertical: (color = 'currentColor', size = 18) => <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="9" cy="5" r="1"></circle><circle cx="9" cy="12" r="1"></circle><circle cx="9" cy="19" r="1"></circle><circle cx="15" cy="5" r="1"></circle><circle cx="15" cy="12" r="1"></circle><circle cx="15" cy="19" r="1"></circle></svg>,
   };
 
-  // Fetch activity feed (fallback to demo data for empty state)
-  const demoActivity = useRef([
-    { action: 'created', user_id: 0, user_name: 'Mike Rodriguez', flock_name: 'Weekend Brunch Crew', flock_id: 0, happened_at: new Date(Date.now() - 2 * 3600000).toISOString() },
-    { action: 'joined', user_id: 0, user_name: 'Emma Taylor', flock_name: 'Friday Night Out', flock_id: 0, happened_at: new Date(Date.now() - 5 * 3600000).toISOString() },
-    { action: 'joined', user_id: 0, user_name: 'Jayden Bansal', flock_name: 'DECA Nationals Prep', flock_id: 0, happened_at: new Date(Date.now() - 8 * 3600000).toISOString() },
-  ]).current;
-  useEffect(() => {
-    getActivityFeed()
-      .then(data => setActivityFeed((data.activity && data.activity.length > 0) ? data.activity : demoActivity))
-      .catch(() => setActivityFeed(demoActivity));
-  }, [flocks, demoActivity]);
+  // Activity feed fetch removed with the home-screen redesign.
 
   // Add reaction to message
   const addReactionToMessage = useCallback((flockId, messageId, reaction) => {
@@ -5593,166 +5654,207 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   const HomeScreen = () => {
     return (
     <div key="home-screen-container" style={{ display: 'flex', flexDirection: 'column', height: '100%', backgroundColor: 'var(--bg-primary)' }}>
-      {/* Header with Parallax */}
+      {/* Compact header */}
       <div ref={headerRef} style={{
-        padding: '16px',
-        paddingBottom: '20px',
-        background: `linear-gradient(135deg, ${colors.navyBg} 0%, ${colorsLight.navyLight} 50%, ${colors.navyMidBg} 100%)`,
+        padding: '14px 16px 12px',
         flexShrink: 0,
         transformOrigin: 'top center',
       }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+        {/* Greeting + avatar — tight */}
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
           <div>
-            <div style={{ height: '14px', overflow: 'hidden', position: 'relative' }}>
-              <div key={greetingIdx} style={{ fontSize: '10px', color: 'rgba(255,255,255,0.6)', margin: 0, letterSpacing: '0.5px', animation: 'slotSpin 0.4s cubic-bezier(0.34, 1.56, 0.64, 1)' }}>{greetings[greetingIdx]()}</div>
+            <div style={{ height: '12px', overflow: 'hidden', position: 'relative' }}>
+              <div key={greetingIdx} style={{ fontSize: '10px', color: 'var(--text-tertiary)', margin: 0, letterSpacing: '0.3px', fontWeight: '500', lineHeight: 1, animation: 'slotSpin 0.4s cubic-bezier(0.34, 1.56, 0.64, 1)' }}>{greetings[greetingIdx]()}</div>
             </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <h1 className="shimmer-text" style={{ fontSize: '20px', fontWeight: '900', margin: 0 }}>Hey, {profileName}</h1>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '4px' }}>
+              <h1 style={{ fontSize: '20px', fontWeight: '800', margin: 0, color: 'var(--text-primary)', letterSpacing: '-0.3px', lineHeight: 1.1 }}>Hey, {profileName.split(' ')[0]}</h1>
               {themeMode === 'auto' && isNightModeActive && (
-                <span style={{ display: 'inline-flex', alignItems: 'center', gap: '3px', padding: '2px 8px', borderRadius: '8px', backgroundColor: 'rgba(167,139,250,0.2)', fontSize: '9px', fontWeight: '700', color: '#c4b5fd', letterSpacing: '0.3px' }}>
+                <span style={{ display: 'inline-flex', alignItems: 'center', gap: '3px', padding: '2px 7px', borderRadius: '6px', backgroundColor: 'rgba(167,139,250,0.15)', fontSize: '9px', fontWeight: '700', color: '#c4b5fd', letterSpacing: '0.3px' }}>
                   {Icons.moon('#c4b5fd', 10)} NIGHT
                 </span>
               )}
             </div>
           </div>
           <button onClick={() => setCurrentTab('profile')} style={{ position: 'relative', background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}>
-            <div style={{ width: '40px', height: '40px', borderRadius: '20px', backgroundColor: 'rgba(255,255,255,0.2)', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden' }}>
-              {profilePic ? <img src={profilePic} alt="" style={{ width: '40px', height: '40px', minWidth: '40px', minHeight: '40px', objectFit: 'cover', display: 'block' }} /> : Icons.user('white', 22)}
+            <div style={{ width: '36px', height: '36px', borderRadius: '18px', backgroundColor: 'var(--bg-card-solid)', border: '1px solid var(--border-default)', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden' }}>
+              {profilePic ? <img src={profilePic} alt="" style={{ width: '36px', height: '36px', objectFit: 'cover', display: 'block' }} /> : Icons.user('var(--text-secondary)', 18)}
             </div>
           </button>
         </div>
 
-        {/* Stats — glass cards */}
+        {/* Compact stats row */}
         <div style={{ display: 'flex', gap: '8px' }}>
           {[
-            { label: 'Active Flocks', value: flocks.length },
+            { label: 'Flocks', value: flocks.length },
             { label: 'Friends', value: friendCount },
-            { label: 'Day Streak', value: streak },
           ].map(stat => (
-            <div key={stat.label} style={{ flex: 1, borderRadius: '14px', padding: '12px 10px', backgroundColor: 'rgba(255,255,255,0.08)', backdropFilter: 'blur(16px)', WebkitBackdropFilter: 'blur(16px)', border: '1px solid rgba(255,255,255,0.15)', boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.1), 0 4px 12px rgba(0,0,0,0.1)' }}>
-              <p style={{ fontSize: '9px', color: 'rgba(255,255,255,0.55)', margin: 0, textTransform: 'uppercase', letterSpacing: '0.5px' }}>{stat.label}</p>
-              <p style={{ fontSize: '20px', fontWeight: '800', color: 'white', margin: '4px 0 0' }}>{stat.value}</p>
+            <div key={stat.label} style={{ flex: 1, borderRadius: '12px', padding: '10px 12px', backgroundColor: 'var(--bg-card-solid)', border: '1px solid var(--border-default)' }}>
+              <p style={{ fontSize: '9px', color: 'var(--text-tertiary)', margin: 0, textTransform: 'uppercase', letterSpacing: '0.6px', fontWeight: '600' }}>{stat.label}</p>
+              <p style={{ fontSize: '20px', fontWeight: '800', color: 'var(--text-primary)', margin: '3px 0 0', lineHeight: 1, letterSpacing: '-0.4px' }}>{stat.value}</p>
             </div>
           ))}
+
+          {/* Tonight pulse — compact list, same height as stat cards */}
+          <div style={{ flex: 1, borderRadius: '12px', padding: '10px 12px', backgroundColor: 'var(--bg-card-solid)', border: '1px solid var(--border-default)' }}>
+            <p style={{ fontSize: '9px', color: 'var(--text-tertiary)', margin: '0 0 4px', textTransform: 'uppercase', letterSpacing: '0.6px', fontWeight: '600' }}>Tonight</p>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+              {[
+                { key: 'down', color: '#10b981', label: 'Down' },
+                { key: 'maybe', color: '#f59e0b', label: 'Maybe' },
+                { key: 'not', color: 'var(--text-tertiary)', label: 'Not' },
+              ].map(opt => {
+                const active = myPulse?.status === opt.key;
+                return (
+                  <button
+                    key={opt.key}
+                    onClick={() => handleSetPulse(opt.key)}
+                    disabled={pulseSaving}
+                    aria-label={opt.label}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '6px',
+                      padding: 0,
+                      margin: 0,
+                      lineHeight: 1,
+                      background: 'none',
+                      border: 'none',
+                      cursor: pulseSaving ? 'wait' : 'pointer',
+                      opacity: pulseSaving ? 0.6 : 1,
+                      textAlign: 'left',
+                    }}
+                  >
+                    <span style={{
+                      width: '6px',
+                      height: '6px',
+                      borderRadius: '50%',
+                      backgroundColor: opt.color,
+                      flexShrink: 0,
+                      boxShadow: active ? `0 0 6px ${opt.color}` : 'none',
+                    }} />
+                    <span style={{
+                      fontSize: '10px',
+                      fontWeight: active ? '700' : '500',
+                      color: active ? 'var(--text-primary)' : 'var(--text-tertiary)',
+                      whiteSpace: 'nowrap',
+                      lineHeight: 1,
+                    }}>{opt.label}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
         </div>
       </div>
 
       {/* Scrollable Content */}
-      <div onScroll={handleScroll} style={{ flex: 1, padding: '12px', overflowY: 'auto', marginTop: '-8px', WebkitOverflowScrolling: 'touch' }}>
-        {/* Quick Glance Cards */}
-        <ScrollFade><div style={{ display: 'flex', gap: '8px', marginBottom: '12px', overflowX: 'auto', paddingBottom: '6px' }}>
-          {/* Happening Now */}
-          <button className="glass-btn glass-secondary" onClick={() => { setCurrentTab('explore'); }} style={{ flexShrink: 0, padding: '8px 14px', borderRadius: '12px', border: '1px solid rgba(255,255,255,0.12)', backgroundColor: 'rgba(255,255,255,0.06)', backdropFilter: 'blur(12px)', WebkitBackdropFilter: 'blur(12px)', cursor: 'pointer', textAlign: 'left', boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.08), 0 2px 8px rgba(0,0,0,0.06)' }}>
-            <p style={{ fontSize: '11px', fontWeight: '800', color: 'var(--text-primary)', margin: '0 0 1px', whiteSpace: 'nowrap' }}>Happening Now</p>
-            <p style={{ fontSize: '9px', color: 'var(--text-tertiary)', margin: 0, whiteSpace: 'nowrap' }}>
-              {allVenues.filter(v => v.crowd > 60).length > 0 ? `${allVenues.filter(v => v.crowd > 60).length} busy spots` : 'See what\'s hot'}
-            </p>
-          </button>
+      <div onScroll={handleScroll} style={{ flex: 1, padding: '4px 16px 16px', overflowY: 'auto', WebkitOverflowScrolling: 'touch' }}>
 
-          {/* Needs You */}
-          {(() => {
-            const needsAction = flocks.filter(f => f.status === 'voting');
-            return (
-              <button className="glass-btn glass-secondary" onClick={() => { if (needsAction.length > 0) { setSelectedFlockId(needsAction[0].id); setCurrentScreen('detail'); } }} style={{ flexShrink: 0, padding: '8px 14px', borderRadius: '12px', border: needsAction.length > 0 ? `1px solid var(--accent-amber-text)` : '1px solid rgba(255,255,255,0.12)', backgroundColor: needsAction.length > 0 ? 'var(--accent-amber-bg)' : 'rgba(255,255,255,0.06)', backdropFilter: 'blur(12px)', WebkitBackdropFilter: 'blur(12px)', cursor: 'pointer', textAlign: 'left', boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.08), 0 2px 8px rgba(0,0,0,0.06)' }}>
-                <p style={{ fontSize: '11px', fontWeight: '800', color: 'var(--text-primary)', margin: '0 0 1px', whiteSpace: 'nowrap' }}>Needs You</p>
-                <p style={{ fontSize: '9px', color: needsAction.length > 0 ? 'var(--accent-amber-text)' : 'var(--text-tertiary)', margin: 0, fontWeight: needsAction.length > 0 ? '700' : '400', whiteSpace: 'nowrap' }}>
-                  {needsAction.length > 0 ? `${needsAction.length} pending` : 'All caught up'}
+        {/* Needs your attention — clean card matching flock-card style */}
+        {(() => {
+          const needsAction = flocks.filter(f => f.status === 'voting');
+          if (needsAction.length === 0) return null;
+          return (
+            <ScrollFade><button
+              onClick={() => { setSelectedFlockId(needsAction[0].id); setCurrentScreen('detail'); }}
+              style={{
+                width: '100%',
+                textAlign: 'left',
+                padding: '12px 14px',
+                borderRadius: '12px',
+                border: '1px solid var(--border-default)',
+                backgroundColor: 'var(--bg-card-solid)',
+                cursor: 'pointer',
+                marginBottom: '10px',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '10px',
+              }}
+            >
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <p style={{ fontSize: '13px', fontWeight: '700', color: 'var(--text-primary)', margin: 0, letterSpacing: '-0.1px' }}>{needsAction[0].name}</p>
+                <p style={{ fontSize: '11px', color: 'var(--text-secondary)', margin: '2px 0 0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {needsAction.length === 1 ? 'Needs your vote' : `${needsAction.length - 1} other ${needsAction.length - 1 === 1 ? 'flock needs' : 'flocks need'} your vote too`}
                 </p>
-              </button>
-            );
-          })()}
+              </div>
+              <span style={{ fontSize: '10px', fontWeight: '600', padding: '3px 8px', borderRadius: '8px', backgroundColor: 'var(--accent-amber-bg)', color: 'var(--accent-amber-text)', display: 'inline-flex', alignItems: 'center', gap: '3px', flexShrink: 0 }}>
+                {Icons.vote('var(--accent-amber-text)', 10)} Needs Votes
+              </span>
+            </button></ScrollFade>
+          );
+        })()}
 
-          {/* This Week */}
-          {(() => {
-            const confirmed = flocks.filter(f => f.status === 'confirmed' || f.status === 'locked');
-            return (
-              <button className="glass-btn glass-secondary" onClick={() => { if (confirmed.length > 0) { setSelectedFlockId(confirmed[0].id); setCurrentScreen('detail'); } }} style={{ flexShrink: 0, padding: '8px 14px', borderRadius: '12px', border: '1px solid rgba(255,255,255,0.12)', backgroundColor: 'rgba(255,255,255,0.06)', backdropFilter: 'blur(12px)', WebkitBackdropFilter: 'blur(12px)', cursor: 'pointer', textAlign: 'left', boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.08), 0 2px 8px rgba(0,0,0,0.06)' }}>
-                <p style={{ fontSize: '11px', fontWeight: '800', color: 'var(--text-primary)', margin: '0 0 1px', whiteSpace: 'nowrap' }}>This Week</p>
-                <p style={{ fontSize: '9px', color: 'var(--text-tertiary)', margin: 0, whiteSpace: 'nowrap' }}>
-                  {confirmed.length > 0 ? `${confirmed.length} plan${confirmed.length > 1 ? 's' : ''} set` : 'Nothing yet'}
-                </p>
-              </button>
-            );
-          })()}
-
-          {/* Friends */}
-          <button className="glass-btn glass-secondary" onClick={() => setCurrentScreen('addFriends')} style={{ flexShrink: 0, padding: '8px 14px', borderRadius: '12px', border: '1px solid rgba(255,255,255,0.12)', backgroundColor: 'rgba(255,255,255,0.06)', backdropFilter: 'blur(12px)', WebkitBackdropFilter: 'blur(12px)', cursor: 'pointer', textAlign: 'left', boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.08), 0 2px 8px rgba(0,0,0,0.06)' }}>
-            <p style={{ fontSize: '11px', fontWeight: '800', color: 'var(--text-primary)', margin: '0 0 1px', whiteSpace: 'nowrap' }}>Friends</p>
-            <p style={{ fontSize: '9px', color: 'var(--text-tertiary)', margin: 0, whiteSpace: 'nowrap' }}>{friendCount} connected</p>
-          </button>
-        </div></ScrollFade>
-
-        {/* Action Buttons */}
-        <ScrollFade delay={1}><div style={{ display: 'flex', gap: '10px', marginBottom: '14px' }}>
+        {/* Action buttons — deep glass treatment, neo-tactile */}
+        <ScrollFade delay={1}><div style={{ display: 'flex', gap: '10px', marginBottom: '16px' }}>
           <button
             onClick={() => setCurrentScreen('create')}
-            className="glass-btn"
+            className="neo-btn-primary"
             style={{
-              flex: 1.2,
-              padding: '16px',
-              borderRadius: '16px',
-              border: isDark ? '1px solid rgba(255,255,255,0.18)' : 'none',
-              background: isDark
-                ? 'rgba(255,255,255,0.08)'
-                : `linear-gradient(135deg, ${colors.navy}, ${colors.navyMid || colors.navy})`,
-              backdropFilter: 'blur(16px)',
-              WebkitBackdropFilter: 'blur(16px)',
+              flex: 1,
+              padding: '14px 16px',
+              borderRadius: '14px',
+              border: 'none',
+              background: 'linear-gradient(180deg, #2d5a87 0%, #1e293b 100%)',
               color: 'white',
+              fontWeight: '700',
+              fontSize: '14px',
               cursor: 'pointer',
-              boxShadow: isDark
-                ? '0 4px 16px rgba(0,0,0,0.2), inset 0 1px 0 rgba(255,255,255,0.15), inset 0 -1px 0 rgba(0,0,0,0.1)'
-                : '0 4px 16px rgba(0,0,0,0.2), inset 0 1px 0 rgba(255,255,255,0.15)',
+              boxShadow: [
+                '0 10px 24px rgba(30,41,59,0.45)',            // outer brand-navy glow
+                '0 2px 6px rgba(0,0,0,0.2)',                  // contact shadow
+                'inset 0 1px 0 rgba(255,255,255,0.22)',       // top highlight
+                'inset 0 -1px 1px rgba(0,0,0,0.28)',          // bottom shade
+                'inset 0 0 0 1px rgba(255,255,255,0.06)',     // edge glow
+              ].join(', '),
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
-              gap: '8px'
+              gap: '7px',
+              letterSpacing: '-0.1px',
+              textShadow: '0 1px 2px rgba(0,0,0,0.3)',
             }}
           >
-            {Icons.plus('white', 18)} <span style={{ fontSize: '16px', fontWeight: '800' }}>Start a Flock</span>
+            {Icons.plus('white', 15)} Start a flock
           </button>
           <button
-            className="glass-btn glass-secondary"
             onClick={() => setCurrentScreen('addFriends')}
+            className="neo-btn-glass"
             style={{
-              flex: 0.8,
-              padding: '14px',
+              flex: 1,
+              padding: '14px 16px',
               borderRadius: '14px',
-              border: '1.5px solid var(--border-default)',
-              backgroundColor: 'var(--bg-card-solid)',
+              border: 'none',
+              background: isDark
+                ? 'linear-gradient(180deg, rgba(255,255,255,0.08) 0%, rgba(255,255,255,0.02) 100%)'
+                : 'linear-gradient(180deg, rgba(255,255,255,0.85) 0%, rgba(255,255,255,0.55) 100%)',
+              backdropFilter: 'blur(20px) saturate(140%)',
+              WebkitBackdropFilter: 'blur(20px) saturate(140%)',
               color: 'var(--text-primary)',
               fontWeight: '700',
-              fontSize: '13px',
+              fontSize: '14px',
               cursor: 'pointer',
-              transition: 'transform 0.2s ease, box-shadow 0.2s ease',
-              boxShadow: '0 4px 12px rgba(0,0,0,0.06)',
+              boxShadow: isDark ? [
+                '0 10px 24px rgba(0,0,0,0.32)',
+                '0 2px 6px rgba(0,0,0,0.2)',
+                'inset 0 1px 0 rgba(255,255,255,0.18)',
+                'inset 0 -1px 1px rgba(0,0,0,0.25)',
+                'inset 0 0 0 1px rgba(255,255,255,0.06)',
+              ].join(', ') : [
+                '0 10px 24px rgba(13,40,71,0.12)',
+                '0 2px 6px rgba(13,40,71,0.06)',
+                'inset 0 1px 0 rgba(255,255,255,0.95)',
+                'inset 0 -1px 1px rgba(13,40,71,0.06)',
+                'inset 0 0 0 1px rgba(255,255,255,0.4)',
+              ].join(', '),
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
-              gap: '6px'
+              gap: '7px',
+              letterSpacing: '-0.1px',
             }}
           >
-            {Icons.userPlus('currentColor', 15)} <span style={{ fontWeight: '700' }}>Add Friends</span>
+            {Icons.userPlus('var(--text-primary)', 15)} Add friends
           </button>
-        </div></ScrollFade>
-
-        {/* Activity */}
-        <ScrollFade delay={2}><div style={styles.card}>
-          <h3 style={{ fontSize: '12px', fontWeight: 'bold', color: colors.navy, margin: '0 0 8px', display: 'flex', alignItems: 'center', gap: '6px' }}>{Icons.bell(colors.navy, 14)} Activity</h3>
-          {activityFeed.length === 0 ? (
-            <p style={{ fontSize: '11px', color: 'var(--text-tertiary)', margin: '8px 0 4px', textAlign: 'center' }}>No recent activity</p>
-          ) : activityFeed.map((a, i) => {
-            const icon = a.action === 'created' ? Icons.plus(colors.teal, 14) : a.action === 'joined' ? Icons.users(colors.navyMid, 14) : Icons.check(colors.sports, 14);
-            const elapsed = Date.now() - new Date(a.happened_at).getTime();
-            const mins = Math.floor(elapsed / 60000);
-            const timeStr = mins < 60 ? `${mins}m ago` : mins < 1440 ? `${Math.floor(mins / 60)}h ago` : `${Math.floor(mins / 1440)}d ago`;
-            return (
-              <div key={`${a.action}-${a.flock_id}-${a.user_id}-${i}`} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 0', borderBottom: '1px solid var(--border-light)' }}>
-                <span>{icon}</span>
-                <p style={{ fontSize: '11px', flex: 1, margin: 0 }}><span style={{ fontWeight: 'bold' }}>{a.user_name}</span> {a.action} <span style={{ color: colors.navyMid, fontStyle: 'italic' }}>{a.flock_name}</span></p>
-                <span style={{ fontSize: '10px', color: 'var(--text-tertiary)', whiteSpace: 'nowrap' }}>{timeStr}</span>
-              </div>
-            );
-          })}
         </div></ScrollFade>
 
         {/* Flocks */}
@@ -8693,21 +8795,66 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                   {flockInviteResults
                     .filter(u => !flockInviteSelected.some(s => s.id === u.id))
                     .filter(u => !(flock?.members || []).some(m => m.id === u.id))
-                    .map((friend, i, arr) => (
-                      <button key={friend.id} onClick={() => setFlockInviteSelected(prev => [...prev, friend])} style={{ width: '100%', padding: '10px 12px', display: 'flex', alignItems: 'center', gap: '10px', border: 'none', borderBottom: i < arr.length - 1 ? `1px solid ${colors.creamDark}` : 'none', backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer', textAlign: 'left' }}>
-                        <div style={{ width: '36px', height: '36px', borderRadius: '18px', backgroundColor: colors.navyMidBg, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '13px', fontWeight: '700', color: 'white', flexShrink: 0, overflow: 'hidden' }}>
-                          {friend.profile_image_url ? <img src={friend.profile_image_url} alt="" style={{ width: '36px', height: '36px', borderRadius: '18px', objectFit: 'cover' }} /> : friend.name[0]?.toUpperCase()}
-                        </div>
-                        <div style={{ flex: 1 }}>
-                          <p style={{ fontWeight: '700', fontSize: '14px', color: colors.navy, margin: 0 }}>{friend.name}</p>
-                        </div>
-                        <div style={{ padding: '4px 10px', borderRadius: '8px', backgroundColor: 'var(--icon-bg)', color: colors.teal, fontSize: '11px', fontWeight: '700' }}>Add</div>
-                      </button>
-                    ))}
+                    .map((friend, i, arr) => {
+                      const pulse = friendsPulses.find(p => p.id === friend.id);
+                      const dot = pulse?.status === 'down' ? '#10b981' : pulse?.status === 'maybe' ? '#f59e0b' : null;
+                      return (
+                        <button key={friend.id} onClick={() => setFlockInviteSelected(prev => [...prev, friend])} style={{ width: '100%', padding: '10px 12px', display: 'flex', alignItems: 'center', gap: '10px', border: 'none', borderBottom: i < arr.length - 1 ? `1px solid ${colors.creamDark}` : 'none', backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer', textAlign: 'left' }}>
+                          <div style={{ position: 'relative', flexShrink: 0 }}>
+                            <div style={{ width: '36px', height: '36px', borderRadius: '18px', backgroundColor: colors.navyMidBg, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '13px', fontWeight: '700', color: 'white', overflow: 'hidden' }}>
+                              {friend.profile_image_url ? <img src={friend.profile_image_url} alt="" style={{ width: '36px', height: '36px', borderRadius: '18px', objectFit: 'cover' }} /> : friend.name[0]?.toUpperCase()}
+                            </div>
+                            {dot && <div style={{ position: 'absolute', bottom: -1, right: -1, width: '12px', height: '12px', borderRadius: '6px', backgroundColor: dot, border: '2px solid var(--bg-card-solid)' }} />}
+                          </div>
+                          <div style={{ flex: 1 }}>
+                            <p style={{ fontWeight: '700', fontSize: '14px', color: colors.navy, margin: 0 }}>{friend.name}</p>
+                            {pulse && pulse.status !== 'not' && (
+                              <p style={{ fontSize: '10px', color: pulse.status === 'down' ? '#10b981' : '#f59e0b', margin: '2px 0 0', fontWeight: '700' }}>
+                                {pulse.status === 'down' ? 'Down to hang tonight' : 'Convince me'}
+                              </p>
+                            )}
+                          </div>
+                          <div style={{ padding: '4px 10px', borderRadius: '8px', backgroundColor: 'var(--icon-bg)', color: colors.teal, fontSize: '11px', fontWeight: '700' }}>Add</div>
+                        </button>
+                      );
+                    })}
                 </div>
               )}
               {!flockInviteSearching && flockInviteSearch.trim().length >= 1 && flockInviteResults.length === 0 && (
                 <p style={{ fontSize: '11px', color: 'var(--text-tertiary)', textAlign: 'center', padding: '8px 0', margin: 0 }}>No friends found</p>
+              )}
+
+              {/* When search is empty: show friends who are down/maybe (the magic) */}
+              {!flockInviteSearching && flockInviteSearch.trim().length === 0 && friendsPulses.filter(p => p.status !== 'not').length > 0 && (
+                <div style={{ marginTop: '4px' }}>
+                  <p style={{ fontSize: '11px', fontWeight: '800', color: 'var(--text-secondary)', margin: '0 0 8px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Available tonight</p>
+                  <div style={{ maxHeight: '240px', overflowY: 'auto', borderRadius: '10px', border: `1px solid ${colors.creamDark}`, backgroundColor: 'var(--bg-card-solid)' }}>
+                    {friendsPulses
+                      .filter(p => p.status !== 'not')
+                      .filter(p => !flockInviteSelected.some(s => s.id === p.id))
+                      .filter(p => !(flock?.members || []).some(m => m.id === p.id))
+                      .map((friend, i, arr) => {
+                        const isDown = friend.status === 'down';
+                        return (
+                          <button key={friend.id} onClick={() => setFlockInviteSelected(prev => [...prev, friend])} style={{ width: '100%', padding: '10px 12px', display: 'flex', alignItems: 'center', gap: '10px', border: 'none', borderBottom: i < arr.length - 1 ? `1px solid ${colors.creamDark}` : 'none', backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer', textAlign: 'left' }}>
+                            <div style={{ position: 'relative', flexShrink: 0 }}>
+                              <div style={{ width: '36px', height: '36px', borderRadius: '18px', backgroundColor: colors.navyMidBg, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '13px', fontWeight: '700', color: 'white', overflow: 'hidden' }}>
+                                {friend.profile_image_url ? <img src={friend.profile_image_url} alt="" style={{ width: '36px', height: '36px', borderRadius: '18px', objectFit: 'cover' }} /> : friend.name[0]?.toUpperCase()}
+                              </div>
+                              <div style={{ position: 'absolute', bottom: -1, right: -1, width: '12px', height: '12px', borderRadius: '6px', backgroundColor: isDown ? '#10b981' : '#f59e0b', border: '2px solid var(--bg-card-solid)' }} />
+                            </div>
+                            <div style={{ flex: 1 }}>
+                              <p style={{ fontWeight: '700', fontSize: '14px', color: colors.navy, margin: 0 }}>{friend.name}</p>
+                              <p style={{ fontSize: '10px', color: isDown ? '#10b981' : '#f59e0b', margin: '2px 0 0', fontWeight: '700' }}>
+                                {isDown ? 'Down to hang tonight' : 'Convince me'}
+                              </p>
+                            </div>
+                            <div style={{ padding: '4px 10px', borderRadius: '8px', backgroundColor: 'var(--icon-bg)', color: colors.teal, fontSize: '11px', fontWeight: '700' }}>Add</div>
+                          </button>
+                        );
+                      })}
+                  </div>
+                </div>
               )}
 
               {/* Send button */}
