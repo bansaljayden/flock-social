@@ -87,6 +87,21 @@ function registerHandlers(io, socket) {
     });
   });
 
+  // --- Venue rooms (live sensor + checkin updates) ---
+  // Public-by-design: any authenticated user can subscribe to a venue's live stream.
+  // No presence tracking — these are read-only feeds, not group chats.
+  socket.on('join_venue', (data) => {
+    const placeId = typeof data === 'string' ? data : data?.placeId;
+    if (!placeId) return;
+    socket.join(`venue:${placeId}`);
+  });
+
+  socket.on('leave_venue', (data) => {
+    const placeId = typeof data === 'string' ? data : data?.placeId;
+    if (!placeId) return;
+    socket.leave(`venue:${placeId}`);
+  });
+
   // --- Real-time messaging ---
 
   socket.on('send_message', async (data) => {

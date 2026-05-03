@@ -35,6 +35,8 @@ const adminRoutes = require('./routes/admin');
 const venueProfileRoutes = require('./routes/venueProfile');
 const venueDashboardRoutes = require('./routes/venueDashboard');
 const availabilityRoutes = require('./routes/availability');
+const sensorRoutes = require('./routes/sensors');
+const checkinRoutes = require('./routes/checkin');
 
 const app = express();
 app.set('trust proxy', 1);
@@ -152,6 +154,8 @@ app.use('/api/admin', apiLimiter, adminRoutes);               // Handles /api/ad
 app.use('/api/venue-profile', apiLimiter, venueProfileRoutes); // Handles /api/venue-profile (venue owners)
 app.use('/api/venue-dashboard', apiLimiter, venueDashboardRoutes); // Handles promotions, events, reviews CRUD
 app.use('/api/availability', apiLimiter, availabilityRoutes); // 3-tap status pulse: down / maybe / not
+app.use('/api/sensors', apiLimiter, sensorRoutes);              // Pi sensor ingest (x-api-key) + read APIs (JWT)
+app.use('/api/checkin', apiLimiter, checkinRoutes);             // NFC tap + manual venue check-in
 
 // Health check
 app.get('/api/health', (req, res) => {
@@ -519,6 +523,53 @@ async function runMigrations() {
       await pool.query('CREATE INDEX IF NOT EXISTS idx_venue_reviews_place ON venue_reviews(google_place_id)');
       console.log('Venue reviews migration complete');
     } catch (e) { console.error('Venue reviews migration error:', e.message); }
+
+    // Hardware sensor system: Pi units at venue entrances + NFC tap check-ins
+    try {
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS sensor_devices (
+          id SERIAL PRIMARY KEY,
+          device_id VARCHAR(100) UNIQUE NOT NULL,
+          venue_place_id VARCHAR(255) NOT NULL,
+          api_key VARCHAR(255) NOT NULL,
+          device_name VARCHAR(100),
+          is_active BOOLEAN DEFAULT true,
+          last_seen_at TIMESTAMPTZ,
+          deployed_at TIMESTAMPTZ DEFAULT NOW()
+        )
+      `);
+      await pool.query('CREATE INDEX IF NOT EXISTS idx_sensor_devices_device_id ON sensor_devices(device_id)');
+      await pool.query('CREATE INDEX IF NOT EXISTS idx_sensor_devices_api_key ON sensor_devices(api_key)');
+
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS venue_sensor_data (
+          id SERIAL PRIMARY KEY,
+          venue_place_id VARCHAR(255) NOT NULL,
+          ir_beam_count INTEGER DEFAULT 0,
+          thermal_headcount INTEGER DEFAULT 0,
+          noise_db DECIMAL(5,2),
+          sensor_device_id VARCHAR(100) NOT NULL,
+          recorded_at TIMESTAMPTZ DEFAULT NOW()
+        )
+      `);
+      await pool.query('CREATE INDEX IF NOT EXISTS idx_venue_sensor_data_place ON venue_sensor_data(venue_place_id)');
+      await pool.query('CREATE INDEX IF NOT EXISTS idx_venue_sensor_data_recorded ON venue_sensor_data(recorded_at)');
+      await pool.query('CREATE INDEX IF NOT EXISTS idx_venue_sensor_data_device ON venue_sensor_data(sensor_device_id)');
+
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS venue_checkins (
+          id SERIAL PRIMARY KEY,
+          venue_place_id VARCHAR(255) NOT NULL,
+          user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+          checkin_source VARCHAR(20) DEFAULT 'nfc' CHECK (checkin_source IN ('nfc', 'manual', 'gps')),
+          created_at TIMESTAMPTZ DEFAULT NOW()
+        )
+      `);
+      await pool.query('CREATE INDEX IF NOT EXISTS idx_venue_checkins_place ON venue_checkins(venue_place_id)');
+      await pool.query('CREATE INDEX IF NOT EXISTS idx_venue_checkins_user ON venue_checkins(user_id)');
+      await pool.query('CREATE INDEX IF NOT EXISTS idx_venue_checkins_created ON venue_checkins(created_at)');
+      console.log('Sensor system migration complete');
+    } catch (e) { console.error('Sensor system migration error:', e.message); }
 
     // Ensure admin account has admin role
     await pool.query(`UPDATE users SET role = 'admin' WHERE LOWER(email) = LOWER('bansaljayden@gmail.com') AND role != 'admin'`).catch(() => {});
