@@ -135,6 +135,12 @@ const venueSearchLimiter = isDev ? (_req, _res, next) => next() : rateLimit({
 app.use('/api/auth', authLimiter, authRoutes);
 app.use('/api/venues', venueSearchLimiter, venueSearchRoutes); // Before /api catch-all — photo proxy needs no auth
 app.use('/api/flocks', apiLimiter, flockRoutes);
+// Mount routes that use NON-JWT auth (or no auth at all) BEFORE the messageRoutes
+// catch-all at /api — that router's `router.use(authenticate)` intercepts every
+// /api/* request without a Bearer token, which would 401 the Pi (x-api-key) and
+// break the anonymous NFC GET below.
+app.use('/api/sensors', apiLimiter, sensorRoutes);              // Pi sensor ingest (x-api-key) + read APIs (JWT)
+app.use('/api/checkin', apiLimiter, checkinRoutes);             // NFC tap + manual venue check-in (anon-friendly GET)
 app.use('/api', apiLimiter, messageRoutes);     // Handles /api/flocks/:id/messages, /api/messages/:id/react, /api/dm/*
 app.use('/api/users', apiLimiter, userRoutes);
 app.use('/api/flocks', apiLimiter, venueRoutes); // Handles /api/flocks/:id/vote, /api/flocks/:id/votes
@@ -154,8 +160,6 @@ app.use('/api/admin', apiLimiter, adminRoutes);               // Handles /api/ad
 app.use('/api/venue-profile', apiLimiter, venueProfileRoutes); // Handles /api/venue-profile (venue owners)
 app.use('/api/venue-dashboard', apiLimiter, venueDashboardRoutes); // Handles promotions, events, reviews CRUD
 app.use('/api/availability', apiLimiter, availabilityRoutes); // 3-tap status pulse: down / maybe / not
-app.use('/api/sensors', apiLimiter, sensorRoutes);              // Pi sensor ingest (x-api-key) + read APIs (JWT)
-app.use('/api/checkin', apiLimiter, checkinRoutes);             // NFC tap + manual venue check-in
 
 // Health check
 app.get('/api/health', (req, res) => {
