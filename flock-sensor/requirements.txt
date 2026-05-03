@@ -1,0 +1,7 @@
+RPi.GPIO
+adafruit-circuitpython-mlx90640
+adafruit-blinka
+spidev
+requests
+numpy
+pygame
