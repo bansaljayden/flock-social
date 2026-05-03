@@ -57,6 +57,30 @@ export function leaveFlock(flockId) {
   }
 }
 
+// --- Venue rooms (live sensor + check-in feed) ---
+
+export function joinVenueRoom(placeId) {
+  if (socket?.connected && placeId) {
+    socket.emit('join_venue', { placeId });
+  }
+}
+
+export function leaveVenueRoom(placeId) {
+  if (socket?.connected && placeId) {
+    socket.emit('leave_venue', { placeId });
+  }
+}
+
+export function onVenueSensorUpdate(callback) {
+  if (socket) socket.on('venue_sensor_update', callback);
+  return () => { if (socket) socket.off('venue_sensor_update', callback); };
+}
+
+export function onVenueCheckin(callback) {
+  if (socket) socket.on('venue_checkin', callback);
+  return () => { if (socket) socket.off('venue_checkin', callback); };
+}
+
 export function sendMessage(flockId, messageText, opts = {}) {
   console.log('Emitting send_message:', { flockId, message: messageText, opts });
   if (socket?.connected) {

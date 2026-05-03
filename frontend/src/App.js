@@ -14,7 +14,8 @@ import {
 import { getCurrentUser, logout, isLoggedIn, getFlocks, getFlock, createFlock as apiCreateFlock, getMessages, sendMessage as apiSendMessage, updateProfile, searchVenues, searchUsers, getSuggestedUsers, sendFriendRequest, getVenueDetails, leaveFlock as apiLeaveFlock, getDMConversations, getDMs, getDmVenueVotes, getDmPinnedVenue, BASE_URL, inviteToFlock, acceptFlockInvite, declineFlockInvite, getFriends, acceptFriendRequest, declineFriendRequest, getPendingRequests, getOutgoingRequests, getFriendSuggestions, addFriendByCode, findFriendsByPhone, removeFriend, getTrustedContacts, addTrustedContact, updateTrustedContact, deleteTrustedContact, sendEmergencyAlert, shareLocationWithContacts, getUserStats, getCrowdPrediction, getCrowdBatch, getCrowdAlternatives, getWeather, submitVenueFeedback, uploadProfileImage, saveProfileImageUrl, submitBudget, getBudgetStatus, lockBudget, sendBudgetReminder, createBillSplit, getBillSplit, settleShare, ghostCommit, updatePaymentMethods, getPaymentLinks, getFeaturedEvents, searchEvents, getEventDetails, sendAiChat, getWeatherForecast, submitAttendance, getAdminAnalytics, createVenueProfile, getVenueProfile, updateVenueProfile, getVenuePromotions, createVenuePromotion, updateVenuePromotion, deleteVenuePromotion, getVenueEvents, createVenueEvent, updateVenueEvent, deleteVenueEvent, getIncomingFlocks, getVenueReviews, replyToReview, submitVenueReview, getPublicReviews, getPublicPromotions } from './services/api';
 import { connectSocket, disconnectSocket, getSocket, joinFlock, leaveFlock, sendMessage as socketSendMessage, sendImageMessage as socketSendImage, startTyping, stopTyping, onNewMessage, onUserTyping, onUserStoppedTyping, emitLocation, stopSharingLocation as socketStopSharing, onLocationUpdate, onMemberStoppedSharing, socketSendDm, onNewDm, dmStartTyping, dmStopTyping, onDmUserTyping, onDmUserStoppedTyping, dmReact, dmRemoveReact, onDmReactionAdded, onDmReactionRemoved, dmVoteVenue, onDmNewVote, dmShareLocation, dmStopSharingLocation, onDmLocationUpdate, onDmMemberStoppedSharing, dmPinVenue, onDmVenuePinned, emitFlockInvite, emitFlockInviteResponse, onFlockInviteReceived, onFlockInviteResponded, emitFriendRequest, emitFriendResponse, onFriendRequestReceived, onFriendRequestResponded, onBudgetUpdated, onBudgetLocked, onBudgetReminder, onBillCreated, onShareSettled, onBillFullySettled, onGhostCommitted, onNewVote, onVenueSelected, onFlockReactionAdded, onFlockReactionRemoved, onFlockDeleted, onFlockUpdated, onFlockMemberLeft } from './services/socket';
 import { requestNotificationPermission, onForegroundMessage } from './services/firebase';
-import { unregisterAllTokens, setAvailability, clearAvailability, getMyAvailability, getFriendsAvailability } from './services/api';
+import { unregisterAllTokens, setAvailability, clearAvailability, getMyAvailability, getFriendsAvailability, getSensorCurrent, getSensorHistory, checkInManual, getNfcCheckin } from './services/api';
+import { joinVenueRoom, leaveVenueRoom, onVenueSensorUpdate, onVenueCheckin } from './services/socket';
 import { pullSettings, queueSync } from './services/userSettings';
 import { QRCodeSVG } from 'qrcode.react';
 import { Html5Qrcode } from 'html5-qrcode';
@@ -384,6 +385,18 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
     });
   }, []);
 
+  // Category ring color — maps to the same palette used elsewhere.
+  // Resolves CSS vars via the colors object so it follows light/dark theme.
+  const categoryRingColor = useCallback((cat) => {
+    switch (cat) {
+      case 'Food': return colors.food;
+      case 'Nightlife': return colors.nightlife;
+      case 'Live Music': return colors.music;
+      case 'Sports': return colors.sports;
+      default: return colors.teal;
+    }
+  }, []);
+
   // Build a marker DOM element (pin or photo). The OUTER el is owned by MapLibre
   // (it sets transform every frame), so all visual styling + transitions live on
   // an INNER div. Touching transform on the outer el causes pin lag / wrong position.
@@ -391,6 +404,9 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
     const el = document.createElement('div');
     el.className = 'mlb-venue-marker';
     el.style.cursor = 'pointer';
+    el.style.display = 'flex';
+    el.style.flexDirection = 'column';
+    el.style.alignItems = 'center';
     // No transition / transform on the outer el — MapLibre owns it.
 
     const inner = document.createElement('div');
@@ -402,11 +418,18 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
     inner.style.height = size + 'px';
     inner.style.display = 'block';
 
+    const ring = categoryRingColor(venue.category);
+    const applyPhotoStyle = () => {
+      inner.style.backgroundSize = 'cover';
+      inner.style.backgroundPosition = 'center';
+      inner.style.borderRadius = '50%';
+      inner.style.boxShadow = `0 0 0 3px ${ring}, 0 4px 14px rgba(0,0,0,0.35)`;
+    };
+
     const cached = photoCacheRef.current[venue.place_id];
     if (cached) {
       inner.style.backgroundImage = `url("${cached}")`;
-      inner.style.backgroundSize = 'cover';
-      inner.style.borderRadius = '50%';
+      applyPhotoStyle();
     } else if (venue.photo_url) {
       const svg = buildPinSvg(isActive, venue.category);
       inner.innerHTML = svg;
@@ -417,8 +440,7 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
           photoCacheRef.current[venue.place_id] = dataUrl;
           inner.innerHTML = '';
           inner.style.backgroundImage = `url("${dataUrl}")`;
-          inner.style.backgroundSize = 'cover';
-          inner.style.borderRadius = '50%';
+          applyPhotoStyle();
         }
       });
     } else {
@@ -428,8 +450,19 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
       if (svgEl) { svgEl.setAttribute('width', size); svgEl.setAttribute('height', Math.round(size * 1.32)); }
     }
     el.appendChild(inner);
+
+    // Name + rating label (Apple-Maps-style). Hidden by default; CSS shows it
+    // when the map container reaches data-zoom-tier="hi".
+    const label = document.createElement('div');
+    label.className = 'mlb-marker-label';
+    const ratingHtml = venue.rating || venue.stars
+      ? `<span class="mlb-label-rating">★ ${(venue.rating || venue.stars).toFixed ? (venue.rating || venue.stars).toFixed(1) : (venue.rating || venue.stars)}</span>`
+      : '';
+    label.innerHTML = `<span class="mlb-label-name">${(venue.name || '').replace(/[<>]/g, '')}</span>${ratingHtml}`;
+    el.appendChild(label);
+
     return el;
-  }, [buildPinSvg, buildPhotoPin]);
+  }, [buildPinSvg, buildPhotoPin, categoryRingColor]);
 
   // ---------- init map (once) ----------
   useEffect(() => {
@@ -476,10 +509,59 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
         setTimeout(() => { try { map.resize(); } catch {} }, 0);
       }
 
+      // Tier the map's container by zoom so CSS can scale + label markers
+      // without re-rendering the React tree on every wheel notch.
+      const applyZoomTier = () => {
+        const z = map.getZoom();
+        const container = mapRef.current;
+        if (!container) return;
+        // hi  → labels visible, full-size markers
+        // mid → no labels, full-size
+        // lo  → no labels, shrunk markers (zoomed-out density)
+        const tier = z >= 15 ? 'hi' : z >= 13 ? 'mid' : 'lo';
+        if (container.dataset.zoomTier !== tier) container.dataset.zoomTier = tier;
+      };
+
+      // Brighten native basemap POI labels (MapTiler's Streets v2 Dark dims them
+      // hard, which is why the map feels emptier than Apple's). We bump opacity
+      // and lower the minzoom so cafés/restaurants show earlier.
+      const boostNativePoiLabels = () => {
+        const style = map.getStyle && map.getStyle();
+        if (!style?.layers) return;
+        for (const layer of style.layers) {
+          if (layer.type !== 'symbol') continue;
+          const id = layer.id || '';
+          const sl = layer['source-layer'] || '';
+          const looksPoi = /poi|place_label/i.test(id) || /poi|place/i.test(sl);
+          if (!looksPoi) continue;
+          try {
+            map.setLayoutProperty(layer.id, 'visibility', 'visible');
+            // Lower the zoom at which labels appear (default ~14 → 12.5)
+            if (typeof layer.minzoom === 'number' && layer.minzoom > 12.5) {
+              map.setLayerZoomRange(layer.id, 12.5, layer.maxzoom ?? 24);
+            }
+            map.setPaintProperty(layer.id, 'text-opacity', 0.95);
+            map.setPaintProperty(layer.id, 'text-color', '#e2e8f0');
+            map.setPaintProperty(layer.id, 'text-halo-color', 'rgba(15,23,42,0.85)');
+            map.setPaintProperty(layer.id, 'text-halo-width', 1.4);
+          } catch { /* layer may not support a property — ignore */ }
+        }
+      };
+
       map.on('load', () => {
         addOverlayLayers(map);
+        applyZoomTier();
+        boostNativePoiLabels();
         setMapReady(true);
       });
+
+      // Re-apply both on style swap (roadmap ↔ satellite)
+      map.on('styledata', () => {
+        applyZoomTier();
+        boostNativePoiLabels();
+      });
+
+      map.on('zoom', applyZoomTier);
 
       // Click on empty map — clear active venue
       map.on('click', (e) => {
@@ -857,6 +939,64 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
         /* Markers must never bleed above overlay UI (venue cards, sheets, etc.) */
         .maplibregl-marker { z-index: 1; }
         .maplibregl-canvas-container { z-index: 0; }
+
+        /* ---- Apple-Maps-style name label under each pin ---- */
+        .mlb-marker-label {
+          margin-top: 4px;
+          padding: 3px 7px;
+          border-radius: 8px;
+          background: rgba(15,23,42,0.78);
+          backdrop-filter: blur(8px);
+          -webkit-backdrop-filter: blur(8px);
+          color: #f1f5f9;
+          font-family: Satoshi, system-ui, -apple-system, sans-serif;
+          font-size: 10.5px;
+          font-weight: 700;
+          letter-spacing: -0.1px;
+          line-height: 1.15;
+          box-shadow: 0 2px 8px rgba(0,0,0,0.35), 0 0 0 1px rgba(255,255,255,0.06);
+          opacity: 0;
+          transform: translateY(-4px) scale(0.85);
+          transition: opacity 0.18s ease, transform 0.18s ease;
+          pointer-events: none;
+          max-width: 180px;
+          display: flex;
+          align-items: center;
+          gap: 5px;
+        }
+        .mlb-label-name {
+          /* Allow up to 2 lines on long names; ellipsize if it still overflows. */
+          display: -webkit-box;
+          -webkit-line-clamp: 2;
+          -webkit-box-orient: vertical;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          word-break: break-word;
+        }
+        .mlb-label-rating {
+          color: #fbbf24;
+          font-weight: 800;
+          font-size: 9.5px;
+          letter-spacing: 0;
+        }
+
+        /* Show labels only when zoomed in enough to read them. */
+        [data-zoom-tier="hi"] .mlb-marker-label {
+          opacity: 1;
+          transform: translateY(0) scale(1);
+        }
+
+        /* Shrink markers when zoomed out so the map doesn't get blanketed. */
+        [data-zoom-tier="lo"] .mlb-marker-inner {
+          transform: scale(0.65);
+          transform-origin: center center;
+          transition: transform 0.18s ease, width 0.2s ease, height 0.2s ease, box-shadow 0.2s ease;
+        }
+        [data-zoom-tier="mid"] .mlb-marker-inner,
+        [data-zoom-tier="hi"] .mlb-marker-inner {
+          transform: scale(1);
+          transition: transform 0.18s ease, width 0.2s ease, height 0.2s ease, box-shadow 0.2s ease;
+        }
       `}</style>
       <div ref={mapRef} style={{ width: '100%', height: '100%' }} />
 
@@ -1431,8 +1571,15 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   }, [venueLoginFlag]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Navigation
+  // NFC tag URLs are flockcorp.com/checkin/<placeId>. We detect that path on
+  // boot and route to a dedicated check-in screen. No React Router involved —
+  // existing screen flow is state-based, this just slots into it.
+  const nfcMatch = (typeof window !== 'undefined' && window.location?.pathname.match(/^\/checkin\/([^/?#]+)/)) || null;
+  const nfcInitialPlaceId = nfcMatch ? decodeURIComponent(nfcMatch[1]) : null;
+
   const [currentTab, setCurrentTab] = useState('home');
-  const [currentScreen, setCurrentScreen] = useState('main');
+  const [currentScreen, setCurrentScreen] = useState(nfcInitialPlaceId ? 'nfcCheckin' : 'main');
+  const [nfcPlaceId, setNfcPlaceId] = useState(nfcInitialPlaceId);
   const [venueDetailReturnTo, setVenueDetailReturnTo] = useState(null);
   const [selectedFlockId, setSelectedFlockId] = useState(null);
   const [pickingVenueForCreate, setPickingVenueForCreate] = useState(false);
@@ -2024,12 +2171,40 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   const [friendsPulses, setFriendsPulses] = useState([]); // [{id, name, profile_image_url, status, note, set_at, expires_at}]
   const [pulseSaving, setPulseSaving] = useState(false);
 
+  // Hardware sensor: live occupancy + checkin state for the active venue
+  const [sensorData, setSensorData] = useState(null);     // { sensor_data: {...}, recent_checkins: N }
+  const [sensorHistory, setSensorHistory] = useState([]); // [{recorded_at, thermal_headcount, ...}]
+  const [checkinSaving, setCheckinSaving] = useState(false);
+  const [checkinJustSaved, setCheckinJustSaved] = useState(false);
+  const [checkinDoneAt, setCheckinDoneAt] = useState(null); // ms timestamp from localStorage
+
   const refreshFriendsPulses = useCallback(async () => {
     try {
       const data = await getFriendsAvailability();
       setFriendsPulses(data.friends || []);
     } catch { /* ignore */ }
   }, []);
+
+  const handleCheckIn = useCallback(async (placeId) => {
+    if (!placeId || checkinSaving) return;
+    setCheckinSaving(true);
+    try {
+      const res = await checkInManual(placeId);
+      const ts = Date.now();
+      localStorage.setItem('flock_checkin_' + placeId, String(ts));
+      setCheckinDoneAt(ts);
+      setCheckinJustSaved(true);
+      setTimeout(() => setCheckinJustSaved(false), 2000);
+      // Bump local recent_checkins so the card updates immediately even if
+      // our own socket emit comes back slow.
+      setSensorData(prev => prev ? { ...prev, recent_checkins: (prev.recent_checkins || 0) + 1 } : prev);
+      return res;
+    } catch (err) {
+      showToast(err.message || 'Check-in failed', 'error');
+    } finally {
+      setCheckinSaving(false);
+    }
+  }, [checkinSaving, showToast]);
 
   const handleSetPulse = useCallback(async (status) => {
     if (pulseSaving) return;
@@ -2313,6 +2488,64 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
       .catch(() => {})
       .finally(() => { if (!cancelled) setCrowdLoading(false); });
     return () => { cancelled = true; };
+  }, [activeVenue]);
+
+  // Sensor: fetch + subscribe when active venue changes
+  useEffect(() => {
+    const pid = activeVenue?.place_id;
+    if (!pid) {
+      setSensorData(null);
+      setSensorHistory([]);
+      setCheckinDoneAt(null);
+      return;
+    }
+
+    // Restore disabled-checkin state from localStorage (2-hour window)
+    const stored = parseInt(localStorage.getItem('flock_checkin_' + pid) || '0', 10);
+    if (stored && Date.now() - stored < 2 * 60 * 60 * 1000) setCheckinDoneAt(stored);
+    else setCheckinDoneAt(null);
+
+    let cancelled = false;
+    Promise.all([
+      getSensorCurrent(pid).catch(() => null),
+      getSensorHistory(pid, 12).catch(() => ({ readings: [] })),
+    ]).then(([current, history]) => {
+      if (cancelled) return;
+      setSensorData(current && current.sensor_data ? current : null);
+      setSensorHistory(history?.readings || []);
+    });
+
+    joinVenueRoom(pid);
+    const offUpdate = onVenueSensorUpdate((payload) => {
+      if (!payload || payload.venue_place_id !== pid) return;
+      setSensorData(prev => ({
+        sensor_data: {
+          venue_place_id: pid,
+          ir_beam_count: payload.ir_beam_count,
+          thermal_headcount: payload.thermal_headcount,
+          noise_db: payload.noise_db,
+          recorded_at: payload.recorded_at,
+        },
+        recent_checkins: prev?.recent_checkins || 0,
+      }));
+      setSensorHistory(prev => [...prev, {
+        recorded_at: payload.recorded_at,
+        thermal_headcount: payload.thermal_headcount,
+        ir_beam_count: payload.ir_beam_count,
+        noise_db: payload.noise_db,
+      }].slice(-24));
+    });
+    const offCheckin = onVenueCheckin((payload) => {
+      if (!payload || payload.venue_place_id !== pid) return;
+      setSensorData(prev => prev ? { ...prev, recent_checkins: (prev.recent_checkins || 0) + 1 } : prev);
+    });
+
+    return () => {
+      cancelled = true;
+      leaveVenueRoom(pid);
+      offUpdate && offUpdate();
+      offCheckin && offCheckin();
+    };
   }, [activeVenue]);
 
   // Auto-refresh crowd data every 5 minutes when venue detail modal is open
@@ -6571,24 +6804,58 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 // Extract real hours: prefer crowd API, fall back to venue search opening_hours
                 const venueOH = activeVenue.opening_hours;
 
-                // Extract today's open/close hours from venue search data as fallback
-                const venueOpenHour = cd?.openHour ?? (() => {
+                // Find the period that actually contains "now". Handles two failure modes
+                // we kept hitting on overnight venues:
+                //   1. Sites like halal grills with 10AM-3AM hours — Google emits a separate
+                //      Saturday early-morning period (12AM-3AM, leftover from Friday) AND the
+                //      main Saturday 10AM-3AM period. Naively picking the first day=6 entry
+                //      grabs the leftover, gives openHour=0, and greys 10AM-11PM.
+                //   2. The backend cd.openHour was sometimes set from the wrong period, so
+                //      we now do this client-side and override cd.openHour entirely.
+                // Handles both legacy format (open.time = "1000") and new format (open.hour = 10).
+                const activePeriod = (() => {
                   const periods = venueOH?.periods;
                   if (!periods || !periods.length) return null;
-                  const today = new Date().getDay();
+                  const getHour = (t) => (
+                    t == null ? null
+                      : typeof t.hour === 'number' ? t.hour
+                      : (typeof t.time === 'string' && t.time.length >= 4) ? parseInt(t.time.slice(0, 2), 10)
+                      : null
+                  );
+                  const getMin = (t) => (
+                    t == null ? 0
+                      : typeof t.minute === 'number' ? t.minute
+                      : (typeof t.time === 'string' && t.time.length >= 4) ? parseInt(t.time.slice(2, 4), 10)
+                      : 0
+                  );
+                  const now = new Date();
+                  // minute-of-week (0..10079)
+                  const nowMOW = now.getDay() * 1440 + now.getHours() * 60 + now.getMinutes();
+                  for (const p of periods) {
+                    if (!p.open) continue;
+                    const oH = getHour(p.open);
+                    if (oH == null) continue;
+                    const cH = getHour(p.close);
+                    const oMOW = (p.open.day ?? 0) * 1440 + oH * 60 + getMin(p.open);
+                    let cMOW = p.close
+                      ? ((p.close.day ?? 0) * 1440 + (cH ?? 0) * 60 + getMin(p.close))
+                      : oMOW + 24 * 60; // 24/7 venues sometimes omit close
+                    if (cMOW <= oMOW) cMOW += 7 * 1440; // wrap to next week
+                    let n = nowMOW;
+                    if (n < oMOW) n += 7 * 1440;
+                    if (n >= oMOW && n < cMOW) return { openHour: oH, closeHour: (cH === 0 ? 24 : cH) };
+                  }
+                  // No period contains "now" — fall back to today's first period
+                  const today = now.getDay();
                   const tp = periods.find(pd => pd.open?.day === today);
                   if (!tp) return null;
-                  return tp.open?.hour ?? null;
+                  const oH = getHour(tp.open);
+                  const cH = getHour(tp.close);
+                  return { openHour: oH, closeHour: cH === 0 ? 24 : cH };
                 })();
-                const venueCloseHour = cd?.closeHour ?? (() => {
-                  const periods = venueOH?.periods;
-                  if (!periods || !periods.length) return null;
-                  const today = new Date().getDay();
-                  const tp = periods.find(pd => pd.open?.day === today);
-                  if (!tp) return null;
-                  const ch = tp.close?.hour ?? null;
-                  return ch === 0 ? 24 : ch;
-                })();
+
+                const venueOpenHour = activePeriod?.openHour ?? cd?.openHour ?? null;
+                const venueCloseHour = activePeriod?.closeHour ?? cd?.closeHour ?? null;
 
                 // Compute isOpen — prefer explicit API signal, fall back to today's hours, then null
                 const nowHour = new Date().getHours();
@@ -6771,7 +7038,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 {/* Hourly Forecast Graph — fades in immediately, bars animate up */}
                 <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.2, duration: 0.4, ease: 'easeOut' }} style={{ marginBottom: '6px' }}>
                   <p style={{ fontSize: '9px', fontWeight: '600', color: 'var(--text-secondary)', marginBottom: '4px', textTransform: 'uppercase' }}>Expected Crowd by Hour</p>
-                  <div style={{ display: 'flex', alignItems: 'flex-end', gap: '2px', height: '44px' }}>
+                  <div style={{ display: 'flex', alignItems: 'flex-end', gap: '2px', height: '56px' }}>
                     {hourlyData.map((h, i) => {
                       const isNow = i === 0;
                       const parsedH = (() => { const p = (h.hour || '').match(/^(\d+)\s*(AM|PM)$/i); if (!p) return 12; let hr = parseInt(p[1], 10); if (p[2].toUpperCase() === 'AM' && hr === 12) hr = 0; else if (p[2].toUpperCase() === 'PM' && hr !== 12) hr += 12; return hr; })();
@@ -6784,7 +7051,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                           ? (parsedH < venueOpenHour || parsedH >= venueCloseHour)
                           : (parsedH >= venueCloseHour && parsedH < venueOpenHour)
                       ) : false;
-                      const hourClosed = closedAllDay ? true : (apiHourly ? (closedByGoogleHours || (isNow && isClosed)) : (() => {
+                      // If we have a live score for "Now", the venue is open right now
+                      // by definition — never grey the Now bar in that case.
+                      const hasLiveNow = isNow && Number.isFinite(score) && score > 0;
+                      const hourClosed = hasLiveNow ? false : (closedAllDay ? true : (apiHourly ? (closedByGoogleHours || (isNow && isClosed)) : (() => {
                         if (closedAllDay) return true;
                         if (venueOpenHour != null && venueCloseHour != null) {
                           // Handle venues that close after midnight (close < open).
@@ -6818,19 +7088,29 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                         if (vTypes.some(t => ['gym', 'fitness_center'].includes(t))) return (parsedH < 5 || parsedH > 23);
                         if (vTypes.some(t => ['library', 'museum'].includes(t))) return (parsedH < 9 || parsedH > 18);
                         return false;
-                      })());
-                      // Defend against null / NaN scores from the ML predictor
-                      const safeScore = Number.isFinite(h.score) ? h.score : 0;
+                      })()));
+                      // Defend against null / NaN scores from the ML predictor.
+                      // Override the "Now" bar with the live score so it matches the
+                      // header (e.g. "60% Moderate") instead of the ML hourly forecast,
+                      // which can drift from the live value and confuse users.
+                      const liveScoreForNow = (isNow && Number.isFinite(score) && score > 0) ? score : null;
+                      const safeScore = liveScoreForNow != null
+                        ? liveScoreForNow
+                        : (Number.isFinite(h.score) ? h.score : 0);
                       const barColor = hourClosed ? 'var(--text-tertiary)' : safeScore > 70 ? colors.red : safeScore > 40 ? colors.amber : colors.teal;
-                      const barH = hourClosed ? 4 : Math.max(Math.min(safeScore, 100) * 0.42, 10);
+                      // 56px chart height. Closed bars: 10px floor. Open bars: 16px floor.
+                      const barH = hourClosed ? 10 : Math.max(Math.min(safeScore, 100) * 0.5, 16);
                       return (
-                      <div key={i} style={{ flex: 1, display: 'flex', alignItems: 'flex-end', justifyContent: 'center', minWidth: 0, height: '100%' }}>
+                      <div key={i} style={{ flex: 1, position: 'relative', display: 'flex', alignItems: 'flex-end', justifyContent: 'center', minWidth: 0, height: '100%' }}>
+                        {/* Faint track behind every slot so chart structure reads even when bars are short */}
+                        <div style={{ position: 'absolute', left: 0, right: 0, bottom: 0, height: '100%', backgroundColor: 'var(--border-subtle, rgba(148,163,184,0.12))', borderRadius: '3px', opacity: 0.5 }} />
                         <div style={{
+                          position: 'relative',
                           width: '100%',
                           height: `${barH}px`,
                           borderRadius: '3px 3px 1px 1px',
                           backgroundColor: barColor,
-                          opacity: hourClosed ? 0.35 : isNow ? 1 : 0.75,
+                          opacity: hourClosed ? 0.55 : isNow ? 1 : 0.9,
                           boxShadow: isNow && !hourClosed ? `0 0 6px ${barColor}50` : 'none',
                           transition: `height 0.5s cubic-bezier(0.34, 1.56, 0.64, 1) ${i * 0.035}s`,
                           flexShrink: 0,
@@ -6916,6 +7196,82 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 );
               })()}
 
+              {/* Live Occupancy card — only renders when a Pi sensor exists for this venue */}
+              {sensorData?.sensor_data && (() => {
+                const sd = sensorData.sensor_data;
+                const noiseLabel = sd.noise_db == null ? null
+                  : sd.noise_db < 50 ? { text: 'Quiet', color: colors.teal }
+                  : sd.noise_db < 70 ? { text: 'Moderate', color: colors.amber }
+                  : sd.noise_db < 85 ? { text: 'Lively', color: colors.food }
+                  : { text: 'Loud', color: colors.red };
+                const ageMin = sd.recorded_at
+                  ? Math.max(0, Math.round((Date.now() - new Date(sd.recorded_at).getTime()) / 60000))
+                  : null;
+                const ageStr = ageMin == null ? '' : ageMin === 0 ? 'just now' : ageMin === 1 ? '1 min ago' : `${ageMin} min ago`;
+                const maxHeads = Math.max(1, ...sensorHistory.map(r => r.thermal_headcount || 0));
+                return (
+                  <motion.div
+                    initial={{ opacity: 0, y: 14 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ delay: 1.05, duration: 0.4, ease: 'easeOut' }}
+                    style={{
+                      backgroundColor: 'var(--bg-card-solid)',
+                      border: '1px solid var(--border-default)',
+                      borderRadius: '14px',
+                      padding: '14px 16px',
+                      boxShadow: 'var(--card-shadow)',
+                      marginBottom: '8px',
+                    }}
+                  >
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '10px' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '7px' }}>
+                        <span className="flock-pulse-dot" style={{ width: '7px', height: '7px', borderRadius: '50%', backgroundColor: '#10b981', display: 'inline-block' }} />
+                        <span style={{ fontSize: '11px', fontWeight: '700', color: 'var(--text-primary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Live Occupancy</span>
+                      </div>
+                      {ageStr && <span style={{ fontSize: '9px', color: 'var(--text-tertiary)' }}>{ageStr}</span>}
+                    </div>
+
+                    <div style={{ display: 'flex', alignItems: 'baseline', gap: '6px', marginBottom: '6px' }}>
+                      <span style={{ fontSize: '26px', fontWeight: '800', color: 'var(--text-primary)', letterSpacing: '-0.5px', lineHeight: 1 }}>~{sd.thermal_headcount}</span>
+                      <span style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>people right now</span>
+                    </div>
+
+                    {noiseLabel && (
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '12px' }}>
+                        <div style={{ width: '6px', height: '6px', borderRadius: '50%', backgroundColor: noiseLabel.color }} />
+                        <span style={{ fontSize: '12px', fontWeight: '700', color: noiseLabel.color }}>{noiseLabel.text}</span>
+                        <span style={{ fontSize: '10px', color: 'var(--text-tertiary)' }}>· {Number(sd.noise_db).toFixed(0)} dB</span>
+                      </div>
+                    )}
+
+                    {sensorHistory.length > 0 && (
+                      <div>
+                        <p style={{ fontSize: '9px', fontWeight: '600', color: 'var(--text-tertiary)', margin: '0 0 4px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Last 12 Hours</p>
+                        <div style={{ display: 'flex', alignItems: 'flex-end', gap: '3px', height: '36px' }}>
+                          {sensorHistory.slice(-12).map((r, i) => {
+                            const h = Math.max(2, Math.round((r.thermal_headcount / maxHeads) * 32));
+                            return <div key={i} style={{ flex: 1, height: `${h}px`, borderRadius: '2px', backgroundColor: colors.navy, opacity: 0.85 }} />;
+                          })}
+                        </div>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '4px' }}>
+                          {sensorHistory.slice(-12).filter((_, i, a) => i === 0 || i === a.length - 1).map((r, i) => (
+                            <span key={i} style={{ fontSize: '8px', color: 'var(--text-tertiary)' }}>
+                              {new Date(r.recorded_at).toLocaleTimeString([], { hour: 'numeric' })}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {sensorData.recent_checkins > 0 && (
+                      <p style={{ fontSize: '10px', color: 'var(--text-secondary)', margin: '10px 0 0' }}>
+                        {sensorData.recent_checkins} check-in{sensorData.recent_checkins === 1 ? '' : 's'} in the last hour
+                      </p>
+                    )}
+                  </motion.div>
+                );
+              })()}
+
               <motion.div initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 1.1, type: 'spring', damping: 20, stiffness: 280 }} style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
                 {pickingVenueForCreate ? (
                   <button onClick={(e) => {
@@ -6959,6 +7315,32 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 ) : (
                   <button className="glass-btn glass-navy" onClick={(e) => { confirmClick(e); setSelectedVenueForCreate({ ...activeVenue, addr: activeVenue.addr || activeVenue.formatted_address, lat: activeVenue.location?.latitude, lng: activeVenue.location?.longitude }); setActiveVenue(null); setCurrentScreen('create'); }} style={{ width: '100%', padding: '10px', borderRadius: '10px', border: 'none', background: `linear-gradient(135deg, ${colors.navyBg}, ${colors.navyMidBg})`, color: 'white', fontWeight: '700', fontSize: '12px', cursor: 'pointer', textAlign: 'center' }}>Start Flock Here</button>
                 )}
+                {activeVenue.place_id && (() => {
+                  const checkedIn = checkinDoneAt && (Date.now() - checkinDoneAt < 2 * 60 * 60 * 1000);
+                  const label = checkinJustSaved ? 'Checked In ✓' : checkedIn ? 'Checked In ✓' : 'Check In';
+                  const disabled = checkedIn || checkinSaving;
+                  return (
+                    <button
+                      onClick={() => handleCheckIn(activeVenue.place_id)}
+                      disabled={disabled}
+                      style={{
+                        width: '100%',
+                        padding: '10px',
+                        borderRadius: '10px',
+                        border: '1.5px solid var(--border-default)',
+                        backgroundColor: disabled ? 'var(--bg-tertiary)' : 'var(--bg-card-solid)',
+                        color: disabled ? 'var(--text-tertiary)' : colors.navy,
+                        cursor: disabled ? 'default' : 'pointer',
+                        fontWeight: '700',
+                        fontSize: '12px',
+                        opacity: checkinSaving ? 0.6 : 1,
+                        transition: 'opacity 0.3s ease, background-color 0.2s ease',
+                      }}
+                    >
+                      {checkinSaving ? 'Checking in...' : label}
+                    </button>
+                  );
+                })()}
                 <div style={{ display: 'flex', gap: '8px' }}>
                   {activeVenue.place_id && (
                     <button className="glass-btn glass-secondary" onClick={() => { openVenueDetail(activeVenue.place_id, { name: activeVenue.name, formatted_address: activeVenue.addr, place_id: activeVenue.place_id, rating: activeVenue.stars, photo_url: activeVenue.photo_url }); }} style={{ flex: 1, padding: '10px', borderRadius: '10px', border: '1.5px solid var(--border-default)', backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', fontSize: '11px', fontWeight: '600', color: 'var(--text-secondary)' }}>{Icons.eye('var(--text-secondary)', 14)} Details</button>
@@ -9988,6 +10370,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   const [editingEvent, setEditingEvent] = useState(null);
   const [venueDashProfileLoaded, setVenueDashProfileLoaded] = useState(false);
   const [venueInfo, setVenueInfo] = useState({ name: '', address: '', phone: '' });
+  // Hardware sensor data for the venue owner dashboard's analytics tab
+  const [ownerSensorData, setOwnerSensorData] = useState(null);
+  const [ownerSensorHistory, setOwnerSensorHistory] = useState([]);
+  const [ownerVenuePlaceId, setOwnerVenuePlaceId] = useState(null);
   const [editingVenueInfo, setEditingVenueInfo] = useState(false);
   const [operatingHours, setOperatingHours] = useState([]);
   const [showHoursModal, setShowHoursModal] = useState(false);
@@ -10089,6 +10475,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
 
             // 1) Try saved place ID — only trust result if venue name matches
             const savedPlaceId = p.google_place_id || venueOnboardingData.googlePlaceId;
+            if (savedPlaceId) setOwnerVenuePlaceId(savedPlaceId);
             let verifiedVenue = await fetchAndVerify(savedPlaceId);
             let resolvedPlaceId = savedPlaceId;
 
@@ -10131,6 +10518,52 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
       }).catch(() => setVenueDashProfileLoaded(true));
     }
   }, [currentScreen, venueDashProfileLoaded]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Pull live sensor data + history for the dashboard analytics tab.
+  // Mirrors the venue-detail effect but scoped to the owner's own placeId.
+  React.useEffect(() => {
+    const pid = ownerVenuePlaceId;
+    if (!pid || currentScreen !== 'venueDashboard') return;
+    let cancelled = false;
+    Promise.all([
+      getSensorCurrent(pid).catch(() => null),
+      getSensorHistory(pid, 24).catch(() => ({ readings: [] })),
+    ]).then(([current, history]) => {
+      if (cancelled) return;
+      setOwnerSensorData(current && current.sensor_data ? current : null);
+      setOwnerSensorHistory(history?.readings || []);
+    });
+    joinVenueRoom(pid);
+    const offUpdate = onVenueSensorUpdate((payload) => {
+      if (!payload || payload.venue_place_id !== pid) return;
+      setOwnerSensorData(prev => ({
+        sensor_data: {
+          venue_place_id: pid,
+          ir_beam_count: payload.ir_beam_count,
+          thermal_headcount: payload.thermal_headcount,
+          noise_db: payload.noise_db,
+          recorded_at: payload.recorded_at,
+        },
+        recent_checkins: prev?.recent_checkins || 0,
+      }));
+      setOwnerSensorHistory(prev => [...prev, {
+        recorded_at: payload.recorded_at,
+        thermal_headcount: payload.thermal_headcount,
+        ir_beam_count: payload.ir_beam_count,
+        noise_db: payload.noise_db,
+      }].slice(-48));
+    });
+    const offCheckin = onVenueCheckin((payload) => {
+      if (!payload || payload.venue_place_id !== pid) return;
+      setOwnerSensorData(prev => prev ? { ...prev, recent_checkins: (prev.recent_checkins || 0) + 1 } : prev);
+    });
+    return () => {
+      cancelled = true;
+      leaveVenueRoom(pid);
+      offUpdate && offUpdate();
+      offCheckin && offCheckin();
+    };
+  }, [ownerVenuePlaceId, currentScreen]);
 
   // Seed venueInfo from onboarding data if backend profile hasn't loaded yet
   React.useEffect(() => {
@@ -10391,6 +10824,73 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
             </div>
             {isFeatureLocked('Detailed insights') && <div style={{ position: 'absolute', inset: 0, backgroundColor: 'var(--locked-overlay)', borderRadius: '12px', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>{Icons.shield(colors.textTertiary, 24)}<span style={{ fontSize: '10px', color: 'var(--text-secondary)', marginTop: '4px' }}>Pro Feature</span></div>}
           </div>
+
+          {/* Live Sensor — only renders if a Pi is deployed for this venue */}
+          {ownerSensorData?.sensor_data && (() => {
+            const sd = ownerSensorData.sensor_data;
+            // Today's IR total = sum of ir_beam_count for readings whose recorded_at is "today"
+            const todayStart = new Date(); todayStart.setHours(0, 0, 0, 0);
+            const todaysIr = ownerSensorHistory
+              .filter(r => new Date(r.recorded_at) >= todayStart)
+              .reduce((sum, r) => sum + (r.ir_beam_count || 0), 0);
+            const noiseLabel = sd.noise_db == null ? null
+              : sd.noise_db < 50 ? { text: 'Quiet', color: colors.teal }
+              : sd.noise_db < 70 ? { text: 'Moderate', color: colors.amber }
+              : sd.noise_db < 85 ? { text: 'Lively', color: colors.food }
+              : { text: 'Loud', color: colors.red };
+            const lastSeenMin = sd.recorded_at ? Math.round((Date.now() - new Date(sd.recorded_at).getTime()) / 60000) : Infinity;
+            const online = lastSeenMin < 5;
+            const max24 = Math.max(1, ...ownerSensorHistory.map(r => r.thermal_headcount || 0));
+            return (
+              <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '14px', marginBottom: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '7px' }}>
+                    <span className="flock-pulse-dot" style={{ width: '7px', height: '7px', borderRadius: '50%', backgroundColor: '#10b981', display: 'inline-block' }} />
+                    <h3 style={{ fontSize: '13px', fontWeight: '700', color: colors.navy, margin: 0 }}>Live Sensor</h3>
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    <span style={{ fontSize: '10px', fontWeight: '700', padding: '2px 8px', borderRadius: '8px', backgroundColor: online ? 'var(--accent-green-bg)' : 'var(--accent-red-bg)', color: online ? 'var(--accent-green-text)' : 'var(--accent-red-text)' }}>{online ? 'Online' : 'Offline'}</span>
+                    <span style={{ fontSize: '9px', color: 'var(--text-tertiary)' }}>last seen {lastSeenMin === 0 ? 'just now' : `${lastSeenMin} min ago`}</span>
+                  </div>
+                </div>
+
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '8px', marginBottom: '12px' }}>
+                  <div>
+                    <p style={{ fontSize: '9px', color: 'var(--text-secondary)', margin: 0, textTransform: 'uppercase' }}>Currently Inside</p>
+                    <p style={{ fontSize: '28px', fontWeight: '900', color: colors.navy, margin: '4px 0 0', lineHeight: 1 }}>~{sd.thermal_headcount}</p>
+                  </div>
+                  <div>
+                    <p style={{ fontSize: '9px', color: 'var(--text-secondary)', margin: 0, textTransform: 'uppercase' }}>Noise Level</p>
+                    {noiseLabel ? (
+                      <p style={{ fontSize: '18px', fontWeight: '800', color: noiseLabel.color, margin: '4px 0 0', lineHeight: 1 }}>
+                        {noiseLabel.text} <span style={{ fontSize: '11px', color: 'var(--text-tertiary)', fontWeight: '600' }}>{Number(sd.noise_db).toFixed(0)} dB</span>
+                      </p>
+                    ) : <p style={{ fontSize: '18px', color: 'var(--text-tertiary)', margin: '4px 0 0' }}>—</p>}
+                  </div>
+                  <div>
+                    <p style={{ fontSize: '9px', color: 'var(--text-secondary)', margin: 0, textTransform: 'uppercase' }}>Today's Door Count</p>
+                    <p style={{ fontSize: '20px', fontWeight: '800', color: colors.navy, margin: '4px 0 0' }}>{todaysIr}</p>
+                  </div>
+                  <div>
+                    <p style={{ fontSize: '9px', color: 'var(--text-secondary)', margin: 0, textTransform: 'uppercase' }}>Last Hour Check-ins</p>
+                    <p style={{ fontSize: '20px', fontWeight: '800', color: colors.navy, margin: '4px 0 0' }}>{ownerSensorData.recent_checkins || 0}</p>
+                  </div>
+                </div>
+
+                {ownerSensorHistory.length > 0 && (
+                  <div>
+                    <p style={{ fontSize: '9px', fontWeight: '600', color: 'var(--text-secondary)', margin: '0 0 6px', textTransform: 'uppercase' }}>Last 24 Hours</p>
+                    <div style={{ display: 'flex', alignItems: 'flex-end', gap: '2px', height: '52px' }}>
+                      {ownerSensorHistory.slice(-24).map((r, i) => {
+                        const h = Math.max(2, Math.round((r.thermal_headcount / max24) * 48));
+                        return <div key={i} style={{ flex: 1, height: `${h}px`, borderRadius: '2px', backgroundColor: colors.navy, opacity: 0.85 }} />;
+                      })}
+                    </div>
+                  </div>
+                )}
+              </div>
+            );
+          })()}
 
           {/* Post a Deal */}
           <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', marginBottom: '12px', boxShadow: 'var(--card-shadow-sm)', position: 'relative' }}>
@@ -12104,6 +12604,103 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
     </div>
   );
 
+  // NFC CHECK-IN LANDING — opened by tapping a venue's NFC tag (URL-based entry)
+  const NfcCheckinScreen = () => {
+    const placeId = nfcPlaceId;
+    const [status, setStatus] = useState('loading'); // 'loading' | 'ok' | 'error'
+    const [checkedInAt, setCheckedInAt] = useState(null);
+    const isAuthed = !!authUser?.id;
+
+    useEffect(() => {
+      if (!placeId) { setStatus('error'); return; }
+      // Hit the NFC endpoint — works for both authed and anonymous users.
+      // For authed: records with user_id and triggers flock-attendance update.
+      // For anon: records with user_id NULL.
+      getNfcCheckin(placeId)
+        .then((res) => {
+          setCheckedInAt(res?.checked_in_at || new Date().toISOString());
+          setStatus('ok');
+        })
+        .catch(() => setStatus('error'));
+    }, [placeId]);
+
+    const goToVenue = () => {
+      // Reset URL so a refresh doesn't re-trigger the NFC flow
+      if (typeof window !== 'undefined' && window.history?.replaceState) {
+        window.history.replaceState({}, '', '/');
+      }
+      setNfcPlaceId(null);
+      setCurrentScreen('main');
+      setCurrentTab('explore');
+      // Best-effort: pan map to venue once map is available
+      if (window.__flockPanToVenue) {
+        window.__flockPanToVenue({ place_id: placeId });
+      }
+    };
+
+    return (
+      <div style={{
+        position: 'fixed', inset: 0, zIndex: 100,
+        backgroundColor: '#0f172a',
+        display: 'flex', flexDirection: 'column',
+        alignItems: 'center', justifyContent: 'center',
+        padding: '32px 24px', textAlign: 'center',
+        color: '#f1ede0', fontFamily: 'Satoshi, system-ui, -apple-system, sans-serif',
+      }}>
+        <div style={{ marginBottom: '32px' }}>
+          <div style={{ fontSize: '32px', fontWeight: '900', letterSpacing: '-1px', color: '#f1ede0' }}>Flock</div>
+        </div>
+
+        {status === 'loading' && (
+          <div style={{ width: '32px', height: '32px', border: '3px solid rgba(255,255,255,0.15)', borderTopColor: '#14B8A6', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
+        )}
+
+        {status === 'ok' && isAuthed && (
+          <>
+            <div style={{ width: '64px', height: '64px', borderRadius: '50%', backgroundColor: 'rgba(16,185,129,0.18)', display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: '20px' }}>
+              <span style={{ fontSize: '32px', color: '#10b981', lineHeight: 1 }}>✓</span>
+            </div>
+            <h1 style={{ fontSize: '24px', fontWeight: '800', margin: '0 0 8px', color: '#f1ede0', letterSpacing: '-0.4px' }}>You're checked in!</h1>
+            <p style={{ fontSize: '13px', color: 'rgba(241,237,224,0.6)', margin: '0 0 8px' }}>{new Date(checkedInAt).toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' })}</p>
+            <p style={{ fontSize: '11px', color: 'rgba(241,237,224,0.4)', margin: '0 0 28px', wordBreak: 'break-all', maxWidth: '320px' }}>{placeId}</p>
+            <button
+              onClick={goToVenue}
+              style={{ padding: '14px 32px', borderRadius: '14px', border: 'none', background: 'linear-gradient(180deg, #2d5a87 0%, #1e293b 100%)', color: 'white', fontWeight: '700', fontSize: '14px', cursor: 'pointer', boxShadow: '0 10px 24px rgba(30,41,59,0.45), inset 0 1px 0 rgba(255,255,255,0.18)' }}
+            >View venue in Flock</button>
+          </>
+        )}
+
+        {status === 'ok' && !isAuthed && (
+          <>
+            <h1 style={{ fontSize: '22px', fontWeight: '800', margin: '0 0 12px', color: '#f1ede0', letterSpacing: '-0.3px', maxWidth: '320px' }}>Checked in.</h1>
+            <p style={{ fontSize: '14px', color: 'rgba(241,237,224,0.7)', margin: '0 0 28px', maxWidth: '320px', lineHeight: 1.5 }}>
+              Get Flock to see live crowd data and coordinate with friends.
+            </p>
+            {/* TODO: switch back to https://flockcorp.com once marketing site is deployed */}
+            <a
+              href="https://flock-app-w65m.vercel.app"
+              style={{ padding: '14px 32px', borderRadius: '14px', background: 'linear-gradient(180deg, #2d5a87 0%, #1e293b 100%)', color: 'white', fontWeight: '700', fontSize: '14px', textDecoration: 'none', boxShadow: '0 10px 24px rgba(30,41,59,0.45)', marginBottom: '12px' }}
+            >Download Flock</a>
+            {/* TODO: switch back to https://flockcorp.com once marketing site is deployed */}
+            <a
+              href="https://flock-app-w65m.vercel.app"
+              style={{ padding: '12px 28px', color: 'rgba(241,237,224,0.7)', fontSize: '13px', textDecoration: 'none', fontWeight: '600' }}
+            >Continue to website</a>
+          </>
+        )}
+
+        {status === 'error' && (
+          <>
+            <h1 style={{ fontSize: '22px', fontWeight: '800', margin: '0 0 8px', color: '#f1ede0' }}>Check-in failed</h1>
+            <p style={{ fontSize: '13px', color: 'rgba(241,237,224,0.6)', margin: '0 0 24px' }}>Try tapping the tag again, or open Flock to check in manually.</p>
+            {/* TODO: switch back to https://flockcorp.com once marketing site is deployed */}
+            <a href="https://flock-app-w65m.vercel.app" style={{ padding: '12px 28px', color: 'rgba(241,237,224,0.7)', fontSize: '13px', textDecoration: 'none', fontWeight: '600' }}>Continue to website</a>
+          </>
+        )}
+      </div>
+    );
+  };
+
   // ADD FRIENDS SCREEN (Snapchat-style)
   const AddFriendsScreen = () => {
     const tabs = [
@@ -12431,6 +13028,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
     if (showVenueOnboarding) return VenueOnboardingScreen();
     // Show onboarding for new users who haven't completed it
     if (userMode === 'user' && !hasCompletedOnboarding) return OnboardingScreen();
+    if (currentScreen === 'nfcCheckin') return NfcCheckinScreen();
     if (currentScreen === 'addFriends') return AddFriendsScreen();
     if (currentScreen === 'create') return CreateScreen();
     if (currentScreen === 'join') return JoinScreen();
