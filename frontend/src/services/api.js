@@ -579,6 +579,23 @@ export async function unregisterAllTokens() {
   return request('/api/notifications/unregister-all', { method: 'DELETE' });
 }
 
+// Sensor + check-in — hardware-driven occupancy + NFC tap pipeline
+export async function getSensorCurrent(placeId) {
+  return request(`/api/sensors/${encodeURIComponent(placeId)}/current`);
+}
+
+export async function getSensorHistory(placeId, hours = 24) {
+  return request(`/api/sensors/${encodeURIComponent(placeId)}/history?hours=${encodeURIComponent(hours)}`);
+}
+
+export async function checkInManual(placeId) {
+  return request(`/api/checkin/${encodeURIComponent(placeId)}`, { method: 'POST' });
+}
+
+export async function getNfcCheckin(placeId) {
+  return request(`/api/checkin/${encodeURIComponent(placeId)}`);
+}
+
 // Availability Pulse — 3-tap status: down / maybe / not
 export async function setAvailability({ status, note, expiresAt }) {
   return request('/api/availability', {
