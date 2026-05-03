@@ -67,96 +67,127 @@ async function collectWeekly() {
   let totalRows = 0;
   let skipped = 0;
 
+  // Resilient query helper — retries up to 3× on transient pg pool errors
+  // (ECONNRESET / ETIMEDOUT / connection terminated). The pool reconnects on
+  // its own; we just have to not crash and not skip the row.
+  const safeQuery = async (sql, params) => {
+    let lastErr;
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      try { return await pool.query(sql, params); }
+      catch (err) {
+        lastErr = err;
+        const transient = /ETIMEDOUT|ECONNRESET|terminated|connection|EAI_AGAIN|ENOTFOUND/i.test(err.code || err.message || '');
+        if (!transient || attempt === 3) throw err;
+        const backoff = 1000 * attempt;
+        console.warn(`  DB error (attempt ${attempt}/3): ${err.message} — retrying in ${backoff}ms`);
+        await sleep(backoff);
+      }
+    }
+    throw lastErr;
+  };
+
+  let consecutiveErrors = 0;
   for (let i = 0; i < venues.length; i++) {
     const venue = venues[i];
     console.log(`[ML:Weekly] (${i + 1}/${venues.length}) ${venue.name} [${venue.city}]`);
 
-    // Fetch BestTime weekly forecast
-    const forecast = await fetchWeeklyForecast(venue.name, venue.address, venue.besttime_venue_id);
-    if (!forecast) {
-      await pool.query(
-        `UPDATE ml_venues
-         SET besttime_attempted_at = NOW(),
-             besttime_status = COALESCE(besttime_status, '404')
-         WHERE id = $1`,
+    try {
+      // Fetch BestTime weekly forecast
+      const forecast = await fetchWeeklyForecast(venue.name, venue.address, venue.besttime_venue_id);
+      if (!forecast) {
+        await safeQuery(
+          `UPDATE ml_venues
+           SET besttime_attempted_at = NOW(),
+               besttime_status = COALESCE(besttime_status, '404')
+           WHERE id = $1`,
+          [venue.id]
+        );
+        console.log('  Skipped — no BestTime data (marked 404)');
+        skipped++;
+        consecutiveErrors = 0;
+        continue;
+      }
+
+      // Update besttime_venue_id if we got one + mark found
+      if (forecast.venueId && !venue.besttime_venue_id) {
+        await safeQuery(
+          `UPDATE ml_venues
+           SET besttime_venue_id = $1,
+               besttime_attempted_at = NOW(),
+               besttime_status = 'found'
+           WHERE id = $2`,
+          [forecast.venueId, venue.id]
+        );
+      } else {
+        await safeQuery(
+          `UPDATE ml_venues
+           SET besttime_attempted_at = NOW(),
+               besttime_status = 'found'
+           WHERE id = $1`,
+          [venue.id]
+        );
+      }
+
+      // Fetch weather for this venue's location (representative snapshot)
+      const weather = await getWeather(venue.latitude, venue.longitude);
+
+      // Insert 168 rows (7 days × 24 hours) — batched into a single multi-row INSERT
+      let venueRows = 0;
+      const params = [];
+      const valueRows = [];
+      let p = 0;
+      for (const day of forecast.days) {
+        const jsDayOfWeek = bestTimeDayToJsDay(day.dayInt);
+        for (let hour = 0; hour < day.hours.length && hour < 24; hour++) {
+          const busyness = day.hours[hour];
+          if (busyness == null) continue;
+          params.push(
+            venue.id, jsDayOfWeek, hour,
+            venue.venue_category, venue.price_level, venue.rating, venue.review_count,
+            weather?.temp ?? null, weather?.humidity ?? null, weather?.windSpeed ?? null,
+            weather?.conditions ?? null, weather?.isRaining ?? null,
+            Math.max(0, Math.min(100, busyness)), forecast.epochAnalysis,
+          );
+          valueRows.push(`($${++p}, 'weekly', $${++p}, $${++p}, $${++p}, $${++p}, $${++p}, $${++p}, $${++p}, $${++p}, $${++p}, $${++p}, $${++p}, $${++p}, $${++p})`);
+        }
+      }
+      if (valueRows.length > 0) {
+        try {
+          await safeQuery(
+            `INSERT INTO ml_training_data
+              (venue_id, collection_mode, day_of_week, hour, venue_category, price_level, rating, review_count,
+               temperature, humidity, wind_speed, weather_condition, is_raining, busyness_pct, besttime_epoch)
+             VALUES ${valueRows.join(', ')}
+             ON CONFLICT DO NOTHING`,
+            params
+          );
+          venueRows = valueRows.length;
+        } catch (err) {
+          console.error(`  Batch insert error:`, err.message);
+        }
+      }
+
+      totalRows += venueRows;
+      console.log(`  ${venueRows} rows inserted`);
+
+      // Update last_collected_at
+      await safeQuery(
+        'UPDATE ml_venues SET last_collected_at = NOW() WHERE id = $1',
         [venue.id]
       );
-      console.log('  Skipped — no BestTime data (marked 404)');
-      skipped++;
-      continue;
-    }
 
-    // Update besttime_venue_id if we got one + mark found
-    if (forecast.venueId && !venue.besttime_venue_id) {
-      await pool.query(
-        `UPDATE ml_venues
-         SET besttime_venue_id = $1,
-             besttime_attempted_at = NOW(),
-             besttime_status = 'found'
-         WHERE id = $2`,
-        [forecast.venueId, venue.id]
-      );
-    } else {
-      await pool.query(
-        `UPDATE ml_venues
-         SET besttime_attempted_at = NOW(),
-             besttime_status = 'found'
-         WHERE id = $1`,
-        [venue.id]
-      );
-    }
-
-    // Fetch weather for this venue's location (representative snapshot)
-    const weather = await getWeather(venue.latitude, venue.longitude);
-
-    // Insert 168 rows (7 days × 24 hours) — batched into a single multi-row INSERT
-    // (was 168 individual round-trips at ~50ms each = 8s/venue; batching brings it
-    // to ~0.2s/venue — ~4× total speedup on the script).
-    let venueRows = 0;
-    const params = [];
-    const valueRows = [];
-    let p = 0;
-    for (const day of forecast.days) {
-      const jsDayOfWeek = bestTimeDayToJsDay(day.dayInt);
-      for (let hour = 0; hour < day.hours.length && hour < 24; hour++) {
-        const busyness = day.hours[hour];
-        if (busyness == null) continue;
-        params.push(
-          venue.id, jsDayOfWeek, hour,
-          venue.venue_category, venue.price_level, venue.rating, venue.review_count,
-          weather?.temp ?? null, weather?.humidity ?? null, weather?.windSpeed ?? null,
-          weather?.conditions ?? null, weather?.isRaining ?? null,
-          Math.max(0, Math.min(100, busyness)), forecast.epochAnalysis,
-        );
-        valueRows.push(`($${++p}, 'weekly', $${++p}, $${++p}, $${++p}, $${++p}, $${++p}, $${++p}, $${++p}, $${++p}, $${++p}, $${++p}, $${++p}, $${++p}, $${++p})`);
+      consecutiveErrors = 0;
+      await sleep(100);
+    } catch (err) {
+      // Per-venue errors must NOT kill the run. Log, count, sleep, continue.
+      consecutiveErrors++;
+      console.error(`  [PER-VENUE ERROR ${consecutiveErrors}] ${err.message}`);
+      if (consecutiveErrors >= 10) {
+        console.error('  10 consecutive errors — bailing to avoid burning slots');
+        break;
       }
+      await sleep(2000);
     }
-    if (valueRows.length > 0) {
-      try {
-        await pool.query(
-          `INSERT INTO ml_training_data
-            (venue_id, collection_mode, day_of_week, hour, venue_category, price_level, rating, review_count,
-             temperature, humidity, wind_speed, weather_condition, is_raining, busyness_pct, besttime_epoch)
-           VALUES ${valueRows.join(', ')}
-           ON CONFLICT DO NOTHING`,
-          params
-        );
-        venueRows = valueRows.length;
-      } catch (err) {
-        console.error(`  Batch insert error:`, err.message);
-      }
-    }
-
-    totalRows += venueRows;
-    console.log(`  ${venueRows} rows inserted`);
-
-    // Update last_collected_at
-    await pool.query(
-      'UPDATE ml_venues SET last_collected_at = NOW() WHERE id = $1',
-      [venue.id]
-    );
-
-    await sleep(100);
   }
 
   console.log(`\n[ML:Weekly] Done. ${totalRows} total rows inserted. ${skipped} venues skipped.`);
