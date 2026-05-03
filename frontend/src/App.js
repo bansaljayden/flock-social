@@ -2516,6 +2516,14 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
     });
 
     joinVenueRoom(pid);
+    // History is hourly-bucketed by the backend. On each live push we either
+    // overwrite the current hour's bucket (last reading wins for "this hour")
+    // or append a new bucket if we've crossed an hour boundary.
+    const sameHour = (tsA, tsB) => {
+      const a = new Date(tsA), b = new Date(tsB);
+      return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() &&
+             a.getDate() === b.getDate() && a.getHours() === b.getHours();
+    };
     const offUpdate = onVenueSensorUpdate((payload) => {
       if (!payload || payload.venue_place_id !== pid) return;
       setSensorData(prev => ({
@@ -2528,12 +2536,21 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
         },
         recent_checkins: prev?.recent_checkins || 0,
       }));
-      setSensorHistory(prev => [...prev, {
-        recorded_at: payload.recorded_at,
-        thermal_headcount: payload.thermal_headcount,
-        ir_beam_count: payload.ir_beam_count,
-        noise_db: payload.noise_db,
-      }].slice(-24));
+      setSensorHistory(prev => {
+        const last = prev[prev.length - 1];
+        const incoming = {
+          recorded_at: payload.recorded_at,
+          thermal_headcount: payload.thermal_headcount,
+          ir_beam_count: payload.ir_beam_count,
+          noise_db: payload.noise_db,
+        };
+        if (last && sameHour(last.recorded_at, payload.recorded_at)) {
+          // Same hour: replace the bucket with the latest reading
+          return [...prev.slice(0, -1), incoming];
+        }
+        // New hour: append. Cap at 48 buckets so memory doesn't grow unbounded.
+        return [...prev, incoming].slice(-48);
+      });
     });
     const offCheckin = onVenueCheckin((payload) => {
       if (!payload || payload.venue_place_id !== pid) return;
@@ -7208,7 +7225,24 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                   ? Math.max(0, Math.round((Date.now() - new Date(sd.recorded_at).getTime()) / 60000))
                   : null;
                 const ageStr = ageMin == null ? '' : ageMin === 0 ? 'just now' : ageMin === 1 ? '1 min ago' : `${ageMin} min ago`;
-                const maxHeads = Math.max(1, ...sensorHistory.map(r => r.thermal_headcount || 0));
+
+                // Build a 12-slot timeline for the past 12 hours, anchored to "now".
+                // The backend now returns one row per hour (date_trunc) so we just
+                // match by hour-truncated timestamp instead of scanning a window.
+                // Empty hours show as placeholder bars so structure is always legible.
+                const hourMs = (ts) => { const d = new Date(ts); d.setMinutes(0, 0, 0); return d.getTime(); };
+                const now = new Date();
+                const slotMs = 60 * 60 * 1000;
+                const currentHour = hourMs(now);
+                const slots = Array.from({ length: 12 }, (_, idx) => {
+                  const slotTs = currentHour - (11 - idx) * slotMs;
+                  const reading = sensorHistory.find(r => hourMs(r.recorded_at) === slotTs) || null;
+                  return { hour: new Date(slotTs).getHours(), reading };
+                });
+                const maxHeads = Math.max(1, ...slots.map(s => s.reading?.thermal_headcount || 0));
+                const fmtHour = (h) => h === 0 ? '12a' : h < 12 ? `${h}a` : h === 12 ? '12p' : `${h - 12}p`;
+                const barColorFor = (val) => val > 70 ? colors.red : val > 40 ? colors.food : val > 15 ? colors.amber : colors.teal;
+
                 return (
                   <motion.div
                     initial={{ opacity: 0, y: 14 }}
@@ -7217,57 +7251,100 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                     style={{
                       backgroundColor: 'var(--bg-card-solid)',
                       border: '1px solid var(--border-default)',
-                      borderRadius: '14px',
-                      padding: '14px 16px',
-                      boxShadow: 'var(--card-shadow)',
+                      borderRadius: '16px',
+                      padding: '16px 18px',
+                      boxShadow: 'var(--card-shadow), inset 0 1px 0 rgba(255,255,255,0.04)',
                       marginBottom: '8px',
+                      position: 'relative',
+                      overflow: 'hidden',
                     }}
                   >
-                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '10px' }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '7px' }}>
-                        <span className="flock-pulse-dot" style={{ width: '7px', height: '7px', borderRadius: '50%', backgroundColor: '#10b981', display: 'inline-block' }} />
-                        <span style={{ fontSize: '11px', fontWeight: '700', color: 'var(--text-primary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Live Occupancy</span>
+                    {/* subtle ambient glow on the upper edge — makes the card feel "alive" */}
+                    <div aria-hidden style={{ position: 'absolute', top: 0, left: 0, right: 0, height: '1px', background: 'linear-gradient(90deg, transparent 0%, rgba(16,185,129,0.5) 50%, transparent 100%)' }} />
+
+                    {/* Header row */}
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '14px' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <span className="flock-pulse-dot" style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: '#10b981', display: 'inline-block' }} />
+                        <span style={{ fontSize: '11px', fontWeight: '800', color: 'var(--text-primary)', textTransform: 'uppercase', letterSpacing: '0.6px' }}>Live Occupancy</span>
                       </div>
-                      {ageStr && <span style={{ fontSize: '9px', color: 'var(--text-tertiary)' }}>{ageStr}</span>}
+                      {ageStr && <span style={{ fontSize: '10px', color: 'var(--text-tertiary)', fontWeight: '500' }}>{ageStr}</span>}
                     </div>
 
-                    <div style={{ display: 'flex', alignItems: 'baseline', gap: '6px', marginBottom: '6px' }}>
-                      <span style={{ fontSize: '26px', fontWeight: '800', color: 'var(--text-primary)', letterSpacing: '-0.5px', lineHeight: 1 }}>~{sd.thermal_headcount}</span>
-                      <span style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>people right now</span>
+                    {/* Hero number */}
+                    <div style={{ display: 'flex', alignItems: 'baseline', gap: '8px', marginBottom: '14px' }}>
+                      <span style={{ fontSize: '48px', fontWeight: '900', color: 'var(--text-primary)', letterSpacing: '-1.5px', lineHeight: 1, fontFeatureSettings: '"tnum"' }}>~{sd.thermal_headcount}</span>
+                      <span style={{ fontSize: '13px', color: 'var(--text-secondary)', fontWeight: '600' }}>people right now</span>
                     </div>
 
-                    {noiseLabel && (
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '12px' }}>
-                        <div style={{ width: '6px', height: '6px', borderRadius: '50%', backgroundColor: noiseLabel.color }} />
-                        <span style={{ fontSize: '12px', fontWeight: '700', color: noiseLabel.color }}>{noiseLabel.text}</span>
-                        <span style={{ fontSize: '10px', color: 'var(--text-tertiary)' }}>· {Number(sd.noise_db).toFixed(0)} dB</span>
-                      </div>
-                    )}
-
-                    {sensorHistory.length > 0 && (
-                      <div>
-                        <p style={{ fontSize: '9px', fontWeight: '600', color: 'var(--text-tertiary)', margin: '0 0 4px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Last 12 Hours</p>
-                        <div style={{ display: 'flex', alignItems: 'flex-end', gap: '3px', height: '36px' }}>
-                          {sensorHistory.slice(-12).map((r, i) => {
-                            const h = Math.max(2, Math.round((r.thermal_headcount / maxHeads) * 32));
-                            return <div key={i} style={{ flex: 1, height: `${h}px`, borderRadius: '2px', backgroundColor: colors.navy, opacity: 0.85 }} />;
-                          })}
+                    {/* Two-tile secondary stats: Sound + Check-ins */}
+                    <div style={{ display: 'grid', gridTemplateColumns: '1.4fr 1fr', gap: '8px', marginBottom: '16px' }}>
+                      {noiseLabel && (
+                        <div style={{ padding: '10px 12px', borderRadius: '12px', backgroundColor: 'var(--bg-tertiary)', border: '1px solid var(--border-subtle)', display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                          <div style={{ display: 'flex', alignItems: 'baseline', gap: '5px' }}>
+                            <span style={{ fontSize: '24px', fontWeight: '800', color: noiseLabel.color, lineHeight: 1, fontFeatureSettings: '"tnum"', letterSpacing: '-0.5px' }}>{Number(sd.noise_db).toFixed(0)}</span>
+                            <span style={{ fontSize: '10px', color: 'var(--text-tertiary)', fontWeight: '700', letterSpacing: '0.3px' }}>dB</span>
+                          </div>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
+                            <span style={{ width: '5px', height: '5px', borderRadius: '50%', backgroundColor: noiseLabel.color, boxShadow: `0 0 6px ${noiseLabel.color}88` }} />
+                            <span style={{ fontSize: '11px', fontWeight: '700', color: noiseLabel.color, letterSpacing: '-0.1px' }}>{noiseLabel.text}</span>
+                          </div>
                         </div>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '4px' }}>
-                          {sensorHistory.slice(-12).filter((_, i, a) => i === 0 || i === a.length - 1).map((r, i) => (
-                            <span key={i} style={{ fontSize: '8px', color: 'var(--text-tertiary)' }}>
-                              {new Date(r.recorded_at).toLocaleTimeString([], { hour: 'numeric' })}
-                            </span>
-                          ))}
-                        </div>
+                      )}
+                      <div style={{ padding: '10px 12px', borderRadius: '12px', backgroundColor: 'var(--bg-tertiary)', border: '1px solid var(--border-subtle)', display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                        <span style={{ fontSize: '24px', fontWeight: '800', color: 'var(--text-primary)', lineHeight: 1, fontFeatureSettings: '"tnum"', letterSpacing: '-0.5px' }}>{sensorData.recent_checkins || 0}</span>
+                        <span style={{ fontSize: '10px', color: 'var(--text-tertiary)', fontWeight: '600', letterSpacing: '0.2px' }}>check-ins · 1h</span>
                       </div>
-                    )}
+                    </div>
 
-                    {sensorData.recent_checkins > 0 && (
-                      <p style={{ fontSize: '10px', color: 'var(--text-secondary)', margin: '10px 0 0' }}>
-                        {sensorData.recent_checkins} check-in{sensorData.recent_checkins === 1 ? '' : 's'} in the last hour
-                      </p>
-                    )}
+                    {/* 12-hour chart — always 12 slots, gradient fills, color by busyness */}
+                    <div>
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
+                        <p style={{ fontSize: '9px', fontWeight: '700', color: 'var(--text-tertiary)', margin: 0, textTransform: 'uppercase', letterSpacing: '0.6px' }}>Past 12 Hours</p>
+                        <p style={{ fontSize: '9px', color: 'var(--text-tertiary)', margin: 0, fontWeight: '500' }}>peak ~{maxHeads}</p>
+                      </div>
+
+                      <div style={{ display: 'flex', alignItems: 'flex-end', gap: '3px', height: '52px', padding: '0 1px' }}>
+                        {slots.map((s, i) => {
+                          const isLast = i === slots.length - 1;
+                          const val = s.reading?.thermal_headcount;
+                          const isEmpty = val == null;
+                          const h = isEmpty ? 4 : Math.max(3, Math.round((val / maxHeads) * 48));
+                          const c = isEmpty ? null : barColorFor(val);
+                          return (
+                            <div key={i} style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'flex-end', minWidth: 0, height: '100%' }}>
+                              <div
+                                title={isEmpty ? `${fmtHour(s.hour)}: no data` : `${fmtHour(s.hour)}: ~${val}`}
+                                style={{
+                                  width: '100%',
+                                  height: `${h}px`,
+                                  borderRadius: '3px 3px 1px 1px',
+                                  background: isEmpty
+                                    ? 'repeating-linear-gradient(45deg, var(--border-subtle), var(--border-subtle) 2px, transparent 2px, transparent 4px)'
+                                    : `linear-gradient(180deg, ${c} 0%, ${c}cc 80%, ${c}88 100%)`,
+                                  boxShadow: isLast && !isEmpty ? `0 0 8px ${c}80, inset 0 1px 0 rgba(255,255,255,0.25)` : (isEmpty ? 'none' : 'inset 0 1px 0 rgba(255,255,255,0.15)'),
+                                  opacity: isEmpty ? 0.5 : isLast ? 1 : 0.92,
+                                  transition: 'height 0.4s cubic-bezier(0.34, 1.56, 0.64, 1)',
+                                }}
+                              />
+                            </div>
+                          );
+                        })}
+                      </div>
+
+                      {/* Hour labels — every 3rd slot to avoid clutter */}
+                      <div style={{ display: 'flex', gap: '3px', marginTop: '6px' }}>
+                        {slots.map((s, i) => (
+                          <div key={i} style={{ flex: 1, textAlign: 'center', minWidth: 0 }}>
+                            {(i % 3 === 0 || i === slots.length - 1) && (
+                              <span style={{ fontSize: '8px', color: i === slots.length - 1 ? 'var(--text-secondary)' : 'var(--text-tertiary)', fontWeight: i === slots.length - 1 ? '700' : '500', letterSpacing: '0.2px' }}>
+                                {i === slots.length - 1 ? 'now' : fmtHour(s.hour)}
+                              </span>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
                   </motion.div>
                 );
               })()}
@@ -10534,6 +10611,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
       setOwnerSensorHistory(history?.readings || []);
     });
     joinVenueRoom(pid);
+    const sameHour = (tsA, tsB) => {
+      const a = new Date(tsA), b = new Date(tsB);
+      return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() &&
+             a.getDate() === b.getDate() && a.getHours() === b.getHours();
+    };
     const offUpdate = onVenueSensorUpdate((payload) => {
       if (!payload || payload.venue_place_id !== pid) return;
       setOwnerSensorData(prev => ({
@@ -10546,12 +10628,21 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
         },
         recent_checkins: prev?.recent_checkins || 0,
       }));
-      setOwnerSensorHistory(prev => [...prev, {
-        recorded_at: payload.recorded_at,
-        thermal_headcount: payload.thermal_headcount,
-        ir_beam_count: payload.ir_beam_count,
-        noise_db: payload.noise_db,
-      }].slice(-48));
+      // Hourly-bucketed history: replace current-hour bucket with latest reading
+      // or append a new bucket on hour rollover. Cap at 72 hours of memory.
+      setOwnerSensorHistory(prev => {
+        const last = prev[prev.length - 1];
+        const incoming = {
+          recorded_at: payload.recorded_at,
+          thermal_headcount: payload.thermal_headcount,
+          ir_beam_count: payload.ir_beam_count,
+          noise_db: payload.noise_db,
+        };
+        if (last && sameHour(last.recorded_at, payload.recorded_at)) {
+          return [...prev.slice(0, -1), incoming];
+        }
+        return [...prev, incoming].slice(-72);
+      });
     });
     const offCheckin = onVenueCheckin((payload) => {
       if (!payload || payload.venue_place_id !== pid) return;
@@ -10877,17 +10968,33 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                   </div>
                 </div>
 
-                {ownerSensorHistory.length > 0 && (
-                  <div>
-                    <p style={{ fontSize: '9px', fontWeight: '600', color: 'var(--text-secondary)', margin: '0 0 6px', textTransform: 'uppercase' }}>Last 24 Hours</p>
-                    <div style={{ display: 'flex', alignItems: 'flex-end', gap: '2px', height: '52px' }}>
-                      {ownerSensorHistory.slice(-24).map((r, i) => {
-                        const h = Math.max(2, Math.round((r.thermal_headcount / max24) * 48));
-                        return <div key={i} style={{ flex: 1, height: `${h}px`, borderRadius: '2px', backgroundColor: colors.navy, opacity: 0.85 }} />;
-                      })}
+                {ownerSensorHistory.length > 0 && (() => {
+                  // Build 24 hourly slots, anchored to "now". Match API rows by
+                  // hour-truncated timestamp so the chart actually represents
+                  // 24 hours of wall-clock time, not 24 raw readings.
+                  const hourMs = (ts) => { const d = new Date(ts); d.setMinutes(0, 0, 0); return d.getTime(); };
+                  const nowD = new Date();
+                  const currentHour = hourMs(nowD);
+                  const slotMs = 60 * 60 * 1000;
+                  const slots = Array.from({ length: 24 }, (_, idx) => {
+                    const slotTs = currentHour - (23 - idx) * slotMs;
+                    return ownerSensorHistory.find(r => hourMs(r.recorded_at) === slotTs) || null;
+                  });
+                  return (
+                    <div>
+                      <p style={{ fontSize: '9px', fontWeight: '600', color: 'var(--text-secondary)', margin: '0 0 6px', textTransform: 'uppercase' }}>Last 24 Hours</p>
+                      <div style={{ display: 'flex', alignItems: 'flex-end', gap: '2px', height: '52px' }}>
+                        {slots.map((r, i) => {
+                          if (!r) {
+                            return <div key={i} style={{ flex: 1, height: '4px', borderRadius: '2px', background: 'repeating-linear-gradient(45deg, var(--border-subtle), var(--border-subtle) 2px, transparent 2px, transparent 4px)', opacity: 0.5 }} />;
+                          }
+                          const h = Math.max(2, Math.round((r.thermal_headcount / max24) * 48));
+                          return <div key={i} style={{ flex: 1, height: `${h}px`, borderRadius: '2px', backgroundColor: colors.navy, opacity: 0.85 }} />;
+                        })}
+                      </div>
                     </div>
-                  </div>
-                )}
+                  );
+                })()}
               </div>
             );
           })()}
