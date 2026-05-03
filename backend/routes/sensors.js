@@ -97,7 +97,10 @@ router.get('/:placeId/current', authenticate, async (req, res) => {
 });
 
 // ---------------------------------------------------------------------------
-// GET /api/sensors/:placeId/history?hours=24 — readings for chart
+// GET /api/sensors/:placeId/history?hours=24 — hourly-bucketed readings for charts
+// One row per hour: thermal/noise are AVG, ir_beam_count is SUM (cumulative entries
+// per hour). Empty hours are omitted — frontends construct fixed-width slot arrays
+// and treat missing hours as gaps.
 // ---------------------------------------------------------------------------
 router.get('/:placeId/history',
   authenticate,
@@ -111,11 +114,16 @@ router.get('/:placeId/history',
       const hours = parseInt(req.query.hours, 10) || 24;
 
       const result = await pool.query(
-        `SELECT venue_place_id, ir_beam_count, thermal_headcount, noise_db,
-                sensor_device_id, recorded_at
+        `SELECT
+           date_trunc('hour', recorded_at) AS recorded_at,
+           ROUND(AVG(thermal_headcount))::int AS thermal_headcount,
+           SUM(ir_beam_count)::int AS ir_beam_count,
+           ROUND(AVG(noise_db)::numeric, 2) AS noise_db,
+           COUNT(*)::int AS sample_count
          FROM venue_sensor_data
          WHERE venue_place_id = $1
-           AND recorded_at > NOW() - ($2 || ' hours')::INTERVAL
+           AND recorded_at >= NOW() - INTERVAL '1 hour' * $2
+         GROUP BY date_trunc('hour', recorded_at)
          ORDER BY recorded_at ASC`,
         [placeId, hours]
       );
