@@ -529,7 +529,17 @@ async function predictBusyness(venue, weather, timestamp) {
     const results = await session.run({ [inputName]: tensor });
 
     const outputName = session.outputNames[0];
-    let score = results[outputName].data[0];
+    const rawOutput = results[outputName].data[0];
+    let score;
+    if (metadata.label_type === 'delta') {
+      // Delta-trained model: reconstruct absolute as baseline + clamp(delta).
+      // The model corrects systematic bias and adds nuance on top of popular_times.
+      const [lo, hi] = metadata.delta_clamp_range || [-30, 30];
+      const clampedDelta = Math.max(lo, Math.min(hi, rawOutput));
+      score = (baseline || 0) + clampedDelta;
+    } else {
+      score = rawOutput;
+    }
     score = Math.max(0, Math.min(100, Math.round(score)));
 
     const label = getLabel(score);

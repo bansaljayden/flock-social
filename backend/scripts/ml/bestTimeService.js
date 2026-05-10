@@ -37,6 +37,14 @@ async function fetchWeeklyForecast(venueName, venueAddress, existingVenueId) {
 
     if (!response.ok) {
       console.error(`[ML:BestTime] Weekly forecast failed (${response.status}) for ${venueName}`);
+      // 404 = venue genuinely not in BestTime → caller marks as 404, never retries.
+      // 5xx / 429 = transient (BestTime outage / quota) → throw so caller's per-venue
+      // catch + consecutive-error bail prevents false 404 marks.
+      if (response.status >= 500 || response.status === 429) {
+        const e = new Error(`BestTime ${response.status}`);
+        e.transient = true;
+        throw e;
+      }
       return null;
     }
 
@@ -62,6 +70,10 @@ async function fetchWeeklyForecast(venueName, venueAddress, existingVenueId) {
     };
   } catch (err) {
     console.error(`[ML:BestTime] Weekly forecast error for ${venueName}:`, err.message);
+    // Re-throw transient errors (5xx/429 from above + network/timeout/abort) so
+    // caller doesn't mark these venues as 404 and lose them for the cycle.
+    const isNetwork = /aborted|timeout|ETIMEDOUT|ECONNRESET|ECONNREFUSED|EAI_AGAIN|ENOTFOUND|fetch failed/i.test(err.message || '');
+    if (err.transient || isNetwork) throw err;
     return null;
   }
 }

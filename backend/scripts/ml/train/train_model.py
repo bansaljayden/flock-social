@@ -30,20 +30,34 @@ def load_data():
     return train_data
 
 
-def evaluate_city_cv(model, X, y, cv, groups) -> dict:
+def evaluate_city_cv(model, X, y, cv, groups, baseline=None, y_actual=None) -> dict:
     """Compute regression metrics using leave-one-city-out cross-validation.
-    Retrains the model for each fold to get honest out-of-fold predictions."""
+    Retrains the model for each fold to get honest out-of-fold predictions.
+
+    If baseline + y_actual are provided (delta-label training), reconstructs
+    absolute predictions as baseline + clamp(delta, -30, +30) and reports
+    metrics on absolute scale vs y_actual. Otherwise reports on y directly.
+    """
     all_preds = np.full(len(y), np.nan)
     for train_idx, val_idx in cv.split(X, y, groups=groups):
         m = clone(model)
         m.fit(X[train_idx], y[train_idx])
         all_preds[val_idx] = m.predict(X[val_idx])
-    all_preds = np.clip(all_preds, 0, 100)
-    errors = np.abs(y - all_preds)
+
+    if baseline is not None and y_actual is not None:
+        # Reconstruct absolute prediction: baseline + clamped delta
+        clamped_delta = np.clip(all_preds, -30, 30)
+        absolute_preds = np.clip(baseline + clamped_delta, 0, 100)
+        target = y_actual
+    else:
+        absolute_preds = np.clip(all_preds, 0, 100)
+        target = y
+
+    errors = np.abs(target - absolute_preds)
     return {
-        'rmse': round(float(np.sqrt(mean_squared_error(y, all_preds))), 4),
-        'mae': round(float(mean_absolute_error(y, all_preds)), 4),
-        'r2': round(float(r2_score(y, all_preds)), 4),
+        'rmse': round(float(np.sqrt(mean_squared_error(target, absolute_preds))), 4),
+        'mae': round(float(mean_absolute_error(target, absolute_preds)), 4),
+        'r2': round(float(r2_score(target, absolute_preds)), 4),
         'median_ae': round(float(np.median(errors)), 4),
         'within_5': round(float(np.mean(errors <= 5) * 100), 1),
         'within_10': round(float(np.mean(errors <= 10) * 100), 1),
@@ -51,7 +65,7 @@ def evaluate_city_cv(model, X, y, cv, groups) -> dict:
     }
 
 
-def train_xgboost(X, y, cv, groups) -> tuple:
+def train_xgboost(X, y, cv, groups, baseline=None, y_actual=None) -> tuple:
     """Train XGBoost with randomized hyperparameter search + city-based CV."""
     logger.info('\n=== Training XGBoost ===')
     start = time.time()
@@ -90,7 +104,7 @@ def train_xgboost(X, y, cv, groups) -> tuple:
 
     logger.info(f'Best params: {best_params}')
     logger.info('Computing leave-one-city-out metrics...')
-    metrics = evaluate_city_cv(model, X, y, cv, groups)
+    metrics = evaluate_city_cv(model, X, y, cv, groups, baseline=baseline, y_actual=y_actual)
     elapsed = time.time() - start
 
     logger.info(f'City CV RMSE: {metrics["rmse"]:.4f}, MAE: {metrics["mae"]:.4f}, R²: {metrics["r2"]:.4f}')
@@ -106,11 +120,16 @@ def main():
     X, y = data['X'], data['y']
     feature_cols = data['feature_cols']
     cities = data.get('cities')
+    baseline = data.get('baseline')
+    y_actual = data.get('y_actual')
+    label_type = data.get('label_type', 'absolute')
 
     if cities is None:
         raise ValueError('City information not found in features. Re-run prepare_features.py.')
 
-    logger.info(f'Data shape: {X.shape}, Label range: [{y.min()}, {y.max()}]')
+    logger.info(f'Data shape: {X.shape}, Label type: {label_type}, Label range: [{y.min():.1f}, {y.max():.1f}]')
+    if label_type == 'delta':
+        logger.info(f'Training on DELTA label (busyness - popular_times). Metrics reported on absolute scale via baseline reconstruction.')
 
     unique_cities = np.unique(cities)
     n_cities = len(unique_cities)
@@ -124,7 +143,7 @@ def main():
     logger.info(f'Using GroupKFold with {n_cities} splits (leave-one-city-out)')
 
     # Train XGBoost only
-    model, metrics, params, elapsed = train_xgboost(X, y, cv, cities)
+    model, metrics, params, elapsed = train_xgboost(X, y, cv, cities, baseline=baseline, y_actual=y_actual)
 
     logger.info(f'\n*** XGBoost Results ***')
     logger.info(f'    RMSE: {metrics["rmse"]:.4f}')
