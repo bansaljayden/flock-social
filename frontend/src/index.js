@@ -15,6 +15,24 @@ if (window.location.pathname === '/landing') {
       </React.Suspense>
     </React.StrictMode>
   );
+} else if (window.location.pathname === '/privacy') {
+  const PrivacyPolicy = React.lazy(() => import('./website/PrivacyPolicy'));
+  root.render(
+    <React.StrictMode>
+      <React.Suspense fallback={null}>
+        <PrivacyPolicy />
+      </React.Suspense>
+    </React.StrictMode>
+  );
+} else if (window.location.pathname === '/support') {
+  const SupportPage = React.lazy(() => import('./website/SupportPage'));
+  root.render(
+    <React.StrictMode>
+      <React.Suspense fallback={null}>
+        <SupportPage />
+      </React.Suspense>
+    </React.StrictMode>
+  );
 } else {
   const App = React.lazy(() => import('./App'));
   const { ThemeProvider } = require('./context/ThemeContext');

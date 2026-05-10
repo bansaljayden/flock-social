@@ -1,6 +1,7 @@
 const express = require('express');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
+const jwksClient = require('jwks-rsa');
 const { body, validationResult } = require('express-validator');
 const { OAuth2Client } = require('google-auth-library');
 const pool = require('../config/database');
@@ -8,6 +9,22 @@ const { authenticate } = require('../middleware/auth');
 const { stripHtml, sanitizeArray } = require('../utils/sanitize');
 
 const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
+
+// Apple Sign In — pull rotating public keys from Apple's JWKS endpoint
+// to verify identity tokens. Cached for 24h per RFC.
+const appleJwksClient = jwksClient({
+  jwksUri: 'https://appleid.apple.com/auth/keys',
+  cache: true,
+  cacheMaxAge: 24 * 60 * 60 * 1000,
+  rateLimit: true,
+});
+
+function appleGetSigningKey(header, callback) {
+  appleJwksClient.getSigningKey(header.kid, (err, key) => {
+    if (err) return callback(err);
+    callback(null, key.getPublicKey());
+  });
+}
 
 const router = express.Router();
 
@@ -194,6 +211,113 @@ router.post('/google', [
       return res.status(401).json({ error: 'Google sign-in expired, please try again' });
     }
     res.status(500).json({ error: 'Google sign-in failed' });
+  }
+});
+
+// POST /api/auth/apple — Sign in with Apple (REQUIRED for App Store
+// submission whenever Google login is offered). Mirrors the /google
+// flow: verify the token, find-or-create the user, issue a Flock JWT.
+//
+// Apple-specific quirks:
+//   - `email` only arrives on the FIRST sign-in. After that, Apple omits
+//     it. Mobile client must persist the linkage by `sub` (Apple user ID).
+//   - `email` may be a private relay address (xyz@privaterelay.appleid.com).
+//     We accept these as-is; Apple forwards mail through their relay.
+//   - Apple does NOT send the user's name in the identity token. The
+//     mobile SDK gives the name on first sign-in only; client passes it
+//     in the `fullName` field of the body, which we use to seed `name`
+//     for new accounts.
+router.post('/apple', [
+  body('identityToken').notEmpty().withMessage('Apple identityToken is required'),
+  body('fullName').optional().isObject(),
+], async (req, res) => {
+  try {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ error: errors.array()[0].msg });
+    }
+
+    const { identityToken, fullName } = req.body;
+
+    // Verify Apple's signed identity token using their rotating JWKS
+    const payload = await new Promise((resolve, reject) => {
+      jwt.verify(
+        identityToken,
+        appleGetSigningKey,
+        {
+          algorithms: ['RS256'],
+          issuer: 'https://appleid.apple.com',
+          // audience: must be the iOS bundle identifier (and Android service ID
+          // when we add it). Set APPLE_BUNDLE_ID in Railway after Xcode setup.
+          audience: process.env.APPLE_BUNDLE_ID || undefined,
+        },
+        (err, decoded) => {
+          if (err) reject(err); else resolve(decoded);
+        }
+      );
+    });
+
+    const appleId = payload.sub;
+    const email = payload.email || null;
+
+    if (!appleId) {
+      return res.status(400).json({ error: 'Apple token missing user id' });
+    }
+
+    // Find by oauth_id first (linkage by Apple sub never changes)
+    let result = await pool.query(
+      `SELECT * FROM users WHERE oauth_provider = 'apple' AND oauth_id = $1`,
+      [appleId]
+    );
+
+    let user;
+    if (result.rows.length > 0) {
+      user = result.rows[0];
+    } else if (email) {
+      // First sign-in for this Apple ID — try to link by email if a
+      // password account already exists with this address.
+      result = await pool.query('SELECT * FROM users WHERE LOWER(email) = LOWER($1)', [email]);
+      if (result.rows.length > 0) {
+        user = result.rows[0];
+        await pool.query(
+          'UPDATE users SET oauth_provider = $1, oauth_id = $2 WHERE id = $3',
+          ['apple', appleId, user.id]
+        );
+      }
+    }
+
+    if (!user) {
+      // New user — Apple may not give us name/email after the first sign-in.
+      // Fall back to email-derived name or "Friend" for the placeholder; the
+      // user can edit in onboarding. Allow email = null (Apple private relay
+      // sometimes omits it on subsequent sign-ins).
+      const givenName = fullName?.givenName ? stripHtml(String(fullName.givenName).trim()) : '';
+      const familyName = fullName?.familyName ? stripHtml(String(fullName.familyName).trim()) : '';
+      const composedName = [givenName, familyName].filter(Boolean).join(' ').trim();
+      const fallbackName = composedName
+        || (email ? email.split('@')[0] : 'Friend');
+
+      result = await pool.query(
+        `INSERT INTO users (email, name, oauth_provider, oauth_id)
+         VALUES ($1, $2, 'apple', $3)
+         RETURNING *`,
+        [email, fallbackName, appleId]
+      );
+      user = result.rows[0];
+    }
+
+    const token = jwt.sign({ userId: user.id }, process.env.JWT_SECRET, { expiresIn: TOKEN_EXPIRY });
+    const { password: _, ...safeUser } = user;
+    res.json({ token, user: safeUser });
+  } catch (err) {
+    console.error('Apple Sign In error:', err);
+    if (err.name === 'TokenExpiredError') {
+      return res.status(401).json({ error: 'Apple sign-in expired, please try again' });
+    }
+    if (err.name === 'JsonWebTokenError') {
+      return res.status(401).json({ error: 'Invalid Apple identity token' });
+    }
+    res.status(500).json({ error: 'Apple sign-in failed' });
   }
 });
 

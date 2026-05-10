@@ -251,7 +251,8 @@ def add_event_features(df: pd.DataFrame) -> pd.DataFrame:
 def get_feature_columns(df: pd.DataFrame) -> List[str]:
     """Return the list of feature columns (excluding label, identifiers)."""
     exclude = {
-        'busyness_pct',  # label
+        'busyness_pct',  # absolute label
+        'delta_label',   # delta label (training target)
         'city', 'season', 'venue_category',  # raw categorical (encoded versions used)
         'weather_condition', 'weather_condition_code', 'weather_group',  # raw (encoded)
         'google_type_1', 'google_type_2', 'google_type_3',  # raw (one-hot encoded)
@@ -259,7 +260,8 @@ def get_feature_columns(df: pd.DataFrame) -> List[str]:
         'event_nearby', 'event_distance_km', 'event_size', 'event_hours_until',  # old sparse event cols
         'nearest_event_type',  # raw string (one-hot encoded as etype_*)
         'latitude', 'longitude', 'lat_bin', 'lng_bin',  # dropped to prevent geographic overfitting
-        # baseline_busyness is Google popular_times — kept as a distillation input
+        'baseline_busyness',  # Google popular_times — moved into label as delta to prevent leakage
+        'has_venue_baseline',  # leaks the same signal as baseline_busyness
         'user_feedback_count',  # raw count — use log_user_feedback_count instead
     }
     feature_cols = [c for c in df.columns if c not in exclude]
@@ -328,7 +330,18 @@ def main():
         holdout_df = add_user_feedback_features(holdout_df)
         holdout_df = add_event_features(holdout_df)
 
-    # Get feature columns
+    # Compute delta label: y_delta = busyness_pct - baseline_busyness
+    # Model predicts the delta; production reconstructs absolute as baseline + clamp(delta, -30, 30).
+    # This removes the popular_times leakage (model can't trivially copy baseline as a feature).
+    train_df['baseline_busyness'] = train_df['baseline_busyness'].fillna(0)
+    train_df['delta_label'] = (train_df['busyness_pct'] - train_df['baseline_busyness']).astype(float)
+    if holdout_df is not None:
+        if 'baseline_busyness' not in holdout_df.columns:
+            holdout_df['baseline_busyness'] = 0
+        holdout_df['baseline_busyness'] = holdout_df['baseline_busyness'].fillna(0)
+        holdout_df['delta_label'] = (holdout_df['busyness_pct'] - holdout_df['baseline_busyness']).astype(float)
+
+    # Get feature columns (excludes baseline_busyness — now in label)
     feature_cols = get_feature_columns(train_df)
 
     # Ensure holdout has same columns
@@ -336,10 +349,11 @@ def main():
         for col in feature_cols:
             if col not in holdout_df.columns:
                 holdout_df[col] = 0
-        holdout_df = holdout_df[feature_cols + ['busyness_pct', 'city']]
+        holdout_df = holdout_df[feature_cols + ['busyness_pct', 'delta_label', 'baseline_busyness', 'city']]
 
     logger.info(f'Feature count: {len(feature_cols)}')
     logger.info(f'Features: {feature_cols}')
+    logger.info(f'Delta label distribution: mean={train_df["delta_label"].mean():.2f}, std={train_df["delta_label"].std():.2f}, min={train_df["delta_label"].min():.0f}, max={train_df["delta_label"].max():.0f}')
 
     # Label distribution
     logger.info(f'\nLabel (busyness_pct) distribution:')
@@ -367,11 +381,15 @@ def main():
     logger.info('\nSaving artifacts...')
 
     # Save feature matrix as pickle
+    # y = delta label (training target). y_actual + baseline kept for evaluation/reconstruction.
     train_data = {
         'X': train_df[feature_cols].values.astype(np.float32),
-        'y': train_df['busyness_pct'].values.astype(np.float32),
+        'y': train_df['delta_label'].values.astype(np.float32),
+        'y_actual': train_df['busyness_pct'].values.astype(np.float32),
+        'baseline': train_df['baseline_busyness'].values.astype(np.float32),
         'feature_cols': feature_cols,
         'cities': train_df['city'].values if 'city' in train_df.columns else None,
+        'label_type': 'delta',
     }
     with open(SCRIPT_DIR / 'features_train.pkl', 'wb') as f:
         pickle.dump(train_data, f)
@@ -379,9 +397,12 @@ def main():
     if holdout_df is not None:
         holdout_data = {
             'X': holdout_df[feature_cols].values.astype(np.float32),
-            'y': holdout_df['busyness_pct'].values.astype(np.float32),
+            'y': holdout_df['delta_label'].values.astype(np.float32),
+            'y_actual': holdout_df['busyness_pct'].values.astype(np.float32),
+            'baseline': holdout_df['baseline_busyness'].values.astype(np.float32),
             'feature_cols': feature_cols,
             'cities': holdout_df['city'].values,
+            'label_type': 'delta',
         }
         with open(SCRIPT_DIR / 'features_holdout.pkl', 'wb') as f:
             pickle.dump(holdout_data, f)
