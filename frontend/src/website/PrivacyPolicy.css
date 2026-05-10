@@ -1,0 +1,125 @@
+.pp {
+  --pp-bg: #0b1a2e;
+  --pp-text: #f5f0e8;
+  --pp-text-2: rgba(245, 240, 232, 0.78);
+  --pp-text-3: rgba(245, 240, 232, 0.5);
+  --pp-accent: #0d9488;
+  --pp-border: rgba(245, 240, 232, 0.1);
+
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+  background: var(--pp-bg);
+  color: var(--pp-text);
+  -webkit-font-smoothing: antialiased;
+  line-height: 1.65;
+  min-height: 100vh;
+  padding: 48px 24px 80px;
+  max-width: 760px;
+  margin: 0 auto;
+}
+
+.pp *,
+.pp *::before,
+.pp *::after {
+  box-sizing: border-box;
+}
+
+.pp-back {
+  display: inline-block;
+  color: var(--pp-text-3);
+  text-decoration: none;
+  font-size: 14px;
+  margin-bottom: 32px;
+  transition: color 0.15s ease;
+}
+.pp-back:hover {
+  color: var(--pp-accent);
+}
+
+.pp-header {
+  border-bottom: 1px solid var(--pp-border);
+  padding-bottom: 24px;
+  margin-bottom: 32px;
+}
+
+.pp h1 {
+  font-size: 36px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  margin: 0 0 8px;
+}
+
+.pp-meta {
+  color: var(--pp-text-3);
+  font-size: 14px;
+  margin: 0;
+}
+
+.pp section {
+  margin-bottom: 32px;
+}
+
+.pp h2 {
+  font-size: 22px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  margin: 0 0 12px;
+  color: var(--pp-text);
+}
+
+.pp h3 {
+  font-size: 16px;
+  font-weight: 600;
+  margin: 20px 0 8px;
+  color: var(--pp-text);
+}
+
+.pp p,
+.pp li {
+  font-size: 15px;
+  color: var(--pp-text-2);
+  margin: 0 0 12px;
+}
+
+.pp ul {
+  padding-left: 20px;
+  margin: 0 0 12px;
+}
+
+.pp li {
+  margin: 0 0 8px;
+}
+
+.pp strong {
+  color: var(--pp-text);
+  font-weight: 600;
+}
+
+.pp a {
+  color: var(--pp-accent);
+  text-decoration: none;
+  border-bottom: 1px solid rgba(13, 148, 136, 0.4);
+  transition: border-color 0.15s ease;
+}
+.pp a:hover {
+  border-bottom-color: var(--pp-accent);
+}
+
+.pp-footer {
+  margin-top: 48px;
+  padding-top: 24px;
+  border-top: 1px solid var(--pp-border);
+  color: var(--pp-text-3);
+  font-size: 13px;
+}
+
+@media (max-width: 600px) {
+  .pp {
+    padding: 32px 20px 64px;
+  }
+  .pp h1 {
+    font-size: 28px;
+  }
+  .pp h2 {
+    font-size: 19px;
+  }
+}

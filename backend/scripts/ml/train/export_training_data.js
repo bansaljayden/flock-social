@@ -37,7 +37,11 @@ function cityQuery(city) {
         t.event_nearby, t.event_distance_km, t.event_size, t.event_type, t.event_hours_until,
         t.has_nearby_event, t.nearest_event_distance_km, t.nearest_event_attendance,
         t.total_nearby_events, t.total_nearby_attendance, t.nearest_event_type,
-        t.baseline_busyness, t.collection_mode,
+        -- baseline_busyness pulled from ml_venue_baselines (the SAME source production serves at inference time).
+        -- This makes training-time baseline match production-time baseline — fixes the systematic-overprediction bug
+        -- where collectWeekly.js never populated t.baseline_busyness for 91% of training rows.
+        COALESCE(b.baseline, 0) AS baseline_busyness,
+        t.collection_mode,
         t.busyness_pct,
         v.city, v.google_types, v.latitude, v.longitude,
         -- User feedback aggregates per venue
@@ -46,6 +50,10 @@ function cityQuery(city) {
         COALESCE(fb.avg_prediction_error, 0) AS avg_prediction_error
       FROM ml_training_data t
       JOIN ml_venues v ON t.venue_id = v.id
+      LEFT JOIN ml_venue_baselines b
+        ON b.google_place_id = v.google_place_id
+       AND b.day_of_week = t.day_of_week
+       AND b.hour = t.hour
       LEFT JOIN (
         SELECT venue_place_id,
           AVG(crowd_level)::numeric(4,1) AS avg_user_crowd,

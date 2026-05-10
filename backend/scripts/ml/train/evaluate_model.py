@@ -209,6 +209,12 @@ def main():
         train_data = pickle.load(f)
     X_train_all, y_train_all = train_data['X'], train_data['y']
     train_cities = train_data.get('cities')
+    train_baseline = train_data.get('baseline')
+    train_y_actual = train_data.get('y_actual')
+    label_type = train_data.get('label_type', 'absolute')
+    is_delta = (label_type == 'delta') and (train_baseline is not None) and (train_y_actual is not None)
+    if is_delta:
+        logger.info('Detected delta-label training. Will reconstruct absolute predictions via baseline + clamp(delta, -30, 30).')
 
     # Load raw training data for category/hour info
     train_df = pd.read_csv(SCRIPT_DIR / 'training_data.csv')
@@ -227,9 +233,24 @@ def main():
         m = clone(model)
         m.fit(X_train_all[train_idx], y_train_all[train_idx])
         val_pred_all[val_idx] = m.predict(X_train_all[val_idx])
-    val_pred_all = np.clip(val_pred_all, 0, 100)
 
-    val_metrics = compute_metrics(y_train_all, val_pred_all)
+    if is_delta:
+        # Reconstruct absolute predictions: baseline + clamp(delta, -30, 30)
+        clamped_delta = np.clip(val_pred_all, -30, 30)
+        val_pred_absolute = np.clip(train_baseline + clamped_delta, 0, 100)
+        val_target = train_y_actual
+        # Popular_times-only baseline (the predictor we must beat by ≥5 MAE or ≥0.10 R²)
+        baseline_pred = np.clip(train_baseline, 0, 100)
+        baseline_metrics = compute_metrics(val_target, baseline_pred)
+    else:
+        val_pred_absolute = np.clip(val_pred_all, 0, 100)
+        val_target = y_train_all
+        baseline_metrics = None
+
+    val_metrics = compute_metrics(val_target, val_pred_absolute)
+    # For downstream code that still references val_pred_all + y_train_all
+    val_pred_all = val_pred_absolute
+    y_train_all_eval = val_target
 
     logger.info(f'RMSE: {val_metrics["rmse"]}')
     logger.info(f'MAE: {val_metrics["mae"]}')
@@ -239,41 +260,86 @@ def main():
     logger.info(f'Within 10 pts: {val_metrics["within_10"]}%')
     logger.info(f'Within 15 pts: {val_metrics["within_15"]}%')
 
+    # =================== POPULAR_TIMES-ONLY BASELINE COMPARISON ===================
+    if baseline_metrics is not None:
+        logger.info('\n=== Popular_times-only baseline (the model must beat this) ===')
+        logger.info(f'Baseline RMSE: {baseline_metrics["rmse"]}')
+        logger.info(f'Baseline MAE: {baseline_metrics["mae"]}')
+        logger.info(f'Baseline R²: {baseline_metrics["r2"]}')
+        logger.info(f'Baseline within 10 pts: {baseline_metrics["within_10"]}%')
+
+        mae_delta = baseline_metrics['mae'] - val_metrics['mae']  # positive = model wins
+        r2_delta = val_metrics['r2'] - baseline_metrics['r2']
+        logger.info('\n=== Head-to-head ===')
+        logger.info(f'Model MAE: {val_metrics["mae"]} vs Baseline MAE: {baseline_metrics["mae"]} → Δ={mae_delta:+.4f} ({"WIN" if mae_delta > 0 else "LOSS"})')
+        logger.info(f'Model R²:  {val_metrics["r2"]} vs Baseline R²:  {baseline_metrics["r2"]} → Δ={r2_delta:+.4f} ({"WIN" if r2_delta > 0 else "LOSS"})')
+
+        # Ship gate: MAE down ≥5 OR R² up ≥0.10
+        ship = (mae_delta >= 5.0) or (r2_delta >= 0.10)
+        if ship:
+            logger.info(f'SHIP VERDICT: ✅ SHIP (MAE Δ={mae_delta:+.2f}, R² Δ={r2_delta:+.3f}) — meets ≥5 MAE or ≥0.10 R² gate')
+        else:
+            logger.warning(f'SHIP VERDICT: ❌ DO NOT SHIP (MAE Δ={mae_delta:+.2f}, R² Δ={r2_delta:+.3f}) — fails ≥5 MAE / ≥0.10 R² gate')
+
     # Per-city CV breakdown
-    logger.info('\nPer-city CV results:')
+    logger.info('\nPer-city CV results (model vs popular_times baseline):')
     for city in unique_cities:
         mask = train_cities == city
-        city_metrics = compute_metrics(y_train_all[mask], val_pred_all[mask])
-        logger.info(f'  {city}: RMSE={city_metrics["rmse"]}, MAE={city_metrics["mae"]}, R²={city_metrics["r2"]}')
+        city_metrics = compute_metrics(y_train_all_eval[mask], val_pred_all[mask])
+        if baseline_metrics is not None:
+            base_pred_city = np.clip(train_baseline[mask], 0, 100)
+            base_city_metrics = compute_metrics(y_train_all_eval[mask], base_pred_city)
+            logger.info(f'  {city}: model MAE={city_metrics["mae"]} (baseline {base_city_metrics["mae"]}, Δ={base_city_metrics["mae"] - city_metrics["mae"]:+.2f}), R²={city_metrics["r2"]}')
+        else:
+            logger.info(f'  {city}: RMSE={city_metrics["rmse"]}, MAE={city_metrics["mae"]}, R²={city_metrics["r2"]}')
 
     logger.info('\nGenerating CV plots...')
-    plot_residuals(y_train_all, val_pred_all, 'City CV: Predicted vs Actual', 'val_residuals.png')
-    plot_error_distribution(val_pred_all - y_train_all, 'City CV: Error Distribution', 'val_error_dist.png')
+    plot_residuals(y_train_all_eval, val_pred_all, 'City CV: Predicted vs Actual', 'val_residuals.png')
+    plot_error_distribution(val_pred_all - y_train_all_eval, 'City CV: Error Distribution', 'val_error_dist.png')
 
     if 'hour' in train_df.columns:
-        plot_per_hour(y_train_all, val_pred_all, train_df['hour'].values[:len(y_train_all)],
+        plot_per_hour(y_train_all_eval, val_pred_all, train_df['hour'].values[:len(y_train_all_eval)],
                       'City CV: MAE by Hour', 'val_per_hour.png')
 
     if 'venue_category' in train_df.columns:
-        plot_per_category(y_train_all, val_pred_all, train_df['venue_category'].values[:len(y_train_all)],
+        plot_per_category(y_train_all_eval, val_pred_all, train_df['venue_category'].values[:len(y_train_all_eval)],
                           'City CV: MAE by Category', 'val_per_category.png')
 
     if train_cities is not None:
-        plot_per_city(y_train_all, val_pred_all, train_cities,
+        plot_per_city(y_train_all_eval, val_pred_all, train_cities,
                       'City CV: MAE by City', 'val_per_city.png')
 
     # =================== HOLDOUT SET ===================
     holdout_path = SCRIPT_DIR / 'features_holdout.pkl'
     holdout_metrics = None
+    holdout_baseline_metrics = None
     if holdout_path.exists():
         logger.info('\n=== Holdout Set Evaluation (Geographic Generalization) ===')
         with open(holdout_path, 'rb') as f:
             holdout_data = pickle.load(f)
         X_hold, y_hold = holdout_data['X'], holdout_data['y']
         hold_cities = holdout_data.get('cities', None)
+        hold_baseline = holdout_data.get('baseline')
+        hold_y_actual = holdout_data.get('y_actual')
+        hold_is_delta = (holdout_data.get('label_type') == 'delta') and (hold_baseline is not None) and (hold_y_actual is not None)
 
-        hold_pred = np.clip(model.predict(X_hold), 0, 100)
+        raw_hold_pred = model.predict(X_hold)
+        if hold_is_delta:
+            clamped = np.clip(raw_hold_pred, -30, 30)
+            hold_pred = np.clip(hold_baseline + clamped, 0, 100)
+            hold_target = hold_y_actual
+            holdout_baseline_metrics = compute_metrics(hold_target, np.clip(hold_baseline, 0, 100))
+        else:
+            hold_pred = np.clip(raw_hold_pred, 0, 100)
+            hold_target = y_hold
+        # Update y_hold reference for downstream plots (rest of function references y_hold)
+        y_hold = hold_target
         holdout_metrics = compute_metrics(y_hold, hold_pred)
+        if holdout_baseline_metrics is not None:
+            mae_d = holdout_baseline_metrics['mae'] - holdout_metrics['mae']
+            r2_d = holdout_metrics['r2'] - holdout_baseline_metrics['r2']
+            logger.info(f'Holdout baseline MAE: {holdout_baseline_metrics["mae"]} → model Δ={mae_d:+.2f}')
+            logger.info(f'Holdout baseline R²:  {holdout_baseline_metrics["r2"]}  → model Δ={r2_d:+.3f}')
 
         logger.info(f'RMSE: {holdout_metrics["rmse"]}')
         logger.info(f'MAE: {holdout_metrics["mae"]}')
@@ -316,9 +382,21 @@ def main():
 
     metadata['evaluation'] = {
         'validation': val_metrics,
+        'validation_baseline': baseline_metrics,
         'holdout': holdout_metrics,
+        'holdout_baseline': holdout_baseline_metrics,
         'holdout_cities': ['miami', 'tokyo', 'barcelona'],
+        'label_type': label_type,
     }
+    if baseline_metrics is not None:
+        mae_delta = baseline_metrics['mae'] - val_metrics['mae']
+        r2_delta = val_metrics['r2'] - baseline_metrics['r2']
+        metadata['ship_gate'] = {
+            'mae_improvement': round(mae_delta, 4),
+            'r2_improvement': round(r2_delta, 4),
+            'pass': bool((mae_delta >= 5.0) or (r2_delta >= 0.10)),
+            'criteria': 'MAE down ≥5 OR R² up ≥0.10 vs popular_times-only baseline',
+        }
 
     with open(meta_path, 'w') as f:
         json.dump(metadata, f, indent=2)

@@ -7054,7 +7054,23 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
 
                 {/* Hourly Forecast Graph — fades in immediately, bars animate up */}
                 <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.2, duration: 0.4, ease: 'easeOut' }} style={{ marginBottom: '6px' }}>
-                  <p style={{ fontSize: '9px', fontWeight: '600', color: 'var(--text-secondary)', marginBottom: '4px', textTransform: 'uppercase' }}>Expected Crowd by Hour</p>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '4px' }}>
+                    <p style={{ fontSize: '9px', fontWeight: '600', color: 'var(--text-secondary)', textTransform: 'uppercase', margin: 0 }}>Expected Crowd by Hour</p>
+                    {(() => {
+                      // Trend arrow: compare "Now" to next-hour prediction.
+                      // Skip if next hour is closed/unknown — model's MAE is ~5pts so use that as the dead-zone threshold.
+                      const cur = (Number.isFinite(score) && score > 0) ? score : (Number.isFinite(hourlyData[0]?.score) ? hourlyData[0].score : null);
+                      const next = Number.isFinite(hourlyData[1]?.score) ? hourlyData[1].score : null;
+                      if (cur == null || next == null || next <= 0) return null;
+                      const diff = next - cur;
+                      const arrow = diff >= 5 ? '↗' : diff <= -5 ? '↘' : '→';
+                      const label = diff >= 5 ? 'Rising' : diff <= -5 ? 'Falling' : 'Steady';
+                      const color = diff >= 5 ? colors.red : diff <= -5 ? colors.teal : 'var(--text-secondary)';
+                      return (
+                        <span style={{ fontSize: '9px', fontWeight: '700', color, letterSpacing: '0.3px' }}>{arrow} {label}</span>
+                      );
+                    })()}
+                  </div>
                   <div style={{ display: 'flex', alignItems: 'flex-end', gap: '2px', height: '56px' }}>
                     {hourlyData.map((h, i) => {
                       const isNow = i === 0;
@@ -10312,7 +10328,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 {Icons.fileText(colors.navy, 14)} Terms of Service
               </button>
               <button
-                className="glass-btn glass-secondary" onClick={() => window.open('https://flock.app/privacy', '_blank')}
+                className="glass-btn glass-secondary" onClick={() => window.open('/privacy', '_blank')}
                 style={{
                   padding: '10px 16px',
                   borderRadius: '10px',
