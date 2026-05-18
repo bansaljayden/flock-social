@@ -1,0 +1,375 @@
+// Direct port of frontend/src/services/socket.js for React Native.
+// One change vs. web: `connectSocket` is async because `getToken()` now reads
+// from AsyncStorage (was synchronous localStorage on web). Every other
+// emitter/listener is identical — socket.io-client works the same in RN.
+
+import { io } from 'socket.io-client';
+import { getToken, BASE_URL } from './api';
+
+let socket = null;
+
+export async function connectSocket() {
+  if (socket?.connected) return socket;
+
+  const token = await getToken();
+  if (!token) return null;
+
+  socket = io(BASE_URL, {
+    auth: { token },
+    transports: ['websocket', 'polling'],
+    reconnection: true,
+    reconnectionAttempts: 10,
+    reconnectionDelay: 1000,
+  });
+
+  socket.on('connect', () => {
+    console.log('Socket connected:', socket?.id);
+  });
+
+  socket.on('connect_error', (err) => {
+    console.warn('Socket connection error:', err.message);
+  });
+
+  socket.on('error', (data) => {
+    console.warn('Socket error:', data?.message);
+  });
+
+  return socket;
+}
+
+export function getSocket() {
+  return socket;
+}
+
+export function disconnectSocket() {
+  if (socket) {
+    socket.removeAllListeners();
+    socket.disconnect();
+    socket = null;
+  }
+}
+
+// --- Flock rooms ---
+
+export function joinFlock(flockId) {
+  if (socket?.connected) socket.emit('join_flock', flockId);
+}
+
+export function leaveFlock(flockId) {
+  if (socket?.connected) socket.emit('leave_flock', flockId);
+}
+
+// --- Venue rooms (live sensor + check-in feed) ---
+
+export function joinVenueRoom(placeId) {
+  if (socket?.connected && placeId) socket.emit('join_venue', { placeId });
+}
+
+export function leaveVenueRoom(placeId) {
+  if (socket?.connected && placeId) socket.emit('leave_venue', { placeId });
+}
+
+export function onVenueSensorUpdate(callback) {
+  if (socket) socket.on('venue_sensor_update', callback);
+  return () => { if (socket) socket.off('venue_sensor_update', callback); };
+}
+
+export function onVenueCheckin(callback) {
+  if (socket) socket.on('venue_checkin', callback);
+  return () => { if (socket) socket.off('venue_checkin', callback); };
+}
+
+// --- Flock messaging ---
+
+export function sendMessage(flockId, messageText, opts = {}) {
+  if (socket?.connected) {
+    socket.emit('send_message', {
+      flockId,
+      message_text: messageText,
+      message_type: opts.message_type || 'text',
+      venue_data: opts.venue_data || null,
+    });
+  }
+}
+
+export function sendImageMessage(flockId, imageUrl) {
+  if (socket?.connected) {
+    socket.emit('send_message', {
+      flockId,
+      message_text: '',
+      message_type: 'image',
+      image_url: imageUrl,
+    });
+  }
+}
+
+export function startTyping(flockId) {
+  if (socket?.connected) socket.emit('typing', flockId);
+}
+
+export function stopTyping(flockId) {
+  if (socket?.connected) socket.emit('stop_typing', flockId);
+}
+
+export function onNewMessage(callback) {
+  if (socket) socket.on('new_message', callback);
+  return () => { if (socket) socket.off('new_message', callback); };
+}
+
+export function onUserTyping(callback) {
+  if (socket) socket.on('user_typing', callback);
+  return () => { if (socket) socket.off('user_typing', callback); };
+}
+
+export function onUserStoppedTyping(callback) {
+  if (socket) socket.on('user_stopped_typing', callback);
+  return () => { if (socket) socket.off('user_stopped_typing', callback); };
+}
+
+// --- Direct messages ---
+
+export function socketSendDm(receiverId, messageText, opts = {}) {
+  if (socket?.connected) {
+    socket.emit('send_dm', {
+      receiverId,
+      message_text: messageText,
+      message_type: opts.message_type || 'text',
+      venue_data: opts.venue_data || null,
+      image_url: opts.image_url || null,
+      reply_to_id: opts.reply_to_id || null,
+    });
+  }
+}
+
+export function onNewDm(callback) {
+  if (socket) socket.on('new_dm', callback);
+  return () => { if (socket) socket.off('new_dm', callback); };
+}
+
+export function dmStartTyping(receiverId) {
+  if (socket?.connected) socket.emit('dm_typing', { receiverId });
+}
+
+export function dmStopTyping(receiverId) {
+  if (socket?.connected) socket.emit('dm_stop_typing', { receiverId });
+}
+
+export function onDmUserTyping(callback) {
+  if (socket) socket.on('dm_user_typing', callback);
+  return () => { if (socket) socket.off('dm_user_typing', callback); };
+}
+
+export function onDmUserStoppedTyping(callback) {
+  if (socket) socket.on('dm_user_stopped_typing', callback);
+  return () => { if (socket) socket.off('dm_user_stopped_typing', callback); };
+}
+
+export function dmReact(dmId, emoji, receiverId) {
+  if (socket?.connected) socket.emit('dm_react', { dmId, emoji, receiverId });
+}
+
+export function dmRemoveReact(dmId, emoji, receiverId) {
+  if (socket?.connected) socket.emit('dm_remove_react', { dmId, emoji, receiverId });
+}
+
+export function onDmReactionAdded(callback) {
+  if (socket) socket.on('dm_reaction_added', callback);
+  return () => { if (socket) socket.off('dm_reaction_added', callback); };
+}
+
+export function onDmReactionRemoved(callback) {
+  if (socket) socket.on('dm_reaction_removed', callback);
+  return () => { if (socket) socket.off('dm_reaction_removed', callback); };
+}
+
+export function dmVoteVenue(receiverId, venueName, venueId) {
+  if (socket?.connected) socket.emit('dm_vote_venue', { receiverId, venue_name: venueName, venue_id: venueId });
+}
+
+export function onDmNewVote(callback) {
+  if (socket) socket.on('dm_new_vote', callback);
+  return () => { if (socket) socket.off('dm_new_vote', callback); };
+}
+
+export function dmPinVenue(receiverId, venueData) {
+  if (socket?.connected) {
+    socket.emit('dm_pin_venue', {
+      receiverId,
+      venue_name: venueData.name,
+      venue_address: venueData.addr,
+      venue_id: venueData.place_id,
+      venue_rating: venueData.rating,
+      venue_photo_url: venueData.photo_url,
+    });
+  }
+}
+
+export function onDmVenuePinned(callback) {
+  if (socket) socket.on('dm_venue_pinned', callback);
+  return () => { if (socket) socket.off('dm_venue_pinned', callback); };
+}
+
+export function dmShareLocation(receiverId, lat, lng) {
+  if (socket?.connected) socket.emit('dm_share_location', { receiverId, lat, lng });
+}
+
+export function dmStopSharingLocation(receiverId) {
+  if (socket?.connected) socket.emit('dm_stop_sharing_location', { receiverId });
+}
+
+export function onDmLocationUpdate(callback) {
+  if (socket) socket.on('dm_location_update', callback);
+  return () => { if (socket) socket.off('dm_location_update', callback); };
+}
+
+export function onDmMemberStoppedSharing(callback) {
+  if (socket) socket.on('dm_member_stopped_sharing', callback);
+  return () => { if (socket) socket.off('dm_member_stopped_sharing', callback); };
+}
+
+// --- Live location sharing (flock) ---
+
+export function emitLocation(flockId, lat, lng) {
+  if (socket?.connected) socket.emit('update_location', { flockId, lat, lng });
+}
+
+export function stopSharingLocation(flockId) {
+  if (socket?.connected) socket.emit('stop_sharing_location', { flockId });
+}
+
+export function onLocationUpdate(callback) {
+  if (socket) socket.on('location_update', callback);
+  return () => { if (socket) socket.off('location_update', callback); };
+}
+
+export function onMemberStoppedSharing(callback) {
+  if (socket) socket.on('member_stopped_sharing', callback);
+  return () => { if (socket) socket.off('member_stopped_sharing', callback); };
+}
+
+// --- Friend requests ---
+
+export function emitFriendRequest(toUserId) {
+  if (socket?.connected) socket.emit('friend_request_sent', { toUserId });
+}
+
+export function emitFriendResponse(toUserId, action) {
+  if (socket?.connected) socket.emit('friend_request_response', { toUserId, action });
+}
+
+export function onFriendRequestReceived(callback) {
+  if (socket) socket.on('friend_request_received', callback);
+  return () => { if (socket) socket.off('friend_request_received', callback); };
+}
+
+export function onFriendRequestResponded(callback) {
+  if (socket) socket.on('friend_request_responded', callback);
+  return () => { if (socket) socket.off('friend_request_responded', callback); };
+}
+
+// --- Flock invites ---
+
+export function emitFlockInvite(flockId, invitedUserIds) {
+  if (socket?.connected) socket.emit('flock_invite', { flockId, invitedUserIds });
+}
+
+export function emitFlockInviteResponse(flockId, action) {
+  if (socket?.connected) socket.emit('flock_invite_response', { flockId, action });
+}
+
+export function onFlockInviteReceived(callback) {
+  if (socket) socket.on('flock_invite_received', callback);
+  return () => { if (socket) socket.off('flock_invite_received', callback); };
+}
+
+export function onFlockInviteResponded(callback) {
+  if (socket) socket.on('flock_invite_responded', callback);
+  return () => { if (socket) socket.off('flock_invite_responded', callback); };
+}
+
+// --- Flock voting + venue confirmation ---
+
+export function onNewVote(callback) {
+  if (socket) socket.on('new_vote', callback);
+  return () => { if (socket) socket.off('new_vote', callback); };
+}
+
+export function onVenueSelected(callback) {
+  if (socket) socket.on('venue_selected', callback);
+  return () => { if (socket) socket.off('venue_selected', callback); };
+}
+
+// --- Flock message reactions ---
+
+export function onFlockReactionAdded(callback) {
+  if (socket) socket.on('flock_reaction_added', callback);
+  return () => { if (socket) socket.off('flock_reaction_added', callback); };
+}
+
+export function onFlockReactionRemoved(callback) {
+  if (socket) socket.on('flock_reaction_removed', callback);
+  return () => { if (socket) socket.off('flock_reaction_removed', callback); };
+}
+
+// --- Flock lifecycle ---
+
+export function onFlockDeleted(callback) {
+  if (socket) socket.on('flock_deleted', callback);
+  return () => { if (socket) socket.off('flock_deleted', callback); };
+}
+
+export function onFlockUpdated(callback) {
+  if (socket) socket.on('flock_updated', callback);
+  return () => { if (socket) socket.off('flock_updated', callback); };
+}
+
+export function onFlockMemberLeft(callback) {
+  if (socket) socket.on('flock_member_left', callback);
+  return () => { if (socket) socket.off('flock_member_left', callback); };
+}
+
+// --- Budget events ---
+
+export function onBudgetUpdated(callback) {
+  if (socket) socket.on('budget_updated', callback);
+  return () => { if (socket) socket.off('budget_updated', callback); };
+}
+
+export function onBudgetLocked(callback) {
+  if (socket) socket.on('budget_locked', callback);
+  return () => { if (socket) socket.off('budget_locked', callback); };
+}
+
+export function onBudgetReminder(callback) {
+  if (socket) socket.on('budget_reminder', callback);
+  return () => { if (socket) socket.off('budget_reminder', callback); };
+}
+
+// --- Billing events ---
+
+export function onBillCreated(callback) {
+  if (socket) socket.on('bill_created', callback);
+  return () => { if (socket) socket.off('bill_created', callback); };
+}
+
+export function onShareSettled(callback) {
+  if (socket) socket.on('share_settled', callback);
+  return () => { if (socket) socket.off('share_settled', callback); };
+}
+
+export function onBillFullySettled(callback) {
+  if (socket) socket.on('bill_fully_settled', callback);
+  return () => { if (socket) socket.off('bill_fully_settled', callback); };
+}
+
+export function onGhostCommitted(callback) {
+  if (socket) socket.on('ghost_committed', callback);
+  return () => { if (socket) socket.off('ghost_committed', callback); };
+}
+
+// --- Availability Pulse ---
+
+export function onAvailabilityUpdated(callback) {
+  if (socket) socket.on('availability_updated', callback);
+  return () => { if (socket) socket.off('availability_updated', callback); };
+}
