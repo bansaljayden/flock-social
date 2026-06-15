@@ -1,6 +1,12 @@
 {
   "version": 1,
   "skills": {
+    "app-store-review": {
+      "source": "safaiyeh/app-store-review-skill",
+      "sourceType": "github",
+      "skillPath": "SKILL.md",
+      "computedHash": "9cab45027817236e86748282ec8545af5e3d61b8d5bb0092d6c0b2bd20e94450"
+    },
     "brandkit": {
       "source": "Leonxlnx/taste-skill",
       "sourceType": "github",
