@@ -1,7 +1,9 @@
+require('./instrument'); // Sentry — must load before everything else (B3)
 require('dotenv').config();
 console.log('DATABASE_URL:', process.env.DATABASE_URL ? '[configured]' : '[missing]');
 
 const express = require('express');
+const Sentry = require('@sentry/node');
 const http = require('http');
 const { Server } = require('socket.io');
 const cors = require('cors');
@@ -170,6 +172,9 @@ app.get('/api/health', (req, res) => {
 app.use((req, res) => {
   res.status(404).json({ error: 'Route not found' });
 });
+
+// Sentry error capture — must precede the custom error handler (B3; no-op without DSN)
+Sentry.setupExpressErrorHandler(app);
 
 // Global error handler
 app.use((err, req, res, _next) => {
