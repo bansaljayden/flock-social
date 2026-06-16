@@ -1,13 +1,15 @@
-import React, { useRef } from 'react';
+import React, { useRef, useState, useEffect } from 'react';
 import { View, ActivityIndicator } from 'react-native';
 import { NavigationContainer } from '@react-navigation/native';
 import { createStackNavigator } from '@react-navigation/stack';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import AuthNavigator from './AuthNavigator';
 import MainTabNavigator from './MainTabNavigator';
 import OnboardingScreen from '../screens/auth/OnboardingScreen';
+import AgeGateScreen, { AGE_KEY } from '../screens/auth/AgeGateScreen';
 import linking from './linking';
 import { trackScreen } from '../services/posthog';
 
@@ -33,12 +35,22 @@ export default function RootNavigator() {
   const { colors } = useTheme();
   const lastRouteNameRef = useRef(null);
 
-  if (loading) {
+  // Neutral age gate (C4) — one-time per device, before anything else.
+  const [ageVerified, setAgeVerified] = useState(null);
+  useEffect(() => {
+    AsyncStorage.getItem(AGE_KEY).then((v) => setAgeVerified(v === 'true')).catch(() => setAgeVerified(false));
+  }, []);
+
+  if (loading || ageVerified === null) {
     return (
       <View style={{ flex: 1, backgroundColor: colors.bgPrimary, alignItems: 'center', justifyContent: 'center' }}>
         <ActivityIndicator size="large" color={colors.teal} />
       </View>
     );
+  }
+
+  if (!ageVerified) {
+    return <AgeGateScreen onVerified={() => setAgeVerified(true)} />;
   }
 
   return (
