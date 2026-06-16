@@ -8,6 +8,7 @@ import {
   Platform,
   ScrollView,
   TouchableOpacity,
+  Linking,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { GoogleSignin, statusCodes } from '@react-native-google-signin/google-signin';
@@ -15,6 +16,9 @@ import appleAuth, { AppleButton } from '@invertase/react-native-apple-authentica
 import { useTheme } from '../../context/ThemeContext';
 import { useAuth } from '../../context/AuthContext';
 import GlassButton from '../../components/common/GlassButton';
+import { TERMS_URL, GUIDELINES_URL } from '../../config/links';
+
+const TERMS_REQUIRED_MSG = 'Please agree to the Terms and Community Guidelines to continue.';
 
 // Validation matches the backend rules in routes/auth.js:
 //   - email: valid format
@@ -43,8 +47,10 @@ export default function SignupScreen({ navigation }) {
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [agreed, setAgreed] = useState(false);
 
   const handleSignup = async () => {
+    if (!agreed) { setError(TERMS_REQUIRED_MSG); return; }
     if (!name.trim()) { setError('Name required'); return; }
     const emailErr = validateEmail(email.trim());
     if (emailErr) { setError(emailErr); return; }
@@ -64,6 +70,7 @@ export default function SignupScreen({ navigation }) {
   };
 
   const handleGoogle = async () => {
+    if (!agreed) { setError(TERMS_REQUIRED_MSG); return; }
     setLoading(true); setError('');
     try {
       await GoogleSignin.hasPlayServices();
@@ -80,6 +87,7 @@ export default function SignupScreen({ navigation }) {
   };
 
   const handleApple = async () => {
+    if (!agreed) { setError(TERMS_REQUIRED_MSG); return; }
     setLoading(true); setError('');
     try {
       const res = await appleAuth.performRequest({
@@ -155,6 +163,28 @@ export default function SignupScreen({ navigation }) {
               />
             </View>
 
+            {/* Terms/EULA acceptance gate (Apple 1.2 / Google UGC). Required for
+                ALL signup methods. The zero-tolerance line is the EULA language
+                Apple's Resolution Center expects to see at the agreement point. */}
+            <TouchableOpacity
+              onPress={() => setAgreed((a) => !a)}
+              activeOpacity={0.7}
+              style={styles.termsRow}
+              accessibilityRole="checkbox"
+              accessibilityState={{ checked: agreed }}
+            >
+              <View style={[styles.checkbox, { borderColor: agreed ? colors.teal : colors.borderDefault, backgroundColor: agreed ? colors.teal : 'transparent' }]}>
+                {agreed ? <Text style={styles.checkmark}>✓</Text> : null}
+              </View>
+              <Text style={[typography.bodySmall, { color: colors.textSecondary, flex: 1 }]}>
+                I agree to Flock's{' '}
+                <Text style={{ color: colors.teal }} onPress={() => Linking.openURL(TERMS_URL)}>Terms of Service</Text>
+                {' '}and{' '}
+                <Text style={{ color: colors.teal }} onPress={() => Linking.openURL(GUIDELINES_URL)}>Community Guidelines</Text>
+                . Flock has zero tolerance for objectionable content or abusive users.
+              </Text>
+            </TouchableOpacity>
+
             {error ? (
               <Text style={[typography.bodySmall, { color: colors.accentRedText }]}>{error}</Text>
             ) : null}
@@ -201,6 +231,9 @@ const styles = StyleSheet.create({
   heroBlock: { marginBottom: 24 },
   formBlock: {},
   input: { paddingVertical: 14, paddingHorizontal: 14, borderWidth: 1 },
+  termsRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 10, marginTop: 4 },
+  checkbox: { width: 22, height: 22, borderRadius: 6, borderWidth: 1.5, alignItems: 'center', justifyContent: 'center', marginTop: 2 },
+  checkmark: { color: '#fff', fontSize: 14, fontWeight: '700', lineHeight: 16 },
   dividerRow: { flexDirection: 'row', alignItems: 'center' },
   dividerLine: { flex: 1, height: 1 },
 });
