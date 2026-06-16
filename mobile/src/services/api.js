@@ -48,10 +48,10 @@ async function request(endpoint, options = {}) {
 // Auth
 // ---------------------------------------------------------------------------
 
-export async function signup(name, email, password) {
+export async function signup(name, email, password, date_of_birth) {
   const data = await request('/api/auth/signup', {
     method: 'POST',
-    body: JSON.stringify({ name, email, password }),
+    body: JSON.stringify({ name, email, password, date_of_birth }),
   });
   await setToken(data.token);
   return data;
@@ -66,10 +66,10 @@ export async function login(email, password) {
   return data;
 }
 
-export async function googleLogin(credential) {
+export async function googleLogin(credential, date_of_birth) {
   const data = await request('/api/auth/google', {
     method: 'POST',
-    body: JSON.stringify({ credential }),
+    body: JSON.stringify({ credential, date_of_birth }),
   });
   await setToken(data.token);
   return data;
@@ -79,10 +79,10 @@ export async function googleLogin(credential) {
 // `identityToken` is the JWT that comes back from
 // @invertase/react-native-apple-authentication. Backend verifies it via
 // Apple's JWKS, upserts user by `sub`, returns Flock JWT.
-export async function appleLogin({ identityToken, fullName, authorizationCode }) {
+export async function appleLogin({ identityToken, fullName, authorizationCode, date_of_birth }) {
   const data = await request('/api/auth/apple', {
     method: 'POST',
-    body: JSON.stringify({ identityToken, fullName, authorizationCode }),
+    body: JSON.stringify({ identityToken, fullName, authorizationCode, date_of_birth }),
   });
   await setToken(data.token);
   return data;

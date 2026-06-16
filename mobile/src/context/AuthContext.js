@@ -80,7 +80,8 @@ export function AuthProvider({ children }) {
   }, []);
 
   const signup = useCallback(async (name, email, password) => {
-    const data = await apiSignup(name, email, password);
+    const dob = await AsyncStorage.getItem('flock_dob'); // from the C4 age gate
+    const data = await apiSignup(name, email, password, dob);
     setUser(data.user || null);
     if (data.user?.id) identify(data.user.id);
     track(Events.SignupCompleted, { method: 'email' });
@@ -90,7 +91,8 @@ export function AuthProvider({ children }) {
   }, []);
 
   const googleLogin = useCallback(async (credential) => {
-    const data = await apiGoogleLogin(credential);
+    const dob = await AsyncStorage.getItem('flock_dob'); // from the C4 age gate
+    const data = await apiGoogleLogin(credential, dob);
     setUser(data.user || null);
     if (data.user?.id) identify(data.user.id);
     track(Events.LoginCompleted, { method: 'google' });
@@ -100,7 +102,8 @@ export function AuthProvider({ children }) {
   }, []);
 
   const appleLogin = useCallback(async ({ identityToken, fullName, authorizationCode }) => {
-    const data = await apiAppleLogin({ identityToken, fullName, authorizationCode });
+    const dob = await AsyncStorage.getItem('flock_dob'); // from the C4 age gate
+    const data = await apiAppleLogin({ identityToken, fullName, authorizationCode, date_of_birth: dob });
     setUser(data.user || null);
     if (data.user?.id) identify(data.user.id);
     track(Events.LoginCompleted, { method: 'apple' });
