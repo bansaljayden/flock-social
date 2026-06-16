@@ -44,6 +44,15 @@ if (window.location.pathname === '/landing') {
       </React.Suspense>
     </React.StrictMode>
   );
+} else if (window.location.pathname === '/admin/moderation') {
+  const ModerationDashboard = React.lazy(() => import('./website/ModerationDashboard'));
+  root.render(
+    <React.StrictMode>
+      <React.Suspense fallback={null}>
+        <ModerationDashboard />
+      </React.Suspense>
+    </React.StrictMode>
+  );
 } else {
   const App = React.lazy(() => import('./App'));
   const { ThemeProvider } = require('./context/ThemeContext');
