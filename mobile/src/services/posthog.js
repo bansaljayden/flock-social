@@ -49,9 +49,14 @@ export async function init() {
   }
 }
 
-export function identify(userId, props = {}) {
+// Identify by PSEUDONYMOUS user id ONLY — never email/name/PII. This keeps the
+// app's `NSPrivacyTracking=false` declaration honest: PostHog RN does not
+// collect IDFA or do cross-app linking, and we send no personal data, so no
+// App Tracking Transparency prompt is required. (C3) Props are intentionally
+// dropped so a caller can't accidentally leak PII.
+export function identify(userId, _props = {}) {
   if (!_enabled || !_client || !userId) return;
-  try { _client.identify(String(userId), props); } catch {}
+  try { _client.identify(String(userId)); } catch {}
 }
 
 export function reset() {
