@@ -7,7 +7,7 @@ const fs = require('fs');
 const pool = require('../config/database');
 const { authenticate } = require('../middleware/auth');
 const { stripHtml, sanitizeArray } = require('../utils/sanitize');
-const { rejectIfProfane } = require('../utils/moderation');
+const { rejectIfProfane, moderateImage, IMAGE_REJECTED_MESSAGE } = require('../utils/moderation');
 
 const router = express.Router();
 const SALT_ROUNDS = 10;
@@ -359,6 +359,15 @@ router.post('/upload-image', (req, res) => {
 
       // Clean up temp file
       fs.unlink(req.file.path, () => {});
+
+      // Image moderation (A2b) — synchronous + FAIL-CLOSED. This is the only
+      // upload endpoint, so screening here gates every user image before its
+      // URL is returned or stored. Dev (no provider) allows with a warning;
+      // prod requires a provider via IMAGE_MODERATION_REQUIRED=true.
+      const verdict = await moderateImage(dataUrl);
+      if (!verdict.allowed) {
+        return res.status(400).json({ error: IMAGE_REJECTED_MESSAGE, moderation: verdict.reason });
+      }
 
       await pool.query(
         'UPDATE users SET profile_image_url = $1, updated_at = NOW() WHERE id = $2',
