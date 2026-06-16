@@ -44,6 +44,33 @@ if (window.location.pathname === '/landing') {
       </React.Suspense>
     </React.StrictMode>
   );
+} else if (window.location.pathname === '/terms') {
+  const TermsOfService = React.lazy(() => import('./website/TermsOfService'));
+  root.render(
+    <React.StrictMode>
+      <React.Suspense fallback={null}>
+        <TermsOfService />
+      </React.Suspense>
+    </React.StrictMode>
+  );
+} else if (window.location.pathname === '/guidelines') {
+  const CommunityGuidelines = React.lazy(() => import('./website/CommunityGuidelines'));
+  root.render(
+    <React.StrictMode>
+      <React.Suspense fallback={null}>
+        <CommunityGuidelines />
+      </React.Suspense>
+    </React.StrictMode>
+  );
+} else if (window.location.pathname === '/delete-account') {
+  const DeleteAccount = React.lazy(() => import('./website/DeleteAccount'));
+  root.render(
+    <React.StrictMode>
+      <React.Suspense fallback={null}>
+        <DeleteAccount />
+      </React.Suspense>
+    </React.StrictMode>
+  );
 } else if (window.location.pathname === '/admin/moderation') {
   const ModerationDashboard = React.lazy(() => import('./website/ModerationDashboard'));
   root.render(
