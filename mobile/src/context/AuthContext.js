@@ -99,8 +99,8 @@ export function AuthProvider({ children }) {
     return data;
   }, []);
 
-  const appleLogin = useCallback(async ({ identityToken, fullName }) => {
-    const data = await apiAppleLogin({ identityToken, fullName });
+  const appleLogin = useCallback(async ({ identityToken, fullName, authorizationCode }) => {
+    const data = await apiAppleLogin({ identityToken, fullName, authorizationCode });
     setUser(data.user || null);
     if (data.user?.id) identify(data.user.id, { email: data.user.email });
     track(Events.LoginCompleted, { method: 'apple' });

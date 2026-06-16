@@ -230,6 +230,7 @@ router.post('/google', [
 router.post('/apple', [
   body('identityToken').notEmpty().withMessage('Apple identityToken is required'),
   body('fullName').optional().isObject(),
+  body('authorizationCode').optional(),
 ], async (req, res) => {
   try {
     const errors = validationResult(req);
@@ -237,7 +238,7 @@ router.post('/apple', [
       return res.status(400).json({ error: errors.array()[0].msg });
     }
 
-    const { identityToken, fullName } = req.body;
+    const { identityToken, fullName, authorizationCode } = req.body;
 
     // Verify Apple's signed identity token using their rotating JWKS
     const payload = await new Promise((resolve, reject) => {
@@ -304,6 +305,18 @@ router.post('/apple', [
         [email, fallbackName, appleId]
       );
       user = result.rows[0];
+    }
+
+    // Capture an Apple refresh token so deletion can revoke it (Apple 5.1.1(v)).
+    // No-op unless APPLE_* signing env is configured.
+    if (authorizationCode) {
+      try {
+        const { exchangeAppleCode } = require('../services/appleAuth');
+        const tokens = await exchangeAppleCode(authorizationCode);
+        if (tokens?.refresh_token) {
+          await pool.query('UPDATE users SET apple_refresh_token = $1 WHERE id = $2', [tokens.refresh_token, user.id]);
+        }
+      } catch (e) { console.error('Apple code exchange error:', e.message); }
     }
 
     const token = jwt.sign({ userId: user.id }, process.env.JWT_SECRET, { expiresIn: TOKEN_EXPIRY });
