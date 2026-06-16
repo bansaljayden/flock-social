@@ -39,6 +39,7 @@ const venueDashboardRoutes = require('./routes/venueDashboard');
 const availabilityRoutes = require('./routes/availability');
 const sensorRoutes = require('./routes/sensors');
 const checkinRoutes = require('./routes/checkin');
+const moderationRoutes = require('./routes/moderation');
 
 const app = express();
 app.set('trust proxy', 1);
@@ -143,6 +144,7 @@ app.use('/api/flocks', apiLimiter, flockRoutes);
 // break the anonymous NFC GET below.
 app.use('/api/sensors', apiLimiter, sensorRoutes);              // Pi sensor ingest (x-api-key) + read APIs (JWT)
 app.use('/api/checkin', apiLimiter, checkinRoutes);             // NFC tap + manual venue check-in (anon-friendly GET)
+app.use('/api', apiLimiter, moderationRoutes);  // /api/reports, /api/blocks/* — before messages catch-all
 app.use('/api', apiLimiter, messageRoutes);     // Handles /api/flocks/:id/messages, /api/messages/:id/react, /api/dm/*
 app.use('/api/users', apiLimiter, userRoutes);
 app.use('/api/flocks', apiLimiter, venueRoutes); // Handles /api/flocks/:id/vote, /api/flocks/:id/votes
@@ -579,6 +581,64 @@ async function runMigrations() {
       await pool.query('CREATE INDEX IF NOT EXISTS idx_venue_checkins_created ON venue_checkins(created_at)');
       console.log('Sensor system migration complete');
     } catch (e) { console.error('Sensor system migration error:', e.message); }
+
+    // UGC safety + moderation (Apple 1.2 / Google UGC policy): reports, blocks,
+    // audit log, hidden-content flags, terms acceptance, DOB age gate, ban flag.
+    try {
+      await pool.query(`CREATE TABLE IF NOT EXISTS content_reports (
+        id SERIAL PRIMARY KEY,
+        reporter_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+        reported_user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+        content_type VARCHAR(20) NOT NULL CHECK (content_type IN ('flock_message','dm','profile','story')),
+        content_id INTEGER,
+        reason VARCHAR(50) NOT NULL,
+        details TEXT,
+        status VARCHAR(20) NOT NULL DEFAULT 'open' CHECK (status IN ('open','under_review','resolved','dismissed')),
+        handled_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+        resolved_at TIMESTAMPTZ,
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      )`);
+      await pool.query('CREATE INDEX IF NOT EXISTS idx_content_reports_status ON content_reports(status)');
+      await pool.query('CREATE INDEX IF NOT EXISTS idx_content_reports_reported_user ON content_reports(reported_user_id)');
+
+      await pool.query(`CREATE TABLE IF NOT EXISTS user_blocks (
+        id SERIAL PRIMARY KEY,
+        blocker_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+        blocked_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        UNIQUE(blocker_id, blocked_id)
+      )`);
+      await pool.query('CREATE INDEX IF NOT EXISTS idx_user_blocks_blocker ON user_blocks(blocker_id)');
+      await pool.query('CREATE INDEX IF NOT EXISTS idx_user_blocks_blocked ON user_blocks(blocked_id)');
+
+      await pool.query(`CREATE TABLE IF NOT EXISTS moderation_actions (
+        id SERIAL PRIMARY KEY,
+        report_id INTEGER REFERENCES content_reports(id) ON DELETE SET NULL,
+        moderator_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+        target_user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+        action VARCHAR(30) NOT NULL CHECK (action IN ('content_hidden','content_removed','user_warned','user_banned','user_unbanned','dismissed')),
+        content_type VARCHAR(20),
+        content_id INTEGER,
+        reason TEXT,
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      )`);
+      await pool.query('CREATE INDEX IF NOT EXISTS idx_moderation_actions_target ON moderation_actions(target_user_id)');
+
+      // Hidden-content flags so moderators can take content down without deleting it
+      await pool.query(`ALTER TABLE messages ADD COLUMN IF NOT EXISTS is_hidden BOOLEAN DEFAULT false`).catch(() => {});
+      await pool.query(`ALTER TABLE direct_messages ADD COLUMN IF NOT EXISTS is_hidden BOOLEAN DEFAULT false`).catch(() => {});
+      await pool.query(`ALTER TABLE stories ADD COLUMN IF NOT EXISTS is_hidden BOOLEAN DEFAULT false`).catch(() => {});
+
+      // Compliance columns on users
+      await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS terms_accepted_at TIMESTAMPTZ`).catch(() => {});
+      await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS date_of_birth DATE`).catch(() => {});
+      await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS is_banned BOOLEAN DEFAULT false`).catch(() => {});
+      await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS banned_at TIMESTAMPTZ`).catch(() => {});
+      // D-lite entitlement (dormant in v1.0) + C1 Apple token revocation
+      await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS is_premium BOOLEAN DEFAULT false`).catch(() => {});
+      await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS apple_refresh_token TEXT`).catch(() => {});
+      console.log('Moderation + compliance migration complete');
+    } catch (e) { console.error('Moderation migration error:', e.message); }
 
     // Ensure admin account has admin role
     await pool.query(`UPDATE users SET role = 'admin' WHERE LOWER(email) = LOWER('bansaljayden@gmail.com') AND role != 'admin'`).catch(() => {});
