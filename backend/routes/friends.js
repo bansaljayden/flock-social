@@ -4,6 +4,7 @@ const pool = require('../config/database');
 const { authenticate } = require('../middleware/auth');
 
 const { pushIfOffline } = require('../services/pushHelper');
+const { isBlockedBetween, getInvisibleUserIds } = require('../utils/blocks');
 
 const router = express.Router();
 router.use(authenticate);
@@ -46,6 +47,11 @@ router.post('/request',
       const userCheck = await pool.query('SELECT id, name FROM users WHERE id = $1', [user_id]);
       if (userCheck.rows.length === 0) {
         return res.status(404).json({ error: 'User not found' });
+      }
+
+      // Mutual block — can't friend someone you (or they) blocked.
+      if (await isBlockedBetween(req.user.id, user_id)) {
+        return res.status(403).json({ error: 'You can no longer connect with this user.' });
       }
 
       // Check if a friendship already exists in either direction
@@ -154,7 +160,9 @@ router.get('/', async (req, res) => {
        ORDER BY u.name ASC`,
       [req.user.id]
     );
-    res.json({ friends: result.rows });
+    // Mutual invisibility — hide blocked users from the friends list.
+    const invisible = new Set(await getInvisibleUserIds(req.user.id));
+    res.json({ friends: result.rows.filter((f) => !invisible.has(f.id)) });
   } catch (err) {
     console.error('Get friends error:', err);
     res.status(500).json({ error: 'Failed to get friends' });
@@ -342,6 +350,11 @@ router.post('/add-by-code',
       const userCheck = await pool.query('SELECT id, name FROM users WHERE id = $1', [targetUserId]);
       if (userCheck.rows.length === 0) {
         return res.status(404).json({ error: 'No user found with this code' });
+      }
+
+      // Mutual block — can't friend someone you (or they) blocked.
+      if (await isBlockedBetween(req.user.id, targetUserId)) {
+        return res.status(403).json({ error: 'You can no longer connect with this user.' });
       }
 
       // Reuse friend request logic

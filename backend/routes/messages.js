@@ -3,6 +3,8 @@ const { body, param, query, validationResult } = require('express-validator');
 const pool = require('../config/database');
 const { authenticate } = require('../middleware/auth');
 const { stripHtml } = require('../utils/sanitize');
+const { rejectIfProfane } = require('../utils/moderation');
+const { isBlockedBetween, getInvisibleUserIds } = require('../utils/blocks');
 
 const router = express.Router();
 
@@ -63,7 +65,8 @@ router.get('/flocks/:id/messages',
       }
 
       const messagesResult = await pool.query(messagesQuery, params);
-      const messages = messagesResult.rows;
+      // Exclude moderator-hidden messages (A6 takedown).
+      const messages = messagesResult.rows.filter((m) => !m.is_hidden);
 
       // Fetch reactions for all returned messages in one query
       if (messages.length > 0) {
@@ -122,6 +125,9 @@ router.post('/flocks/:id/messages',
       }
 
       const { message_text, message_type, venue_data, image_url } = req.body;
+
+      // UGC text filter (Apple 1.2) — reject objectionable content before storing.
+      if (rejectIfProfane(res, message_text)) return;
 
       const result = await pool.query(
         `INSERT INTO messages (flock_id, sender_id, message_text, message_type, venue_data, image_url)
@@ -288,10 +294,14 @@ router.get('/dm', async (req, res) => {
       unread: unreadMap[r.other_id] || 0,
     }));
 
-    // Sort by most recent message
-    conversations.sort((a, b) => new Date(b.lastMessageTime) - new Date(a.lastMessageTime));
+    // Hide conversations with users blocked in either direction (mutual invisibility).
+    const invisible = new Set(await getInvisibleUserIds(req.user.id));
+    const visible = conversations.filter((c) => !invisible.has(c.userId));
 
-    res.json({ conversations });
+    // Sort by most recent message
+    visible.sort((a, b) => new Date(b.lastMessageTime) - new Date(a.lastMessageTime));
+
+    res.json({ conversations: visible });
   } catch (err) {
     console.error('Get DM conversations error:', err);
     res.status(500).json({ error: 'Failed to get conversations' });
@@ -310,6 +320,11 @@ router.get('/dm/:userId',
       const otherUserId = parseInt(req.params.userId);
       const limit = parseInt(req.query.limit) || 50;
       const before = req.query.before ? parseInt(req.query.before) : null;
+
+      // Mutual block: hide the conversation entirely if either side blocked the other.
+      if (await isBlockedBetween(req.user.id, otherUserId)) {
+        return res.json({ messages: [], blocked: true });
+      }
 
       let dmQuery;
       let params;
@@ -338,7 +353,8 @@ router.get('/dm/:userId',
       }
 
       const result = await pool.query(dmQuery, params);
-      const messages = result.rows;
+      // Exclude moderator-hidden DMs (A6 takedown).
+      const messages = result.rows.filter((m) => !m.is_hidden);
 
       // Fetch reactions for all returned DMs
       if (messages.length > 0) {
@@ -421,7 +437,15 @@ router.post('/dm/:userId',
         return res.status(404).json({ error: 'User not found' });
       }
 
+      // Mutual block: if either user blocked the other, no DMs in either direction.
+      if (await isBlockedBetween(req.user.id, receiverId)) {
+        return res.status(403).json({ error: 'You can no longer message this user.' });
+      }
+
       const { message_text, message_type, venue_data, image_url, reply_to_id } = req.body;
+
+      // UGC text filter (Apple 1.2) — reject objectionable content before storing.
+      if (rejectIfProfane(res, message_text)) return;
 
       const result = await pool.query(
         `INSERT INTO direct_messages (sender_id, receiver_id, message_text, message_type, venue_data, image_url, reply_to_id)
