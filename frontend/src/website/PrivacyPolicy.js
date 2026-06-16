@@ -129,7 +129,7 @@ export default function PrivacyPolicy() {
       <section>
         <h2>6. Your choices and rights</h2>
         <ul>
-          <li><strong>Access, correction, export, deletion:</strong> you can request any of these by emailing <a href={`mailto:${SUPPORT_EMAIL}`}>{SUPPORT_EMAIL}</a>. Account deletion is also available inside the app under Settings.</li>
+          <li><strong>Access, correction, export, deletion:</strong> you can request any of these by emailing <a href={`mailto:${SUPPORT_EMAIL}`}>{SUPPORT_EMAIL}</a>. You can delete your account in the app (Profile &rarr; Delete account) or from our <a href="/delete-account">account deletion page</a>.</li>
           <li><strong>Push notifications:</strong> turn off in your device settings or inside Flock.</li>
           <li><strong>Live location:</strong> stop sharing at any time from within the flock.</li>
           <li><strong>Marketing email:</strong> we don't send marketing email. Transactional email (security, SOS) cannot be turned off while your account is active.</li>
