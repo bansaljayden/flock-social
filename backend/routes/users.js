@@ -7,6 +7,7 @@ const fs = require('fs');
 const pool = require('../config/database');
 const { authenticate } = require('../middleware/auth');
 const { stripHtml, sanitizeArray } = require('../utils/sanitize');
+const { rejectIfProfane } = require('../utils/moderation');
 
 const router = express.Router();
 const SALT_ROUNDS = 10;
@@ -130,6 +131,10 @@ router.put('/profile',
       }
 
       const { name, email, phone, interests, current_password, new_password } = req.body;
+
+      // UGC text filter on display name (Apple 1.2).
+      if (name && rejectIfProfane(res, name)) return;
+
       const safeInterests = interests ? sanitizeArray(interests) : null;
 
       // Fetch current user with password
@@ -538,6 +543,29 @@ router.patch('/settings', async (req, res) => {
   } catch (err) {
     console.error('Update user settings error:', err);
     res.status(500).json({ error: 'Failed to update settings' });
+  }
+});
+
+// DELETE /api/users/me - Permanently delete the authenticated user's account.
+// Hard-deletes the user row; ON DELETE CASCADE removes their flocks, memberships,
+// messages, DMs, friendships, budgets, trusted contacts, device tokens, settings,
+// etc. (a few FKs are ON DELETE SET NULL, which de-attribute content rather than
+// delete it). Required for Apple Guideline 5.1.1(v) and Google Play's account-
+// deletion policy. Irreversible.
+router.delete('/me', async (req, res) => {
+  try {
+    const result = await pool.query(
+      'DELETE FROM users WHERE id = $1 RETURNING id',
+      [req.user.id]
+    );
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Account not found' });
+    }
+    console.log(`Account deleted: user ${req.user.id} at ${new Date().toISOString()}`);
+    res.json({ message: 'Account deleted' });
+  } catch (err) {
+    console.error('Delete account error:', err);
+    res.status(500).json({ error: 'Failed to delete account' });
   }
 });
 
