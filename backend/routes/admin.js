@@ -99,4 +99,110 @@ router.get('/analytics', async (req, res) => {
   }
 });
 
+// ---------------------------------------------------------------------------
+// Moderation queue (A6) — Apple 1.2 / Google UGC. Admin-only (requireAdmin above).
+// ---------------------------------------------------------------------------
+
+// GET /api/admin/reports?status=open — moderation queue
+router.get('/reports', async (req, res) => {
+  try {
+    const { status } = req.query;
+    const params = [];
+    let where = '';
+    if (status && ['open', 'under_review', 'resolved', 'dismissed'].includes(status)) {
+      params.push(status);
+      where = 'WHERE r.status = $1';
+    }
+    const result = await pool.query(
+      `SELECT r.*, ru.name AS reporter_name,
+              tu.name AS reported_user_name, tu.is_banned AS reported_user_banned
+       FROM content_reports r
+       LEFT JOIN users ru ON ru.id = r.reporter_id
+       LEFT JOIN users tu ON tu.id = r.reported_user_id
+       ${where}
+       ORDER BY (r.status = 'open') DESC, r.created_at DESC
+       LIMIT 200`,
+      params
+    );
+    // Counts for the queue header
+    const counts = await pool.query(
+      `SELECT status, COUNT(*)::int AS count FROM content_reports GROUP BY status`
+    );
+    res.json({ reports: result.rows, counts: counts.rows });
+  } catch (err) {
+    console.error('Admin list reports error:', err);
+    res.status(500).json({ error: 'Failed to fetch reports' });
+  }
+});
+
+// PUT /api/admin/reports/:id — take a moderation action:
+//   action ∈ 'hide' (take content down) | 'ban' | 'unban' | 'dismiss'
+router.put('/reports/:id', async (req, res) => {
+  try {
+    const reportId = parseInt(req.params.id);
+    const { action, reason } = req.body;
+    if (!['hide', 'ban', 'unban', 'dismiss'].includes(action)) {
+      return res.status(400).json({ error: 'Invalid action' });
+    }
+
+    const rep = await pool.query('SELECT * FROM content_reports WHERE id = $1', [reportId]);
+    if (rep.rows.length === 0) return res.status(404).json({ error: 'Report not found' });
+    const report = rep.rows[0];
+
+    let actionType;
+    if (action === 'hide') {
+      const table = { flock_message: 'messages', dm: 'direct_messages', story: 'stories' }[report.content_type];
+      if (table && report.content_id) {
+        await pool.query(`UPDATE ${table} SET is_hidden = true WHERE id = $1`, [report.content_id]);
+      }
+      actionType = 'content_hidden';
+    } else if (action === 'ban') {
+      if (report.reported_user_id) {
+        await pool.query('UPDATE users SET is_banned = true, banned_at = NOW() WHERE id = $1', [report.reported_user_id]);
+      }
+      actionType = 'user_banned';
+    } else if (action === 'unban') {
+      if (report.reported_user_id) {
+        await pool.query('UPDATE users SET is_banned = false, banned_at = NULL WHERE id = $1', [report.reported_user_id]);
+      }
+      actionType = 'user_unbanned';
+    } else {
+      actionType = 'dismissed';
+    }
+
+    const newStatus = action === 'dismiss' ? 'dismissed' : 'resolved';
+    await pool.query(
+      'UPDATE content_reports SET status = $1, handled_by = $2, resolved_at = NOW() WHERE id = $3',
+      [newStatus, req.user.id, reportId]
+    );
+    await pool.query(
+      `INSERT INTO moderation_actions (report_id, moderator_id, target_user_id, action, content_type, content_id, reason)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+      [reportId, req.user.id, report.reported_user_id || null, actionType, report.content_type, report.content_id || null, reason || null]
+    );
+
+    res.json({ message: 'Action applied', status: newStatus, action: actionType });
+  } catch (err) {
+    console.error('Admin moderate error:', err);
+    res.status(500).json({ error: 'Failed to apply action' });
+  }
+});
+
+// GET /api/admin/moderation-actions — audit log
+router.get('/moderation-actions', async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT ma.*, mod.name AS moderator_name, tu.name AS target_user_name
+       FROM moderation_actions ma
+       LEFT JOIN users mod ON mod.id = ma.moderator_id
+       LEFT JOIN users tu ON tu.id = ma.target_user_id
+       ORDER BY ma.created_at DESC LIMIT 200`
+    );
+    res.json({ actions: result.rows });
+  } catch (err) {
+    console.error('Admin audit log error:', err);
+    res.status(500).json({ error: 'Failed to fetch audit log' });
+  }
+});
+
 module.exports = router;
