@@ -8,6 +8,7 @@ const pool = require('../config/database');
 const { authenticate } = require('../middleware/auth');
 const { stripHtml, sanitizeArray } = require('../utils/sanitize');
 const { rejectIfProfane, moderateImage, IMAGE_REJECTED_MESSAGE } = require('../utils/moderation');
+const { revokeAppleToken } = require('../services/appleAuth');
 
 const router = express.Router();
 const SALT_ROUNDS = 10;
@@ -563,6 +564,17 @@ router.patch('/settings', async (req, res) => {
 // deletion policy. Irreversible.
 router.delete('/me', async (req, res) => {
   try {
+    // Apple 5.1.1(v): revoke Sign in with Apple tokens before deleting the row.
+    const u = await pool.query('SELECT oauth_provider, apple_refresh_token FROM users WHERE id = $1', [req.user.id]);
+    if (u.rows.length === 0) return res.status(404).json({ error: 'Account not found' });
+    if (u.rows[0].oauth_provider === 'apple' && u.rows[0].apple_refresh_token) {
+      try { await revokeAppleToken(u.rows[0].apple_refresh_token); } catch (_) { /* never block deletion */ }
+    }
+
+    // messages.sender_id is ON DELETE SET NULL (anonymize). Explicitly remove the
+    // user's flock messages so no authored content is retained after deletion.
+    await pool.query('DELETE FROM messages WHERE sender_id = $1', [req.user.id]).catch(() => {});
+
     const result = await pool.query(
       'DELETE FROM users WHERE id = $1 RETURNING id',
       [req.user.id]
