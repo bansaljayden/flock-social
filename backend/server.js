@@ -40,6 +40,7 @@ const availabilityRoutes = require('./routes/availability');
 const sensorRoutes = require('./routes/sensors');
 const checkinRoutes = require('./routes/checkin');
 const moderationRoutes = require('./routes/moderation');
+const revenuecatRoutes = require('./routes/revenuecat');
 
 const app = express();
 app.set('trust proxy', 1);
@@ -142,6 +143,7 @@ app.use('/api/flocks', apiLimiter, flockRoutes);
 // catch-all at /api — that router's `router.use(authenticate)` intercepts every
 // /api/* request without a Bearer token, which would 401 the Pi (x-api-key) and
 // break the anonymous NFC GET below.
+app.use('/api/revenuecat', revenuecatRoutes);                  // RevenueCat webhook (shared-secret, no JWT) — before messages catch-all
 app.use('/api/sensors', apiLimiter, sensorRoutes);              // Pi sensor ingest (x-api-key) + read APIs (JWT)
 app.use('/api/checkin', apiLimiter, checkinRoutes);             // NFC tap + manual venue check-in (anon-friendly GET)
 app.use('/api', apiLimiter, moderationRoutes);  // /api/reports, /api/blocks/* — before messages catch-all
