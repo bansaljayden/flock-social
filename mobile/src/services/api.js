@@ -79,10 +79,10 @@ export async function googleLogin(credential) {
 // `identityToken` is the JWT that comes back from
 // @invertase/react-native-apple-authentication. Backend verifies it via
 // Apple's JWKS, upserts user by `sub`, returns Flock JWT.
-export async function appleLogin({ identityToken, fullName }) {
+export async function appleLogin({ identityToken, fullName, authorizationCode }) {
   const data = await request('/api/auth/apple', {
     method: 'POST',
-    body: JSON.stringify({ identityToken, fullName }),
+    body: JSON.stringify({ identityToken, fullName, authorizationCode }),
   });
   await setToken(data.token);
   return data;

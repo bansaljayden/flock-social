@@ -67,11 +67,12 @@ export default function LoginScreen({ navigation }) {
         requestedScopes: [appleAuth.Scope.EMAIL, appleAuth.Scope.FULL_NAME],
       });
 
-      const { identityToken, fullName } = res;
+      const { identityToken, fullName, authorizationCode } = res;
       if (!identityToken) throw new Error('Apple did not return an identity token');
 
       await appleLogin({
         identityToken,
+        authorizationCode,
         fullName: fullName ? { givenName: fullName.givenName, familyName: fullName.familyName } : null,
       });
     } catch (e) {
