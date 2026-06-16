@@ -26,6 +26,7 @@ import {
   onUserTyping,
   onUserStoppedTyping,
 } from '../../services/socket';
+import ModerationMenu from '../../components/common/ModerationMenu';
 
 // Phase 2 minimum: text-only chat with real-time delivery + typing indicator.
 // Polish pass adds: image messages, emoji reactions, venue cards in chat,
@@ -46,6 +47,7 @@ export default function FlockChatScreen({ route, navigation }) {
   const [draft, setDraft] = useState('');
   const [sending, setSending] = useState(false);
   const [typingUsers, setTypingUsers] = useState([]); // [{ userId, name }]
+  const [modTarget, setModTarget] = useState(null); // report/block target
   const typingTimerRef = useRef(null);
 
   // Initial load
@@ -149,11 +151,16 @@ export default function FlockChatScreen({ route, navigation }) {
               {item.sender_name}
             </Text>
           )}
-          <View style={bubbleStyle}>
+          <TouchableOpacity
+            activeOpacity={mine ? 1 : 0.85}
+            onLongPress={mine ? undefined : () => setModTarget({ userId: item.sender_id, name: item.sender_name, contentType: 'flock_message', contentId: item.id })}
+            delayLongPress={300}
+            style={bubbleStyle}
+          >
             <Text style={[typography.body, { color: mine ? 'white' : colors.msgReceivedText }]}>
               {item.content || item.message_text}
             </Text>
-          </View>
+          </TouchableOpacity>
         </View>
       </View>
     );
@@ -213,6 +220,12 @@ export default function FlockChatScreen({ route, navigation }) {
           </TouchableOpacity>
         </View>
       </KeyboardAvoidingView>
+
+      <ModerationMenu
+        target={modTarget}
+        onClose={() => setModTarget(null)}
+        onBlocked={(id) => setMessages((cur) => cur.filter((m) => m.sender_id !== id))}
+      />
     </SafeAreaView>
   );
 }
