@@ -14,12 +14,16 @@ const authenticate = async (req, res, next) => {
 
     // Confirm user still exists in DB
     const result = await pool.query(
-      'SELECT id, email, name, role FROM users WHERE id = $1',
+      'SELECT id, email, name, role, is_banned FROM users WHERE id = $1',
       [decoded.userId]
     );
 
     if (result.rows.length === 0) {
       return res.status(401).json({ error: 'User no longer exists' });
+    }
+    // Banned-user enforcement (A6): a ban locks the account out on the next request.
+    if (result.rows[0].is_banned) {
+      return res.status(403).json({ error: 'This account has been suspended for violating our community guidelines.' });
     }
 
     req.user = result.rows[0];
@@ -48,12 +52,15 @@ const authenticateSocket = async (socket, next) => {
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
 
     const result = await pool.query(
-      'SELECT id, email, name, role, profile_image_url FROM users WHERE id = $1',
+      'SELECT id, email, name, role, profile_image_url, is_banned FROM users WHERE id = $1',
       [decoded.userId]
     );
 
     if (result.rows.length === 0) {
       return next(new Error('User not found'));
+    }
+    if (result.rows[0].is_banned) {
+      return next(new Error('Account suspended'));
     }
 
     socket.user = result.rows[0];
