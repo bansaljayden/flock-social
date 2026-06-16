@@ -67,8 +67,8 @@ router.post('/signup', signupValidation, async (req, res) => {
     const hashedPassword = await bcrypt.hash(password, SALT_ROUNDS);
 
     const result = await pool.query(
-      `INSERT INTO users (email, password, name, phone, interests)
-       VALUES ($1, $2, $3, $4, $5)
+      `INSERT INTO users (email, password, name, phone, interests, terms_accepted_at)
+       VALUES ($1, $2, $3, $4, $5, NOW())
        RETURNING id, email, name, phone, interests, role, profile_image_url, created_at`,
       [email, hashedPassword, name, phone || null, safeInterests]
     );
@@ -193,8 +193,8 @@ router.post('/google', [
       } else {
         // New user — create account
         result = await pool.query(
-          `INSERT INTO users (email, name, oauth_provider, oauth_id, profile_image_url)
-           VALUES ($1, $2, 'google', $3, $4)
+          `INSERT INTO users (email, name, oauth_provider, oauth_id, profile_image_url, terms_accepted_at)
+           VALUES ($1, $2, 'google', $3, $4, NOW())
            RETURNING *`,
           [email, name, googleId, picture]
         );
@@ -298,8 +298,8 @@ router.post('/apple', [
         || (email ? email.split('@')[0] : 'Friend');
 
       result = await pool.query(
-        `INSERT INTO users (email, name, oauth_provider, oauth_id)
-         VALUES ($1, $2, 'apple', $3)
+        `INSERT INTO users (email, name, oauth_provider, oauth_id, terms_accepted_at)
+         VALUES ($1, $2, 'apple', $3, NOW())
          RETURNING *`,
         [email, fallbackName, appleId]
       );
