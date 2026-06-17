@@ -1,4 +1,9 @@
 {
   "name": "Flock",
-  "displayName": "Flock"
+  "displayName": "Flock",
+  "extra": {
+    "eas": {
+      "projectId": "366ecea6-bd97-4e51-bdf4-31bda695ede2"
+    }
+  }
 }
