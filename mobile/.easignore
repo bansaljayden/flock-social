@@ -1,0 +1,25 @@
+# EAS reinstalls dependencies in the cloud — never upload these.
+node_modules/
+
+# Native build artifacts (regenerated during the cloud build)
+android/build/
+android/.gradle/
+android/app/build/
+android/app/.cxx/
+android/.cxx/
+android/build-attempt.log
+ios/build/
+ios/Pods/
+ios/DerivedData/
+
+# Local-only / machine-specific
+.expo/
+.vscode/
+.idea/
+*.log
+npm-debug.*
+yarn-debug.*
+yarn-error.*
+
+# Local Android SDK pointer (cloud sets its own)
+android/local.properties

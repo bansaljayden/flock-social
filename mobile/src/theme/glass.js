@@ -2,9 +2,12 @@
 // approximate with: layered semi-transparent fill + linear-gradient overlay
 // for the top specular + multi-layer shadow + edge stroke.
 //
-// On iOS we ALSO drop a BlurView behind the content (via @react-native-community/blur)
-// for a real blur effect. On Android the BlurView is unreliable, so we fall back
-// to the layered fill alone — looks fine, just less depth.
+// Note: a real backdrop blur (@react-native-community/blur) was removed — that
+// library's BlurView dependency fails to resolve on JitPack and is semi-abandoned.
+// The layered fill + gradient + shadow below reads as glass on its own. If a true
+// blur is wanted later, use expo-blur (works on both platforms, no JitPack).
+//
+// blurProps below is retained as harmless config in case a blur lib is reintroduced.
 //
 // Each variant returns a style object you can spread onto a TouchableOpacity:
 //   <TouchableOpacity style={glass.primary(colors).container}>
