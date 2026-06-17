@@ -102,6 +102,9 @@ const signup = (name, email, dob) =>
   r = await signup('Carol', 'carol@e2e.test', '1998-03-03');
   const tC = r.data?.token, idC = r.data?.user?.id;
   check('Carol signup', r.status === 201, r);
+  r = await signup('Dave', 'dave@e2e.test', '1997-04-04');
+  const tD = r.data?.token;
+  check('Dave signup', r.status === 201, r);
 
   const meta = await pool.query('SELECT date_of_birth, terms_accepted_at FROM users WHERE id = $1', [idA]);
   check('DOB persisted on row', !!meta.rows[0]?.date_of_birth, meta.rows[0]);
@@ -112,6 +115,16 @@ const signup = (name, email, dob) =>
   const flockId = r.data?.flock?.id ?? r.data?.id ?? r.data?.flock_id;
   check('Alice creates flock', r.status === 201 && !!flockId, r);
   await pool.query("INSERT INTO flock_members (flock_id, user_id, status) VALUES ($1,$2,'accepted'),($1,$3,'accepted')", [flockId, idB, idC]);
+
+  // --- Authorization boundaries + input validation ---
+  r = await req('POST', `/api/flocks/${flockId}/messages`, { token: tD, body: { message_text: 'i am not a member' } });
+  check('non-member cannot post to flock (403)', r.status === 403, r);
+  r = await req('GET', '/api/admin/reports', { token: tB });
+  check('non-admin blocked from admin reports (403)', r.status === 403, r);
+  r = await req('POST', `/api/blocks/${idA}`, { token: tA });
+  check('cannot block yourself (400)', r.status === 400, r);
+  r = await req('POST', '/api/reports', { token: tB, body: { reason: 'harassment' } });
+  check('report without content_type rejected (400)', r.status === 400, r);
 
   // --- Content filter (Carol posts) ---
   r = await req('POST', `/api/flocks/${flockId}/messages`, { token: tC, body: { message_text: 'you piece of shit' } });
@@ -130,6 +143,9 @@ const signup = (name, email, dob) =>
   check('Bob blocks Carol (201)', r.status === 201, r);
   r = await req('POST', `/api/dm/${idB}`, { token: tC, body: { message_text: 'hi' } });
   check('blocked user DM rejected (403)', r.status === 403, r);
+  r = await req('GET', `/api/flocks/${flockId}/messages`, { token: tB });
+  const carolVisibleWhileBlocked = (r.data?.messages || []).some(m => m.id === msgC);
+  check('blocked user message hidden in shared flock', r.status === 200 && !carolVisibleWhileBlocked, { carolVisibleWhileBlocked });
   r = await req('DELETE', `/api/blocks/${idC}`, { token: tB });
   check('Bob unblocks Carol (200)', r.status === 200, r);
   r = await req('POST', `/api/dm/${idB}`, { token: tC, body: { message_text: 'hi again' } });
