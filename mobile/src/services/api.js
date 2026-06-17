@@ -8,10 +8,11 @@
 // is identical to the web version.
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { API_URL } from '../config/env';
 
-// TODO: read from .env via react-native-config when wired in Phase 6.
-// For now, hardcoded prod URL works for development.
-export const BASE_URL = 'https://flock-app-production.up.railway.app';
+// Base URL lives in config/env.js — release builds always use prod; debug builds
+// can target a local/staging backend via DEV_API_URL there (no edits here).
+export const BASE_URL = API_URL;
 
 const TOKEN_KEY = 'flockToken';
 
