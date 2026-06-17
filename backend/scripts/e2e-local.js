@@ -64,6 +64,7 @@ const signup = (name, email, dob) =>
   process.env.NODE_ENV = 'development';
   process.env.PORT = String(PORT);
   process.env.JWT_SECRET = 'e2e-test-secret';
+  process.env.IMAGE_MODERATION_REQUIRED = 'true'; // exercise the fail-closed image path (no provider configured)
 
   // Base schema first — runMigrations() only ADDS to existing tables. Fresh DBs
   // (local/staging) need schema.sql; prod already has it.
@@ -132,6 +133,17 @@ const signup = (name, email, dob) =>
   r = await req('POST', `/api/flocks/${flockId}/messages`, { token: tC, body: { message_text: 'meeting at 8 works for me' } });
   const msgC = r.data?.message?.id;
   check('clean flock message accepted (201)', r.status === 201 && !!msgC, r);
+
+  // Image moderation INTEGRATION: with IMAGE_MODERATION_REQUIRED + no provider,
+  // the upload route must FAIL-CLOSED. Proves moderateImage is wired into the
+  // upload path (a valid 1x1 PNG clears the magic-byte check, then is rejected).
+  {
+    const png = Buffer.from('89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c4890000000a49444154789c63000100000500010d0a2db40000000049454e44ae426082', 'hex');
+    const fd = new FormData();
+    fd.append('image', new Blob([png], { type: 'image/png' }), 'x.png');
+    const ir = await fetch(BASE + '/api/users/upload-image', { method: 'POST', headers: { Authorization: 'Bearer ' + tA }, body: fd });
+    check('image upload fail-closed when moderation required + unconfigured (400)', ir.status === 400, { status: ir.status });
+  }
 
   // --- Report (Bob reports Carol's message) ---
   r = await req('POST', '/api/reports', { token: tB, body: { content_type: 'flock_message', content_id: msgC, reported_user_id: idC, reason: 'harassment' } });
