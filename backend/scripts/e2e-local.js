@@ -182,6 +182,16 @@ const signup = (name, email, dob) =>
   const bobMsgs = await pool.query('SELECT COUNT(*)::int n FROM direct_messages WHERE sender_id = $1', [idB]);
   check('deleted user content cascade-cleared', bobMsgs.rows[0].n === 0, bobMsgs.rows[0]);
 
+  // Verify the reviewer seed script actually runs against a migrated DB (it's the
+  // App Review demo fixture — it must work). Child inherits DATABASE_URL=embedded.
+  try {
+    require('child_process').execSync('node scripts/seed-review-account.js', { cwd: path.join(__dirname, '..'), env: process.env, stdio: 'ignore' });
+    const seeded = await pool.query("SELECT COUNT(*)::int n FROM users WHERE email IN ('review@flockcorp.com','buddy@flockcorp.com')");
+    check('reviewer seed script runs + creates accounts', seeded.rows[0].n === 2, seeded.rows[0]);
+  } catch (e) {
+    check('reviewer seed script runs + creates accounts', false, { err: String(e.message).slice(0, 140) });
+  }
+
   console.log(`\nE2E: ${passed} passed, ${failed} failed`);
   await pg.stop();
   process.exit(failed === 0 ? 0 : 1);
