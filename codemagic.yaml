@@ -52,16 +52,15 @@ workflows:
       - name: Set up code signing (fresh cert + App Store profile)
         script: |
           keychain initialize
-          # Codemagic has no private key for the EAS-created distribution cert, so
-          # create a brand-new one whose key we control (saved to MobileDevice/Certificates),
-          # then create a matching App Store provisioning profile and apply it.
-          app-store-connect create-certificate \
-            --type IOS_DISTRIBUTION \
-            --save
+          # The EAS-created distribution cert's private key isn't available to Codemagic.
+          # Generate a private key we own, then create a NEW distribution certificate and
+          # matching App Store provisioning profile from it, and apply them to the project.
+          openssl genrsa -out /tmp/cert_key.pem 2048
           app-store-connect fetch-signing-files "$BUNDLE_ID" \
             --type IOS_APP_STORE \
+            --certificate-key=@file:/tmp/cert_key.pem \
             --create
-          keychain add-certificates
+          keychain add-certificates --certificate-key=@file:/tmp/cert_key.pem
           xcode-project use-profiles
       - name: Build signed IPA
         script: >
