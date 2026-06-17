@@ -32,12 +32,10 @@ workflows:
     integrations:
       app_store_connect: FlockASC
     environment:
-      ios_signing:
-        distribution_type: app_store
-        bundle_identifier: com.flockcorp.flock
       groups:
         - flock_web
       vars:
+        BUNDLE_ID: "com.flockcorp.flock"
         XCODE_PROJECT: "ios/App/App.xcodeproj"
         XCODE_SCHEME: "App"
         PUBLIC_URL: "."   # CRA → relative asset paths for the bundled WebView origin
@@ -51,8 +49,14 @@ workflows:
         script: npm run build
       - name: Capacitor sync iOS
         script: npx cap sync ios
-      - name: Set up signing profiles
-        script: xcode-project use-profiles
+      - name: Set up code signing (creates cert + profile if missing)
+        script: |
+          keychain initialize
+          app-store-connect fetch-signing-files "$BUNDLE_ID" \
+            --type IOS_APP_STORE \
+            --create
+          keychain add-certificates
+          xcode-project use-profiles
       - name: Build signed IPA
         script: >
           xcode-project build-ipa
