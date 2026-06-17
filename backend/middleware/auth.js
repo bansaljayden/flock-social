@@ -21,9 +21,14 @@ const authenticate = async (req, res, next) => {
     if (result.rows.length === 0) {
       return res.status(401).json({ error: 'User no longer exists' });
     }
-    // Banned-user enforcement (A6): a ban locks the account out on the next request.
+    // Banned-user enforcement (A6): a ban locks the account out on the next
+    // request — EXCEPT deleting their own account, which a banned user must still
+    // be able to do (right to erasure: Apple 5.1.1(v) / GDPR / Google).
     if (result.rows[0].is_banned) {
-      return res.status(403).json({ error: 'This account has been suspended for violating our community guidelines.' });
+      const isAccountDeletion = req.method === 'DELETE' && /\/users\/me\/?(\?|$)/.test(req.originalUrl || req.url || '');
+      if (!isAccountDeletion) {
+        return res.status(403).json({ error: 'This account has been suspended for violating our community guidelines.' });
+      }
     }
 
     req.user = result.rows[0];
