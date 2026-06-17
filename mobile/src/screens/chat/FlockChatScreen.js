@@ -15,7 +15,7 @@ import Icon from 'react-native-vector-icons/Feather';
 import { useTheme } from '../../context/ThemeContext';
 import { useAuth } from '../../context/AuthContext';
 import { useSocket } from '../../context/SocketContext';
-import { getMessages, sendMessage as apiSendMessage } from '../../services/api';
+import { getMessages, sendMessage as apiSendMessage, getBlockedUsers } from '../../services/api';
 import {
   joinFlock,
   leaveFlock,
@@ -49,6 +49,7 @@ export default function FlockChatScreen({ route, navigation }) {
   const [typingUsers, setTypingUsers] = useState([]); // [{ userId, name }]
   const [modTarget, setModTarget] = useState(null); // report/block target
   const typingTimerRef = useRef(null);
+  const blockedRef = useRef(new Set()); // ids I've blocked — filter their live socket messages
 
   // Initial load
   useEffect(() => {
@@ -65,6 +66,14 @@ export default function FlockChatScreen({ route, navigation }) {
     return () => { cancelled = true; };
   }, [flockId]);
 
+  // Load who I've blocked so live socket messages from them are filtered too
+  // (the REST read filters server-side; this keeps the real-time push consistent).
+  useEffect(() => {
+    getBlockedUsers()
+      .then((d) => { blockedRef.current = new Set((d?.blocked || []).map((b) => b.user_id)); })
+      .catch(() => {});
+  }, []);
+
   // Socket: join flock room, listen for messages + typing
   useEffect(() => {
     if (!flockId) return;
@@ -72,6 +81,7 @@ export default function FlockChatScreen({ route, navigation }) {
 
     const offNew = onNewMessage((msg) => {
       if (msg?.flock_id !== flockId) return;
+      if (blockedRef.current.has(msg.sender_id)) return; // mutual invisibility on the live socket
       setMessages((cur) => [msg, ...cur]);
     });
     const offTypingStart = onUserTyping((d) => {
@@ -224,7 +234,10 @@ export default function FlockChatScreen({ route, navigation }) {
       <ModerationMenu
         target={modTarget}
         onClose={() => setModTarget(null)}
-        onBlocked={(id) => setMessages((cur) => cur.filter((m) => m.sender_id !== id))}
+        onBlocked={(id) => {
+          blockedRef.current.add(id);
+          setMessages((cur) => cur.filter((m) => m.sender_id !== id));
+        }}
       />
     </SafeAreaView>
   );
