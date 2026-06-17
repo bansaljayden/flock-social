@@ -65,8 +65,11 @@ router.get('/flocks/:id/messages',
       }
 
       const messagesResult = await pool.query(messagesQuery, params);
-      // Exclude moderator-hidden messages (A6 takedown).
-      const messages = messagesResult.rows.filter((m) => !m.is_hidden);
+      // Exclude moderator-hidden messages (A6 takedown) AND messages from users
+      // blocked in either direction — mutual invisibility holds in group flocks
+      // too, not just DMs (A3).
+      const invisible = new Set(await getInvisibleUserIds(req.user.id));
+      const messages = messagesResult.rows.filter((m) => !m.is_hidden && !invisible.has(m.sender_id));
 
       // Fetch reactions for all returned messages in one query
       if (messages.length > 0) {
