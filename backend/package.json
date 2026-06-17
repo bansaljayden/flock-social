@@ -6,7 +6,10 @@
   "scripts": {
     "start": "node server.js",
     "dev": "nodemon server.js",
-    "db:init": "psql $DATABASE_URL -f database/schema.sql"
+    "db:init": "psql $DATABASE_URL -f database/schema.sql",
+    "test": "node --test",
+    "e2e": "node scripts/e2e-local.js",
+    "seed:review": "node scripts/seed-review-account.js"
   },
   "dependencies": {
     "@google/generative-ai": "^0.24.1",
