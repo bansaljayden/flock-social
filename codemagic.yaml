@@ -49,9 +49,15 @@ workflows:
         script: npm run build
       - name: Capacitor sync iOS
         script: npx cap sync ios
-      - name: Set up code signing (creates cert + profile if missing)
+      - name: Set up code signing (fresh cert + App Store profile)
         script: |
           keychain initialize
+          # Codemagic has no private key for the EAS-created distribution cert, so
+          # create a brand-new one whose key we control (saved to MobileDevice/Certificates),
+          # then create a matching App Store provisioning profile and apply it.
+          app-store-connect create-certificate \
+            --type IOS_DISTRIBUTION \
+            --save
           app-store-connect fetch-signing-files "$BUNDLE_ID" \
             --type IOS_APP_STORE \
             --create
