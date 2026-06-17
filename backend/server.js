@@ -96,6 +96,12 @@ app.use(express.urlencoded({ extended: true }));
 // Serve uploaded files (deny dotfiles, no directory listing)
 app.use('/uploads', express.static(path.join(__dirname, 'uploads'), { dotfiles: 'deny', index: false }));
 
+// Health check — defined BEFORE the authenticated /api/* routers so their auth
+// middleware doesn't shadow it with a 401 (caught by the local E2E harness).
+app.get('/api/health', (req, res) => {
+  res.json({ status: 'ok', timestamp: new Date().toISOString() });
+});
+
 // ---------------------------------------------------------------------------
 // Rate limiting (disabled in development)
 // ---------------------------------------------------------------------------
@@ -166,11 +172,6 @@ app.use('/api/admin', apiLimiter, adminRoutes);               // Handles /api/ad
 app.use('/api/venue-profile', apiLimiter, venueProfileRoutes); // Handles /api/venue-profile (venue owners)
 app.use('/api/venue-dashboard', apiLimiter, venueDashboardRoutes); // Handles promotions, events, reviews CRUD
 app.use('/api/availability', apiLimiter, availabilityRoutes); // 3-tap status pulse: down / maybe / not
-
-// Health check
-app.get('/api/health', (req, res) => {
-  res.json({ status: 'ok', timestamp: new Date().toISOString() });
-});
 
 // 404 handler
 app.use((req, res) => {
@@ -337,6 +338,10 @@ async function runMigrations() {
       await pool.query(`ALTER TABLE flocks ADD COLUMN IF NOT EXISTS budget_locked BOOLEAN DEFAULT false`);
       await pool.query(`ALTER TABLE flocks ADD COLUMN IF NOT EXISTS budget_ceiling DECIMAL(8,2)`);
       await pool.query(`ALTER TABLE flocks ADD COLUMN IF NOT EXISTS ghost_mode_enabled BOOLEAN DEFAULT false`);
+      // Venue columns the flock-create route writes but schema.sql lacks (drift:
+      // present in prod, missing on a fresh DB). Idempotent — no-op on prod.
+      await pool.query(`ALTER TABLE flocks ADD COLUMN IF NOT EXISTS venue_rating NUMERIC(2,1)`);
+      await pool.query(`ALTER TABLE flocks ADD COLUMN IF NOT EXISTS venue_photo_url TEXT`);
 
       await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS venmo_username VARCHAR(50)`);
       await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS cashapp_cashtag VARCHAR(50)`);
