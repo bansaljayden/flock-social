@@ -40,11 +40,11 @@ workflows:
         XCODE_SCHEME: "App"
         PUBLIC_URL: "."   # CRA → relative asset paths for the bundled WebView origin
         CI: "false"        # don't treat CRA build warnings as errors
-      node: 20             # Capacitor 8 CLI requires Node >= 20
+      node: 22             # Capacitor 8.4 CLI requires Node >= 22
       xcode: latest
     scripts:
       - name: Install web dependencies
-        script: npm ci
+        script: npm install --no-audit --no-fund
       - name: Build web app (relative asset paths)
         script: npm run build
       - name: Capacitor sync iOS
