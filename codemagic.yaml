@@ -49,16 +49,16 @@ workflows:
         script: npm run build
       - name: Capacitor sync iOS
         script: npx cap sync ios
-      - name: Set up code signing (fresh cert + App Store profile)
+      - name: Set up code signing (reuse pinned cert + App Store profile)
         script: |
           keychain initialize
-          # The EAS-created distribution cert's private key isn't available to Codemagic.
-          # Generate a private key we own, then create a NEW distribution certificate and
-          # matching App Store provisioning profile from it, and apply them to the project.
-          openssl genrsa -out /tmp/cert_key.pem 2048
+          # Use a PINNED private key (CM_CERTIFICATE_PRIVATE_KEY env var) so every build
+          # reuses ONE distribution certificate instead of minting a new one each run
+          # (Apple caps distribution certs at 3). First run creates the cert from this key;
+          # later runs find and reuse it because the key matches.
           app-store-connect fetch-signing-files "$BUNDLE_ID" \
             --type IOS_APP_STORE \
-            --certificate-key=@file:/tmp/cert_key.pem \
+            --certificate-key=@env:CM_CERTIFICATE_PRIVATE_KEY \
             --create
           keychain add-certificates
           xcode-project use-profiles
