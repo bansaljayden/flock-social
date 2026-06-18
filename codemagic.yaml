@@ -60,7 +60,7 @@ workflows:
             --type IOS_APP_STORE \
             --certificate-key=@file:/tmp/cert_key.pem \
             --create
-          keychain add-certificates --certificate-key=@file:/tmp/cert_key.pem
+          keychain add-certificates
           xcode-project use-profiles
       - name: Build signed IPA
         script: >
