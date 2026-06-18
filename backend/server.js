@@ -49,6 +49,13 @@ const allowedOrigins = [
   process.env.FRONTEND_URL || 'http://localhost:3000',
   'http://localhost:5173', // Vite dev server
   'https://flock-app-w65m.vercel.app',
+  // Capacitor native app shell origins (iOS uses capacitor://localhost,
+  // Android uses http(s)://localhost). Required or the app's API + Socket.io
+  // calls are blocked by CORS ("load failed" on login).
+  'capacitor://localhost',
+  'ionic://localhost',
+  'http://localhost',
+  'https://localhost',
 ];
 
 app.use(cors({
