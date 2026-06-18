@@ -68,7 +68,8 @@ workflows:
           --project "$XCODE_PROJECT"
           --scheme "$XCODE_SCHEME"
     artifacts:
-      - frontend/build/ios/ipa/*.ipa
+      - build/ios/ipa/*.ipa
+      - "**/*.ipa"
       - /tmp/xcodebuild_logs/*.log
     publishing:
       app_store_connect:
