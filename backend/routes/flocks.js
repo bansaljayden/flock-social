@@ -3,6 +3,7 @@ const { body, param, validationResult } = require('express-validator');
 const pool = require('../config/database');
 const { authenticate } = require('../middleware/auth');
 const { stripHtml } = require('../utils/sanitize');
+const { rejectIfProfane } = require('../utils/moderation');
 
 const { pushIfOffline } = require('../services/pushHelper');
 
@@ -69,6 +70,11 @@ router.post('/',
       }
 
       const { name, venue_name, venue_address, venue_id, venue_latitude, venue_longitude, venue_rating, venue_photo_url, event_time, invited_user_ids, budget_enabled, budget_context, ghost_mode_enabled } = req.body;
+
+      // UGC text filter on user-writable flock fields (Apple 1.2).
+      if (rejectIfProfane(res, name)) return;
+      if (budget_context && rejectIfProfane(res, budget_context)) return;
+
       console.log('[Flock Create] User:', req.user.id, '| Name:', name, '| Venue:', venue_name || '(none)');
 
       const client = await pool.connect();

@@ -8,10 +8,11 @@
 // is identical to the web version.
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { API_URL } from '../config/env';
 
-// TODO: read from .env via react-native-config when wired in Phase 6.
-// For now, hardcoded prod URL works for development.
-export const BASE_URL = 'https://flock-app-production.up.railway.app';
+// Base URL lives in config/env.js — release builds always use prod; debug builds
+// can target a local/staging backend via DEV_API_URL there (no edits here).
+export const BASE_URL = API_URL;
 
 const TOKEN_KEY = 'flockToken';
 
@@ -48,10 +49,10 @@ async function request(endpoint, options = {}) {
 // Auth
 // ---------------------------------------------------------------------------
 
-export async function signup(name, email, password) {
+export async function signup(name, email, password, date_of_birth) {
   const data = await request('/api/auth/signup', {
     method: 'POST',
-    body: JSON.stringify({ name, email, password }),
+    body: JSON.stringify({ name, email, password, date_of_birth }),
   });
   await setToken(data.token);
   return data;
@@ -66,10 +67,10 @@ export async function login(email, password) {
   return data;
 }
 
-export async function googleLogin(credential) {
+export async function googleLogin(credential, date_of_birth) {
   const data = await request('/api/auth/google', {
     method: 'POST',
-    body: JSON.stringify({ credential }),
+    body: JSON.stringify({ credential, date_of_birth }),
   });
   await setToken(data.token);
   return data;
@@ -79,10 +80,10 @@ export async function googleLogin(credential) {
 // `identityToken` is the JWT that comes back from
 // @invertase/react-native-apple-authentication. Backend verifies it via
 // Apple's JWKS, upserts user by `sub`, returns Flock JWT.
-export async function appleLogin({ identityToken, fullName }) {
+export async function appleLogin({ identityToken, fullName, authorizationCode, date_of_birth }) {
   const data = await request('/api/auth/apple', {
     method: 'POST',
-    body: JSON.stringify({ identityToken, fullName }),
+    body: JSON.stringify({ identityToken, fullName, authorizationCode, date_of_birth }),
   });
   await setToken(data.token);
   return data;
@@ -136,6 +137,13 @@ export async function saveProfileImageUrl(url) {
     method: 'PUT',
     body: JSON.stringify({ url }),
   });
+}
+
+// Permanently delete the signed-in user's account (Apple 5.1.1(v) / Google
+// account-deletion policy). Server hard-deletes the user; cascades remove their
+// data. Irreversible — caller should clear the token / log out on success.
+export async function deleteAccount() {
+  return request('/api/users/me', { method: 'DELETE' });
 }
 
 // ---------------------------------------------------------------------------
@@ -348,6 +356,31 @@ export async function addFriendByCode(code) {
 }
 export async function findFriendsByPhone(phones) {
   return request('/api/friends/find-by-phone', { method: 'POST', body: JSON.stringify({ phones }) });
+}
+
+// ---------------------------------------------------------------------------
+// Moderation: report + block (Apple 1.2 / Google UGC)
+// ---------------------------------------------------------------------------
+export async function reportContent({ contentType, contentId, reportedUserId, reason, details }) {
+  return request('/api/reports', {
+    method: 'POST',
+    body: JSON.stringify({
+      content_type: contentType,
+      content_id: contentId,
+      reported_user_id: reportedUserId,
+      reason,
+      details,
+    }),
+  });
+}
+export async function blockUser(userId) {
+  return request(`/api/blocks/${userId}`, { method: 'POST' });
+}
+export async function unblockUser(userId) {
+  return request(`/api/blocks/${userId}`, { method: 'DELETE' });
+}
+export async function getBlockedUsers() {
+  return request('/api/blocks');
 }
 
 // ---------------------------------------------------------------------------

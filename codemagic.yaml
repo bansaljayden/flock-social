@@ -1,0 +1,77 @@
+# Codemagic CI/CD — builds the Capacitor-wrapped Flock web app into a signed iOS .ipa
+# and ships it to TestFlight. Runs entirely in the cloud (no Mac needed).
+#
+# Capacitor 8 uses Swift Package Manager — there is NO CocoaPods / .xcworkspace.
+# We archive frontend/ios/App/App.xcodeproj using the shared "App" scheme.
+#
+# ─────────────────────────────────────────────────────────────────────────────
+# ONE-TIME SETUP IN THE CODEMAGIC UI BEFORE THE FIRST BUILD:
+#
+# 1. App Store Connect API key integration
+#    Codemagic UI → Teams → Integrations → App Store Connect → add a key
+#    (created in App Store Connect → Users and Access → Integrations).
+#    Name the integration exactly:  FlockASC   (matches `app_store_connect` below).
+#
+# 2. Web build secrets — create a variable group named  flock_web  and add EVERY
+#    REACT_APP_* line from frontend/.env as Secure variables. Critical ones:
+#      REACT_APP_MAPTILER_KEY          (no map renders without it)
+#      REACT_APP_API_URL               (optional; defaults to the Railway prod URL)
+#      REACT_APP_FIREBASE_* / REACT_APP_GOOGLE_* / REACT_APP_GOOGLE_MAPS_API_KEY
+#    CRA inlines these at `npm run build`, so they must exist in the build env.
+#
+# 3. Create the app record in App Store Connect (My Apps → +) with bundle id
+#    com.flockcorp.flock so TestFlight submission has somewhere to land.
+# ─────────────────────────────────────────────────────────────────────────────
+
+workflows:
+  ios-capacitor:
+    name: Flock iOS (Capacitor)
+    instance_type: mac_mini_m2
+    max_build_duration: 60
+    working_directory: frontend
+    integrations:
+      app_store_connect: FlockASC
+    environment:
+      groups:
+        - flock_web
+      vars:
+        BUNDLE_ID: "com.flockcorp.flock"
+        XCODE_PROJECT: "ios/App/App.xcodeproj"
+        XCODE_SCHEME: "App"
+        PUBLIC_URL: "."   # CRA → relative asset paths for the bundled WebView origin
+        CI: "false"        # don't treat CRA build warnings as errors
+      node: 22             # Capacitor 8.4 CLI requires Node >= 22
+      xcode: latest
+    scripts:
+      - name: Install web dependencies
+        script: npm install --no-audit --no-fund
+      - name: Build web app (relative asset paths)
+        script: npm run build
+      - name: Capacitor sync iOS
+        script: npx cap sync ios
+      - name: Set up code signing (reuse pinned cert + App Store profile)
+        script: |
+          keychain initialize
+          # Use a PINNED private key (CM_CERTIFICATE_PRIVATE_KEY env var) so every build
+          # reuses ONE distribution certificate instead of minting a new one each run
+          # (Apple caps distribution certs at 3). First run creates the cert from this key;
+          # later runs find and reuse it because the key matches.
+          app-store-connect fetch-signing-files "$BUNDLE_ID" \
+            --type IOS_APP_STORE \
+            --certificate-key=@env:CM_CERTIFICATE_PRIVATE_KEY \
+            --create
+          keychain add-certificates
+          xcode-project use-profiles
+      - name: Build signed IPA
+        script: >
+          xcode-project build-ipa
+          --project "$XCODE_PROJECT"
+          --scheme "$XCODE_SCHEME"
+    artifacts:
+      - build/ios/ipa/*.ipa
+      - "**/*.ipa"
+      - /tmp/xcodebuild_logs/*.log
+    publishing:
+      app_store_connect:
+        auth: integration
+        submit_to_testflight: true

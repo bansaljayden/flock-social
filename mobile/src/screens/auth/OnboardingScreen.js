@@ -22,13 +22,12 @@ const VIBE_OPTIONS = [
   'Shopping', 'Outdoors', 'Gaming', 'Study', 'Other',
 ];
 
-// 5-step onboarding. Each step renders inside an animated container that
+// 4-step onboarding. Each step renders inside an animated container that
 // slides in from the right. Progress bar at top indicates advancement.
 //
-// Step 5 (paywall) is the only step that depends on a service not yet wired
-// (RevenueCat — Phase 6). For now it shows the value prop + price and the
-// "Subscribe" button is disabled with a "Coming soon" hint. "Maybe Later"
-// works and completes onboarding.
+// v1.0 ships FREE — there is NO paywall step (Apple 2.1: no non-functional
+// advertised purchase). The RevenueCat paywall returns as a v1.1 update,
+// designed against real usage data. Step 4 (vibes) completes onboarding.
 
 export default function OnboardingScreen({ navigation }) {
   const { colors, typography, screenPadding, radius } = useTheme();
@@ -40,7 +39,7 @@ export default function OnboardingScreen({ navigation }) {
   const [vibes, setVibes] = useState([]);
   const [saving, setSaving] = useState(false);
 
-  const totalSteps = 5;
+  const totalSteps = 4;
 
   const finish = useCallback(async () => {
     // Flips the gate in AuthContext — RootNavigator re-renders into MainTabNavigator.
@@ -97,7 +96,8 @@ export default function OnboardingScreen({ navigation }) {
     // No backend column for vibes yet — when user_settings adds a vibes
     // field this can persist via updateUserSettings({ vibes }). For now
     // selections are kept in component state only.
-    goNext();
+    // Step 4 is the final step in v1.0 (no paywall) — finish onboarding.
+    await finish();
   };
 
   return (
@@ -222,57 +222,9 @@ export default function OnboardingScreen({ navigation }) {
             <View style={{ marginTop: 24 }}>
               <GlassButton variant="primary" onPress={saveVibes} disabled={vibes.length === 0}>Continue</GlassButton>
             </View>
-            <TouchableOpacity onPress={goNext} style={{ alignSelf: 'center', marginTop: 12 }}>
+            <TouchableOpacity onPress={finish} style={{ alignSelf: 'center', marginTop: 12 }}>
               <Text style={[typography.bodySmall, { color: colors.textTertiary }]}>Skip</Text>
             </TouchableOpacity>
-          </Animated.View>
-        )}
-
-        {step === 5 && (
-          <Animated.View entering={SlideInRight.duration(260)}>
-            <Text style={[typography.heading1, { color: colors.textPrimary }]}>Unlock Flock Premium</Text>
-            <Text style={[typography.body, { color: colors.textSecondary, marginTop: 8, marginBottom: 20 }]}>
-              Free forever covers the basics. Premium adds the deeper insights.
-            </Text>
-
-            <View style={[styles.featureCard, { backgroundColor: colors.bgCardSolid, borderColor: colors.borderDefault, borderRadius: radius.xxl, gap: 12 }]}>
-              {[
-                'Unlimited flock history',
-                'AI venue recommendations',
-                'Advanced crowd analytics',
-                'Priority support',
-              ].map((f) => (
-                <View key={f} style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-                  <View style={[styles.bulletDot, { backgroundColor: colors.teal }]} />
-                  <Text style={[typography.body, { color: colors.textPrimary }]}>{f}</Text>
-                </View>
-              ))}
-            </View>
-
-            <View style={[styles.priceRow, { gap: 10, marginTop: 16 }]}>
-              <View style={[styles.priceCard, { backgroundColor: colors.bgCardSolid, borderColor: colors.borderDefault, borderRadius: radius.xxl }]}>
-                <Text style={[typography.label, { color: colors.textTertiary }]}>MONTHLY</Text>
-                <Text style={[typography.heading2, { color: colors.textPrimary, marginTop: 4 }]}>$14.99</Text>
-                <Text style={[typography.bodySmall, { color: colors.textSecondary }]}>per month</Text>
-              </View>
-              <View style={[styles.priceCard, { backgroundColor: colors.bgCardSolid, borderColor: colors.teal, borderWidth: 2, borderRadius: radius.xxl }]}>
-                <Text style={[typography.labelBold, { color: colors.teal }]}>SAVE 44%</Text>
-                <Text style={[typography.heading2, { color: colors.textPrimary, marginTop: 4 }]}>$99.99</Text>
-                <Text style={[typography.bodySmall, { color: colors.textSecondary }]}>per year</Text>
-              </View>
-            </View>
-
-            <View style={{ marginTop: 20 }}>
-              {/* RevenueCat purchase wired in Phase 6. For now this is a
-                  visible placeholder so the onboarding flow looks complete
-                  but doesn't attempt a (broken) purchase. */}
-              <GlassButton variant="primary" onPress={() => Alert.alert('Coming soon', 'RevenueCat is wired in Phase 6 of the port.')}>
-                Subscribe (coming soon)
-              </GlassButton>
-              <TouchableOpacity onPress={finish} style={{ alignSelf: 'center', marginTop: 16 }}>
-                <Text style={[typography.body, { color: colors.textSecondary }]}>Maybe Later</Text>
-              </TouchableOpacity>
-            </View>
           </Animated.View>
         )}
 
