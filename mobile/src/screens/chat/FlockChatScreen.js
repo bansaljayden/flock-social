@@ -15,7 +15,7 @@ import Icon from 'react-native-vector-icons/Feather';
 import { useTheme } from '../../context/ThemeContext';
 import { useAuth } from '../../context/AuthContext';
 import { useSocket } from '../../context/SocketContext';
-import { getMessages, sendMessage as apiSendMessage } from '../../services/api';
+import { getMessages, sendMessage as apiSendMessage, getBlockedUsers } from '../../services/api';
 import {
   joinFlock,
   leaveFlock,
@@ -26,6 +26,7 @@ import {
   onUserTyping,
   onUserStoppedTyping,
 } from '../../services/socket';
+import ModerationMenu from '../../components/common/ModerationMenu';
 
 // Phase 2 minimum: text-only chat with real-time delivery + typing indicator.
 // Polish pass adds: image messages, emoji reactions, venue cards in chat,
@@ -46,7 +47,9 @@ export default function FlockChatScreen({ route, navigation }) {
   const [draft, setDraft] = useState('');
   const [sending, setSending] = useState(false);
   const [typingUsers, setTypingUsers] = useState([]); // [{ userId, name }]
+  const [modTarget, setModTarget] = useState(null); // report/block target
   const typingTimerRef = useRef(null);
+  const blockedRef = useRef(new Set()); // ids I've blocked — filter their live socket messages
 
   // Initial load
   useEffect(() => {
@@ -63,6 +66,14 @@ export default function FlockChatScreen({ route, navigation }) {
     return () => { cancelled = true; };
   }, [flockId]);
 
+  // Load who I've blocked so live socket messages from them are filtered too
+  // (the REST read filters server-side; this keeps the real-time push consistent).
+  useEffect(() => {
+    getBlockedUsers()
+      .then((d) => { blockedRef.current = new Set((d?.blocked || []).map((b) => b.user_id)); })
+      .catch(() => {});
+  }, []);
+
   // Socket: join flock room, listen for messages + typing
   useEffect(() => {
     if (!flockId) return;
@@ -70,6 +81,7 @@ export default function FlockChatScreen({ route, navigation }) {
 
     const offNew = onNewMessage((msg) => {
       if (msg?.flock_id !== flockId) return;
+      if (blockedRef.current.has(msg.sender_id)) return; // mutual invisibility on the live socket
       setMessages((cur) => [msg, ...cur]);
     });
     const offTypingStart = onUserTyping((d) => {
@@ -149,11 +161,16 @@ export default function FlockChatScreen({ route, navigation }) {
               {item.sender_name}
             </Text>
           )}
-          <View style={bubbleStyle}>
+          <TouchableOpacity
+            activeOpacity={mine ? 1 : 0.85}
+            onLongPress={mine ? undefined : () => setModTarget({ userId: item.sender_id, name: item.sender_name, contentType: 'flock_message', contentId: item.id })}
+            delayLongPress={300}
+            style={bubbleStyle}
+          >
             <Text style={[typography.body, { color: mine ? 'white' : colors.msgReceivedText }]}>
               {item.content || item.message_text}
             </Text>
-          </View>
+          </TouchableOpacity>
         </View>
       </View>
     );
@@ -213,6 +230,15 @@ export default function FlockChatScreen({ route, navigation }) {
           </TouchableOpacity>
         </View>
       </KeyboardAvoidingView>
+
+      <ModerationMenu
+        target={modTarget}
+        onClose={() => setModTarget(null)}
+        onBlocked={(id) => {
+          blockedRef.current.add(id);
+          setMessages((cur) => cur.filter((m) => m.sender_id !== id));
+        }}
+      />
     </SafeAreaView>
   );
 }

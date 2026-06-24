@@ -44,8 +44,8 @@ export function AuthProvider({ children }) {
       const data = await getCurrentUser();
       const u = data?.user || data || null;
       setUser(u);
-      // Identify the user with PostHog so all subsequent events tie to them
-      if (u?.id) identify(u.id, { email: u.email, name: u.name });
+      // Identify by pseudonymous id only — no email/name (C3, keeps no-tracking honest)
+      if (u?.id) identify(u.id);
       return data;
     } catch {
       setUser(null);
@@ -71,7 +71,7 @@ export function AuthProvider({ children }) {
   const login = useCallback(async (email, password) => {
     const data = await apiLogin(email, password);
     setUser(data.user || null);
-    if (data.user?.id) identify(data.user.id, { email: data.user.email });
+    if (data.user?.id) identify(data.user.id);
     track(Events.LoginCompleted, { method: 'email' });
     const flag = await AsyncStorage.getItem(ONBOARDING_KEY);
     if (flag !== 'true') await AsyncStorage.setItem(ONBOARDING_KEY, 'true');
@@ -80,9 +80,10 @@ export function AuthProvider({ children }) {
   }, []);
 
   const signup = useCallback(async (name, email, password) => {
-    const data = await apiSignup(name, email, password);
+    const dob = await AsyncStorage.getItem('flock_dob'); // from the C4 age gate
+    const data = await apiSignup(name, email, password, dob);
     setUser(data.user || null);
-    if (data.user?.id) identify(data.user.id, { email: data.user.email, name });
+    if (data.user?.id) identify(data.user.id);
     track(Events.SignupCompleted, { method: 'email' });
     setOnboardingComplete(false);
     await AsyncStorage.removeItem(ONBOARDING_KEY);
@@ -90,19 +91,21 @@ export function AuthProvider({ children }) {
   }, []);
 
   const googleLogin = useCallback(async (credential) => {
-    const data = await apiGoogleLogin(credential);
+    const dob = await AsyncStorage.getItem('flock_dob'); // from the C4 age gate
+    const data = await apiGoogleLogin(credential, dob);
     setUser(data.user || null);
-    if (data.user?.id) identify(data.user.id, { email: data.user.email });
+    if (data.user?.id) identify(data.user.id);
     track(Events.LoginCompleted, { method: 'google' });
     const flag = await AsyncStorage.getItem(ONBOARDING_KEY);
     setOnboardingComplete(flag === 'true');
     return data;
   }, []);
 
-  const appleLogin = useCallback(async ({ identityToken, fullName }) => {
-    const data = await apiAppleLogin({ identityToken, fullName });
+  const appleLogin = useCallback(async ({ identityToken, fullName, authorizationCode }) => {
+    const dob = await AsyncStorage.getItem('flock_dob'); // from the C4 age gate
+    const data = await apiAppleLogin({ identityToken, fullName, authorizationCode, date_of_birth: dob });
     setUser(data.user || null);
-    if (data.user?.id) identify(data.user.id, { email: data.user.email });
+    if (data.user?.id) identify(data.user.id);
     track(Events.LoginCompleted, { method: 'apple' });
     const flag = await AsyncStorage.getItem(ONBOARDING_KEY);
     setOnboardingComplete(flag === 'true');

@@ -24,6 +24,7 @@ import {
   onDmUserTyping,
   onDmUserStoppedTyping,
 } from '../../services/socket';
+import ModerationMenu from '../../components/common/ModerationMenu';
 
 // Same shape as FlockChatScreen but for 1-on-1 DMs. Server-side, the room
 // is derived from the (user1_id, user2_id) pair — no explicit join_dm event.
@@ -40,6 +41,7 @@ export default function DMChatScreen({ route, navigation }) {
   const [draft, setDraft] = useState('');
   const [sending, setSending] = useState(false);
   const [typing, setTyping] = useState(false);
+  const [modTarget, setModTarget] = useState(null); // report/block target
   const typingTimerRef = useRef(null);
 
   useEffect(() => {
@@ -118,18 +120,23 @@ export default function DMChatScreen({ route, navigation }) {
     return (
       <View style={[styles.row, { justifyContent: mine ? 'flex-end' : 'flex-start' }]}>
         <View style={{ maxWidth: '78%' }}>
-          <View style={[
-            styles.bubble,
-            {
-              backgroundColor: mine ? colors.teal : colors.msgReceivedBg,
-              borderBottomRightRadius: mine ? 4 : 16,
-              borderBottomLeftRadius: mine ? 16 : 4,
-            },
-          ]}>
+          <TouchableOpacity
+            activeOpacity={mine ? 1 : 0.85}
+            onLongPress={mine ? undefined : () => setModTarget({ userId: otherUserId, name: otherUserName, contentType: 'dm', contentId: item.id })}
+            delayLongPress={300}
+            style={[
+              styles.bubble,
+              {
+                backgroundColor: mine ? colors.teal : colors.msgReceivedBg,
+                borderBottomRightRadius: mine ? 4 : 16,
+                borderBottomLeftRadius: mine ? 16 : 4,
+              },
+            ]}
+          >
             <Text style={[typography.body, { color: mine ? 'white' : colors.msgReceivedText }]}>
               {item.content || item.message_text}
             </Text>
-          </View>
+          </TouchableOpacity>
         </View>
       </View>
     );
@@ -147,7 +154,12 @@ export default function DMChatScreen({ route, navigation }) {
             <Text style={[typography.caption, { color: colors.textTertiary }]}>typing…</Text>
           )}
         </View>
-        <View style={styles.headerBtn} />
+        <TouchableOpacity
+          onPress={() => setModTarget({ userId: otherUserId, name: otherUserName, contentType: 'dm', contentId: null })}
+          style={styles.headerBtn}
+        >
+          <Icon name="more-vertical" size={20} color={colors.textPrimary} />
+        </TouchableOpacity>
       </View>
 
       <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={{ flex: 1 }}>
@@ -182,6 +194,12 @@ export default function DMChatScreen({ route, navigation }) {
           </TouchableOpacity>
         </View>
       </KeyboardAvoidingView>
+
+      <ModerationMenu
+        target={modTarget}
+        onClose={() => setModTarget(null)}
+        onBlocked={() => navigation.goBack()}
+      />
     </SafeAreaView>
   );
 }
