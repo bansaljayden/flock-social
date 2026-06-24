@@ -1,7 +1,9 @@
+require('./instrument'); // Sentry — must load before everything else (B3)
 require('dotenv').config();
 console.log('DATABASE_URL:', process.env.DATABASE_URL ? '[configured]' : '[missing]');
 
 const express = require('express');
+const Sentry = require('@sentry/node');
 const http = require('http');
 const { Server } = require('socket.io');
 const cors = require('cors');
@@ -37,6 +39,8 @@ const venueDashboardRoutes = require('./routes/venueDashboard');
 const availabilityRoutes = require('./routes/availability');
 const sensorRoutes = require('./routes/sensors');
 const checkinRoutes = require('./routes/checkin');
+const moderationRoutes = require('./routes/moderation');
+const revenuecatRoutes = require('./routes/revenuecat');
 
 const app = express();
 app.set('trust proxy', 1);
@@ -99,6 +103,12 @@ app.use(express.urlencoded({ extended: true }));
 // Serve uploaded files (deny dotfiles, no directory listing)
 app.use('/uploads', express.static(path.join(__dirname, 'uploads'), { dotfiles: 'deny', index: false }));
 
+// Health check — defined BEFORE the authenticated /api/* routers so their auth
+// middleware doesn't shadow it with a 401 (caught by the local E2E harness).
+app.get('/api/health', (req, res) => {
+  res.json({ status: 'ok', timestamp: new Date().toISOString() });
+});
+
 // ---------------------------------------------------------------------------
 // Rate limiting (disabled in development)
 // ---------------------------------------------------------------------------
@@ -146,8 +156,10 @@ app.use('/api/flocks', apiLimiter, flockRoutes);
 // catch-all at /api — that router's `router.use(authenticate)` intercepts every
 // /api/* request without a Bearer token, which would 401 the Pi (x-api-key) and
 // break the anonymous NFC GET below.
+app.use('/api/revenuecat', revenuecatRoutes);                  // RevenueCat webhook (shared-secret, no JWT) — before messages catch-all
 app.use('/api/sensors', apiLimiter, sensorRoutes);              // Pi sensor ingest (x-api-key) + read APIs (JWT)
 app.use('/api/checkin', apiLimiter, checkinRoutes);             // NFC tap + manual venue check-in (anon-friendly GET)
+app.use('/api', apiLimiter, moderationRoutes);  // /api/reports, /api/blocks/* — before messages catch-all
 app.use('/api', apiLimiter, messageRoutes);     // Handles /api/flocks/:id/messages, /api/messages/:id/react, /api/dm/*
 app.use('/api/users', apiLimiter, userRoutes);
 app.use('/api/flocks', apiLimiter, venueRoutes); // Handles /api/flocks/:id/vote, /api/flocks/:id/votes
@@ -168,15 +180,13 @@ app.use('/api/venue-profile', apiLimiter, venueProfileRoutes); // Handles /api/v
 app.use('/api/venue-dashboard', apiLimiter, venueDashboardRoutes); // Handles promotions, events, reviews CRUD
 app.use('/api/availability', apiLimiter, availabilityRoutes); // 3-tap status pulse: down / maybe / not
 
-// Health check
-app.get('/api/health', (req, res) => {
-  res.json({ status: 'ok', timestamp: new Date().toISOString() });
-});
-
 // 404 handler
 app.use((req, res) => {
   res.status(404).json({ error: 'Route not found' });
 });
+
+// Sentry error capture — must precede the custom error handler (B3; no-op without DSN)
+Sentry.setupExpressErrorHandler(app);
 
 // Global error handler
 app.use((err, req, res, _next) => {
@@ -335,6 +345,10 @@ async function runMigrations() {
       await pool.query(`ALTER TABLE flocks ADD COLUMN IF NOT EXISTS budget_locked BOOLEAN DEFAULT false`);
       await pool.query(`ALTER TABLE flocks ADD COLUMN IF NOT EXISTS budget_ceiling DECIMAL(8,2)`);
       await pool.query(`ALTER TABLE flocks ADD COLUMN IF NOT EXISTS ghost_mode_enabled BOOLEAN DEFAULT false`);
+      // Venue columns the flock-create route writes but schema.sql lacks (drift:
+      // present in prod, missing on a fresh DB). Idempotent — no-op on prod.
+      await pool.query(`ALTER TABLE flocks ADD COLUMN IF NOT EXISTS venue_rating NUMERIC(2,1)`);
+      await pool.query(`ALTER TABLE flocks ADD COLUMN IF NOT EXISTS venue_photo_url TEXT`);
 
       await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS venmo_username VARCHAR(50)`);
       await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS cashapp_cashtag VARCHAR(50)`);
@@ -581,6 +595,64 @@ async function runMigrations() {
       await pool.query('CREATE INDEX IF NOT EXISTS idx_venue_checkins_created ON venue_checkins(created_at)');
       console.log('Sensor system migration complete');
     } catch (e) { console.error('Sensor system migration error:', e.message); }
+
+    // UGC safety + moderation (Apple 1.2 / Google UGC policy): reports, blocks,
+    // audit log, hidden-content flags, terms acceptance, DOB age gate, ban flag.
+    try {
+      await pool.query(`CREATE TABLE IF NOT EXISTS content_reports (
+        id SERIAL PRIMARY KEY,
+        reporter_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+        reported_user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+        content_type VARCHAR(20) NOT NULL CHECK (content_type IN ('flock_message','dm','profile','story')),
+        content_id INTEGER,
+        reason VARCHAR(50) NOT NULL,
+        details TEXT,
+        status VARCHAR(20) NOT NULL DEFAULT 'open' CHECK (status IN ('open','under_review','resolved','dismissed')),
+        handled_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+        resolved_at TIMESTAMPTZ,
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      )`);
+      await pool.query('CREATE INDEX IF NOT EXISTS idx_content_reports_status ON content_reports(status)');
+      await pool.query('CREATE INDEX IF NOT EXISTS idx_content_reports_reported_user ON content_reports(reported_user_id)');
+
+      await pool.query(`CREATE TABLE IF NOT EXISTS user_blocks (
+        id SERIAL PRIMARY KEY,
+        blocker_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+        blocked_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        UNIQUE(blocker_id, blocked_id)
+      )`);
+      await pool.query('CREATE INDEX IF NOT EXISTS idx_user_blocks_blocker ON user_blocks(blocker_id)');
+      await pool.query('CREATE INDEX IF NOT EXISTS idx_user_blocks_blocked ON user_blocks(blocked_id)');
+
+      await pool.query(`CREATE TABLE IF NOT EXISTS moderation_actions (
+        id SERIAL PRIMARY KEY,
+        report_id INTEGER REFERENCES content_reports(id) ON DELETE SET NULL,
+        moderator_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+        target_user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+        action VARCHAR(30) NOT NULL CHECK (action IN ('content_hidden','content_removed','user_warned','user_banned','user_unbanned','dismissed')),
+        content_type VARCHAR(20),
+        content_id INTEGER,
+        reason TEXT,
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      )`);
+      await pool.query('CREATE INDEX IF NOT EXISTS idx_moderation_actions_target ON moderation_actions(target_user_id)');
+
+      // Hidden-content flags so moderators can take content down without deleting it
+      await pool.query(`ALTER TABLE messages ADD COLUMN IF NOT EXISTS is_hidden BOOLEAN DEFAULT false`).catch(() => {});
+      await pool.query(`ALTER TABLE direct_messages ADD COLUMN IF NOT EXISTS is_hidden BOOLEAN DEFAULT false`).catch(() => {});
+      await pool.query(`ALTER TABLE stories ADD COLUMN IF NOT EXISTS is_hidden BOOLEAN DEFAULT false`).catch(() => {});
+
+      // Compliance columns on users
+      await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS terms_accepted_at TIMESTAMPTZ`).catch(() => {});
+      await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS date_of_birth DATE`).catch(() => {});
+      await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS is_banned BOOLEAN DEFAULT false`).catch(() => {});
+      await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS banned_at TIMESTAMPTZ`).catch(() => {});
+      // D-lite entitlement (dormant in v1.0) + C1 Apple token revocation
+      await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS is_premium BOOLEAN DEFAULT false`).catch(() => {});
+      await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS apple_refresh_token TEXT`).catch(() => {});
+      console.log('Moderation + compliance migration complete');
+    } catch (e) { console.error('Moderation migration error:', e.message); }
 
     // Ensure admin account has admin role
     await pool.query(`UPDATE users SET role = 'admin' WHERE LOWER(email) = LOWER('bansaljayden@gmail.com') AND role != 'admin'`).catch(() => {});

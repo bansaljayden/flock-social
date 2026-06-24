@@ -7,6 +7,8 @@ const fs = require('fs');
 const pool = require('../config/database');
 const { authenticate } = require('../middleware/auth');
 const { stripHtml, sanitizeArray } = require('../utils/sanitize');
+const { rejectIfProfane, moderateImage, IMAGE_REJECTED_MESSAGE } = require('../utils/moderation');
+const { revokeAppleToken } = require('../services/appleAuth');
 
 const router = express.Router();
 const SALT_ROUNDS = 10;
@@ -130,6 +132,10 @@ router.put('/profile',
       }
 
       const { name, email, phone, interests, current_password, new_password } = req.body;
+
+      // UGC text filter on display name (Apple 1.2).
+      if (name && rejectIfProfane(res, name)) return;
+
       const safeInterests = interests ? sanitizeArray(interests) : null;
 
       // Fetch current user with password
@@ -355,6 +361,15 @@ router.post('/upload-image', (req, res) => {
       // Clean up temp file
       fs.unlink(req.file.path, () => {});
 
+      // Image moderation (A2b) — synchronous + FAIL-CLOSED. This is the only
+      // upload endpoint, so screening here gates every user image before its
+      // URL is returned or stored. Dev (no provider) allows with a warning;
+      // prod requires a provider via IMAGE_MODERATION_REQUIRED=true.
+      const verdict = await moderateImage(dataUrl);
+      if (!verdict.allowed) {
+        return res.status(400).json({ error: IMAGE_REJECTED_MESSAGE, moderation: verdict.reason });
+      }
+
       await pool.query(
         'UPDATE users SET profile_image_url = $1, updated_at = NOW() WHERE id = $2',
         [dataUrl, req.user.id]
@@ -538,6 +553,40 @@ router.patch('/settings', async (req, res) => {
   } catch (err) {
     console.error('Update user settings error:', err);
     res.status(500).json({ error: 'Failed to update settings' });
+  }
+});
+
+// DELETE /api/users/me - Permanently delete the authenticated user's account.
+// Hard-deletes the user row; ON DELETE CASCADE removes their flocks, memberships,
+// messages, DMs, friendships, budgets, trusted contacts, device tokens, settings,
+// etc. (a few FKs are ON DELETE SET NULL, which de-attribute content rather than
+// delete it). Required for Apple Guideline 5.1.1(v) and Google Play's account-
+// deletion policy. Irreversible.
+router.delete('/me', async (req, res) => {
+  try {
+    // Apple 5.1.1(v): revoke Sign in with Apple tokens before deleting the row.
+    const u = await pool.query('SELECT oauth_provider, apple_refresh_token FROM users WHERE id = $1', [req.user.id]);
+    if (u.rows.length === 0) return res.status(404).json({ error: 'Account not found' });
+    if (u.rows[0].oauth_provider === 'apple' && u.rows[0].apple_refresh_token) {
+      try { await revokeAppleToken(u.rows[0].apple_refresh_token); } catch (_) { /* never block deletion */ }
+    }
+
+    // messages.sender_id is ON DELETE SET NULL (anonymize). Explicitly remove the
+    // user's flock messages so no authored content is retained after deletion.
+    await pool.query('DELETE FROM messages WHERE sender_id = $1', [req.user.id]).catch(() => {});
+
+    const result = await pool.query(
+      'DELETE FROM users WHERE id = $1 RETURNING id',
+      [req.user.id]
+    );
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Account not found' });
+    }
+    console.log(`Account deleted: user ${req.user.id} at ${new Date().toISOString()}`);
+    res.json({ message: 'Account deleted' });
+  } catch (err) {
+    console.error('Delete account error:', err);
+    res.status(500).json({ error: 'Failed to delete account' });
   }
 });
 

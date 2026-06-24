@@ -31,6 +31,12 @@ const router = express.Router();
 const SALT_ROUNDS = 10;
 const TOKEN_EXPIRY = '24h';
 
+// Age gate (C4) — SERVER-SIDE enforcement. The mobile neutral age screen collects
+// a DOB and sends it at account creation; we compute age here so the under-13
+// block survives local-storage clears / reinstalls and is recorded on the user row.
+const { ageFromDob, MIN_AGE } = require('../utils/age');
+const UNDERAGE_MSG = 'You must be at least 13 to use Flock.';
+
 // Validation rules
 const signupValidation = [
   body('email').isEmail().normalizeEmail().withMessage('Valid email required'),
@@ -40,6 +46,7 @@ const signupValidation = [
     .matches(/[0-9]/).withMessage('Password must contain at least one number'),
   body('name').trim().customSanitizer(stripHtml).isLength({ min: 1, max: 255 }).withMessage('Name is required'),
   body('phone').optional().isMobilePhone().withMessage('Invalid phone number'),
+  body('date_of_birth').optional().isISO8601().withMessage('Invalid date of birth'),
 ];
 
 const loginValidation = [
@@ -55,8 +62,14 @@ router.post('/signup', signupValidation, async (req, res) => {
       return res.status(400).json({ error: errors.array()[0].msg });
     }
 
-    const { email, password, name, phone, interests } = req.body;
+    const { email, password, name, phone, interests, date_of_birth } = req.body;
     const safeInterests = sanitizeArray(interests || []);
+
+    // Server-side age gate (C4): reject under-13 regardless of the client gate.
+    const age = ageFromDob(date_of_birth);
+    if (age !== null && age < MIN_AGE) {
+      return res.status(403).json({ error: UNDERAGE_MSG });
+    }
 
     // Check if email already exists
     const existing = await pool.query('SELECT id FROM users WHERE LOWER(email) = LOWER($1)', [email]);
@@ -67,10 +80,10 @@ router.post('/signup', signupValidation, async (req, res) => {
     const hashedPassword = await bcrypt.hash(password, SALT_ROUNDS);
 
     const result = await pool.query(
-      `INSERT INTO users (email, password, name, phone, interests)
-       VALUES ($1, $2, $3, $4, $5)
+      `INSERT INTO users (email, password, name, phone, interests, terms_accepted_at, date_of_birth)
+       VALUES ($1, $2, $3, $4, $5, NOW(), $6)
        RETURNING id, email, name, phone, interests, role, profile_image_url, created_at`,
-      [email, hashedPassword, name, phone || null, safeInterests]
+      [email, hashedPassword, name, phone || null, safeInterests, date_of_birth || null]
     );
 
     const user = result.rows[0];
@@ -191,12 +204,16 @@ router.post('/google', [
           ['google', googleId, picture, user.id]
         );
       } else {
-        // New user — create account
+        // New user — create account (server-side age gate, C4)
+        const dobAge = ageFromDob(req.body.date_of_birth);
+        if (dobAge !== null && dobAge < MIN_AGE) {
+          return res.status(403).json({ error: UNDERAGE_MSG });
+        }
         result = await pool.query(
-          `INSERT INTO users (email, name, oauth_provider, oauth_id, profile_image_url)
-           VALUES ($1, $2, 'google', $3, $4)
+          `INSERT INTO users (email, name, oauth_provider, oauth_id, profile_image_url, terms_accepted_at, date_of_birth)
+           VALUES ($1, $2, 'google', $3, $4, NOW(), $5)
            RETURNING *`,
-          [email, name, googleId, picture]
+          [email, name, googleId, picture, req.body.date_of_birth || null]
         );
         user = result.rows[0];
       }
@@ -230,6 +247,7 @@ router.post('/google', [
 router.post('/apple', [
   body('identityToken').notEmpty().withMessage('Apple identityToken is required'),
   body('fullName').optional().isObject(),
+  body('authorizationCode').optional(),
 ], async (req, res) => {
   try {
     const errors = validationResult(req);
@@ -237,7 +255,7 @@ router.post('/apple', [
       return res.status(400).json({ error: errors.array()[0].msg });
     }
 
-    const { identityToken, fullName } = req.body;
+    const { identityToken, fullName, authorizationCode } = req.body;
 
     // Verify Apple's signed identity token using their rotating JWKS
     const payload = await new Promise((resolve, reject) => {
@@ -297,13 +315,29 @@ router.post('/apple', [
       const fallbackName = composedName
         || (email ? email.split('@')[0] : 'Friend');
 
+      const appleDobAge = ageFromDob(req.body.date_of_birth);
+      if (appleDobAge !== null && appleDobAge < MIN_AGE) {
+        return res.status(403).json({ error: UNDERAGE_MSG });
+      }
       result = await pool.query(
-        `INSERT INTO users (email, name, oauth_provider, oauth_id)
-         VALUES ($1, $2, 'apple', $3)
+        `INSERT INTO users (email, name, oauth_provider, oauth_id, terms_accepted_at, date_of_birth)
+         VALUES ($1, $2, 'apple', $3, NOW(), $4)
          RETURNING *`,
-        [email, fallbackName, appleId]
+        [email, fallbackName, appleId, req.body.date_of_birth || null]
       );
       user = result.rows[0];
+    }
+
+    // Capture an Apple refresh token so deletion can revoke it (Apple 5.1.1(v)).
+    // No-op unless APPLE_* signing env is configured.
+    if (authorizationCode) {
+      try {
+        const { exchangeAppleCode } = require('../services/appleAuth');
+        const tokens = await exchangeAppleCode(authorizationCode);
+        if (tokens?.refresh_token) {
+          await pool.query('UPDATE users SET apple_refresh_token = $1 WHERE id = $2', [tokens.refresh_token, user.id]);
+        }
+      } catch (e) { console.error('Apple code exchange error:', e.message); }
     }
 
     const token = jwt.sign({ userId: user.id }, process.env.JWT_SECRET, { expiresIn: TOKEN_EXPIRY });

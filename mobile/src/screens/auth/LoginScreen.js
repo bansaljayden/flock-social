@@ -9,6 +9,7 @@ import {
   ScrollView,
   TouchableOpacity,
   Alert,
+  Linking,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { GoogleSignin, statusCodes } from '@react-native-google-signin/google-signin';
@@ -16,6 +17,7 @@ import appleAuth, { AppleButton } from '@invertase/react-native-apple-authentica
 import { useTheme } from '../../context/ThemeContext';
 import { useAuth } from '../../context/AuthContext';
 import GlassButton from '../../components/common/GlassButton';
+import { TERMS_URL, GUIDELINES_URL } from '../../config/links';
 
 export default function LoginScreen({ navigation }) {
   const { colors, typography, screenPadding, radius } = useTheme();
@@ -65,11 +67,12 @@ export default function LoginScreen({ navigation }) {
         requestedScopes: [appleAuth.Scope.EMAIL, appleAuth.Scope.FULL_NAME],
       });
 
-      const { identityToken, fullName } = res;
+      const { identityToken, fullName, authorizationCode } = res;
       if (!identityToken) throw new Error('Apple did not return an identity token');
 
       await appleLogin({
         identityToken,
+        authorizationCode,
         fullName: fullName ? { givenName: fullName.givenName, familyName: fullName.familyName } : null,
       });
     } catch (e) {
@@ -173,6 +176,15 @@ export default function LoginScreen({ navigation }) {
               />
             )}
           </View>
+
+          {/* Sign-in with Google/Apple can create an account on first use, so the
+              agreement notice belongs here too (Apple 1.2 / Google UGC). */}
+          <Text style={[typography.bodySmall, { color: colors.textTertiary, textAlign: 'center', marginTop: 16, paddingHorizontal: 8 }]}>
+            By continuing, you agree to our{' '}
+            <Text style={{ color: colors.teal }} onPress={() => Linking.openURL(TERMS_URL)}>Terms</Text>
+            {' '}and{' '}
+            <Text style={{ color: colors.teal }} onPress={() => Linking.openURL(GUIDELINES_URL)}>Community Guidelines</Text>.
+          </Text>
 
           <TouchableOpacity onPress={() => navigation.navigate('Signup')} style={{ marginTop: 32, alignSelf: 'center' }}>
             <Text style={[typography.body, { color: colors.textSecondary }]}>

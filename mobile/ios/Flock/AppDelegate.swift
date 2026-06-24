@@ -23,11 +23,14 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
 
     window = UIWindow(frame: UIScreen.main.bounds)
 
-    factory.startReactNative(
-      withModuleName: "Flock",
-      in: window,
-      launchOptions: launchOptions
-    )
+    // RN 0.78 has no `startReactNative` convenience (added in 0.79). Build the root
+    // view from the factory's rootViewFactory and attach it to the window manually.
+    let rootView = factory.rootViewFactory.view(withModuleName: "Flock")
+
+    let rootViewController = UIViewController()
+    rootViewController.view = rootView
+    window?.rootViewController = rootViewController
+    window?.makeKeyAndVisible()
 
     return true
   }

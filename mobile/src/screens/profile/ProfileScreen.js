@@ -13,7 +13,7 @@ import { launchImageLibrary } from 'react-native-image-picker';
 import Icon from 'react-native-vector-icons/Feather';
 import { useTheme } from '../../context/ThemeContext';
 import { useAuth } from '../../context/AuthContext';
-import { getUserStats, uploadProfileImage, saveProfileImageUrl } from '../../services/api';
+import { getUserStats, uploadProfileImage, saveProfileImageUrl, deleteAccount } from '../../services/api';
 import GlassButton from '../../components/common/GlassButton';
 
 export default function ProfileScreen({ navigation }) {
@@ -49,6 +49,28 @@ export default function ProfileScreen({ navigation }) {
     } catch (e) {
       Alert.alert('Upload failed', e.message);
     }
+  };
+
+  const confirmDeleteAccount = () => {
+    Alert.alert(
+      'Delete account?',
+      'This permanently deletes your account and all your data — flocks you created, messages, friends, and payment info. This cannot be undone.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete account',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await deleteAccount();
+              await logout(); // clears token → RootNavigator returns to Auth
+            } catch (e) {
+              Alert.alert('Could not delete account', e.message);
+            }
+          },
+        },
+      ],
+    );
   };
 
   const cycleTheme = () => {
@@ -117,6 +139,10 @@ export default function ProfileScreen({ navigation }) {
           >
             Log out
           </GlassButton>
+
+          <TouchableOpacity onPress={confirmDeleteAccount} style={styles.deleteBtn} activeOpacity={0.7}>
+            <Text style={[typography.bodySmall, { color: colors.red }]}>Delete account</Text>
+          </TouchableOpacity>
         </View>
 
         <Text style={[typography.caption, { color: colors.textTertiary, textAlign: 'center', marginTop: 20 }]}>
@@ -176,4 +202,5 @@ const styles = StyleSheet.create({
   row: { flexDirection: 'row', alignItems: 'center', padding: 14, gap: 12, borderWidth: 0 },
   rowIconBox: { width: 24, alignItems: 'center' },
   themePill: { paddingHorizontal: 12, paddingVertical: 4, borderWidth: 1 },
+  deleteBtn: { alignSelf: 'center', paddingVertical: 10, marginTop: 2 },
 });
