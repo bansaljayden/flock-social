@@ -1,5 +1,7 @@
 const pool = require('../config/database');
 const { stripHtml } = require('../utils/sanitize');
+const { moderateText, TEXT_REJECTED_MESSAGE } = require('../utils/moderation');
+const { isBlockedBetween } = require('../utils/blocks');
 const { pushIfOfflineDebounced } = require('../services/pushHelper');
 
 // Track which users are in which rooms for presence
@@ -116,6 +118,11 @@ function registerHandlers(io, socket) {
       }
       if (message_text.length > 5000) {
         socket.emit('error', { message: 'Message too long (max 5000 characters)' });
+        return;
+      }
+      // UGC text filter (Apple 1.2) — reject objectionable content before storing.
+      if (!moderateText(message_text).allowed) {
+        socket.emit('error', { message: TEXT_REJECTED_MESSAGE });
         return;
       }
       const allowedTypes = ['text', 'venue_card', 'image'];
@@ -360,6 +367,17 @@ function registerHandlers(io, socket) {
       const text = stripHtml(typeof data.message_text === 'string' ? data.message_text.trim() : '');
       if (!receiverId || (!text && message_type !== 'image')) return;
       if (text.length > 5000) return;
+
+      // Mutual block — no DMs in either direction.
+      if (await isBlockedBetween(user.id, receiverId)) {
+        socket.emit('error', { message: 'You can no longer message this user.' });
+        return;
+      }
+      // UGC text filter (Apple 1.2).
+      if (!moderateText(text).allowed) {
+        socket.emit('error', { message: TEXT_REJECTED_MESSAGE });
+        return;
+      }
 
       const allowedTypes = ['text', 'venue_card', 'image'];
       const safeType = allowedTypes.includes(message_type) ? message_type : 'text';

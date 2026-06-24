@@ -17,6 +17,13 @@ end
 target 'Flock' do
   config = use_native_modules!
 
+  # Firebase 12.x ships Swift pods (AppCheckCore, FirebaseCoreInternal) that import
+  # these Google pods. Under static-library linkage those pods don't generate module
+  # maps, so the Swift imports fail at `pod install`. Forcing modular headers on just
+  # these two generates the module maps without switching the whole app to frameworks.
+  pod 'GoogleUtilities', :modular_headers => true
+  pod 'RecaptchaInterop', :modular_headers => true
+
   use_react_native!(
     :path => config[:reactNativePath],
     # An absolute path to your application root.

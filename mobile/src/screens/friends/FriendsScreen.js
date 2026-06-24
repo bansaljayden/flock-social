@@ -21,12 +21,14 @@ import {
   removeFriend,
 } from '../../services/api';
 import { readCache, writeCache, CacheKeys } from '../../services/offlineCache';
+import ModerationMenu from '../../components/common/ModerationMenu';
 
 export default function FriendsScreen({ navigation }) {
   const { colors, typography, screenPadding, radius } = useTheme();
   const [friends, setFriends] = useState([]);
   const [pending, setPending] = useState([]);
   const [refreshing, setRefreshing] = useState(false);
+  const [modTarget, setModTarget] = useState(null); // report/block target
 
   const load = useCallback(async () => {
     try {
@@ -78,11 +80,18 @@ export default function FriendsScreen({ navigation }) {
       },
     ]);
   };
+  const openFriendActions = (friend) => {
+    Alert.alert(friend.name, undefined, [
+      { text: 'Report or Block', onPress: () => setModTarget({ userId: friend.id, name: friend.name, contentType: 'profile', contentId: friend.id }) },
+      { text: 'Remove friend', style: 'destructive', onPress: () => handleRemove(friend) },
+      { text: 'Cancel', style: 'cancel' },
+    ]);
+  };
 
   const renderFriend = ({ item }) => (
     <TouchableOpacity
       onPress={() => navigation.navigate('DMChat', { otherUserId: item.id, otherUserName: item.name })}
-      onLongPress={() => handleRemove(item)}
+      onLongPress={() => openFriendActions(item)}
       style={[styles.row, { backgroundColor: colors.bgCardSolid, borderColor: colors.borderDefault, borderRadius: radius.xl }]}
     >
       <View style={[styles.avatar, { backgroundColor: colors.navyMidBg }]}>
@@ -152,6 +161,12 @@ export default function FriendsScreen({ navigation }) {
             </Text>
           </View>
         }
+      />
+
+      <ModerationMenu
+        target={modTarget}
+        onClose={() => setModTarget(null)}
+        onBlocked={() => load()}
       />
     </SafeAreaView>
   );
