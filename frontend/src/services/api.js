@@ -38,13 +38,44 @@ async function request(endpoint, options = {}) {
 }
 
 // Auth
-export async function signup(name, email, password) {
+export async function signup(name, email, password, dateOfBirth) {
+  const body = { name, email, password };
+  // Send DOB only when provided so the backend's server-side age gate (>= 13)
+  // can compute and enforce age. Field name + ISO format match POST /api/auth/signup.
+  if (dateOfBirth) body.date_of_birth = dateOfBirth;
   const data = await request('/api/auth/signup', {
     method: 'POST',
-    body: JSON.stringify({ name, email, password }),
+    body: JSON.stringify(body),
   });
   setToken(data.token);
   return data;
+}
+
+// Add report/block helpers next to the auth client so they share the request() wrapper.
+// Contract mirrors backend/routes/moderation.js exactly.
+export async function reportContent({ contentType, contentId, reportedUserId, reason, details }) {
+  return request('/api/reports', {
+    method: 'POST',
+    body: JSON.stringify({
+      content_type: contentType,
+      content_id: contentId,
+      reported_user_id: reportedUserId,
+      reason,
+      details: details || undefined,
+    }),
+  });
+}
+
+export async function blockUser(userId) {
+  return request(`/api/blocks/${userId}`, { method: 'POST' });
+}
+
+export async function unblockUser(userId) {
+  return request(`/api/blocks/${userId}`, { method: 'DELETE' });
+}
+
+export async function getBlockedUsers() {
+  return request('/api/blocks');
 }
 
 export async function login(email, password) {
