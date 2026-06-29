@@ -22,6 +22,7 @@ import { Html5Qrcode } from 'html5-qrcode';
 import LoginScreen from './components/auth/LoginScreen';
 import SignupScreen from './components/auth/SignupScreen';
 import VenueLoginScreen from './components/auth/VenueLoginScreen';
+import ModerationSheet from './components/ModerationSheet';
 import { motion, AnimatePresence } from 'framer-motion';
 import { SplineScene } from './components/ui/spline-scene';
 import 'maplibre-gl/dist/maplibre-gl.css';
@@ -2654,6 +2655,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   const [directMessages, setDirectMessages] = useState([]);
   const [selectedDmId, setSelectedDmId] = useState(null);
   const [showNewDmModal, setShowNewDmModal] = useState(false);
+  // UGC moderation (Apple 1.2): null = closed, else { userId, userName, contentType, contentId }
+  const [moderationTarget, setModerationTarget] = useState(null);
   const [dmSearchText, setDmSearchText] = useState('');
   const [showDmMenu, setShowDmMenu] = useState(false);
   const [showDeleteDmConfirm, setShowDeleteDmConfirm] = useState(false);
@@ -4885,6 +4888,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
             <button onClick={() => setShowDmMenu(!showDmMenu)} style={{ width: '34px', height: '34px', borderRadius: '17px', border: 'none', backgroundColor: 'rgba(255,255,255,0.15)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.moreVertical('white', 16)}</button>
             {showDmMenu && (
               <div style={{ position: 'absolute', top: '38px', right: 0, backgroundColor: 'var(--bg-card-solid)', borderRadius: '14px', boxShadow: '0 8px 30px rgba(0,0,0,0.18)', minWidth: '200px', zIndex: 60, overflow: 'hidden', border: '1px solid var(--border-subtle)' }}>
+                <button className="glass-btn" onClick={() => { setShowDmMenu(false); setModerationTarget({ userId: selectedDmId, userName: selectedDm.name, contentType: 'profile' }); }} style={{ width: '100%', padding: '14px 16px', display: 'flex', alignItems: 'center', gap: '10px', border: 'none', borderBottom: '1px solid var(--border-subtle)', backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer', fontSize: '14px', fontWeight: '600', color: 'var(--text-primary)' }}>
+                  <span aria-hidden style={{ fontSize: '15px' }}>⚑</span> Report or block {selectedDm.name}
+                </button>
                 <button className="glass-btn glass-danger" onClick={() => { setShowDmMenu(false); setShowDeleteDmConfirm(true); }} style={{ width: '100%', padding: '14px 16px', display: 'flex', alignItems: 'center', gap: '10px', border: 'none', backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer', fontSize: '14px', fontWeight: '600', color: '#EF4444' }}>
                   {Icons.x('#EF4444', 16)} Delete Conversation
                 </button>
@@ -5363,6 +5369,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                       >{emoji}</button>
                     ))}
                     <button onClick={(e) => { e.stopPropagation(); setDmReplyingTo(m); setShowDmReactionPicker(null); }} style={{ fontSize: '14px', background: 'none', border: 'none', cursor: 'pointer', padding: '4px 6px', borderRadius: '8px', color: colors.navy, fontWeight: '700' }} title="Reply">{Icons.reply(colors.navy, 14)}</button>
+                    {m.sender !== 'You' && (
+                      <button onClick={(e) => { e.stopPropagation(); setShowDmReactionPicker(null); setModerationTarget({ userId: selectedDmId, userName: selectedDm.name, contentType: 'dm', contentId: m.id }); }} style={{ fontSize: '14px', background: 'none', border: 'none', cursor: 'pointer', padding: '4px 6px', borderRadius: '8px', color: '#EF4444', fontWeight: '700' }} title="Report">⚑</button>
+                    )}
                   </div>
                 )}
                 <p style={{ fontSize: '9px', color: 'var(--text-tertiary)', margin: '4px 4px 0', textAlign: m.sender === 'You' ? 'right' : 'left' }}>{getRelativeTime(m.time)}</p>
@@ -8530,6 +8539,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                       >{r}</button>
                     ))}
                     <button onClick={(e) => { e.stopPropagation(); setReplyingTo(m); setShowReactionPicker(null); }} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '6px', display: 'flex', alignItems: 'center', borderRadius: '10px' }}>{Icons.reply(colors.textSecondary, 18)}</button>
+                    {m.sender !== 'You' && (
+                      <button onClick={(e) => { e.stopPropagation(); setShowReactionPicker(null); setModerationTarget({ userId: m.senderId, userName: m.sender, contentType: 'flock_message', contentId: m.id }); }} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '6px', display: 'flex', alignItems: 'center', borderRadius: '10px', fontSize: '16px', color: '#EF4444' }} title="Report">⚑</button>
+                    )}
                   </div>
                 )}
 
@@ -13161,6 +13173,21 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
             {ExploreScreen()}
           </div>
           {renderScreen()}
+
+          {/* UGC moderation sheet (report / block) — global so it works from chat + DMs */}
+          <ModerationSheet
+            target={moderationTarget}
+            onClose={() => setModerationTarget(null)}
+            showToast={showToast}
+            onBlocked={(blockedId) => {
+              // Drop the blocked user's DM thread and leave their conversation.
+              setDirectMessages(prev => prev.filter(d => String(d.userId) !== String(blockedId)));
+              if (String(selectedDmId) === String(blockedId)) {
+                setSelectedDmId(null);
+                setCurrentScreen('main');
+              }
+            }}
+          />
 
           {/* Full-screen venue search results overlay */}
           {showSearchResults && (() => {
