@@ -28,9 +28,31 @@ const SignupScreen = ({ onSignupSuccess, onSwitchToLogin }) => {
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [dob, setDob] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+
+  // Flock requires users to be at least 13 (matches Terms of Service + the
+  // server-side age gate in backend/utils/age.js). Client check is for UX only;
+  // the backend re-computes age from date_of_birth and is the source of truth.
+  const MIN_AGE = 13;
+  const ageFromDob = (value) => {
+    if (!value) return null;
+    const b = new Date(value);
+    if (isNaN(b.getTime())) return null;
+    const now = new Date();
+    let age = now.getFullYear() - b.getFullYear();
+    const m = now.getMonth() - b.getMonth();
+    if (m < 0 || (m === 0 && now.getDate() < b.getDate())) age -= 1;
+    return age;
+  };
+  // Latest date that still satisfies the minimum age — caps the date picker.
+  const maxDob = (() => {
+    const d = new Date();
+    d.setFullYear(d.getFullYear() - MIN_AGE);
+    return d.toISOString().split('T')[0];
+  })();
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -41,10 +63,20 @@ const SignupScreen = ({ onSignupSuccess, onSwitchToLogin }) => {
       return;
     }
 
+    const age = ageFromDob(dob);
+    if (age === null) {
+      setError('Please enter your date of birth');
+      return;
+    }
+    if (age < MIN_AGE) {
+      setError(`You must be at least ${MIN_AGE} to use Flock`);
+      return;
+    }
+
     setLoading(true);
 
     try {
-      const data = await signup(name, email, password);
+      const data = await signup(name, email, password, dob);
       onSignupSuccess(data.user);
     } catch (err) {
       setError(err.message);
@@ -164,6 +196,12 @@ const SignupScreen = ({ onSignupSuccess, onSwitchToLogin }) => {
             <div style={{ marginBottom: '16px' }}>
               <label style={{ display: 'block', fontSize: '13px', fontWeight: '500', color: 'rgba(148,163,184,0.9)', marginBottom: '8px' }}>Email</label>
               <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@example.com" required style={inputStyle} onFocus={handleFocus} onBlur={handleBlur}/>
+            </div>
+
+            <div style={{ marginBottom: '16px' }}>
+              <label style={{ display: 'block', fontSize: '13px', fontWeight: '500', color: 'rgba(148,163,184,0.9)', marginBottom: '8px' }}>Date of birth</label>
+              <input type="date" value={dob} max={maxDob} onChange={(e) => setDob(e.target.value)} required style={{ ...inputStyle, colorScheme: 'dark' }} onFocus={handleFocus} onBlur={handleBlur}/>
+              <p style={{ fontSize: '11px', color: 'rgba(148,163,184,0.5)', margin: '6px 2px 0' }}>You must be at least 13 to use Flock.</p>
             </div>
 
             <div style={{ marginBottom: '24px' }}>
