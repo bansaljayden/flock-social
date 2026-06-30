@@ -55,9 +55,10 @@ export default function SupportPage() {
 
         <h3>How do I delete my account?</h3>
         <p>
-          Profile → Account → Delete account. This permanently removes your messages, flocks
-          you created, friend connections, and personal info within 30 days. If you can't sign
-          in to delete it yourself, email us from the address on the account and we'll do it.
+          Open Flock and go to Profile → Delete account, then type DELETE to confirm. This
+          immediately and permanently removes your account, messages, flocks you created,
+          friend connections, and personal info. If you can't sign in to delete it yourself,
+          email us from the address on the account and we'll do it.
         </p>
 
         <h3>How does the budget feature stay anonymous?</h3>
