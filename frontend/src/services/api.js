@@ -78,6 +78,15 @@ export async function getBlockedUsers() {
   return request('/api/blocks');
 }
 
+// Permanently delete the signed-in user's account (Apple Guideline 5.1.1(v)).
+// Backend hard-deletes the user row (DELETE /api/users/me); we drop the local
+// token afterward so the app falls back to the logged-out state.
+export async function deleteAccount() {
+  const data = await request('/api/users/me', { method: 'DELETE' });
+  clearToken();
+  return data;
+}
+
 export async function login(email, password) {
   const data = await request('/api/auth/login', {
     method: 'POST',

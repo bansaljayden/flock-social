@@ -36,6 +36,7 @@ workflows:
         - flock_web
       vars:
         BUNDLE_ID: "com.flockcorp.flock"
+        APP_STORE_APP_ID: "6781442127"   # numeric ASC app id (Flock Social) — for build-number lookup
         XCODE_PROJECT: "ios/App/App.xcodeproj"
         XCODE_SCHEME: "App"
         PUBLIC_URL: "."   # CRA → relative asset paths for the bundled WebView origin
@@ -64,14 +65,20 @@ workflows:
           xcode-project use-profiles
       - name: Set unique build number (TestFlight rejects duplicates)
         script: |
-          # App Store Connect rejects any upload whose build number was used before,
-          # so a pinned CURRENT_PROJECT_VERSION = 1 means every build after the first
-          # is silently refused and never reaches TestFlight. Codemagic's $BUILD_NUMBER
-          # auto-increments on every build, so stamping it as CURRENT_PROJECT_VERSION
-          # guarantees a strictly-higher, unique CFBundleVersion each time.
-          # MARKETING_VERSION (1.0) is intentionally left untouched.
-          sed -i '' "s/CURRENT_PROJECT_VERSION = [0-9][0-9]*;/CURRENT_PROJECT_VERSION = $BUILD_NUMBER;/g" ios/App/App.xcodeproj/project.pbxproj
-          echo "Stamped CURRENT_PROJECT_VERSION = $BUILD_NUMBER"
+          # App Store Connect rejects any upload whose CFBundleVersion was used before
+          # ("bundle version must be higher than the previously uploaded version").
+          # The project ships pinned at CURRENT_PROJECT_VERSION = 1, so every build after
+          # the first 409s at Publishing. Fix: ask ASC for the highest build number it
+          # has already seen and stamp the next integer above it — bulletproof regardless
+          # of Codemagic's internal counter. MARKETING_VERSION (1.0) is left untouched.
+          # Auth comes from the FlockASC integration env vars already in scope.
+          LATEST=$(app-store-connect get-latest-testflight-build-number "$APP_STORE_APP_ID" --platform IOS 2>/dev/null || true)
+          case "$LATEST" in ''|*[!0-9]*) LATEST=0;; esac
+          NEXT=$((LATEST + 1))
+          # If Codemagic's monotonic build counter is somehow higher, prefer it.
+          if [ "${BUILD_NUMBER:-0}" -gt "$NEXT" ] 2>/dev/null; then NEXT=$BUILD_NUMBER; fi
+          sed -i '' "s/CURRENT_PROJECT_VERSION = [0-9][0-9]*;/CURRENT_PROJECT_VERSION = $NEXT;/g" ios/App/App.xcodeproj/project.pbxproj
+          echo "Stamped CURRENT_PROJECT_VERSION = $NEXT (ASC latest: $LATEST, CM build: ${BUILD_NUMBER:-n/a})"
           grep -n "CURRENT_PROJECT_VERSION" ios/App/App.xcodeproj/project.pbxproj
       - name: Build signed IPA
         script: >
