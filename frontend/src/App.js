@@ -5951,14 +5951,14 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
             { label: 'Flocks', value: flocks.length },
             { label: 'Friends', value: friendCount },
           ].map(stat => (
-            <div key={stat.label} style={{ flex: 1, borderRadius: '12px', padding: '10px 12px', backgroundColor: 'var(--bg-card-solid)', border: '1px solid var(--border-default)' }}>
+            <div key={stat.label} style={{ flex: 1, borderRadius: '12px', padding: '10px 12px', backgroundColor: 'var(--bg-card-solid)', border: '1px solid var(--border-default)', boxShadow: 'var(--card-shadow-sm)' }}>
               <p style={{ fontSize: '9px', color: 'var(--text-tertiary)', margin: 0, textTransform: 'uppercase', letterSpacing: '0.6px', fontWeight: '600' }}>{stat.label}</p>
               <p style={{ fontSize: '20px', fontWeight: '800', color: 'var(--text-primary)', margin: '3px 0 0', lineHeight: 1, letterSpacing: '-0.4px' }}>{stat.value}</p>
             </div>
           ))}
 
           {/* Tonight pulse — compact list, same height as stat cards */}
-          <div style={{ flex: 1, borderRadius: '12px', padding: '10px 12px', backgroundColor: 'var(--bg-card-solid)', border: '1px solid var(--border-default)' }}>
+          <div style={{ flex: 1, borderRadius: '12px', padding: '10px 12px', backgroundColor: 'var(--bg-card-solid)', border: '1px solid var(--border-default)', boxShadow: 'var(--card-shadow-sm)' }}>
             <p style={{ fontSize: '9px', color: 'var(--text-tertiary)', margin: '0 0 4px', textTransform: 'uppercase', letterSpacing: '0.6px', fontWeight: '600' }}>Tonight</p>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
               {[
