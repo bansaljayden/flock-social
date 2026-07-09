@@ -57,8 +57,8 @@
   --border-mid: #d1d5db;
   --border-subtle: rgba(0,0,0,0.06);
   --divider: #eeeeee;
-  --card-shadow: 0 4px 24px rgba(13,40,71,0.08), 0 1px 3px rgba(0,0,0,0.04);
-  --card-shadow-sm: 0 1px 3px rgba(0,0,0,0.1);
+  --card-shadow: 0 1px 2px rgba(13,40,71,0.04), 0 6px 16px -6px rgba(13,40,71,0.10), 0 16px 40px -12px rgba(13,40,71,0.10);
+  --card-shadow-sm: 0 1px 2px rgba(13,40,71,0.05), 0 3px 8px -3px rgba(13,40,71,0.08);
   --card-border: 1px solid rgba(255,255,255,0.9);
   --nav-shadow: 0 -4px 24px rgba(0,0,0,0.06);
   --nav-border: 1px solid rgba(0,0,0,0.03);
@@ -109,8 +109,8 @@
   --border-mid: #2d5a87;
   --border-subtle: rgba(255,255,255,0.06);
   --divider: #1e3a5c;
-  --card-shadow: 0 4px 24px rgba(0,0,0,0.25), 0 1px 3px rgba(0,0,0,0.15);
-  --card-shadow-sm: 0 1px 3px rgba(0,0,0,0.3);
+  --card-shadow: 0 1px 2px rgba(0,0,0,0.30), 0 6px 16px -6px rgba(0,0,0,0.35), 0 16px 40px -12px rgba(0,0,0,0.30);
+  --card-shadow-sm: 0 1px 2px rgba(0,0,0,0.30), 0 3px 8px -3px rgba(0,0,0,0.25);
   --card-border: 1px solid rgba(255,255,255,0.05);
   --nav-shadow: 0 -4px 24px rgba(0,0,0,0.3);
   --nav-border: 1px solid rgba(255,255,255,0.05);
@@ -158,11 +158,26 @@ body {
   -moz-osx-font-smoothing: grayscale;
   background: var(--bg-primary);
   color: var(--text-primary);
+  /* Equal-width numerals so stats, crowd %, budgets and timestamps line up cleanly. */
+  font-variant-numeric: tabular-nums;
   transition: background-color 0.3s ease, color 0.3s ease;
 }
 
 input, textarea, select, button {
   font-family: inherit;
+}
+
+/* Film-grain texture — fixed, non-interactive, barely-there. Gives surfaces a
+   physical, editorial feel instead of flat digital vectors (high-end technique).
+   Self-contained SVG so it works offline inside the Capacitor WebView. */
+body::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: 9998;
+  pointer-events: none;
+  opacity: 0.022;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
 }
 
 /* Keyboard-only focus ring (teal brand accent). :focus-visible never fires on
