@@ -48,8 +48,8 @@
   --bg-tertiary: #e8e0d5;
   --bg-elevated: #ffffff;
   --text-primary: #1e293b;
-  --text-secondary: #64748b;
-  --text-tertiary: #94a3b8;
+  --text-secondary: #556274;
+  --text-tertiary: #78859a;
   --text-on-primary: #1e293b;
   --border-color: #e8e0d0;
   --border-light: #f3f4f6;
@@ -100,8 +100,8 @@
   --bg-tertiary: #1e3a5c;
   --bg-elevated: #1e293b;
   --text-primary: #f1ede0;
-  --text-secondary: #94a3b8;
-  --text-tertiary: #64748b;
+  --text-secondary: #a3b0c2;
+  --text-tertiary: #7c8a9e;
   --text-on-primary: #f1ede0;
   --border-color: #1e3a5c;
   --border-light: #162d4a;
@@ -186,6 +186,21 @@ body::after {
   outline: 2px solid rgba(13,148,136,0.9);
   outline-offset: 2px;
   border-radius: 4px;
+}
+
+/* Respect the OS "reduce motion" setting (a11y requirement both impeccable and
+   the Web Interface Guidelines mandate). Kills the infinite orb/shimmer/pulse
+   loops and collapses transitions to crossfades, while forcing any
+   scroll-reveal content to its visible state so nothing ships blank. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+  .scroll-fade { opacity: 1 !important; transform: none !important; }
+  .birdie-orb, .birdie-bg::before { animation: none !important; }
 }
 
 /* Default readable colors for all text inputs — individual overrides still win via inline styles */
