@@ -333,8 +333,16 @@ export async function uploadProfileImage(file) {
     headers: { Authorization: `Bearer ${token}` },
     body: formData,
   });
-  const data = await res.json();
-  if (!res.ok) throw new Error(data.error || 'Upload failed');
+  const contentType = res.headers.get('content-type') || '';
+  const data = res.status === 204
+    ? null
+    : contentType.includes('application/json')
+      ? await res.json()
+      : await res.text();
+  if (!res.ok) {
+    const message = data && typeof data === 'object' ? data.error : data;
+    throw new Error(message || 'Upload failed');
+  }
   return data;
 }
 
