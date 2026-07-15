@@ -28,10 +28,18 @@ async function request(endpoint, options = {}) {
     headers,
   });
 
-  const data = await res.json();
+  const contentType = res.headers.get('content-type') || '';
+  const data = res.status === 204
+    ? null
+    : contentType.includes('application/json')
+      ? await res.json()
+      : await res.text();
 
   if (!res.ok) {
-    throw new Error(data.error || data.errors?.[0]?.msg || 'Something went wrong');
+    const message = data && typeof data === 'object'
+      ? (data.error || data.errors?.[0]?.msg)
+      : data;
+    throw new Error(message || 'Something went wrong');
   }
 
   return data;
