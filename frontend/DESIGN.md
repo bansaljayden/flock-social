@@ -26,13 +26,12 @@ Light mode (`:root`):
 - Semantic only: amber (warnings/moderate), red (danger/busy), green (go/available)
 
 Dark mode (`[data-theme="dark"]`): navy-slate family (`#0f172a` canvas, `#1e293b`
-surfaces), teal accent preserved, muted text lightened for AA.
+surfaces), steel accent lightened to `#6d9ac3`, muted text lightened for AA.
 
 **Locks & bans:**
-- **One accent: teal.** No second accent. (The old indigo/purple "Birdie" orbs were
-  removed — purple/indigo is the #1 AI fingerprint and clashed with teal.)
+- **One accent: steel navy.** No second accent. Purple is fully dead (2026-07):
+  Birdie AI, Pro badges, concert category, NIGHT badge all steel/navy family.
 - No pure `#000000` / pure `#ffffff` backgrounds (cream + off-navy carry depth).
-- Night-mode badge purple is the one sanctioned exception (semantic: moon = night).
 
 ## 3. Typography Rules
 - **Family:** **Satoshi** (self-hosted, weights 400/500/700/900) on everything.
@@ -46,17 +45,15 @@ surfaces), teal accent preserved, muted text lightened for AA.
   (this is a product UI); loading fonts from a CDN (must be self-hosted/offline).
 
 ## 4. Component Stylings
-- **Buttons:** the `.glass-*` system is Flock's signature — teal `.glass-primary`
-  for actions, `.glass-secondary` for neutral, `.glass-danger` for destructive.
-  Tactile `scale(0.98)` on `:active`, `scale(1.02)` on hover. Glass is a
-  *deliberate identity choice here* (premium-consumer register), not decoration —
-  keep it purposeful, don't add more blur layers.
-- **Cards:** rounded 12–16px, `--bg-card-solid` with a 1px `--border-default`
-  hairline AND a soft ambient shadow (`--card-shadow-sm`) so they lift off the
-  cream instead of reading flat. Avoid nesting cards inside cards.
-- **Elevation:** layered soft-ambient shadows (`--card-shadow` / `--card-shadow-sm`),
-  tinted navy in light, deep black in dark — never a single harsh drop shadow.
-- **Inputs:** label above, error below; readable fill (`--bg-tertiary`), teal focus.
+- **Buttons:** the REFINED `.glass-*` system (2026-07) — modest blur(10px), 1px
+  hairline, single inner highlight, whisper shadow. `.glass-primary` = navy glass
+  (light) / cream glass (dark) — the login CTA language. No glow stacks ever.
+  Tactile `scale(0.98)` on `:active`; hover = brightness shift, not scale.
+- **Cards:** FLAT — rounded 12–16px, `--bg-card-solid`, 1px `--border-default`
+  hairline, whisper `--card-shadow-sm`. No blur on cards. No nested cards.
+- **Elevation:** whisper shadows only (≤0.05 light); modals may carry a soft
+  0.15 black shadow. Never colored glows.
+- **Inputs:** label above, error below; readable fill (`--bg-tertiary`), steel focus.
 - **Surfaces:** a fixed film-grain overlay (0.022) gives editorial texture.
 
 ## 5. Layout Principles
