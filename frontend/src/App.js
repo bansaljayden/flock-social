@@ -6101,14 +6101,12 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
 
         {/* Flocks */}
         <ScrollFade delay={3}><h2 style={{ fontSize: '12px', fontWeight: 'bold', color: colors.navy, margin: '0 0 8px' }}>Your Flocks</h2></ScrollFade>
-        <div style={{ display: 'flex', flexDirection: 'column', marginBottom: '14px' }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginBottom: '14px' }}>
           {flocks.map((f, idx) => {
-            const rotation = idx * -1.5;
             return (
               <ScrollFade key={`fade-${f.id}`} delay={Math.min(idx + 4, 7)}><button
                 key={f.id}
                 onClick={() => { setSelectedFlockId(f.id); setCurrentScreen('detail'); }}
-                className="flock-stack-card glass-btn glass-secondary"
                 style={{
                   width: '100%',
                   textAlign: 'left',
@@ -6116,16 +6114,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                   borderRadius: '14px',
                   border: '1px solid var(--border-default)',
                   backgroundColor: 'var(--bg-card-solid)',
-                  boxShadow: 'var(--card-shadow)',
+                  boxShadow: 'var(--card-shadow-sm)',
                   cursor: 'pointer',
-                  transform: `rotate(${rotation}deg)`,
-                  transformOrigin: 'center center',
-                  transition: 'transform 0.3s ease, box-shadow 0.3s ease, border-color 0.3s ease',
+                  transition: 'border-color 0.2s ease',
                   overflow: 'hidden',
-                  willChange: 'transform',
-                  marginTop: idx === 0 ? '0' : '-14px',
-                  zIndex: idx,
-                  position: 'relative',
                 }}
               >
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '8px' }}>
