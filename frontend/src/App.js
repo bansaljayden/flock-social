@@ -5953,67 +5953,47 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           </button>
         </div>
 
-        {/* Compact stats row */}
-        <div style={{ display: 'flex', gap: '8px' }}>
-          {[
-            { label: 'Flocks', value: flocks.length },
-            { label: 'Friends', value: friendCount },
-          ].map(stat => (
-            <div key={stat.label} style={{ flex: 1, borderRadius: '12px', padding: '10px 12px', backgroundColor: 'var(--bg-card-solid)', border: '1px solid var(--border-default)', boxShadow: 'var(--card-shadow-sm)' }}>
-              <p style={{ fontSize: '9px', color: 'var(--text-tertiary)', margin: 0, textTransform: 'uppercase', letterSpacing: '0.6px', fontWeight: '600' }}>{stat.label}</p>
-              <p style={{ fontSize: '20px', fontWeight: '800', color: 'var(--text-primary)', margin: '3px 0 0', lineHeight: 1, letterSpacing: '-0.4px' }}>{stat.value}</p>
-            </div>
-          ))}
+        {/* Editorial stat line — numbers as typography, not identical tiles (2026-07 recomposition) */}
+        <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: '0 0 12px', fontWeight: '600', letterSpacing: '-0.1px' }}>
+          <span style={{ color: 'var(--text-primary)', fontWeight: '800', fontSize: '13px' }}>{flocks.length}</span> {flocks.length === 1 ? 'flock' : 'flocks'}
+          <span style={{ color: 'var(--text-tertiary)', margin: '0 7px' }}>·</span>
+          <span style={{ color: 'var(--text-primary)', fontWeight: '800', fontSize: '13px' }}>{friendCount}</span> {friendCount === 1 ? 'friend' : 'friends'}
+        </p>
 
-          {/* Tonight pulse — compact list, same height as stat cards */}
-          <div style={{ flex: 1, borderRadius: '12px', padding: '10px 12px', backgroundColor: 'var(--bg-card-solid)', border: '1px solid var(--border-default)', boxShadow: 'var(--card-shadow-sm)' }}>
-            <p style={{ fontSize: '9px', color: 'var(--text-tertiary)', margin: '0 0 4px', textTransform: 'uppercase', letterSpacing: '0.6px', fontWeight: '600' }}>Tonight</p>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
-              {[
-                { key: 'down', color: '#10b981', label: 'Down' },
-                { key: 'maybe', color: '#f59e0b', label: 'Maybe' },
-                { key: 'not', color: 'var(--text-tertiary)', label: 'Not' },
-              ].map(opt => {
-                const active = myPulse?.status === opt.key;
-                return (
-                  <button
-                    key={opt.key}
-                    onClick={() => handleSetPulse(opt.key)}
-                    disabled={pulseSaving}
-                    aria-label={opt.label}
-                    style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '6px',
-                      padding: 0,
-                      margin: 0,
-                      lineHeight: 1,
-                      background: 'none',
-                      border: 'none',
-                      cursor: pulseSaving ? 'wait' : 'pointer',
-                      opacity: pulseSaving ? 0.6 : 1,
-                      textAlign: 'left',
-                    }}
-                  >
-                    <span style={{
-                      width: '6px',
-                      height: '6px',
-                      borderRadius: '50%',
-                      backgroundColor: opt.color,
-                      flexShrink: 0,
-                      boxShadow: 'none',
-                    }} />
-                    <span style={{
-                      fontSize: '10px',
-                      fontWeight: active ? '700' : '500',
-                      color: active ? 'var(--text-primary)' : 'var(--text-tertiary)',
-                      whiteSpace: 'nowrap',
-                      lineHeight: 1,
-                    }}>{opt.label}</span>
-                  </button>
-                );
-              })}
-            </div>
+        {/* Tonight — full-width segmented pulse control (the actionable hero of the header) */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px', borderRadius: '14px', backgroundColor: 'var(--bg-card-solid)', border: '1px solid var(--border-default)', boxShadow: 'var(--card-shadow-sm)' }}>
+          <span style={{ fontSize: '11px', fontWeight: '700', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px', paddingLeft: '8px', flexShrink: 0 }}>Tonight?</span>
+          <div style={{ display: 'flex', flex: 1, gap: '4px' }}>
+            {[
+              { key: 'down', fill: '#10b981', label: 'Down' },
+              { key: 'maybe', fill: '#f59e0b', label: 'Maybe' },
+              { key: 'not', fill: 'var(--text-secondary)', label: 'Not' },
+            ].map(opt => {
+              const active = myPulse?.status === opt.key;
+              return (
+                <button
+                  key={opt.key}
+                  onClick={() => handleSetPulse(opt.key)}
+                  disabled={pulseSaving}
+                  aria-label={opt.label}
+                  style={{
+                    flex: 1,
+                    padding: '8px 0',
+                    borderRadius: '9px',
+                    border: active ? '1px solid transparent' : '1px solid var(--border-default)',
+                    backgroundColor: active ? opt.fill : 'transparent',
+                    color: active ? '#ffffff' : 'var(--text-secondary)',
+                    fontSize: '11px',
+                    fontWeight: '700',
+                    cursor: pulseSaving ? 'wait' : 'pointer',
+                    opacity: pulseSaving ? 0.6 : 1,
+                    transition: 'background-color 0.15s ease, color 0.15s ease',
+                  }}
+                >
+                  {opt.label}
+                </button>
+              );
+            })}
           </div>
         </div>
       </div>
@@ -6021,7 +6001,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
       {/* Scrollable Content */}
       <div onScroll={handleScroll} style={{ flex: 1, padding: '4px 16px 16px', overflowY: 'auto', WebkitOverflowScrolling: 'touch' }}>
 
-        {/* Needs your attention — clean card matching flock-card style */}
+        {/* Needs your attention — slim amber ALERT strip, visually distinct from cards */}
         {(() => {
           const needsAction = flocks.filter(f => f.status === 'voting');
           if (needsAction.length === 0) return null;
@@ -6031,84 +6011,62 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
               style={{
                 width: '100%',
                 textAlign: 'left',
-                padding: '12px 14px',
-                borderRadius: '12px',
-                border: '1px solid var(--border-default)',
-                backgroundColor: 'var(--bg-card-solid)',
+                padding: '11px 14px',
+                borderRadius: '10px',
+                border: '1px solid rgba(245,158,11,0.35)',
+                backgroundColor: 'var(--accent-amber-bg)',
                 cursor: 'pointer',
-                marginBottom: '10px',
+                marginBottom: '12px',
                 display: 'flex',
                 alignItems: 'center',
                 gap: '10px',
               }}
             >
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <p style={{ fontSize: '13px', fontWeight: '700', color: 'var(--text-primary)', margin: 0, letterSpacing: '-0.1px' }}>{needsAction[0].name}</p>
-                <p style={{ fontSize: '11px', color: 'var(--text-secondary)', margin: '2px 0 0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                  {needsAction.length === 1 ? 'Needs your vote' : `${needsAction.length - 1} other ${needsAction.length - 1 === 1 ? 'flock needs' : 'flocks need'} your vote too`}
-                </p>
-              </div>
-              <span style={{ fontSize: '10px', fontWeight: '600', padding: '3px 8px', borderRadius: '8px', backgroundColor: 'var(--accent-amber-bg)', color: 'var(--accent-amber-text)', display: 'inline-flex', alignItems: 'center', gap: '3px', flexShrink: 0 }}>
-                {Icons.vote('var(--accent-amber-text)', 10)} Needs Votes
-              </span>
+              {Icons.vote('var(--accent-amber-text)', 14)}
+              <p style={{ flex: 1, minWidth: 0, fontSize: '12px', fontWeight: '700', color: 'var(--accent-amber-text)', margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {needsAction[0].name} needs your vote{needsAction.length > 1 ? ` · +${needsAction.length - 1} more` : ''}
+              </p>
+              <span style={{ fontSize: '14px', color: 'var(--accent-amber-text)', flexShrink: 0, lineHeight: 1 }}>→</span>
             </button></ScrollFade>
           );
         })()}
 
-        {/* Action buttons — deep glass treatment, neo-tactile */}
-        <ScrollFade delay={1}><div style={{ display: 'flex', gap: '10px', marginBottom: '16px' }}>
-          <button
-            onClick={() => setCurrentScreen('create')}
-            className="neo-btn-primary"
-            style={{
-              flex: 1,
-              padding: '14px 16px',
-              borderRadius: '14px',
-              border: 'none',
-              background: '#1e293b',
-              color: 'white',
-              fontWeight: '700',
-              fontSize: '14px',
-              cursor: 'pointer',
-              boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.12), 0 1px 2px rgba(30,41,59,0.10)',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              gap: '7px',
-              letterSpacing: '-0.1px',
-            }}
-          >
-            {Icons.plus('white', 15)} Start a flock
-          </button>
+        {/* Primary action — one full-width hero CTA (login-language: navy on light, cream on dark) */}
+        <ScrollFade delay={1}><button
+          onClick={() => setCurrentScreen('create')}
+          className="neo-btn-primary"
+          style={{
+            width: '100%',
+            padding: '16px',
+            borderRadius: '14px',
+            border: 'none',
+            background: isDark ? '#f1ede0' : '#1e293b',
+            color: isDark ? '#1e293b' : '#ffffff',
+            fontWeight: '700',
+            fontSize: '15px',
+            cursor: 'pointer',
+            boxShadow: isDark ? 'inset 0 1px 0 rgba(255,255,255,0.55), 0 1px 2px rgba(0,0,0,0.20)' : 'inset 0 1px 0 rgba(255,255,255,0.12), 0 1px 2px rgba(30,41,59,0.10)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            gap: '8px',
+            letterSpacing: '-0.1px',
+            marginBottom: '18px',
+          }}
+        >
+          {Icons.plus(isDark ? '#1e293b' : 'white', 16)} Start a flock
+        </button></ScrollFade>
+
+        {/* Flocks — header row with quiet Add-friends ghost */}
+        <ScrollFade delay={3}><div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', margin: '0 0 8px' }}>
+          <h2 style={{ fontSize: '12px', fontWeight: 'bold', color: colors.navy, margin: 0 }}>Your Flocks</h2>
           <button
             onClick={() => setCurrentScreen('addFriends')}
-            className="neo-btn-glass"
-            style={{
-              flex: 1,
-              padding: '14px 16px',
-              borderRadius: '14px',
-              border: 'none',
-              background: isDark ? 'rgba(255,255,255,0.07)' : 'rgba(255,255,255,0.62)',
-              backdropFilter: 'blur(10px)',
-              WebkitBackdropFilter: 'blur(10px)',
-              color: 'var(--text-primary)',
-              fontWeight: '700',
-              fontSize: '14px',
-              cursor: 'pointer',
-              boxShadow: isDark ? 'inset 0 1px 0 rgba(255,255,255,0.10), 0 1px 2px rgba(0,0,0,0.20)' : 'inset 0 1px 0 rgba(255,255,255,0.70), 0 1px 2px rgba(30,41,59,0.05)',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              gap: '7px',
-              letterSpacing: '-0.1px',
-            }}
+            style={{ display: 'flex', alignItems: 'center', gap: '5px', padding: '5px 10px', borderRadius: '8px', border: '1px solid var(--border-default)', background: 'transparent', color: 'var(--text-secondary)', fontSize: '11px', fontWeight: '700', cursor: 'pointer' }}
           >
-            {Icons.userPlus('var(--text-primary)', 15)} Add friends
+            {Icons.userPlus('var(--text-secondary)', 12)} Add friends
           </button>
         </div></ScrollFade>
-
-        {/* Flocks */}
-        <ScrollFade delay={3}><h2 style={{ fontSize: '12px', fontWeight: 'bold', color: colors.navy, margin: '0 0 8px' }}>Your Flocks</h2></ScrollFade>
         <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginBottom: '14px' }}>
           {flocks.map((f, idx) => {
             return (
