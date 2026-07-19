@@ -37,6 +37,7 @@ const adminRoutes = require('./routes/admin');
 const venueProfileRoutes = require('./routes/venueProfile');
 const venueDashboardRoutes = require('./routes/venueDashboard');
 const availabilityRoutes = require('./routes/availability');
+const calendarRoutes = require('./routes/calendar');
 const sensorRoutes = require('./routes/sensors');
 const checkinRoutes = require('./routes/checkin');
 const moderationRoutes = require('./routes/moderation');
@@ -179,6 +180,7 @@ app.use('/api/admin', apiLimiter, adminRoutes);               // Handles /api/ad
 app.use('/api/venue-profile', apiLimiter, venueProfileRoutes); // Handles /api/venue-profile (venue owners)
 app.use('/api/venue-dashboard', apiLimiter, venueDashboardRoutes); // Handles promotions, events, reviews CRUD
 app.use('/api/availability', apiLimiter, availabilityRoutes); // 3-tap status pulse: down / maybe / not
+app.use('/api/calendar', apiLimiter, calendarRoutes);          // personal calendar events (CRUD, per-user)
 
 // 404 handler
 app.use((req, res) => {
