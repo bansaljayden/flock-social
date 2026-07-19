@@ -6016,7 +6016,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
       {/* Scrollable Content */}
       <div onScroll={handleScroll} style={{ flex: 1, padding: '4px 16px 16px', overflowY: 'auto', WebkitOverflowScrolling: 'touch' }}>
 
-        {/* Needs your attention — slim amber ALERT strip, visually distinct from cards */}
+        {/* Needs your attention — clean card (previous form), steel chip, no yellow */}
         {(() => {
           const needsAction = flocks.filter(f => f.status === 'voting');
           if (needsAction.length === 0) return null;
@@ -6026,10 +6026,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
               style={{
                 width: '100%',
                 textAlign: 'left',
-                padding: '11px 14px',
-                borderRadius: '10px',
-                border: '1px solid rgba(245,158,11,0.35)',
-                backgroundColor: 'var(--accent-amber-bg)',
+                padding: '12px 14px',
+                borderRadius: '12px',
+                border: '1px solid var(--border-default)',
+                backgroundColor: 'var(--bg-card-solid)',
+                boxShadow: 'var(--card-shadow-sm)',
                 cursor: 'pointer',
                 marginBottom: '12px',
                 display: 'flex',
@@ -6037,11 +6038,15 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 gap: '10px',
               }}
             >
-              {Icons.vote('var(--accent-amber-text)', 14)}
-              <p style={{ flex: 1, minWidth: 0, fontSize: '12px', fontWeight: '700', color: 'var(--accent-amber-text)', margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                {needsAction[0].name} needs your vote{needsAction.length > 1 ? ` · +${needsAction.length - 1} more` : ''}
-              </p>
-              <span style={{ fontSize: '14px', color: 'var(--accent-amber-text)', flexShrink: 0, lineHeight: 1 }}>→</span>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <p style={{ fontSize: '13px', fontWeight: '700', color: 'var(--text-primary)', margin: 0, letterSpacing: '-0.1px' }}>{needsAction[0].name}</p>
+                <p style={{ fontSize: '11px', color: 'var(--text-secondary)', margin: '2px 0 0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {needsAction.length === 1 ? 'Needs your vote' : `${needsAction.length - 1} other ${needsAction.length - 1 === 1 ? 'flock needs' : 'flocks need'} your vote too`}
+                </p>
+              </div>
+              <span style={{ fontSize: '10px', fontWeight: '600', padding: '3px 8px', borderRadius: '8px', backgroundColor: 'rgba(45,90,135,0.12)', color: 'var(--accent-purple-text)', display: 'inline-flex', alignItems: 'center', gap: '3px', flexShrink: 0 }}>
+                {Icons.vote('var(--accent-purple-text)', 10)} Needs Votes
+              </span>
             </button></ScrollFade>
           );
         })()}
@@ -6106,8 +6111,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                     <h3 style={{ fontSize: '15px', fontWeight: '800', color: colors.navy, margin: 0 }}>{f.name}</h3>
                     <p style={{ fontSize: '10px', color: 'var(--text-secondary)', margin: '2px 0 0', display: 'flex', alignItems: 'center', gap: '3px' }}>{Icons.mapPin(colors.textSecondary, 10)} {f.venue}</p>
                   </div>
-                  <span style={{ fontSize: '9px', padding: '3px 8px', borderRadius: '10px', fontWeight: '600', backgroundColor: f.status === 'voting' ? 'var(--accent-amber-bg)' : 'var(--accent-green-bg)', color: f.status === 'voting' ? 'var(--accent-amber-text)' : 'var(--accent-green-text)', display: 'flex', alignItems: 'center', gap: '3px' }}>
-                    {f.status === 'voting' ? Icons.vote('var(--accent-amber-text)', 9) : Icons.check('var(--accent-green-text)', 9)} {f.status === 'voting' ? 'Needs Votes' : 'Locked In'}
+                  <span style={{ fontSize: '9px', padding: '3px 8px', borderRadius: '10px', fontWeight: '600', backgroundColor: f.status === 'voting' ? 'rgba(45,90,135,0.12)' : 'var(--icon-bg)', color: f.status === 'voting' ? 'var(--accent-purple-text)' : 'var(--text-secondary)', display: 'flex', alignItems: 'center', gap: '3px' }}>
+                    {f.status === 'voting' ? Icons.vote('var(--accent-purple-text)', 9) : Icons.check('var(--text-secondary)', 9)} {f.status === 'voting' ? 'Needs Votes' : 'Locked In'}
                   </span>
                 </div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -6585,9 +6590,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           <button
             className="glass-btn glass-secondary"
             onClick={() => { setShowSearchResults(true); setShowSearchDropdown(false); }}
-            style={{ position: 'absolute', bottom: '14px', right: '12px', padding: '8px 14px', borderRadius: '12px', border: 'none', background: 'var(--bg-card-solid)', color: colors.navy, fontSize: '12px', fontWeight: '700', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px', boxShadow: '0 2px 12px rgba(0,0,0,0.15)', zIndex: 35, transition: 'opacity 0.2s ease' }}
+            style={{ position: 'absolute', bottom: '12px', right: '12px', padding: '5px 10px', borderRadius: '9px', border: '1px solid var(--border-default)', background: 'var(--bg-card-solid)', color: 'var(--text-secondary)', fontSize: '11px', fontWeight: '600', cursor: 'pointer', boxShadow: 'var(--card-shadow-sm)' }}
           >
-            View All {allVenues.length} Results
+            All {allVenues.length} results
           </button>
         )}
 
