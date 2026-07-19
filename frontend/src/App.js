@@ -1182,7 +1182,8 @@ const makeStyles = (c, isDark) => ({
   bottomNav: {
     display: 'flex',
     justifyContent: 'space-around',
-    padding: '8px 4px',
+    // extra bottom padding = iPhone home-indicator safe area (Capacitor)
+    padding: '8px 4px calc(8px + env(safe-area-inset-bottom))',
     backgroundColor: 'var(--bg-nav)',
     borderTop: 'var(--nav-border)',
     flexShrink: 0,
@@ -2290,6 +2291,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   const [newEventTitle, setNewEventTitle] = useState('');
   const [newEventVenue, setNewEventVenue] = useState('');
   const [newEventTime, setNewEventTime] = useState('');
+  const [newEventCategory, setNewEventCategory] = useState('social');
 
   // Load persisted calendar events on boot and every Plans visit (server is source of truth)
   useEffect(() => {
@@ -2735,6 +2737,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   const [newContact, setNewContact] = useState({ name: '', phone: '', email: '', relationship: '' });
   const [safetyLoading, setSafetyLoading] = useState(false);
   const [sosAlertSending, setSosAlertSending] = useState(false);
+  const [sosArmed, setSosArmed] = useState(false); // two-step confirm: first tap arms, second fires
 
   // Corner positions for FABs
   const cornerStyle = useCallback((corner, side) => {
@@ -4377,12 +4380,12 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
         </div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
           <a href="tel:911" style={{ ...styles.gradientButton, background: colors.red, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', textDecoration: 'none', color: 'white', fontWeight: '700' }}>{Icons.phone('white', 16)} Call 911</a>
-          <button className="glass-btn glass-danger" disabled={sosAlertSending} onClick={handleEmergencyAlert} style={{ ...styles.gradientButton, background: colors.red, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', position: 'relative', overflow: 'hidden', opacity: sosAlertSending ? 0.6 : 1 }}>{Icons.shield('white', 16)} {sosAlertSending ? 'Sending...' : 'Alert Contacts'}</button>
+          <button className="glass-btn glass-danger" disabled={sosAlertSending} onClick={() => { if (!sosArmed) { setSosArmed(true); setTimeout(() => setSosArmed(false), 4000); } else { setSosArmed(false); handleEmergencyAlert(); } }} style={{ ...styles.gradientButton, background: colors.red, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', position: 'relative', overflow: 'hidden', opacity: sosAlertSending ? 0.6 : 1 }}>{Icons.shield('white', 16)} {sosAlertSending ? 'Sending...' : sosArmed ? 'Tap again to confirm' : 'Alert Contacts'}</button>
           <button className="glass-btn glass-secondary" disabled={sosAlertSending} onClick={handleShareLocationWithContacts} style={{ ...styles.gradientButton, background: 'var(--bg-card-solid)', color: colors.navy, border: `2px solid ${colors.navy}`, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', opacity: sosAlertSending ? 0.6 : 1 }}>{Icons.mapPin(colors.navy, 16)} {sosAlertSending ? 'Sending...' : 'Share Location'}</button>
           {trustedContacts.length === 0 && (
             <button className="glass-btn glass-secondary" onClick={() => { setShowSOS(false); setProfileScreen('safety'); setCurrentScreen('profile'); loadTrustedContacts(); }} style={{ ...styles.gradientButton, background: 'var(--icon-bg)', color: colors.navy, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', fontSize: '13px' }}>Set Up Trusted Contacts</button>
           )}
-          <button className="glass-btn glass-secondary" disabled={sosAlertSending} onClick={() => setShowSOS(false)} style={{ background: 'none', border: 'none', color: 'var(--text-tertiary)', padding: '8px', cursor: 'pointer' }}>Cancel</button>
+          <button className="glass-btn glass-secondary" disabled={sosAlertSending} onClick={() => { setSosArmed(false); setShowSOS(false); }} style={{ background: 'none', border: 'none', color: 'var(--text-tertiary)', padding: '8px', cursor: 'pointer' }}>Cancel</button>
         </div>
       </div>
     </div>
@@ -6088,6 +6091,12 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           </button>
         </div></ScrollFade>
         <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginBottom: '14px' }}>
+          {flocks.length === 0 && (
+            <ScrollFade><div style={{ padding: '28px 20px', borderRadius: '14px', border: '1px dashed var(--border-mid)', backgroundColor: 'var(--bg-card-solid)', textAlign: 'center' }}>
+              <p style={{ fontSize: '14px', fontWeight: '700', color: 'var(--text-primary)', margin: 0 }}>No flocks yet</p>
+              <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: '4px 0 0' }}>Start one above and get your people together.</p>
+            </div></ScrollFade>
+          )}
           {flocks.map((f, idx) => {
             return (
               <ScrollFade key={`fade-${f.id}`} delay={Math.min(idx + 4, 7)}><button
@@ -6274,7 +6283,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
             <label style={{ display: 'block', fontSize: '12px', fontWeight: 'bold', color: colors.navy, marginBottom: '6px' }}>When</label>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '6px' }}>
               {['Tonight', 'Tomorrow', 'This Weekend', 'Next Week'].map(d => (
-                <button key={d} onClick={() => setFlockDate(d)} style={{ padding: '10px', borderRadius: '10px', border: flockDate === d ? '2px solid #22c55e' : '1.5px solid var(--border-default)', backgroundColor: flockDate === d ? 'rgba(34,197,94,0.15)' : 'var(--bg-card-solid)', color: flockDate === d ? '#22c55e' : 'var(--text-primary)', fontWeight: '700', fontSize: '13px', cursor: 'pointer', transition: 'all 0.2s ease', boxShadow: flockDate === d ? '0 0 12px rgba(34,197,94,0.2)' : 'none' }}>{flockDate === d ? '✓ ' : ''}{d}</button>
+                <button key={d} onClick={() => setFlockDate(d)} style={{ padding: '10px', borderRadius: '10px', border: flockDate === d ? '2px solid #2d5a87' : '1.5px solid var(--border-default)', backgroundColor: flockDate === d ? 'rgba(45,90,135,0.12)' : 'var(--bg-card-solid)', color: flockDate === d ? '#22c55e' : 'var(--text-primary)', fontWeight: '700', fontSize: '13px', cursor: 'pointer', transition: 'all 0.2s ease', boxShadow: flockDate === d ? '0 0 12px rgba(34,197,94,0.2)' : 'none' }}>{flockDate === d ? '✓ ' : ''}{d}</button>
               ))}
             </div>
           </div>
@@ -6283,7 +6292,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
             <label style={{ display: 'block', fontSize: '12px', fontWeight: 'bold', color: colors.navy, marginBottom: '6px' }}>Time</label>
             <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
               {['7 PM', '8 PM', '9 PM', '10 PM', '11 PM'].map(t => (
-                <button key={t} onClick={() => setFlockTime(t)} style={{ padding: '6px 14px', borderRadius: '20px', border: flockTime === t ? '2px solid #22c55e' : '1.5px solid var(--border-default)', backgroundColor: flockTime === t ? 'rgba(34,197,94,0.15)' : 'var(--bg-card-solid)', color: flockTime === t ? '#22c55e' : 'var(--text-primary)', fontWeight: '700', fontSize: '12px', cursor: 'pointer', transition: 'all 0.2s ease', boxShadow: flockTime === t ? '0 0 10px rgba(34,197,94,0.2)' : 'none' }}>{t}</button>
+                <button key={t} onClick={() => setFlockTime(t)} style={{ padding: '6px 14px', borderRadius: '20px', border: flockTime === t ? '2px solid #2d5a87' : '1.5px solid var(--border-default)', backgroundColor: flockTime === t ? 'rgba(45,90,135,0.12)' : 'var(--bg-card-solid)', color: flockTime === t ? '#22c55e' : 'var(--text-primary)', fontWeight: '700', fontSize: '12px', cursor: 'pointer', transition: 'all 0.2s ease', boxShadow: flockTime === t ? '0 0 10px rgba(34,197,94,0.2)' : 'none' }}>{t}</button>
               ))}
             </div>
           </div>
@@ -7780,19 +7789,14 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
               <p style={{ fontSize: '10px', fontWeight: '600', color: 'var(--text-secondary)', marginBottom: '6px' }}>Category</p>
               <div style={{ display: 'flex', gap: '6px', marginBottom: '10px', flexWrap: 'wrap' }}>
                 {eventCategories.map(cat => (
-                  <button key={cat.id} className="glass-btn glass-secondary" style={{ padding: '6px 10px', borderRadius: '16px', border: `1px solid ${cat.color}`, backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer', fontSize: '10px', color: cat.color, fontWeight: '500', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                  <button key={cat.id} onClick={() => setNewEventCategory(cat.id)} style={{ padding: '6px 10px', borderRadius: '10px', border: newEventCategory === cat.id ? `2px solid ${cat.color}` : '1px solid var(--border-default)', backgroundColor: newEventCategory === cat.id ? `${cat.color}18` : 'var(--bg-card-solid)', cursor: 'pointer', fontSize: '10px', color: cat.color, fontWeight: '600', display: 'flex', alignItems: 'center', gap: '4px' }}>
                     {cat.icon(cat.color, 12)} {cat.label}
                   </button>
                 ))}
               </div>
-              {/* Repeat toggle */}
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 0', borderTop: '1px solid var(--divider)', marginBottom: '10px' }}>
-                <span style={{ fontSize: '11px', fontWeight: '500', color: colors.navy, display: 'flex', alignItems: 'center', gap: '4px' }}>{Icons.repeat(colors.navy, 12)} Repeat weekly</span>
-                <Toggle on={false} onChange={() => {}} />
-              </div>
               <div style={{ display: 'flex', gap: '8px' }}>
                 <button className="glass-btn glass-secondary" onClick={() => { setShowAddEvent(false); setNewEventTitle(''); setNewEventVenue(''); setNewEventTime(''); }} style={{ flex: 1, padding: '10px', borderRadius: '10px', border: '1px solid var(--border-mid)', backgroundColor: 'var(--bg-card-solid)', fontWeight: '600', fontSize: '13px', cursor: 'pointer' }}>Cancel</button>
-                <button className="glass-btn glass-navy" onClick={(e) => { if (newEventTitle.trim()) { confirmClick(e); const timeLabel = newEventTime ? new Date('1970-01-01T' + newEventTime + ':00').toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }) : 'TBD'; addEventToCalendar(newEventTitle, newEventVenue || 'TBD', selectedDate, timeLabel, colors.navy); setNewEventTitle(''); setNewEventVenue(''); setNewEventTime(''); setShowAddEvent(false); }}} style={{ flex: 1, padding: '10px', borderRadius: '10px', border: 'none', background: colors.navyMidBg, color: 'white', fontWeight: 'bold', fontSize: '13px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px', position: 'relative', overflow: 'hidden' }}>{Icons.check('white', 14)} Add</button>
+                <button className="glass-btn glass-navy" onClick={(e) => { if (newEventTitle.trim()) { confirmClick(e); const timeLabel = newEventTime ? new Date('1970-01-01T' + newEventTime + ':00').toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }) : 'TBD'; addEventToCalendar(newEventTitle, newEventVenue || 'TBD', selectedDate, timeLabel, (eventCategories.find(cat => cat.id === newEventCategory) || { color: colors.navy }).color); setNewEventTitle(''); setNewEventVenue(''); setNewEventTime(''); setShowAddEvent(false); }}} style={{ flex: 1, padding: '10px', borderRadius: '10px', border: 'none', background: colors.navyMidBg, color: 'white', fontWeight: 'bold', fontSize: '13px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px', position: 'relative', overflow: 'hidden' }}>{Icons.check('white', 14)} Add</button>
               </div>
             </div>
           )}
@@ -8134,7 +8138,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           const stages = [
             { key: 'idea', label: 'Idea', color: '#94a3b8' },
             { key: 'building', label: 'Building', color: '#f59e0b' },
-            { key: 'almost_there', label: 'Almost There', color: '#f97316' },
+            { key: 'almost_there', label: 'Almost There', color: '#F59E0B' },
             { key: 'locked_in', label: 'Locked In', color: '#22c55e' },
             { key: 'lets_go', label: "Let's Go", color: '#4a7ba7' },
           ];
@@ -9363,7 +9367,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
             const stages = [
               { key: 'idea', label: 'Idea', color: '#94a3b8' },
               { key: 'building', label: 'Building', color: '#f59e0b' },
-              { key: 'almost_there', label: 'Almost There', color: '#f97316' },
+              { key: 'almost_there', label: 'Almost There', color: '#F59E0B' },
               { key: 'locked_in', label: 'Locked In', color: '#22c55e' },
               { key: 'lets_go', label: "Let's Go", color: '#4a7ba7' },
             ];
