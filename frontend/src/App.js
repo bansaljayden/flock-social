@@ -204,6 +204,13 @@ const MAPTILER_KEY = process.env.REACT_APP_MAPTILER_KEY;
 const DARK_VECTOR_STYLE = MAPTILER_KEY
   ? `https://api.maptiler.com/maps/streets-v2-dark/style.json?key=${MAPTILER_KEY}`
   : 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json';
+// Light-mode basemap (2026-07 redesign): the always-dark map read as a "weird
+// overlay" inside the cream app. Streets v2 light in light mode; positron fallback.
+const LIGHT_VECTOR_STYLE = MAPTILER_KEY
+  ? `https://api.maptiler.com/maps/streets-v2/style.json?key=${MAPTILER_KEY}`
+  : 'https://basemaps.cartocdn.com/gl/positron-gl-style/style.json';
+const isAppDark = () => document.documentElement.getAttribute('data-theme') === 'dark';
+const ROADMAP_STYLE = () => (isAppDark() ? DARK_VECTOR_STYLE : LIGHT_VECTOR_STYLE);
 // Satellite: prefer MapTiler "hybrid" (imagery + roads + place labels overlaid)
 // when key is set; falls back to bare ESRI raster imagery if not.
 const SATELLITE_STYLE = MAPTILER_KEY
@@ -480,7 +487,7 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
 
       const map = new maplibregl.Map({
         container: mapRef.current,
-        style: savedMapType === 'roadmap' ? DARK_VECTOR_STYLE : SATELLITE_STYLE,
+        style: savedMapType === 'roadmap' ? ROADMAP_STYLE() : SATELLITE_STYLE,
         center: [userLoc.lng, userLoc.lat],
         zoom: DEFAULT_ZOOM,
         minZoom: 3,
@@ -527,6 +534,7 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
       // hard, which is why the map feels emptier than Apple's). We bump opacity
       // and lower the minzoom so cafés/restaurants show earlier.
       const boostNativePoiLabels = () => {
+        if (!isAppDark()) return; // pale-label boost is tuned for the dark basemap only
         const style = map.getStyle && map.getStyle();
         if (!style?.layers) return;
         for (const layer of style.layers) {
@@ -597,7 +605,7 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
     setMapType(newType);
     localStorage.setItem('flock_map_type', newType);
     queueSync({ mapType: newType });
-    map.setStyle(newType === 'roadmap' ? DARK_VECTOR_STYLE : SATELLITE_STYLE);
+    map.setStyle(newType === 'roadmap' ? ROADMAP_STYLE() : SATELLITE_STYLE);
     map.once('styledata', () => {
       addOverlayLayers(map);
       // Re-feed accuracy data
