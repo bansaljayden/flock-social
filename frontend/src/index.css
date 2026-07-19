@@ -167,6 +167,23 @@ input, textarea, select, button {
   font-family: inherit;
 }
 
+/* Phone ergonomics (Web Interface Guidelines pass, 2026-07-18):
+   - touch-action kills double-tap-zoom delay on interactive elements
+   - overscroll containment stops rubber-band scroll-chaining in the WebView
+   - color-scheme gives native widgets/scrollbars the right palette per theme */
+html {
+  color-scheme: light;
+}
+[data-theme="dark"] {
+  color-scheme: dark;
+}
+body {
+  overscroll-behavior-y: none;
+}
+button, a, [role="button"], input, select, textarea {
+  touch-action: manipulation;
+}
+
 /* Film-grain texture — fixed, non-interactive, barely-there. Gives surfaces a
    physical, editorial feel instead of flat digital vectors (high-end technique).
    Self-contained SVG so it works offline inside the Capacitor WebView. */
