@@ -309,14 +309,6 @@ code {
   cursor: not-allowed;
 }
 
-/* ─── Stacked cards (flock list) — opaque enough to not bleed through each other ─── */
-[data-theme="dark"] .flock-stack-card.glass-secondary {
-  background: rgba(20, 30, 50, 0.92) !important;
-}
-[data-theme="light"] .flock-stack-card.glass-secondary {
-  background: rgba(255, 255, 255, 0.88) !important;
-}
-
 /* Scroll fade-in animations */
 .scroll-fade {
   opacity: 0;
@@ -491,18 +483,7 @@ button:active, [role="button"]:active {
   box-shadow: 0 1px 2px rgba(30,41,59,0.05);
 }
 
-/* Stacked flock cards */
-.flock-stack-card:hover {
-  transform: rotate(0deg) !important;
-  box-shadow: 0 1px 3px rgba(30,41,59,0.06) !important;
-  z-index: 50 !important;
-  border-color: var(--border-mid) !important;
-}
-
-.flock-stack-card:active {
-  transform: rotate(0deg) scale(0.98) !important;
-  z-index: 50 !important;
-}
+/* (stacked flock-card rules removed 2026-07 — flat list now) */
 
 /* Shimmer text removed (2026-07 redesign) - plain solid text */
 .shimmer-text {
