@@ -14,7 +14,7 @@ import {
 import { getCurrentUser, logout, isLoggedIn, getFlocks, getFlock, createFlock as apiCreateFlock, getMessages, sendMessage as apiSendMessage, updateProfile, searchVenues, searchUsers, getSuggestedUsers, sendFriendRequest, getVenueDetails, leaveFlock as apiLeaveFlock, getDMConversations, getDMs, getDmVenueVotes, getDmPinnedVenue, BASE_URL, inviteToFlock, acceptFlockInvite, declineFlockInvite, getFriends, acceptFriendRequest, declineFriendRequest, getPendingRequests, getOutgoingRequests, getFriendSuggestions, addFriendByCode, findFriendsByPhone, removeFriend, getTrustedContacts, addTrustedContact, updateTrustedContact, deleteTrustedContact, sendEmergencyAlert, shareLocationWithContacts, getUserStats, getCrowdPrediction, getCrowdBatch, getCrowdAlternatives, getWeather, submitVenueFeedback, uploadProfileImage, saveProfileImageUrl, submitBudget, getBudgetStatus, lockBudget, sendBudgetReminder, createBillSplit, getBillSplit, settleShare, ghostCommit, updatePaymentMethods, getPaymentLinks, getFeaturedEvents, searchEvents, getEventDetails, sendAiChat, getWeatherForecast, submitAttendance, getAdminAnalytics, createVenueProfile, getVenueProfile, updateVenueProfile, getVenuePromotions, createVenuePromotion, updateVenuePromotion, deleteVenuePromotion, getVenueEvents, createVenueEvent, updateVenueEvent, deleteVenueEvent, getIncomingFlocks, getVenueReviews, replyToReview, submitVenueReview, getPublicReviews, getPublicPromotions, deleteAccount } from './services/api';
 import { connectSocket, disconnectSocket, getSocket, joinFlock, leaveFlock, sendMessage as socketSendMessage, sendImageMessage as socketSendImage, startTyping, stopTyping, onNewMessage, onUserTyping, onUserStoppedTyping, emitLocation, stopSharingLocation as socketStopSharing, onLocationUpdate, onMemberStoppedSharing, socketSendDm, onNewDm, dmStartTyping, dmStopTyping, onDmUserTyping, onDmUserStoppedTyping, dmReact, dmRemoveReact, onDmReactionAdded, onDmReactionRemoved, dmVoteVenue, onDmNewVote, dmShareLocation, dmStopSharingLocation, onDmLocationUpdate, onDmMemberStoppedSharing, dmPinVenue, onDmVenuePinned, emitFlockInvite, emitFlockInviteResponse, onFlockInviteReceived, onFlockInviteResponded, emitFriendRequest, emitFriendResponse, onFriendRequestReceived, onFriendRequestResponded, onBudgetUpdated, onBudgetLocked, onBudgetReminder, onBillCreated, onShareSettled, onBillFullySettled, onGhostCommitted, onNewVote, onVenueSelected, onFlockReactionAdded, onFlockReactionRemoved, onFlockDeleted, onFlockUpdated, onFlockMemberLeft } from './services/socket';
 import { requestNotificationPermission, onForegroundMessage } from './services/firebase';
-import { unregisterAllTokens, setAvailability, clearAvailability, getMyAvailability, getFriendsAvailability, getSensorCurrent, getSensorHistory, checkInManual, getNfcCheckin } from './services/api';
+import { unregisterAllTokens, setAvailability, clearAvailability, getMyAvailability, getFriendsAvailability, getSensorCurrent, getSensorHistory, checkInManual, getNfcCheckin, getCalendarEvents, createCalendarEvent, deleteCalendarEvent } from './services/api';
 import { joinVenueRoom, leaveVenueRoom, onVenueSensorUpdate, onVenueCheckin } from './services/socket';
 import { pullSettings, queueSync } from './services/userSettings';
 import { QRCodeSVG } from 'qrcode.react';
@@ -2289,6 +2289,16 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   const [showAddEvent, setShowAddEvent] = useState(false);
   const [newEventTitle, setNewEventTitle] = useState('');
   const [newEventVenue, setNewEventVenue] = useState('');
+  const [newEventTime, setNewEventTime] = useState('');
+
+  // Load persisted calendar events on boot and every Plans visit (server is source of truth)
+  useEffect(() => {
+    if (!isLoggedIn()) return;
+    getCalendarEvents()
+      .then(rows => setCalendarEvents(rows))
+      .catch(() => {}); // offline/first-boot: keep whatever is local
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentTab === 'calendar']);
 
 
   // Activity feed
@@ -2982,8 +2992,13 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   const getEventsForDate = useCallback((dateStr) => calendarEvents.filter(e => e.date === dateStr), [calendarEvents]);
 
   const addEventToCalendar = useCallback((title, venue, date, time, color) => {
-    setCalendarEvents(prev => [...prev, { id: Date.now(), title, venue, date: typeof date === 'string' ? date : formatDateStr(date), time, color: color || colors.navy, members: 1 }]);
-    // Toast removed
+    const dateStr = typeof date === 'string' ? date : formatDateStr(date);
+    const tempId = `tmp-${Date.now()}`;
+    // Optimistic local add; server assigns the real id and persists across refreshes
+    setCalendarEvents(prev => [...prev, { id: tempId, title, venue, date: dateStr, time, color: color || colors.navy, members: 1 }]);
+    createCalendarEvent({ title, date: dateStr, venue, time, color: color || colors.navy })
+      .then(saved => setCalendarEvents(prev => prev.map(e => e.id === tempId ? saved : e)))
+      .catch(() => {}); // offline: keep the optimistic local copy for this session
   }, [colors.navy]);
 
   const addMessageToFlock = useCallback((flockId, message) => {
@@ -7737,7 +7752,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 </div>
                 {event.members > 1 && <div style={{ display: 'flex', alignItems: 'center', gap: '3px', marginTop: '4px' }}>{Icons.users(colors.textSecondary, 10)}<span style={{ fontSize: '9px', color: 'var(--text-secondary)' }}>{event.members} going</span></div>}
               </div>
-              <button onClick={() => setCalendarEvents(calendarEvents.filter(e => e.id !== event.id))} style={{ width: '28px', height: '28px', borderRadius: '14px', backgroundColor: 'var(--accent-red-bg)', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.x(colors.red, 14)}</button>
+              <button onClick={() => { setCalendarEvents(calendarEvents.filter(e => e.id !== event.id)); if (typeof event.id === 'number') deleteCalendarEvent(event.id).catch(() => {}); }} style={{ width: '28px', height: '28px', borderRadius: '14px', backgroundColor: 'var(--accent-red-bg)', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.x(colors.red, 14)}</button>
             </div>
           )) : (
             <div style={{ textAlign: 'center', padding: '24px' }}>
@@ -7752,6 +7767,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
               <h4 style={{ fontSize: '13px', fontWeight: 'bold', color: colors.navy, margin: '0 0 10px', display: 'flex', alignItems: 'center', gap: '6px' }}>{Icons.plus(colors.navy, 14)} New Event</h4>
               <SearchInputLocal key="event-title" id="event-title" type="text" initialValue={newEventTitle} onCommit={setNewEventTitle} placeholder="Event title" style={{ ...styles.input, marginBottom: '8px' }} autoComplete="off" />
               <SearchInputLocal key="event-venue" id="event-venue" type="text" initialValue={newEventVenue} onCommit={setNewEventVenue} placeholder="Venue (optional)" style={{ ...styles.input, marginBottom: '10px' }} autoComplete="off" />
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '10px' }}>
+                <span style={{ fontSize: '10px', fontWeight: '600', color: 'var(--text-secondary)', flexShrink: 0 }}>Time</span>
+                <input type="time" value={newEventTime} onChange={(e) => setNewEventTime(e.target.value)} style={{ flex: 1, padding: '9px 12px', borderRadius: '10px', border: '1px solid var(--border-default)', fontSize: '14px', outline: 'none', backgroundColor: 'var(--bg-tertiary)', color: 'var(--text-primary)' }} />
+              </div>
               {/* Event categories */}
               <p style={{ fontSize: '10px', fontWeight: '600', color: 'var(--text-secondary)', marginBottom: '6px' }}>Category</p>
               <div style={{ display: 'flex', gap: '6px', marginBottom: '10px', flexWrap: 'wrap' }}>
@@ -7767,8 +7786,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 <Toggle on={false} onChange={() => {}} />
               </div>
               <div style={{ display: 'flex', gap: '8px' }}>
-                <button className="glass-btn glass-secondary" onClick={() => { setShowAddEvent(false); setNewEventTitle(''); setNewEventVenue(''); }} style={{ flex: 1, padding: '10px', borderRadius: '10px', border: '1px solid var(--border-mid)', backgroundColor: 'var(--bg-card-solid)', fontWeight: '600', fontSize: '13px', cursor: 'pointer' }}>Cancel</button>
-                <button className="glass-btn glass-navy" onClick={(e) => { if (newEventTitle.trim()) { confirmClick(e); addEventToCalendar(newEventTitle, newEventVenue || 'TBD', selectedDate, '7:00 PM', colors.navy); setNewEventTitle(''); setNewEventVenue(''); setShowAddEvent(false); }}} style={{ flex: 1, padding: '10px', borderRadius: '10px', border: 'none', background: colors.navyMidBg, color: 'white', fontWeight: 'bold', fontSize: '13px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px', position: 'relative', overflow: 'hidden' }}>{Icons.check('white', 14)} Add</button>
+                <button className="glass-btn glass-secondary" onClick={() => { setShowAddEvent(false); setNewEventTitle(''); setNewEventVenue(''); setNewEventTime(''); }} style={{ flex: 1, padding: '10px', borderRadius: '10px', border: '1px solid var(--border-mid)', backgroundColor: 'var(--bg-card-solid)', fontWeight: '600', fontSize: '13px', cursor: 'pointer' }}>Cancel</button>
+                <button className="glass-btn glass-navy" onClick={(e) => { if (newEventTitle.trim()) { confirmClick(e); const timeLabel = newEventTime ? new Date('1970-01-01T' + newEventTime + ':00').toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }) : 'TBD'; addEventToCalendar(newEventTitle, newEventVenue || 'TBD', selectedDate, timeLabel, colors.navy); setNewEventTitle(''); setNewEventVenue(''); setNewEventTime(''); setShowAddEvent(false); }}} style={{ flex: 1, padding: '10px', borderRadius: '10px', border: 'none', background: colors.navyMidBg, color: 'white', fontWeight: 'bold', fontSize: '13px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px', position: 'relative', overflow: 'hidden' }}>{Icons.check('white', 14)} Add</button>
               </div>
             </div>
           )}
