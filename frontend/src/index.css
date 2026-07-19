@@ -57,10 +57,10 @@
   --border-mid: #d1d5db;
   --border-subtle: rgba(0,0,0,0.06);
   --divider: #eeeeee;
-  --card-shadow: 0 1px 2px rgba(13,40,71,0.04), 0 6px 16px -6px rgba(13,40,71,0.10), 0 16px 40px -12px rgba(13,40,71,0.10);
-  --card-shadow-sm: 0 1px 2px rgba(13,40,71,0.05), 0 3px 8px -3px rgba(13,40,71,0.08);
+  --card-shadow: 0 1px 2px rgba(30,41,59,0.04), 0 1px 3px rgba(30,41,59,0.05);
+  --card-shadow-sm: 0 1px 2px rgba(30,41,59,0.04);
   --card-border: 1px solid rgba(255,255,255,0.9);
-  --nav-shadow: 0 -4px 24px rgba(0,0,0,0.06);
+  --nav-shadow: 0 -1px 0 #e8e0d0;
   --nav-border: 1px solid rgba(0,0,0,0.03);
   --icon-bg: #f1ede0;
   --modal-backdrop: rgba(0,0,0,0.5);
@@ -109,10 +109,10 @@
   --border-mid: #2d5a87;
   --border-subtle: rgba(255,255,255,0.06);
   --divider: #1e3a5c;
-  --card-shadow: 0 1px 2px rgba(0,0,0,0.30), 0 6px 16px -6px rgba(0,0,0,0.35), 0 16px 40px -12px rgba(0,0,0,0.30);
-  --card-shadow-sm: 0 1px 2px rgba(0,0,0,0.30), 0 3px 8px -3px rgba(0,0,0,0.25);
+  --card-shadow: 0 1px 2px rgba(0,0,0,0.20), 0 1px 3px rgba(0,0,0,0.15);
+  --card-shadow-sm: 0 1px 2px rgba(0,0,0,0.20);
   --card-border: 1px solid rgba(255,255,255,0.05);
-  --nav-shadow: 0 -4px 24px rgba(0,0,0,0.3);
+  --nav-shadow: 0 -1px 0 #1e3a5c;
   --nav-border: 1px solid rgba(255,255,255,0.05);
   --icon-bg: #1e3a5c;
   --modal-backdrop: rgba(0,0,0,0.7);
@@ -183,7 +183,7 @@ body::after {
 /* Keyboard-only focus ring (teal brand accent). :focus-visible never fires on
    touch/mouse, so this is invisible on the phone and only aids keyboard a11y. */
 :focus-visible {
-  outline: 2px solid rgba(13,148,136,0.9);
+  outline: 2px solid rgba(45,90,135,0.9);
   outline-offset: 2px;
   border-radius: 4px;
 }
@@ -244,93 +244,65 @@ code {
     monospace;
 }
 
-/* ═══════════════════════════════════════════════════════════════════
-   GLASS BUTTON SYSTEM
-   Tactile glass elements — transparent, reflective, with depth.
-   Apply via className: "glass-btn glass-primary" (or secondary/danger)
-   ═══════════════════════════════════════════════════════════════════ */
+/* GLASS BUTTON SYSTEM - refined (2026-07 redesign).
+   One material for every button: modest blur, 1px hairline, a single
+   inner highlight, whisper outer shadow. No glow stacks, no teal.
+   Primary = navy glass (light) / cream glass (dark) - login language. */
 
 .glass-btn {
-  backdrop-filter: blur(12px) !important;
-  -webkit-backdrop-filter: blur(12px) !important;
-  transition: transform 0.15s ease, box-shadow 0.15s ease, background 0.15s ease !important;
+  backdrop-filter: blur(10px) !important;
+  -webkit-backdrop-filter: blur(10px) !important;
+  transition: transform 0.15s ease, filter 0.15s ease !important;
   cursor: pointer;
 }
 .glass-btn:hover {
-  transform: scale(1.02);
+  filter: brightness(1.05);
 }
 .glass-btn:active {
   transform: scale(0.98) !important;
+  filter: brightness(0.97);
 }
 
-/* ─── Primary CTA (teal actions: Start a Flock, Submit, Confirm, Send) ─── */
 .glass-primary {
-  background: rgba(13, 148, 136, 0.75) !important;
-  border: 1px solid rgba(255, 255, 255, 0.2) !important;
-  box-shadow: 0 4px 20px rgba(13, 148, 136, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.25), inset 0 -1px 0 rgba(0, 0, 0, 0.15) !important;
-  color: white !important;
+  background: rgba(30, 41, 59, 0.88) !important;
+  border: 1px solid rgba(255, 255, 255, 0.18) !important;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.12), 0 1px 2px rgba(30, 41, 59, 0.10) !important;
+  color: #ffffff !important;
 }
-.glass-primary:hover {
-  box-shadow: 0 6px 28px rgba(13, 148, 136, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.35), inset 0 -1px 0 rgba(0, 0, 0, 0.15) !important;
-}
-.glass-primary:active {
-  box-shadow: 0 2px 8px rgba(13, 148, 136, 0.3), inset 0 1px 0 rgba(0, 0, 0, 0.1), inset 0 -1px 0 rgba(255, 255, 255, 0.1) !important;
-}
-
-/* ─── Secondary (default interactive) — auto dark/light ─── */
-[data-theme="dark"] .glass-secondary {
-  background: rgba(255, 255, 255, 0.08) !important;
-  border: 1px solid rgba(255, 255, 255, 0.12) !important;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.15), inset 0 -1px 0 rgba(0, 0, 0, 0.1) !important;
-  color: var(--text-primary) !important;
-}
-[data-theme="dark"] .glass-secondary:hover {
-  background: rgba(255, 255, 255, 0.12) !important;
-  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.25), inset 0 1px 0 rgba(255, 255, 255, 0.25), inset 0 -1px 0 rgba(0, 0, 0, 0.1) !important;
-}
-[data-theme="dark"] .glass-secondary:active {
-  background: rgba(255, 255, 255, 0.05) !important;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2), inset 0 1px 0 rgba(0, 0, 0, 0.05), inset 0 -1px 0 rgba(255, 255, 255, 0.05) !important;
+[data-theme="dark"] .glass-primary {
+  background: rgba(241, 237, 224, 0.92) !important;
+  border: 1px solid rgba(255, 255, 255, 0.35) !important;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.55), 0 1px 2px rgba(0, 0, 0, 0.20) !important;
+  color: #1e293b !important;
 }
 
 .glass-secondary,
 [data-theme="light"] .glass-secondary {
-  background: rgba(255, 255, 255, 0.45) !important;
-  border: 1px solid rgba(255, 255, 255, 0.6) !important;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.08), inset 0 1px 0 rgba(255, 255, 255, 0.8), inset 0 -1px 0 rgba(0, 0, 0, 0.05) !important;
+  background: rgba(255, 255, 255, 0.62) !important;
+  border: 1px solid rgba(30, 41, 59, 0.10) !important;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.70), 0 1px 2px rgba(30, 41, 59, 0.05) !important;
   color: var(--text-primary) !important;
 }
-[data-theme="light"] .glass-secondary:hover {
-  background: rgba(255, 255, 255, 0.55) !important;
-  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.1), inset 0 1px 0 rgba(255, 255, 255, 0.9), inset 0 -1px 0 rgba(0, 0, 0, 0.05) !important;
+[data-theme="dark"] .glass-secondary {
+  background: rgba(255, 255, 255, 0.07) !important;
+  border: 1px solid rgba(255, 255, 255, 0.12) !important;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.10), 0 1px 2px rgba(0, 0, 0, 0.20) !important;
+  color: var(--text-primary) !important;
 }
 
-/* ─── Danger (delete, leave, destructive) ─── */
 .glass-danger {
-  background: rgba(239, 68, 68, 0.7) !important;
-  border: 1px solid rgba(255, 255, 255, 0.15) !important;
-  box-shadow: 0 4px 20px rgba(239, 68, 68, 0.25), inset 0 1px 0 rgba(255, 255, 255, 0.2), inset 0 -1px 0 rgba(0, 0, 0, 0.15) !important;
+  background: rgba(220, 38, 38, 0.88) !important;
+  border: 1px solid rgba(255, 255, 255, 0.18) !important;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.15), 0 1px 2px rgba(30, 41, 59, 0.10) !important;
   color: white !important;
 }
-.glass-danger:hover {
-  background: rgba(239, 68, 68, 0.8) !important;
-  box-shadow: 0 6px 28px rgba(239, 68, 68, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.3), inset 0 -1px 0 rgba(0, 0, 0, 0.15) !important;
-}
 
-/* ─── Navy CTA (existing navy gradient buttons that should keep color but add glass) ─── */
 .glass-navy {
   border: 1px solid rgba(255, 255, 255, 0.15) !important;
-  box-shadow: 0 4px 20px rgba(13, 40, 71, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.2), inset 0 -1px 0 rgba(0, 0, 0, 0.2) !important;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.12), 0 1px 2px rgba(30, 41, 59, 0.10) !important;
   color: white !important;
 }
-.glass-navy:hover {
-  box-shadow: 0 6px 28px rgba(13, 40, 71, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.3), inset 0 -1px 0 rgba(0, 0, 0, 0.2) !important;
-}
-.glass-navy:active {
-  box-shadow: 0 2px 8px rgba(13, 40, 71, 0.3), inset 0 1px 0 rgba(0, 0, 0, 0.1) !important;
-}
 
-/* ─── Disabled state — mutes the glass ─── */
 .glass-btn:disabled {
   opacity: 0.5;
   transform: none !important;
@@ -367,149 +339,32 @@ code {
 .scroll-fade-delay-7 { transition-delay: 0.35s; }
 
 
-/* Birdie AI background */
-@keyframes float-orb-1 {
-  0%, 100% { transform: translate(0, 0) scale(1); }
-  33% { transform: translate(30px, -40px) scale(1.1); }
-  66% { transform: translate(-20px, 20px) scale(0.9); }
-}
-
-@keyframes float-orb-2 {
-  0%, 100% { transform: translate(0, 0) scale(1); }
-  33% { transform: translate(-40px, 30px) scale(0.9); }
-  66% { transform: translate(25px, -25px) scale(1.15); }
-}
-
-@keyframes float-orb-3 {
-  0%, 100% { transform: translate(0, 0) scale(1); }
-  50% { transform: translate(20px, 30px) scale(1.05); }
-}
-
+/* Birdie AI background - flat since the 2026-07 redesign.
+   Orb/grid decoration removed; classes kept harmless because App.js
+   still renders the divs (stripped in a later phase). */
 .birdie-bg {
   position: relative;
   overflow: hidden;
 }
 
-.birdie-bg::before {
-  content: '';
-  position: absolute;
-  inset: 0;
-  background-image:
-    radial-gradient(circle at 20% 30%, rgba(13,148,136,0.09) 0%, transparent 50%),
-    radial-gradient(circle at 80% 70%, rgba(20,184,166,0.06) 0%, transparent 50%),
-    radial-gradient(circle at 50% 50%, rgba(8,145,178,0.04) 0%, transparent 60%);
-  pointer-events: none;
-  z-index: 0;
-}
-
-.birdie-orb {
-  position: absolute;
-  border-radius: 50%;
-  pointer-events: none;
-  filter: blur(40px);
-  z-index: 0;
-}
-
-.birdie-orb-1 {
-  width: 120px;
-  height: 120px;
-  background: rgba(13,148,136,0.13);
-  top: 10%;
-  left: 10%;
-  animation: float-orb-1 8s ease-in-out infinite;
-}
-
-.birdie-orb-2 {
-  width: 100px;
-  height: 100px;
-  background: rgba(20,184,166,0.11);
-  bottom: 20%;
-  right: 10%;
-  animation: float-orb-2 10s ease-in-out infinite;
-}
-
-.birdie-orb-3 {
-  width: 80px;
-  height: 80px;
-  background: rgba(8,145,178,0.08);
-  top: 50%;
-  left: 50%;
-  animation: float-orb-3 12s ease-in-out infinite;
-}
-
+.birdie-orb,
 .birdie-grid {
-  position: absolute;
-  inset: 0;
-  background-image:
-    linear-gradient(rgba(13,148,136,0.035) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(13,148,136,0.035) 1px, transparent 1px);
-  background-size: 40px 40px;
-  pointer-events: none;
-  z-index: 0;
-  mask-image: radial-gradient(ellipse at center, black 30%, transparent 80%);
-  -webkit-mask-image: radial-gradient(ellipse at center, black 30%, transparent 80%);
+  display: none;
 }
 
-[data-theme="dark"] .birdie-orb-1 { background: rgba(13,148,136,0.22); }
-[data-theme="dark"] .birdie-orb-2 { background: rgba(20,184,166,0.16); }
-[data-theme="dark"] .birdie-orb-3 { background: rgba(8,145,178,0.13); }
-[data-theme="dark"] .birdie-grid {
-  background-image:
-    linear-gradient(rgba(20,184,166,0.06) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(20,184,166,0.06) 1px, transparent 1px);
-}
-
-/* Shimmer effect for buttons */
-@keyframes shimmer {
-  0% { background-position: -200% 0; }
-  100% { background-position: 200% 0; }
-}
-
+/* Shimmer removed (2026-07 redesign) - plain tactile buttons. */
 .shimmer-btn {
   position: relative;
   overflow: hidden;
 }
 
-.shimmer-btn::after {
-  content: '';
-  position: absolute;
-  inset: 0;
-  background: linear-gradient(
-    110deg,
-    transparent 25%,
-    rgba(255,255,255,0.15) 37%,
-    rgba(255,255,255,0.25) 50%,
-    rgba(255,255,255,0.15) 63%,
-    transparent 75%
-  );
-  background-size: 200% 100%;
-  animation: shimmer 3s ease-in-out infinite;
-  pointer-events: none;
-  border-radius: inherit;
-}
-
-.shimmer-btn-light::after {
-  background: linear-gradient(
-    110deg,
-    transparent 25%,
-    rgba(13,40,71,0.06) 37%,
-    rgba(13,40,71,0.1) 50%,
-    rgba(13,40,71,0.06) 63%,
-    transparent 75%
-  );
-  background-size: 200% 100%;
-  animation: shimmer 3s ease-in-out infinite;
-}
-
-/* Button hover effects */
 .shimmer-btn:hover {
-  transform: translateY(-2px) scale(1.02);
-  box-shadow: 0 8px 25px rgba(13,40,71,0.35), 0 4px 8px rgba(0,0,0,0.15);
+  filter: brightness(1.05);
 }
 
 .shimmer-btn:active {
   transform: translateY(1px) scale(0.98);
-  box-shadow: 0 2px 8px rgba(13,40,71,0.2);
+  box-shadow: 0 1px 2px rgba(30,41,59,0.05);
 }
 
 /* Slot machine spin for greeting text */
@@ -575,20 +430,17 @@ button:active, [role="button"]:active {
 
 .shimmer-btn, .shimmer-btn-light {
   transition: transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1),
-              box-shadow 0.25s ease;
-  will-change: transform;
+              filter 0.15s ease;
 }
 
 .shimmer-btn-light:hover {
-  transform: translateY(-2px) scale(1.02);
-  box-shadow: 0 6px 20px rgba(13,40,71,0.15);
+  filter: brightness(1.04);
 }
 
-/* ---------------------------------------------------------------------------
-   shadcn/ui design tokens (B4). Additive — bare token names do not collide
-   with the app's existing suffixed vars (--border-color, --card-shadow, etc.).
-   Dark values apply under the app's existing `.dark` class (darkMode: "class").
-   --------------------------------------------------------------------------- */
+/* shadcn HSL tokens - visually inert (zero component usages) but LOAD-BEARING:
+   tailwind.config.js maps colors to hsl(var(--border)) etc., and removing these
+   definitions sends the prod CSS optimizer into infinite recursion (verified
+   2026-07-18: build fails with "Maximum call stack size exceeded"). KEEP. */
 :root {
   --background: 0 0% 100%;
   --foreground: 222.2 84% 4.9%;
@@ -633,15 +485,16 @@ button:active, [role="button"]:active {
   --ring: 212.7 26.8% 83.9%;
 }
 
+
 .shimmer-btn-light:active {
   transform: translateY(1px) scale(0.98);
-  box-shadow: 0 1px 4px rgba(13,40,71,0.1);
+  box-shadow: 0 1px 2px rgba(30,41,59,0.05);
 }
 
 /* Stacked flock cards */
 .flock-stack-card:hover {
-  transform: rotate(0deg) scale(1.02) !important;
-  box-shadow: 0 8px 28px rgba(0,0,0,0.15) !important;
+  transform: rotate(0deg) !important;
+  box-shadow: 0 1px 3px rgba(30,41,59,0.06) !important;
   z-index: 50 !important;
   border-color: var(--border-mid) !important;
 }
@@ -651,19 +504,7 @@ button:active, [role="button"]:active {
   z-index: 50 !important;
 }
 
-/* Shimmer text effect */
+/* Shimmer text removed (2026-07 redesign) - plain solid text */
 .shimmer-text {
-  background-image: linear-gradient(
-    110deg,
-    #ffffff 0%,
-    #ffffff 35%,
-    #b0d4ff 50%,
-    #ffffff 65%,
-    #ffffff 100%
-  );
-  background-size: 200% 100%;
-  -webkit-background-clip: text;
-  background-clip: text;
-  -webkit-text-fill-color: transparent;
-  animation: shimmer 3s ease-in-out infinite;
+  color: inherit;
 }
