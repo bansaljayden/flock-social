@@ -652,6 +652,30 @@ export async function getNfcCheckin(placeId) {
   return request(`/api/checkin/${encodeURIComponent(placeId)}`);
 }
 
+// Personal calendar events — persisted per-user (CRUD, /api/calendar)
+export async function getCalendarEvents(start, end) {
+  const qs = start && end ? `?start=${start}&end=${end}` : '';
+  return request(`/api/calendar${qs}`);
+}
+
+export async function createCalendarEvent({ title, date, venue, time, color }) {
+  return request('/api/calendar', {
+    method: 'POST',
+    body: JSON.stringify({ title, date, venue, time, color }),
+  });
+}
+
+export async function updateCalendarEvent(id, fields) {
+  return request(`/api/calendar/${id}`, {
+    method: 'PUT',
+    body: JSON.stringify(fields),
+  });
+}
+
+export async function deleteCalendarEvent(id) {
+  return request(`/api/calendar/${id}`, { method: 'DELETE' });
+}
+
 // Availability Pulse — 3-tap status: down / maybe / not
 export async function setAvailability({ status, note, expiresAt }) {
   return request('/api/availability', {
