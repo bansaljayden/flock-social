@@ -5325,7 +5325,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
               <div style={{ maxWidth: '75%', position: 'relative' }}>
                 {/* Reply reference */}
                 {m.reply_to && (
-                  <div style={{ padding: '4px 10px', marginBottom: '2px', borderLeft: `3px solid ${colors.navy}40`, borderRadius: '4px', backgroundColor: 'var(--bg-tertiary)' }}>
+                  <div style={{ padding: '4px 10px', marginBottom: '2px', borderRadius: '8px', backgroundColor: 'var(--bg-tertiary)', border: '1px solid var(--border-default)' }}>
                     <span style={{ fontSize: '10px', fontWeight: '600', color: colors.navy }}>{m.reply_to.sender}</span>
                     <p style={{ fontSize: '10px', color: 'var(--text-secondary)', margin: '1px 0 0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{m.reply_to.text}</p>
                   </div>
@@ -5426,7 +5426,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
       {/* Reply bar */}
       {dmReplyingTo && (
         <div style={{ padding: '8px 12px', borderTop: '1px solid var(--divider)', backgroundColor: 'var(--bg-tertiary)', display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0 }}>
-          <div style={{ flex: 1, borderLeft: `3px solid ${colors.navy}`, paddingLeft: '8px' }}>
+          <div style={{ flex: 1, paddingLeft: '10px', borderRadius: '8px', backgroundColor: 'var(--bg-tertiary)', padding: '6px 10px' }}>
             <span style={{ fontSize: '11px', fontWeight: '700', color: colors.navy }}>Replying to {dmReplyingTo.sender}</span>
             <p style={{ fontSize: '11px', color: 'var(--text-secondary)', margin: '1px 0 0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{dmReplyingTo.text}</p>
           </div>
@@ -11230,7 +11230,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                       </div>
                       <p style={{ fontSize: '11px', color: 'var(--text-secondary)', margin: '8px 0 0', lineHeight: '1.4' }}>{review.text}</p>
                       {review.reply && (
-                        <div style={{ marginTop: '8px', padding: '8px', backgroundColor: 'var(--bg-tertiary)', borderRadius: '6px', borderLeft: `3px solid ${colors.teal}` }}>
+                        <div style={{ marginTop: '8px', padding: '8px', backgroundColor: 'var(--bg-tertiary)', borderRadius: '8px', border: '1px solid var(--border-default)' }}>
                           <p style={{ fontSize: '10px', fontWeight: '600', color: colors.teal, margin: '0 0 2px' }}>Owner Reply</p>
                           <p style={{ fontSize: '11px', color: 'var(--text-secondary)', margin: 0 }}>{review.reply}</p>
                         </div>
@@ -13943,10 +13943,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           50% { box-shadow: 0 0 20px rgba(13,40,71,0.5); }
         }
         @keyframes tabBounce {
-          0% { transform: scale(1); }
-          25% { transform: scale(0.9); }
-          50% { transform: scale(1.15); }
-          75% { transform: scale(0.95); }
+          0% { transform: scale(0.92); }
+          60% { transform: scale(1.04); }
           100% { transform: scale(1); }
         }
         @keyframes cardSlideIn {
