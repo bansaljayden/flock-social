@@ -11,8 +11,7 @@ Warm, tactile, "soft daylight" consumer app. Density **Daily-App Balanced (4)** 
 compact but breathing, never a data cockpit. Variance **Low-offset (3–4)** — a
 product UI, so symmetry and predictability aid usability over artsy asymmetry.
 Motion **Fluid (5)** — spring-eased micro-interactions, a live "pulse" language,
-no cinematic scroll-hijacking. The feel is a cream paper surface under teal task
-light: friendly, physical (film grain + soft ambient shadows), quietly premium.
+no cinematic scroll-hijacking. The feel is a cream paper surface under navy ink: friendly, physical (film grain + soft ambient shadows), quietly premium.
 
 ## 2. Color Palette & Roles
 Light mode (`:root`):
@@ -22,8 +21,8 @@ Light mode (`:root`):
 - **Ink** (`#1e293b`) — primary text (`--text-primary`)
 - **Slate Secondary** (`#556274`) — secondary text — raised for WCAG AA (`--text-secondary`)
 - **Muted Tertiary** (`#78859a`) — meta/hints — raised toward AA (`--text-tertiary`)
-- **Teal** (`rgb(13,148,136)` / `#0d9488`) — THE single brand accent: primary CTAs,
-  active states, focus rings, ambient orbs, distance/map cues
+- **Steel Navy** (`#2d5a87` light / `#6d9ac3` dark) — THE single brand accent:
+  active states, focus rings, badges, distance/map cues (2026-07 redesign: teal killed)
 - Semantic only: amber (warnings/moderate), red (danger/busy), green (go/available)
 
 Dark mode (`[data-theme="dark"]`): navy-slate family (`#0f172a` canvas, `#1e293b`
