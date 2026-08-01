@@ -9,19 +9,37 @@ const colors = {
   navy: '#1a2744',
 };
 
-// Video city background
-const CityBackground = () => (
-  <div style={{ position: 'absolute', inset: 0, overflow: 'hidden', pointerEvents: 'none' }}>
-    <video autoPlay muted loop playsInline style={{
-      position: 'absolute', width: '100%', height: '100%', objectFit: 'cover',
-      filter: 'brightness(0.65) saturate(1)',
-    }}>
-      <source src="/bg-city.mp4" type="video/mp4" />
-    </video>
-    {/* Navy tint overlay to match Flock palette */}
-    <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(180deg, rgba(6,10,20,0.45) 0%, rgba(10,21,40,0.15) 40%, rgba(6,10,20,0.4) 100%)' }} />
-  </div>
-);
+// Video city background.
+// WKWebView (Capacitor) blocks autoplay unless the muted ATTRIBUTE is on the
+// element — React's `muted` prop doesn't always reach the DOM — and a blocked
+// video renders iOS's grey play glyph over the form. Set attributes + play()
+// imperatively; if playback still refuses, hide the video (navy bg remains).
+const CityBackground = () => {
+  const vidRef = React.useRef(null);
+  React.useEffect(() => {
+    const v = vidRef.current;
+    if (!v) return;
+    v.muted = true;
+    v.setAttribute('muted', '');
+    v.setAttribute('playsinline', '');
+    v.setAttribute('webkit-playsinline', '');
+    const tryPlay = () => v.play().catch(() => { v.style.display = 'none'; });
+    if (v.readyState >= 2) tryPlay();
+    else v.addEventListener('loadeddata', tryPlay, { once: true });
+  }, []);
+  return (
+    <div style={{ position: 'absolute', inset: 0, overflow: 'hidden', pointerEvents: 'none', backgroundColor: '#0a1528' }}>
+      <video ref={vidRef} autoPlay muted loop playsInline preload="auto" style={{
+        position: 'absolute', width: '100%', height: '100%', objectFit: 'cover',
+        filter: 'brightness(0.65) saturate(1)',
+      }}>
+        <source src="/bg-city.mp4" type="video/mp4" />
+      </video>
+      {/* Navy tint overlay to match Flock palette */}
+      <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(180deg, rgba(6,10,20,0.45) 0%, rgba(10,21,40,0.15) 40%, rgba(6,10,20,0.4) 100%)' }} />
+    </div>
+  );
+};
 
 const EyeIcon = ({ size = 20 }) => (
   <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="rgba(148,163,184,0.6)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
