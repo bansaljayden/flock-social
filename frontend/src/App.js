@@ -1140,8 +1140,29 @@ const colorsDark = {
 // eslint-disable-next-line no-unused-vars
 const colors = colorsLight;
 
+// The decorative phone bezel is a DESKTOP-ONLY preview shell. On the real device
+// (Capacitor) or any phone-sized viewport it must not render — otherwise the app
+// draws a fake phone border inside the actual phone. Native detection + width
+// check; evaluated once (rotation/resize edge cases don't need live re-eval).
+const IS_FULLBLEED = (typeof window !== 'undefined') && (
+  (window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform()) ||
+  (window.matchMedia && window.matchMedia('(max-width: 500px)').matches)
+);
+
 const makeStyles = (c, isDark) => ({
-  phoneContainer: {
+  phoneContainer: IS_FULLBLEED ? {
+    width: '100%',
+    maxWidth: '100%',
+    height: '100dvh',
+    margin: 0,
+    borderRadius: 0,
+    border: 'none',
+    overflow: 'hidden',
+    display: 'flex',
+    flexDirection: 'column',
+    backgroundColor: 'var(--bg-card-solid)',
+    position: 'relative',
+  } : {
     width: '375px',
     maxWidth: '375px',
     height: '100vh',
@@ -1158,7 +1179,13 @@ const makeStyles = (c, isDark) => ({
       : '0 25px 80px -12px rgba(0, 0, 0, 0.4), 0 10px 30px rgba(13,40,71,0.10), inset 0 1px 0 rgba(255,255,255,0.1)',
     position: 'relative',
   },
-  notch: {
+  // Full-bleed: the fake notch becomes a real safe-area spacer so content
+  // clears the actual status bar / Dynamic Island (viewport-fit=cover).
+  notch: IS_FULLBLEED ? {
+    height: 'env(safe-area-inset-top)',
+    backgroundColor: 'var(--bg-card-solid)',
+    flexShrink: 0,
+  } : {
     height: '28px',
     backgroundColor: isDark ? '#1e293b' : colorsLight.navy,
     display: 'flex',
@@ -1166,7 +1193,7 @@ const makeStyles = (c, isDark) => ({
     justifyContent: 'center',
     flexShrink: 0,
   },
-  notchInner: {
+  notchInner: IS_FULLBLEED ? { display: 'none' } : {
     width: '120px',
     height: '24px',
     backgroundColor: 'black',
