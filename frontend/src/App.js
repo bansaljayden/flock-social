@@ -492,11 +492,14 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
         zoom: DEFAULT_ZOOM,
         minZoom: 3,
         maxZoom: 18,
-        attributionControl: { compact: true },
+        // Attribution added manually below at bottom-left (compact) so it
+        // never collides with the View-All pill anchored bottom-right.
+        attributionControl: false,
         // Snap-style smoothness
         fadeDuration: 200,
         antialias: true,
       });
+      map.addControl(new maplibregl.AttributionControl({ compact: true }), 'bottom-left');
       mapInstanceRef.current = map;
 
       // Snappier scroll-wheel zoom — default 1/300 feels sluggish vs Snap Map.
