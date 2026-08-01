@@ -1160,7 +1160,7 @@ const makeStyles = (c, isDark) => ({
     overflow: 'hidden',
     display: 'flex',
     flexDirection: 'column',
-    backgroundColor: 'var(--bg-card-solid)',
+    backgroundColor: 'var(--bg-primary)',
     position: 'relative',
   } : {
     width: '375px',
@@ -1183,7 +1183,7 @@ const makeStyles = (c, isDark) => ({
   // clears the actual status bar / Dynamic Island (viewport-fit=cover).
   notch: IS_FULLBLEED ? {
     height: 'env(safe-area-inset-top)',
-    backgroundColor: 'var(--bg-card-solid)',
+    backgroundColor: 'var(--bg-primary)',
     flexShrink: 0,
   } : {
     height: '28px',
@@ -10354,7 +10354,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
             <p style={{ fontSize: '10px', color: 'var(--text-tertiary)', marginBottom: '12px', textAlign: 'center', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Legal</p>
             <div style={{ display: 'flex', gap: '8px', justifyContent: 'center' }}>
               <button
-                className="glass-btn glass-secondary" onClick={() => window.open('https://flock.app/terms', '_blank')}
+                className="glass-btn glass-secondary" onClick={() => window.open('https://flock-app-w65m.vercel.app/terms', '_blank')}
                 style={{
                   padding: '10px 16px',
                   borderRadius: '10px',
@@ -10372,7 +10372,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 {Icons.fileText(colors.navy, 14)} Terms of Service
               </button>
               <button
-                className="glass-btn glass-secondary" onClick={() => window.open('/privacy', '_blank')}
+                className="glass-btn glass-secondary" onClick={() => window.open('https://flock-app-w65m.vercel.app/privacy', '_blank')}
                 style={{
                   padding: '10px 16px',
                   borderRadius: '10px',
