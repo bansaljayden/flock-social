@@ -167,6 +167,17 @@ input, textarea, select, button {
   font-family: inherit;
 }
 
+/* Map attribution: keep it legal but quiet — tiny, translucent, collapsed. */
+.maplibregl-ctrl-attrib {
+  font-size: 9px !important;
+  opacity: 0.55;
+  border-radius: 8px;
+}
+.maplibregl-ctrl-attrib.maplibregl-compact:not(.maplibregl-compact-show) {
+  min-width: 20px;
+  min-height: 20px;
+}
+
 /* Never show iOS's grey play glyph over decorative background videos */
 video::-webkit-media-controls-start-playback-button,
 video::-webkit-media-controls {
