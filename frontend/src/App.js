@@ -401,7 +401,7 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
       case 'Nightlife': return colors.nightlife;
       case 'Live Music': return colors.music;
       case 'Sports': return colors.sports;
-      default: return colors.teal;
+      default: return colors.steel;
     }
   }, []);
 
@@ -1097,7 +1097,7 @@ const colorsLight = {
   skyBlue: '#4a7ba7',
   cream: '#f1ede0',
   creamDark: '#e8e0d5',
-  teal: '#2d5a87',
+  steel: '#2d5a87',   // brand accent (renamed from 'teal' 2026-07 — the color IS steel navy; old name was a trap)
   amber: '#F59E0B',
   red: '#EF4444',
   food: '#F97316',
@@ -1121,7 +1121,7 @@ const colorsDark = {
   skyBlue: '#38bdf8',
   cream: '#0f172a',
   creamDark: '#1e3a5c',
-  teal: '#6d9ac3',
+  steel: '#6d9ac3',   // brand accent (renamed from 'teal' 2026-07)
   amber: '#F59E0B',
   red: '#EF4444',
   food: '#F97316',
@@ -4036,7 +4036,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
 
   // Toggle Component
   const Toggle = ({ on, onChange }) => (
-    <button onClick={onChange} style={{ width: '44px', height: '24px', borderRadius: '12px', border: 'none', backgroundColor: on ? colors.teal : 'var(--toggle-off)', cursor: 'pointer', position: 'relative', transition: 'background-color 0.2s' }}>
+    <button onClick={onChange} style={{ width: '44px', height: '24px', borderRadius: '12px', border: 'none', backgroundColor: on ? colors.steel : 'var(--toggle-off)', cursor: 'pointer', position: 'relative', transition: 'background-color 0.2s' }}>
       <div style={{ width: '20px', height: '20px', borderRadius: '10px', backgroundColor: 'var(--bg-card-solid)', position: 'absolute', top: '2px', left: on ? '22px' : '2px', transition: 'left 0.2s', boxShadow: '0 1px 3px rgba(0,0,0,0.2)' }} />
     </button>
   );
@@ -4396,11 +4396,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
     <div className="modal-backdrop" style={{ position: 'absolute', inset: 0, backgroundColor: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(8px)', WebkitBackdropFilter: 'blur(8px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 50, padding: '16px' }}>
       <div className="modal-content" style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '24px', padding: '20px', width: '100%', maxWidth: '280px' }}>
         <div style={{ textAlign: 'center', marginBottom: '16px' }}>
-          <div style={{ width: '64px', height: '64px', borderRadius: '32px', backgroundColor: 'var(--icon-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 8px' }}>{Icons.check(colors.teal, 32)}</div>
+          <div style={{ width: '64px', height: '64px', borderRadius: '32px', backgroundColor: 'var(--icon-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 8px' }}>{Icons.check(colors.steel, 32)}</div>
           <h2 style={{ fontSize: '20px', fontWeight: '900', color: colors.navy, margin: 0 }}>Check-in</h2>
         </div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-          <button className="glass-btn glass-primary" onClick={(e) => { confirmClick(e); setShowCheckin(false); }} style={{ ...styles.gradientButton, backgroundColor: colors.teal, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', position: 'relative', overflow: 'hidden' }}>{Icons.check('white', 16)} I'm Safe</button>
+          <button className="glass-btn glass-primary" onClick={(e) => { confirmClick(e); setShowCheckin(false); }} style={{ ...styles.gradientButton, backgroundColor: colors.steel, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', position: 'relative', overflow: 'hidden' }}>{Icons.check('white', 16)} I'm Safe</button>
           <button className="glass-btn glass-danger" onClick={() => { setShowCheckin(false); setShowSOS(true); }} style={{ ...styles.gradientButton, backgroundColor: colors.red, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}>{Icons.shield('white', 16)} Need Help</button>
           <button className="glass-btn glass-secondary" onClick={() => setShowCheckin(false)} style={{ background: 'none', border: 'none', color: 'var(--text-tertiary)', padding: '8px', cursor: 'pointer' }}>Dismiss</button>
         </div>
@@ -4466,7 +4466,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
       {/* Zoom slider */}
       <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginTop: '16px', width: '280px' }}>
         <span style={{ fontSize: '14px', color: 'white' }}>-</span>
-        <input type="range" min="0.5" max="4" step="0.05" value={cropZoom} onChange={(e) => setCropZoom(parseFloat(e.target.value))} style={{ flex: 1, accentColor: colors.teal }} />
+        <input type="range" min="0.5" max="4" step="0.05" value={cropZoom} onChange={(e) => setCropZoom(parseFloat(e.target.value))} style={{ flex: 1, accentColor: colors.steel }} />
         <span style={{ fontSize: '14px', color: 'white' }}>+</span>
       </div>
 
@@ -4956,7 +4956,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
 
       {/* Pinned Venue Banner — top-voted or manually pinned venue */}
       {dmPinnedVenue ? (
-        <div style={{ padding: '10px 14px', background: `linear-gradient(135deg, ${colors.navy}08, ${colors.teal}12)`, borderBottom: `1px solid ${colors.creamDark}`, flexShrink: 0 }}>
+        <div style={{ padding: '10px 14px', background: `linear-gradient(135deg, ${colors.navy}08, ${colors.steel}12)`, borderBottom: `1px solid ${colors.creamDark}`, flexShrink: 0 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
             {dmPinnedVenue.photo_url ? (
               <img src={dmPinnedVenue.photo_url} alt="" style={{ width: '52px', height: '52px', borderRadius: '12px', objectFit: 'cover', flexShrink: 0, boxShadow: '0 2px 8px rgba(0,0,0,0.1)' }} onError={(e) => { e.target.onerror = null; e.target.src = 'data:image/svg+xml,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="52" height="52"><rect fill="#1a3a5c" width="52" height="52" rx="12"/></svg>'); }} />
@@ -4987,7 +4987,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                     }, 300);
                   }
                 }}
-                style={{ padding: '8px 10px', borderRadius: '10px', border: 'none', background: colors.teal, color: 'white', fontSize: '10px', fontWeight: '700', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px', boxShadow: '0 1px 2px rgba(30,41,59,0.10)' }}
+                style={{ padding: '8px 10px', borderRadius: '10px', border: 'none', background: colors.steel, color: 'white', fontSize: '10px', fontWeight: '700', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px', boxShadow: '0 1px 2px rgba(30,41,59,0.10)' }}
               >
                 {Icons.mapPin('white', 12)} Map
               </button>
@@ -4999,12 +4999,12 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
         </div>
       ) : (
         <button className="glass-btn glass-secondary" onClick={() => { setPickingVenueForDm(true); setPickingVenueForCreate(true); setCurrentTab('explore'); setCurrentScreen('main'); }} style={{ margin: '0', padding: '10px 14px', background: `linear-gradient(135deg, var(--bg-primary), var(--bg-card-solid))`, borderBottom: `1px solid ${colors.creamDark}`, border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '10px', width: '100%', flexShrink: 0 }}>
-          <div style={{ width: '40px', height: '40px', borderRadius: '12px', border: `2px dashed ${colors.teal}`, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.mapPin(colors.teal, 18)}</div>
+          <div style={{ width: '40px', height: '40px', borderRadius: '12px', border: `2px dashed ${colors.steel}`, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.mapPin(colors.steel, 18)}</div>
           <div style={{ flex: 1, textAlign: 'left' }}>
             <p style={{ fontSize: '13px', fontWeight: '700', color: colors.navy, margin: 0 }}>Add a Venue</p>
             <p style={{ fontSize: '11px', color: 'var(--text-secondary)', margin: '1px 0 0' }}>Pick a spot on the map</p>
           </div>
-          <div style={{ color: colors.teal, fontWeight: '700', fontSize: '20px' }}>+</div>
+          <div style={{ color: colors.steel, fontWeight: '700', fontSize: '20px' }}>+</div>
         </button>
       )}
 
@@ -5023,7 +5023,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           {!dmCashPool.paid.includes('You') ? (
             <button className="glass-btn glass-primary" onClick={(e) => { confirmClick(e); setDmCashPool(prev => ({ ...prev, paid: [...prev.paid, 'You'], collected: prev.collected + prev.perPerson })); sendDmMessage({ text: `I paid $${dmCashPool.perPerson} to the pool!`, noReply: true }); }} style={{ width: '100%', padding: '8px', borderRadius: '12px', border: 'none', background: colors.navyMidBg, color: 'white', fontWeight: '700', fontSize: '13px', cursor: 'pointer', position: 'relative', overflow: 'hidden' }}>Pay ${dmCashPool.perPerson}</button>
           ) : (
-            <div style={{ textAlign: 'center', padding: '4px', color: colors.teal, fontWeight: '600', fontSize: '12px' }}>Paid</div>
+            <div style={{ textAlign: 'center', padding: '4px', color: colors.steel, fontWeight: '600', fontSize: '12px' }}>Paid</div>
           )}
         </div>
       )}
@@ -5107,7 +5107,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                     const isLeading = !v.isPinned && idx === 0 && voteCount > 0;
                     const iconBg = v.isPinned
                       ? colors.navyBg
-                      : isLeading ? colors.teal : `linear-gradient(135deg, ${colors.navy}15, ${colors.navy}25)`;
+                      : isLeading ? colors.steel : `linear-gradient(135deg, ${colors.navy}15, ${colors.navy}25)`;
                     return (
                       <button key={v.venue_name} className="glass-btn glass-secondary" onClick={(e) => { confirmClick(e); isMyVote ? handleDmUnvote() : handleDmQuickVote(v.venue_name, v.venue_id); }} style={{ width: '100%', textAlign: 'left', padding: '12px 14px', borderRadius: '14px', border: v.isPinned ? `2px solid ${colors.navy}` : isMyVote ? `2px solid ${colors.navy}` : '1.5px solid var(--border-default)', backgroundColor: v.isPinned ? `${colors.navy}05` : isMyVote ? `${colors.navy}06` : 'var(--bg-card-solid)', cursor: 'pointer', position: 'relative', overflow: 'hidden', transition: 'opacity 0.2s' }}>
                         {/* Progress bar background */}
@@ -5120,7 +5120,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                             <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                               <h4 style={{ fontSize: '14px', fontWeight: '700', color: colors.navy, margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{v.venue_name}</h4>
                               {v.isPinned && <span style={{ fontSize: '9px', fontWeight: '700', color: 'white', backgroundColor: colors.navyBg, padding: '1px 6px', borderRadius: '6px', flexShrink: 0 }}>Pinned</span>}
-                              {isLeading && <span style={{ fontSize: '9px', fontWeight: '700', color: colors.teal, backgroundColor: `${colors.teal}15`, padding: '1px 6px', borderRadius: '6px', flexShrink: 0 }}>Leading</span>}
+                              {isLeading && <span style={{ fontSize: '9px', fontWeight: '700', color: colors.steel, backgroundColor: `${colors.steel}15`, padding: '1px 6px', borderRadius: '6px', flexShrink: 0 }}>Leading</span>}
                             </div>
                             <p style={{ fontSize: '11px', color: 'var(--text-tertiary)', margin: '1px 0 0' }}>{(v.voters || []).length > 0 ? (v.voters || []).join(', ') : v.isPinned ? 'Current pinned venue — tap to vote' : 'No votes yet'}</p>
                           </div>
@@ -5186,16 +5186,16 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
 
             {/* Current pinned venue display */}
             {dmPinnedVenue ? (
-              <div style={{ padding: '12px', borderRadius: '14px', background: `linear-gradient(135deg, ${colors.navy}08, ${colors.teal}15)`, border: `2px solid ${colors.teal}40`, marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '10px' }}>
-                <div style={{ width: '40px', height: '40px', borderRadius: '10px', background: colors.teal, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+              <div style={{ padding: '12px', borderRadius: '14px', background: `linear-gradient(135deg, ${colors.navy}08, ${colors.steel}15)`, border: `2px solid ${colors.steel}40`, marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '10px' }}>
+                <div style={{ width: '40px', height: '40px', borderRadius: '10px', background: colors.steel, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
                   {Icons.mapPin('white', 18)}
                 </div>
                 <div style={{ flex: 1, minWidth: 0 }}>
-                  <p style={{ fontSize: '10px', fontWeight: '600', color: colors.teal, margin: '0 0 2px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Pinned Venue</p>
+                  <p style={{ fontSize: '10px', fontWeight: '600', color: colors.steel, margin: '0 0 2px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Pinned Venue</p>
                   <p style={{ fontSize: '14px', fontWeight: '700', color: colors.navy, margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{dmPinnedVenue.name}</p>
                   {dmPinnedVenue.addr && <p style={{ fontSize: '11px', color: 'var(--text-secondary)', margin: '2px 0 0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{dmPinnedVenue.addr}</p>}
                 </div>
-                <button className="glass-btn glass-primary" onClick={(e) => { confirmClick(e); sendDmMessage({ text: `Check out ${dmPinnedVenue.name}!`, message_type: 'venue_card', venue_data: { name: dmPinnedVenue.name, addr: dmPinnedVenue.addr, stars: dmPinnedVenue.rating, rating: dmPinnedVenue.rating, photo_url: dmPinnedVenue.photo_url, place_id: dmPinnedVenue.place_id }, noReply: true }); setShowDmVenueSearch(false); }} style={{ padding: '8px 12px', borderRadius: '10px', border: 'none', background: colors.teal, color: 'white', fontSize: '11px', fontWeight: '700', cursor: 'pointer', whiteSpace: 'nowrap', position: 'relative', overflow: 'hidden' }}>Share This</button>
+                <button className="glass-btn glass-primary" onClick={(e) => { confirmClick(e); sendDmMessage({ text: `Check out ${dmPinnedVenue.name}!`, message_type: 'venue_card', venue_data: { name: dmPinnedVenue.name, addr: dmPinnedVenue.addr, stars: dmPinnedVenue.rating, rating: dmPinnedVenue.rating, photo_url: dmPinnedVenue.photo_url, place_id: dmPinnedVenue.place_id }, noReply: true }); setShowDmVenueSearch(false); }} style={{ padding: '8px 12px', borderRadius: '10px', border: 'none', background: colors.steel, color: 'white', fontSize: '11px', fontWeight: '700', cursor: 'pointer', whiteSpace: 'nowrap', position: 'relative', overflow: 'hidden' }}>Share This</button>
               </div>
             ) : (
               <div style={{ padding: '10px 12px', borderRadius: '12px', backgroundColor: 'var(--bg-tertiary)', border: '1px solid var(--border-default)', marginBottom: '16px' }}>
@@ -5222,7 +5222,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                     <p style={{ fontSize: '14px', fontWeight: '600', color: colors.navy, margin: 0 }}>{venue.name}</p>
                     <p style={{ fontSize: '11px', color: 'var(--text-secondary)', margin: '2px 0 0' }}>{venue.type} {venue.price ? `\u2022 ${venue.price}` : ''}</p>
                   </div>
-                  <div style={{ padding: '4px 10px', borderRadius: '12px', backgroundColor: venue.crowd > 70 ? '#FEE2E2' : venue.crowd > 40 ? '#FEF3C7' : '#D1FAE5', color: venue.crowd > 70 ? colors.red : venue.crowd > 40 ? colors.amber : colors.teal, fontSize: '11px', fontWeight: '600' }}>
+                  <div style={{ padding: '4px 10px', borderRadius: '12px', backgroundColor: venue.crowd > 70 ? '#FEE2E2' : venue.crowd > 40 ? '#FEF3C7' : '#D1FAE5', color: venue.crowd > 70 ? colors.red : venue.crowd > 40 ? colors.amber : colors.steel, fontSize: '11px', fontWeight: '600' }}>
                     {venue.crowd}%
                   </div>
                 </button>
@@ -6255,7 +6255,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
             <label style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '12px', fontWeight: 'bold', color: colors.navy, marginBottom: '6px' }}>{Icons.mapPin(colors.navy, 12)} Venue</label>
 
             {selectedVenueForCreate ? (
-              <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '10px', border: `2px solid ${colors.teal}`, display: 'flex', alignItems: 'center', gap: '10px' }}>
+              <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '10px', border: `2px solid ${colors.steel}`, display: 'flex', alignItems: 'center', gap: '10px' }}>
                 {selectedVenueForCreate.photo_url ? (
                   <img src={selectedVenueForCreate.photo_url} alt="" style={{ width: '48px', height: '48px', borderRadius: '8px', objectFit: 'cover' }} onError={(e) => { e.target.onerror = null; e.target.src = 'data:image/svg+xml,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48"><rect fill="#1a3a5c" width="48" height="48" rx="8"/></svg>'); }} />
                 ) : (
@@ -6274,7 +6274,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
               </div>
             ) : (
               <button className="glass-btn glass-secondary" onClick={() => { setPickingVenueForCreate(true); setCurrentTab('explore'); setCurrentScreen('main'); }} style={{ width: '100%', padding: '14px', borderRadius: '12px', border: `2px dashed ${colors.creamDark}`, backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontWeight: '700', fontSize: '14px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
-                {Icons.mapPin(colors.teal, 18)} Browse Venues
+                {Icons.mapPin(colors.steel, 18)} Browse Venues
               </button>
             )}
           </div>
@@ -6326,7 +6326,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                         {user.profile_image_url ? <img src={user.profile_image_url} alt="" style={{ width: '24px', height: '24px', borderRadius: '12px', objectFit: 'cover' }} /> : user.name[0]?.toUpperCase()}
                       </div>
                       <span style={{ fontSize: '12px', fontWeight: '600', color: colors.navy, whiteSpace: 'nowrap' }}>{user.name.split(' ')[0]}</span>
-                      <span style={{ fontSize: '12px', color: colors.teal, fontWeight: '700' }}>+</span>
+                      <span style={{ fontSize: '12px', color: colors.steel, fontWeight: '700' }}>+</span>
                     </button>
                   ))}
                 </div>
@@ -6371,7 +6371,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                       <p style={{ fontWeight: '700', fontSize: '13px', color: colors.navy, margin: 0 }}>{user.name}</p>
                       <p style={{ fontSize: '10px', color: 'var(--text-tertiary)', margin: '1px 0 0' }}>{user.email}</p>
                     </div>
-                    <div style={{ padding: '4px 10px', borderRadius: '8px', backgroundColor: 'var(--icon-bg)', color: colors.teal, fontSize: '11px', fontWeight: '700', flexShrink: 0 }}>Add</div>
+                    <div style={{ padding: '4px 10px', borderRadius: '8px', backgroundColor: 'var(--icon-bg)', color: colors.steel, fontSize: '11px', fontWeight: '700', flexShrink: 0 }}>Add</div>
                   </button>
                 ))}
               </div>
@@ -6392,7 +6392,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginBottom: '10px' }}>
                   {['dinner', 'drinks', 'movie', 'concert', 'activity'].map(ctx => (
                     <button key={ctx} className={flockBudgetContext === ctx ? '' : 'glass-btn glass-secondary'} onClick={() => setFlockBudgetContext(ctx)}
-                      style={{ padding: '6px 14px', borderRadius: '20px', border: flockBudgetContext === ctx ? `2px solid ${colors.teal}` : '1.5px solid var(--border-color)', backgroundColor: flockBudgetContext === ctx ? `${colors.teal}B3` : 'var(--bg-card-solid)', fontSize: '12px', fontWeight: flockBudgetContext === ctx ? '800' : '600', color: flockBudgetContext === ctx ? '#ffffff' : colors.navy, cursor: 'pointer', textTransform: 'capitalize', transition: 'all 0.2s ease', boxShadow: flockBudgetContext === ctx ? `0 0 12px ${colors.teal}66` : 'none' }}>
+                      style={{ padding: '6px 14px', borderRadius: '20px', border: flockBudgetContext === ctx ? `2px solid ${colors.steel}` : '1.5px solid var(--border-color)', backgroundColor: flockBudgetContext === ctx ? `${colors.steel}B3` : 'var(--bg-card-solid)', fontSize: '12px', fontWeight: flockBudgetContext === ctx ? '800' : '600', color: flockBudgetContext === ctx ? '#ffffff' : colors.navy, cursor: 'pointer', textTransform: 'capitalize', transition: 'all 0.2s ease', boxShadow: flockBudgetContext === ctx ? `0 0 12px ${colors.steel}66` : 'none' }}>
                       {ctx}
                     </button>
                   ))}
@@ -6482,7 +6482,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
       {/* Location loading overlay */}
       {locationLoading && !mapVenuesLoaded && (
         <div style={{ position: 'relative', zIndex: 25, backgroundColor: 'var(--bg-card-solid)', borderBottom: '1px solid var(--border-default)', padding: '16px 0', textAlign: 'center' }}>
-          <div style={{ display: 'inline-block', width: '24px', height: '24px', border: `3px solid var(--border-default)`, borderTopColor: colors.teal, borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
+          <div style={{ display: 'inline-block', width: '24px', height: '24px', border: `3px solid var(--border-default)`, borderTopColor: colors.steel, borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
           <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: '8px 0 0', fontWeight: '500' }}>Finding venues near you...</p>
         </div>
       )}
@@ -6537,7 +6537,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                         const dLng = (venue.location.longitude - userLocation.lng) * Math.PI / 180;
                         const a = Math.sin(dLat/2)**2 + Math.cos(userLocation.lat*Math.PI/180)*Math.cos(venue.location.latitude*Math.PI/180)*Math.sin(dLng/2)**2;
                         const dist = 6371 * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
-                        return <span style={{ fontSize: '10px', color: colors.teal, fontWeight: '600' }}>{dist < 1 ? `${Math.round(dist*1000)}m` : `${dist.toFixed(1)}km`}</span>;
+                        return <span style={{ fontSize: '10px', color: colors.steel, fontWeight: '600' }}>{dist < 1 ? `${Math.round(dist*1000)}m` : `${dist.toFixed(1)}km`}</span>;
                       })()}
                     </div>
                     <p style={{ fontSize: '10px', color: 'var(--text-secondary)', margin: '2px 0 0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{venue.formatted_address}</p>
@@ -6722,7 +6722,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 const cd = crowdData;
                 const score = cd ? cd.score : (activeVenue.crowd || 0);
                 const label = cd ? cd.label : (score > 70 ? 'Very Busy' : score > 40 ? 'Moderate' : 'Not Busy');
-                const crowdColor = score > 70 ? colors.red : score > 40 ? colors.amber : colors.teal;
+                const crowdColor = score > 70 ? colors.red : score > 40 ? colors.amber : colors.steel;
                 // Only pass real ML score to the dial — rule-engine score of 0 means "still loading"
                 const dialScore = cd ? cd.score : 0;
 
@@ -6983,8 +6983,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                         <p style={{ fontSize: '14px', fontWeight: '700', color: colors.red, margin: 0 }}>{closedAllDay ? 'Closed Today' : 'Currently Closed'}</p>
                         {!closedAllDay && (
                           <div style={{ display: 'flex', alignItems: 'center', gap: '4px', marginTop: '4px' }}>
-                            {Icons.clock(colors.teal, 12)}
-                            <span style={{ fontSize: '12px', fontWeight: 'bold', color: colors.teal }}>Best time to visit: {bestText}</span>
+                            {Icons.clock(colors.steel, 12)}
+                            <span style={{ fontSize: '12px', fontWeight: 'bold', color: colors.steel }}>Best time to visit: {bestText}</span>
                           </div>
                         )}
                       </>
@@ -6993,8 +6993,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                         <p style={{ fontSize: '14px', fontWeight: '700', color: crowdColor, margin: 0 }}>{label} <span style={{ fontSize: '10px', fontWeight: '500', color: 'var(--text-tertiary)' }}>({score}% capacity filled)</span></p>
                         <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: '3px 0' }}>{waitText === 'No wait' ? 'No wait expected' : /^\d|^~/.test(waitText) ? `Est. wait: ${waitText}` : waitText}</p>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                          {Icons.clock(colors.teal, 12)}
-                          <span style={{ fontSize: '12px', fontWeight: 'bold', color: colors.teal }}>Least crowded: {bestText}</span>
+                          {Icons.clock(colors.steel, 12)}
+                          <span style={{ fontSize: '12px', fontWeight: 'bold', color: colors.steel }}>Least crowded: {bestText}</span>
                         </div>
                       </>
                     )}
@@ -7044,7 +7044,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                       const diff = next - cur;
                       const arrow = diff >= 5 ? '↗' : diff <= -5 ? '↘' : '→';
                       const label = diff >= 5 ? 'Rising' : diff <= -5 ? 'Falling' : 'Steady';
-                      const color = diff >= 5 ? colors.red : diff <= -5 ? colors.teal : 'var(--text-secondary)';
+                      const color = diff >= 5 ? colors.red : diff <= -5 ? colors.steel : 'var(--text-secondary)';
                       return (
                         <span style={{ fontSize: '9px', fontWeight: '700', color, letterSpacing: '0.3px' }}>{arrow} {label}</span>
                       );
@@ -7212,7 +7212,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
               {sensorData?.sensor_data && (() => {
                 const sd = sensorData.sensor_data;
                 const noiseLabel = sd.noise_db == null ? null
-                  : sd.noise_db < 50 ? { text: 'Quiet', color: colors.teal }
+                  : sd.noise_db < 50 ? { text: 'Quiet', color: colors.steel }
                   : sd.noise_db < 70 ? { text: 'Moderate', color: colors.amber }
                   : sd.noise_db < 85 ? { text: 'Lively', color: colors.food }
                   : { text: 'Loud', color: colors.red };
@@ -7323,7 +7323,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                       setPickingVenueForCreate(false);
                       setCurrentScreen('create');
                     }
-                  }} className="glass-btn glass-primary" style={{ width: '100%', padding: '9px', borderRadius: '10px', border: 'none', backgroundColor: colors.teal, color: 'white', fontWeight: '700', fontSize: '12px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}>{Icons.check('white', 14)} Select Venue</button>
+                  }} className="glass-btn glass-primary" style={{ width: '100%', padding: '9px', borderRadius: '10px', border: 'none', backgroundColor: colors.steel, color: 'white', fontWeight: '700', fontSize: '12px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}>{Icons.check('white', 14)} Select Venue</button>
                 ) : venueDetailReturnTo ? (
                   <button onClick={() => {
                     setVenueDetailHistory([]);
@@ -7496,7 +7496,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                         </span>
                       )}
                       {dist != null && (
-                        <span style={{ fontSize: '10px', fontWeight: '700', color: colors.teal }}>{dist < 1 ? `${Math.round(dist*1000)}m` : `${dist.toFixed(1)}km`}</span>
+                        <span style={{ fontSize: '10px', fontWeight: '700', color: colors.steel }}>{dist < 1 ? `${Math.round(dist*1000)}m` : `${dist.toFixed(1)}km`}</span>
                       )}
                     </div>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
@@ -7663,7 +7663,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
             const isTodayDate = isToday(dateStr);
             const isBusy = events.length >= 2;
             return (
-              <button key={day} onClick={() => setSelectedDate(new Date(calendarMonth.getFullYear(), calendarMonth.getMonth(), day))} style={{ height: '40px', borderRadius: '10px', border: isTodayDate && !isSelected ? `2px solid ${colors.teal}` : 'none', backgroundColor: isSelected ? colors.navyBg : isBusy ? 'var(--icon-bg)' : 'transparent', color: isSelected ? 'white' : isTodayDate ? colors.teal : 'inherit', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', position: 'relative' }}>
+              <button key={day} onClick={() => setSelectedDate(new Date(calendarMonth.getFullYear(), calendarMonth.getMonth(), day))} style={{ height: '40px', borderRadius: '10px', border: isTodayDate && !isSelected ? `2px solid ${colors.steel}` : 'none', backgroundColor: isSelected ? colors.navyBg : isBusy ? 'var(--icon-bg)' : 'transparent', color: isSelected ? 'white' : isTodayDate ? colors.steel : 'inherit', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', position: 'relative' }}>
                 <span style={{ fontSize: '12px', fontWeight: isTodayDate || isSelected ? '700' : '500' }}>{day}</span>
                 {events.length > 0 && (
                   <div style={{ display: 'flex', gap: '2px', marginTop: '2px' }}>
@@ -7991,7 +7991,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 const isPinned = pinnedFlockIds.includes(f.id);
                 const lastMsg = f.messages[f.messages.length - 1];
                 const hasUnread = f.messages.some(m => m.sender !== 'You' && !m.read);
-                const statusColor = f.status === 'completed' ? '#4a7ba7' : f.status === 'confirmed' ? '#22C55E' : f.status === 'voting' ? '#F59E0B' : colors.teal;
+                const statusColor = f.status === 'completed' ? '#4a7ba7' : f.status === 'confirmed' ? '#22C55E' : f.status === 'voting' ? '#F59E0B' : colors.steel;
                 const statusLabel = f.status === 'completed' ? 'Done' : f.status === 'confirmed' ? 'Confirmed' : f.status === 'voting' ? 'Voting' : 'Planning';
 
                 return (
@@ -8107,7 +8107,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
             )}
             <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flex: chatNavOpen ? 1 : 'none', justifyContent: chatNavOpen ? 'center' : 'flex-end', flexShrink: 0 }}>
               <div style={{ display: 'flex', gap: '6px', overflow: 'hidden', maxWidth: chatNavOpen ? '300px' : '0px', opacity: chatNavOpen ? 1 : 0, transition: 'max-width 0.3s ease, opacity 0.25s ease' }}>
-                <button className="glass-btn" onClick={() => { setChatNavOpen(false); setShowVotePanel(true); loadPopularVenues(); }} style={{ width: '36px', height: '36px', minWidth: '36px', borderRadius: '10px', border: '1px solid rgba(255,255,255,0.15)', backgroundColor: flock.status === 'voting' ? colors.teal : 'rgba(255,255,255,0.08)', backdropFilter: 'blur(8px)', WebkitBackdropFilter: 'blur(8px)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.vote('white', 15)}</button>
+                <button className="glass-btn" onClick={() => { setChatNavOpen(false); setShowVotePanel(true); loadPopularVenues(); }} style={{ width: '36px', height: '36px', minWidth: '36px', borderRadius: '10px', border: '1px solid rgba(255,255,255,0.15)', backgroundColor: flock.status === 'voting' ? colors.steel : 'rgba(255,255,255,0.08)', backdropFilter: 'blur(8px)', WebkitBackdropFilter: 'blur(8px)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.vote('white', 15)}</button>
                 <button className="glass-btn" onClick={() => { setChatNavOpen(false); setShowFlockInviteModal(true); setFlockInviteSelected([]); setFlockInviteSearch(''); setFlockInviteResults([]); }} style={{ width: '36px', height: '36px', minWidth: '36px', borderRadius: '10px', border: '1px solid rgba(255,255,255,0.15)', backgroundColor: 'rgba(255,255,255,0.08)', backdropFilter: 'blur(8px)', WebkitBackdropFilter: 'blur(8px)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.userPlus('white', 15)}</button>
                 <button className="glass-btn" onClick={() => { setChatNavOpen(false); setShowChatSearch(!showChatSearch); }} style={{ width: '36px', height: '36px', minWidth: '36px', borderRadius: '10px', border: '1px solid rgba(255,255,255,0.15)', backgroundColor: showChatSearch ? 'rgba(255,255,255,0.25)' : 'rgba(255,255,255,0.08)', backdropFilter: 'blur(8px)', WebkitBackdropFilter: 'blur(8px)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.search('white', 15)}</button>
                 <button className="glass-btn" onClick={() => { setChatNavOpen(false); setShowChatPool(true); }} style={{ width: '36px', height: '36px', minWidth: '36px', borderRadius: '10px', border: '1px solid rgba(255,255,255,0.15)', backgroundColor: 'rgba(255,255,255,0.08)', backdropFilter: 'blur(8px)', WebkitBackdropFilter: 'blur(8px)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.dollar('white', 15)}</button>
@@ -8195,7 +8195,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
 
         {/* Pinned Venue Banner — shows which venue this flock is at */}
         {flock.venue && flock.venue !== 'TBD' ? (
-          <div style={{ padding: '10px 14px', background: `linear-gradient(135deg, ${colors.navy}08, ${colors.teal}12)`, borderBottom: `1px solid ${colors.creamDark}`, flexShrink: 0 }}>
+          <div style={{ padding: '10px 14px', background: `linear-gradient(135deg, ${colors.navy}08, ${colors.steel}12)`, borderBottom: `1px solid ${colors.creamDark}`, flexShrink: 0 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
               {flock.venuePhoto ? (
                 <img src={flock.venuePhoto} alt="" style={{ width: '52px', height: '52px', borderRadius: '12px', objectFit: 'cover', flexShrink: 0, boxShadow: '0 2px 8px rgba(0,0,0,0.1)' }} onError={(e) => { e.target.onerror = null; e.target.src = 'data:image/svg+xml,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="52" height="52"><rect fill="#1a3a5c" width="52" height="52" rx="12"/></svg>'); }} />
@@ -8231,7 +8231,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                       }, 300);
                     }
                   }}
-                  className="glass-btn glass-primary" style={{ padding: '8px 10px', borderRadius: '10px', border: 'none', background: colors.teal, color: 'white', fontSize: '10px', fontWeight: '700', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px', boxShadow: '0 1px 2px rgba(30,41,59,0.10)' }}
+                  className="glass-btn glass-primary" style={{ padding: '8px 10px', borderRadius: '10px', border: 'none', background: colors.steel, color: 'white', fontSize: '10px', fontWeight: '700', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px', boxShadow: '0 1px 2px rgba(30,41,59,0.10)' }}
                 >
                   {Icons.mapPin('white', 12)} Map
                 </button>
@@ -8250,14 +8250,14 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
             onClick={() => { setPickingVenueForCreate(true); setPickingVenueForFlockId(flock.id); setCurrentTab('explore'); setCurrentScreen('main'); }}
             style={{ margin: '0', padding: '10px 14px', background: `linear-gradient(135deg, var(--bg-primary), var(--bg-card-solid))`, borderBottom: `1px solid ${colors.creamDark}`, border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '10px', width: '100%', flexShrink: 0 }}
           >
-            <div style={{ width: '40px', height: '40px', borderRadius: '12px', border: `2px dashed ${colors.teal}`, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-              {Icons.mapPin(colors.teal, 18)}
+            <div style={{ width: '40px', height: '40px', borderRadius: '12px', border: `2px dashed ${colors.steel}`, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              {Icons.mapPin(colors.steel, 18)}
             </div>
             <div style={{ flex: 1, textAlign: 'left' }}>
               <p style={{ fontSize: '13px', fontWeight: '700', color: colors.navy, margin: 0 }}>Add a Venue</p>
               <p style={{ fontSize: '11px', color: 'var(--text-secondary)', margin: '1px 0 0' }}>Pick a spot for this flock</p>
             </div>
-            <div style={{ color: colors.teal, fontWeight: '700', fontSize: '20px' }}>+</div>
+            <div style={{ color: colors.steel, fontWeight: '700', fontSize: '20px' }}>+</div>
           </button>
         )}
 
@@ -8290,13 +8290,13 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
 
         {/* Budget status bar */}
         {flock.budgetEnabled && budgetStatus && (
-          <div onClick={() => setShowChatPool(true)} style={{ padding: '8px 14px', background: `linear-gradient(135deg, ${colors.teal}08, ${colors.teal}15)`, borderBottom: `1px solid ${colors.teal}25`, flexShrink: 0, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <div onClick={() => setShowChatPool(true)} style={{ padding: '8px 14px', background: `linear-gradient(135deg, ${colors.steel}08, ${colors.steel}15)`, borderBottom: `1px solid ${colors.steel}25`, flexShrink: 0, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-              {Icons.dollar(colors.teal, 13)}
+              {Icons.dollar(colors.steel, 13)}
               {budgetStatus.isReady && budgetStatus.ceiling ? (
                 <p style={{ fontSize: '12px', fontWeight: '600', color: colors.navy, margin: 0 }}>
                   {budgetStatus.budgetLocked ? 'Budget locked at ' : 'Group budget: up to '}
-                  <span style={{ color: colors.teal, fontWeight: '800' }}>${budgetStatus.ceiling}</span>
+                  <span style={{ color: colors.steel, fontWeight: '800' }}>${budgetStatus.ceiling}</span>
                   <span style={{ color: 'var(--text-secondary)', fontWeight: '500' }}> per person</span>
                 </p>
               ) : (
@@ -8674,7 +8674,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                     <div style={{ display: 'flex', gap: '8px', marginBottom: '12px' }}>
                       {presets.map(p => (
                         <button key={p} className="glass-btn glass-secondary" onClick={() => { setBudgetAmount(p); setBudgetCustom(''); }}
-                          style={{ flex: 1, padding: '12px 4px', borderRadius: '12px', border: budgetAmount === p ? `2px solid ${colors.teal}` : '1.5px solid var(--border-color)', backgroundColor: budgetAmount === p ? `${colors.teal}12` : 'var(--bg-card-solid)', fontSize: '15px', fontWeight: '800', color: budgetAmount === p ? colors.teal : colors.navy, cursor: 'pointer' }}>
+                          style={{ flex: 1, padding: '12px 4px', borderRadius: '12px', border: budgetAmount === p ? `2px solid ${colors.steel}` : '1.5px solid var(--border-color)', backgroundColor: budgetAmount === p ? `${colors.steel}12` : 'var(--bg-card-solid)', fontSize: '15px', fontWeight: '800', color: budgetAmount === p ? colors.steel : colors.navy, cursor: 'pointer' }}>
                           ${p}{p === presets[presets.length - 1] ? '+' : ''}
                         </button>
                       ))}
@@ -8724,8 +8724,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 {hasBudget && (userSubmitted || budgetStatus?.budgetLocked) && !showCreateBill && (
                   <div>
                     {budgetStatus?.isReady && budgetStatus?.ceiling ? (
-                      <div style={{ padding: '14px', borderRadius: '12px', backgroundColor: `${colors.teal}10`, border: `1px solid ${colors.teal}30`, marginBottom: '14px' }}>
-                        <p style={{ fontSize: '15px', fontWeight: '800', color: colors.teal, margin: 0 }}>
+                      <div style={{ padding: '14px', borderRadius: '12px', backgroundColor: `${colors.steel}10`, border: `1px solid ${colors.steel}30`, marginBottom: '14px' }}>
+                        <p style={{ fontSize: '15px', fontWeight: '800', color: colors.steel, margin: 0 }}>
                           {budgetStatus.budgetLocked ? `Group budget locked at $${budgetStatus.ceiling}` : `Group budget: up to $${budgetStatus.ceiling} per person`}
                         </p>
                         <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: '4px 0 0' }}>{budgetStatus.submissionCount} of {budgetStatus.totalMembers} submitted</p>
@@ -8737,7 +8737,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                       </div>
                     )}
                     {!budgetStatus?.budgetLocked && budgetStatus?.userAmount && (
-                      <p style={{ fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '12px' }}>Your budget: ${budgetStatus.userAmount} — <button onClick={() => { setBudgetAmount(budgetStatus.userAmount); setBudgetCustom(''); setBudgetStatus(prev => ({ ...prev, userSubmitted: false })); }} style={{ background: 'none', border: 'none', color: colors.teal, fontWeight: '700', cursor: 'pointer', padding: 0, fontSize: '12px' }}>Change</button></p>
+                      <p style={{ fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '12px' }}>Your budget: ${budgetStatus.userAmount} — <button onClick={() => { setBudgetAmount(budgetStatus.userAmount); setBudgetCustom(''); setBudgetStatus(prev => ({ ...prev, userSubmitted: false })); }} style={{ background: 'none', border: 'none', color: colors.steel, fontWeight: '700', cursor: 'pointer', padding: 0, fontSize: '12px' }}>Change</button></p>
                     )}
                     {isCreator && !budgetStatus?.budgetLocked && (
                       <div style={{ display: 'flex', gap: '8px', marginBottom: '12px' }}>
@@ -8767,7 +8767,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                       <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
                         {[{ id: authUser?.id, name: 'Me' }, ...(flock.members || []).filter(m => typeof m === 'object' && m.id && String(m.id) !== String(authUser?.id)).map(m => ({ id: m.id, name: m.name || m }))].map(m => (
                           <button key={m.id || m.name} className="glass-btn glass-secondary" onClick={() => setBillPaidBy(m.id || authUser?.id)}
-                            style={{ padding: '8px 14px', borderRadius: '20px', border: (billPaidBy || authUser?.id) === m.id ? `2px solid ${colors.teal}` : '1.5px solid var(--border-color)', backgroundColor: (billPaidBy || authUser?.id) === m.id ? `${colors.teal}12` : 'var(--bg-card-solid)', fontSize: '12px', fontWeight: '700', color: (billPaidBy || authUser?.id) === m.id ? colors.teal : colors.navy, cursor: 'pointer' }}>
+                            style={{ padding: '8px 14px', borderRadius: '20px', border: (billPaidBy || authUser?.id) === m.id ? `2px solid ${colors.steel}` : '1.5px solid var(--border-color)', backgroundColor: (billPaidBy || authUser?.id) === m.id ? `${colors.steel}12` : 'var(--bg-card-solid)', fontSize: '12px', fontWeight: '700', color: (billPaidBy || authUser?.id) === m.id ? colors.steel : colors.navy, cursor: 'pointer' }}>
                             {m.name}
                           </button>
                         ))}
@@ -8785,7 +8785,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                       <div style={{ display: 'flex', gap: '6px' }}>
                         {[0, 15, 18, 20, 25].map(t => (
                           <button key={t} className="glass-btn glass-secondary" onClick={() => setBillTip(t)}
-                            style={{ flex: 1, padding: '8px 2px', borderRadius: '10px', border: billTip === t ? `2px solid ${colors.teal}` : '1.5px solid var(--border-color)', backgroundColor: billTip === t ? `${colors.teal}12` : 'var(--bg-card-solid)', fontSize: '12px', fontWeight: '700', color: billTip === t ? colors.teal : colors.navy, cursor: 'pointer' }}>
+                            style={{ flex: 1, padding: '8px 2px', borderRadius: '10px', border: billTip === t ? `2px solid ${colors.steel}` : '1.5px solid var(--border-color)', backgroundColor: billTip === t ? `${colors.steel}12` : 'var(--bg-card-solid)', fontSize: '12px', fontWeight: '700', color: billTip === t ? colors.steel : colors.navy, cursor: 'pointer' }}>
                             {t === 0 ? 'None' : `${t}%`}
                           </button>
                         ))}
@@ -8804,7 +8804,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                         <div style={{ height: '1px', backgroundColor: 'var(--divider)', margin: '6px 0' }} />
                         <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                           <span style={{ fontSize: '13px', fontWeight: '800', color: colors.navy }}>Total</span>
-                          <span style={{ fontSize: '13px', fontWeight: '800', color: colors.teal }}>${(parseFloat(billTotal) * (1 + billTip / 100)).toFixed(2)}</span>
+                          <span style={{ fontSize: '13px', fontWeight: '800', color: colors.steel }}>${(parseFloat(billTotal) * (1 + billTip / 100)).toFixed(2)}</span>
                         </div>
                         <p style={{ fontSize: '11px', color: 'var(--text-tertiary)', margin: '6px 0 0', textAlign: 'center' }}>Equal split — ~${(parseFloat(billTotal) * (1 + billTip / 100) / Math.max(1, flock.members?.length || flock.memberCount || 1)).toFixed(2)} each</p>
                       </div>
@@ -8997,7 +8997,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                       const isLeading = !isAssigned && idx === 0 && v.voters.length > 0;
                       const iconBg = isAssigned
                         ? colors.navyBg
-                        : isLeading ? colors.teal : `linear-gradient(135deg, ${colors.navy}15, ${colors.navy}25)`;
+                        : isLeading ? colors.steel : `linear-gradient(135deg, ${colors.navy}15, ${colors.navy}25)`;
                       return (
                         <button key={v.venue} className="glass-btn glass-secondary" onClick={(e) => { confirmClick(e); isMyVote ? handleUnvote() : handleQuickVote(v.venue, v.type); }} style={{ width: '100%', textAlign: 'left', padding: '12px 14px', borderRadius: '14px', border: isAssigned ? `2px solid ${colors.navy}` : isMyVote ? `2px solid ${colors.navy}` : `1.5px solid var(--border-default)`, backgroundColor: isAssigned ? `${colors.navy}05` : isMyVote ? `${colors.navy}06` : 'var(--bg-card-solid)', cursor: 'pointer', position: 'relative', overflow: 'hidden', transition: 'opacity 0.2s' }}>
                           {/* Progress bar background */}
@@ -9010,7 +9010,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                               <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                                 <h4 style={{ fontSize: '14px', fontWeight: '700', color: colors.navy, margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{v.venue}</h4>
                                 {isAssigned && <span style={{ fontSize: '9px', fontWeight: '700', color: 'white', backgroundColor: colors.navyBg, padding: '1px 6px', borderRadius: '6px', flexShrink: 0 }}>Assigned</span>}
-                                {isLeading && <span style={{ fontSize: '9px', fontWeight: '700', color: colors.teal, backgroundColor: `${colors.teal}15`, padding: '1px 6px', borderRadius: '6px', flexShrink: 0 }}>Leading</span>}
+                                {isLeading && <span style={{ fontSize: '9px', fontWeight: '700', color: colors.steel, backgroundColor: `${colors.steel}15`, padding: '1px 6px', borderRadius: '6px', flexShrink: 0 }}>Leading</span>}
                               </div>
                               <p style={{ fontSize: '11px', color: 'var(--text-tertiary)', margin: '1px 0 0' }}>{v.voters.length > 0 ? v.voters.join(', ') : isAssigned ? 'Current flock venue — tap to vote' : 'No votes yet'}</p>
                             </div>
@@ -9018,7 +9018,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                               {v.voters.length > 0 && <span style={{ fontSize: '16px', fontWeight: '900', color: isMyVote ? colors.navy : colors.textTertiary }}>{v.voters.length}</span>}
                               {isMyVote && <div style={{ width: '20px', height: '20px', borderRadius: '10px', backgroundColor: colors.navyBg, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.check('white', 12)}</div>}
                               {isCreator && !isAssigned && (
-                                <button className="glass-btn glass-primary" onClick={(e) => { e.stopPropagation(); confirmClick(e); handleConfirmVenue(v.venue); }} style={{ padding: '4px 8px', borderRadius: '8px', border: 'none', background: colors.teal, color: 'white', fontSize: '10px', fontWeight: '700', cursor: 'pointer', position: 'relative', overflow: 'hidden' }}>Confirm</button>
+                                <button className="glass-btn glass-primary" onClick={(e) => { e.stopPropagation(); confirmClick(e); handleConfirmVenue(v.venue); }} style={{ padding: '4px 8px', borderRadius: '8px', border: 'none', background: colors.steel, color: 'white', fontSize: '10px', fontWeight: '700', cursor: 'pointer', position: 'relative', overflow: 'hidden' }}>Confirm</button>
                               )}
                             </div>
                           </div>
@@ -9079,16 +9079,16 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
 
               {/* Current venue display */}
               {flock.venue && flock.venue !== 'TBD' ? (
-                <div style={{ padding: '12px', borderRadius: '14px', background: `linear-gradient(135deg, ${colors.navy}08, ${colors.teal}15)`, border: `2px solid ${colors.teal}40`, marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '10px' }}>
-                  <div style={{ width: '40px', height: '40px', borderRadius: '10px', background: colors.teal, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                <div style={{ padding: '12px', borderRadius: '14px', background: `linear-gradient(135deg, ${colors.navy}08, ${colors.steel}15)`, border: `2px solid ${colors.steel}40`, marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '10px' }}>
+                  <div style={{ width: '40px', height: '40px', borderRadius: '10px', background: colors.steel, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
                     {Icons.mapPin('white', 18)}
                   </div>
                   <div style={{ flex: 1, minWidth: 0 }}>
-                    <p style={{ fontSize: '10px', fontWeight: '600', color: colors.teal, margin: '0 0 2px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Current Venue</p>
+                    <p style={{ fontSize: '10px', fontWeight: '600', color: colors.steel, margin: '0 0 2px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Current Venue</p>
                     <p style={{ fontSize: '14px', fontWeight: '700', color: colors.navy, margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{flock.venue}</p>
                     {flock.venueAddress && <p style={{ fontSize: '11px', color: 'var(--text-secondary)', margin: '2px 0 0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{flock.venueAddress}</p>}
                   </div>
-                  <button className="glass-btn glass-primary" onClick={(e) => { confirmClick(e); shareVenueToChat(selectedFlockId, { name: flock.venue, addr: flock.venueAddress, place_id: flock.venueId, stars: flock.venueRating, photo_url: flock.venuePhoto, category: 'Food', crowd: 50, price: '$$' }); }} style={{ padding: '8px 12px', borderRadius: '10px', border: 'none', background: colors.teal, color: 'white', fontSize: '11px', fontWeight: '700', cursor: 'pointer', whiteSpace: 'nowrap', position: 'relative', overflow: 'hidden' }}>Share This</button>
+                  <button className="glass-btn glass-primary" onClick={(e) => { confirmClick(e); shareVenueToChat(selectedFlockId, { name: flock.venue, addr: flock.venueAddress, place_id: flock.venueId, stars: flock.venueRating, photo_url: flock.venuePhoto, category: 'Food', crowd: 50, price: '$$' }); }} style={{ padding: '8px 12px', borderRadius: '10px', border: 'none', background: colors.steel, color: 'white', fontSize: '11px', fontWeight: '700', cursor: 'pointer', whiteSpace: 'nowrap', position: 'relative', overflow: 'hidden' }}>Share This</button>
                 </div>
               ) : (
                 <div style={{ padding: '10px 12px', borderRadius: '12px', backgroundColor: 'var(--bg-tertiary)', border: '1px solid var(--border-default)', marginBottom: '16px' }}>
@@ -9136,7 +9136,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                       padding: '4px 10px',
                       borderRadius: '12px',
                       backgroundColor: venue.crowd > 70 ? '#FEE2E2' : venue.crowd > 40 ? '#FEF3C7' : '#D1FAE5',
-                      color: venue.crowd > 70 ? colors.red : venue.crowd > 40 ? colors.amber : colors.teal,
+                      color: venue.crowd > 70 ? colors.red : venue.crowd > 40 ? colors.amber : colors.steel,
                       fontSize: '11px',
                       fontWeight: '600'
                     }}>
@@ -9221,7 +9221,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                               </p>
                             )}
                           </div>
-                          <div style={{ padding: '4px 10px', borderRadius: '8px', backgroundColor: 'var(--icon-bg)', color: colors.teal, fontSize: '11px', fontWeight: '700' }}>Add</div>
+                          <div style={{ padding: '4px 10px', borderRadius: '8px', backgroundColor: 'var(--icon-bg)', color: colors.steel, fontSize: '11px', fontWeight: '700' }}>Add</div>
                         </button>
                       );
                     })}
@@ -9256,7 +9256,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                                 {isDown ? 'Down to hang tonight' : 'Convince me'}
                               </p>
                             </div>
-                            <div style={{ padding: '4px 10px', borderRadius: '8px', backgroundColor: 'var(--icon-bg)', color: colors.teal, fontSize: '11px', fontWeight: '700' }}>Add</div>
+                            <div style={{ padding: '4px 10px', borderRadius: '8px', backgroundColor: 'var(--icon-bg)', color: colors.steel, fontSize: '11px', fontWeight: '700' }}>Add</div>
                           </button>
                         );
                       })}
@@ -9524,7 +9524,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
 
               <p style={{ fontSize: '11px', color: 'var(--text-secondary)', margin: '0 0 8px', fontWeight: '600' }}>Was it busy?</p>
               <div style={{ display: 'flex', gap: '8px', marginBottom: '14px' }}>
-                {[{ level: 1, label: 'Quiet', color: colors.teal }, { level: 2, label: 'Moderate', color: colors.amber }, { level: 3, label: 'Packed', color: colors.red }].map(opt => (
+                {[{ level: 1, label: 'Quiet', color: colors.steel }, { level: 2, label: 'Moderate', color: colors.amber }, { level: 3, label: 'Packed', color: colors.red }].map(opt => (
                   <button key={opt.level} className="glass-btn glass-secondary" onClick={() => setFeedbackState(prev => ({ ...prev, crowdLevel: opt.level }))} style={{ flex: 1, padding: '12px 6px', borderRadius: '10px', border: feedbackState.crowdLevel === opt.level ? `2px solid ${opt.color}` : '1.5px solid var(--border-default)', backgroundColor: feedbackState.crowdLevel === opt.level ? `${opt.color}15` : 'var(--bg-card-solid)', cursor: 'pointer', textAlign: 'center', transition: 'opacity 0.15s ease' }}>
                     <div style={{ width: '8px', height: '8px', borderRadius: '4px', backgroundColor: opt.color, margin: '0 auto 6px' }} />
                     <span style={{ fontSize: '12px', fontWeight: '700', color: feedbackState.crowdLevel === opt.level ? opt.color : colors.navy }}>{opt.label}</span>
@@ -9534,7 +9534,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
 
               <p style={{ fontSize: '11px', color: 'var(--text-secondary)', margin: '0 0 8px', fontWeight: '600' }}>Worth the price?</p>
               <div style={{ display: 'flex', gap: '8px', marginBottom: '14px' }}>
-                {[{ val: true, label: 'Yes', color: colors.teal }, { val: false, label: 'No', color: colors.red }].map(opt => (
+                {[{ val: true, label: 'Yes', color: colors.steel }, { val: false, label: 'No', color: colors.red }].map(opt => (
                   <button key={String(opt.val)} className="glass-btn glass-secondary" onClick={() => setFeedbackState(prev => ({ ...prev, priceWorth: opt.val }))} style={{ flex: 1, padding: '12px 6px', borderRadius: '10px', border: feedbackState.priceWorth === opt.val ? `2px solid ${opt.color}` : '1.5px solid var(--border-default)', backgroundColor: feedbackState.priceWorth === opt.val ? `${opt.color}15` : 'var(--bg-card-solid)', cursor: 'pointer', textAlign: 'center', transition: 'opacity 0.15s ease' }}>
                     <span style={{ fontSize: '12px', fontWeight: '700', color: feedbackState.priceWorth === opt.val ? opt.color : colors.navy }}>{opt.label}</span>
                   </button>
@@ -9602,7 +9602,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                   const mName = typeof member === 'string' ? member : (member.name || 'User');
                   const mImage = typeof member === 'object' ? member.image : null;
                   const initial = mName[0]?.toUpperCase() || '?';
-                  const bgColors = [colors.navy, colors.navyMid, colors.teal, colors.amber, '#4a7ba7', '#ec4899'];
+                  const bgColors = [colors.navy, colors.navyMid, colors.steel, colors.amber, '#4a7ba7', '#ec4899'];
                   return (
                     <div key={i} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '5px', minWidth: '54px' }}>
                       {mImage ? (
@@ -9785,7 +9785,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                       <button onClick={() => setShowPicModal(true)} style={{ width: '80px', height: '80px', borderRadius: '40px', background: colors.navyBg, border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', position: 'relative' }}>
                         {profilePic ? <img src={profilePic} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : Icons.user('white', 32)}
                       </button>
-                      <button onClick={() => { if (profilePic) { setCropImageSrc(profilePic); setCropZoom(1); setCropOffset({ x: 0, y: 0 }); } else { setShowPicModal(true); } }} style={{ marginTop: '6px', padding: '4px 12px', borderRadius: '8px', border: 'none', backgroundColor: 'transparent', color: colors.teal, fontSize: '11px', fontWeight: '600', cursor: 'pointer' }}>
+                      <button onClick={() => { if (profilePic) { setCropImageSrc(profilePic); setCropZoom(1); setCropOffset({ x: 0, y: 0 }); } else { setShowPicModal(true); } }} style={{ marginTop: '6px', padding: '4px 12px', borderRadius: '8px', border: 'none', backgroundColor: 'transparent', color: colors.steel, fontSize: '11px', fontWeight: '600', cursor: 'pointer' }}>
                         Edit Photo
                       </button>
                     </div>
@@ -9794,7 +9794,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                       <div style={{ backgroundColor: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)', borderRadius: '10px', padding: '10px 14px', marginBottom: '14px', color: colors.red, fontSize: '13px', fontWeight: '600' }}>{editError}</div>
                     )}
                     {editSuccess && (
-                      <div style={{ backgroundColor: 'rgba(45,90,135,0.10)', border: '1px solid rgba(45,90,135,0.35)', borderRadius: '10px', padding: '10px 14px', marginBottom: '14px', color: colors.teal, fontSize: '13px', fontWeight: '600' }}>{editSuccess}</div>
+                      <div style={{ backgroundColor: 'rgba(45,90,135,0.10)', border: '1px solid rgba(45,90,135,0.35)', borderRadius: '10px', padding: '10px 14px', marginBottom: '14px', color: colors.steel, fontSize: '13px', fontWeight: '600' }}>{editSuccess}</div>
                     )}
 
                     <div style={{ marginBottom: '12px' }}>
@@ -10307,9 +10307,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 marginTop: '8px',
                 padding: '8px 12px',
                 borderRadius: '8px',
-                border: `1px solid ${colors.teal}`,
+                border: `1px solid ${colors.steel}`,
                 backgroundColor: 'rgba(45,90,135,0.10)',
-                color: colors.teal,
+                color: colors.steel,
                 fontSize: '10px',
                 cursor: 'pointer',
                 display: 'flex',
@@ -10318,7 +10318,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 justifyContent: 'center'
               }}
             >
-              {Icons.repeat(colors.teal, 12)} Replay Onboarding
+              {Icons.repeat(colors.steel, 12)} Replay Onboarding
             </button>
           )}
 
@@ -10834,7 +10834,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
               {venueLogoUploading && (
                 <div style={{ position: 'absolute', inset: 0, backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '9px', color: 'white' }}>…</div>
               )}
-              <div style={{ position: 'absolute', bottom: -2, right: -2, width: '18px', height: '18px', borderRadius: '9px', backgroundColor: colors.teal, display: 'flex', alignItems: 'center', justifyContent: 'center', border: '2px solid var(--bg-primary)' }}>
+              <div style={{ position: 'absolute', bottom: -2, right: -2, width: '18px', height: '18px', borderRadius: '9px', backgroundColor: colors.steel, display: 'flex', alignItems: 'center', justifyContent: 'center', border: '2px solid var(--bg-primary)' }}>
                 {Icons.camera('white', 10)}
               </div>
               <input ref={venueLogoInputRef} type="file" accept="image/*" onChange={handleVenueLogoUpload} style={{ display: 'none' }} />
@@ -10876,7 +10876,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
             </div>
             <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
               <p style={{ fontSize: '9px', color: 'var(--text-secondary)', margin: 0, textTransform: 'uppercase' }}>Crowd Forecast</p>
-              <p style={{ fontSize: '24px', fontWeight: '900', color: venueData.crowdForecast > 70 ? colors.red : colors.teal, margin: '4px 0 0' }}>{venueData.crowdForecast}%</p>
+              <p style={{ fontSize: '24px', fontWeight: '900', color: venueData.crowdForecast > 70 ? colors.red : colors.steel, margin: '4px 0 0' }}>{venueData.crowdForecast}%</p>
             </div>
             <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', boxShadow: 'var(--card-shadow-sm)', position: 'relative' }}>
               <p style={{ fontSize: '9px', color: 'var(--text-secondary)', margin: 0, textTransform: 'uppercase' }}>Repeat Rate</p>
@@ -10909,7 +10909,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
               .filter(r => new Date(r.recorded_at) >= todayStart)
               .reduce((sum, r) => sum + (r.ir_beam_count || 0), 0);
             const noiseLabel = sd.noise_db == null ? null
-              : sd.noise_db < 50 ? { text: 'Quiet', color: colors.teal }
+              : sd.noise_db < 50 ? { text: 'Quiet', color: colors.steel }
               : sd.noise_db < 70 ? { text: 'Moderate', color: colors.amber }
               : sd.noise_db < 85 ? { text: 'Lively', color: colors.food }
               : { text: 'Loud', color: colors.red };
@@ -11030,7 +11030,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
             <div style={{ display: 'flex', gap: '4px', alignItems: 'flex-end', height: '50px' }}>
               {venueData.peakHours.map((h, i) => (
                 <div key={i} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-                  <div style={{ width: '100%', height: `${h.value * 0.5}px`, backgroundColor: h.value > 80 ? colors.red : h.value > 50 ? colors.amber : colors.teal, borderRadius: '2px', transition: 'height 0.3s ease' }} />
+                  <div style={{ width: '100%', height: `${h.value * 0.5}px`, backgroundColor: h.value > 80 ? colors.red : h.value > 50 ? colors.amber : colors.steel, borderRadius: '2px', transition: 'height 0.3s ease' }} />
                   <span style={{ fontSize: '8px', color: 'var(--text-secondary)', marginTop: '4px' }}>{h.hour}</span>
                 </div>
               ))}
@@ -11093,7 +11093,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                         <span style={{ fontSize: '10px', color: 'var(--text-secondary)' }}>{promo.views} views</span>
                       </div>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                        {Icons.checkCircle(colors.teal, 12)}
+                        {Icons.checkCircle(colors.steel, 12)}
                         <span style={{ fontSize: '10px', color: 'var(--text-secondary)' }}>{promo.claims} claims</span>
                       </div>
                     </div>
@@ -11126,7 +11126,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
 
               {/* Incoming Flocks */}
               <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
-                <h3 style={{ fontSize: '12px', fontWeight: '700', color: colors.navy, margin: '0 0 10px', display: 'flex', alignItems: 'center', gap: '6px' }}>{Icons.users(colors.teal, 14)} Incoming Flocks</h3>
+                <h3 style={{ fontSize: '12px', fontWeight: '700', color: colors.navy, margin: '0 0 10px', display: 'flex', alignItems: 'center', gap: '6px' }}>{Icons.users(colors.steel, 14)} Incoming Flocks</h3>
                 {incomingFlocks.length > 0 ? incomingFlocks.map(flock => (
                   <div key={flock.id} style={{ padding: '10px', backgroundColor: 'var(--bg-card-solid)', borderRadius: '8px', marginBottom: '8px' }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -11134,7 +11134,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                         <h4 style={{ fontSize: '13px', fontWeight: '700', color: colors.navy, margin: 0 }}>{flock.title || flock.name}</h4>
                         <p style={{ fontSize: '10px', color: 'var(--text-secondary)', margin: '2px 0' }}>{flock.member_count || flock.members || 0} members{flock.date ? ` - ${new Date(flock.date).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}` : ''}{flock.time ? ` ${flock.time}` : ''}</p>
                       </div>
-                      <span style={{ padding: '4px 8px', borderRadius: '12px', backgroundColor: flock.status === 'confirmed' ? colors.teal : colors.amber, color: 'white', fontSize: '9px', fontWeight: '600' }}>
+                      <span style={{ padding: '4px 8px', borderRadius: '12px', backgroundColor: flock.status === 'confirmed' ? colors.steel : colors.amber, color: 'white', fontSize: '9px', fontWeight: '600' }}>
                         {flock.status === 'confirmed' ? 'Confirmed' : 'Active'}
                       </span>
                     </div>
@@ -11235,7 +11235,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                       <p style={{ fontSize: '11px', color: 'var(--text-secondary)', margin: '8px 0 0', lineHeight: '1.4' }}>{review.text}</p>
                       {review.reply && (
                         <div style={{ marginTop: '8px', padding: '8px', backgroundColor: 'var(--bg-tertiary)', borderRadius: '8px', border: '1px solid var(--border-default)' }}>
-                          <p style={{ fontSize: '10px', fontWeight: '600', color: colors.teal, margin: '0 0 2px' }}>Owner Reply</p>
+                          <p style={{ fontSize: '10px', fontWeight: '600', color: colors.steel, margin: '0 0 2px' }}>Owner Reply</p>
                           <p style={{ fontSize: '11px', color: 'var(--text-secondary)', margin: 0 }}>{review.reply}</p>
                         </div>
                       )}
@@ -11251,7 +11251,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                           <button className="glass-btn glass-secondary" onClick={() => setReplyingToReview(null)} style={{ padding: '6px 8px', borderRadius: '6px', border: `1px solid ${colors.creamDark}`, backgroundColor: 'var(--bg-card-solid)', color: 'var(--text-secondary)', fontSize: '10px', cursor: 'pointer' }}>Cancel</button>
                         </div>
                       )}
-                      {review.replied && !review.reply && <p style={{ fontSize: '10px', color: colors.teal, margin: '8px 0 0', display: 'flex', alignItems: 'center', gap: '4px' }}>{Icons.checkCircle(colors.teal, 12)} Replied</p>}
+                      {review.replied && !review.reply && <p style={{ fontSize: '10px', color: colors.steel, margin: '8px 0 0', display: 'flex', alignItems: 'center', gap: '4px' }}>{Icons.checkCircle(colors.steel, 12)} Replied</p>}
                     </div>
                   ))}
                 </div>
@@ -11272,7 +11272,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                     <button onClick={() => {
                       setEditingVenueInfo(false);
                       updateVenueProfile({ businessName: venueInfo.name, location: venueInfo.address, phone: venueInfo.phone }).catch(() => {});
-                    }} style={{ padding: '4px 8px', borderRadius: '6px', border: 'none', backgroundColor: colors.teal, color: 'white', fontSize: '10px', fontWeight: '500', cursor: 'pointer' }}>Save</button>
+                    }} style={{ padding: '4px 8px', borderRadius: '6px', border: 'none', backgroundColor: colors.steel, color: 'white', fontSize: '10px', fontWeight: '500', cursor: 'pointer' }}>Save</button>
                   )}
                 </div>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
@@ -11315,7 +11315,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                     <p style={{ fontSize: '11px', fontWeight: '500', color: colors.navy, margin: 0 }}>New bookings</p>
                     <p style={{ fontSize: '9px', color: 'var(--text-tertiary)', margin: 0 }}>Get notified when a flock books</p>
                   </div>
-                  <div onClick={() => { const next = {...notifications, bookings: !notifications.bookings}; setNotifications(next); updateVenueProfile({ notificationPrefs: next }).catch(() => {}); }} style={{ width: '36px', height: '20px', borderRadius: '10px', backgroundColor: notifications.bookings ? colors.teal : 'var(--toggle-off)', cursor: 'pointer', position: 'relative' }}>
+                  <div onClick={() => { const next = {...notifications, bookings: !notifications.bookings}; setNotifications(next); updateVenueProfile({ notificationPrefs: next }).catch(() => {}); }} style={{ width: '36px', height: '20px', borderRadius: '10px', backgroundColor: notifications.bookings ? colors.steel : 'var(--toggle-off)', cursor: 'pointer', position: 'relative' }}>
                     <div style={{ position: 'absolute', top: '2px', left: notifications.bookings ? '18px' : '2px', width: '16px', height: '16px', borderRadius: '8px', backgroundColor: 'var(--bg-card-solid)', transition: 'left 0.2s' }} />
                   </div>
                 </div>
@@ -11324,7 +11324,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                     <p style={{ fontSize: '11px', fontWeight: '500', color: colors.navy, margin: 0 }}>New reviews</p>
                     <p style={{ fontSize: '9px', color: 'var(--text-tertiary)', margin: 0 }}>Alerts for customer reviews</p>
                   </div>
-                  <div onClick={() => { const next = {...notifications, reviews: !notifications.reviews}; setNotifications(next); updateVenueProfile({ notificationPrefs: next }).catch(() => {}); }} style={{ width: '36px', height: '20px', borderRadius: '10px', backgroundColor: notifications.reviews ? colors.teal : 'var(--toggle-off)', cursor: 'pointer', position: 'relative' }}>
+                  <div onClick={() => { const next = {...notifications, reviews: !notifications.reviews}; setNotifications(next); updateVenueProfile({ notificationPrefs: next }).catch(() => {}); }} style={{ width: '36px', height: '20px', borderRadius: '10px', backgroundColor: notifications.reviews ? colors.steel : 'var(--toggle-off)', cursor: 'pointer', position: 'relative' }}>
                     <div style={{ position: 'absolute', top: '2px', left: notifications.reviews ? '18px' : '2px', width: '16px', height: '16px', borderRadius: '8px', backgroundColor: 'var(--bg-card-solid)', transition: 'left 0.2s' }} />
                   </div>
                 </div>
@@ -11333,7 +11333,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                     <p style={{ fontSize: '11px', fontWeight: '500', color: colors.navy, margin: 0 }}>Weekly reports</p>
                     <p style={{ fontSize: '9px', color: 'var(--text-tertiary)', margin: 0 }}>Performance summary emails</p>
                   </div>
-                  <div onClick={() => { const next = {...notifications, weekly: !notifications.weekly}; setNotifications(next); updateVenueProfile({ notificationPrefs: next }).catch(() => {}); }} style={{ width: '36px', height: '20px', borderRadius: '10px', backgroundColor: notifications.weekly ? colors.teal : 'var(--toggle-off)', cursor: 'pointer', position: 'relative' }}>
+                  <div onClick={() => { const next = {...notifications, weekly: !notifications.weekly}; setNotifications(next); updateVenueProfile({ notificationPrefs: next }).catch(() => {}); }} style={{ width: '36px', height: '20px', borderRadius: '10px', backgroundColor: notifications.weekly ? colors.steel : 'var(--toggle-off)', cursor: 'pointer', position: 'relative' }}>
                     <div style={{ position: 'absolute', top: '2px', left: notifications.weekly ? '18px' : '2px', width: '16px', height: '16px', borderRadius: '8px', backgroundColor: 'var(--bg-card-solid)', transition: 'left 0.2s' }} />
                   </div>
                 </div>
@@ -11380,7 +11380,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                   <ul style={{ margin: 0, paddingLeft: '16px', fontSize: '11px', color: 'var(--text-secondary)' }}>
                     {features.free.map(f => <li key={f} style={{ marginBottom: '2px' }}>{f}</li>)}
                   </ul>
-                  {venueTier === 'free' && <span style={{ display: 'block', textAlign: 'center', fontSize: '10px', color: colors.teal, fontWeight: '600', marginTop: '8px' }}>Current Plan</span>}
+                  {venueTier === 'free' && <span style={{ display: 'block', textAlign: 'center', fontSize: '10px', color: colors.steel, fontWeight: '600', marginTop: '8px' }}>Current Plan</span>}
                 </div>
 
                 {/* Premium Tier */}
@@ -11808,7 +11808,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                   <p style={{ fontSize: '9px', color: 'var(--text-secondary)', margin: 0 }}>Total Users</p>
                 </div>
                 <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', textAlign: 'center', boxShadow: 'var(--card-shadow-sm)' }}>
-                  <p style={{ fontSize: '24px', fontWeight: '900', color: colors.teal, margin: 0 }}>2,850</p>
+                  <p style={{ fontSize: '24px', fontWeight: '900', color: colors.steel, margin: 0 }}>2,850</p>
                   <p style={{ fontSize: '9px', color: 'var(--text-secondary)', margin: 0 }}>Active</p>
                 </div>
                 <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', textAlign: 'center', boxShadow: 'var(--card-shadow-sm)' }}>
@@ -11928,7 +11928,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                     <p style={{ fontSize: '9px', color: 'var(--text-secondary)', margin: 0 }}>Active Cities</p>
                   </div>
                   <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '8px', padding: '10px', textAlign: 'center' }}>
-                    <p style={{ fontSize: '20px', fontWeight: '900', color: colors.teal, margin: 0 }}>$44.8K</p>
+                    <p style={{ fontSize: '20px', fontWeight: '900', color: colors.steel, margin: 0 }}>$44.8K</p>
                     <p style={{ fontSize: '9px', color: 'var(--text-secondary)', margin: 0 }}>Total Revenue</p>
                   </div>
                 </div>
@@ -11946,7 +11946,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                       </div>
                       <div style={{ textAlign: 'right' }}>
                         <p style={{ fontSize: '12px', fontWeight: '700', color: colors.navy, margin: 0 }}>${(city.revenue / 1000).toFixed(1)}K</p>
-                        <span style={{ fontSize: '9px', color: colors.teal, fontWeight: '600' }}>+{city.growth}%</span>
+                        <span style={{ fontSize: '9px', color: colors.steel, fontWeight: '600' }}>+{city.growth}%</span>
                       </div>
                     </div>
                     <div style={{ height: '6px', backgroundColor: 'var(--bg-tertiary)', borderRadius: '3px', overflow: 'hidden' }}>
@@ -11958,7 +11958,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
 
               {/* Expansion Opportunities */}
               <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', border: `1px dashed ${colors.creamDark}` }}>
-                <h4 style={{ fontSize: '11px', fontWeight: '700', color: colors.navy, margin: '0 0 6px', display: 'flex', alignItems: 'center', gap: '4px' }}>{Icons.globe(colors.teal, 12)} Expansion Targets</h4>
+                <h4 style={{ fontSize: '11px', fontWeight: '700', color: colors.navy, margin: '0 0 6px', display: 'flex', alignItems: 'center', gap: '4px' }}>{Icons.globe(colors.steel, 12)} Expansion Targets</h4>
                 <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
                   {['Denver', 'Phoenix', 'Nashville', 'Atlanta'].map(city => (
                     <span key={city} style={{ padding: '4px 10px', borderRadius: '12px', backgroundColor: 'var(--bg-card-solid)', fontSize: '10px', fontWeight: '500', color: colors.navy }}>
@@ -11978,12 +11978,12 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
                   <p style={{ fontSize: '9px', color: 'var(--text-secondary)', margin: '0 0 4px', textTransform: 'uppercase' }}>Today's Volume</p>
                   <p style={{ fontSize: '20px', fontWeight: '900', color: colors.navy, margin: 0 }}>$3,240</p>
-                  <span style={{ fontSize: '10px', color: colors.teal }}>+18% vs yesterday</span>
+                  <span style={{ fontSize: '10px', color: colors.steel }}>+18% vs yesterday</span>
                 </div>
                 <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
                   <p style={{ fontSize: '9px', color: 'var(--text-secondary)', margin: '0 0 4px', textTransform: 'uppercase' }}>This Month</p>
                   <p style={{ fontSize: '20px', fontWeight: '900', color: colors.navy, margin: 0 }}>$48.2K</p>
-                  <span style={{ fontSize: '10px', color: colors.teal }}>+12% vs last month</span>
+                  <span style={{ fontSize: '10px', color: colors.steel }}>+12% vs last month</span>
                 </div>
               </div>
 
@@ -12024,7 +12024,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                         <span style={{ padding: '2px 6px', borderRadius: '8px', backgroundColor: txn.type === 'booking' ? 'var(--accent-blue-bg)' : 'var(--accent-pink-bg)', color: txn.type === 'booking' ? 'var(--accent-blue-text)' : 'var(--accent-pink-text)', fontSize: '8px', fontWeight: '600' }}>
                           {txn.type}
                         </span>
-                        <span style={{ width: '6px', height: '6px', borderRadius: '3px', backgroundColor: txn.status === 'completed' ? colors.teal : colors.amber }} />
+                        <span style={{ width: '6px', height: '6px', borderRadius: '3px', backgroundColor: txn.status === 'completed' ? colors.steel : colors.amber }} />
                       </div>
                     </div>
                   </div>
@@ -12068,7 +12068,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                       <span style={{ fontSize: '10px', color: 'var(--text-secondary)' }}>{item.current} / {item.target}</span>
                     </div>
                     <div style={{ height: '6px', backgroundColor: 'var(--bg-tertiary)', borderRadius: '3px', overflow: 'hidden' }}>
-                      <div style={{ height: '100%', width: `${item.progress}%`, backgroundColor: colors.teal, borderRadius: '3px' }} />
+                      <div style={{ height: '100%', width: `${item.progress}%`, backgroundColor: colors.steel, borderRadius: '3px' }} />
                     </div>
                   </div>
                 ))}
@@ -12124,13 +12124,13 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
               ],
               reliabilityDistribution: { reliable: 3240, moderate: 1870, flaky: 390, unscored: 3000 },
             } : (researchLiveData || {});
-            const stallColors = { completed: colors.teal, venue: '#F59E0B', rsvp: '#EF4444', confirmation: '#4a7ba7', budget: '#3B82F6' };
+            const stallColors = { completed: colors.steel, venue: '#F59E0B', rsvp: '#EF4444', confirmation: '#4a7ba7', budget: '#3B82F6' };
             const stallTotal = (data.stallPointDistribution || []).reduce((s, p) => s + parseInt(p.count), 0) || 1;
             const statCards = [
               { label: 'Total Flocks', value: data.totalFlocks || 0, color: colors.navy },
-              { label: 'Completion Rate', value: `${data.completionRate || 0}%`, color: colors.teal },
+              { label: 'Completion Rate', value: `${data.completionRate || 0}%`, color: colors.steel },
               { label: 'Avg Group Size', value: data.avgGroupSize || 0, color: colors.navy },
-              { label: 'Budget Adoption', value: `${data.budgetAdoptionRate || 0}%`, color: colors.teal },
+              { label: 'Budget Adoption', value: `${data.budgetAdoptionRate || 0}%`, color: colors.steel },
               { label: 'Time to Confirm', value: `${data.avgTimeToConfirmation || 0}m`, color: colors.navy },
               { label: 'Total Users', value: (data.totalUsers || 0).toLocaleString(), color: colors.navy },
             ];
@@ -12166,7 +12166,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                   <h3 style={{ fontSize: '12px', fontWeight: '700', color: colors.navy, margin: '0 0 10px' }}>User Reliability</h3>
                   <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '6px' }}>
                     {[
-                      { label: '80%+', value: data.reliabilityDistribution?.reliable || 0, color: colors.teal },
+                      { label: '80%+', value: data.reliabilityDistribution?.reliable || 0, color: colors.steel },
                       { label: '50-79%', value: data.reliabilityDistribution?.moderate || 0, color: '#F59E0B' },
                       { label: '<50%', value: data.reliabilityDistribution?.flaky || 0, color: '#EF4444' },
                       { label: 'New', value: data.reliabilityDistribution?.unscored || 0, color: 'var(--text-secondary)' },
@@ -12180,11 +12180,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 </div>
                 <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', boxShadow: 'var(--card-shadow-sm)', textAlign: 'center' }}>
                   <p style={{ fontSize: '11px', fontWeight: '600', color: 'var(--text-secondary)', margin: '0 0 4px' }}>New Users This Week</p>
-                  <p style={{ fontSize: '28px', fontWeight: '900', color: colors.teal, margin: 0 }}>+{data.newUsersThisWeek || 0}</p>
+                  <p style={{ fontSize: '28px', fontWeight: '900', color: colors.steel, margin: 0 }}>+{data.newUsersThisWeek || 0}</p>
                 </div>
                 <button onClick={() => { if (demoMode) fetchResearchLive(); else setResearchDemoMode(true); }}
                   style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', padding: '6px', width: '100%', border: 'none', background: 'transparent', cursor: 'pointer' }}>
-                  <span style={{ width: '6px', height: '6px', borderRadius: '3px', background: demoMode ? '#D97706' : colors.teal }} />
+                  <span style={{ width: '6px', height: '6px', borderRadius: '3px', background: demoMode ? '#D97706' : colors.steel }} />
                   <span style={{ fontSize: '9px', fontWeight: '600', color: 'var(--text-tertiary)' }}>{researchLoading ? 'Loading...' : demoMode ? 'Demo data · Tap for live' : 'Live data · Tap for demo'}</span>
                 </button>
               </div>
@@ -12513,7 +12513,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
     }}>
       {/* Decorative background circles */}
       <div style={{ position: 'absolute', top: '-100px', right: '-100px', width: '250px', height: '250px', borderRadius: '50%', background: `linear-gradient(135deg, ${colors.navy}10, ${colors.navyMid}05)`, pointerEvents: 'none' }} />
-      <div style={{ position: 'absolute', bottom: '-50px', left: '-50px', width: '150px', height: '150px', borderRadius: '50%', background: `linear-gradient(135deg, ${colors.teal}10, ${colors.teal}05)`, pointerEvents: 'none' }} />
+      <div style={{ position: 'absolute', bottom: '-50px', left: '-50px', width: '150px', height: '150px', borderRadius: '50%', background: `linear-gradient(135deg, ${colors.steel}10, ${colors.steel}05)`, pointerEvents: 'none' }} />
 
       {/* Back button + Progress indicator */}
       <div style={{ padding: '16px 24px 0', flexShrink: 0, position: 'relative', zIndex: 1 }}>
@@ -12564,7 +12564,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
         {onboardingStep === 0 && (
           <div style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '16px', marginTop: '12px', marginBottom: '24px' }}>
-              <div style={{ width: '56px', height: '56px', borderRadius: '16px', background: colors.teal, display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 1px 2px rgba(30,41,59,0.10)' }}>
+              <div style={{ width: '56px', height: '56px', borderRadius: '16px', background: colors.steel, display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 1px 2px rgba(30,41,59,0.10)' }}>
                 {Icons.heart('white', 28)}
               </div>
               <div>
@@ -12621,8 +12621,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
               })}
             </div>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', marginBottom: '12px' }}>
-              <div style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: onboardingVibes.length > 0 ? colors.teal : 'var(--toggle-off)' }} />
-              <p style={{ fontSize: '13px', color: onboardingVibes.length > 0 ? colors.teal : colors.textTertiary, margin: 0, fontWeight: '600' }}>
+              <div style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: onboardingVibes.length > 0 ? colors.steel : 'var(--toggle-off)' }} />
+              <p style={{ fontSize: '13px', color: onboardingVibes.length > 0 ? colors.steel : colors.textTertiary, margin: 0, fontWeight: '600' }}>
                 {onboardingVibes.length === 0
                   ? 'Select at least one'
                   : `${onboardingVibes.length} selected`}
@@ -13361,8 +13361,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
 
                           <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', marginBottom: '8px' }}>
                             {dist != null && (
-                              <span style={{ fontSize: '11px', fontWeight: '600', color: colors.teal, display: 'flex', alignItems: 'center', gap: '3px' }}>
-                                {Icons.mapPin(colors.teal, 11)} {dist < 1 ? `${Math.round(dist*1000)}m` : `${dist.toFixed(1)}km`}
+                              <span style={{ fontSize: '11px', fontWeight: '600', color: colors.steel, display: 'flex', alignItems: 'center', gap: '3px' }}>
+                                {Icons.mapPin(colors.steel, 11)} {dist < 1 ? `${Math.round(dist*1000)}m` : `${dist.toFixed(1)}km`}
                               </span>
                             )}
                             {!venue.photo_url && (
@@ -13496,7 +13496,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
 
             {/* Distance */}
             {eventDetail.distance_miles && (
-              <p style={{ fontSize: '11px', color: 'var(--text-tertiary)', fontWeight: '600', marginBottom: '16px' }}>{Icons.mapPin(colors.teal, 11)} {eventDetail.distance_miles.toFixed(1)} miles away</p>
+              <p style={{ fontSize: '11px', color: 'var(--text-tertiary)', fontWeight: '600', marginBottom: '16px' }}>{Icons.mapPin(colors.steel, 11)} {eventDetail.distance_miles.toFixed(1)} miles away</p>
             )}
           </div>
 
@@ -13651,8 +13651,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                     )}
                     {venueDetailModal.opening_hours && (
                       <div style={{ flex: 1, backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '10px', textAlign: 'center', border: '1px solid var(--border-subtle)' }}>
-                        <div style={{ marginBottom: '2px' }}>{Icons.clock(venueDetailModal.opening_hours.openNow ? colors.teal : colors.red, 18)}</div>
-                        <p style={{ fontSize: '10px', color: venueDetailModal.opening_hours.openNow ? colors.teal : colors.red, fontWeight: '600', margin: 0 }}>{venueDetailModal.opening_hours.openNow ? 'Open Now' : 'Closed'}</p>
+                        <div style={{ marginBottom: '2px' }}>{Icons.clock(venueDetailModal.opening_hours.openNow ? colors.steel : colors.red, 18)}</div>
+                        <p style={{ fontSize: '10px', color: venueDetailModal.opening_hours.openNow ? colors.steel : colors.red, fontWeight: '600', margin: 0 }}>{venueDetailModal.opening_hours.openNow ? 'Open Now' : 'Closed'}</p>
                       </div>
                     )}
                   </div>
@@ -13715,9 +13715,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
             {/* Active Promotions */}
             {venueDetailPromos.length > 0 && (
               <div style={{ padding: '0 16px 12px' }}>
-                <h4 style={{ fontSize: '13px', fontWeight: '700', color: 'var(--text-primary)', margin: '0 0 8px', display: 'flex', alignItems: 'center', gap: '6px' }}>{Icons.gift(colors.teal, 14)} Deals & Promotions</h4>
+                <h4 style={{ fontSize: '13px', fontWeight: '700', color: 'var(--text-primary)', margin: '0 0 8px', display: 'flex', alignItems: 'center', gap: '6px' }}>{Icons.gift(colors.steel, 14)} Deals & Promotions</h4>
                 {venueDetailPromos.map(p => (
-                  <div key={p.id} style={{ padding: '10px', backgroundColor: 'var(--bg-tertiary)', borderRadius: '10px', marginBottom: '6px', border: `1px solid ${colors.teal}33` }}>
+                  <div key={p.id} style={{ padding: '10px', backgroundColor: 'var(--bg-tertiary)', borderRadius: '10px', marginBottom: '6px', border: `1px solid ${colors.steel}33` }}>
                     <p style={{ fontSize: '12px', fontWeight: '700', color: 'var(--text-primary)', margin: 0 }}>{p.title}</p>
                     {p.description && <p style={{ fontSize: '11px', color: 'var(--text-secondary)', margin: '2px 0 0' }}>{p.description}</p>}
                     <p style={{ fontSize: '10px', color: 'var(--text-tertiary)', margin: '2px 0 0' }}>{p.time_slot}{p.days ? ` · ${p.days}` : ''}</p>
@@ -13783,8 +13783,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                   </div>
                   {r.text && <p style={{ fontSize: '11px', color: 'var(--text-secondary)', margin: '4px 0 0', lineHeight: '1.4' }}>{r.text}</p>}
                   {r.venue_reply && (
-                    <div style={{ marginTop: '6px', padding: '6px 8px', backgroundColor: 'var(--bg-card-solid)', borderRadius: '6px', borderLeft: `2px solid ${colors.teal}` }}>
-                      <p style={{ fontSize: '9px', fontWeight: '600', color: colors.teal, margin: '0 0 1px' }}>Owner Reply</p>
+                    <div style={{ marginTop: '6px', padding: '6px 8px', backgroundColor: 'var(--bg-card-solid)', borderRadius: '6px', borderLeft: `2px solid ${colors.steel}` }}>
+                      <p style={{ fontSize: '9px', fontWeight: '600', color: colors.steel, margin: '0 0 1px' }}>Owner Reply</p>
                       <p style={{ fontSize: '10px', color: 'var(--text-secondary)', margin: 0 }}>{r.venue_reply}</p>
                     </div>
                   )}
@@ -13853,11 +13853,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
               {attendanceMembers.map(m => (
                 <button key={m.id} onClick={() => setAttendanceChecks(prev => ({ ...prev, [m.id]: !prev[m.id] }))}
                   style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '12px', borderRadius: '14px', border: `1.5px solid ${attendanceChecks[m.id] ? 'rgba(45,90,135,0.45)' : 'var(--border-default)'}`, background: attendanceChecks[m.id] ? 'rgba(45,90,135,0.08)' : 'var(--bg-card-solid)', cursor: 'pointer', width: '100%', textAlign: 'left' }}>
-                  <div style={{ width: '36px', height: '36px', borderRadius: '18px', background: `linear-gradient(135deg, ${colors.teal}, ${colors.navy})`, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: '14px', fontWeight: '700', flexShrink: 0 }}>
+                  <div style={{ width: '36px', height: '36px', borderRadius: '18px', background: `linear-gradient(135deg, ${colors.steel}, ${colors.navy})`, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: '14px', fontWeight: '700', flexShrink: 0 }}>
                     {(m.name || '?')[0].toUpperCase()}
                   </div>
                   <span style={{ flex: 1, fontSize: '14px', fontWeight: '600', color: 'var(--text-primary)' }}>{m.name}</span>
-                  <div style={{ width: '24px', height: '24px', borderRadius: '12px', border: `2px solid ${attendanceChecks[m.id] ? colors.teal : 'var(--border-default)'}`, background: attendanceChecks[m.id] ? colors.teal : 'transparent', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  <div style={{ width: '24px', height: '24px', borderRadius: '12px', border: `2px solid ${attendanceChecks[m.id] ? colors.steel : 'var(--border-default)'}`, background: attendanceChecks[m.id] ? colors.steel : 'transparent', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                     {attendanceChecks[m.id] && <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="#fff" strokeWidth="2.5" strokeLinecap="round"><path d="M3 8.5l3 3 7-7.5"/></svg>}
                   </div>
                 </button>
@@ -13872,7 +13872,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                   getUserStats().then(d => setReliabilityScore(d.reliabilityScore || null)).catch(() => {});
                 } catch (err) { showToast('Failed to record', 'error'); }
                 finally { setAttendanceSubmitting(false); setShowAttendanceModal(false); }
-              }} className="glass-btn glass-primary" style={{ flex: 1, padding: '13px', borderRadius: '14px', border: 'none', background: `linear-gradient(135deg, ${colors.teal}, ${colors.navy})`, color: '#fff', fontSize: '14px', fontWeight: '700', cursor: 'pointer', opacity: attendanceSubmitting ? 0.6 : 1 }}>
+              }} className="glass-btn glass-primary" style={{ flex: 1, padding: '13px', borderRadius: '14px', border: 'none', background: `linear-gradient(135deg, ${colors.steel}, ${colors.navy})`, color: '#fff', fontSize: '14px', fontWeight: '700', cursor: 'pointer', opacity: attendanceSubmitting ? 0.6 : 1 }}>
                 {attendanceSubmitting ? 'Saving...' : 'Confirm'}
               </button>
               <button className="glass-btn glass-secondary" onClick={() => setShowAttendanceModal(false)} style={{ padding: '13px 18px', borderRadius: '14px', border: '1.5px solid var(--border-default)', background: 'var(--bg-card-solid)', color: 'var(--text-secondary)', fontSize: '14px', fontWeight: '600', cursor: 'pointer' }}>Skip</button>
