@@ -100,8 +100,8 @@
   --bg-tertiary: #1e3a5c;
   --bg-elevated: #1e293b;
   --text-primary: #f1ede0;
-  --text-secondary: #a3b0c2;
-  --text-tertiary: #7c8a9e;
+  --text-secondary: #c8c3b2;   /* warm cream-gray (2026-08: cream more prominent in dark) */
+  --text-tertiary: #98937f;    /* warm muted cream */
   --text-on-primary: #f1ede0;
   --border-color: #1e3a5c;
   --border-light: #162d4a;
@@ -165,6 +165,13 @@ body {
 
 input, textarea, select, button {
   font-family: inherit;
+}
+
+/* Never show iOS's grey play glyph over decorative background videos */
+video::-webkit-media-controls-start-playback-button,
+video::-webkit-media-controls {
+  display: none !important;
+  -webkit-appearance: none;
 }
 
 /* Phone ergonomics (Web Interface Guidelines pass, 2026-07-18):
