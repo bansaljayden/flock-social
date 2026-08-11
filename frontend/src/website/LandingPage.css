@@ -543,6 +543,12 @@
   padding: clamp(72px, 10vw, 116px) 0;
 }
 .lp-cta-in { max-width: 720px; }
+.lp-cta-row { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 26px; }
+.lp-cta-divider {
+  margin-top: 26px; padding-top: 22px;
+  border-top: 1px solid var(--rule-cream);
+  font-size: 14px; color: var(--cream-3);
+}
 .lp-form button:disabled { opacity: 0.65; cursor: default; }
 
 /* ============ motion ============ */
