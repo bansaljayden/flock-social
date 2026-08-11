@@ -83,7 +83,9 @@ router.get('/:placeId', async (req, res) => {
       success: true,
       venue_place_id: placeId,
       checked_in_at,
-      redirect: 'https://flockcorp.com',
+      // flockcorp.com has no DNS pointed at the app yet, so tapping an NFC tag
+      // would land on a dead domain. Overridable once DNS is live.
+      redirect: process.env.PUBLIC_WEB_URL || 'https://flock-app-w65m.vercel.app',
     });
   } catch (err) {
     console.error('NFC checkin error:', err);

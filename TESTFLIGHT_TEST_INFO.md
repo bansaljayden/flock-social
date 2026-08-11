@@ -13,8 +13,12 @@
   your people, vote on where to go, match budgets anonymously, and lock it in.
   This beta includes the redesigned interface, live crowd levels for venues,
   and the new plans calendar.
-- **Marketing URL (optional):** https://flockcorp.com
-- **Privacy Policy URL:** https://flockcorp.com/privacy  (verify path matches the live site)
+- **Marketing URL (optional):** https://flock-app-w65m.vercel.app/landing
+- **Privacy Policy URL:** https://flock-app-w65m.vercel.app/privacy  ← verified 200
+  > Use the Vercel domain, NOT flockcorp.com. `flockcorp.com` has no DNS pointed
+  > at the app (checked 2026-08-11: does not resolve). A privacy-policy URL that
+  > doesn't load is an automatic App Store rejection. Switch these to
+  > flockcorp.com only after DNS is pointed at Vercel and both URLs return 200.
 
 ## Beta App Review Information
 - **First Name:** Jayden
