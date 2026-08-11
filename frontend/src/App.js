@@ -7041,7 +7041,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                         {!closedAllDay && (
                           <div style={{ display: 'flex', alignItems: 'center', gap: '4px', marginTop: '4px' }}>
                             {Icons.clock(colors.steel, 12)}
-                            {entitlements?.paywallEnabled && !isPro ? (
+                            {cd?.forecastAccess?.locked ? (
                               <span onClick={(e) => { e.stopPropagation(); setPaywallTrigger('forecast'); }} style={{ fontSize: '12px', fontWeight: 'bold', color: colors.steel, cursor: 'pointer' }}>
                                 Best time to visit: <span aria-hidden style={{ filter: 'blur(4px)', userSelect: 'none' }}>9 PM</span> <span style={{ fontSize: '10px', fontWeight: '700', letterSpacing: '0.5px' }}>PRO</span>
                               </span>
@@ -7057,7 +7057,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                         <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: '3px 0' }}>{waitText === 'No wait' ? 'No wait expected' : /^\d|^~/.test(waitText) ? `Est. wait: ${waitText}` : waitText}</p>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
                           {Icons.clock(colors.steel, 12)}
-                          {entitlements?.paywallEnabled && !isPro ? (
+                          {cd?.forecastAccess?.locked ? (
                             <span onClick={(e) => { e.stopPropagation(); setPaywallTrigger('forecast'); }} style={{ fontSize: '12px', fontWeight: 'bold', color: colors.steel, cursor: 'pointer' }}>
                               Least crowded: <span aria-hidden style={{ filter: 'blur(4px)', userSelect: 'none' }}>9 PM</span> <span style={{ fontSize: '10px', fontWeight: '700', letterSpacing: '0.5px' }}>PRO</span>
                             </span>

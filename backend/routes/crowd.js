@@ -16,8 +16,39 @@ const {
   getLabel,
 } = mlPredictor;
 const pool = require('../config/database');
+const { isPremium, paywallEnabled } = require('../services/entitlements');
+const { FREE_MONTHLY_FORECASTS, getUsedThisMonth, recordView } = require('../services/forecastUsage');
 
 const router = express.Router();
+
+// Flock Pro gate for the single-venue AI forecast. The live "how busy now" score
+// stays free; best-time / hourly / peak are free for the first N venue views a
+// month, then Pro. Returns a per-request copy so the shared cache stays ungated.
+// `count` = true means this request should consume one of the free allowance
+// (only the single-venue detail view counts, not batch/list previews).
+async function gateForecast(result, userId, { count } = {}) {
+  // Paywall off (or unset) → today's behavior, unlimited, no meter.
+  if (!paywallEnabled()) return result;
+  if (await isPremium(userId)) {
+    return { ...result, forecastAccess: { locked: false, remaining: null, limit: null } };
+  }
+  const usedBefore = getUsedThisMonth(userId);
+  if (usedBefore >= FREE_MONTHLY_FORECASTS) {
+    // Allowance spent — strip the premium prediction, keep the free live score.
+    return {
+      ...result,
+      bestTime: null,
+      hourly: [],
+      peak: null,
+      forecastAccess: { locked: true, remaining: 0, limit: FREE_MONTHLY_FORECASTS },
+    };
+  }
+  const usedNow = count ? recordView(userId) : usedBefore;
+  return {
+    ...result,
+    forecastAccess: { locked: false, remaining: Math.max(0, FREE_MONTHLY_FORECASTS - usedNow), limit: FREE_MONTHLY_FORECASTS },
+  };
+}
 const API_KEY = process.env.GOOGLE_PLACES_API_KEY;
 
 // ---------------------------------------------------------------------------
@@ -121,7 +152,7 @@ router.get('/:placeId',
       // Check cache (include local time in key so different hours aren't stale)
       const cacheKey = `full:${placeId}:${req.query.localHour || ''}:${req.query.localDay || ''}`;
       const cached = getCached(cacheKey);
-      if (cached) return res.json(cached);
+      if (cached) return res.json(await gateForecast(cached, req.user.id, { count: true }));
 
       // Use client's local time if provided, else fall back to server time
       const now = new Date();
@@ -208,7 +239,7 @@ router.get('/:placeId',
       };
 
       setCache(cacheKey, result);
-      res.json(result);
+      res.json(await gateForecast(result, req.user.id, { count: true }));
     } catch (err) {
       console.error('[Crowd] Prediction error:', err);
       res.status(500).json({ error: 'Failed to generate crowd prediction' });
