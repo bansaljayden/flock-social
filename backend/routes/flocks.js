@@ -474,7 +474,7 @@ router.delete('/:id', param('id').isInt(), async (req, res) => {
   }
 });
 
-// POST /api/flocks/:id/join - Join (accept invite) or request to join a flock
+// POST /api/flocks/:id/join - Accept a flock invite
 router.post('/:id/join', param('id').isInt(), async (req, res) => {
   try {
     const flockId = req.params.id;
@@ -485,12 +485,22 @@ router.post('/:id/join', param('id').isInt(), async (req, res) => {
       return res.status(404).json({ error: 'Flock not found' });
     }
 
-    // Upsert membership to 'accepted'
+    // Access control: only users with an existing membership row (invited,
+    // previously declined, or already accepted) may join. Without this check,
+    // any authenticated user could add themselves to any flock by ID and read
+    // its messages (IDOR).
+    const membership = await pool.query(
+      'SELECT status FROM flock_members WHERE flock_id = $1 AND user_id = $2',
+      [flockId, req.user.id]
+    );
+    if (membership.rows.length === 0) {
+      return res.status(403).json({ error: 'You must be invited to join this flock' });
+    }
+
+    // Flip membership to 'accepted' (idempotent if already accepted)
     const result = await pool.query(
-      `INSERT INTO flock_members (flock_id, user_id, status)
-       VALUES ($1, $2, 'accepted')
-       ON CONFLICT (flock_id, user_id)
-       DO UPDATE SET status = 'accepted', joined_at = NOW()
+      `UPDATE flock_members SET status = 'accepted', joined_at = NOW()
+       WHERE flock_id = $1 AND user_id = $2
        RETURNING *`,
       [flockId, req.user.id]
     );
@@ -532,7 +542,7 @@ router.post('/:id/invite',
   ],
   async (req, res) => {
     try {
-      console.log('[Invite] Route hit — flock:', req.params.id, '| body:', JSON.stringify(req.body));
+      console.log('[Invite] Route hit — flock:', req.params.id, '| user_ids count:', Array.isArray(req.body?.user_ids) ? req.body.user_ids.length : 0);
       const errors = validationResult(req);
       if (!errors.isEmpty()) {
         console.log('[Invite] Validation error:', errors.array());

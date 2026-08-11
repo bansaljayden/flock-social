@@ -13,10 +13,13 @@ const router = express.Router();
 router.post('/webhook', express.json(), async (req, res) => {
   try {
     const secret = process.env.REVENUECAT_WEBHOOK_SECRET;
-    if (secret) {
-      const auth = req.headers.authorization || '';
-      if (auth !== `Bearer ${secret}`) return res.status(401).json({ error: 'Unauthorized' });
+    // Fail closed: without a configured secret this endpoint must not accept
+    // events — otherwise anyone could flip users.is_premium for any user id.
+    if (!secret) {
+      return res.status(503).json({ error: 'Webhook not configured' });
     }
+    const auth = req.headers.authorization || '';
+    if (auth !== `Bearer ${secret}`) return res.status(401).json({ error: 'Unauthorized' });
 
     const event = req.body?.event || {};
     const appUserId = parseInt(event.app_user_id);
