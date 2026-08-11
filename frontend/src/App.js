@@ -23,6 +23,9 @@ import LoginScreen from './components/auth/LoginScreen';
 import SignupScreen from './components/auth/SignupScreen';
 import VenueLoginScreen from './components/auth/VenueLoginScreen';
 import ModerationSheet from './components/ModerationSheet';
+import PaywallSheet from './components/PaywallSheet';
+import { initPurchases } from './services/purchases';
+import { getEntitlements } from './services/api';
 import { motion, AnimatePresence } from 'framer-motion';
 import { SplineScene } from './components/ui/spline-scene';
 import 'maplibre-gl/dist/maplibre-gl.css';
@@ -2757,6 +2760,23 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   const [trustedContacts, setTrustedContacts] = useState([]);
   const [safetyOn, setSafetyOn] = useState(true);
 
+  // Flock Pro — entitlements come from the backend (users.is_premium via the
+  // RevenueCat webhook), fetched once at boot and re-fetched after a purchase.
+  // paywallTrigger doubles as the sheet's open state + contextual headline.
+  const [entitlements, setEntitlements] = useState(null); // { isPremium, paywallEnabled, birdie }
+  const [paywallTrigger, setPaywallTrigger] = useState(null); // 'birdie' | 'settings' | null
+  const isPro = !!entitlements?.isPremium;
+  const refreshEntitlements = useCallback(() => {
+    getEntitlements().then(setEntitlements).catch(() => {});
+  }, []);
+  useEffect(() => {
+    refreshEntitlements();
+    // Safe no-op on web; on iOS links RevenueCat's app_user_id to our user id
+    // so the webhook can flip is_premium for the right row.
+    if (authUser?.id) initPurchases(authUser.id).catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // Draggable FAB positions — snap to corners, persisted in localStorage
   // corner format: 'bottom-left' | 'bottom-right' | 'top-left' | 'top-right'
   const [birdieCorner, setBirdieCorner] = useState(() => localStorage.getItem('flock_birdie_corner') || 'bottom-left');
@@ -3155,11 +3175,18 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
       const response = await sendAiChat(messagesToSend, location, currentContext);
       setAiMessages(prev => [...prev, { role: 'assistant', text: response.text, venues: response.venues || [], navigate: response.navigate || null }]);
     } catch (err) {
-      // Surface the server's friendly text when present (rate-limit, busy, etc.).
-      // Never show "I'm broken" / "trouble connecting" — Birdie stays in character.
-      const serverMsg = err?.message && err.message !== 'Something went wrong' ? err.message : null;
-      const fallback = serverMsg || 'hmm gimme a sec, hit me again';
-      setAiMessages(prev => [...prev, { role: 'assistant', text: fallback }]);
+      if (err?.code === 'UPGRADE_REQUIRED') {
+        // Free-tier daily meter hit — Birdie pitches Pro in character, then the
+        // paywall sheet opens with the birdie-specific headline.
+        setAiMessages(prev => [...prev, { role: 'assistant', text: "that's all my free chirps for today 🐦 Flock Pro gets you unlimited me" }]);
+        setPaywallTrigger('birdie');
+      } else {
+        // Surface the server's friendly text when present (rate-limit, busy, etc.).
+        // Never show "I'm broken" / "trouble connecting" — Birdie stays in character.
+        const serverMsg = err?.message && err.message !== 'Something went wrong' ? err.message : null;
+        const fallback = serverMsg || 'hmm gimme a sec, hit me again';
+        setAiMessages(prev => [...prev, { role: 'assistant', text: fallback }]);
+      }
     } finally {
       setAiTyping(false);
       if (aiInputRef.current) aiInputRef.current.focus();
@@ -7014,7 +7041,13 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                         {!closedAllDay && (
                           <div style={{ display: 'flex', alignItems: 'center', gap: '4px', marginTop: '4px' }}>
                             {Icons.clock(colors.steel, 12)}
-                            <span style={{ fontSize: '12px', fontWeight: 'bold', color: colors.steel }}>Best time to visit: {bestText}</span>
+                            {entitlements?.paywallEnabled && !isPro ? (
+                              <span onClick={(e) => { e.stopPropagation(); setPaywallTrigger('forecast'); }} style={{ fontSize: '12px', fontWeight: 'bold', color: colors.steel, cursor: 'pointer' }}>
+                                Best time to visit: <span aria-hidden style={{ filter: 'blur(4px)', userSelect: 'none' }}>9 PM</span> <span style={{ fontSize: '10px', fontWeight: '700', letterSpacing: '0.5px' }}>PRO</span>
+                              </span>
+                            ) : (
+                              <span style={{ fontSize: '12px', fontWeight: 'bold', color: colors.steel }}>Best time to visit: {bestText}</span>
+                            )}
                           </div>
                         )}
                       </>
@@ -7024,7 +7057,13 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                         <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: '3px 0' }}>{waitText === 'No wait' ? 'No wait expected' : /^\d|^~/.test(waitText) ? `Est. wait: ${waitText}` : waitText}</p>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
                           {Icons.clock(colors.steel, 12)}
-                          <span style={{ fontSize: '12px', fontWeight: 'bold', color: colors.steel }}>Least crowded: {bestText}</span>
+                          {entitlements?.paywallEnabled && !isPro ? (
+                            <span onClick={(e) => { e.stopPropagation(); setPaywallTrigger('forecast'); }} style={{ fontSize: '12px', fontWeight: 'bold', color: colors.steel, cursor: 'pointer' }}>
+                              Least crowded: <span aria-hidden style={{ filter: 'blur(4px)', userSelect: 'none' }}>9 PM</span> <span style={{ fontSize: '10px', fontWeight: '700', letterSpacing: '0.5px' }}>PRO</span>
+                            </span>
+                          ) : (
+                            <span style={{ fontSize: '12px', fontWeight: 'bold', color: colors.steel }}>Least crowded: {bestText}</span>
+                          )}
                         </div>
                       </>
                     )}
@@ -10212,6 +10251,18 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 )}
               </div>
             </div>
+            {/* Flock Pro — hidden until the backend flips PAYWALL_ENABLED (or the user is already Pro) */}
+            {(entitlements?.paywallEnabled || isPro) && (
+              <button className="glass-btn glass-secondary" onClick={() => { if (!isPro) setPaywallTrigger('settings'); }} style={{ width: '100%', padding: '12px', textAlign: 'left', borderTop: '1px solid var(--border-light)', display: 'flex', alignItems: 'center', gap: '12px', backgroundColor: 'var(--bg-card-solid)', border: 'none', cursor: isPro ? 'default' : 'pointer' }}>
+                <div style={{ width: '32px', height: '32px', borderRadius: '8px', backgroundColor: 'var(--icon-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.sparkles(colors.navy, 18)}</div>
+                <span style={{ flex: 1, fontWeight: '600', fontSize: '14px', color: colors.navy }}>Flock Pro</span>
+                {isPro ? (
+                  <span style={{ fontSize: '12px', fontWeight: '600', color: '#22c55e' }}>Active</span>
+                ) : (
+                  <span style={{ color: 'var(--text-tertiary)' }}>›</span>
+                )}
+              </button>
+            )}
             <button className="glass-btn glass-danger" onClick={() => { if (onLogout) onLogout(); }} style={{ width: '100%', padding: '12px', textAlign: 'left', display: 'flex', alignItems: 'center', gap: '12px', backgroundColor: 'var(--bg-card-solid)', border: 'none', cursor: 'pointer', color: colors.red }}>
               {Icons.logout(colors.red, 18)}
               <span style={{ fontWeight: '600', fontSize: '14px' }}>Log Out</span>
@@ -13222,6 +13273,15 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 setCurrentScreen('main');
               }
             }}
+          />
+
+          {/* Flock Pro paywall — global sheet, opened by the Birdie meter or Settings */}
+          <PaywallSheet
+            open={!!paywallTrigger}
+            trigger={paywallTrigger}
+            onClose={() => setPaywallTrigger(null)}
+            showToast={showToast}
+            onUpgraded={refreshEntitlements}
           />
 
           {/* Full-screen venue search results overlay */}
