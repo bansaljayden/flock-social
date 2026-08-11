@@ -74,8 +74,9 @@ export default function CommunityGuidelines() {
       <section>
         <h2>How to report or block</h2>
         <p>
-          In Flock, long-press a message or open a profile to <strong>Report</strong> content or{' '}
-          <strong>Block</strong> a user. Blocking is mutual — a blocked user can't message you,
+          In Flock, tap any message to <strong>Report</strong> it, or open the <strong>⋯</strong> menu
+          in a direct message to <strong>Report</strong> content or <strong>Block</strong> a user.
+          Blocking is mutual — a blocked user can't message you,
           add you, or see your content, and you won't see theirs. You can also email{' '}
           <a href={`mailto:${SUPPORT_EMAIL}`}>{SUPPORT_EMAIL}</a>.
         </p>

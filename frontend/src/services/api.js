@@ -104,10 +104,14 @@ export async function login(email, password) {
   return data;
 }
 
-export async function googleLogin(credential) {
+export async function googleLogin(credential, dateOfBirth) {
+  const body = { credential };
+  // Pass DOB on consumer sign-up so the backend age gate (>= 13) fires for new
+  // OAuth accounts too, matching email signup. Existing-user logins omit it.
+  if (dateOfBirth) body.date_of_birth = dateOfBirth;
   const data = await request('/api/auth/google', {
     method: 'POST',
-    body: JSON.stringify({ credential }),
+    body: JSON.stringify(body),
   });
   setToken(data.token);
   return data;
