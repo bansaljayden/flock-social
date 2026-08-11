@@ -53,6 +53,7 @@ const sensorRoutes = require('./routes/sensors');
 const checkinRoutes = require('./routes/checkin');
 const moderationRoutes = require('./routes/moderation');
 const revenuecatRoutes = require('./routes/revenuecat');
+const entitlementsRoutes = require('./routes/entitlements');
 
 const app = express();
 app.set('trust proxy', 1);
@@ -185,6 +186,7 @@ app.use('/api/budget', apiLimiter, budgetRoutes);     // Handles /api/budget/:fl
 app.use('/api/billing', apiLimiter, billingRoutes);   // Handles /api/billing/:flockId/*
 app.use('/api/events', apiLimiter, eventRoutes);      // Handles /api/events/search, /api/events/featured
 app.use('/api/ai', aiLimiter, aiRoutes);             // Handles /api/ai/chat (Birdie AI assistant)
+app.use('/api/entitlements', apiLimiter, entitlementsRoutes); // Handles /api/entitlements (Flock Pro paywall status)
 app.use('/api/notifications', apiLimiter, notificationRoutes); // Handles /api/notifications/register, unregister
 app.use('/api/waitlist', apiLimiter, waitlistRoutes);          // Handles /api/waitlist (public, no auth)
 app.use('/api/admin', apiLimiter, adminRoutes);               // Handles /api/admin/* (admin only)

@@ -116,9 +116,16 @@ async function processFlockAlert(flock) {
       body = `Expected to be ${eventScore.label.toLowerCase()} at your flock time.`;
     }
 
-    // Get all accepted members of this flock
+    // Get all accepted members of this flock. Proactive crowd alerts are a
+    // Flock Pro perk once the paywall is live; with PAYWALL_ENABLED unset,
+    // everyone still gets them (today's behavior).
+    const proOnly = process.env.PAYWALL_ENABLED === 'true';
     const { rows: members } = await pool.query(
-      `SELECT user_id FROM flock_members WHERE flock_id = $1 AND status = 'accepted'`,
+      proOnly
+        ? `SELECT fm.user_id FROM flock_members fm
+           JOIN users u ON u.id = fm.user_id
+           WHERE fm.flock_id = $1 AND fm.status = 'accepted' AND u.is_premium = true`
+        : `SELECT user_id FROM flock_members WHERE flock_id = $1 AND status = 'accepted'`,
       [flock.id]
     );
 
