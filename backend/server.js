@@ -2,6 +2,17 @@ require('./instrument'); // Sentry — must load before everything else (B3)
 require('dotenv').config();
 console.log('DATABASE_URL:', process.env.DATABASE_URL ? '[configured]' : '[missing]');
 
+// Fail fast if JWT_SECRET is missing — without it every jwt.sign/verify throws
+// at request time (opaque 500s). Hard-exit in production; warn elsewhere so
+// local tooling that stubs auth still runs.
+if (!process.env.JWT_SECRET) {
+  if (process.env.NODE_ENV === 'production') {
+    console.error('FATAL: JWT_SECRET is not set. Refusing to start.');
+    process.exit(1);
+  }
+  console.warn('WARNING: JWT_SECRET is not set — auth endpoints will fail until it is configured.');
+}
+
 const express = require('express');
 const Sentry = require('@sentry/node');
 const http = require('http');
