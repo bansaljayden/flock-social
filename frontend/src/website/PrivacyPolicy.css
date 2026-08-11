@@ -1,125 +1,370 @@
-.pp {
-  --pp-bg: #0b1a2e;
-  --pp-text: #f5f0e8;
-  --pp-text-2: rgba(245, 240, 232, 0.78);
-  --pp-text-3: rgba(245, 240, 232, 0.5);
-  --pp-accent: #0d9488;
-  --pp-border: rgba(245, 240, 232, 0.1);
+/* Privacy Policy — a printed document, not a web page.
+   Cream paper + navy ink: the login-screen language (and the app icon).
+   Teal is dead as of the 2026-07 redesign; the accent here is steel navy.
+   Satoshi is self-hosted globally via src/index.css @font-face. */
 
-  font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
-  background: var(--pp-bg);
-  color: var(--pp-text);
+.pp {
+  /* Light: cream paper, navy ink */
+  --pp-paper: #f1ede0;
+  --pp-paper-2: #e9e3d3;      /* recessed panels */
+  --pp-ink: #16283d;          /* headings — 13.5:1 on paper */
+  --pp-ink-2: #33475e;        /* body — 7.9:1 on paper */
+  --pp-ink-3: #6b7a8c;        /* meta — 4.6:1 on paper */
+  --pp-accent: #2d5a87;       /* steel navy — 6.4:1 on paper */
+  --pp-rule: rgba(22, 40, 61, 0.14);
+  --pp-rule-soft: rgba(22, 40, 61, 0.08);
+
+  --pp-measure: 72ch;
+
+  font-family: 'Satoshi', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  background: var(--pp-paper);
+  color: var(--pp-ink-2);
   -webkit-font-smoothing: antialiased;
-  line-height: 1.65;
+  text-rendering: optimizeLegibility;
+  line-height: 1.7;
   min-height: 100vh;
-  padding: 48px 24px 80px;
-  max-width: 760px;
-  margin: 0 auto;
+  padding: clamp(24px, 5vw, 56px) clamp(20px, 5vw, 40px) 96px;
+}
+
+@media (prefers-color-scheme: dark) {
+  .pp {
+    --pp-paper: #0f172a;
+    --pp-paper-2: #172236;
+    --pp-ink: #f4efe3;
+    --pp-ink-2: #c8c3b2;      /* the cream-warm secondary from the app */
+    --pp-ink-3: #98937f;
+    --pp-accent: #6d9ac3;     /* steel navy, dark-mode pair */
+    --pp-rule: rgba(244, 239, 227, 0.16);
+    --pp-rule-soft: rgba(244, 239, 227, 0.09);
+  }
 }
 
 .pp *,
 .pp *::before,
-.pp *::after {
-  box-sizing: border-box;
+.pp *::after { box-sizing: border-box; }
+
+/* Contents-rail jumps glide instead of teleporting. */
+@media (prefers-reduced-motion: no-preference) {
+  html:has(.pp) { scroll-behavior: smooth; }
 }
+
+/* ---------- shell: contents rail + document ---------- */
+
+.pp-shell {
+  max-width: 1160px;
+  margin: 0 auto;
+  display: grid;
+  gap: clamp(28px, 5vw, 72px);
+}
+
+/* Grid children default to min-width:auto, which lets the contents rail's
+   horizontal scroller push the whole page wider than the viewport. */
+.pp-shell > * { min-width: 0; }
+
+@media (min-width: 960px) {
+  .pp-shell {
+    /* Columns hug their content and the pair centers, so the document doesn't
+       sit off-centre inside an over-wide column. */
+    grid-template-columns: 232px minmax(0, var(--pp-measure));
+    justify-content: center;
+    /* NOT align-items:start — the rail's cell must stretch to the full row
+       height or position:sticky has no distance to travel and scrolls away. */
+    align-items: stretch;
+  }
+}
+
+/* ---------- masthead ---------- */
 
 .pp-back {
   display: inline-block;
-  color: var(--pp-text-3);
+  color: var(--pp-ink-3);
   text-decoration: none;
   font-size: 14px;
-  margin-bottom: 32px;
-  transition: color 0.15s ease;
+  font-weight: 500;
+  border: 0;
+  margin-bottom: clamp(28px, 5vw, 44px);
+  transition: color 0.18s cubic-bezier(0.22, 1, 0.36, 1);
 }
-.pp-back:hover {
-  color: var(--pp-accent);
-}
+.pp-back:hover { color: var(--pp-accent); }
 
 .pp-header {
-  border-bottom: 1px solid var(--pp-border);
-  padding-bottom: 24px;
-  margin-bottom: 32px;
+  max-width: var(--pp-measure);
+  margin-bottom: clamp(28px, 4vw, 40px);
 }
 
 .pp h1 {
-  font-size: 36px;
+  font-size: clamp(38px, 7vw, 62px);
+  line-height: 1.02;
   font-weight: 700;
-  letter-spacing: -0.02em;
-  margin: 0 0 8px;
+  letter-spacing: -0.035em;
+  color: var(--pp-ink);
+  margin: 0 0 14px;
+  text-wrap: balance;
 }
 
 .pp-meta {
-  color: var(--pp-text-3);
+  color: var(--pp-ink-3);
   font-size: 14px;
+  font-weight: 500;
   margin: 0;
 }
 
-.pp section {
-  margin-bottom: 32px;
+/* ---------- the short version (plain-English summary) ---------- */
+
+.pp-summary {
+  max-width: var(--pp-measure);
+  background: var(--pp-paper-2);
+  border: 1px solid var(--pp-rule-soft);
+  border-radius: 14px;
+  padding: clamp(20px, 3.5vw, 28px);
+  margin: 0 0 clamp(36px, 5vw, 52px);
 }
 
-.pp h2 {
-  font-size: 22px;
-  font-weight: 600;
+.pp-summary h2 {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--pp-ink);
+  margin: 0 0 14px;
   letter-spacing: -0.01em;
+}
+
+.pp-summary ul {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: grid;
+  gap: 10px;
+}
+
+.pp-summary li {
+  position: relative;
+  padding-left: 26px;
+  margin: 0;
+  font-size: 15px;
+  color: var(--pp-ink-2);
+}
+
+/* Checkmark drawn in CSS — no icon font, no decorative image */
+.pp-summary li::before {
+  content: '';
+  position: absolute;
+  left: 3px;
+  top: 0.58em;
+  width: 10px;
+  height: 6px;
+  border-left: 2px solid var(--pp-accent);
+  border-bottom: 2px solid var(--pp-accent);
+  transform: rotate(-45deg);
+}
+
+.pp-summary p {
+  margin: 14px 0 0;
+  font-size: 13.5px;
+  color: var(--pp-ink-3);
+}
+
+/* ---------- contents rail ---------- */
+
+.pp-toc {
+  font-size: 13.5px;
+  line-height: 1.5;
+}
+
+@media (min-width: 960px) {
+  .pp-toc-inner {
+    position: sticky;
+    top: 40px;
+    max-height: calc(100vh - 80px);
+    overflow-y: auto;
+    scrollbar-width: thin;
+  }
+}
+
+.pp-toc-label {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--pp-ink-3);
   margin: 0 0 12px;
-  color: var(--pp-text);
+  letter-spacing: 0.02em;
+}
+
+.pp-toc ol {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.pp-toc a {
+  display: flex;
+  gap: 10px;
+  padding: 6px 10px;
+  border-radius: 8px;
+  color: var(--pp-ink-3);
+  text-decoration: none;
+  border: 0;
+  transition: color 0.18s cubic-bezier(0.22, 1, 0.36, 1),
+              background-color 0.18s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.pp-toc a:hover { color: var(--pp-ink); background: var(--pp-rule-soft); }
+
+.pp-toc a[aria-current='true'] {
+  color: var(--pp-ink);
+  font-weight: 600;
+  background: var(--pp-rule-soft);
+}
+
+.pp-toc-num {
+  color: var(--pp-accent);
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+
+/* Horizontal scroller on mobile instead of a tall stacked list */
+@media (max-width: 959px) {
+  .pp-toc ol {
+    grid-auto-flow: column;
+    grid-auto-columns: max-content;
+    max-width: 100%;
+    overflow-x: auto;
+    gap: 6px;
+    padding-bottom: 6px;
+    scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
+  }
+  .pp-toc ol::-webkit-scrollbar { display: none; }
+  .pp-toc a {
+    border: 1px solid var(--pp-rule-soft);
+    white-space: nowrap;
+  }
+}
+
+/* ---------- document body ---------- */
+
+/* Trailing space so the final short sections (Changes, Contact) can still
+   scroll up to the top when you jump to them from the contents rail.
+   Without it the browser runs out of scroll and the anchor lands mid-page. */
+.pp-doc {
+  max-width: var(--pp-measure);
+  padding-bottom: clamp(110px, 38vh, 380px);
+}
+
+.pp-doc section {
+  padding-top: clamp(28px, 4vw, 40px);
+  margin-bottom: clamp(4px, 1vw, 8px);
+  border-top: 1px solid var(--pp-rule-soft);
+  scroll-margin-top: 28px;
+}
+.pp-doc section:first-child { border-top: 0; padding-top: 0; }
+
+.pp h2 {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  font-size: clamp(21px, 2.6vw, 25px);
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--pp-ink);
+  margin: 0 0 14px;
+  text-wrap: balance;
+}
+
+.pp-num {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--pp-accent);
+  font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
 }
 
 .pp h3 {
-  font-size: 16px;
-  font-weight: 600;
-  margin: 20px 0 8px;
-  color: var(--pp-text);
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--pp-ink);
+  margin: 26px 0 10px;
+  letter-spacing: -0.005em;
 }
 
 .pp p,
 .pp li {
-  font-size: 15px;
-  color: var(--pp-text-2);
-  margin: 0 0 12px;
+  font-size: 16px;
+  color: var(--pp-ink-2);
+  margin: 0 0 14px;
+  text-wrap: pretty;
 }
 
-.pp ul {
-  padding-left: 20px;
-  margin: 0 0 12px;
-}
+.pp ul { padding-left: 22px; margin: 0 0 14px; }
+.pp li { margin: 0 0 10px; }
+.pp li::marker { color: var(--pp-ink-3); }
 
-.pp li {
-  margin: 0 0 8px;
-}
-
-.pp strong {
-  color: var(--pp-text);
-  font-weight: 600;
-}
+.pp strong { color: var(--pp-ink); font-weight: 700; }
 
 .pp a {
   color: var(--pp-accent);
   text-decoration: none;
-  border-bottom: 1px solid rgba(13, 148, 136, 0.4);
-  transition: border-color 0.15s ease;
+  border-bottom: 1px solid color-mix(in srgb, var(--pp-accent) 38%, transparent);
+  transition: border-color 0.18s cubic-bezier(0.22, 1, 0.36, 1);
 }
-.pp a:hover {
-  border-bottom-color: var(--pp-accent);
+.pp a:hover { border-bottom-color: var(--pp-accent); }
+
+.pp a:focus-visible,
+.pp-toc a:focus-visible,
+.pp-back:focus-visible {
+  outline: 2px solid var(--pp-accent);
+  outline-offset: 3px;
+  border-radius: 3px;
+}
+
+/* ---------- contact ---------- */
+
+.pp-contact {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 12px;
+  background: var(--pp-paper-2);
+  border: 1px solid var(--pp-rule-soft);
+  border-radius: 14px;
+  padding: 20px 22px;
+  margin-top: 4px;
+}
+
+.pp-contact-mail {
+  font-size: 17px;
+  font-weight: 600;
+  color: var(--pp-accent);
+  border-bottom: 1px solid color-mix(in srgb, var(--pp-accent) 38%, transparent);
+  text-decoration: none;
+  word-break: break-word;
 }
 
 .pp-footer {
-  margin-top: 48px;
-  padding-top: 24px;
-  border-top: 1px solid var(--pp-border);
-  color: var(--pp-text-3);
+  max-width: var(--pp-measure);
+  margin-top: clamp(40px, 6vw, 64px);
+  padding-top: 22px;
+  border-top: 1px solid var(--pp-rule);
+  color: var(--pp-ink-3);
   font-size: 13px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 20px;
+  justify-content: space-between;
 }
 
-@media (max-width: 600px) {
-  .pp {
-    padding: 32px 20px 64px;
-  }
-  .pp h1 {
-    font-size: 28px;
-  }
-  .pp h2 {
-    font-size: 19px;
-  }
+.pp-footer a { color: var(--pp-ink-3); border-bottom-color: var(--pp-rule); }
+.pp-footer a:hover { color: var(--pp-accent); }
+
+/* ---------- entrance: one subtle, single-run settle ---------- */
+
+@media (prefers-reduced-motion: no-preference) {
+  .pp-header,
+  .pp-summary { animation: pp-settle 0.5s cubic-bezier(0.22, 1, 0.36, 1) both; }
+  .pp-summary { animation-delay: 0.06s; }
+}
+
+@keyframes pp-settle {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: none; }
 }
