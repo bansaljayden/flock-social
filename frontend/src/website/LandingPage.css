@@ -597,11 +597,14 @@
    confirmed it can animate (root gets .lp-anim), so a failed observer, a
    background tab, or a crawler can never leave a section blank. */
 @media (prefers-reduced-motion: no-preference) {
-  .lp-anim .lp-reveal { opacity: 0; transform: translateY(14px); }
+  /* Position only — never opacity. Off-screen elements don't run transitions,
+     so fading from 0 could leave a section invisible to anyone who lands
+     without scrolling (and to crawlers). Content is always readable; the
+     motion is the 14px settle. */
+  .lp-anim .lp-reveal { transform: translateY(14px); }
   .lp-anim .lp-reveal.is-in {
-    opacity: 1; transform: none;
-    transition: opacity 0.6s cubic-bezier(0.22, 1, 0.36, 1),
-                transform 0.6s cubic-bezier(0.22, 1, 0.36, 1);
+    transform: none;
+    transition: transform 0.6s cubic-bezier(0.22, 1, 0.36, 1);
   }
   .lp-anim .lp-fc-hours i { transform: scaleY(0.35); transition: transform 0.7s cubic-bezier(0.22, 1, 0.36, 1); }
   .lp-anim .is-in .lp-fc-hours i { transform: scaleY(1); }
