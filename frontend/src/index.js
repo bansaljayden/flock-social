@@ -16,8 +16,16 @@ if (process.env.REACT_APP_SENTRY_DSN) {
 
 const root = ReactDOM.createRoot(document.getElementById('root'));
 
-// Landing page only at /landing — everything else renders the app
-if (window.location.pathname === '/landing') {
+// The iOS/Android shell loads the bundle at "/" too. It must ALWAYS boot the
+// app — if the marketing site rendered there, the native app would open on a
+// landing page. Web visitors to "/" get the marketing site; the app moves to
+// "/app". Everything else (invites, NFC check-ins, admin) still renders the app.
+const isNativeShell = typeof window !== 'undefined'
+  && (window.Capacitor?.isNativePlatform?.() === true || window.location.protocol === 'capacitor:');
+const path = window.location.pathname;
+const isMarketingRoot = !isNativeShell && (path === '/' || path === '/landing' || path === '/index.html');
+
+if (isMarketingRoot) {
   const LandingPage = React.lazy(() => import('./website/LandingPage'));
   root.render(
     <React.StrictMode>
