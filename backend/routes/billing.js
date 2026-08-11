@@ -96,6 +96,13 @@ router.post('/:flockId/create',
           userId: parseInt(s.userId),
           amount: Math.round(parseFloat(s.amount) * 100) / 100,
         }));
+        // Access control: every share must belong to an accepted flock member —
+        // otherwise arbitrary user ids could be assigned debt + pushed notifications.
+        const memberIds = new Set(members.map(m => m.id));
+        const invalidShare = shares.find(s => !Number.isFinite(s.userId) || !memberIds.has(s.userId));
+        if (invalidShare) {
+          return res.status(400).json({ error: 'All custom shares must be for members of this flock' });
+        }
       } else {
         // Equal split with penny rounding
         const memberCount = members.length;
