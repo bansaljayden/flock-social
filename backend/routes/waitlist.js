@@ -44,7 +44,7 @@ router.post('/',
             html: `
               <div style="font-family: -apple-system, BlinkMacSystemFont, sans-serif; max-width: 480px; margin: 0 auto; padding: 40px 24px;">
                 <div style="text-align: center; margin-bottom: 32px;">
-                  <img src="https://flockcorp.com/flock-logo.png" alt="Flock" width="64" height="64" style="border-radius: 16px;" />
+                  <img src="${process.env.PUBLIC_WEB_URL || 'https://flock-app-w65m.vercel.app'}/flock-logo.png" alt="Flock" width="64" height="64" style="border-radius: 16px;" />
                 </div>
                 <h1 style="font-size: 24px; font-weight: 700; color: #0d2847; margin-bottom: 16px;">You're on the list.</h1>
                 <p style="font-size: 16px; color: #4a5568; line-height: 1.6; margin-bottom: 24px;">
