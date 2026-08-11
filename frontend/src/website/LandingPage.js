@@ -3,6 +3,13 @@ import './LandingPage.css';
 
 const API = process.env.REACT_APP_API_URL || 'https://flock-app-production.up.railway.app';
 
+// Flock's real App Store record (Apple ID 6781442127). The URL is already
+// correct — it starts resolving the moment the app is approved. Flip
+// APP_STORE_LIVE to true then, and the badge replaces the "in review" note.
+// Don't flip it early: linking users at a 404 is worse than saying "soon".
+const APP_STORE_URL = 'https://apps.apple.com/app/id6781442127';
+const APP_STORE_LIVE = false;
+
 /* Inline stroke icons — one visual family, sized by the caller. */
 const Ico = {
   vote: (c) => <svg viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="M9 11l3 3L22 4" /><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" /></svg>,
@@ -136,13 +143,29 @@ export default function LandingPage() {
               <a className="lp-btn lp-btn-cream lp-btn-lg" href="/signup">Create your account</a>
               <a className="lp-btn lp-btn-ghost lp-btn-lg" href="#how">See how it works</a>
             </div>
-            <p className="lp-hero-note">
-              Free to use. Works in your browser today — the iPhone app is in review.
-            </p>
+            {APP_STORE_LIVE ? (
+              <a className="lp-appstore" href={APP_STORE_URL} target="_blank" rel="noreferrer" aria-label="Download on the App Store">
+                <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                  <path d="M17.05 12.54c-.02-2.2 1.8-3.26 1.88-3.31-1.02-1.5-2.62-1.7-3.19-1.72-1.36-.14-2.65.8-3.34.8-.69 0-1.75-.78-2.87-.76-1.48.02-2.84.86-3.6 2.18-1.53 2.66-.39 6.6 1.1 8.76.73 1.06 1.6 2.24 2.74 2.2 1.1-.05 1.52-.71 2.85-.71 1.33 0 1.7.71 2.87.69 1.18-.02 1.93-1.07 2.65-2.13.84-1.22 1.18-2.4 1.2-2.46-.03-.01-2.28-.88-2.3-3.48zM14.9 5.6c.6-.74 1.01-1.76.9-2.78-.87.04-1.93.58-2.56 1.31-.56.65-1.05 1.69-.92 2.68.97.08 1.97-.49 2.58-1.21z" />
+                </svg>
+                <span><small>Download on the</small>App Store</span>
+              </a>
+            ) : (
+              <p className="lp-hero-note">
+                Free to use. Works in your browser today — the iPhone app is in review.
+              </p>
+            )}
           </div>
 
           <Reveal className="lp-phone-wrap">
-            <div className="lp-phone">
+            {/* Real capture of the shipping app, not a mockup. */}
+            <img
+              className="lp-shot lp-shot-hero"
+              src="/screenshots/app-nest.png"
+              width="390" height="844"
+              alt="The Flock home screen: tonight's status, your flocks, and a plan that needs votes."
+            />
+            <div className="lp-phone" hidden>
               <div className="lp-phone-screen">
                 <div className="lp-ph-top">
                   <div>
@@ -252,26 +275,14 @@ export default function LandingPage() {
           </Reveal>
 
           <Reveal className="lp-row-media">
-            <div className="lp-forecast">
-              <div className="lp-fc-head">
-                <span className="lp-fc-name">The Wooden Match</span>
-                <span className="lp-fc-live">● LIVE</span>
-              </div>
-              <div className="lp-fc-dial">
-                <div className="lp-fc-ring"><span>62%</span></div>
-                <div>
-                  <div className="lp-fc-label">Filling up</div>
-                  <div className="lp-fc-sub">Est. wait 10–15 min for 5</div>
-                  <div className="lp-fc-sub"><b style={{ color: '#2d5a87' }}>Best time: 9 PM</b></div>
-                </div>
-              </div>
-              <div className="lp-fc-hours" aria-hidden="true">
-                {[28, 34, 40, 52, 62, 74, 88, 96, 82, 60, 44, 30].map((h, i) => (
-                  <i key={i} className={h > 90 ? 'peak' : h > 55 ? 'on' : ''} style={{ height: `${h}%`, transitionDelay: `${i * 45}ms` }} />
-                ))}
-              </div>
-              <div className="lp-fc-axis"><span>6 PM</span><span>10 PM</span><span>2 AM</span></div>
-            </div>
+            <img
+              className="lp-shot"
+              src="/screenshots/app-crowd.png"
+              width="390" height="844"
+              loading="lazy"
+              alt="Venues near you with live crowd levels: 40% not busy, 46% moderate, plus a 12-hour forecast for each."
+            />
+            
           </Reveal>
         </div>
       </section>
