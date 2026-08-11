@@ -14374,7 +14374,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
 
 const FlockApp = () => {
   const [authUser, setAuthUser] = useState(null);
-  const [authScreen, setAuthScreen] = useState('login');
+  // /signup deep-links straight to account creation (the marketing site's
+  // "Create account" CTA); every other path opens on login as before.
+  const [authScreen, setAuthScreen] = useState(
+    () => (typeof window !== 'undefined' && window.location.pathname === '/signup' ? 'signup' : 'login')
+  );
   const [authChecking, setAuthChecking] = useState(true);
   const [venueLoginFlag, setVenueLoginFlag] = useState(false);
 

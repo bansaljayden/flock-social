@@ -133,10 +133,12 @@ export default function LandingPage() {
               200-message thread.
             </p>
             <div className="lp-hero-cta">
-              <a className="lp-btn lp-btn-cream lp-btn-lg" href="/app">Open Flock</a>
+              <a className="lp-btn lp-btn-cream lp-btn-lg" href="/signup">Create your account</a>
               <a className="lp-btn lp-btn-ghost lp-btn-lg" href="#how">See how it works</a>
             </div>
-            <p className="lp-hero-note">Free to use. Built for going out with the people you actually want to see.</p>
+            <p className="lp-hero-note">
+              Free to use. Works in your browser today — the iPhone app is in review.
+            </p>
           </div>
 
           <Reveal className="lp-phone-wrap">
@@ -371,6 +373,10 @@ export default function LandingPage() {
               Open Flock in your browser, or leave your email and we'll tell you the
               moment the iPhone app is out.
             </p>
+            <div className="lp-cta-row">
+              <a className="lp-btn lp-btn-cream lp-btn-lg" href="/signup">Create your account</a>
+              <a className="lp-btn lp-btn-ghost lp-btn-lg" href="/app">Log in</a>
+            </div>
             <form className="lp-form" onSubmit={join}>
               <input
                 type="email"
@@ -403,7 +409,8 @@ export default function LandingPage() {
             <div>
               <h4>Product</h4>
               <ul>
-                <li><a href="/app">Open Flock</a></li>
+                <li><a href="/signup">Create an account</a></li>
+                <li><a href="/app">Log in</a></li>
                 <li><a href="#how">How it works</a></li>
                 <li><a href="#crowds">Crowd levels</a></li>
                 <li><a href="#safety">Safety</a></li>
