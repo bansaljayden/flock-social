@@ -86,7 +86,7 @@ const upload = multer({
 router.get('/profile', async (req, res) => {
   try {
     const result = await pool.query(
-      `SELECT id, email, name, phone, interests, role, profile_image_url, venmo_username, cashapp_cashtag, zelle_identifier, created_at, updated_at
+      `SELECT id, email, name, phone, interests, role, profile_image_url, venmo_username, cashapp_cashtag, zelle_identifier, is_premium, created_at, updated_at
        FROM users WHERE id = $1`,
       [req.user.id]
     );
