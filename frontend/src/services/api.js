@@ -39,7 +39,16 @@ async function request(endpoint, options = {}) {
     const message = data && typeof data === 'object'
       ? (data.error || data.errors?.[0]?.msg)
       : data;
-    throw new Error(message || 'Something went wrong');
+    // Carry the machine-readable bits: callers key off err.code (e.g.
+    // 'UPGRADE_REQUIRED' from the Birdie free-tier meter) — the message
+    // alone is display copy and not a stable contract.
+    const err = new Error(message || 'Something went wrong');
+    err.status = res.status;
+    if (data && typeof data === 'object') {
+      err.code = data.code;
+      err.data = data;
+    }
+    throw err;
   }
 
   return data;
@@ -123,6 +132,13 @@ export async function getCurrentUser() {
 
 export function logout() {
   clearToken();
+}
+
+// Flock Pro — { isPremium, paywallEnabled, birdie: { limit, used, remaining } }.
+// Source of truth for premium state; users.is_premium is set by the RevenueCat
+// webhook, so re-fetch after a purchase/restore to pick up the flip.
+export async function getEntitlements() {
+  return request('/api/entitlements');
 }
 
 // Venue profile
