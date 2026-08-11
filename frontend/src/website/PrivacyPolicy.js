@@ -44,12 +44,13 @@ export default function PrivacyPolicy() {
           <li><strong>Trusted contacts:</strong> if you add emergency contacts, we store the name, phone, and email you give us so we can notify them when you trigger an SOS.</li>
           <li><strong>Messages and content:</strong> flock chat messages, direct messages, emoji reactions, stories (auto-deleted after 24 hours), images you upload.</li>
           <li><strong>Plans and votes:</strong> flocks you create or join, RSVPs, venue votes, budget submissions, check-ins.</li>
+          <li><strong>Payment handles (optional):</strong> if you add them for bill-splitting, we store your Venmo username, Cash App cashtag, or Zelle identifier so flockmates can pay you back. These are usernames/handles only &mdash; Flock never collects or processes card, bank-account, or payment-card numbers.</li>
           <li><strong>Sign-in tokens:</strong> if you sign in with Apple or Google, we receive an identity token from the provider, verify it, and issue our own session token. We do not store the provider token after verification.</li>
         </ul>
 
         <h3>We collect automatically</h3>
         <ul>
-          <li><strong>Device and usage data:</strong> approximate session activity (screens visited, features used, errors) via PostHog. Identifiers are pseudonymous and used to improve the product.</li>
+          <li><strong>Product analytics:</strong> Flock does not currently use a third-party product-analytics or crash-reporting service. If we add one, we will update this policy and our App Store privacy labels before turning it on.</li>
           <li><strong>Push notification tokens:</strong> if you enable notifications, we store the device token issued by Apple Push Notification service or Firebase Cloud Messaging.</li>
           <li><strong>Connection metadata:</strong> IP address and user agent for security, abuse prevention, and rate limiting. Stored short-term in server logs.</li>
         </ul>
@@ -76,7 +77,7 @@ export default function PrivacyPolicy() {
           <li>Operate the core product (auth, flocks, chat, voting, notifications).</li>
           <li>Send transactional email (sign-up confirmation, password reset, SOS alerts) via Resend.</li>
           <li>Send push notifications you opted into.</li>
-          <li>Improve product quality (usage analytics, crash diagnostics).</li>
+          <li>Monitor reliability and diagnose errors to keep the app working.</li>
           <li>Detect abuse, spam, and security incidents.</li>
           <li>Comply with legal obligations.</li>
         </ul>
@@ -100,7 +101,6 @@ export default function PrivacyPolicy() {
           <li><strong>OpenWeatherMap</strong> (weather context for crowd predictions &mdash; no personal info sent).</li>
           <li><strong>Ticketmaster</strong> (event listings &mdash; no personal info sent).</li>
           <li><strong>BestTime</strong> (aggregate venue popularity data &mdash; no personal info sent).</li>
-          <li><strong>PostHog</strong> (product analytics, pseudonymous).</li>
           <li><strong>Apple</strong> and <strong>Google</strong> (sign-in identity verification, only when you choose those options).</li>
           <li><strong>RevenueCat</strong> (subscription receipt verification, if you subscribe).</li>
         </ul>
