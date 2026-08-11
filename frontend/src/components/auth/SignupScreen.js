@@ -234,9 +234,20 @@ const SignupScreen = ({ onSignupSuccess, onSwitchToLogin }) => {
             <GoogleLogin
               onSuccess={async (response) => {
                 setError('');
+                // Age gate the Google sign-up path too: DOB must be entered and
+                // >= 13 before we create an account (parity with email signup).
+                const age = ageFromDob(dob);
+                if (age === null) {
+                  setError('Please enter your date of birth first');
+                  return;
+                }
+                if (age < MIN_AGE) {
+                  setError(`You must be at least ${MIN_AGE} to use Flock`);
+                  return;
+                }
                 setLoading(true);
                 try {
-                  const data = await googleLogin(response.credential);
+                  const data = await googleLogin(response.credential, dob);
                   onSignupSuccess(data.user);
                 } catch (err) {
                   setError(err.message || 'Google sign-in failed');
