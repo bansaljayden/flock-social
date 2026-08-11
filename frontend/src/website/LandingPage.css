@@ -310,6 +310,14 @@
   transition: transform 0.18s cubic-bezier(0.22, 1, 0.36, 1);
 }
 .lp-appstore:hover { transform: translateY(-1px); }
+/* Pre-launch: present and clickable (goes to the waitlist), visibly not yet a
+   download. Becomes the solid cream download badge on approval. */
+.lp-appstore.is-soon {
+  background: transparent;
+  color: var(--cream);
+  border: 1px solid rgba(244, 239, 227, 0.32);
+}
+.lp-appstore.is-soon:hover { border-color: var(--cream); }
 .lp-appstore svg { width: 24px; height: 24px; }
 .lp-appstore span { display: grid; line-height: 1.15; font-weight: 700; font-size: 17px; letter-spacing: -0.02em; }
 .lp-appstore small { font-size: 10.5px; font-weight: 500; letter-spacing: 0.02em; }
@@ -460,6 +468,54 @@
   border-top: 1px solid var(--rule);
   font-size: 13px; color: var(--ink-3);
 }
+
+/* ============ pricing ============ */
+
+.lp-plans {
+  display: grid;
+  gap: clamp(16px, 2.4vw, 24px);
+  margin-top: clamp(32px, 5vw, 52px);
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  align-items: start;
+}
+.lp-plan {
+  background: #fff;
+  border: 1px solid var(--rule);
+  border-radius: 18px;
+  padding: clamp(24px, 3vw, 32px);
+  display: flex;
+  flex-direction: column;
+}
+.lp-plan-venue { background: var(--navy); border-color: transparent; }
+.lp-plan-venue h3,
+.lp-plan-venue .lp-plan-price { color: var(--cream); }
+.lp-plan-venue .lp-plan-price small,
+.lp-plan-venue .lp-plan-note { color: var(--cream-3); }
+.lp-plan-venue .lp-list li { color: var(--cream-2); }
+.lp-plan-venue .lp-tick { border-color: var(--steel-lift); }
+.lp-plan-venue .lp-btn-navy { background: var(--cream); color: var(--navy); }
+.lp-plan-venue .lp-btn-navy:hover { background: #fffaf0; }
+
+.lp-plan-price {
+  font-size: clamp(30px, 3.4vw, 38px);
+  font-weight: 700;
+  color: var(--ink);
+  letter-spacing: -0.03em;
+  margin: 14px 0 6px;
+  display: flex;
+  align-items: baseline;
+  gap: 9px;
+  flex-wrap: wrap;
+}
+.lp-plan-price small {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--ink-3);
+  letter-spacing: 0;
+}
+.lp-plan-note { font-size: 15px; color: var(--ink-2); }
+.lp-plan .lp-list { margin: 20px 0 26px; }
+.lp-plan .lp-btn { margin-top: auto; align-self: flex-start; }
 
 /* ============ waitlist ============ */
 
