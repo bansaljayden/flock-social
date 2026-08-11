@@ -9,6 +9,7 @@ const API = process.env.REACT_APP_API_URL || 'https://flock-app-production.up.ra
 // Don't flip it early: linking users at a 404 is worse than saying "soon".
 const APP_STORE_URL = 'https://apps.apple.com/app/id6781442127';
 const APP_STORE_LIVE = false;
+const CONTACT_EMAIL = 'noreply.flockapp@gmail.com';
 
 /* Inline stroke icons — one visual family, sized by the caller. */
 const Ico = {
@@ -31,6 +32,29 @@ const Mark = ({ size = 26, color = '#f4efe3' }) => (
     <path d="M11.4 21c1.6-2.3 3.2-2.3 4.8 0 1.6-2.3 3.2-2.3 4.8 0" opacity="0.55" />
   </svg>
 );
+
+/* The App Store badge is always on the page. Before Apple approves the app it
+   points at the waitlist and says so, rather than sending people to a 404;
+   after approval (APP_STORE_LIVE = true) it becomes the real download link. */
+const AppStoreBadge = () => {
+  const live = APP_STORE_LIVE;
+  return (
+    <a
+      className={`lp-appstore ${live ? '' : 'is-soon'}`}
+      href={live ? APP_STORE_URL : '#get'}
+      {...(live ? { target: '_blank', rel: 'noreferrer' } : {})}
+      aria-label={live ? 'Download Flock on the App Store' : 'Flock is coming to the App Store — join the waitlist'}
+    >
+      <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+        <path d="M17.05 12.54c-.02-2.2 1.8-3.26 1.88-3.31-1.02-1.5-2.62-1.7-3.19-1.72-1.36-.14-2.65.8-3.34.8-.69 0-1.75-.78-2.87-.76-1.48.02-2.84.86-3.6 2.18-1.53 2.66-.39 6.6 1.1 8.76.73 1.06 1.6 2.24 2.74 2.2 1.1-.05 1.52-.71 2.85-.71 1.33 0 1.7.71 2.87.69 1.18-.02 1.93-1.07 2.65-2.13.84-1.22 1.18-2.4 1.2-2.46-.03-.01-2.28-.88-2.3-3.48zM14.9 5.6c.6-.74 1.01-1.76.9-2.78-.87.04-1.93.58-2.56 1.31-.56.65-1.05 1.69-.92 2.68.97.08 1.97-.49 2.58-1.21z" />
+      </svg>
+      <span>
+        <small>{live ? 'Download on the' : 'Coming soon to the'}</small>
+        App Store
+      </span>
+    </a>
+  );
+};
 
 /* Reveal on scroll-in. The hidden state is applied ONLY after JS confirms it
    can animate (the .lp-anim root class), and a failsafe reveals everything
@@ -122,6 +146,7 @@ export default function LandingPage() {
             <a href="#crowds">Crowd levels</a>
             <a href="#money">Money</a>
             <a href="#safety">Safety</a>
+            <a href="#pricing">Pricing</a>
           </nav>
           <a className="lp-btn lp-btn-cream" href="/app">Open Flock</a>
         </div>
@@ -143,18 +168,10 @@ export default function LandingPage() {
               <a className="lp-btn lp-btn-cream lp-btn-lg" href="/signup">Create your account</a>
               <a className="lp-btn lp-btn-ghost lp-btn-lg" href="#how">See how it works</a>
             </div>
-            {APP_STORE_LIVE ? (
-              <a className="lp-appstore" href={APP_STORE_URL} target="_blank" rel="noreferrer" aria-label="Download on the App Store">
-                <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-                  <path d="M17.05 12.54c-.02-2.2 1.8-3.26 1.88-3.31-1.02-1.5-2.62-1.7-3.19-1.72-1.36-.14-2.65.8-3.34.8-.69 0-1.75-.78-2.87-.76-1.48.02-2.84.86-3.6 2.18-1.53 2.66-.39 6.6 1.1 8.76.73 1.06 1.6 2.24 2.74 2.2 1.1-.05 1.52-.71 2.85-.71 1.33 0 1.7.71 2.87.69 1.18-.02 1.93-1.07 2.65-2.13.84-1.22 1.18-2.4 1.2-2.46-.03-.01-2.28-.88-2.3-3.48zM14.9 5.6c.6-.74 1.01-1.76.9-2.78-.87.04-1.93.58-2.56 1.31-.56.65-1.05 1.69-.92 2.68.97.08 1.97-.49 2.58-1.21z" />
-                </svg>
-                <span><small>Download on the</small>App Store</span>
-              </a>
-            ) : (
-              <p className="lp-hero-note">
-                Free to use. Works in your browser today — the iPhone app is in review.
-              </p>
-            )}
+            <AppStoreBadge />
+            <p className="lp-hero-note">
+              Free to use. Works in your browser today.
+            </p>
           </div>
 
           <Reveal className="lp-phone-wrap">
@@ -375,8 +392,55 @@ export default function LandingPage() {
         </div>
       </section>
 
+      {/* ---------------- pricing ---------------- */}
+      <section className="lp-sec lp-sec-paper-2" id="pricing">
+        <div className="lp-wrap">
+          <Reveal>
+            <p className="lp-kicker">Pricing</p>
+            <h2>Free for your friend group.</h2>
+            <p className="lp-lead" style={{ marginTop: 16 }}>
+              Planning a night out shouldn't cost anything, so it doesn't. Venues
+              pay to reach groups who are deciding where to go right now.
+            </p>
+          </Reveal>
+
+          <Reveal className="lp-plans">
+            <div className="lp-plan">
+              <h3>Free</h3>
+              <div className="lp-plan-price">$0<small>forever</small></div>
+              <p className="lp-plan-note">Everything you need to plan and go.</p>
+              <ul className="lp-list">
+                <li><i className="lp-tick" />Unlimited flocks and friends</li>
+                <li><i className="lp-tick" />Venue voting and group chat</li>
+                <li><i className="lp-tick" />Live crowd levels</li>
+                <li><i className="lp-tick" />Budget matching and bill splitting</li>
+                <li><i className="lp-tick" />SOS and trusted contacts</li>
+              </ul>
+              <a className="lp-btn lp-btn-navy" href="/signup">Create your account</a>
+            </div>
+
+            <div className="lp-plan lp-plan-venue">
+              <h3>For venues</h3>
+              <div className="lp-plan-price">Let's talk<small>bars, clubs, restaurants</small></div>
+              <p className="lp-plan-note">
+                Reach groups at the moment they're picking a place — not after they've gone somewhere else.
+              </p>
+              <ul className="lp-list">
+                <li><i className="lp-tick" />Show up in venue voting near you</li>
+                <li><i className="lp-tick" />Post deals and events to nearby groups</li>
+                <li><i className="lp-tick" />See demand: how many groups considered you</li>
+                <li><i className="lp-tick" />Fill slow nights with targeted offers</li>
+              </ul>
+              <a className="lp-btn lp-btn-navy" href={`mailto:${CONTACT_EMAIL}?subject=Flock%20for%20venues`}>
+                Get in touch
+              </a>
+            </div>
+          </Reveal>
+        </div>
+      </section>
+
       {/* ---------------- cta ---------------- */}
-      <section className="lp-cta lp-on-navy">
+      <section className="lp-cta lp-on-navy" id="get">
         <div className="lp-wrap lp-cta-in">
           <Reveal>
             <h2>Your group's next plan shouldn't die in a thread.</h2>
