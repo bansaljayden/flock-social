@@ -11,6 +11,13 @@ const {
   findPeakTime,
   getLabel,
 } = require('../services/crowdEngine');
+const { isPremium, paywallEnabled } = require('../services/entitlements');
+const {
+  checkUserRateLimit,
+  nextUtcMidnightISO,
+  PREMIUM_DAILY_LIMIT,
+  FREE_DAILY_LIMIT,
+} = require('../services/birdieUsage');
 
 const router = express.Router();
 const PLACES_API_KEY = process.env.GOOGLE_PLACES_API_KEY;
@@ -27,53 +34,9 @@ function getGenAI() {
 }
 
 // ---------------------------------------------------------------------------
-// Per-user rate limiting (150 messages/day per user, 15/min)
+// Per-user rate limiting — moved to services/birdieUsage.js (shared with
+// entitlements). 150/day premium (or paywall off), 10/day free tier, 15/min all.
 // ---------------------------------------------------------------------------
-const userRateLimits = new Map();
-const USER_DAILY_LIMIT = 150;
-const USER_PER_MIN_LIMIT = 15;
-
-function checkUserRateLimit(userId) {
-  const now = Date.now();
-  const todayKey = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
-
-  if (!userRateLimits.has(userId)) {
-    userRateLimits.set(userId, { day: todayKey, dailyCount: 0, recentTimestamps: [] });
-  }
-
-  const limit = userRateLimits.get(userId);
-
-  // Reset daily count if new day
-  if (limit.day !== todayKey) {
-    limit.day = todayKey;
-    limit.dailyCount = 0;
-  }
-
-  // Check daily limit
-  if (limit.dailyCount >= USER_DAILY_LIMIT) {
-    return { allowed: false, error: `you've been chatting up a storm 🐦 catch up tomorrow!` };
-  }
-
-  // Check per-minute limit
-  const oneMinAgo = now - 60000;
-  limit.recentTimestamps = limit.recentTimestamps.filter(ts => ts > oneMinAgo);
-  if (limit.recentTimestamps.length >= USER_PER_MIN_LIMIT) {
-    return { allowed: false, error: 'easy there — gimme a sec to catch up' };
-  }
-
-  // Allow and record
-  limit.dailyCount++;
-  limit.recentTimestamps.push(now);
-  return { allowed: true, remaining: USER_DAILY_LIMIT - limit.dailyCount };
-}
-
-// Clean up stale entries every hour
-setInterval(() => {
-  const todayKey = new Date().toISOString().slice(0, 10);
-  for (const [userId, limit] of userRateLimits) {
-    if (limit.day !== todayKey) userRateLimits.delete(userId);
-  }
-}, 3600000);
 
 // ---------------------------------------------------------------------------
 // Tool definitions for Gemini
@@ -435,9 +398,23 @@ router.post('/chat',
       const { messages, location, currentContext } = req.body;
       const userId = req.user.id;
 
-      // Per-user rate limit
-      const rateCheck = checkUserRateLimit(userId);
+      // Resolve tier ONCE per request (isPremium is a DB query). When the
+      // paywall is off (default), no DB hit — behavior is identical to before.
+      const freeTier = paywallEnabled() && !(await isPremium(userId));
+      const dailyLimit = freeTier ? FREE_DAILY_LIMIT : PREMIUM_DAILY_LIMIT;
+
+      // Per-user rate limit (daily by tier + 15/min for everyone)
+      const rateCheck = checkUserRateLimit(userId, dailyLimit);
       if (!rateCheck.allowed) {
+        if (freeTier && rateCheck.reason === 'daily') {
+          return res.status(429).json({
+            error: "Birdie's free tier is out of chirps for today",
+            code: 'UPGRADE_REQUIRED',
+            feature: 'birdie',
+            limit: FREE_DAILY_LIMIT,
+            resetsAt: nextUtcMidnightISO(),
+          });
+        }
         return res.status(429).json({ error: rateCheck.error });
       }
 
