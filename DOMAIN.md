@@ -88,15 +88,11 @@ Only once the domain resolves:
    (e.g. `api.flockcorp.com`). Not required.
 3. Update the App Store Connect fields (`TESTFLIGHT_TEST_INFO.md`) to the
    flockcorp.com versions of the Privacy Policy and Marketing URLs.
-4. Optional: `backend/server.js` CORS already allows the Vercel domains — add
-   `https://flockcorp.com` to that allowlist so the site can call the API from
-   the new origin. **Do this before switching, or the app at flockcorp.com/app
-   will fail every request.**
-
-> ⚠️ Step 4.4 is the one that will bite you. The backend's CORS list currently
-> contains the Vercel origins only. Add `https://flockcorp.com` (and
-> `https://www.flockcorp.com`) to `backend/server.js` and redeploy **before**
-> you tell anyone to use the new domain.
+4. **CORS — already handled in code.** `https://flockcorp.com` and
+   `https://www.flockcorp.com` are in the backend allowlist
+   (`backend/server.js`). You just need the backend deployed with that change
+   (it ships on your next push to `main`). Without it the app at
+   flockcorp.com/app would load and then fail every single API call.
 
 ---
 
