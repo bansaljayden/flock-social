@@ -192,6 +192,16 @@ html {
 body {
   overscroll-behavior-y: none;
 }
+/* Native app shell (class set from App.js when running inside Capacitor):
+   pin the page so the frame itself can never drag or bounce — all scrolling
+   happens in the app's inner containers. Never applied on the website. */
+body.native-shell {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
 button, a, [role="button"], input, select, textarea {
   touch-action: manipulation;
 }
