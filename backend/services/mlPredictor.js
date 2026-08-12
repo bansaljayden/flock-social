@@ -9,6 +9,7 @@ const crowdEngine = require('./crowdEngine');
 // Same holiday/school-break calendar the training rows were stamped with —
 // inference must use the identical definition or the feature is garbage.
 const { isHoliday, isSchoolBreak } = require('../scripts/ml/config');
+const { specialNightContext } = require('../scripts/ml/specialNights');
 
 const MODEL_DIR = path.join(__dirname, '..', 'scripts', 'ml', 'models');
 const ONNX_PATH = path.join(MODEL_DIR, 'crowd_model.onnx');
@@ -454,6 +455,9 @@ function buildFeatureVector(venue, weather, timestamp, eventData, feedback, base
     month: month,
     is_holiday: isHoliday(dateStr) ? 1 : 0,
     is_school_break: isSchoolBreak(dateStr) ? 1 : 0,
+    // v2.5 special-night features — only consumed when the loaded model's
+    // metadata.feature_names includes them (older models ignore extra keys)
+    ...specialNightContext(lat, lng, dateStr),
     price_level: priceLevel,
     rating: rating,
     review_count: reviewCount,
