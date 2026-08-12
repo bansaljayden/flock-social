@@ -90,7 +90,9 @@ def train_xgboost(X, y, cv, groups, baseline=None, y_actual=None) -> tuple:
 
     search = RandomizedSearchCV(
         base_model, param_dist,
-        n_iter=8,
+        # v2.3: the serving-population filter shrinks the dataset ~30x, so a
+        # wider hyperparameter search is affordable in the same wall-clock.
+        n_iter=24,
         cv=cv,
         scoring='neg_root_mean_squared_error',
         random_state=RANDOM_STATE,
