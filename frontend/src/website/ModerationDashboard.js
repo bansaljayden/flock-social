@@ -149,7 +149,7 @@ function Badge({ label, value, color }) {
 }
 
 const S = {
-  page: { minHeight: '100vh', background: '#0e0e11', color: '#e7e7ea', fontFamily: '-apple-system, system-ui, Segoe UI, Roboto, sans-serif' },
+  page: { minHeight: '100vh', background: '#0e0e11', color: '#e7e7ea', fontFamily: "'Hanken Grotesk', -apple-system, system-ui, 'Segoe UI', Roboto, sans-serif" },
   wrap: { maxWidth: 880, margin: '0 auto', padding: '32px 20px 80px' },
   h1: { fontSize: 28, margin: '0 0 4px' },
   h2: { fontSize: 18, margin: '28px 0 12px', color: '#c7c7cd' },
