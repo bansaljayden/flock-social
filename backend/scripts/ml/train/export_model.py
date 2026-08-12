@@ -75,7 +75,11 @@ def main():
     with open(meta_path, 'r') as f:
         metadata = json.load(f)
 
-    metadata['model_version'] = '2.1.0'
+    # The crowd model's name is Starling (Flock / Birdie / Flux / Starling).
+    metadata['model_name'] = 'Starling'
+    metadata['model_version'] = '2.4.0-starling'
+    metadata['label_type'] = metadata.get('label_type', 'delta')
+    metadata['delta_clamp_range'] = metadata.get('delta_clamp_range', [-30, 30])
     metadata['model_type'] = model_name
     metadata['onnx_input_name'] = input_name
     metadata['trained_at'] = datetime.now(timezone.utc).isoformat()

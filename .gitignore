@@ -40,3 +40,7 @@ backend/scripts/ml/models/crowd_model.onnx
 backend/collection_log*.txt
 backend/transient_failed_venues.txt
 backend/scripts/ml/models/spot_check.py
+
+# local training run logs
+backend/scripts/ml/train/train_v*.log
+backend/scripts/ml/train/train_v*.err
