@@ -13450,7 +13450,13 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   };
 
   return (
-    <div style={{ minHeight: '100vh', backgroundColor: '#1a1a2e', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px', boxSizing: 'border-box', fontFamily: "'Hanken Grotesk', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" }}>
+    <div style={fullBleed
+      // Real device: the wrapper IS the screen. No padding, no centering, no
+      // decorative backdrop — this outer div was re-creating the desktop
+      // bezel (20px gutters, dark backdrop, squeezed height) on real phones
+      // even after phoneContainer went full-bleed.
+      ? { height: '100dvh', backgroundColor: 'var(--bg-primary)', boxSizing: 'border-box', fontFamily: "'Hanken Grotesk', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" }
+      : { minHeight: '100vh', backgroundColor: '#1a1a2e', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px', boxSizing: 'border-box', fontFamily: "'Hanken Grotesk', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" }}>
       <style>{`
         .btn-confirmed { position: relative !important; overflow: hidden !important; pointer-events: none !important; }
         .btn-confirmed::after {
