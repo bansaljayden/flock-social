@@ -31,7 +31,7 @@ const newLinkToken = () => {
 // Resolve a link token to its live flock, or null.
 async function resolveLink(token) {
   const r = await pool.query(
-    `SELECT il.flock_id, f.name, f.event_date, f.event_time, f.venue_name,
+    `SELECT il.flock_id, f.name, f.event_time, f.venue_name,
             f.status, u.name AS host_name
      FROM flock_invite_links il
      JOIN flocks f ON f.id = il.flock_id
@@ -80,8 +80,9 @@ router.get('/:token',
       res.json({
         flock: {
           name: link.name,
-          date: link.event_date,
-          time: link.event_time,
+          // event_time is the full timestamp; the page formats day + time
+          // in the guest's own locale.
+          when: link.event_time || null,
           chosenVenue: link.venue_name || null,
           status: link.status,
         },
