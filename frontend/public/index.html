@@ -5,17 +5,21 @@
     <link rel="icon" href="%PUBLIC_URL%/favicon.ico" />
     <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
     <meta name="theme-color" content="#0b1a2e" />
-    <meta name="description" content="Stop planning in group chats. Flock helps friend groups decide where to go with anonymous budget matching, AI crowd predictions, and instant coordination." />
+    <meta name="description" content="Vote on where to go, see how busy it is before you leave, and split the bill after. Flock turns the group chat argument into an actual plan. Free." />
 
-    <!-- Open Graph -->
-    <meta property="og:title" content="Flock — Social Coordination Simplified" />
-    <meta property="og:description" content="Stop planning in group chats. Flock helps friend groups decide where to go with anonymous budget matching, AI crowd predictions, and instant coordination." />
-    <meta property="og:image" content="%PUBLIC_URL%/og-image.png" />
+    <!-- Open Graph. og:image must be an absolute URL for crawlers; this one
+         goes live with the flockcorp.com DNS cutover (DOMAIN.md). Until then
+         the Vercel URL still serves the same file at its own /og-image.png. -->
+    <meta property="og:title" content="Flock | Plans that actually happen" />
+    <meta property="og:description" content="Vote on where to go, see how busy it is before you leave, and split the bill after. Free." />
+    <meta property="og:image" content="https://flockcorp.com/og-image.png" />
+    <meta property="og:url" content="https://flockcorp.com" />
     <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Flock" />
     <meta name="twitter:card" content="summary_large_image" />
-    <meta name="twitter:title" content="Flock — Social Coordination Simplified" />
-    <meta name="twitter:description" content="The app that turns 'idk what do you wanna do' into a confirmed plan." />
-    <meta name="twitter:image" content="%PUBLIC_URL%/og-image.png" />
+    <meta name="twitter:title" content="Flock | Plans that actually happen" />
+    <meta name="twitter:description" content="Vote on where to go, see how busy it is before you leave, and split the bill after. Free." />
+    <meta name="twitter:image" content="https://flockcorp.com/og-image.png" />
 
     <!-- PWA: Apple-specific — makes it look native on iPhone -->
     <link rel="apple-touch-icon" href="%PUBLIC_URL%/apple-touch-icon.png" />
@@ -25,7 +29,7 @@
     <meta name="apple-mobile-web-app-title" content="Flock" />
 
     <link rel="manifest" href="%PUBLIC_URL%/manifest.json" />
-    <title>Flock — Social Coordination Simplified</title>
+    <title>Flock | Plans that actually happen</title>
     <!-- Satoshi is self-hosted and bundled from src/fonts (@font-face in index.css),
          so it renders offline inside the Capacitor WebView instead of relying on a CDN. -->
 

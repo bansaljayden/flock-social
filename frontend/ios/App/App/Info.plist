@@ -49,6 +49,12 @@
 	<true/>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>Flock uses your location to show nearby venues and crowd levels, share live location with your group while a flock is active, and send your location to trusted contacts when you tap SOS.</string>
+	<!-- ITMS-90683: the Capacitor geolocation plugin's code references the
+	     always-location API, so Apple requires this purpose string to EXIST
+	     even though Flock never requests always access (no background modes
+	     are declared; the app is when-in-use only). -->
+	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
+	<string>Flock only uses your location while you are using the app: to show nearby venues and crowd levels, share live location with your group while a flock is active, and send your location to trusted contacts when you tap SOS. Flock does not track your location in the background.</string>
 	<key>NSCameraUsageDescription</key>
 	<string>Flock uses the camera to take photos for your stories and chat messages.</string>
 	<key>NSPhotoLibraryUsageDescription</key>

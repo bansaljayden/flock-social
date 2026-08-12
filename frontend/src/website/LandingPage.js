@@ -307,9 +307,9 @@ export default function LandingPage() {
             <div className="lp-safety">
               <span className="lp-safety-ico">{Ico.shield('#6d9ac3')}</span>
               <div className="lp-safety-title">Trusted contacts notified</div>
-              <div className="lp-safety-sub">Location shared · 11:42 PM</div>
-              <div className="lp-safety-row"><span>{Ico.pin('#98937f')}</span> 41 W Broad St, Bethlehem</div>
-              <div className="lp-safety-row"><span>{Ico.crowd('#98937f')}</span> 2 contacts reached</div>
+              <div className="lp-safety-sub">SOS sent · 11:42 PM</div>
+              <div className="lp-safety-row"><span>{Ico.pin('#98937f')}</span> Your live location, shared instantly</div>
+              <div className="lp-safety-row"><span>{Ico.crowd('#98937f')}</span> The people you chose, reached by email</div>
             </div>
           </div>
         </div>
