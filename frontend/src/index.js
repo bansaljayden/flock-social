@@ -70,6 +70,15 @@ if (isMarketingRoot) {
       </React.Suspense>
     </React.StrictMode>
   );
+} else if (window.location.pathname === '/about') {
+  const AboutPage = React.lazy(() => import('./website/AboutPage'));
+  root.render(
+    <React.StrictMode>
+      <React.Suspense fallback={null}>
+        <AboutPage />
+      </React.Suspense>
+    </React.StrictMode>
+  );
 } else if (window.location.pathname === '/delete-account') {
   const DeleteAccount = React.lazy(() => import('./website/DeleteAccount'));
   root.render(
