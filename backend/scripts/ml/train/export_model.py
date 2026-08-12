@@ -77,7 +77,7 @@ def main():
 
     # The crowd model's name is Starling (Flock / Birdie / Flux / Starling).
     metadata['model_name'] = 'Starling'
-    metadata['model_version'] = '2.4.0-starling'
+    metadata['model_version'] = '2.5.0-starling'
     metadata['label_type'] = metadata.get('label_type', 'delta')
     metadata['delta_clamp_range'] = metadata.get('delta_clamp_range', [-30, 30])
     metadata['model_type'] = model_name
