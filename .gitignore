@@ -35,3 +35,8 @@ backend/scripts/ml/train/*.csv
 backend/scripts/ml/train/*.pkl
 backend/scripts/ml/train/plots/
 backend/scripts/ml/models/crowd_model.onnx
+
+# ML collection-run scratch output (local only)
+backend/collection_log*.txt
+backend/transient_failed_venues.txt
+backend/scripts/ml/models/spot_check.py
