@@ -43,14 +43,16 @@ const ICON_PATHS = {
   birdie: <path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z" />,
   forecast: <><polyline points="22 12 18 12 15 21 9 3 6 12 2 12" /></>,
   alerts: <><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" /><path d="M13.73 21a2 2 0 0 1-3.46 0" /></>,
-  badge: <><circle cx="12" cy="8" r="6" /><path d="M15.5 13 17 22l-5-3-5 3 1.5-9" /></>,
 };
 
+// Every line here must name something that actually ships (SLOP-AUDIT.md C1).
+// Birdie cap: backend/services/birdieUsage.js. Forecast meter: forecastUsage.js.
+// Alerts: crowdAlerts.js cron sends to Pro users when the flag is on.
+// "Pro badge" was listed here once but never rendered anywhere, so it was cut.
 const BENEFITS = [
-  { icon: 'birdie', label: 'Unlimited Birdie AI' },
-  { icon: 'forecast', label: 'Crowd forecasts & best-time-to-go' },
-  { icon: 'alerts', label: 'Proactive venue alerts' },
-  { icon: 'badge', label: 'Pro badge' },
+  { icon: 'birdie', label: '150 Birdie messages a day, up from 10' },
+  { icon: 'forecast', label: 'Unlimited crowd forecasts and best times' },
+  { icon: 'alerts', label: 'A heads-up push before your spot gets packed' },
 ];
 
 // Match RevenueCat packages to our two plans by packageType / identifier.

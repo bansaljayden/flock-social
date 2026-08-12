@@ -24,7 +24,7 @@ export default function PrivacyPolicy() {
   const pinnedRef = useRef(null);
 
   useEffect(() => {
-    document.title = 'Privacy Policy — Flock';
+    document.title = 'Privacy Policy · Flock';
   }, []);
 
   // Highlight the section you're reading in the contents rail. Scroll-based
@@ -115,14 +115,14 @@ export default function PrivacyPolicy() {
           <aside className="pp-summary">
             <h2>The short version</h2>
             <ul>
-              <li>We collect what Flock needs to work — your account, your plans, your messages.</li>
+              <li>We collect what Flock needs to work: your account, your plans, your messages.</li>
               <li>Location is used only while you're using the app. Never in the background.</li>
               <li>We don't sell your information, and we don't run ads.</li>
               <li>Budget amounts are never shown to other people. Only the group total.</li>
               <li>You can delete your account, and everything in it, from inside the app.</li>
             </ul>
             <p>
-              The full detail is below. It's written in plain language on purpose — if
+              The full detail is below. It's written in plain language on purpose. If
               anything is unclear, email {mail}.
             </p>
           </aside>
@@ -148,7 +148,7 @@ export default function PrivacyPolicy() {
                 <li><strong>Trusted contacts:</strong> if you add emergency contacts, we store the name, phone, and email you give us so we can notify them when you trigger an SOS.</li>
                 <li><strong>Messages and content:</strong> flock chat messages, direct messages, emoji reactions, stories (auto-deleted after 24 hours), images you upload.</li>
                 <li><strong>Plans and votes:</strong> flocks you create or join, RSVPs, venue votes, budget submissions, check-ins.</li>
-                <li><strong>Payment handles (optional):</strong> if you add them for bill-splitting, we store your Venmo username, Cash App cashtag, or Zelle identifier so flockmates can pay you back. These are usernames/handles only &mdash; Flock never collects or processes card, bank-account, or payment-card numbers.</li>
+                <li><strong>Payment handles (optional):</strong> if you add them for bill-splitting, we store your Venmo username, Cash App cashtag, or Zelle identifier so flockmates can pay you back. These are usernames/handles only. Flock never collects or processes card, bank-account, or payment-card numbers.</li>
                 <li><strong>Sign-in tokens:</strong> if you sign in with Apple or Google, we receive an identity token from the provider, verify it, and issue our own session token. We do not store the provider token after verification.</li>
               </ul>
 
@@ -201,10 +201,10 @@ export default function PrivacyPolicy() {
                 <li><strong>Vercel</strong> (web hosting), <strong>Railway</strong> (server + PostgreSQL hosting).</li>
                 <li><strong>Resend</strong> (transactional email).</li>
                 <li><strong>Apple Push Notification service</strong> and <strong>Firebase Cloud Messaging</strong> (push delivery).</li>
-                <li><strong>Google Places</strong> (venue search results &mdash; we send the query, not your account).</li>
-                <li><strong>OpenWeatherMap</strong> (weather context for crowd predictions &mdash; no personal info sent).</li>
-                <li><strong>Ticketmaster</strong> (event listings &mdash; no personal info sent).</li>
-                <li><strong>BestTime</strong> (aggregate venue popularity data &mdash; no personal info sent).</li>
+                <li><strong>Google Places</strong> (venue search results; we send the query, not your account).</li>
+                <li><strong>OpenWeatherMap</strong> (weather context for crowd predictions; no personal info sent).</li>
+                <li><strong>Ticketmaster</strong> (event listings; no personal info sent).</li>
+                <li><strong>BestTime</strong> (aggregate venue popularity data; no personal info sent).</li>
                 <li><strong>Apple</strong> and <strong>Google</strong> (sign-in identity verification, only when you choose those options).</li>
                 <li><strong>RevenueCat</strong> (subscription receipt verification, if you subscribe).</li>
               </ul>
@@ -282,7 +282,7 @@ export default function PrivacyPolicy() {
 
             <section id="contact">
               <h2>{num(11)} Contact</h2>
-              <p>Questions, requests, or concerns — reach a human here:</p>
+              <p>Questions, requests, or concerns? A human reads this inbox:</p>
               <div className="pp-contact">
                 <a className="pp-contact-mail" href={`mailto:${CONTACT_EMAIL}`}>
                   {CONTACT_EMAIL}
