@@ -357,7 +357,7 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
       `<defs><filter id="s" x="-20%" y="-10%" width="140%" height="140%"><feDropShadow dx="0" dy="2" stdDeviation="2" flood-opacity="0.35"/></filter></defs>` +
       `<path d="M16 0C7.16 0 0 7.16 0 16c0 12 16 26 16 26s16-14 16-26C32 7.16 24.84 0 16 0z" fill="${fill}" stroke="${stroke}" stroke-width="2" filter="url(#s)"/>` +
       `<circle cx="16" cy="14.5" r="9" fill="white"/>` +
-      `<text x="16" y="18.5" text-anchor="middle" font-size="13" font-weight="bold" font-family="Satoshi,sans-serif" fill="${fill}">${initial}</text>` +
+      `<text x="16" y="18.5" text-anchor="middle" font-size="13" font-weight="bold" font-family="Hanken Grotesk,sans-serif" fill="${fill}">${initial}</text>` +
       `</svg>`;
   }, []);
 
@@ -926,7 +926,7 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
           el.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 40 40">
             <circle cx="20" cy="20" r="18" fill="#1e293b" stroke="white" stroke-width="3"/>
             <circle cx="20" cy="20" r="18" fill="none" stroke="#22c55e" stroke-width="2" stroke-dasharray="4 4" opacity="0.6"/>
-            <text x="20" y="26" text-anchor="middle" fill="white" font-size="16" font-weight="bold" font-family="Satoshi,sans-serif">${initial}</text>
+            <text x="20" y="26" text-anchor="middle" fill="white" font-size="16" font-weight="bold" font-family="Hanken Grotesk,sans-serif">${initial}</text>
           </svg>`;
           const popup = new mlMod.Popup({ offset: 25, closeButton: false }).setHTML(popupHtml);
           const marker = new mlMod.Marker({ element: el, anchor: 'center' }).setLngLat([lng, lat]).setPopup(popup).addTo(map);
@@ -964,7 +964,7 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
           backdrop-filter: blur(8px);
           -webkit-backdrop-filter: blur(8px);
           color: #f1f5f9;
-          font-family: Satoshi, system-ui, -apple-system, sans-serif;
+          font-family: 'Hanken Grotesk', system-ui, -apple-system, sans-serif;
           font-size: 10.5px;
           font-weight: 700;
           letter-spacing: -0.1px;
@@ -12815,7 +12815,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
         display: 'flex', flexDirection: 'column',
         alignItems: 'center', justifyContent: 'center',
         padding: '32px 24px', textAlign: 'center',
-        color: '#f1ede0', fontFamily: 'Satoshi, system-ui, -apple-system, sans-serif',
+        color: '#f1ede0', fontFamily: "'Hanken Grotesk', system-ui, -apple-system, sans-serif",
       }}>
         <div style={{ marginBottom: '32px' }}>
           <div style={{ fontSize: '32px', fontWeight: '900', letterSpacing: '-1px', color: '#f1ede0' }}>Flock</div>
