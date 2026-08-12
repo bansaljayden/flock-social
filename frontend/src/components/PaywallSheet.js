@@ -6,7 +6,7 @@ import { isPurchasesAvailable, getProOffering, purchase, restore } from '../serv
 // (overlay, 440px max, 20px top radius, drag handle, fadeInUp).
 //
 // Props: { open, onClose, showToast, onUpgraded, trigger }
-//   trigger âˆˆ 'birdie' | 'forecast' | 'settings' | null â€” picks the headline.
+//   trigger ∈ 'birdie' | 'forecast' | 'settings' | null — picks the headline.
 //
 // Purchase availability (Apple 2.1): the CTA only renders when RevenueCat
 // offerings actually loaded. On web we show a single quiet line pointing to the
@@ -32,7 +32,7 @@ const PRIVACY_URL = 'https://flock-app-w65m.vercel.app/privacy';
 
 const FONT = "'Hanken Grotesk', -apple-system, BlinkMacSystemFont, sans-serif";
 
-// Minimal 18px stroke icons (in-app SVG language â€” no emoji as UI icons).
+// Minimal 18px stroke icons (in-app SVG language — no emoji as UI icons).
 const BenefitIcon = ({ path, color }) => (
   <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" style={{ flexShrink: 0 }}>
     {path}
@@ -123,7 +123,7 @@ const PaywallSheet = ({ open, onClose, showToast, onUpgraded, trigger }) => {
         onUpgraded?.();
         onClose?.();
       }
-      // Cancelled / failed purchases stay quiet â€” the sheet remains usable.
+      // Cancelled / failed purchases stay quiet — the sheet remains usable.
     } finally {
       setBusy(false);
     }
@@ -179,7 +179,7 @@ const PaywallSheet = ({ open, onClose, showToast, onUpgraded, trigger }) => {
   };
 
   const ctaLabel = busy
-    ? (selected === 'yearly' ? 'Starting trialâ€¦' : 'Subscribingâ€¦')
+    ? (selected === 'yearly' ? 'Starting trial…' : 'Subscribing…')
     : (selected === 'yearly' ? 'Start free trial' : 'Subscribe');
 
   return (
@@ -226,7 +226,7 @@ const PaywallSheet = ({ open, onClose, showToast, onUpgraded, trigger }) => {
 
           {loadState === 'loading' && (
             <p style={{ fontSize: '13px', fontWeight: '500', color: 'var(--text-secondary)', textAlign: 'center', margin: '4px 0' }}>
-              Loading plansâ€¦
+              Loading plans…
             </p>
           )}
 
@@ -248,14 +248,14 @@ const PaywallSheet = ({ open, onClose, showToast, onUpgraded, trigger }) => {
               disabled={busy || restoring}
               style={{ display: 'block', width: '100%', marginTop: '10px', padding: '8px', border: 'none', background: 'none', fontSize: '13px', fontWeight: '600', color: 'var(--text-secondary)', cursor: 'pointer', fontFamily: FONT }}
             >
-              {restoring ? 'Restoringâ€¦' : 'Restore purchases'}
+              {restoring ? 'Restoring…' : 'Restore purchases'}
             </button>
           )}
 
           <p style={{ fontSize: '11px', fontWeight: '500', color: 'var(--text-tertiary)', textAlign: 'center', lineHeight: 1.5, margin: '10px 0 0' }}>
             Subscriptions auto-renew until cancelled in your App Store settings. The yearly plan starts with a 7-day free trial; cancel anytime before it ends and you won't be charged.{' '}
             <button onClick={() => window.open(TERMS_URL, '_blank')} style={{ border: 'none', background: 'none', padding: 0, fontSize: '11px', fontWeight: '600', color: 'var(--text-secondary)', textDecoration: 'underline', cursor: 'pointer', fontFamily: FONT }}>Terms</button>
-            {' '}Â·{' '}
+            {' '}·{' '}
             <button onClick={() => window.open(PRIVACY_URL, '_blank')} style={{ border: 'none', background: 'none', padding: 0, fontSize: '11px', fontWeight: '600', color: 'var(--text-secondary)', textDecoration: 'underline', cursor: 'pointer', fontFamily: FONT }}>Privacy</button>
           </p>
         </div>

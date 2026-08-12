@@ -12,7 +12,7 @@ const colors = {
 
 // Video city background.
 // WKWebView (Capacitor) blocks autoplay unless the muted ATTRIBUTE is on the
-// element â€” React's `muted` prop doesn't always reach the DOM â€” and a blocked
+// element — React's `muted` prop doesn't always reach the DOM — and a blocked
 // video renders iOS's grey play glyph over the form. Set attributes + play()
 // imperatively; if playback still refuses, hide the video (navy bg remains).
 const CityBackground = () => {
