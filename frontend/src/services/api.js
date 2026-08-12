@@ -1,4 +1,15 @@
+import posthog from 'posthog-js';
+
 const BASE_URL = process.env.REACT_APP_API_URL || 'https://flock-app-production.up.railway.app';
+
+// Analytics — a tracking failure must never break a real request. Users are
+// identified by their id only; no email or name goes to PostHog.
+function track(event, props) {
+  try { posthog.capture(event, props); } catch (_) { /* analytics only */ }
+}
+function identifyUser(user) {
+  try { if (user?.id) posthog.identify(String(user.id)); } catch (_) { /* analytics only */ }
+}
 
 function getToken() {
   return localStorage.getItem('flockToken');
@@ -65,6 +76,8 @@ export async function signup(name, email, password, dateOfBirth) {
     body: JSON.stringify(body),
   });
   setToken(data.token);
+  identifyUser(data.user);
+  track('signup', { method: 'email' });
   return data;
 }
 
@@ -110,6 +123,8 @@ export async function login(email, password) {
     body: JSON.stringify({ email, password }),
   });
   setToken(data.token);
+  identifyUser(data.user);
+  track('login', { method: 'email' });
   return data;
 }
 
@@ -123,6 +138,8 @@ export async function googleLogin(credential, dateOfBirth) {
     body: JSON.stringify(body),
   });
   setToken(data.token);
+  identifyUser(data.user);
+  track('login', { method: 'google' });
   return data;
 }
 
@@ -139,6 +156,8 @@ export async function appleLogin(identityToken, fullName, authorizationCode) {
     body: JSON.stringify(body),
   });
   setToken(data.token);
+  identifyUser(data.user);
+  track('login', { method: 'apple' });
   return data;
 }
 
@@ -153,10 +172,12 @@ export async function getVenueStrip() {
 
 // Shareable guest invite link for a flock (guests RSVP + vote, no account).
 export async function createFlockInviteLink(flockId, regenerate = false) {
-  return request(`/api/flocks/${flockId}/invite-link`, {
+  const data = await request(`/api/flocks/${flockId}/invite-link`, {
     method: 'POST',
     body: JSON.stringify({ regenerate }),
   });
+  track('invite_link_created', { regenerate });
+  return data;
 }
 
 export async function getCurrentUser() {
@@ -256,10 +277,12 @@ export async function getFlock(id) {
 }
 
 export async function createFlock({ name, venue_name, venue_address, venue_id, venue_latitude, venue_longitude, venue_rating, venue_photo_url, event_time, invited_user_ids, budget_enabled, budget_context, ghost_mode_enabled }) {
-  return request('/api/flocks', {
+  const data = await request('/api/flocks', {
     method: 'POST',
     body: JSON.stringify({ name, venue_name, venue_address, venue_id, venue_latitude, venue_longitude, venue_rating, venue_photo_url, event_time, invited_user_ids, budget_enabled, budget_context, ghost_mode_enabled }),
   });
+  track('flock_created', { has_venue: !!venue_name, invited_count: invited_user_ids?.length || 0 });
+  return data;
 }
 
 export async function deleteFlock(id) {
