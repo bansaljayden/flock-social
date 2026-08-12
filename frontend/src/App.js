@@ -110,6 +110,58 @@ const AnimatedDial = React.memo(function AnimatedDial({ score, color }) {
   );
 });
 
+// One-tap reality check under the crowd forecast: a report from someone at the
+// venue becomes a dated training row (venue_feedback) AND calibrates the live
+// score for everyone else. Self-contained state; remount per venue via key.
+const CrowdRealityCheck = React.memo(function CrowdRealityCheck({ placeId, venueName, predicted }) {
+  const [sent, setSent] = useState(false);
+  const [busy, setBusy] = useState(false);
+  if (!placeId) return null;
+  if (sent) {
+    return (
+      <p style={{ fontSize: '11px', color: 'var(--text-secondary)', margin: '0 0 8px', fontWeight: '600' }}>
+        Thanks. Real reports sharpen the forecast for everyone.
+      </p>
+    );
+  }
+  const opts = [
+    { level: 1, label: 'Quiet', color: '#22C55E' },
+    { level: 2, label: 'Moderate', color: '#F59E0B' },
+    { level: 3, label: 'Packed', color: '#EF4444' },
+  ];
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap', margin: '0 0 8px' }}>
+      <span style={{ fontSize: '11px', fontWeight: '600', color: 'var(--text-secondary)' }}>
+        There now? How busy is it actually:
+      </span>
+      {opts.map(o => (
+        <button
+          key={o.level}
+          disabled={busy}
+          onClick={async () => {
+            setBusy(true);
+            try {
+              await submitVenueFeedback({
+                venue_place_id: placeId,
+                venue_name: venueName,
+                crowd_level: o.level,
+                predicted_score: typeof predicted === 'number' ? Math.round(predicted) : null,
+              });
+              setSent(true);
+            } catch (err) {
+              console.error('[RealityCheck] submit failed:', err);
+              setBusy(false);
+            }
+          }}
+          style={{ padding: '4px 10px', borderRadius: '8px', border: `1.5px solid ${o.color}55`, backgroundColor: 'var(--bg-card-solid)', color: o.color, fontSize: '11px', fontWeight: '700', cursor: busy ? 'wait' : 'pointer' }}
+        >
+          {o.label}
+        </button>
+      ))}
+    </div>
+  );
+});
+
 // Scroll fade-in component using IntersectionObserver
 const ScrollFade = ({ children, delay = 0, className = '' }) => {
   const ref = useRef(null);
@@ -7092,6 +7144,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                     )}
                   </div>
                 </motion.div>
+
+                {/* One-tap crowd reality check (open venues only) */}
+                {!isClosed && (
+                  <CrowdRealityCheck key={activeVenue.place_id} placeId={activeVenue.place_id} venueName={activeVenue.name} predicted={score} />
+                )}
 
                 {/* Group Admission */}
                 <motion.div initial={{ opacity: 0, y: 16, scale: 0.95 }} animate={{ opacity: 1, y: 0, scale: 1 }} transition={{ delay: 0.4, type: 'spring', damping: 20, stiffness: 280 }} style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '6px' }}>
