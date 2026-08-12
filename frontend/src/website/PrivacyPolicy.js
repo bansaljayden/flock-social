@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import './PrivacyPolicy.css';
 
 const EFFECTIVE_DATE = 'August 11, 2026';
-const CONTACT_EMAIL = 'noreply.flockapp@gmail.com';
+const CONTACT_EMAIL = 'flocksocial.corp@gmail.com';
 
 // Section order drives both the document and the contents rail.
 const SECTIONS = [
