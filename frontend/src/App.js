@@ -1656,12 +1656,6 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
     }
   }, [showModeSelection, authUser, userMode]);
 
-  // Onboarding
-  const [hasCompletedOnboarding, setHasCompletedOnboarding] = useState(() => localStorage.getItem('flockOnboardingComplete') === 'true');
-  const [onboardingStep, setOnboardingStep] = useState(0);
-  // onboardingName removed — name comes from signup
-  const [onboardingVibes, setOnboardingVibes] = useState([]);
-  const [onboardingAnimating, setOnboardingAnimating] = useState(false);
 
   // Venue onboarding
   const [showVenueOnboarding, setShowVenueOnboarding] = useState(false);
@@ -10500,34 +10494,6 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
             </button>
           )}
 
-          {/* Replay Onboarding Button */}
-          {userMode === 'user' && (
-            <button
-              onClick={() => {
-                localStorage.removeItem('flockOnboardingComplete');
-                setHasCompletedOnboarding(false);
-                setOnboardingStep(0);
-                setOnboardingVibes([]);
-              }}
-              style={{
-                marginTop: '8px',
-                padding: '8px 12px',
-                borderRadius: '8px',
-                border: `1px solid ${colors.steel}`,
-                backgroundColor: 'rgba(45,90,135,0.10)',
-                color: colors.steel,
-                fontSize: '10px',
-                cursor: 'pointer',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '4px',
-                justifyContent: 'center'
-              }}
-            >
-              {Icons.repeat(colors.steel, 12)} Replay Onboarding
-            </button>
-          )}
-
           {/* Legal Links */}
           <div style={{ marginTop: '24px', paddingTop: '16px', borderTop: `1px solid ${colors.creamDark}` }}>
             <p style={{ fontSize: '10px', color: 'var(--text-tertiary)', marginBottom: '12px', textAlign: 'center', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Legal</p>
@@ -12497,43 +12463,6 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
     );
   };
 
-  // ONBOARDING SCREEN
-  const vibeOptions = [
-    { icon: Icons.cocktail, label: 'Cocktails' },
-    { icon: Icons.music, label: 'Live Music' },
-    { icon: Icons.beer, label: 'Beer & Brews' },
-    { icon: Icons.sports, label: 'Sports' },
-    { icon: Icons.partyPopper, label: 'Dancing' },
-    { icon: Icons.mic, label: 'Karaoke' },
-    { icon: Icons.laugh, label: 'Comedy' },
-    { icon: Icons.wine, label: 'Wine' },
-    { icon: Icons.gamepad, label: 'Gaming' },
-    { icon: Icons.palette, label: 'Art & Culture' },
-    { icon: Icons.pizza, label: 'Food' },
-    { icon: Icons.coffee, label: 'Chill Vibes' },
-  ];
-
-  const completeOnboarding = () => {
-    setOnboardingAnimating(true);
-    setTimeout(() => {
-      localStorage.setItem('flockOnboardingComplete', 'true');
-      queueSync({ onboardingComplete: 'true' });
-      if (onboardingVibes.length > 0) {
-        setUserInterests(onboardingVibes);
-      }
-      setHasCompletedOnboarding(true);
-      setOnboardingAnimating(false);
-         }, 1500);
-  };
-
-  const nextOnboardingStep = () => {
-    setOnboardingAnimating(true);
-    setTimeout(() => {
-      setOnboardingStep(prev => prev + 1);
-      setOnboardingAnimating(false);
-    }, 300);
-  };
-
   // VENUE ONBOARDING SCREEN
   const venueCategories = ['Bar / Nightclub', 'Restaurant', 'Cafe / Coffee', 'Lounge', 'Rooftop', 'Brewery / Winery', 'Event Space', 'Other'];
   const venueGoals = ['Increase foot traffic', 'Fill slow nights', 'Reach Gen Z audience', 'Promote events', 'Track crowd analytics', 'Offer deals & promos'];
@@ -12804,198 +12733,6 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
     );
   };
 
-  const OnboardingScreen = () => (
-    <div style={{
-      display: 'flex',
-      flexDirection: 'column',
-      height: '100%',
-      background: `linear-gradient(180deg, var(--bg-primary) 0%, var(--bg-card-solid) 100%)`,
-      overflow: 'hidden',
-      position: 'relative'
-    }}>
-      {/* Decorative background circles */}
-      <div style={{ position: 'absolute', top: '-100px', right: '-100px', width: '250px', height: '250px', borderRadius: '50%', background: `linear-gradient(135deg, ${colors.navy}10, ${colors.navyMid}05)`, pointerEvents: 'none' }} />
-      <div style={{ position: 'absolute', bottom: '-50px', left: '-50px', width: '150px', height: '150px', borderRadius: '50%', background: `linear-gradient(135deg, ${colors.steel}10, ${colors.steel}05)`, pointerEvents: 'none' }} />
-
-      {/* Back button + Progress indicator */}
-      <div style={{ padding: '16px 24px 0', flexShrink: 0, position: 'relative', zIndex: 1 }}>
-        <button
-          onClick={() => {
-            if (onboardingStep > 0) {
-              setOnboardingAnimating(true);
-              setTimeout(() => { setOnboardingStep(prev => prev - 1); setOnboardingAnimating(false); }, 300);
-            } else {
-              if (onLogout) onLogout();
-            }
-          }}
-          style={{ display: 'flex', alignItems: 'center', gap: '6px', background: 'none', border: 'none', cursor: 'pointer', padding: '4px 0', marginBottom: '12px', color: 'var(--text-secondary)', fontSize: '13px', fontWeight: '600' }}
-        >
-          {Icons.arrowLeft('var(--text-secondary)', 16)} {onboardingStep > 0 ? 'Back' : 'Log out'}
-        </button>
-        <div style={{ display: 'flex', gap: '8px' }}>
-          {[0, 1].map(step => (
-            <div
-              key={step}
-              style={{
-                flex: 1,
-                height: '4px',
-                borderRadius: '4px',
-                backgroundColor: step <= onboardingStep ? colors.navyBg : 'var(--border-subtle)',
-                transition: 'opacity 0.3s ease',
-                transform: step <= onboardingStep ? 'scaleY(1.2)' : 'scaleY(1)'
-              }}
-            />
-          ))}
-        </div>
-        <p style={{ fontSize: '11px', color: 'var(--text-tertiary)', marginTop: '8px', textAlign: 'center' }}>Step {onboardingStep + 1} of 2</p>
-      </div>
-
-      {/* Content */}
-      <div style={{
-        flex: 1,
-        display: 'flex',
-        flexDirection: 'column',
-        padding: '20px 24px 24px',
-        opacity: onboardingAnimating ? 0 : 1,
-        transform: onboardingAnimating ? 'translateX(20px)' : 'translateX(0)',
-        transition: 'opacity 0.3s, transform 0.3s',
-        position: 'relative',
-        zIndex: 1
-      }}>
-        {/* Step 0: Pick Interests */}
-        {onboardingStep === 0 && (
-          <div style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '16px', marginTop: '12px', marginBottom: '24px' }}>
-              <div style={{ width: '56px', height: '56px', borderRadius: '16px', background: colors.steel, display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 1px 2px rgba(30,41,59,0.10)' }}>
-                {Icons.heart('white', 28)}
-              </div>
-              <div>
-                <h1 style={{ fontSize: '24px', fontWeight: '900', color: colors.navy, margin: '0 0 4px' }}>
-                  What's your vibe?
-                </h1>
-                <p style={{ fontSize: '13px', color: 'var(--text-secondary)', margin: 0 }}>
-                  Pick 3-5 things you're into so Flock knows what to suggest
-                </p>
-              </div>
-            </div>
-            <div style={{
-              display: 'grid',
-              gridTemplateColumns: 'repeat(2, 1fr)',
-              gap: '10px',
-              flex: 1,
-              overflow: 'auto',
-              alignContent: 'start',
-              marginBottom: '12px',
-              paddingRight: '4px'
-            }}>
-              {vibeOptions.map(vibe => {
-                const isSelected = onboardingVibes.includes(vibe.label);
-                return (
-                  <button
-                    key={vibe.label}
-                    onClick={() => {
-                      if (isSelected) {
-                        setOnboardingVibes(prev => prev.filter(v => v !== vibe.label));
-                      } else {
-                        setOnboardingVibes(prev => [...prev, vibe.label]);
-                      }
-                    }}
-                    style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '8px',
-                      padding: '12px 16px',
-                      borderRadius: '100px',
-                      border: `2px solid ${isSelected ? colors.navy : colors.creamDark}`,
-                      backgroundColor: isSelected ? colors.navyBg : 'var(--bg-card-solid)',
-                      color: isSelected ? 'white' : colors.navy,
-                      fontSize: '14px',
-                      fontWeight: '600',
-                      cursor: 'pointer',
-                      transition: 'opacity 0.2s',
-                      transform: isSelected ? 'scale(1.02)' : 'scale(1)'
-                    }}
-                  >
-                    <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{vibe.icon(isSelected ? 'white' : colors.navy, 18)}</span>
-                    {vibe.label}
-                  </button>
-                );
-              })}
-            </div>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', marginBottom: '12px' }}>
-              <div style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: onboardingVibes.length > 0 ? colors.steel : 'var(--toggle-off)' }} />
-              <p style={{ fontSize: '13px', color: onboardingVibes.length > 0 ? colors.steel : colors.textTertiary, margin: 0, fontWeight: '600' }}>
-                {onboardingVibes.length === 0
-                  ? 'Select at least one'
-                  : `${onboardingVibes.length} selected`}
-              </p>
-            </div>
-            <button
-              onClick={nextOnboardingStep}
-              disabled={onboardingVibes.length === 0}
-              style={{
-                ...styles.gradientButton,
-                padding: '16px 32px',
-                fontSize: '15px',
-                opacity: onboardingVibes.length > 0 ? 1 : 0.5,
-                cursor: onboardingVibes.length > 0 ? 'pointer' : 'not-allowed'
-              }}
-            >
-              Continue →
-            </button>
-          </div>
-        )}
-
-        {/* Step 1: All set */}
-        {onboardingStep === 1 && (
-          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', textAlign: 'center' }}>
-            <div style={{ position: 'relative', marginBottom: '32px' }}>
-              <div style={{
-                width: '120px',
-                height: '120px',
-                borderRadius: '50%',
-                background: 'linear-gradient(135deg, #22C55E, #16A34A)',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                boxShadow: '0 20px 60px rgba(34,197,94,0.35)'
-              }}>
-                {Icons.check('white', 56)}
-              </div>
-              <div style={{ position: 'absolute', top: '-4px', right: '-4px', width: '36px', height: '36px', borderRadius: '50%', backgroundColor: colors.amber, display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 4px 12px rgba(245,158,11,0.4)' }}>
-                {Icons.sparkles('white', 18)}
-              </div>
-            </div>
-            <h1 style={{ fontSize: '28px', fontWeight: '900', color: colors.navy, margin: '0 0 8px', letterSpacing: '-0.5px' }}>
-              You're all set{authUser?.name ? `, ${authUser.name}` : ''}!
-            </h1>
-            <p style={{ fontSize: '16px', color: colors.navyMid, margin: '0 0 12px', lineHeight: 1.5, fontWeight: '500' }}>
-              Time to find your flock.
-            </p>
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', justifyContent: 'center', marginBottom: '32px', maxWidth: '280px' }}>
-              {onboardingVibes.slice(0, 4).map(vibe => (
-                <span key={vibe} style={{ padding: '6px 12px', borderRadius: '20px', backgroundColor: 'var(--bg-hover)', color: colors.navy, fontSize: '12px', fontWeight: '600' }}>{vibe}</span>
-              ))}
-              {onboardingVibes.length > 4 && <span style={{ padding: '6px 12px', borderRadius: '20px', backgroundColor: 'var(--bg-hover)', color: colors.navy, fontSize: '12px', fontWeight: '600' }}>+{onboardingVibes.length - 4} more</span>}
-            </div>
-            <button
-              onClick={completeOnboarding}
-              disabled={onboardingAnimating}
-              style={{
-                ...styles.gradientButton,
-                maxWidth: '280px',
-                padding: '16px 32px',
-                fontSize: '15px',
-                opacity: onboardingAnimating ? 0.7 : 1
-              }}
-            >
-              {onboardingAnimating ? 'Getting things ready...' : "Let's Flock →"}
-            </button>
-          </div>
-        )}
-      </div>
-    </div>
-  );
 
   // NFC CHECK-IN LANDING — opened by tapping a venue's NFC tag (URL-based entry)
   const NfcCheckinScreen = () => {
@@ -13410,7 +13147,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   }, [currentScreen, authUser]);
 
   // RENDER - Call functions directly instead of JSX to prevent component recreation
-  const isExploreVisible = currentTab === 'explore' && currentScreen === 'main' && !showModeSelection && (userMode !== 'user' || hasCompletedOnboarding);
+  const isExploreVisible = currentTab === 'explore' && currentScreen === 'main' && !showModeSelection;
 
   const renderScreen = () => {
     // Show welcome screen for mode selection — only for privileged users
@@ -13420,7 +13157,6 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
     // Show venue onboarding for venue logins
     if (showVenueOnboarding) return VenueOnboardingScreen();
     // Show onboarding for new users who haven't completed it
-    if (userMode === 'user' && !hasCompletedOnboarding) return OnboardingScreen();
     if (currentScreen === 'nfcCheckin') return NfcCheckinScreen();
     if (currentScreen === 'addFriends') return AddFriendsScreen();
     if (currentScreen === 'create') return CreateScreen();
