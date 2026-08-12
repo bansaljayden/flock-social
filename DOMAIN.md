@@ -127,5 +127,8 @@ Only once the domain resolves:
       renders at flockcorp.com/app on next device test
 - [x] `PUBLIC_WEB_URL` set on Railway
 - [ ] App Store Connect URLs updated to flockcorp.com (do with next TestFlight pass)
-- [ ] Resend **Receiving** still disabled — flip it + add inbound MX when you
-      want social@flockcorp.com live, then Claude swaps the contact email site-wide
+- [x] **social@flockcorp.com LIVE 2026-08-12** via Cloudflare Email Routing
+      (forwards to Jayden's Gmail; Resend keeps outbound — Resend Receiving was
+      never needed). Verified with a real send; site contact swapped site-wide.
+      Optional remaining: Gmail "Send mail as" via smtp.resend.com so replies
+      come from social@ (steps in chat 2026-08-12).
