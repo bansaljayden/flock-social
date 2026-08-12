@@ -30,10 +30,10 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { SplineScene } from './components/ui/spline-scene';
 import 'maplibre-gl/dist/maplibre-gl.css';
 
-// Animated crowd dial — fills from 0 to target score with counting number.
+// Animated crowd dial â€” fills from 0 to target score with counting number.
 // Perf notes: caches getComputedStyle (was called every frame), pre-renders the
 // static track to an offscreen canvas, and keeps the parent drop-shadow filter
-// on a SIBLING glow div so the canvas itself isn't re-rasterized 60×/sec.
+// on a SIBLING glow div so the canvas itself isn't re-rasterized 60Ã—/sec.
 const AnimatedDial = React.memo(function AnimatedDial({ score, color }) {
   const textRef = React.useRef(null);
   const canvasRef = React.useRef(null);
@@ -52,10 +52,10 @@ const AnimatedDial = React.memo(function AnimatedDial({ score, color }) {
 
     const ctx = canvas.getContext('2d');
 
-    // Cache the track color ONCE (was a getComputedStyle call per frame — expensive style recalc)
+    // Cache the track color ONCE (was a getComputedStyle call per frame â€” expensive style recalc)
     const trackColor = getComputedStyle(document.documentElement).getPropertyValue('--border-default').trim() || '#334155';
 
-    // Pre-render the static gray ring to an offscreen canvas — drawn once, blitted each frame.
+    // Pre-render the static gray ring to an offscreen canvas â€” drawn once, blitted each frame.
     const trackCanvas = document.createElement('canvas');
     trackCanvas.width = size;
     trackCanvas.height = size;
@@ -99,7 +99,7 @@ const AnimatedDial = React.memo(function AnimatedDial({ score, color }) {
 
   return (
     <div style={{ width: '60px', height: '60px', position: 'relative', flexShrink: 0 }}>
-      {/* Glow lives on a SIBLING div — not on a parent of the canvas. Otherwise every
+      {/* Glow lives on a SIBLING div â€” not on a parent of the canvas. Otherwise every
           canvas frame would force the browser to re-rasterize the drop-shadow. */}
       <div aria-hidden style={{ position: 'absolute', inset: 0, borderRadius: '50%', boxShadow: `0 4px 12px rgba(0,0,0,0.3), 0 0 8px ${color}30`, pointerEvents: 'none' }} />
       <canvas ref={canvasRef} style={{ width: '60px', height: '60px', position: 'absolute', top: 0, left: 0, transform: 'translateZ(0)' }} />
@@ -130,7 +130,7 @@ const ScrollFade = ({ children, delay = 0, className = '' }) => {
   );
 };
 
-// Memoized VenueCard — unified design for both DMs and Flocks
+// Memoized VenueCard â€” unified design for both DMs and Flocks
 const VenueCard = React.memo(({ venue, onViewDetails, onVote, colors: c, Icons: I, getCategoryColor: gcc }) => {
   const rating = venue.stars || venue.rating || null;
   const price = venue.price || (venue.price_level ? '$'.repeat(venue.price_level) : null);
@@ -198,7 +198,7 @@ const VenueCard = React.memo(({ venue, onViewDetails, onVote, colors: c, Icons: 
 });
 
 // =============================================================================
-// MapLibre GL JS — Snap Map-style vector basemap (smooth GPU-rendered)
+// MapLibre GL JS â€” Snap Map-style vector basemap (smooth GPU-rendered)
 // Prefers MapTiler Streets v2 Dark when REACT_APP_MAPTILER_KEY is set
 // (denser POIs, road hierarchies, neighborhood labels). Falls back to
 // CARTO Dark Matter (free, no key) when the env var is missing.
@@ -225,15 +225,15 @@ const SATELLITE_STYLE = MAPTILER_KEY
           type: 'raster',
           tiles: ['https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'],
           tileSize: 256,
-          attribution: 'Tiles © Esri',
+          attribution: 'Tiles Â© Esri',
           maxzoom: 19,
         },
       },
       layers: [{ id: 'esri-imagery', type: 'raster', source: 'esri-imagery' }],
     };
 
-// AI crowd heatmap paint — matches the old Google HeatmapLayer gradient/radius/opacity.
-// MapLibre heatmap-intensity: 2 ≈ Google maxIntensity: 0.5 (1/0.5 = 2× per-point contribution).
+// AI crowd heatmap paint â€” matches the old Google HeatmapLayer gradient/radius/opacity.
+// MapLibre heatmap-intensity: 2 â‰ˆ Google maxIntensity: 0.5 (1/0.5 = 2Ã— per-point contribution).
 const VENUE_HEAT_PAINT = {
   'heatmap-weight': ['coalesce', ['get', 'weight'], 0.5],
   'heatmap-intensity': 4,
@@ -258,7 +258,7 @@ const VENUE_HEAT_PAINT = {
 // Add accuracy ring + venue heatmap + 3D buildings.
 // Inserts heat UNDER the first symbol layer so road/place labels stay readable
 // on top of the heat. 3D building extrusion uses the basemap's existing
-// building vector tiles (free, no extra fetch) — gives the map Snap-Map-style
+// building vector tiles (free, no extra fetch) â€” gives the map Snap-Map-style
 // city depth when zoomed in.
 function addOverlayLayers(map) {
   const layers = map.getStyle().layers || [];
@@ -396,7 +396,7 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
     });
   }, []);
 
-  // Category ring color — maps to the same palette used elsewhere.
+  // Category ring color â€” maps to the same palette used elsewhere.
   // Resolves CSS vars via the colors object so it follows light/dark theme.
   const categoryRingColor = useCallback((cat) => {
     switch (cat) {
@@ -418,7 +418,7 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
     el.style.display = 'flex';
     el.style.flexDirection = 'column';
     el.style.alignItems = 'center';
-    // No transition / transform on the outer el — MapLibre owns it.
+    // No transition / transform on the outer el â€” MapLibre owns it.
 
     const inner = document.createElement('div');
     inner.className = 'mlb-marker-inner';
@@ -467,7 +467,7 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
     const label = document.createElement('div');
     label.className = 'mlb-marker-label';
     const ratingHtml = venue.rating || venue.stars
-      ? `<span class="mlb-label-rating">★ ${(venue.rating || venue.stars).toFixed ? (venue.rating || venue.stars).toFixed(1) : (venue.rating || venue.stars)}</span>`
+      ? `<span class="mlb-label-rating">â˜… ${(venue.rating || venue.stars).toFixed ? (venue.rating || venue.stars).toFixed(1) : (venue.rating || venue.stars)}</span>`
       : '';
     label.innerHTML = `<span class="mlb-label-name">${(venue.name || '').replace(/[<>]/g, '')}</span>${ratingHtml}`;
     el.appendChild(label);
@@ -505,13 +505,13 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
       map.addControl(new maplibregl.AttributionControl({ compact: true }), 'bottom-left');
       mapInstanceRef.current = map;
 
-      // Snappier scroll-wheel zoom — default 1/300 feels sluggish vs Snap Map.
+      // Snappier scroll-wheel zoom â€” default 1/300 feels sluggish vs Snap Map.
       if (map.scrollZoom) {
-        map.scrollZoom.setZoomRate(1 / 100);   // 3× faster per pixel
-        map.scrollZoom.setWheelZoomRate(1 / 80); // 5× faster per wheel notch
+        map.scrollZoom.setZoomRate(1 / 100);   // 3Ã— faster per pixel
+        map.scrollZoom.setWheelZoomRate(1 / 80); // 5Ã— faster per wheel notch
       }
 
-      // Track container size — MapLibre locks canvas dimensions at construction,
+      // Track container size â€” MapLibre locks canvas dimensions at construction,
       // so if the parent flex layout settles AFTER init the canvas stays short
       // (leaves a navy gap below the map). ResizeObserver fixes that for good
       // and also handles orientation changes / window resize.
@@ -529,16 +529,16 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
         const z = map.getZoom();
         const container = mapRef.current;
         if (!container) return;
-        // hi  → labels visible, full-size markers
-        // mid → no labels, full-size
-        // lo  → no labels, shrunk markers (zoomed-out density)
+        // hi  â†’ labels visible, full-size markers
+        // mid â†’ no labels, full-size
+        // lo  â†’ no labels, shrunk markers (zoomed-out density)
         const tier = z >= 15 ? 'hi' : z >= 13 ? 'mid' : 'lo';
         if (container.dataset.zoomTier !== tier) container.dataset.zoomTier = tier;
       };
 
       // Brighten native basemap POI labels (MapTiler's Streets v2 Dark dims them
       // hard, which is why the map feels emptier than Apple's). We bump opacity
-      // and lower the minzoom so cafés/restaurants show earlier.
+      // and lower the minzoom so cafÃ©s/restaurants show earlier.
       const boostNativePoiLabels = () => {
         if (!isAppDark()) return; // pale-label boost is tuned for the dark basemap only
         const style = map.getStyle && map.getStyle();
@@ -551,7 +551,7 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
           if (!looksPoi) continue;
           try {
             map.setLayoutProperty(layer.id, 'visibility', 'visible');
-            // Lower the zoom at which labels appear (default ~14 → 12.5)
+            // Lower the zoom at which labels appear (default ~14 â†’ 12.5)
             if (typeof layer.minzoom === 'number' && layer.minzoom > 12.5) {
               map.setLayerZoomRange(layer.id, 12.5, layer.maxzoom ?? 24);
             }
@@ -559,7 +559,7 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
             map.setPaintProperty(layer.id, 'text-color', '#e2e8f0');
             map.setPaintProperty(layer.id, 'text-halo-color', 'rgba(15,23,42,0.85)');
             map.setPaintProperty(layer.id, 'text-halo-width', 1.4);
-          } catch { /* layer may not support a property — ignore */ }
+          } catch { /* layer may not support a property â€” ignore */ }
         }
       };
 
@@ -570,7 +570,7 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
         setMapReady(true);
       });
 
-      // Re-apply both on style swap (roadmap ↔ satellite)
+      // Re-apply both on style swap (roadmap â†” satellite)
       map.on('styledata', () => {
         applyZoomTier();
         boostNativePoiLabels();
@@ -578,7 +578,7 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
 
       map.on('zoom', applyZoomTier);
 
-      // Click on empty map — clear active venue
+      // Click on empty map â€” clear active venue
       map.on('click', (e) => {
         if (e.originalEvent?.target?.closest?.('.mlb-venue-marker')) return;
         setActiveVenue(null);
@@ -637,7 +637,7 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
     const lng = userLocation.lng, lat = userLocation.lat;
     const acc = userLocation.accuracy || 50;
 
-    // Blue dot — outer el is owned by MapLibre; pulse animations target the inner div.
+    // Blue dot â€” outer el is owned by MapLibre; pulse animations target the inner div.
     if (!userMarkerRef.current) {
       const el = document.createElement('div');
       el.style.width = '20px';
@@ -704,7 +704,7 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
       const loc = v.location;
       if (!loc?.latitude || !loc?.longitude) return;
 
-      // Heatmap point — weighted by crowd score (0-100 → 0-1)
+      // Heatmap point â€” weighted by crowd score (0-100 â†’ 0-1)
       if (typeof v.crowd === 'number') {
         heatFeatures.push({
           type: 'Feature',
@@ -743,7 +743,7 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
       const inner = el.querySelector('.mlb-marker-inner') || el;
       inner.style.width = size + 'px';
       inner.style.height = size + 'px';
-      // Tiny z-index range — the venue card overlay must always sit above markers.
+      // Tiny z-index range â€” the venue card overlay must always sit above markers.
       // (Active = 3, trending = 2, normal = 1.)
       el.style.zIndex = isActive ? '3' : (venue.trending ? '2' : '1');
       const svgEl = inner.querySelector('svg');
@@ -802,7 +802,7 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
         const loc = entry.venue.location;
         map.flyTo({ center: [loc.longitude, loc.latitude], zoom: 17, duration: 700 });
         setActiveVenue(entry.venue);
-        // Bounce — animate the INNER div's top offset (outer transform is MapLibre's)
+        // Bounce â€” animate the INNER div's top offset (outer transform is MapLibre's)
         const inner = entry.el.querySelector('.mlb-marker-inner');
         if (inner) {
           inner.style.transition = 'top 0.4s cubic-bezier(0.34, 1.56, 0.64, 1)';
@@ -865,7 +865,7 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
       if (userMarkerRef.current) {
         const ll = userMarkerRef.current.getLngLat();
         map.flyTo({ center: [ll.lng, ll.lat], zoom: 15, duration: 600 });
-        // Pulse the dot — box-shadow on the inner div only (transform is owned by MapLibre on the outer)
+        // Pulse the dot â€” box-shadow on the inner div only (transform is owned by MapLibre on the outer)
         if (userElRef.current) {
           userElRef.current.style.boxShadow = '0 0 0 12px rgba(59,130,246,0.35)';
           setTimeout(() => {
@@ -902,7 +902,7 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
         const dist = userLocation ? calcDistance(userLocation.lat, userLocation.lng, loc.lat, loc.lng) : '';
         const age = Math.round((Date.now() - loc.timestamp) / 1000);
         const ageStr = age < 10 ? 'just now' : age < 60 ? `${age}s ago` : `${Math.round(age / 60)}m ago`;
-        const popupHtml = `<div style="font-family:'Satoshi',-apple-system,system-ui,sans-serif;display:flex;align-items:center;gap:10px;padding:6px 4px;min-width:160px">
+        const popupHtml = `<div style="font-family:'Hanken Grotesk',-apple-system,system-ui,sans-serif;display:flex;align-items:center;gap:10px;padding:6px 4px;min-width:160px">
           <div style="width:36px;height:36px;border-radius:18px;background:linear-gradient(135deg,#1e293b,#1a3a5c);display:flex;align-items:center;justify-content:center;flex-shrink:0">
             <span style="color:white;font-size:15px;font-weight:700">${initial}</span>
           </div>
@@ -910,7 +910,7 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
             <div style="font-size:13px;font-weight:700;color:#1e293b;margin:0 0 2px">${loc.name}</div>
             <div style="display:flex;align-items:center;gap:4px">
               <span style="width:6px;height:6px;border-radius:3px;background:#22c55e;display:inline-block"></span>
-              <span style="font-size:11px;color:#6b7280;font-weight:500">${dist ? dist + ' away · ' + ageStr : 'Live'}</span>
+              <span style="font-size:11px;color:#6b7280;font-weight:500">${dist ? dist + ' away Â· ' + ageStr : 'Live'}</span>
             </div>
           </div>
         </div>`;
@@ -1093,7 +1093,7 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
 });
 
 // Brand Colors
-// Base colors (light mode defaults — used outside components too)
+// Base colors (light mode defaults â€” used outside components too)
 const colorsLight = {
   navy: '#1e293b',
   navyBg: '#1e293b',
@@ -1103,7 +1103,7 @@ const colorsLight = {
   skyBlue: '#4a7ba7',
   cream: '#f1ede0',
   creamDark: '#e8e0d5',
-  steel: '#2d5a87',   // brand accent (renamed from 'teal' 2026-07 — the color IS steel navy; old name was a trap)
+  steel: '#2d5a87',   // brand accent (renamed from 'teal' 2026-07 â€” the color IS steel navy; old name was a trap)
   amber: '#F59E0B',
   red: '#EF4444',
   food: '#F97316',
@@ -1147,7 +1147,7 @@ const colorsDark = {
 const colors = colorsLight;
 
 // The decorative phone bezel is a DESKTOP-ONLY preview shell. On the real device
-// (Capacitor) or any phone-sized viewport it must not render — otherwise the app
+// (Capacitor) or any phone-sized viewport it must not render â€” otherwise the app
 // draws a fake phone border inside the actual phone. Native detection + width
 // check; evaluated once (rotation/resize edge cases don't need live re-eval).
 const IS_FULLBLEED = (typeof window !== 'undefined') && (
@@ -1280,7 +1280,7 @@ const makeStyles = (c, isDark) => ({
 // eslint-disable-next-line no-unused-vars
 const styles = makeStyles(colorsLight, false);
 
-// Group admission likelihood — venue-type, size, and time-aware
+// Group admission likelihood â€” venue-type, size, and time-aware
 function getGroupAdmission(crowdScore, partySize, venue) {
   if (!crowdScore && crowdScore !== 0) return null;
   const size = partySize || 1;
@@ -1296,11 +1296,11 @@ function getGroupAdmission(crowdScore, partySize, venue) {
   // Venue size factor from reviews (more reviews = bigger venue = groups easier)
   const sizeFactor = reviews > 3000 ? 0.5 : reviews > 1000 ? 0.7 : reviews > 300 ? 0.85 : reviews > 100 ? 1.0 : 1.3;
 
-  // Classify venue — group impact per person depends on how capacity-constrained it is
+  // Classify venue â€” group impact per person depends on how capacity-constrained it is
   let perPersonImpact;
   let category;
 
-  // Open / unlimited capacity — group size doesn't matter
+  // Open / unlimited capacity â€” group size doesn't matter
   if (has('park', 'amusement_park', 'zoo', 'aquarium', 'beach', 'campground',
     'national_park', 'dog_park', 'hiking_area', 'playground', 'ski_resort',
     'stadium', 'arena', 'shopping_mall', 'shopping_center', 'outlet_mall',
@@ -1309,7 +1309,7 @@ function getGroupAdmission(crowdScore, partySize, venue) {
     category = 'open';
     perPersonImpact = 0;
   }
-  // Ticketed / assigned seating — group size barely matters
+  // Ticketed / assigned seating â€” group size barely matters
   else if (has('movie_theater', 'performing_arts_theater', 'concert_hall',
     'opera_house', 'live_music_venue', 'comedy_club', 'theater',
     'museum', 'art_gallery', 'science_museum', 'planetarium',
@@ -1317,7 +1317,7 @@ function getGroupAdmission(crowdScore, partySize, venue) {
     category = 'ticketed';
     perPersonImpact = 0.5;
   }
-  // Large casual — high capacity, groups are easy
+  // Large casual â€” high capacity, groups are easy
   else if (has('fast_food_restaurant', 'meal_takeaway', 'food_court',
     'gym', 'fitness_center', 'spa', 'bowling_alley', 'pool_hall',
     'casino', 'supermarket', 'grocery_store', 'department_store',
@@ -1325,20 +1325,20 @@ function getGroupAdmission(crowdScore, partySize, venue) {
     category = 'large_casual';
     perPersonImpact = 0.8;
   }
-  // Entertainment — moderate impact
+  // Entertainment â€” moderate impact
   else if (has('arcade', 'game_center', 'trampoline_park', 'laser_tag',
     'karaoke', 'billiard_hall', 'hookah_bar', 'lounge',
     'dance_club', 'night_club', 'batting_cage', 'rock_climbing_gym')) {
     category = 'entertainment';
     perPersonImpact = 1.2;
   }
-  // Bars / breweries — standing room helps, but tables for groups are limited
+  // Bars / breweries â€” standing room helps, but tables for groups are limited
   else if (has('bar', 'pub', 'sports_bar', 'wine_bar', 'cocktail_bar',
     'beer_garden', 'brewery', 'winery', 'distillery', 'taproom')) {
     category = 'bar';
     perPersonImpact = 1.5;
   }
-  // Regular restaurants — table-based, groups need bigger tables
+  // Regular restaurants â€” table-based, groups need bigger tables
   else if (has('restaurant', 'diner', 'buffet_restaurant', 'steakhouse',
     'seafood_restaurant', 'pizza_restaurant', 'hamburger_restaurant',
     'american_restaurant', 'italian_restaurant', 'mexican_restaurant',
@@ -1351,30 +1351,30 @@ function getGroupAdmission(crowdScore, partySize, venue) {
     category = 'restaurant';
     perPersonImpact = 2.0;
   }
-  // Small / cozy — limited seating, groups take up a lot of space
+  // Small / cozy â€” limited seating, groups take up a lot of space
   else if (has('cafe', 'coffee_shop', 'tea_house', 'juice_shop',
     'smoothie_shop', 'bakery', 'dessert_shop', 'ice_cream_shop',
     'donut_shop', 'patisserie', 'creperie', 'bubble_tea')) {
     category = 'small';
     perPersonImpact = 2.5;
   }
-  // Fine dining — reservations are the norm, groups are hard
+  // Fine dining â€” reservations are the norm, groups are hard
   else if (has('fine_dining_restaurant') || (venue?.price_level >= 3 && has('restaurant'))) {
     category = 'fine_dining';
     perPersonImpact = 3.0;
   }
-  // Default — treat like a regular restaurant
+  // Default â€” treat like a regular restaurant
   else {
     category = 'default';
     perPersonImpact = 1.5;
   }
 
-  // Open venues — group size doesn't matter
+  // Open venues â€” group size doesn't matter
   if (category === 'open') {
     return { text: 'No issues for groups', color: '#22C55E', icon: 'check' };
   }
 
-  // Time pressure — peak hours make groups harder to seat
+  // Time pressure â€” peak hours make groups harder to seat
   let timeMult = 1.0;
   if (category === 'bar' || category === 'entertainment') {
     // Bars/clubs peak later
@@ -1387,12 +1387,12 @@ function getGroupAdmission(crowdScore, partySize, venue) {
     else if (isPeakLunch) timeMult = 1.1;
   }
 
-  // Large group penalty — non-linear, 7+ is way harder than 4
+  // Large group penalty â€” non-linear, 7+ is way harder than 4
   const groupPenalty = size <= 2 ? size : size <= 4 ? size * 1.1 : size * 1.4;
 
   const effectiveLoad = crowdScore + (groupPenalty * perPersonImpact * sizeFactor * timeMult);
 
-  // Ticketed venues — simpler messaging
+  // Ticketed venues â€” simpler messaging
   if (category === 'ticketed') {
     if (size >= 6) return { text: 'Book ahead for group', color: '#F59E0B', icon: 'clock' };
     return { text: 'Buy tickets anytime', color: '#22C55E', icon: 'check' };
@@ -1406,7 +1406,7 @@ function getGroupAdmission(crowdScore, partySize, venue) {
   return { text: 'Reservation needed', color: '#EF4444', icon: 'alert' };
 }
 
-// ─── ISOLATED MODAL COMPONENTS ────────────────────────────────────────────
+// â”€â”€â”€ ISOLATED MODAL COMPONENTS â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // These manage their own local state so typing doesn't re-render the parent.
 // Only onSave and onCancel callbacks escape.
 
@@ -1483,10 +1483,10 @@ const EventModal = React.memo(function EventModal({ editing, onSave, onCancel, c
   );
 });
 
-// ─── Isolated search input — local state, debounced commit upward ───
+// â”€â”€â”€ Isolated search input â€” local state, debounced commit upward â”€â”€â”€
 // Usage: <SearchInputLocal initialValue={chatSearch} onCommit={setChatSearch} placeholder="..." />
 // Parent state only updates after the user pauses typing (debounceMs, default 120ms).
-// Typing never re-renders the parent → no full-tree re-render per keystroke.
+// Typing never re-renders the parent â†’ no full-tree re-render per keystroke.
 // Pass inputRef to forward a ref to the underlying <input> (for .focus() etc.).
 const SearchInputLocal = React.memo(function SearchInputLocal({
   initialValue = '',
@@ -1516,7 +1516,7 @@ const SearchInputLocal = React.memo(function SearchInputLocal({
 });
 
 const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
-  // Theme — shadows the outer static colors/styles with reactive versions
+  // Theme â€” shadows the outer static colors/styles with reactive versions
   const { toggleTheme, isDark, themeMode, isNightModeActive, setAutoMode } = useTheme();
   // eslint-disable-next-line no-unused-vars
   const colors = useMemo(() => isDark ? colorsDark : colorsLight, [isDark]);
@@ -1532,7 +1532,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   // Foreground push notification listener
   useEffect(() => {
     const unsubscribe = onForegroundMessage((notification) => {
-      // Show as toast — the user is in the app but maybe on a different screen
+      // Show as toast â€” the user is in the app but maybe on a different screen
       if (notification.title || notification.body) {
         window.dispatchEvent(new CustomEvent('flock-toast', { detail: { message: notification.body || notification.title, type: 'info' } }));
       }
@@ -1544,7 +1544,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   const [userMode, setUserMode] = useState(() => {
     const saved = localStorage.getItem('flockUserMode');
     if (saved) return saved;
-    // No saved mode — auto-select 'user' for regular users immediately (no flash)
+    // No saved mode â€” auto-select 'user' for regular users immediately (no flash)
     if (authUser?.role !== 'venue_owner' && authUser?.role !== 'admin') {
       localStorage.setItem('flockUserMode', 'user');
       return 'user';
@@ -1563,7 +1563,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   React.useEffect(() => {
     if (!authUser) return;
     const isPrivileged = authUser.role === 'venue_owner' || authUser.role === 'admin';
-    // Regular users are forced to user mode — clear any stale venue/admin mode
+    // Regular users are forced to user mode â€” clear any stale venue/admin mode
     if (!isPrivileged && (userMode === 'venue' || userMode === 'admin')) {
       setUserMode('user');
       localStorage.setItem('flockUserMode', 'user');
@@ -1578,7 +1578,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   // Onboarding
   const [hasCompletedOnboarding, setHasCompletedOnboarding] = useState(() => localStorage.getItem('flockOnboardingComplete') === 'true');
   const [onboardingStep, setOnboardingStep] = useState(0);
-  // onboardingName removed — name comes from signup
+  // onboardingName removed â€” name comes from signup
   const [onboardingVibes, setOnboardingVibes] = useState([]);
   const [onboardingAnimating, setOnboardingAnimating] = useState(false);
 
@@ -1596,18 +1596,18 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
       setUserMode('venue');
       setShowModeSelection(false);
       localStorage.setItem('flockUserMode', 'venue');
-      // Check if venue profile already exists — skip onboarding if so
+      // Check if venue profile already exists â€” skip onboarding if so
       getVenueProfile().then(p => {
         if (p && p.business_name) {
-          // Already onboarded — go straight to dashboard
+          // Already onboarded â€” go straight to dashboard
           setShowVenueOnboarding(false);
           setCurrentScreen('venueDashboard');
         } else {
-          // New venue owner — show onboarding
+          // New venue owner â€” show onboarding
           setShowVenueOnboarding(true);
         }
       }).catch(() => {
-        // No profile found — show onboarding
+        // No profile found â€” show onboarding
         setShowVenueOnboarding(true);
       });
     }
@@ -1615,7 +1615,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
 
   // Navigation
   // NFC tag URLs are flockcorp.com/checkin/<placeId>. We detect that path on
-  // boot and route to a dedicated check-in screen. No React Router involved —
+  // boot and route to a dedicated check-in screen. No React Router involved â€”
   // existing screen flow is state-based, this just slots into it.
   const nfcMatch = (typeof window !== 'undefined' && window.location?.pathname.match(/^\/checkin\/([^/?#]+)/)) || null;
   const nfcInitialPlaceId = nfcMatch ? decodeURIComponent(nfcMatch[1]) : null;
@@ -1679,7 +1679,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   const skipCrowdFetchRef = useRef(false);
   const [liveWeather, setLiveWeather] = useState(null);
 
-  // Geolocation state — restore last known location immediately so map isn't empty
+  // Geolocation state â€” restore last known location immediately so map isn't empty
   const [locationEnabled, setLocationEnabled] = useState(() => localStorage.getItem('flock_location_enabled') !== 'false');
   const [userLocation, setUserLocation] = useState(() => {
     if (localStorage.getItem('flock_location_enabled') === 'false') return null;
@@ -1751,7 +1751,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
     }).finally(() => setResearchLoading(false));
   }, [showToast]);
 
-  // Confirm click — shows a ✓ overlay on the button, no state/re-renders (pure DOM + CSS)
+  // Confirm click â€” shows a âœ“ overlay on the button, no state/re-renders (pure DOM + CSS)
   const confirmClick = useCallback((e) => {
     const btn = e.currentTarget;
     if (btn.classList.contains('btn-confirmed')) return;
@@ -2209,7 +2209,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   const [streak, setStreak] = useState(0);
   const [friendCount, setFriendCount] = useState(0);
 
-  // Availability Pulse — 3-tap status: down / maybe / not (or null = unset)
+  // Availability Pulse â€” 3-tap status: down / maybe / not (or null = unset)
   const [myPulse, setMyPulse] = useState(null);
   const [friendsPulses, setFriendsPulses] = useState([]); // [{id, name, profile_image_url, status, note, set_at, expires_at}]
   const [pulseSaving, setPulseSaving] = useState(false);
@@ -2277,7 +2277,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
 
   // Animations
   const [activeTabAnimation, setActiveTabAnimation] = useState(null);
-  // scrollY removed — parallax now uses direct DOM manipulation via headerRef
+  // scrollY removed â€” parallax now uses direct DOM manipulation via headerRef
   const [swipeState, setSwipeState] = useState({ id: null, x: 0, startX: 0 });
 
   const headerRef = useRef(null);
@@ -2337,7 +2337,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
 
 
   // Activity feed
-  // Activity feed removed from home (redesign) — re-enable here if surfacing elsewhere
+  // Activity feed removed from home (redesign) â€” re-enable here if surfacing elsewhere
   // const [activityFeed, setActivityFeed] = useState([]);
 
   // Cycling greeting messages (slot machine style)
@@ -2491,7 +2491,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   const [showPaymentPicker, setShowPaymentPicker] = useState(false);
 
   // Explore
-  // searchText removed — filtering handled by venue search
+  // searchText removed â€” filtering handled by venue search
   const [category, setCategory] = useState('All');
   const [categoryExpanded, setCategoryExpanded] = useState(false);
   const [activeVenue, setActiveVenue] = useState(null);
@@ -2647,7 +2647,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   const [connectSearching, setConnectSearching] = useState(false);
   const [friendStatuses, setFriendStatuses] = useState({}); // { [userId]: 'pending' | 'accepted' }
 
-  // Chat — use refs for input values to avoid full re-renders on every keystroke
+  // Chat â€” use refs for input values to avoid full re-renders on every keystroke
   const [chatInputHasText, setChatInputHasText] = useState(false);
   const chatInputRef = useRef('');
   const setChatInput = useCallback((val) => {
@@ -2760,7 +2760,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   const [trustedContacts, setTrustedContacts] = useState([]);
   const [safetyOn, setSafetyOn] = useState(true);
 
-  // Flock Pro — entitlements come from the backend (users.is_premium via the
+  // Flock Pro â€” entitlements come from the backend (users.is_premium via the
   // RevenueCat webhook), fetched once at boot and re-fetched after a purchase.
   // paywallTrigger doubles as the sheet's open state + contextual headline.
   const [entitlements, setEntitlements] = useState(null); // { isPremium, paywallEnabled, birdie }
@@ -2777,7 +2777,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Draggable FAB positions — snap to corners, persisted in localStorage
+  // Draggable FAB positions â€” snap to corners, persisted in localStorage
   // corner format: 'bottom-left' | 'bottom-right' | 'top-left' | 'top-right'
   const [birdieCorner, setBirdieCorner] = useState(() => localStorage.getItem('flock_birdie_corner') || 'bottom-left');
   const [sosCorner, setSosCorner] = useState(() => localStorage.getItem('flock_sos_corner') || 'bottom-right');
@@ -2799,7 +2799,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
     return pos;
   }, []);
 
-  // Drag FABs — smooth 60fps transform, snap to nearest corner on release
+  // Drag FABs â€” smooth 60fps transform, snap to nearest corner on release
   const handleFabPointerDown = useCallback((e, id) => {
     const el = e.currentTarget;
     el.setPointerCapture(e.pointerId);
@@ -2824,7 +2824,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
     const d = dragRef.current;
     if (!d) return false;
     const wasDrag = d.moved;
-    // Reset transform — CSS transition in .fab-corner handles the snap animation
+    // Reset transform â€” CSS transition in .fab-corner handles the snap animation
     d.el.style.transform = '';
     d.el.style.willChange = '';
     d.el.style.cursor = 'grab';
@@ -2877,7 +2877,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   const [venueTab, setVenueTab] = useState('analytics'); // Lifted to App level to persist across re-renders
   const [adminTab, setAdminTab] = useState('revenue'); // Lifted to App level to persist across re-renders
 
-  // Check URL for admin/venue mode on mount — gated by role
+  // Check URL for admin/venue mode on mount â€” gated by role
   useEffect(() => {
     const urlParams = new URLSearchParams(window.location.search);
     if (urlParams.get('admin') === 'true' && authUser?.role === 'admin') {
@@ -2897,7 +2897,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   }, [aiChatMode]);
 
   // Map venues loaded from Google Places API
-  // Start empty — venues load from API based on user's actual location
+  // Start empty â€” venues load from API based on user's actual location
   const [allVenues, setAllVenues] = useState([]);
   const [mapVenuesLoaded, setMapVenuesLoaded] = useState(false);
 
@@ -3095,7 +3095,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
         body: JSON.stringify({ venue_name: vName, venue_address: vAddr, venue_id: vId, venue_latitude: vLat, venue_longitude: vLng, venue_rating: vRating, venue_photo_url: vPhoto }),
       }).catch(err => console.error('Failed to update flock venue:', err));
     }
-    // Toast removed — venue updates visually
+    // Toast removed â€” venue updates visually
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Mark a flock as completed (post-hangout)
@@ -3142,7 +3142,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
       const loc = ctx.userLocation;
       const location = loc ? { lat: loc.lat, lng: loc.lng } : null;
 
-      // Snapshot of where the user is in the app right now — lets Birdie answer
+      // Snapshot of where the user is in the app right now â€” lets Birdie answer
       // questions like "is this place busy?" or "who's in this flock?"
       const currentContext = {
         screen: ctx.currentScreen,
@@ -3162,7 +3162,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
         };
       }
 
-      // Send conversation history — skip initial greeting, include venue context
+      // Send conversation history â€” skip initial greeting, include venue context
       const messagesToSend = newMessages.slice(1).map(m => {
         let text = m.text;
         // Include venue names in assistant messages so Birdie remembers what it recommended
@@ -3176,13 +3176,13 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
       setAiMessages(prev => [...prev, { role: 'assistant', text: response.text, venues: response.venues || [], navigate: response.navigate || null }]);
     } catch (err) {
       if (err?.code === 'UPGRADE_REQUIRED') {
-        // Free-tier daily meter hit — Birdie pitches Pro in character, then the
+        // Free-tier daily meter hit â€” Birdie pitches Pro in character, then the
         // paywall sheet opens with the birdie-specific headline.
-        setAiMessages(prev => [...prev, { role: 'assistant', text: "that's all my free chirps for today 🐦 Flock Pro gets you unlimited me" }]);
+        setAiMessages(prev => [...prev, { role: 'assistant', text: "that's all my free chirps for today ðŸ¦ Flock Pro gets you unlimited me" }]);
         setPaywallTrigger('birdie');
       } else {
         // Surface the server's friendly text when present (rate-limit, busy, etc.).
-        // Never show "I'm broken" / "trouble connecting" — Birdie stays in character.
+        // Never show "I'm broken" / "trouble connecting" â€” Birdie stays in character.
         const serverMsg = err?.message && err.message !== 'Something went wrong' ? err.message : null;
         const fallback = serverMsg || 'hmm gimme a sec, hit me again';
         setAiMessages(prev => [...prev, { role: 'assistant', text: fallback }]);
@@ -3193,7 +3193,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
     }
   }, [aiMessages]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Keep Birdie's context ref fresh — sendAiMessage's useCallback closure
+  // Keep Birdie's context ref fresh â€” sendAiMessage's useCallback closure
   // would otherwise capture stale screen/flock/venue values.
   useEffect(() => {
     const flock = flocks.find(f => f.id === selectedFlockId) || null;
@@ -3221,7 +3221,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
     () => flocks.find(f => f.id === selectedFlockId) || flocks[0],
     [flocks, selectedFlockId]
   );
-  // Shared budget-filtered venue list — used in search results overlay and share-to-chat modal.
+  // Shared budget-filtered venue list â€” used in search results overlay and share-to-chat modal.
   // Placed high so unrelated state changes (typing) don't recompute.
   const budgetMaxPL = useMemo(
     () => (budgetStatus?.isReady && budgetStatus?.ceiling ? getMaxPriceLevel(budgetStatus.ceiling) : 4),
@@ -3353,7 +3353,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
       };
       setFlocks(prev => prev.map(f => {
         if (f.id !== msg.flock_id) return f;
-        // Deduplicate — skip if message ID already exists
+        // Deduplicate â€” skip if message ID already exists
         if ((f.messages || []).some(m => m.id === msg.id)) return f;
         return { ...f, messages: [...(f.messages || []), mapped] };
       }));
@@ -3391,7 +3391,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
 
   const startSharingLocation = useCallback((flockId) => {
     if (!userLocation) {
-      // Toast removed — banner shows location status
+      // Toast removed â€” banner shows location status
       return;
     }
     emitLocation(flockId, userLocation.lat, userLocation.lng);
@@ -3423,8 +3423,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   useEffect(() => {
     if (!sharingLocationForFlock) { sharingFlockStatusRef.current = null; return; }
     const flock = flocks.find(f => f.id === sharingLocationForFlock);
-    if (!flock) return; // flock not found during state rebuild — don't stop
-    if (sharingFlockStatusRef.current === null) { sharingFlockStatusRef.current = flock.status; return; } // first run — just record status
+    if (!flock) return; // flock not found during state rebuild â€” don't stop
+    if (sharingFlockStatusRef.current === null) { sharingFlockStatusRef.current = flock.status; return; } // first run â€” just record status
     if (flock.status !== 'confirmed') {
       stopLocationSharing();
       sharingFlockStatusRef.current = null;
@@ -3573,7 +3573,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
     return unsub;
   }, []);
 
-  // Listen for venue confirmed (flock status → confirmed)
+  // Listen for venue confirmed (flock status â†’ confirmed)
   useEffect(() => {
     const unsub = onVenueSelected((data) => {
       setFlocks(prev => prev.map(f => {
@@ -3667,7 +3667,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
     return unsub;
   }, []);
 
-  // Typing indicator — throttled: emit once, suppress until stopped
+  // Typing indicator â€” throttled: emit once, suppress until stopped
   const typingTimeoutRef = useRef(null);
   const typingActiveRef = useRef(false);
   const handleChatInputChange = useCallback((e) => {
@@ -3687,7 +3687,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
     }
   }, [selectedFlockId]);
 
-  // Send chat message — emit via WebSocket, fall back to HTTP
+  // Send chat message â€” emit via WebSocket, fall back to HTTP
   const sendChatMessage = useCallback(async () => {
     const currentInput = chatInputRef.current;
     if (currentInput.trim()) {
@@ -3942,7 +3942,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
         try {
           stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' } }, audio: false });
         } catch {
-          // Fallback — any camera
+          // Fallback â€” any camera
           stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
         }
         cameraStreamRef.current = stream;
@@ -4112,7 +4112,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
     return icons[id] || null;
   };
 
-  // Bottom Navigation — hidden only when actually on venue/admin dashboard screens
+  // Bottom Navigation â€” hidden only when actually on venue/admin dashboard screens
   const BottomNav = () => {
     if (currentScreen === 'venueDashboard' || currentScreen === 'adminRevenue') return null;
     if (showVenueOnboarding || showModeSelection) return null;
@@ -4338,7 +4338,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
     </div>
   );
 
-  // AI Bubble — draggable floating widget, snaps to corners
+  // AI Bubble â€” draggable floating widget, snaps to corners
   const lastAiMessage = aiMessages.length > 1 ? aiMessages[aiMessages.length - 1] : null;
   const birdieIsRight = birdieCorner.includes('right');
   const AIBubble = () => currentScreen === 'main' && currentTab === 'home' && aiChatMode === 'bubble' && (
@@ -4402,7 +4402,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
     </div>
   );
 
-  // Toast — lightweight, GPU-accelerated
+  // Toast â€” lightweight, GPU-accelerated
   const Toast = () => toast && (
     <div style={{
       position: 'fixed',
@@ -4482,13 +4482,13 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
     </div>
   );
 
-  // Crop modal — shown after selecting a photo, before uploading
+  // Crop modal â€” shown after selecting a photo, before uploading
   const CropModal = () => cropImageSrc && (
     <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.9)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', zIndex: 60, padding: '16px' }}>
       <h2 style={{ fontSize: '18px', fontWeight: '900', color: 'white', margin: '0 0 16px', textAlign: 'center' }}>Crop Photo</h2>
       <p style={{ fontSize: '12px', color: 'rgba(255,255,255,0.5)', margin: '0 0 12px' }}>Drag to reposition, pinch/scroll to zoom</p>
 
-      {/* Crop area — circular preview */}
+      {/* Crop area â€” circular preview */}
       <div
         style={{ width: '280px', height: '280px', borderRadius: '50%', overflow: 'hidden', position: 'relative', cursor: 'grab', border: '3px solid rgba(255,255,255,0.3)', touchAction: 'none' }}
         onPointerDown={(e) => {
@@ -4535,7 +4535,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
     </div>
   );
 
-  // Handler for admin mode — verified via user role from backend
+  // Handler for admin mode â€” verified via user role from backend
   const handleAdminModeSelect = () => {
     if (authUser?.role === 'admin') {
       localStorage.setItem('flockUserMode', 'admin');
@@ -4675,7 +4675,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                   <h3 style={{ fontSize: '14px', fontWeight: '700', color: colors.navy, margin: 0 }}>{user.name}</h3>
                   <p style={{ fontSize: '11px', color: 'var(--text-secondary)', margin: '1px 0 0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{user.email}</p>
                 </div>
-                <span style={{ fontSize: '16px', color: 'var(--text-tertiary)' }}>›</span>
+                <span style={{ fontSize: '16px', color: 'var(--text-tertiary)' }}>â€º</span>
               </button>
             ))}
           </div>
@@ -4755,7 +4755,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
     // Clear reply
     const replyTo = opts.reply_to_id ? dmReplyingTo : dmReplyingTo;
     if (!opts.noReply) setDmReplyingTo(null);
-    // Optimistic update — show message instantly
+    // Optimistic update â€” show message instantly
     const tempId = `temp-${Date.now()}`;
     const optimistic = {
       id: tempId,
@@ -4951,7 +4951,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
     e.target.value = '';
   }, [showToast]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const dmReactions = ['❤️', '👍', '😂', '🔥'];
+  const dmReactions = ['â¤ï¸', 'ðŸ‘', 'ðŸ˜‚', 'ðŸ”¥'];
 
   const dmDetailScreen = currentScreen === 'dmDetail' && selectedDm && (
     <div key="dm-detail-screen" style={{ display: 'flex', flexDirection: 'column', height: '100%', backgroundColor: 'var(--bg-card-solid)' }}>
@@ -4976,7 +4976,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
             {showDmMenu && (
               <div style={{ position: 'absolute', top: '38px', right: 0, backgroundColor: 'var(--bg-card-solid)', borderRadius: '14px', boxShadow: '0 8px 24px rgba(0,0,0,0.12)', minWidth: '200px', zIndex: 60, overflow: 'hidden', border: '1px solid var(--border-subtle)' }}>
                 <button className="glass-btn" onClick={() => { setShowDmMenu(false); setModerationTarget({ userId: selectedDmId, userName: selectedDm.name, contentType: 'profile' }); }} style={{ width: '100%', padding: '14px 16px', display: 'flex', alignItems: 'center', gap: '10px', border: 'none', borderBottom: '1px solid var(--border-subtle)', backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer', fontSize: '14px', fontWeight: '600', color: 'var(--text-primary)' }}>
-                  <span aria-hidden style={{ fontSize: '15px' }}>⚑</span> Report or block {selectedDm.name}
+                  <span aria-hidden style={{ fontSize: '15px' }}>âš‘</span> Report or block {selectedDm.name}
                 </button>
                 <button className="glass-btn glass-danger" onClick={() => { setShowDmMenu(false); setShowDeleteDmConfirm(true); }} style={{ width: '100%', padding: '14px 16px', display: 'flex', alignItems: 'center', gap: '10px', border: 'none', backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer', fontSize: '14px', fontWeight: '600', color: '#EF4444' }}>
                   {Icons.x('#EF4444', 16)} Delete Conversation
@@ -5011,7 +5011,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
         </div>
       )}
 
-      {/* Pinned Venue Banner — top-voted or manually pinned venue */}
+      {/* Pinned Venue Banner â€” top-voted or manually pinned venue */}
       {dmPinnedVenue ? (
         <div style={{ padding: '10px 14px', background: `linear-gradient(135deg, ${colors.navy}08, ${colors.steel}12)`, borderBottom: `1px solid ${colors.creamDark}`, flexShrink: 0 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
@@ -5085,7 +5085,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
         </div>
       )}
 
-      {/* Vote panel — identical to flock with optimistic local updates */}
+      {/* Vote panel â€” identical to flock with optimistic local updates */}
       {showDmVotePanel && (() => {
         const myName = authUser?.name;
         const totalVoters = new Set(dmVenueVotes.flatMap(v => v.voters || [])).size;
@@ -5149,7 +5149,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
                 <div>
                   <h2 style={{ fontSize: '18px', fontWeight: '900', color: colors.navy, margin: 0, display: 'flex', alignItems: 'center', gap: '8px' }}>{Icons.vote(colors.navy, 20)} Vote for a Venue</h2>
-                  <p style={{ fontSize: '11px', color: 'var(--text-tertiary)', margin: '2px 0 0' }}>{totalVoters} vote{totalVoters !== 1 ? 's' : ''} cast{myVote ? ` • You voted for ${myVote}` : ''}</p>
+                  <p style={{ fontSize: '11px', color: 'var(--text-tertiary)', margin: '2px 0 0' }}>{totalVoters} vote{totalVoters !== 1 ? 's' : ''} cast{myVote ? ` â€¢ You voted for ${myVote}` : ''}</p>
                 </div>
                 <button onClick={() => setShowDmVotePanel(false)} style={{ width: '32px', height: '32px', borderRadius: '16px', backgroundColor: 'var(--bg-hover)', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.x(colors.textSecondary, 18)}</button>
               </div>
@@ -5212,7 +5212,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                         )}
                         <div style={{ flex: 1, minWidth: 0 }}>
                           <p style={{ fontSize: '13px', fontWeight: '600', color: colors.navy, margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{venue.name}</p>
-                          <p style={{ fontSize: '10px', color: 'var(--text-tertiary)', margin: '1px 0 0' }}>{venue.type || venue.category}{venue.stars ? ` • ${venue.stars}★` : ''}{venue.price ? ` • ${venue.price}` : ''}</p>
+                          <p style={{ fontSize: '10px', color: 'var(--text-tertiary)', margin: '1px 0 0' }}>{venue.type || venue.category}{venue.stars ? ` â€¢ ${venue.stars}â˜…` : ''}{venue.price ? ` â€¢ ${venue.price}` : ''}</p>
                         </div>
                         <div style={{ padding: '6px 12px', borderRadius: '10px', backgroundColor: `${colors.navy}08`, color: colors.navy, fontSize: '11px', fontWeight: '700', flexShrink: 0 }}>
                           {Icons.vote(colors.navy, 12)} Vote
@@ -5232,7 +5232,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
         );
       })()}
 
-      {/* Venue Share Modal — matches flock style exactly */}
+      {/* Venue Share Modal â€” matches flock style exactly */}
       {showDmVenueSearch && (
         <div className="modal-backdrop" style={{ position: 'absolute', inset: 0, backgroundColor: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'flex-end', zIndex: 50 }}>
           <div className="modal-content" style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '20px 20px 0 0', padding: '20px', width: '100%', maxHeight: '70%', overflowY: 'auto' }}>
@@ -5298,11 +5298,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
               <button onClick={() => setShowDmCashPool(false)} style={{ width: '32px', height: '32px', borderRadius: '16px', backgroundColor: 'var(--bg-hover)', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.x(colors.textSecondary, 18)}</button>
             </div>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '16px', marginBottom: '16px' }}>
-              <button className="glass-btn glass-secondary" onClick={() => setDmCashPoolAmount(prev => Math.max(5, prev - 5))} style={{ width: '44px', height: '44px', borderRadius: '22px', border: `2px solid ${colors.navy}`, backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontWeight: 'bold', cursor: 'pointer', fontSize: '18px' }}>−</button>
+              <button className="glass-btn glass-secondary" onClick={() => setDmCashPoolAmount(prev => Math.max(5, prev - 5))} style={{ width: '44px', height: '44px', borderRadius: '22px', border: `2px solid ${colors.navy}`, backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontWeight: 'bold', cursor: 'pointer', fontSize: '18px' }}>âˆ’</button>
               <span style={{ fontSize: '36px', fontWeight: '900', width: '100px', textAlign: 'center', color: colors.navy }}>${dmCashPoolAmount}</span>
               <button className="glass-btn glass-secondary" onClick={() => setDmCashPoolAmount(prev => prev + 5)} style={{ width: '44px', height: '44px', borderRadius: '22px', border: `2px solid ${colors.navy}`, backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontWeight: 'bold', cursor: 'pointer', fontSize: '18px' }}>+</button>
             </div>
-            <p style={{ fontSize: '13px', color: 'var(--text-secondary)', textAlign: 'center', marginBottom: '20px' }}>Per person • Total: ${dmCashPoolAmount * 2}</p>
+            <p style={{ fontSize: '13px', color: 'var(--text-secondary)', textAlign: 'center', marginBottom: '20px' }}>Per person â€¢ Total: ${dmCashPoolAmount * 2}</p>
             <button className="glass-btn glass-navy" onClick={(e) => {
               confirmClick(e);
               setDmCashPool({ perPerson: dmCashPoolAmount, total: dmCashPoolAmount * 2, collected: 0, paid: [] });
@@ -5390,7 +5390,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                     <p style={{ fontSize: '10px', color: 'var(--text-secondary)', margin: '1px 0 0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{m.reply_to.text}</p>
                   </div>
                 )}
-                {/* Venue card message — uses same VenueCard component as flocks */}
+                {/* Venue card message â€” uses same VenueCard component as flocks */}
                 {m.message_type === 'venue_card' && m.venue_data ? (
                   <VenueCard
                     venue={m.venue_data}
@@ -5457,7 +5457,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                     ))}
                     <button onClick={(e) => { e.stopPropagation(); setDmReplyingTo(m); setShowDmReactionPicker(null); }} style={{ fontSize: '14px', background: 'none', border: 'none', cursor: 'pointer', padding: '4px 6px', borderRadius: '8px', color: colors.navy, fontWeight: '700' }} title="Reply">{Icons.reply(colors.navy, 14)}</button>
                     {m.sender !== 'You' && (
-                      <button onClick={(e) => { e.stopPropagation(); setShowDmReactionPicker(null); setModerationTarget({ userId: selectedDmId, userName: selectedDm.name, contentType: 'dm', contentId: m.id }); }} style={{ fontSize: '14px', background: 'none', border: 'none', cursor: 'pointer', padding: '4px 6px', borderRadius: '8px', color: '#EF4444', fontWeight: '700' }} title="Report">⚑</button>
+                      <button onClick={(e) => { e.stopPropagation(); setShowDmReactionPicker(null); setModerationTarget({ userId: selectedDmId, userName: selectedDm.name, contentType: 'dm', contentId: m.id }); }} style={{ fontSize: '14px', background: 'none', border: 'none', cursor: 'pointer', padding: '4px 6px', borderRadius: '8px', color: '#EF4444', fontWeight: '700' }} title="Report">âš‘</button>
                     )}
                   </div>
                 )}
@@ -5494,7 +5494,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
         </div>
       )}
 
-      {/* Input bar — text + camera + venue search + send */}
+      {/* Input bar â€” text + camera + venue search + send */}
       <div style={{ padding: '10px 12px', borderTop: '1px solid var(--divider)', backgroundColor: 'var(--bg-card-solid)' }}>
         <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
           {/* Camera button */}
@@ -5545,7 +5545,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
     { label: 'Check Plans', icon: Icons.calendar, action: () => { closeAiChat(); setCurrentTab('calendar'); } },
   ];
 
-  // AI Assistant — Expandable Chat (panel / fullscreen)
+  // AI Assistant â€” Expandable Chat (panel / fullscreen)
   const isAiPanel = aiChatMode === 'panel';
   const isAiFullscreen = aiChatMode === 'fullscreen';
   const closeAiChat = () => setAiChatMode('bubble');
@@ -5622,7 +5622,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
             </div>
           </div>
 
-          {/* Quick Actions — only in fullscreen */}
+          {/* Quick Actions â€” only in fullscreen */}
           {isAiFullscreen && (
           <div style={{ padding: '10px 12px', backgroundColor: 'var(--bg-tertiary)', borderBottom: '1px solid var(--divider)', display: 'flex', gap: '8px', flexShrink: 0 }}>
             {aiQuickActions.map((action, i) => (
@@ -5671,7 +5671,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                       else if (nav.profile_section === 'edit') setProfileScreen('edit');
                       closeAiChat();
                     }} style={{ marginTop: '8px', padding: '10px 16px', borderRadius: '12px', border: 'none', background: '#1e293b', color: 'white', fontSize: '12px', fontWeight: '700', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px', boxShadow: '0 2px 8px rgba(30,58,92,0.25)' }}>
-                      {Icons.arrowRight ? Icons.arrowRight('white', 14) : '→'} Take me there
+                      {Icons.arrowRight ? Icons.arrowRight('white', 14) : 'â†’'} Take me there
                     </button>
                   )}
                   {msg.venues && msg.venues.length > 0 && (
@@ -5780,7 +5780,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
             <div ref={aiChatEndRef} />
           </div>
 
-          {/* Suggested Questions — show in both modes but compact in panel */}
+          {/* Suggested Questions â€” show in both modes but compact in panel */}
           {!aiTyping && (
             <div style={{ padding: isAiPanel ? '6px 10px' : '8px 12px', borderTop: '1px solid var(--divider)', backgroundColor: 'var(--bg-tertiary)', flexShrink: 0 }}>
               {isAiFullscreen && <p style={{ fontSize: '9px', fontWeight: '600', color: 'var(--text-secondary)', marginBottom: '6px', textTransform: 'uppercase' }}>Try asking</p>}
@@ -5856,7 +5856,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 </div>
                 <div style={{ flex: 1, overflowY: 'auto', padding: '8px' }}>
                   {aiShareVenue._shareToDm ? (
-                    /* DM — navigate to DM tab with venue in clipboard */
+                    /* DM â€” navigate to DM tab with venue in clipboard */
                     <div style={{ padding: '20px', textAlign: 'center' }}>
                       <p style={{ fontSize: '13px', color: 'var(--text-secondary)', marginBottom: '12px' }}>Open your DMs to share <strong>{aiShareVenue.name}</strong></p>
                       <button onClick={() => {
@@ -5939,7 +5939,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
 
     return (
       <div style={{ display: 'flex', flexDirection: 'column', height: '100%', position: 'relative', overflow: 'hidden' }}>
-        {/* City video background — same as login */}
+        {/* City video background â€” same as login */}
         <div style={{ position: 'absolute', inset: 0, overflow: 'hidden', pointerEvents: 'none' }}>
           <video autoPlay muted loop playsInline style={{ position: 'absolute', width: '100%', height: '100%', objectFit: 'cover', filter: 'brightness(0.65) saturate(1)' }}>
             <source src="/bg-city.mp4" type="video/mp4" />
@@ -5964,7 +5964,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 <h3 style={{ fontSize: '15px', fontWeight: '800', color: 'white', margin: '0 0 2px', textShadow: '0 1px 3px rgba(0,0,0,0.4)' }}>I'm Going Out</h3>
                 <p style={{ fontSize: '11px', color: 'rgba(255,255,255,0.7)', margin: 0, textShadow: '0 1px 2px rgba(0,0,0,0.3)' }}>Coordinate with friends, find venues</p>
               </div>
-              <span style={{ fontSize: '18px', color: 'rgba(255,255,255,0.5)' }}>›</span>
+              <span style={{ fontSize: '18px', color: 'rgba(255,255,255,0.5)' }}>â€º</span>
             </button>
 
             {/* Venue Owner Mode */}
@@ -5974,7 +5974,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                   <h3 style={{ fontSize: '15px', fontWeight: '800', color: 'white', margin: '0 0 2px', textShadow: '0 1px 3px rgba(0,0,0,0.4)' }}>Venue Dashboard</h3>
                   <p style={{ fontSize: '11px', color: 'rgba(255,255,255,0.7)', margin: 0, textShadow: '0 1px 2px rgba(0,0,0,0.3)' }}>Manage your venue, see traffic</p>
                 </div>
-                <span style={{ fontSize: '18px', color: 'rgba(255,255,255,0.5)' }}>›</span>
+                <span style={{ fontSize: '18px', color: 'rgba(255,255,255,0.5)' }}>â€º</span>
               </button>
             )}
 
@@ -5985,7 +5985,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                   <h3 style={{ fontSize: '15px', fontWeight: '800', color: 'white', margin: '0 0 2px', textShadow: '0 1px 3px rgba(0,0,0,0.4)' }}>Admin Dashboard</h3>
                   <p style={{ fontSize: '11px', color: 'rgba(255,255,255,0.7)', margin: 0, textShadow: '0 1px 2px rgba(0,0,0,0.3)' }}>Platform analytics & revenue</p>
                 </div>
-                <span style={{ fontSize: '18px', color: 'rgba(255,255,255,0.5)' }}>›</span>
+                <span style={{ fontSize: '18px', color: 'rgba(255,255,255,0.5)' }}>â€º</span>
               </button>
             )}
           </div>
@@ -6006,7 +6006,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
         flexShrink: 0,
         transformOrigin: 'top center',
       }}>
-        {/* Greeting + avatar — tight */}
+        {/* Greeting + avatar â€” tight */}
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
           <div>
             <div style={{ height: '12px', overflow: 'hidden', position: 'relative' }}>
@@ -6028,14 +6028,14 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           </button>
         </div>
 
-        {/* Editorial stat line — numbers as typography, not identical tiles (2026-07 recomposition) */}
+        {/* Editorial stat line â€” numbers as typography, not identical tiles (2026-07 recomposition) */}
         <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: '0 0 12px', fontWeight: '600', letterSpacing: '-0.1px' }}>
           <span style={{ color: 'var(--text-primary)', fontWeight: '800', fontSize: '13px' }}>{flocks.length}</span> {flocks.length === 1 ? 'flock' : 'flocks'}
-          <span style={{ color: 'var(--text-tertiary)', margin: '0 7px' }}>·</span>
+          <span style={{ color: 'var(--text-tertiary)', margin: '0 7px' }}>Â·</span>
           <span style={{ color: 'var(--text-primary)', fontWeight: '800', fontSize: '13px' }}>{friendCount}</span> {friendCount === 1 ? 'friend' : 'friends'}
         </p>
 
-        {/* Tonight — full-width segmented pulse control (the actionable hero of the header) */}
+        {/* Tonight â€” full-width segmented pulse control (the actionable hero of the header) */}
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px', borderRadius: '14px', backgroundColor: 'var(--bg-card-solid)', border: '1px solid var(--border-default)', boxShadow: 'var(--card-shadow-sm)' }}>
           <span style={{ fontSize: '11px', fontWeight: '700', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px', paddingLeft: '8px', flexShrink: 0 }}>Tonight?</span>
           <div style={{ display: 'flex', flex: 1, gap: '4px' }}>
@@ -6076,7 +6076,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
       {/* Scrollable Content */}
       <div onScroll={handleScroll} style={{ flex: 1, padding: '4px 16px 16px', overflowY: 'auto', WebkitOverflowScrolling: 'touch' }}>
 
-        {/* Needs your attention — clean card (previous form), steel chip, no yellow */}
+        {/* Needs your attention â€” clean card (previous form), steel chip, no yellow */}
         {(() => {
           const needsAction = flocks.filter(f => f.status === 'voting');
           if (needsAction.length === 0) return null;
@@ -6111,7 +6111,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           );
         })()}
 
-        {/* Primary action — one full-width hero CTA (login-language: navy on light, cream on dark) */}
+        {/* Primary action â€” one full-width hero CTA (login-language: navy on light, cream on dark) */}
         <ScrollFade delay={1}><button
           onClick={() => setCurrentScreen('create')}
           className="neo-btn-primary"
@@ -6137,7 +6137,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           {Icons.plus(isDark ? '#1e293b' : 'white', 16)} Start a flock
         </button></ScrollFade>
 
-        {/* Flocks — header row with quiet Add-friends ghost */}
+        {/* Flocks â€” header row with quiet Add-friends ghost */}
         <ScrollFade delay={3}><div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', margin: '0 0 8px' }}>
           <h2 style={{ fontSize: '12px', fontWeight: 'bold', color: colors.navy, margin: 0 }}>Your Flocks</h2>
           <button
@@ -6282,7 +6282,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
         const invitedNames = capturedFriends.map(fr => fr.name);
         const newFlock = { id: f.id, name: f.name, host: authUser?.name || 'You', creatorId: f.creator_id, members: invitedNames, memberCount: 1 + invitedIds.length, time: f.event_time ? new Date(f.event_time).toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' }) : `${flockDate} ${flockTime}`, status: 'voting', venue: f.venue_name || 'TBD', venueAddress: venueAddr, venueId: venueId, venuePhoto: venuePhoto, venueRating: venueRating, venuePriceLevel: venuePriceLevel, venueLat: venueLat, venueLng: venueLng, cashPool: null, budgetEnabled: f.budget_enabled || capturedBudget, budgetContext: f.budget_context || capturedBudgetCtx, budgetLocked: false, budgetCeiling: null, ghostModeEnabled: f.ghost_mode_enabled || capturedGhostMode, votes: [], messages: initialMessages };
 
-        // Batch all state updates together — navigate immediately
+        // Batch all state updates together â€” navigate immediately
         newlyCreatedFlockRef.current = f.id;
         setFlocks(prev => [...prev, newFlock]);
         setSelectedFlockId(f.id);
@@ -6297,7 +6297,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
     return (
       <div key="create-screen-container" style={{ display: 'flex', flexDirection: 'column', height: '100%', backgroundColor: 'var(--bg-card-solid)' }}>
         <div style={{ padding: '12px', display: 'flex', alignItems: 'center', gap: '8px', borderBottom: '1px solid var(--divider)', backgroundColor: 'var(--bg-card-solid)', flexShrink: 0 }}>
-          <button onClick={() => { setCurrentScreen('main'); setFlockName(''); setFlockFriends([]); setInviteSearch(''); setInviteResults([]); setSelectedVenueForCreate(null); }} style={{ width: '32px', height: '32px', borderRadius: '16px', border: 'none', backgroundColor: 'transparent', color: colors.navy, fontSize: '18px', cursor: 'pointer' }}>←</button>
+          <button onClick={() => { setCurrentScreen('main'); setFlockName(''); setFlockFriends([]); setInviteSearch(''); setInviteResults([]); setSelectedVenueForCreate(null); }} style={{ width: '32px', height: '32px', borderRadius: '16px', border: 'none', backgroundColor: 'transparent', color: colors.navy, fontSize: '18px', cursor: 'pointer' }}>â†</button>
           <h1 style={{ fontSize: '18px', fontWeight: '900', color: colors.navy, margin: 0 }}>Start a Flock</h1>
         </div>
 
@@ -6307,7 +6307,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
             <SearchInputLocal key="flock-name-input" id="flock-name-input" type="text" initialValue={flockName} onCommit={setFlockName} placeholder="Movie night, dinner, party..." style={styles.input} autoComplete="off" />
           </div>
 
-          {/* VENUE PICKER — Browse on Discover tab */}
+          {/* VENUE PICKER â€” Browse on Discover tab */}
           <div style={{ marginBottom: '16px' }}>
             <label style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '12px', fontWeight: 'bold', color: colors.navy, marginBottom: '6px' }}>{Icons.mapPin(colors.navy, 12)} Venue</label>
 
@@ -6340,7 +6340,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
             <label style={{ display: 'block', fontSize: '12px', fontWeight: 'bold', color: colors.navy, marginBottom: '6px' }}>When</label>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '6px' }}>
               {['Tonight', 'Tomorrow', 'This Weekend', 'Next Week'].map(d => (
-                <button key={d} onClick={() => setFlockDate(d)} style={{ padding: '10px', borderRadius: '10px', border: flockDate === d ? '2px solid #2d5a87' : '1.5px solid var(--border-default)', backgroundColor: flockDate === d ? 'rgba(45,90,135,0.12)' : 'var(--bg-card-solid)', color: flockDate === d ? '#22c55e' : 'var(--text-primary)', fontWeight: '700', fontSize: '13px', cursor: 'pointer', transition: 'all 0.2s ease', boxShadow: flockDate === d ? '0 0 12px rgba(34,197,94,0.2)' : 'none' }}>{flockDate === d ? '✓ ' : ''}{d}</button>
+                <button key={d} onClick={() => setFlockDate(d)} style={{ padding: '10px', borderRadius: '10px', border: flockDate === d ? '2px solid #2d5a87' : '1.5px solid var(--border-default)', backgroundColor: flockDate === d ? 'rgba(45,90,135,0.12)' : 'var(--bg-card-solid)', color: flockDate === d ? '#22c55e' : 'var(--text-primary)', fontWeight: '700', fontSize: '13px', cursor: 'pointer', transition: 'all 0.2s ease', boxShadow: flockDate === d ? '0 0 12px rgba(34,197,94,0.2)' : 'none' }}>{flockDate === d ? 'âœ“ ' : ''}{d}</button>
               ))}
             </div>
           </div>
@@ -6487,7 +6487,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   const JoinScreen = () => (
     <div key="join-screen-container" style={{ display: 'flex', flexDirection: 'column', height: '100%', backgroundColor: 'var(--bg-card-solid)' }}>
       <div style={{ padding: '12px', display: 'flex', alignItems: 'center', gap: '8px', borderBottom: '1px solid var(--divider)', backgroundColor: 'var(--bg-card-solid)', flexShrink: 0 }}>
-        <button onClick={() => { setCurrentScreen('main'); setJoinCode(''); }} style={{ width: '32px', height: '32px', borderRadius: '16px', border: 'none', backgroundColor: 'transparent', color: colors.navy, fontSize: '18px', cursor: 'pointer' }}>←</button>
+        <button onClick={() => { setCurrentScreen('main'); setJoinCode(''); }} style={{ width: '32px', height: '32px', borderRadius: '16px', border: 'none', backgroundColor: 'transparent', color: colors.navy, fontSize: '18px', cursor: 'pointer' }}>â†</button>
         <h1 style={{ fontSize: '18px', fontWeight: '900', color: colors.navy, margin: 0 }}>Join a Flock</h1>
       </div>
       <div style={{ flex: 1, padding: '16px', backgroundColor: 'var(--bg-primary)' }}>
@@ -6552,7 +6552,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           )}
           {!venueSearching && venueResults.length > 0 && (
             <div style={{ padding: '4px 12px 8px' }}>
-              {/* View All — first thing you see */}
+              {/* View All â€” first thing you see */}
               <button
                 className="glass-btn glass-navy"
                 onClick={() => { setShowSearchResults(true); setShowSearchDropdown(false); }}
@@ -6583,7 +6583,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <p style={{ fontWeight: '700', fontSize: '13px', color: colors.navy, margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{venue.name}</p>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginTop: '2px', flexWrap: 'wrap' }}>
-                      {venue.rating && <span style={{ fontSize: '11px', fontWeight: '700', color: colors.navy }}>{venue.rating} ★</span>}
+                      {venue.rating && <span style={{ fontSize: '11px', fontWeight: '700', color: colors.navy }}>{venue.rating} â˜…</span>}
                       {venue.user_ratings_total > 0 && <span style={{ fontSize: '10px', color: 'var(--text-tertiary)' }}>({venue.user_ratings_total})</span>}
                       {venue.price_level && <span style={{ fontSize: '11px', color: 'var(--text-secondary)', fontWeight: '600' }}>{'$'.repeat(venue.price_level)}</span>}
                       {userLocation && venue.location && (() => {
@@ -6614,7 +6614,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
 
       {/* Premium Map */}
       <div onClick={() => { setShowSearchDropdown(false); }} style={{ flex: 1, position: 'relative', overflow: 'hidden' }}>
-        {/* MapLibre GL — Snap Map-style vector tiles (smooth, free, no API key) */}
+        {/* MapLibre GL â€” Snap Map-style vector tiles (smooth, free, no API key) */}
         <MapLibreMapView
           venues={allVenues}
           filterCategory={category}
@@ -6642,7 +6642,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           }}>
             <div style={{ width: '8px', height: '8px', borderRadius: '4px', backgroundColor: '#34d399', animation: 'pulse 2s ease-in-out infinite', boxShadow: 'none', flexShrink: 0 }} />
             <p style={{ fontSize: '11px', fontWeight: '600', color: 'white', margin: 0, flex: 1 }}>
-              Live location · {Object.keys(flockMemberLocations).length > 0 ? `${Object.keys(flockMemberLocations).length} member${Object.keys(flockMemberLocations).length > 1 ? 's' : ''} nearby` : 'Waiting for others...'}
+              Live location Â· {Object.keys(flockMemberLocations).length > 0 ? `${Object.keys(flockMemberLocations).length} member${Object.keys(flockMemberLocations).length > 1 ? 's' : ''} nearby` : 'Waiting for others...'}
             </p>
             <button onClick={stopLocationSharing} style={{ padding: '4px 10px', borderRadius: '10px', border: '1px solid rgba(255,255,255,0.3)', background: 'rgba(255,255,255,0.15)', color: 'white', fontSize: '10px', fontWeight: '600', cursor: 'pointer' }}>Stop</button>
           </div>
@@ -6759,7 +6759,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                     const types = activeVenue.types || [];
                     if (types.length > 0) return types[0].replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
                     return activeVenue.type || 'Place';
-                  })()} • {activeVenue.price}</span>
+                  })()} â€¢ {activeVenue.price}</span>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '2px' }}>
                     {Icons.party('#fbbf24', 10)}
                     <span style={{ fontSize: '11px', fontWeight: '700', color: 'var(--text-primary)' }}>{activeVenue.stars}</span>
@@ -6777,7 +6777,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 const score = cd ? cd.score : (activeVenue.crowd || 0);
                 const label = cd ? cd.label : (score > 70 ? 'Very Busy' : score > 40 ? 'Moderate' : 'Not Busy');
                 const crowdColor = score > 70 ? colors.red : score > 40 ? colors.amber : colors.steel;
-                // Only pass real ML score to the dial — rule-engine score of 0 means "still loading"
+                // Only pass real ML score to the dial â€” rule-engine score of 0 means "still loading"
                 const dialScore = cd ? cd.score : 0;
 
                 // Generate client-side hourly forecast when API data is unavailable
@@ -6856,7 +6856,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
 
                 // Find the period that actually contains "now". Handles two failure modes
                 // we kept hitting on overnight venues:
-                //   1. Sites like halal grills with 10AM-3AM hours — Google emits a separate
+                //   1. Sites like halal grills with 10AM-3AM hours â€” Google emits a separate
                 //      Saturday early-morning period (12AM-3AM, leftover from Friday) AND the
                 //      main Saturday 10AM-3AM period. Naively picking the first day=6 entry
                 //      grabs the leftover, gives openHour=0, and greys 10AM-11PM.
@@ -6895,7 +6895,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                     if (n < oMOW) n += 7 * 1440;
                     if (n >= oMOW && n < cMOW) return { openHour: oH, closeHour: (cH === 0 ? 24 : cH) };
                   }
-                  // No period contains "now" — fall back to today's first period
+                  // No period contains "now" â€” fall back to today's first period
                   const today = now.getDay();
                   const tp = periods.find(pd => pd.open?.day === today);
                   if (!tp) return null;
@@ -6907,12 +6907,12 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 const venueOpenHour = activePeriod?.openHour ?? cd?.openHour ?? null;
                 const venueCloseHour = activePeriod?.closeHour ?? cd?.closeHour ?? null;
 
-                // Compute isOpen — prefer explicit API signal, fall back to today's hours, then null
+                // Compute isOpen â€” prefer explicit API signal, fall back to today's hours, then null
                 const nowHour = new Date().getHours();
                 const computedIsOpen = (venueOpenHour != null && venueCloseHour != null)
                   ? (venueCloseHour > venueOpenHour
-                      ? (nowHour >= venueOpenHour && nowHour < venueCloseHour)       // normal hours e.g. 9–18
-                      : (nowHour >= venueOpenHour || nowHour < venueCloseHour))      // overnight e.g. 17–02
+                      ? (nowHour >= venueOpenHour && nowHour < venueCloseHour)       // normal hours e.g. 9â€“18
+                      : (nowHour >= venueOpenHour || nowHour < venueCloseHour))      // overnight e.g. 17â€“02
                   : null;
                 const realIsOpen = cd?.isOpen ?? venueOH?.openNow ?? computedIsOpen;
                 const isOpen = realIsOpen;
@@ -6921,7 +6921,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 // Closed all day = venue is closed AND we have no opening window for today
                 const closedAllDay = isClosed && venueOpenHour == null;
 
-                // Wait estimate — only show actual wait if busy (70%+). Under 70% = no meaningful wait.
+                // Wait estimate â€” only show actual wait if busy (70%+). Under 70% = no meaningful wait.
                 const getWait = () => {
                   if (isClosed) return 'Closed';
                   if (cd && cd.waitEstimate) return cd.waitEstimate;
@@ -6938,7 +6938,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 // Compute peak & best from full-day forecast (6 AM - 5 AM)
                 let peakText = cd?.peak;
                 let bestText = cd?.bestTime;
-                // Closed venue can never have "Now is good" — force a recompute so we surface the next/least-busy open hour.
+                // Closed venue can never have "Now is good" â€” force a recompute so we surface the next/least-busy open hour.
                 if (isClosed && bestText === 'Now is good') bestText = null;
                 if (!peakText || !bestText) {
                   const types = activeVenue.types || [];
@@ -7097,18 +7097,18 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                   })()}
                 </motion.div>
 
-                {/* Hourly Forecast Graph — fades in immediately, bars animate up */}
+                {/* Hourly Forecast Graph â€” fades in immediately, bars animate up */}
                 <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.2, duration: 0.4, ease: 'easeOut' }} style={{ marginBottom: '6px' }}>
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '4px' }}>
                     <p style={{ fontSize: '9px', fontWeight: '600', color: 'var(--text-secondary)', textTransform: 'uppercase', margin: 0 }}>Expected Crowd by Hour</p>
                     {(() => {
                       // Trend arrow: compare "Now" to next-hour prediction.
-                      // Skip if next hour is closed/unknown — model's MAE is ~5pts so use that as the dead-zone threshold.
+                      // Skip if next hour is closed/unknown â€” model's MAE is ~5pts so use that as the dead-zone threshold.
                       const cur = (Number.isFinite(score) && score > 0) ? score : (Number.isFinite(hourlyData[0]?.score) ? hourlyData[0].score : null);
                       const next = Number.isFinite(hourlyData[1]?.score) ? hourlyData[1].score : null;
                       if (cur == null || next == null || next <= 0) return null;
                       const diff = next - cur;
-                      const arrow = diff >= 5 ? '↗' : diff <= -5 ? '↘' : '→';
+                      const arrow = diff >= 5 ? 'â†—' : diff <= -5 ? 'â†˜' : 'â†’';
                       const label = diff >= 5 ? 'Rising' : diff <= -5 ? 'Falling' : 'Steady';
                       const color = diff >= 5 ? colors.red : diff <= -5 ? colors.steel : 'var(--text-secondary)';
                       return (
@@ -7120,7 +7120,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                     {hourlyData.map((h, i) => {
                       const isNow = i === 0;
                       const parsedH = (() => { const p = (h.hour || '').match(/^(\d+)\s*(AM|PM)$/i); if (!p) return 12; let hr = parseInt(p[1], 10); if (p[2].toUpperCase() === 'AM' && hr === 12) hr = 0; else if (p[2].toUpperCase() === 'PM' && hr !== 12) hr += 12; return hr; })();
-                      // When the API supplies hourly data, the score itself encodes openness — skip the Google-hours heuristic,
+                      // When the API supplies hourly data, the score itself encodes openness â€” skip the Google-hours heuristic,
                       // EXCEPT: closedAllDay greys every bar, explicit Google open/close hours grey bars outside the window,
                       // and a closed-now venue must grey its "Now" bar regardless.
                       const apiHourly = !!cd?.hourly;
@@ -7130,14 +7130,14 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                           : (parsedH >= venueCloseHour && parsedH < venueOpenHour)
                       ) : false;
                       // If we have a live score for "Now", the venue is open right now
-                      // by definition — never grey the Now bar in that case.
+                      // by definition â€” never grey the Now bar in that case.
                       const hasLiveNow = isNow && Number.isFinite(score) && score > 0;
                       const hourClosed = hasLiveNow ? false : (closedAllDay ? true : (apiHourly ? (closedByGoogleHours || (isNow && isClosed)) : (() => {
                         if (closedAllDay) return true;
                         if (venueOpenHour != null && venueCloseHour != null) {
                           // Handle venues that close after midnight (close < open).
-                          // Open period for "regular" days  : [open, close]   → closed = h<open || h>close
-                          // Open period for "wraparound" days: [open, 24) ∪ [0, close] → closed = h>close && h<open
+                          // Open period for "regular" days  : [open, close]   â†’ closed = h<open || h>close
+                          // Open period for "wraparound" days: [open, 24) âˆª [0, close] â†’ closed = h>close && h<open
                           if (venueCloseHour > venueOpenHour) {
                             return parsedH < venueOpenHour || parsedH > venueCloseHour;
                           }
@@ -7274,7 +7274,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 );
               })()}
 
-              {/* Live Occupancy card — only renders when a Pi sensor exists for this venue */}
+              {/* Live Occupancy card â€” only renders when a Pi sensor exists for this venue */}
               {sensorData?.sensor_data && (() => {
                 const sd = sensorData.sensor_data;
                 const noiseLabel = sd.noise_db == null ? null
@@ -7330,7 +7330,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                       <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '12px' }}>
                         <div style={{ width: '6px', height: '6px', borderRadius: '50%', backgroundColor: noiseLabel.color }} />
                         <span style={{ fontSize: '12px', fontWeight: '700', color: noiseLabel.color }}>{noiseLabel.text}</span>
-                        <span style={{ fontSize: '10px', color: 'var(--text-tertiary)' }}>· {Number(sd.noise_db).toFixed(0)} dB</span>
+                        <span style={{ fontSize: '10px', color: 'var(--text-tertiary)' }}>Â· {Number(sd.noise_db).toFixed(0)} dB</span>
                       </div>
                     )}
 
@@ -7406,7 +7406,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 )}
                 {activeVenue.place_id && (() => {
                   const checkedIn = checkinDoneAt && (Date.now() - checkinDoneAt < 2 * 60 * 60 * 1000);
-                  const label = checkinJustSaved ? 'Checked In ✓' : checkedIn ? 'Checked In ✓' : 'Check In';
+                  const label = checkinJustSaved ? 'Checked In âœ“' : checkedIn ? 'Checked In âœ“' : 'Check In';
                   const disabled = checkedIn || checkinSaving;
                   return (
                     <button
@@ -7443,7 +7443,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
         </AnimatePresence>
       </div>
 
-      {/* Live Events Panel — slides in from right */}
+      {/* Live Events Panel â€” slides in from right */}
       <div style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, zIndex: showEventsView ? 45 : -1, pointerEvents: showEventsView ? 'auto' : 'none' }}>
         <div style={{ position: 'absolute', inset: 0, backgroundColor: 'var(--bg-primary)', display: 'flex', flexDirection: 'column', transform: showEventsView ? 'translateX(0)' : 'translateX(100%)', transition: 'transform 0.35s cubic-bezier(0.4, 0, 0.2, 1)', willChange: 'transform' }}>
           {/* Events header */}
@@ -7614,7 +7614,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
       </div>
 
 
-      {/* Categories — expandable filter bar (matches Features button pattern) */}
+      {/* Categories â€” expandable filter bar (matches Features button pattern) */}
       <div style={{ padding: '6px 12px', backgroundColor: 'var(--bg-card-solid)', borderTop: '1px solid var(--border-light)', flexShrink: 0 }}>
         <div style={{ display: 'flex', gap: '6px', alignItems: 'center', justifyContent: categoryExpanded ? 'flex-start' : 'center', overflow: 'hidden' }}>
           {categoryExpanded && (
@@ -7643,7 +7643,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
             padding: categoryExpanded ? '0' : '0 14px', fontSize: '12px', fontWeight: '700', color: 'var(--text-primary)',
             flexShrink: 0, transition: 'all 0.3s ease',
           }}>
-            {categoryExpanded ? Icons.x('var(--text-primary)', 16) : <span style={{ fontSize: '12px', fontWeight: '700', whiteSpace: 'nowrap' }}>Filters{category !== 'All' ? ` · ${category}` : ''}</span>}
+            {categoryExpanded ? Icons.x('var(--text-primary)', 16) : <span style={{ fontSize: '12px', fontWeight: '700', whiteSpace: 'nowrap' }}>Filters{category !== 'All' ? ` Â· ${category}` : ''}</span>}
           </button>
         </div>
       </div>
@@ -7685,7 +7685,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
       return upcoming.slice(0, 4);
     };
 
-    // Weather data — live for today, forecast for future dates
+    // Weather data â€” live for today, forecast for future dates
     const isSelectedToday = selectedDateStr === todayStr;
     const forecastForDate = weatherForecast.find(f => f.date === selectedDateStr);
     const weatherData = isSelectedToday ? liveWeather : forecastForDate;
@@ -7762,7 +7762,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                   <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
                     {weatherIcon(weatherColor, 36)}
                     <div>
-                      <p style={{ fontSize: '28px', fontWeight: '800', color: colors.navy, margin: 0, lineHeight: 1 }}>{Math.round(w.temp)}°</p>
+                      <p style={{ fontSize: '28px', fontWeight: '800', color: colors.navy, margin: 0, lineHeight: 1 }}>{Math.round(w.temp)}Â°</p>
                       <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: '2px 0 0', fontWeight: '500' }}>{conditionText}</p>
                     </div>
                   </div>
@@ -7778,7 +7778,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '1px', backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)' }}>
                   <div style={{ padding: '10px', textAlign: 'center', backgroundColor: isDark ? 'rgba(30,58,92,0.5)' : 'rgba(219,234,254,0.5)' }}>
                     <p style={{ fontSize: '9px', color: 'var(--text-tertiary)', margin: 0, fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Feels Like</p>
-                    <p style={{ fontSize: '16px', fontWeight: '800', color: colors.navy, margin: '2px 0 0' }}>{Math.round(w.feelsLike)}°</p>
+                    <p style={{ fontSize: '16px', fontWeight: '800', color: colors.navy, margin: '2px 0 0' }}>{Math.round(w.feelsLike)}Â°</p>
                   </div>
                   <div style={{ padding: '10px', textAlign: 'center', backgroundColor: isDark ? 'rgba(30,58,92,0.5)' : 'rgba(219,234,254,0.5)' }}>
                     <p style={{ fontSize: '9px', color: 'var(--text-tertiary)', margin: 0, fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Humidity</p>
@@ -7890,7 +7890,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
     );
   };
 
-  // CHAT LIST SCREEN — redesigned with pin & reorder
+  // CHAT LIST SCREEN â€” redesigned with pin & reorder
   const ChatListScreen = () => {
     const totalConversations = flocks.length + directMessages.length;
 
@@ -8076,7 +8076,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
 
                     {/* Flock card */}
                     <button onClick={() => { if (editingFlockList) return; setSelectedFlockId(f.id); setCurrentScreen('chatDetail'); simulateTyping(); }} style={{ flex: 1, textAlign: 'left', backgroundColor: isPinned ? `${colors.navy}06` : 'var(--bg-card-solid)', borderRadius: '16px', padding: '12px 14px', border: isPinned ? `1.5px solid ${colors.navy}18` : `1px solid var(--border-default)`, cursor: editingFlockList ? 'default' : 'pointer', display: 'flex', alignItems: 'center', gap: '12px', transition: 'opacity 0.2s', boxShadow: isPinned ? '0 2px 12px rgba(13,40,71,0.06)' : '0 1px 4px rgba(0,0,0,0.03)', position: 'relative', overflow: 'hidden' }}>
-                      {/* Avatar — group chat photo */}
+                      {/* Avatar â€” group chat photo */}
                       <div style={{ position: 'relative', flexShrink: 0 }}>
                         {(() => {
                           const seed = String(f.id || f.name || '');
@@ -8154,7 +8154,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   // CHAT DETAIL SCREEN - Enhanced with location cards, timestamps, typing indicators, and image sharing
   const ChatDetailScreen = () => {
     const flock = getSelectedFlock();
-    const reactions = ['❤️', '👍', '😂', '🔥'];
+    const reactions = ['â¤ï¸', 'ðŸ‘', 'ðŸ˜‚', 'ðŸ”¥'];
 
     return (
       <div key="chat-detail-screen-container" style={{ display: 'flex', flexDirection: 'column', height: '100%', backgroundColor: 'var(--bg-card-solid)' }}>
@@ -8166,7 +8166,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 <h2 style={{ fontWeight: '800', color: 'white', fontSize: '15px', margin: 0, lineHeight: '1.2', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{flock.name}</h2>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '5px', marginTop: '2px' }}>
                   <span style={{ fontSize: '11px', color: 'rgba(255,255,255,0.55)', fontWeight: '500' }}>{flock.members?.length || flock.memberCount || 0} members</span>
-                  <span style={{ fontSize: '11px', color: 'rgba(255,255,255,0.3)' }}>•</span>
+                  <span style={{ fontSize: '11px', color: 'rgba(255,255,255,0.3)' }}>â€¢</span>
                   {isTyping ? <span style={{ fontSize: '11px', color: '#86EFAC', fontWeight: '600' }}>{typingUser} is typing...</span> : <><span style={{ width: '5px', height: '5px', borderRadius: '3px', backgroundColor: '#22c55e', boxShadow: 'none' }} /><span style={{ fontSize: '11px', color: 'rgba(255,255,255,0.55)', fontWeight: '500' }}>online</span></>}
                 </div>
               </div>
@@ -8198,7 +8198,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           <div onClick={() => setShowFlockMenu(false)} style={{ position: 'absolute', inset: 0, zIndex: 55 }} />
         )}
 
-        {/* ── Momentum Meter (compact) ── */}
+        {/* â”€â”€ Momentum Meter (compact) â”€â”€ */}
         {flock.momentum && flock.status !== 'completed' && (() => {
           const m = flock.momentum;
           const stages = [
@@ -8217,8 +8217,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                   <span style={{ fontSize: '10px', color: 'var(--text-secondary)' }}>
                     {m.accepted}/{m.totalMembers} RSVPs
-                    {m.hasVenue ? ' · Venue set' : ''}
-                    {m.hasTime ? ' · Time set' : ''}
+                    {m.hasVenue ? ' Â· Venue set' : ''}
+                    {m.hasTime ? ' Â· Time set' : ''}
                   </span>
                   <span style={{ fontSize: '11px', fontWeight: '800', color: activeColor }}>{stages[activeIdx]?.label}</span>
                 </div>
@@ -8259,7 +8259,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           </div>
         )}
 
-        {/* Pinned Venue Banner — shows which venue this flock is at */}
+        {/* Pinned Venue Banner â€” shows which venue this flock is at */}
         {flock.venue && flock.venue !== 'TBD' ? (
           <div style={{ padding: '10px 14px', background: `linear-gradient(135deg, ${colors.navy}08, ${colors.steel}12)`, borderBottom: `1px solid ${colors.creamDark}`, flexShrink: 0 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
@@ -8367,7 +8367,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 </p>
               ) : (
                 <p style={{ fontSize: '12px', fontWeight: '600', color: 'var(--text-secondary)', margin: 0 }}>
-                  Waiting for budgets · {budgetStatus.submissionCount || 0} of {budgetStatus.totalMembers || '?'} submitted
+                  Waiting for budgets Â· {budgetStatus.submissionCount || 0} of {budgetStatus.totalMembers || '?'} submitted
                 </p>
               )}
             </div>
@@ -8375,7 +8375,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           </div>
         )}
 
-        {/* Ghost Mode Card — after venue confirmed, before bill created */}
+        {/* Ghost Mode Card â€” after venue confirmed, before bill created */}
         {flock.status === 'confirmed' && flock.budgetEnabled && flock.ghostModeEnabled && budgetStatus?.ceiling && !billSplit && (
           <div style={{ padding: '10px 14px', background: `linear-gradient(135deg, ${colors.amber}08, ${colors.amber}15)`, borderBottom: `1px solid ${colors.amber}25`, flexShrink: 0 }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
@@ -8395,7 +8395,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           </div>
         )}
 
-        {/* Bill summary bar — shows when bill exists */}
+        {/* Bill summary bar â€” shows when bill exists */}
         {billSplit && (
           <div onClick={() => setShowChatPool(true)} style={{ padding: '8px 14px', background: billSplit.shares?.every(s => s.settled) ? 'linear-gradient(135deg, #ecfdf5, #d1fae5)' : `linear-gradient(135deg, ${colors.navy}06, ${colors.navy}12)`, borderBottom: '1px solid var(--divider)', flexShrink: 0, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
@@ -8403,7 +8403,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
               <p style={{ fontSize: '12px', fontWeight: '600', color: colors.navy, margin: 0 }}>
                 {billSplit.shares?.every(s => s.settled)
                   ? 'All settled up'
-                  : `Bill: $${billSplit.totalWithTip?.toFixed(2)} · ${billSplit.shares?.filter(s => s.settled).length}/${billSplit.shares?.length} settled`}
+                  : `Bill: $${billSplit.totalWithTip?.toFixed(2)} Â· ${billSplit.shares?.filter(s => s.settled).length}/${billSplit.shares?.length} settled`}
               </p>
             </div>
             <span style={{ fontSize: '10px', color: 'var(--text-tertiary)' }}>View</span>
@@ -8461,7 +8461,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 {/* Sender name and timestamp */}
                 <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '4px', padding: '0 4px' }}>
                   <span style={{ fontSize: '11px', color: colors.navy, fontWeight: '600' }}>{m.sender}</span>
-                  <span style={{ fontSize: '10px', color: 'var(--text-tertiary)' }}>•</span>
+                  <span style={{ fontSize: '10px', color: 'var(--text-tertiary)' }}>â€¢</span>
                   <span style={{ fontSize: '10px', color: 'var(--text-tertiary)', fontWeight: '500' }}>{m.time || getRelativeTime(m.time)}</span>
                 </div>
 
@@ -8575,7 +8575,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                     ))}
                     <button onClick={(e) => { e.stopPropagation(); setReplyingTo(m); setShowReactionPicker(null); }} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '6px', display: 'flex', alignItems: 'center', borderRadius: '10px' }}>{Icons.reply(colors.textSecondary, 18)}</button>
                     {m.sender !== 'You' && (
-                      <button onClick={(e) => { e.stopPropagation(); setShowReactionPicker(null); setModerationTarget({ userId: m.senderId, userName: m.sender, contentType: 'flock_message', contentId: m.id }); }} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '6px', display: 'flex', alignItems: 'center', borderRadius: '10px', fontSize: '16px', color: '#EF4444' }} title="Report">⚑</button>
+                      <button onClick={(e) => { e.stopPropagation(); setShowReactionPicker(null); setModerationTarget({ userId: m.senderId, userName: m.sender, contentType: 'flock_message', contentId: m.id }); }} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '6px', display: 'flex', alignItems: 'center', borderRadius: '10px', fontSize: '16px', color: '#EF4444' }} title="Report">âš‘</button>
                     )}
                   </div>
                 )}
@@ -8609,7 +8609,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
             </div>
           ))}
 
-          {/* Enhanced typing indicator with user name — fixed height to prevent layout shift */}
+          {/* Enhanced typing indicator with user name â€” fixed height to prevent layout shift */}
           <div style={{ height: '58px', overflow: 'hidden', opacity: isTyping ? 1 : 0, transition: 'opacity 0.2s ease', pointerEvents: isTyping ? 'auto' : 'none' }}>
             <div style={{ display: 'flex', gap: '10px' }}>
               <div style={{ width: '34px', height: '34px', borderRadius: '17px', backgroundColor: 'var(--bg-card-solid)', border: '2px solid var(--border-subtle)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '11px', fontWeight: '700', color: colors.navy }}>{typingUser?.[0] || 'A'}</div>
@@ -8709,7 +8709,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           </div>
         )}
 
-        {/* Money Layer Modal — Budget Submit / Bill Split */}
+        {/* Money Layer Modal â€” Budget Submit / Bill Split */}
         {showChatPool && (() => {
           const isCreator = flock.creatorId && String(flock.creatorId) === String(authUser?.id);
           const isConfirmedOrComplete = flock.status === 'confirmed' || flock.status === 'completed';
@@ -8802,7 +8802,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                       </div>
                     )}
                     {!budgetStatus?.budgetLocked && budgetStatus?.userAmount && (
-                      <p style={{ fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '12px' }}>Your budget: ${budgetStatus.userAmount} · <button onClick={() => { setBudgetAmount(budgetStatus.userAmount); setBudgetCustom(''); setBudgetStatus(prev => ({ ...prev, userSubmitted: false })); }} style={{ background: 'none', border: 'none', color: colors.steel, fontWeight: '700', cursor: 'pointer', padding: 0, fontSize: '12px' }}>Change</button></p>
+                      <p style={{ fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '12px' }}>Your budget: ${budgetStatus.userAmount} Â· <button onClick={() => { setBudgetAmount(budgetStatus.userAmount); setBudgetCustom(''); setBudgetStatus(prev => ({ ...prev, userSubmitted: false })); }} style={{ background: 'none', border: 'none', color: colors.steel, fontWeight: '700', cursor: 'pointer', padding: 0, fontSize: '12px' }}>Change</button></p>
                     )}
                     {isCreator && !budgetStatus?.budgetLocked && (
                       <div style={{ display: 'flex', gap: '8px', marginBottom: '12px' }}>
@@ -8816,7 +8816,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                   </div>
                 )}
 
-                {/* Budget disabled — direct to bill split */}
+                {/* Budget disabled â€” direct to bill split */}
                 {!hasBudget && !showCreateBill && !billSplit && (
                   <div>
                     <p style={{ fontSize: '13px', color: 'var(--text-secondary)', marginBottom: '16px' }}>Create a bill split after your hangout</p>
@@ -8871,7 +8871,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                           <span style={{ fontSize: '13px', fontWeight: '800', color: colors.navy }}>Total</span>
                           <span style={{ fontSize: '13px', fontWeight: '800', color: colors.steel }}>${(parseFloat(billTotal) * (1 + billTip / 100)).toFixed(2)}</span>
                         </div>
-                        <p style={{ fontSize: '11px', color: 'var(--text-tertiary)', margin: '6px 0 0', textAlign: 'center' }}>Equal split · ~${(parseFloat(billTotal) * (1 + billTip / 100) / Math.max(1, flock.members?.length || flock.memberCount || 1)).toFixed(2)} each</p>
+                        <p style={{ fontSize: '11px', color: 'var(--text-tertiary)', margin: '6px 0 0', textAlign: 'center' }}>Equal split Â· ~${(parseFloat(billTotal) * (1 + billTip / 100) / Math.max(1, flock.members?.length || flock.memberCount || 1)).toFixed(2)} each</p>
                       </div>
                     )}
                     <button className="glass-btn glass-primary" disabled={!billTotal || parseFloat(billTotal) <= 0} onClick={async () => {
@@ -8951,7 +8951,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                           } catch (e2) { showToast(e2.message, 'error'); }
                         }
                       }} style={{ ...styles.gradientButton, padding: '14px', marginBottom: '8px' }}>
-                        Settle Up · ${billSplit.shares.find(s => String(s.userId) === String(authUser?.id))?.amount?.toFixed(2)}
+                        Settle Up Â· ${billSplit.shares.find(s => String(s.userId) === String(authUser?.id))?.amount?.toFixed(2)}
                       </button>
                     )}
                     {billSplit.shares?.find(s => String(s.userId) === String(authUser?.id) && !s.settled) && (
@@ -9047,7 +9047,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
                   <div>
                     <h2 style={{ fontSize: '18px', fontWeight: '900', color: colors.navy, margin: 0, display: 'flex', alignItems: 'center', gap: '8px' }}>{Icons.vote(colors.navy, 20)} Vote for a Venue</h2>
-                    <p style={{ fontSize: '11px', color: 'var(--text-tertiary)', margin: '2px 0 0' }}>{totalVoters} vote{totalVoters !== 1 ? 's' : ''} cast{myVote ? ` • You voted for ${myVote}` : ''}</p>
+                    <p style={{ fontSize: '11px', color: 'var(--text-tertiary)', margin: '2px 0 0' }}>{totalVoters} vote{totalVoters !== 1 ? 's' : ''} cast{myVote ? ` â€¢ You voted for ${myVote}` : ''}</p>
                   </div>
                   <button onClick={() => setShowVotePanel(false)} style={{ width: '32px', height: '32px', borderRadius: '16px', backgroundColor: 'var(--bg-hover)', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.x(colors.textSecondary, 18)}</button>
                 </div>
@@ -9113,7 +9113,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                           )}
                           <div style={{ flex: 1, minWidth: 0 }}>
                             <p style={{ fontSize: '13px', fontWeight: '600', color: colors.navy, margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{venue.name}</p>
-                            <p style={{ fontSize: '10px', color: 'var(--text-tertiary)', margin: '1px 0 0' }}>{venue.type || venue.category}{venue.stars ? ` • ${venue.stars}★` : ''}{venue.price ? ` • ${venue.price}` : ''}</p>
+                            <p style={{ fontSize: '10px', color: 'var(--text-tertiary)', margin: '1px 0 0' }}>{venue.type || venue.category}{venue.stars ? ` â€¢ ${venue.stars}â˜…` : ''}{venue.price ? ` â€¢ ${venue.price}` : ''}</p>
                           </div>
                           <div style={{ padding: '6px 12px', borderRadius: '10px', backgroundColor: `${colors.navy}08`, color: colors.navy, fontSize: '11px', fontWeight: '700', flexShrink: 0 }}>
                             {Icons.vote(colors.navy, 12)} Vote
@@ -9195,7 +9195,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                     </div>
                     <div style={{ flex: 1 }}>
                       <p style={{ fontSize: '14px', fontWeight: '600', color: colors.navy, margin: 0 }}>{venue.name}</p>
-                      <p style={{ fontSize: '11px', color: 'var(--text-secondary)', margin: '2px 0 0' }}>{venue.type} • {venue.price}</p>
+                      <p style={{ fontSize: '11px', color: 'var(--text-secondary)', margin: '2px 0 0' }}>{venue.type} â€¢ {venue.price}</p>
                     </div>
                     <div style={{
                       padding: '4px 10px',
@@ -9389,7 +9389,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
     );
   };
 
-  // FLOCK DETAIL SCREEN — Modern Dashboard
+  // FLOCK DETAIL SCREEN â€” Modern Dashboard
   const FlockDetailScreen = () => {
     const flock = getSelectedFlock();
     if (!flock) return null;
@@ -9401,14 +9401,14 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
     return (
       <div key="flock-detail-screen-container" style={{ display: 'flex', flexDirection: 'column', height: '100%', backgroundColor: 'var(--bg-primary)' }}>
 
-        {/* ── Header with navy gradient ── */}
+        {/* â”€â”€ Header with navy gradient â”€â”€ */}
         <div style={{ background: colors.navyBg, padding: '16px', paddingTop: '20px', flexShrink: 0 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '14px' }}>
-            <button onClick={() => setCurrentScreen('main')} style={{ width: '36px', height: '36px', borderRadius: '50%', background: 'rgba(255,255,255,0.2)', border: 'none', color: 'white', fontSize: '18px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>←</button>
+            <button onClick={() => setCurrentScreen('main')} style={{ width: '36px', height: '36px', borderRadius: '50%', background: 'rgba(255,255,255,0.2)', border: 'none', color: 'white', fontSize: '18px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>â†</button>
             <div style={{ flex: 1, minWidth: 0 }}>
               <h1 style={{ color: 'white', margin: 0, fontSize: '20px', fontWeight: '800', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{flock.name}</h1>
               <div style={{ color: 'rgba(255,255,255,0.75)', fontSize: '13px', marginTop: '3px' }}>
-                Hosted by {flock.host} {acceptedMembers.length > 0 && <span style={{ marginLeft: '4px' }}>· {acceptedMembers.length} member{acceptedMembers.length !== 1 ? 's' : ''}</span>}
+                Hosted by {flock.host} {acceptedMembers.length > 0 && <span style={{ marginLeft: '4px' }}>Â· {acceptedMembers.length} member{acceptedMembers.length !== 1 ? 's' : ''}</span>}
               </div>
             </div>
             <button onClick={(e) => { confirmClick(e); addEventToCalendar(flock.name, flock.venue, new Date(), flock.time || '9 PM'); }} style={{ width: '36px', height: '36px', borderRadius: '50%', background: 'rgba(255,255,255,0.2)', border: 'none', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{Icons.calendar('white', 16)}</button>
@@ -9426,7 +9426,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
             )}
           </div>
 
-          {/* ── Momentum Meter ── */}
+          {/* â”€â”€ Momentum Meter â”€â”€ */}
           {!isCompleted && flock.momentum && (() => {
             const m = flock.momentum;
             const stages = [
@@ -9472,7 +9472,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           })()}
         </div>
 
-        {/* Slide to complete bar — only for confirmed flocks */}
+        {/* Slide to complete bar â€” only for confirmed flocks */}
         {isConfirmed && (
           <div style={{ padding: '10px 16px', flexShrink: 0, borderBottom: '1px solid var(--border-subtle)' }}>
             <p style={{ fontSize: '10px', fontWeight: '600', color: 'var(--text-secondary)', margin: '0 0 6px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Hangout done? Slide to complete</p>
@@ -9536,7 +9536,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           </div>
         )}
 
-        {/* ── Scrollable content ── */}
+        {/* â”€â”€ Scrollable content â”€â”€ */}
         <div style={{ flex: 1, overflowY: 'auto', padding: '14px', paddingBottom: '90px' }}>
 
           {/* Venue Card */}
@@ -9552,7 +9552,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 <div style={{ display: 'flex', alignItems: 'flex-start', gap: '8px', marginBottom: '6px' }}>
                   <h3 style={{ color: colors.navy, margin: 0, fontSize: '17px', fontWeight: '800', flex: 1 }}>{flock.venue}</h3>
                   {flock.venueRating && (
-                    <span style={{ display: 'flex', alignItems: 'center', gap: '3px', padding: '3px 8px', background: 'var(--accent-amber-bg)', borderRadius: '8px', fontSize: '13px', fontWeight: '700', color: 'var(--accent-amber-text)', flexShrink: 0 }}>★ {flock.venueRating}</span>
+                    <span style={{ display: 'flex', alignItems: 'center', gap: '3px', padding: '3px 8px', background: 'var(--accent-amber-bg)', borderRadius: '8px', fontSize: '13px', fontWeight: '700', color: 'var(--accent-amber-text)', flexShrink: 0 }}>â˜… {flock.venueRating}</span>
                   )}
                 </div>
                 {flock.venueAddress && (
@@ -9582,7 +9582,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
             </div>
           )}
 
-          {/* Post-hangout feedback prompt — only after flock is marked done */}
+          {/* Post-hangout feedback prompt â€” only after flock is marked done */}
           {isCompleted && hasVenue && flock.venueId && !submittedFeedback.has(flock.id) && (
             <div style={{ ...styles.card, marginBottom: '12px', overflow: 'hidden' }}>
               <p style={{ color: colors.navy, fontSize: '14px', fontWeight: '800', margin: '0 0 10px' }}>How was {flock.venue}?</p>
@@ -9757,7 +9757,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
 
         </div>
 
-        {/* ── Bottom CTA ── */}
+        {/* â”€â”€ Bottom CTA â”€â”€ */}
         <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, padding: '14px', background: `linear-gradient(transparent, var(--bg-primary) 30%)`, pointerEvents: 'none' }}>
           <button className="glass-btn glass-navy" onClick={() => setCurrentScreen('chatDetail')} style={{ width: '100%', padding: '14px', background: colors.navyBg, border: 'none', borderRadius: '14px', color: 'white', fontSize: '15px', fontWeight: '800', cursor: 'pointer', boxShadow: '0 6px 20px rgba(13,40,71,0.10)', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', pointerEvents: 'auto' }}>
             {Icons.chat('white', 18)} Open Chat
@@ -9774,7 +9774,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
       return (
         <div key={`profile-${profileScreen}-container`} style={{ display: 'flex', flexDirection: 'column', height: '100%', backgroundColor: 'var(--bg-primary)' }}>
           <div style={{ padding: '12px', display: 'flex', alignItems: 'center', gap: '8px', borderBottom: '1px solid var(--divider)', backgroundColor: 'var(--bg-card-solid)', flexShrink: 0 }}>
-            <button onClick={() => setProfileScreen('main')} style={{ background: 'none', border: 'none', color: colors.navy, fontSize: '18px', cursor: 'pointer' }}>←</button>
+            <button onClick={() => setProfileScreen('main')} style={{ background: 'none', border: 'none', color: colors.navy, fontSize: '18px', cursor: 'pointer' }}>â†</button>
             <h1 style={{ fontSize: '18px', fontWeight: '900', color: colors.navy, margin: 0 }}>{profileScreen === 'edit' ? 'Edit Profile' : profileScreen === 'safety' ? 'Safety' : profileScreen === 'interests' ? 'Interests' : 'Payment'}</h1>
           </div>
           <div style={{ flex: 1, padding: '16px', overflowY: 'auto' }}>
@@ -10099,7 +10099,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                           {card.brand}
                         </div>
                         <div style={{ flex: 1 }}>
-                          <p style={{ fontSize: '14px', fontWeight: '600', color: colors.navy, margin: 0 }}>•••• {card.last4}</p>
+                          <p style={{ fontSize: '14px', fontWeight: '600', color: colors.navy, margin: 0 }}>â€¢â€¢â€¢â€¢ {card.last4}</p>
                           <p style={{ fontSize: '11px', color: 'var(--text-secondary)', margin: 0 }}>Expires {card.expiry}</p>
                         </div>
                         {card.isDefault && <span style={{ fontSize: '9px', fontWeight: '600', color: '#22C55E', backgroundColor: '#DCFCE7', padding: '2px 6px', borderRadius: '4px' }}>Default</span>}
@@ -10180,7 +10180,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
               <span style={{ fontSize: '11px', opacity: 0.7 }}>Find people, scan QR, sync contacts</span>
             </div>
             {pendingRequests.length > 0 && <span style={{ padding: '4px 10px', borderRadius: '12px', backgroundColor: colors.amber, fontSize: '12px', fontWeight: '700' }}>{pendingRequests.length}</span>}
-            <span style={{ opacity: 0.6 }}>›</span>
+            <span style={{ opacity: 0.6 }}>â€º</span>
           </button>
 
           <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', boxShadow: 'var(--card-shadow-sm)', overflow: 'hidden' }}>
@@ -10193,7 +10193,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
               <button key={m.s} className="glass-btn glass-secondary" onClick={() => { setProfileScreen(m.s); if (m.s === 'safety') loadTrustedContacts(); if (m.s === 'payment') { setVenmoUsername(authUser?.venmo_username || ''); setCashappCashtag(authUser?.cashapp_cashtag || ''); setZelleIdentifier(authUser?.zelle_identifier || ''); } }} style={{ width: '100%', padding: '12px', textAlign: 'left', borderBottom: '1px solid var(--border-light)', display: 'flex', alignItems: 'center', gap: '12px', backgroundColor: 'var(--bg-card-solid)', border: 'none', cursor: 'pointer' }}>
                 <div style={{ width: '32px', height: '32px', borderRadius: '8px', backgroundColor: 'var(--icon-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{m.icon(colors.navy, 18)}</div>
                 <span style={{ flex: 1, fontWeight: '600', fontSize: '14px', color: colors.navy }}>{m.l}</span>
-                <span style={{ color: 'var(--text-tertiary)' }}>›</span>
+                <span style={{ color: 'var(--text-tertiary)' }}>â€º</span>
               </button>
             ))}
             {/* Location Toggle */}
@@ -10224,7 +10224,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                   {Icons.moon('var(--accent-purple-text)', 12)} Night mode active
                 </div>
               )}
-              {/* Manual dark mode toggle — only when auto is off */}
+              {/* Manual dark mode toggle â€” only when auto is off */}
               {themeMode !== 'auto' && (
                 <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginTop: '10px', paddingTop: '10px', borderTop: '1px solid var(--border-light)' }}>
                   <div style={{ width: '32px', height: '32px', borderRadius: '8px', backgroundColor: 'var(--icon-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{isDark ? Icons.moon(colors.navy, 18) : Icons.sun(colors.navy, 18)}</div>
@@ -10247,7 +10247,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 )}
               </div>
             </div>
-            {/* Flock Pro — hidden until the backend flips PAYWALL_ENABLED (or the user is already Pro) */}
+            {/* Flock Pro â€” hidden until the backend flips PAYWALL_ENABLED (or the user is already Pro) */}
             {(entitlements?.paywallEnabled || isPro) && (
               <button className="glass-btn glass-secondary" onClick={() => { if (!isPro) setPaywallTrigger('settings'); }} style={{ width: '100%', padding: '12px', textAlign: 'left', borderTop: '1px solid var(--border-light)', display: 'flex', alignItems: 'center', gap: '12px', backgroundColor: 'var(--bg-card-solid)', border: 'none', cursor: isPro ? 'default' : 'pointer' }}>
                 <div style={{ width: '32px', height: '32px', borderRadius: '8px', backgroundColor: 'var(--icon-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.sparkles(colors.navy, 18)}</div>
@@ -10255,7 +10255,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 {isPro ? (
                   <span style={{ fontSize: '12px', fontWeight: '600', color: '#22c55e' }}>Active</span>
                 ) : (
-                  <span style={{ color: 'var(--text-tertiary)' }}>›</span>
+                  <span style={{ color: 'var(--text-tertiary)' }}>â€º</span>
                 )}
               </button>
             )}
@@ -10263,17 +10263,17 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
               {Icons.logout(colors.red, 18)}
               <span style={{ fontWeight: '600', fontSize: '14px' }}>Log Out</span>
             </button>
-            {/* Delete account (Apple Guideline 5.1.1(v)) — permanent, in-app */}
+            {/* Delete account (Apple Guideline 5.1.1(v)) â€” permanent, in-app */}
             <button onClick={() => { setDeleteConfirmText(''); setShowDeleteAccount(true); }} style={{ width: '100%', marginTop: '10px', padding: '12px', textAlign: 'left', display: 'flex', alignItems: 'center', gap: '12px', backgroundColor: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--text-tertiary)' }}>
               {Icons.trash('var(--text-tertiary)', 18)}
               <span style={{ fontWeight: '600', fontSize: '14px' }}>Delete account</span>
             </button>
           </div>
 
-          {/* Delete-account confirmation — requires typing DELETE; hard-delete is irreversible */}
+          {/* Delete-account confirmation â€” requires typing DELETE; hard-delete is irreversible */}
           {showDeleteAccount && (
             <div onClick={() => !deletingAccount && setShowDeleteAccount(false)} style={{ position: 'absolute', inset: 0, zIndex: 210, backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '24px' }}>
-              <div onClick={(e) => e.stopPropagation()} style={{ width: '100%', maxWidth: '360px', backgroundColor: 'var(--bg-card-solid)', borderRadius: '18px', padding: '22px', boxShadow: '0 8px 24px rgba(0,0,0,0.15)', fontFamily: "'Satoshi', -apple-system, BlinkMacSystemFont, sans-serif" }}>
+              <div onClick={(e) => e.stopPropagation()} style={{ width: '100%', maxWidth: '360px', backgroundColor: 'var(--bg-card-solid)', borderRadius: '18px', padding: '22px', boxShadow: '0 8px 24px rgba(0,0,0,0.15)', fontFamily: "'Hanken Grotesk', -apple-system, BlinkMacSystemFont, sans-serif" }}>
                 <h3 style={{ fontSize: '17px', fontWeight: '800', color: 'var(--text-primary)', margin: '0 0 8px' }}>Delete your account?</h3>
                 <p style={{ fontSize: '13px', color: 'var(--text-secondary)', margin: '0 0 16px', lineHeight: 1.5 }}>This permanently deletes your account, messages, flocks, friends, and payment settings. <strong>This cannot be undone.</strong></p>
                 <p style={{ fontSize: '12px', fontWeight: '600', color: 'var(--text-secondary)', margin: '0 0 6px' }}>Type <strong>DELETE</strong> to confirm</p>
@@ -10295,14 +10295,14 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                       }
                     }}
                     style={{ flex: 1.6, padding: '13px', borderRadius: '12px', border: 'none', backgroundColor: '#EF4444', color: 'white', fontSize: '14px', fontWeight: '700', cursor: (deletingAccount || deleteConfirmText.trim().toUpperCase() !== 'DELETE') ? 'not-allowed' : 'pointer', opacity: (deletingAccount || deleteConfirmText.trim().toUpperCase() !== 'DELETE') ? 0.5 : 1 }}
-                  >{deletingAccount ? 'Deleting…' : 'Delete account'}</button>
+                  >{deletingAccount ? 'Deletingâ€¦' : 'Delete account'}</button>
                 </div>
               </div>
             </div>
           )}
 
           {/* Admin Access Button - Small and subtle at bottom */}
-          {/* Admin Access — admin role only */}
+          {/* Admin Access â€” admin role only */}
           {authUser?.role === 'admin' && (
             <button
               onClick={() => setShowAdminPrompt(true)}
@@ -10325,7 +10325,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
             </button>
           )}
 
-          {/* Venue Dashboard — venue_owner or admin only */}
+          {/* Venue Dashboard â€” venue_owner or admin only */}
           {(authUser?.role === 'venue_owner' || authUser?.role === 'admin') && (
             <button
               onClick={() => setCurrentScreen('venueDashboard')}
@@ -10348,7 +10348,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
             </button>
           )}
 
-          {/* Switch Mode Button — only show if user has multiple modes */}
+          {/* Switch Mode Button â€” only show if user has multiple modes */}
           {userMode && (authUser?.role === 'venue_owner' || authUser?.role === 'admin') && (
             <button
               onClick={switchMode}
@@ -10455,12 +10455,12 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   // Parse Google weekdayDescriptions into grouped operating hours
   const parseGoogleHours = (descriptions) => {
     if (!descriptions || !Array.isArray(descriptions)) return [];
-    // descriptions = ["Monday: 11:00 AM – 10:00 PM", ...]
-    // Google sometimes returns garbled UTF-8 for dashes/spaces — normalize them
+    // descriptions = ["Monday: 11:00 AM â€“ 10:00 PM", ...]
+    // Google sometimes returns garbled UTF-8 for dashes/spaces â€” normalize them
     const clean = (s) => s
       .replace(/\u202f|\u00a0|\u2009|\u2008/g, ' ')  // narrow/non-breaking spaces
-      .replace(/\u2013|\u2014|\u00e2\u20ac\u201c/g, '–')  // en-dash variants
-      .replace(/[^\x20-\x7E–]/g, '')  // strip remaining non-ASCII except en-dash
+      .replace(/\u2013|\u2014|\u00e2\u20ac\u201c/g, 'â€“')  // en-dash variants
+      .replace(/[^\x20-\x7Eâ€“]/g, '')  // strip remaining non-ASCII except en-dash
       .replace(/\s+/g, ' ').trim();
     const dayOrder = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
     const dayAbbr = { Monday: 'Mon', Tuesday: 'Tue', Wednesday: 'Wed', Thursday: 'Thu', Friday: 'Fri', Saturday: 'Sat', Sunday: 'Sun' };
@@ -10489,7 +10489,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
       if (g.time === 'Closed' || g.time === 'Open 24 hours') {
         return { days: daysLabel, open: g.time, close: '' };
       }
-      const match = g.time.match(/^(.+?)\s*[–-]\s*(.+)$/);
+      const match = g.time.match(/^(.+?)\s*[â€“-]\s*(.+)$/);
       if (match) {
         return { days: daysLabel, open: match[1].trim(), close: match[2].trim() };
       }
@@ -10497,7 +10497,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
     });
   };
 
-  // Venue Dashboard state — hoisted to FlockAppInner so VenueDashboard can be a plain function
+  // Venue Dashboard state â€” hoisted to FlockAppInner so VenueDashboard can be a plain function
   const [showUpgradeModal, setShowUpgradeModal] = useState(false);
   const [venueProfile, setVenueProfile] = useState(null);
   const [promotions, setPromotions] = useState([]);
@@ -10611,7 +10611,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
               return got;
             };
 
-            // 1) Try saved place ID — only trust result if venue name matches
+            // 1) Try saved place ID â€” only trust result if venue name matches
             const savedPlaceId = p.google_place_id || venueOnboardingData.googlePlaceId;
             if (savedPlaceId) setOwnerVenuePlaceId(savedPlaceId);
             let verifiedVenue = await fetchAndVerify(savedPlaceId);
@@ -10730,7 +10730,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
 
   const VenueDashboard = () => {
 
-    // Incoming flocks — real data from backend
+    // Incoming flocks â€” real data from backend
     const incomingFlocks = realIncomingFlocks;
 
     // Reviews from backend
@@ -10745,7 +10745,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
     }));
     const reviewStats = venueReviewsData.stats;
 
-    // Settings state — hoisted to FlockAppInner
+    // Settings state â€” hoisted to FlockAppInner
     const notifications = venueNotifications;
     const setNotifications = setVenueNotifications;
 
@@ -10757,7 +10757,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
       { id: 'settings', label: 'Settings', icon: Icons.settings }
     ];
 
-    // Promotion handlers — real API
+    // Promotion handlers â€” real API
     const openPromoModal = (promo = null) => {
       setEditingPromo(promo);
       setShowPromoModal(true);
@@ -10770,7 +10770,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
       } catch (e) { console.error('Delete promo failed:', e); }
     };
 
-    // Event handlers — real API
+    // Event handlers â€” real API
     const openEventModal = (event = null) => {
       setEditingEvent(event);
       setShowEventModal(true);
@@ -10797,7 +10797,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
       } catch (e) { console.error('Reply failed:', e); }
     };
 
-    // Venue analytics — demo data for ICDC (will be replaced by real analytics backend)
+    // Venue analytics â€” demo data for ICDC (will be replaced by real analytics backend)
     const analytics = {
       todayCheckins: 47,
       weekTraffic: 312,
@@ -10852,7 +10852,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
       return true;
     };
 
-    // Capability gates by tier — used elsewhere in the dashboard
+    // Capability gates by tier â€” used elsewhere in the dashboard
     const can = {
       postDeals: venueTier === 'premium' || venueTier === 'pro',
       events: venueTier === 'premium' || venueTier === 'pro',
@@ -10865,7 +10865,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
       booking: venueTier === 'pro',
     };
 
-    // Locked tab placeholder — shown when feature isn't available on current tier
+    // Locked tab placeholder â€” shown when feature isn't available on current tier
     const LockedTab = ({ requiredTier, featureName, description }) => (
       <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '16px', padding: '32px 20px', textAlign: 'center', margin: '12px 0', border: `2px dashed ${requiredTier === 'pro' ? '#2d5a87' : 'var(--accent-amber-text)'}` }}>
         <div style={{ display: 'flex', justifyContent: 'center', marginBottom: '10px' }} aria-hidden>
@@ -10873,7 +10873,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
         </div>
         <h3 style={{ fontSize: '16px', fontWeight: '800', color: 'var(--text-primary)', margin: '0 0 6px' }}>{featureName}</h3>
         <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: '0 0 16px', lineHeight: '1.5' }}>{description}</p>
-        <p style={{ fontSize: '11px', color: requiredTier === 'pro' ? 'var(--accent-purple-text)' : 'var(--accent-amber-text)', fontWeight: '700', margin: '0 0 12px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Requires {requiredTier === 'pro' ? 'Pro · $75/mo' : 'Premium · $35/mo'}</p>
+        <p style={{ fontSize: '11px', color: requiredTier === 'pro' ? 'var(--accent-purple-text)' : 'var(--accent-amber-text)', fontWeight: '700', margin: '0 0 12px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Requires {requiredTier === 'pro' ? 'Pro Â· $75/mo' : 'Premium Â· $35/mo'}</p>
         <button className="glass-btn glass-primary" onClick={() => setShowUpgradeModal(true)} style={{ padding: '10px 20px', borderRadius: '10px', border: 'none', background: requiredTier === 'pro' ? '#2d5a87' : 'var(--accent-amber-text)', color: 'white', fontWeight: '700', fontSize: '12px', cursor: 'pointer' }}>
           Upgrade to {requiredTier === 'pro' ? 'Pro' : 'Premium'}
         </button>
@@ -10911,7 +10911,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 </span>
               )}
               {venueLogoUploading && (
-                <div style={{ position: 'absolute', inset: 0, backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '9px', color: 'white' }}>…</div>
+                <div style={{ position: 'absolute', inset: 0, backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '9px', color: 'white' }}>â€¦</div>
               )}
               <div style={{ position: 'absolute', bottom: -2, right: -2, width: '18px', height: '18px', borderRadius: '9px', backgroundColor: colors.steel, display: 'flex', alignItems: 'center', justifyContent: 'center', border: '2px solid var(--bg-primary)' }}>
                 {Icons.camera('white', 10)}
@@ -10920,7 +10920,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
             </div>
             <div style={{ flex: 1 }}>
               <h1 style={{ fontSize: '18px', fontWeight: '900', color: 'white', margin: 0 }}>Welcome, {venueData.name}</h1>
-              <p style={{ fontSize: '10px', color: 'rgba(255,255,255,0.7)', margin: 0 }}>{venueProfile?.category || venueOnboardingData.category || 'Venue Dashboard'}{(venueProfile?.location || venueOnboardingData.location) ? ` · ${venueProfile?.location || venueOnboardingData.location}` : ''}</p>
+              <p style={{ fontSize: '10px', color: 'rgba(255,255,255,0.7)', margin: 0 }}>{venueProfile?.category || venueOnboardingData.category || 'Venue Dashboard'}{(venueProfile?.location || venueOnboardingData.location) ? ` Â· ${venueProfile?.location || venueOnboardingData.location}` : ''}</p>
             </div>
           </div>
         </div>
@@ -10979,7 +10979,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
             {isFeatureLocked('Detailed insights') && <div style={{ position: 'absolute', inset: 0, backgroundColor: 'var(--locked-overlay)', borderRadius: '12px', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>{Icons.shield(colors.textTertiary, 24)}<span style={{ fontSize: '10px', color: 'var(--text-secondary)', marginTop: '4px' }}>Pro Feature</span></div>}
           </div>
 
-          {/* Live Sensor — only renders if a Pi is deployed for this venue */}
+          {/* Live Sensor â€” only renders if a Pi is deployed for this venue */}
           {ownerSensorData?.sensor_data && (() => {
             const sd = ownerSensorData.sensor_data;
             // Today's IR total = sum of ir_beam_count for readings whose recorded_at is "today"
@@ -11019,7 +11019,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                       <p style={{ fontSize: '18px', fontWeight: '800', color: noiseLabel.color, margin: '4px 0 0', lineHeight: 1 }}>
                         {noiseLabel.text} <span style={{ fontSize: '11px', color: 'var(--text-tertiary)', fontWeight: '600' }}>{Number(sd.noise_db).toFixed(0)} dB</span>
                       </p>
-                    ) : <p style={{ fontSize: '18px', color: 'var(--text-tertiary)', margin: '4px 0 0' }}>—</p>}
+                    ) : <p style={{ fontSize: '18px', color: 'var(--text-tertiary)', margin: '4px 0 0' }}>â€”</p>}
                   </div>
                   <div>
                     <p style={{ fontSize: '9px', color: 'var(--text-secondary)', margin: 0, textTransform: 'uppercase' }}>Today's Door Count</p>
@@ -11491,7 +11491,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
             </div>
           )}
 
-          {/* Promotion Modal — isolated component, typing doesn't re-render parent */}
+          {/* Promotion Modal â€” isolated component, typing doesn't re-render parent */}
           {showPromoModal && (
             <PromoModal
               editing={editingPromo}
@@ -11613,7 +11613,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
       { id: 'TXN-4817', date: 'Jan 17', venue: 'Rooftop @ The Grand', amount: 423, type: 'booking', status: 'completed' },
     ];
 
-    // Revenue simulator state — defaults match pitch deck projections
+    // Revenue simulator state â€” defaults match pitch deck projections
     const [numVenues, setNumVenues] = useState(20);
     const [subscriptionPrice, setSubscriptionPrice] = useState(50); // avg of $35 Premium + $75 Pro
     const [eventsPerVenue, setEventsPerVenue] = useState(12);
@@ -11980,7 +11980,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                       </div>
                       <div>
                         <p style={{ fontSize: '12px', fontWeight: '600', color: colors.navy, margin: 0 }}>{venue.name}</p>
-                        <p style={{ fontSize: '9px', color: 'var(--text-tertiary)', margin: 0 }}>{venue.city} • {venue.rating} {Icons.starFilled(colors.amber, 10)}</p>
+                        <p style={{ fontSize: '9px', color: 'var(--text-tertiary)', margin: 0 }}>{venue.city} â€¢ {venue.rating} {Icons.starFilled(colors.amber, 10)}</p>
                       </div>
                     </div>
                     <div style={{ textAlign: 'right' }}>
@@ -12021,7 +12021,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
                       <div>
                         <p style={{ fontSize: '13px', fontWeight: '700', color: colors.navy, margin: 0 }}>{city.name}</p>
-                        <p style={{ fontSize: '9px', color: 'var(--text-tertiary)', margin: 0 }}>{city.users} users • {city.venues} venues</p>
+                        <p style={{ fontSize: '9px', color: 'var(--text-tertiary)', margin: 0 }}>{city.users} users â€¢ {city.venues} venues</p>
                       </div>
                       <div style={{ textAlign: 'right' }}>
                         <p style={{ fontSize: '12px', fontWeight: '700', color: colors.navy, margin: 0 }}>${(city.revenue / 1000).toFixed(1)}K</p>
@@ -12095,7 +12095,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                   <div key={txn.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 0', borderBottom: `1px solid ${colors.cream}` }}>
                     <div>
                       <p style={{ fontSize: '11px', fontWeight: '600', color: colors.navy, margin: 0 }}>{txn.venue}</p>
-                      <p style={{ fontSize: '9px', color: 'var(--text-tertiary)', margin: 0 }}>{txn.id} • {txn.date}</p>
+                      <p style={{ fontSize: '9px', color: 'var(--text-tertiary)', margin: 0 }}>{txn.id} â€¢ {txn.date}</p>
                     </div>
                     <div style={{ textAlign: 'right' }}>
                       <p style={{ fontSize: '12px', fontWeight: '700', color: colors.navy, margin: 0 }}>${txn.amount}</p>
@@ -12264,7 +12264,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 <button onClick={() => { if (demoMode) fetchResearchLive(); else setResearchDemoMode(true); }}
                   style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', padding: '6px', width: '100%', border: 'none', background: 'transparent', cursor: 'pointer' }}>
                   <span style={{ width: '6px', height: '6px', borderRadius: '3px', background: demoMode ? '#D97706' : colors.steel }} />
-                  <span style={{ fontSize: '9px', fontWeight: '600', color: 'var(--text-tertiary)' }}>{researchLoading ? 'Loading...' : demoMode ? 'Demo data · Tap for live' : 'Live data · Tap for demo'}</span>
+                  <span style={{ fontSize: '9px', fontWeight: '600', color: 'var(--text-tertiary)' }}>{researchLoading ? 'Loading...' : demoMode ? 'Demo data Â· Tap for live' : 'Live data Â· Tap for demo'}</span>
                 </button>
               </div>
             );
@@ -12535,7 +12535,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
       if (venueOnboardingStep < steps.length - 1) {
         setVenueOnboardingStep(s => s + 1);
       } else {
-        // Complete onboarding — save to backend
+        // Complete onboarding â€” save to backend
         try {
           await createVenueProfile(venueOnboardingData);
         } catch (err) {
@@ -12718,7 +12718,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 cursor: onboardingVibes.length > 0 ? 'pointer' : 'not-allowed'
               }}
             >
-              Continue →
+              Continue â†’
             </button>
           </div>
         )}
@@ -12766,7 +12766,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 opacity: onboardingAnimating ? 0.7 : 1
               }}
             >
-              {onboardingAnimating ? 'Getting things ready...' : "Let's Flock →"}
+              {onboardingAnimating ? 'Getting things ready...' : "Let's Flock â†’"}
             </button>
           </div>
         )}
@@ -12774,7 +12774,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
     </div>
   );
 
-  // NFC CHECK-IN LANDING — opened by tapping a venue's NFC tag (URL-based entry)
+  // NFC CHECK-IN LANDING â€” opened by tapping a venue's NFC tag (URL-based entry)
   const NfcCheckinScreen = () => {
     const placeId = nfcPlaceId;
     const [status, setStatus] = useState('loading'); // 'loading' | 'ok' | 'error'
@@ -12783,7 +12783,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
 
     useEffect(() => {
       if (!placeId) { setStatus('error'); return; }
-      // Hit the NFC endpoint — works for both authed and anonymous users.
+      // Hit the NFC endpoint â€” works for both authed and anonymous users.
       // For authed: records with user_id and triggers flock-attendance update.
       // For anon: records with user_id NULL.
       getNfcCheckin(placeId)
@@ -12828,7 +12828,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
         {status === 'ok' && isAuthed && (
           <>
             <div style={{ width: '64px', height: '64px', borderRadius: '50%', backgroundColor: 'rgba(16,185,129,0.18)', display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: '20px' }}>
-              <span style={{ fontSize: '32px', color: '#10b981', lineHeight: 1 }}>✓</span>
+              <span style={{ fontSize: '32px', color: '#10b981', lineHeight: 1 }}>âœ“</span>
             </div>
             <h1 style={{ fontSize: '24px', fontWeight: '800', margin: '0 0 8px', color: '#f1ede0', letterSpacing: '-0.4px' }}>You're checked in!</h1>
             <p style={{ fontSize: '13px', color: 'rgba(241,237,224,0.6)', margin: '0 0 8px' }}>{new Date(checkedInAt).toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' })}</p>
@@ -13190,7 +13190,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   const isExploreVisible = currentTab === 'explore' && currentScreen === 'main' && !showModeSelection && (userMode !== 'user' || hasCompletedOnboarding);
 
   const renderScreen = () => {
-    // Show welcome screen for mode selection — only for privileged users
+    // Show welcome screen for mode selection â€” only for privileged users
     if (showModeSelection) {
       return WelcomeScreen();
     }
@@ -13227,11 +13227,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   };
 
   return (
-    <div style={{ minHeight: '100vh', backgroundColor: '#1a1a2e', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px', boxSizing: 'border-box', fontFamily: "'Satoshi', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" }}>
+    <div style={{ minHeight: '100vh', backgroundColor: '#1a1a2e', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px', boxSizing: 'border-box', fontFamily: "'Hanken Grotesk', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" }}>
       <style>{`
         .btn-confirmed { position: relative !important; overflow: hidden !important; pointer-events: none !important; }
         .btn-confirmed::after {
-          content: '✓';
+          content: 'âœ“';
           position: absolute; inset: 0;
           display: flex; align-items: center; justify-content: center;
           background: #22c55e; color: white;
@@ -13252,13 +13252,13 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           <div style={styles.notchInner} />
         </div>
         <div style={styles.content}>
-          {/* Persistent map layer — hidden via CSS, never unmounted */}
+          {/* Persistent map layer â€” hidden via CSS, never unmounted */}
           <div style={{ position: 'absolute', inset: 0, zIndex: isExploreVisible ? 1 : -1, visibility: isExploreVisible ? 'visible' : 'hidden', pointerEvents: isExploreVisible ? 'auto' : 'none' }}>
             {ExploreScreen()}
           </div>
           {renderScreen()}
 
-          {/* UGC moderation sheet (report / block) — global so it works from chat + DMs */}
+          {/* UGC moderation sheet (report / block) â€” global so it works from chat + DMs */}
           <ModerationSheet
             target={moderationTarget}
             onClose={() => setModerationTarget(null)}
@@ -13273,7 +13273,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
             }}
           />
 
-          {/* Flock Pro paywall — global sheet, opened by the Birdie meter or Settings */}
+          {/* Flock Pro paywall â€” global sheet, opened by the Birdie meter or Settings */}
           <PaywallSheet
             open={!!paywallTrigger}
             trigger={paywallTrigger}
@@ -13437,7 +13437,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                           <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '8px', marginBottom: '6px' }}>
                             <div style={{ flex: 1, minWidth: 0 }}>
                               <h3 style={{ fontSize: '15px', fontWeight: '800', color: colors.navy, margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{venue.name}</h3>
-                              <p style={{ fontSize: '11px', color: 'var(--text-tertiary)', margin: '2px 0 0', fontWeight: '500' }}>{venue.type}{venue.price ? ` • ${venue.price}` : ''}</p>
+                              <p style={{ fontSize: '11px', color: 'var(--text-tertiary)', margin: '2px 0 0', fontWeight: '500' }}>{venue.type}{venue.price ? ` â€¢ ${venue.price}` : ''}</p>
                             </div>
                             {venue.stars && (
                               <div style={{ display: 'flex', alignItems: 'center', gap: '3px', padding: '3px 8px', borderRadius: '8px', backgroundColor: '#FEF3C7', flexShrink: 0 }}>
@@ -13528,7 +13528,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                   {Icons.calendar(colors.navy, 18)}
                   <div>
                     <p style={{ margin: 0, fontSize: '13px', fontWeight: '700', color: colors.navy }}>{new Date(eventDetail.date + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}</p>
-                    {eventDetail.time && <p style={{ margin: '2px 0 0', fontSize: '12px', color: 'var(--text-secondary)', fontWeight: '600' }}>{new Date('2000-01-01T' + eventDetail.time).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}{eventDetail.time_end ? ` – ${new Date('2000-01-01T' + eventDetail.time_end).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}` : ''}</p>}
+                    {eventDetail.time && <p style={{ margin: '2px 0 0', fontSize: '12px', color: 'var(--text-secondary)', fontWeight: '600' }}>{new Date('2000-01-01T' + eventDetail.time).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}{eventDetail.time_end ? ` â€“ ${new Date('2000-01-01T' + eventDetail.time_end).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}` : ''}</p>}
                   </div>
                 </div>
               )}
@@ -13536,7 +13536,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '10px 14px', borderRadius: '12px', backgroundColor: 'var(--bg-tertiary)' }}>
                   {Icons.dollar(colors.navy, 18)}
                   <div>
-                    <p style={{ margin: 0, fontSize: '13px', fontWeight: '700', color: colors.navy }}>${eventDetail.price_range.min}{eventDetail.price_range.max ? ` – $${eventDetail.price_range.max}` : '+'}</p>
+                    <p style={{ margin: 0, fontSize: '13px', fontWeight: '700', color: colors.navy }}>${eventDetail.price_range.min}{eventDetail.price_range.max ? ` â€“ $${eventDetail.price_range.max}` : '+'}</p>
                     <p style={{ margin: '2px 0 0', fontSize: '11px', color: 'var(--text-tertiary)' }}>{eventDetail.price_range.currency}</p>
                   </div>
                 </div>
@@ -13631,7 +13631,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
         <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.5)', zIndex: 9999, display: 'flex', alignItems: 'flex-end', justifyContent: 'center' }} onClick={() => setShowPaymentPicker(false)}>
           <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '16px 16px 0 0', padding: '20px', width: '100%', maxWidth: '420px' }} onClick={e => e.stopPropagation()}>
             <h3 style={{ fontSize: '16px', fontWeight: '800', color: colors.navy, margin: '0 0 4px' }}>Pay {paymentOptions.payTo}</h3>
-            <p style={{ fontSize: '13px', color: 'var(--text-secondary)', margin: '0 0 16px' }}>${paymentOptions.amount.toFixed(2)} · {paymentOptions.note}</p>
+            <p style={{ fontSize: '13px', color: 'var(--text-secondary)', margin: '0 0 16px' }}>${paymentOptions.amount.toFixed(2)} Â· {paymentOptions.note}</p>
             {paymentOptions.methods.map(m => (
               <button key={m.method} onClick={async () => {
                 if (m.deepLink) window.open(m.deepLink, '_blank');
@@ -13685,8 +13685,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                   <img src={venueDetailModal.photos[venueDetailPhotoIdx] || venueDetailModal.photos[0]} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} onError={(e) => { e.target.src = ''; e.target.parentElement.style.background = `linear-gradient(135deg, #1e293b, #1a3a5c)`; e.target.style.display = 'none'; }} />
                   {venueDetailModal.photos.length > 1 && (
                     <>
-                      <button onClick={(e) => { e.stopPropagation(); setVenueDetailPhotoIdx(i => i > 0 ? i - 1 : venueDetailModal.photos.length - 1); }} style={{ position: 'absolute', left: '8px', top: '50%', transform: 'translateY(-50%)', width: '32px', height: '32px', borderRadius: '16px', backgroundColor: 'rgba(0,0,0,0.5)', border: 'none', color: 'white', cursor: 'pointer', fontSize: '16px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>‹</button>
-                      <button onClick={(e) => { e.stopPropagation(); setVenueDetailPhotoIdx(i => i < venueDetailModal.photos.length - 1 ? i + 1 : 0); }} style={{ position: 'absolute', right: '8px', top: '50%', transform: 'translateY(-50%)', width: '32px', height: '32px', borderRadius: '16px', backgroundColor: 'rgba(0,0,0,0.5)', border: 'none', color: 'white', cursor: 'pointer', fontSize: '16px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>›</button>
+                      <button onClick={(e) => { e.stopPropagation(); setVenueDetailPhotoIdx(i => i > 0 ? i - 1 : venueDetailModal.photos.length - 1); }} style={{ position: 'absolute', left: '8px', top: '50%', transform: 'translateY(-50%)', width: '32px', height: '32px', borderRadius: '16px', backgroundColor: 'rgba(0,0,0,0.5)', border: 'none', color: 'white', cursor: 'pointer', fontSize: '16px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>â€¹</button>
+                      <button onClick={(e) => { e.stopPropagation(); setVenueDetailPhotoIdx(i => i < venueDetailModal.photos.length - 1 ? i + 1 : 0); }} style={{ position: 'absolute', right: '8px', top: '50%', transform: 'translateY(-50%)', width: '32px', height: '32px', borderRadius: '16px', backgroundColor: 'rgba(0,0,0,0.5)', border: 'none', color: 'white', cursor: 'pointer', fontSize: '16px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>â€º</button>
                       <div style={{ position: 'absolute', bottom: '10px', left: '50%', transform: 'translateX(-50%)', display: 'flex', gap: '5px' }}>
                         {venueDetailModal.photos.map((_, i) => (
                           <div key={i} style={{ width: '7px', height: '7px', borderRadius: '50%', backgroundColor: i === venueDetailPhotoIdx ? 'white' : 'rgba(255,255,255,0.4)', transition: 'background-color 0.2s' }} />
@@ -13808,7 +13808,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                   <div key={p.id} style={{ padding: '10px', backgroundColor: 'var(--bg-tertiary)', borderRadius: '10px', marginBottom: '6px', border: `1px solid ${colors.steel}33` }}>
                     <p style={{ fontSize: '12px', fontWeight: '700', color: 'var(--text-primary)', margin: 0 }}>{p.title}</p>
                     {p.description && <p style={{ fontSize: '11px', color: 'var(--text-secondary)', margin: '2px 0 0' }}>{p.description}</p>}
-                    <p style={{ fontSize: '10px', color: 'var(--text-tertiary)', margin: '2px 0 0' }}>{p.time_slot}{p.days ? ` · ${p.days}` : ''}</p>
+                    <p style={{ fontSize: '10px', color: 'var(--text-tertiary)', margin: '2px 0 0' }}>{p.time_slot}{p.days ? ` Â· ${p.days}` : ''}</p>
                   </div>
                 ))}
               </div>
@@ -13976,7 +13976,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
       <NewDmModal />
       <style>{`
         /* CrowdBar component now drives its own height via useState + CSS
-           transition — no global keyframe needed. */
+           transition â€” no global keyframe needed. */
         @keyframes pulse {
           0%, 100% { opacity: 0.4; transform: translate(-50%, -50%) scale(1); }
           50% { opacity: 0.8; transform: translate(-50%, -50%) scale(1.2); }
@@ -14145,7 +14145,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
         *, *::before, *::after {
           box-sizing: border-box;
           -webkit-tap-highlight-color: transparent;
-          font-family: 'Satoshi', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+          font-family: 'Hanken Grotesk', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
         }
         body {
           margin: 0;
@@ -14408,7 +14408,7 @@ const FlockApp = () => {
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
-        fontFamily: "'Satoshi', -apple-system, BlinkMacSystemFont, sans-serif",
+        fontFamily: "'Hanken Grotesk', -apple-system, BlinkMacSystemFont, sans-serif",
       }}>
         <div style={{ textAlign: 'center' }}>
           <div style={{ fontSize: '28px', fontWeight: '900', color: '#f1ede0', letterSpacing: '-0.5px', marginBottom: '8px' }}>Flock</div>

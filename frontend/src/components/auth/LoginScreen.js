@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { login, googleLogin } from '../../services/api';
 import { GoogleLogin } from '@react-oauth/google';
+import AppleSignInButton from './AppleSignInButton';
 
 const colors = {
   navyDark: '#0f172a',
@@ -11,7 +12,7 @@ const colors = {
 
 // Video city background.
 // WKWebView (Capacitor) blocks autoplay unless the muted ATTRIBUTE is on the
-// element — React's `muted` prop doesn't always reach the DOM — and a blocked
+// element â€” React's `muted` prop doesn't always reach the DOM â€” and a blocked
 // video renders iOS's grey play glyph over the form. Set attributes + play()
 // imperatively; if playback still refuses, hide the video (navy bg remains).
 const CityBackground = () => {
@@ -82,7 +83,7 @@ const LoginScreen = ({ onLoginSuccess, onSwitchToSignup, onSwitchToVenueLogin })
       alignItems: 'center',
       justifyContent: 'center',
       padding: '20px',
-      fontFamily: "'Satoshi', -apple-system, BlinkMacSystemFont, sans-serif",
+      fontFamily: "'Hanken Grotesk', -apple-system, BlinkMacSystemFont, sans-serif",
       position: 'relative',
       overflow: 'hidden',
     }}>
@@ -173,6 +174,10 @@ const LoginScreen = ({ onLoginSuccess, onSwitchToSignup, onSwitchToVenueLogin })
               theme="filled_black" shape="pill" size="large" width="344" text="continue_with"
             />
           </div>
+
+          {/* Apple guideline 4.8: Google login is offered above, so the native
+              iOS app must offer Sign in with Apple too. Renders null on web. */}
+          <AppleSignInButton onSuccess={onLoginSuccess} onError={(m) => setError(m)} />
 
           <p style={{ textAlign: 'center', marginTop: '22px', paddingTop: '18px', borderTop: '1px solid rgba(255,255,255,0.06)', fontSize: '14px', color: 'rgba(148,163,184,0.5)', margin: '22px 0 0' }}>
             Don't have an account?{' '}

@@ -126,6 +126,22 @@ export async function googleLogin(credential, dateOfBirth) {
   return data;
 }
 
+// Sign in with Apple (native iOS only). The plugin hands us Apple's signed
+// identityToken; the backend verifies it against Apple's JWKS and issues our
+// JWT (backend/routes/auth.js POST /apple). fullName only arrives on the very
+// FIRST authorization for an Apple ID, so pass it through when present.
+export async function appleLogin(identityToken, fullName, authorizationCode) {
+  const body = { identityToken };
+  if (fullName) body.fullName = fullName;
+  if (authorizationCode) body.authorizationCode = authorizationCode;
+  const data = await request('/api/auth/apple', {
+    method: 'POST',
+    body: JSON.stringify(body),
+  });
+  setToken(data.token);
+  return data;
+}
+
 export async function getCurrentUser() {
   return request('/api/auth/me');
 }
