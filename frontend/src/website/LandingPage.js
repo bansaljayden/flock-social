@@ -304,12 +304,18 @@ export default function LandingPage() {
             </ul>
           </div>
           <div className="lp-row-media">
-            <div className="lp-safety">
-              <span className="lp-safety-ico">{Ico.shield('#6d9ac3')}</span>
-              <div className="lp-safety-title">Trusted contacts notified</div>
-              <div className="lp-safety-sub">SOS sent · 11:42 PM</div>
-              <div className="lp-safety-row"><span>{Ico.pin('#98937f')}</span> Your live location, shared instantly</div>
-              <div className="lp-safety-row"><span>{Ico.crowd('#98937f')}</span> The people you chose, reached by email</div>
+            {/* Excerpt of the real SOS email the backend sends — not a mock UI */}
+            <div className="lp-sos-mail">
+              <div className="lp-sos-meta">
+                <span>To</span><span>Your trusted contacts</span>
+                <span>Subject</span><span>Emergency Alert from Jordan</span>
+              </div>
+              <div className="lp-sos-body">
+                <p className="lp-sos-headline">Jordan needs help</p>
+                <p className="lp-sos-link">View location on map</p>
+                <p className="lp-sos-fine">Sent 11:42 PM, exact coordinates included</p>
+              </div>
+              <p className="lp-sos-cap">The actual email. It goes out the moment you tap SOS.</p>
             </div>
           </div>
         </div>
