@@ -7,7 +7,7 @@ const SUPPORT_EMAIL = 'noreply.flockapp@gmail.com';
 // who uninstalled can still request deletion). Routed at /delete-account.
 export default function DeleteAccount() {
   useEffect(() => {
-    document.title = 'Delete Your Account — Flock';
+    document.title = 'Delete Your Account · Flock';
   }, []);
 
   const mailto =

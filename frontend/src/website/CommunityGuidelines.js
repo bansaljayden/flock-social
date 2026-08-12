@@ -7,7 +7,7 @@ const CHILD_SAFETY_EMAIL = 'safety@flockcorp.com';
 
 export default function CommunityGuidelines() {
   useEffect(() => {
-    document.title = 'Community Guidelines — Flock';
+    document.title = 'Community Guidelines · Flock';
   }, []);
 
   return (
@@ -43,7 +43,7 @@ export default function CommunityGuidelines() {
       </section>
 
       <section>
-        <h2>Child safety — zero tolerance (CSAE)</h2>
+        <h2>Child safety: zero tolerance (CSAE)</h2>
         <p>
           Flock has <strong>zero tolerance for child sexual abuse and exploitation (CSAE)</strong>,
           including any child sexual abuse material (CSAM), grooming, sextortion, or
@@ -76,7 +76,7 @@ export default function CommunityGuidelines() {
         <p>
           In Flock, tap any message to <strong>Report</strong> it, or open the <strong>⋯</strong> menu
           in a direct message to <strong>Report</strong> content or <strong>Block</strong> a user.
-          Blocking is mutual — a blocked user can't message you,
+          Blocking is mutual: a blocked user can't message you,
           add you, or see your content, and you won't see theirs. You can also email{' '}
           <a href={`mailto:${SUPPORT_EMAIL}`}>{SUPPORT_EMAIL}</a>.
         </p>
@@ -85,8 +85,8 @@ export default function CommunityGuidelines() {
       <section>
         <h2>What happens after a report</h2>
         <p>
-          Our team reviews reports and acts promptly — typically removing violating content and
-          ejecting the responsible user. Serious or repeated violations result in a permanent
+          Our team reviews reports and acts promptly, typically by removing the violating
+          content and ejecting the responsible user. Serious or repeated violations result in a permanent
           ban. Illegal content may be reported to the authorities.
         </p>
       </section>
