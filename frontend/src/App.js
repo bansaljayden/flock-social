@@ -12253,7 +12253,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
               </div>
 
               {/* Strategic Notes */}
-              <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', border: `1px dashed ${colors.creamDark}` }}>
+              <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', border: `1px dashed ${colors.creamDark}`, marginBottom: '12px' }}>
                 <h4 style={{ fontSize: '11px', fontWeight: '700', color: colors.navy, margin: '0 0 6px', display: 'flex', alignItems: 'center', gap: '4px' }}>{Icons.sparkles(colors.amber, 12)} Key Insights</h4>
                 <ul style={{ margin: 0, paddingLeft: '16px', fontSize: '10px', color: 'var(--text-secondary)' }}>
                   <li>Austin market nearing saturation: prioritize Dallas/Houston</li>
@@ -12261,6 +12261,49 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                   <li>User acquisition cost trending down 15% MoM</li>
                 </ul>
               </div>
+
+              {/* Real expenses — Jayden's actual spend, maintained by hand.
+                  Update the EXPENSES arrays below when a bill changes. */}
+              {(() => {
+                const MONTHLY = [
+                  { name: 'Railway (backend + Postgres)', usd: 20 },
+                  { name: 'Claude Max', usd: 125 },
+                  { name: 'Codex', usd: 20 },
+                ];
+                const ANNUAL = [
+                  { name: 'Apple Developer Program', usd: 99 },
+                ];
+                const ONE_TIME = [
+                  { name: 'BestTime training data (the model moat)', usd: 1500 },
+                ];
+                const FREE_TIER = ['Vercel (web hosting)', 'Codemagic (~500 build min/mo)', 'Resend (email)'];
+                const monthlyTotal = MONTHLY.reduce((s, e) => s + e.usd, 0);
+                const annualTotal = ANNUAL.reduce((s, e) => s + e.usd, 0);
+                const oneTimeTotal = ONE_TIME.reduce((s, e) => s + e.usd, 0);
+                const effectiveMonthly = monthlyTotal + annualTotal / 12;
+                const row = (name, amount, sub) => (
+                  <div key={name} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', padding: '5px 0', borderTop: '1px solid var(--border-light)' }}>
+                    <span style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>{name}</span>
+                    <span style={{ fontSize: '11px', fontWeight: '700', color: colors.navy }}>{amount}<span style={{ fontWeight: '500', color: 'var(--text-tertiary)' }}>{sub}</span></span>
+                  </div>
+                );
+                return (
+                  <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: '8px' }}>
+                      <h4 style={{ fontSize: '11px', fontWeight: '700', color: colors.navy, margin: 0 }}>Expenses</h4>
+                      <span style={{ fontSize: '13px', fontWeight: '900', color: colors.navy }}>${effectiveMonthly.toFixed(0)}<span style={{ fontSize: '9px', fontWeight: '500', color: 'var(--text-tertiary)' }}>/mo effective</span></span>
+                    </div>
+                    {MONTHLY.map((e) => row(e.name, `$${e.usd}`, '/mo'))}
+                    {ANNUAL.map((e) => row(e.name, `$${e.usd}`, '/yr'))}
+                    {ONE_TIME.map((e) => row(e.name, `$${e.usd.toLocaleString()}`, ' once'))}
+                    <div style={{ display: 'flex', justifyContent: 'space-between', padding: '7px 0 0', marginTop: '3px', borderTop: '1px solid var(--border-default)' }}>
+                      <span style={{ fontSize: '10px', fontWeight: '600', color: 'var(--text-secondary)' }}>Recurring ${monthlyTotal}/mo + ${annualTotal}/yr</span>
+                      <span style={{ fontSize: '10px', fontWeight: '600', color: 'var(--text-secondary)' }}>One-time invested: ${oneTimeTotal.toLocaleString()}</span>
+                    </div>
+                    <p style={{ fontSize: '9px', color: 'var(--text-tertiary)', margin: '7px 0 0' }}>Free tier: {FREE_TIER.join(' · ')}</p>
+                  </div>
+                );
+              })()}
             </div>
           )}
 
