@@ -369,31 +369,44 @@ function astronomyFeatures(lat, month, hour) {
 
 // v2.4 neighbor activity — same quantity the training pipeline computes
 // (mean same-hour baseline of venues within ~1km, excluding self), served
-// from ml_venues + ml_venue_baselines. Cached 24h per venue/dow/hour.
+// from ml_venues + ml_venue_baselines.
+// PERF: cached per LOCATION with all dow/hour slots fetched in ONE query.
+// The first version keyed the cache by (location, dow, hour), so a single
+// venue view (now + 12h + 24h forecasts = ~37 predictions at different
+// hours) fired ~37 sequential SQL round trips — the "10 seconds to load a
+// venue" bug. Now it's one query per venue per 24h.
 const neighborCache = new Map();
 async function getNeighborActivity(placeId, lat, lng, dayOfWeek, hour) {
   const none = { count: 0, mean: 0 };
   if (!pool || !lat || !lng) return none;
-  const key = `${(+lat).toFixed(3)}_${(+lng).toFixed(3)}_${dayOfWeek}_${hour}`;
-  const hit = neighborCache.get(key);
-  if (hit && Date.now() - hit.ts < 24 * 60 * 60 * 1000) return hit.data;
-  try {
-    const r = await pool.query(
-      `SELECT COUNT(*)::int AS cnt, COALESCE(AVG(b.baseline), 0) AS mean_bl
-       FROM ml_venues v
-       JOIN ml_venue_baselines b ON b.google_place_id = v.google_place_id
-        AND b.day_of_week = $3 AND b.hour = $4
-       WHERE v.latitude BETWEEN $1 - 0.0075 AND $1 + 0.0075
-         AND v.longitude BETWEEN $2 - 0.0075 AND $2 + 0.0075
-         AND ($5::text IS NULL OR v.google_place_id != $5)`,
-      [lat, lng, dayOfWeek, hour, placeId || null]
-    );
-    const data = { count: r.rows[0]?.cnt || 0, mean: Math.max(0, Math.min(100, parseFloat(r.rows[0]?.mean_bl) || 0)) };
-    neighborCache.set(key, { ts: Date.now(), data });
-    return data;
-  } catch {
-    return none;
+  const key = `${(+lat).toFixed(3)}_${(+lng).toFixed(3)}_${placeId || ''}`;
+  let entry = neighborCache.get(key);
+  if (!entry || Date.now() - entry.ts >= 24 * 60 * 60 * 1000) {
+    try {
+      const r = await pool.query(
+        `SELECT b.day_of_week AS dow, b.hour, COUNT(*)::int AS cnt, COALESCE(AVG(b.baseline), 0) AS mean_bl
+         FROM ml_venues v
+         JOIN ml_venue_baselines b ON b.google_place_id = v.google_place_id
+         WHERE v.latitude BETWEEN $1 - 0.0075 AND $1 + 0.0075
+           AND v.longitude BETWEEN $2 - 0.0075 AND $2 + 0.0075
+           AND ($3::text IS NULL OR v.google_place_id != $3)
+         GROUP BY b.day_of_week, b.hour`,
+        [lat, lng, placeId || null]
+      );
+      const byDowHour = new Map();
+      for (const row of r.rows) {
+        byDowHour.set(`${row.dow}_${row.hour}`, {
+          count: row.cnt,
+          mean: Math.max(0, Math.min(100, parseFloat(row.mean_bl) || 0)),
+        });
+      }
+      entry = { ts: Date.now(), byDowHour };
+      neighborCache.set(key, entry);
+    } catch {
+      return none;
+    }
   }
+  return entry.byDowHour.get(`${dayOfWeek}_${hour}`) || none;
 }
 
 function buildFeatureVector(venue, weather, timestamp, eventData, feedback, baseline, neighbors) {

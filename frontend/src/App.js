@@ -7156,8 +7156,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                   </div>
                 </motion.div>
 
-                {/* One-tap crowd reality check (open venues only) */}
-                {!isClosed && (
+                {/* One-tap crowd reality check (open venues, after the score loads) */}
+                {!isClosed && !!cd && (
                   <CrowdRealityCheck key={activeVenue.place_id} placeId={activeVenue.place_id} venueName={activeVenue.name} predicted={score} />
                 )}
 
@@ -7196,6 +7196,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '4px' }}>
                     <p style={{ fontSize: '9px', fontWeight: '600', color: 'var(--text-secondary)', textTransform: 'uppercase', margin: 0 }}>Expected Crowd by Hour</p>
                     {(() => {
+                      if (!cd && !isClosed) return null; // no trend claims while loading
                       // Trend arrow: compare "Now" to next-hour prediction.
                       // Skip if next hour is closed/unknown — model's MAE is ~5pts so use that as the dead-zone threshold.
                       const cur = (Number.isFinite(score) && score > 0) ? score : (Number.isFinite(hourlyData[0]?.score) ? hourlyData[0].score : null);
@@ -7211,7 +7212,12 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                     })()}
                   </div>
                   <div style={{ display: 'flex', alignItems: 'flex-end', gap: '2px', height: '56px' }}>
-                    {hourlyData.map((h, i) => {
+                    {/* Skeleton bars while the prediction loads — never fake colored data */}
+                    {(!cd && !isClosed) ? [34, 46, 40, 52, 44, 38, 50, 42, 36, 48, 40, 32].map((hgt, i) => (
+                      <div key={i} style={{ flex: 1, display: 'flex', alignItems: 'flex-end', height: '100%' }}>
+                        <div className="skeleton" style={{ width: '100%', height: `${hgt}px`, borderRadius: '3px 3px 1px 1px' }} />
+                      </div>
+                    )) : hourlyData.map((h, i) => {
                       const isNow = i === 0;
                       const parsedH = (() => { const p = (h.hour || '').match(/^(\d+)\s*(AM|PM)$/i); if (!p) return 12; let hr = parseInt(p[1], 10); if (p[2].toUpperCase() === 'AM' && hr === 12) hr = 0; else if (p[2].toUpperCase() === 'PM' && hr !== 12) hr += 12; return hr; })();
                       // When the API supplies hourly data, the score itself encodes openness — skip the Google-hours heuristic,
@@ -7292,7 +7298,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                     })}
                   </div>
                   <div style={{ display: 'flex', gap: '2px', marginTop: '2px' }}>
-                    {hourlyData.map((h, i) => {
+                    {(!cd && !isClosed) ? null : hourlyData.map((h, i) => {
                       const isNow = i === 0;
                       return (
                         <span key={i} style={{ flex: 1, textAlign: 'center', fontSize: '7px', color: isNow ? 'var(--text-primary)' : 'var(--text-tertiary)', fontWeight: isNow ? '800' : '400', minWidth: 0, overflow: 'hidden' }}>{isNow ? 'Now' : h.hour}</span>
@@ -14498,7 +14504,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
         }
         /* Skeleton loading for cards */
         .skeleton {
-          background: linear-gradient(90deg, var(--skeleton-bg) 25%, var(--border-default) 37%, var(--skeleton-bg) 63%);
+          /* Highlight is a translucent white sweep, not a theme token — the
+             dark theme's skeleton-bg and border-default are near-identical
+             navies, which made skeletons invisible on device. */
+          background: linear-gradient(90deg, var(--skeleton-bg) 30%, rgba(255,255,255,0.12) 45%, var(--skeleton-bg) 60%);
           background-size: 400% 100%;
           animation: loadingShimmer 1.4s ease infinite;
           border-radius: 8px;
