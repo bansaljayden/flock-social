@@ -30,7 +30,7 @@ def load_data():
     return train_data
 
 
-def evaluate_city_cv(model, X, y, cv, groups, baseline=None, y_actual=None) -> dict:
+def evaluate_city_cv(model, X, y, cv, groups, baseline=None, y_actual=None, sample_weight=None) -> dict:
     """Compute regression metrics using leave-one-city-out cross-validation.
     Retrains the model for each fold to get honest out-of-fold predictions.
 
@@ -41,7 +41,10 @@ def evaluate_city_cv(model, X, y, cv, groups, baseline=None, y_actual=None) -> d
     all_preds = np.full(len(y), np.nan)
     for train_idx, val_idx in cv.split(X, y, groups=groups):
         m = clone(model)
-        m.fit(X[train_idx], y[train_idx])
+        if sample_weight is not None:
+            m.fit(X[train_idx], y[train_idx], sample_weight=sample_weight[train_idx])
+        else:
+            m.fit(X[train_idx], y[train_idx])
         all_preds[val_idx] = m.predict(X[val_idx])
 
     if baseline is not None and y_actual is not None:
@@ -65,7 +68,7 @@ def evaluate_city_cv(model, X, y, cv, groups, baseline=None, y_actual=None) -> d
     }
 
 
-def train_xgboost(X, y, cv, groups, baseline=None, y_actual=None) -> tuple:
+def train_xgboost(X, y, cv, groups, baseline=None, y_actual=None, sample_weight=None) -> tuple:
     """Train XGBoost with randomized hyperparameter search + city-based CV."""
     logger.info('\n=== Training XGBoost ===')
     start = time.time()
@@ -99,14 +102,26 @@ def train_xgboost(X, y, cv, groups, baseline=None, y_actual=None) -> tuple:
         n_jobs=1,
         verbose=0,
     )
-    search.fit(X, y, groups=groups)
-
-    model = search.best_estimator_
-    best_params = search.best_params_
+    if sample_weight is not None:
+        # RandomizedSearchCV does not slice fit-params like sample_weight per
+        # CV fold (metadata routing off) — it would crash or silently misfit.
+        # Weighted runs reuse the params the v2.3.0 realtime-only search
+        # already found, and just fit + LOCO-evaluate with weights.
+        best_params = {
+            'subsample': 0.9, 'reg_lambda': 1.0, 'reg_alpha': 0.5,
+            'n_estimators': 800, 'min_child_weight': 7, 'max_depth': 8,
+            'learning_rate': 0.01, 'colsample_bytree': 0.8,
+        }
+        model = clone(base_model).set_params(**best_params)
+        model.fit(X, y, sample_weight=sample_weight)
+    else:
+        search.fit(X, y, groups=groups)
+        model = search.best_estimator_
+        best_params = search.best_params_
 
     logger.info(f'Best params: {best_params}')
     logger.info('Computing leave-one-city-out metrics...')
-    metrics = evaluate_city_cv(model, X, y, cv, groups, baseline=baseline, y_actual=y_actual)
+    metrics = evaluate_city_cv(model, X, y, cv, groups, baseline=baseline, y_actual=y_actual, sample_weight=sample_weight)
     elapsed = time.time() - start
 
     logger.info(f'City CV RMSE: {metrics["rmse"]:.4f}, MAE: {metrics["mae"]:.4f}, R²: {metrics["r2"]:.4f}')
@@ -124,7 +139,10 @@ def main():
     cities = data.get('cities')
     baseline = data.get('baseline')
     y_actual = data.get('y_actual')
+    sample_weight = data.get('sample_weight')
     label_type = data.get('label_type', 'absolute')
+    if sample_weight is not None:
+        logger.info(f'Sample weights present: min={sample_weight.min()}, max={sample_weight.max()}, mean={sample_weight.mean():.3f}')
 
     if cities is None:
         raise ValueError('City information not found in features. Re-run prepare_features.py.')
@@ -145,7 +163,7 @@ def main():
     logger.info(f'Using GroupKFold with {n_cities} splits (leave-one-city-out)')
 
     # Train XGBoost only
-    model, metrics, params, elapsed = train_xgboost(X, y, cv, cities, baseline=baseline, y_actual=y_actual)
+    model, metrics, params, elapsed = train_xgboost(X, y, cv, cities, baseline=baseline, y_actual=y_actual, sample_weight=sample_weight)
 
     logger.info(f'\n*** XGBoost Results ***')
     logger.info(f'    RMSE: {metrics["rmse"]:.4f}')
