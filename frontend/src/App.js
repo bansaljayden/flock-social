@@ -136,9 +136,9 @@ const CrowdRealityCheck = React.memo(function CrowdRealityCheck({ placeId, venue
     );
   }
   const opts = [
-    { level: 1, label: 'Quiet', color: '#22C55E' },
-    { level: 2, label: 'Moderate', color: '#F59E0B' },
-    { level: 3, label: 'Packed', color: '#EF4444' },
+    { level: 1, label: 'Quiet' },
+    { level: 2, label: 'Moderate' },
+    { level: 3, label: 'Packed' },
   ];
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap', margin: '0 0 8px', animation: 'fadeSlideIn 0.25s ease-out' }}>
@@ -164,7 +164,7 @@ const CrowdRealityCheck = React.memo(function CrowdRealityCheck({ placeId, venue
               setBusy(false);
             }
           }}
-          style={{ padding: '4px 10px', borderRadius: '8px', border: `1.5px solid ${o.color}55`, backgroundColor: 'var(--bg-card-solid)', color: o.color, fontSize: '11px', fontWeight: '700', cursor: busy ? 'wait' : 'pointer' }}
+          style={{ padding: '4px 12px', borderRadius: '8px', border: '1.5px solid var(--border-default)', backgroundColor: 'var(--bg-card-solid)', color: 'var(--text-primary)', fontSize: '11px', fontWeight: '600', cursor: busy ? 'wait' : 'pointer' }}
         >
           {o.label}
         </button>
