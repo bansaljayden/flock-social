@@ -114,15 +114,18 @@ Only once the domain resolves:
 
 ---
 
-## Pre-flight checklist
+## Pre-flight checklist — DOMAIN WENT LIVE 2026-08-12
 
-- [ ] Domain added in Vercel, both apex and www
-- [ ] A + CNAME records added at the registrar
-- [ ] MX / TXT / DKIM / DMARC records untouched (test: send yourself a waitlist email)
-- [ ] `https://flockcorp.com` returns 200
-- [ ] `https://flockcorp.com/privacy` returns 200
-- [x] `https://flockcorp.com` added to the backend CORS allowlist (done in code — just redeploy)
-- [ ] `https://flockcorp.com` + `www` added to Google OAuth **Authorized JavaScript origins**
-      (test: load flockcorp.com/app and confirm the Google button actually renders)
-- [ ] `PUBLIC_WEB_URL` set on Railway
-- [ ] App Store Connect URLs updated to flockcorp.com
+- [x] Domain added in Vercel, both apex and www (apex 308-redirects to www;
+      www is canonical)
+- [x] CNAME records added at Cloudflare (DNS only / grey cloud)
+- [x] Resend sending records untouched — domain still shows verified
+- [x] `https://www.flockcorp.com` returns 200 (apex 308 → www)
+- [x] `/privacy`, `/about`, `/og-image.png` verified 200
+- [x] Backend CORS allowlist deployed
+- [x] Google OAuth origins added (flockcorp.com + www) — verify the button
+      renders at flockcorp.com/app on next device test
+- [x] `PUBLIC_WEB_URL` set on Railway
+- [ ] App Store Connect URLs updated to flockcorp.com (do with next TestFlight pass)
+- [ ] Resend **Receiving** still disabled — flip it + add inbound MX when you
+      want hello@flockcorp.com live, then Claude swaps the contact email site-wide
