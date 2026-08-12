@@ -48,7 +48,7 @@ export default function BillSplitScreen({ route, navigation }) {
     getBillSplit(flockId).then((existing) => {
       if (existing?.bill?.id) navigation.replace('SettleUp', { flockId });
     }).catch(() => {});
-  }, [flockId]);
+  }, [flockId, navigation]);
 
   const totalNum = parseFloat(total) || 0;
   const tipAmount = useMemo(() => Math.round(totalNum * (tipPercent / 100) * 100) / 100, [totalNum, tipPercent]);
