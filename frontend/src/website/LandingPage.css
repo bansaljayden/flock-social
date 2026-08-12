@@ -1,9 +1,9 @@
-/* Flock â€” flockcorp.com
+/* Flock — flockcorp.com
    The physical object: a printed field guide. Cream paper, navy ink, one steel
    accent, birds as the motif. The page alternates navy (the night you're going
-   out into) and cream (the planning you do in daylight) â€” the product's own
+   out into) and cream (the planning you do in daylight) — the product's own
    duality, not decoration.
-   Type: Fraunces (display, h1/h2 ONLY â€” no tnum, never for live numbers) over
+   Type: Fraunces (display, h1/h2 ONLY — no tnum, never for live numbers) over
    Hanken Grotesk (body). Both variable, self-hosted via src/index.css. */
 
 .lp {
@@ -23,7 +23,7 @@
   --rule: rgba(22, 40, 61, 0.12);
   --rule-cream: rgba(244, 239, 227, 0.16);
 
-  /* semantic crowd colours â€” sacred, never decorative */
+  /* semantic crowd colours — sacred, never decorative */
   --crowd-quiet: #22c55e;
   --crowd-mid: #f59e0b;
   --crowd-busy: #ef4444;
@@ -143,7 +143,7 @@
 }
 .lp-btn:active { transform: translateY(1px); }
 
-/* cream button on navy â€” the login-screen CTA language */
+/* cream button on navy — the login-screen CTA language */
 .lp-btn-cream { background: var(--cream); color: var(--navy); }
 .lp-btn-cream:hover { background: #fffaf0; }
 
@@ -274,7 +274,7 @@
 .lp-appstore span { display: grid; line-height: 1.15; font-weight: 700; font-size: 17px; letter-spacing: -0.02em; }
 .lp-appstore small { font-size: 10.5px; font-weight: 500; letter-spacing: 0.02em; }
 
-/* ============ the turn (problem â†’ answer) ============ */
+/* ============ the turn (problem → answer) ============ */
 
 .lp-turn { max-width: 22ch; }
 .lp-turn-grid {
@@ -441,7 +441,7 @@
   background: rgba(244, 239, 227, 0.07);
   color: var(--cream);
   font-family: inherit;
-  font-size: 16px; /* 16px â€” no zoom-on-focus in the iOS shell */
+  font-size: 16px; /* 16px — no zoom-on-focus in the iOS shell */
 }
 .lp-form input::placeholder { color: var(--cream-3); }
 .lp-form-msg { margin-top: 12px; font-size: 14px; color: var(--cream-2); min-height: 20px; }
