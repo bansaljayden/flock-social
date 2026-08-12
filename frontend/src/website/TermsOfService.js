@@ -6,7 +6,7 @@ const SUPPORT_EMAIL = 'noreply.flockapp@gmail.com';
 
 export default function TermsOfService() {
   useEffect(() => {
-    document.title = 'Terms of Service — Flock';
+    document.title = 'Terms of Service · Flock';
   }, []);
 
   return (
@@ -59,8 +59,8 @@ export default function TermsOfService() {
         </p>
         <p>
           We may remove content and suspend or terminate accounts that violate these Terms. We
-          act on reports of objectionable content and abusive behavior promptly — typically
-          removing violating content and ejecting the responsible user — and we may report
+          act on reports of objectionable content and abusive behavior promptly, typically by
+          removing the violating content and ejecting the responsible user, and we may report
           illegal content to the appropriate authorities.
         </p>
       </section>
