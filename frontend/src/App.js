@@ -114,6 +114,7 @@ const AnimatedDial = React.memo(function AnimatedDial({ score, color }) {
 // venue becomes a dated training row (venue_feedback) AND calibrates the live
 // score for everyone else. Self-contained state; remount per venue via key.
 const CrowdRealityCheck = React.memo(function CrowdRealityCheck({ placeId, venueName, predicted }) {
+  const [open, setOpen] = useState(false);
   const [sent, setSent] = useState(false);
   const [busy, setBusy] = useState(false);
   if (!placeId) return null;
@@ -124,15 +125,25 @@ const CrowdRealityCheck = React.memo(function CrowdRealityCheck({ placeId, venue
       </p>
     );
   }
+  if (!open) {
+    return (
+      <button
+        onClick={() => setOpen(true)}
+        style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', padding: '6px 12px', margin: '0 0 8px', borderRadius: '10px', border: '1.5px solid var(--border-default)', backgroundColor: 'var(--bg-card-solid)', color: 'var(--text-secondary)', fontSize: '11px', fontWeight: '700', cursor: 'pointer' }}
+      >
+        There now? Rate the crowd
+      </button>
+    );
+  }
   const opts = [
     { level: 1, label: 'Quiet', color: '#22C55E' },
     { level: 2, label: 'Moderate', color: '#F59E0B' },
     { level: 3, label: 'Packed', color: '#EF4444' },
   ];
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap', margin: '0 0 8px' }}>
+    <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap', margin: '0 0 8px', animation: 'fadeSlideIn 0.25s ease-out' }}>
       <span style={{ fontSize: '11px', fontWeight: '600', color: 'var(--text-secondary)' }}>
-        There now? How busy is it actually:
+        How busy is it actually:
       </span>
       {opts.map(o => (
         <button
