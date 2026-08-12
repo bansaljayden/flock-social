@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
-import { signup, googleLogin } from '../../services/api';
-import { GoogleLogin } from '@react-oauth/google';
+import { signup, googleLoginWithToken } from '../../services/api';
+import { useGoogleLogin } from '@react-oauth/google';
 import AppleSignInButton from './AppleSignInButton';
 import { Meteors } from '../ui/meteors';
 
@@ -33,6 +33,23 @@ const SignupScreen = ({ onSignupSuccess, onSwitchToLogin }) => {
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+
+  // Custom-styled Google button; DOB is validated in onClick BEFORE this
+  // launches (the server re-checks age on account creation regardless).
+  const startGoogle = useGoogleLogin({
+    onSuccess: async (tokenResponse) => {
+      setLoading(true);
+      try {
+        const data = await googleLoginWithToken(tokenResponse.access_token, dob);
+        onSignupSuccess(data.user);
+      } catch (err) {
+        setError(err.message || 'Google sign-in failed');
+      } finally {
+        setLoading(false);
+      }
+    },
+    onError: () => setError('Google sign-up failed'),
+  });
 
   // Flock requires users to be at least 13 (matches Terms of Service + the
   // server-side age gate in backend/utils/age.js). Client check is for UX only;
@@ -252,39 +269,34 @@ const SignupScreen = ({ onSignupSuccess, onSwitchToLogin }) => {
             <div style={{ flex: 1, height: '1px', backgroundColor: 'rgba(148,163,184,0.12)' }} />
           </div>
 
-          <div style={{ display: 'flex', justifyContent: 'center' }}>
-            <GoogleLogin
-              onSuccess={async (response) => {
-                setError('');
-                // Age gate the Google sign-up path too: DOB must be entered and
-                // >= 13 before we create an account (parity with email signup).
-                const age = ageFromDob(dob);
-                if (age === null) {
-                  setError('Please enter your date of birth first');
-                  return;
-                }
-                if (age < MIN_AGE) {
-                  setError(`You must be at least ${MIN_AGE} to use Flock`);
-                  return;
-                }
-                setLoading(true);
-                try {
-                  const data = await googleLogin(response.credential, dob);
-                  onSignupSuccess(data.user);
-                } catch (err) {
-                  setError(err.message || 'Google sign-in failed');
-                } finally {
-                  setLoading(false);
-                }
-              }}
-              onError={() => setError('Google sign-up failed')}
-              theme="filled_black"
-              shape="pill"
-              size="large"
-              width="332"
-              text="continue_with"
-            />
-          </div>
+          <button
+            type="button"
+            disabled={loading}
+            onClick={() => {
+              setError('');
+              // Age gate the Google sign-up path too: DOB must be entered and
+              // >= 13 before we create an account (parity with email signup).
+              const age = ageFromDob(dob);
+              if (age === null) {
+                setError('Please enter your date of birth first');
+                return;
+              }
+              if (age < MIN_AGE) {
+                setError(`You must be at least ${MIN_AGE} to use Flock`);
+                return;
+              }
+              startGoogle();
+            }}
+            style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '10px', padding: '13px', borderRadius: '12px', border: '1px solid rgba(148,163,184,0.25)', backgroundColor: 'rgba(255,255,255,0.04)', color: '#f4efe3', fontSize: '15px', fontWeight: '600', cursor: loading ? 'wait' : 'pointer' }}
+          >
+            <svg width="18" height="18" viewBox="0 0 48 48" aria-hidden="true">
+              <path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z" />
+              <path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z" />
+              <path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z" />
+              <path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z" />
+            </svg>
+            Continue with Google
+          </button>
 
           {/* Apple guideline 4.8 parity with the Google button above; native
               iOS only (returns null on web). Apple accounts don't carry DOB,

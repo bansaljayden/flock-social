@@ -163,23 +163,57 @@ router.post('/logout', authenticate, (req, res) => {
   res.json({ message: 'Logged out successfully' });
 });
 
-// POST /api/auth/google — Google OAuth sign-in
+// POST /api/auth/google — Google OAuth sign-in.
+// Two accepted proofs:
+//   credential    — ID token from Google's rendered button (legacy path)
+//   access_token  — OAuth token from the custom-styled button (useGoogleLogin).
+//     SECURITY: an access token alone proves nothing about WHICH app it was
+//     issued to, so we check tokeninfo.aud against our client id before
+//     trusting userinfo — otherwise any third-party app's token could log
+//     its users into Flock accounts.
 router.post('/google', [
-  body('credential').notEmpty().withMessage('Google credential is required'),
+  body('credential').optional().isString(),
+  body('access_token').optional().isString(),
 ], async (req, res) => {
   try {
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
       return res.status(400).json({ error: errors.array()[0].msg });
     }
+    if (!req.body.credential && !req.body.access_token) {
+      return res.status(400).json({ error: 'Google credential is required' });
+    }
 
-    // Verify the Google ID token
-    const ticket = await googleClient.verifyIdToken({
-      idToken: req.body.credential,
-      audience: process.env.GOOGLE_CLIENT_ID,
-    });
-    const payload = ticket.getPayload();
-    const { sub: googleId, email, name, picture } = payload;
+    let googleId, email, name, picture;
+    if (req.body.credential) {
+      // Verify the Google ID token
+      const ticket = await googleClient.verifyIdToken({
+        idToken: req.body.credential,
+        audience: process.env.GOOGLE_CLIENT_ID,
+      });
+      ({ sub: googleId, email, name, picture } = ticket.getPayload());
+    } else {
+      const at = req.body.access_token;
+      const infoRes = await fetch(`https://oauth2.googleapis.com/tokeninfo?access_token=${encodeURIComponent(at)}`);
+      if (!infoRes.ok) {
+        return res.status(401).json({ error: 'Google sign-in expired, please try again' });
+      }
+      const info = await infoRes.json();
+      if (info.aud !== process.env.GOOGLE_CLIENT_ID) {
+        return res.status(401).json({ error: 'Google sign-in failed' });
+      }
+      const profileRes = await fetch('https://openidconnect.googleapis.com/v1/userinfo', {
+        headers: { Authorization: `Bearer ${at}` },
+      });
+      if (!profileRes.ok) {
+        return res.status(401).json({ error: 'Google sign-in failed' });
+      }
+      const profile = await profileRes.json();
+      if (profile.email_verified === false) {
+        return res.status(401).json({ error: 'Google account email is not verified' });
+      }
+      ({ sub: googleId, email, name, picture } = profile);
+    }
 
     if (!email) {
       return res.status(400).json({ error: 'Google account has no email' });

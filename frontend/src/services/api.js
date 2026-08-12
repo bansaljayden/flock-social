@@ -128,6 +128,21 @@ export async function login(email, password) {
   return data;
 }
 
+// Custom-button flow: useGoogleLogin yields an OAuth access token, verified
+// server-side (tokeninfo aud check + userinfo). Same backend route.
+export async function googleLoginWithToken(accessToken, dateOfBirth) {
+  const body = { access_token: accessToken };
+  if (dateOfBirth) body.date_of_birth = dateOfBirth;
+  const data = await request('/api/auth/google', {
+    method: 'POST',
+    body: JSON.stringify(body),
+  });
+  setToken(data.token);
+  identifyUser(data.user);
+  track('login', { method: 'google' });
+  return data;
+}
+
 export async function googleLogin(credential, dateOfBirth) {
   const body = { credential };
   // Pass DOB on consumer sign-up so the backend age gate (>= 13) fires for new
