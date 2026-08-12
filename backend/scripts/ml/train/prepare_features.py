@@ -341,6 +341,26 @@ def main():
         holdout_df['baseline_busyness'] = holdout_df['baseline_busyness'].fillna(0)
         holdout_df['delta_label'] = (holdout_df['busyness_pct'] - holdout_df['baseline_busyness']).astype(float)
 
+    # ── v2.3 TRAINING-POPULATION FIX (the realtime discrepancy) ──────────────
+    # 91% of rows are weekly popular_times snapshots where busyness_pct equals
+    # baseline_busyness BY CONSTRUCTION, so their delta label is exactly 0.
+    # Training on them teaches "predict 0" and drags every real deviation
+    # toward zero — this is why v2.2.1's realtime-only within-10 was 18%.
+    # Also: production only serves the delta model when baseline > 0 (the
+    # no-baseline guard falls back to the rule engine), so rows with
+    # baseline == 0 are a population we never serve.
+    # v2.3 trains on the exact serving population: realtime rows with a real
+    # baseline. Holdout is NOT filtered — quick_eval.py already reports the
+    # realtime-only slice as the ship gate.
+    before_filter = len(train_df)
+    train_df = train_df[(train_df['is_realtime'] == 1) & (train_df['baseline_busyness'] > 0)]
+    logger.info(
+        f'v2.3 serving-population filter: {before_filter} -> {len(train_df)} rows '
+        f'(dropped weekly-tautology and no-baseline rows)'
+    )
+    if len(train_df) < 50000:
+        raise ValueError(f'Only {len(train_df)} training rows after filter — expected 100K+. Check is_realtime/baseline columns.')
+
     # Get feature columns (excludes baseline_busyness — now in label)
     feature_cols = get_feature_columns(train_df)
 
