@@ -12,7 +12,7 @@ const APP_STORE_LIVE = false;
 // TODO(Jayden): swap for hello at flockcorp.com once inbound mail is set up on
 // the domain (Resend currently handles outbound only). A Gmail contact on a
 // paid venue pitch reads as unprofessional (SLOP-AUDIT.md B).
-const CONTACT_EMAIL = 'noreply.flockapp@gmail.com';
+const CONTACT_EMAIL = 'flocksocial.corp@gmail.com';
 
 /* Inline stroke icons, one visual family, sized by the caller. */
 const Ico = {
