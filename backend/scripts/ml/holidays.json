@@ -29,6 +29,7 @@
   "nola": "US_LA",
   "nyc": "US_NY",
   "paris": "FR_",
+  "philly": "US_PA",
   "rome": "IT_",
   "saopaulo": "BR_SP",
   "seattle": "US_WA",
@@ -1892,6 +1893,6821 @@
    "2028-12-08": "bonenkai_friday",
    "2028-12-15": "bonenkai_friday",
    "2028-12-22": "bonenkai_friday"
+  }
+ },
+ "special_nights": {
+  "US": {
+   "2025-12-31": {
+    "name": "nye",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2025-11-26": {
+    "name": "thanksgiving_eve",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2025-07-03": {
+    "name": "july_3",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2025-07-04": {
+    "name": "july_4",
+    "effect": "mixed",
+    "conf": "med"
+   },
+   "2025-10-31": {
+    "name": "halloween",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2025-03-17": {
+    "name": "st_patricks",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2025-05-05": {
+    "name": "cinco_de_mayo",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2025-12-23": {
+    "name": "christmas_eve_eve",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2025-05-25": {
+    "name": "memorial_sunday",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2025-08-31": {
+    "name": "labor_day_sunday",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2025-02-09": {
+    "name": "super_bowl_sunday",
+    "effect": "mixed",
+    "conf": "med"
+   },
+   "2025-12-25": {
+    "name": "christmas_day",
+    "effect": "suppress",
+    "conf": "high"
+   },
+   "2025-11-27": {
+    "name": "thanksgiving_day",
+    "effect": "suppress",
+    "conf": "high"
+   },
+   "2025-04-20": {
+    "name": "easter_sunday",
+    "effect": "suppress",
+    "conf": "high"
+   },
+   "2025-01-01": {
+    "name": "new_years_day",
+    "effect": "suppress",
+    "conf": "high"
+   },
+   "2026-12-31": {
+    "name": "nye",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2026-11-25": {
+    "name": "thanksgiving_eve",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2026-07-03": {
+    "name": "july_3",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2026-07-04": {
+    "name": "july_4",
+    "effect": "mixed",
+    "conf": "med"
+   },
+   "2026-10-31": {
+    "name": "halloween",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2026-03-17": {
+    "name": "st_patricks",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2026-05-05": {
+    "name": "cinco_de_mayo",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2026-12-23": {
+    "name": "christmas_eve_eve",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2026-05-24": {
+    "name": "memorial_sunday",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2026-09-06": {
+    "name": "labor_day_sunday",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2026-02-08": {
+    "name": "super_bowl_sunday",
+    "effect": "mixed",
+    "conf": "med"
+   },
+   "2026-12-25": {
+    "name": "christmas_day",
+    "effect": "suppress",
+    "conf": "high"
+   },
+   "2026-11-26": {
+    "name": "thanksgiving_day",
+    "effect": "suppress",
+    "conf": "high"
+   },
+   "2026-04-05": {
+    "name": "easter_sunday",
+    "effect": "suppress",
+    "conf": "high"
+   },
+   "2026-01-01": {
+    "name": "new_years_day",
+    "effect": "suppress",
+    "conf": "high"
+   },
+   "2027-12-31": {
+    "name": "nye",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2027-11-24": {
+    "name": "thanksgiving_eve",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2027-07-03": {
+    "name": "july_3",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2027-07-04": {
+    "name": "july_4",
+    "effect": "mixed",
+    "conf": "med"
+   },
+   "2027-10-31": {
+    "name": "halloween",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2027-03-17": {
+    "name": "st_patricks",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2027-05-05": {
+    "name": "cinco_de_mayo",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2027-12-23": {
+    "name": "christmas_eve_eve",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2027-05-30": {
+    "name": "memorial_sunday",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2027-09-05": {
+    "name": "labor_day_sunday",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2027-02-14": {
+    "name": "super_bowl_sunday",
+    "effect": "mixed",
+    "conf": "med"
+   },
+   "2027-12-25": {
+    "name": "christmas_day",
+    "effect": "suppress",
+    "conf": "high"
+   },
+   "2027-11-25": {
+    "name": "thanksgiving_day",
+    "effect": "suppress",
+    "conf": "high"
+   },
+   "2027-03-28": {
+    "name": "easter_sunday",
+    "effect": "suppress",
+    "conf": "high"
+   },
+   "2027-01-01": {
+    "name": "new_years_day",
+    "effect": "suppress",
+    "conf": "high"
+   },
+   "2028-12-31": {
+    "name": "nye",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2028-11-22": {
+    "name": "thanksgiving_eve",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2028-07-03": {
+    "name": "july_3",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2028-07-04": {
+    "name": "july_4",
+    "effect": "mixed",
+    "conf": "med"
+   },
+   "2028-10-31": {
+    "name": "halloween",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2028-03-17": {
+    "name": "st_patricks",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2028-05-05": {
+    "name": "cinco_de_mayo",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2028-12-23": {
+    "name": "christmas_eve_eve",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2028-05-28": {
+    "name": "memorial_sunday",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2028-09-03": {
+    "name": "labor_day_sunday",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2028-02-13": {
+    "name": "super_bowl_sunday",
+    "effect": "mixed",
+    "conf": "med"
+   },
+   "2028-12-25": {
+    "name": "christmas_day",
+    "effect": "suppress",
+    "conf": "high"
+   },
+   "2028-11-23": {
+    "name": "thanksgiving_day",
+    "effect": "suppress",
+    "conf": "high"
+   },
+   "2028-04-16": {
+    "name": "easter_sunday",
+    "effect": "suppress",
+    "conf": "high"
+   },
+   "2028-01-01": {
+    "name": "new_years_day",
+    "effect": "suppress",
+    "conf": "high"
+   }
+  },
+  "nola": {
+   "2025-02-28": {
+    "name": "mardi_gras_peak",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2025-03-01": {
+    "name": "mardi_gras_peak",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2025-03-02": {
+    "name": "mardi_gras_peak",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2025-03-03": {
+    "name": "mardi_gras_peak",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2025-03-04": {
+    "name": "mardi_gras_peak",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2026-02-13": {
+    "name": "mardi_gras_peak",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2026-02-14": {
+    "name": "mardi_gras_peak",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2026-02-15": {
+    "name": "mardi_gras_peak",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2026-02-16": {
+    "name": "mardi_gras_peak",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2026-02-17": {
+    "name": "mardi_gras_peak",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2027-02-05": {
+    "name": "mardi_gras_peak",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2027-02-06": {
+    "name": "mardi_gras_peak",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2027-02-07": {
+    "name": "mardi_gras_peak",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2027-02-08": {
+    "name": "mardi_gras_peak",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2027-02-09": {
+    "name": "mardi_gras_peak",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2028-02-25": {
+    "name": "mardi_gras_peak",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2028-02-26": {
+    "name": "mardi_gras_peak",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2028-02-27": {
+    "name": "mardi_gras_peak",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2028-02-28": {
+    "name": "mardi_gras_peak",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2028-02-29": {
+    "name": "mardi_gras_peak",
+    "effect": "boost",
+    "conf": "high"
+   }
+  },
+  "miami": {
+   "2025-03-08": {
+    "name": "spring_break",
+    "effect": "mixed",
+    "conf": "high"
+   },
+   "2025-03-09": {
+    "name": "spring_break",
+    "effect": "mixed",
+    "conf": "high"
+   },
+   "2025-03-10": {
+    "name": "spring_break",
+    "effect": "mixed",
+    "conf": "high"
+   },
+   "2025-03-11": {
+    "name": "spring_break",
+    "effect": "mixed",
+    "conf": "high"
+   },
+   "2025-03-12": {
+    "name": "spring_break",
+    "effect": "mixed",
+    "conf": "high"
+   },
+   "2025-03-13": {
+    "name": "spring_break",
+    "effect": "mixed",
+    "conf": "high"
+   },
+   "2025-03-14": {
+    "name": "spring_break",
+    "effect": "mixed",
+    "conf": "high"
+   },
+   "2025-03-15": {
+    "name": "spring_break",
+    "effect": "mixed",
+    "conf": "high"
+   },
+   "2025-03-16": {
+    "name": "spring_break",
+    "effect": "mixed",
+    "conf": "high"
+   },
+   "2025-03-17": {
+    "name": "spring_break",
+    "effect": "mixed",
+    "conf": "high"
+   },
+   "2025-03-18": {
+    "name": "spring_break",
+    "effect": "mixed",
+    "conf": "high"
+   },
+   "2025-03-19": {
+    "name": "spring_break",
+    "effect": "mixed",
+    "conf": "high"
+   },
+   "2025-03-20": {
+    "name": "spring_break",
+    "effect": "mixed",
+    "conf": "high"
+   },
+   "2025-03-21": {
+    "name": "spring_break",
+    "effect": "mixed",
+    "conf": "high"
+   },
+   "2025-12-05": {
+    "name": "art_basel",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2025-12-06": {
+    "name": "art_basel",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2026-03-08": {
+    "name": "spring_break",
+    "effect": "mixed",
+    "conf": "high"
+   },
+   "2026-03-09": {
+    "name": "spring_break",
+    "effect": "mixed",
+    "conf": "high"
+   },
+   "2026-03-10": {
+    "name": "spring_break",
+    "effect": "mixed",
+    "conf": "high"
+   },
+   "2026-03-11": {
+    "name": "spring_break",
+    "effect": "mixed",
+    "conf": "high"
+   },
+   "2026-03-12": {
+    "name": "spring_break",
+    "effect": "mixed",
+    "conf": "high"
+   },
+   "2026-03-13": {
+    "name": "spring_break",
+    "effect": "mixed",
+    "conf": "high"
+   },
+   "2026-03-14": {
+    "name": "spring_break",
+    "effect": "mixed",
+    "conf": "high"
+   },
+   "2026-03-15": {
+    "name": "spring_break",
+    "effect": "mixed",
+    "conf": "high"
+   },
+   "2026-03-16": {
+    "name": "spring_break",
+    "effect": "mixed",
+    "conf": "high"
+   },
+   "2026-03-17": {
+    "name": "spring_break",
+    "effect": "mixed",
+    "conf": "high"
+   },
+   "2026-03-18": {
+    "name": "spring_break",
+    "effect": "mixed",
+    "conf": "high"
+   },
+   "2026-03-19": {
+    "name": "spring_break",
+    "effect": "mixed",
+    "conf": "high"
+   },
+   "2026-03-20": {
+    "name": "spring_break",
+    "effect": "mixed",
+    "conf": "high"
+   },
+   "2026-03-21": {
+    "name": "spring_break",
+    "effect": "mixed",
+    "conf": "high"
+   },
+   "2026-12-04": {
+    "name": "art_basel",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2026-12-05": {
+    "name": "art_basel",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2027-03-08": {
+    "name": "spring_break",
+    "effect": "mixed",
+    "conf": "high"
+   },
+   "2027-03-09": {
+    "name": "spring_break",
+    "effect": "mixed",
+    "conf": "high"
+   },
+   "2027-03-10": {
+    "name": "spring_break",
+    "effect": "mixed",
+    "conf": "high"
+   },
+   "2027-03-11": {
+    "name": "spring_break",
+    "effect": "mixed",
+    "conf": "high"
+   },
+   "2027-03-12": {
+    "name": "spring_break",
+    "effect": "mixed",
+    "conf": "high"
+   },
+   "2027-03-13": {
+    "name": "spring_break",
+    "effect": "mixed",
+    "conf": "high"
+   },
+   "2027-03-14": {
+    "name": "spring_break",
+    "effect": "mixed",
+    "conf": "high"
+   },
+   "2027-03-15": {
+    "name": "spring_break",
+    "effect": "mixed",
+    "conf": "high"
+   },
+   "2027-03-16": {
+    "name": "spring_break",
+    "effect": "mixed",
+    "conf": "high"
+   },
+   "2027-03-17": {
+    "name": "spring_break",
+    "effect": "mixed",
+    "conf": "high"
+   },
+   "2027-03-18": {
+    "name": "spring_break",
+    "effect": "mixed",
+    "conf": "high"
+   },
+   "2027-03-19": {
+    "name": "spring_break",
+    "effect": "mixed",
+    "conf": "high"
+   },
+   "2027-03-20": {
+    "name": "spring_break",
+    "effect": "mixed",
+    "conf": "high"
+   },
+   "2027-03-21": {
+    "name": "spring_break",
+    "effect": "mixed",
+    "conf": "high"
+   },
+   "2027-12-03": {
+    "name": "art_basel",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2027-12-04": {
+    "name": "art_basel",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2028-03-08": {
+    "name": "spring_break",
+    "effect": "mixed",
+    "conf": "high"
+   },
+   "2028-03-09": {
+    "name": "spring_break",
+    "effect": "mixed",
+    "conf": "high"
+   },
+   "2028-03-10": {
+    "name": "spring_break",
+    "effect": "mixed",
+    "conf": "high"
+   },
+   "2028-03-11": {
+    "name": "spring_break",
+    "effect": "mixed",
+    "conf": "high"
+   },
+   "2028-03-12": {
+    "name": "spring_break",
+    "effect": "mixed",
+    "conf": "high"
+   },
+   "2028-03-13": {
+    "name": "spring_break",
+    "effect": "mixed",
+    "conf": "high"
+   },
+   "2028-03-14": {
+    "name": "spring_break",
+    "effect": "mixed",
+    "conf": "high"
+   },
+   "2028-03-15": {
+    "name": "spring_break",
+    "effect": "mixed",
+    "conf": "high"
+   },
+   "2028-03-16": {
+    "name": "spring_break",
+    "effect": "mixed",
+    "conf": "high"
+   },
+   "2028-03-17": {
+    "name": "spring_break",
+    "effect": "mixed",
+    "conf": "high"
+   },
+   "2028-03-18": {
+    "name": "spring_break",
+    "effect": "mixed",
+    "conf": "high"
+   },
+   "2028-03-19": {
+    "name": "spring_break",
+    "effect": "mixed",
+    "conf": "high"
+   },
+   "2028-03-20": {
+    "name": "spring_break",
+    "effect": "mixed",
+    "conf": "high"
+   },
+   "2028-03-21": {
+    "name": "spring_break",
+    "effect": "mixed",
+    "conf": "high"
+   },
+   "2028-12-01": {
+    "name": "art_basel",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2028-12-02": {
+    "name": "art_basel",
+    "effect": "boost",
+    "conf": "med"
+   }
+  },
+  "austin": {
+   "2025-03-10": {
+    "name": "sxsw",
+    "effect": "boost",
+    "conf": "low"
+   },
+   "2025-03-11": {
+    "name": "sxsw",
+    "effect": "boost",
+    "conf": "low"
+   },
+   "2025-03-12": {
+    "name": "sxsw",
+    "effect": "boost",
+    "conf": "low"
+   },
+   "2025-03-13": {
+    "name": "sxsw",
+    "effect": "boost",
+    "conf": "low"
+   },
+   "2025-03-14": {
+    "name": "sxsw",
+    "effect": "boost",
+    "conf": "low"
+   },
+   "2025-03-15": {
+    "name": "sxsw",
+    "effect": "boost",
+    "conf": "low"
+   },
+   "2025-03-16": {
+    "name": "sxsw",
+    "effect": "boost",
+    "conf": "low"
+   },
+   "2025-03-17": {
+    "name": "sxsw",
+    "effect": "boost",
+    "conf": "low"
+   },
+   "2025-03-18": {
+    "name": "sxsw",
+    "effect": "boost",
+    "conf": "low"
+   },
+   "2025-03-19": {
+    "name": "sxsw",
+    "effect": "boost",
+    "conf": "low"
+   },
+   "2026-03-10": {
+    "name": "sxsw",
+    "effect": "boost",
+    "conf": "low"
+   },
+   "2026-03-11": {
+    "name": "sxsw",
+    "effect": "boost",
+    "conf": "low"
+   },
+   "2026-03-12": {
+    "name": "sxsw",
+    "effect": "boost",
+    "conf": "low"
+   },
+   "2026-03-13": {
+    "name": "sxsw",
+    "effect": "boost",
+    "conf": "low"
+   },
+   "2026-03-14": {
+    "name": "sxsw",
+    "effect": "boost",
+    "conf": "low"
+   },
+   "2026-03-15": {
+    "name": "sxsw",
+    "effect": "boost",
+    "conf": "low"
+   },
+   "2026-03-16": {
+    "name": "sxsw",
+    "effect": "boost",
+    "conf": "low"
+   },
+   "2026-03-17": {
+    "name": "sxsw",
+    "effect": "boost",
+    "conf": "low"
+   },
+   "2026-03-18": {
+    "name": "sxsw",
+    "effect": "boost",
+    "conf": "low"
+   },
+   "2026-03-19": {
+    "name": "sxsw",
+    "effect": "boost",
+    "conf": "low"
+   },
+   "2027-03-10": {
+    "name": "sxsw",
+    "effect": "boost",
+    "conf": "low"
+   },
+   "2027-03-11": {
+    "name": "sxsw",
+    "effect": "boost",
+    "conf": "low"
+   },
+   "2027-03-12": {
+    "name": "sxsw",
+    "effect": "boost",
+    "conf": "low"
+   },
+   "2027-03-13": {
+    "name": "sxsw",
+    "effect": "boost",
+    "conf": "low"
+   },
+   "2027-03-14": {
+    "name": "sxsw",
+    "effect": "boost",
+    "conf": "low"
+   },
+   "2027-03-15": {
+    "name": "sxsw",
+    "effect": "boost",
+    "conf": "low"
+   },
+   "2027-03-16": {
+    "name": "sxsw",
+    "effect": "boost",
+    "conf": "low"
+   },
+   "2027-03-17": {
+    "name": "sxsw",
+    "effect": "boost",
+    "conf": "low"
+   },
+   "2027-03-18": {
+    "name": "sxsw",
+    "effect": "boost",
+    "conf": "low"
+   },
+   "2027-03-19": {
+    "name": "sxsw",
+    "effect": "boost",
+    "conf": "low"
+   },
+   "2028-03-10": {
+    "name": "sxsw",
+    "effect": "boost",
+    "conf": "low"
+   },
+   "2028-03-11": {
+    "name": "sxsw",
+    "effect": "boost",
+    "conf": "low"
+   },
+   "2028-03-12": {
+    "name": "sxsw",
+    "effect": "boost",
+    "conf": "low"
+   },
+   "2028-03-13": {
+    "name": "sxsw",
+    "effect": "boost",
+    "conf": "low"
+   },
+   "2028-03-14": {
+    "name": "sxsw",
+    "effect": "boost",
+    "conf": "low"
+   },
+   "2028-03-15": {
+    "name": "sxsw",
+    "effect": "boost",
+    "conf": "low"
+   },
+   "2028-03-16": {
+    "name": "sxsw",
+    "effect": "boost",
+    "conf": "low"
+   },
+   "2028-03-17": {
+    "name": "sxsw",
+    "effect": "boost",
+    "conf": "low"
+   },
+   "2028-03-18": {
+    "name": "sxsw",
+    "effect": "boost",
+    "conf": "low"
+   },
+   "2028-03-19": {
+    "name": "sxsw",
+    "effect": "boost",
+    "conf": "low"
+   }
+  },
+  "nyc": {
+   "2025-06-28": {
+    "name": "pride_saturday",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2025-06-29": {
+    "name": "pride_sunday",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2026-06-27": {
+    "name": "pride_saturday",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2026-06-28": {
+    "name": "pride_sunday",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2027-06-26": {
+    "name": "pride_saturday",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2027-06-27": {
+    "name": "pride_sunday",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2028-06-24": {
+    "name": "pride_saturday",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2028-06-25": {
+    "name": "pride_sunday",
+    "effect": "boost",
+    "conf": "high"
+   }
+  },
+  "chicago": {
+   "2025-06-28": {
+    "name": "pride_saturday",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2025-06-29": {
+    "name": "pride_sunday",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2026-06-27": {
+    "name": "pride_saturday",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2026-06-28": {
+    "name": "pride_sunday",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2027-06-26": {
+    "name": "pride_saturday",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2027-06-27": {
+    "name": "pride_sunday",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2028-06-24": {
+    "name": "pride_saturday",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2028-06-25": {
+    "name": "pride_sunday",
+    "effect": "boost",
+    "conf": "high"
+   }
+  },
+  "GB": {
+   "2025-12-19": {
+    "name": "mad_friday",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2025-12-31": {
+    "name": "nye",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2025-05-04": {
+    "name": "bank_holiday_sunday",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2025-05-25": {
+    "name": "bank_holiday_sunday",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2025-08-24": {
+    "name": "notting_hill_carnival",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2025-08-25": {
+    "name": "notting_hill_carnival",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2025-03-17": {
+    "name": "st_patricks",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2025-12-25": {
+    "name": "christmas_day",
+    "effect": "suppress",
+    "conf": "high"
+   },
+   "2025-12-26": {
+    "name": "boxing_day",
+    "effect": "suppress",
+    "conf": "low"
+   },
+   "2026-12-18": {
+    "name": "mad_friday",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2026-12-31": {
+    "name": "nye",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2026-05-03": {
+    "name": "bank_holiday_sunday",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2026-05-24": {
+    "name": "bank_holiday_sunday",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2026-08-30": {
+    "name": "notting_hill_carnival",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2026-08-31": {
+    "name": "notting_hill_carnival",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2026-03-17": {
+    "name": "st_patricks",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2026-12-25": {
+    "name": "christmas_day",
+    "effect": "suppress",
+    "conf": "high"
+   },
+   "2026-12-26": {
+    "name": "boxing_day",
+    "effect": "suppress",
+    "conf": "low"
+   },
+   "2027-12-24": {
+    "name": "mad_friday",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2027-12-31": {
+    "name": "nye",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2027-05-02": {
+    "name": "bank_holiday_sunday",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2027-05-30": {
+    "name": "bank_holiday_sunday",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2027-08-29": {
+    "name": "notting_hill_carnival",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2027-08-30": {
+    "name": "notting_hill_carnival",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2027-03-17": {
+    "name": "st_patricks",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2027-12-25": {
+    "name": "christmas_day",
+    "effect": "suppress",
+    "conf": "high"
+   },
+   "2027-12-26": {
+    "name": "boxing_day",
+    "effect": "suppress",
+    "conf": "low"
+   },
+   "2028-12-22": {
+    "name": "mad_friday",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2028-12-31": {
+    "name": "nye",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2028-04-30": {
+    "name": "bank_holiday_sunday",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2028-05-28": {
+    "name": "bank_holiday_sunday",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2028-08-27": {
+    "name": "notting_hill_carnival",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2028-08-28": {
+    "name": "notting_hill_carnival",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2028-03-17": {
+    "name": "st_patricks",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2028-12-25": {
+    "name": "christmas_day",
+    "effect": "suppress",
+    "conf": "high"
+   },
+   "2028-12-26": {
+    "name": "boxing_day",
+    "effect": "suppress",
+    "conf": "low"
+   }
+  },
+  "ES": {
+   "2025-12-31": {
+    "name": "nochevieja",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2025-12-24": {
+    "name": "nochebuena",
+    "effect": "mixed",
+    "conf": "med"
+   },
+   "2026-12-31": {
+    "name": "nochevieja",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2026-12-24": {
+    "name": "nochebuena",
+    "effect": "mixed",
+    "conf": "med"
+   },
+   "2027-12-31": {
+    "name": "nochevieja",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2027-12-24": {
+    "name": "nochebuena",
+    "effect": "mixed",
+    "conf": "med"
+   },
+   "2028-12-31": {
+    "name": "nochevieja",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2028-12-24": {
+    "name": "nochebuena",
+    "effect": "mixed",
+    "conf": "med"
+   }
+  },
+  "barcelona": {
+   "2025-06-23": {
+    "name": "sant_joan_eve",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2025-09-20": {
+    "name": "la_merce",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2025-09-21": {
+    "name": "la_merce",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2025-09-22": {
+    "name": "la_merce",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2025-09-23": {
+    "name": "la_merce",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2025-09-24": {
+    "name": "la_merce",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2026-06-23": {
+    "name": "sant_joan_eve",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2026-09-20": {
+    "name": "la_merce",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2026-09-21": {
+    "name": "la_merce",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2026-09-22": {
+    "name": "la_merce",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2026-09-23": {
+    "name": "la_merce",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2026-09-24": {
+    "name": "la_merce",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2027-06-23": {
+    "name": "sant_joan_eve",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2027-09-20": {
+    "name": "la_merce",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2027-09-21": {
+    "name": "la_merce",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2027-09-22": {
+    "name": "la_merce",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2027-09-23": {
+    "name": "la_merce",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2027-09-24": {
+    "name": "la_merce",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2028-06-23": {
+    "name": "sant_joan_eve",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2028-09-20": {
+    "name": "la_merce",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2028-09-21": {
+    "name": "la_merce",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2028-09-22": {
+    "name": "la_merce",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2028-09-23": {
+    "name": "la_merce",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2028-09-24": {
+    "name": "la_merce",
+    "effect": "boost",
+    "conf": "high"
+   }
+  },
+  "madrid": {
+   "2025-05-15": {
+    "name": "san_isidro",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2026-05-15": {
+    "name": "san_isidro",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2027-05-15": {
+    "name": "san_isidro",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2028-05-15": {
+    "name": "san_isidro",
+    "effect": "boost",
+    "conf": "med"
+   }
+  },
+  "FR": {
+   "2025-06-21": {
+    "name": "fete_de_la_musique",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2025-07-13": {
+    "name": "bastille_eve_bals",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2025-07-14": {
+    "name": "bastille_day",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2025-12-31": {
+    "name": "nye",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2025-04-30": {
+    "name": "holiday_eve",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2025-05-07": {
+    "name": "holiday_eve",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2025-08-14": {
+    "name": "august_exodus",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2025-11-10": {
+    "name": "holiday_eve",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2025-08-01": {
+    "name": "august_exodus",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2025-08-02": {
+    "name": "august_exodus",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2025-08-03": {
+    "name": "august_exodus",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2025-08-04": {
+    "name": "august_exodus",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2025-08-05": {
+    "name": "august_exodus",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2025-08-06": {
+    "name": "august_exodus",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2025-08-07": {
+    "name": "august_exodus",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2025-08-08": {
+    "name": "august_exodus",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2025-08-09": {
+    "name": "august_exodus",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2025-08-10": {
+    "name": "august_exodus",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2025-08-11": {
+    "name": "august_exodus",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2025-08-12": {
+    "name": "august_exodus",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2025-08-13": {
+    "name": "august_exodus",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2025-08-15": {
+    "name": "august_exodus",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2025-08-16": {
+    "name": "august_exodus",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2025-08-17": {
+    "name": "august_exodus",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2025-08-18": {
+    "name": "august_exodus",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2025-08-19": {
+    "name": "august_exodus",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2025-08-20": {
+    "name": "august_exodus",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2025-08-21": {
+    "name": "august_exodus",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2025-08-22": {
+    "name": "august_exodus",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2025-08-23": {
+    "name": "august_exodus",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2025-08-24": {
+    "name": "august_exodus",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2025-08-25": {
+    "name": "august_exodus",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2025-12-24": {
+    "name": "christmas_eve",
+    "effect": "suppress",
+    "conf": "high"
+   },
+   "2025-12-25": {
+    "name": "christmas_day",
+    "effect": "suppress",
+    "conf": "high"
+   },
+   "2026-06-21": {
+    "name": "fete_de_la_musique",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2026-07-13": {
+    "name": "bastille_eve_bals",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2026-07-14": {
+    "name": "bastille_day",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2026-12-31": {
+    "name": "nye",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2026-04-30": {
+    "name": "holiday_eve",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2026-05-07": {
+    "name": "holiday_eve",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2026-08-14": {
+    "name": "august_exodus",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2026-11-10": {
+    "name": "holiday_eve",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2026-08-01": {
+    "name": "august_exodus",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2026-08-02": {
+    "name": "august_exodus",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2026-08-03": {
+    "name": "august_exodus",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2026-08-04": {
+    "name": "august_exodus",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2026-08-05": {
+    "name": "august_exodus",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2026-08-06": {
+    "name": "august_exodus",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2026-08-07": {
+    "name": "august_exodus",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2026-08-08": {
+    "name": "august_exodus",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2026-08-09": {
+    "name": "august_exodus",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2026-08-10": {
+    "name": "august_exodus",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2026-08-11": {
+    "name": "august_exodus",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2026-08-12": {
+    "name": "august_exodus",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2026-08-13": {
+    "name": "august_exodus",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2026-08-15": {
+    "name": "august_exodus",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2026-08-16": {
+    "name": "august_exodus",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2026-08-17": {
+    "name": "august_exodus",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2026-08-18": {
+    "name": "august_exodus",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2026-08-19": {
+    "name": "august_exodus",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2026-08-20": {
+    "name": "august_exodus",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2026-08-21": {
+    "name": "august_exodus",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2026-08-22": {
+    "name": "august_exodus",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2026-08-23": {
+    "name": "august_exodus",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2026-08-24": {
+    "name": "august_exodus",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2026-08-25": {
+    "name": "august_exodus",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2026-12-24": {
+    "name": "christmas_eve",
+    "effect": "suppress",
+    "conf": "high"
+   },
+   "2026-12-25": {
+    "name": "christmas_day",
+    "effect": "suppress",
+    "conf": "high"
+   },
+   "2027-06-21": {
+    "name": "fete_de_la_musique",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2027-07-13": {
+    "name": "bastille_eve_bals",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2027-07-14": {
+    "name": "bastille_day",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2027-12-31": {
+    "name": "nye",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2027-04-30": {
+    "name": "holiday_eve",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2027-05-07": {
+    "name": "holiday_eve",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2027-08-14": {
+    "name": "august_exodus",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2027-11-10": {
+    "name": "holiday_eve",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2027-08-01": {
+    "name": "august_exodus",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2027-08-02": {
+    "name": "august_exodus",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2027-08-03": {
+    "name": "august_exodus",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2027-08-04": {
+    "name": "august_exodus",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2027-08-05": {
+    "name": "august_exodus",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2027-08-06": {
+    "name": "august_exodus",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2027-08-07": {
+    "name": "august_exodus",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2027-08-08": {
+    "name": "august_exodus",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2027-08-09": {
+    "name": "august_exodus",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2027-08-10": {
+    "name": "august_exodus",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2027-08-11": {
+    "name": "august_exodus",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2027-08-12": {
+    "name": "august_exodus",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2027-08-13": {
+    "name": "august_exodus",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2027-08-15": {
+    "name": "august_exodus",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2027-08-16": {
+    "name": "august_exodus",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2027-08-17": {
+    "name": "august_exodus",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2027-08-18": {
+    "name": "august_exodus",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2027-08-19": {
+    "name": "august_exodus",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2027-08-20": {
+    "name": "august_exodus",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2027-08-21": {
+    "name": "august_exodus",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2027-08-22": {
+    "name": "august_exodus",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2027-08-23": {
+    "name": "august_exodus",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2027-08-24": {
+    "name": "august_exodus",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2027-08-25": {
+    "name": "august_exodus",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2027-12-24": {
+    "name": "christmas_eve",
+    "effect": "suppress",
+    "conf": "high"
+   },
+   "2027-12-25": {
+    "name": "christmas_day",
+    "effect": "suppress",
+    "conf": "high"
+   },
+   "2028-06-21": {
+    "name": "fete_de_la_musique",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2028-07-13": {
+    "name": "bastille_eve_bals",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2028-07-14": {
+    "name": "bastille_day",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2028-12-31": {
+    "name": "nye",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2028-04-30": {
+    "name": "holiday_eve",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2028-05-07": {
+    "name": "holiday_eve",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2028-08-14": {
+    "name": "august_exodus",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2028-11-10": {
+    "name": "holiday_eve",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2028-08-01": {
+    "name": "august_exodus",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2028-08-02": {
+    "name": "august_exodus",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2028-08-03": {
+    "name": "august_exodus",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2028-08-04": {
+    "name": "august_exodus",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2028-08-05": {
+    "name": "august_exodus",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2028-08-06": {
+    "name": "august_exodus",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2028-08-07": {
+    "name": "august_exodus",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2028-08-08": {
+    "name": "august_exodus",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2028-08-09": {
+    "name": "august_exodus",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2028-08-10": {
+    "name": "august_exodus",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2028-08-11": {
+    "name": "august_exodus",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2028-08-12": {
+    "name": "august_exodus",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2028-08-13": {
+    "name": "august_exodus",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2028-08-15": {
+    "name": "august_exodus",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2028-08-16": {
+    "name": "august_exodus",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2028-08-17": {
+    "name": "august_exodus",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2028-08-18": {
+    "name": "august_exodus",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2028-08-19": {
+    "name": "august_exodus",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2028-08-20": {
+    "name": "august_exodus",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2028-08-21": {
+    "name": "august_exodus",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2028-08-22": {
+    "name": "august_exodus",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2028-08-23": {
+    "name": "august_exodus",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2028-08-24": {
+    "name": "august_exodus",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2028-08-25": {
+    "name": "august_exodus",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2028-12-24": {
+    "name": "christmas_eve",
+    "effect": "suppress",
+    "conf": "high"
+   },
+   "2028-12-25": {
+    "name": "christmas_day",
+    "effect": "suppress",
+    "conf": "high"
+   }
+  },
+  "IT": {
+   "2025-08-08": {
+    "name": "ferragosto_exodus",
+    "effect": "suppress",
+    "conf": "high"
+   },
+   "2025-08-09": {
+    "name": "ferragosto_exodus",
+    "effect": "suppress",
+    "conf": "high"
+   },
+   "2025-08-10": {
+    "name": "ferragosto_exodus",
+    "effect": "suppress",
+    "conf": "high"
+   },
+   "2025-08-11": {
+    "name": "ferragosto_exodus",
+    "effect": "suppress",
+    "conf": "high"
+   },
+   "2025-08-12": {
+    "name": "ferragosto_exodus",
+    "effect": "suppress",
+    "conf": "high"
+   },
+   "2025-08-13": {
+    "name": "ferragosto_exodus",
+    "effect": "suppress",
+    "conf": "high"
+   },
+   "2025-08-14": {
+    "name": "ferragosto_exodus",
+    "effect": "suppress",
+    "conf": "high"
+   },
+   "2025-08-15": {
+    "name": "ferragosto_exodus",
+    "effect": "suppress",
+    "conf": "high"
+   },
+   "2025-08-16": {
+    "name": "ferragosto_exodus",
+    "effect": "suppress",
+    "conf": "high"
+   },
+   "2025-08-17": {
+    "name": "ferragosto_exodus",
+    "effect": "suppress",
+    "conf": "high"
+   },
+   "2025-08-18": {
+    "name": "ferragosto_exodus",
+    "effect": "suppress",
+    "conf": "high"
+   },
+   "2025-08-19": {
+    "name": "ferragosto_exodus",
+    "effect": "suppress",
+    "conf": "high"
+   },
+   "2025-08-20": {
+    "name": "ferragosto_exodus",
+    "effect": "suppress",
+    "conf": "high"
+   },
+   "2025-08-21": {
+    "name": "ferragosto_exodus",
+    "effect": "suppress",
+    "conf": "high"
+   },
+   "2025-08-22": {
+    "name": "ferragosto_exodus",
+    "effect": "suppress",
+    "conf": "high"
+   },
+   "2025-12-31": {
+    "name": "nye",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2025-04-24": {
+    "name": "holiday_eve",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2025-06-01": {
+    "name": "holiday_eve",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2025-12-07": {
+    "name": "holiday_eve",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2025-12-24": {
+    "name": "christmas_eve",
+    "effect": "suppress",
+    "conf": "high"
+   },
+   "2025-12-25": {
+    "name": "christmas_day",
+    "effect": "suppress",
+    "conf": "high"
+   },
+   "2026-08-08": {
+    "name": "ferragosto_exodus",
+    "effect": "suppress",
+    "conf": "high"
+   },
+   "2026-08-09": {
+    "name": "ferragosto_exodus",
+    "effect": "suppress",
+    "conf": "high"
+   },
+   "2026-08-10": {
+    "name": "ferragosto_exodus",
+    "effect": "suppress",
+    "conf": "high"
+   },
+   "2026-08-11": {
+    "name": "ferragosto_exodus",
+    "effect": "suppress",
+    "conf": "high"
+   },
+   "2026-08-12": {
+    "name": "ferragosto_exodus",
+    "effect": "suppress",
+    "conf": "high"
+   },
+   "2026-08-13": {
+    "name": "ferragosto_exodus",
+    "effect": "suppress",
+    "conf": "high"
+   },
+   "2026-08-14": {
+    "name": "ferragosto_exodus",
+    "effect": "suppress",
+    "conf": "high"
+   },
+   "2026-08-15": {
+    "name": "ferragosto_exodus",
+    "effect": "suppress",
+    "conf": "high"
+   },
+   "2026-08-16": {
+    "name": "ferragosto_exodus",
+    "effect": "suppress",
+    "conf": "high"
+   },
+   "2026-08-17": {
+    "name": "ferragosto_exodus",
+    "effect": "suppress",
+    "conf": "high"
+   },
+   "2026-08-18": {
+    "name": "ferragosto_exodus",
+    "effect": "suppress",
+    "conf": "high"
+   },
+   "2026-08-19": {
+    "name": "ferragosto_exodus",
+    "effect": "suppress",
+    "conf": "high"
+   },
+   "2026-08-20": {
+    "name": "ferragosto_exodus",
+    "effect": "suppress",
+    "conf": "high"
+   },
+   "2026-08-21": {
+    "name": "ferragosto_exodus",
+    "effect": "suppress",
+    "conf": "high"
+   },
+   "2026-08-22": {
+    "name": "ferragosto_exodus",
+    "effect": "suppress",
+    "conf": "high"
+   },
+   "2026-12-31": {
+    "name": "nye",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2026-04-24": {
+    "name": "holiday_eve",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2026-06-01": {
+    "name": "holiday_eve",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2026-12-07": {
+    "name": "holiday_eve",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2026-12-24": {
+    "name": "christmas_eve",
+    "effect": "suppress",
+    "conf": "high"
+   },
+   "2026-12-25": {
+    "name": "christmas_day",
+    "effect": "suppress",
+    "conf": "high"
+   },
+   "2027-08-08": {
+    "name": "ferragosto_exodus",
+    "effect": "suppress",
+    "conf": "high"
+   },
+   "2027-08-09": {
+    "name": "ferragosto_exodus",
+    "effect": "suppress",
+    "conf": "high"
+   },
+   "2027-08-10": {
+    "name": "ferragosto_exodus",
+    "effect": "suppress",
+    "conf": "high"
+   },
+   "2027-08-11": {
+    "name": "ferragosto_exodus",
+    "effect": "suppress",
+    "conf": "high"
+   },
+   "2027-08-12": {
+    "name": "ferragosto_exodus",
+    "effect": "suppress",
+    "conf": "high"
+   },
+   "2027-08-13": {
+    "name": "ferragosto_exodus",
+    "effect": "suppress",
+    "conf": "high"
+   },
+   "2027-08-14": {
+    "name": "ferragosto_exodus",
+    "effect": "suppress",
+    "conf": "high"
+   },
+   "2027-08-15": {
+    "name": "ferragosto_exodus",
+    "effect": "suppress",
+    "conf": "high"
+   },
+   "2027-08-16": {
+    "name": "ferragosto_exodus",
+    "effect": "suppress",
+    "conf": "high"
+   },
+   "2027-08-17": {
+    "name": "ferragosto_exodus",
+    "effect": "suppress",
+    "conf": "high"
+   },
+   "2027-08-18": {
+    "name": "ferragosto_exodus",
+    "effect": "suppress",
+    "conf": "high"
+   },
+   "2027-08-19": {
+    "name": "ferragosto_exodus",
+    "effect": "suppress",
+    "conf": "high"
+   },
+   "2027-08-20": {
+    "name": "ferragosto_exodus",
+    "effect": "suppress",
+    "conf": "high"
+   },
+   "2027-08-21": {
+    "name": "ferragosto_exodus",
+    "effect": "suppress",
+    "conf": "high"
+   },
+   "2027-08-22": {
+    "name": "ferragosto_exodus",
+    "effect": "suppress",
+    "conf": "high"
+   },
+   "2027-12-31": {
+    "name": "nye",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2027-04-24": {
+    "name": "holiday_eve",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2027-06-01": {
+    "name": "holiday_eve",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2027-12-07": {
+    "name": "holiday_eve",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2027-12-24": {
+    "name": "christmas_eve",
+    "effect": "suppress",
+    "conf": "high"
+   },
+   "2027-12-25": {
+    "name": "christmas_day",
+    "effect": "suppress",
+    "conf": "high"
+   },
+   "2028-08-08": {
+    "name": "ferragosto_exodus",
+    "effect": "suppress",
+    "conf": "high"
+   },
+   "2028-08-09": {
+    "name": "ferragosto_exodus",
+    "effect": "suppress",
+    "conf": "high"
+   },
+   "2028-08-10": {
+    "name": "ferragosto_exodus",
+    "effect": "suppress",
+    "conf": "high"
+   },
+   "2028-08-11": {
+    "name": "ferragosto_exodus",
+    "effect": "suppress",
+    "conf": "high"
+   },
+   "2028-08-12": {
+    "name": "ferragosto_exodus",
+    "effect": "suppress",
+    "conf": "high"
+   },
+   "2028-08-13": {
+    "name": "ferragosto_exodus",
+    "effect": "suppress",
+    "conf": "high"
+   },
+   "2028-08-14": {
+    "name": "ferragosto_exodus",
+    "effect": "suppress",
+    "conf": "high"
+   },
+   "2028-08-15": {
+    "name": "ferragosto_exodus",
+    "effect": "suppress",
+    "conf": "high"
+   },
+   "2028-08-16": {
+    "name": "ferragosto_exodus",
+    "effect": "suppress",
+    "conf": "high"
+   },
+   "2028-08-17": {
+    "name": "ferragosto_exodus",
+    "effect": "suppress",
+    "conf": "high"
+   },
+   "2028-08-18": {
+    "name": "ferragosto_exodus",
+    "effect": "suppress",
+    "conf": "high"
+   },
+   "2028-08-19": {
+    "name": "ferragosto_exodus",
+    "effect": "suppress",
+    "conf": "high"
+   },
+   "2028-08-20": {
+    "name": "ferragosto_exodus",
+    "effect": "suppress",
+    "conf": "high"
+   },
+   "2028-08-21": {
+    "name": "ferragosto_exodus",
+    "effect": "suppress",
+    "conf": "high"
+   },
+   "2028-08-22": {
+    "name": "ferragosto_exodus",
+    "effect": "suppress",
+    "conf": "high"
+   },
+   "2028-12-31": {
+    "name": "nye",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2028-04-24": {
+    "name": "holiday_eve",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2028-06-01": {
+    "name": "holiday_eve",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2028-12-07": {
+    "name": "holiday_eve",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2028-12-24": {
+    "name": "christmas_eve",
+    "effect": "suppress",
+    "conf": "high"
+   },
+   "2028-12-25": {
+    "name": "christmas_day",
+    "effect": "suppress",
+    "conf": "high"
+   }
+  },
+  "DE": {
+   "2025-04-30": {
+    "name": "walpurgis_night",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2025-05-01": {
+    "name": "may_day_myfest",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2025-12-31": {
+    "name": "nye",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2025-10-02": {
+    "name": "unity_day_eve",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2025-12-24": {
+    "name": "christmas_eve",
+    "effect": "suppress",
+    "conf": "high"
+   },
+   "2026-04-30": {
+    "name": "walpurgis_night",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2026-05-01": {
+    "name": "may_day_myfest",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2026-12-31": {
+    "name": "nye",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2026-10-02": {
+    "name": "unity_day_eve",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2026-12-24": {
+    "name": "christmas_eve",
+    "effect": "suppress",
+    "conf": "high"
+   },
+   "2027-04-30": {
+    "name": "walpurgis_night",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2027-05-01": {
+    "name": "may_day_myfest",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2027-12-31": {
+    "name": "nye",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2027-10-02": {
+    "name": "unity_day_eve",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2027-12-24": {
+    "name": "christmas_eve",
+    "effect": "suppress",
+    "conf": "high"
+   },
+   "2028-04-30": {
+    "name": "walpurgis_night",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2028-05-01": {
+    "name": "may_day_myfest",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2028-12-31": {
+    "name": "nye",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2028-10-02": {
+    "name": "unity_day_eve",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2028-12-24": {
+    "name": "christmas_eve",
+    "effect": "suppress",
+    "conf": "high"
+   }
+  },
+  "berlin": {
+   "2025-04-18": {
+    "name": "tanzverbot_karfreitag",
+    "effect": "suppress",
+    "conf": "low"
+   },
+   "2026-04-03": {
+    "name": "tanzverbot_karfreitag",
+    "effect": "suppress",
+    "conf": "low"
+   },
+   "2027-03-26": {
+    "name": "tanzverbot_karfreitag",
+    "effect": "suppress",
+    "conf": "low"
+   },
+   "2028-04-14": {
+    "name": "tanzverbot_karfreitag",
+    "effect": "suppress",
+    "conf": "low"
+   }
+  },
+  "NL": {
+   "2025-04-25": {
+    "name": "kings_night",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2025-04-26": {
+    "name": "kings_day",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2025-10-22": {
+    "name": "ade",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2025-10-23": {
+    "name": "ade",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2025-10-24": {
+    "name": "ade",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2025-10-25": {
+    "name": "ade",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2025-10-26": {
+    "name": "ade",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2025-12-31": {
+    "name": "nye",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2025-05-04": {
+    "name": "remembrance_eve",
+    "effect": "mixed",
+    "conf": "low"
+   },
+   "2025-05-05": {
+    "name": "liberation_day",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2025-08-02": {
+    "name": "pride_canal_parade",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2025-12-25": {
+    "name": "christmas_day",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2025-12-26": {
+    "name": "second_christmas_day",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2026-04-26": {
+    "name": "kings_night",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2026-04-27": {
+    "name": "kings_day",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2026-10-21": {
+    "name": "ade",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2026-10-22": {
+    "name": "ade",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2026-10-23": {
+    "name": "ade",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2026-10-24": {
+    "name": "ade",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2026-10-25": {
+    "name": "ade",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2026-12-31": {
+    "name": "nye",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2026-05-04": {
+    "name": "remembrance_eve",
+    "effect": "mixed",
+    "conf": "low"
+   },
+   "2026-05-05": {
+    "name": "liberation_day",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2026-08-01": {
+    "name": "pride_canal_parade",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2026-12-25": {
+    "name": "christmas_day",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2026-12-26": {
+    "name": "second_christmas_day",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2027-04-26": {
+    "name": "kings_night",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2027-04-27": {
+    "name": "kings_day",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2027-10-20": {
+    "name": "ade",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2027-10-21": {
+    "name": "ade",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2027-10-22": {
+    "name": "ade",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2027-10-23": {
+    "name": "ade",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2027-10-24": {
+    "name": "ade",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2027-12-31": {
+    "name": "nye",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2027-05-04": {
+    "name": "remembrance_eve",
+    "effect": "mixed",
+    "conf": "low"
+   },
+   "2027-05-05": {
+    "name": "liberation_day",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2027-08-07": {
+    "name": "pride_canal_parade",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2027-12-25": {
+    "name": "christmas_day",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2027-12-26": {
+    "name": "second_christmas_day",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2028-04-26": {
+    "name": "kings_night",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2028-04-27": {
+    "name": "kings_day",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2028-10-18": {
+    "name": "ade",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2028-10-19": {
+    "name": "ade",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2028-10-20": {
+    "name": "ade",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2028-10-21": {
+    "name": "ade",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2028-10-22": {
+    "name": "ade",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2028-12-31": {
+    "name": "nye",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2028-05-04": {
+    "name": "remembrance_eve",
+    "effect": "mixed",
+    "conf": "low"
+   },
+   "2028-05-05": {
+    "name": "liberation_day",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2028-08-05": {
+    "name": "pride_canal_parade",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2028-12-25": {
+    "name": "christmas_day",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2028-12-26": {
+    "name": "second_christmas_day",
+    "effect": "suppress",
+    "conf": "med"
+   }
+  },
+  "TH": {
+   "2025-02-12": {
+    "name": "buddhist_alcohol_ban",
+    "effect": "suppress",
+    "conf": "high"
+   },
+   "2025-05-11": {
+    "name": "buddhist_alcohol_ban",
+    "effect": "suppress",
+    "conf": "high"
+   },
+   "2025-07-10": {
+    "name": "buddhist_alcohol_ban",
+    "effect": "suppress",
+    "conf": "high"
+   },
+   "2025-07-11": {
+    "name": "buddhist_alcohol_ban",
+    "effect": "suppress",
+    "conf": "high"
+   },
+   "2025-10-07": {
+    "name": "buddhist_alcohol_ban",
+    "effect": "suppress",
+    "conf": "high"
+   },
+   "2025-04-13": {
+    "name": "songkran",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2025-04-14": {
+    "name": "songkran",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2025-04-15": {
+    "name": "songkran",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2025-12-31": {
+    "name": "nye",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2025-11-05": {
+    "name": "loy_krathong",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2026-03-03": {
+    "name": "buddhist_alcohol_ban",
+    "effect": "suppress",
+    "conf": "high"
+   },
+   "2026-05-31": {
+    "name": "buddhist_alcohol_ban",
+    "effect": "suppress",
+    "conf": "high"
+   },
+   "2026-06-01": {
+    "name": "buddhist_alcohol_ban",
+    "effect": "suppress",
+    "conf": "high"
+   },
+   "2026-07-29": {
+    "name": "buddhist_alcohol_ban",
+    "effect": "suppress",
+    "conf": "high"
+   },
+   "2026-07-30": {
+    "name": "buddhist_alcohol_ban",
+    "effect": "suppress",
+    "conf": "high"
+   },
+   "2026-10-26": {
+    "name": "buddhist_alcohol_ban",
+    "effect": "suppress",
+    "conf": "high"
+   },
+   "2026-04-13": {
+    "name": "songkran",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2026-04-14": {
+    "name": "songkran",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2026-04-15": {
+    "name": "songkran",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2026-12-31": {
+    "name": "nye",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2026-11-24": {
+    "name": "loy_krathong",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2027-02-21": {
+    "name": "buddhist_alcohol_ban",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2027-05-20": {
+    "name": "buddhist_alcohol_ban",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2027-07-18": {
+    "name": "buddhist_alcohol_ban",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2027-07-19": {
+    "name": "buddhist_alcohol_ban",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2027-10-15": {
+    "name": "buddhist_alcohol_ban",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2027-04-13": {
+    "name": "songkran",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2027-04-14": {
+    "name": "songkran",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2027-04-15": {
+    "name": "songkran",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2027-12-31": {
+    "name": "nye",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2027-11-14": {
+    "name": "loy_krathong",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2028-03-10": {
+    "name": "buddhist_alcohol_ban",
+    "effect": "suppress",
+    "conf": "low"
+   },
+   "2028-05-08": {
+    "name": "buddhist_alcohol_ban",
+    "effect": "suppress",
+    "conf": "low"
+   },
+   "2028-07-06": {
+    "name": "buddhist_alcohol_ban",
+    "effect": "suppress",
+    "conf": "low"
+   },
+   "2028-07-07": {
+    "name": "buddhist_alcohol_ban",
+    "effect": "suppress",
+    "conf": "low"
+   },
+   "2028-10-02": {
+    "name": "buddhist_alcohol_ban",
+    "effect": "suppress",
+    "conf": "low"
+   },
+   "2028-10-03": {
+    "name": "buddhist_alcohol_ban",
+    "effect": "suppress",
+    "conf": "low"
+   },
+   "2028-04-13": {
+    "name": "songkran",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2028-04-14": {
+    "name": "songkran",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2028-04-15": {
+    "name": "songkran",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2028-12-31": {
+    "name": "nye",
+    "effect": "boost",
+    "conf": "high"
+   }
+  },
+  "CN": {
+   "2025-01-28": {
+    "name": "cny_exodus",
+    "effect": "suppress",
+    "conf": "high"
+   },
+   "2025-01-29": {
+    "name": "cny_exodus",
+    "effect": "suppress",
+    "conf": "high"
+   },
+   "2025-01-30": {
+    "name": "cny_exodus",
+    "effect": "suppress",
+    "conf": "high"
+   },
+   "2025-01-31": {
+    "name": "cny_exodus",
+    "effect": "suppress",
+    "conf": "high"
+   },
+   "2025-02-01": {
+    "name": "cny_exodus",
+    "effect": "suppress",
+    "conf": "high"
+   },
+   "2025-02-02": {
+    "name": "cny_exodus",
+    "effect": "suppress",
+    "conf": "high"
+   },
+   "2025-02-03": {
+    "name": "cny_exodus",
+    "effect": "suppress",
+    "conf": "high"
+   },
+   "2025-02-04": {
+    "name": "cny_exodus",
+    "effect": "suppress",
+    "conf": "high"
+   },
+   "2025-12-24": {
+    "name": "pingan_ye",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2025-10-01": {
+    "name": "golden_week",
+    "effect": "mixed",
+    "conf": "med"
+   },
+   "2025-10-02": {
+    "name": "golden_week",
+    "effect": "mixed",
+    "conf": "med"
+   },
+   "2025-10-03": {
+    "name": "golden_week",
+    "effect": "mixed",
+    "conf": "med"
+   },
+   "2025-10-04": {
+    "name": "golden_week",
+    "effect": "mixed",
+    "conf": "med"
+   },
+   "2025-10-05": {
+    "name": "golden_week",
+    "effect": "mixed",
+    "conf": "med"
+   },
+   "2025-10-06": {
+    "name": "golden_week",
+    "effect": "mixed",
+    "conf": "med"
+   },
+   "2025-10-07": {
+    "name": "golden_week",
+    "effect": "mixed",
+    "conf": "med"
+   },
+   "2025-12-31": {
+    "name": "nye",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2026-02-16": {
+    "name": "cny_exodus",
+    "effect": "suppress",
+    "conf": "high"
+   },
+   "2026-02-17": {
+    "name": "cny_exodus",
+    "effect": "suppress",
+    "conf": "high"
+   },
+   "2026-02-18": {
+    "name": "cny_exodus",
+    "effect": "suppress",
+    "conf": "high"
+   },
+   "2026-02-19": {
+    "name": "cny_exodus",
+    "effect": "suppress",
+    "conf": "high"
+   },
+   "2026-02-20": {
+    "name": "cny_exodus",
+    "effect": "suppress",
+    "conf": "high"
+   },
+   "2026-02-21": {
+    "name": "cny_exodus",
+    "effect": "suppress",
+    "conf": "high"
+   },
+   "2026-02-22": {
+    "name": "cny_exodus",
+    "effect": "suppress",
+    "conf": "high"
+   },
+   "2026-02-23": {
+    "name": "cny_exodus",
+    "effect": "suppress",
+    "conf": "high"
+   },
+   "2026-12-24": {
+    "name": "pingan_ye",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2026-10-01": {
+    "name": "golden_week",
+    "effect": "mixed",
+    "conf": "med"
+   },
+   "2026-10-02": {
+    "name": "golden_week",
+    "effect": "mixed",
+    "conf": "med"
+   },
+   "2026-10-03": {
+    "name": "golden_week",
+    "effect": "mixed",
+    "conf": "med"
+   },
+   "2026-10-04": {
+    "name": "golden_week",
+    "effect": "mixed",
+    "conf": "med"
+   },
+   "2026-10-05": {
+    "name": "golden_week",
+    "effect": "mixed",
+    "conf": "med"
+   },
+   "2026-10-06": {
+    "name": "golden_week",
+    "effect": "mixed",
+    "conf": "med"
+   },
+   "2026-10-07": {
+    "name": "golden_week",
+    "effect": "mixed",
+    "conf": "med"
+   },
+   "2026-12-31": {
+    "name": "nye",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2027-02-05": {
+    "name": "cny_exodus",
+    "effect": "suppress",
+    "conf": "high"
+   },
+   "2027-02-06": {
+    "name": "cny_exodus",
+    "effect": "suppress",
+    "conf": "high"
+   },
+   "2027-02-07": {
+    "name": "cny_exodus",
+    "effect": "suppress",
+    "conf": "high"
+   },
+   "2027-02-08": {
+    "name": "cny_exodus",
+    "effect": "suppress",
+    "conf": "high"
+   },
+   "2027-02-09": {
+    "name": "cny_exodus",
+    "effect": "suppress",
+    "conf": "high"
+   },
+   "2027-02-10": {
+    "name": "cny_exodus",
+    "effect": "suppress",
+    "conf": "high"
+   },
+   "2027-02-11": {
+    "name": "cny_exodus",
+    "effect": "suppress",
+    "conf": "high"
+   },
+   "2027-02-12": {
+    "name": "cny_exodus",
+    "effect": "suppress",
+    "conf": "high"
+   },
+   "2027-12-24": {
+    "name": "pingan_ye",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2027-10-01": {
+    "name": "golden_week",
+    "effect": "mixed",
+    "conf": "med"
+   },
+   "2027-10-02": {
+    "name": "golden_week",
+    "effect": "mixed",
+    "conf": "med"
+   },
+   "2027-10-03": {
+    "name": "golden_week",
+    "effect": "mixed",
+    "conf": "med"
+   },
+   "2027-10-04": {
+    "name": "golden_week",
+    "effect": "mixed",
+    "conf": "med"
+   },
+   "2027-10-05": {
+    "name": "golden_week",
+    "effect": "mixed",
+    "conf": "med"
+   },
+   "2027-10-06": {
+    "name": "golden_week",
+    "effect": "mixed",
+    "conf": "med"
+   },
+   "2027-10-07": {
+    "name": "golden_week",
+    "effect": "mixed",
+    "conf": "med"
+   },
+   "2027-12-31": {
+    "name": "nye",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2028-01-25": {
+    "name": "cny_exodus",
+    "effect": "suppress",
+    "conf": "high"
+   },
+   "2028-01-26": {
+    "name": "cny_exodus",
+    "effect": "suppress",
+    "conf": "high"
+   },
+   "2028-01-27": {
+    "name": "cny_exodus",
+    "effect": "suppress",
+    "conf": "high"
+   },
+   "2028-01-28": {
+    "name": "cny_exodus",
+    "effect": "suppress",
+    "conf": "high"
+   },
+   "2028-01-29": {
+    "name": "cny_exodus",
+    "effect": "suppress",
+    "conf": "high"
+   },
+   "2028-01-30": {
+    "name": "cny_exodus",
+    "effect": "suppress",
+    "conf": "high"
+   },
+   "2028-01-31": {
+    "name": "cny_exodus",
+    "effect": "suppress",
+    "conf": "high"
+   },
+   "2028-02-01": {
+    "name": "cny_exodus",
+    "effect": "suppress",
+    "conf": "high"
+   },
+   "2028-12-24": {
+    "name": "pingan_ye",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2028-10-01": {
+    "name": "golden_week",
+    "effect": "mixed",
+    "conf": "med"
+   },
+   "2028-10-02": {
+    "name": "golden_week",
+    "effect": "mixed",
+    "conf": "med"
+   },
+   "2028-10-03": {
+    "name": "golden_week",
+    "effect": "mixed",
+    "conf": "med"
+   },
+   "2028-10-04": {
+    "name": "golden_week",
+    "effect": "mixed",
+    "conf": "med"
+   },
+   "2028-10-05": {
+    "name": "golden_week",
+    "effect": "mixed",
+    "conf": "med"
+   },
+   "2028-10-06": {
+    "name": "golden_week",
+    "effect": "mixed",
+    "conf": "med"
+   },
+   "2028-10-07": {
+    "name": "golden_week",
+    "effect": "mixed",
+    "conf": "med"
+   },
+   "2028-12-31": {
+    "name": "nye",
+    "effect": "boost",
+    "conf": "med"
+   }
+  },
+  "SG": {
+   "2025-12-31": {
+    "name": "nye",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2025-01-28": {
+    "name": "cny_eve_reunion",
+    "effect": "mixed",
+    "conf": "med"
+   },
+   "2025-01-29": {
+    "name": "cny_closure",
+    "effect": "suppress",
+    "conf": "high"
+   },
+   "2025-01-30": {
+    "name": "cny_closure",
+    "effect": "suppress",
+    "conf": "high"
+   },
+   "2025-10-03": {
+    "name": "f1_night_race",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2025-10-04": {
+    "name": "f1_night_race",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2025-10-05": {
+    "name": "f1_night_race",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2026-12-31": {
+    "name": "nye",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2026-02-16": {
+    "name": "cny_eve_reunion",
+    "effect": "mixed",
+    "conf": "med"
+   },
+   "2026-02-17": {
+    "name": "cny_closure",
+    "effect": "suppress",
+    "conf": "high"
+   },
+   "2026-02-18": {
+    "name": "cny_closure",
+    "effect": "suppress",
+    "conf": "high"
+   },
+   "2027-12-31": {
+    "name": "nye",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2027-02-05": {
+    "name": "cny_eve_reunion",
+    "effect": "mixed",
+    "conf": "med"
+   },
+   "2027-02-06": {
+    "name": "cny_closure",
+    "effect": "suppress",
+    "conf": "high"
+   },
+   "2027-02-07": {
+    "name": "cny_closure",
+    "effect": "suppress",
+    "conf": "high"
+   },
+   "2028-12-31": {
+    "name": "nye",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2028-01-25": {
+    "name": "cny_eve_reunion",
+    "effect": "mixed",
+    "conf": "med"
+   },
+   "2028-01-26": {
+    "name": "cny_closure",
+    "effect": "suppress",
+    "conf": "high"
+   },
+   "2028-01-27": {
+    "name": "cny_closure",
+    "effect": "suppress",
+    "conf": "high"
+   }
+  },
+  "KR": {
+   "2025-12-24": {
+    "name": "christmas_eve_couples",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2025-12-25": {
+    "name": "christmas_day_couples",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2025-01-28": {
+    "name": "seollal",
+    "effect": "suppress",
+    "conf": "high"
+   },
+   "2025-01-29": {
+    "name": "seollal",
+    "effect": "suppress",
+    "conf": "high"
+   },
+   "2025-01-30": {
+    "name": "seollal",
+    "effect": "suppress",
+    "conf": "high"
+   },
+   "2025-10-05": {
+    "name": "chuseok",
+    "effect": "suppress",
+    "conf": "high"
+   },
+   "2025-10-06": {
+    "name": "chuseok",
+    "effect": "suppress",
+    "conf": "high"
+   },
+   "2025-10-07": {
+    "name": "chuseok",
+    "effect": "suppress",
+    "conf": "high"
+   },
+   "2025-12-31": {
+    "name": "nye",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2025-12-05": {
+    "name": "hoesik_friday",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2025-12-12": {
+    "name": "hoesik_friday",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2025-12-19": {
+    "name": "hoesik_friday",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2025-12-26": {
+    "name": "hoesik_friday",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2025-10-31": {
+    "name": "halloween_itaewon",
+    "effect": "mixed",
+    "conf": "med"
+   },
+   "2025-11-11": {
+    "name": "pepero_day",
+    "effect": "boost",
+    "conf": "low"
+   },
+   "2026-12-24": {
+    "name": "christmas_eve_couples",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2026-12-25": {
+    "name": "hoesik_friday",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2026-02-16": {
+    "name": "seollal",
+    "effect": "suppress",
+    "conf": "high"
+   },
+   "2026-02-17": {
+    "name": "seollal",
+    "effect": "suppress",
+    "conf": "high"
+   },
+   "2026-02-18": {
+    "name": "seollal",
+    "effect": "suppress",
+    "conf": "high"
+   },
+   "2026-09-24": {
+    "name": "chuseok",
+    "effect": "suppress",
+    "conf": "high"
+   },
+   "2026-09-25": {
+    "name": "chuseok",
+    "effect": "suppress",
+    "conf": "high"
+   },
+   "2026-09-26": {
+    "name": "chuseok",
+    "effect": "suppress",
+    "conf": "high"
+   },
+   "2026-12-31": {
+    "name": "nye",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2026-12-04": {
+    "name": "hoesik_friday",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2026-12-11": {
+    "name": "hoesik_friday",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2026-12-18": {
+    "name": "hoesik_friday",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2026-10-31": {
+    "name": "halloween_itaewon",
+    "effect": "mixed",
+    "conf": "med"
+   },
+   "2026-11-11": {
+    "name": "pepero_day",
+    "effect": "boost",
+    "conf": "low"
+   },
+   "2027-12-24": {
+    "name": "hoesik_friday",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2027-12-25": {
+    "name": "christmas_day_couples",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2027-02-06": {
+    "name": "seollal",
+    "effect": "suppress",
+    "conf": "high"
+   },
+   "2027-02-07": {
+    "name": "seollal",
+    "effect": "suppress",
+    "conf": "high"
+   },
+   "2027-02-08": {
+    "name": "seollal",
+    "effect": "suppress",
+    "conf": "high"
+   },
+   "2027-09-14": {
+    "name": "chuseok",
+    "effect": "suppress",
+    "conf": "high"
+   },
+   "2027-09-15": {
+    "name": "chuseok",
+    "effect": "suppress",
+    "conf": "high"
+   },
+   "2027-09-16": {
+    "name": "chuseok",
+    "effect": "suppress",
+    "conf": "high"
+   },
+   "2027-12-31": {
+    "name": "nye",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2027-12-03": {
+    "name": "hoesik_friday",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2027-12-10": {
+    "name": "hoesik_friday",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2027-12-17": {
+    "name": "hoesik_friday",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2027-10-31": {
+    "name": "halloween_itaewon",
+    "effect": "mixed",
+    "conf": "med"
+   },
+   "2027-11-11": {
+    "name": "pepero_day",
+    "effect": "boost",
+    "conf": "low"
+   },
+   "2028-12-24": {
+    "name": "christmas_eve_couples",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2028-12-25": {
+    "name": "christmas_day_couples",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2028-01-25": {
+    "name": "seollal",
+    "effect": "suppress",
+    "conf": "high"
+   },
+   "2028-01-26": {
+    "name": "seollal",
+    "effect": "suppress",
+    "conf": "high"
+   },
+   "2028-01-27": {
+    "name": "seollal",
+    "effect": "suppress",
+    "conf": "high"
+   },
+   "2028-10-02": {
+    "name": "chuseok",
+    "effect": "suppress",
+    "conf": "high"
+   },
+   "2028-10-03": {
+    "name": "chuseok",
+    "effect": "suppress",
+    "conf": "high"
+   },
+   "2028-10-04": {
+    "name": "chuseok",
+    "effect": "suppress",
+    "conf": "high"
+   },
+   "2028-12-31": {
+    "name": "nye",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2028-12-01": {
+    "name": "hoesik_friday",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2028-12-08": {
+    "name": "hoesik_friday",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2028-12-15": {
+    "name": "hoesik_friday",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2028-12-22": {
+    "name": "hoesik_friday",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2028-10-31": {
+    "name": "halloween_itaewon",
+    "effect": "mixed",
+    "conf": "med"
+   },
+   "2028-11-11": {
+    "name": "pepero_day",
+    "effect": "boost",
+    "conf": "low"
+   }
+  },
+  "JP": {
+   "2025-12-05": {
+    "name": "bonenkai_friday",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2025-12-12": {
+    "name": "bonenkai_friday",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2025-12-19": {
+    "name": "bonenkai_friday",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2025-12-26": {
+    "name": "bonenkai_friday",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2025-10-31": {
+    "name": "halloween_shibuya",
+    "effect": "mixed",
+    "conf": "med"
+   },
+   "2025-12-31": {
+    "name": "nye_shrine",
+    "effect": "mixed",
+    "conf": "med"
+   },
+   "2025-01-01": {
+    "name": "shogatsu",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2025-01-02": {
+    "name": "shogatsu",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2025-01-03": {
+    "name": "shogatsu",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2025-08-13": {
+    "name": "obon",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2025-08-14": {
+    "name": "obon",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2025-08-15": {
+    "name": "obon",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2025-08-16": {
+    "name": "obon",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2025-04-29": {
+    "name": "golden_week",
+    "effect": "mixed",
+    "conf": "med"
+   },
+   "2025-04-30": {
+    "name": "golden_week",
+    "effect": "mixed",
+    "conf": "med"
+   },
+   "2025-05-01": {
+    "name": "golden_week",
+    "effect": "mixed",
+    "conf": "med"
+   },
+   "2025-05-02": {
+    "name": "golden_week",
+    "effect": "mixed",
+    "conf": "med"
+   },
+   "2025-05-03": {
+    "name": "golden_week",
+    "effect": "mixed",
+    "conf": "med"
+   },
+   "2025-05-04": {
+    "name": "golden_week",
+    "effect": "mixed",
+    "conf": "med"
+   },
+   "2025-05-05": {
+    "name": "golden_week",
+    "effect": "mixed",
+    "conf": "med"
+   },
+   "2026-12-04": {
+    "name": "bonenkai_friday",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2026-12-11": {
+    "name": "bonenkai_friday",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2026-12-18": {
+    "name": "bonenkai_friday",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2026-12-25": {
+    "name": "bonenkai_friday",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2026-10-31": {
+    "name": "halloween_shibuya",
+    "effect": "mixed",
+    "conf": "med"
+   },
+   "2026-12-31": {
+    "name": "nye_shrine",
+    "effect": "mixed",
+    "conf": "med"
+   },
+   "2026-01-01": {
+    "name": "shogatsu",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2026-01-02": {
+    "name": "shogatsu",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2026-01-03": {
+    "name": "shogatsu",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2026-08-13": {
+    "name": "obon",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2026-08-14": {
+    "name": "obon",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2026-08-15": {
+    "name": "obon",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2026-08-16": {
+    "name": "obon",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2026-04-29": {
+    "name": "golden_week",
+    "effect": "mixed",
+    "conf": "med"
+   },
+   "2026-04-30": {
+    "name": "golden_week",
+    "effect": "mixed",
+    "conf": "med"
+   },
+   "2026-05-01": {
+    "name": "golden_week",
+    "effect": "mixed",
+    "conf": "med"
+   },
+   "2026-05-02": {
+    "name": "golden_week",
+    "effect": "mixed",
+    "conf": "med"
+   },
+   "2026-05-03": {
+    "name": "golden_week",
+    "effect": "mixed",
+    "conf": "med"
+   },
+   "2026-05-04": {
+    "name": "golden_week",
+    "effect": "mixed",
+    "conf": "med"
+   },
+   "2026-05-05": {
+    "name": "golden_week",
+    "effect": "mixed",
+    "conf": "med"
+   },
+   "2027-12-03": {
+    "name": "bonenkai_friday",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2027-12-10": {
+    "name": "bonenkai_friday",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2027-12-17": {
+    "name": "bonenkai_friday",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2027-12-24": {
+    "name": "bonenkai_friday",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2027-10-31": {
+    "name": "halloween_shibuya",
+    "effect": "mixed",
+    "conf": "med"
+   },
+   "2027-12-31": {
+    "name": "nye_shrine",
+    "effect": "mixed",
+    "conf": "med"
+   },
+   "2027-01-01": {
+    "name": "shogatsu",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2027-01-02": {
+    "name": "shogatsu",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2027-01-03": {
+    "name": "shogatsu",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2027-08-13": {
+    "name": "obon",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2027-08-14": {
+    "name": "obon",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2027-08-15": {
+    "name": "obon",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2027-08-16": {
+    "name": "obon",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2027-04-29": {
+    "name": "golden_week",
+    "effect": "mixed",
+    "conf": "med"
+   },
+   "2027-04-30": {
+    "name": "golden_week",
+    "effect": "mixed",
+    "conf": "med"
+   },
+   "2027-05-01": {
+    "name": "golden_week",
+    "effect": "mixed",
+    "conf": "med"
+   },
+   "2027-05-02": {
+    "name": "golden_week",
+    "effect": "mixed",
+    "conf": "med"
+   },
+   "2027-05-03": {
+    "name": "golden_week",
+    "effect": "mixed",
+    "conf": "med"
+   },
+   "2027-05-04": {
+    "name": "golden_week",
+    "effect": "mixed",
+    "conf": "med"
+   },
+   "2027-05-05": {
+    "name": "golden_week",
+    "effect": "mixed",
+    "conf": "med"
+   },
+   "2028-12-01": {
+    "name": "bonenkai_friday",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2028-12-08": {
+    "name": "bonenkai_friday",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2028-12-15": {
+    "name": "bonenkai_friday",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2028-12-22": {
+    "name": "bonenkai_friday",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2028-10-31": {
+    "name": "halloween_shibuya",
+    "effect": "mixed",
+    "conf": "med"
+   },
+   "2028-12-31": {
+    "name": "nye_shrine",
+    "effect": "mixed",
+    "conf": "med"
+   },
+   "2028-01-01": {
+    "name": "shogatsu",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2028-01-02": {
+    "name": "shogatsu",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2028-01-03": {
+    "name": "shogatsu",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2028-08-13": {
+    "name": "obon",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2028-08-14": {
+    "name": "obon",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2028-08-15": {
+    "name": "obon",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2028-08-16": {
+    "name": "obon",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2028-04-29": {
+    "name": "golden_week",
+    "effect": "mixed",
+    "conf": "med"
+   },
+   "2028-04-30": {
+    "name": "golden_week",
+    "effect": "mixed",
+    "conf": "med"
+   },
+   "2028-05-01": {
+    "name": "golden_week",
+    "effect": "mixed",
+    "conf": "med"
+   },
+   "2028-05-02": {
+    "name": "golden_week",
+    "effect": "mixed",
+    "conf": "med"
+   },
+   "2028-05-03": {
+    "name": "golden_week",
+    "effect": "mixed",
+    "conf": "med"
+   },
+   "2028-05-04": {
+    "name": "golden_week",
+    "effect": "mixed",
+    "conf": "med"
+   },
+   "2028-05-05": {
+    "name": "golden_week",
+    "effect": "mixed",
+    "conf": "med"
+   }
+  },
+  "AU": {
+   "2025-12-31": {
+    "name": "nye",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2025-01-26": {
+    "name": "australia_day",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2025-04-25": {
+    "name": "anzac_day",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2025-04-18": {
+    "name": "good_friday_restricted",
+    "effect": "suppress",
+    "conf": "high"
+   },
+   "2025-12-25": {
+    "name": "christmas_restricted",
+    "effect": "suppress",
+    "conf": "high"
+   },
+   "2025-11-04": {
+    "name": "melbourne_cup",
+    "effect": "boost",
+    "conf": "low"
+   },
+   "2026-12-31": {
+    "name": "nye",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2026-01-26": {
+    "name": "australia_day",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2026-04-25": {
+    "name": "anzac_day",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2026-04-03": {
+    "name": "good_friday_restricted",
+    "effect": "suppress",
+    "conf": "high"
+   },
+   "2026-12-25": {
+    "name": "christmas_restricted",
+    "effect": "suppress",
+    "conf": "high"
+   },
+   "2026-11-03": {
+    "name": "melbourne_cup",
+    "effect": "boost",
+    "conf": "low"
+   },
+   "2027-12-31": {
+    "name": "nye",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2027-01-26": {
+    "name": "australia_day",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2027-04-25": {
+    "name": "anzac_day",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2027-03-26": {
+    "name": "good_friday_restricted",
+    "effect": "suppress",
+    "conf": "high"
+   },
+   "2027-12-25": {
+    "name": "christmas_restricted",
+    "effect": "suppress",
+    "conf": "high"
+   },
+   "2027-11-02": {
+    "name": "melbourne_cup",
+    "effect": "boost",
+    "conf": "low"
+   },
+   "2028-12-31": {
+    "name": "nye",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2028-01-26": {
+    "name": "australia_day",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2028-04-25": {
+    "name": "anzac_day",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2028-04-14": {
+    "name": "good_friday_restricted",
+    "effect": "suppress",
+    "conf": "high"
+   },
+   "2028-12-25": {
+    "name": "christmas_restricted",
+    "effect": "suppress",
+    "conf": "high"
+   },
+   "2028-11-07": {
+    "name": "melbourne_cup",
+    "effect": "boost",
+    "conf": "low"
+   }
+  },
+  "CA": {
+   "2025-12-31": {
+    "name": "nye",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2025-08-02": {
+    "name": "caribana_weekend",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2025-08-03": {
+    "name": "caribana_weekend",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2025-08-04": {
+    "name": "caribana_weekend",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2025-05-18": {
+    "name": "victoria_day_sunday",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2025-03-17": {
+    "name": "st_patricks",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2025-06-30": {
+    "name": "canada_day_eve",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2025-08-31": {
+    "name": "labour_day_sunday",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2025-10-12": {
+    "name": "thanksgiving_sunday",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2025-12-25": {
+    "name": "christmas_day",
+    "effect": "suppress",
+    "conf": "high"
+   },
+   "2025-04-18": {
+    "name": "good_friday",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2026-12-31": {
+    "name": "nye",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2026-08-01": {
+    "name": "caribana_weekend",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2026-08-02": {
+    "name": "caribana_weekend",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2026-08-03": {
+    "name": "caribana_weekend",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2026-05-17": {
+    "name": "victoria_day_sunday",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2026-03-17": {
+    "name": "st_patricks",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2026-06-30": {
+    "name": "canada_day_eve",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2026-09-06": {
+    "name": "labour_day_sunday",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2026-10-11": {
+    "name": "thanksgiving_sunday",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2026-12-25": {
+    "name": "christmas_day",
+    "effect": "suppress",
+    "conf": "high"
+   },
+   "2026-04-03": {
+    "name": "good_friday",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2027-12-31": {
+    "name": "nye",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2027-07-31": {
+    "name": "caribana_weekend",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2027-08-01": {
+    "name": "caribana_weekend",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2027-08-02": {
+    "name": "caribana_weekend",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2027-05-23": {
+    "name": "victoria_day_sunday",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2027-03-17": {
+    "name": "st_patricks",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2027-06-30": {
+    "name": "canada_day_eve",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2027-09-05": {
+    "name": "labour_day_sunday",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2027-10-10": {
+    "name": "thanksgiving_sunday",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2027-12-25": {
+    "name": "christmas_day",
+    "effect": "suppress",
+    "conf": "high"
+   },
+   "2027-03-26": {
+    "name": "good_friday",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2028-12-31": {
+    "name": "nye",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2028-08-05": {
+    "name": "caribana_weekend",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2028-08-06": {
+    "name": "caribana_weekend",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2028-08-07": {
+    "name": "caribana_weekend",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2028-05-21": {
+    "name": "victoria_day_sunday",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2028-03-17": {
+    "name": "st_patricks",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2028-06-30": {
+    "name": "canada_day_eve",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2028-09-03": {
+    "name": "labour_day_sunday",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2028-10-08": {
+    "name": "thanksgiving_sunday",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2028-12-25": {
+    "name": "christmas_day",
+    "effect": "suppress",
+    "conf": "high"
+   },
+   "2028-04-14": {
+    "name": "good_friday",
+    "effect": "suppress",
+    "conf": "med"
+   }
+  },
+  "MX": {
+   "2025-09-15": {
+    "name": "grito_night",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2025-10-31": {
+    "name": "dia_de_muertos",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2025-11-01": {
+    "name": "dia_de_muertos",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2025-11-02": {
+    "name": "dia_de_muertos",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2025-12-31": {
+    "name": "nye",
+    "effect": "mixed",
+    "conf": "med"
+   },
+   "2025-04-13": {
+    "name": "semana_santa_exodus",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2025-04-14": {
+    "name": "semana_santa_exodus",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2025-04-15": {
+    "name": "semana_santa_exodus",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2025-04-16": {
+    "name": "semana_santa_exodus",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2025-04-17": {
+    "name": "semana_santa_exodus",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2025-04-18": {
+    "name": "semana_santa_exodus",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2025-04-19": {
+    "name": "semana_santa_exodus",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2025-04-20": {
+    "name": "semana_santa_exodus",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2025-12-12": {
+    "name": "posada_season",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2025-12-13": {
+    "name": "posada_season",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2025-12-14": {
+    "name": "posada_season",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2025-12-15": {
+    "name": "posada_season",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2025-12-16": {
+    "name": "posada_season",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2025-12-17": {
+    "name": "posada_season",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2025-12-18": {
+    "name": "posada_season",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2025-12-19": {
+    "name": "posada_season",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2025-12-20": {
+    "name": "posada_season",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2025-12-21": {
+    "name": "posada_season",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2025-12-22": {
+    "name": "posada_season",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2025-12-23": {
+    "name": "posada_season",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2026-09-15": {
+    "name": "grito_night",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2026-10-31": {
+    "name": "dia_de_muertos",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2026-11-01": {
+    "name": "dia_de_muertos",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2026-11-02": {
+    "name": "dia_de_muertos",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2026-12-31": {
+    "name": "nye",
+    "effect": "mixed",
+    "conf": "med"
+   },
+   "2026-03-29": {
+    "name": "semana_santa_exodus",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2026-03-30": {
+    "name": "semana_santa_exodus",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2026-03-31": {
+    "name": "semana_santa_exodus",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2026-04-01": {
+    "name": "semana_santa_exodus",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2026-04-02": {
+    "name": "semana_santa_exodus",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2026-04-03": {
+    "name": "semana_santa_exodus",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2026-04-04": {
+    "name": "semana_santa_exodus",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2026-04-05": {
+    "name": "semana_santa_exodus",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2026-12-12": {
+    "name": "posada_season",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2026-12-13": {
+    "name": "posada_season",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2026-12-14": {
+    "name": "posada_season",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2026-12-15": {
+    "name": "posada_season",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2026-12-16": {
+    "name": "posada_season",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2026-12-17": {
+    "name": "posada_season",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2026-12-18": {
+    "name": "posada_season",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2026-12-19": {
+    "name": "posada_season",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2026-12-20": {
+    "name": "posada_season",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2026-12-21": {
+    "name": "posada_season",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2026-12-22": {
+    "name": "posada_season",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2026-12-23": {
+    "name": "posada_season",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2027-09-15": {
+    "name": "grito_night",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2027-10-31": {
+    "name": "dia_de_muertos",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2027-11-01": {
+    "name": "dia_de_muertos",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2027-11-02": {
+    "name": "dia_de_muertos",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2027-12-31": {
+    "name": "nye",
+    "effect": "mixed",
+    "conf": "med"
+   },
+   "2027-03-21": {
+    "name": "semana_santa_exodus",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2027-03-22": {
+    "name": "semana_santa_exodus",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2027-03-23": {
+    "name": "semana_santa_exodus",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2027-03-24": {
+    "name": "semana_santa_exodus",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2027-03-25": {
+    "name": "semana_santa_exodus",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2027-03-26": {
+    "name": "semana_santa_exodus",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2027-03-27": {
+    "name": "semana_santa_exodus",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2027-03-28": {
+    "name": "semana_santa_exodus",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2027-12-12": {
+    "name": "posada_season",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2027-12-13": {
+    "name": "posada_season",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2027-12-14": {
+    "name": "posada_season",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2027-12-15": {
+    "name": "posada_season",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2027-12-16": {
+    "name": "posada_season",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2027-12-17": {
+    "name": "posada_season",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2027-12-18": {
+    "name": "posada_season",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2027-12-19": {
+    "name": "posada_season",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2027-12-20": {
+    "name": "posada_season",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2027-12-21": {
+    "name": "posada_season",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2027-12-22": {
+    "name": "posada_season",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2027-12-23": {
+    "name": "posada_season",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2028-09-15": {
+    "name": "grito_night",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2028-10-31": {
+    "name": "dia_de_muertos",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2028-11-01": {
+    "name": "dia_de_muertos",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2028-11-02": {
+    "name": "dia_de_muertos",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2028-12-31": {
+    "name": "nye",
+    "effect": "mixed",
+    "conf": "med"
+   },
+   "2028-04-09": {
+    "name": "semana_santa_exodus",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2028-04-10": {
+    "name": "semana_santa_exodus",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2028-04-11": {
+    "name": "semana_santa_exodus",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2028-04-12": {
+    "name": "semana_santa_exodus",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2028-04-13": {
+    "name": "semana_santa_exodus",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2028-04-14": {
+    "name": "semana_santa_exodus",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2028-04-15": {
+    "name": "semana_santa_exodus",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2028-04-16": {
+    "name": "semana_santa_exodus",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2028-12-12": {
+    "name": "posada_season",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2028-12-13": {
+    "name": "posada_season",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2028-12-14": {
+    "name": "posada_season",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2028-12-15": {
+    "name": "posada_season",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2028-12-16": {
+    "name": "posada_season",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2028-12-17": {
+    "name": "posada_season",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2028-12-18": {
+    "name": "posada_season",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2028-12-19": {
+    "name": "posada_season",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2028-12-20": {
+    "name": "posada_season",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2028-12-21": {
+    "name": "posada_season",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2028-12-22": {
+    "name": "posada_season",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2028-12-23": {
+    "name": "posada_season",
+    "effect": "boost",
+    "conf": "med"
+   }
+  },
+  "AR": {
+   "2025-07-20": {
+    "name": "dia_del_amigo",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2025-09-21": {
+    "name": "spring_students_day",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2025-12-24": {
+    "name": "nochebuena_late",
+    "effect": "mixed",
+    "conf": "med"
+   },
+   "2025-12-31": {
+    "name": "nye_late",
+    "effect": "mixed",
+    "conf": "med"
+   },
+   "2025-04-18": {
+    "name": "good_friday",
+    "effect": "suppress",
+    "conf": "low"
+   },
+   "2026-07-20": {
+    "name": "dia_del_amigo",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2026-09-21": {
+    "name": "spring_students_day",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2026-12-24": {
+    "name": "nochebuena_late",
+    "effect": "mixed",
+    "conf": "med"
+   },
+   "2026-12-31": {
+    "name": "nye_late",
+    "effect": "mixed",
+    "conf": "med"
+   },
+   "2026-04-03": {
+    "name": "good_friday",
+    "effect": "suppress",
+    "conf": "low"
+   },
+   "2027-07-20": {
+    "name": "dia_del_amigo",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2027-09-21": {
+    "name": "spring_students_day",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2027-12-24": {
+    "name": "nochebuena_late",
+    "effect": "mixed",
+    "conf": "med"
+   },
+   "2027-12-31": {
+    "name": "nye_late",
+    "effect": "mixed",
+    "conf": "med"
+   },
+   "2027-03-26": {
+    "name": "good_friday",
+    "effect": "suppress",
+    "conf": "low"
+   },
+   "2028-07-20": {
+    "name": "dia_del_amigo",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2028-09-21": {
+    "name": "spring_students_day",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2028-12-24": {
+    "name": "nochebuena_late",
+    "effect": "mixed",
+    "conf": "med"
+   },
+   "2028-12-31": {
+    "name": "nye_late",
+    "effect": "mixed",
+    "conf": "med"
+   },
+   "2028-04-14": {
+    "name": "good_friday",
+    "effect": "suppress",
+    "conf": "low"
+   }
+  },
+  "BR": {
+   "2025-02-28": {
+    "name": "carnival",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2025-03-01": {
+    "name": "carnival",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2025-03-02": {
+    "name": "carnival",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2025-03-03": {
+    "name": "carnival",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2025-03-04": {
+    "name": "carnival",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2025-03-05": {
+    "name": "carnival",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2025-02-22": {
+    "name": "pre_carnival_saturday",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2025-02-23": {
+    "name": "pre_carnival_sunday",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2025-02-15": {
+    "name": "pre_carnival_saturday",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2025-02-16": {
+    "name": "pre_carnival_sunday",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2025-12-31": {
+    "name": "reveillon",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2025-06-12": {
+    "name": "dia_dos_namorados",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2025-12-24": {
+    "name": "christmas_eve",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2025-12-25": {
+    "name": "christmas_day",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2026-02-13": {
+    "name": "carnival",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2026-02-14": {
+    "name": "carnival",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2026-02-15": {
+    "name": "carnival",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2026-02-16": {
+    "name": "carnival",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2026-02-17": {
+    "name": "carnival",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2026-02-18": {
+    "name": "carnival",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2026-02-07": {
+    "name": "pre_carnival_saturday",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2026-02-08": {
+    "name": "pre_carnival_sunday",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2026-01-31": {
+    "name": "pre_carnival_saturday",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2026-02-01": {
+    "name": "pre_carnival_sunday",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2026-12-31": {
+    "name": "reveillon",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2026-06-12": {
+    "name": "dia_dos_namorados",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2026-12-24": {
+    "name": "christmas_eve",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2026-12-25": {
+    "name": "christmas_day",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2027-02-05": {
+    "name": "carnival",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2027-02-06": {
+    "name": "carnival",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2027-02-07": {
+    "name": "carnival",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2027-02-08": {
+    "name": "carnival",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2027-02-09": {
+    "name": "carnival",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2027-02-10": {
+    "name": "carnival",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2027-01-30": {
+    "name": "pre_carnival_saturday",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2027-01-31": {
+    "name": "pre_carnival_sunday",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2027-01-23": {
+    "name": "pre_carnival_saturday",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2027-01-24": {
+    "name": "pre_carnival_sunday",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2027-12-31": {
+    "name": "reveillon",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2027-06-12": {
+    "name": "dia_dos_namorados",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2027-12-24": {
+    "name": "christmas_eve",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2027-12-25": {
+    "name": "christmas_day",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2028-02-25": {
+    "name": "carnival",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2028-02-26": {
+    "name": "carnival",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2028-02-27": {
+    "name": "carnival",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2028-02-28": {
+    "name": "carnival",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2028-02-29": {
+    "name": "carnival",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2028-03-01": {
+    "name": "carnival",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2028-02-19": {
+    "name": "pre_carnival_saturday",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2028-02-20": {
+    "name": "pre_carnival_sunday",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2028-02-12": {
+    "name": "pre_carnival_saturday",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2028-02-13": {
+    "name": "pre_carnival_sunday",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2028-12-31": {
+    "name": "reveillon",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2028-06-12": {
+    "name": "dia_dos_namorados",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2028-12-24": {
+    "name": "christmas_eve",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2028-12-25": {
+    "name": "christmas_day",
+    "effect": "suppress",
+    "conf": "med"
+   }
+  },
+  "ZA": {
+   "2025-12-15": {
+    "name": "festive_season",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2025-12-16": {
+    "name": "festive_season",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2025-12-17": {
+    "name": "festive_season",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2025-12-18": {
+    "name": "festive_season",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2025-12-19": {
+    "name": "festive_season",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2025-12-20": {
+    "name": "festive_season",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2025-12-21": {
+    "name": "festive_season",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2025-12-22": {
+    "name": "festive_season",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2025-12-23": {
+    "name": "festive_season",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2025-12-24": {
+    "name": "festive_season",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2025-12-25": {
+    "name": "christmas_day",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2025-12-26": {
+    "name": "festive_season",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2025-12-27": {
+    "name": "festive_season",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2025-12-28": {
+    "name": "festive_season",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2025-12-29": {
+    "name": "festive_season",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2025-12-30": {
+    "name": "festive_season",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2025-12-31": {
+    "name": "nye",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2025-01-01": {
+    "name": "festive_season",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2025-01-02": {
+    "name": "tweede_nuwe_jaar",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2025-01-03": {
+    "name": "festive_season",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2025-01-04": {
+    "name": "festive_season",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2025-01-05": {
+    "name": "festive_season",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2025-04-18": {
+    "name": "good_friday",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2026-12-15": {
+    "name": "festive_season",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2026-12-16": {
+    "name": "festive_season",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2026-12-17": {
+    "name": "festive_season",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2026-12-18": {
+    "name": "festive_season",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2026-12-19": {
+    "name": "festive_season",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2026-12-20": {
+    "name": "festive_season",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2026-12-21": {
+    "name": "festive_season",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2026-12-22": {
+    "name": "festive_season",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2026-12-23": {
+    "name": "festive_season",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2026-12-24": {
+    "name": "festive_season",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2026-12-25": {
+    "name": "christmas_day",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2026-12-26": {
+    "name": "festive_season",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2026-12-27": {
+    "name": "festive_season",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2026-12-28": {
+    "name": "festive_season",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2026-12-29": {
+    "name": "festive_season",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2026-12-30": {
+    "name": "festive_season",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2026-12-31": {
+    "name": "nye",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2026-01-01": {
+    "name": "festive_season",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2026-01-02": {
+    "name": "tweede_nuwe_jaar",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2026-01-03": {
+    "name": "festive_season",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2026-01-04": {
+    "name": "festive_season",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2026-01-05": {
+    "name": "festive_season",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2026-04-03": {
+    "name": "good_friday",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2027-12-15": {
+    "name": "festive_season",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2027-12-16": {
+    "name": "festive_season",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2027-12-17": {
+    "name": "festive_season",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2027-12-18": {
+    "name": "festive_season",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2027-12-19": {
+    "name": "festive_season",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2027-12-20": {
+    "name": "festive_season",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2027-12-21": {
+    "name": "festive_season",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2027-12-22": {
+    "name": "festive_season",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2027-12-23": {
+    "name": "festive_season",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2027-12-24": {
+    "name": "festive_season",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2027-12-25": {
+    "name": "christmas_day",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2027-12-26": {
+    "name": "festive_season",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2027-12-27": {
+    "name": "festive_season",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2027-12-28": {
+    "name": "festive_season",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2027-12-29": {
+    "name": "festive_season",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2027-12-30": {
+    "name": "festive_season",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2027-12-31": {
+    "name": "nye",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2027-01-01": {
+    "name": "festive_season",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2027-01-02": {
+    "name": "tweede_nuwe_jaar",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2027-01-03": {
+    "name": "festive_season",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2027-01-04": {
+    "name": "festive_season",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2027-01-05": {
+    "name": "festive_season",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2027-03-26": {
+    "name": "good_friday",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2028-12-15": {
+    "name": "festive_season",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2028-12-16": {
+    "name": "festive_season",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2028-12-17": {
+    "name": "festive_season",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2028-12-18": {
+    "name": "festive_season",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2028-12-19": {
+    "name": "festive_season",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2028-12-20": {
+    "name": "festive_season",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2028-12-21": {
+    "name": "festive_season",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2028-12-22": {
+    "name": "festive_season",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2028-12-23": {
+    "name": "festive_season",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2028-12-24": {
+    "name": "festive_season",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2028-12-25": {
+    "name": "christmas_day",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2028-12-26": {
+    "name": "festive_season",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2028-12-27": {
+    "name": "festive_season",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2028-12-28": {
+    "name": "festive_season",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2028-12-29": {
+    "name": "festive_season",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2028-12-30": {
+    "name": "festive_season",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2028-12-31": {
+    "name": "nye",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2028-01-01": {
+    "name": "festive_season",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2028-01-02": {
+    "name": "tweede_nuwe_jaar",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2028-01-03": {
+    "name": "festive_season",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2028-01-04": {
+    "name": "festive_season",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2028-01-05": {
+    "name": "festive_season",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2028-04-14": {
+    "name": "good_friday",
+    "effect": "suppress",
+    "conf": "med"
+   }
+  },
+  "IN": {
+   "2025-01-26": {
+    "name": "dry_day_republic",
+    "effect": "suppress",
+    "conf": "high"
+   },
+   "2025-08-15": {
+    "name": "dry_day_independence",
+    "effect": "suppress",
+    "conf": "high"
+   },
+   "2025-10-02": {
+    "name": "dry_day_gandhi_jayanti",
+    "effect": "suppress",
+    "conf": "high"
+   },
+   "2025-12-31": {
+    "name": "nye",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2025-10-20": {
+    "name": "diwali",
+    "effect": "mixed",
+    "conf": "med"
+   },
+   "2025-03-14": {
+    "name": "holi",
+    "effect": "mixed",
+    "conf": "med"
+   },
+   "2026-01-26": {
+    "name": "dry_day_republic",
+    "effect": "suppress",
+    "conf": "high"
+   },
+   "2026-08-15": {
+    "name": "dry_day_independence",
+    "effect": "suppress",
+    "conf": "high"
+   },
+   "2026-10-02": {
+    "name": "dry_day_gandhi_jayanti",
+    "effect": "suppress",
+    "conf": "high"
+   },
+   "2026-12-31": {
+    "name": "nye",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2026-11-08": {
+    "name": "diwali",
+    "effect": "mixed",
+    "conf": "med"
+   },
+   "2026-03-04": {
+    "name": "holi",
+    "effect": "mixed",
+    "conf": "med"
+   },
+   "2027-01-26": {
+    "name": "dry_day_republic",
+    "effect": "suppress",
+    "conf": "high"
+   },
+   "2027-08-15": {
+    "name": "dry_day_independence",
+    "effect": "suppress",
+    "conf": "high"
+   },
+   "2027-10-02": {
+    "name": "dry_day_gandhi_jayanti",
+    "effect": "suppress",
+    "conf": "high"
+   },
+   "2027-12-31": {
+    "name": "nye",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2027-10-29": {
+    "name": "diwali",
+    "effect": "mixed",
+    "conf": "med"
+   },
+   "2027-03-22": {
+    "name": "holi",
+    "effect": "mixed",
+    "conf": "med"
+   },
+   "2028-01-26": {
+    "name": "dry_day_republic",
+    "effect": "suppress",
+    "conf": "high"
+   },
+   "2028-08-15": {
+    "name": "dry_day_independence",
+    "effect": "suppress",
+    "conf": "high"
+   },
+   "2028-10-02": {
+    "name": "dry_day_gandhi_jayanti",
+    "effect": "suppress",
+    "conf": "high"
+   },
+   "2028-12-31": {
+    "name": "nye",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2028-10-17": {
+    "name": "diwali",
+    "effect": "mixed",
+    "conf": "med"
+   },
+   "2028-03-11": {
+    "name": "holi",
+    "effect": "mixed",
+    "conf": "med"
+   }
+  },
+  "mumbai": {
+   "2025-04-14": {
+    "name": "dry_day_ambedkar",
+    "effect": "suppress",
+    "conf": "high"
+   },
+   "2025-01-30": {
+    "name": "dry_day_martyrs",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2025-03-14": {
+    "name": "holi_dry_day",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2026-04-14": {
+    "name": "dry_day_ambedkar",
+    "effect": "suppress",
+    "conf": "high"
+   },
+   "2026-01-30": {
+    "name": "dry_day_martyrs",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2026-03-04": {
+    "name": "holi_dry_day",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2027-04-14": {
+    "name": "dry_day_ambedkar",
+    "effect": "suppress",
+    "conf": "high"
+   },
+   "2027-01-30": {
+    "name": "dry_day_martyrs",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2027-03-22": {
+    "name": "holi_dry_day",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2028-04-14": {
+    "name": "dry_day_ambedkar",
+    "effect": "suppress",
+    "conf": "high"
+   },
+   "2028-01-30": {
+    "name": "dry_day_martyrs",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2028-03-11": {
+    "name": "holi_dry_day",
+    "effect": "suppress",
+    "conf": "med"
+   }
+  },
+  "AE": {
+   "2025-03-01": {
+    "name": "ramadan",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2025-03-02": {
+    "name": "ramadan",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2025-03-03": {
+    "name": "ramadan",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2025-03-04": {
+    "name": "ramadan",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2025-03-05": {
+    "name": "ramadan",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2025-03-06": {
+    "name": "ramadan",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2025-03-07": {
+    "name": "ramadan",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2025-03-08": {
+    "name": "ramadan",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2025-03-09": {
+    "name": "ramadan",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2025-03-10": {
+    "name": "ramadan",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2025-03-11": {
+    "name": "ramadan",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2025-03-12": {
+    "name": "ramadan",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2025-03-13": {
+    "name": "ramadan",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2025-03-14": {
+    "name": "ramadan",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2025-03-15": {
+    "name": "ramadan",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2025-03-16": {
+    "name": "ramadan",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2025-03-17": {
+    "name": "ramadan",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2025-03-18": {
+    "name": "ramadan",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2025-03-19": {
+    "name": "ramadan",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2025-03-20": {
+    "name": "ramadan",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2025-03-21": {
+    "name": "ramadan",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2025-03-22": {
+    "name": "ramadan",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2025-03-23": {
+    "name": "ramadan",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2025-03-24": {
+    "name": "ramadan",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2025-03-25": {
+    "name": "ramadan",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2025-03-26": {
+    "name": "ramadan",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2025-03-27": {
+    "name": "ramadan",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2025-03-28": {
+    "name": "ramadan",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2025-03-29": {
+    "name": "ramadan",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2025-03-30": {
+    "name": "eid_al_fitr",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2025-03-31": {
+    "name": "eid_al_fitr",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2025-04-01": {
+    "name": "eid_al_fitr",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2025-06-06": {
+    "name": "eid_al_adha",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2025-06-07": {
+    "name": "eid_al_adha",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2025-06-08": {
+    "name": "eid_al_adha",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2025-12-31": {
+    "name": "nye",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2026-02-18": {
+    "name": "ramadan",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2026-02-19": {
+    "name": "ramadan",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2026-02-20": {
+    "name": "ramadan",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2026-02-21": {
+    "name": "ramadan",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2026-02-22": {
+    "name": "ramadan",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2026-02-23": {
+    "name": "ramadan",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2026-02-24": {
+    "name": "ramadan",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2026-02-25": {
+    "name": "ramadan",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2026-02-26": {
+    "name": "ramadan",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2026-02-27": {
+    "name": "ramadan",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2026-02-28": {
+    "name": "ramadan",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2026-03-01": {
+    "name": "ramadan",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2026-03-02": {
+    "name": "ramadan",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2026-03-03": {
+    "name": "ramadan",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2026-03-04": {
+    "name": "ramadan",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2026-03-05": {
+    "name": "ramadan",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2026-03-06": {
+    "name": "ramadan",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2026-03-07": {
+    "name": "ramadan",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2026-03-08": {
+    "name": "ramadan",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2026-03-09": {
+    "name": "ramadan",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2026-03-10": {
+    "name": "ramadan",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2026-03-11": {
+    "name": "ramadan",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2026-03-12": {
+    "name": "ramadan",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2026-03-13": {
+    "name": "ramadan",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2026-03-14": {
+    "name": "ramadan",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2026-03-15": {
+    "name": "ramadan",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2026-03-16": {
+    "name": "ramadan",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2026-03-17": {
+    "name": "ramadan",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2026-03-18": {
+    "name": "ramadan",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2026-03-19": {
+    "name": "ramadan",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2026-03-20": {
+    "name": "eid_al_fitr",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2026-03-21": {
+    "name": "eid_al_fitr",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2026-03-22": {
+    "name": "eid_al_fitr",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2026-05-27": {
+    "name": "eid_al_adha",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2026-05-28": {
+    "name": "eid_al_adha",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2026-05-29": {
+    "name": "eid_al_adha",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2026-12-31": {
+    "name": "nye",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2027-02-08": {
+    "name": "ramadan",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2027-02-09": {
+    "name": "ramadan",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2027-02-10": {
+    "name": "ramadan",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2027-02-11": {
+    "name": "ramadan",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2027-02-12": {
+    "name": "ramadan",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2027-02-13": {
+    "name": "ramadan",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2027-02-14": {
+    "name": "ramadan",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2027-02-15": {
+    "name": "ramadan",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2027-02-16": {
+    "name": "ramadan",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2027-02-17": {
+    "name": "ramadan",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2027-02-18": {
+    "name": "ramadan",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2027-02-19": {
+    "name": "ramadan",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2027-02-20": {
+    "name": "ramadan",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2027-02-21": {
+    "name": "ramadan",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2027-02-22": {
+    "name": "ramadan",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2027-02-23": {
+    "name": "ramadan",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2027-02-24": {
+    "name": "ramadan",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2027-02-25": {
+    "name": "ramadan",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2027-02-26": {
+    "name": "ramadan",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2027-02-27": {
+    "name": "ramadan",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2027-02-28": {
+    "name": "ramadan",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2027-03-01": {
+    "name": "ramadan",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2027-03-02": {
+    "name": "ramadan",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2027-03-03": {
+    "name": "ramadan",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2027-03-04": {
+    "name": "ramadan",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2027-03-05": {
+    "name": "ramadan",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2027-03-06": {
+    "name": "ramadan",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2027-03-07": {
+    "name": "ramadan",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2027-03-08": {
+    "name": "ramadan",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2027-03-09": {
+    "name": "eid_al_fitr",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2027-03-10": {
+    "name": "eid_al_fitr",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2027-03-11": {
+    "name": "eid_al_fitr",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2027-05-16": {
+    "name": "eid_al_adha",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2027-05-17": {
+    "name": "eid_al_adha",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2027-05-18": {
+    "name": "eid_al_adha",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2027-12-31": {
+    "name": "nye",
+    "effect": "boost",
+    "conf": "high"
+   },
+   "2028-01-28": {
+    "name": "ramadan",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2028-01-29": {
+    "name": "ramadan",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2028-01-30": {
+    "name": "ramadan",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2028-01-31": {
+    "name": "ramadan",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2028-02-01": {
+    "name": "ramadan",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2028-02-02": {
+    "name": "ramadan",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2028-02-03": {
+    "name": "ramadan",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2028-02-04": {
+    "name": "ramadan",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2028-02-05": {
+    "name": "ramadan",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2028-02-06": {
+    "name": "ramadan",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2028-02-07": {
+    "name": "ramadan",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2028-02-08": {
+    "name": "ramadan",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2028-02-09": {
+    "name": "ramadan",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2028-02-10": {
+    "name": "ramadan",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2028-02-11": {
+    "name": "ramadan",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2028-02-12": {
+    "name": "ramadan",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2028-02-13": {
+    "name": "ramadan",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2028-02-14": {
+    "name": "ramadan",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2028-02-15": {
+    "name": "ramadan",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2028-02-16": {
+    "name": "ramadan",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2028-02-17": {
+    "name": "ramadan",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2028-02-18": {
+    "name": "ramadan",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2028-02-19": {
+    "name": "ramadan",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2028-02-20": {
+    "name": "ramadan",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2028-02-21": {
+    "name": "ramadan",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2028-02-22": {
+    "name": "ramadan",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2028-02-23": {
+    "name": "ramadan",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2028-02-24": {
+    "name": "ramadan",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2028-02-25": {
+    "name": "ramadan",
+    "effect": "suppress",
+    "conf": "med"
+   },
+   "2028-02-26": {
+    "name": "eid_al_fitr",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2028-02-27": {
+    "name": "eid_al_fitr",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2028-02-28": {
+    "name": "eid_al_fitr",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2028-05-05": {
+    "name": "eid_al_adha",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2028-05-06": {
+    "name": "eid_al_adha",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2028-05-07": {
+    "name": "eid_al_adha",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2028-12-31": {
+    "name": "nye",
+    "effect": "boost",
+    "conf": "high"
+   }
   }
  }
 }

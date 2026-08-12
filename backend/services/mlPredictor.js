@@ -6,6 +6,9 @@
 const path = require('path');
 const fs = require('fs');
 const crowdEngine = require('./crowdEngine');
+// Same holiday/school-break calendar the training rows were stamped with —
+// inference must use the identical definition or the feature is garbage.
+const { isHoliday, isSchoolBreak } = require('../scripts/ml/config');
 
 const MODEL_DIR = path.join(__dirname, '..', 'scripts', 'ml', 'models');
 const ONNX_PATH = path.join(MODEL_DIR, 'crowd_model.onnx');
@@ -396,6 +399,7 @@ function buildFeatureVector(venue, weather, timestamp, eventData, feedback, base
   const ts = timestamp ? new Date(timestamp) : new Date();
   const dayOfWeek = ts.getDay(); // 0=Sun
   const hour = ts.getHours();
+  const dateStr = `${ts.getFullYear()}-${String(ts.getMonth() + 1).padStart(2, '0')}-${String(ts.getDate()).padStart(2, '0')}`;
   const month = ts.getMonth() + 1;
 
   // Determine season
@@ -448,8 +452,8 @@ function buildFeatureVector(venue, weather, timestamp, eventData, feedback, base
     day_of_week: dayOfWeek,
     hour: hour,
     month: month,
-    is_holiday: 0,
-    is_school_break: 0,
+    is_holiday: isHoliday(dateStr) ? 1 : 0,
+    is_school_break: isSchoolBreak(dateStr) ? 1 : 0,
     price_level: priceLevel,
     rating: rating,
     review_count: reviewCount,
