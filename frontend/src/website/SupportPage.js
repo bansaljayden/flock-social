@@ -1,7 +1,7 @@
 import React, { useEffect } from 'react';
 import './PrivacyPolicy.css';
 
-const SUPPORT_EMAIL = 'flocksocial.corp@gmail.com';
+const SUPPORT_EMAIL = 'social@flockcorp.com';
 
 export default function SupportPage() {
   useEffect(() => {

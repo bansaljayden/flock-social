@@ -1,7 +1,7 @@
 import React, { useEffect } from 'react';
 import './PrivacyPolicy.css';
 
-const SUPPORT_EMAIL = 'flocksocial.corp@gmail.com';
+const SUPPORT_EMAIL = 'social@flockcorp.com';
 
 // Public account-deletion page (Google Play requires a public URL where users
 // who uninstalled can still request deletion). Routed at /delete-account.
