@@ -1527,8 +1527,12 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   // so a one-shot check drew the desktop bezel inside real phones. Sticky true.
   const [fullBleed, setFullBleed] = useState(isFullBleedNow);
   useEffect(() => {
-    if (fullBleed) return undefined;
-    const check = () => { if (isFullBleedNow()) setFullBleed(true); };
+    const check = () => {
+      if (isFullBleedNow()) setFullBleed(true);
+      // Pin the page inside the native shell so the frame can't drag/bounce
+      if (window.Capacitor?.isNativePlatform?.()) document.body.classList.add('native-shell');
+    };
+    if (fullBleed && document.body.classList.contains('native-shell')) return undefined;
     check();
     const t = setTimeout(check, 400);
     window.addEventListener('resize', check);
