@@ -1,7 +1,7 @@
 import React, { useEffect } from 'react';
 import './PrivacyPolicy.css';
 
-const CONTACT_EMAIL = 'noreply.flockapp@gmail.com';
+const CONTACT_EMAIL = 'flocksocial.corp@gmail.com';
 
 // The public why-does-this-exist page: what users get, why venues pay, and
 // what the forecast model actually is. Every claim on this page is real and
