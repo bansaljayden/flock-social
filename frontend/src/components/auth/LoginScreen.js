@@ -93,7 +93,7 @@ const LoginScreen = ({ onLoginSuccess, onSwitchToSignup, onSwitchToVenueLogin })
         {/* Logo */}
         <div style={{ textAlign: 'center', marginBottom: '24px' }}>
           <img src="/flock-logo.png" alt="Flock" style={{ width: '160px', height: '160px', borderRadius: '50%', objectFit: 'cover', display: 'block', margin: '0 auto 12px', boxShadow: '0 8px 40px rgba(0,0,0,0.4)', animation: 'floatIn 0.8s ease-out' }} />
-          <h1 style={{ fontSize: '28px', fontWeight: '900', color: colors.cream, margin: '0 0 2px', letterSpacing: '-0.5px' }}>Welcome back</h1>
+          <h1 style={{ fontFamily: 'var(--font-display)', fontSize: '30px', fontWeight: '600', color: colors.cream, margin: '0 0 2px', letterSpacing: '-0.005em' }}>Welcome back</h1>
           <p style={{ fontSize: '14px', color: 'rgba(148,163,184,0.5)', fontWeight: '400', margin: 0 }}>Sign in to continue</p>
         </div>
 
