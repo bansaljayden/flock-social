@@ -1,9 +1,10 @@
-/* Flock — flockcorp.com
+/* Flock â€” flockcorp.com
    The physical object: a printed field guide. Cream paper, navy ink, one steel
    accent, birds as the motif. The page alternates navy (the night you're going
-   out into) and cream (the planning you do in daylight) — the product's own
+   out into) and cream (the planning you do in daylight) â€” the product's own
    duality, not decoration.
-   Satoshi is self-hosted globally via src/index.css. */
+   Type: Fraunces (display, h1/h2 ONLY â€” no tnum, never for live numbers) over
+   Hanken Grotesk (body). Both variable, self-hosted via src/index.css. */
 
 .lp {
   --navy: #0f172a;
@@ -22,12 +23,12 @@
   --rule: rgba(22, 40, 61, 0.12);
   --rule-cream: rgba(244, 239, 227, 0.16);
 
-  /* semantic crowd colours — sacred, never decorative */
+  /* semantic crowd colours â€” sacred, never decorative */
   --crowd-quiet: #22c55e;
   --crowd-mid: #f59e0b;
   --crowd-busy: #ef4444;
 
-  font-family: 'Satoshi', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  font-family: 'Hanken Grotesk', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   background: var(--paper);
   color: var(--ink-2);
   -webkit-font-smoothing: antialiased;
@@ -50,15 +51,22 @@
 
 .lp h1, .lp h2, .lp h3 {
   color: var(--ink);
-  letter-spacing: -0.03em;
   line-height: 1.04;
   margin: 0;
   text-wrap: balance;
-  font-weight: 700;
+}
+/* Fraunces carries the headlines. Its optical sizing picks the display cut
+   automatically. -0.03em tracking was tuned for Satoshi's loose grotesque
+   fitting; on a bracketed serif it jams the serifs together, so headlines run
+   near-neutral. Weight 600, not 700: the serif brackets add their own mass. */
+.lp h1, .lp h2 {
+  font-family: var(--font-display);
+  font-weight: 600;
+  letter-spacing: -0.005em;
 }
 .lp h1 { font-size: clamp(40px, 5.2vw, 64px); }
 .lp h2 { font-size: clamp(32px, 4.6vw, 54px); }
-.lp h3 { font-size: clamp(18px, 2vw, 21px); letter-spacing: -0.015em; }
+.lp h3 { font-size: clamp(18px, 2vw, 21px); font-weight: 700; letter-spacing: -0.015em; }
 .lp p { margin: 0; text-wrap: pretty; }
 
 .lp-lead {
@@ -135,7 +143,7 @@
 }
 .lp-btn:active { transform: translateY(1px); }
 
-/* cream button on navy — the login-screen CTA language */
+/* cream button on navy â€” the login-screen CTA language */
 .lp-btn-cream { background: var(--cream); color: var(--navy); }
 .lp-btn-cream:hover { background: #fffaf0; }
 
@@ -266,7 +274,7 @@
 .lp-appstore span { display: grid; line-height: 1.15; font-weight: 700; font-size: 17px; letter-spacing: -0.02em; }
 .lp-appstore small { font-size: 10.5px; font-weight: 500; letter-spacing: 0.02em; }
 
-/* ============ the turn (problem → answer) ============ */
+/* ============ the turn (problem â†’ answer) ============ */
 
 .lp-turn { max-width: 22ch; }
 .lp-turn-grid {
@@ -433,7 +441,7 @@
   background: rgba(244, 239, 227, 0.07);
   color: var(--cream);
   font-family: inherit;
-  font-size: 16px; /* 16px — no zoom-on-focus in the iOS shell */
+  font-size: 16px; /* 16px â€” no zoom-on-focus in the iOS shell */
 }
 .lp-form input::placeholder { color: var(--cream-3); }
 .lp-form-msg { margin-top: 12px; font-size: 14px; color: var(--cream-2); min-height: 20px; }
