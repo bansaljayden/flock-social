@@ -40,6 +40,8 @@ import { cardShadow } from '../../theme/shadows';
 export default function DiscoverScreen() {
   const { colors, typography, screenPadding, radius } = useTheme();
   const { location, loading: locLoading } = useLocation();
+  const latitude = location?.latitude;
+  const longitude = location?.longitude;
   const mapRef = useRef(null);
 
   const [query, setQuery] = useState('');
@@ -52,14 +54,14 @@ export default function DiscoverScreen() {
 
   // Recenter map on location once geolocation resolves
   useEffect(() => {
-    if (!location || !mapRef.current) return;
+    if (!Number.isFinite(latitude) || !Number.isFinite(longitude) || !mapRef.current) return;
     mapRef.current.animateToRegion({
-      latitude: location.latitude,
-      longitude: location.longitude,
+      latitude,
+      longitude,
       latitudeDelta: 0.04,
       longitudeDelta: 0.04,
     }, 600);
-  }, [location?.latitude, location?.longitude]);
+  }, [latitude, longitude]);
 
   // Debounced search — same UX as the web's venue search
   useEffect(() => {

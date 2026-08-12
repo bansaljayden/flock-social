@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   View,
   Text,
@@ -7,7 +7,6 @@ import {
   TouchableOpacity,
   Linking,
   Alert,
-  Image,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Icon from 'react-native-vector-icons/Feather';
@@ -37,7 +36,7 @@ export default function SettleUpScreen({ route, navigation }) {
   const [links, setLinks] = useState(null);
   const [settling, setSettling] = useState(false);
 
-  const load = async () => {
+  const load = useCallback(async () => {
     if (!flockId) return;
     try {
       const [b, l] = await Promise.all([
@@ -49,9 +48,9 @@ export default function SettleUpScreen({ route, navigation }) {
     } catch (e) {
       console.warn('Settle load failed:', e.message);
     }
-  };
+  }, [flockId]);
 
-  useEffect(() => { load(); }, [flockId]);
+  useEffect(() => { load(); }, [load]);
 
   if (!bill) {
     return (

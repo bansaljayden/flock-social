@@ -26,7 +26,7 @@ export default function CheckInScreen({ route, navigation }) {
         track(Events.CheckinNfc, { place_id: placeId, authenticated: !!user });
       })
       .catch(() => setStatus('error'));
-  }, [placeId]);
+  }, [placeId, user]);
 
   return (
     <SafeAreaView style={[styles.root, { backgroundColor: colors.bgPrimary }]}>
