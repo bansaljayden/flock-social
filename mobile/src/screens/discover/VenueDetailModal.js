@@ -60,7 +60,7 @@ export default function VenueDetailModal({ visible, venue, onClose, onSelectAlte
       setLoading(false);
     });
     return () => { cancelled = true; };
-  }, [visible, venue?.place_id]);
+  }, [visible, venue?.place_id, venue?.name]);
 
   const score = Number.isFinite(crowd?.score) ? crowd.score : 0;
   const label = crowd?.label || (score > 70 ? 'Busy' : score > 40 ? 'Moderate' : 'Not Busy');
