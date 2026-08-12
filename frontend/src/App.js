@@ -4986,7 +4986,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           </div>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: '5px', paddingLeft: '74px', marginTop: '2px' }}>
-          {dmIsTyping ? <span style={{ fontSize: '11px', color: '#86EFAC', fontWeight: '600' }}>{dmTypingUser || selectedDm.name} is typing...</span> : dmSharingLocation ? <span style={{ fontSize: '11px', color: '#34d399', fontWeight: '600' }}>📍 sharing location</span> : <><span style={{ width: '5px', height: '5px', borderRadius: '3px', backgroundColor: '#22c55e', boxShadow: 'none' }} /><span style={{ fontSize: '11px', color: 'rgba(255,255,255,0.55)', fontWeight: '500' }}>online</span></>}
+          {dmIsTyping ? <span style={{ fontSize: '11px', color: '#86EFAC', fontWeight: '600' }}>{dmTypingUser || selectedDm.name} is typing...</span> : dmSharingLocation ? <span style={{ fontSize: '11px', color: '#34d399', fontWeight: '600', display: 'inline-flex', alignItems: 'center', gap: '4px' }}><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#34d399" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z" /><circle cx="12" cy="10" r="3" /></svg>sharing location</span> : <><span style={{ width: '5px', height: '5px', borderRadius: '3px', backgroundColor: '#22c55e', boxShadow: 'none' }} /><span style={{ fontSize: '11px', color: 'rgba(255,255,255,0.55)', fontWeight: '500' }}>online</span></>}
         </div>
       </div>
 
@@ -10265,7 +10265,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
             </button>
             {/* Delete account (Apple Guideline 5.1.1(v)) — permanent, in-app */}
             <button onClick={() => { setDeleteConfirmText(''); setShowDeleteAccount(true); }} style={{ width: '100%', marginTop: '10px', padding: '12px', textAlign: 'left', display: 'flex', alignItems: 'center', gap: '12px', backgroundColor: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--text-tertiary)' }}>
-              {Icons.trash ? Icons.trash('var(--text-tertiary)', 18) : <span aria-hidden style={{ fontSize: '16px' }}>🗑️</span>}
+              {Icons.trash('var(--text-tertiary)', 18)}
               <span style={{ fontWeight: '600', fontSize: '14px' }}>Delete account</span>
             </button>
           </div>
@@ -10868,7 +10868,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
     // Locked tab placeholder — shown when feature isn't available on current tier
     const LockedTab = ({ requiredTier, featureName, description }) => (
       <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '16px', padding: '32px 20px', textAlign: 'center', margin: '12px 0', border: `2px dashed ${requiredTier === 'pro' ? '#2d5a87' : 'var(--accent-amber-text)'}` }}>
-        <div style={{ fontSize: '40px', marginBottom: '8px' }}>🔒</div>
+        <div style={{ display: 'flex', justifyContent: 'center', marginBottom: '10px' }} aria-hidden>
+          <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke={requiredTier === 'pro' ? '#2d5a87' : 'var(--accent-amber-text)'} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" /><path d="M7 11V7a5 5 0 0 1 10 0v4" /></svg>
+        </div>
         <h3 style={{ fontSize: '16px', fontWeight: '800', color: 'var(--text-primary)', margin: '0 0 6px' }}>{featureName}</h3>
         <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: '0 0 16px', lineHeight: '1.5' }}>{description}</p>
         <p style={{ fontSize: '11px', color: requiredTier === 'pro' ? 'var(--accent-purple-text)' : 'var(--accent-amber-text)', fontWeight: '700', margin: '0 0 12px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Requires {requiredTier === 'pro' ? 'Pro · $75/mo' : 'Premium · $35/mo'}</p>
