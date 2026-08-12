@@ -107,6 +107,8 @@ def train_xgboost(X, y, cv, groups, baseline=None, y_actual=None, sample_weight=
         # CV fold (metadata routing off) — it would crash or silently misfit.
         # Weighted runs reuse the params the v2.3.0 realtime-only search
         # already found, and just fit + LOCO-evaluate with weights.
+        # Depth 8 won the blend bake-off (v2.3.1 beat v2.3.2's depth-4 on
+        # every slice: realtime 34.46 vs 34.87, weekly 1.06 vs 1.61).
         best_params = {
             'subsample': 0.9, 'reg_lambda': 1.0, 'reg_alpha': 0.5,
             'n_estimators': 800, 'min_child_weight': 7, 'max_depth': 8,
