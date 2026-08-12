@@ -73,6 +73,102 @@ def add_temporal_features(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+def add_astronomy_features(df: pd.DataFrame) -> pd.DataFrame:
+    """Sunset/daylight from latitude + month + hour (v2.4).
+
+    Dependency-free solar approximation using mid-month day-of-year. The SAME
+    closed-form formula is implemented in mlPredictor.js so training and
+    inference agree by construction. Rows have no dates, so mid-month is the
+    honest resolution available; the signal is the seasonal daylight shape
+    (patio dusk, early winter darkness), not exact sunset minutes.
+    """
+    doy = df['month'].fillna(6) * 30.4 - 15.2
+    decl = -23.44 * np.cos(np.radians((360.0 / 365.0) * (doy + 10)))
+    lat = df['latitude'].fillna(0).clip(-65, 65)
+    x = (-np.tan(np.radians(lat)) * np.tan(np.radians(decl))).clip(-1, 1)
+    daylight = 2 * np.degrees(np.arccos(x)) / 15.0
+    df['daylight_hours'] = daylight
+    sunset_hour = 12 + daylight / 2.0
+    hh = np.where(df['hour'] < 5, df['hour'] + 24, df['hour'])  # 1 AM belongs to the evening
+    df['hours_after_sunset'] = (hh - sunset_hour).clip(-8, 12)
+    df['is_after_sunset'] = (df['hours_after_sunset'] > 0).astype(int)
+    return df
+
+
+def add_climate_anomaly(df: pd.DataFrame, norms: pd.DataFrame = None) -> Tuple[pd.DataFrame, pd.DataFrame]:
+    """Temperature vs latitude-band x month climatology (v2.4).
+
+    Literature: anomaly vs seasonal norm predicts demand better than absolute
+    temperature. Norms are computed FROM THE TRAINING SET (train split only,
+    passed in for holdout/inference parity) on 5-degree latitude bands so
+    inference needs only lat + month. Saved into model metadata for Node.
+    """
+    df['lat_band'] = (df['latitude'].fillna(0) / 5.0).round() * 5
+    if norms is None:
+        norms = (
+            df.groupby(['lat_band', 'month'])['temperature']
+            .mean().rename('temp_norm').reset_index()
+        )
+    df = df.merge(norms, on=['lat_band', 'month'], how='left')
+    global_mean = float(norms['temp_norm'].mean())
+    df['temp_norm'] = df['temp_norm'].fillna(global_mean)
+    df['temp_anomaly'] = (df['temperature'].fillna(df['temp_norm']) - df['temp_norm']).clip(-25, 25)
+    df['is_warm_anomaly_evening'] = ((df['temp_anomaly'] > 5) & (df['hour'] >= 17)).astype(int)
+    return df, norms
+
+
+def add_neighbor_features(df: pd.DataFrame) -> pd.DataFrame:
+    """Neighbor-venue same-hour baseline activity (v2.4, agglomeration signal).
+
+    For each venue: how much typical same-hour activity surrounds it within
+    ~1km (3x3 grid of ~500m buckets), excluding itself. The academic result
+    this encodes: nearby venues' demand predicts a venue's own demand.
+    Inference computes the identical quantity via SQL over ml_venues +
+    ml_venue_baselines (same source data).
+    """
+    df['_vkey'] = df['latitude'].round(5).astype(str) + '_' + df['longitude'].round(5).astype(str)
+    vb = (
+        df.groupby(['_vkey', 'day_of_week', 'hour'])
+        .agg(bl=('baseline_busyness', 'mean'), lat=('latitude', 'first'), lng=('longitude', 'first'))
+        .reset_index()
+    )
+    vb['bx'] = (vb['lat'] / 0.005).round().astype(np.int32)
+    vb['by'] = (vb['lng'] / 0.005).round().astype(np.int32)
+
+    bucket = (
+        vb.groupby(['bx', 'by', 'day_of_week', 'hour'])
+        .agg(b_sum=('bl', 'sum'), b_cnt=('bl', 'size'))
+        .reset_index()
+    )
+    # 3x3 window sums via shifted copies
+    shifted = []
+    for dx in (-1, 0, 1):
+        for dy in (-1, 0, 1):
+            s = bucket.copy()
+            s['bx'] = s['bx'] + dx
+            s['by'] = s['by'] + dy
+            shifted.append(s)
+    window = (
+        pd.concat(shifted, ignore_index=True)
+        .groupby(['bx', 'by', 'day_of_week', 'hour'])
+        .agg(w_sum=('b_sum', 'sum'), w_cnt=('b_cnt', 'sum'))
+        .reset_index()
+    )
+    vb = vb.merge(window, on=['bx', 'by', 'day_of_week', 'hour'], how='left')
+    vb['neighbor_count'] = (vb['w_cnt'].fillna(1) - 1).clip(lower=0)
+    vb['neighbor_baseline_same_hour'] = np.where(
+        vb['neighbor_count'] > 0,
+        (vb['w_sum'].fillna(vb['bl']) - vb['bl']) / vb['neighbor_count'].replace(0, 1),
+        0.0,
+    )
+    nb = vb[['_vkey', 'day_of_week', 'hour', 'neighbor_count', 'neighbor_baseline_same_hour']]
+    df = df.merge(nb, on=['_vkey', 'day_of_week', 'hour'], how='left')
+    df['neighbor_count'] = df['neighbor_count'].fillna(0)
+    df['log_neighbor_count'] = np.log1p(df['neighbor_count'])
+    df['neighbor_baseline_same_hour'] = df['neighbor_baseline_same_hour'].fillna(0).clip(0, 100)
+    return df
+
+
 def add_venue_features(df: pd.DataFrame) -> Tuple[pd.DataFrame, Dict]:
     """Add venue-derived features and encode categories."""
     # Category encoding
@@ -264,6 +360,7 @@ def get_feature_columns(df: pd.DataFrame) -> List[str]:
         'has_venue_baseline',  # leaks the same signal as baseline_busyness
         'user_feedback_count',  # raw count — use log_user_feedback_count instead
         'sample_weight',  # training weight — NEVER a feature (encodes row provenance = label regime)
+        '_vkey', 'lat_band', 'temp_norm', 'neighbor_count',  # v2.4 intermediates (log_neighbor_count is the feature)
     }
     feature_cols = [c for c in df.columns if c not in exclude]
     return sorted(feature_cols)
@@ -303,6 +400,14 @@ def main():
     train_df = add_baseline_features(train_df)
     train_df = add_user_feedback_features(train_df)
     train_df = add_event_features(train_df)
+    # v2.4 features (sunset/anomaly/neighbors) — see function docstrings
+    train_df = add_astronomy_features(train_df)
+    train_df, temp_norms = add_climate_anomaly(train_df)
+    train_df = add_neighbor_features(train_df)
+    venue_metadata['temp_norms'] = {
+        f"{int(r.lat_band)}_{int(r.month)}": round(float(r.temp_norm), 2)
+        for r in temp_norms.itertuples() if not pd.isna(r.month)
+    }
 
     # Feature engineering — holdout data (same transforms)
     if holdout_df is not None:
@@ -330,6 +435,9 @@ def main():
         holdout_df = add_baseline_features(holdout_df)
         holdout_df = add_user_feedback_features(holdout_df)
         holdout_df = add_event_features(holdout_df)
+        holdout_df = add_astronomy_features(holdout_df)
+        holdout_df, _ = add_climate_anomaly(holdout_df, norms=temp_norms)  # TRAIN norms — no holdout leakage
+        holdout_df = add_neighbor_features(holdout_df)
 
     # Compute delta label: y_delta = busyness_pct - baseline_busyness
     # Model predicts the delta; production reconstructs absolute as baseline + clamp(delta, -30, 30).

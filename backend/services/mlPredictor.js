@@ -348,7 +348,51 @@ async function getNearbyEvents(lat, lng, timestamp) {
 // Feature Engineering (mirrors prepare_features.py)
 // ---------------------------------------------------------------------------
 
-function buildFeatureVector(venue, weather, timestamp, eventData, feedback, baseline) {
+// v2.4 astronomy — the SAME closed-form mid-month solar approximation as
+// prepare_features.py add_astronomy_features (parity by construction).
+function astronomyFeatures(lat, month, hour) {
+  const doy = month * 30.4 - 15.2;
+  const decl = -23.44 * Math.cos((Math.PI / 180) * (360 / 365) * (doy + 10));
+  const latC = Math.max(-65, Math.min(65, lat || 0));
+  let x = -Math.tan(latC * Math.PI / 180) * Math.tan(decl * Math.PI / 180);
+  x = Math.max(-1, Math.min(1, x));
+  const daylight = (2 * (Math.acos(x) * 180 / Math.PI)) / 15;
+  const sunsetHour = 12 + daylight / 2;
+  const hh = hour < 5 ? hour + 24 : hour; // 1 AM belongs to the evening
+  const afterSunset = Math.max(-8, Math.min(12, hh - sunsetHour));
+  return { daylight_hours: daylight, hours_after_sunset: afterSunset, is_after_sunset: afterSunset > 0 ? 1 : 0 };
+}
+
+// v2.4 neighbor activity — same quantity the training pipeline computes
+// (mean same-hour baseline of venues within ~1km, excluding self), served
+// from ml_venues + ml_venue_baselines. Cached 24h per venue/dow/hour.
+const neighborCache = new Map();
+async function getNeighborActivity(placeId, lat, lng, dayOfWeek, hour) {
+  const none = { count: 0, mean: 0 };
+  if (!pool || !lat || !lng) return none;
+  const key = `${(+lat).toFixed(3)}_${(+lng).toFixed(3)}_${dayOfWeek}_${hour}`;
+  const hit = neighborCache.get(key);
+  if (hit && Date.now() - hit.ts < 24 * 60 * 60 * 1000) return hit.data;
+  try {
+    const r = await pool.query(
+      `SELECT COUNT(*)::int AS cnt, COALESCE(AVG(b.baseline), 0) AS mean_bl
+       FROM ml_venues v
+       JOIN ml_venue_baselines b ON b.google_place_id = v.google_place_id
+        AND b.day_of_week = $3 AND b.hour = $4
+       WHERE v.latitude BETWEEN $1 - 0.0075 AND $1 + 0.0075
+         AND v.longitude BETWEEN $2 - 0.0075 AND $2 + 0.0075
+         AND ($5::text IS NULL OR v.google_place_id != $5)`,
+      [lat, lng, dayOfWeek, hour, placeId || null]
+    );
+    const data = { count: r.rows[0]?.cnt || 0, mean: Math.max(0, Math.min(100, parseFloat(r.rows[0]?.mean_bl) || 0)) };
+    neighborCache.set(key, { ts: Date.now(), data });
+    return data;
+  } catch {
+    return none;
+  }
+}
+
+function buildFeatureVector(venue, weather, timestamp, eventData, feedback, baseline, neighbors) {
   const ts = timestamp ? new Date(timestamp) : new Date();
   const dayOfWeek = ts.getDay(); // 0=Sun
   const hour = ts.getHours();
@@ -467,6 +511,20 @@ function buildFeatureVector(venue, weather, timestamp, eventData, feedback, base
     log_user_feedback_count: Math.log((feedback?.count || 0) + 1),
     has_user_feedback: (feedback?.count > 0) ? 1 : 0,
     avg_prediction_error: feedback?.avgError || 0,
+    // v2.4 features (older models simply don't list these in feature_names)
+    ...astronomyFeatures(lat, month, hour),
+    ...(() => {
+      const norms = metadata.temp_norms || {};
+      const band = Math.round((lat || 0) / 5) * 5;
+      const norm = norms[`${band}_${month}`];
+      const anomaly = norm != null ? Math.max(-25, Math.min(25, temp - norm)) : 0;
+      return {
+        temp_anomaly: anomaly,
+        is_warm_anomaly_evening: (anomaly > 5 && hour >= 17) ? 1 : 0,
+      };
+    })(),
+    log_neighbor_count: Math.log1p(neighbors?.count || 0),
+    neighbor_baseline_same_hour: neighbors?.mean || 0,
   };
 
   // Weather group one-hot
@@ -527,10 +585,11 @@ async function predictBusyness(venue, weather, timestamp) {
     const placeId = venue.place_id || venue.google_place_id || null;
     const ts = timestamp ? new Date(timestamp) : new Date();
 
-    const [eventData, feedback, storedBaseline] = await Promise.all([
+    const [eventData, feedback, storedBaseline, neighbors] = await Promise.all([
       getNearbyEvents(lat, lng, timestamp),
       getUserFeedback(placeId),
       getBaseline(placeId, ts.getDay(), ts.getHours()),
+      getNeighborActivity(placeId, lat, lng, ts.getDay(), ts.getHours()),
     ]);
 
     // Best-available baseline: stored table first, else read it directly off
@@ -557,7 +616,7 @@ async function predictBusyness(venue, weather, timestamp) {
     }
 
     const ort = require('onnxruntime-node');
-    const vector = buildFeatureVector(venue, weather, timestamp, eventData, feedback, baseline);
+    const vector = buildFeatureVector(venue, weather, timestamp, eventData, feedback, baseline, neighbors);
     const inputName = metadata.onnx_input_name || 'input';
     const tensor = new ort.Tensor('float32', vector, [1, vector.length]);
     const results = await session.run({ [inputName]: tensor });
