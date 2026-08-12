@@ -25,7 +25,7 @@ import VenueLoginScreen from './components/auth/VenueLoginScreen';
 import ModerationSheet from './components/ModerationSheet';
 import PaywallSheet from './components/PaywallSheet';
 import { initPurchases } from './services/purchases';
-import { getEntitlements } from './services/api';
+import { getEntitlements, createFlockInviteLink, getVenueIntelligence, getVenueStrip } from './services/api';
 import { motion, AnimatePresence } from 'framer-motion';
 import { SplineScene } from './components/ui/spline-scene';
 import 'maplibre-gl/dist/maplibre-gl.css';
@@ -9224,6 +9224,28 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 <button onClick={() => setShowFlockInviteModal(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '4px' }}>{Icons.x(colors.textTertiary, 20)}</button>
               </div>
 
+              {/* Guest link — anyone with it can RSVP and vote, no account.
+                  This is the growth surface: every plan reaches non-users. */}
+              <button
+                onClick={async () => {
+                  try {
+                    const { url } = await createFlockInviteLink(selectedFlockId);
+                    if (navigator.share && window.Capacitor?.isNativePlatform?.()) {
+                      await navigator.share({ title: 'Join my flock', url });
+                    } else {
+                      await navigator.clipboard.writeText(url);
+                      showToast('Invite link copied. Anyone with it can RSVP and vote');
+                    }
+                  } catch (e) {
+                    if (e?.name !== 'AbortError') showToast('Could not create invite link', 'error');
+                  }
+                }}
+                style={{ width: '100%', marginBottom: '14px', padding: '12px 14px', borderRadius: '12px', border: `1.5px dashed ${colors.steel}`, backgroundColor: 'transparent', color: colors.steel, fontWeight: '700', fontSize: '13px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}
+              >
+                {Icons.share ? Icons.share(colors.steel, 15) : null}
+                Share invite link (no account needed)
+              </button>
+
               {/* Selected friends chips */}
               {flockInviteSelected.length > 0 && (
                 <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', marginBottom: '12px' }}>
@@ -10525,6 +10547,18 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   const [venueLogoUrl, setVenueLogoUrl] = useState(null);
   const [venueLogoUploading, setVenueLogoUploading] = useState(false);
   const venueLogoInputRef = React.useRef(null);
+  // Real model-powered intelligence (replaces the old hardcoded demo numbers).
+  // null = loading, {available:false} = no linked Google listing yet.
+  const [venueIntel, setVenueIntel] = useState(null);
+  const [venueStrip, setVenueStrip] = useState(null);
+  useEffect(() => {
+    if (venueTab !== 'analytics' || !venueProfile) return;
+    let cancelled = false;
+    getVenueIntelligence().then((d) => { if (!cancelled) setVenueIntel(d); }).catch(() => { if (!cancelled) setVenueIntel({ available: false, reason: 'Could not load forecasts right now' }); });
+    getVenueStrip().then((d) => { if (!cancelled) setVenueStrip(d); }).catch(() => { if (!cancelled) setVenueStrip({ available: false }); });
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [venueTab, venueProfile?.google_place_id]);
 
   // Handler for uploading a venue logo
   const handleVenueLogoUpload = async (e) => {
@@ -10797,25 +10831,22 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
       } catch (e) { console.error('Reply failed:', e); }
     };
 
-    // Venue analytics â€” demo data for ICDC (will be replaced by real analytics backend)
-    const analytics = {
-      todayCheckins: 47,
-      weekTraffic: 312,
-      crowdForecast: 62,
-      peakHours: [
-        { hour: '6pm', value: 25 }, { hour: '7pm', value: 45 }, { hour: '8pm', value: 68 },
-        { hour: '9pm', value: 85 }, { hour: '10pm', value: 92 }, { hour: '11pm', value: 78 }, { hour: '12am', value: 45 },
-      ],
-      topInterests: ['Live Music', 'Cocktails', 'Sports'],
-      repeatRate: 34,
-      demographics: { '21-25': 38, '26-30': 32, '31-35': 18, '36+': 12 },
-    };
+    // Everything on the analytics tab is now computed, never invented:
+    // venueIntel/venueStrip come from the crowd model, and the demand number
+    // is the venue's real incoming-flocks feed. If something can't be
+    // computed, the tab says so instead of showing a made-up figure.
     const venueData = {
       name: venueProfile?.business_name || authUser?.name || 'Your Venue',
       logo: null,
       tier: venueTier,
-      ...analytics,
     };
+    const intelReady = venueIntel?.available;
+    const weekPeak = intelReady && venueIntel.week?.length
+      ? venueIntel.week.reduce((a, b) => (b.peakScore > a.peakScore ? b : a))
+      : null;
+    const tonightPeak = intelReady && venueIntel.todayHourly?.length
+      ? venueIntel.todayHourly.slice(-8).reduce((a, b) => (b.score > a.score ? b : a))
+      : null;
 
     const tierBadge = {
       free: { label: 'Free', color: 'var(--text-secondary)', bg: 'var(--bg-hover)' },
@@ -10835,13 +10866,12 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
         'Event promotion tools',
         'Basic analytics dashboard',
       ],
+      // Only features that actually exist may appear here (SLOP-AUDIT.md C1).
       pro: [
         'Everything in Premium',
-        'Detailed customer insights (demographics, peak times, interests)',
-        'Targeted push notifications to nearby users',
-        'Sponsored placement during slow hours',
-        'AI-powered crowd optimization recommendations',
-        'Direct booking and reservation system',
+        'Hour-by-hour crowd forecasts for your venue',
+        'Strip view: you vs nearby venues tonight',
+        'Week-ahead projected peaks',
       ],
     };
 
@@ -10943,41 +10973,92 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
             <LockedTab requiredTier="premium" featureName="Analytics Dashboard" description="Track check-ins, peak hours, and customer traffic with real-time insights." />
           )}
           {venueTab === 'analytics' && can.analytics && (<>
-          {/* Key Metrics */}
+          {/* No linked listing / loading states */}
+          {venueIntel && !venueIntel.available && (
+            <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '16px', marginBottom: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
+              <p style={{ fontSize: '13px', fontWeight: '600', color: colors.navy, margin: 0 }}>{venueIntel.reason || 'Forecasts unavailable right now'}</p>
+            </div>
+          )}
+          {!venueIntel && (
+            <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '16px', marginBottom: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
+              <p style={{ fontSize: '13px', fontWeight: '600', color: 'var(--text-secondary)', margin: 0 }}>Building your forecast...</p>
+            </div>
+          )}
+
+          {/* Key metrics — all computed, none invented */}
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '8px', marginBottom: '12px' }}>
             <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
-              <p style={{ fontSize: '9px', color: 'var(--text-secondary)', margin: 0, textTransform: 'uppercase' }}>Today's Check-ins</p>
-              <p style={{ fontSize: '24px', fontWeight: '900', color: colors.navy, margin: '4px 0 0' }}>{venueData.todayCheckins}</p>
+              <p style={{ fontSize: '9px', color: 'var(--text-secondary)', margin: 0, textTransform: 'uppercase' }}>Right Now</p>
+              <p style={{ fontSize: '24px', fontWeight: '900', color: intelReady && venueIntel.now.score > 70 ? colors.red : colors.steel, margin: '4px 0 0' }}>{intelReady ? `${venueIntel.now.score}` : '–'}</p>
+              <p style={{ fontSize: '10px', color: 'var(--text-secondary)', margin: '2px 0 0' }}>{intelReady ? venueIntel.now.label : ''}</p>
             </div>
             <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
-              <p style={{ fontSize: '9px', color: 'var(--text-secondary)', margin: 0, textTransform: 'uppercase' }}>This Week</p>
-              <p style={{ fontSize: '24px', fontWeight: '900', color: colors.navy, margin: '4px 0 0' }}>{venueData.weekTraffic}</p>
+              <p style={{ fontSize: '9px', color: 'var(--text-secondary)', margin: 0, textTransform: 'uppercase' }}>Tonight's Peak</p>
+              <p style={{ fontSize: '24px', fontWeight: '900', color: colors.navy, margin: '4px 0 0' }}>{tonightPeak ? tonightPeak.score : '–'}</p>
+              <p style={{ fontSize: '10px', color: 'var(--text-secondary)', margin: '2px 0 0' }}>{tonightPeak ? `around ${tonightPeak.hour}` : ''}</p>
             </div>
             <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
-              <p style={{ fontSize: '9px', color: 'var(--text-secondary)', margin: 0, textTransform: 'uppercase' }}>Crowd Forecast</p>
-              <p style={{ fontSize: '24px', fontWeight: '900', color: venueData.crowdForecast > 70 ? colors.red : colors.steel, margin: '4px 0 0' }}>{venueData.crowdForecast}%</p>
+              <p style={{ fontSize: '9px', color: 'var(--text-secondary)', margin: 0, textTransform: 'uppercase' }}>Groups Eyeing You</p>
+              <p style={{ fontSize: '24px', fontWeight: '900', color: colors.navy, margin: '4px 0 0' }}>{realIncomingFlocks.length}</p>
+              <p style={{ fontSize: '10px', color: 'var(--text-secondary)', margin: '2px 0 0' }}>flocks with you in their vote</p>
             </div>
-            <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', boxShadow: 'var(--card-shadow-sm)', position: 'relative' }}>
-              <p style={{ fontSize: '9px', color: 'var(--text-secondary)', margin: 0, textTransform: 'uppercase' }}>Repeat Rate</p>
-              <p style={{ fontSize: '24px', fontWeight: '900', color: colors.navy, margin: '4px 0 0' }}>{venueData.repeatRate}%</p>
-              {isFeatureLocked('Detailed insights') && <div style={{ position: 'absolute', inset: 0, backgroundColor: 'var(--locked-overlay)', borderRadius: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.shield(colors.textTertiary, 20)}</div>}
+            <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
+              <p style={{ fontSize: '9px', color: 'var(--text-secondary)', margin: 0, textTransform: 'uppercase' }}>Biggest Night Ahead</p>
+              <p style={{ fontSize: '24px', fontWeight: '900', color: colors.navy, margin: '4px 0 0' }}>{weekPeak ? weekPeak.weekday : '–'}</p>
+              <p style={{ fontSize: '10px', color: 'var(--text-secondary)', margin: '2px 0 0' }}>{weekPeak ? `projected ${weekPeak.peakScore} at ${weekPeak.peakHour}` : ''}</p>
             </div>
           </div>
 
-          {/* Demographics */}
-          <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', marginBottom: '12px', boxShadow: 'var(--card-shadow-sm)', position: 'relative' }}>
-            <h3 style={{ fontSize: '12px', fontWeight: '700', color: colors.navy, margin: '0 0 10px' }}>Customer Demographics</h3>
-            <div style={{ display: 'flex', gap: '4px', alignItems: 'flex-end', height: '60px' }}>
-              {Object.entries(venueData.demographics).map(([age, pct]) => (
-                <div key={age} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-                  <div style={{ width: '100%', height: `${pct * 0.6}px`, backgroundColor: colors.navyBg, borderRadius: '4px 4px 0 0' }} />
-                  <span style={{ fontSize: '8px', color: 'var(--text-secondary)', marginTop: '4px' }}>{age}</span>
-                  <span style={{ fontSize: '9px', fontWeight: '600', color: colors.navy }}>{pct}%</span>
+          {/* Week ahead — projected peak per evening */}
+          {intelReady && venueIntel.week?.length > 0 && (
+            <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', marginBottom: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
+              <h3 style={{ fontSize: '12px', fontWeight: '700', color: colors.navy, margin: '0 0 10px' }}>Week Ahead (projected evening peak)</h3>
+              <div style={{ display: 'flex', gap: '4px', alignItems: 'flex-end', height: '60px' }}>
+                {venueIntel.week.map((d) => (
+                  <div key={d.date} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+                    <div style={{ width: '100%', height: `${Math.max(3, (d.peakScore || 0) * 0.55)}px`, backgroundColor: d.peakScore > 70 ? colors.red : d.peakScore > 45 ? colors.amber : colors.steel, borderRadius: '4px 4px 0 0' }} />
+                    <span style={{ fontSize: '8px', color: 'var(--text-secondary)', marginTop: '4px' }}>{d.weekday}</span>
+                    <span style={{ fontSize: '9px', fontWeight: '600', color: colors.navy }}>{d.peakScore ?? '–'}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* The strip — you vs the venues around you, tonight. Google's
+              busyness chart can't do this: per-venue, read-only, no API. */}
+          {venueStrip?.available && (
+            <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', marginBottom: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
+              <h3 style={{ fontSize: '12px', fontWeight: '700', color: colors.navy, margin: '0 0 10px' }}>Your Strip Tonight</h3>
+              {[{ ...venueStrip.you, you: true }, ...venueStrip.competitors].map((v, i) => (
+                <div key={`${v.name}-${i}`} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 0', borderTop: i === 0 ? 'none' : '1px solid var(--border-light)' }}>
+                  <span style={{ flex: 1, fontSize: '12px', fontWeight: v.you ? '800' : '500', color: colors.navy, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{v.you ? `${v.name} (you)` : v.name}</span>
+                  <span style={{ width: '80px', height: '6px', borderRadius: '3px', backgroundColor: 'var(--bg-hover)', overflow: 'hidden', flexShrink: 0 }}>
+                    <span style={{ display: 'block', height: '100%', width: `${Math.min(100, v.peakScore || 0)}%`, backgroundColor: v.you ? colors.steel : 'var(--text-tertiary)', borderRadius: '3px' }} />
+                  </span>
+                  <span style={{ fontSize: '11px', fontWeight: '700', color: colors.navy, width: '26px', textAlign: 'right', flexShrink: 0 }}>{v.peakScore ?? '–'}</span>
                 </div>
               ))}
+              <p style={{ fontSize: '9px', color: 'var(--text-tertiary)', margin: '8px 0 0' }}>Projected evening peaks within 1.5 km, from Flock's crowd model.</p>
             </div>
-            {isFeatureLocked('Detailed insights') && <div style={{ position: 'absolute', inset: 0, backgroundColor: 'var(--locked-overlay)', borderRadius: '12px', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>{Icons.shield(colors.textTertiary, 24)}<span style={{ fontSize: '10px', color: 'var(--text-secondary)', marginTop: '4px' }}>Pro Feature</span></div>}
-          </div>
+          )}
+
+          {/* Embeddable live badge — free marketing for them, distribution for us */}
+          {intelReady && venueProfile?.google_place_id && (
+            <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', marginBottom: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
+              <h3 style={{ fontSize: '12px', fontWeight: '700', color: colors.navy, margin: '0 0 6px' }}>Live Badge for Your Website</h3>
+              <p style={{ fontSize: '11px', color: 'var(--text-secondary)', margin: '0 0 10px', lineHeight: 1.5 }}>A live "how busy is it" badge, updated every 15 minutes by Flock's crowd model. Paste this where your site's HTML goes:</p>
+              <button
+                onClick={async () => {
+                  const snippet = `<img src="${BASE_URL}/api/badge/${venueProfile.google_place_id}.svg" alt="How busy is ${venueData.name}? Live from Flock" height="36">`;
+                  try { await navigator.clipboard.writeText(snippet); showToast('Embed code copied'); } catch { showToast('Could not copy', 'error'); }
+                }}
+                style={{ width: '100%', padding: '10px', borderRadius: '10px', border: `1.5px dashed ${colors.steel}`, backgroundColor: 'transparent', color: colors.steel, fontWeight: '700', fontSize: '12px', cursor: 'pointer' }}
+              >
+                Copy embed code
+              </button>
+            </div>
+          )}
 
           {/* Live Sensor â€” only renders if a Pi is deployed for this venue */}
           {ownerSensorData?.sensor_data && (() => {
@@ -11103,31 +11184,23 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
             {isFeatureLocked('Post deals') && <div style={{ position: 'absolute', inset: 0, backgroundColor: 'var(--locked-overlay)', borderRadius: '12px', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>{Icons.shield(colors.textTertiary, 24)}<span style={{ fontSize: '10px', color: 'var(--text-secondary)', marginTop: '4px' }}>Premium Feature</span></div>}
           </div>
 
-          {/* Peak Hours */}
-          <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', marginBottom: '12px', boxShadow: 'var(--card-shadow-sm)', position: 'relative' }}>
-            <h3 style={{ fontSize: '12px', fontWeight: '700', color: colors.navy, margin: '0 0 10px' }}>Peak Hours (Tonight)</h3>
-            <div style={{ display: 'flex', gap: '4px', alignItems: 'flex-end', height: '50px' }}>
-              {venueData.peakHours.map((h, i) => (
-                <div key={i} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-                  <div style={{ width: '100%', height: `${h.value * 0.5}px`, backgroundColor: h.value > 80 ? colors.red : h.value > 50 ? colors.amber : colors.steel, borderRadius: '2px', transition: 'height 0.3s ease' }} />
-                  <span style={{ fontSize: '8px', color: 'var(--text-secondary)', marginTop: '4px' }}>{h.hour}</span>
-                </div>
-              ))}
+          {/* Today, hour by hour — from the model */}
+          {intelReady && venueIntel.todayHourly?.length > 0 && (
+            <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', marginBottom: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
+              <h3 style={{ fontSize: '12px', fontWeight: '700', color: colors.navy, margin: '0 0 10px' }}>Today, Hour by Hour</h3>
+              <div style={{ display: 'flex', gap: '3px', alignItems: 'flex-end', height: '50px' }}>
+                {venueIntel.todayHourly.map((h, i) => (
+                  <div key={i} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+                    <div style={{ width: '100%', height: `${Math.max(2, h.score * 0.5)}px`, backgroundColor: h.score > 70 ? colors.red : h.score > 45 ? colors.amber : colors.steel, borderRadius: '2px' }} />
+                    {i % 3 === 0 && <span style={{ fontSize: '7px', color: 'var(--text-secondary)', marginTop: '4px', whiteSpace: 'nowrap' }}>{h.hour}</span>}
+                  </div>
+                ))}
+              </div>
+              <p style={{ fontSize: '9px', color: 'var(--text-tertiary)', margin: '8px 0 0' }}>
+                {venueIntel.model ? `Flock crowd model v${venueIntel.model}` : 'Flock rule engine (model learns your venue as data arrives)'}
+              </p>
             </div>
-            {isFeatureLocked('Basic analytics') && <div style={{ position: 'absolute', inset: 0, backgroundColor: 'var(--locked-overlay)', borderRadius: '12px', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>{Icons.shield(colors.textTertiary, 24)}<span style={{ fontSize: '10px', color: 'var(--text-secondary)', marginTop: '4px' }}>Premium Feature</span></div>}
-          </div>
-
-          {/* Top Interests */}
-          <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', marginBottom: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
-            <h3 style={{ fontSize: '12px', fontWeight: '700', color: colors.navy, margin: '0 0 10px' }}>Top Visitor Interests</h3>
-            <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
-              {venueData.topInterests.map(interest => (
-                <span key={interest} style={{ padding: '6px 12px', borderRadius: '16px', backgroundColor: 'var(--icon-bg)', fontSize: '11px', fontWeight: '500', color: colors.navy }}>
-                  {interest}
-                </span>
-              ))}
-            </div>
-          </div>
+          )}
 
           {/* Upgrade Button (if not Pro) */}
           {venueTier !== 'pro' && (
