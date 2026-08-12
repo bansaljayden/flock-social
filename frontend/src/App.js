@@ -267,13 +267,17 @@ const VenueCard = React.memo(({ venue, onViewDetails, onVote, colors: c, Icons: 
 // CARTO Dark Matter (free, no key) when the env var is missing.
 // =============================================================================
 const MAPTILER_KEY = process.env.REACT_APP_MAPTILER_KEY;
+// basic-v2 instead of streets-v2 (2026-08-12): streets renders every POI,
+// transit stop, and neighborhood label Google-style, which buried Flock's own
+// venue markers in basemap noise. Basic keeps roads/water/districts legible
+// and lets OUR pins be the loudest thing on the map.
 const DARK_VECTOR_STYLE = MAPTILER_KEY
-  ? `https://api.maptiler.com/maps/streets-v2-dark/style.json?key=${MAPTILER_KEY}`
+  ? `https://api.maptiler.com/maps/basic-v2-dark/style.json?key=${MAPTILER_KEY}`
   : 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json';
 // Light-mode basemap (2026-07 redesign): the always-dark map read as a "weird
-// overlay" inside the cream app. Streets v2 light in light mode; positron fallback.
+// overlay" inside the cream app. Basic light in light mode; positron fallback.
 const LIGHT_VECTOR_STYLE = MAPTILER_KEY
-  ? `https://api.maptiler.com/maps/streets-v2/style.json?key=${MAPTILER_KEY}`
+  ? `https://api.maptiler.com/maps/basic-v2/style.json?key=${MAPTILER_KEY}`
   : 'https://basemaps.cartocdn.com/gl/positron-gl-style/style.json';
 const isAppDark = () => document.documentElement.getAttribute('data-theme') === 'dark';
 const ROADMAP_STYLE = () => (isAppDark() ? DARK_VECTOR_STYLE : LIGHT_VECTOR_STYLE);
