@@ -263,6 +263,7 @@ def get_feature_columns(df: pd.DataFrame) -> List[str]:
         'baseline_busyness',  # Google popular_times — moved into label as delta to prevent leakage
         'has_venue_baseline',  # leaks the same signal as baseline_busyness
         'user_feedback_count',  # raw count — use log_user_feedback_count instead
+        'sample_weight',  # training weight — NEVER a feature (encodes row provenance = label regime)
     }
     feature_cols = [c for c in df.columns if c not in exclude]
     return sorted(feature_cols)
@@ -353,13 +354,22 @@ def main():
     # baseline. Holdout is NOT filtered — quick_eval.py already reports the
     # realtime-only slice as the ship gate.
     before_filter = len(train_df)
-    train_df = train_df[(train_df['is_realtime'] == 1) & (train_df['baseline_busyness'] > 0)]
+    # v2.3.1 BLEND: pure realtime-only training (v2.3.0) overpredicted
+    # deviations on ordinary nights (weekly holdout MAE 0.2 -> 11.7) because
+    # nothing taught it "most moments are typical". Keep the weekly rows but
+    # at 5% sample weight: enough anchor to calm typical nights, not enough
+    # to drown the real deviations like v2.2.1 (where they were 91% of the
+    # loss and taught delta=0 everywhere).
+    train_df = train_df[train_df['baseline_busyness'] > 0]
+    train_df['sample_weight'] = np.where(train_df['is_realtime'] == 1, 1.0, 0.05)
+    n_rt = int((train_df['is_realtime'] == 1).sum())
     logger.info(
-        f'v2.3 serving-population filter: {before_filter} -> {len(train_df)} rows '
-        f'(dropped weekly-tautology and no-baseline rows)'
+        f'v2.3.1 blend: {before_filter} -> {len(train_df)} rows with baseline>0 '
+        f'({n_rt} realtime @ weight 1.0, {len(train_df) - n_rt} weekly @ weight 0.05; '
+        f'effective realtime share of loss: {n_rt / (n_rt + 0.05 * (len(train_df) - n_rt)) * 100:.0f}%)'
     )
-    if len(train_df) < 50000:
-        raise ValueError(f'Only {len(train_df)} training rows after filter — expected 100K+. Check is_realtime/baseline columns.')
+    if n_rt < 50000:
+        raise ValueError(f'Only {n_rt} realtime rows — expected 100K+. Check is_realtime/baseline columns.')
 
     # Get feature columns (excludes baseline_busyness — now in label)
     feature_cols = get_feature_columns(train_df)
@@ -407,6 +417,7 @@ def main():
         'y': train_df['delta_label'].values.astype(np.float32),
         'y_actual': train_df['busyness_pct'].values.astype(np.float32),
         'baseline': train_df['baseline_busyness'].values.astype(np.float32),
+        'sample_weight': train_df['sample_weight'].values.astype(np.float32) if 'sample_weight' in train_df.columns else None,
         'feature_cols': feature_cols,
         'cities': train_df['city'].values if 'city' in train_df.columns else None,
         'label_type': 'delta',
