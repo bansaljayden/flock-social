@@ -9,7 +9,7 @@ const colors = {
   navy: '#1a2744',
 };
 
-// Video city background â€” different clip than user login
+// Video city background — different clip than user login
 const SceneBackground = () => (
   <div style={{ position: 'absolute', inset: 0, overflow: 'hidden', pointerEvents: 'none' }}>
     <video autoPlay muted loop playsInline style={{

@@ -57,7 +57,7 @@ const SignupScreen = ({ onSignupSuccess, onSwitchToLogin }) => {
     if (m < 0 || (m === 0 && now.getDate() < b.getDate())) age -= 1;
     return age;
   };
-  // Latest date that still satisfies the minimum age â€” caps the date picker.
+  // Latest date that still satisfies the minimum age — caps the date picker.
   const maxDob = (() => {
     const d = new Date();
     d.setFullYear(d.getFullYear() - MIN_AGE);
