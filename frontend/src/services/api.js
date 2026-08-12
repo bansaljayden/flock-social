@@ -580,10 +580,12 @@ export async function getCrowdAlternatives(placeId) {
 
 // Venue Feedback
 export async function submitVenueFeedback(data) {
-  return request('/api/feedback', {
+  const res = await request('/api/feedback', {
     method: 'POST',
     body: JSON.stringify(data),
   });
+  track('crowd_feedback', { crowd_level: data.crowd_level });
+  return res;
 }
 
 // Weather
