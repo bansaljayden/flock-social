@@ -1,6 +1,7 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
 import * as Sentry from '@sentry/react';
+import posthog from 'posthog-js';
 import './index.css';
 import reportWebVitals from './reportWebVitals';
 
@@ -11,6 +12,16 @@ if (process.env.REACT_APP_SENTRY_DSN) {
     environment: process.env.NODE_ENV,
     integrations: [Sentry.browserTracingIntegration()],
     tracesSampleRate: 0.1,
+  });
+}
+
+// PostHog — no-op until REACT_APP_POSTHOG_KEY is set (Vercel env + local .env).
+// The phc_ key is public by design but stays in env vars per repo policy.
+// defaults '2025-05-24' = SPA pageviews on history changes + sane privacy defaults.
+if (process.env.REACT_APP_POSTHOG_KEY) {
+  posthog.init(process.env.REACT_APP_POSTHOG_KEY, {
+    api_host: process.env.REACT_APP_POSTHOG_HOST || 'https://us.i.posthog.com',
+    defaults: '2025-05-24',
   });
 }
 

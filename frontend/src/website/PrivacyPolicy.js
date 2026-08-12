@@ -154,7 +154,7 @@ export default function PrivacyPolicy() {
 
               <h3>We collect automatically</h3>
               <ul>
-                <li><strong>Product analytics:</strong> Flock does not currently use a third-party product-analytics or crash-reporting service. If we add one, we will update this policy and our App Store privacy labels before turning it on.</li>
+                <li><strong>Product analytics:</strong> we use PostHog to understand how Flock is used: pages viewed, features used, and events like creating a flock or sharing an invite link. Events are tied to your account ID, not your name or email. Your messages, votes, budgets, and location are never sent to PostHog.</li>
                 <li><strong>Push notification tokens:</strong> if you enable notifications, we store the device token issued by Apple Push Notification service or Firebase Cloud Messaging.</li>
                 <li><strong>Connection metadata:</strong> IP address and user agent for security, abuse prevention, and rate limiting. Stored short-term in server logs.</li>
               </ul>
@@ -207,6 +207,7 @@ export default function PrivacyPolicy() {
                 <li><strong>BestTime</strong> (aggregate venue popularity data; no personal info sent).</li>
                 <li><strong>Apple</strong> and <strong>Google</strong> (sign-in identity verification, only when you choose those options).</li>
                 <li><strong>RevenueCat</strong> (subscription receipt verification, if you subscribe).</li>
+                <li><strong>PostHog</strong> (product analytics; usage events tied to account ID only).</li>
               </ul>
               <p>
                 Other flock members see content you share inside that flock (messages, RSVP
