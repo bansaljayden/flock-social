@@ -144,6 +144,22 @@ async function storeGoogleBaselines(placeId, popularTimes) {
   }
 }
 
+// Read the current dow/hour baseline straight out of a venue's Google
+// popular_times payload, so the FIRST request for a venue can use the ML
+// model instead of waiting for storeGoogleBaselines() to land for next time.
+function baselineFromPopularTimes(popularTimes, dayOfWeek, hour) {
+  if (!popularTimes || !Array.isArray(popularTimes)) return 0;
+  for (const day of popularTimes) {
+    const dow = day.day != null ? day.day : null;
+    if (dow !== dayOfWeek) continue;
+    const hours = day.data || day.hours || [];
+    const val = hours[hour];
+    if (val == null) return 0;
+    return Math.max(0, Math.min(100, Math.round(val)));
+  }
+  return 0;
+}
+
 // ---------------------------------------------------------------------------
 // User Feedback Lookup
 // ---------------------------------------------------------------------------
@@ -511,19 +527,37 @@ async function predictBusyness(venue, weather, timestamp) {
     const placeId = venue.place_id || venue.google_place_id || null;
     const ts = timestamp ? new Date(timestamp) : new Date();
 
-    const [eventData, feedback, baseline] = await Promise.all([
+    const [eventData, feedback, storedBaseline] = await Promise.all([
       getNearbyEvents(lat, lng, timestamp),
       getUserFeedback(placeId),
       getBaseline(placeId, ts.getDay(), ts.getHours()),
     ]);
 
-    const ort = require('onnxruntime-node');
-    const vector = buildFeatureVector(venue, weather, timestamp, eventData, feedback, baseline);
-
-    // If venue has Google popular_times and no baseline stored yet, save it
-    if (baseline === 0 && venue.popular_times) {
+    // Best-available baseline: stored table first, else read it directly off
+    // the venue's Google popular_times payload so even the FIRST request for
+    // a venue runs through the ML model instead of the fallback.
+    let baseline = storedBaseline;
+    if ((!baseline || baseline <= 0) && venue.popular_times) {
+      baseline = baselineFromPopularTimes(venue.popular_times, ts.getDay(), ts.getHours());
+      // Persist for future requests/hours (async, non-blocking).
       storeGoogleBaselines(placeId, venue.popular_times).catch(() => {});
     }
+
+    // No-baseline guard (delta models only): the delta model reconstructs
+    // score = baseline + clamp(delta, ±30). With baseline 0 that caps the
+    // score at ~30 ("Not Busy") no matter how packed the venue really is —
+    // strictly worse than the rule engine. Only venues with NO stored
+    // baseline AND no popular_times land here; the rule engine answers.
+    // (Retrain plan: teach the model an absolute head so this path dies.)
+    if (metadata.label_type === 'delta' && (!baseline || baseline <= 0)) {
+      const result = crowdEngine.calculateCrowdScore(venue, weather, timestamp);
+      result.predictionMethod = 'rule_engine_no_baseline';
+      result.modelVersion = null;
+      return result;
+    }
+
+    const ort = require('onnxruntime-node');
+    const vector = buildFeatureVector(venue, weather, timestamp, eventData, feedback, baseline);
     const inputName = metadata.onnx_input_name || 'input';
     const tensor = new ort.Tensor('float32', vector, [1, vector.length]);
     const results = await session.run({ [inputName]: tensor });
