@@ -5413,6 +5413,26 @@
    }
   },
   "KR": {
+   "2025-12-05": {
+    "name": "hoesik_friday",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2025-12-12": {
+    "name": "hoesik_friday",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2025-12-19": {
+    "name": "hoesik_friday",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2025-12-26": {
+    "name": "hoesik_friday",
+    "effect": "boost",
+    "conf": "med"
+   },
    "2025-12-24": {
     "name": "christmas_eve_couples",
     "effect": "boost",
@@ -5458,26 +5478,6 @@
     "effect": "boost",
     "conf": "high"
    },
-   "2025-12-05": {
-    "name": "hoesik_friday",
-    "effect": "boost",
-    "conf": "med"
-   },
-   "2025-12-12": {
-    "name": "hoesik_friday",
-    "effect": "boost",
-    "conf": "med"
-   },
-   "2025-12-19": {
-    "name": "hoesik_friday",
-    "effect": "boost",
-    "conf": "med"
-   },
-   "2025-12-26": {
-    "name": "hoesik_friday",
-    "effect": "boost",
-    "conf": "med"
-   },
    "2025-10-31": {
     "name": "halloween_itaewon",
     "effect": "mixed",
@@ -5488,13 +5488,28 @@
     "effect": "boost",
     "conf": "low"
    },
-   "2026-12-24": {
-    "name": "christmas_eve_couples",
+   "2026-12-04": {
+    "name": "hoesik_friday",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2026-12-11": {
+    "name": "hoesik_friday",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2026-12-18": {
+    "name": "hoesik_friday",
     "effect": "boost",
     "conf": "med"
    },
    "2026-12-25": {
-    "name": "hoesik_friday",
+    "name": "christmas_day_couples",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2026-12-24": {
+    "name": "christmas_eve_couples",
     "effect": "boost",
     "conf": "med"
    },
@@ -5533,21 +5548,6 @@
     "effect": "boost",
     "conf": "high"
    },
-   "2026-12-04": {
-    "name": "hoesik_friday",
-    "effect": "boost",
-    "conf": "med"
-   },
-   "2026-12-11": {
-    "name": "hoesik_friday",
-    "effect": "boost",
-    "conf": "med"
-   },
-   "2026-12-18": {
-    "name": "hoesik_friday",
-    "effect": "boost",
-    "conf": "med"
-   },
    "2026-10-31": {
     "name": "halloween_itaewon",
     "effect": "mixed",
@@ -5558,8 +5558,23 @@
     "effect": "boost",
     "conf": "low"
    },
-   "2027-12-24": {
+   "2027-12-03": {
     "name": "hoesik_friday",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2027-12-10": {
+    "name": "hoesik_friday",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2027-12-17": {
+    "name": "hoesik_friday",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2027-12-24": {
+    "name": "christmas_eve_couples",
     "effect": "boost",
     "conf": "med"
    },
@@ -5603,21 +5618,6 @@
     "effect": "boost",
     "conf": "high"
    },
-   "2027-12-03": {
-    "name": "hoesik_friday",
-    "effect": "boost",
-    "conf": "med"
-   },
-   "2027-12-10": {
-    "name": "hoesik_friday",
-    "effect": "boost",
-    "conf": "med"
-   },
-   "2027-12-17": {
-    "name": "hoesik_friday",
-    "effect": "boost",
-    "conf": "med"
-   },
    "2027-10-31": {
     "name": "halloween_itaewon",
     "effect": "mixed",
@@ -5627,6 +5627,26 @@
     "name": "pepero_day",
     "effect": "boost",
     "conf": "low"
+   },
+   "2028-12-01": {
+    "name": "hoesik_friday",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2028-12-08": {
+    "name": "hoesik_friday",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2028-12-15": {
+    "name": "hoesik_friday",
+    "effect": "boost",
+    "conf": "med"
+   },
+   "2028-12-22": {
+    "name": "hoesik_friday",
+    "effect": "boost",
+    "conf": "med"
    },
    "2028-12-24": {
     "name": "christmas_eve_couples",
@@ -5672,26 +5692,6 @@
     "name": "nye",
     "effect": "boost",
     "conf": "high"
-   },
-   "2028-12-01": {
-    "name": "hoesik_friday",
-    "effect": "boost",
-    "conf": "med"
-   },
-   "2028-12-08": {
-    "name": "hoesik_friday",
-    "effect": "boost",
-    "conf": "med"
-   },
-   "2028-12-15": {
-    "name": "hoesik_friday",
-    "effect": "boost",
-    "conf": "med"
-   },
-   "2028-12-22": {
-    "name": "hoesik_friday",
-    "effect": "boost",
-    "conf": "med"
    },
    "2028-10-31": {
     "name": "halloween_itaewon",

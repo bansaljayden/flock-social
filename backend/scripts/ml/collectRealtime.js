@@ -11,6 +11,7 @@ const { getWeather } = require('../../services/weatherService');
 const { fetchLiveBusyness } = require('./bestTimeService');
 const { CITIES, getLocalTime, isHoliday, isSchoolBreak, sleep } = require('./config');
 const { getNearestEvent } = require('./eventService');
+const { specialNightFor, isHolidayEve } = require('./specialNights');
 
 if (!process.env.DATABASE_URL && process.env.PGHOST) {
   const host = process.env.PGHOST;
@@ -26,7 +27,19 @@ const pool = new Pool({
   ssl: { rejectUnauthorized: false },
 });
 
+// Dated holiday context (2026-08-12): every realtime row now records WHEN it
+// was observed and what special night it was, so retrains can learn eve/party/
+// ban effects. Weekly rows stay dateless by design ("typical Tuesday").
+async function ensureHolidayColumns() {
+  await pool.query(`ALTER TABLE ml_training_data ADD COLUMN IF NOT EXISTS observed_date DATE`);
+  await pool.query(`ALTER TABLE ml_training_data ADD COLUMN IF NOT EXISTS is_holiday_eve BOOLEAN DEFAULT false`);
+  await pool.query(`ALTER TABLE ml_training_data ADD COLUMN IF NOT EXISTS special_night VARCHAR(40)`);
+  await pool.query(`ALTER TABLE ml_training_data ADD COLUMN IF NOT EXISTS special_night_effect VARCHAR(8)`);
+  await pool.query(`ALTER TABLE ml_training_data ADD COLUMN IF NOT EXISTS special_night_conf VARCHAR(4)`);
+}
+
 async function collectRealtime() {
+  await ensureHolidayColumns();
   const { rows: venues } = await pool.query(
     `SELECT * FROM ml_venues WHERE is_active = true AND besttime_venue_id IS NOT NULL ORDER BY city, id`
   );
@@ -56,8 +69,11 @@ async function collectRealtime() {
     // One weather call per city
     const weather = await getWeather(cityConfig.lat, cityConfig.lon);
     const local = getLocalTime(cityConfig.tz);
+    const special = specialNightFor(cityKey, local.dateStr);
+    const holidayEve = isHolidayEve(cityKey, local.dateStr);
 
-    console.log(`\n[ML:Realtime] ${cityConfig.name} (${local.dateStr} ${local.hour}:00 local)`);
+    console.log(`\n[ML:Realtime] ${cityConfig.name} (${local.dateStr} ${local.hour}:00 local)`
+      + (special ? ` [${special.name}: ${special.effect}]` : '') + (holidayEve ? ' [holiday eve]' : ''));
 
     for (const venue of cityVenues) {
       const live = await fetchLiveBusyness(venue.besttime_venue_id);
@@ -101,8 +117,10 @@ async function collectRealtime() {
              venue_category, price_level, rating, review_count,
              temperature, humidity, wind_speed, weather_condition, is_raining,
              event_nearby, event_distance_km, event_size, event_type, event_hours_until,
-             baseline_busyness, busyness_pct)
-          VALUES ($1, 'realtime', $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23)`,
+             baseline_busyness, busyness_pct,
+             observed_date, is_holiday_eve, special_night, special_night_effect, special_night_conf)
+          VALUES ($1, 'realtime', $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23,
+                  $24, $25, $26, $27, $28)`,
           [
             venue.id,
             local.dayOfWeek,
@@ -127,6 +145,11 @@ async function collectRealtime() {
             eventData.event_hours_until,
             baseline,
             Math.max(0, Math.min(100, busyness)),
+            local.dateStr,
+            holidayEve,
+            special?.name ?? null,
+            special?.effect ?? null,
+            special?.conf ?? null,
           ]
         );
         totalRows++;

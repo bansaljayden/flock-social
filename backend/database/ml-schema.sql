@@ -118,3 +118,11 @@ ALTER TABLE ml_training_data ADD COLUMN IF NOT EXISTS nearest_event_attendance I
 ALTER TABLE ml_training_data ADD COLUMN IF NOT EXISTS total_nearby_events INTEGER DEFAULT 0;
 ALTER TABLE ml_training_data ADD COLUMN IF NOT EXISTS total_nearby_attendance INTEGER DEFAULT 0;
 ALTER TABLE ml_training_data ADD COLUMN IF NOT EXISTS nearest_event_type VARCHAR(50);
+
+-- Dated holiday context (2026-08-12) — stamped on realtime rows only; weekly
+-- rows are dateless by design. Sourced from scripts/ml/holidays.json.
+ALTER TABLE ml_training_data ADD COLUMN IF NOT EXISTS observed_date DATE;
+ALTER TABLE ml_training_data ADD COLUMN IF NOT EXISTS is_holiday_eve BOOLEAN DEFAULT false;
+ALTER TABLE ml_training_data ADD COLUMN IF NOT EXISTS special_night VARCHAR(40);
+ALTER TABLE ml_training_data ADD COLUMN IF NOT EXISTS special_night_effect VARCHAR(8);
+ALTER TABLE ml_training_data ADD COLUMN IF NOT EXISTS special_night_conf VARCHAR(4);

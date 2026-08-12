@@ -273,6 +273,12 @@ def special_nights():
             add_range('SG', f1, f1 + timedelta(days=2), 'f1_night_race', 'boost', 'high')
 
         # ---- KR / Seoul (Christmas = couples' night out, OPPOSITE of the West) ----
+        d = date(y, 12, 1)
+        while d <= date(y, 12, 28):
+            if d.weekday() == 4:
+                add('KR', d, 'hoesik_friday', 'boost', 'med')
+            d += timedelta(days=1)
+        # Named nights AFTER the Friday loop so they win date collisions
         add('KR', date(y, 12, 24), 'christmas_eve_couples', 'boost', 'med')
         add('KR', date(y, 12, 25), 'christmas_day_couples', 'boost', 'med')
         seollal = SEOLLAL[y]
@@ -280,11 +286,6 @@ def special_nights():
         chu = CHUSEOK_START[y]
         add_range('KR', chu, chu + timedelta(days=2), 'chuseok', 'suppress', 'high')
         add('KR', nye, 'nye', 'boost', 'high')
-        d = date(y, 12, 1)
-        while d <= date(y, 12, 28):
-            if d.weekday() == 4:
-                add('KR', d, 'hoesik_friday', 'boost', 'med')
-            d += timedelta(days=1)
         add('KR', date(y, 10, 31), 'halloween_itaewon', 'mixed', 'med')
         add('KR', date(y, 11, 11), 'pepero_day', 'boost', 'low')
 
