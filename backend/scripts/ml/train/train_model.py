@@ -84,9 +84,23 @@ def train_xgboost(X, y, cv, groups, baseline=None, y_actual=None, sample_weight=
         'reg_lambda': [1.0, 1.5, 2.0, 3.0],
     }
 
+    # GPU when available (Jayden's box: RTX 5080 — cuts runs from ~1h to
+    # minutes). Probe once; fall back to CPU hist if CUDA isn't usable.
+    def _cuda_available():
+        try:
+            probe = XGBRegressor(device='cuda', tree_method='hist', n_estimators=2, verbosity=0)
+            probe.fit(np.zeros((8, 2), dtype=np.float32), np.zeros(8, dtype=np.float32))
+            return True
+        except Exception as e:
+            logger.info(f'CUDA not usable ({type(e).__name__}) — training on CPU')
+            return False
+
+    use_gpu = _cuda_available()
+    logger.info(f'Training device: {"cuda (GPU)" if use_gpu else "cpu"}')
     base_model = XGBRegressor(
         random_state=RANDOM_STATE,
         tree_method='hist',
+        device='cuda' if use_gpu else 'cpu',
         n_jobs=-1,
         verbosity=0,
     )
