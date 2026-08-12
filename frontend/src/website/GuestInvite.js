@@ -8,11 +8,13 @@ const API = process.env.REACT_APP_API_URL || 'https://flock-app-production.up.ra
 // after the value, not before. Design follows the site rules (SLOP-AUDIT.md):
 // Fraunces headline via the pp styles, no em dashes, nothing fake.
 
-const dayLabel = (dateStr) => {
-  if (!dateStr) return null;
-  const d = new Date(dateStr);
-  if (isNaN(d.getTime())) return dateStr;
-  return d.toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' });
+const whenLabel = (ts) => {
+  if (!ts) return null;
+  const d = new Date(ts);
+  if (isNaN(d.getTime())) return null;
+  const day = d.toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' });
+  const time = d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+  return `${day} · ${time}`;
 };
 
 export default function GuestInvite() {
@@ -127,7 +129,7 @@ export default function GuestInvite() {
       <header className="pp-header">
         <h1>{flock.name}</h1>
         <p className="pp-meta">
-          {host} invited you{flock.date ? ` · ${dayLabel(flock.date)}` : ''}{flock.time ? ` · ${flock.time}` : ''}
+          {host} invited you{flock.when && whenLabel(flock.when) ? ` · ${whenLabel(flock.when)}` : ''}
           {going > 0 ? ` · ${going} going` : ''}
         </p>
       </header>
