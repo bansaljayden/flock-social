@@ -7077,6 +7077,71 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
 
                 const hasWeather = cd?.weather != null;
 
+                // Per-bar openness computed once; the chart then runs only as
+                // long as the venue's hours do — trailing closed hours are
+                // trimmed instead of rendering a dead gray tail after close.
+                const chartBars = (() => {
+                  const infos = hourlyData.map((h, i) => {
+                    const isNow = i === 0;
+                    const parsedH = (() => { const p = (h.hour || '').match(/^(\d+)\s*(AM|PM)$/i); if (!p) return 12; let hr = parseInt(p[1], 10); if (p[2].toUpperCase() === 'AM' && hr === 12) hr = 0; else if (p[2].toUpperCase() === 'PM' && hr !== 12) hr += 12; return hr; })();
+                    // When the API supplies hourly data, the score itself encodes openness — skip the Google-hours heuristic,
+                    // EXCEPT: closedAllDay greys every bar, explicit Google open/close hours grey bars outside the window,
+                    // and a closed-now venue must grey its "Now" bar regardless.
+                    const apiHourly = !!cd?.hourly;
+                    const closedByGoogleHours = (venueOpenHour != null && venueCloseHour != null) ? (
+                      venueCloseHour > venueOpenHour
+                        ? (parsedH < venueOpenHour || parsedH >= venueCloseHour)
+                        : (parsedH >= venueCloseHour && parsedH < venueOpenHour)
+                    ) : false;
+                    // If we have a live score for "Now", the venue is open right now
+                    // by definition — never grey the Now bar in that case.
+                    const hasLiveNow = isNow && Number.isFinite(score) && score > 0;
+                    const hourClosed = hasLiveNow ? false : (closedAllDay ? true : (apiHourly ? (closedByGoogleHours || (isNow && isClosed)) : (() => {
+                      if (closedAllDay) return true;
+                      if (venueOpenHour != null && venueCloseHour != null) {
+                        // Handle venues that close after midnight (close < open).
+                        if (venueCloseHour > venueOpenHour) {
+                          return parsedH < venueOpenHour || parsedH > venueCloseHour;
+                        }
+                        return parsedH > venueCloseHour && parsedH < venueOpenHour;
+                      }
+                      if (isClosed && isNow) return true;
+                      if (isClosed) {
+                        const vTypes = activeVenue.types || [];
+                        if (vTypes.some(t => ['diner', 'breakfast_restaurant', 'brunch_restaurant'].includes(t))) return parsedH < 6 || parsedH > 21;
+                        if (vTypes.some(t => t === 'restaurant')) return parsedH < 17 || parsedH > 22;
+                        if (vTypes.some(t => ['bar', 'night_club'].includes(t))) return parsedH < 16;
+                        if (vTypes.some(t => ['cafe', 'juice_shop', 'smoothie_shop', 'juice_bar', 'tea_house', 'coffee_shop'].includes(t))) return parsedH < 6 || parsedH > 21;
+                        if (vTypes.some(t => ['fast_food_restaurant', 'meal_takeaway'].includes(t))) return parsedH < 6 || parsedH > 23;
+                        if (vTypes.some(t => t === 'shopping_mall')) return parsedH < 10 || parsedH > 21;
+                        if (vTypes.some(t => ['gym', 'fitness_center'].includes(t))) return parsedH < 5 || parsedH > 23;
+                        if (vTypes.some(t => ['library', 'museum'].includes(t))) return parsedH < 9 || parsedH > 18;
+                        return parsedH <= new Date().getHours();
+                      }
+                      const vTypes = activeVenue.types || [];
+                      if (vTypes.some(t => ['bar', 'night_club'].includes(t))) return (parsedH >= 3 && parsedH < 16);
+                      if (vTypes.some(t => ['diner', 'breakfast_restaurant', 'brunch_restaurant'].includes(t))) return (parsedH < 6 || parsedH > 21);
+                      if (vTypes.some(t => ['fast_food_restaurant', 'meal_takeaway'].includes(t))) return (parsedH < 6 || parsedH > 23);
+                      if (vTypes.some(t => t === 'restaurant')) return (parsedH < 11 || parsedH > 22);
+                      if (vTypes.some(t => ['cafe', 'juice_shop', 'smoothie_shop', 'juice_bar', 'tea_house', 'coffee_shop'].includes(t))) return (parsedH < 6 || parsedH > 21);
+                      if (vTypes.some(t => t === 'shopping_mall')) return (parsedH < 10 || parsedH > 21);
+                      if (vTypes.some(t => ['gym', 'fitness_center'].includes(t))) return (parsedH < 5 || parsedH > 23);
+                      if (vTypes.some(t => ['library', 'museum'].includes(t))) return (parsedH < 9 || parsedH > 18);
+                      return false;
+                    })()));
+                    // Defend against null / NaN scores; the "Now" bar mirrors the
+                    // live header score so the chart and dial never disagree.
+                    const liveScoreForNow = (isNow && Number.isFinite(score) && score > 0) ? score : null;
+                    const safeScore = liveScoreForNow != null
+                      ? liveScoreForNow
+                      : (Number.isFinite(h.score) ? h.score : 0);
+                    return { h, isNow, hourClosed, safeScore };
+                  });
+                  let end = infos.length;
+                  while (end > 1 && infos[end - 1].hourClosed) end--;
+                  return infos.slice(0, end);
+                })();
+
                 return (
               <motion.div initial={{ opacity: 0, y: 20, scale: 0.97 }} animate={{ opacity: 1, y: 0, scale: 1 }} transition={{ delay: 0.15, type: 'spring', damping: 20, stiffness: 300 }} style={{ backgroundColor: 'var(--bg-tertiary)', borderRadius: '12px', padding: '6px 10px 8px', marginBottom: '6px', border: '1px solid var(--border-subtle)' }}>
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', marginBottom: '4px', gap: '4px' }}>
@@ -7217,67 +7282,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                       <div key={i} style={{ flex: 1, display: 'flex', alignItems: 'flex-end', height: '100%' }}>
                         <div className="skeleton" style={{ width: '100%', height: `${hgt}px`, borderRadius: '3px 3px 1px 1px' }} />
                       </div>
-                    )) : hourlyData.map((h, i) => {
-                      const isNow = i === 0;
-                      const parsedH = (() => { const p = (h.hour || '').match(/^(\d+)\s*(AM|PM)$/i); if (!p) return 12; let hr = parseInt(p[1], 10); if (p[2].toUpperCase() === 'AM' && hr === 12) hr = 0; else if (p[2].toUpperCase() === 'PM' && hr !== 12) hr += 12; return hr; })();
-                      // When the API supplies hourly data, the score itself encodes openness — skip the Google-hours heuristic,
-                      // EXCEPT: closedAllDay greys every bar, explicit Google open/close hours grey bars outside the window,
-                      // and a closed-now venue must grey its "Now" bar regardless.
-                      const apiHourly = !!cd?.hourly;
-                      const closedByGoogleHours = (venueOpenHour != null && venueCloseHour != null) ? (
-                        venueCloseHour > venueOpenHour
-                          ? (parsedH < venueOpenHour || parsedH >= venueCloseHour)
-                          : (parsedH >= venueCloseHour && parsedH < venueOpenHour)
-                      ) : false;
-                      // If we have a live score for "Now", the venue is open right now
-                      // by definition — never grey the Now bar in that case.
-                      const hasLiveNow = isNow && Number.isFinite(score) && score > 0;
-                      const hourClosed = hasLiveNow ? false : (closedAllDay ? true : (apiHourly ? (closedByGoogleHours || (isNow && isClosed)) : (() => {
-                        if (closedAllDay) return true;
-                        if (venueOpenHour != null && venueCloseHour != null) {
-                          // Handle venues that close after midnight (close < open).
-                          // Open period for "regular" days  : [open, close]   → closed = h<open || h>close
-                          // Open period for "wraparound" days: [open, 24) ∪ [0, close] → closed = h>close && h<open
-                          if (venueCloseHour > venueOpenHour) {
-                            return parsedH < venueOpenHour || parsedH > venueCloseHour;
-                          }
-                          return parsedH > venueCloseHour && parsedH < venueOpenHour;
-                        }
-                        if (isClosed && isNow) return true;
-                        if (isClosed) {
-                          const vTypes = activeVenue.types || [];
-                          if (vTypes.some(t => ['diner', 'breakfast_restaurant', 'brunch_restaurant'].includes(t))) return parsedH < 6 || parsedH > 21;
-                          if (vTypes.some(t => t === 'restaurant')) return parsedH < 17 || parsedH > 22;
-                          if (vTypes.some(t => ['bar', 'night_club'].includes(t))) return parsedH < 16;
-                          if (vTypes.some(t => ['cafe', 'juice_shop', 'smoothie_shop', 'juice_bar', 'tea_house', 'coffee_shop'].includes(t))) return parsedH < 6 || parsedH > 21;
-                          if (vTypes.some(t => ['fast_food_restaurant', 'meal_takeaway'].includes(t))) return parsedH < 6 || parsedH > 23;
-                          if (vTypes.some(t => t === 'shopping_mall')) return parsedH < 10 || parsedH > 21;
-                          if (vTypes.some(t => ['gym', 'fitness_center'].includes(t))) return parsedH < 5 || parsedH > 23;
-                          if (vTypes.some(t => ['library', 'museum'].includes(t))) return parsedH < 9 || parsedH > 18;
-                          return parsedH <= new Date().getHours();
-                        }
-                        const vTypes = activeVenue.types || [];
-                        if (vTypes.some(t => ['bar', 'night_club'].includes(t))) return (parsedH >= 3 && parsedH < 16);
-                        if (vTypes.some(t => ['diner', 'breakfast_restaurant', 'brunch_restaurant'].includes(t))) return (parsedH < 6 || parsedH > 21);
-                        if (vTypes.some(t => ['fast_food_restaurant', 'meal_takeaway'].includes(t))) return (parsedH < 6 || parsedH > 23);
-                        if (vTypes.some(t => t === 'restaurant')) return (parsedH < 11 || parsedH > 22);
-                        if (vTypes.some(t => ['cafe', 'juice_shop', 'smoothie_shop', 'juice_bar', 'tea_house', 'coffee_shop'].includes(t))) return (parsedH < 6 || parsedH > 21);
-                        if (vTypes.some(t => t === 'shopping_mall')) return (parsedH < 10 || parsedH > 21);
-                        if (vTypes.some(t => ['gym', 'fitness_center'].includes(t))) return (parsedH < 5 || parsedH > 23);
-                        if (vTypes.some(t => ['library', 'museum'].includes(t))) return (parsedH < 9 || parsedH > 18);
-                        return false;
-                      })()));
-                      // Defend against null / NaN scores from the ML predictor.
-                      // Override the "Now" bar with the live score so it matches the
-                      // header (e.g. "60% Moderate") instead of the ML hourly forecast,
-                      // which can drift from the live value and confuse users.
-                      const liveScoreForNow = (isNow && Number.isFinite(score) && score > 0) ? score : null;
-                      const safeScore = liveScoreForNow != null
-                        ? liveScoreForNow
-                        : (Number.isFinite(h.score) ? h.score : 0);
-                      const barColor = hourClosed ? 'var(--text-tertiary)' : safeScore > 70 ? colors.red : safeScore > 40 ? colors.amber : '#22C55E';
+                    )) : chartBars.map((b, i) => {
+                      const barColor = b.hourClosed ? 'var(--text-tertiary)' : b.safeScore > 70 ? colors.red : b.safeScore > 40 ? colors.amber : '#22C55E';
                       // 56px chart height. Closed bars: 10px floor. Open bars: 16px floor.
-                      const barH = hourClosed ? 10 : Math.max(Math.min(safeScore, 100) * 0.5, 16);
+                      const barH = b.hourClosed ? 10 : Math.max(Math.min(b.safeScore, 100) * 0.5, 16);
                       return (
                       <div key={i} style={{ flex: 1, position: 'relative', display: 'flex', alignItems: 'flex-end', justifyContent: 'center', minWidth: 0, height: '100%' }}>
                         {/* Faint track behind every slot so chart structure reads even when bars are short */}
@@ -7288,8 +7296,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                           height: `${barH}px`,
                           borderRadius: '3px 3px 1px 1px',
                           backgroundColor: barColor,
-                          opacity: hourClosed ? 0.55 : isNow ? 1 : 0.9,
+                          opacity: b.hourClosed ? 0.55 : b.isNow ? 1 : 0.9,
                           boxShadow: 'none',
+                          transformOrigin: 'bottom',
+                          animation: `barRise 0.45s cubic-bezier(0.34, 1.56, 0.64, 1) ${i * 0.04}s both`,
                           transition: `height 0.5s cubic-bezier(0.34, 1.56, 0.64, 1) ${i * 0.035}s`,
                           flexShrink: 0,
                         }} />
@@ -7298,12 +7308,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                     })}
                   </div>
                   <div style={{ display: 'flex', gap: '2px', marginTop: '2px' }}>
-                    {(!cd && !isClosed) ? null : hourlyData.map((h, i) => {
-                      const isNow = i === 0;
-                      return (
-                        <span key={i} style={{ flex: 1, textAlign: 'center', fontSize: '7px', color: isNow ? 'var(--text-primary)' : 'var(--text-tertiary)', fontWeight: isNow ? '800' : '400', minWidth: 0, overflow: 'hidden' }}>{isNow ? 'Now' : h.hour}</span>
-                      );
-                    })}
+                    {(!cd && !isClosed) ? null : chartBars.map((b, i) => (
+                      <span key={i} style={{ flex: 1, textAlign: 'center', fontSize: '7px', color: b.isNow ? 'var(--text-primary)' : 'var(--text-tertiary)', fontWeight: b.isNow ? '800' : '400', minWidth: 0, overflow: 'hidden' }}>{b.isNow ? 'Now' : b.h.hour}</span>
+                    ))}
                   </div>
                 </motion.div>
 
@@ -14503,6 +14510,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           animation: badgeBounce 0.6s ease-in-out;
         }
         /* Skeleton loading for cards */
+        /* Hourly chart bars grow up from the baseline, staggered left to right */
+        @keyframes barRise {
+          from { transform: scaleY(0); }
+          to { transform: scaleY(1); }
+        }
         .skeleton {
           /* Highlight is a translucent white sweep, not a theme token — the
              dark theme's skeleton-bg and border-default are near-identical
