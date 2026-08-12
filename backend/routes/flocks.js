@@ -474,6 +474,47 @@ router.delete('/:id', param('id').isInt(), async (req, res) => {
   }
 });
 
+// POST /api/flocks/:id/invite-link — create (or return) the flock's shareable
+// guest link. Any accepted member can share it; guests RSVP + vote from the
+// link with no account (routes/guest.js). One active link per flock; calling
+// with { regenerate: true } revokes the old one (kills a leaked link).
+router.post('/:id/invite-link', param('id').isInt(), async (req, res) => {
+  try {
+    const flockId = req.params.id;
+    const member = await pool.query(
+      "SELECT id FROM flock_members WHERE flock_id = $1 AND user_id = $2 AND status = 'accepted'",
+      [flockId, req.user.id]
+    );
+    if (member.rows.length === 0) {
+      return res.status(403).json({ error: 'Not a member of this flock' });
+    }
+
+    if (req.body?.regenerate) {
+      await pool.query('UPDATE flock_invite_links SET revoked = true WHERE flock_id = $1', [flockId]);
+    }
+
+    const existing = await pool.query(
+      'SELECT token FROM flock_invite_links WHERE flock_id = $1 AND revoked = false LIMIT 1',
+      [flockId]
+    );
+    let token = existing.rows[0]?.token;
+    if (!token) {
+      const { newLinkToken } = require('./guest');
+      token = newLinkToken();
+      await pool.query(
+        'INSERT INTO flock_invite_links (token, flock_id, created_by) VALUES ($1, $2, $3)',
+        [token, flockId, req.user.id]
+      );
+    }
+
+    const base = process.env.PUBLIC_WEB_URL || 'https://flock-app-w65m.vercel.app';
+    res.json({ token, url: `${base}/i/${token}` });
+  } catch (err) {
+    console.error('Invite link error:', err);
+    res.status(500).json({ error: 'Could not create invite link' });
+  }
+});
+
 // POST /api/flocks/:id/join - Accept a flock invite
 router.post('/:id/join', param('id').isInt(), async (req, res) => {
   try {

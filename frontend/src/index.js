@@ -70,6 +70,15 @@ if (isMarketingRoot) {
       </React.Suspense>
     </React.StrictMode>
   );
+} else if (window.location.pathname.startsWith('/i/')) {
+  const GuestInvite = React.lazy(() => import('./website/GuestInvite'));
+  root.render(
+    <React.StrictMode>
+      <React.Suspense fallback={null}>
+        <GuestInvite />
+      </React.Suspense>
+    </React.StrictMode>
+  );
 } else if (window.location.pathname === '/about') {
   const AboutPage = React.lazy(() => import('./website/AboutPage'));
   root.render(

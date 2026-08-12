@@ -142,6 +142,23 @@ export async function appleLogin(identityToken, fullName, authorizationCode) {
   return data;
 }
 
+// Venue intelligence: the owner's own model-powered forecast + the
+// competitor strip view. Real computation, replaces the old demo numbers.
+export async function getVenueIntelligence() {
+  return request('/api/venue-dashboard/intelligence');
+}
+export async function getVenueStrip() {
+  return request('/api/venue-dashboard/strip');
+}
+
+// Shareable guest invite link for a flock (guests RSVP + vote, no account).
+export async function createFlockInviteLink(flockId, regenerate = false) {
+  return request(`/api/flocks/${flockId}/invite-link`, {
+    method: 'POST',
+    body: JSON.stringify({ regenerate }),
+  });
+}
+
 export async function getCurrentUser() {
   return request('/api/auth/me');
 }
