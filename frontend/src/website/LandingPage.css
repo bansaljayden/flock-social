@@ -161,7 +161,7 @@
 
 /* ============ sections ============ */
 
-.lp-sec { padding: clamp(72px, 11vw, 132px) 0; }
+.lp-sec { padding: clamp(56px, 8vw, 96px) 0; }
 .lp-sec-navy { background: var(--navy); color: var(--cream-2); }
 .lp-sec-paper { background: var(--paper); }
 .lp-sec-paper-2 { background: var(--paper-2); }
@@ -192,20 +192,8 @@
   .lp-hero-in { grid-template-columns: 1.05fr 0.95fr; }
 }
 
-.lp-badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  padding: 7px 14px;
-  border-radius: 999px;
-  border: 1px solid var(--rule-cream);
-  background: rgba(244, 239, 227, 0.06);
-  color: var(--cream-2);
-  font-size: 13px;
-  font-weight: 600;
-  margin-bottom: 22px;
-}
-.lp-badge b { color: var(--cream); font-weight: 700; }
+/* .lp-badge removed: the pill badge above the hero H1 is a named AI-site
+   tell (SLOP-AUDIT.md A4). The DECA proof line lives in .lp-hero-note now. */
 
 .lp-hero h1 { margin-bottom: 20px; }
 .lp-hero .lp-lead { margin-bottom: 30px; }
@@ -217,42 +205,7 @@
   color: var(--cream-3);
 }
 
-/* ============ phone vignette ============ */
-
-.lp-phone {
-  width: min(310px, 82vw);
-  margin: 0 auto;
-  border-radius: 38px;
-  border: 1px solid rgba(244, 239, 227, 0.18);
-  background: var(--navy-soft);
-  padding: 10px;
-  box-shadow: 0 30px 70px rgba(0, 0, 0, 0.45);
-}
-.lp-phone-screen {
-  border-radius: 29px;
-  background: var(--navy);
-  overflow: hidden;
-  padding: 18px 16px 16px;
-}
-.lp-ph-top {
-  display: flex;
-  justify-content: space-between;
-  align-items: baseline;
-  margin-bottom: 16px;
-}
-.lp-ph-hi { font-size: 12px; color: var(--cream-3); }
-.lp-ph-name { font-size: 19px; font-weight: 700; color: var(--cream); letter-spacing: -0.02em; }
-
-.lp-ph-card {
-  border: 1px solid var(--rule-cream);
-  border-radius: 14px;
-  padding: 13px 14px;
-  margin-bottom: 10px;
-  background: rgba(244, 239, 227, 0.03);
-}
-.lp-ph-card-row { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
-.lp-ph-title { font-size: 14.5px; font-weight: 700; color: var(--cream); }
-.lp-ph-sub { font-size: 12px; color: var(--cream-3); margin-top: 3px; }
+/* ============ chips (crowd labels on vignettes) ============ */
 
 .lp-chip {
   font-size: 11px;
@@ -264,15 +217,6 @@
 .lp-chip-quiet { background: rgba(34, 197, 94, 0.14); color: #4ade80; }
 .lp-chip-mid { background: rgba(245, 158, 11, 0.14); color: #fbbf24; }
 .lp-chip-steel { background: rgba(109, 154, 195, 0.16); color: var(--steel-lift); }
-
-.lp-ph-bar {
-  height: 6px;
-  border-radius: 99px;
-  background: rgba(244, 239, 227, 0.1);
-  overflow: hidden;
-  margin-top: 10px;
-}
-.lp-ph-bar i { display: block; height: 100%; border-radius: 99px; background: var(--steel-lift); }
 
 /* ============ real app screenshots ============ */
 
@@ -404,46 +348,6 @@
 }
 .lp-sec-navy .lp-tick { border-color: var(--steel-lift); }
 
-/* crowd forecast vignette */
-.lp-forecast {
-  border: 1px solid var(--rule);
-  border-radius: 18px;
-  background: #fff;
-  padding: clamp(20px, 3vw, 26px);
-}
-.lp-fc-head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 18px; }
-.lp-fc-name { font-size: 17px; font-weight: 700; color: var(--ink); }
-.lp-fc-live { font-size: 11px; font-weight: 700; color: var(--crowd-quiet); }
-.lp-fc-dial { display: flex; align-items: center; gap: 16px; margin-bottom: 20px; }
-.lp-fc-ring {
-  width: 74px; height: 74px; border-radius: 50%;
-  display: grid; place-items: center;
-  flex-shrink: 0;
-  background: conic-gradient(var(--crowd-mid) 0 62%, var(--paper-2) 62% 100%);
-}
-.lp-fc-ring span {
-  width: 58px; height: 58px; border-radius: 50%;
-  background: #fff;
-  display: grid; place-items: center;
-  font-size: 17px; font-weight: 700; color: var(--ink);
-}
-.lp-fc-label { font-size: 16px; font-weight: 700; color: var(--crowd-mid); }
-.lp-fc-sub { font-size: 13.5px; color: var(--ink-3); margin-top: 3px; }
-
-.lp-fc-hours { display: flex; align-items: flex-end; gap: 5px; height: 76px; }
-.lp-fc-hours i {
-  flex: 1;
-  border-radius: 4px 4px 2px 2px;
-  background: var(--paper-2);
-  transform-origin: bottom;
-}
-.lp-fc-hours i.on { background: var(--steel); }
-.lp-fc-hours i.peak { background: var(--crowd-busy); }
-.lp-fc-axis {
-  display: flex; justify-content: space-between;
-  font-size: 11px; color: var(--ink-3); margin-top: 8px;
-}
-
 /* split / money vignette */
 .lp-split {
   border: 1px solid var(--rule);
@@ -568,42 +472,35 @@
 }
 .lp-hero-in { position: relative; z-index: 1; }
 
-.lp-ph-foot {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-top: 14px;
-  padding-top: 13px;
-  border-top: 1px solid var(--rule-cream);
-  font-size: 12.5px;
-  color: var(--cream-3);
-}
-.lp-ph-foot b { color: var(--steel-lift); font-size: 13px; }
-
 /* ============ feature grid ============ */
 
+/* One ruled block, like the steps grid: hairline dividers instead of six
+   floating white cards. The icon sits inline with the title, not in the
+   40px rounded "icon badge" square every AI page ships (SLOP-AUDIT.md A14). */
 .lp-grid {
   display: grid;
-  gap: clamp(16px, 2.2vw, 24px);
-  margin-top: clamp(32px, 5vw, 52px);
-  grid-template-columns: repeat(auto-fit, minmax(268px, 1fr));
-}
-.lp-card {
-  background: #fff;
+  gap: 1px;
+  background: var(--rule);
   border: 1px solid var(--rule);
-  border-radius: 16px;
-  padding: clamp(22px, 2.6vw, 28px);
+  border-radius: 18px;
+  overflow: hidden;
+  margin-top: clamp(28px, 4vw, 44px);
 }
-.lp-card-ico {
-  display: grid;
-  place-items: center;
-  width: 40px; height: 40px;
-  border-radius: 11px;
-  background: rgba(45, 90, 135, 0.09);
-  margin-bottom: 16px;
+@media (min-width: 700px) { .lp-grid { grid-template-columns: repeat(2, 1fr); } }
+@media (min-width: 1020px) { .lp-grid { grid-template-columns: repeat(3, 1fr); } }
+.lp-card {
+  background: var(--paper);
+  padding: clamp(18px, 2.4vw, 24px);
 }
-.lp-card-ico svg { width: 20px; height: 20px; }
-.lp-card h3 { margin-bottom: 8px; }
+.lp-card-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+.lp-card-ico { display: inline-flex; flex-shrink: 0; }
+.lp-card-ico svg { width: 19px; height: 19px; }
+.lp-card h3 { margin-bottom: 0; }
 .lp-card p { font-size: 15px; color: var(--ink-2); }
 
 /* ============ safety card ============ */
@@ -649,19 +546,8 @@
 
 /* ============ motion ============ */
 
-/* Content is VISIBLE by default. The hidden state only exists once JS has
-   confirmed it can animate (root gets .lp-anim), so a failed observer, a
-   background tab, or a crawler can never leave a section blank. */
-@media (prefers-reduced-motion: no-preference) {
-  /* Position only — never opacity. Off-screen elements don't run transitions,
-     so fading from 0 could leave a section invisible to anyone who lands
-     without scrolling (and to crawlers). Content is always readable; the
-     motion is the 14px settle. */
-  .lp-anim .lp-reveal { transform: translateY(14px); }
-  .lp-anim .lp-reveal.is-in {
-    transform: none;
-    transition: transform 0.6s cubic-bezier(0.22, 1, 0.36, 1);
-  }
-  .lp-anim .lp-fc-hours i { transform: scaleY(0.35); transition: transform 0.7s cubic-bezier(0.22, 1, 0.36, 1); }
-  .lp-anim .is-in .lp-fc-hours i { transform: scaleY(1); }
-}
+/* No scroll-triggered entrance animation, on purpose. Sections sliding or
+   fading in from the bottom is the single most recognizable AI-built-site
+   pattern (SLOP-AUDIT.md A10), and it makes readers wait for content that
+   could just be there. The only motion on this page is hover/press feedback
+   on interactive elements. */

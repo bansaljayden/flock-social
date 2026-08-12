@@ -5,7 +5,7 @@ const SUPPORT_EMAIL = 'noreply.flockapp@gmail.com';
 
 export default function SupportPage() {
   useEffect(() => {
-    document.title = 'Support — Flock';
+    document.title = 'Support · Flock';
   }, []);
 
   return (
@@ -36,7 +36,7 @@ export default function SupportPage() {
         <h3>I can't sign in.</h3>
         <p>
           Check that the email matches the one you signed up with. If you signed up with Google
-          or Apple, use the same button — a password account isn't created automatically.
+          or Apple, use the same button. A password account isn't created automatically.
           Still stuck? Email us with the email you tried.
         </p>
 
@@ -63,8 +63,8 @@ export default function SupportPage() {
 
         <h3>How does the budget feature stay anonymous?</h3>
         <p>
-          The app server never sends individual budget amounts back to the group — only the
-          aggregate ceiling, the submission count, and whether everyone has submitted. No member
+          The app server never sends individual budget amounts back to the group. It only sends
+          the aggregate ceiling, the submission count, and whether everyone has submitted. No member
           (including the flock creator) sees what you personally entered.
         </p>
 

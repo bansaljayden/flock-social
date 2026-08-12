@@ -88,7 +88,16 @@ Only once the domain resolves:
    (e.g. `api.flockcorp.com`). Not required.
 3. Update the App Store Connect fields (`TESTFLIGHT_TEST_INFO.md`) to the
    flockcorp.com versions of the Privacy Policy and Marketing URLs.
-4. **CORS — already handled in code.** `https://flockcorp.com` and
+4. **Google Sign-In — you must add the new origin yourself.** Google Identity
+   Services refuses to render the "Continue with Google" button on any origin
+   that isn't registered, so the button will silently 403 on flockcorp.com until
+   you add it. Google Cloud Console → APIs & Services → Credentials → the OAuth
+   2.0 Client ID `1012360079798-apa806ukb8dul36on3304tr9996c217s` → **Authorized
+   JavaScript origins** → add `https://flockcorp.com` and
+   `https://www.flockcorp.com`. Leave the existing Vercel origin in place. (Add
+   the same two to **Authorized redirect URIs** only if you ever move off the
+   button-based flow — the current one doesn't redirect.)
+5. **CORS — already handled in code.** `https://flockcorp.com` and
    `https://www.flockcorp.com` are in the backend allowlist
    (`backend/server.js`). You just need the backend deployed with that change
    (it ships on your next push to `main`). Without it the app at
@@ -104,5 +113,7 @@ Only once the domain resolves:
 - [ ] `https://flockcorp.com` returns 200
 - [ ] `https://flockcorp.com/privacy` returns 200
 - [x] `https://flockcorp.com` added to the backend CORS allowlist (done in code — just redeploy)
+- [ ] `https://flockcorp.com` + `www` added to Google OAuth **Authorized JavaScript origins**
+      (test: load flockcorp.com/app and confirm the Google button actually renders)
 - [ ] `PUBLIC_WEB_URL` set on Railway
 - [ ] App Store Connect URLs updated to flockcorp.com

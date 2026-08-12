@@ -2349,7 +2349,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
     () => 'Let\'s make plans',
     () => 'Who\'s free tonight?',
     () => 'Time to link up',
-    () => 'Squad goals loading...',
+    () => 'Rounding up the group...',
   ]).current;
   useEffect(() => {
     const iv = setInterval(() => setGreetingIdx(i => (i + 1) % greetings.length), 3000);
@@ -3527,7 +3527,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
       if (data.flockId === selectedFlockId) {
         setBudgetStatus(prev => {
           if (prev && !prev.isReady && data.isReady && data.ceiling) {
-            showToast('Budget set — showing spots that work for everyone');
+            showToast('Budget set. Showing spots that work for everyone');
           }
           return prev ? { ...prev, ceiling: data.ceiling, submissionCount: data.submissionCount, totalMembers: data.totalMembers, isReady: data.isReady, skipCount: data.skipCount } : prev;
         });
@@ -3952,7 +3952,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
         }
       } catch (err) {
         console.error('Camera access error:', err);
-        showToast(err.name === 'NotAllowedError' ? 'Camera permission denied — allow it in browser settings' : 'Could not access camera: ' + (err.message || err.name), 'error');
+        showToast(err.name === 'NotAllowedError' ? 'Camera permission denied. Allow it in browser settings' : 'Could not access camera: ' + (err.message || err.name), 'error');
         setShowCameraViewfinder(null);
       }
     }, 300);
@@ -4292,7 +4292,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
       setShowSOS(false);
     } catch (err) {
       if (err.code) {
-        showToast('Could not get location — check permissions', 'error');
+        showToast('Could not get location. Check permissions', 'error');
       } else {
         showToast(err.message || 'Failed to share location', 'error');
       }
@@ -5179,7 +5179,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                               {v.isPinned && <span style={{ fontSize: '9px', fontWeight: '700', color: 'white', backgroundColor: colors.navyBg, padding: '1px 6px', borderRadius: '6px', flexShrink: 0 }}>Pinned</span>}
                               {isLeading && <span style={{ fontSize: '9px', fontWeight: '700', color: colors.steel, backgroundColor: `${colors.steel}15`, padding: '1px 6px', borderRadius: '6px', flexShrink: 0 }}>Leading</span>}
                             </div>
-                            <p style={{ fontSize: '11px', color: 'var(--text-tertiary)', margin: '1px 0 0' }}>{(v.voters || []).length > 0 ? (v.voters || []).join(', ') : v.isPinned ? 'Current pinned venue — tap to vote' : 'No votes yet'}</p>
+                            <p style={{ fontSize: '11px', color: 'var(--text-tertiary)', margin: '1px 0 0' }}>{(v.voters || []).length > 0 ? (v.voters || []).join(', ') : v.isPinned ? 'Current pinned venue. Tap to vote' : 'No votes yet'}</p>
                           </div>
                           <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0 }}>
                             {voteCount > 0 && <span style={{ fontSize: '16px', fontWeight: '900', color: isMyVote ? colors.navy : colors.textTertiary }}>{voteCount}</span>}
@@ -5306,7 +5306,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
             <button className="glass-btn glass-navy" onClick={(e) => {
               confirmClick(e);
               setDmCashPool({ perPerson: dmCashPoolAmount, total: dmCashPoolAmount * 2, collected: 0, paid: [] });
-              sendDmMessage({ text: `Cash Pool: $${dmCashPoolAmount}/person — let's split it!`, noReply: true });
+              sendDmMessage({ text: `Cash Pool: $${dmCashPoolAmount}/person. Let's split it!`, noReply: true });
               setShowDmCashPool(false);
                          }} style={{ width: '100%', padding: '14px', borderRadius: '14px', border: 'none', background: colors.navyMidBg, color: 'white', fontWeight: '800', fontSize: '15px', cursor: 'pointer', position: 'relative', overflow: 'hidden' }}>Create Pool</button>
           </div>
@@ -6495,12 +6495,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           <label style={{ display: 'block', fontSize: '12px', fontWeight: 'bold', color: colors.navy, marginBottom: '6px' }}>Enter Code</label>
           <SearchInputLocal key="join-code-input" id="join-code-input" type="text" initialValue={joinCode} onCommit={setJoinCode} transform={(v) => v.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 6)} placeholder="ABC123" maxLength={6} style={{ ...styles.input, fontSize: '20px', textAlign: 'center', letterSpacing: '8px', textTransform: 'uppercase' }} autoComplete="off" />
         </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', margin: '24px 0' }}>
-          <div style={{ flex: 1, height: '1px', backgroundColor: 'var(--toggle-off)' }} />
-          <span style={{ color: 'var(--text-tertiary)', fontSize: '12px' }}>or</span>
-          <div style={{ flex: 1, height: '1px', backgroundColor: 'var(--toggle-off)' }} />
-        </div>
-        <button className="glass-btn glass-secondary" onClick={() => showToast('QR scanner coming soon!', 'info')} style={{ width: '100%', padding: '12px', borderRadius: '12px', border: `2px solid ${colors.creamDark}`, backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontWeight: '500', fontSize: '14px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>{Icons.camera(colors.navy, 16)} Scan QR</button>
+        {/* "Scan QR" button removed: it only toasted "coming soon", and a dead
+            button that advertises itself is a named tell (SLOP-AUDIT.md C1).
+            Restore it WITH a working scanner or not at all. */}
       </div>
       <div style={{ padding: '12px', backgroundColor: 'var(--bg-card-solid)', borderTop: '1px solid var(--divider)', flexShrink: 0 }}>
         <button className="glass-btn glass-navy" onClick={(e) => { if (joinCode.length === 6) { confirmClick(e); setJoinCode(''); setCurrentScreen('main'); } else { showToast('Enter a valid code', 'error'); }}} style={{ ...styles.gradientButton, position: 'relative', overflow: 'hidden' }}>Join Flock</button>
@@ -7796,7 +7793,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                   <div style={{ padding: '8px 16px', display: 'flex', alignItems: 'center', gap: '6px', backgroundColor: isDark ? 'rgba(251,191,36,0.1)' : 'rgba(251,191,36,0.12)' }}>
                     {Icons.zap('#f59e0b', 12)}
                     <span style={{ fontSize: '11px', color: '#b45309', fontWeight: '600' }}>
-                      {isRainy ? 'Rain expected — consider indoor venues' : isSnowy ? 'Snow expected — plan accordingly' : 'High winds — outdoor plans may be affected'}
+                      {isRainy ? 'Rain expected. Indoor spots are the move' : isSnowy ? 'Snow expected. Plan around it' : 'High winds. Outdoor plans may suffer'}
                     </span>
                   </div>
                 )}
@@ -8686,11 +8683,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           <input ref={chatGalleryInputRef} type="file" accept="image/*" onChange={handleChatImageSelect} style={{ display: 'none' }} />
           <button onClick={() => { if (sharingLocationForFlock === flock.id) { stopLocationSharing(); } else { const otherMembers = (flock.members || []).filter(m => m.id !== authUser?.id).length; if (otherMembers === 0) { showToast('No one else in this flock to share with', 'error'); return; } startSharingLocation(flock.id); } }} style={{ width: '38px', height: '38px', borderRadius: '19px', border: 'none', backgroundColor: sharingLocationForFlock === flock.id ? '#10b981' : 'var(--bg-hover)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'opacity 0.2s ease', flexShrink: 0 }}>{Icons.mapPin(sharingLocationForFlock === flock.id ? 'white' : colors.textSecondary, 16)}</button>
           <input key="chat-input" id="chat-input" type="text" defaultValue="" onChange={handleChatInputChange} onKeyDown={(e) => e.key === 'Enter' && sendChatMessage()} placeholder={replyingTo ? 'Reply...' : 'Type a message...'} style={{ flex: 1, padding: '15px 18px', borderRadius: '24px', backgroundColor: 'var(--bg-hover)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)', fontSize: '16px', outline: 'none', fontWeight: '500', transition: 'opacity 0.2s ease' }} autoComplete="off" />
-          {chatInputHasText ? (
-            <button className="glass-btn glass-navy" onClick={sendChatMessage} style={{ width: '42px', height: '42px', borderRadius: '21px', border: 'none', background: colors.navyBg, color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 3px 10px rgba(13,40,71,0.10)', transition: 'opacity 0.2s ease' }}>{Icons.send('white', 18)}</button>
-          ) : (
-            <button onClick={() => showToast('Voice messages coming soon!', 'info')} style={{ width: '42px', height: '42px', borderRadius: '21px', border: 'none', background: colors.navyBg, color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 3px 10px rgba(13,40,71,0.10)', transition: 'opacity 0.2s ease' }}>{Icons.mic('white', 18)}</button>
-          )}
+          {/* The mic button that lived here only toasted "coming soon" (dead
+              button, SLOP-AUDIT.md C1). The send button now stays put and
+              disables when the input is empty. */}
+          <button className="glass-btn glass-navy" onClick={sendChatMessage} disabled={!chatInputHasText} style={{ width: '42px', height: '42px', borderRadius: '21px', border: 'none', background: colors.navyBg, color: 'white', cursor: chatInputHasText ? 'pointer' : 'default', opacity: chatInputHasText ? 1 : 0.45, display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 3px 10px rgba(13,40,71,0.10)', transition: 'opacity 0.2s ease' }}>{Icons.send('white', 18)}</button>
         </div>
 
         {/* Camera options popup */}
@@ -8784,7 +8780,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                       } catch (err) { showToast(err.message, 'error'); }
                       setBudgetSubmitting(false);
                     }} className="glass-btn glass-secondary" style={{ width: '100%', padding: '12px', marginTop: '8px', border: 'none', backgroundColor: 'transparent', color: 'var(--text-secondary)', fontSize: '13px', fontWeight: '600', cursor: 'pointer' }}>
-                      Skip — any budget works
+                      Skip, any budget works
                     </button>
                   </div>
                 )}
@@ -8806,7 +8802,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                       </div>
                     )}
                     {!budgetStatus?.budgetLocked && budgetStatus?.userAmount && (
-                      <p style={{ fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '12px' }}>Your budget: ${budgetStatus.userAmount} — <button onClick={() => { setBudgetAmount(budgetStatus.userAmount); setBudgetCustom(''); setBudgetStatus(prev => ({ ...prev, userSubmitted: false })); }} style={{ background: 'none', border: 'none', color: colors.steel, fontWeight: '700', cursor: 'pointer', padding: 0, fontSize: '12px' }}>Change</button></p>
+                      <p style={{ fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '12px' }}>Your budget: ${budgetStatus.userAmount} · <button onClick={() => { setBudgetAmount(budgetStatus.userAmount); setBudgetCustom(''); setBudgetStatus(prev => ({ ...prev, userSubmitted: false })); }} style={{ background: 'none', border: 'none', color: colors.steel, fontWeight: '700', cursor: 'pointer', padding: 0, fontSize: '12px' }}>Change</button></p>
                     )}
                     {isCreator && !budgetStatus?.budgetLocked && (
                       <div style={{ display: 'flex', gap: '8px', marginBottom: '12px' }}>
@@ -8875,7 +8871,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                           <span style={{ fontSize: '13px', fontWeight: '800', color: colors.navy }}>Total</span>
                           <span style={{ fontSize: '13px', fontWeight: '800', color: colors.steel }}>${(parseFloat(billTotal) * (1 + billTip / 100)).toFixed(2)}</span>
                         </div>
-                        <p style={{ fontSize: '11px', color: 'var(--text-tertiary)', margin: '6px 0 0', textAlign: 'center' }}>Equal split — ~${(parseFloat(billTotal) * (1 + billTip / 100) / Math.max(1, flock.members?.length || flock.memberCount || 1)).toFixed(2)} each</p>
+                        <p style={{ fontSize: '11px', color: 'var(--text-tertiary)', margin: '6px 0 0', textAlign: 'center' }}>Equal split · ~${(parseFloat(billTotal) * (1 + billTip / 100) / Math.max(1, flock.members?.length || flock.memberCount || 1)).toFixed(2)} each</p>
                       </div>
                     )}
                     <button className="glass-btn glass-primary" disabled={!billTotal || parseFloat(billTotal) <= 0} onClick={async () => {
@@ -8955,7 +8951,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                           } catch (e2) { showToast(e2.message, 'error'); }
                         }
                       }} style={{ ...styles.gradientButton, padding: '14px', marginBottom: '8px' }}>
-                        Settle Up — ${billSplit.shares.find(s => String(s.userId) === String(authUser?.id))?.amount?.toFixed(2)}
+                        Settle Up · ${billSplit.shares.find(s => String(s.userId) === String(authUser?.id))?.amount?.toFixed(2)}
                       </button>
                     )}
                     {billSplit.shares?.find(s => String(s.userId) === String(authUser?.id) && !s.settled) && (
@@ -9081,7 +9077,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                                 {isAssigned && <span style={{ fontSize: '9px', fontWeight: '700', color: 'white', backgroundColor: colors.navyBg, padding: '1px 6px', borderRadius: '6px', flexShrink: 0 }}>Assigned</span>}
                                 {isLeading && <span style={{ fontSize: '9px', fontWeight: '700', color: colors.steel, backgroundColor: `${colors.steel}15`, padding: '1px 6px', borderRadius: '6px', flexShrink: 0 }}>Leading</span>}
                               </div>
-                              <p style={{ fontSize: '11px', color: 'var(--text-tertiary)', margin: '1px 0 0' }}>{v.voters.length > 0 ? v.voters.join(', ') : isAssigned ? 'Current flock venue — tap to vote' : 'No votes yet'}</p>
+                              <p style={{ fontSize: '11px', color: 'var(--text-tertiary)', margin: '1px 0 0' }}>{v.voters.length > 0 ? v.voters.join(', ') : isAssigned ? 'Current flock venue. Tap to vote' : 'No votes yet'}</p>
                             </div>
                             <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0 }}>
                               {v.voters.length > 0 && <span style={{ fontSize: '16px', fontWeight: '900', color: isMyVote ? colors.navy : colors.textTertiary }}>{v.voters.length}</span>}
@@ -11381,7 +11377,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                     <span style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>{slot.close ? `${slot.open} - ${slot.close}` : slot.open}</span>
                   </div>
                 )) : (
-                  <p style={{ fontSize: '11px', color: 'var(--text-secondary)', margin: '4px 0', fontStyle: 'italic' }}>No hours set — tap Edit Hours to add</p>
+                  <p style={{ fontSize: '11px', color: 'var(--text-secondary)', margin: '4px 0', fontStyle: 'italic' }}>No hours set. Tap Edit Hours to add</p>
                 )}
                 <button onClick={() => setShowHoursModal(true)} style={{ marginTop: '8px', width: '100%', padding: '8px', borderRadius: '6px', border: `1px solid ${colors.creamDark}`, backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontSize: '11px', fontWeight: '500', cursor: 'pointer' }}>
                   Edit Hours
@@ -12185,8 +12181,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
               <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', border: `1px dashed ${colors.creamDark}` }}>
                 <h4 style={{ fontSize: '11px', fontWeight: '700', color: colors.navy, margin: '0 0 6px', display: 'flex', alignItems: 'center', gap: '4px' }}>{Icons.sparkles(colors.amber, 12)} Key Insights</h4>
                 <ul style={{ margin: 0, paddingLeft: '16px', fontSize: '10px', color: 'var(--text-secondary)' }}>
-                  <li>Austin market nearing saturation - prioritize Dallas/Houston</li>
-                  <li>Pro tier conversion at 24% - above industry average</li>
+                  <li>Austin market nearing saturation: prioritize Dallas/Houston</li>
+                  <li>Pro tier conversion at 24%: above industry average</li>
                   <li>User acquisition cost trending down 15% MoM</li>
                 </ul>
               </div>
@@ -12489,7 +12485,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
       () => (
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center', padding: '24px' }}>
           <h2 style={{ fontSize: '20px', fontWeight: '800', color: '#f0ead8', margin: '0 0 6px' }}>Where are you located?</h2>
-          <p style={{ fontSize: '13px', color: 'rgba(148,163,184,0.6)', margin: '0 0 24px' }}>City or full address — helps us connect you with nearby customers.</p>
+          <p style={{ fontSize: '13px', color: 'rgba(148,163,184,0.6)', margin: '0 0 24px' }}>City or full address, so nearby customers can find you.</p>
           <input value={venueOnboardingData.location} onChange={(e) => setVenueOnboardingData(d => ({ ...d, location: e.target.value }))} placeholder="e.g. Austin, TX or 123 Main St" autoComplete="off" data-lpignore="true" data-form-type="other" style={{ width: '100%', padding: '14px 16px', borderRadius: '12px', border: '1.5px solid rgba(148,163,184,0.15)', fontSize: '16px', fontWeight: '500', outline: 'none', boxSizing: 'border-box', backgroundColor: 'rgba(255,255,255,0.06)', color: 'white' }} autoFocus />
         </div>
       ),
@@ -12653,7 +12649,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                   What's your vibe?
                 </h1>
                 <p style={{ fontSize: '13px', color: 'var(--text-secondary)', margin: 0 }}>
-                  Pick 3-5 interests so we can personalize your experience
+                  Pick 3-5 things you're into so Flock knows what to suggest
                 </p>
               </div>
             </div>
@@ -13633,7 +13629,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
         <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.5)', zIndex: 9999, display: 'flex', alignItems: 'flex-end', justifyContent: 'center' }} onClick={() => setShowPaymentPicker(false)}>
           <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '16px 16px 0 0', padding: '20px', width: '100%', maxWidth: '420px' }} onClick={e => e.stopPropagation()}>
             <h3 style={{ fontSize: '16px', fontWeight: '800', color: colors.navy, margin: '0 0 4px' }}>Pay {paymentOptions.payTo}</h3>
-            <p style={{ fontSize: '13px', color: 'var(--text-secondary)', margin: '0 0 16px' }}>${paymentOptions.amount.toFixed(2)} — {paymentOptions.note}</p>
+            <p style={{ fontSize: '13px', color: 'var(--text-secondary)', margin: '0 0 16px' }}>${paymentOptions.amount.toFixed(2)} · {paymentOptions.note}</p>
             {paymentOptions.methods.map(m => (
               <button key={m.method} onClick={async () => {
                 if (m.deepLink) window.open(m.deepLink, '_blank');
