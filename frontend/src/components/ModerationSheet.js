@@ -3,14 +3,14 @@ import { reportContent, blockUser } from '../services/api';
 
 // UGC moderation sheet (Apple Guideline 1.2). Opened from a message action or a
 // user/profile menu. Lets a user REPORT objectionable content and BLOCK an abusive
-// user â€” the two mechanisms Apple requires and that our CommunityGuidelines /
+// user — the two mechanisms Apple requires and that our CommunityGuidelines /
 // TermsOfService pages promise ("long-press a message or open a profile to Report
 // content or Block a user").
 //
 // `target` shape (null = closed):
 //   { userId, userName, contentType, contentId }
-//     contentType âˆˆ 'flock_message' | 'dm' | 'profile' | 'story'  (backend contract)
-//     contentId   â€” message id when reporting a specific message, else undefined
+//     contentType ∈ 'flock_message' | 'dm' | 'profile' | 'story'  (backend contract)
+//     contentId   — message id when reporting a specific message, else undefined
 //
 // Reasons mirror VALID_REASONS in backend/routes/moderation.js exactly.
 const REASONS = [
@@ -95,7 +95,7 @@ const ModerationSheet = ({ target, onClose, showToast, onBlocked }) => {
             </button>
             {userId && (
               <button style={{ ...sheetBtn, color: '#EF4444' }} onClick={() => setMode('block')}>
-                <span aria-hidden style={{ fontSize: '16px' }}>ðŸš«</span> Block {who}
+                <span aria-hidden style={{ fontSize: '16px' }}>🚫</span> Block {who}
               </button>
             )}
             <button style={{ ...sheetBtn, borderBottom: 'none', justifyContent: 'center', color: 'var(--text-secondary)' }} onClick={onClose}>Cancel</button>
@@ -114,7 +114,7 @@ const ModerationSheet = ({ target, onClose, showToast, onBlocked }) => {
             <textarea value={details} onChange={(e) => setDetails(e.target.value)} maxLength={1000} placeholder="Add details (optional)" rows={3} style={{ width: '100%', boxSizing: 'border-box', padding: '12px', borderRadius: '12px', border: '1px solid var(--border-default)', backgroundColor: 'var(--bg-hover)', color: 'var(--text-primary)', fontSize: '13px', resize: 'none', outline: 'none', marginBottom: '14px', fontFamily: 'inherit' }} />
             <div style={{ display: 'flex', gap: '10px' }}>
               <button onClick={() => setMode('menu')} disabled={busy} style={{ flex: 1, padding: '13px', borderRadius: '12px', border: '1px solid var(--border-default)', backgroundColor: 'transparent', color: 'var(--text-secondary)', fontSize: '14px', fontWeight: '600', cursor: 'pointer' }}>Back</button>
-              <button onClick={submitReport} disabled={busy || !reason} style={{ flex: 2, padding: '13px', borderRadius: '12px', border: 'none', backgroundColor: '#EF4444', color: 'white', fontSize: '14px', fontWeight: '700', cursor: busy || !reason ? 'not-allowed' : 'pointer', opacity: busy || !reason ? 0.6 : 1 }}>{busy ? 'Submittingâ€¦' : 'Submit report'}</button>
+              <button onClick={submitReport} disabled={busy || !reason} style={{ flex: 2, padding: '13px', borderRadius: '12px', border: 'none', backgroundColor: '#EF4444', color: 'white', fontSize: '14px', fontWeight: '700', cursor: busy || !reason ? 'not-allowed' : 'pointer', opacity: busy || !reason ? 0.6 : 1 }}>{busy ? 'Submitting…' : 'Submit report'}</button>
             </div>
           </div>
         )}
@@ -125,7 +125,7 @@ const ModerationSheet = ({ target, onClose, showToast, onBlocked }) => {
             <p style={{ fontSize: '13px', color: 'var(--text-secondary)', margin: '0 0 16px', lineHeight: 1.5 }}>They won't be able to message you or see your activity, and you won't see theirs. Blocking is mutual.</p>
             <div style={{ display: 'flex', gap: '10px' }}>
               <button onClick={() => setMode('menu')} disabled={busy} style={{ flex: 1, padding: '13px', borderRadius: '12px', border: '1px solid var(--border-default)', backgroundColor: 'transparent', color: 'var(--text-secondary)', fontSize: '14px', fontWeight: '600', cursor: 'pointer' }}>Cancel</button>
-              <button onClick={confirmBlock} disabled={busy} style={{ flex: 2, padding: '13px', borderRadius: '12px', border: 'none', backgroundColor: '#EF4444', color: 'white', fontSize: '14px', fontWeight: '700', cursor: busy ? 'not-allowed' : 'pointer', opacity: busy ? 0.6 : 1 }}>{busy ? 'Blockingâ€¦' : `Block ${who}`}</button>
+              <button onClick={confirmBlock} disabled={busy} style={{ flex: 2, padding: '13px', borderRadius: '12px', border: 'none', backgroundColor: '#EF4444', color: 'white', fontSize: '14px', fontWeight: '700', cursor: busy ? 'not-allowed' : 'pointer', opacity: busy ? 0.6 : 1 }}>{busy ? 'Blocking…' : `Block ${who}`}</button>
             </div>
           </div>
         )}
