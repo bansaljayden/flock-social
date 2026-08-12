@@ -1150,13 +1150,16 @@ const colors = colorsLight;
 // (Capacitor) or any phone-sized viewport it must not render — otherwise the app
 // draws a fake phone border inside the actual phone. Native detection + width
 // check; evaluated once (rotation/resize edge cases don't need live re-eval).
-const IS_FULLBLEED = (typeof window !== 'undefined') && (
+const isFullBleedNow = () => (typeof window !== 'undefined') && (
   (window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform()) ||
   (window.matchMedia && window.matchMedia('(max-width: 500px)').matches)
 );
-
-const makeStyles = (c, isDark) => ({
-  phoneContainer: IS_FULLBLEED ? {
+// One-shot evaluation proved unreliable on device (TestFlight builds rendered
+// the desktop bezel INSIDE the phone when the module evaluated before the
+// Capacitor bridge landed) — makeStyles now takes fullBleed as a parameter and
+// the app re-checks after mount.
+const makeStyles = (c, isDark, fullBleed = isFullBleedNow()) => ({
+  phoneContainer: fullBleed ? {
     width: '100%',
     maxWidth: '100%',
     height: '100dvh',
@@ -1187,7 +1190,7 @@ const makeStyles = (c, isDark) => ({
   },
   // Full-bleed: the fake notch becomes a real safe-area spacer so content
   // clears the actual status bar / Dynamic Island (viewport-fit=cover).
-  notch: IS_FULLBLEED ? {
+  notch: fullBleed ? {
     height: 'env(safe-area-inset-top)',
     backgroundColor: 'var(--bg-primary)',
     flexShrink: 0,
@@ -1199,7 +1202,7 @@ const makeStyles = (c, isDark) => ({
     justifyContent: 'center',
     flexShrink: 0,
   },
-  notchInner: IS_FULLBLEED ? { display: 'none' } : {
+  notchInner: fullBleed ? { display: 'none' } : {
     width: '120px',
     height: '24px',
     backgroundColor: 'black',
@@ -1520,8 +1523,19 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   const { toggleTheme, isDark, themeMode, isNightModeActive, setAutoMode } = useTheme();
   // eslint-disable-next-line no-unused-vars
   const colors = useMemo(() => isDark ? colorsDark : colorsLight, [isDark]);
+  // Full-bleed re-check: the Capacitor bridge can land after module evaluation,
+  // so a one-shot check drew the desktop bezel inside real phones. Sticky true.
+  const [fullBleed, setFullBleed] = useState(isFullBleedNow);
+  useEffect(() => {
+    if (fullBleed) return undefined;
+    const check = () => { if (isFullBleedNow()) setFullBleed(true); };
+    check();
+    const t = setTimeout(check, 400);
+    window.addEventListener('resize', check);
+    return () => { clearTimeout(t); window.removeEventListener('resize', check); };
+  }, [fullBleed]);
   // eslint-disable-next-line no-unused-vars
-  const styles = useMemo(() => makeStyles(colors, isDark), [colors, isDark]);
+  const styles = useMemo(() => makeStyles(colors, isDark, fullBleed), [colors, isDark, fullBleed]);
 
   // Connect WebSocket on mount
   useEffect(() => {
