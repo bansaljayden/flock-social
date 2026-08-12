@@ -327,9 +327,9 @@ export default function LandingPage() {
               <div className="lp-split-total"><span>Friday Night Out</span><b>$116.82</b></div>
               <div className="lp-split-row"><span>Jayden</span><b>$23.36</b></div>
               <div className="lp-split-row"><span>Sam</span><b>$23.36</b></div>
-              <div className="lp-split-row"><span>Ava</span><b>$23.36</b></div>
-              <div className="lp-split-row"><span>Vicky</span><b>$23.37</b></div>
-              <div className="lp-split-row"><span>Marcus</span><b>$23.37</b></div>
+              <div className="lp-split-row"><span>Riley</span><b>$23.36</b></div>
+              <div className="lp-split-row"><span>Jordan</span><b>$23.37</b></div>
+              <div className="lp-split-row"><span>Alex</span><b>$23.37</b></div>
               <div className="lp-split-note">Group budget ceiling was $25 each. Nobody saw anyone else's number.</div>
             </div>
           </Reveal>
