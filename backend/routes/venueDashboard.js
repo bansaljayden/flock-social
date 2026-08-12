@@ -356,4 +356,171 @@ router.get('/public-promotions/:placeId', async (req, res) => {
   }
 });
 
+// ─── VENUE INTELLIGENCE ──────────────────────────────────────────────────────
+// Real, model-powered analytics for the venue owner. This is the zero-user
+// venue product: their own forecast and the competitive strip view, computed
+// by the same crowd model users see. It replaces the hardcoded demo numbers
+// the old Analytics tab showed (VENUE-BILLING.md finding #3): nothing here is
+// invented; if we can't compute it, the field is null and the UI says so.
+
+const { getWeather } = require('../services/weatherService');
+const mlPredictor = require('../services/mlPredictor');
+const GOOGLE_KEY = process.env.GOOGLE_PLACES_API_KEY;
+
+// 60-min cache: Google calls cost money and forecasts don't move fast.
+const intelCache = new Map();
+const INTEL_TTL = 60 * 60 * 1000;
+const cacheGet = (k) => {
+  const hit = intelCache.get(k);
+  if (hit && Date.now() - hit.ts < INTEL_TTL) return hit.data;
+  intelCache.delete(k);
+  return null;
+};
+const cacheSet = (k, data) => intelCache.set(k, { ts: Date.now(), data });
+
+async function fetchVenueBasics(placeId) {
+  if (!GOOGLE_KEY) return null;
+  const r = await fetch(`https://places.googleapis.com/v1/places/${placeId}`, {
+    headers: {
+      'X-Goog-Api-Key': GOOGLE_KEY,
+      'X-Goog-FieldMask': 'id,displayName,rating,userRatingCount,priceLevel,types,location,currentOpeningHours',
+    },
+  });
+  const p = await r.json();
+  if (p.error) return null;
+  return {
+    place_id: p.id,
+    name: p.displayName?.text || '',
+    rating: p.rating || null,
+    user_ratings_total: p.userRatingCount || 0,
+    types: p.types || [],
+    location: p.location || null,
+    isOpen: p.currentOpeningHours?.openNow ?? null,
+  };
+}
+
+// GET /api/venue-dashboard/intelligence — the owner's own forecast
+router.get('/intelligence', async (req, res) => {
+  try {
+    const ctx = await getVenueCtx(req.user.id);
+    if (!ctx?.google_place_id) {
+      return res.json({ available: false, reason: 'Link your Google listing in Edit Profile to unlock forecasts' });
+    }
+    const cached = cacheGet(`intel:${ctx.google_place_id}`);
+    if (cached) return res.json(cached);
+
+    const venue = await fetchVenueBasics(ctx.google_place_id);
+    if (!venue) return res.json({ available: false, reason: 'Could not reach your Google listing right now' });
+
+    const lat = venue.location?.latitude;
+    const lng = venue.location?.longitude;
+    const weather = (lat && lng) ? await getWeather(lat, lng).catch(() => null) : null;
+
+    const now = new Date();
+    const current = await mlPredictor.predictBusyness(venue, weather, now);
+    // Full day today (6 AM start), then evening curves for the next 6 days.
+    const todayHourly = await mlPredictor.predictHourlyForecast(venue, weather, 6, 18, now);
+    const week = [];
+    for (let d = 1; d <= 6; d++) {
+      const day = new Date(now);
+      day.setDate(day.getDate() + d);
+      day.setHours(17, 0, 0, 0);
+      const evening = await mlPredictor.predictHourlyForecast(venue, weather, 17, 7, day);
+      const peak = evening.reduce((a, b) => (b.score > a.score ? b : a), { score: -1 });
+      week.push({
+        date: day.toISOString().slice(0, 10),
+        weekday: day.toLocaleDateString('en-US', { weekday: 'short' }),
+        peakScore: peak.score ?? null,
+        peakHour: peak.hour ?? null,
+      });
+    }
+
+    const result = {
+      available: true,
+      venue: { name: venue.name, placeId: venue.place_id },
+      now: { score: current.score, label: current.label, method: current.predictionMethod || (current.dataSourcesUsed?.includes('ml_model') ? 'ml' : 'rule_engine') },
+      todayHourly,
+      week,
+      model: current.modelVersion || null,
+      generatedAt: new Date().toISOString(),
+    };
+    cacheSet(`intel:${ctx.google_place_id}`, result);
+    res.json(result);
+  } catch (err) {
+    console.error('Venue intelligence error:', err);
+    res.status(500).json({ error: 'Failed to build venue intelligence' });
+  }
+});
+
+// GET /api/venue-dashboard/strip — you vs the venues around you, tonight.
+// Google Popular Times cannot do this: it is per-venue, read-only, no API.
+router.get('/strip', async (req, res) => {
+  try {
+    const ctx = await getVenueCtx(req.user.id);
+    if (!ctx?.google_place_id) {
+      return res.json({ available: false, reason: 'Link your Google listing in Edit Profile to unlock the strip view' });
+    }
+    const cached = cacheGet(`strip:${ctx.google_place_id}`);
+    if (cached) return res.json(cached);
+    if (!GOOGLE_KEY) return res.json({ available: false, reason: 'Search unavailable right now' });
+
+    const me = await fetchVenueBasics(ctx.google_place_id);
+    if (!me?.location) return res.json({ available: false, reason: 'Could not reach your Google listing right now' });
+
+    // Same-category venues within walking distance.
+    const wanted = ['bar', 'night_club', 'restaurant'].filter((t) => me.types.includes(t));
+    const nearby = await fetch('https://places.googleapis.com/v1/places:searchNearby', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Goog-Api-Key': GOOGLE_KEY,
+        'X-Goog-FieldMask': 'places.id,places.displayName,places.types,places.location,places.priceLevel,places.rating,places.currentOpeningHours',
+      },
+      body: JSON.stringify({
+        includedTypes: wanted.length ? wanted : ['bar'],
+        maxResultCount: 8,
+        locationRestriction: {
+          circle: { center: { latitude: me.location.latitude, longitude: me.location.longitude }, radius: 1500 },
+        },
+      }),
+    }).then((r) => r.json());
+
+    const weather = await getWeather(me.location.latitude, me.location.longitude).catch(() => null);
+    const now = new Date();
+
+    const scoreOne = async (v) => {
+      const [current, evening] = await Promise.all([
+        mlPredictor.predictBusyness(v, weather, now),
+        mlPredictor.predictHourlyForecast(v, weather, 17, 7, now),
+      ]);
+      const peak = evening.reduce((a, b) => (b.score > a.score ? b : a), { score: -1 });
+      return { name: v.name, score: current.score, label: current.label, peakScore: peak.score ?? null, peakHour: peak.hour ?? null };
+    };
+
+    const competitors = (nearby.places || [])
+      .filter((p) => p.id !== me.place_id)
+      .slice(0, 6)
+      .map((p) => ({
+        place_id: p.id,
+        name: p.displayName?.text || '',
+        types: p.types || [],
+        location: p.location || null,
+        rating: p.rating || null,
+        isOpen: p.currentOpeningHours?.openNow ?? null,
+      }));
+
+    const result = {
+      available: true,
+      you: await scoreOne(me),
+      competitors: await Promise.all(competitors.map(scoreOne)),
+      generatedAt: new Date().toISOString(),
+    };
+    cacheSet(`strip:${ctx.google_place_id}`, result);
+    res.json(result);
+  } catch (err) {
+    console.error('Venue strip error:', err);
+    res.status(500).json({ error: 'Failed to build the strip view' });
+  }
+});
+
 module.exports = router;

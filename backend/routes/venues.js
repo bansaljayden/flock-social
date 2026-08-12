@@ -101,7 +101,29 @@ router.get('/:id/votes', param('id').isInt(), async (req, res) => {
       [flockId]
     );
 
-    res.json({ votes: result.rows });
+    // Fold in guest-link votes (no identities, counts only). vote_count stays
+    // the total the vote bars are drawn from; guest_count lets the UI say
+    // "+2 guests" if it wants to.
+    const guests = await pool.query(
+      `SELECT venue_name, COUNT(*)::int AS guest_count
+       FROM guest_votes WHERE flock_id = $1 GROUP BY venue_name`,
+      [flockId]
+    ).catch(() => ({ rows: [] }));
+    const guestByVenue = Object.fromEntries(guests.rows.map((g) => [g.venue_name, g.guest_count]));
+    const votes = result.rows.map((v) => ({
+      ...v,
+      guest_count: guestByVenue[v.venue_name] || 0,
+      vote_count: parseInt(v.vote_count, 10) + (guestByVenue[v.venue_name] || 0),
+    }));
+    // Venues only guests have voted on so far still show up for members.
+    for (const [name, n] of Object.entries(guestByVenue)) {
+      if (!votes.some((v) => v.venue_name === name)) {
+        votes.push({ venue_name: name, venue_id: null, vote_count: n, guest_count: n, voters: [] });
+      }
+    }
+    votes.sort((a, b) => b.vote_count - a.vote_count);
+
+    res.json({ votes });
   } catch (err) {
     console.error('Get votes error:', err);
     res.status(500).json({ error: 'Failed to get votes' });

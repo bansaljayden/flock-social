@@ -175,6 +175,8 @@ app.use('/api/flocks', apiLimiter, flockRoutes);
 // /api/* request without a Bearer token, which would 401 the Pi (x-api-key) and
 // break the anonymous NFC GET below.
 app.use('/api/revenuecat', revenuecatRoutes);                  // RevenueCat webhook (shared-secret, no JWT) — before messages catch-all
+app.use('/api/guest', apiLimiter, require('./routes/guest').router); // Guest link RSVP/vote (token-authed, no JWT) — before messages catch-all
+app.use('/api/badge', apiLimiter, require('./routes/badge'));        // Embeddable live-busyness SVG (public, claimed venues only)
 app.use('/api/sensors', apiLimiter, sensorRoutes);              // Pi sensor ingest (x-api-key) + read APIs (JWT)
 app.use('/api/checkin', apiLimiter, checkinRoutes);             // NFC tap + manual venue check-in (anon-friendly GET)
 app.use('/api', apiLimiter, moderationRoutes);  // /api/reports, /api/blocks/* — before messages catch-all
@@ -673,6 +675,42 @@ async function runMigrations() {
       await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS apple_refresh_token TEXT`).catch(() => {});
       console.log('Moderation + compliance migration complete');
     } catch (e) { console.error('Moderation migration error:', e.message); }
+
+    // Guest invite links (cold-start: RSVP + vote from a link, no account).
+    // Tokens are random and unguessable; guests are identified by a
+    // server-issued guest UUID, never by anything the client makes up.
+    try {
+      await pool.query(`CREATE TABLE IF NOT EXISTS flock_invite_links (
+        token VARCHAR(20) PRIMARY KEY,
+        flock_id INTEGER NOT NULL REFERENCES flocks(id) ON DELETE CASCADE,
+        created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+        revoked BOOLEAN NOT NULL DEFAULT false,
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      )`);
+      await pool.query('CREATE INDEX IF NOT EXISTS idx_invite_links_flock ON flock_invite_links(flock_id)');
+
+      await pool.query(`CREATE TABLE IF NOT EXISTS guest_rsvps (
+        id SERIAL PRIMARY KEY,
+        flock_id INTEGER NOT NULL REFERENCES flocks(id) ON DELETE CASCADE,
+        guest_token UUID NOT NULL UNIQUE DEFAULT gen_random_uuid(),
+        name VARCHAR(60) NOT NULL,
+        status VARCHAR(10) NOT NULL DEFAULT 'in' CHECK (status IN ('in','out')),
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW()
+      )`);
+      await pool.query('CREATE INDEX IF NOT EXISTS idx_guest_rsvps_flock ON guest_rsvps(flock_id)');
+
+      await pool.query(`CREATE TABLE IF NOT EXISTS guest_votes (
+        id SERIAL PRIMARY KEY,
+        flock_id INTEGER NOT NULL REFERENCES flocks(id) ON DELETE CASCADE,
+        guest_rsvp_id INTEGER NOT NULL REFERENCES guest_rsvps(id) ON DELETE CASCADE,
+        venue_name VARCHAR(255) NOT NULL,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        UNIQUE(flock_id, guest_rsvp_id, venue_name)
+      )`);
+      await pool.query('CREATE INDEX IF NOT EXISTS idx_guest_votes_flock ON guest_votes(flock_id)');
+      console.log('Guest invite migration complete');
+    } catch (e) { console.error('Guest invite migration error:', e.message); }
 
     // Ensure admin account has admin role
     await pool.query(`UPDATE users SET role = 'admin' WHERE LOWER(email) = LOWER('bansaljayden@gmail.com') AND role != 'admin'`).catch(() => {});
