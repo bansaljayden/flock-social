@@ -27,6 +27,7 @@
     "jsonwebtoken": "^9.0.2",
     "jwks-rsa": "^3.1.0",
     "multer": "^1.4.5-lts.1",
+    "onnxruntime-node": "^1.27.0",
     "pg": "^8.11.3",
     "resend": "^6.9.3",
     "socket.io": "^4.6.1",
