@@ -36,10 +36,12 @@ const TOKEN_EXPIRY = '24h';
 // block survives local-storage clears / reinstalls and is recorded on the user row.
 const { ageFromDob, MIN_AGE } = require('../utils/age');
 const UNDERAGE_MSG = 'You must be at least 13 to use Flock.';
+const { isDisposableEmail } = require('../utils/disposableEmail');
 
 // Validation rules
 const signupValidation = [
-  body('email').isEmail().normalizeEmail().withMessage('Valid email required'),
+  body('email').isEmail().normalizeEmail().withMessage('Valid email required')
+    .custom((v) => !isDisposableEmail(v)).withMessage('Temporary email addresses cannot be used. Use an address you keep.'),
   body('password')
     .isLength({ min: 8 }).withMessage('Password must be at least 8 characters')
     .matches(/[A-Z]/).withMessage('Password must contain at least one uppercase letter')

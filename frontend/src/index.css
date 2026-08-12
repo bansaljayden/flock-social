@@ -3,36 +3,28 @@
 @tailwind utilities;
 
 /* ═══════════════════════════════════════════════════════════════════
-   SATOSHI — self-hosted so it renders offline in the Capacitor WebView.
-   Static instances 400/500/700/900 (the set the app actually uses).
-   font-weight:600 (SemiBold, used throughout) matches to 700 the same
-   way it did on the CDN — so this is 1:1 with the current web look.
+   FRAUNCES (display) + HANKEN GROTESK (body) — self-hosted so they
+   render offline in the Capacitor WebView. Both variable, both OFL 1.1.
+   Replaced Satoshi 2026-08-12: Satoshi/Inter became the recognizable
+   AI-default look (SLOP-AUDIT.md A15). Hanken was chosen over the
+   researched first pick (Schibsted Grotesk) because its x-height is
+   +1.9% vs Satoshi (Schibsted is +9%), which preserves the device-
+   tested App.js layouts at 10-12px. Hanken's digits are natively
+   monospaced, so tabular-nums alignment still holds. Fraunces is
+   display ONLY (site h1/h2): it has no tnum — never set live counts,
+   prices-in-columns, or anything that animates in Fraunces.
    ═══════════════════════════════════════════════════════════════════ */
 @font-face {
-  font-family: 'Satoshi';
-  src: url('./fonts/Satoshi-400.woff2') format('woff2');
-  font-weight: 400;
+  font-family: 'Fraunces';
+  src: url('./fonts/Fraunces-var.woff2') format('woff2');
+  font-weight: 100 900;
   font-style: normal;
   font-display: swap;
 }
 @font-face {
-  font-family: 'Satoshi';
-  src: url('./fonts/Satoshi-500.woff2') format('woff2');
-  font-weight: 500;
-  font-style: normal;
-  font-display: swap;
-}
-@font-face {
-  font-family: 'Satoshi';
-  src: url('./fonts/Satoshi-700.woff2') format('woff2');
-  font-weight: 700;
-  font-style: normal;
-  font-display: swap;
-}
-@font-face {
-  font-family: 'Satoshi';
-  src: url('./fonts/Satoshi-900.woff2') format('woff2');
-  font-weight: 900;
+  font-family: 'Hanken Grotesk';
+  src: url('./fonts/HankenGrotesk-var.woff2') format('woff2');
+  font-weight: 100 900;
   font-style: normal;
   font-display: swap;
 }
@@ -87,6 +79,12 @@
   --accent-purple-text: #2d5a87;
   --accent-pink-bg: #fce7f3;
   --accent-pink-text: #be185d;
+
+  /* Font tokens — theme-independent, so they live here on :root only.
+     Body serves the whole app; display is site headlines only. */
+  --font-body: 'Hanken Grotesk', -apple-system, BlinkMacSystemFont, 'Segoe UI',
+    'Roboto', 'Helvetica Neue', sans-serif;
+  --font-display: 'Fraunces', 'Iowan Old Style', Georgia, 'Times New Roman', serif;
 }
 
 [data-theme="dark"] {
@@ -144,16 +142,12 @@
 *,
 *::before,
 *::after {
-  font-family: 'Satoshi', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
-    'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
-    sans-serif;
+  font-family: var(--font-body);
 }
 
 body {
   margin: 0;
-  font-family: 'Satoshi', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
-    'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
-    sans-serif;
+  font-family: var(--font-body);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   background: var(--bg-primary);

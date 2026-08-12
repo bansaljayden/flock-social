@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { signup, googleLogin } from '../../services/api';
 import { GoogleLogin } from '@react-oauth/google';
+import AppleSignInButton from './AppleSignInButton';
 import { Meteors } from '../ui/meteors';
 
 const colors = {
@@ -37,6 +38,15 @@ const SignupScreen = ({ onSignupSuccess, onSwitchToLogin }) => {
   // server-side age gate in backend/utils/age.js). Client check is for UX only;
   // the backend re-computes age from date_of_birth and is the source of truth.
   const MIN_AGE = 13;
+  // Live password checklist. Mirrors backend/routes/auth.js EXACTLY (8 chars,
+  // 1 uppercase, 1 number) so nobody submits a password the server will bounce
+  // for a rule they were never shown. Shown only once the field has content.
+  const pwChecks = [
+    { label: '8 characters', ok: password.length >= 8 },
+    { label: 'One uppercase letter', ok: /[A-Z]/.test(password) },
+    { label: 'One number', ok: /[0-9]/.test(password) },
+  ];
+
   const ageFromDob = (value) => {
     if (!value) return null;
     const b = new Date(value);
@@ -47,7 +57,7 @@ const SignupScreen = ({ onSignupSuccess, onSwitchToLogin }) => {
     if (m < 0 || (m === 0 && now.getDate() < b.getDate())) age -= 1;
     return age;
   };
-  // Latest date that still satisfies the minimum age — caps the date picker.
+  // Latest date that still satisfies the minimum age â€” caps the date picker.
   const maxDob = (() => {
     const d = new Date();
     d.setFullYear(d.getFullYear() - MIN_AGE);
@@ -58,8 +68,8 @@ const SignupScreen = ({ onSignupSuccess, onSwitchToLogin }) => {
     e.preventDefault();
     setError('');
 
-    if (password.length < 8) {
-      setError('Password must be at least 8 characters');
+    if (!pwChecks.every((c) => c.ok)) {
+      setError('Your password is missing a requirement below');
       return;
     }
 
@@ -110,7 +120,7 @@ const SignupScreen = ({ onSignupSuccess, onSwitchToLogin }) => {
       alignItems: 'center',
       justifyContent: 'center',
       padding: '20px',
-      fontFamily: "'Satoshi', -apple-system, BlinkMacSystemFont, sans-serif",
+      fontFamily: "'Hanken Grotesk', -apple-system, BlinkMacSystemFont, sans-serif",
       position: 'relative',
       overflow: 'hidden',
     }}>
@@ -212,6 +222,18 @@ const SignupScreen = ({ onSignupSuccess, onSwitchToLogin }) => {
                   {showPassword ? <EyeOffIcon /> : <EyeIcon />}
                 </button>
               </div>
+              {password.length > 0 && (
+                <div style={{ marginTop: '10px', display: 'grid', gap: '6px' }}>
+                  {pwChecks.map((c) => (
+                    <div key={c.label} style={{ display: 'flex', alignItems: 'center', gap: '7px', fontSize: '12px', fontWeight: '500', color: c.ok ? '#34d399' : 'rgba(148,163,184,0.75)' }}>
+                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke={c.ok ? '#34d399' : 'rgba(148,163,184,0.55)'} strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                        {c.ok ? <polyline points="20 6 9 17 4 12" /> : <circle cx="12" cy="12" r="9" />}
+                      </svg>
+                      {c.label}
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
 
             <button type="submit" disabled={loading} style={{
@@ -263,6 +285,12 @@ const SignupScreen = ({ onSignupSuccess, onSwitchToLogin }) => {
               text="continue_with"
             />
           </div>
+
+          {/* Apple guideline 4.8 parity with the Google button above; native
+              iOS only (returns null on web). Apple accounts don't carry DOB,
+              and Apple requires its account holders to be 13+, so the age
+              gate here matches the Google path's server-side behavior. */}
+          <AppleSignInButton onSuccess={onSignupSuccess} onError={(m) => setError(m)} />
 
           <div style={{ textAlign: 'center', marginTop: '20px', paddingTop: '20px', borderTop: '1px solid rgba(148,163,184,0.08)', fontSize: '14px', color: 'rgba(148,163,184,0.6)' }}>
             Already have an account?{' '}
