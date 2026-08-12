@@ -547,7 +547,8 @@ function getWeatherFactor(weather, types) {
 // ---------------------------------------------------------------------------
 
 function calculateCrowdScore(venue, weather, timestamp) {
-  const ts = timestamp || new Date();
+  // Accept Date, ISO string, or nothing — callers pass all three.
+  const ts = timestamp instanceof Date ? timestamp : (timestamp ? new Date(timestamp) : new Date());
   const dayOfWeek = ts.getDay();
   const hour = ts.getHours();
 
