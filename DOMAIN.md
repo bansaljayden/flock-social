@@ -58,13 +58,13 @@ Vercel showed you. It is normally:
 > **Use the values Vercel shows you, not these**, if they differ — Vercel
 > occasionally changes them.
 
-### While you're in DNS anyway: make hello@flockcorp.com real (5 min)
+### While you're in DNS anyway: make social@flockcorp.com real (5 min)
 Resend can RECEIVE mail for this domain (verified available on the account,
 receiving currently disabled). In the Resend dashboard → Domains →
 flockcorp.com → enable **Receiving**, copy the inbound **MX record** it shows,
 and add it at the registrar together with the records above. Once verified,
 tell Claude — the site's contact email swaps from the noreply Gmail to
-hello@flockcorp.com everywhere, and incoming mail is readable via the Resend
+social@flockcorp.com everywhere, and incoming mail is readable via the Resend
 connector ("check the support inbox").
 
 ### Do not delete your email records
@@ -128,4 +128,4 @@ Only once the domain resolves:
 - [x] `PUBLIC_WEB_URL` set on Railway
 - [ ] App Store Connect URLs updated to flockcorp.com (do with next TestFlight pass)
 - [ ] Resend **Receiving** still disabled — flip it + add inbound MX when you
-      want hello@flockcorp.com live, then Claude swaps the contact email site-wide
+      want social@flockcorp.com live, then Claude swaps the contact email site-wide
