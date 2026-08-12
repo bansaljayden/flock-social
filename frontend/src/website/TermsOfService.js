@@ -2,7 +2,7 @@ import React, { useEffect } from 'react';
 import './PrivacyPolicy.css';
 
 const EFFECTIVE_DATE = 'June 16, 2026';
-const SUPPORT_EMAIL = 'noreply.flockapp@gmail.com';
+const SUPPORT_EMAIL = 'flocksocial.corp@gmail.com';
 
 export default function TermsOfService() {
   useEffect(() => {
