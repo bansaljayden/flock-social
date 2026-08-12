@@ -81,9 +81,12 @@ Go-forward plumbing:
    sending `is_holiday: 0` always while training rows stamped it from
    `config.js`. Inference now uses the same `isHoliday`/`isSchoolBreak`
    calendar (extended through 2028).
-3. NEXT — collection scripts + venue_feedback export: stamp `observed_date`,
-   `is_holiday_eve`, `is_special_night` (+effect) on every new realtime row
-   from `special_nights`.
+3. PARTLY DONE (2026-08-12) — `collectRealtime.js` now stamps every new
+   realtime row with `observed_date`, `is_holiday_eve`, `special_night`,
+   `special_night_effect`, `special_night_conf` (lookup module:
+   `scripts/ml/specialNights.js`; columns self-migrate, mirrored in
+   ml-schema.sql). STILL TO DO: venue_feedback export as dated realtime
+   rows (needs prod DB session).
 4. NEXT — add special-night features to prepare_features.py + matching
    mlPredictor computation, gated on metadata.feature_names (backward
    compatible). First retrain after a season of stamped data can actually
