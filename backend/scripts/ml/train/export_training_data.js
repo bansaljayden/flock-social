@@ -25,6 +25,24 @@ const pool = new Pool({
 
 const HOLDOUT_CITIES = ['miami', 'tokyo', 'barcelona'];
 
+const { CITIES } = require('../config');
+
+// Local calendar date at the venue when the row was observed. Realtime rows
+// only — weekly rows are a synthetic "typical week", their insert time is
+// meaningless as an observation date.
+const dateFmtCache = {};
+function observedDate(row) {
+  if (row.collection_mode !== 'realtime' || !row.collected_at) return '';
+  const tz = CITIES[row.city]?.tz;
+  if (!tz) return '';
+  if (!dateFmtCache[tz]) {
+    dateFmtCache[tz] = new Intl.DateTimeFormat('en-CA', {
+      timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit',
+    });
+  }
+  return dateFmtCache[tz].format(new Date(row.collected_at)); // YYYY-MM-DD
+}
+
 function cityQuery(city) {
   return {
     text: `
@@ -42,6 +60,7 @@ function cityQuery(city) {
         -- where collectWeekly.js never populated t.baseline_busyness for 91% of training rows.
         COALESCE(b.baseline, 0) AS baseline_busyness,
         t.collection_mode,
+        t.collected_at,
         t.busyness_pct,
         v.city, v.google_types, v.latitude, v.longitude,
         -- User feedback aggregates per venue
@@ -120,6 +139,7 @@ function rowToCsv(row) {
     row.avg_user_crowd,
     row.user_feedback_count,
     row.avg_prediction_error,
+    observedDate(row),
   ].map(escapeCsv).join(',');
 }
 
@@ -138,6 +158,7 @@ const HEADER = [
   'google_type_1', 'google_type_2', 'google_type_3',
   'latitude', 'longitude',
   'avg_user_crowd', 'user_feedback_count', 'avg_prediction_error',
+  'observed_date',
 ].join(',');
 
 async function main() {

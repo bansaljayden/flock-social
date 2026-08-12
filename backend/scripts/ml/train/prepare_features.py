@@ -169,6 +169,59 @@ def add_neighbor_features(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+def add_holiday_features(df: pd.DataFrame) -> pd.DataFrame:
+    """Special-night context from holidays.json (v2.5).
+
+    Only realtime rows carry observed_date (weekly rows are a synthetic
+    "typical week" — they get zeros, which is the truth: a typical Tuesday is
+    not a special night). Lookup mirrors backend/scripts/ml/specialNights.js:
+    country layer keyed by the city's calendar, city layer wins collisions.
+    Effects are confidence-weighted signed evidence, not magnitudes — the
+    trees learn the magnitude per effect from the data.
+    """
+    from datetime import date as _date, timedelta as _timedelta
+
+    hol = json.loads((SCRIPT_DIR.parent / 'holidays.json').read_text(encoding='utf-8'))
+    cities_map = hol.get('cities', {})
+    special = hol.get('special_nights', {})
+    hol_sets = {k: set(v) for k, v in hol.get('holidays', {}).items()}
+    conf_w = {'high': 1.0, 'med': 0.6, 'low': 0.3}
+
+    def ctx(key):
+        city, date_str = key.split('|', 1)
+        cal = cities_map.get(city)
+        if not date_str or not cal:
+            return (0, 0.0, 0.0, 0)
+        country = cal.split('_')[0]
+        hit = (special.get(city, {}).get(date_str)
+               or special.get(country, {}).get(date_str))
+        is_sp, boost, suppress = 0, 0.0, 0.0
+        if hit:
+            is_sp = 1
+            w = conf_w.get(hit.get('conf'), 0.3)
+            if hit['effect'] == 'boost':
+                boost = w
+            elif hit['effect'] == 'suppress':
+                suppress = w
+        y, m, d = (int(x) for x in date_str.split('-'))
+        eve = 1 if str(_date(y, m, d) + _timedelta(days=1)) in hol_sets.get(cal, ()) else 0
+        return (is_sp, boost, suppress, eve)
+
+    if 'observed_date' not in df.columns:
+        df['observed_date'] = ''
+    keys = df['city'].fillna('').astype(str) + '|' + df['observed_date'].fillna('').astype(str)
+    lut = {k: ctx(k) for k in keys.unique()}
+    vals = np.array([lut[k] for k in keys], dtype=float)
+    df['is_special_night'] = vals[:, 0].astype(int)
+    df['special_boost'] = vals[:, 1]
+    df['special_suppress'] = vals[:, 2]
+    df['is_holiday_eve'] = vals[:, 3].astype(int)
+    n = int(df['is_special_night'].sum())
+    e = int(df['is_holiday_eve'].sum())
+    logger.info(f'Holiday features: {n} special-night rows, {e} holiday-eve rows')
+    return df
+
+
 def add_venue_features(df: pd.DataFrame) -> Tuple[pd.DataFrame, Dict]:
     """Add venue-derived features and encode categories."""
     # Category encoding
@@ -361,6 +414,7 @@ def get_feature_columns(df: pd.DataFrame) -> List[str]:
         'user_feedback_count',  # raw count — use log_user_feedback_count instead
         'sample_weight',  # training weight — NEVER a feature (encodes row provenance = label regime)
         '_vkey', 'lat_band', 'temp_norm', 'neighbor_count',  # v2.4 intermediates (log_neighbor_count is the feature)
+        'observed_date',  # raw date string — v2.5 holiday features are derived from it
     }
     feature_cols = [c for c in df.columns if c not in exclude]
     return sorted(feature_cols)
@@ -404,6 +458,8 @@ def main():
     train_df = add_astronomy_features(train_df)
     train_df, temp_norms = add_climate_anomaly(train_df)
     train_df = add_neighbor_features(train_df)
+    # v2.5: special-night calendar features from observed_date
+    train_df = add_holiday_features(train_df)
     venue_metadata['temp_norms'] = {
         f"{int(r.lat_band)}_{int(r.month)}": round(float(r.temp_norm), 2)
         for r in temp_norms.itertuples() if not pd.isna(r.month)
@@ -438,6 +494,7 @@ def main():
         holdout_df = add_astronomy_features(holdout_df)
         holdout_df, _ = add_climate_anomaly(holdout_df, norms=temp_norms)  # TRAIN norms — no holdout leakage
         holdout_df = add_neighbor_features(holdout_df)
+        holdout_df = add_holiday_features(holdout_df)
 
     # Compute delta label: y_delta = busyness_pct - baseline_busyness
     # Model predicts the delta; production reconstructs absolute as baseline + clamp(delta, -30, 30).
