@@ -103,6 +103,40 @@ the Western prior; Shibuya Halloween street ban (2025) displaced demand INTO
 clubs. Base calendar: Python `holidays` pkg (MIT, subdivision support) + a
 hand-curated party-nights YAML (~30 rows/yr).
 
+## Feature roadmap (commissioned research 2026-08-12, ranked evidence x feasibility)
+
+**Zero-cost, ship first (derive from data we already fetch):**
+1. Evening-rain timing (rain 18-23h vs daytime rain, "dry evening after wet day")
+2. Sunset/daylight via `suncalc` npm (BSD-2): minutes-after-sunset, daylight
+   duration, patio-dusk hour — JPMC found DST spend effects; sunset encoding
+   subsumes a DST flag
+3. Temperature ANOMALY vs city-month normal (literature: beats absolute temp;
+   "first warm Friday of spring" flag) — needs a one-time 31x12 normals JSON
+4. Big-TV-event calendar (~20 dates/yr/region, hand-curated JSON: Super Bowl,
+   World Cup/UCL finals, El Clasico, Eurovision) — documented +36% traffic days
+
+**From our own DB (strongest academic support — spatial):**
+5. Neighbor-venue same-hour baseline within 300-800m + same-category counts
+   (agglomeration lit: neighbor demand predicts a venue's demand)
+6. Nightlife-cluster features (DBSCAN per city: cluster id, dist-to-centroid,
+   rank-in-cluster)
+
+**Cheap paid / enrichment:**
+7. TheSportsDB $9/mo Patreon tier (commercial OK, attribution): home-game
+   nights x is_sports_bar x arena distance — documented +21-70% sports-bar lifts
+8. Anchor proximity (stadium/theater/campus <=1km) via Overture Maps Places
+   (CDLA-P 2.0, clean commercial license) — also late-close/hours-shape flags
+   and chain-vs-independent from FSQ OS Places/Overture
+9. NYC permitted-events open data (street festivals Ticketmaster misses)
+10. Tourism seasonality index (Eurostat etc., static 31x12 table)
+
+**DO NOT BOTHER (verified):** moon phase (junk), Google Trends (no commercial
+API), ESPN hidden API (ToS), Eventbrite search (dead since 2019), Songkick
+(dormant), OpenTable/Resy availability (partner-gated), happy-hour datasets
+(don't exist), warehoused Google photo/review metadata (Places ToS: no caching
+>30 days, no ML training on Maps content — keep ALL stored venue metadata on
+FSQ/Overture instead; see vault note on the baseline provenance question).
+
 ## Next levers after v2.3 (in order)
 
 1. Feedback-rows-as-labels export (closes the loop for real).
