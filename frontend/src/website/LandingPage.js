@@ -9,10 +9,9 @@ const API = process.env.REACT_APP_API_URL || 'https://flock-app-production.up.ra
 // Don't flip it early: linking users at a 404 is worse than saying "soon".
 const APP_STORE_URL = 'https://apps.apple.com/app/id6781442127';
 const APP_STORE_LIVE = false;
-// TODO(Jayden): swap for social at flockcorp.com once inbound mail is set up on
-// the domain (Resend currently handles outbound only). A Gmail contact on a
-// paid venue pitch reads as unprofessional (SLOP-AUDIT.md B).
-const CONTACT_EMAIL = 'flocksocial.corp@gmail.com';
+// Inbound mail: Cloudflare Email Routing forwards this to Jayden's Gmail
+// (set up 2026-08-12). Outbound stays on Resend.
+const CONTACT_EMAIL = 'social@flockcorp.com';
 
 /* Inline stroke icons, one visual family, sized by the caller. */
 const Ico = {
