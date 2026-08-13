@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import './LandingPage.css';
 import LiveDemo from './LiveDemo';
 import BirdieBird from '../components/ui/BirdieBird';
+import { Icons } from '../components/ui/Icons';
 
 const API = process.env.REACT_APP_API_URL || 'https://flock-app-production.up.railway.app';
 
@@ -298,7 +299,7 @@ export default function LandingPage() {
                 mark. It used to sit on the navy Safety section, where it was
                 the wrong subject and needed a CSS invert to be visible at all.
                 This is the section it actually describes. */}
-            <img className="lp-plate lp-plate-plans" src="/marks/calendar.png" alt="" width="320" height="320" loading="lazy" />
+            <span className="lp-mark" aria-hidden="true">{Icons.calendar('currentColor', 64)}</span>
             <p className="lp-kicker">How it works</p>
             <h2>Four steps, then you’re out the door.</h2>
           </div>
@@ -414,7 +415,7 @@ export default function LandingPage() {
       <section className="lp-sec lp-sec-paper lp-sec-ruled" id="money">
         <div className="lp-wrap lp-row lp-row-flip">
           <div>
-            <img className="lp-plate lp-plate-split" src="/marks/split.png" alt="" width="320" height="320" loading="lazy" />
+            <span className="lp-mark" aria-hidden="true">{Icons.dollar('currentColor', 64)}</span>
             <h2>Nobody wants to say “that’s too expensive” out loud.</h2>
             <p className="lp-lead">
               In Flock nobody has to. Everyone types a number privately, and the
