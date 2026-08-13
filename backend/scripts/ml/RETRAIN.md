@@ -33,6 +33,22 @@ beat both the previous model (v2.2.1: 33.5) and the popular-times baseline
 (40.5), and overall holdout must not regress materially (v2.2.1: MAE 5.16,
 R² 0.75). If training dies, feature pickles persist — rerun train_model.py.
 
+**Round 10:** `quick_eval.py` is no longer advisory. It writes
+`ship_gate.overall_pass` from the realtime-only holdout slice, and
+`mlPredictor.init()` refuses to load an artifact whose gate fails — the backend
+serves the rule engine instead and logs why at startup. So:
+
+- `quick_eval.py` must run after `evaluate_model.py` and before you commit the
+  artifact (`run_training.sh` now does this as step 5 of 6).
+- Only `quick_eval.py` may write `ship_gate`. `evaluate_model.py` writes its
+  validation-split comparison under `validation_baseline_delta`.
+- Comparing model MAE to the popular_times baseline on the AGGREGATE holdout is
+  meaningless: ~84% of those rows are weekly snapshots where the label equals
+  the baseline by construction, and against a baseline MAE of ~6 the doctrinal
+  "MAE down ≥5" threshold cannot be met by any model. Use the realtime slice.
+- `ML_SHIP_GATE_OVERRIDE=true` promotes a failing artifact anyway (loudly).
+  Local debugging only.
+
 ## The continuous-learning loop ("constantly machine learning")
 
 The model gets better as the app is used. Ground-truth sources that accrue in

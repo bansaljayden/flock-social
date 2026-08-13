@@ -23,7 +23,7 @@ let metadata = null;
 let loadAttempted = false;
 let useML = false;
 
-// Event cache: key = "lat,lng,hour" → { data, ts }
+// Event cache: key = "lat,lng,YYYY-MM-DDTHH" (UTC) → { data, ts }
 const eventCache = new Map();
 const EVENT_CACHE_TTL = 60 * 60 * 1000; // 1 hour
 const EVENT_CACHE_MAX = 500;
@@ -63,6 +63,39 @@ function boundedSet(map, key, value) {
 // Initialization
 // ---------------------------------------------------------------------------
 
+// Round 10: the ship gate written by scripts/ml/train/quick_eval.py was read
+// by nobody — init() promoted whatever artifact was on disk. It is now
+// honored, and the decision is logged at startup either way.
+//
+// The gate that matters is `overall_pass`, which quick_eval derives from the
+// REALTIME-ONLY holdout slice: rows where the actual busyness differs from the
+// popular_times baseline, i.e. the only rows where a delta model can show real
+// signal. (The aggregate holdout is ~84% weekly rows where label == baseline by
+// construction; its numbers are meaningless as a gate. Pre-round-10 metadata
+// wrote overall_pass from those aggregate slices, which is why v2.5.0-starling
+// carries overall_pass:false despite quick_eval printing "VERDICT: SHIP".)
+//
+// Escape hatch: ML_SHIP_GATE_OVERRIDE=true promotes a failing artifact anyway,
+// loudly. Intended for local debugging, not production.
+function evaluateShipGate(meta) {
+  const gate = meta && meta.ship_gate;
+  if (!gate || typeof gate !== 'object') {
+    // Models predating the gate (v2.2 and earlier) have no verdict to honor.
+    return { promote: true, reason: 'no ship_gate in metadata — promoting unverified artifact' };
+  }
+  if (gate.overall_pass === true) {
+    const basis = gate.gate_basis || 'unspecified';
+    const detail = gate.realtime_mae_improvement != null
+      ? ` (realtime MAE Δ=${gate.realtime_mae_improvement}, R² Δ=${gate.realtime_r2_improvement})`
+      : '';
+    return { promote: true, reason: `ship gate PASS on ${basis}${detail}` };
+  }
+  return {
+    promote: false,
+    reason: `ship gate FAIL (verdict=${gate.verdict || 'unknown'}, basis=${gate.gate_basis || 'unspecified'}) — ${gate.criteria || 'no criteria recorded'}`,
+  };
+}
+
 async function init() {
   if (loadAttempted) return useML;
   loadAttempted = true;
@@ -74,10 +107,23 @@ async function init() {
 
   try {
     const ort = require('onnxruntime-node');
-    metadata = JSON.parse(fs.readFileSync(META_PATH, 'utf8'));
+    const candidate = JSON.parse(fs.readFileSync(META_PATH, 'utf8'));
+    const version = candidate.model_version || '?';
+    const gate = evaluateShipGate(candidate);
+    const overridden = !gate.promote && process.env.ML_SHIP_GATE_OVERRIDE === 'true';
+
+    if (!gate.promote && !overridden) {
+      console.warn(`[MLPredictor] REFUSING to promote model v${version}: ${gate.reason}. Serving rule engine instead.`);
+      return false;
+    }
+    if (overridden) {
+      console.warn(`[MLPredictor] ML_SHIP_GATE_OVERRIDE=true — promoting model v${version} despite: ${gate.reason}`);
+    }
+
+    metadata = candidate;
     session = await ort.InferenceSession.create(ONNX_PATH);
     useML = true;
-    console.log(`[MLPredictor] Loaded ONNX model v${metadata.model_version || '?'} (${metadata.best_model || '?'}, ${metadata.feature_count || '?'} features)`);
+    console.log(`[MLPredictor] Loaded ONNX model v${version} (${metadata.best_model || '?'}, ${metadata.feature_count || '?'} features) — ${overridden ? 'gate overridden' : gate.reason}`);
     return true;
   } catch (err) {
     console.warn('[MLPredictor] Failed to load model:', err.message);
@@ -305,7 +351,15 @@ async function getNearbyEvents(lat, lng, timestamp) {
   };
   if (!apiKey || !lat || !lng) return noEvents;
 
-  const cacheKey = `${lat.toFixed(3)},${lng.toFixed(3)},${new Date(timestamp).getHours()}`;
+  // Round 10: the key used to be hour-only, so the 6-day owner forecast served
+  // day 1's events for every future date — the upstream query window is built
+  // from the full timestamp (startDateTime/endDateTime), so the key has to
+  // carry the date too. UTC "YYYY-MM-DDTHH" matches the request window exactly.
+  const keyTs = timestamp ? new Date(timestamp) : new Date();
+  const slot = Number.isNaN(keyTs.getTime())
+    ? new Date().toISOString().slice(0, 13)
+    : keyTs.toISOString().slice(0, 13);
+  const cacheKey = `${lat.toFixed(3)},${lng.toFixed(3)},${slot}`;
   const cached = eventCache.get(cacheKey);
   if (cached && Date.now() - cached.ts < EVENT_CACHE_TTL) return cached.data;
   // Budget applies only to cache MISSES (real upstream calls).

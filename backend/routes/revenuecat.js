@@ -22,8 +22,31 @@ router.post('/webhook', express.json(), async (req, res) => {
     if (auth !== `Bearer ${secret}`) return res.status(401).json({ error: 'Unauthorized' });
 
     const event = req.body?.event || {};
-    const appUserId = parseInt(event.app_user_id);
     const type = event.type;
+
+    // TRANSFER moves an entitlement between accounts (a restore on a new
+    // login, or a family/device handover). Its payload carries no
+    // app_user_id at all, just transferred_from / transferred_to arrays, so
+    // the generic handler below 400'd it and neither account was updated:
+    // the receiving user stayed locked out of something they own, and the
+    // old one kept access they no longer have (round 10).
+    if (type === 'TRANSFER') {
+      const ids = (arr) => (Array.isArray(arr) ? arr : [])
+        .map((v) => parseInt(v))
+        .filter((n) => Number.isInteger(n));
+      const from = ids(event.transferred_from);
+      const to = ids(event.transferred_to);
+      if (from.length) {
+        await pool.query('UPDATE users SET is_premium = false WHERE id = ANY($1::int[])', [from]);
+      }
+      if (to.length) {
+        await pool.query('UPDATE users SET is_premium = true WHERE id = ANY($1::int[])', [to]);
+      }
+      console.log(`[RevenueCat] TRANSFER from [${from}] to [${to}]`);
+      return res.json({ ok: true });
+    }
+
+    const appUserId = parseInt(event.app_user_id);
     if (!appUserId) return res.status(400).json({ error: 'Missing app_user_id' });
 
     const ACTIVE = ['INITIAL_PURCHASE', 'RENEWAL', 'UNCANCELLATION', 'PRODUCT_CHANGE'];

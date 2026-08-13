@@ -391,11 +391,19 @@ def main():
     if baseline_metrics is not None:
         mae_delta = baseline_metrics['mae'] - val_metrics['mae']
         r2_delta = val_metrics['r2'] - baseline_metrics['r2']
-        metadata['ship_gate'] = {
+        # Round 10: this used to be written as metadata['ship_gate'], in a third
+        # incompatible shape ({mae_improvement, r2_improvement, pass}) and
+        # measured on the VALIDATION split rather than the holdout. Running this
+        # script after quick_eval.py therefore clobbered the real verdict — and
+        # mlPredictor.init() now honors that verdict, so a clobber would drop
+        # every user back to the rule engine. quick_eval.py owns 'ship_gate';
+        # this is a diagnostic under its own key.
+        metadata['validation_baseline_delta'] = {
             'mae_improvement': round(mae_delta, 4),
             'r2_improvement': round(r2_delta, 4),
-            'pass': bool((mae_delta >= 5.0) or (r2_delta >= 0.10)),
-            'criteria': 'MAE down ≥5 OR R² up ≥0.10 vs popular_times-only baseline',
+            'beats_baseline': bool((mae_delta >= 5.0) or (r2_delta >= 0.10)),
+            'criteria': 'MAE down ≥5 OR R² up ≥0.10 vs popular_times-only baseline '
+                        '(validation split — NOT the ship gate, see quick_eval.py)',
         }
 
     with open(meta_path, 'w') as f:

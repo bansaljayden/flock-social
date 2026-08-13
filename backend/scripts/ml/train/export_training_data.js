@@ -47,6 +47,14 @@ function cityQuery(city) {
   return {
     text: `
       SELECT
+        -- Round 10: venue_id is what prepare_features.add_baseline_features
+        -- keys its neighbouring-hour baseline smoothing on. Without it the
+        -- smoothing block was silently skipped (it is guarded by
+        -- "if 'venue_id' in df.columns"), so the model learned deltas against
+        -- RAW baselines while mlPredictor.getBaseline serves a smoothed one
+        -- (current*0.6 + prev*0.2 + next*0.2). Exported as an identifier only —
+        -- prepare_features excludes it from the feature set.
+        t.venue_id,
         t.day_of_week, t.hour, t.month, t.season,
         t.is_holiday, t.is_school_break,
         t.venue_category, t.price_level, t.rating, t.review_count,
@@ -60,6 +68,13 @@ function cityQuery(city) {
         -- where collectWeekly.js never populated t.baseline_busyness for 91% of training rows.
         COALESCE(b.baseline, 0) AS baseline_busyness,
         t.collection_mode,
+        -- Round 10: collection_mode='realtime' only says WHEN the row was
+        -- taken, not whether the number is an observation. collectRealtime.js
+        -- falls back to BestTime's own forecast when live data is unavailable,
+        -- and those rows used to be exported as is_realtime=1 and weighted 1.0
+        -- in training — a vendor's prediction carrying more confidence than
+        -- anything else in the corpus. label_source records the truth.
+        t.label_source,
         t.collected_at,
         t.busyness_pct,
         v.city, v.google_types, v.latitude, v.longitude,
@@ -98,9 +113,23 @@ function escapeCsv(val) {
   return str;
 }
 
+// Round 10: honest provenance for the label.
+//   weekly   — synthetic "typical week" snapshot (sample weight 0.05)
+//   live     — BestTime reported live foot traffic (full confidence)
+//   forecast — BestTime's own forecast, used because live was unavailable
+//   unknown  — realtime row collected before label_source existed; we cannot
+//              tell live from forecast retroactively, so it keeps the old
+//              treatment rather than silently reweighting the whole corpus.
+function labelProvenance(row) {
+  if (row.collection_mode !== 'realtime') return 'weekly';
+  if (row.label_source === 'live' || row.label_source === 'forecast') return row.label_source;
+  return 'unknown';
+}
+
 function rowToCsv(row) {
   const types = row.google_types || [];
   return [
+    row.venue_id,
     row.day_of_week,
     row.hour,
     row.month,
@@ -141,10 +170,12 @@ function rowToCsv(row) {
     row.user_feedback_count,
     row.avg_prediction_error,
     observedDate(row),
+    labelProvenance(row),
   ].map(escapeCsv).join(',');
 }
 
 const HEADER = [
+  'venue_id',
   'day_of_week', 'hour', 'month', 'season',
   'is_holiday', 'is_school_break',
   'venue_category', 'price_level', 'rating', 'review_count',
@@ -159,10 +190,15 @@ const HEADER = [
   'google_type_1', 'google_type_2', 'google_type_3',
   'latitude', 'longitude',
   'avg_user_crowd', 'user_feedback_count', 'avg_prediction_error',
-  'observed_date',
+  'observed_date', 'label_provenance',
 ].join(',');
 
 async function main() {
+  // Round 10: label_source is written by collectRealtime.js. Export can run
+  // against a DB where that script hasn't run since the column was added, and
+  // a missing column is a hard SQL error — so make sure it exists first.
+  await pool.query(`ALTER TABLE ml_training_data ADD COLUMN IF NOT EXISTS label_source VARCHAR(10)`);
+
   // Get list of cities that have training data
   console.log('[Export] Finding cities with data...');
   const { rows: cityRows } = await pool.query(
