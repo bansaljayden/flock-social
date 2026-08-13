@@ -79,8 +79,10 @@ router.get('/:placeId/current', authenticate, async (req, res) => {
       [placeId]
     );
 
+    // COUNT(DISTINCT user_id): one account checking in repeatedly must not
+    // inflate the public "check-ins in the last hour" occupancy signal.
     const checkins = await pool.query(
-      `SELECT COUNT(*)::int AS count
+      `SELECT COUNT(DISTINCT user_id)::int AS count
        FROM venue_checkins
        WHERE venue_place_id = $1 AND user_id IS NOT NULL AND created_at > NOW() - INTERVAL '1 hour'`,
       [placeId]
