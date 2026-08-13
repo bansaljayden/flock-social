@@ -225,6 +225,28 @@ router.put('/venues/:profileId/verify', async (req, res) => {
   }
 });
 
+// POST /api/admin/venues/:userId/tier — comp or change a venue's tier
+// (VENUE-BILLING.md Phase 0: tier is server-written only; this is the manual
+// path for demos and hand-sold venues until Stripe self-serve exists).
+router.post('/venues/:userId/tier', async (req, res) => {
+  try {
+    const { tier, reason } = req.body;
+    if (!['free', 'premium', 'pro'].includes(tier)) {
+      return res.status(400).json({ error: 'tier must be free, premium, or pro' });
+    }
+    const result = await pool.query(
+      'UPDATE venue_profiles SET tier = $1, updated_at = NOW() WHERE user_id = $2 RETURNING id, business_name, tier',
+      [tier, parseInt(req.params.userId, 10)]
+    );
+    if (result.rows.length === 0) return res.status(404).json({ error: 'Venue profile not found' });
+    console.log(`[Admin] venue tier: user ${req.params.userId} -> ${tier} by admin ${req.user.id} (${reason || 'no reason given'})`);
+    res.json(result.rows[0]);
+  } catch (err) {
+    console.error('Admin venue tier error:', err);
+    res.status(500).json({ error: 'Failed to update tier' });
+  }
+});
+
 // GET /api/admin/moderation-actions — audit log
 router.get('/moderation-actions', async (req, res) => {
   try {
