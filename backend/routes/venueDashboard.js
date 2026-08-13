@@ -3,6 +3,7 @@ const { body, param, validationResult } = require('express-validator');
 const pool = require('../config/database');
 const { authenticate } = require('../middleware/auth');
 const { requireVenueTier } = require('../services/venueEntitlements');
+const { rejectIfProfane } = require('../utils/moderation');
 
 const router = express.Router();
 router.use(authenticate);
@@ -73,12 +74,18 @@ router.post('/promotions', requirePremium, [
 // PUT /api/venue-dashboard/promotions/:id
 router.put('/promotions/:id', requirePremium, [
   param('id').isInt(),
-  body('title').optional().trim(),
-  body('description').optional().trim(),
-  body('timeSlot').optional().trim(),
-  body('days').optional().trim(),
+  body('title').optional().trim().isLength({ min: 1, max: 80 }).withMessage('Title too long (max 80 characters)'),
+  body('description').optional().trim().isLength({ max: 300 }),
+  body('timeSlot').optional().trim().isLength({ max: 60 }),
+  body('days').optional().trim().isLength({ max: 60 }),
 ], async (req, res) => {
   try {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) return res.status(400).json({ error: errors.array()[0].msg });
+    // Edits are the same public UGC surface as creation (round 8).
+    if (req.body.title && rejectIfProfane(res, req.body.title)) return;
+    if (req.body.description && rejectIfProfane(res, req.body.description)) return;
+
     const { title, description, timeSlot, days } = req.body;
     const { rows } = await pool.query(
       `UPDATE venue_promotions SET
@@ -134,14 +141,15 @@ router.get('/events', async (req, res) => {
 
 // POST /api/venue-dashboard/events
 router.post('/events', requirePremium, [
-  body('title').trim().isLength({ min: 1 }).withMessage('Title is required'),
-  body('eventDate').optional().trim(),
-  body('eventTime').optional().trim(),
+  body('title').trim().isLength({ min: 1, max: 120 }).withMessage('Title is required (max 120 characters)'),
+  body('eventDate').optional().trim().isLength({ max: 40 }),
+  body('eventTime').optional().trim().isLength({ max: 40 }),
   body('capacity').optional().isInt({ min: 1 }),
 ], async (req, res) => {
   try {
     const errors = validationResult(req);
     if (!errors.isEmpty()) return res.status(400).json({ error: errors.array()[0].msg });
+    if (rejectIfProfane(res, req.body.title)) return;
 
     const venue = await getVenueCtx(req.user.id);
     if (!venue) return res.status(404).json({ error: 'No venue profile found' });
@@ -162,12 +170,16 @@ router.post('/events', requirePremium, [
 // PUT /api/venue-dashboard/events/:id
 router.put('/events/:id', requirePremium, [
   param('id').isInt(),
-  body('title').optional().trim(),
-  body('eventDate').optional().trim(),
-  body('eventTime').optional().trim(),
+  body('title').optional().trim().isLength({ min: 1, max: 120 }).withMessage('Title too long (max 120 characters)'),
+  body('eventDate').optional().trim().isLength({ max: 40 }),
+  body('eventTime').optional().trim().isLength({ max: 40 }),
   body('capacity').optional().isInt({ min: 1 }),
 ], async (req, res) => {
   try {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) return res.status(400).json({ error: errors.array()[0].msg });
+    if (req.body.title && rejectIfProfane(res, req.body.title)) return;
+
     const { title, eventDate, eventTime, capacity } = req.body;
     const { rows } = await pool.query(
       `UPDATE venue_events SET
