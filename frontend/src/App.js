@@ -678,6 +678,56 @@ const momentumStageKey = (m) => {
   return 'idea';
 };
 
+/* ── LIST SKELETON ───────────────────────────────────────────────────────
+   Three cards in the shape of the rows they stand in for. Every list that
+   fetches on mount uses this, because the alternative is what the app used to
+   do: render the empty state during the fetch, so a returning user with six
+   flocks was told "No flocks yet" for as long as the network took. Empty
+   states are a claim about the user's data and must not be made before the
+   data arrives. (SLOP-AUDIT.md rule 10: skeletons for feeds and pages.) */
+const ListSkeleton = ({ count = 3, thumb = 46, thumbRadius = 14, label = 'Loading' }) => (
+  <div role="status" aria-label={label}>
+    {Array.from({ length: count }, (_, i) => (
+      <div key={i} style={{ display: 'flex', gap: '12px', padding: '12px', marginBottom: '10px', borderRadius: '14px', border: '1px solid var(--border-subtle)', backgroundColor: 'var(--bg-card-solid)' }}>
+        <div className="skeleton" style={{ width: `${thumb}px`, height: `${thumb}px`, borderRadius: `${thumbRadius}px`, flexShrink: 0 }} />
+        <div style={{ flex: 1, minWidth: 0, paddingTop: '4px' }}>
+          <div className="skeleton" style={{ width: '60%', height: '14px', borderRadius: '4px', marginBottom: '8px' }} />
+          <div className="skeleton" style={{ width: '40%', height: '11px', borderRadius: '4px', marginBottom: '10px' }} />
+          <div className="skeleton" style={{ width: '80%', height: '10px', borderRadius: '4px' }} />
+        </div>
+      </div>
+    ))}
+  </div>
+);
+
+/* ── FLOCK TILE ──────────────────────────────────────────────────────────
+   The 46px square next to a flock in the Messages list. It used to be one of
+   five stock JPEGs (public/group-avatars/flock-1..5.jpg) picked by hashing the
+   flock id, so a real group called "Sarah's birthday" was illustrated with a
+   dog in sunglasses. That is fabricated decoration standing in for user
+   content, so the files are gone and the tile is now the flock's own initial
+   on one of four brand swatches, keyed off the flock id so a given flock keeps
+   the same colour forever. A flock that has picked a venue shows the venue
+   photo instead — that one IS the flock's own content. */
+const FLOCK_TILE_SWATCHES = [
+  { bg: '#1e293b', fg: '#f1ede0' }, // navy
+  { bg: '#2d5a87', fg: '#f1ede0' }, // steel
+  { bg: '#e8e0d5', fg: '#1e293b' }, // cream
+  { bg: '#c8b696', fg: '#1e293b' }, // sand
+];
+
+const flockTileSwatch = (flockId) => {
+  const seed = String(flockId || '');
+  let hash = 0;
+  for (let i = 0; i < seed.length; i++) hash = (hash * 31 + seed.charCodeAt(i)) >>> 0;
+  return FLOCK_TILE_SWATCHES[hash % FLOCK_TILE_SWATCHES.length];
+};
+
+const flockTileInitial = (name) => {
+  const ch = String(name || '').trim().charAt(0);
+  return ch ? ch.toUpperCase() : '?';
+};
+
 // Memoized VenueCard — unified design for both DMs and Flocks
 const VenueCard = React.memo(({ venue, onViewDetails, onVote, colors: c, Icons: I, getCategoryColor: gcc }) => {
   const rating = venue.stars || venue.rating || null;
@@ -3097,11 +3147,14 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   const [newEventCategory, setNewEventCategory] = useState('social');
 
   // Load persisted calendar events on boot and every Plans visit (server is source of truth)
+  const [calendarLoading, setCalendarLoading] = useState(true);
   useEffect(() => {
-    if (!isLoggedIn()) return;
+    if (!isLoggedIn()) { setCalendarLoading(false); return; }
+    setCalendarLoading(true);
     getCalendarEvents()
       .then(rows => setCalendarEvents(rows))
-      .catch(() => {}); // offline/first-boot: keep whatever is local
+      .catch(() => {}) // offline/first-boot: keep whatever is local
+      .finally(() => setCalendarLoading(false));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentTab === 'calendar']);
 
@@ -3128,7 +3181,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
 
   // Flocks
   const [flocks, setFlocks] = useState([]);
-  const [, setFlocksLoading] = useState(true);
+  // Read, not discarded: every screen that lists flocks branches on this so it
+  // does not render an empty state over data that is still in flight.
+  const [flocksLoading, setFlocksLoading] = useState(true);
   // Latest signed-in user, for socket handlers that must not resubscribe when
   // the profile object changes identity.
   const meRef = useRef(authUser);
@@ -3504,6 +3559,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
 
   // Direct Messages
   const [directMessages, setDirectMessages] = useState([]);
+  const [dmsLoading, setDmsLoading] = useState(true);
   const [selectedDmId, setSelectedDmId] = useState(null);
   const [showNewDmModal, setShowNewDmModal] = useState(false);
   // UGC moderation (Apple 1.2): null = closed, else { userId, userName, contentType, contentId }
@@ -3610,7 +3666,13 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   // Draggable FAB positions — snap to corners, persisted in localStorage
   // corner format: 'bottom-left' | 'bottom-right' | 'top-left' | 'top-right'
   const [birdieCorner, setBirdieCorner] = useState(() => localStorage.getItem('flock_birdie_corner') || 'bottom-left');
-  const [sosCorner, setSosCorner] = useState(() => localStorage.getItem('flock_sos_corner') || 'bottom-right');
+  // SOS stays DOCKED to the bottom row (see FAB DOCK GEOMETRY below): a top
+  // corner parked it over the Discover search bar / screen headers. Only the
+  // side is user-choosable, so a stale 'top-*' from localStorage is normalised.
+  const [sosCorner, setSosCorner] = useState(() => {
+    const saved = localStorage.getItem('flock_sos_corner') || 'bottom-right';
+    return saved.includes('left') ? 'bottom-left' : 'bottom-right';
+  });
   const dragRef = useRef(null);
   const [showAddContact, setShowAddContact] = useState(false);
   const [editingContact, setEditingContact] = useState(null);
@@ -3619,15 +3681,38 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   const [sosAlertSending, setSosAlertSending] = useState(false);
   const [sosArmed, setSosArmed] = useState(false); // two-step confirm: first tap arms, second fires
 
+  /* ── FAB DOCK GEOMETRY ──────────────────────────────────────────────
+     The FABs are position:absolute inside the SCREEN root, and the screen
+     root contains the tab bar, so `bottom: 0` is the bottom of the tab bar,
+     not the bottom of the content. The old 95px put the 52px SOS button at
+     95-147px from the frame bottom, which is inside the tab bar's own
+     neighbours: on Discover the Filters row (docked directly above the tab
+     bar) occupies 85-134px and the button swallowed the right end of it, and
+     on You it landed on whichever settings row happened to be there.
+
+     So the numbers below are the real heights of the bottom chrome. The
+     home-indicator inset is added on top with var(--safe-bottom) rather than
+     baked in, per the SAFE-AREA CONTRACT in index.css. */
+  const TAB_BAR_H = 85;             // 10 top pad + 62 nav item + 12 bottom pad + 1 border
+  const DISCOVER_FILTER_BAR_H = 49; // Discover's Filters row sits above the tab bar
+  const FAB_DOCK_GAP = 12;
+
+  // Distance from the bottom of the phone frame to the bottom of a docked FAB.
+  const fabDockBottom = useMemo(() => {
+    const chrome = TAB_BAR_H + (currentTab === 'explore' ? DISCOVER_FILTER_BAR_H : 0) + FAB_DOCK_GAP;
+    return `calc(var(--safe-bottom) + ${chrome}px)`;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentTab]);
+
   // Corner positions for FABs
-  const cornerStyle = useCallback((corner, side) => {
+  const cornerStyle = useCallback((corner) => {
     const isTop = corner.startsWith('top');
     const isLeft = corner.includes('left');
     const pos = {};
-    if (isTop) { pos.top = '60px'; } else { pos.bottom = '95px'; }
+    if (isTop) { pos.top = '60px'; } else { pos.bottom = fabDockBottom; }
     if (isLeft) { pos.left = '12px'; } else { pos.right = '12px'; }
     return pos;
-  }, []);
+  }, [fabDockBottom]);
 
   // Drag FABs — smooth 60fps transform, snap to nearest corner on release
   const handleFabPointerDown = useCallback((e, id) => {
@@ -3674,9 +3759,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
         localStorage.setItem('flock_birdie_corner', corner);
         queueSync({ birdieCorner: corner });
       } else {
-        setSosCorner(corner);
-        localStorage.setItem('flock_sos_corner', corner);
-        queueSync({ sosCorner: corner });
+        // SOS only moves left/right — it stays docked above the tab bar.
+        const sos = isLeft ? 'bottom-left' : 'bottom-right';
+        setSosCorner(sos);
+        localStorage.setItem('flock_sos_corner', sos);
+        queueSync({ sosCorner: sos });
       }
     }
     dragRef.current = null;
@@ -5348,8 +5435,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
     }
   }, [trustedContacts, showToast]);
 
-  // Safety Button - Draggable, snaps to corners
-  const SafetyButton = () => safetyOn && currentScreen === 'main' && !showSOS && (
+  // Safety Button — draggable left/right, docked above the tab bar.
+  // Not on the You tab: that screen is a list of settings rows the button would
+  // sit on top of and intercept taps for, and Safety already has its own row in
+  // that list, so nothing is lost by leaving it out.
+  const SafetyButton = () => safetyOn && currentScreen === 'main' && currentTab !== 'profile' && !showSOS && (
     <div
       className="fab-corner"
       onPointerDown={(e) => handleFabPointerDown(e, 'sos')}
@@ -5754,6 +5844,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
 
   // Load DM conversations from backend on mount (filter out deleted ones)
   useEffect(() => {
+    setDmsLoading(true);
     getDMConversations()
       .then(data => {
         const hidden = deletedDmUserIds;
@@ -5768,7 +5859,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           unread: c.unread,
         })));
       })
-      .catch(() => {});
+      .catch(() => {})
+      .finally(() => setDmsLoading(false));
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Load messages when opening a DM conversation
@@ -6609,8 +6701,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           <input ref={dmGalleryInputRef} type="file" accept="image/*" onChange={handleDmImageSelect} style={{ display: 'none' }} />
           {/* Location share button */}
           <button aria-label="Share your location" className="hit44" onClick={() => { if (dmSharingLocation) { dmStopSharingLocation(dmSharingLocation); setDmSharingLocation(null); setDmMemberLocation(null); } else { setDmSharingLocation(selectedDmId); } }} style={{ width: '36px', height: '36px', borderRadius: '18px', backgroundColor: dmSharingLocation ? '#10b981' : 'var(--bg-hover)', border: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', flexShrink: 0 }}>{Icons.mapPin(dmSharingLocation ? 'white' : colors.textSecondary, 16)}</button>
-          <input data-dm-input aria-label="Message" type="text" defaultValue="" onChange={handleDmInputChange} onKeyDown={(e) => e.key === 'Enter' && sendDmMessage()} placeholder={dmReplyingTo ? `Reply...` : `Message ${selectedDm.name}...`} style={{ flex: 1, padding: '15px 18px', borderRadius: '24px', backgroundColor: 'var(--bg-hover)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)', fontSize: '16px', outline: 'none' }} autoComplete="off" />
-          <button aria-label="Send" className="hit44 glass-btn glass-navy" onClick={() => sendDmMessage()} disabled={!chatInputHasText} style={{ width: '42px', height: '42px', borderRadius: '21px', border: 'none', background: chatInputHasText ? colors.navyBg : 'var(--pill-bg)', color: 'white', cursor: chatInputHasText ? 'pointer' : 'default', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.send('white', 18)}</button>
+          {/* minWidth:0 / flexShrink:0 — same story as the flock composer. */}
+          <input data-dm-input aria-label="Message" type="text" defaultValue="" onChange={handleDmInputChange} onKeyDown={(e) => e.key === 'Enter' && sendDmMessage()} placeholder={dmReplyingTo ? `Reply...` : `Message ${selectedDm.name}...`} style={{ flex: '1 1 0%', minWidth: 0, padding: '15px 18px', borderRadius: '24px', backgroundColor: 'var(--bg-hover)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)', fontSize: '16px', outline: 'none' }} autoComplete="off" />
+          <button aria-label="Send" className="hit44 glass-btn glass-navy" onClick={() => sendDmMessage()} disabled={!chatInputHasText} style={{ width: '42px', height: '42px', minWidth: '42px', flexShrink: 0, borderRadius: '21px', border: 'none', background: chatInputHasText ? colors.navyBg : 'var(--pill-bg)', color: 'white', cursor: chatInputHasText ? 'pointer' : 'default', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.send('white', 18)}</button>
         </div>
       </div>
 
@@ -6660,7 +6753,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           display: 'flex',
           flexDirection: 'column',
           position: isAiPanel ? 'absolute' : 'relative',
-          bottom: isAiPanel ? (birdieCorner.startsWith('bottom') ? '95px' : undefined) : 0,
+          bottom: isAiPanel ? (birdieCorner.startsWith('bottom') ? fabDockBottom : undefined) : 0,
           top: isAiPanel ? (birdieCorner.startsWith('top') ? '60px' : undefined) : undefined,
           left: isAiPanel ? (birdieCorner.includes('left') ? '12px' : undefined) : undefined,
           right: isAiPanel ? (birdieCorner.includes('right') ? '12px' : undefined) : undefined,
@@ -7256,7 +7349,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           </button>
         </div></ScrollFade>
         <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginBottom: '14px' }}>
-          {flocks.length === 0 && (
+          {/* "No flocks yet" is a statement about the user's account, so it
+              waits until the fetch has actually answered. */}
+          {flocksLoading && flocks.length === 0 && <ListSkeleton label="Loading your flocks" />}
+          {!flocksLoading && flocks.length === 0 && (
             <ScrollFade><div style={{ padding: '28px 20px', borderRadius: '14px', border: '1px dashed var(--border-mid)', backgroundColor: 'var(--bg-card-solid)', textAlign: 'center' }}>
               <p style={{ fontSize: '14px', fontWeight: '700', color: 'var(--text-primary)', margin: 0 }}>No flocks yet</p>
               <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: '4px 0 0' }}>Start one above and get your people together.</p>
@@ -7533,9 +7629,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
 
             {/* Search results */}
             {inviteSearching && (
-              <div style={{ textAlign: 'center', padding: '10px 0' }}>
-                <div style={{ display: 'inline-block', width: '14px', height: '14px', border: `2px solid ${colors.creamDark}`, borderTopColor: colors.navy, borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
-                <span style={{ fontSize: '12px', color: 'var(--text-secondary)', marginLeft: '6px' }}>Searching...</span>
+              <div style={{ marginTop: '6px' }}>
+                <ListSkeleton count={3} thumb={32} thumbRadius={16} label="Searching people" />
               </div>
             )}
             {!inviteSearching && inviteSearch.trim().length >= 1 && inviteResults.length > 0 && (
@@ -7673,10 +7768,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
       {/* Search Results Overlay */}
       {showSearchDropdown && (venueSearching || venueResults.length > 0 || (venueQuery.trim().length >= 2 && !venueSearching && venueResults.length === 0)) && (
         <div style={{ position: 'relative', zIndex: 30, backgroundColor: 'var(--bg-card-solid)', borderBottom: '1px solid var(--border-default)', maxHeight: '260px', overflowY: 'auto' }}>
+          {/* A list is loading, so it gets the list skeleton — the bare spinner
+              that used to sit here told you nothing about what was coming. */}
           {venueSearching && (
-            <div style={{ textAlign: 'center', padding: '20px 0' }}>
-              <div style={{ display: 'inline-block', width: '20px', height: '20px', border: `3px solid var(--border-default)`, borderTopColor: colors.navy, borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
-              <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: '8px 0 0' }}>Searching venues...</p>
+            <div style={{ padding: '8px 12px 4px' }}>
+              <ListSkeleton count={3} thumb={44} thumbRadius={10} label="Searching venues" />
             </div>
           )}
           {!venueSearching && venueResults.length > 0 && (
@@ -8997,7 +9093,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 <button aria-label={`Remove ${event.title}`} className="hit44" onClick={() => { setCalendarEvents(calendarEvents.filter(e => e.id !== event.id)); if (typeof event.id === 'number') deleteCalendarEvent(event.id).catch(() => {}); }} style={{ width: '28px', height: '28px', borderRadius: '14px', backgroundColor: 'var(--accent-red-bg)', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.x(colors.red, 14)}</button>
               )}
             </div>
-          )) : (
+          )) : (flocksLoading || calendarLoading) ? (
+            /* Plans is built from flocks + saved calendar events, both fetched.
+               "No events scheduled" waits for them. */
+            <ListSkeleton label="Loading your plans" thumb={44} thumbRadius={10} />
+          ) : (
             <div style={{ textAlign: 'center', padding: '24px' }}>
               {Icons.calendar(colors.textTertiary, 40)}
               <p style={{ color: 'var(--text-tertiary)', fontSize: '14px', margin: '8px 0 0' }}>No events scheduled</p>
@@ -9056,6 +9156,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   // CHAT LIST SCREEN — redesigned with pin & reorder
   const ChatListScreen = () => {
     const totalConversations = flocks.length + directMessages.length;
+    // Both lists on this screen fetch on mount. Until they answer, the screen
+    // shows skeleton rows rather than "No conversations yet".
+    const conversationsLoading = (flocksLoading || dmsLoading) && totalConversations === 0;
 
     // Sort flocks: pinned first, then by custom order, then default
     const sortedFlocks = [...flocks].sort((a, b) => {
@@ -9243,16 +9346,18 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
 
                     {/* Flock card */}
                     <button className="hit44" onClick={() => { if (editingFlockList) return; setSelectedFlockId(f.id); setCurrentScreen('chatDetail'); simulateTyping(); }} style={{ flex: 1, textAlign: 'left', backgroundColor: isPinned ? `${colors.navy}06` : 'var(--bg-card-solid)', borderRadius: '16px', padding: '12px 14px', border: isPinned ? `1.5px solid ${colors.navy}18` : `1px solid var(--border-default)`, cursor: editingFlockList ? 'default' : 'pointer', display: 'flex', alignItems: 'center', gap: '12px', transition: 'opacity 0.2s', boxShadow: isPinned ? '0 2px 12px rgba(13,40,71,0.06)' : '0 1px 4px rgba(0,0,0,0.03)', position: 'relative', overflow: 'hidden' }}>
-                      {/* Avatar — group chat photo */}
+                      {/* Tile — the flock's venue photo if it has picked one,
+                          otherwise its initial on a colour keyed to its id. */}
                       <div style={{ position: 'relative', flexShrink: 0 }}>
                         {(() => {
-                          const seed = String(f.id || f.name || '');
-                          let hash = 0;
-                          for (let i = 0; i < seed.length; i++) hash = (hash * 31 + seed.charCodeAt(i)) >>> 0;
-                          const pic = `/group-avatars/flock-${(hash % 5) + 1}.jpg`;
+                          const swatch = flockTileSwatch(f.id);
                           return (
-                            <div style={{ width: '46px', height: '46px', borderRadius: '14px', overflow: 'hidden', boxShadow: '0 2px 10px rgba(13,40,71,0.18)', backgroundColor: 'var(--bg-tertiary)' }}>
-                              <img src={pic} alt={f.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                            <div style={{ width: '46px', height: '46px', borderRadius: '14px', overflow: 'hidden', boxShadow: '0 2px 10px rgba(13,40,71,0.18)', backgroundColor: swatch.bg, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                              {f.venuePhoto ? (
+                                <img src={f.venuePhoto} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} onError={(e) => { e.target.style.display = 'none'; }} />
+                              ) : (
+                                <span aria-hidden="true" style={{ fontFamily: 'var(--font-display)', fontSize: '20px', fontWeight: '600', color: swatch.fg, lineHeight: 1, letterSpacing: '-0.01em' }}>{flockTileInitial(f.name)}</span>
+                              )}
                             </div>
                           );
                         })()}
@@ -9302,8 +9407,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
             </>
           )}
 
+          {/* Loading */}
+          {conversationsLoading && <ListSkeleton label="Loading conversations" />}
+
           {/* Empty state */}
-          {filteredDms.length === 0 && filteredFlocks.length === 0 && (
+          {!conversationsLoading && filteredDms.length === 0 && filteredFlocks.length === 0 && (
             <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '60px 20px', opacity: 0.6 }}>
               {Icons.messageSquare(colors.textTertiary, 40)}
               <p style={{ fontSize: '14px', color: 'var(--text-tertiary)', fontWeight: '600', margin: '12px 0 4px' }}>{chatSearch ? 'No results found' : 'No conversations yet'}</p>
@@ -9887,11 +9995,17 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           </button>
           <input ref={chatGalleryInputRef} type="file" accept="image/*" onChange={handleChatImageSelect} style={{ display: 'none' }} />
           <button className="hit44" onClick={() => { if (sharingLocationForFlock === flock.id) { stopLocationSharing(); } else { const otherMembers = (flock.members || []).filter(m => m.id !== authUser?.id).length; if (otherMembers === 0) { showToast('No one else in this flock to share with', 'error'); return; } startSharingLocation(flock.id); } }} style={{ width: '38px', height: '38px', borderRadius: '19px', border: 'none', backgroundColor: sharingLocationForFlock === flock.id ? '#10b981' : 'var(--bg-hover)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'opacity 0.2s ease', flexShrink: 0 }}>{Icons.mapPin(sharingLocationForFlock === flock.id ? 'white' : colors.textSecondary, 16)}</button>
-          <input key="chat-input" id="chat-input" aria-label="Message" type="text" defaultValue="" onChange={handleChatInputChange} onKeyDown={(e) => e.key === 'Enter' && sendChatMessage()} placeholder={replyingTo ? 'Reply...' : 'Type a message...'} style={{ flex: 1, padding: '15px 18px', borderRadius: '24px', backgroundColor: 'var(--bg-hover)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)', fontSize: '16px', outline: 'none', fontWeight: '500', transition: 'opacity 0.2s ease' }} autoComplete="off" />
+          {/* minWidth:0 is load-bearing. A text input's `min-width: auto`
+              resolves to its intrinsic ~20-character width (~215px), so at
+              390px the row's min-content exceeded the viewport, the input
+              refused to shrink, and the overflow was pushed onto the only
+              flex item that could still shrink: the send button. It measured
+              20px wide with its right edge 7px off-screen. */}
+          <input key="chat-input" id="chat-input" aria-label="Message" type="text" defaultValue="" onChange={handleChatInputChange} onKeyDown={(e) => e.key === 'Enter' && sendChatMessage()} placeholder={replyingTo ? 'Reply...' : 'Type a message...'} style={{ flex: '1 1 0%', minWidth: 0, padding: '15px 18px', borderRadius: '24px', backgroundColor: 'var(--bg-hover)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)', fontSize: '16px', outline: 'none', fontWeight: '500', transition: 'opacity 0.2s ease' }} autoComplete="off" />
           {/* The mic button that lived here only toasted "coming soon" (dead
               button, SLOP-AUDIT.md C1). The send button now stays put and
               disables when the input is empty. */}
-          <button className="hit44 glass-btn glass-navy" onClick={sendChatMessage} disabled={!chatInputHasText} style={{ width: '42px', height: '42px', borderRadius: '21px', border: 'none', background: colors.navyBg, color: 'white', cursor: chatInputHasText ? 'pointer' : 'default', opacity: chatInputHasText ? 1 : 0.45, display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 3px 10px rgba(13,40,71,0.10)', transition: 'opacity 0.2s ease' }}>{Icons.send('white', 18)}</button>
+          <button className="hit44 glass-btn glass-navy" onClick={sendChatMessage} disabled={!chatInputHasText} style={{ width: '42px', height: '42px', minWidth: '42px', flexShrink: 0, borderRadius: '21px', border: 'none', background: colors.navyBg, color: 'white', cursor: chatInputHasText ? 'pointer' : 'default', opacity: chatInputHasText ? 1 : 0.45, display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 3px 10px rgba(13,40,71,0.10)', transition: 'opacity 0.2s ease' }}>{Icons.send('white', 18)}</button>
         </div>
 
 
@@ -14484,16 +14598,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 {/* Results list */}
                 <div style={{ flex: 1, overflowY: 'auto', padding: '4px 12px 80px' }}>
                   {/* Skeleton cards while searching, matching the real card layout */}
-                  {venueSearching && [0, 1, 2, 3].map(i => (
-                    <div key={i} style={{ display: 'flex', gap: '12px', padding: '12px', marginBottom: '10px', borderRadius: '14px', border: '1px solid var(--border-subtle)', backgroundColor: 'var(--bg-card-solid)' }}>
-                      <div className="skeleton" style={{ width: '72px', height: '72px', borderRadius: '10px', flexShrink: 0 }} />
-                      <div style={{ flex: 1, minWidth: 0, paddingTop: '4px' }}>
-                        <div className="skeleton" style={{ width: '60%', height: '14px', borderRadius: '4px', marginBottom: '8px' }} />
-                        <div className="skeleton" style={{ width: '40%', height: '11px', borderRadius: '4px', marginBottom: '10px' }} />
-                        <div className="skeleton" style={{ width: '80%', height: '10px', borderRadius: '4px' }} />
-                      </div>
-                    </div>
-                  ))}
+                  {venueSearching && <ListSkeleton count={4} thumb={72} thumbRadius={10} label="Searching venues" />}
                   {!venueSearching && sorted.length === 0 ? (
                     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '60px 20px', opacity: 0.6 }}>
                       {Icons.search(colors.textTertiary, 40)}
