@@ -173,6 +173,317 @@ const CrowdRealityCheck = React.memo(function CrowdRealityCheck({ placeId, venue
   );
 });
 
+// =============================================================================
+// Offline screen with a playable minigame. Reviewers open apps in Airplane
+// Mode hunting for the webview white screen; Flock hands them a bird instead.
+// Original art (Flock palette, code-drawn bird) — only the mechanics are
+// borrowed from every runner game since the dinosaur. Auto-dismisses the
+// moment connectivity returns.
+// =============================================================================
+const FlockBirdGame = () => {
+  const canvasRef = React.useRef(null);
+  const wrapRef = React.useRef(null);
+  const [best, setBest] = useState(() => parseInt(localStorage.getItem('flockBirdBest') || '0', 10));
+
+  React.useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return undefined;
+    const W = 320, H = 400;
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    canvas.width = W * dpr;
+    canvas.height = H * dpr;
+    const ctx = canvas.getContext('2d');
+    ctx.scale(dpr, dpr);
+    const rr = (x, y, w, h, r) => {
+      // roundRect with fallback for older WebViews
+      if (ctx.roundRect) { ctx.roundRect(x, y, w, h, r); return; }
+      ctx.rect(x, y, w, h);
+    };
+
+    const CREAM = '#f1ede0', NAVY = '#16283d', NAVY_2 = '#1d3049', DIM = 'rgba(241,237,224,0.35)';
+    const GROUND_H = 18, BIRD_X = 70;
+
+    // ---- tuning (feel first: strong gravity, sharp flap, lagged tilt) ----
+    const GRAVITY = 1380, FLAP = -395, PIPE_W = 56;
+    const speedFor = (s) => Math.min(140 + s * 3.5, 205);   // ramps with score
+    const gapFor = (s) => Math.max(152 - s * 1.2, 126);     // narrows with score
+
+    let phase = 'ready'; // ready | play | dying | over
+    let birdY = H / 2, vy = 0, tilt = 0, squash = 1;
+    let pipes = [], score = 0, newBest = false;
+    let groundX = 0, hitStopUntil = 0, flash = 0, shake = 0, diedAt = 0, scorePop = 1;
+    let last = performance.now(), raf;
+
+    // ---- backdrop: fixed stars + parallax skyline (0.35x speed) ----
+    const stars = Array.from({ length: 24 }, (_, i) => ({
+      x: (i * 97) % W, y: (i * 53) % (H - 160), r: (i % 3) * 0.4 + 0.5,
+    }));
+    const skyline = Array.from({ length: 12 }, (_, i) => ({
+      x: i * 58, w: 34 + (i * 29) % 26, h: 34 + (i * 47) % 52,
+    }));
+    let skyX = 0;
+
+    // ---- tiny synth (created on first user gesture; fails silently) ----
+    let ac = null;
+    const beep = (type, f0, f1, dur, vol) => {
+      try {
+        if (!ac) ac = new (window.AudioContext || window.webkitAudioContext)();
+        const o = ac.createOscillator(), g = ac.createGain();
+        o.type = type;
+        o.frequency.setValueAtTime(f0, ac.currentTime);
+        o.frequency.exponentialRampToValueAtTime(Math.max(f1, 1), ac.currentTime + dur);
+        g.gain.setValueAtTime(vol, ac.currentTime);
+        g.gain.exponentialRampToValueAtTime(0.0001, ac.currentTime + dur);
+        o.connect(g).connect(ac.destination);
+        o.start();
+        o.stop(ac.currentTime + dur);
+      } catch (_) { /* audio is garnish */ }
+    };
+    const sFlap = () => beep('square', 440, 620, 0.07, 0.05);
+    const sScore = () => { beep('sine', 660, 660, 0.06, 0.06); setTimeout(() => beep('sine', 880, 880, 0.08, 0.06), 70); };
+    const sHit = () => beep('sawtooth', 220, 60, 0.22, 0.09);
+
+    const reset = () => { birdY = H / 2; vy = 0; tilt = 0; pipes = []; score = 0; newBest = false; };
+
+    const flap = () => {
+      const now = performance.now();
+      if (phase === 'over') {
+        if (now - diedAt > 500) { reset(); phase = 'ready'; }
+        return;
+      }
+      if (phase === 'dying') return;
+      if (phase === 'ready') phase = 'play';
+      vy = FLAP;
+      tilt = -0.38;      // snap nose-up on flap; gravity eases it back down
+      squash = 0.82;     // quick squash, springs back
+      sFlap();
+    };
+
+    const die = () => {
+      phase = 'dying';
+      hitStopUntil = performance.now() + 70;  // hit-stop: the world blinks
+      flash = 0.55;
+      shake = 9;
+      sHit();
+      const prevBest = parseInt(localStorage.getItem('flockBirdBest') || '0', 10);
+      if (score > prevBest) {
+        localStorage.setItem('flockBirdBest', String(score));
+        setBest(score);
+        newBest = true;
+      }
+    };
+
+    const drawBird = () => {
+      ctx.save();
+      ctx.translate(BIRD_X, birdY);
+      ctx.rotate(tilt);
+      ctx.scale(1 / squash, squash); // squash-and-stretch on flap
+      ctx.fillStyle = CREAM;
+      ctx.beginPath();
+      ctx.ellipse(0, 0, 14, 11, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = NAVY;
+      ctx.lineWidth = 2.5;
+      ctx.lineCap = 'round';
+      const w = vy < -60 ? -6 : 3; // wing up while rising
+      ctx.beginPath();
+      ctx.moveTo(-8, 0); ctx.quadraticCurveTo(-2, w, 5, 0);
+      ctx.stroke();
+      ctx.fillStyle = NAVY;
+      ctx.beginPath(); ctx.arc(6, -3.5, 1.8, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.moveTo(13, -2); ctx.lineTo(19, 0); ctx.lineTo(13, 2); ctx.closePath(); ctx.fill();
+      ctx.restore();
+    };
+
+    const tick = (now) => {
+      const dt = Math.min((now - last) / 1000, 0.033);
+      last = now;
+      const frozen = now < hitStopUntil;
+      const speed = speedFor(score);
+
+      if (!frozen) {
+        squash += (1 - squash) * Math.min(1, dt * 14);
+        scorePop += (1 - scorePop) * Math.min(1, dt * 10);
+
+        if (phase === 'play' || phase === 'dying') {
+          vy += GRAVITY * dt;
+          birdY += vy * dt;
+          // tilt lags velocity: floats level, then noses into the dive
+          const target = phase === 'dying' ? 1.5 : Math.max(-0.38, Math.min(1.1, vy / 520));
+          tilt += (target - tilt) * Math.min(1, dt * (phase === 'dying' ? 6 : 9));
+          if (birdY < 8) { birdY = 8; vy = Math.max(vy, 0); } // ceiling clamps, never kills
+        }
+
+        if (phase === 'play') {
+          groundX = (groundX - speed * dt) % 24;
+          skyX = (skyX - speed * 0.35 * dt) % (12 * 58);
+          const spacing = 185 + speed * 0.25; // constant distance apart as speed ramps
+          if (!pipes.length || pipes[pipes.length - 1].x < W - spacing) {
+            const gap = gapFor(score);
+            const gapY = 60 + Math.random() * (H - GROUND_H - 120 - gap);
+            pipes.push({ x: W + PIPE_W, gapY, gap, passed: false });
+          }
+          for (const p of pipes) {
+            p.x -= speed * dt;
+            if (!p.passed && p.x + PIPE_W < BIRD_X - 14) { p.passed = true; score++; scorePop = 1.45; sScore(); }
+            // forgiving hitbox: ~80% of the visual bird
+            if (p.x < BIRD_X + 10 && p.x + PIPE_W > BIRD_X - 10) {
+              if (birdY - 7 < p.gapY || birdY + 7 > p.gapY + p.gap) die();
+            }
+          }
+          pipes = pipes.filter(p => p.x > -PIPE_W);
+          if (birdY > H - GROUND_H - 10) die();
+        } else if (phase === 'dying') {
+          if (birdY > H - GROUND_H - 8) { birdY = H - GROUND_H - 8; phase = 'over'; diedAt = now; }
+        } else if (phase === 'ready') {
+          birdY = H / 2 + Math.sin(now / 300) * 7;
+          tilt = Math.sin(now / 300 + 1) * 0.06;
+          groundX = (groundX - 40 * dt) % 24;
+        }
+        shake = Math.max(0, shake - dt * 34);
+        flash = Math.max(0, flash - dt * 2.2);
+      }
+
+      // ================= draw =================
+      ctx.save();
+      if (shake > 0.5) ctx.translate((Math.random() - 0.5) * shake, (Math.random() - 0.5) * shake);
+
+      ctx.fillStyle = NAVY;
+      ctx.fillRect(-12, -12, W + 24, H + 24);
+      ctx.fillStyle = DIM;
+      for (const s of stars) { ctx.beginPath(); ctx.arc(s.x, s.y, s.r, 0, Math.PI * 2); ctx.fill(); }
+      // parallax skyline silhouette
+      ctx.fillStyle = NAVY_2;
+      for (const b of skyline) {
+        const bx = ((b.x + skyX) % (12 * 58) + 12 * 58) % (12 * 58) - 58;
+        ctx.fillRect(bx, H - GROUND_H - b.h, b.w, b.h);
+      }
+      // pipes
+      ctx.fillStyle = CREAM;
+      for (const p of pipes) {
+        ctx.beginPath();
+        rr(p.x, -8, PIPE_W, p.gapY + 8, [0, 0, 7, 7]);
+        rr(p.x, p.gapY + p.gap, PIPE_W, H - p.gapY - p.gap - GROUND_H, [7, 7, 0, 0]);
+        ctx.fill();
+        // lip on each pipe mouth gives them dimension
+        ctx.fillRect(p.x - 3, p.gapY - 9, PIPE_W + 6, 9);
+        ctx.fillRect(p.x - 3, p.gapY + p.gap, PIPE_W + 6, 9);
+      }
+      // scrolling ground with motion notches
+      ctx.fillStyle = CREAM;
+      ctx.fillRect(-12, H - GROUND_H, W + 24, GROUND_H + 12);
+      ctx.fillStyle = 'rgba(22,40,61,0.22)';
+      for (let x = groundX - 24; x < W + 24; x += 24) {
+        ctx.beginPath();
+        ctx.moveTo(x, H - GROUND_H); ctx.lineTo(x + 12, H - GROUND_H);
+        ctx.lineTo(x + 6, H - GROUND_H + 6); ctx.closePath(); ctx.fill();
+      }
+      drawBird();
+      // score with pop
+      if (phase !== 'ready') {
+        ctx.save();
+        ctx.translate(W / 2, 52);
+        ctx.scale(scorePop, scorePop);
+        ctx.fillStyle = CREAM;
+        ctx.font = "600 34px 'Fraunces', Georgia, serif";
+        ctx.textAlign = 'center';
+        ctx.fillText(String(score), 0, 0);
+        ctx.restore();
+      }
+      if (phase === 'ready') {
+        ctx.fillStyle = CREAM;
+        ctx.font = "600 15px 'Hanken Grotesk', sans-serif";
+        ctx.textAlign = 'center';
+        ctx.fillText('Tap to fly', W / 2, H / 2 + 74);
+      } else if (phase === 'over') {
+        ctx.textAlign = 'center';
+        ctx.fillStyle = CREAM;
+        ctx.font = "600 17px 'Hanken Grotesk', sans-serif";
+        ctx.fillText(newBest ? 'New best!' : `${score} pillar${score === 1 ? '' : 's'}`, W / 2, H / 2 - 10);
+        ctx.font = "500 13px 'Hanken Grotesk', sans-serif";
+        ctx.fillStyle = DIM;
+        ctx.fillText('Tap to go again', W / 2, H / 2 + 14);
+      }
+      // death flash
+      if (flash > 0) {
+        ctx.fillStyle = `rgba(241,237,224,${flash})`;
+        ctx.fillRect(-12, -12, W + 24, H + 24);
+      }
+      ctx.restore();
+      raf = requestAnimationFrame(tick);
+    };
+
+    const onKey = (e) => { if (e.code === 'Space') { e.preventDefault(); flap(); } };
+    const wrap = wrapRef.current;
+    wrap.addEventListener('pointerdown', flap);
+    window.addEventListener('keydown', onKey);
+    raf = requestAnimationFrame(tick);
+    return () => {
+      cancelAnimationFrame(raf);
+      wrap.removeEventListener('pointerdown', flap);
+      window.removeEventListener('keydown', onKey);
+      try { if (ac) ac.close(); } catch (_) { /* already closed */ }
+    };
+  }, []);
+
+  return (
+    <div ref={wrapRef} style={{ touchAction: 'manipulation', cursor: 'pointer', userSelect: 'none', WebkitUserSelect: 'none' }}>
+      <canvas ref={canvasRef} style={{ width: '320px', height: '400px', maxWidth: '86vw', borderRadius: '16px', display: 'block' }} />
+      {best > 0 && (
+        <p style={{ textAlign: 'center', fontSize: '12px', color: 'rgba(241,237,224,0.5)', margin: '10px 0 0', fontWeight: '600' }}>Best: {best}</p>
+      )}
+    </div>
+  );
+};
+
+const OfflineGate = () => {
+  const [offline, setOffline] = useState(() => typeof navigator !== 'undefined' && !navigator.onLine);
+  const [checking, setChecking] = useState(false);
+
+  useEffect(() => {
+    const goOnline = () => setOffline(false);
+    const goOffline = () => setOffline(true);
+    window.addEventListener('online', goOnline);
+    window.addEventListener('offline', goOffline);
+    return () => {
+      window.removeEventListener('online', goOnline);
+      window.removeEventListener('offline', goOffline);
+    };
+  }, []);
+
+  if (!offline) return null;
+
+  const retry = async () => {
+    setChecking(true);
+    try {
+      // Any HTTP response at all (even a 401) proves the network path works
+      await fetch(`${BASE_URL}/api/auth/me`, { cache: 'no-store' });
+      setOffline(false);
+    } catch (_) {
+      // still offline — the game is right there
+    } finally {
+      setChecking(false);
+    }
+  };
+
+  return (
+    <div style={{ position: 'fixed', inset: 0, zIndex: 99999, backgroundColor: '#16283d', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '18px', padding: '24px', fontFamily: "'Hanken Grotesk', -apple-system, sans-serif" }}>
+      <div style={{ textAlign: 'center' }}>
+        <h1 style={{ fontFamily: 'var(--font-display, Georgia)', fontSize: '26px', fontWeight: '600', color: '#f1ede0', margin: '0 0 6px', letterSpacing: '-0.005em' }}>You're offline</h1>
+        <p style={{ fontSize: '14px', color: 'rgba(241,237,224,0.55)', margin: 0 }}>Your plans are safe. Flock reconnects on its own.</p>
+      </div>
+      <FlockBirdGame />
+      <button
+        onClick={retry}
+        disabled={checking}
+        style={{ padding: '12px 28px', borderRadius: '12px', border: 'none', backgroundColor: '#f1ede0', color: '#16283d', fontSize: '14px', fontWeight: '700', cursor: checking ? 'wait' : 'pointer', opacity: checking ? 0.7 : 1 }}
+      >
+        {checking ? 'Checking...' : 'Try again'}
+      </button>
+    </div>
+  );
+};
+
 // Scroll fade-in component using IntersectionObserver
 const ScrollFade = ({ children, delay = 0, className = '' }) => {
   const ref = useRef(null);
@@ -14436,6 +14747,7 @@ const GOOGLE_CLIENT_ID = process.env.REACT_APP_GOOGLE_CLIENT_ID || '';
 
 const FlockAppWithProviders = () => (
   <GoogleOAuthProvider clientId={GOOGLE_CLIENT_ID}>
+    <OfflineGate />
     <FlockApp />
   </GoogleOAuthProvider>
 );
