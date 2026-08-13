@@ -122,30 +122,34 @@ router.post('/',
           [flock.id, req.user.id]
         );
 
-        // Invite additional users if provided (parameterized, status = 'invited')
+        // Invite additional users if provided (parameterized, status = 'invited').
+        // Mutual blocks hold here too — the standalone invite endpoint skips
+        // blocked pairs, and creating a fresh flock must not be a way around it.
+        const invitedUids = [];
         if (invited_user_ids && invited_user_ids.length > 0) {
           for (const userId of invited_user_ids) {
             const uid = parseInt(userId);
             if (!Number.isFinite(uid) || uid === req.user.id) continue;
+            if (await isBlockedBetween(req.user.id, uid)) continue;
             await client.query(
               `INSERT INTO flock_members (flock_id, user_id, status) VALUES ($1, $2, 'invited')
                ON CONFLICT (flock_id, user_id) DO NOTHING`,
               [flock.id, uid]
             );
+            invitedUids.push(uid);
           }
-          console.log('[Flock Create] Invited', invited_user_ids.length, 'users');
+          console.log('[Flock Create] Invited', invitedUids.length, 'users');
         }
 
         await client.query('COMMIT');
         console.log('[Flock Create] Success - flock id:', flock.id);
 
-        // Notify invited users via socket
-        if (invited_user_ids && invited_user_ids.length > 0) {
+        // Notify invited users via socket (only the ones actually inserted —
+        // blocked pairs were skipped above)
+        if (invitedUids.length > 0) {
           const io = req.app.get('io');
           if (io) {
-            for (const userId of invited_user_ids) {
-              const uid = parseInt(userId);
-              if (!Number.isFinite(uid) || uid === req.user.id) continue;
+            for (const uid of invitedUids) {
               io.to(`user:${uid}`).emit('flock_invite_received', {
                 flockId: flock.id,
                 flockName: flock.name,
@@ -179,7 +183,7 @@ router.get('/activity', async (req, res) => {
                f.name AS flock_name, f.id AS flock_id, f.created_at AS happened_at
         FROM flocks f
         JOIN users u ON u.id = f.creator_id
-        JOIN flock_members fm ON fm.flock_id = f.id AND fm.user_id = $1
+        JOIN flock_members fm ON fm.flock_id = f.id AND fm.user_id = $1 AND fm.status = 'accepted'
         WHERE f.created_at > NOW() - INTERVAL '7 days'
       )
       UNION ALL
@@ -191,7 +195,7 @@ router.get('/activity', async (req, res) => {
         FROM flock_members fm2
         JOIN users u2 ON u2.id = fm2.user_id
         JOIN flocks f2 ON f2.id = fm2.flock_id
-        JOIN flock_members my ON my.flock_id = f2.id AND my.user_id = $1
+        JOIN flock_members my ON my.flock_id = f2.id AND my.user_id = $1 AND my.status = 'accepted'
         WHERE fm2.user_id != $1
           AND fm2.joined_at > NOW() - INTERVAL '7 days'
           AND fm2.status IN ('accepted', 'declined')
@@ -267,7 +271,7 @@ router.get('/:id', param('id').isInt(), async (req, res) => {
     }
 
     const membersResult = await pool.query(
-      `SELECT u.id, u.name, u.email, u.profile_image_url, u.reliability_score, fm.status, fm.attendance, fm.joined_at
+      `SELECT u.id, u.name, u.profile_image_url, u.reliability_score, fm.status, fm.attendance, fm.joined_at
        FROM flock_members fm
        JOIN users u ON u.id = fm.user_id
        WHERE fm.flock_id = $1
