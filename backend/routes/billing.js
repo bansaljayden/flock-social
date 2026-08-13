@@ -137,7 +137,15 @@ router.post('/:flockId/create',
         }
         if (existingBill.rows.length > 0) {
           const prevPayer = existingBill.rows[0].paid_by;
-          if (userId !== prevPayer && userId !== flockCreatorId) {
+          // A ghost-commit shell has paid_by NULL — nobody has claimed the
+          // bill yet, so first-bill rules apply, not replacement rules
+          // (round 7: NULL rejected every legitimate first payer).
+          if (prevPayer === null) {
+            if (payerId !== userId && userId !== flockCreatorId) {
+              await client.query('ROLLBACK');
+              return res.status(403).json({ error: 'Only the person who paid can start the bill' });
+            }
+          } else if (userId !== prevPayer && userId !== flockCreatorId) {
             await client.query('ROLLBACK');
             return res.status(403).json({ error: 'Only the person who paid or the flock creator can change this bill' });
           }

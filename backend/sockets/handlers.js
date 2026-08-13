@@ -107,18 +107,23 @@ function registerHandlers(io, socket) {
     const room = `flock:${flockId}`;
     socket.leave(room);
 
-    // Remove from presence tracking
+    // Remove from presence tracking. Like disconnect, only announce offline
+    // when the user has no OTHER socket left in the room (round 7).
+    let announce = true;
     if (roomUsers.has(flockId)) {
       const users = roomUsers.get(flockId);
       users.delete(socket.id);
+      announce = ![...users.values()].some((u) => u.userId === user.id);
       if (users.size === 0) roomUsers.delete(flockId);
     }
 
-    socket.to(room).emit('member_offline', {
-      userId: user.id,
-      name: user.name,
-      flockId,
-    });
+    if (announce) {
+      socket.to(room).emit('member_offline', {
+        userId: user.id,
+        name: user.name,
+        flockId,
+      });
+    }
   });
 
   // --- Venue rooms (live sensor + checkin updates) ---
@@ -482,6 +487,7 @@ function registerHandlers(io, socket) {
 
   socket.on('flock_invite_response', async (data) => {
     try {
+      if (!allowEvent(socket, 'invite_response', 10, 10_000)) return;
       const { flockId, action } = data;
       if (!flockId || !['accepted', 'declined'].includes(action)) return;
       // Round 3: any socket could broadcast fake RSVP activity into a guessed
@@ -786,6 +792,7 @@ function registerHandlers(io, socket) {
 
   socket.on('select_venue', async (data) => {
     try {
+      if (!allowEvent(socket, 'select_venue', 10, 10_000)) return;
       const { flockId, venue_name, venue_address, venue_id } = data;
 
       // Only the flock creator can confirm a venue

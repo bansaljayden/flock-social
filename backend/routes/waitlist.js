@@ -13,6 +13,13 @@ router.post('/',
   body('email').isEmail().normalizeEmail().withMessage('Valid email is required'),
   async (req, res) => {
     try {
+    // Round 7: this public route emails any address it is given — without its
+    // own throttle it is an outbound-mail relay under the generous global
+    // limiter. 3 signups/hour per IP, 500 confirmation emails/day globally.
+    if (!allowWaitlistSignup(req)) {
+      return res.status(429).json({ error: 'Too many signups from this connection. Try again later.' });
+    }
+
       const errors = validationResult(req);
       if (!errors.isEmpty()) {
         return res.status(400).json({ error: errors.array()[0].msg });

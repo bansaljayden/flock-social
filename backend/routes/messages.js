@@ -124,7 +124,7 @@ router.post('/flocks/:id/messages',
     body('message_text').trim().customSanitizer(stripHtml).isLength({ min: 1, max: 5000 }).withMessage('Message is required'),
     body('message_type').optional().isIn(['text', 'venue_card', 'image']),
     body('venue_data').optional().isObject(),
-    body('image_url').optional().isURL(),
+    body('image_url').optional().matches(/^data:image\/(png|jpe?g|gif|webp);base64,/),
   ],
   async (req, res) => {
     try {
@@ -468,7 +468,9 @@ router.post('/dm/:userId',
     body('message_text').trim().customSanitizer(stripHtml).isLength({ min: 1, max: 5000 }).withMessage('Message is required'),
     body('message_type').optional().isIn(['text', 'venue_card', 'image']),
     body('venue_data').optional().isObject(),
-    body('image_url').optional().isURL(),
+    // data: URLs only — a sender-controlled https image is a tracking pixel
+    // aimed at every recipient (round 7); the socket path already refuses them.
+    body('image_url').optional().matches(/^data:image\/(png|jpe?g|gif|webp);base64,/),
     body('reply_to_id').optional().isInt(),
   ],
   async (req, res) => {

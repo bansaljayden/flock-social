@@ -21,7 +21,20 @@ function setCache(key, data) {
     for (const [k, v] of weatherCache) {
       if (now - v.ts > CACHE_TTL) weatherCache.delete(k);
     }
+    // Fresh-but-oversized: evict oldest so coordinate spam can't grow it
+    while (weatherCache.size > 100) weatherCache.delete(weatherCache.keys().next().value);
   }
+}
+
+// Daily upstream budget (round 7): unique coordinates were unmetered misses.
+let wxDayKey = new Date().toISOString().slice(0, 10);
+let wxDayCount = 0;
+function allowWeatherFetch() {
+  const today = new Date().toISOString().slice(0, 10);
+  if (today !== wxDayKey) { wxDayKey = today; wxDayCount = 0; }
+  if (wxDayCount >= 3000) return false;
+  wxDayCount++;
+  return true;
 }
 
 async function getWeather(lat, lon) {
@@ -38,6 +51,7 @@ async function getWeather(lat, lon) {
     const cacheKey = getCacheKey(lat, lon);
     const cached = getCached(cacheKey);
     if (cached) return cached;
+    if (!allowWeatherFetch()) return null; // weather is an enhancer, fail soft
 
     const url = `https://api.openweathermap.org/data/2.5/weather?lat=${Number(lat).toFixed(2)}&lon=${Number(lon).toFixed(2)}&appid=${apiKey}&units=imperial`;
     const response = await fetch(url);

@@ -714,7 +714,7 @@ export async function getActivityFeed() {
 export async function sendAiChat(messages, location, currentContext) {
   return request('/api/ai/chat', {
     method: 'POST',
-    body: JSON.stringify({ messages, location, currentContext }),
+    body: JSON.stringify({ messages, location, currentContext, localHour: new Date().getHours(), localDay: new Date().getDay() }),
   });
 }
 
