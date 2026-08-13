@@ -142,11 +142,21 @@ router.post('/:id/vote',
       // One vote per member per flock. Switching venues used to stack a second
       // row (the unique key is per venue name), so both venues came back from
       // the server (round 10). Replace the old row inside one transaction.
+      //
+      // Round 11: the transaction alone was not enough. Two rapid switches
+      // could each DELETE before the other INSERTed, and UNIQUE(flock_id,
+      // user_id, venue_name) happily accepts both rows, so one member ended up
+      // holding two votes. Serialize per (flock, user) with an advisory lock
+      // held for the transaction, same pattern as safety.js/guest.js.
       const client = await pool.connect();
       let vote;
       let changed;
       try {
         await client.query('BEGIN');
+        await client.query(
+          "SELECT pg_advisory_xact_lock(hashtext('flockvote:' || $1::text || ':' || $2::text))",
+          [String(flockId), String(req.user.id)]
+        );
         const before = await client.query(
           'SELECT venue_name FROM venue_votes WHERE flock_id = $1 AND user_id = $2',
           [flockId, req.user.id]

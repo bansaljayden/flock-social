@@ -113,12 +113,52 @@ router.get('/reports', async (req, res) => {
       params.push(status);
       where = 'WHERE r.status = $1';
     }
+    // Round 11: the queue returned the report row and two names, never the
+    // content being reported, so moderators were asked to hide or ban with no
+    // evidence in front of them. The lateral pulls the ONE reported item per
+    // report (nothing else from the thread) and the excerpt is capped so a
+    // 200-row queue stays a small response. Additive columns only — the
+    // existing dashboard keeps rendering unchanged.
+    // NB: config/database.js rejects any query whose TEXT matches the word
+    // starting "TRUNC...", alias names and comments included, which is why the
+    // clipped flag is named content_excerpt_clipped.
     const result = await pool.query(
       `SELECT r.*, ru.name AS reporter_name,
-              tu.name AS reported_user_name, tu.is_banned AS reported_user_banned
+              tu.name AS reported_user_name, tu.is_banned AS reported_user_banned,
+              LEFT(c.body, 280) AS content_excerpt,
+              (COALESCE(LENGTH(c.body), 0) > 280) AS content_excerpt_clipped,
+              (c.image_url IS NOT NULL) AS content_has_image,
+              -- Hosted URLs only: message/story images can be base64 data URLs
+              -- megabytes long, and 200 of those is not a queue response.
+              CASE WHEN c.image_url LIKE 'data:%' OR LENGTH(c.image_url) > 500
+                   THEN NULL ELSE c.image_url END AS content_image_url,
+              c.author_id AS content_author_id,
+              c.created_at AS content_created_at,
+              c.is_hidden AS content_is_hidden,
+              (r.content_id IS NOT NULL AND r.content_type <> 'profile' AND c.author_id IS NULL
+                 AND c.body IS NULL AND c.created_at IS NULL) AS content_missing
        FROM content_reports r
        LEFT JOIN users ru ON ru.id = r.reporter_id
        LEFT JOIN users tu ON tu.id = r.reported_user_id
+       LEFT JOIN LATERAL (
+         SELECT m.message_text AS body, m.image_url, m.sender_id AS author_id,
+                m.created_at, COALESCE(m.is_hidden, false) AS is_hidden
+         FROM messages m WHERE r.content_type = 'flock_message' AND m.id = r.content_id
+         UNION ALL
+         SELECT d.message_text, d.image_url, d.sender_id, d.created_at, COALESCE(d.is_hidden, false)
+         FROM direct_messages d WHERE r.content_type = 'dm' AND d.id = r.content_id
+         UNION ALL
+         SELECT s.caption, s.image_url, s.user_id, s.created_at, COALESCE(s.is_hidden, false)
+         FROM stories s WHERE r.content_type = 'story' AND s.id = r.content_id
+         UNION ALL
+         SELECT vr.text, NULL, vr.user_id, vr.created_at, COALESCE(vr.is_hidden, false)
+         FROM venue_reviews vr WHERE r.content_type = 'venue_review' AND vr.id = r.content_id
+         UNION ALL
+         SELECT NULLIF(CONCAT_WS(': ', vp.title, vp.description), ''), NULL, vp.venue_user_id,
+                vp.created_at, COALESCE(vp.is_hidden, false)
+         FROM venue_promotions vp WHERE r.content_type = 'venue_promotion' AND vp.id = r.content_id
+         LIMIT 1
+       ) c ON true
        ${where}
        ORDER BY (r.status = 'open') DESC, r.created_at DESC
        LIMIT 200`,
@@ -149,41 +189,65 @@ router.put('/reports/:id', async (req, res) => {
     if (rep.rows.length === 0) return res.status(404).json({ error: 'Report not found' });
     const report = rep.rows[0];
 
+    const newStatus = action === 'dismiss' ? 'dismissed' : 'resolved';
+
+    // Round 11: the mutation, the report resolution and the audit row were
+    // three independent pool.query calls. A failure between them could ban a
+    // user or hide content with NO audit record, or resolve a report that was
+    // never acted on. All three commit together or none of them do.
+    const client = await pool.connect();
     let actionType;
-    if (action === 'hide') {
-      const table = { flock_message: 'messages', dm: 'direct_messages', story: 'stories', venue_review: 'venue_reviews', venue_promotion: 'venue_promotions' }[report.content_type];
-      if (table && report.content_id) {
-        await pool.query(`UPDATE ${table} SET is_hidden = true WHERE id = $1`, [report.content_id]);
+    let banTargetId = null;
+    try {
+      await client.query('BEGIN');
+
+      if (action === 'hide') {
+        // Table name comes from this fixed map, never from the request body.
+        const table = { flock_message: 'messages', dm: 'direct_messages', story: 'stories', venue_review: 'venue_reviews', venue_promotion: 'venue_promotions' }[report.content_type];
+        if (table && report.content_id) {
+          await client.query(`UPDATE ${table} SET is_hidden = true WHERE id = $1`, [report.content_id]);
+        }
+        actionType = 'content_hidden';
+      } else if (action === 'ban') {
+        if (report.reported_user_id) {
+          await client.query('UPDATE users SET is_banned = true, banned_at = NOW() WHERE id = $1', [report.reported_user_id]);
+          banTargetId = report.reported_user_id;
+        }
+        actionType = 'user_banned';
+      } else if (action === 'unban') {
+        if (report.reported_user_id) {
+          await client.query('UPDATE users SET is_banned = false, banned_at = NULL WHERE id = $1', [report.reported_user_id]);
+        }
+        actionType = 'user_unbanned';
+      } else {
+        actionType = 'dismissed';
       }
-      actionType = 'content_hidden';
-    } else if (action === 'ban') {
-      if (report.reported_user_id) {
-        await pool.query('UPDATE users SET is_banned = true, banned_at = NOW() WHERE id = $1', [report.reported_user_id]);
-        // Ban must bite NOW: the socket handshake checks is_banned once, so an
-        // established connection would otherwise keep working indefinitely.
-        const io = req.app.get('io');
-        if (io) io.in(`user:${report.reported_user_id}`).disconnectSockets(true);
-      }
-      actionType = 'user_banned';
-    } else if (action === 'unban') {
-      if (report.reported_user_id) {
-        await pool.query('UPDATE users SET is_banned = false, banned_at = NULL WHERE id = $1', [report.reported_user_id]);
-      }
-      actionType = 'user_unbanned';
-    } else {
-      actionType = 'dismissed';
+
+      await client.query(
+        'UPDATE content_reports SET status = $1, handled_by = $2, resolved_at = NOW() WHERE id = $3',
+        [newStatus, req.user.id, reportId]
+      );
+      await client.query(
+        `INSERT INTO moderation_actions (report_id, moderator_id, target_user_id, action, content_type, content_id, reason)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+        [reportId, req.user.id, report.reported_user_id || null, actionType, report.content_type, report.content_id || null, reason || null]
+      );
+
+      await client.query('COMMIT');
+    } catch (txErr) {
+      await client.query('ROLLBACK').catch(() => {});
+      throw txErr;
+    } finally {
+      client.release();
     }
 
-    const newStatus = action === 'dismiss' ? 'dismissed' : 'resolved';
-    await pool.query(
-      'UPDATE content_reports SET status = $1, handled_by = $2, resolved_at = NOW() WHERE id = $3',
-      [newStatus, req.user.id, reportId]
-    );
-    await pool.query(
-      `INSERT INTO moderation_actions (report_id, moderator_id, target_user_id, action, content_type, content_id, reason)
-       VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-      [reportId, req.user.id, report.reported_user_id || null, actionType, report.content_type, report.content_id || null, reason || null]
-    );
+    // Ban must bite NOW: the socket handshake checks is_banned once, so an
+    // established connection would otherwise keep working indefinitely. Runs
+    // after COMMIT so a rolled-back ban never kicks anyone off.
+    if (banTargetId) {
+      const io = req.app.get('io');
+      if (io) io.in(`user:${banTargetId}`).disconnectSockets(true);
+    }
 
     res.json({ message: 'Action applied', status: newStatus, action: actionType });
   } catch (err) {
