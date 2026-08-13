@@ -190,9 +190,13 @@ async function executeTool(toolName, toolInput, userId, opts = {}) {
       const p = await resp.json();
       if (p.error) return { error: 'Venue not found' };
 
+      // The visitor's clock, not Railway's UTC — same contract as /api/crowd.
       const now = new Date();
-      const localHour = now.getHours();
-      const localDay = now.getDay();
+      const localHour = Number.isInteger(opts.localHour) ? opts.localHour : now.getHours();
+      const localDay = Number.isInteger(opts.localDay) ? opts.localDay : now.getDay();
+      const scoreTime = new Date(now);
+      scoreTime.setDate(scoreTime.getDate() + (localDay - scoreTime.getDay()));
+      scoreTime.setHours(localHour, 0, 0, 0);
 
       let openHour = null, closeHour = null;
       const periods = p.currentOpeningHours?.periods;
@@ -222,8 +226,8 @@ async function executeTool(toolName, toolInput, userId, opts = {}) {
       const lon = venue.location?.longitude;
       const weather = (lat && lon) ? await getWeather(lat, lon) : null;
 
-      const crowdResult = await mlPredictor.predictBusyness(venue, weather, now);
-      const fullDay = await mlPredictor.predictHourlyForecast(venue, weather, 6, 24, now);
+      const crowdResult = await mlPredictor.predictBusyness(venue, weather, scoreTime);
+      const fullDay = await mlPredictor.predictHourlyForecast(venue, weather, 6, 24, scoreTime);
       const peakResult = findPeakTime(fullDay, venue);
       const bestTime = findBestTime(fullDay, venue, peakResult.startIdx, peakResult.endIdx, venue.isOpen);
 
@@ -240,7 +244,7 @@ async function executeTool(toolName, toolInput, userId, opts = {}) {
       // Hour-by-hour forecasts are a Pro surface (forecast meter). Free-tier
       // users get now + best time + peak through Birdie, same as the app.
       if (opts.includeForecast) {
-        const hourly = await mlPredictor.predictHourlyForecast(venue, weather, localHour, 12, now);
+        const hourly = await mlPredictor.predictHourlyForecast(venue, weather, localHour, 12, scoreTime);
         result.hourly_forecast = hourly.map(h => ({ hour: h.hour, label: h.label, score: h.score }));
       } else {
         result.hourly_forecast_note = 'Hour-by-hour forecast is a Flock Pro feature; do not invent one.';
@@ -385,7 +389,18 @@ router.post('/chat',
     body('messages').isArray({ min: 1, max: 24 }).withMessage('messages array is required'),
     body('messages.*.text').optional().isString().isLength({ max: 4000 }).withMessage('Message too long'),
     body('location').optional(),
-    body('currentContext').optional(),
+    // Bounded: this is interpolated into the system prompt, so unbounded
+    // strings were a 1MB context bypass around the message caps (round 6).
+    body('currentContext').optional().isObject(),
+    body('currentContext.screen').optional().isString().isLength({ max: 40 }),
+    body('currentContext.tab').optional().isString().isLength({ max: 40 }),
+    body('currentContext.flock.name').optional().isString().isLength({ max: 120 }),
+    body('currentContext.flock.venue').optional().isString().isLength({ max: 120 }),
+    body('currentContext.flock.status').optional().isString().isLength({ max: 40 }),
+    body('currentContext.venue.name').optional().isString().isLength({ max: 120 }),
+    body('currentContext.venue.place_id').optional().isString().isLength({ max: 200 }),
+    body('localHour').optional().isInt({ min: 0, max: 23 }),
+    body('localDay').optional().isInt({ min: 0, max: 6 }),
   ],
   async (req, res) => {
     try {
@@ -502,9 +517,11 @@ router.post('/chat',
         // Execute all function calls
         const functionResponses = [];
         for (const part of functionCalls) {
-          const { name, args } = part.functionCall;
+          // Gemini 3.x matches responses to calls by id — dropping it makes
+          // tool-backed turns come back empty (round 6).
+          const { name, args, id } = part.functionCall;
           try {
-            const result = await executeTool(name, args || {}, userId, { includeForecast: !freeTier });
+            const result = await executeTool(name, args || {}, userId, { includeForecast: !freeTier, localHour: req.body.localHour, localDay: req.body.localDay });
 
             // Collect venue data for cards
             if (name === 'search_venues' && result.venues) {
@@ -523,18 +540,12 @@ router.post('/chat',
             }
 
             functionResponses.push({
-              functionResponse: {
-                name,
-                response: result,
-              },
+              functionResponse: { ...(id ? { id } : {}), name, response: result },
             });
           } catch (err) {
             console.error(`[AI] Tool ${name} failed:`, err.message);
             functionResponses.push({
-              functionResponse: {
-                name,
-                response: { error: err.message },
-              },
+              functionResponse: { ...(id ? { id } : {}), name, response: { error: err.message } },
             });
           }
         }
@@ -564,7 +575,8 @@ router.post('/chat',
             is_open: v.is_open,
             lat: v.lat,
             lng: v.lng,
-            crowd: v.crowd || null,
+            photo_url: v.photo_url || null,
+            crowd: typeof v.crowd === 'number' ? v.crowd : null,
             crowd_label: v.crowd_label || null,
           });
         }

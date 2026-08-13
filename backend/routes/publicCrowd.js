@@ -156,9 +156,11 @@ router.get('/demo/venues',
       const lat = +(+req.query.lat).toFixed(2); // ~1km buckets = shared cache
       const lng = +(+req.query.lng).toFixed(2);
       const q = (req.query.q || 'restaurants and bars').toLowerCase();
-      const { time: scoreTime, localHour } = clientNow(req);
+      const { time: scoreTime, localHour, localDay } = clientNow(req);
 
-      const cacheKey = `area:${lat}:${lng}:${q}:${localHour}`;
+      // localDay changes the score, so it MUST be in the key — otherwise a
+      // weekend request could poison the weekday cache (round 6).
+      const cacheKey = `area:${lat}:${lng}:${q}:${localDay}:${localHour}`;
       const cached = getCache(cacheKey);
       if (cached) return res.json(cached);
 
@@ -245,8 +247,8 @@ router.get('/demo/venue/:placeId',
       if (!API_KEY) return res.status(503).json({ error: DEMO_BUSY_MSG });
 
       const placeId = req.params.placeId;
-      const { time: scoreTime, localHour } = clientNow(req);
-      const cacheKey = `venue:${placeId}:${localHour}`;
+      const { time: scoreTime, localHour, localDay } = clientNow(req);
+      const cacheKey = `venue:${placeId}:${localDay}:${localHour}`;
       const cached = getCache(cacheKey);
       if (cached) return res.json(cached);
 

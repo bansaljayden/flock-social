@@ -120,15 +120,22 @@ function registerHandlers(io, socket) {
   // --- Venue rooms (live sensor + checkin updates) ---
   // Public-by-design: any authenticated user can subscribe to a venue's live stream.
   // No presence tracking — these are read-only feeds, not group chats.
+  // Bounded: unlimited unique ids grew Socket.io's room maps without limit
+  // (round 6). 25 venue rooms per socket is far more than any real session.
+  const venueRooms = new Set();
   socket.on('join_venue', (data) => {
+    if (!allowEvent(socket, 'join_venue', 30, 10_000)) return;
     const placeId = typeof data === 'string' ? data : data?.placeId;
-    if (!placeId) return;
+    if (!placeId || typeof placeId !== 'string' || placeId.length > 200) return;
+    if (!venueRooms.has(placeId) && venueRooms.size >= 25) return;
+    venueRooms.add(placeId);
     socket.join(`venue:${placeId}`);
   });
 
   socket.on('leave_venue', (data) => {
     const placeId = typeof data === 'string' ? data : data?.placeId;
     if (!placeId) return;
+    venueRooms.delete(placeId);
     socket.leave(`venue:${placeId}`);
   });
 

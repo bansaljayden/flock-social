@@ -6,6 +6,28 @@ const router = express.Router();
 
 const API_KEY = process.env.GOOGLE_PLACES_API_KEY;
 
+// Upstream budget for the UNAUTHENTICATED photo proxy: cache misses cost a
+// Google call, so one client cannot burn the quota (round 6). Cache hits are
+// free and never counted.
+const photoIpHits = new Map();
+let photoDayKey = new Date().toISOString().slice(0, 10);
+let photoDayCount = 0;
+const PUBLIC_PHOTO_BUDGET = 4000;
+function allowPhotoFetch(req) {
+  const today = new Date().toISOString().slice(0, 10);
+  if (today !== photoDayKey) { photoDayKey = today; photoDayCount = 0; }
+  if (photoDayCount >= PUBLIC_PHOTO_BUDGET) return false;
+  const now = Date.now();
+  const ip = req.ip || 'unknown';
+  const hits = (photoIpHits.get(ip) || []).filter((t) => now - t < 3600_000);
+  if (hits.length >= 300) return false;
+  hits.push(now);
+  photoIpHits.set(ip, hits);
+  if (photoIpHits.size > 5000) photoIpHits.clear();
+  photoDayCount++;
+  return true;
+}
+
 // In-memory photo cache (avoids re-fetching from Google on every page load)
 const photoCache = new Map();
 const PHOTO_CACHE_TTL = 60 * 60 * 1000; // 1 hour
@@ -36,6 +58,10 @@ router.get('/photo',
         res.set('Cache-Control', 'public, max-age=86400');
         res.set('Cross-Origin-Resource-Policy', 'cross-origin');
         return res.send(cached.buffer);
+      }
+
+      if (!allowPhotoFetch(req)) {
+        return res.status(429).json({ error: 'Too many photo requests right now' });
       }
 
       // Step 1: ask Google for the actual CDN url (JSON response)
