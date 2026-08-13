@@ -2,6 +2,7 @@ const express = require('express');
 const crypto = require('crypto');
 const { body, param, validationResult } = require('express-validator');
 const pool = require('../config/database');
+const { stripHtml } = require('../utils/sanitize');
 const { rejectIfProfane } = require('../utils/moderation');
 
 const router = express.Router();
@@ -111,7 +112,11 @@ router.post('/:token/rsvp',
     param('token').trim().isLength({ min: 8, max: 20 }),
     // max 60 matches the guest_rsvps.name column cap, so an over-long name is a
     // 400 here instead of a database error.
-    body('name').trim().isLength({ min: 1, max: 60 }).withMessage('Tell them who you are'),
+    // Round 13: this was the only user-writable name field in the app that
+    // skipped stripHtml, and it is written WITHOUT authentication then
+    // broadcast to every member over the `guest_rsvp` socket event. Sanitize
+    // before the length check so markup can't smuggle past the 60-char cap.
+    body('name').trim().customSanitizer(stripHtml).isLength({ min: 1, max: 60 }).withMessage('Tell them who you are'),
     body('status').isIn(['in', 'out']).withMessage('RSVP must be in or out'),
     body('guestToken').optional().isUUID(),
   ],

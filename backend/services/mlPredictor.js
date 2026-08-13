@@ -10,6 +10,7 @@ const crowdEngine = require('./crowdEngine');
 // inference must use the identical definition or the feature is garbage.
 const { isHoliday, isSchoolBreak } = require('../scripts/ml/config');
 const { specialNightContext } = require('../scripts/ml/specialNights');
+const { upstreamSignal } = require('../utils/upstream');
 
 const MODEL_DIR = path.join(__dirname, '..', 'scripts', 'ml', 'models');
 const ONNX_PATH = path.join(MODEL_DIR, 'crowd_model.onnx');
@@ -387,8 +388,12 @@ async function getNearbyEvents(lat, lng, timestamp) {
       sort: 'date,asc',
     });
 
+    // Round 12: event enrichment sits on the crowd-prediction path — without a
+    // deadline a slow Ticketmaster held every scored request open. The catch
+    // below already degrades to "no events". See utils/upstream.js.
     const response = await fetch(
-      `https://app.ticketmaster.com/discovery/v2/events.json?${params}`
+      `https://app.ticketmaster.com/discovery/v2/events.json?${params}`,
+      { signal: upstreamSignal('ticketmaster') }
     );
 
     if (!response.ok) {
