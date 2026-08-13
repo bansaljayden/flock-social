@@ -107,6 +107,15 @@ router.post('/:flockId/create',
           userId: parseInt(s.userId),
           amount: Math.round(parseFloat(s.amount) * 100) / 100,
         }));
+        // Round 3: every amount finite and non-negative, no duplicate users —
+        // negative shares could offset an oversized one and NaN skipped the
+        // total check entirely.
+        if (shares.some(s => !Number.isFinite(s.amount) || s.amount < 0)) {
+          return res.status(400).json({ error: 'Every share must be a valid non-negative amount' });
+        }
+        if (new Set(shares.map(s => s.userId)).size !== shares.length) {
+          return res.status(400).json({ error: 'Each member can appear only once in custom shares' });
+        }
         // Access control: every share must belong to an accepted flock member —
         // otherwise arbitrary user ids could be assigned debt + pushed notifications.
         const memberIds = new Set(members.map(m => m.id));
@@ -150,11 +159,14 @@ router.post('/:flockId/create',
         for (const share of shares) {
           const isPayer = share.userId === payerId;
           const wasCommitted = existingCommitments.has(share.userId);
+          const wasSettled = existingSettled.has(share.userId);
           const settledAt = isPayer ? new Date() : (existingSettled.get(share.userId) || null);
+          share.settled = isPayer || wasSettled; // response mirrors DB truth (round 3)
+          share.committed = wasCommitted;
           await client.query(
             `INSERT INTO bill_split_shares (bill_id, user_id, amount, committed, settled, settled_at)
              VALUES ($1, $2, $3, $4, $5, $6)`,
-            [billId, share.userId, share.amount, wasCommitted, isPayer || existingSettled.has(share.userId), settledAt]
+            [billId, share.userId, share.amount, wasCommitted, share.settled, settledAt]
           );
         }
 

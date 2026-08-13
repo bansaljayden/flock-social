@@ -44,7 +44,23 @@ router.get('/', async (req, res) => {
       [req.user.id]
     );
 
-    res.json({ flocks: result.rows });
+    // Non-accepted rows collapse to an invite card (round 3: the list was
+    // still handing invitees f.*, coordinates, and member previews even
+    // after the detail route got its minimal DTO)
+    const flocks = result.rows.map((f) => {
+      if (f.member_status === 'accepted') return f;
+      return {
+        id: f.id,
+        name: f.name,
+        venue_name: f.venue_name,
+        event_time: f.event_time,
+        creator_name: f.creator_name,
+        member_count: f.member_count,
+        member_status: f.member_status,
+        invitePreview: true,
+      };
+    });
+    res.json({ flocks });
   } catch (err) {
     console.error('Get flocks error:', err);
     res.status(500).json({ error: 'Failed to get flocks' });
@@ -473,7 +489,18 @@ router.put('/:id',
         }
       }
 
-      res.json({ flock: result.rows[0] });
+      // PRIVACY: RETURNING * carries the raw budget_ceiling — apply the same
+      // 3-submission threshold as every other surface before responding
+      // (review round 3: an innocuous update was a fourth door to the value).
+      const updated = { ...result.rows[0] };
+      if (updated.budget_ceiling != null) {
+        const thr = await pool.query(
+          `SELECT COUNT(*)::int AS n FROM budget_submissions WHERE flock_id = $1 AND skipped = false`,
+          [flockId]
+        );
+        if ((thr.rows[0]?.n || 0) < 3) updated.budget_ceiling = null;
+      }
+      res.json({ flock: updated });
     } catch (err) {
       console.error('Update flock error:', err);
       res.status(500).json({ error: 'Failed to update flock' });
@@ -650,6 +677,10 @@ router.post('/:id/invite',
         const userCheck = await pool.query('SELECT id, name FROM users WHERE id = $1', [uid]);
         if (userCheck.rows.length === 0) continue;
 
+        // Blocked pairs never invite each other (round 3: filtering only the
+        // socket notification still created the membership row)
+        if (await isBlockedBetween(req.user.id, uid)) continue;
+
         // Check if already a member
         const existing = await pool.query(
           'SELECT status FROM flock_members WHERE flock_id = $1 AND user_id = $2',
@@ -822,9 +853,11 @@ router.get('/:id/members', param('id').isInt(), async (req, res) => {
   try {
     const flockId = req.params.id;
 
-    // Verify user is a member
+    // ACCEPTED members only see the roster (round 3: invitees got every
+    // member's email from here). Email dropped from the payload entirely —
+    // flockmates don't need each other's addresses.
     const membership = await pool.query(
-      'SELECT id FROM flock_members WHERE flock_id = $1 AND user_id = $2',
+      "SELECT id FROM flock_members WHERE flock_id = $1 AND user_id = $2 AND status = 'accepted'",
       [flockId, req.user.id]
     );
     if (membership.rows.length === 0) {
@@ -832,7 +865,7 @@ router.get('/:id/members', param('id').isInt(), async (req, res) => {
     }
 
     const result = await pool.query(
-      `SELECT u.id, u.name, u.email, u.profile_image_url, fm.status, fm.joined_at
+      `SELECT u.id, u.name, u.profile_image_url, fm.status, fm.joined_at
        FROM flock_members fm
        JOIN users u ON u.id = fm.user_id
        WHERE fm.flock_id = $1

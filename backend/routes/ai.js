@@ -234,13 +234,15 @@ async function executeTool(toolName, toolInput, userId) {
     }
 
     case 'get_user_flocks': {
+      // Round 3: accepted flocks only (an invitee could pump the minimal
+      // invite card for full data via Birdie), and member COUNT instead of
+      // third parties' names — rosters stay out of the Gemini payload.
       const result = await pool.query(
-        `SELECT f.id, f.name, f.venue_name, f.venue_address, f.event_time, f.status,
-                json_agg(json_build_object('name', u.name, 'status', fm.status)) as members
+        `SELECT f.id, f.name, f.venue_name, f.event_time, f.status,
+                COUNT(*) FILTER (WHERE fm.status = 'accepted')::int AS member_count
          FROM flocks f
          JOIN flock_members fm ON fm.flock_id = f.id
-         JOIN users u ON u.id = fm.user_id
-         WHERE f.id IN (SELECT flock_id FROM flock_members WHERE user_id = $1)
+         WHERE f.id IN (SELECT flock_id FROM flock_members WHERE user_id = $1 AND status = 'accepted')
            AND f.status IN ('active', 'confirmed')
          GROUP BY f.id
          ORDER BY f.event_time DESC NULLS LAST

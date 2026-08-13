@@ -37,6 +37,11 @@ async function markFlockAttendance(userId, placeId) {
            SELECT id FROM flocks
            WHERE (venue_id = $2 OR venue_data->>'place_id' = $2)
              AND status NOT IN ('completed', 'cancelled')
+             -- Only within the event window (round 3: checking in today must
+             -- not pre-credit attendance for next week's flock — reliability
+             -- scores were inflatable above 100%)
+             AND event_time IS NOT NULL
+             AND NOW() BETWEEN event_time - INTERVAL '3 hours' AND event_time + INTERVAL '12 hours'
          )`,
       [userId, placeId]
     );
@@ -46,6 +51,8 @@ async function markFlockAttendance(userId, placeId) {
     console.error('Flock attendance update FAILED:', err.message);
   }
 }
+
+const anonTapCache = new Map(); // ip|place -> last anon tap ms
 
 // ---------------------------------------------------------------------------
 // GET /api/checkin/:placeId — NFC tap landing endpoint
@@ -57,6 +64,19 @@ router.get('/:placeId', async (req, res) => {
     if (!placeId) return res.status(400).json({ error: 'placeId required' });
 
     const userId = await tryAuth(req);
+
+    // Round 3: refreshing the NFC URL (or embedding it) minted unlimited
+    // anonymous check-in rows that fed straight into occupancy counts and
+    // future training data. Anonymous taps dedupe per IP+venue per 30 min.
+    if (!userId) {
+      const ipKey = `${req.ip}|${placeId}`;
+      const lastTap = anonTapCache.get(ipKey);
+      if (lastTap && Date.now() - lastTap < 30 * 60 * 1000) {
+        return res.json({ ok: true, deduped: true });
+      }
+      if (anonTapCache.size > 10000) anonTapCache.clear();
+      anonTapCache.set(ipKey, Date.now());
+    }
 
     const insert = await pool.query(
       `INSERT INTO venue_checkins (venue_place_id, user_id, checkin_source)

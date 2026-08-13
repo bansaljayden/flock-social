@@ -22,6 +22,22 @@ if (process.env.REACT_APP_POSTHOG_KEY) {
   posthog.init(process.env.REACT_APP_POSTHOG_KEY, {
     api_host: process.env.REACT_APP_POSTHOG_HOST || 'https://us.i.posthog.com',
     defaults: '2025-05-24',
+    // Privacy boundary (round 3): autocapture could vacuum up interacted DOM
+    // text (messages, budget amounts). We track pageviews + the explicit
+    // events in api.js — nothing else.
+    autocapture: false,
+    // Guest invite URLs carry bearer tokens (/i/<token>); scrub them from
+    // every event before it leaves the device.
+    before_send: (event) => {
+      if (!event) return event;
+      const scrub = (v) => (typeof v === 'string' ? v.replace(/\/i\/[A-Za-z0-9_-]+/g, '/i/:token') : v);
+      if (event.properties) {
+        for (const k of ['$current_url', '$pathname', '$referrer', '$initial_current_url', '$initial_referrer']) {
+          if (event.properties[k]) event.properties[k] = scrub(event.properties[k]);
+        }
+      }
+      return event;
+    },
   });
 }
 

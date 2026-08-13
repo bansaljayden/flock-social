@@ -146,10 +146,18 @@ router.put('/profile',
 
       const user = userResult.rows[0];
 
-      // Verify current password
-      const validPassword = await bcrypt.compare(current_password, user.password);
-      if (!validPassword) {
-        return res.status(401).json({ error: 'Current password is incorrect' });
+      // Verify current password. OAuth accounts have no password (round 3:
+      // bcrypt.compare against null threw and locked Google/Apple users out
+      // of every profile edit); their bearer token is their auth. They can't
+      // SET a password here either — that would bolt a second credential
+      // onto an OAuth account without any email-ownership verification.
+      if (user.password) {
+        const validPassword = await bcrypt.compare(current_password || '', user.password);
+        if (!validPassword) {
+          return res.status(401).json({ error: 'Current password is incorrect' });
+        }
+      } else if (new_password) {
+        return res.status(400).json({ error: 'This account signs in with Google or Apple and has no password.' });
       }
 
       // Check email uniqueness if changing email
