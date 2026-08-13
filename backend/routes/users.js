@@ -118,7 +118,11 @@ router.put('/profile',
     body('email').optional().isEmail().withMessage('Valid email required'),
     body('phone').optional(),
     body('interests').optional().isArray(),
-    body('current_password').notEmpty().withMessage('Current password is required'),
+    // Optional at the validator layer: OAuth accounts have no password, and a
+    // notEmpty() here 400'd their profile edits before the OAuth-aware handler
+    // below could run. Password accounts still fail closed — the bcrypt
+    // compare against a missing value returns 401.
+    body('current_password').optional().isString(),
     body('new_password').optional()
       .isLength({ min: 8 }).withMessage('New password must be at least 8 characters')
       .matches(/[A-Z]/).withMessage('Password must contain at least one uppercase letter')
@@ -302,10 +306,16 @@ router.get('/search',
 
       const searchTerm = `%${req.query.q}%`;
 
+      // Mutual invisibility: blocked pairs never rediscover each other here.
       const result = await pool.query(
         `SELECT id, name, profile_image_url
          FROM users
          WHERE name ILIKE $1 AND id != $2
+           AND NOT EXISTS (
+             SELECT 1 FROM user_blocks b
+             WHERE (b.blocker_id = $2 AND b.blocked_id = users.id)
+                OR (b.blocker_id = users.id AND b.blocked_id = $2)
+           )
          LIMIT 20`,
         [searchTerm, req.user.id]
       );
@@ -327,6 +337,11 @@ router.get('/suggested', async (req, res) => {
        JOIN flock_members fm2 ON fm2.flock_id = fm1.flock_id AND fm2.user_id != fm1.user_id AND fm2.status = 'accepted'
        JOIN users u ON u.id = fm2.user_id
        WHERE fm1.user_id = $1 AND fm1.status = 'accepted'
+         AND NOT EXISTS (
+           SELECT 1 FROM user_blocks b
+           WHERE (b.blocker_id = $1 AND b.blocked_id = u.id)
+              OR (b.blocker_id = u.id AND b.blocked_id = $1)
+         )
        GROUP BY u.id, u.name, u.profile_image_url
        ORDER BY shared_flocks DESC, u.name ASC
        LIMIT 10`,
