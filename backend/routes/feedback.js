@@ -66,13 +66,42 @@ router.post('/',
           return res.status(429).json({ error: 'Too many reports in a short time. Try again later.' });
         }
 
+        // Round 5: mark feedback "verified" only when we have independent
+        // evidence the user was actually there — a recent check-in at the
+        // venue, or accepted membership in a flock that met at this venue
+        // around now. Unverified rows are still stored (product UX) but are
+        // excluded from live calibration and training export: otherwise
+        // Sybil accounts could steer public crowd predictions and poison
+        // future model features with fabricated reports.
+        const verifiedCheck = await client.query(
+          `SELECT
+             EXISTS (
+               SELECT 1 FROM venue_checkins
+               WHERE user_id = $1
+                 AND venue_place_id = $2
+                 AND created_at > NOW() - INTERVAL '5 hours'
+             )
+             OR EXISTS (
+               SELECT 1
+               FROM flock_members fm
+               JOIN flocks f ON f.id = fm.flock_id
+               WHERE fm.user_id = $1
+                 AND fm.status = 'accepted'
+                 AND f.venue_id = $2
+                 AND f.event_time BETWEEN NOW() - INTERVAL '12 hours'
+                                      AND NOW() + INTERVAL '12 hours'
+             ) AS verified`,
+          [req.user.id, venue_place_id]
+        );
+        const verified = verifiedCheck.rows[0]?.verified === true;
+
         const result = await client.query(
           `INSERT INTO venue_feedback
-            (user_id, flock_id, venue_place_id, venue_name, crowd_level, price_worth, rating, predicted_score, day_of_week, hour)
+            (user_id, flock_id, venue_place_id, venue_name, crowd_level, price_worth, rating, predicted_score, day_of_week, hour, verified)
           VALUES
-            ($1, $2, $3, $4, $5, $6, $7, $8, EXTRACT(DOW FROM NOW()), EXTRACT(HOUR FROM NOW()))
+            ($1, $2, $3, $4, $5, $6, $7, $8, EXTRACT(DOW FROM NOW()), EXTRACT(HOUR FROM NOW()), $9)
           RETURNING *`,
-          [req.user.id, flock_id || null, venue_place_id, venue_name, crowd_level, price_worth ?? null, rating || null, predicted_score ?? null]
+          [req.user.id, flock_id || null, venue_place_id, venue_name, crowd_level, price_worth ?? null, rating || null, predicted_score ?? null, verified]
         );
         inserted = result.rows[0];
 

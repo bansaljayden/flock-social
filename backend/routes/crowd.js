@@ -192,6 +192,7 @@ router.get('/:placeId',
         const fbResult = await pool.query(
           `SELECT crowd_level, predicted_score FROM venue_feedback
            WHERE venue_place_id = $1 AND day_of_week = $2 AND hour BETWEEN $3 AND $4
+             AND verified = true -- only presence-verified reports: Sybil accounts could steer public predictions (REVIEW-ROUND5)
            ORDER BY created_at DESC LIMIT 50`,
           [placeId, localDay, Math.max(0, localHour - 1), Math.min(23, localHour + 1)]
         );
@@ -287,7 +288,8 @@ router.post('/batch',
           `SELECT venue_place_id, crowd_level, predicted_score FROM venue_feedback
            WHERE venue_place_id = ANY($1::text[])
              AND day_of_week = $2
-             AND hour BETWEEN $3 AND $4`,
+             AND hour BETWEEN $3 AND $4
+             AND verified = true -- only presence-verified reports: Sybil accounts could steer public predictions (REVIEW-ROUND5)`,
           [placeIds, batchDay, Math.max(0, batchHour - 1), Math.min(23, batchHour + 1)]
         );
         for (const row of fbResult.rows) {

@@ -54,7 +54,8 @@ router.get('/flocks/:id/messages',
 
       if (before) {
         messagesQuery = `
-          SELECT m.*, u.name AS sender_name, u.profile_image_url AS sender_image
+          -- Giant legacy base64 avatars would be repeated on every one of up to 100 rows; drop oversized ones instead of amplifying them (REVIEW-ROUND5)
+          SELECT m.*, u.name AS sender_name, CASE WHEN LENGTH(u.profile_image_url) > 12000 THEN NULL ELSE u.profile_image_url END AS sender_image
           FROM messages m
           LEFT JOIN users u ON u.id = m.sender_id
           WHERE m.flock_id = $1 AND m.id < $2
@@ -65,7 +66,8 @@ router.get('/flocks/:id/messages',
         params = [flockId, before, limit, invisibleArr];
       } else {
         messagesQuery = `
-          SELECT m.*, u.name AS sender_name, u.profile_image_url AS sender_image
+          -- Giant legacy base64 avatars would be repeated on every one of up to 100 rows; drop oversized ones instead of amplifying them (REVIEW-ROUND5)
+          SELECT m.*, u.name AS sender_name, CASE WHEN LENGTH(u.profile_image_url) > 12000 THEN NULL ELSE u.profile_image_url END AS sender_image
           FROM messages m
           LEFT JOIN users u ON u.id = m.sender_id
           WHERE m.flock_id = $1
@@ -373,7 +375,8 @@ router.get('/dm/:userId',
 
       if (before) {
         dmQuery = `
-          SELECT dm.*, u.name AS sender_name, u.profile_image_url AS sender_image
+          -- Giant legacy base64 avatars would be repeated on every one of up to 100 rows; drop oversized ones instead of amplifying them (REVIEW-ROUND5)
+          SELECT dm.*, u.name AS sender_name, CASE WHEN LENGTH(u.profile_image_url) > 12000 THEN NULL ELSE u.profile_image_url END AS sender_image
           FROM direct_messages dm
           JOIN users u ON u.id = dm.sender_id
           WHERE ((dm.sender_id = $1 AND dm.receiver_id = $2)
@@ -385,7 +388,8 @@ router.get('/dm/:userId',
         params = [req.user.id, otherUserId, before, limit];
       } else {
         dmQuery = `
-          SELECT dm.*, u.name AS sender_name, u.profile_image_url AS sender_image
+          -- Giant legacy base64 avatars would be repeated on every one of up to 100 rows; drop oversized ones instead of amplifying them (REVIEW-ROUND5)
+          SELECT dm.*, u.name AS sender_name, CASE WHEN LENGTH(u.profile_image_url) > 12000 THEN NULL ELSE u.profile_image_url END AS sender_image
           FROM direct_messages dm
           JOIN users u ON u.id = dm.sender_id
           WHERE ((dm.sender_id = $1 AND dm.receiver_id = $2)

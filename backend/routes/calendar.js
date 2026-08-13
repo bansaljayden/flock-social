@@ -6,27 +6,8 @@ const { authenticate } = require('../middleware/auth');
 const router = express.Router();
 router.use(authenticate);
 
-// Auto-create table on boot (same pattern as availability.js)
-(async () => {
-  try {
-    await pool.query(`
-      CREATE TABLE IF NOT EXISTS calendar_events (
-        id SERIAL PRIMARY KEY,
-        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-        title VARCHAR(120) NOT NULL,
-        venue VARCHAR(200),
-        event_date DATE NOT NULL,
-        time_label VARCHAR(20),
-        color VARCHAR(30),
-        created_at TIMESTAMPTZ DEFAULT NOW(),
-        updated_at TIMESTAMPTZ DEFAULT NOW()
-      )
-    `);
-    await pool.query(`CREATE INDEX IF NOT EXISTS idx_calendar_events_user_date ON calendar_events(user_id, event_date)`);
-  } catch (err) {
-    console.error('Failed to ensure calendar_events table:', err.message);
-  }
-})();
+// calendar_events table lives in migrations/003 — route-owned DDL raced the
+// migration runner on fresh deployments (see REVIEW-ROUND5).
 
 const rowToEvent = (r) => ({
   id: r.id,
