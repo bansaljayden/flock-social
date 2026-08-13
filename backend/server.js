@@ -20,7 +20,6 @@ const { Server } = require('socket.io');
 const cors = require('cors');
 const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
-const path = require('path');
 
 const { authenticateSocket } = require('./middleware/auth');
 const { registerHandlers } = require('./sockets/handlers');
@@ -119,8 +118,12 @@ app.use(helmet({
 app.use(express.json({ limit: '1mb' }));
 app.use(express.urlencoded({ extended: true }));
 
-// Serve uploaded files (deny dotfiles, no directory listing)
-app.use('/uploads', express.static(path.join(__dirname, 'uploads'), { dotfiles: 'deny', index: false }));
+// Round 12: the /uploads static mount is gone. Nothing writes to that
+// directory any more — routes/users.js buffers the one upload endpoint in
+// memory and stores the image as a data URL in users.profile_image_url —
+// and serving it from Railway's ephemeral filesystem was a promise the
+// platform could not keep: every redeploy emptied it while the column still
+// pointed at /uploads/<file>. No Railway volume is needed.
 
 // Health check — defined BEFORE the authenticated /api/* routers so their auth
 // middleware doesn't shadow it with a 401 (caught by the local E2E harness).
@@ -183,9 +186,15 @@ app.use('/api/checkin', apiLimiter, checkinRoutes);             // NFC tap + man
 app.use('/api/waitlist', apiLimiter, waitlistRoutes);           // PUBLIC, no auth — MUST stay before the /api catch-alls
 app.use('/api/public', apiLimiter, publicCrowdRoutes);          // PUBLIC, no auth — website live crowd demo (own per-IP + daily caps inside)
                                                                 // (was mounted after them, which 401'd every landing-page signup)
+// /api/users must also precede the two /api catch-alls. Those routers call
+// `router.use(authenticate)`, which runs for EVERY request under /api — so a
+// banned user's DELETE /api/users/me was rejected 403 there before it could
+// ever reach the ban-tolerant `authenticateAllowBanned` this router mounts on
+// that one route, breaking the right to erasure (Apple 5.1.1(v) / GDPR).
+// Neither catch-all defines any /users path, so the move changes nothing else.
+app.use('/api/users', apiLimiter, userRoutes);
 app.use('/api', apiLimiter, moderationRoutes);  // /api/reports, /api/blocks/* — before messages catch-all
 app.use('/api', apiLimiter, messageRoutes);     // Handles /api/flocks/:id/messages, /api/messages/:id/react, /api/dm/*
-app.use('/api/users', apiLimiter, userRoutes);
 app.use('/api/flocks', apiLimiter, venueRoutes); // Handles /api/flocks/:id/vote, /api/flocks/:id/votes
 app.use('/api/stories', apiLimiter, storyRoutes);     // Handles /api/stories
 app.use('/api/friends', apiLimiter, friendRoutes);    // Handles /api/friends, /api/friends/request, etc.

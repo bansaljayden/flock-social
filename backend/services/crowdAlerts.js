@@ -9,19 +9,38 @@ const { calculateCrowdScore, generateHourlyForecast } = require('./crowdEngine')
 const { getWeather } = require('./weatherService');
 const { pushAlways } = require('./pushHelper');
 
-// Track which alerts we've already sent: `${flockId}:${alertType}` -> timestamp
-const sentAlerts = new Map();
+const ALERT_TYPE = 'crowd';
 
-// Clean up old entries every hour
-setInterval(() => {
-  const now = Date.now();
-  for (const [key, ts] of sentAlerts) {
-    if (now - ts > 6 * 60 * 60 * 1000) sentAlerts.delete(key);
-  }
-}, 60 * 60 * 1000);
+// Round 12: dedupe used to be a per-process Map. server.js runs this sweep in
+// the WEB process, so a second Railway instance (or an overlapping deploy)
+// meant every member got the same push once per instance, and a restart
+// re-sent everything. The marker is now a row in crowd_alert_sends
+// (migration 007) claimed with INSERT ... ON CONFLICT DO NOTHING BEFORE any
+// push: exactly one process wins the primary key, the rest send nothing.
+async function claimAlert(flockId) {
+  const { rowCount } = await pool.query(
+    `INSERT INTO crowd_alert_sends (flock_id, alert_type)
+     VALUES ($1, $2)
+     ON CONFLICT (flock_id, alert_type) DO NOTHING`,
+    [flockId, ALERT_TYPE]
+  );
+  return rowCount === 1;
+}
+
+async function releaseAlert(flockId) {
+  await pool
+    .query('DELETE FROM crowd_alert_sends WHERE flock_id = $1 AND alert_type = $2', [flockId, ALERT_TYPE])
+    .catch(() => {});
+}
 
 async function checkCrowdAlerts() {
   try {
+    // Keep the marker table proportional to live flocks. Markers only need to
+    // outlive the 3-hour pre-event window they guard.
+    await pool
+      .query("DELETE FROM crowd_alert_sends WHERE sent_at < NOW() - INTERVAL '7 days'")
+      .catch((e) => console.warn('[CrowdAlerts] marker sweep failed:', e.message));
+
     // Find confirmed flocks with event_time in the next 3 hours that have a venue set
     const { rows: flocks } = await pool.query(`
       SELECT f.id, f.name, f.venue_id, f.venue_name, f.venue_latitude, f.venue_longitude, f.event_time
@@ -43,10 +62,14 @@ async function checkCrowdAlerts() {
 }
 
 async function processFlockAlert(flock) {
-  const alertKey = `${flock.id}:crowd`;
-
-  // Already sent an alert for this flock
-  if (sentAlerts.has(alertKey)) return;
+  // Cheap pre-check so a flock that was already alerted costs one indexed read
+  // instead of a weather call plus a scoring pass. The authoritative claim
+  // happens below, right before the pushes go out.
+  const already = await pool.query(
+    'SELECT 1 FROM crowd_alert_sends WHERE flock_id = $1 AND alert_type = $2',
+    [flock.id, ALERT_TYPE]
+  );
+  if (already.rowCount > 0) return;
 
   try {
     // Build venue object for crowd engine
@@ -58,13 +81,18 @@ async function processFlockAlert(flock) {
       rating: 0,
     };
 
-    // Try to get venue details from DB if we have them
+    // Try to get venue details from DB if we have them.
+    // Round 12: this read named columns that have never existed — ml_venues has
+    // google_place_id and google_types, not place_id/types (see
+    // database/ml-schema.sql). Every call threw, the catch below swallowed it,
+    // and NO confirmed flock has ever received a pre-event crowd push.
     const { rows: venueRows } = await pool.query(
-      `SELECT types, review_count, rating, price_level FROM ml_venues WHERE place_id = $1 LIMIT 1`,
+      `SELECT google_types, review_count, rating, price_level
+       FROM ml_venues WHERE google_place_id = $1 LIMIT 1`,
       [flock.venue_id]
     );
     if (venueRows.length) {
-      venue.types = venueRows[0].types || [];
+      venue.types = venueRows[0].google_types || [];
       venue.user_ratings_total = venueRows[0].review_count || 0;
       venue.rating = venueRows[0].rating || 0;
       venue.price_level = venueRows[0].price_level || 0;
@@ -129,18 +157,30 @@ async function processFlockAlert(flock) {
       [flock.id]
     );
 
-    // Send push to all members
-    for (const member of members) {
-      await pushAlways(member.user_id, title, body, {
-        type: 'crowd_alert',
-        flockId: String(flock.id),
-        score: String(eventScore.score),
-        label: eventScore.label,
-      });
-    }
+    if (!members.length) return;
 
-    // Mark as sent so we don't spam
-    sentAlerts.set(alertKey, Date.now());
+    // Claim BEFORE sending. Losing the race means another instance is already
+    // pushing this flock, so stop here rather than double-notifying.
+    if (!(await claimAlert(flock.id))) return;
+
+    // Send push to all members
+    let delivered = 0;
+    try {
+      for (const member of members) {
+        await pushAlways(member.user_id, title, body, {
+          type: 'crowd_alert',
+          flockId: String(flock.id),
+          score: String(eventScore.score),
+          label: eventScore.label,
+        });
+        delivered += 1;
+      }
+    } catch (pushErr) {
+      // Nothing went out — drop the claim so the next sweep can retry rather
+      // than the flock being permanently marked as alerted.
+      if (delivered === 0) await releaseAlert(flock.id);
+      throw pushErr;
+    }
 
     console.log(`[CrowdAlerts] Sent alert for flock ${flock.id} (${flock.venue_name}): score=${eventScore.score}`);
   } catch (err) {
