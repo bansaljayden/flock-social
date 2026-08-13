@@ -58,9 +58,41 @@ async function registerServiceWorker() {
   }
 }
 
+const isNativeApp = () =>
+  typeof window !== 'undefined' && window.Capacitor?.isNativePlatform?.() === true;
+
+// Native (Capacitor iOS/Android) path: @capacitor-firebase/messaging bridges
+// APNs -> FCM, so the token it returns works with the existing firebase-admin
+// send path on the backend. Web Notification/service-worker APIs don't exist
+// in the WKWebView — this branch replaces them entirely on device.
+// Requires (documented in PUSH-SETUP.md): GoogleService-Info.plist in the iOS
+// app, Push Notifications capability on the App ID, APNs key uploaded to
+// Firebase. Fails soft until those land.
+async function requestNativePermission() {
+  try {
+    const { FirebaseMessaging } = await import('@capacitor-firebase/messaging');
+    const perm = await FirebaseMessaging.requestPermissions();
+    if (perm.receive !== 'granted') {
+      localStorage.setItem('flock_notif_denied', 'true');
+      return null;
+    }
+    const { token } = await FirebaseMessaging.getToken();
+    if (!token) return null;
+    const platform = window.Capacitor.getPlatform() === 'android' ? 'android' : 'ios';
+    await registerDeviceToken(token, platform);
+    localStorage.removeItem('flock_notif_denied');
+    return token;
+  } catch (err) {
+    console.warn('[Push] Native registration failed:', err.message);
+    return null;
+  }
+}
+
 // Request notification permission and register the FCM token
 export async function requestNotificationPermission() {
   try {
+    if (isNativeApp()) return await requestNativePermission();
+
     const m = getFirebaseMessaging();
     if (!m) return null;
 
@@ -103,6 +135,20 @@ export async function requestNotificationPermission() {
 
 // Listen for foreground messages
 export function onForegroundMessage(callback) {
+  if (isNativeApp()) {
+    let remove = () => {};
+    import('@capacitor-firebase/messaging')
+      .then(({ FirebaseMessaging }) =>
+        FirebaseMessaging.addListener('notificationReceived', (event) => {
+          const n = event?.notification || {};
+          callback({ title: n.title || '', body: n.body || '', data: n.data || {} });
+        })
+      )
+      .then((handle) => { remove = () => handle.remove(); })
+      .catch(() => {});
+    return () => remove();
+  }
+
   const m = getFirebaseMessaging();
   if (!m) return () => {};
 
@@ -117,6 +163,11 @@ export function onForegroundMessage(callback) {
 
 // Check current notification permission status
 export function getNotificationStatus() {
+  if (isNativeApp()) {
+    // The web Notification API doesn't exist in the WKWebView; report from
+    // our own denial marker so the settings UI stays truthful.
+    return localStorage.getItem('flock_notif_denied') === 'true' ? 'denied' : 'default';
+  }
   if (!('Notification' in window)) return 'unsupported';
   return Notification.permission; // 'granted', 'denied', or 'default'
 }
