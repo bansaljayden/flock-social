@@ -13,15 +13,20 @@ Accurate from the code + privacy policy. Fill the bracketed blanks. Pair with
 - **Primary category:** Social Networking  · **Secondary:** Lifestyle
 - **Bundle ID:** com.flockcorp.flock · **SKU:** flock-ios-001
 
-### Age rating (questionnaire → expect 17+)
-Flock has unmoderated-in-realtime user chat, so answer honestly; this lands at
-**17+**, which is the safe rating for social/UGC apps (Apple reviewers often
-require it):
+### Age rating (questionnaire → expect 16+)
+Apple retired 12+ and 17+. The bands are **4+ / 9+ / 13+ / 16+ / 18+**, and the
+questionnaire computes the number, you don't pick it. Flock has user chat that
+is not moderated in real time, so answer honestly; that lands at **16+**:
 - Made for Kids: **No**
 - Unrestricted web access: **No**
-- User-generated content / social networking: **Yes** (Frequent/Intense → triggers 17+)
+- User-generated content / in-app chat: **Yes**, and describe the moderation
+  (report + block, mutual blocking, server-side review)
+- **Alcohol, tobacco, or drug references: Infrequent/Mild.** The app is built
+  around nights out and bars, so "None" is not accurate. It never depicts
+  drinking and sells nothing, so it is not Frequent/Intense.
 - Medical/Treatment, Gambling, Contests: **No**
-- Violence, sexual content, profanity, drugs: **None** (the *app* doesn't publish it; UGC is moderated)
+- Violence, sexual content, profanity, horror, mature themes: **None** (the
+  *app* doesn't publish it; UGC is reportable and moderated)
 
 ### App Privacy (Nutrition Labels) — Data collected
 For each: **Linked to identity = Yes**, **Used for tracking = No** (no IDFA, pseudonymous analytics).
@@ -54,11 +59,35 @@ Demo account: review@flockcorp.com / ReviewPass123
 This account has a flock ("Friday Night Out") with sample messages and a
 friend ("Sam Buddy") you can block.
 
-UGC moderation:
-- Long-press any message in a flock or DM -> Report (choose a reason) or Block.
-- Blocking is mutual: a blocked user can't message/find you and you don't see
-  their content (DMs and group flocks).
-- We act on reports promptly via an admin console; reports trigger alerts.
+UGC moderation. How to report a message, step by step (single TAP, there is
+no long-press gesture in this app):
+
+In a flock chat:
+1. Open the flock "Friday Night Out" from the Nest tab, then open its Chat tab.
+2. Single-tap the body of a message SOMEONE ELSE sent (a grey bubble on the
+   left). Your own blue bubbles on the right do not offer Report.
+3. A small row pops up directly under the bubble: four emoji, a reply arrow,
+   then a red flag at the right end of the row.
+4. Tap the red flag. The Report and Block sheet slides up from the bottom.
+5. Tap "Report this message", pick one of the seven reasons, add optional
+   details, tap "Submit report". A "Report received" toast confirms it.
+
+In a direct message:
+1. Open the Chats tab, then open the conversation with "Sam Buddy".
+2. Single-tap the body of a message Sam sent (grey bubble on the left).
+3. The same row appears just below the bubble: four emoji, a reply arrow, then
+   a red flag at the right end.
+4. Tap the red flag, then follow steps 4 and 5 above.
+
+Also available: the three-dot menu in the top right of any DM has "Report or
+block <name>", which opens the same sheet for the person rather than one
+message. Venue reviews have a flag next to each review.
+
+Blocking: the same sheet has "Block <name>". Blocking is mutual. A blocked
+user can't message or find you and you don't see their content, in both DMs
+and group flocks.
+
+We act on reports promptly via an admin console; reports trigger alerts.
 
 Age gate: first launch asks date of birth; under-13 is blocked (also enforced
 server-side at signup).
@@ -118,7 +147,11 @@ transit = Yes**, **User can request deletion = Yes**.
 ### Child Safety Standards (CSAE) self-certification — REQUIRED for Social apps
 - Published CSAE standards URL: **https://flock-app-w65m.vercel.app/guidelines**
   (the Community Guidelines page has a CSAE zero-tolerance section).
-- In-app reporting mechanism: **Yes** (Report on every message/profile).
+- In-app reporting mechanism: **Yes** — tap a received text message in a flock
+  chat or a DM to get a red flag, or use a DM's three-dot menu to report the
+  person. Reports go to `/api/reports`; blocking is mutual. (Do not describe
+  this as "on every message": image messages and venue cards have no per-item
+  flag yet. See "Pending App.js changes" in `SUBMIT-CHECKLIST.md`.)
 - CSAM handling self-cert: remove on actual knowledge, report to **NCMEC**.
 - Child-safety point of contact: **safety@flockcorp.com**.
 - File the declaration in Play Console → Policy → Child safety standards.
@@ -130,7 +163,12 @@ transit = Yes**, **User can request deletion = Yes**.
 ---
 
 ## C. Pre-submit gate (both stores)
-- [ ] `OPENMODERATOR_API_KEY` + `IMAGE_MODERATION_REQUIRED=true` set on the backend.
+- [ ] `VISION_API_KEY` + `IMAGE_MODERATION_REQUIRED=true` set on the backend.
+      (Not `OPENMODERATOR_API_KEY`. That name is dead: `backend/utils/moderation.js`
+      reads `VISION_API_KEY`, falling back to `GOOGLE_VISION_API_KEY`, and calls the
+      Google Cloud Vision SafeSearch endpoint. Setting the old name leaves
+      `IMAGE_PROVIDER_CONFIGURED` false. `STAGING.md` and `SUBMISSION.md` still
+      carry the dead name and need the same correction.)
 - [ ] `APPLE_*` revocation keys set (so deletion revokes Apple tokens).
 - [ ] Demo account seeded on the backend the build points at.
 - [ ] Re-run `/app-store-review` on `mobile/` → zero blockers.

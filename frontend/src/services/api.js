@@ -1,14 +1,32 @@
-import posthog from 'posthog-js';
-
 const BASE_URL = process.env.REACT_APP_API_URL || 'https://flock-app-production.up.railway.app';
 
 // Analytics — a tracking failure must never break a real request. Users are
 // identified by their id only; no email or name goes to PostHog.
+//
+// posthog-js is pulled in with a dynamic import and only when a key is
+// configured, so a build with analytics switched off never ships the SDK at
+// all. index.js owns init() (including the guest-invite-token scrub in
+// before_send); this module only reaches for the singleton, which is the same
+// webpack module instance either way. Calls that land before init are dropped
+// exactly as they were when this was a static import.
+let posthogPromise = null;
+function withPostHog(fn) {
+  if (!process.env.REACT_APP_POSTHOG_KEY) return;
+  if (!posthogPromise) {
+    posthogPromise = import('posthog-js').then((m) => m.default).catch(() => null);
+  }
+  posthogPromise.then((posthog) => {
+    if (!posthog) return;
+    try { fn(posthog); } catch (_) { /* analytics only */ }
+  });
+}
+
 function track(event, props) {
-  try { posthog.capture(event, props); } catch (_) { /* analytics only */ }
+  withPostHog((posthog) => posthog.capture(event, props));
 }
 function identifyUser(user) {
-  try { if (user?.id) posthog.identify(String(user.id)); } catch (_) { /* analytics only */ }
+  if (!user?.id) return;
+  withPostHog((posthog) => posthog.identify(String(user.id)));
 }
 
 function getToken() {
@@ -209,7 +227,7 @@ export function logout() {
   clearToken();
   // Round 3: without reset, activity on a shared device stays attributed to
   // the previous account, and the next login can merge identities.
-  try { posthog.reset(); } catch (_) { /* analytics only */ }
+  withPostHog((posthog) => posthog.reset());
 }
 
 // Flock Pro — { isPremium, paywallEnabled, birdie: { limit, used, remaining } }.
@@ -311,6 +329,59 @@ export async function createFlock({ name, venue_name, venue_address, venue_id, v
 
 export async function deleteFlock(id) {
   return request(`/api/flocks/${id}`, { method: 'DELETE' });
+}
+
+// --- Flock edits (PUT /api/flocks/:id, creator only) ---
+//
+// App.js used to call this route with two bare fetch()es that never looked at
+// res.ok, so a 403 (not the creator), a 404 (deleted flock) or a 400 all read
+// as success and the optimistic local state quietly diverged from the server.
+// Routed through request(), they now throw the standard error object
+// (err.status, err.code, err.data) that every other caller already handles.
+//
+// The nullish stripping is not cosmetic. backend/routes/flocks.js validates
+// with express-validator v7, whose .optional() skips `undefined` only — it
+// does NOT skip `null`. Sending `venue_latitude: null` (which the old App.js
+// code did on every venue with no coordinates) fails isFloat() and the whole
+// request comes back 400 with nothing saved. Omit the key instead.
+function withoutNullish(obj) {
+  const out = {};
+  for (const [k, v] of Object.entries(obj)) {
+    if (v !== null && v !== undefined) out[k] = v;
+  }
+  return out;
+}
+
+// Assign or change a flock's venue.
+// venue: { name, addr, place_id, lat, lng, rating, photo_url }
+// Resolves to the updated flock row. Throws on any non-2xx.
+export async function saveFlockVenue(flockId, venue = {}) {
+  return request(`/api/flocks/${flockId}`, {
+    method: 'PUT',
+    body: JSON.stringify(withoutNullish({
+      venue_name: venue.name,
+      venue_address: venue.addr,
+      venue_id: venue.place_id,
+      venue_latitude: venue.lat,
+      venue_longitude: venue.lng,
+      venue_rating: venue.rating,
+      venue_photo_url: venue.photo_url,
+    })),
+  });
+}
+
+// Move a flock through its lifecycle. Statuses match the server's enum
+// exactly; anything else is rejected here rather than spending a round trip.
+const FLOCK_STATUSES = ['planning', 'confirmed', 'completed', 'cancelled'];
+
+export async function setFlockStatus(flockId, status) {
+  if (!FLOCK_STATUSES.includes(status)) {
+    throw new Error(`Unknown flock status: ${status}`);
+  }
+  return request(`/api/flocks/${flockId}`, {
+    method: 'PUT',
+    body: JSON.stringify({ status }),
+  });
 }
 
 export async function leaveFlock(id) {

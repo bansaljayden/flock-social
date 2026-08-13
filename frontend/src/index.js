@@ -1,9 +1,8 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
-import * as Sentry from '@sentry/react';
-import posthog from 'posthog-js';
 import './index.css';
 import reportWebVitals from './reportWebVitals';
+import ErrorBoundary from './components/ErrorBoundary';
 
 // Guest invite URLs carry a bearer token in the path (/i/<token>): anyone
 // holding one can RSVP and vote as that guest. Keep them out of every
@@ -12,60 +11,73 @@ const scrubGuestToken = (v) =>
   (typeof v === 'string' ? v.replace(/\/i\/[A-Za-z0-9_-]+/g, '/i/:token') : v);
 
 // Sentry (B3) — no-op until REACT_APP_SENTRY_DSN is set (Vercel env). Never commit the DSN.
+//
+// Both SDKs below are behind an env-var check but used to be STATIC imports,
+// so every build shipped both of them in the entry chunk whether or not they
+// could ever run. They are dynamic imports now: with no DSN and no PostHog
+// key, neither package is fetched at all. The init options are unchanged,
+// scrubbing included. The one accepted cost is that Sentry attaches a moment
+// after boot, so a crash in the first few hundred ms and the pageload
+// transaction can be missed; ErrorBoundary re-reports render crashes through
+// the same lazily-loaded SDK, which covers the case that matters.
 if (process.env.REACT_APP_SENTRY_DSN) {
-  Sentry.init({
-    dsn: process.env.REACT_APP_SENTRY_DSN,
-    environment: process.env.NODE_ENV,
-    integrations: [Sentry.browserTracingIntegration()],
-    tracesSampleRate: 0.1,
-    // Round 10: PostHog scrubbed invite tokens but Sentry did not, so an error
-    // or transaction raised on a guest page exported a replayable token in its
-    // URL. Same scrub on every field that can carry one.
-    beforeSend(event) {
-      if (!event) return event;
-      if (event.request?.url) event.request.url = scrubGuestToken(event.request.url);
-      if (event.request?.headers?.Referer) event.request.headers.Referer = scrubGuestToken(event.request.headers.Referer);
-      if (Array.isArray(event.breadcrumbs)) {
-        for (const b of event.breadcrumbs) {
-          if (b?.data?.url) b.data.url = scrubGuestToken(b.data.url);
-          if (typeof b?.message === 'string') b.message = scrubGuestToken(b.message);
+  import('@sentry/react').then((Sentry) => {
+    Sentry.init({
+      dsn: process.env.REACT_APP_SENTRY_DSN,
+      environment: process.env.NODE_ENV,
+      integrations: [Sentry.browserTracingIntegration()],
+      tracesSampleRate: 0.1,
+      // Round 10: PostHog scrubbed invite tokens but Sentry did not, so an error
+      // or transaction raised on a guest page exported a replayable token in its
+      // URL. Same scrub on every field that can carry one.
+      beforeSend(event) {
+        if (!event) return event;
+        if (event.request?.url) event.request.url = scrubGuestToken(event.request.url);
+        if (event.request?.headers?.Referer) event.request.headers.Referer = scrubGuestToken(event.request.headers.Referer);
+        if (Array.isArray(event.breadcrumbs)) {
+          for (const b of event.breadcrumbs) {
+            if (b?.data?.url) b.data.url = scrubGuestToken(b.data.url);
+            if (typeof b?.message === 'string') b.message = scrubGuestToken(b.message);
+          }
         }
-      }
-      return event;
-    },
-    beforeSendTransaction(event) {
-      if (!event) return event;
-      if (event.request?.url) event.request.url = scrubGuestToken(event.request.url);
-      if (typeof event.transaction === 'string') event.transaction = scrubGuestToken(event.transaction);
-      return event;
-    },
-  });
+        return event;
+      },
+      beforeSendTransaction(event) {
+        if (!event) return event;
+        if (event.request?.url) event.request.url = scrubGuestToken(event.request.url);
+        if (typeof event.transaction === 'string') event.transaction = scrubGuestToken(event.transaction);
+        return event;
+      },
+    });
+  }).catch(() => { /* monitoring is never load-bearing */ });
 }
 
 // PostHog — no-op until REACT_APP_POSTHOG_KEY is set (Vercel env + local .env).
 // The phc_ key is public by design but stays in env vars per repo policy.
 // defaults '2025-05-24' = SPA pageviews on history changes + sane privacy defaults.
 if (process.env.REACT_APP_POSTHOG_KEY) {
-  posthog.init(process.env.REACT_APP_POSTHOG_KEY, {
-    api_host: process.env.REACT_APP_POSTHOG_HOST || 'https://us.i.posthog.com',
-    defaults: '2025-05-24',
-    // Privacy boundary (round 3): autocapture could vacuum up interacted DOM
-    // text (messages, budget amounts). We track pageviews + the explicit
-    // events in api.js — nothing else.
-    autocapture: false,
-    // Guest invite URLs carry bearer tokens (/i/<token>); scrub them from
-    // every event before it leaves the device.
-    before_send: (event) => {
-      if (!event) return event;
-      const scrub = scrubGuestToken;
-      if (event.properties) {
-        for (const k of ['$current_url', '$pathname', '$referrer', '$initial_current_url', '$initial_referrer']) {
-          if (event.properties[k]) event.properties[k] = scrub(event.properties[k]);
+  import('posthog-js').then(({ default: posthog }) => {
+    posthog.init(process.env.REACT_APP_POSTHOG_KEY, {
+      api_host: process.env.REACT_APP_POSTHOG_HOST || 'https://us.i.posthog.com',
+      defaults: '2025-05-24',
+      // Privacy boundary (round 3): autocapture could vacuum up interacted DOM
+      // text (messages, budget amounts). We track pageviews + the explicit
+      // events in api.js — nothing else.
+      autocapture: false,
+      // Guest invite URLs carry bearer tokens (/i/<token>); scrub them from
+      // every event before it leaves the device.
+      before_send: (event) => {
+        if (!event) return event;
+        const scrub = scrubGuestToken;
+        if (event.properties) {
+          for (const k of ['$current_url', '$pathname', '$referrer', '$initial_current_url', '$initial_referrer']) {
+            if (event.properties[k]) event.properties[k] = scrub(event.properties[k]);
+          }
         }
-      }
-      return event;
-    },
-  });
+        return event;
+      },
+    });
+  }).catch(() => { /* analytics is never load-bearing */ });
 }
 
 const root = ReactDOM.createRoot(document.getElementById('root'));
@@ -163,13 +175,21 @@ if (isMarketingRoot) {
 } else {
   const App = React.lazy(() => import('./App'));
   const { ThemeProvider } = require('./context/ThemeContext');
+  // The boundary sits OUTSIDE Suspense on purpose, so it also catches a failed
+  // chunk fetch — the App bundle 404ing against a stale cached index.html after
+  // a deploy is a real production failure mode, and unhandled it is the same
+  // white screen as a render crash. ThemeProvider writes data-theme onto
+  // <html> and never removes it, so the fallback still paints in the user's
+  // theme even though it renders after ThemeProvider has gone.
   root.render(
     <React.StrictMode>
-      <React.Suspense fallback={null}>
-        <ThemeProvider>
-          <App />
-        </ThemeProvider>
-      </React.Suspense>
+      <ErrorBoundary label="app-root">
+        <React.Suspense fallback={null}>
+          <ThemeProvider>
+            <App />
+          </ThemeProvider>
+        </React.Suspense>
+      </ErrorBoundary>
     </React.StrictMode>
   );
 }
