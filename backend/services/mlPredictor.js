@@ -188,7 +188,9 @@ async function getUserFeedback(placeId) {
         -- matches the checked-in model's training distribution.
         AVG((CASE crowd_level WHEN 1 THEN 20 WHEN 2 THEN 50 ELSE 80 END) - predicted_score)::numeric(5,2) AS avg_error_mapped,
         AVG(crowd_level - predicted_score)::numeric(5,2) AS avg_error_legacy
-      FROM venue_feedback WHERE venue_place_id = $1`,
+      -- verified only: unverified rows are stored for product UX but must not
+      -- move live predictions (round 6 — the round-5 filters missed this one)
+      FROM venue_feedback WHERE venue_place_id = $1 AND verified = true`,
       [placeId]
     );
     const r = rows[0];
