@@ -1,5 +1,13 @@
 # Flock Compliance Build — Adversarial Review (self-review)
 
+> **Historical record (audited 2026-08-13).** This captures the state at the
+> compliance build. Two things have since changed and are corrected inline
+> below: the image-moderation provider (OpenModerator is dead; it is Google
+> Cloud Vision now) and the "Mobile/UI is unproven" verdict (it refers to the
+> abandoned React Native app in `mobile/`, not the shipping Capacitor client).
+> Later adversarial passes live in `REVIEW-ROUND*-gpt56sol.md`, which are
+> gitignored and local-only.
+
 The external Codex adversarial review couldn't run (the ChatGPT account has no
 Codex model entitlement — auth works, the model allowlist is empty). This is the
 honest substitute: a critical pass over the *design*, not just the code, grounded
@@ -7,13 +15,19 @@ in the bugs the local E2E harness actually caught.
 
 ## What is PROVEN vs ASSUMED
 - **Backend: proven.** `backend/scripts/e2e-local.js` boots a real Postgres,
-  applies schema + migrations, and exercises the endpoints over HTTP — **31/31**
+  applies schema + migrations, and exercises the endpoints over HTTP —
   including age gate, content filter, report, mutual block + unblock, admin
   hide/ban, banned-can-still-delete, deletion cascade, and authz boundaries.
+  (The original "31/31" is stale: the harness carries 34 assertions today and
+  prints its own pass/fail line. Read the output, don't quote a number.)
 - **Mobile/UI: assumed.** Parse-checked only. The age screen, terms checkbox,
   report/block sheets, and DOB threading have NOT run on a device. First boot
   will surface render/runtime issues no static check catches. This is the single
   biggest unverified surface.
+  > **Updated:** this referred to the React Native app in `mobile/`, which is no
+  > longer the launch path. The shipping client is the Capacitor app in
+  > `frontend/`, which HAS been device-tested (build 16). Treat the UI-unproven
+  > verdict as retired; the surface it names no longer ships.
 
 ## Bugs the harness caught (would have shipped otherwise)
 1. Fresh DB needs `schema.sql` before migrations — staging bootstrap order.
@@ -36,9 +50,13 @@ in the bugs the local E2E harness actually caught.
   (NSFW filter + reporting + CSAE policy + NCMEC escalation), but do NOT describe
   it as "CSAM detection" anywhere. Already worded correctly in SUBMISSION.md.
 - **Image moderation is fail-CLOSED but unconfigured.** Correct default, but in
-  prod it only actually screens when `OPENMODERATOR_API_KEY` + `IMAGE_MODERATION_
+  prod it only actually screens when the provider key + `IMAGE_MODERATION_
   REQUIRED=true` are set. Until then it's allow-with-warning. Ship-blocker if
   forgotten — it's in the env checklist.
+  > **Updated:** the provider is now **Google Cloud Vision SafeSearch**, keyed by
+  > `VISION_API_KEY`. OpenModerator's hosted service was shut down by its owner,
+  > so the `OPENMODERATOR_API_KEY` path named in the original review could never
+  > have worked. See `backend/utils/moderation.js:53-70`.
 - **Age gate: device-local screen + server enforcement.** The device screen is
   bypassable (reinstall), so the server now recomputes age from the submitted DOB
   and 403s under-13 + stores it. Residual: enforcement is "when DOB present"; a
