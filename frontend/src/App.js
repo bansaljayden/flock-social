@@ -824,7 +824,9 @@ const LIGHT_VECTOR_STYLE = MAPTILER_KEY
   ? `https://api.maptiler.com/maps/basic-v2/style.json?key=${MAPTILER_KEY}`
   : 'https://basemaps.cartocdn.com/gl/positron-gl-style/style.json';
 const isAppDark = () => document.documentElement.getAttribute('data-theme') === 'dark';
-const ROADMAP_STYLE = () => (isAppDark() ? DARK_VECTOR_STYLE : LIGHT_VECTOR_STYLE);
+// Pass `dark` explicitly when you have it from React state; omit it to read the
+// live <html data-theme> (used at map construction, before any effect runs).
+const ROADMAP_STYLE = (dark) => ((dark === undefined ? isAppDark() : dark) ? DARK_VECTOR_STYLE : LIGHT_VECTOR_STYLE);
 // Satellite: prefer MapTiler "hybrid" (imagery + roads + place labels overlaid)
 // when key is set; falls back to bare ESRI raster imagery if not.
 const SATELLITE_STYLE = MAPTILER_KEY
@@ -944,6 +946,14 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
   const fittedKeyRef = useRef(null); // result set the viewport was last framed to
   const [mapReady, setMapReady] = useState(false);
   const [mapType, setMapType] = useState(() => localStorage.getItem('flock_map_type') || 'roadmap');
+  /* The basemap follows the app theme. It used to be chosen ONCE, at map
+     construction, so flipping to dark mode left three quarters of Discover as a
+     bright blue-and-cream rectangle under navy chrome. The style is now swapped
+     whenever the theme changes, and every marker colour below is read from the
+     matching palette instead of the module-level light-mode constant. */
+  const { isDark: mapIsDark } = useTheme();
+  const mapPalette = mapIsDark ? colorsDark : colorsLight;
+  const appliedDarkRef = useRef(null);
 
   const DEFAULT_ZOOM = 12;
 
@@ -960,25 +970,29 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
     }
   });
 
-  // SVG fallback pin (no photo)
+  // SVG fallback pin (no photo). Inverted on the dark basemap: a navy pin body
+  // on dark tiles was a hole in the map.
   const buildPinSvg = useCallback((isActive, category) => {
-    const fill = isActive ? '#2d5a87' : '#1e293b';
-    const stroke = '#f1ede0';
+    const body = mapIsDark
+      ? (isActive ? '#6d9ac3' : '#f1ede0')
+      : (isActive ? '#2d5a87' : '#1e293b');
+    const edge = mapIsDark ? '#0b1220' : '#f1ede0';
+    const disc = mapIsDark ? '#0f172a' : '#ffffff';
     const initialMap = { Food: 'F', Nightlife: 'N', 'Live Music': 'M', Sports: 'S' };
     const initial = initialMap[category] || 'P';
     return `<svg aria-hidden="true" focusable="false" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 42">` +
       `<defs><filter id="s" x="-20%" y="-10%" width="140%" height="140%"><feDropShadow dx="0" dy="2" stdDeviation="2" flood-opacity="0.35"/></filter></defs>` +
-      `<path d="M16 0C7.16 0 0 7.16 0 16c0 12 16 26 16 26s16-14 16-26C32 7.16 24.84 0 16 0z" fill="${fill}" stroke="${stroke}" stroke-width="2" filter="url(#s)"/>` +
-      `<circle cx="16" cy="14.5" r="9" fill="white"/>` +
-      `<text x="16" y="18.5" text-anchor="middle" font-size="13" font-weight="bold" font-family="Hanken Grotesk,sans-serif" fill="${fill}">${initial}</text>` +
+      `<path d="M16 0C7.16 0 0 7.16 0 16c0 12 16 26 16 26s16-14 16-26C32 7.16 24.84 0 16 0z" fill="${body}" stroke="${edge}" stroke-width="2" filter="url(#s)"/>` +
+      `<circle cx="16" cy="14.5" r="9" fill="${disc}"/>` +
+      `<text x="16" y="18.5" text-anchor="middle" font-size="13" font-weight="bold" font-family="Hanken Grotesk,sans-serif" fill="${body}">${initial}</text>` +
       `</svg>`;
-  }, []);
+  }, [mapIsDark]);
 
   // Circular photo pin via canvas (same trick as the old impl, returns dataURL)
   const buildPhotoPin = useCallback((photoUrl, isActive) => {
     const size = isActive ? 54 : 44;
     const border = isActive ? 3.5 : 2.5;
-    const borderColor = isActive ? '#2d5a87' : '#f1ede0';
+    const borderColor = isActive ? (mapIsDark ? '#6d9ac3' : '#2d5a87') : '#f1ede0';
     return new Promise((resolve) => {
       const canvas = document.createElement('canvas');
       const dpr = 2;
@@ -1007,19 +1021,20 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
       img.onerror = () => resolve(null);
       img.src = photoUrl;
     });
-  }, []);
+  }, [mapIsDark]);
 
-  // Category ring color — maps to the same palette used elsewhere.
-  // Resolves CSS vars via the colors object so it follows light/dark theme.
+  // Category ring colour. This used to read the module-level `colors`, which is
+  // the LIGHT palette regardless of theme — so on the dark basemap the rings
+  // were navy on near-black and the pins lost their edge entirely.
   const categoryRingColor = useCallback((cat) => {
     switch (cat) {
-      case 'Food': return colors.food;
-      case 'Nightlife': return colors.nightlife;
-      case 'Live Music': return colors.music;
-      case 'Sports': return colors.sports;
-      default: return colors.steel;
+      case 'Food': return mapPalette.food;
+      case 'Nightlife': return mapPalette.nightlife;
+      case 'Live Music': return mapPalette.music;
+      case 'Sports': return mapPalette.sports;
+      default: return mapPalette.steel;
     }
-  }, []);
+  }, [mapPalette]);
 
   // Build a marker DOM element (pin or photo). The OUTER el is owned by MapLibre
   // (it sets transform every frame), so all visual styling + transitions live on
@@ -1236,6 +1251,27 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
     return () => { cancelled = true; if (resizeObs) resizeObs.disconnect(); };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
+  /* setStyle throws away every source and layer the app added, so anything
+     Flock owns has to go back on afterwards. Shared by the satellite toggle and
+     the light/dark swap below. (HTML markers survive a style swap; sources and
+     layers do not.) */
+  const rehydrateAfterStyleSwap = useCallback((map) => {
+    addOverlayLayers(map);
+    // Re-feed accuracy data
+    if (userLocation) {
+      const src = map.getSource('user-accuracy');
+      if (src) src.setData({ type: 'FeatureCollection', features: [metersCirclePolygon(userLocation.lat, userLocation.lng, userLocation.accuracy || 50)] });
+    }
+    // Re-feed heatmap data from current venues
+    const heatSrc = map.getSource('venue-heat');
+    if (heatSrc) {
+      const features = (venuesRef.current || [])
+        .filter(v => typeof v.crowd === 'number' && v.location?.latitude && v.location?.longitude)
+        .map(v => ({ type: 'Feature', geometry: { type: 'Point', coordinates: [v.location.longitude, v.location.latitude] }, properties: { weight: v.crowd / 100 } }));
+      heatSrc.setData({ type: 'FeatureCollection', features });
+    }
+  }, [userLocation]);
+
   // ---------- map type toggle (vector dark <-> satellite) ----------
   const toggleMapType = useCallback(async () => {
     const map = mapInstanceRef.current;
@@ -1244,24 +1280,23 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
     setMapType(newType);
     localStorage.setItem('flock_map_type', newType);
     queueSync({ mapType: newType });
-    map.setStyle(newType === 'roadmap' ? ROADMAP_STYLE() : SATELLITE_STYLE);
-    map.once('styledata', () => {
-      addOverlayLayers(map);
-      // Re-feed accuracy data
-      if (userLocation) {
-        const src = map.getSource('user-accuracy');
-        if (src) src.setData({ type: 'FeatureCollection', features: [metersCirclePolygon(userLocation.lat, userLocation.lng, userLocation.accuracy || 50)] });
-      }
-      // Re-feed heatmap data from current venues
-      const heatSrc = map.getSource('venue-heat');
-      if (heatSrc) {
-        const features = (venuesRef.current || [])
-          .filter(v => typeof v.crowd === 'number' && v.location?.latitude && v.location?.longitude)
-          .map(v => ({ type: 'Feature', geometry: { type: 'Point', coordinates: [v.location.longitude, v.location.latitude] }, properties: { weight: v.crowd / 100 } }));
-        heatSrc.setData({ type: 'FeatureCollection', features });
-      }
-    });
-  }, [mapType, userLocation]);
+    map.setStyle(newType === 'roadmap' ? ROADMAP_STYLE(mapIsDark) : SATELLITE_STYLE);
+    map.once('styledata', () => rehydrateAfterStyleSwap(map));
+  }, [mapType, mapIsDark, rehydrateAfterStyleSwap]);
+
+  // ---------- basemap follows the app theme ----------
+  useEffect(() => {
+    const map = mapInstanceRef.current;
+    if (!mapReady || !map) return;
+    // First pass records the theme the map was constructed with; only a real
+    // change after that costs a style fetch.
+    if (appliedDarkRef.current === null) { appliedDarkRef.current = mapIsDark; return; }
+    if (appliedDarkRef.current === mapIsDark) return;
+    appliedDarkRef.current = mapIsDark;
+    if (mapType !== 'roadmap') return; // satellite imagery has no light/dark twin
+    map.setStyle(ROADMAP_STYLE(mapIsDark));
+    map.once('styledata', () => rehydrateAfterStyleSwap(map));
+  }, [mapIsDark, mapReady, mapType, rehydrateAfterStyleSwap]);
 
   // ---------- user blue dot + accuracy ring ----------
   useEffect(() => {
@@ -3693,7 +3728,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
      So the numbers below are the real heights of the bottom chrome. The
      home-indicator inset is added on top with var(--safe-bottom) rather than
      baked in, per the SAFE-AREA CONTRACT in index.css. */
-  const TAB_BAR_H = 85;             // 10 top pad + 62 nav item + 12 bottom pad + 1 border
+  // Both measured in a browser at 390x844 (no home-indicator inset).
+  const TAB_BAR_H = 89;             // nav[aria-label="Main"]
   const DISCOVER_FILTER_BAR_H = 49; // Discover's Filters row sits above the tab bar
   const FAB_DOCK_GAP = 12;
 
@@ -7873,12 +7909,23 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           </div>
         )}
 
-        {/* Floating "See All Results" on map */}
+        {/* Floating "See All Results" on map. It moved from the bottom-right to
+            the top-right: the bottom-right band is the map's own control rail
+            (zoom, satellite, locate) plus the OSM attribution plus the docked
+            SOS button, and there is not 52px of clear height left in it. Under
+            the search bar is also where a result count belongs. It steps down
+            while the live-location banner is up so the two never stack.
+            No `glass-secondary` here. That class is `background: rgba(255,255,
+            255,0.07) !important` in dark, i.e. all but transparent, which is
+            fine over an app surface and invisible over the dark basemap — and
+            the !important beat any inline colour. This chip floats on tiles, so
+            it carries its own opaque face: cream with navy text in dark, the
+            same inversion the pins use. `glass-btn` (blur + press only) stays. */}
         {allVenues.length > 0 && !activeVenue && !showConnectPanel && !pickingVenueForCreate && (
           <button
-            className="hit44 glass-btn glass-secondary"
+            className="hit44 glass-btn"
             onClick={() => { setShowSearchResults(true); setShowSearchDropdown(false); }}
-            style={{ position: 'absolute', bottom: '12px', right: '12px', padding: '5px 10px', borderRadius: '9px', border: '1px solid var(--border-default)', background: 'var(--bg-card-solid)', color: 'var(--text-secondary)', fontSize: '12px', fontWeight: '600', cursor: 'pointer', boxShadow: 'var(--card-shadow-sm)' }}
+            style={{ position: 'absolute', top: sharingLocationForFlock ? '58px' : '12px', right: '12px', padding: '5px 10px', borderRadius: '9px', border: isDark ? '1px solid rgba(15,23,42,0.35)' : '1px solid var(--border-default)', background: isDark ? '#f1ede0' : 'var(--bg-card-solid)', color: isDark ? '#1e293b' : 'var(--text-secondary)', fontSize: '12px', fontWeight: '600', cursor: 'pointer', boxShadow: isDark ? '0 2px 10px rgba(0,0,0,0.45)' : 'var(--card-shadow-sm)' }}
           >
             All {allVenues.length} results
           </button>
@@ -15184,8 +15231,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                     </div>
                   </div>
                   {r.text && <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: '4px 0 0', lineHeight: '1.4' }}>{r.text}</p>}
+                  {/* Owner reply. No 2px side stripe — banned pattern
+                      (.claude/CLAUDE.md, SLOP-AUDIT.md). The reply is set apart
+                      by its own surface and an indent instead. */}
                   {r.venue_reply && (
-                    <div style={{ marginTop: '6px', padding: '6px 8px', backgroundColor: 'var(--bg-card-solid)', borderRadius: '6px', borderLeft: `2px solid ${colors.steel}` }}>
+                    <div style={{ marginTop: '6px', marginLeft: '10px', padding: '8px 10px', backgroundColor: 'var(--bg-card-solid)', borderRadius: '8px', border: '1px solid var(--border-subtle)' }}>
                       <p style={{ fontSize: '12px', fontWeight: '600', color: colors.steel, margin: '0 0 1px' }}>Owner Reply</p>
                       <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: 0 }}>{r.venue_reply}</p>
                     </div>
@@ -15577,19 +15627,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
         .link-hover:hover::after {
           width: 100%;
         }
-        /* Gradient text animation */
-        @keyframes gradientShift {
-          0% { background-position: 0% 50%; }
-          50% { background-position: 100% 50%; }
-          100% { background-position: 0% 50%; }
-        }
-        .gradient-text {
-          background: linear-gradient(135deg, #1e293b, #2d5a87, #4a7ba7, #1e293b);
-          background-size: 300% 300%;
-          -webkit-background-clip: text;
-          -webkit-text-fill-color: transparent;
-          animation: gradientShift 4s ease infinite;
-        }
+        /* The animated background-clip:text gradient that lived here is a
+           banned pattern (.claude/CLAUDE.md, SLOP-AUDIT.md) and nothing in the
+           app referenced it. Removed with its keyframes. */
         /* Notification badge bounce */
         @keyframes badgeBounce {
           0%, 100% { transform: scale(1); }
