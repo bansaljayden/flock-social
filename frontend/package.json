@@ -4,6 +4,8 @@
   "private": true,
   "dependencies": {
     "@capacitor-community/apple-sign-in": "^7.1.0",
+    "@capacitor-firebase/app": "^8.4.0",
+    "@capacitor-firebase/messaging": "^8.4.0",
     "@capacitor/app": "^8.1.0",
     "@capacitor/camera": "^8.2.0",
     "@capacitor/cli": "^8.4.0",
@@ -28,7 +30,7 @@
     "@testing-library/user-event": "^13.5.0",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
-    "firebase": "^12.10.0",
+    "firebase": "^12.17.1",
     "framer-motion": "^12.36.0",
     "gsap": "^3.14.2",
     "html5-qrcode": "^2.3.8",
