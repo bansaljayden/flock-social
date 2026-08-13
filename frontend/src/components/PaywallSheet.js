@@ -27,8 +27,8 @@ const FALLBACK_PLANS = {
   monthly: { price: '$3.99/mo' },
 };
 
-const TERMS_URL = 'https://flock-app-w65m.vercel.app/terms';
-const PRIVACY_URL = 'https://flock-app-w65m.vercel.app/privacy';
+const TERMS_URL = 'https://www.flockcorp.com/terms';
+const PRIVACY_URL = 'https://www.flockcorp.com/privacy';
 
 const FONT = "'Hanken Grotesk', -apple-system, BlinkMacSystemFont, sans-serif";
 

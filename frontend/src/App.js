@@ -11,7 +11,7 @@ import {
   formatCurrency,
   calculateProfitMargin
 } from './lib/finance';
-import { getCurrentUser, logout, isLoggedIn, getFlocks, getFlock, createFlock as apiCreateFlock, getMessages, sendMessage as apiSendMessage, updateProfile, searchVenues, searchUsers, getSuggestedUsers, sendFriendRequest, getVenueDetails, leaveFlock as apiLeaveFlock, getDMConversations, getDMs, getDmVenueVotes, getDmPinnedVenue, BASE_URL, inviteToFlock, acceptFlockInvite, declineFlockInvite, getFriends, acceptFriendRequest, declineFriendRequest, getPendingRequests, getOutgoingRequests, getFriendSuggestions, addFriendByCode, findFriendsByPhone, removeFriend, getTrustedContacts, addTrustedContact, updateTrustedContact, deleteTrustedContact, sendEmergencyAlert, shareLocationWithContacts, getUserStats, getCrowdPrediction, getCrowdBatch, getCrowdAlternatives, getWeather, submitVenueFeedback, uploadProfileImage, saveProfileImageUrl, submitBudget, getBudgetStatus, lockBudget, sendBudgetReminder, createBillSplit, getBillSplit, settleShare, ghostCommit, updatePaymentMethods, getPaymentLinks, getFeaturedEvents, searchEvents, getEventDetails, sendAiChat, getWeatherForecast, submitAttendance, getAdminAnalytics, createVenueProfile, getVenueProfile, updateVenueProfile, getVenuePromotions, createVenuePromotion, updateVenuePromotion, deleteVenuePromotion, getVenueEvents, createVenueEvent, updateVenueEvent, deleteVenueEvent, getIncomingFlocks, getVenueReviews, replyToReview, submitVenueReview, getPublicReviews, getPublicPromotions, deleteAccount } from './services/api';
+import { getCurrentUser, logout, isLoggedIn, getFlocks, getFlock, createFlock as apiCreateFlock, getMessages, sendMessage as apiSendMessage, updateProfile, searchVenues, searchUsers, getSuggestedUsers, sendFriendRequest, getVenueDetails, leaveFlock as apiLeaveFlock, getDMConversations, getDMs, sendDM as apiSendDM, getDmVenueVotes, getDmPinnedVenue, BASE_URL, inviteToFlock, acceptFlockInvite, declineFlockInvite, getFriends, acceptFriendRequest, declineFriendRequest, getPendingRequests, getOutgoingRequests, getFriendSuggestions, addFriendByCode, findFriendsByPhone, removeFriend, getTrustedContacts, addTrustedContact, updateTrustedContact, deleteTrustedContact, sendEmergencyAlert, shareLocationWithContacts, getUserStats, getCrowdPrediction, getCrowdBatch, getCrowdAlternatives, getWeather, submitVenueFeedback, uploadProfileImage, saveProfileImageUrl, submitBudget, getBudgetStatus, lockBudget, sendBudgetReminder, createBillSplit, getBillSplit, settleShare, ghostCommit, updatePaymentMethods, getPaymentLinks, getFeaturedEvents, searchEvents, getEventDetails, sendAiChat, getWeatherForecast, submitAttendance, getAdminAnalytics, createVenueProfile, getVenueProfile, updateVenueProfile, getVenuePromotions, createVenuePromotion, updateVenuePromotion, deleteVenuePromotion, getVenueEvents, createVenueEvent, updateVenueEvent, deleteVenueEvent, getIncomingFlocks, getVenueReviews, replyToReview, submitVenueReview, getPublicReviews, getPublicPromotions, deleteAccount } from './services/api';
 import { connectSocket, disconnectSocket, getSocket, joinFlock, leaveFlock, sendMessage as socketSendMessage, sendImageMessage as socketSendImage, startTyping, stopTyping, onNewMessage, onUserTyping, onUserStoppedTyping, emitLocation, stopSharingLocation as socketStopSharing, onLocationUpdate, onMemberStoppedSharing, socketSendDm, onNewDm, dmStartTyping, dmStopTyping, onDmUserTyping, onDmUserStoppedTyping, dmReact, dmRemoveReact, onDmReactionAdded, onDmReactionRemoved, dmVoteVenue, onDmNewVote, dmShareLocation, dmStopSharingLocation, onDmLocationUpdate, onDmMemberStoppedSharing, dmPinVenue, onDmVenuePinned, onFlockInviteReceived, onFlockInviteResponded, onFriendRequestReceived, onFriendRequestResponded, onBudgetUpdated, onBudgetLocked, onBudgetReminder, onBillCreated, onShareSettled, onBillFullySettled, onGhostCommitted, onNewVote, onVenueSelected, onFlockReactionAdded, onFlockReactionRemoved, onFlockDeleted, onFlockUpdated, onFlockMemberLeft } from './services/socket';
 import { requestNotificationPermission, onForegroundMessage, getNotificationStatus } from './services/firebase';
 import { unregisterAllTokens, setAvailability, clearAvailability, getMyAvailability, getFriendsAvailability, getSensorCurrent, getSensorHistory, checkInManual, getNfcCheckin, getCalendarEvents, createCalendarEvent, deleteCalendarEvent } from './services/api';
@@ -2690,13 +2690,14 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   }, [swipeState.id, swipeState.x]);
 
   // AI Assistant
-  const [aiMessages, setAiMessages] = useState([
-    { role: 'assistant', text: "Hey! I'm your Flock assistant. I can help you find venues, check crowd levels, and coordinate plans with friends. What can I help you with?" }
-  ]);
+  // Starts EMPTY — the empty state (Birdie himself + prompt chips) is the
+  // greeting; a canned assistant bubble on top of it was double chrome.
+  const [aiMessages, setAiMessages] = useState([]);
   const [aiInputHasText, setAiInputHasText] = useState(false);
   const aiInputHasTextRef = useRef(false);
   const aiInputValueRef = useRef('');
   const [aiTyping, setAiTyping] = useState(false);
+  const [aiRemaining, setAiRemaining] = useState(null); // free-tier daily chirps left, from the last reply
   const [aiChatMode, setAiChatMode] = useState('bubble'); // 'bubble' | 'panel' | 'fullscreen'
   const [aiShareVenue, setAiShareVenue] = useState(null); // venue to share to flock/DM
 
@@ -3188,7 +3189,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   // Drag FABs — smooth 60fps transform, snap to nearest corner on release
   const handleFabPointerDown = useCallback((e, id) => {
     const el = e.currentTarget;
-    el.setPointerCapture(e.pointerId);
+    try { el.setPointerCapture(e.pointerId); } catch (_) { /* synthetic/stale pointer ids have no capture */ }
     dragRef.current = { id, el, startX: e.clientX, startY: e.clientY, moved: false };
     el.style.transition = 'none';
     el.style.willChange = 'transform';
@@ -3545,8 +3546,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
         };
       }
 
-      // Send conversation history — skip initial greeting, include venue context
-      const messagesToSend = newMessages.slice(1).map(m => {
+      // Send the whole conversation (no canned greeting to skip anymore)
+      const messagesToSend = newMessages.map(m => {
         let text = m.text;
         // Include venue names in assistant messages so Birdie remembers what it recommended
         if (m.role === 'assistant' && m.venues && m.venues.length > 0) {
@@ -3556,12 +3557,15 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
       });
 
       const response = await sendAiChat(messagesToSend, location, currentContext);
+      if (typeof response.remaining === 'number') setAiRemaining(response.remaining);
       setAiMessages(prev => [...prev, { role: 'assistant', text: response.text, venues: response.venues || [], navigate: response.navigate || null }]);
     } catch (err) {
       if (err?.code === 'UPGRADE_REQUIRED') {
         // Free-tier daily meter hit — Birdie pitches Pro in character, then the
         // paywall sheet opens with the birdie-specific headline.
-        setAiMessages(prev => [...prev, { role: 'assistant', text: "that's all my free chirps for today 🐦 Flock Pro gets you unlimited me" }]);
+        // Honest pitch: Pro is 150 messages a day, not unlimited.
+        setAiMessages(prev => [...prev, { role: 'assistant', text: "that's my 10 free chirps for today. Flock Pro bumps me to 150 a day, or catch me tomorrow." }]);
+        setAiRemaining(0);
         setPaywallTrigger('birdie');
       } else {
         // Surface the server's friendly text when present (rate-limit, busy, etc.).
@@ -4089,6 +4093,55 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
     }
   }, [selectedFlockId]);
 
+  // Transmit one flock text message: optimistic bubble + socket (echo-
+  // reconciled) or HTTP fallback. Used by fresh sends AND tap-to-retry.
+  const transmitFlockMessage = useCallback(async (flockId, text) => {
+    // Optimistic local update
+    const tempId = Date.now();
+    addMessageToFlock(flockId, { id: tempId, sender: 'You', senderId: authUser?.id, senderImage: profilePic, time: 'Now', text, reactions: [], pending: true });
+
+    // Send via WebSocket when connected, HTTP only as the fallback —
+    // both paths persist server-side, so firing both stored every
+    // message twice (round 3: duplicates appeared on history reload).
+    const sock = getSocket();
+    if (sock?.connected) {
+      socketSendMessage(flockId, text);
+      // A connected socket doesn't prove persistence — rate limits,
+      // moderation, or a DB failure drop the message with no echo. If no
+      // echo arrives, the message shows as failed with tap-to-retry. An
+      // automatic HTTP retry here could DOUBLE the message whenever the
+      // socket insert succeeded but its echo got lost (round 5) — only the
+      // user can safely decide to send again.
+      const timer = setTimeout(() => {
+        if (!pendingEchoRef.current.has(tempId)) return;
+        pendingEchoRef.current.delete(tempId);
+        setFlocks(prev => prev.map(f => {
+          if (f.id !== flockId) return f;
+          return { ...f, messages: (f.messages || []).map(m => (m.id === tempId ? { ...m, pending: false, failed: true } : m)) };
+        }));
+      }, 8000);
+      pendingEchoRef.current.set(tempId, { flockId, text, timer });
+    } else {
+      try {
+        await apiSendMessage(flockId, text);
+      } catch {
+        setFlocks(prev => prev.map(f => {
+          if (f.id !== flockId) return f;
+          return { ...f, messages: (f.messages || []).map(m => (m.id === tempId ? { ...m, pending: false, failed: true } : m)) };
+        }));
+      }
+    }
+  }, [addMessageToFlock, authUser]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Tap-to-retry: drop the failed bubble, send the same text fresh.
+  const retryFailedMessage = useCallback((flockId, failedMsg) => {
+    setFlocks(prev => prev.map(f => {
+      if (f.id !== flockId) return f;
+      return { ...f, messages: (f.messages || []).filter(m => m.id !== failedMsg.id) };
+    }));
+    transmitFlockMessage(flockId, failedMsg.text);
+  }, [transmitFlockMessage]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // Send chat message — emit via WebSocket, fall back to HTTP
   const sendChatMessage = useCallback(async () => {
     const currentInput = chatInputRef.current;
@@ -4103,40 +4156,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
         clearTimeout(typingTimeoutRef.current);
         stopTyping(selectedFlockId);
       }
-
-      // Optimistic local update
-      const tempId = Date.now();
-      addMessageToFlock(selectedFlockId, { id: tempId, sender: 'You', senderId: authUser?.id, senderImage: profilePic, time: 'Now', text, reactions: [], pending: true });
-
-      // Send via WebSocket when connected, HTTP only as the fallback —
-      // both paths persist server-side, so firing both stored every
-      // message twice (round 3: duplicates appeared on history reload).
-      const sock = getSocket();
-      if (sock?.connected) {
-        socketSendMessage(selectedFlockId, text);
-        // A connected socket doesn't prove persistence — rate limits,
-        // moderation, or a DB failure drop the message with no echo. If no
-        // echo arrives, retry once over HTTP; if that fails too, say so.
-        const flockIdAtSend = selectedFlockId;
-        const timer = setTimeout(async () => {
-          if (!pendingEchoRef.current.has(tempId)) return;
-          pendingEchoRef.current.delete(tempId);
-          try {
-            await apiSendMessage(flockIdAtSend, text);
-          } catch {
-            showToast('Message failed to send', 'error');
-          }
-        }, 8000);
-        pendingEchoRef.current.set(tempId, { flockId: flockIdAtSend, text, timer });
-      } else {
-        try {
-          await apiSendMessage(selectedFlockId, text);
-        } catch {
-          showToast('Message failed to send', 'error');
-        }
-      }
+      transmitFlockMessage(selectedFlockId, text);
     }
-  }, [selectedFlockId, addMessageToFlock, authUser]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [selectedFlockId, transmitFlockMessage]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const getCategoryColor = (cat) => {
     switch(cat) {
@@ -4768,7 +4790,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   );
 
   // AI Bubble — draggable floating widget, snaps to corners
-  const lastAiMessage = aiMessages.length > 1 ? aiMessages[aiMessages.length - 1] : null;
+  const lastAiMessage = aiMessages.length > 0 ? aiMessages[aiMessages.length - 1] : null;
   const birdieIsRight = birdieCorner.includes('right');
   const AIBubble = () => currentScreen === 'main' && currentTab === 'home' && aiChatMode === 'bubble' && (
     <div
@@ -4922,7 +4944,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
         style={{ width: '280px', height: '280px', borderRadius: '50%', overflow: 'hidden', position: 'relative', cursor: 'grab', border: '3px solid rgba(255,255,255,0.3)', touchAction: 'none' }}
         onPointerDown={(e) => {
           cropDragRef.current = { startX: e.clientX - cropOffset.x, startY: e.clientY - cropOffset.y };
-          e.currentTarget.setPointerCapture(e.pointerId);
+          try { e.currentTarget.setPointerCapture(e.pointerId); } catch (_) { /* synthetic/stale pointer ids */ }
           e.currentTarget.style.cursor = 'grabbing';
         }}
         onPointerMove={(e) => {
@@ -5199,12 +5221,30 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
       reply_to: replyTo && !opts.noReply ? { id: replyTo.id, text: replyTo.text, sender: replyTo.sender } : null,
     };
     setDirectMessages(prev => prev.map(d => d.userId === selectedDmId ? { ...d, messages: [...d.messages, optimistic], lastMessage: text || 'Photo', lastMessageIsYou: true } : d));
-    socketSendDm(selectedDmId, text || '', {
-      message_type: msgType,
-      venue_data: opts.venue_data,
-      image_url: opts.image_url,
-      reply_to_id: replyTo && !opts.noReply ? replyTo.id : null,
-    });
+    // Socket when connected, REST when not — the socket helper silently does
+    // nothing while disconnected, which used to drop the message entirely
+    // while the sender kept seeing it (round 5).
+    const dmSock = getSocket();
+    if (dmSock?.connected) {
+      socketSendDm(selectedDmId, text || '', {
+        message_type: msgType,
+        venue_data: opts.venue_data,
+        image_url: opts.image_url,
+        reply_to_id: replyTo && !opts.noReply ? replyTo.id : null,
+      });
+    } else {
+      apiSendDM(selectedDmId, text || '', {
+        message_type: msgType,
+        venue_data: opts.venue_data,
+        image_url: opts.image_url,
+        reply_to_id: replyTo && !opts.noReply ? replyTo.id : null,
+      }).catch(() => {
+        showToast('Message failed to send', 'error');
+        setDirectMessages(prev => prev.map(d => d.userId === selectedDmId
+          ? { ...d, messages: d.messages.filter(m => m.id !== tempId) }
+          : d));
+      });
+    }
   }, [selectedDm, selectedDmId, dmReplyingTo, authUser]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Listen for real-time DMs
@@ -5311,6 +5351,18 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   }, []);
 
   // Emit DM location periodically when sharing
+  // If the person we're sharing DM location with blocks us, stop the interval
+  // immediately — the server refuses the events anyway (round 5).
+  useEffect(() => {
+    const sock = getSocket();
+    if (!sock) return;
+    const onBlockedBy = ({ userId }) => {
+      setDmSharingLocation(prev => (String(prev) === String(userId) ? null : prev));
+    };
+    sock.on('blocked_by', onBlockedBy);
+    return () => sock.off('blocked_by', onBlockedBy);
+  }, [dmSharingLocation]);
+
   useEffect(() => {
     if (!dmSharingLocation || !userLocation) return;
     dmShareLocation(dmSharingLocation, userLocation.lat, userLocation.lng);
@@ -5963,16 +6015,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   // AI Assistant Modal - Data
   const aiSuggestedQuestions = [
     { text: "Where's poppin rn?", icon: Icons.activity },
-    { text: "Pick a bar for us", icon: Icons.cocktail },
-    { text: "How do I add friends?", icon: Icons.users },
+    { text: "Pick a spot for tonight", icon: Icons.mapPin },
+    { text: "When should we head out?", icon: Icons.clock },
     { text: "How do I split a bill?", icon: Icons.dollar },
   ];
 
-  const aiQuickActions = [
-    { label: 'Scout Spots', icon: Icons.compass, action: () => { closeAiChat(); setCurrentTab('explore'); } },
-    { label: 'Rally the Flock', icon: Icons.users, action: () => { closeAiChat(); setCurrentScreen('create'); } },
-    { label: 'Check Plans', icon: Icons.calendar, action: () => { closeAiChat(); setCurrentTab('calendar'); } },
-  ];
 
   // AI Assistant — Expandable Chat (panel / fullscreen)
   const isAiPanel = aiChatMode === 'panel';
@@ -6025,10 +6072,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
               </div>
               <div>
                 <h2 style={{ fontSize: isAiPanel ? '14px' : '15px', fontWeight: 'bold', color: 'white', margin: 0 }}>Birdie</h2>
-                <p style={{ fontSize: '10px', color: 'rgba(255,255,255,0.7)', margin: 0, display: 'flex', alignItems: 'center', gap: '4px' }}>
-                  {Icons.sparkles('rgba(255,255,255,0.7)', 10)}
-                  <span>your personal wingman</span>
-                </p>
+                <p style={{ fontSize: '10px', color: 'rgba(255,255,255,0.7)', margin: 0 }}>knows what's good tonight</p>
               </div>
             </div>
             <div style={{ display: 'flex', gap: '6px' }}>
@@ -6051,18 +6095,6 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
             </div>
           </div>
 
-          {/* Quick Actions — only in fullscreen */}
-          {isAiFullscreen && (
-          <div style={{ padding: '10px 12px', backgroundColor: 'var(--bg-tertiary)', borderBottom: '1px solid var(--divider)', display: 'flex', gap: '8px', flexShrink: 0 }}>
-            {aiQuickActions.map((action, i) => (
-              <button key={i} onClick={action.action} style={{ flex: 1, padding: '8px', borderRadius: '10px', border: '1px solid var(--border-subtle)', backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '4px' }}>
-                {action.icon(colors.navy, 16)}
-                <span style={{ fontSize: '9px', fontWeight: '600', color: colors.navy }}>{action.label}</span>
-              </button>
-            ))}
-          </div>
-          )}
-
           {/* Messages */}
           <div className="birdie-bg" onPointerMove={(e) => {
             if (e.target.tagName === 'CANVAS') return;
@@ -6071,12 +6103,30 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
               canvas.dispatchEvent(new PointerEvent('pointermove', { clientX: e.clientX, clientY: e.clientY, bubbles: false, pointerId: e.pointerId, pointerType: e.pointerType }));
             }
           }} style={{ flex: 1, padding: '12px', overflowY: 'auto', position: 'relative' }}>
+            {/* Birdie himself — the 3D bird tracks your cursor. Full presence
+                while the chat is empty, fades to a whisper once it starts. */}
             <div
               data-spline-wrapper
-              style={{ position: 'absolute', inset: 0, zIndex: 0, filter: isDark ? 'none' : 'invert(1) hue-rotate(180deg) brightness(0.8) contrast(1.6) saturate(0.2) drop-shadow(0 0 12px rgba(0,0,0,0.2))', opacity: aiMessages.length <= 1 ? 1 : 0.12, transition: 'opacity 0.2s ease', pointerEvents: aiMessages.length <= 1 ? 'auto' : 'none' }}
+              style={{ position: 'absolute', inset: 0, zIndex: 0, filter: isDark ? 'none' : 'invert(1) hue-rotate(180deg) brightness(0.8) contrast(1.6) saturate(0.2) drop-shadow(0 0 12px rgba(0,0,0,0.2))', opacity: aiMessages.length === 0 ? 1 : 0.12, transition: 'opacity 0.2s ease', pointerEvents: aiMessages.length === 0 ? 'auto' : 'none' }}
             >
               <SplineScene scene="https://prod.spline.design/kZDDjO5HuC9GJUM2/scene.splinecode" style={{ width: '100%', height: '100%' }} />
             </div>
+
+            {/* Empty state: greeting + prompt chips layered under the bird */}
+            {aiMessages.length === 0 && (
+              <div style={{ position: 'absolute', left: 0, right: 0, bottom: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '10px', padding: '0 16px 18px', pointerEvents: 'none', zIndex: 1 }}>
+                <p style={{ fontSize: isAiPanel ? '13px' : '14px', fontWeight: '600', color: 'var(--text-primary)', margin: 0, textAlign: 'center' }}>hey, it's Birdie.</p>
+                <p style={{ fontSize: isAiPanel ? '11px' : '12px', color: 'var(--text-secondary)', margin: 0, textAlign: 'center', maxWidth: '260px', lineHeight: 1.5 }}>where's good tonight, how packed it is, what your flock is up to. ask away.</p>
+                <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', justifyContent: 'center', pointerEvents: 'auto' }}>
+                  {aiSuggestedQuestions.slice(0, isAiPanel ? 2 : 4).map((q, i) => (
+                    <button key={i} onClick={() => { aiInputValueRef.current = q.text; setAiInputHasText(true); aiInputHasTextRef.current = true; if (aiInputRef.current) aiInputRef.current.value = q.text; setTimeout(() => sendAiMessage(), 50); }} style={{ padding: '7px 12px', borderRadius: '16px', border: '1px solid var(--border-subtle)', backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer', fontSize: '12px', color: colors.navy, fontWeight: '600', display: 'flex', alignItems: 'center', gap: '5px' }}>
+                      {q.icon(colors.navy, 12)}
+                      {q.text}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
 
             {aiMessages.map((msg, i) => (
               <div key={i} style={{ display: 'flex', gap: '8px', marginBottom: '12px', flexDirection: msg.role === 'user' ? 'row-reverse' : 'row', position: 'relative', zIndex: 2 }}>
@@ -6106,73 +6156,67 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                   {msg.venues && msg.venues.length > 0 && (
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginTop: '8px' }}>
                       {msg.venues.map((v, vi) => {
-                        const crowd = typeof v.crowd === 'number' ? v.crowd : Math.round(20 + ((((v.place_id || v.name || '').charCodeAt(0) || 0) * 37) % 60));
-                        const crowdColor = crowd > 70 ? '#EF4444' : crowd > 40 ? '#F59E0B' : '#22C55E';
-                        const photoUrl = v.place_id ? `https://flock-app-production.up.railway.app/api/venues/photo/${v.place_id}` : null;
+                        // Real crowd data only. When Birdie hasn't checked this
+                        // venue, the card simply has no crowd row; a number
+                        // derived from the venue's name is a lie, not a design.
+                        const crowd = typeof v.crowd === 'number' ? v.crowd : null;
+                        const crowdColor = crowd == null ? null : crowd > 70 ? 'var(--accent-red-text)' : crowd > 40 ? '#B45309' : 'var(--accent-green-text)';
+                        const crowdBar = crowd == null ? null : crowd > 70 ? '#EF4444' : crowd > 40 ? '#F59E0B' : '#22C55E';
+                        // photo_url is a proxy ref path from the backend — the
+                        // old place-id URL never resolved (proxy takes ?ref=).
+                        const photoUrl = v.photo_url ? `${BASE_URL}${v.photo_url}` : null;
                         return (
-                        <div key={vi} style={{ borderRadius: '16px', border: '1px solid var(--border-subtle)', backgroundColor: 'var(--bg-card-solid)', overflow: 'hidden', boxShadow: '0 4px 20px rgba(0,0,0,0.12)', maxWidth: '280px', animation: `fadeSlideIn 0.4s ease-out ${vi * 0.1}s both` }}>
-                          {/* Venue Photo */}
+                        <div key={vi} style={{ borderRadius: '14px', border: '1px solid var(--border-default)', backgroundColor: 'var(--bg-card-solid)', overflow: 'hidden', boxShadow: 'var(--card-shadow-sm, 0 1px 3px rgba(0,0,0,0.05))', maxWidth: '280px', animation: `fadeSlideIn 0.35s ease-out ${vi * 0.08}s both` }}>
                           {photoUrl && (
-                            <img src={photoUrl} alt={v.name} style={{ width: '100%', height: '140px', objectFit: 'cover', display: 'block' }} onError={(e) => { e.target.style.display = 'none'; }} />
+                            <img src={photoUrl} alt="" loading="lazy" style={{ width: '100%', height: '120px', objectFit: 'cover', display: 'block' }} onError={(e) => { e.target.style.display = 'none'; }} />
                           )}
 
                           <div style={{ padding: '12px' }}>
-                            {/* Name + Open/Closed */}
-                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '4px' }}>
-                              <h4 style={{ fontSize: '14px', fontWeight: '700', color: colors.navy, margin: 0 }}>{v.name}</h4>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '8px' }}>
+                              <h4 style={{ fontSize: '14px', fontWeight: '700', color: 'var(--text-primary)', margin: 0, lineHeight: 1.25 }}>{v.name}</h4>
                               {v.is_open != null && (
-                                <span style={{ fontSize: '9px', fontWeight: '600', padding: '2px 6px', borderRadius: '6px', backgroundColor: v.is_open ? 'var(--accent-green-bg)' : 'var(--accent-red-bg)', color: v.is_open ? 'var(--accent-green-text)' : 'var(--accent-red-text)', flexShrink: 0, marginLeft: '6px' }}>{v.is_open ? 'Open' : 'Closed'}</span>
+                                <span style={{ fontSize: '10px', fontWeight: '600', padding: '2px 7px', borderRadius: '999px', backgroundColor: v.is_open ? 'var(--accent-green-bg)' : 'var(--accent-red-bg)', color: v.is_open ? 'var(--accent-green-text)' : 'var(--accent-red-text)', flexShrink: 0 }}>{v.is_open ? 'Open' : 'Closed'}</span>
                               )}
                             </div>
 
-                            {/* Address */}
-                            {v.address && (
-                              <div style={{ display: 'flex', alignItems: 'center', gap: '4px', marginBottom: '8px' }}>
-                                {Icons.mapPin('var(--text-secondary)', 11)}
-                                <span style={{ fontSize: '10px', color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{v.address.split(',').slice(0, 2).join(',')}</span>
+                            {/* One meta line: price · rating · street */}
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginTop: '4px', minWidth: 0 }}>
+                              {v.price_level != null && <span style={{ fontSize: '11px', color: 'var(--text-secondary)', fontWeight: '600', flexShrink: 0 }}>{'$'.repeat(v.price_level || 1)}</span>}
+                              {v.rating && (
+                                <span style={{ display: 'inline-flex', alignItems: 'center', gap: '3px', fontSize: '11px', color: 'var(--text-secondary)', fontWeight: '600', flexShrink: 0 }}>
+                                  {Icons.starFilled('#d97706', 11)}{v.rating}
+                                </span>
+                              )}
+                              {v.address && (
+                                <span style={{ fontSize: '11px', color: 'var(--text-tertiary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{v.address.split(',')[0]}</span>
+                              )}
+                            </div>
+
+                            {/* Crowd row — only when Birdie actually checked */}
+                            {crowd != null && (
+                              <div style={{ marginTop: '10px' }}>
+                                <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: '4px' }}>
+                                  <span style={{ fontSize: '11px', color: 'var(--text-secondary)', fontWeight: '500' }}>{v.crowd_label || 'Crowd right now'}</span>
+                                  <span style={{ fontSize: '12px', fontWeight: '700', color: crowdColor }}>{crowd}%</span>
+                                </div>
+                                <div style={{ width: '100%', height: '4px', backgroundColor: 'var(--bg-tertiary)', borderRadius: '2px', overflow: 'hidden' }}>
+                                  <div style={{ height: '100%', width: `${crowd}%`, backgroundColor: crowdBar, borderRadius: '2px', transition: 'width 0.5s cubic-bezier(0.22,1,0.36,1)' }} />
+                                </div>
                               </div>
                             )}
 
-                            {/* Rating + Price */}
-                            <div style={{ display: 'flex', gap: '10px', marginBottom: '10px', alignItems: 'center' }}>
-                              {v.price_level != null && <span style={{ fontSize: '12px', color: colors.navy, fontWeight: '600' }}>{'$'.repeat(v.price_level || 1)}</span>}
-                              {v.rating && (
-                                <div style={{ display: 'flex', alignItems: 'center', gap: '3px' }}>
-                                  {Icons.starFilled('#fbbf24', 12)}
-                                  <span style={{ fontSize: '12px', color: colors.navy, fontWeight: '600' }}>{v.rating}</span>
-                                </div>
-                              )}
-                            </div>
-
-                            {/* Crowd Bar */}
-                            <div style={{ backgroundColor: 'var(--bg-tertiary)', borderRadius: '10px', padding: '8px 10px', marginBottom: '10px', border: '1px solid var(--border-default)' }}>
-                              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '5px' }}>
-                                <span style={{ fontSize: '10px', color: 'var(--text-secondary)', fontWeight: '500' }}>Current Crowd</span>
-                                <div style={{ backgroundColor: `${crowdColor}20`, color: crowdColor, padding: '1px 7px', borderRadius: '8px', fontSize: '10px', fontWeight: '700' }}>{crowd}%</div>
-                              </div>
-                              <div style={{ width: '100%', height: '5px', backgroundColor: 'var(--pill-bg)', borderRadius: '3px', overflow: 'hidden' }}>
-                                <div style={{ height: '100%', width: `${crowd}%`, backgroundColor: crowdColor, borderRadius: '3px', transition: 'width 0.6s ease-out' }} />
-                              </div>
-                            </div>
-
-                            {/* Action Buttons */}
-                            <div style={{ display: 'flex', gap: '6px' }}>
+                            <div style={{ display: 'flex', gap: '6px', marginTop: '12px' }}>
                               {v.place_id && (
                                 <button className="fab-press" onClick={() => {
                                   openVenueDetail(v.place_id, { name: v.name, formatted_address: v.address, place_id: v.place_id, rating: v.rating });
-                                }} style={{ flex: 1, padding: '9px', borderRadius: '10px', border: `1.5px solid ${colors.navy}`, backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontSize: '11px', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px' }}>
-                                  {Icons.eye(colors.navy, 13)} View Details
+                                }} style={{ flex: 1, padding: '9px', borderRadius: '10px', border: '1px solid var(--border-default)', backgroundColor: 'transparent', color: 'var(--text-primary)', fontSize: '12px', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '5px' }}>
+                                  Details
                                 </button>
                               )}
-                              <button className="fab-press" onClick={() => setAiShareVenue(v)} style={{ flex: 1, padding: '9px', borderRadius: '10px', border: 'none', background: colors.navyBg, color: 'white', fontSize: '11px', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px', boxShadow: '0 2px 8px rgba(13,40,71,0.10)' }}>
+                              <button className="fab-press" onClick={() => setAiShareVenue(v)} style={{ flex: 1, padding: '9px', borderRadius: '10px', border: 'none', background: colors.navyBg, color: 'white', fontSize: '12px', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '5px' }}>
                                 {Icons.send('white', 12)} Share
                               </button>
                             </div>
-
-                            {/* DM share link */}
-                            <button className="fab-press" onClick={() => setAiShareVenue({ ...v, _shareToDm: true })} style={{ width: '100%', marginTop: '6px', padding: '7px', borderRadius: '10px', border: '1px solid var(--border-subtle)', backgroundColor: 'transparent', cursor: 'pointer', fontSize: '10px', fontWeight: '600', color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px' }}>
-                              {Icons.chat('var(--text-secondary)', 11)} Send as DM
-                            </button>
                           </div>
                         </div>
                         );
@@ -6209,8 +6253,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
             <div ref={aiChatEndRef} />
           </div>
 
-          {/* Suggested Questions — show in both modes but compact in panel */}
-          {!aiTyping && (
+          {/* Suggested Questions — mid-conversation only; the empty state
+              carries its own chips under the bird */}
+          {!aiTyping && aiMessages.length > 0 && (
             <div style={{ padding: isAiPanel ? '6px 10px' : '8px 12px', borderTop: '1px solid var(--divider)', backgroundColor: 'var(--bg-tertiary)', flexShrink: 0 }}>
               {isAiFullscreen && <p style={{ fontSize: '9px', fontWeight: '600', color: 'var(--text-secondary)', marginBottom: '6px', textTransform: 'uppercase' }}>Try asking</p>}
               <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
@@ -6239,9 +6284,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
               {/* Action buttons row */}
               <div style={{ display: 'flex', alignItems: 'center', gap: '2px', padding: '2px 4px 0', borderTop: '1px solid var(--border-subtle)', marginTop: '4px', paddingTop: '6px' }}>
                 {[
-                  { icon: Icons.search, label: 'Search', prefix: 'Find me ', color: '#1EAEDB' },
-                  { icon: Icons.mapPin, label: 'Crowds', prefix: 'How busy is ', color: '#4a7ba7' },
-                  { icon: Icons.users, label: 'My Flocks', prefix: 'What are my upcoming plans?', color: '#F97316' },
+                  { icon: Icons.search, label: 'Search', prefix: 'Find me ', color: 'var(--accent-steel, #2d5a87)' },
+                  { icon: Icons.mapPin, label: 'Crowds', prefix: 'How busy is ', color: 'var(--accent-steel, #2d5a87)' },
+                  { icon: Icons.users, label: 'My Flocks', prefix: 'What are my upcoming plans?', color: 'var(--accent-steel, #2d5a87)' },
                 ].map((action, i) => (
                   <button key={i} className="fab-press" onClick={() => {
                     if (action.prefix.endsWith('?')) {
@@ -6255,7 +6300,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                       if (aiInputRef.current) { aiInputRef.current.value = action.prefix; aiInputRef.current.focus(); }
                     }
                   }} style={{ display: 'flex', alignItems: 'center', gap: '4px', padding: '4px 10px', borderRadius: '12px', border: 'none', backgroundColor: 'transparent', cursor: 'pointer', transition: 'all 0.25s ease', fontSize: '11px', fontWeight: '600', color: 'var(--text-tertiary)' }}
-                  onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = `${action.color}15`; e.currentTarget.style.color = action.color; }}
+                  onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = 'rgba(45,90,135,0.08)'; e.currentTarget.style.color = action.color; }}
                   onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = 'transparent'; e.currentTarget.style.color = 'var(--text-tertiary)'; }}
                   >
                     {action.icon('currentColor', 13)}
@@ -6263,7 +6308,14 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                   </button>
                 ))}
                 <div style={{ flex: 1 }} />
-                <span style={{ fontSize: '9px', color: 'var(--text-tertiary)', fontWeight: '500', opacity: 0.6 }}>Birdie AI</span>
+                {/* Free-tier meter surfaces only when it's about to matter */}
+                {entitlements?.paywallEnabled && !isPro && aiRemaining != null && aiRemaining <= 5 ? (
+                  <span style={{ fontSize: '10px', color: aiRemaining === 0 ? 'var(--accent-red-text)' : 'var(--text-tertiary)', fontWeight: '600' }}>
+                    {aiRemaining === 0 ? 'Out of chirps today' : `${aiRemaining} chirp${aiRemaining === 1 ? '' : 's'} left today`}
+                  </span>
+                ) : (
+                  <span style={{ fontSize: '10px', color: 'var(--text-tertiary)', fontWeight: '500', opacity: 0.6 }}>Birdie AI</span>
+                )}
               </div>
             </div>
           </div>
@@ -8919,6 +8971,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                   <span style={{ fontSize: '10px', color: 'var(--text-tertiary)' }}>•</span>
                   <span style={{ fontSize: '10px', color: 'var(--text-tertiary)', fontWeight: '500' }}>{m.time || getRelativeTime(m.time)}</span>
                 </div>
+                {m.failed && (
+                  <button onClick={() => retryFailedMessage(flock.id, m)} style={{ background: 'none', border: 'none', padding: '0 4px 4px', cursor: 'pointer', fontSize: '10px', fontWeight: '600', color: 'var(--accent-red-text, #b91c1c)', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                    Didn't send. Tap to retry
+                  </button>
+                )}
 
                 {/* Image message */}
                 {m.image && (
@@ -10805,7 +10862,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
             <p style={{ fontSize: '10px', color: 'var(--text-tertiary)', marginBottom: '12px', textAlign: 'center', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Legal</p>
             <div style={{ display: 'flex', gap: '8px', justifyContent: 'center' }}>
               <button
-                className="glass-btn glass-secondary" onClick={() => window.open('https://flock-app-w65m.vercel.app/terms', '_blank')}
+                className="glass-btn glass-secondary" onClick={() => window.open('https://www.flockcorp.com/terms', '_blank')}
                 style={{
                   padding: '10px 16px',
                   borderRadius: '10px',
@@ -10823,7 +10880,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 {Icons.fileText(colors.navy, 14)} Terms of Service
               </button>
               <button
-                className="glass-btn glass-secondary" onClick={() => window.open('https://flock-app-w65m.vercel.app/privacy', '_blank')}
+                className="glass-btn glass-secondary" onClick={() => window.open('https://www.flockcorp.com/privacy', '_blank')}
                 style={{
                   padding: '10px 16px',
                   borderRadius: '10px',
@@ -13114,12 +13171,12 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
             </p>
             {/* TODO: switch back to https://flockcorp.com once marketing site is deployed */}
             <a
-              href="https://flock-app-w65m.vercel.app"
+              href="https://www.flockcorp.com"
               style={{ padding: '14px 32px', borderRadius: '14px', background: '#1e293b', color: 'white', fontWeight: '700', fontSize: '14px', textDecoration: 'none', boxShadow: '0 1px 2px rgba(30,41,59,0.10)', marginBottom: '12px' }}
             >Download Flock</a>
             {/* TODO: switch back to https://flockcorp.com once marketing site is deployed */}
             <a
-              href="https://flock-app-w65m.vercel.app"
+              href="https://www.flockcorp.com"
               style={{ padding: '12px 28px', color: 'rgba(241,237,224,0.7)', fontSize: '13px', textDecoration: 'none', fontWeight: '600' }}
             >Continue to website</a>
           </>
@@ -13130,7 +13187,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
             <h1 style={{ fontSize: '22px', fontWeight: '800', margin: '0 0 8px', color: '#f1ede0' }}>Check-in failed</h1>
             <p style={{ fontSize: '13px', color: 'rgba(241,237,224,0.6)', margin: '0 0 24px' }}>Try tapping the tag again, or open Flock to check in manually.</p>
             {/* TODO: switch back to https://flockcorp.com once marketing site is deployed */}
-            <a href="https://flock-app-w65m.vercel.app" style={{ padding: '12px 28px', color: 'rgba(241,237,224,0.7)', fontSize: '13px', textDecoration: 'none', fontWeight: '600' }}>Continue to website</a>
+            <a href="https://www.flockcorp.com" style={{ padding: '12px 28px', color: 'rgba(241,237,224,0.7)', fontSize: '13px', textDecoration: 'none', fontWeight: '600' }}>Continue to website</a>
           </>
         )}
       </div>
