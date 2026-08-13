@@ -750,8 +750,11 @@ export async function checkInManual(placeId) {
   return request(`/api/checkin/${encodeURIComponent(placeId)}`, { method: 'POST' });
 }
 
-export async function getNfcCheckin(placeId) {
-  return request(`/api/checkin/${encodeURIComponent(placeId)}`);
+export async function getNfcCheckin(placeId, sig) {
+  // The tag's HMAC rides along as ?sig — the backend records the tap as
+  // presence-verified only when it matches (round 9).
+  const qs = sig ? `?sig=${encodeURIComponent(sig)}` : '';
+  return request(`/api/checkin/${encodeURIComponent(placeId)}${qs}`);
 }
 
 // Personal calendar events — persisted per-user (CRUD, /api/calendar)
