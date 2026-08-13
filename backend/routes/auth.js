@@ -236,16 +236,18 @@ router.post('/google', [
       // Existing Google user — log in
       user = result.rows[0];
     } else {
-      // Check if email already exists (password user wanting to link Google)
-      result = await pool.query('SELECT * FROM users WHERE LOWER(email) = LOWER($1)', [email]);
+      // SECURITY (audit 2026-08-12): NEVER auto-link by email. Signup does not
+      // verify email ownership, so an attacker could pre-register a victim's
+      // address with a password, wait for the victim's first Google sign-in
+      // to link onto that row, and keep password access to the victim's
+      // account. Same-email accounts must log in with their original method.
+      result = await pool.query('SELECT id FROM users WHERE LOWER(email) = LOWER($1)', [email]);
       if (result.rows.length > 0) {
-        // Link Google to existing account
-        user = result.rows[0];
-        await pool.query(
-          'UPDATE users SET oauth_provider = $1, oauth_id = $2, profile_image_url = COALESCE(profile_image_url, $3) WHERE id = $4',
-          ['google', googleId, picture, user.id]
-        );
-      } else {
+        return res.status(409).json({
+          error: 'An account with this email already exists. Log in with your email and password instead.',
+        });
+      }
+      {
         // New user — create account (server-side age gate, C4).
         // DOB is REQUIRED for account creation on every path; a Google
         // sign-in without one means "sign up first" (needsDob tells the
@@ -340,15 +342,14 @@ router.post('/apple', [
     if (result.rows.length > 0) {
       user = result.rows[0];
     } else if (email) {
-      // First sign-in for this Apple ID — try to link by email if a
-      // password account already exists with this address.
-      result = await pool.query('SELECT * FROM users WHERE LOWER(email) = LOWER($1)', [email]);
+      // SECURITY (audit 2026-08-12): same no-auto-link rule as Google — an
+      // unverified same-email password account must not silently absorb this
+      // Apple identity (pre-hijack vector).
+      result = await pool.query('SELECT id FROM users WHERE LOWER(email) = LOWER($1)', [email]);
       if (result.rows.length > 0) {
-        user = result.rows[0];
-        await pool.query(
-          'UPDATE users SET oauth_provider = $1, oauth_id = $2 WHERE id = $3',
-          ['apple', appleId, user.id]
-        );
+        return res.status(409).json({
+          error: 'An account with this email already exists. Log in with your email and password instead.',
+        });
       }
     }
 

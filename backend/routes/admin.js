@@ -159,6 +159,10 @@ router.put('/reports/:id', async (req, res) => {
     } else if (action === 'ban') {
       if (report.reported_user_id) {
         await pool.query('UPDATE users SET is_banned = true, banned_at = NOW() WHERE id = $1', [report.reported_user_id]);
+        // Ban must bite NOW: the socket handshake checks is_banned once, so an
+        // established connection would otherwise keep working indefinitely.
+        const io = req.app.get('io');
+        if (io) io.in(`user:${report.reported_user_id}`).disconnectSockets(true);
       }
       actionType = 'user_banned';
     } else if (action === 'unban') {

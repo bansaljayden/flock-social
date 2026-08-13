@@ -208,6 +208,7 @@ export default function PrivacyPolicy() {
                 <li><strong>Apple</strong> and <strong>Google</strong> (sign-in identity verification, only when you choose those options).</li>
                 <li><strong>RevenueCat</strong> (subscription receipt verification, if you subscribe).</li>
                 <li><strong>PostHog</strong> (product analytics; usage events tied to account ID only).</li>
+                <li><strong>Google Gemini</strong> (powers Birdie, the in-app assistant). When you chat with Birdie, your messages in that conversation, your first name, and your approximate location (rounded to about a kilometer, only if you've allowed location) are sent to Google to generate the reply. Birdie conversations are not used by us for advertising, and we don't send your email, exact coordinates, or messages from your flocks or DMs.</li>
               </ul>
               <p>
                 Other flock members see content you share inside that flock (messages, RSVP
