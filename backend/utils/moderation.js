@@ -12,7 +12,10 @@
 // ---------------------------------------------------------------------------
 const { Filter } = require('content-checker');
 
-const filter = new Filter();
+// content-checker reads OPEN_MODERATOR_API_KEY (not our documented
+// OPENMODERATOR_API_KEY) unless the key is passed explicitly — without this
+// option the client is keyless and every image call throws.
+const filter = new Filter({ openModeratorAPIKey: process.env.OPENMODERATOR_API_KEY });
 
 const TEXT_REJECTED_MESSAGE =
   "That doesn't fit our community guidelines — please rephrase and try again.";
@@ -70,7 +73,10 @@ async function moderateImage(imageUrl) {
   }
 
   try {
-    const result = await filter.isImageNSFW(imageUrl); // content-checker hosted NSFW model
+    // isImageNSFW posts a multipart file and needs actual image bytes as a
+    // Blob — handing it the URL string uploads the text of the URL instead.
+    const blob = await imageToBlob(imageUrl);
+    const result = await filter.isImageNSFW(blob); // content-checker hosted NSFW model
     const nsfw = result && (result.nsfw === true);
     if (nsfw) return { allowed: false, reason: 'nsfw_image' };
     return { allowed: true, reason: null };
@@ -79,6 +85,31 @@ async function moderateImage(imageUrl) {
     console.error('🛡️ Image moderation call failed — rejecting upload (fail-closed):', err.message);
     return { allowed: false, reason: 'moderation_error' };
   }
+}
+
+const MAX_MODERATED_IMAGE_BYTES = 8 * 1024 * 1024;
+
+async function imageToBlob(imageUrl) {
+  if (typeof imageUrl !== 'string' || imageUrl === '') {
+    throw new Error('no image data');
+  }
+  if (imageUrl.startsWith('data:')) {
+    const match = imageUrl.match(/^data:(image\/[\w+.-]+);base64,(.+)$/s);
+    if (!match) throw new Error('unsupported data URL');
+    const bytes = Buffer.from(match[2], 'base64');
+    if (bytes.length > MAX_MODERATED_IMAGE_BYTES) throw new Error('image too large');
+    return new Blob([bytes], { type: match[1] });
+  }
+  if (/^https:\/\//.test(imageUrl)) {
+    const response = await fetch(imageUrl, { redirect: 'follow', signal: AbortSignal.timeout(15000) });
+    if (!response.ok) throw new Error(`image fetch failed: ${response.status}`);
+    const type = response.headers.get('content-type') || '';
+    if (!type.startsWith('image/')) throw new Error(`not an image: ${type}`);
+    const bytes = Buffer.from(await response.arrayBuffer());
+    if (bytes.length > MAX_MODERATED_IMAGE_BYTES) throw new Error('image too large');
+    return new Blob([bytes], { type });
+  }
+  throw new Error('unsupported image URL scheme');
 }
 
 const IMAGE_REJECTED_MESSAGE =

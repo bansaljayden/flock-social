@@ -12,6 +12,11 @@ process.env.OPENMODERATOR_API_KEY = 'test-key'; // marks an image provider as co
 
 const moderation = require('../utils/moderation');
 
+// A real 1x1 PNG so moderateImage's data-URL → Blob conversion runs for real
+// (an https:// URL would be fetched for bytes before the stubbed provider).
+const TINY_PNG =
+  'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+
 test('text: clean text allowed, profanity blocked', () => {
   assert.strictEqual(moderation.moderateText('lets meet at 8pm').allowed, true);
   assert.strictEqual(moderation.moderateText('you piece of shit').allowed, false);
@@ -20,20 +25,20 @@ test('text: clean text allowed, profanity blocked', () => {
 test('image: provider configured but ERRORS -> rejected (fail-closed)', async () => {
   // Simulate timeout / quota / network failure from the provider.
   moderation.filter.isImageNSFW = async () => { throw new Error('simulated provider error'); };
-  const res = await moderation.moderateImage('https://example.com/x.jpg');
+  const res = await moderation.moderateImage(TINY_PNG);
   assert.strictEqual(res.allowed, false, 'must REJECT the upload when the provider errors');
   assert.strictEqual(res.reason, 'moderation_error');
 });
 
 test('image: NSFW verdict -> rejected', async () => {
   moderation.filter.isImageNSFW = async () => ({ nsfw: true, type: ['Porn'] });
-  const res = await moderation.moderateImage('https://example.com/x.jpg');
+  const res = await moderation.moderateImage(TINY_PNG);
   assert.strictEqual(res.allowed, false);
   assert.strictEqual(res.reason, 'nsfw_image');
 });
 
 test('image: safe verdict -> allowed', async () => {
   moderation.filter.isImageNSFW = async () => ({ nsfw: false, type: [] });
-  const res = await moderation.moderateImage('https://example.com/x.jpg');
+  const res = await moderation.moderateImage(TINY_PNG);
   assert.strictEqual(res.allowed, true);
 });
