@@ -990,3 +990,15 @@
    white card keeps its navy fill. */
 .lp-sec-navy .lpd-controls .lp-btn-navy { background: var(--cream); color: var(--navy); }
 .lp-sec-navy .lpd-controls .lp-btn-navy:hover { background: #fffaf0; }
+
+/* The two birds on the pricing section. Bottom-aligned so they read as
+   perched on the same ground rather than floating at different heights, and
+   the warm one stands slightly back, which is what keeps it a pair instead of
+   a symmetrical logo. */
+.lp-pair {
+  display: flex;
+  align-items: flex-end;
+  gap: clamp(4px, 1.4vw, 18px);
+  margin: 0 0 20px;
+}
+.lp-pair > :first-child { margin-bottom: 6px; }

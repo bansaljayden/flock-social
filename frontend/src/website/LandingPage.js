@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import './LandingPage.css';
 import LiveDemo from './LiveDemo';
-import BirdieBird from '../components/ui/BirdieBird';
+import BirdieBird, { WARM_BIRD } from '../components/ui/BirdieBird';
 import { Icons } from '../components/ui/Icons';
 
 const API = process.env.REACT_APP_API_URL || 'https://flock-app-production.up.railway.app';
@@ -493,6 +493,14 @@ export default function LandingPage() {
       <section className="lp-sec lp-sec-paper" id="pricing">
         <div className="lp-wrap">
           <div>
+            {/* The only place on the page where both birds appear together,
+                and the one section whose subject is a group rather than a
+                feature. They each watch the cursor on their own, so they
+                never move in lockstep the way a two-up graphic would. */}
+            <div className="lp-pair">
+              <BirdieBird bird={WARM_BIRD} size={112} style={{ width: 'clamp(84px, 9vw, 112px)', height: 'auto', aspectRatio: '332 / 333' }} />
+              <BirdieBird size={128} style={{ width: 'clamp(92px, 10vw, 128px)', height: 'auto', aspectRatio: '316 / 400' }} />
+            </div>
             <p className="lp-kicker">Pricing</p>
             <h2>Free for your friend group.</h2>
             <p className="lp-lead" style={{ marginTop: 16 }}>
