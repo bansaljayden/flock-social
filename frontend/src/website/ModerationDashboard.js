@@ -10,7 +10,18 @@ const REASON_LABEL = {
   harassment: 'Harassment', hate: 'Hate speech', sexual: 'Sexual content',
   violence: 'Violence/threats', self_harm: 'Self-harm', spam: 'Spam', other: 'Other',
 };
-const HIDEABLE = { flock_message: true, dm: true, story: true, profile: false };
+const TYPE_LABEL = {
+  flock_message: 'Flock message', dm: 'Direct message', story: 'Story',
+  profile: 'Profile', venue_review: 'Venue review', venue_promotion: 'Venue promotion',
+};
+// Round 9: venue_review and venue_promotion were missing, so the Hide button
+// never rendered for venue UGC even though PUT /api/admin/reports/:id hides
+// both (venue_reviews / venue_promotions is_hidden). Profile has no row to
+// hide, so it stays false.
+const HIDEABLE = {
+  flock_message: true, dm: true, story: true, profile: false,
+  venue_review: true, venue_promotion: true,
+};
 
 async function adminFetch(path, options = {}) {
   const token = getToken();
@@ -48,8 +59,9 @@ export default function ModerationDashboard() {
   useEffect(() => { load(); }, [load]);
 
   const act = async (report, action) => {
+    const noun = (TYPE_LABEL[report.content_type] || 'content').toLowerCase();
     const labels = {
-      hide: 'Hide this content', ban: `Ban ${report.reported_user_name || 'this user'}`,
+      hide: `Hide this ${noun}`, ban: `Ban ${report.reported_user_name || 'this user'}`,
       dismiss: 'Dismiss this report', unban: `Unban ${report.reported_user_name || 'this user'}`,
     };
     if (!window.confirm(`${labels[action]}?`)) return;
@@ -68,13 +80,13 @@ export default function ModerationDashboard() {
       <div style={S.wrap}>
         <h1 style={S.h1}>Moderation</h1>
         <p style={S.sub}>
-          Report queue. Act promptly — hide content and/or ban the user. Every action is logged.
+          Report queue. Act promptly. Hide content and/or ban the user. Every action is logged.
           <button onClick={load} style={S.refresh}>↻ Refresh</button>
         </p>
 
         {error && (
           <div style={S.err}>
-            {error}{/403|Admin/i.test(error) ? ' — sign in to the app as an admin account first, then reload this page.' : ''}
+            {error}{/403|Admin/i.test(error) ? '. Sign in to the app as an admin account first, then reload this page.' : ''}
           </div>
         )}
 
@@ -93,7 +105,7 @@ export default function ModerationDashboard() {
                   <div key={r.id} style={{ ...S.card, opacity: r.status === 'open' ? 1 : 0.6 }}>
                     <div style={S.cardTop}>
                       <span style={S.reason}>{REASON_LABEL[r.reason] || r.reason}</span>
-                      <span style={S.type}>{r.content_type}{r.content_id ? ` #${r.content_id}` : ''}</span>
+                      <span style={S.type}>{TYPE_LABEL[r.content_type] || r.content_type}{r.content_id ? ` #${r.content_id}` : ''}</span>
                       <span style={{ ...S.status, color: r.status === 'open' ? '#e5484d' : '#7c7c87' }}>{r.status}</span>
                     </div>
                     <div style={S.meta}>
@@ -126,7 +138,7 @@ export default function ModerationDashboard() {
                 {actions.map((a) => (
                   <div key={a.id} style={S.logRow}>
                     <b>{a.action}</b>{a.target_user_name ? ` → ${a.target_user_name}` : ''}
-                    {a.content_type ? `  (${a.content_type}${a.content_id ? ` #${a.content_id}` : ''})` : ''}
+                    {a.content_type ? `  (${TYPE_LABEL[a.content_type] || a.content_type}${a.content_id ? ` #${a.content_id}` : ''})` : ''}
                     <span style={S.logMeta}>  by {a.moderator_name || '—'} · {fmt(a.created_at)}</span>
                   </div>
                 ))}

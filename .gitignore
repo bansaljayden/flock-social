@@ -51,4 +51,7 @@ frontend/ios/App/App/GoogleService-Info.plist
 frontend/ios/App/App/GoogleService-Info.plist.b64
 
 # Higgsfield source renders (large); shipped assets live in frontend/public/birdie
+
+# Higgsfield source renders and unused mascot video (kept out of the deployment)
 frontend/public/birdie/birdie.png
+frontend/public/birdie/birdie-idle.mp4

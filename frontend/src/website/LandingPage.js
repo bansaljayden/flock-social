@@ -1,6 +1,7 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import './LandingPage.css';
 import LiveDemo from './LiveDemo';
+import BirdieBird from '../components/ui/BirdieBird';
 
 const API = process.env.REACT_APP_API_URL || 'https://flock-app-production.up.railway.app';
 
@@ -13,6 +14,17 @@ const APP_STORE_LIVE = false;
 // Inbound mail: Cloudflare Email Routing forwards this to Jayden's Gmail
 // (set up 2026-08-12). Outbound stays on Resend.
 const CONTACT_EMAIL = 'social@flockcorp.com';
+
+/* Every destination in the page menu. Same six sections the header used to
+   list inline, all of which exist on this page. */
+const NAV_LINKS = [
+  { href: '#how', label: 'How it works' },
+  { href: '#try', label: 'Try it live' },
+  { href: '#birdie', label: 'Birdie' },
+  { href: '#money', label: 'Money' },
+  { href: '#safety', label: 'Safety' },
+  { href: '#pricing', label: 'Pricing' },
+];
 
 /* The Flock mark: the actual logo (same asset as the app icon), not a
    hand-drawn stand-in. */
@@ -57,6 +69,67 @@ export default function LandingPage() {
   const [email, setEmail] = useState('');
   const [msg, setMsg] = useState('');
   const [busy, setBusy] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuRef = useRef(null);
+  const menuBtnRef = useRef(null);
+  const wasMenuOpen = useRef(false);
+
+  // While the panel is open: page scroll is locked, Escape closes, and Tab
+  // cycles inside the panel (the corner block is part of that cycle, since it
+  // is the close button).
+  useEffect(() => {
+    if (!menuOpen) return undefined;
+    const panel = menuRef.current;
+    const btn = menuBtnRef.current;
+    if (!panel) return undefined;
+
+    // Locking scroll removes the scrollbar, which would otherwise shove the
+    // corner block sideways at the moment you click it. Hold its width.
+    const bar = window.innerWidth - document.documentElement.clientWidth;
+    const prevOverflow = document.body.style.overflow;
+    const prevPad = document.body.style.paddingRight;
+    document.body.style.overflow = 'hidden';
+    if (bar > 0) {
+      document.body.style.paddingRight = `${bar}px`;
+      document.body.style.setProperty('--lp-scrollbar', `${bar}px`);
+    }
+
+    const first = panel.querySelector('a[href]');
+    if (first) first.focus();
+
+    const onKey = (e) => {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        setMenuOpen(false);
+        return;
+      }
+      if (e.key !== 'Tab') return;
+      const items = [btn, ...panel.querySelectorAll('a[href]')].filter(Boolean);
+      if (!items.length) return;
+      const i = items.indexOf(document.activeElement);
+      const next = e.shiftKey
+        ? items[(i <= 0 ? items.length : i) - 1]
+        : items[i === -1 || i === items.length - 1 ? 0 : i + 1];
+      e.preventDefault();
+      next.focus();
+    };
+
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('keydown', onKey);
+      document.body.style.overflow = prevOverflow;
+      document.body.style.paddingRight = prevPad;
+      document.body.style.removeProperty('--lp-scrollbar');
+    };
+  }, [menuOpen]);
+
+  // Closing hands focus back to the block that opened it.
+  useEffect(() => {
+    if (wasMenuOpen.current && !menuOpen && menuBtnRef.current) {
+      menuBtnRef.current.focus();
+    }
+    wasMenuOpen.current = menuOpen;
+  }, [menuOpen]);
 
   useEffect(() => {
     document.title = 'Flock | Plans that actually happen';
@@ -91,20 +164,60 @@ export default function LandingPage() {
   return (
     <div className="lp">
       {/* ---------------- nav ---------------- */}
-      <header className="lp-nav">
+      <header className={`lp-nav${menuOpen ? ' is-menu-open' : ''}`}>
         <div className="lp-wrap lp-nav-in">
           <a className="lp-brand" href="/"><Mark /> Flock</a>
-          <nav className="lp-nav-links">
-            <a href="#how">How it works</a>
-            <a href="#try">Try it live</a>
-            <a href="#birdie">Birdie</a>
-            <a href="#money">Money</a>
-            <a href="#safety">Safety</a>
-            <a href="#pricing">Pricing</a>
-          </nav>
-          <a className="lp-btn lp-btn-cream" href="/app">Open Flock</a>
         </div>
+        {/* One navigation affordance at every width: the corner block. The
+            inline link row used to vanish under 860px, which meant phones had
+            no menu at all. */}
+        <button
+          type="button"
+          ref={menuBtnRef}
+          className={`lp-menu-btn${menuOpen ? ' is-open' : ''}`}
+          aria-label={menuOpen ? 'Close menu' : 'Open menu'}
+          aria-expanded={menuOpen}
+          aria-controls="lp-menu"
+          onClick={() => setMenuOpen((v) => !v)}
+        >
+          <span className="lp-menu-bars" aria-hidden="true">
+            <span className="lp-menu-bar" />
+            <span className="lp-menu-bar" />
+            <span className="lp-menu-bar" />
+          </span>
+        </button>
       </header>
+
+      {/* ---------------- menu panel ---------------- */}
+      <div
+        id="lp-menu"
+        ref={menuRef}
+        className={`lp-menu${menuOpen ? ' is-open' : ''}`}
+      >
+        {/* Deliberately not aria-modal: the close control is the corner block
+            in the header, which sits outside this element, and aria-modal
+            would hide it from screen readers. Escape and the focus trap give
+            the modal behaviour instead. */}
+        <nav className="lp-menu-in" aria-label="Site menu">
+          {NAV_LINKS.map((l, i) => (
+            <a
+              key={l.href}
+              className={`lp-menu-link${i === NAV_LINKS.length - 1 ? ' is-last' : ''}`}
+              href={l.href}
+              onClick={() => setMenuOpen(false)}
+            >
+              {l.label}
+            </a>
+          ))}
+          <a
+            className="lp-btn lp-btn-cream lp-btn-lg lp-menu-cta"
+            href="/app"
+            onClick={() => setMenuOpen(false)}
+          >
+            Open Flock
+          </a>
+        </nav>
+      </div>
 
       {/* ---------------- hero ---------------- */}
       <section className="lp-hero lp-on-navy">
@@ -247,7 +360,21 @@ export default function LandingPage() {
             />
           </div>
           <div>
-            <img className="lp-plate" src="/marks/birdie.png" alt="" width="320" height="320" loading="lazy" />
+            {/* The character himself, not a linocut plate of him. This is the
+                one section where the mascot IS the subject, so he stands in
+                the text column and follows the reader's cursor. Sized by
+                aspect ratio so he can never push the column wide on a phone.
+                (The idle mp4 is unused here: its ground is white and this
+                section is cream, so the cutout PNG is the honest asset.) */}
+            <BirdieBird
+              size={150}
+              style={{
+                width: 'clamp(112px, 13vw, 168px)',
+                height: 'auto',
+                aspectRatio: '316 / 400',
+                margin: '0 0 16px',
+              }}
+            />
             <p className="lp-kicker">Birdie</p>
             <h2>"Idk, you pick." Birdie picks.</h2>
             <p className="lp-lead">
