@@ -25,14 +25,16 @@ const Ico = {
   bird: (c) => <svg viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="M16 7h.01" /><path d="M3.4 18H12a8 8 0 0 0 8-8V7a4 4 0 0 0-7.28-2.3L2 20" /><path d="M20 7l2 .5-2 .5" /><path d="M10 18v3" /><path d="M14 17.75V21" /></svg>,
 };
 
-/* The Flock mark: three birds in flight, drawn so it stays crisp at any size. */
-const Mark = ({ size = 26, color = '#f4efe3' }) => (
-  <svg width={size} height={size} viewBox="0 0 32 32" fill="none" aria-hidden="true"
-       stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-    <path d="M4 12.5c1.8-2.6 3.6-2.6 5.4 0 1.8-2.6 3.6-2.6 5.4 0" />
-    <path d="M16.6 8.5c1.6-2.3 3.2-2.3 4.8 0 1.6-2.3 3.2-2.3 4.8 0" opacity="0.75" />
-    <path d="M11.4 21c1.6-2.3 3.2-2.3 4.8 0 1.6-2.3 3.2-2.3 4.8 0" opacity="0.55" />
-  </svg>
+/* The Flock mark: the actual logo (same asset as the app icon), not a
+   hand-drawn stand-in. */
+const Mark = ({ size = 32 }) => (
+  <img
+    src="/logo192.png"
+    width={size} height={size}
+    alt=""
+    aria-hidden="true"
+    style={{ borderRadius: '50%', display: 'block' }}
+  />
 );
 
 /* The App Store badge is always on the page. Before Apple approves the app it

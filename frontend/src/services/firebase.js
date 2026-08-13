@@ -80,6 +80,15 @@ async function requestNativePermission() {
     if (!token) return null;
     const platform = window.Capacitor.getPlatform() === 'android' ? 'android' : 'ios';
     await registerDeviceToken(token, platform);
+    // Firebase rotates tokens while the app stays installed; without this
+    // subscription the backend keeps the stale token and push silently dies
+    // until the next login (round 4).
+    if (!tokenRotationSubscribed) {
+      tokenRotationSubscribed = true;
+      FirebaseMessaging.addListener('tokenReceived', (event) => {
+        if (event?.token) registerDeviceToken(event.token, platform).catch(() => {});
+      }).catch(() => { tokenRotationSubscribed = false; });
+    }
     localStorage.removeItem('flock_notif_denied');
     return token;
   } catch (err) {
@@ -87,6 +96,7 @@ async function requestNativePermission() {
     return null;
   }
 }
+let tokenRotationSubscribed = false;
 
 // Request notification permission and register the FCM token
 export async function requestNotificationPermission() {
@@ -136,6 +146,10 @@ export async function requestNotificationPermission() {
 // Listen for foreground messages
 export function onForegroundMessage(callback) {
   if (isNativeApp()) {
+    // If cleanup runs while the dynamic import is still pending, the resolved
+    // listener must be removed immediately — otherwise a quick unmount/remount
+    // leaked the old listener and duplicated foreground notifications.
+    let cancelled = false;
     let remove = () => {};
     import('@capacitor-firebase/messaging')
       .then(({ FirebaseMessaging }) =>
@@ -144,9 +158,12 @@ export function onForegroundMessage(callback) {
           callback({ title: n.title || '', body: n.body || '', data: n.data || {} });
         })
       )
-      .then((handle) => { remove = () => handle.remove(); })
+      .then((handle) => {
+        if (cancelled) { handle.remove(); return; }
+        remove = () => handle.remove();
+      })
       .catch(() => {});
-    return () => remove();
+    return () => { cancelled = true; remove(); };
   }
 
   const m = getFirebaseMessaging();

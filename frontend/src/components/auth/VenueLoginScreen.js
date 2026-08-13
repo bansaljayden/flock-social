@@ -39,19 +39,31 @@ const VenueLoginScreen = ({ onLoginSuccess, onSwitchToUserLogin }) => {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [name, setName] = useState('');
+  const [dob, setDob] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  // Legacy accounts with no DOB on file get 403 {needsDob: true} at login.
+  const [needsDob, setNeedsDob] = useState(false);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError('');
     setLoading(true);
     try {
-      const data = isSignup ? await signup(email, password, name) : await login(email, password);
+      // signup's declared order is (name, email, password, dateOfBirth) — the
+      // old call passed (email, password, name), mapping every field wrong.
+      const data = isSignup
+        ? await signup(name, email, password, dob)
+        : await login(email, password, needsDob && dob ? dob : undefined);
       onLoginSuccess(data.user);
     } catch (err) {
-      setError(err.message);
+      if (err.data?.needsDob) {
+        setNeedsDob(true);
+        setError('Add your date of birth to continue.');
+      } else {
+        setError(err.message);
+      }
     } finally {
       setLoading(false);
     }
@@ -104,6 +116,13 @@ const VenueLoginScreen = ({ onLoginSuccess, onSwitchToUserLogin }) => {
               </div>
             )}
 
+            {(isSignup || needsDob) && (
+              <div style={{ marginBottom: '20px' }}>
+                <label className="login-label">Date of birth</label>
+                <input type="date" value={dob} onChange={(e) => setDob(e.target.value)} required className="login-input" />
+              </div>
+            )}
+
             <div style={{ marginBottom: '20px' }}>
               <label className="login-label">Email</label>
               <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@example.com" required className="login-input" />
@@ -132,7 +151,7 @@ const VenueLoginScreen = ({ onLoginSuccess, onSwitchToUserLogin }) => {
 
           <div style={{ display: 'flex', justifyContent: 'center' }}>
             <GoogleLogin
-              onSuccess={async (response) => { setError(''); setLoading(true); try { const data = await googleLogin(response.credential); onLoginSuccess(data.user); } catch (err) { setError(err.message || 'Google sign-in failed'); } finally { setLoading(false); } }}
+              onSuccess={async (response) => { setError(''); setLoading(true); try { const data = await googleLogin(response.credential, dob || undefined); onLoginSuccess(data.user); } catch (err) { if (err.data?.needsDob) { setNeedsDob(true); setError('Add your date of birth above, then tap the Google button again.'); } else { setError(err.message || 'Google sign-in failed'); } } finally { setLoading(false); } }}
               onError={() => setError('Google sign-in failed')}
               theme="filled_black" shape="pill" size="large" width="344" text="continue_with"
             />

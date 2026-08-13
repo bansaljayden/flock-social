@@ -117,10 +117,15 @@ export async function deleteAccount() {
   return data;
 }
 
-export async function login(email, password) {
+export async function login(email, password, dateOfBirth) {
+  // dateOfBirth: only for legacy accounts created before DOB was required —
+  // the backend answers 403 {needsDob: true} and the login screen retries
+  // with the collected date.
+  const body = { email, password };
+  if (dateOfBirth) body.date_of_birth = dateOfBirth;
   const data = await request('/api/auth/login', {
     method: 'POST',
-    body: JSON.stringify({ email, password }),
+    body: JSON.stringify(body),
   });
   setToken(data.token);
   identifyUser(data.user);
