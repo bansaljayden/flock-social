@@ -102,6 +102,22 @@ router.get('/profile', async (req, res) => {
   }
 });
 
+// Mirrors express-validator's normalizeEmail() defaults, for COMPARISON only.
+// The submitted address is normalized by the validator; stored addresses are
+// not always (OAuth rows keep the provider's address verbatim, and rows predate
+// the sanitizer), so comparing raw against normalized would read an UNCHANGED
+// profile form as an email change and reject it.
+function normalizedAddress(addr) {
+  if (typeof addr !== 'string') return '';
+  const at = addr.lastIndexOf('@');
+  if (at < 1) return addr.toLowerCase();
+  let local = addr.slice(0, at).toLowerCase();
+  let domain = addr.slice(at + 1).toLowerCase();
+  if (domain === 'googlemail.com') domain = 'gmail.com';
+  if (domain === 'gmail.com') local = local.split('+')[0].replace(/\./g, '');
+  return `${local}@${domain}`;
+}
+
 // PUT /api/users/profile - Update current user's profile (requires current password)
 router.put('/profile',
   [
@@ -159,7 +175,7 @@ router.put('/profile',
       }
 
       // Check email uniqueness if changing email
-      const changingEmail = Boolean(email) && email.toLowerCase() !== user.email.toLowerCase();
+      const changingEmail = Boolean(email) && normalizedAddress(email) !== normalizedAddress(user.email);
       if (changingEmail) {
         // PERMANENT EMAIL SQUAT (round 13). Nothing here ever verified that the
         // caller owns the address they are moving to, and an OAuth row needs no
@@ -211,7 +227,9 @@ router.put('/profile',
              updated_at = NOW()
          WHERE id = $6
          RETURNING id, email, name, phone, interests, role, profile_image_url, token_version, created_at, updated_at`,
-        [name || null, email || null, phone || null, safeInterests, hashedPassword, req.user.id]
+        // Only write the email column on a real change, so an unchanged form
+        // never silently rewrites a stored address into its normalized form.
+        [name || null, changingEmail ? email : null, phone || null, safeInterests, hashedPassword, req.user.id]
       );
 
       const { token_version: _tv, ...safeUser } = result.rows[0];
