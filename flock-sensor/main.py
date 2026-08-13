@@ -303,6 +303,11 @@ def push_loop():
                 'thermal_headcount': int(_state['thermal']),
                 'noise_db': round(float(_state['noise_db']), 2),
             }
+            # Ownership rule: each snapshot owns its IR events exactly once.
+            # Reset at snapshot time (not on POST success) so a payload sitting
+            # in the retry buffer is never re-counted by the next interval's
+            # snapshot -- the backend SUMs ir_beam_count across payloads.
+            _state['ir_count'] = 0
         # Try to flush any buffered payloads first
         buf = _read_buffer()
         if buf:
@@ -318,7 +323,6 @@ def push_loop():
         code, body = _post(payload)
         if code == 201:
             with _lock:
-                _state['ir_count'] = 0
                 _state['last_push_history'].append(payload['thermal_headcount'])
             logger.info(f"PUSH ok ir={payload['ir_beam_count']} thermal={payload['thermal_headcount']} db={payload['noise_db']}")
         else:
