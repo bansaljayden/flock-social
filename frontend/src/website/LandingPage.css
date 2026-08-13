@@ -580,3 +580,115 @@
    pattern (SLOP-AUDIT.md A10), and it makes readers wait for content that
    could just be there. The only motion on this page is hover/press feedback
    on interactive elements. */
+
+/* ============ live demo (#try) ============ */
+/* A working slice of Discover: real map, real pins, real model output. */
+
+.lpd { margin-top: 34px; }
+
+.lpd-controls { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin-bottom: 14px; }
+.lpd-input {
+  flex: 1 1 220px; min-width: 0;
+  padding: 12px 16px; font: inherit; font-size: 15px;
+  color: var(--ink); background: #fff;
+  border: 1px solid var(--rule); border-radius: 12px; outline: none;
+}
+.lpd-input:focus { border-color: var(--steel); box-shadow: 0 0 0 3px rgba(45, 90, 135, 0.15); }
+.lpd-input::placeholder { color: var(--ink-3); }
+.lpd-go { flex-shrink: 0; }
+.lpd-locate {
+  flex-shrink: 0; padding: 11px 14px; font: inherit; font-size: 13px; font-weight: 600;
+  color: var(--steel); background: none; border: 1px solid var(--rule); border-radius: 12px; cursor: pointer;
+}
+.lpd-locate:hover { border-color: var(--steel); }
+
+.lpd-stage {
+  display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(300px, 1fr);
+  gap: 0; border: 1px solid var(--rule); border-radius: 16px; overflow: hidden; background: #fff;
+}
+.lpd-map { min-height: 460px; }
+.lpd-map .maplibregl-map { font: inherit; }
+
+/* Venue pins — the app's language: circular photo, ring colored by crowd,
+   small % badge tucked under the photo */
+.lpd-pin {
+  display: flex; flex-direction: column; align-items: center;
+  background: none; border: none; padding: 0; cursor: pointer;
+}
+.lpd-pin-photo {
+  width: 46px; height: 46px; border-radius: 50%;
+  background-size: cover; background-position: center; background-color: #1e293b;
+  transition: transform 0.15s ease;
+}
+.lpd-pin:hover .lpd-pin-photo { transform: scale(1.1); }
+.lpd-pin-noimg {
+  display: flex; align-items: center; justify-content: center;
+  color: #f1ede0; font: 700 18px 'Hanken Grotesk', sans-serif;
+}
+.lpd-pin-badge {
+  margin-top: -8px; position: relative; z-index: 1;
+  padding: 1px 7px; border: 2px solid #fff; border-radius: 999px;
+  color: #fff; font: 700 11px 'Hanken Grotesk', sans-serif;
+  box-shadow: 0 2px 6px rgba(15, 23, 42, 0.3);
+}
+
+.lpd-card { padding: 22px; border-left: 1px solid var(--rule); display: flex; flex-direction: column; min-height: 460px; }
+
+.lpd-card-head { display: flex; gap: 16px; align-items: center; }
+.lpd-dial { position: relative; width: 104px; height: 104px; flex-shrink: 0; }
+.lpd-dial-glow { position: absolute; inset: 0; border-radius: 50%; pointer-events: none; }
+.lpd-dial-core {
+  position: absolute; inset: 11px; border-radius: 50%; background: #fff;
+  display: flex; align-items: center; justify-content: center;
+}
+.lpd-dial-num { font-size: 23px; font-weight: 800; font-variant-numeric: tabular-nums; line-height: 1; }
+.lpd-live-dot {
+  display: inline-block; width: 7px; height: 7px; border-radius: 50%;
+  background: #22c55e; margin-right: 6px; vertical-align: 1px;
+  animation: lpd-live 2s ease-in-out infinite;
+}
+@keyframes lpd-live { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+.lpd-card-title h3 { font-size: 19px; line-height: 1.15; margin: 0; }
+.lpd-label { margin: 4px 0 0; font-size: 13px; font-weight: 700; }
+.lpd-addr { margin: 4px 0 0; font-size: 13px; color: var(--ink-3); }
+
+.lpd-best { margin: 16px 0 0; font-size: 14px; color: var(--ink-2); }
+.lpd-best strong { color: var(--ink); }
+
+.lpd-chart {
+  display: flex; align-items: flex-end; gap: 5px;
+  height: 110px; margin-top: 16px; padding-top: 8px; border-top: 1px solid var(--rule);
+}
+.lpd-bar-col { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 5px; height: 100%; justify-content: flex-end; min-width: 0; }
+.lpd-bar { width: 100%; max-width: 18px; border-radius: 4px 4px 2px 2px; transition: height 0.5s cubic-bezier(0.22, 1, 0.36, 1); }
+.lpd-bar-hour { font-size: 9px; color: var(--ink-3); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.lpd-bar-col:nth-child(even) .lpd-bar-hour { visibility: hidden; }
+
+.lpd-note { margin: 14px 0 0; font-size: 12.5px; color: var(--ink-3); }
+.lpd-cta { margin-top: 14px; align-self: flex-start; }
+
+.lpd-empty { flex: 1; display: flex; align-items: center; justify-content: center; text-align: center; color: var(--ink-3); font-size: 14px; padding: 20px; }
+
+/* skeleton — layout is here, data is coming */
+.lpd-skel { padding-top: 4px; }
+.lpd-skel-dial { width: 104px; height: 104px; border-radius: 50%; }
+.lpd-skel-line { height: 14px; border-radius: 7px; margin-top: 14px; }
+.lpd-skel-bars { height: 110px; border-radius: 10px; margin-top: 18px; }
+.lpd-skel-dial, .lpd-skel-line, .lpd-skel-bars {
+  background: linear-gradient(90deg, rgba(22,40,61,0.06) 25%, rgba(22,40,61,0.12) 50%, rgba(22,40,61,0.06) 75%);
+  background-size: 200% 100%;
+  animation: lpd-shimmer 1.4s ease-in-out infinite;
+}
+@keyframes lpd-shimmer { to { background-position: -200% 0; } }
+@media (prefers-reduced-motion: reduce) {
+  .lpd-skel-dial, .lpd-skel-line, .lpd-skel-bars { animation: none; }
+  .lpd-bar { transition: none; }
+  .lpd-live-dot { animation: none; }
+  .lpd-pin:hover .lpd-pin-photo { transform: none; }
+}
+
+@media (max-width: 860px) {
+  .lpd-stage { grid-template-columns: 1fr; }
+  .lpd-map { min-height: 320px; }
+  .lpd-card { border-left: none; border-top: 1px solid var(--rule); min-height: 0; }
+}
