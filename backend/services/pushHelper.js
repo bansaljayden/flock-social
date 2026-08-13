@@ -11,12 +11,17 @@ const lastPushSent = new Map();
 const DEBOUNCE_MS = 30 * 1000;
 
 // Clean up old entries every 5 minutes
-setInterval(() => {
+const debounceSweep = setInterval(() => {
   const now = Date.now();
   for (const [key, ts] of lastPushSent) {
     if (now - ts > DEBOUNCE_MS * 2) lastPushSent.delete(key);
   }
 }, 5 * 60 * 1000);
+// A cleanup timer must never be the reason the process stays up. Unreffed, the
+// server (whose listening socket holds the loop open) is unaffected, but a
+// short-lived process that merely REQUIRES this module can exit: `node --test`
+// hung forever the moment a test touched anything that pulls in pushHelper.
+if (typeof debounceSweep.unref === 'function') debounceSweep.unref();
 
 // Check if a user is currently connected via Socket.io
 function isUserOnline(io, userId) {
