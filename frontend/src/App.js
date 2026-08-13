@@ -6062,7 +6062,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
             {showDmMenu && (
               <div style={{ position: 'absolute', top: '38px', right: 0, backgroundColor: 'var(--bg-card-solid)', borderRadius: '14px', boxShadow: '0 8px 24px rgba(0,0,0,0.12)', minWidth: '200px', zIndex: 60, overflow: 'hidden', border: '1px solid var(--border-subtle)' }}>
                 <button className="hit44 glass-btn" onClick={() => { setShowDmMenu(false); setModerationTarget({ userId: selectedDmId, userName: selectedDm.name, contentType: 'profile' }); }} style={{ width: '100%', padding: '14px 16px', display: 'flex', alignItems: 'center', gap: '10px', border: 'none', borderBottom: '1px solid var(--border-subtle)', backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer', fontSize: '14px', fontWeight: '600', color: 'var(--text-primary)' }}>
-                  <span aria-hidden style={{ fontSize: '15px' }}>⚑</span> Report or block {selectedDm.name}
+                  <span aria-hidden style={{ display: 'inline-flex' }}>{Icons.flag('currentColor', 15)}</span> Report or block {selectedDm.name}
                 </button>
                 <button className="hit44 glass-btn glass-danger" onClick={() => { setShowDmMenu(false); setShowDeleteDmConfirm(true); }} style={{ width: '100%', padding: '14px 16px', display: 'flex', alignItems: 'center', gap: '10px', border: 'none', backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer', fontSize: '14px', fontWeight: '600', color: '#EF4444' }}>
                   {Icons.x('#EF4444', 16)} Delete Conversation
@@ -6547,7 +6547,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                     ))}
                     <button aria-label="Reply" className="hit44" onClick={(e) => { e.stopPropagation(); setDmReplyingTo(m); setShowDmReactionPicker(null); }} style={{ fontSize: '14px', background: 'none', border: 'none', cursor: 'pointer', padding: '4px 6px', borderRadius: '8px', color: colors.navy, fontWeight: '700' }} title="Reply">{Icons.reply(colors.navy, 14)}</button>
                     {m.sender !== 'You' && (
-                      <button aria-label="Report" className="hit44" onClick={(e) => { e.stopPropagation(); setShowDmReactionPicker(null); setModerationTarget({ userId: selectedDmId, userName: selectedDm.name, contentType: 'dm', contentId: m.id }); }} style={{ fontSize: '14px', background: 'none', border: 'none', cursor: 'pointer', padding: '4px 6px', borderRadius: '8px', color: '#EF4444', fontWeight: '700' }} title="Report">⚑</button>
+                      <button aria-label="Report" className="hit44" onClick={(e) => { e.stopPropagation(); setShowDmReactionPicker(null); setModerationTarget({ userId: selectedDmId, userName: selectedDm.name, contentType: 'dm', contentId: m.id }); }} style={{ fontSize: '14px', background: 'none', border: 'none', cursor: 'pointer', padding: '4px 6px', borderRadius: '8px', color: '#EF4444', fontWeight: '700' }} title="Report">{Icons.flag('#EF4444', 15)}</button>
                     )}
                   </div>
                 )}
@@ -7703,7 +7703,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <p style={{ fontWeight: '700', fontSize: '13px', color: colors.navy, margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{venue.name}</p>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginTop: '2px', flexWrap: 'wrap' }}>
-                      {venue.rating && <span style={{ fontSize: '12px', fontWeight: '700', color: colors.navy }}>{venue.rating} ★</span>}
+                      {venue.rating && <span style={{ fontSize: '12px', fontWeight: '700', color: colors.navy }}>{venue.rating} {Icons.starFilled('currentColor', 12)}</span>}
                       {venue.user_ratings_total > 0 && <span style={{ fontSize: '12px', color: 'var(--text-tertiary)' }}>({venue.user_ratings_total})</span>}
                       {venue.price_level && <span style={{ fontSize: '12px', color: 'var(--text-secondary)', fontWeight: '600' }}>{'$'.repeat(venue.price_level)}</span>}
                       {userLocation && venue.location && (() => {
@@ -9761,7 +9761,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                     ))}
                     <button className="hit44" onClick={(e) => { e.stopPropagation(); setReplyingTo(m); setShowReactionPicker(null); }} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '6px', display: 'flex', alignItems: 'center', borderRadius: '10px' }}>{Icons.reply(colors.textSecondary, 18)}</button>
                     {m.sender !== 'You' && (
-                      <button className="hit44" onClick={(e) => { e.stopPropagation(); setShowReactionPicker(null); setModerationTarget({ userId: m.senderId, userName: m.sender, contentType: 'flock_message', contentId: m.id }); }} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '6px', display: 'flex', alignItems: 'center', borderRadius: '10px', fontSize: '16px', color: '#EF4444' }} title="Report">⚑</button>
+                      <button className="hit44" onClick={(e) => { e.stopPropagation(); setShowReactionPicker(null); setModerationTarget({ userId: m.senderId, userName: m.sender, contentType: 'flock_message', contentId: m.id }); }} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '6px', display: 'flex', alignItems: 'center', borderRadius: '10px', fontSize: '16px', color: '#EF4444' }} title="Report">{Icons.flag('#EF4444', 15)}</button>
                     )}
                   </div>
                 )}
@@ -10793,7 +10793,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 <div style={{ display: 'flex', alignItems: 'flex-start', gap: '8px', marginBottom: '6px' }}>
                   <h3 style={{ color: colors.navy, margin: 0, fontSize: '17px', fontWeight: '800', flex: 1 }}>{flock.venue}</h3>
                   {flock.venueRating && (
-                    <span style={{ display: 'flex', alignItems: 'center', gap: '3px', padding: '3px 8px', background: 'var(--accent-amber-bg)', borderRadius: '8px', fontSize: '13px', fontWeight: '700', color: 'var(--accent-amber-text)', flexShrink: 0 }}>★ {flock.venueRating}</span>
+                    <span style={{ display: 'flex', alignItems: 'center', gap: '3px', padding: '3px 8px', background: 'var(--accent-amber-bg)', borderRadius: '8px', fontSize: '13px', fontWeight: '700', color: 'var(--accent-amber-text)', flexShrink: 0 }}>{Icons.starFilled('currentColor', 13)} {flock.venueRating}</span>
                   )}
                 </div>
                 {flock.venueAddress && (
@@ -15066,7 +15066,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                       <div style={{ display: 'flex', gap: '1px' }}>
                         {[1, 2, 3, 4, 5].map(s => s <= r.rating ? Icons.starFilled(colors.amber, 10) : Icons.star(colors.disabled, 10))}
                       </div>
-                      <button aria-label="Report review" className="hit44" onClick={() => setModerationTarget({ userId: r.user_id, userName: r.name || 'this reviewer', contentType: 'venue_review', contentId: r.id })} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '2px 4px', fontSize: '12px', color: 'var(--text-tertiary)' }} title="Report review">⚑</button>
+                      <button aria-label="Report review" className="hit44" onClick={() => setModerationTarget({ userId: r.user_id, userName: r.name || 'this reviewer', contentType: 'venue_review', contentId: r.id })} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '2px 4px', fontSize: '12px', color: 'var(--text-tertiary)' }} title="Report review">{Icons.flag('currentColor', 13)}</button>
                     </div>
                   </div>
                   {r.text && <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: '4px 0 0', lineHeight: '1.4' }}>{r.text}</p>}
