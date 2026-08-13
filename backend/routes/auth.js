@@ -48,7 +48,9 @@ const signupValidation = [
     .matches(/[0-9]/).withMessage('Password must contain at least one number'),
   body('name').trim().customSanitizer(stripHtml).isLength({ min: 1, max: 255 }).withMessage('Name is required'),
   body('phone').optional().isMobilePhone().withMessage('Invalid phone number'),
-  body('date_of_birth').optional().isISO8601().withMessage('Invalid date of birth'),
+  // Required: the age gate is meaningless if DOB is optional (audit 2026-08-12)
+  body('date_of_birth').exists().withMessage('Add your date of birth to create an account.')
+    .isISO8601().withMessage('Invalid date of birth'),
 ];
 
 const loginValidation = [
@@ -67,9 +69,13 @@ router.post('/signup', signupValidation, async (req, res) => {
     const { email, password, name, phone, interests, date_of_birth } = req.body;
     const safeInterests = sanitizeArray(interests || []);
 
-    // Server-side age gate (C4): reject under-13 regardless of the client gate.
+    // Server-side age gate (C4): DOB is required, and under-13 is rejected
+    // regardless of the client gate.
     const age = ageFromDob(date_of_birth);
-    if (age !== null && age < MIN_AGE) {
+    if (age === null) {
+      return res.status(400).json({ error: 'Add your date of birth to create an account.', needsDob: true });
+    }
+    if (age < MIN_AGE) {
       return res.status(403).json({ error: UNDERAGE_MSG });
     }
 
@@ -240,9 +246,15 @@ router.post('/google', [
           ['google', googleId, picture, user.id]
         );
       } else {
-        // New user — create account (server-side age gate, C4)
+        // New user — create account (server-side age gate, C4).
+        // DOB is REQUIRED for account creation on every path; a Google
+        // sign-in without one means "sign up first" (needsDob tells the
+        // client to route the user to the signup screen's DOB field).
         const dobAge = ageFromDob(req.body.date_of_birth);
-        if (dobAge !== null && dobAge < MIN_AGE) {
+        if (dobAge === null) {
+          return res.status(403).json({ error: 'No Flock account yet. Sign up with your date of birth first.', needsDob: true });
+        }
+        if (dobAge < MIN_AGE) {
           return res.status(403).json({ error: UNDERAGE_MSG });
         }
         result = await pool.query(
@@ -351,8 +363,13 @@ router.post('/apple', [
       const fallbackName = composedName
         || (email ? email.split('@')[0] : 'Friend');
 
+      // DOB required for creation, same as email + Google paths. Apple never
+      // supplies it, so the client must send it (signup screen's DOB field).
       const appleDobAge = ageFromDob(req.body.date_of_birth);
-      if (appleDobAge !== null && appleDobAge < MIN_AGE) {
+      if (appleDobAge === null) {
+        return res.status(403).json({ error: 'No Flock account yet. Sign up with your date of birth first.', needsDob: true });
+      }
+      if (appleDobAge < MIN_AGE) {
         return res.status(403).json({ error: UNDERAGE_MSG });
       }
       result = await pool.query(

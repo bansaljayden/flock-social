@@ -311,11 +311,16 @@ router.post('/submit-review', [
 // GET /api/venue-dashboard/public-reviews/:placeId — get reviews for any venue (for user-facing venue cards)
 router.get('/public-reviews/:placeId', async (req, res) => {
   try {
+    // venue_reply comes from whoever claimed the place — expose it publicly
+    // only when that claim is verified. User reviews themselves always show.
     const { rows } = await pool.query(
-      `SELECT vr.id, vr.rating, vr.text, vr.venue_reply, vr.venue_replied_at, vr.created_at,
-              u.name, u.profile_image_url
+      `SELECT vr.id, vr.rating, vr.text,
+              CASE WHEN vp.verified THEN vr.venue_reply ELSE NULL END AS venue_reply,
+              CASE WHEN vp.verified THEN vr.venue_replied_at ELSE NULL END AS venue_replied_at,
+              vr.created_at, u.name, u.profile_image_url
        FROM venue_reviews vr
        JOIN users u ON u.id = vr.user_id
+       LEFT JOIN venue_profiles vp ON vp.google_place_id = vr.google_place_id
        WHERE vr.google_place_id = $1
        ORDER BY vr.created_at DESC
        LIMIT 50`,
@@ -335,10 +340,13 @@ router.get('/public-reviews/:placeId', async (req, res) => {
 // GET /api/venue-dashboard/public-promotions/:placeId — get active promotions for a venue (user-facing)
 router.get('/public-promotions/:placeId', async (req, res) => {
   try {
+    // Only VERIFIED venues publish publicly — an unverified claim on a Google
+    // Place ID must not let a stranger speak as that business (audit 2026-08-12).
     const { rows } = await pool.query(
-      `SELECT id, title, description, time_slot, days FROM venue_promotions
-       WHERE google_place_id = $1 AND active = true
-       ORDER BY created_at DESC`,
+      `SELECT p.id, p.title, p.description, p.time_slot, p.days FROM venue_promotions p
+       JOIN venue_profiles vp ON vp.google_place_id = p.google_place_id AND vp.verified = true
+       WHERE p.google_place_id = $1 AND p.active = true
+       ORDER BY p.created_at DESC`,
       [req.params.placeId]
     );
     // Increment view count

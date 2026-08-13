@@ -379,14 +379,17 @@ router.get('/dm/:userId',
         }
       }
 
-      // Fetch reply-to message text for any replies
+      // Fetch reply-to message text for any replies.
+      // SECURITY: scoped to this conversation's pair — a stored reply_to_id
+      // pointing at another conversation must never hydrate its text here.
       const replyIds = messages.filter(m => m.reply_to_id).map(m => m.reply_to_id);
       if (replyIds.length > 0) {
         const replyResult = await pool.query(
           `SELECT dm.id, dm.message_text, u.name AS sender_name
            FROM direct_messages dm JOIN users u ON u.id = dm.sender_id
-           WHERE dm.id = ANY($1)`,
-          [replyIds]
+           WHERE dm.id = ANY($1)
+             AND ((dm.sender_id = $2 AND dm.receiver_id = $3) OR (dm.sender_id = $3 AND dm.receiver_id = $2))`,
+          [replyIds, req.user.id, otherUserId]
         );
         const replyMap = {};
         replyResult.rows.forEach(r => { replyMap[r.id] = r; });
@@ -450,11 +453,27 @@ router.post('/dm/:userId',
       // UGC text filter (Apple 1.2) — reject objectionable content before storing.
       if (rejectIfProfane(res, message_text)) return;
 
+      // SECURITY: a reply may only reference a message from THIS conversation
+      // (same invariant as the socket path — see sockets/handlers.js).
+      let safeReplyId = null;
+      if (reply_to_id) {
+        const replyCheck = await pool.query(
+          `SELECT id FROM direct_messages
+           WHERE id = $1
+             AND ((sender_id = $2 AND receiver_id = $3) OR (sender_id = $3 AND receiver_id = $2))`,
+          [reply_to_id, req.user.id, receiverId]
+        );
+        if (replyCheck.rows.length === 0) {
+          return res.status(400).json({ error: 'Invalid reply target' });
+        }
+        safeReplyId = reply_to_id;
+      }
+
       const result = await pool.query(
         `INSERT INTO direct_messages (sender_id, receiver_id, message_text, message_type, venue_data, image_url, reply_to_id)
          VALUES ($1, $2, $3, $4, $5, $6, $7)
          RETURNING *`,
-        [req.user.id, receiverId, message_text, message_type || 'text', venue_data || null, image_url || null, reply_to_id || null]
+        [req.user.id, receiverId, message_text, message_type || 'text', venue_data || null, image_url || null, safeReplyId]
       );
 
       const message = result.rows[0];
