@@ -806,6 +806,19 @@ router.post('/:id/leave', param('id').isInt(), async (req, res) => {
     const isCreator = flock.rows[0].creator_id === req.user.id;
     const flockName = flock.rows[0].name;
 
+    // Round 5: without this, any authenticated user who guessed a flock id
+    // could learn its name and broadcast fake departures that decrement every
+    // member's displayed count. Non-members get the same 404 as a bad id.
+    if (!isCreator) {
+      const mem = await pool.query(
+        'SELECT 1 FROM flock_members WHERE flock_id = $1 AND user_id = $2',
+        [flockId, req.user.id]
+      );
+      if (mem.rows.length === 0) {
+        return res.status(404).json({ error: 'Flock not found' });
+      }
+    }
+
     const io = req.app.get('io');
 
     if (isCreator) {
@@ -932,8 +945,13 @@ router.post('/:id/attendance',
              WHERE fm.user_id = $1 AND fm.status = 'accepted' AND f.status = 'completed' AND fm.attendance != 'unmarked'`,
             [userId]
           );
+          // Numerator scoped to COMPLETED flocks like the denominator —
+          // counting a live check-in on an active flock produced 200% scores
+          // (round 5).
           const attended = await client.query(
-            `SELECT COUNT(*) AS cnt FROM flock_members WHERE user_id = $1 AND attendance = 'attended'`,
+            `SELECT COUNT(*) AS cnt FROM flock_members fm
+             JOIN flocks f ON f.id = fm.flock_id
+             WHERE fm.user_id = $1 AND fm.attendance = 'attended' AND f.status = 'completed'`,
             [userId]
           );
           const totalJoined = parseInt(joined.rows[0].cnt);

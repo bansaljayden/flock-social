@@ -52,6 +52,7 @@ function registerHandlers(io, socket) {
   // --- Flock room management ---
 
   socket.on('join_flock', async (flockId) => {
+    if (!allowEvent(socket, 'join_flock', 20, 10_000)) return;
     try {
       // Verify membership before allowing room join
       const membership = await pool.query(
@@ -67,11 +68,13 @@ function registerHandlers(io, socket) {
       const room = `flock:${flockId}`;
       socket.join(room);
 
-      // Track user presence in the room
+      // Track user presence in the room. Keyed by socket id — the old
+      // Set-of-objects never deduplicated, so repeated join_flock emits grew
+      // presence, memory, and room_members payloads without bound (round 5).
       if (!roomUsers.has(flockId)) {
-        roomUsers.set(flockId, new Set());
+        roomUsers.set(flockId, new Map());
       }
-      roomUsers.get(flockId).add({
+      roomUsers.get(flockId).set(socket.id, {
         socketId: socket.id,
         userId: user.id,
         name: user.name,
@@ -85,7 +88,7 @@ function registerHandlers(io, socket) {
       });
 
       // Send current online members to the joining user
-      const onlineMembers = Array.from(roomUsers.get(flockId) || []).map((u) => ({
+      const onlineMembers = Array.from((roomUsers.get(flockId) || new Map()).values()).map((u) => ({
         userId: u.userId,
         name: u.name,
       }));
@@ -103,12 +106,7 @@ function registerHandlers(io, socket) {
     // Remove from presence tracking
     if (roomUsers.has(flockId)) {
       const users = roomUsers.get(flockId);
-      for (const u of users) {
-        if (u.socketId === socket.id) {
-          users.delete(u);
-          break;
-        }
-      }
+      users.delete(socket.id);
       if (users.size === 0) roomUsers.delete(flockId);
     }
 
@@ -296,10 +294,11 @@ function registerHandlers(io, socket) {
         [flockId, user.id, venue_name, venue_id || null]
       );
 
-      // Fetch updated vote tallies
+      // Fetch updated vote tallies (ids kept internally so each recipient's
+      // blocked users can be stripped from the names list — round 5)
       const votes = await pool.query(
         `SELECT venue_name, venue_id, COUNT(*) AS vote_count,
-                ARRAY_AGG(u.name) AS voters
+                ARRAY_AGG(json_build_object('id', u.id, 'name', u.name)) AS voter_rows
          FROM venue_votes vv
          JOIN users u ON u.id = vv.user_id
          WHERE vv.flock_id = $1
@@ -308,14 +307,39 @@ function registerHandlers(io, socket) {
         [flockId]
       );
 
-      const votePayload = {
-        flockId,
-        voter: { userId: user.id, name: user.name },
-        venue_name,
-        votes: votes.rows,
+      const members = await pool.query(
+        "SELECT user_id FROM flock_members WHERE flock_id = $1 AND status = 'accepted'",
+        [flockId]
+      );
+      const memberIds = members.rows.map(r => r.user_id);
+      const blockRows = memberIds.length
+        ? await pool.query(
+            'SELECT blocker_id, blocked_id FROM user_blocks WHERE blocker_id = ANY($1::int[]) OR blocked_id = ANY($1::int[])',
+            [memberIds]
+          )
+        : { rows: [] };
+      const invisibleOf = (uid) => {
+        const s = new Set();
+        for (const b of blockRows.rows) {
+          if (b.blocker_id === uid) s.add(b.blocked_id);
+          if (b.blocked_id === uid) s.add(b.blocker_id);
+        }
+        return s;
       };
-      socket.emit('new_vote', votePayload);
-      await emitToFlockExcludingBlocked(io, flockId, user.id, 'new_vote', votePayload);
+      const tailor = (invisible) => votes.rows.map(v => ({
+        venue_name: v.venue_name,
+        venue_id: v.venue_id,
+        vote_count: v.vote_count,
+        voters: (v.voter_rows || []).filter(p => !invisible.has(p.id)).map(p => p.name),
+      }));
+
+      socket.emit('new_vote', { flockId, voter: { userId: user.id, name: user.name }, venue_name, votes: tailor(invisibleOf(user.id)) });
+      for (const uid of memberIds) {
+        if (uid === user.id) continue;
+        const invisible = invisibleOf(uid);
+        if (invisible.has(user.id)) continue;
+        io.to(`user:${uid}`).emit('new_vote', { flockId, voter: { userId: user.id, name: user.name }, venue_name, votes: tailor(invisible) });
+      }
     } catch (err) {
       console.error('vote_venue error:', err);
       socket.emit('error', { message: 'Failed to vote' });
@@ -399,8 +423,9 @@ function registerHandlers(io, socket) {
 
   socket.on('flock_invite', async (data) => {
     try {
+      if (!allowEvent(socket, 'flock_invite', 10, 10_000)) return;
       const { flockId, invitedUserIds } = data;
-      if (!flockId || !Array.isArray(invitedUserIds) || invitedUserIds.length === 0) return;
+      if (!flockId || !Array.isArray(invitedUserIds) || invitedUserIds.length === 0 || invitedUserIds.length > 25) return;
 
       if (!(await verifyMembership(flockId, user.id))) {
         socket.emit('error', { message: 'Not a member of this flock' });
@@ -411,7 +436,15 @@ function registerHandlers(io, socket) {
       if (flockResult.rows.length === 0) return;
       const flockName = flockResult.rows[0].name;
 
-      for (const uid of invitedUserIds) {
+      // Relay persisted state only (round 5): each target must actually hold
+      // an 'invited' membership row — otherwise any member could spoof-flood
+      // invite toasts to arbitrary user ids.
+      const invitedRows = await pool.query(
+        `SELECT user_id FROM flock_members WHERE flock_id = $1 AND status = 'invited' AND user_id = ANY($2::int[])`,
+        [flockId, invitedUserIds.map(Number).filter(Number.isFinite)]
+      );
+      for (const row of invitedRows.rows) {
+        const uid = row.user_id;
         // Blocked users never see each other's invites
         if (await isBlockedBetween(user.id, uid)) continue;
         io.to(`user:${uid}`).emit('flock_invite_received', {
@@ -764,50 +797,57 @@ function registerHandlers(io, socket) {
 
   // --- Crowd level updates (for venue owners) ---
 
-  socket.on('crowd_update', (data) => {
-    const { venue_id, level } = data; // level: 'low' | 'moderate' | 'busy' | 'packed'
+  socket.on('crowd_update', async (data) => {
+    try {
+      if (!allowEvent(socket, 'crowd_update', 6, 60_000)) return;
+      const { venue_id, level } = data; // level: 'low' | 'moderate' | 'busy' | 'packed'
 
-    // Only venue owners or admins can broadcast crowd updates
-    if (user.role !== 'venue_owner' && user.role !== 'admin') {
-      socket.emit('error', { message: 'Only venue owners can update crowd levels' });
-      return;
+      const allowedLevels = ['low', 'moderate', 'busy', 'packed'];
+      if (!venue_id || !allowedLevels.includes(level)) {
+        socket.emit('error', { message: 'Invalid crowd update data' });
+        return;
+      }
+
+      // Round 5: role alone is forgeable (venue onboarding self-assigns it).
+      // The broadcaster must hold the VERIFIED claim on this exact venue.
+      const claim = await pool.query(
+        'SELECT 1 FROM venue_profiles WHERE user_id = $1 AND google_place_id = $2 AND verified = true',
+        [user.id, venue_id]
+      );
+      if (claim.rows.length === 0 && user.role !== 'admin') {
+        socket.emit('error', { message: 'Only the verified owner can update crowd levels' });
+        return;
+      }
+
+      // Broadcast to clients watching this venue (its room, not the world)
+      io.to(`venue:${venue_id}`).emit('crowd_update', {
+        venue_id,
+        level,
+        updated_by: user.id,
+        timestamp: Date.now(),
+      });
+    } catch (err) {
+      console.error('crowd_update error:', err.message);
     }
-
-    const allowedLevels = ['low', 'moderate', 'busy', 'packed'];
-    if (!venue_id || !allowedLevels.includes(level)) {
-      socket.emit('error', { message: 'Invalid crowd update data' });
-      return;
-    }
-
-    // Broadcast to clients watching this venue
-    io.emit('crowd_update', {
-      venue_id,
-      level,
-      updated_by: user.id,
-      timestamp: Date.now(),
-    });
   });
 
   // --- Cleanup on disconnect ---
 
   socket.on('disconnect', () => {
     clearBuckets(socket.id);
-    // Remove user from all tracked rooms
+    // Remove user from all tracked rooms (Map keyed by socket id — no
+    // duplicate entries to leak)
     for (const [flockId, users] of roomUsers.entries()) {
-      for (const u of users) {
-        if (u.socketId === socket.id) {
-          users.delete(u);
-          io.to(`flock:${flockId}`).emit('member_offline', {
-            userId: user.id,
-            name: user.name,
-            flockId,
-          });
-          // Also notify that location sharing stopped
-          io.to(`flock:${flockId}`).emit('member_stopped_sharing', {
-            userId: user.id,
-          });
-          break;
-        }
+      if (users.delete(socket.id)) {
+        io.to(`flock:${flockId}`).emit('member_offline', {
+          userId: user.id,
+          name: user.name,
+          flockId,
+        });
+        // Also notify that location sharing stopped
+        io.to(`flock:${flockId}`).emit('member_stopped_sharing', {
+          userId: user.id,
+        });
       }
       if (users.size === 0) roomUsers.delete(flockId);
     }

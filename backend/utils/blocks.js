@@ -54,4 +54,15 @@ async function isBlockedBetweenCached(a, b) {
   return blocked;
 }
 
-module.exports = { isBlockedBetween, isBlockedBetweenCached, getInvisibleUserIds };
+/**
+ * Call when a block is created or removed: kills the cached pair decision so
+ * the 30s TTL can't keep leaking live coordinates/typing to a fresh blocker
+ * (round 5 — block creation must invalidate, not wait out, the cache).
+ */
+function invalidateBlockCache(a, b) {
+  if (!a || !b) return;
+  const key = a < b ? `${a}_${b}` : `${b}_${a}`;
+  blockCache.delete(key);
+}
+
+module.exports = { isBlockedBetween, isBlockedBetweenCached, getInvisibleUserIds, invalidateBlockCache };
