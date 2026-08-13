@@ -42,14 +42,17 @@ router.get('/promotions', async (req, res) => {
 
 // POST /api/venue-dashboard/promotions
 router.post('/promotions', requirePremium, [
-  body('title').trim().isLength({ min: 1 }).withMessage('Title is required'),
-  body('description').optional().trim(),
-  body('timeSlot').optional().trim(),
-  body('days').optional().trim(),
+  body('title').trim().isLength({ min: 1, max: 80 }).withMessage('Title is required (max 80 characters)'),
+  body('description').optional().trim().isLength({ max: 300 }),
+  body('timeSlot').optional().trim().isLength({ max: 60 }),
+  body('days').optional().trim().isLength({ max: 60 }),
 ], async (req, res) => {
   try {
     const errors = validationResult(req);
     if (!errors.isEmpty()) return res.status(400).json({ error: errors.array()[0].msg });
+    // Promotions are public UGC — same screen as every user-writable field.
+    if (rejectIfProfane(res, req.body.title)) return;
+    if (req.body.description && rejectIfProfane(res, req.body.description)) return;
 
     const venue = await getVenueCtx(req.user.id);
     if (!venue) return res.status(404).json({ error: 'No venue profile found' });
@@ -376,7 +379,7 @@ router.get('/public-promotions/:placeId', async (req, res) => {
        JOIN venue_profiles vp ON vp.user_id = p.venue_user_id
          AND vp.google_place_id = p.google_place_id
          AND vp.verified = true
-       WHERE p.google_place_id = $1 AND p.active = true
+       WHERE p.google_place_id = $1 AND p.active = true AND COALESCE(p.is_hidden, false) = false
        ORDER BY p.created_at DESC`,
       [req.params.placeId]
     );

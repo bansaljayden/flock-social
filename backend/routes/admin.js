@@ -151,7 +151,7 @@ router.put('/reports/:id', async (req, res) => {
 
     let actionType;
     if (action === 'hide') {
-      const table = { flock_message: 'messages', dm: 'direct_messages', story: 'stories', venue_review: 'venue_reviews' }[report.content_type];
+      const table = { flock_message: 'messages', dm: 'direct_messages', story: 'stories', venue_review: 'venue_reviews', venue_promotion: 'venue_promotions' }[report.content_type];
       if (table && report.content_id) {
         await pool.query(`UPDATE ${table} SET is_hidden = true WHERE id = $1`, [report.content_id]);
       }

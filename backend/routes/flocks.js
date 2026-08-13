@@ -391,6 +391,11 @@ router.put('/:id',
 
       const { name, venue_name, venue_address, venue_id, venue_latitude, venue_longitude, venue_rating, venue_photo_url, event_time, status } = req.body;
 
+      // Same UGC screen as creation — editing must not be a bypass (round 7).
+      if (name && rejectIfProfane(res, name)) return;
+      if (venue_name && rejectIfProfane(res, venue_name)) return;
+      if (venue_address && rejectIfProfane(res, venue_address)) return;
+
       const result = await pool.query(
         `UPDATE flocks
          SET name = COALESCE($1, name),
@@ -902,7 +907,7 @@ router.get('/:id/members', param('id').isInt(), async (req, res) => {
 router.post('/:id/attendance',
   [
     param('id').isInt(),
-    body('attendance').isArray({ min: 1 }).withMessage('Attendance array required'),
+    body('attendance').isArray({ min: 1, max: 50 }).withMessage('Attendance array required'),
   ],
   async (req, res) => {
     try {
@@ -936,8 +941,15 @@ router.post('/:id/attendance',
           );
         }
 
-        // Recalculate reliability for each affected user
-        const affectedUserIds = attendance.map(a => a.userId).filter(Boolean);
+        // Recalculate reliability for each affected user. Scoped to ACCEPTED
+        // members of THIS flock and deduped — unbounded arbitrary ids meant
+        // query amplification + push spam to strangers (round 7).
+        const memberRows = await client.query(
+          "SELECT user_id FROM flock_members WHERE flock_id = $1 AND status = 'accepted'",
+          [flockId]
+        );
+        const memberSet = new Set(memberRows.rows.map(r => r.user_id));
+        const affectedUserIds = [...new Set(attendance.map(a => parseInt(a.userId)).filter(id => Number.isFinite(id) && memberSet.has(id)))];
         for (const userId of affectedUserIds) {
           const joined = await client.query(
             `SELECT COUNT(*) AS cnt FROM flock_members fm

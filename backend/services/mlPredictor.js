@@ -325,6 +325,7 @@ async function getNearbyEvents(lat, lng, timestamp) {
 
     if (!response.ok) {
       if (eventCache.size >= EVENT_CACHE_MAX) eventCache.delete(eventCache.keys().next().value);
+      if (eventCache.size >= EVENT_CACHE_MAX) eventCache.delete(eventCache.keys().next().value);
       eventCache.set(cacheKey, { data: noEvents, ts: Date.now() });
       return noEvents;
     }
@@ -333,6 +334,7 @@ async function getNearbyEvents(lat, lng, timestamp) {
     const events = data._embedded?.events || [];
 
     if (events.length === 0) {
+      if (eventCache.size >= EVENT_CACHE_MAX) eventCache.delete(eventCache.keys().next().value);
       if (eventCache.size >= EVENT_CACHE_MAX) eventCache.delete(eventCache.keys().next().value);
       eventCache.set(cacheKey, { data: noEvents, ts: Date.now() });
       return noEvents;
@@ -367,10 +369,13 @@ async function getNearbyEvents(lat, lng, timestamp) {
       nearestName: nearestEvent.name,
     } : noEvents;
 
+    if (eventCache.size >= EVENT_CACHE_MAX) eventCache.delete(eventCache.keys().next().value);
+
     eventCache.set(cacheKey, { data: result, ts: Date.now() });
     return result;
   } catch (err) {
     console.error('[MLPredictor] Event lookup failed:', err.message);
+    if (eventCache.size >= EVENT_CACHE_MAX) eventCache.delete(eventCache.keys().next().value);
     eventCache.set(cacheKey, { data: noEvents, ts: Date.now() });
     return noEvents;
   }

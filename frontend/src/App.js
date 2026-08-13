@@ -27,7 +27,7 @@ import PaywallSheet from './components/PaywallSheet';
 import { initPurchases } from './services/purchases';
 import { getEntitlements, createFlockInviteLink, getVenueIntelligence, getVenueStrip } from './services/api';
 import { motion, AnimatePresence } from 'framer-motion';
-import { SplineScene } from './components/ui/spline-scene';
+import BirdieBird from './components/ui/BirdieBird';
 import 'maplibre-gl/dist/maplibre-gl.css';
 
 // Animated crowd dial — fills from 0 to target score with counting number.
@@ -5457,7 +5457,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
             {showDmMenu && (
               <div style={{ position: 'absolute', top: '38px', right: 0, backgroundColor: 'var(--bg-card-solid)', borderRadius: '14px', boxShadow: '0 8px 24px rgba(0,0,0,0.12)', minWidth: '200px', zIndex: 60, overflow: 'hidden', border: '1px solid var(--border-subtle)' }}>
                 <button className="glass-btn" onClick={() => { setShowDmMenu(false); setModerationTarget({ userId: selectedDmId, userName: selectedDm.name, contentType: 'profile' }); }} style={{ width: '100%', padding: '14px 16px', display: 'flex', alignItems: 'center', gap: '10px', border: 'none', borderBottom: '1px solid var(--border-subtle)', backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer', fontSize: '14px', fontWeight: '600', color: 'var(--text-primary)' }}>
-                  <span aria-hidden style={{ fontSize: '15px' }}>âš‘</span> Report or block {selectedDm.name}
+                  <span aria-hidden style={{ fontSize: '15px' }}>⚑</span> Report or block {selectedDm.name}
                 </button>
                 <button className="glass-btn glass-danger" onClick={() => { setShowDmMenu(false); setShowDeleteDmConfirm(true); }} style={{ width: '100%', padding: '14px 16px', display: 'flex', alignItems: 'center', gap: '10px', border: 'none', backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer', fontSize: '14px', fontWeight: '600', color: '#EF4444' }}>
                   {Icons.x('#EF4444', 16)} Delete Conversation
@@ -5938,7 +5938,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                     ))}
                     <button onClick={(e) => { e.stopPropagation(); setDmReplyingTo(m); setShowDmReactionPicker(null); }} style={{ fontSize: '14px', background: 'none', border: 'none', cursor: 'pointer', padding: '4px 6px', borderRadius: '8px', color: colors.navy, fontWeight: '700' }} title="Reply">{Icons.reply(colors.navy, 14)}</button>
                     {m.sender !== 'You' && (
-                      <button onClick={(e) => { e.stopPropagation(); setShowDmReactionPicker(null); setModerationTarget({ userId: selectedDmId, userName: selectedDm.name, contentType: 'dm', contentId: m.id }); }} style={{ fontSize: '14px', background: 'none', border: 'none', cursor: 'pointer', padding: '4px 6px', borderRadius: '8px', color: '#EF4444', fontWeight: '700' }} title="Report">âš‘</button>
+                      <button onClick={(e) => { e.stopPropagation(); setShowDmReactionPicker(null); setModerationTarget({ userId: selectedDmId, userName: selectedDm.name, contentType: 'dm', contentId: m.id }); }} style={{ fontSize: '14px', background: 'none', border: 'none', cursor: 'pointer', padding: '4px 6px', borderRadius: '8px', color: '#EF4444', fontWeight: '700' }} title="Report">⚑</button>
                     )}
                   </div>
                 )}
@@ -6096,25 +6096,20 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           </div>
 
           {/* Messages */}
-          <div className="birdie-bg" onPointerMove={(e) => {
-            if (e.target.tagName === 'CANVAS') return;
-            const canvas = e.currentTarget.querySelector('[data-spline-wrapper] canvas');
-            if (canvas) {
-              canvas.dispatchEvent(new PointerEvent('pointermove', { clientX: e.clientX, clientY: e.clientY, bubbles: false, pointerId: e.pointerId, pointerType: e.pointerType }));
-            }
-          }} style={{ flex: 1, padding: '12px', overflowY: 'auto', position: 'relative' }}>
-            {/* Birdie himself — the 3D bird tracks your cursor. Full presence
-                while the chat is empty, fades to a whisper once it starts. */}
-            <div
-              data-spline-wrapper
-              style={{ position: 'absolute', inset: 0, zIndex: 0, filter: isDark ? 'none' : 'invert(1) hue-rotate(180deg) brightness(0.8) contrast(1.6) saturate(0.2) drop-shadow(0 0 12px rgba(0,0,0,0.2))', opacity: aiMessages.length === 0 ? 1 : 0.12, transition: 'opacity 0.2s ease', pointerEvents: aiMessages.length === 0 ? 'auto' : 'none' }}
-            >
-              <SplineScene scene="https://prod.spline.design/kZDDjO5HuC9GJUM2/scene.splinecode" style={{ width: '100%', height: '100%' }} />
-            </div>
+          <div className="birdie-bg" style={{ flex: 1, padding: '12px', overflowY: 'auto', position: 'relative' }}>
+            {/* Once the chat starts he steps aside: a whisper behind the
+                thread rather than a second thing to read. */}
+            {aiMessages.length > 0 && (
+              <div style={{ position: 'absolute', inset: 0, zIndex: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', opacity: 0.08, pointerEvents: 'none' }}>
+                <BirdieBird size={isAiPanel ? 168 : 230} tone={isDark ? '#8fb3d4' : '#2d5a87'} />
+              </div>
+            )}
 
-            {/* Empty state: greeting + prompt chips layered under the bird */}
+            {/* Empty state: Birdie, then the greeting, then the chips — one
+                stack in normal flow so nothing overlaps him. */}
             {aiMessages.length === 0 && (
-              <div style={{ position: 'absolute', left: 0, right: 0, bottom: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '10px', padding: '0 16px 18px', pointerEvents: 'none', zIndex: 1 }}>
+              <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '10px', padding: '0 16px 12px', pointerEvents: 'none', zIndex: 1 }}>
+                <BirdieBird size={isAiPanel ? 150 : 210} tone={isDark ? '#8fb3d4' : '#2d5a87'} style={{ marginBottom: '2px' }} />
                 <p style={{ fontSize: isAiPanel ? '13px' : '14px', fontWeight: '600', color: 'var(--text-primary)', margin: 0, textAlign: 'center' }}>hey, it's Birdie.</p>
                 <p style={{ fontSize: isAiPanel ? '11px' : '12px', color: 'var(--text-secondary)', margin: 0, textAlign: 'center', maxWidth: '260px', lineHeight: 1.5 }}>where's good tonight, how packed it is, what your flock is up to. ask away.</p>
                 <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', justifyContent: 'center', pointerEvents: 'auto' }}>
@@ -9087,7 +9082,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                     ))}
                     <button onClick={(e) => { e.stopPropagation(); setReplyingTo(m); setShowReactionPicker(null); }} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '6px', display: 'flex', alignItems: 'center', borderRadius: '10px' }}>{Icons.reply(colors.textSecondary, 18)}</button>
                     {m.sender !== 'You' && (
-                      <button onClick={(e) => { e.stopPropagation(); setShowReactionPicker(null); setModerationTarget({ userId: m.senderId, userName: m.sender, contentType: 'flock_message', contentId: m.id }); }} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '6px', display: 'flex', alignItems: 'center', borderRadius: '10px', fontSize: '16px', color: '#EF4444' }} title="Report">âš‘</button>
+                      <button onClick={(e) => { e.stopPropagation(); setShowReactionPicker(null); setModerationTarget({ userId: m.senderId, userName: m.sender, contentType: 'flock_message', contentId: m.id }); }} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '6px', display: 'flex', alignItems: 'center', borderRadius: '10px', fontSize: '16px', color: '#EF4444' }} title="Report">⚑</button>
                     )}
                   </div>
                 )}
@@ -14196,8 +14191,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                       </div>
                       <span style={{ fontSize: '11px', fontWeight: '600', color: 'var(--text-primary)' }}>{r.name || 'Anonymous'}</span>
                     </div>
-                    <div style={{ display: 'flex', gap: '1px' }}>
-                      {[1, 2, 3, 4, 5].map(s => s <= r.rating ? Icons.starFilled(colors.amber, 10) : Icons.star(colors.disabled, 10))}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                      <div style={{ display: 'flex', gap: '1px' }}>
+                        {[1, 2, 3, 4, 5].map(s => s <= r.rating ? Icons.starFilled(colors.amber, 10) : Icons.star(colors.disabled, 10))}
+                      </div>
+                      <button onClick={() => setModerationTarget({ userId: r.user_id, userName: r.name || 'this reviewer', contentType: 'venue_review', contentId: r.id })} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '2px 4px', fontSize: '11px', color: 'var(--text-tertiary)' }} title="Report review">⚑</button>
                     </div>
                   </div>
                   {r.text && <p style={{ fontSize: '11px', color: 'var(--text-secondary)', margin: '4px 0 0', lineHeight: '1.4' }}>{r.text}</p>}
