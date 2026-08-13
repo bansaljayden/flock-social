@@ -47,3 +47,5 @@ backend/scripts/ml/train/train_v*.err
 
 # Security review working notes (do not commit)
 REVIEW-ROUND3-gpt56sol.md
+frontend/ios/App/App/GoogleService-Info.plist
+frontend/ios/App/App/GoogleService-Info.plist.b64
