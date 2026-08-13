@@ -6,16 +6,15 @@
 //   text field is screened before it is stored.
 //
 // IMAGE: synchronous, FAIL-CLOSED (build-time decision). Every image/story upload
-//   is screened before it becomes visible. Pluggable provider; if a provider is
-//   configured and errors/times out/quota-exhausts, the upload is REJECTED rather
-//   than letting unmoderated imagery through during a degradation.
+//   is screened before it becomes visible via Google Cloud Vision SafeSearch; if
+//   the provider errors, times out, or exhausts quota, the upload is REJECTED
+//   rather than letting unmoderated imagery through during a degradation.
 // ---------------------------------------------------------------------------
 const { Filter } = require('content-checker');
 
-// content-checker reads OPEN_MODERATOR_API_KEY (not our documented
-// OPENMODERATOR_API_KEY) unless the key is passed explicitly — without this
-// option the client is keyless and every image call throws.
-const filter = new Filter({ openModeratorAPIKey: process.env.OPENMODERATOR_API_KEY });
+// Text screening only. content-checker's hosted image endpoint pointed at
+// OpenModerator, which no longer exists; images go through Cloud Vision below.
+const filter = new Filter();
 
 const TEXT_REJECTED_MESSAGE =
   "That doesn't fit our community guidelines. Rephrase and try again.";
@@ -52,12 +51,29 @@ function rejectIfProfane(res, text) {
 // Image moderation — fail-closed
 // ---------------------------------------------------------------------------
 const IMAGE_MODERATION_REQUIRED = process.env.IMAGE_MODERATION_REQUIRED === 'true';
-const OPENMODERATOR_API_KEY = process.env.OPENMODERATOR_API_KEY;
-const IMAGE_PROVIDER_CONFIGURED = !!OPENMODERATOR_API_KEY; // extend with AWS Rekognition later
+
+// Provider: Google Cloud Vision SafeSearch.
+//
+// This replaced OpenModerator, whose hosted service was shut down by its owner
+// (the domain now serves a paused-deployment 503, so the old key path could
+// never have worked). Cloud Vision runs in the Google Cloud project this app
+// already uses for Places and Gemini: enable the Vision API on that project and
+// set VISION_API_KEY. A separate key is supported so the browser-restricted
+// Maps key is never reused server-side.
+const VISION_API_KEY = process.env.VISION_API_KEY || process.env.GOOGLE_VISION_API_KEY;
+const IMAGE_PROVIDER_CONFIGURED = !!VISION_API_KEY;
+
+// SafeSearch returns a likelihood enum per category rather than a score.
+// LIKELY and VERY_LIKELY are refused. POSSIBLE is refused for the two
+// categories that carry real legal and App Store risk on a teen app, and
+// allowed for the softer ones so ordinary night-out photos are not eaten.
+const HARD_REJECT = new Set(['LIKELY', 'VERY_LIKELY']);
+const STRICT_CATEGORIES = ['adult', 'racy'];
+const OTHER_CATEGORIES = ['violence', 'medical'];
 
 /**
  * Screen an uploaded image before it becomes visible. FAIL-CLOSED.
- * @param {string} imageUrl  publicly-fetchable URL of the just-uploaded image
+ * @param {string} imageUrl  data: URL or publicly-fetchable https URL
  * @returns {Promise<{ allowed: boolean, reason: string|null }>}
  */
 async function moderateImage(imageUrl) {
@@ -65,24 +81,56 @@ async function moderateImage(imageUrl) {
   // IMAGE_MODERATION_REQUIRED is set (fail-closed for a teen app with photo UGC).
   if (!IMAGE_PROVIDER_CONFIGURED) {
     if (IMAGE_MODERATION_REQUIRED) {
-      console.error('🛡️ Image moderation REQUIRED but no provider configured — rejecting upload (fail-closed).');
+      console.error('🛡️ Image moderation REQUIRED but no provider configured, rejecting upload (fail-closed).');
       return { allowed: false, reason: 'moderation_unavailable' };
     }
-    console.warn('⚠️ Image moderation provider not configured — allowing upload (dev only). Set OPENMODERATOR_API_KEY + IMAGE_MODERATION_REQUIRED=true before store submission.');
+    console.warn('⚠️ Image moderation provider not configured, allowing upload (dev only). Set VISION_API_KEY + IMAGE_MODERATION_REQUIRED=true before store submission.');
     return { allowed: true, reason: null };
   }
 
   try {
-    // isImageNSFW posts a multipart file and needs actual image bytes as a
-    // Blob — handing it the URL string uploads the text of the URL instead.
     const blob = await imageToBlob(imageUrl);
-    const result = await filter.isImageNSFW(blob); // content-checker hosted NSFW model
-    const nsfw = result && (result.nsfw === true);
-    if (nsfw) return { allowed: false, reason: 'nsfw_image' };
+    const bytes = Buffer.from(await blob.arrayBuffer());
+
+    const response = await fetch(
+      `https://vision.googleapis.com/v1/images:annotate?key=${encodeURIComponent(VISION_API_KEY)}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          requests: [{
+            image: { content: bytes.toString('base64') },
+            features: [{ type: 'SAFE_SEARCH_DETECTION' }],
+          }],
+        }),
+        signal: AbortSignal.timeout(15000),
+      }
+    );
+
+    if (!response.ok) throw new Error(`vision ${response.status}`);
+    const data = await response.json();
+    const verdict = data?.responses?.[0];
+    if (verdict?.error) throw new Error(verdict.error.message || 'vision error');
+
+    const safe = verdict?.safeSearchAnnotation;
+    // A 200 with no annotation means we learned nothing about the image, which
+    // is not the same as it being clean.
+    if (!safe) throw new Error('no safeSearch annotation');
+
+    for (const key of STRICT_CATEGORIES) {
+      if (HARD_REJECT.has(safe[key]) || safe[key] === 'POSSIBLE') {
+        return { allowed: false, reason: `unsafe_${key}` };
+      }
+    }
+    for (const key of OTHER_CATEGORIES) {
+      if (HARD_REJECT.has(safe[key])) {
+        return { allowed: false, reason: `unsafe_${key}` };
+      }
+    }
     return { allowed: true, reason: null };
   } catch (err) {
     // Provider configured but call failed → FAIL CLOSED.
-    console.error('🛡️ Image moderation call failed — rejecting upload (fail-closed):', err.message);
+    console.error('🛡️ Image moderation call failed, rejecting upload (fail-closed):', err.message);
     return { allowed: false, reason: 'moderation_error' };
   }
 }
