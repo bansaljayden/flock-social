@@ -9,10 +9,13 @@ const colors = {
   navy: '#1a2744',
 };
 
-// Video city background — different clip than user login
+// Video city background — different clip than user login.
+// The 27KB poster is what paints first; preload="metadata" keeps the 880KB
+// clip off the critical path, and the poster stays put if playback never
+// starts. (Same treatment as the user login backdrop in AuthShell.js.)
 const SceneBackground = () => (
   <div style={{ position: 'absolute', inset: 0, overflow: 'hidden', pointerEvents: 'none' }}>
-    <video autoPlay muted loop playsInline style={{
+    <video autoPlay muted loop playsInline preload="metadata" poster="/bg-city-venue-poster.jpg" style={{
       position: 'absolute', width: '100%', height: '100%', objectFit: 'cover',
       filter: 'brightness(0.65) saturate(1)',
     }}>

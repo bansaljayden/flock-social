@@ -6,8 +6,11 @@ import { appleLogin } from '../../services/api';
 // on the NATIVE app only — on web it returns null and the web login stays
 // Google + email. Wired to backend POST /api/auth/apple (JWKS-verified).
 //
-// Styling follows Apple's HIG for the white button: system-looking mark,
-// "Continue with Apple" text, pill shape matching the Google button beside it.
+// Styling follows Apple's HIG white button style, which is the one Apple
+// asks for on a dark background. It shares the `.auth-provider` class with
+// the Google button beside it, so the two are identical in height, radius,
+// type and weight — which is also what guideline 4.8 means by offering
+// Sign in with Apple at equal prominence.
 
 const isNativeIos = () =>
   typeof window !== 'undefined' &&
@@ -52,29 +55,12 @@ const AppleSignInButton = ({ onSuccess, onError, dob }) => {
   return (
     <button
       type="button"
+      className="auth-provider"
       onClick={handleClick}
       disabled={busy}
-      style={{
-        width: '100%',
-        maxWidth: '344px',
-        height: '40px',
-        margin: '10px auto 0',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        gap: '8px',
-        borderRadius: '20px',
-        border: 'none',
-        background: '#ffffff',
-        color: '#000000',
-        fontSize: '14px',
-        fontWeight: '600',
-        fontFamily: 'inherit',
-        cursor: busy ? 'default' : 'pointer',
-        opacity: busy ? 0.7 : 1,
-      }}
+      style={{ color: '#000000' }}
     >
-      <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+      <svg width="17" height="17" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" style={{ marginTop: '-2px' }}>
         <path d="M17.05 12.54c-.02-2.2 1.8-3.26 1.88-3.31-1.02-1.5-2.62-1.7-3.19-1.72-1.36-.14-2.65.8-3.34.8-.69 0-1.75-.78-2.87-.76-1.48.02-2.84.86-3.6 2.18-1.53 2.66-.39 6.6 1.1 8.76.73 1.06 1.6 2.24 2.74 2.2 1.1-.05 1.52-.71 2.85-.71 1.33 0 1.7.71 2.87.69 1.18-.02 1.93-1.07 2.65-2.13.84-1.22 1.18-2.4 1.2-2.46-.03-.01-2.28-.88-2.3-3.48zM14.9 5.6c.6-.74 1.01-1.76.9-2.78-.87.04-1.93.58-2.56 1.31-.56.65-1.05 1.69-.92 2.68.97.08 1.97-.49 2.58-1.21z" />
       </svg>
       {busy ? 'Signing in…' : 'Continue with Apple'}

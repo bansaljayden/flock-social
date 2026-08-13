@@ -134,7 +134,7 @@ export default function LandingPage() {
   useEffect(() => {
     document.title = 'Flock | Plans that actually happen';
     const d = document.querySelector('meta[name="description"]');
-    if (d) d.setAttribute('content', 'Flock turns "we should hang out" into a real night out. Vote on where to go, see how busy it is before you leave, split the bill, and go.');
+    if (d) d.setAttribute('content', 'Flock turns “we should hang out” into a real night out. Vote on where to go, see how busy it is before you leave, split the bill, and go.');
   }, []);
 
   const join = async (e) => {
@@ -152,7 +152,7 @@ export default function LandingPage() {
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.error || 'Something went wrong.');
-      setMsg("You're on the list. We'll email you when it opens up.");
+      setMsg("You’re on the list. We’ll email you when it opens up.");
       setEmail('');
     } catch (err) {
       setMsg(err.message || 'Could not sign you up. Try again in a moment.');
@@ -219,15 +219,24 @@ export default function LandingPage() {
         </nav>
       </div>
 
-      {/* ---------------- hero ---------------- */}
+      {/* ---------------- hero ----------------
+          The headline spans the full measure and the rest of the fold hangs
+          under it: two sentences at 72px need ~900px to sit on two lines, and
+          in a half-width column they broke into four ragged ones. The phone is
+          a plate in the right margin with a caption, which is the field guide's
+          own device and the honest way to say the screenshot is real. */}
       <section className="lp-hero lp-on-navy">
-        <div className="lp-hero-glow" aria-hidden="true" />
         <div className="lp-wrap lp-hero-in">
-          <div>
-            <h1>Plans die in the group chat.<br />Flock is where they happen.</h1>
+          {/* "they happen." is held together: text-wrap balance, pretty and
+              auto all break this sentence 4+1 at phone widths and leave
+              "happen." alone on line four. */}
+          <h1>Plans die in the group chat.<br />Flock is where <span className="lp-keep">they happen.</span></h1>
+          <hr className="lp-hero-rule" aria-hidden="true" />
+
+          <div className="lp-hero-copy">
             <p className="lp-lead">
               Start a flock, invite your people, and vote on where to go. Everyone
-              lands on the same plan without the 200-message thread.
+              ends up on the same plan without the 200-message thread.
             </p>
             <div className="lp-hero-cta">
               <a className="lp-btn lp-btn-cream lp-btn-lg" href="/signup">Create your account</a>
@@ -235,11 +244,12 @@ export default function LandingPage() {
             </div>
             <AppStoreBadge />
             <p className="lp-hero-note">
-              Free to use. Works in your browser today. Took 1st at PA DECA States.
+              Free, and it runs in your browser right now. It won 1st place at PA
+              DECA States.
             </p>
           </div>
 
-          <div className="lp-phone-wrap">
+          <figure className="lp-phone-wrap">
             {/* Real capture of the shipping app, not a mockup. */}
             <img
               className="lp-shot lp-shot-hero"
@@ -247,18 +257,23 @@ export default function LandingPage() {
               width="390" height="844"
               alt="The Flock home screen: tonight's status, your flocks, and a plan that needs votes."
             />
-          </div>
+            <figcaption className="lp-plate-cap">
+              The Nest, top of screen. Who is in tonight, and which plans still
+              need votes.
+            </figcaption>
+          </figure>
         </div>
       </section>
 
-      {/* ---------------- the turn ---------------- */}
+      {/* ---------------- the turn ----------------
+          No kicker here: "The problem" above a headline that states the problem
+          is a label narrating its own sentence. */}
       <section className="lp-sec lp-sec-paper">
         <div className="lp-wrap lp-turn-grid">
           <div>
-            <p className="lp-kicker">The problem</p>
             <h2 className="lp-turn">Six people say yes. Then the chat goes quiet.</h2>
             <p className="lp-lead" style={{ marginTop: 18 }}>
-              The plan doesn't fall apart because people don't want to go. It falls
+              The plan doesn’t fall apart because people don't want to go. It falls
               apart because deciding is annoying, and one person always ends up
               carrying it.
             </p>
@@ -276,7 +291,7 @@ export default function LandingPage() {
       </section>
 
       {/* ---------------- how it works ---------------- */}
-      <section className="lp-sec lp-sec-paper-2" id="how">
+      <section className="lp-sec lp-sec-paper lp-sec-ruled" id="how">
         <div className="lp-wrap">
           <div>
             {/* Two birds already on the wire and a third flying in: the plans
@@ -285,14 +300,14 @@ export default function LandingPage() {
                 This is the section it actually describes. */}
             <img className="lp-plate lp-plate-plans" src="/marks/calendar.png" alt="" width="320" height="320" loading="lazy" />
             <p className="lp-kicker">How it works</p>
-            <h2>Four steps, then you're out the door.</h2>
+            <h2>Four steps, then you’re out the door.</h2>
           </div>
           <div className="lp-steps">
             {[
               { n: '01', t: 'Start a flock', d: 'Name the night, pick a date, invite your people. They RSVP in one tap.' },
               { n: '02', t: 'Vote on where', d: 'Everyone throws in places. The group votes. No one has to be the decider.' },
-              { n: '03', t: 'Match budgets', d: "Everyone types in what they can spend. The group only ever sees the ceiling, never anyone's number." },
-              { n: '04', t: 'Lock it in', d: "The plan confirms and everyone gets it. You're going out." },
+              { n: '03', t: 'Match budgets', d: "Everyone types in what they can spend. The group only ever sees the ceiling, never anyone’s number." },
+              { n: '04', t: 'Lock it in', d: "The plan locks, everyone gets the details, and you’re going out." },
             ].map((s) => (
               <div className="lp-step" key={s.n}>
                 <div className="lp-step-n">{s.n}</div>
@@ -301,52 +316,49 @@ export default function LandingPage() {
               </div>
             ))}
           </div>
+          {/* The two features the cut "In the app" grid actually added, as one
+              line under the thing they belong to. */}
+          <p className="lp-steps-after">
+            The chat, the venue cards and the votes all live in the flock, and
+            everything you say yes to lands on one calendar.
+          </p>
         </div>
       </section>
 
-      {/* ---------------- crowd intelligence ---------------- */}
-      <section className="lp-sec lp-sec-paper" id="crowds">
-        <div className="lp-wrap lp-row">
-          <div>
-            <img className="lp-plate lp-plate-crowd" src="/marks/crowd.png" alt="" width="320" height="320" loading="lazy" />
-            <p className="lp-kicker">Crowd levels</p>
-            <h2>Know how busy it is before you leave.</h2>
-            <p className="lp-lead">
-              Flock estimates how packed a place will be, hour by hour, from live
-              signals like the time, the weather, and how busy that spot usually
-              runs. You stop driving across town to stand in a line.
-            </p>
+      {/* ---------------- crowds, and the proof ----------------
+          These used to be two sections in a row: a claim about crowd levels
+          illustrated with a screenshot, then the same claim again with a real
+          working map under it. The screenshot version was strictly the weaker
+          one and it came first, so the page argued before it proved. One
+          section now, and it is navy: the demo is showing you tonight, and
+          tonight is what navy means on this page. It also breaks what was
+          otherwise a run of seven cream sections down the middle.
+
+          Both old anchors survive — #crowds on the section, #try on the demo —
+          so the footer link and the menu link each land somewhere sensible. */}
+      <section className="lp-sec lp-sec-navy lp-on-navy" id="crowds">
+        <div className="lp-wrap">
+          <div className="lp-demo-head">
+            <div>
+              <p className="lp-kicker">Crowd levels</p>
+              <h2>Know how busy it is before you leave.</h2>
+              <p className="lp-lead">
+                Flock reads the hour, the weather, and how busy a place usually
+                runs, then estimates how packed it will be tonight. You stop
+                driving across town to stand in a line.
+              </p>
+            </div>
             <ul className="lp-list">
-              <li>An hour-by-hour picture of tonight</li>
+              <li>An hour-by-hour read on tonight</li>
               <li>The best time to show up</li>
-              <li>A heads-up push before your spot gets packed</li>
+              <li>Every spot near you, scored the same way</li>
             </ul>
           </div>
 
-          <div className="lp-row-media">
-            <img
-              className="lp-shot"
-              src="/screenshots/app-crowd.png"
-              width="390" height="844"
-              loading="lazy"
-              alt="Venues near you with live crowd levels: 40% not busy, 46% moderate, plus a 12-hour forecast for each."
-            />
-          </div>
-        </div>
-      </section>
-
-      {/* ---------------- live demo ---------------- */}
-      <section className="lp-sec lp-sec-paper-2" id="try">
-        <div className="lp-wrap">
-          <div>
-            <p className="lp-kicker">Try it live</p>
-            <h2>See tonight's crowds, right here.</h2>
-            <p className="lp-lead" style={{ maxWidth: 620 }}>
-              This is the actual Flock crowd map, running on this page. Search a
-              spot or use your location, tap a pin, and the same model that powers
-              the app scores it for you on the spot.
-            </p>
-          </div>
+          <p className="lp-demo-proof" id="try">
+            Everything below is live. The map, the pins, and the numbers come
+            from the same model that ships inside Flock. Pick a pin.
+          </p>
           <LiveDemo />
         </div>
       </section>
@@ -380,40 +392,37 @@ export default function LandingPage() {
                 margin: '0 0 16px',
               }}
             />
-            <p className="lp-kicker">Birdie</p>
-            <h2>"Idk, you pick." Birdie picks.</h2>
+            <h2>“Idk, you pick.” Birdie picks.</h2>
             <p className="lp-lead">
-              Every plan dies in the same argument: where. Ask Birdie like you'd
-              ask a friend and it answers like a local, with Flock's live crowd
-              numbers behind every recommendation.
+              The argument is always the same one: where. Ask Birdie the way you’d
+              ask a friend who knows the city, and it answers with tonight’s crowd
+              numbers already checked.
             </p>
             <ul className="lp-list">
-              <li>Ask in plain words. "Where's poppin rn" works.</li>
-              <li>Every pick is backed by the live crowd model, not vibes.</li>
+              <li>Ask in plain words. “Where’s poppin rn” works.</li>
+              <li>Every pick is scored by the crowd model before it reaches you.</li>
               <li>Tap a card to see details, share it to the group, or start the plan.</li>
             </ul>
-            <p className="lp-hero-note" style={{ marginTop: 14 }}>
-              Free accounts get 10 Birdie messages a day.
-            </p>
           </div>
         </div>
       </section>
 
-      {/* ---------------- money ---------------- */}
-      <section className="lp-sec lp-sec-paper-2" id="money">
+      {/* ---------------- money ----------------
+          The old headline was "Money kills more plans than distance", the third
+          plans-die construction on one page after the hero and Birdie. The
+          section's best line was buried in the lead; it is the headline now. */}
+      <section className="lp-sec lp-sec-paper lp-sec-ruled" id="money">
         <div className="lp-wrap lp-row lp-row-flip">
           <div>
             <img className="lp-plate lp-plate-split" src="/marks/split.png" alt="" width="320" height="320" loading="lazy" />
-            <p className="lp-kicker">Money</p>
-            <h2>Money kills more plans than distance.</h2>
+            <h2>Nobody wants to say “that’s too expensive” out loud.</h2>
             <p className="lp-lead">
-              Nobody wants to say "that's too expensive" in front of everyone. In
-              Flock, nobody has to. Budgets go in privately and the group only sees
-              a ceiling everyone can actually afford.
+              In Flock nobody has to. Everyone types a number privately, and the
+              group only ever sees a ceiling that works for all of them.
             </p>
             <ul className="lp-list">
-              <li>Individual amounts are never shown to anyone</li>
-              <li>Venue picks stay under the group's ceiling</li>
+              <li>Nobody ever sees an individual amount</li>
+              <li>Venue picks stay under the group’s ceiling</li>
               <li>Split the bill and send Venmo, Cash App, or Zelle links</li>
             </ul>
           </div>
@@ -426,36 +435,19 @@ export default function LandingPage() {
               <div className="lp-split-row"><span>Riley</span><b>$23.36</b></div>
               <div className="lp-split-row"><span>Jordan</span><b>$23.37</b></div>
               <div className="lp-split-row"><span>Alex</span><b>$23.37</b></div>
-              <div className="lp-split-note">Group budget ceiling was $25 each. Nobody saw anyone else's number.</div>
+              <div className="lp-split-note">Group budget ceiling was $25 each. Nobody saw anyone else’s number.</div>
             </div>
           </div>
         </div>
       </section>
 
-      {/* ---------------- everything else ---------------- */}
-      <section className="lp-sec lp-sec-paper">
-        <div className="lp-wrap">
-          <div>
-            <p className="lp-kicker">In the app</p>
-            <h2>The rest of the night, handled.</h2>
-          </div>
-          <div className="lp-grid">
-            {[
-              { t: 'Venue voting', d: 'Put places up, vote, and watch the group converge without a single argument.' },
-              { t: 'Live crowd levels', d: 'See how packed somewhere is right now and when it peaks tonight.' },
-              { t: 'Budget matching', d: 'Budgets stay private. The ceiling is shared. Then split the bill.' },
-              { t: 'Group chat that plans', d: 'Chat, venue cards, and votes in one place instead of five apps.' },
-              { t: 'Plans calendar', d: 'Everything you said yes to, in one place, so nothing gets double-booked.' },
-              { t: 'Birdie', d: 'Tell it what kind of night you want and it finds spots that fit.' },
-            ].map((f) => (
-              <div className="lp-card" key={f.t}>
-                <h3>{f.t}</h3>
-                <p>{f.d}</p>
-              </div>
-            ))}
-          </div>
-        </div>
-      </section>
+      {/* The "In the app" section was cut here. It was a six-card grid, and
+          four of the six cards (venue voting, live crowd levels, budget
+          matching, Birdie) were a fourth restatement of sections this page had
+          already given a full spread each. The other two, group chat and the
+          plans calendar, are now a single line at the end of the steps rather
+          than a section of their own. A page that says the same six things four
+          times is not thorough, it is unsure. */}
 
       {/* ---------------- safety ---------------- */}
       <section className="lp-sec lp-sec-navy lp-on-navy" id="safety">
@@ -468,7 +460,7 @@ export default function LandingPage() {
             <h2>Getting home matters as much as getting out.</h2>
             <p className="lp-lead">
               Share your live location with your group while the night is on, and
-              only while it's on. If something goes wrong, one button tells the
+              only while it’s on. If something goes wrong, one button tells the
               people you picked where you are.
             </p>
             <ul className="lp-list">
@@ -497,13 +489,13 @@ export default function LandingPage() {
       </section>
 
       {/* ---------------- pricing ---------------- */}
-      <section className="lp-sec lp-sec-paper-2" id="pricing">
+      <section className="lp-sec lp-sec-paper" id="pricing">
         <div className="lp-wrap">
           <div>
             <p className="lp-kicker">Pricing</p>
             <h2>Free for your friend group.</h2>
             <p className="lp-lead" style={{ marginTop: 16 }}>
-              You and your friends don't pay. Venues pay to show up in front of
+              You and your friends don’t pay. Venues pay to show up in front of
               groups that are picking a place right now.
             </p>
           </div>
@@ -525,15 +517,18 @@ export default function LandingPage() {
 
             <div className="lp-plan lp-plan-venue">
               <h3>For venues</h3>
-              <div className="lp-plan-price">Let's talk<small>bars, clubs, restaurants</small></div>
+              <div className="lp-plan-price">Let’s talk<small>bars, clubs, restaurants</small></div>
               <p className="lp-plan-note">
-                Reach groups at the exact moment they're picking a place, before they
+                Reach groups at the exact moment they’re picking a place, before they
                 end up somewhere else.
               </p>
+              {/* "See how many groups considered you" was cut: the venue
+                  analytics tab it described was deleted from the product on
+                  2026-08-12, and the page cannot sell a screen that no longer
+                  exists. */}
               <ul className="lp-list">
                 <li>Show up in venue voting near you</li>
                 <li>Post deals and events to nearby groups</li>
-                <li>See how many groups considered you</li>
                 <li>Put an offer up on a slow night</li>
               </ul>
               <a className="lp-btn lp-btn-navy" href={`mailto:${CONTACT_EMAIL}?subject=Flock%20for%20venues`}>
@@ -550,7 +545,7 @@ export default function LandingPage() {
           <div>
             <h2>Give the next plan a fighting chance.</h2>
             <p className="lp-lead" style={{ marginTop: 16 }}>
-              Open Flock in your browser, or leave your email and we'll tell you the
+              Open Flock in your browser, or leave your email and we’ll tell you the
               moment the iPhone app is out.
             </p>
             <div className="lp-cta-row">
@@ -583,7 +578,7 @@ export default function LandingPage() {
             <div>
               <a className="lp-brand" href="/"><Mark size={24} /> Flock</a>
               <p className="lp-footer-blurb">
-                The app that turns "we should hang out" into an actual night out.
+                The app that turns “we should hang out” into an actual night out.
               </p>
             </div>
             <div>
