@@ -203,7 +203,12 @@ function registerHandlers(io, socket) {
 
       const message = result.rows[0];
       message.sender_name = user.name;
-      message.sender_image = user.profile_image_url || null;
+      // Oversized base64 avatars fan out to every member on every message —
+      // drop them from the payload instead of amplifying them (REVIEW-ROUND5)
+      message.sender_image =
+        (user.profile_image_url && user.profile_image_url.length <= 12000)
+          ? user.profile_image_url
+          : null;
       message.reactions = [];
 
       // Fan out per-member instead of to the whole room, so mutual blocks are
@@ -568,7 +573,11 @@ function registerHandlers(io, socket) {
 
       const msg = result.rows[0];
       msg.sender_name = user.name;
-      msg.sender_image = user.profile_image_url || null;
+      // Same oversized-avatar guard as the flock send path (REVIEW-ROUND5)
+      msg.sender_image =
+        (user.profile_image_url && user.profile_image_url.length <= 12000)
+          ? user.profile_image_url
+          : null;
       msg.reactions = [];
       if (replyRow) msg.reply_to = replyRow;
 

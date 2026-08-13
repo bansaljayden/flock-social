@@ -79,6 +79,7 @@ function cityQuery(city) {
           COUNT(*)::int AS user_feedback_count,
           AVG((CASE crowd_level WHEN 1 THEN 20 WHEN 2 THEN 50 ELSE 80 END) - predicted_score)::numeric(5,2) AS avg_prediction_error
         FROM venue_feedback
+        WHERE verified = true -- only presence-verified reports: unverified rows let Sybil accounts poison training features (REVIEW-ROUND5)
         GROUP BY venue_place_id
       ) fb ON fb.venue_place_id = v.google_place_id
       WHERE t.busyness_pct IS NOT NULL AND v.city = $1

@@ -5,14 +5,8 @@ const pool = require('../config/database');
 
 const resend = process.env.RESEND_API_KEY ? new Resend(process.env.RESEND_API_KEY) : null;
 
-// Create waitlist table if it doesn't exist
-pool.query(`
-  CREATE TABLE IF NOT EXISTS waitlist (
-    id SERIAL PRIMARY KEY,
-    email VARCHAR(255) NOT NULL UNIQUE,
-    created_at TIMESTAMPTZ DEFAULT NOW()
-  )
-`).catch(() => {});
+// waitlist table lives in migrations/003 — route-owned DDL raced the
+// migration runner on fresh deployments (see REVIEW-ROUND5).
 
 // POST /api/waitlist — no auth required
 router.post('/',

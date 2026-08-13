@@ -9,23 +9,8 @@ const { isBlockedBetween, getInvisibleUserIds } = require('../utils/blocks');
 const router = express.Router();
 router.use(authenticate);
 
-// Auto-create friendships table if it doesn't exist
-(async () => {
-  try {
-    await pool.query(`
-      CREATE TABLE IF NOT EXISTS friendships (
-        id SERIAL PRIMARY KEY,
-        requester_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
-        addressee_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
-        status VARCHAR(20) DEFAULT 'pending' CHECK (status IN ('pending', 'accepted', 'declined')),
-        created_at TIMESTAMP DEFAULT NOW(),
-        UNIQUE(requester_id, addressee_id)
-      )
-    `);
-  } catch (err) {
-    console.error('Failed to ensure friendships table:', err.message);
-  }
-})();
+// friendships table lives in migrations/003 — route-owned DDL raced the
+// migration runner on fresh deployments (see REVIEW-ROUND5).
 
 // POST /api/friends/request - Send a friend request
 router.post('/request',
