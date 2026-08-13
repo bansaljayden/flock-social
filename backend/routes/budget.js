@@ -38,58 +38,79 @@ router.post('/:flockId/submit',
         return res.status(403).json({ error: 'You are not a member of this flock' });
       }
 
-      // Verify budget is enabled and not locked
-      const flockCheck = await pool.query(
-        'SELECT budget_enabled, budget_locked FROM flocks WHERE id = $1',
-        [flockId]
-      );
-      if (flockCheck.rows.length === 0) {
-        return res.status(404).json({ error: 'Flock not found' });
-      }
-      if (!flockCheck.rows[0].budget_enabled) {
-        return res.status(400).json({ error: 'Budget matching is not enabled for this flock' });
-      }
-      if (flockCheck.rows[0].budget_locked) {
-        return res.status(400).json({ error: 'Budget has been locked' });
-      }
-
       // Validate: if not skipped, amount is required
       if (!skipped && (!amount || amount <= 0)) {
         return res.status(400).json({ error: 'Amount is required when not skipping' });
       }
 
-      // UPSERT budget submission
-      await pool.query(
-        `INSERT INTO budget_submissions (flock_id, user_id, amount, skipped, updated_at)
-         VALUES ($1, $2, $3, $4, NOW())
-         ON CONFLICT (flock_id, user_id) DO UPDATE
-         SET amount = $3, skipped = $4, updated_at = NOW()`,
-        [flockId, userId, skipped ? null : amount, !!skipped]
-      );
+      // PRIVACY INVARIANT: submission, ceiling recompute, and counting run in
+      // ONE transaction holding the flock row lock. As autocommit queries, a
+      // concurrent skip could slip between this route's checks and /lock's
+      // count, letting the lock emit a ceiling backed by <3 submissions.
+      const client = await pool.connect();
+      let countRow;
+      let ceiling;
+      try {
+        await client.query('BEGIN');
 
-      // Recalculate ceiling: MIN of non-skipped amounts
-      const ceilingResult = await pool.query(
-        'SELECT MIN(amount) AS ceiling FROM budget_submissions WHERE flock_id = $1 AND skipped = false',
-        [flockId]
-      );
-      const ceiling = ceilingResult.rows[0].ceiling ? parseFloat(ceilingResult.rows[0].ceiling) : null;
+        const flockCheck = await client.query(
+          'SELECT budget_enabled, budget_locked FROM flocks WHERE id = $1 FOR UPDATE',
+          [flockId]
+        );
+        if (flockCheck.rows.length === 0) {
+          await client.query('ROLLBACK');
+          return res.status(404).json({ error: 'Flock not found' });
+        }
+        if (!flockCheck.rows[0].budget_enabled) {
+          await client.query('ROLLBACK');
+          return res.status(400).json({ error: 'Budget matching is not enabled for this flock' });
+        }
+        if (flockCheck.rows[0].budget_locked) {
+          await client.query('ROLLBACK');
+          return res.status(400).json({ error: 'Budget has been locked' });
+        }
 
-      // Update cached ceiling on flocks table
-      await pool.query(
-        'UPDATE flocks SET budget_ceiling = $1, updated_at = NOW() WHERE id = $2',
-        [ceiling, flockId]
-      );
+        // UPSERT budget submission
+        await client.query(
+          `INSERT INTO budget_submissions (flock_id, user_id, amount, skipped, updated_at)
+           VALUES ($1, $2, $3, $4, NOW())
+           ON CONFLICT (flock_id, user_id) DO UPDATE
+           SET amount = $3, skipped = $4, updated_at = NOW()`,
+          [flockId, userId, skipped ? null : amount, !!skipped]
+        );
 
-      // Count submissions
-      const countResult = await pool.query(
-        `SELECT
-           COUNT(*) AS total_submissions,
-           COUNT(*) FILTER (WHERE skipped = false) AS non_skip_count,
-           COUNT(*) FILTER (WHERE skipped = true) AS skip_count
-         FROM budget_submissions WHERE flock_id = $1`,
-        [flockId]
-      );
-      const { total_submissions, non_skip_count, skip_count } = countResult.rows[0];
+        // Recalculate ceiling: MIN of non-skipped amounts
+        const ceilingResult = await client.query(
+          'SELECT MIN(amount) AS ceiling FROM budget_submissions WHERE flock_id = $1 AND skipped = false',
+          [flockId]
+        );
+        ceiling = ceilingResult.rows[0].ceiling ? parseFloat(ceilingResult.rows[0].ceiling) : null;
+
+        // Update cached ceiling on flocks table
+        await client.query(
+          'UPDATE flocks SET budget_ceiling = $1, updated_at = NOW() WHERE id = $2',
+          [ceiling, flockId]
+        );
+
+        // Count submissions
+        const countResult = await client.query(
+          `SELECT
+             COUNT(*) AS total_submissions,
+             COUNT(*) FILTER (WHERE skipped = false) AS non_skip_count,
+             COUNT(*) FILTER (WHERE skipped = true) AS skip_count
+           FROM budget_submissions WHERE flock_id = $1`,
+          [flockId]
+        );
+        countRow = countResult.rows[0];
+
+        await client.query('COMMIT');
+      } catch (txErr) {
+        await client.query('ROLLBACK').catch(() => {});
+        throw txErr;
+      } finally {
+        client.release();
+      }
+      const { total_submissions, non_skip_count, skip_count } = countRow;
       const submissionCount = parseInt(total_submissions);
       const skipCount = parseInt(skip_count);
       const nonSkipCount = parseInt(non_skip_count);
@@ -247,40 +268,64 @@ router.post('/:flockId/lock',
       const flockId = parseInt(req.params.flockId);
       const userId = req.user.id;
 
-      // Verify creator
-      const flockResult = await pool.query(
-        'SELECT creator_id, budget_enabled, budget_ceiling FROM flocks WHERE id = $1',
-        [flockId]
-      );
-      if (flockResult.rows.length === 0) {
-        return res.status(404).json({ error: 'Flock not found' });
-      }
-      if (flockResult.rows[0].creator_id !== userId) {
-        return res.status(403).json({ error: 'Only the flock creator can lock the budget' });
-      }
-      if (!flockResult.rows[0].budget_enabled) {
-        return res.status(400).json({ error: 'Budget matching is not enabled for this flock' });
-      }
-
       // PRIVACY INVARIANT (README "hard invariants"): the ceiling is the MIN of
       // submissions, so revealing it below the 3-submission threshold exposes an
-      // individual's exact budget. The status endpoints enforce >= 3; locking
-      // must too, or a creator could lock after one submission and read it.
-      const countResult = await pool.query(
-        `SELECT COUNT(*)::int AS n FROM budget_submissions
-         WHERE flock_id = $1 AND skipped = false`,
-        [flockId]
-      );
-      if ((countResult.rows[0]?.n || 0) < 3) {
-        return res.status(400).json({ error: 'Budget locks after at least 3 people have submitted' });
+      // individual's exact budget. The threshold check, lock, and ceiling read
+      // happen in ONE transaction holding the flock row lock — otherwise a
+      // concurrent skip between the count and the response could leave this
+      // emitting a ceiling backed by fewer than 3 submissions.
+      const client = await pool.connect();
+      let ceiling;
+      try {
+        await client.query('BEGIN');
+
+        const flockResult = await client.query(
+          'SELECT creator_id, budget_enabled FROM flocks WHERE id = $1 FOR UPDATE',
+          [flockId]
+        );
+        if (flockResult.rows.length === 0) {
+          await client.query('ROLLBACK');
+          return res.status(404).json({ error: 'Flock not found' });
+        }
+        if (flockResult.rows[0].creator_id !== userId) {
+          await client.query('ROLLBACK');
+          return res.status(403).json({ error: 'Only the flock creator can lock the budget' });
+        }
+        if (!flockResult.rows[0].budget_enabled) {
+          await client.query('ROLLBACK');
+          return res.status(400).json({ error: 'Budget matching is not enabled for this flock' });
+        }
+
+        const countResult = await client.query(
+          `SELECT COUNT(*)::int AS n FROM budget_submissions
+           WHERE flock_id = $1 AND skipped = false`,
+          [flockId]
+        );
+        if ((countResult.rows[0]?.n || 0) < 3) {
+          await client.query('ROLLBACK');
+          return res.status(400).json({ error: 'Budget locks after at least 3 people have submitted' });
+        }
+
+        // Recompute inside the transaction — the cached column could be stale
+        // relative to the submissions this count just validated.
+        const ceilingResult = await client.query(
+          'SELECT MIN(amount) AS ceiling FROM budget_submissions WHERE flock_id = $1 AND skipped = false',
+          [flockId]
+        );
+        ceiling = ceilingResult.rows[0].ceiling ? parseFloat(ceilingResult.rows[0].ceiling) : null;
+
+        await client.query(
+          'UPDATE flocks SET budget_locked = true, budget_ceiling = $2, updated_at = NOW() WHERE id = $1',
+          [flockId, ceiling]
+        );
+
+        await client.query('COMMIT');
+      } catch (txErr) {
+        await client.query('ROLLBACK').catch(() => {});
+        throw txErr;
+      } finally {
+        client.release();
       }
-
-      await pool.query(
-        'UPDATE flocks SET budget_locked = true, updated_at = NOW() WHERE id = $1',
-        [flockId]
-      );
-
-      const ceiling = flockResult.rows[0].budget_ceiling ? parseFloat(flockResult.rows[0].budget_ceiling) : null;
 
       const io = req.app.get('io');
       if (io) {
