@@ -119,6 +119,12 @@ ALTER TABLE ml_training_data ADD COLUMN IF NOT EXISTS total_nearby_events INTEGE
 ALTER TABLE ml_training_data ADD COLUMN IF NOT EXISTS total_nearby_attendance INTEGER DEFAULT 0;
 ALTER TABLE ml_training_data ADD COLUMN IF NOT EXISTS nearest_event_type VARCHAR(50);
 
+-- Collector columns that lived only as hand-run ALTERs on the prod database
+-- (audit 2026-08-12: a fresh initTables couldn't run either collector)
+ALTER TABLE ml_venues ADD COLUMN IF NOT EXISTS besttime_attempted_at TIMESTAMPTZ;
+ALTER TABLE ml_venues ADD COLUMN IF NOT EXISTS besttime_status VARCHAR(20);
+ALTER TABLE ml_training_data ADD COLUMN IF NOT EXISTS baseline_busyness SMALLINT;
+
 -- Dated holiday context (2026-08-12) — stamped on realtime rows only; weekly
 -- rows are dateless by design. Sourced from scripts/ml/holidays.json.
 ALTER TABLE ml_training_data ADD COLUMN IF NOT EXISTS observed_date DATE;

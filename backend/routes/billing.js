@@ -60,26 +60,37 @@ router.post('/:flockId/create',
         return res.status(400).json({ error: 'No accepted members in this flock' });
       }
 
-      // Get flock name
-      const flockResult = await pool.query('SELECT name FROM flocks WHERE id = $1', [flockId]);
+      // Get flock name + creator
+      const flockResult = await pool.query('SELECT name, creator_id FROM flocks WHERE id = $1', [flockId]);
       const flockName = flockResult.rows[0]?.name || 'Flock';
+      const flockCreatorId = flockResult.rows[0]?.creator_id;
 
       // Calculate total with tip
       const totalWithTip = Math.round(totalAmount * (1 + tipPercent / 100) * 100) / 100;
 
-      // Check for existing ghost-mode commitments
+      // Check for an existing bill + preserved states.
+      // AUTHORIZATION (audit 2026-08-12): any member may CREATE the bill, but
+      // replacing an existing one is restricted to its payer or the flock
+      // creator — before this, any member could rewrite the amount/payer and
+      // erase everyone's settlement records.
       const existingBill = await pool.query(
-        'SELECT id FROM bill_splits WHERE flock_id = $1',
+        'SELECT id, paid_by FROM bill_splits WHERE flock_id = $1',
         [flockId]
       );
       const existingCommitments = new Map();
+      const existingSettled = new Map();
       if (existingBill.rows.length > 0) {
-        const commitResult = await pool.query(
-          'SELECT user_id, committed FROM bill_split_shares WHERE bill_id = $1 AND committed = true',
+        const prevPayer = existingBill.rows[0].paid_by;
+        if (userId !== prevPayer && userId !== flockCreatorId) {
+          return res.status(403).json({ error: 'Only the person who paid or the flock creator can change this bill' });
+        }
+        const shareResult = await pool.query(
+          'SELECT user_id, committed, settled, settled_at FROM bill_split_shares WHERE bill_id = $1',
           [existingBill.rows[0].id]
         );
-        for (const row of commitResult.rows) {
-          existingCommitments.set(row.user_id, true);
+        for (const row of shareResult.rows) {
+          if (row.committed) existingCommitments.set(row.user_id, true);
+          if (row.settled) existingSettled.set(row.user_id, row.settled_at || new Date());
         }
       }
 
@@ -134,14 +145,16 @@ router.post('/:flockId/create',
         // Delete existing shares (for re-creation)
         await client.query('DELETE FROM bill_split_shares WHERE bill_id = $1', [billId]);
 
-        // Insert shares
+        // Insert shares — settled records survive the rewrite (a paid debt
+        // must not silently become unpaid because the bill was edited)
         for (const share of shares) {
           const isPayer = share.userId === payerId;
           const wasCommitted = existingCommitments.has(share.userId);
+          const settledAt = isPayer ? new Date() : (existingSettled.get(share.userId) || null);
           await client.query(
             `INSERT INTO bill_split_shares (bill_id, user_id, amount, committed, settled, settled_at)
              VALUES ($1, $2, $3, $4, $5, $6)`,
-            [billId, share.userId, share.amount, wasCommitted, isPayer, isPayer ? new Date() : null]
+            [billId, share.userId, share.amount, wasCommitted, isPayer || existingSettled.has(share.userId), settledAt]
           );
         }
 
@@ -359,11 +372,25 @@ router.post('/:flockId/ghost-commit',
 
       // Get budget ceiling and member count
       const flockResult = await pool.query(
-        'SELECT budget_ceiling, status FROM flocks WHERE id = $1',
+        'SELECT budget_ceiling, status, ghost_mode_enabled FROM flocks WHERE id = $1',
         [flockId]
       );
       if (flockResult.rows.length === 0) {
         return res.status(404).json({ error: 'Flock not found' });
+      }
+
+      // PRIVACY (audit 2026-08-12): this endpoint was a third door to the raw
+      // ceiling. Same anonymity threshold as everywhere else, and ghost mode
+      // must actually be on for a ghost commit.
+      if (!flockResult.rows[0].ghost_mode_enabled) {
+        return res.status(400).json({ error: 'Ghost mode is not enabled for this flock' });
+      }
+      const thresholdResult = await pool.query(
+        `SELECT COUNT(*)::int AS n FROM budget_submissions WHERE flock_id = $1 AND skipped = false`,
+        [flockId]
+      );
+      if ((thresholdResult.rows[0]?.n || 0) < 3) {
+        return res.status(400).json({ error: 'Ghost commit opens after at least 3 people have submitted budgets' });
       }
 
       const ceiling = flockResult.rows[0].budget_ceiling ? parseFloat(flockResult.rows[0].budget_ceiling) : null;

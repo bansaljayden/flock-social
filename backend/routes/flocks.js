@@ -17,6 +17,13 @@ router.get('/', async (req, res) => {
   try {
     const result = await pool.query(
       `SELECT f.*,
+              -- PRIVACY: budget_ceiling is MIN(submissions); below the 3-non-skip
+              -- threshold it IS someone's exact budget. This aliased CASE
+              -- overrides the f.* column in the result row (node-postgres keeps
+              -- the last duplicate field), mirroring the budget-status gate.
+              CASE WHEN (SELECT COUNT(*) FROM budget_submissions bs
+                         WHERE bs.flock_id = f.id AND bs.skipped = false) >= 3
+                   THEN f.budget_ceiling ELSE NULL END AS budget_ceiling,
               u.name AS creator_name,
               fm.status AS member_status,
               (SELECT COUNT(*) FROM flock_members WHERE flock_id = f.id AND status = 'accepted') AS member_count,
@@ -203,7 +210,11 @@ router.get('/:id', param('id').isInt(), async (req, res) => {
     }
 
     const flockResult = await pool.query(
-      `SELECT f.*, u.name AS creator_name
+      `SELECT f.*,
+              CASE WHEN (SELECT COUNT(*) FROM budget_submissions bs
+                         WHERE bs.flock_id = f.id AND bs.skipped = false) >= 3
+                   THEN f.budget_ceiling ELSE NULL END AS budget_ceiling,
+              u.name AS creator_name
        FROM flocks f
        JOIN users u ON u.id = f.creator_id
        WHERE f.id = $1`,
@@ -212,6 +223,30 @@ router.get('/:id', param('id').isInt(), async (req, res) => {
 
     if (flockResult.rows.length === 0) {
       return res.status(404).json({ error: 'Flock not found' });
+    }
+
+    // Invited/declined users get a minimal invite card, not the full flock:
+    // no member emails, reliability scores, attendance, budgets, or messages
+    // (audit 2026-08-12 — membership-row existence is not acceptance).
+    if (membership.rows[0].status !== 'accepted') {
+      const inv = flockResult.rows[0];
+      const cnt = await pool.query(
+        `SELECT COUNT(*)::int AS n FROM flock_members WHERE flock_id = $1 AND status = 'accepted'`,
+        [flockId]
+      );
+      return res.json({
+        flock: {
+          id: inv.id,
+          name: inv.name,
+          venue_name: inv.venue_name,
+          event_time: inv.event_time,
+          creator_name: inv.creator_name,
+          member_count: cnt.rows[0].n,
+          member_status: membership.rows[0].status,
+        },
+        members: [],
+        invitePreview: true,
+      });
     }
 
     const membersResult = await pool.query(
@@ -744,6 +779,7 @@ router.post('/:id/leave', param('id').isInt(), async (req, res) => {
       }
       // Creator leaving deletes the entire flock (cascade removes members, messages, votes)
       await pool.query('DELETE FROM flocks WHERE id = $1', [flockId]);
+      if (io) io.socketsLeave(`flock:${flockId}`); // no ghost listeners on a dead room
       return res.json({ message: 'Left flock', flock_name: flockName, deleted: true });
     }
 
@@ -757,6 +793,11 @@ router.post('/:id/leave', param('id').isInt(), async (req, res) => {
       'DELETE FROM flock_members WHERE flock_id = $1 AND user_id = $2',
       [flockId, req.user.id]
     );
+
+    // Revoke live room access (audit 2026-08-12): room auth is checked only at
+    // join time, so without this a departed member's open sockets kept
+    // receiving messages, locations, and votes until they disconnected.
+    if (io) io.in(`user:${req.user.id}`).socketsLeave(`flock:${flockId}`);
 
     // If no accepted members remain, delete the flock
     const remaining = await pool.query(

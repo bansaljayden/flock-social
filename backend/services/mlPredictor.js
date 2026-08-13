@@ -428,12 +428,15 @@ function buildFeatureVector(venue, weather, timestamp, eventData, feedback, base
   const priceLevel = venue.price_level != null ? venue.price_level : (metadata.median_price_level || 2);
   const reviewCount = venue.user_ratings_total || venue.review_count || 0;
 
-  // Weather
+  // Weather — accept BOTH naming styles. weatherService returns camelCase
+  // (windSpeed/isRaining/conditionId); reading only snake_case silently fed
+  // the model wind=0, rain=0, weather_group=unknown on every live prediction
+  // (audit 2026-08-12), skewing all bad-weather forecasts.
   const temp = weather?.temp ?? weather?.temperature ?? 20;
   const humidity = weather?.humidity ?? 50;
-  const windSpeed = weather?.wind_speed ?? 0;
-  const isRaining = weather?.is_raining ? 1 : 0;
-  const weatherCode = weather?.weather_condition_code || weather?.id || null;
+  const windSpeed = weather?.wind_speed ?? weather?.windSpeed ?? 0;
+  const isRaining = (weather?.is_raining ?? weather?.isRaining) ? 1 : 0;
+  const weatherCode = weather?.weather_condition_code || weather?.conditionId || weather?.id || null;
   const weatherGroup = groupWeatherCode(weatherCode);
 
   const lat = venue.latitude || venue.lat || 0;
