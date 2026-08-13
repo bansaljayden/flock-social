@@ -386,26 +386,34 @@ function registerHandlers(io, socket) {
       const receiver = await pool.query('SELECT id, name FROM users WHERE id = $1', [receiverId]);
       if (receiver.rows.length === 0) return;
 
+      // SECURITY: a reply may only reference a message from THIS conversation.
+      // Without this check, any authenticated user could DM themselves an
+      // arbitrary message ID and read someone else's private message text.
+      let replyRow = null;
+      if (reply_to_id) {
+        const replyResult = await pool.query(
+          `SELECT dm.id, dm.message_text, u.name AS sender_name
+           FROM direct_messages dm JOIN users u ON u.id = dm.sender_id
+           WHERE dm.id = $1
+             AND ((dm.sender_id = $2 AND dm.receiver_id = $3) OR (dm.sender_id = $3 AND dm.receiver_id = $2))`,
+          [reply_to_id, user.id, receiverId]
+        );
+        replyRow = replyResult.rows[0] || null;
+        if (!replyRow) return; // foreign or nonexistent reply target — drop the message
+      }
+
       // Persist to database
       const result = await pool.query(
         `INSERT INTO direct_messages (sender_id, receiver_id, message_text, message_type, venue_data, image_url, reply_to_id)
          VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
-        [user.id, receiverId, text, safeType, venue_data || null, image_url || null, reply_to_id || null]
+        [user.id, receiverId, text, safeType, venue_data || null, image_url || null, replyRow ? reply_to_id : null]
       );
 
       const msg = result.rows[0];
       msg.sender_name = user.name;
       msg.sender_image = user.profile_image_url || null;
       msg.reactions = [];
-
-      // If replying, attach the reply-to info
-      if (reply_to_id) {
-        const replyResult = await pool.query(
-          `SELECT dm.id, dm.message_text, u.name AS sender_name FROM direct_messages dm JOIN users u ON u.id = dm.sender_id WHERE dm.id = $1`,
-          [reply_to_id]
-        );
-        if (replyResult.rows.length > 0) msg.reply_to = replyResult.rows[0];
-      }
+      if (replyRow) msg.reply_to = replyRow;
 
       // Send to receiver's personal room
       socket.to(`user:${receiverId}`).emit('new_dm', msg);

@@ -302,7 +302,7 @@ const SignupScreen = ({ onSignupSuccess, onSwitchToLogin }) => {
               iOS only (returns null on web). Apple accounts don't carry DOB,
               and Apple requires its account holders to be 13+, so the age
               gate here matches the Google path's server-side behavior. */}
-          <AppleSignInButton onSuccess={onSignupSuccess} onError={(m) => setError(m)} />
+          <AppleSignInButton onSuccess={onSignupSuccess} onError={(m) => setError(m)} dob={dob} />
 
           <div style={{ textAlign: 'center', marginTop: '20px', paddingTop: '20px', borderTop: '1px solid rgba(148,163,184,0.08)', fontSize: '14px', color: 'rgba(148,163,184,0.6)' }}>
             Already have an account?{' '}
