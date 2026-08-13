@@ -70,6 +70,30 @@ async function emitToFlockExcludingBlocked(io, flockId, actorId, event, payload)
   }
 }
 
+// Guest RSVPs come in over an UNAUTHENTICATED share link (routes/guest.js), so
+// there is no connected socket to broadcast from — the REST route calls this.
+//
+// It fans out to each accepted member's PERSONAL room, not to `flock:{id}`.
+// A socket only joins the flock room while that flock's screen is open
+// (join_flock above), so the host sitting anywhere else in the app — the normal
+// case right after a share link goes out — was never in the room the old
+// `guest_rsvp` emit targeted. `user:{id}` is joined on connect and is a
+// superset of the flock room, so this reaches the host wherever they are and
+// still delivers exactly once.
+//
+// Returns the ids it delivered to (handy for tests and logging).
+async function broadcastGuestRsvp(io, flockId, payload) {
+  if (!io) return [];
+  const members = await pool.query(
+    "SELECT user_id FROM flock_members WHERE flock_id = $1 AND status = 'accepted'",
+    [flockId]
+  );
+  for (const m of members.rows) {
+    io.to(`user:${m.user_id}`).emit('guest_rsvp', payload);
+  }
+  return members.rows.map((r) => r.user_id);
+}
+
 function registerHandlers(io, socket) {
   const user = socket.user; // Set by authenticateSocket middleware
 
@@ -1020,4 +1044,4 @@ function registerHandlers(io, socket) {
   });
 }
 
-module.exports = { registerHandlers, emitToFlockExcludingBlocked };
+module.exports = { registerHandlers, emitToFlockExcludingBlocked, broadcastGuestRsvp };
