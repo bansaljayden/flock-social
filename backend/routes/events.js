@@ -24,7 +24,32 @@ function setCache(key, data) {
     for (const [k, v] of eventCache) {
       if (now - v.ts > CACHE_TTL) eventCache.delete(k);
     }
+    // Still oversized after expiry sweep: evict oldest so unique-keyword
+    // spam can't grow the map without bound (round 5).
+    while (eventCache.size > 100) {
+      eventCache.delete(eventCache.keys().next().value);
+    }
   }
+}
+
+// Upstream budget: per-user 20 fresh searches/hour, global 2000/day — the
+// documented Ticketmaster ceiling is 5K/day and each fresh search costs up to
+// two upstream calls.
+const tmUserHits = new Map();
+let tmDayKey = new Date().toISOString().slice(0, 10);
+let tmDayCount = 0;
+function allowUpstream(userId) {
+  const today = new Date().toISOString().slice(0, 10);
+  if (today !== tmDayKey) { tmDayKey = today; tmDayCount = 0; }
+  if (tmDayCount >= 2000) return false;
+  const now = Date.now();
+  const hits = (tmUserHits.get(userId) || []).filter(t => now - t < 3600_000);
+  if (hits.length >= 20) return false;
+  hits.push(now);
+  tmUserHits.set(userId, hits);
+  if (tmUserHits.size > 5000) tmUserHits.clear();
+  tmDayCount++;
+  return true;
 }
 
 // Map Ticketmaster segment to simple category
@@ -135,13 +160,22 @@ router.get('/search',
       }
 
       const location = req.query.location;
-      const searchQuery = req.query.query || '';
+      // Normalized + capped: raw keywords made every request a cache miss, and
+      // the general API limiter alone let one client burn the whole 5k/day
+      // Ticketmaster quota (round 5).
+      const searchQuery = (req.query.query || '').toLowerCase().trim().slice(0, 40);
       const radiusMiles = parseInt(req.query.radius) || 50;
       const categoryFilter = req.query.category || '';
 
-      const cacheKey = `events:${location}|${searchQuery}|${radiusMiles}|${categoryFilter}`;
+      const [rlat, rlng] = location.split(',').map(Number);
+      const coarseLoc = `${(+rlat).toFixed(1)},${(+rlng).toFixed(1)}`;
+      const cacheKey = `events:${coarseLoc}|${searchQuery}|${radiusMiles}|${categoryFilter}`;
       const cached = getCached(cacheKey);
       if (cached) return res.json(cached);
+
+      if (!allowUpstream(req.user.id)) {
+        return res.status(429).json({ error: 'Event search is busy right now. Try again in a bit.' });
+      }
 
       const [lat, lng] = location.split(',').map(Number);
 

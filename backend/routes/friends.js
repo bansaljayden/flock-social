@@ -279,6 +279,10 @@ router.get('/suggestions', async (req, res) => {
          SELECT 1 FROM friendships
          WHERE ((requester_id = $1 AND addressee_id = u.id) OR (requester_id = u.id AND addressee_id = $1))
        )
+       AND NOT EXISTS (
+         SELECT 1 FROM user_blocks
+         WHERE (blocker_id = $1 AND blocked_id = u.id) OR (blocker_id = u.id AND blocked_id = $1)
+       )
        GROUP BY u.id, u.name, u.profile_image_url
        ORDER BY mutual_count DESC
        LIMIT 20`,
@@ -298,6 +302,10 @@ router.get('/suggestions', async (req, res) => {
          AND NOT EXISTS (
            SELECT 1 FROM friendships
            WHERE ((requester_id = $1 AND addressee_id = u.id) OR (requester_id = u.id AND addressee_id = $1))
+         )
+         AND NOT EXISTS (
+           SELECT 1 FROM user_blocks
+           WHERE (blocker_id = $1 AND blocked_id = u.id) OR (blocker_id = u.id AND blocked_id = $1)
          )
          GROUP BY u.id, u.name, u.profile_image_url
          ORDER BY mutual_count DESC
@@ -412,11 +420,16 @@ router.post('/find-by-phone',
       const normalized = phones.map(p => p.replace(/\D/g, '').slice(-10)).filter(p => p.length >= 7);
       if (normalized.length === 0) return res.json({ users: [] });
 
-      // Find users whose phone matches (last 10 digits comparison)
+      // Find users whose phone matches (last 10 digits comparison).
+      // Blocked pairs never rediscover each other via contact sync (round 5).
       const result = await pool.query(
         `SELECT id, name, profile_image_url, phone FROM users
          WHERE id != $1 AND phone IS NOT NULL
-         AND REGEXP_REPLACE(phone, '\\D', '', 'g') SIMILAR TO '%(' || $2 || ')'`,
+         AND REGEXP_REPLACE(phone, '\\D', '', 'g') SIMILAR TO '%(' || $2 || ')'
+         AND NOT EXISTS (
+           SELECT 1 FROM user_blocks
+           WHERE (blocker_id = $1 AND blocked_id = users.id) OR (blocker_id = users.id AND blocked_id = $1)
+         )`,
         [req.user.id, normalized.join('|')]
       );
 
