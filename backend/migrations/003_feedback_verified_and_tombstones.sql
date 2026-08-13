@@ -75,3 +75,7 @@ CREATE TABLE IF NOT EXISTS waitlist (
   email VARCHAR(255) NOT NULL UNIQUE,
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
+
+-- 4) Venue reviews are public UGC and must be takedown-able (round 6 —
+--    App Review 1.2 requires reporting AND removal on every UGC surface).
+ALTER TABLE venue_reviews ADD COLUMN IF NOT EXISTS is_hidden BOOLEAN DEFAULT false;
