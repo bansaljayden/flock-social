@@ -29,6 +29,48 @@
   font-display: swap;
 }
 
+/* ═══════════════════════════════════════════════════════════════════
+   SAFE-AREA CONTRACT — read this before touching any layout padding.
+
+   public/index.html declares `viewport-fit=cover`. That is deliberate and
+   must stay: it is how a Capacitor app gets the modern edge-to-edge look,
+   painting into the rounded screen corners instead of sitting in a letter-
+   boxed rectangle. The obligation that comes with it is that the WebView
+   now extends UNDER the Dynamic Island and UNDER the home indicator, so
+   the app — not iOS — is responsible for keeping content out of those
+   strips. Nothing else does it for us.
+
+   These four tokens are the single source of truth for that. Read the
+   Capacitor-injected variable first (Capacitor 8.3+ sets
+   --safe-area-inset-* natively on Android, where the WebView's own env()
+   is unreliable below WebView 140), fall back to the CSS env() that iOS
+   WKWebView supports natively, then to 0px. The 0px fallback is why the
+   website and desktop are completely unaffected: off-device every one of
+   these resolves to 0px and every calc() below collapses to its old value.
+
+   RULES:
+   1. Anything that touches the physical BOTTOM of the screen (the tab bar,
+      a bottom sheet, a chat composer, a full-screen overlay's footer) adds
+      var(--safe-bottom) to its bottom padding. Never a hardcoded 28px or
+      34px — the inset differs per device and is 0 on the web.
+   2. Anything that touches the physical TOP of the screen (the shell's
+      status-bar spacer, any position:fixed full-screen overlay with a
+      header) adds var(--safe-top).
+   3. Pad, do not margin, and let the element's BACKGROUND extend into the
+      inset. That is what makes the tab bar read as native: its material
+      runs to the screen edge while its content stops above the home
+      indicator.
+   4. Never overwrite a safe-area-aware `padding` shorthand with a plain
+      `padding` shorthand later in the same style object. That silently
+      deletes the inset and is exactly how this bug shipped 50+ times.
+   ═══════════════════════════════════════════════════════════════════ */
+:root {
+  --safe-top: var(--safe-area-inset-top, env(safe-area-inset-top, 0px));
+  --safe-right: var(--safe-area-inset-right, env(safe-area-inset-right, 0px));
+  --safe-bottom: var(--safe-area-inset-bottom, env(safe-area-inset-bottom, 0px));
+  --safe-left: var(--safe-area-inset-left, env(safe-area-inset-left, 0px));
+}
+
 :root {
   --bg-primary: #f1ede0;
   --bg-card: rgba(255,255,255,0.95);
@@ -185,6 +227,13 @@ video::-webkit-media-controls {
    - color-scheme gives native widgets/scrollbars the right palette per theme */
 html {
   color-scheme: light;
+  /* Paint the app colour on the root element too, not just <body>. With
+     viewport-fit=cover the WebView reaches the physical screen edge, and
+     any pixel the web content leaves unpainted (the rounded corners, the
+     strip behind the home indicator, an overscroll gap) falls through to
+     the native view underneath. Painting html + body edge-to-edge is what
+     makes the corners look like a native app instead of a framed page. */
+  background: var(--bg-primary);
 }
 [data-theme="dark"] {
   color-scheme: dark;
