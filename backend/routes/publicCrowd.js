@@ -93,7 +93,7 @@ function toVenueShape(p, localDay) {
   };
 }
 
-const PLACE_FIELDS = 'places.id,places.displayName,places.formattedAddress,places.rating,places.userRatingCount,places.priceLevel,places.types,places.currentOpeningHours,places.location';
+const PLACE_FIELDS = 'places.id,places.displayName,places.formattedAddress,places.rating,places.userRatingCount,places.priceLevel,places.types,places.currentOpeningHours,places.location,places.photos';
 
 // The full venue card: current score + best time + peak + 12h forecast.
 async function buildCard(v, weather, scoreTime, localHour) {
@@ -199,7 +199,8 @@ router.get('/demo/venues',
             lat: v.location.latitude,
             lng: v.location.longitude,
             is_open: v.isOpen,
-            photo_url: `/api/venues/photo/${encodeURIComponent(v.place_id)}`,
+            // The photo proxy takes a Google photo resource ref, not a place id
+            photo_url: p.photos?.[0]?.name ? `/api/venues/photo?ref=${encodeURIComponent(p.photos[0].name)}&maxwidth=160` : null,
             score: scored.score,
             label: getLabel(scored.score),
           };
