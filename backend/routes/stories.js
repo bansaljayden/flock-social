@@ -30,6 +30,16 @@ router.get('/',
          FROM stories s
          JOIN users u ON u.id = s.user_id
          WHERE s.expires_at > NOW()
+           -- Admin takedowns (is_hidden) and blocks must hold here, not just
+           -- in messaging: shared-flock membership survives a block, so the
+           -- friendship/flock grants below would otherwise keep leaking
+           -- stories across a block in both directions.
+           AND s.is_hidden IS NOT TRUE
+           AND NOT EXISTS (
+             SELECT 1 FROM user_blocks b
+             WHERE (b.blocker_id = $1 AND b.blocked_id = s.user_id)
+                OR (b.blocker_id = s.user_id AND b.blocked_id = $1)
+           )
            AND (
              s.user_id = $1
              OR s.user_id IN (
