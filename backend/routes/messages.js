@@ -3,8 +3,9 @@ const { body, param, query, validationResult } = require('express-validator');
 const pool = require('../config/database');
 const { authenticate } = require('../middleware/auth');
 const { stripHtml } = require('../utils/sanitize');
-const { rejectIfProfane } = require('../utils/moderation');
+const { rejectIfProfane, moderateImage, IMAGE_REJECTED_MESSAGE } = require('../utils/moderation');
 const { isBlockedBetween, getInvisibleUserIds } = require('../utils/blocks');
+const { emitToFlockExcludingBlocked } = require('../sockets/handlers');
 
 const router = express.Router();
 
@@ -41,6 +42,13 @@ router.get('/flocks/:id/messages',
         return res.status(403).json({ error: 'Not a member of this flock' });
       }
 
+      // Moderator-hidden messages (A6 takedown) and messages from users blocked
+      // in either direction are filtered IN SQL, before LIMIT — filtering after
+      // pagination could return an empty page (with no cursor to page past)
+      // while older visible messages still existed.
+      const invisible = new Set(await getInvisibleUserIds(req.user.id));
+      const invisibleArr = [...invisible];
+
       let messagesQuery;
       let params;
 
@@ -50,26 +58,26 @@ router.get('/flocks/:id/messages',
           FROM messages m
           LEFT JOIN users u ON u.id = m.sender_id
           WHERE m.flock_id = $1 AND m.id < $2
+            AND m.is_hidden IS NOT TRUE
+            AND NOT (m.sender_id = ANY($4::int[]))
           ORDER BY m.created_at DESC
           LIMIT $3`;
-        params = [flockId, before, limit];
+        params = [flockId, before, limit, invisibleArr];
       } else {
         messagesQuery = `
           SELECT m.*, u.name AS sender_name, u.profile_image_url AS sender_image
           FROM messages m
           LEFT JOIN users u ON u.id = m.sender_id
           WHERE m.flock_id = $1
+            AND m.is_hidden IS NOT TRUE
+            AND NOT (m.sender_id = ANY($3::int[]))
           ORDER BY m.created_at DESC
           LIMIT $2`;
-        params = [flockId, limit];
+        params = [flockId, limit, invisibleArr];
       }
 
       const messagesResult = await pool.query(messagesQuery, params);
-      // Exclude moderator-hidden messages (A6 takedown) AND messages from users
-      // blocked in either direction — mutual invisibility holds in group flocks
-      // too, not just DMs (A3).
-      const invisible = new Set(await getInvisibleUserIds(req.user.id));
-      const messages = messagesResult.rows.filter((m) => !m.is_hidden && !invisible.has(m.sender_id));
+      const messages = messagesResult.rows;
 
       // Fetch reactions for all returned messages in one query
       if (messages.length > 0) {
@@ -82,9 +90,11 @@ router.get('/flocks/:id/messages',
           [messageIds]
         );
 
-        // Group reactions by message ID
+        // Group reactions by message ID — a blocked user's reaction on a third
+        // member's message would otherwise still expose their name/activity.
         const reactionsByMessage = {};
         for (const r of reactionsResult.rows) {
+          if (invisible.has(r.user_id)) continue;
           if (!reactionsByMessage[r.message_id]) {
             reactionsByMessage[r.message_id] = [];
           }
@@ -131,6 +141,15 @@ router.post('/flocks/:id/messages',
 
       // UGC text filter (Apple 1.2) — reject objectionable content before storing.
       if (rejectIfProfane(res, message_text)) return;
+
+      // Image moderation must hold on the REST transport too — the socket-only
+      // check left this endpoint delivering unmoderated (and trackable) URLs.
+      if (image_url) {
+        const verdict = await moderateImage(image_url);
+        if (!verdict.allowed) {
+          return res.status(400).json({ error: IMAGE_REJECTED_MESSAGE });
+        }
+      }
 
       const result = await pool.query(
         `INSERT INTO messages (flock_id, sender_id, message_text, message_type, venue_data, image_url)
@@ -197,10 +216,17 @@ router.post('/messages/:id/react',
         return res.status(400).json({ error: 'Already reacted with this emoji' });
       }
 
-      // Notify flock members in real-time
+      // Notify flock members in real-time — block-aware fan-out, a room
+      // broadcast would hand the reactor's identity to blocked members.
       const io = req.app.get('io');
       if (io) {
-        io.to(`flock:${flockId}`).emit('flock_reaction_added', {
+        emitToFlockExcludingBlocked(io, flockId, req.user.id, 'flock_reaction_added', {
+          messageId: parseInt(messageId),
+          emoji,
+          userId: req.user.id,
+          userName: req.user.name,
+        }).catch(() => {});
+        io.to(`user:${req.user.id}`).emit('flock_reaction_added', {
           messageId: parseInt(messageId),
           emoji,
           userId: req.user.id,
@@ -237,11 +263,16 @@ router.delete('/messages/:id/react/:emoji',
         return res.status(404).json({ error: 'Reaction not found' });
       }
 
-      // Notify flock members
+      // Notify flock members — block-aware fan-out (see the add path).
       if (flockId) {
         const io = req.app.get('io');
         if (io) {
-          io.to(`flock:${flockId}`).emit('flock_reaction_removed', {
+          emitToFlockExcludingBlocked(io, flockId, req.user.id, 'flock_reaction_removed', {
+            messageId: parseInt(messageId),
+            emoji,
+            userId: req.user.id,
+          }).catch(() => {});
+          io.to(`user:${req.user.id}`).emit('flock_reaction_removed', {
             messageId: parseInt(messageId),
             emoji,
             userId: req.user.id,
@@ -277,11 +308,14 @@ router.get('/dm', async (req, res) => {
       [req.user.id]
     );
 
-    // Get unread counts per conversation
+    // Get unread counts per conversation. Moderator-hidden DMs are excluded —
+    // no projection will ever display them, so counting them left a ghost
+    // unread badge that could never be cleared.
     const unreadResult = await pool.query(
       `SELECT sender_id, COUNT(*) AS unread_count
        FROM direct_messages
        WHERE receiver_id = $1 AND read_status = FALSE
+         AND COALESCE(is_hidden, false) = false
        GROUP BY sender_id`,
       [req.user.id]
     );
@@ -461,6 +495,14 @@ router.post('/dm/:userId',
       // UGC text filter (Apple 1.2) — reject objectionable content before storing.
       if (rejectIfProfane(res, message_text)) return;
 
+      // Image moderation on the REST transport too (same as flock messages).
+      if (image_url) {
+        const verdict = await moderateImage(image_url);
+        if (!verdict.allowed) {
+          return res.status(400).json({ error: IMAGE_REJECTED_MESSAGE });
+        }
+      }
+
       // SECURITY: a reply may only reference a message from THIS conversation
       // (same invariant as the socket path — see sockets/handlers.js).
       let safeReplyId = null;
@@ -538,6 +580,14 @@ router.delete('/dm/messages/:id/react/:emoji', [param('id').isInt()], async (req
   try {
     const dmId = parseInt(req.params.id);
     const emoji = decodeURIComponent(req.params.emoji);
+    // Blocks end ALL interaction with the shared conversation, removals included.
+    const dm = await pool.query('SELECT sender_id, receiver_id FROM direct_messages WHERE id = $1', [dmId]);
+    if (dm.rows.length > 0) {
+      const counterpart = dm.rows[0].sender_id === req.user.id ? dm.rows[0].receiver_id : dm.rows[0].sender_id;
+      if (await isBlockedBetween(req.user.id, counterpart)) {
+        return res.status(403).json({ error: 'You can no longer interact with this user.' });
+      }
+    }
     const result = await pool.query(
       'DELETE FROM dm_emoji_reactions WHERE dm_id = $1 AND user_id = $2 AND emoji = $3 RETURNING *',
       [dmId, req.user.id, emoji]
@@ -553,6 +603,10 @@ router.delete('/dm/messages/:id/react/:emoji', [param('id').isInt()], async (req
 // GET /api/dm/:userId/venue-votes - Get venue votes for a DM conversation
 router.get('/dm/:userId/venue-votes', [param('userId').isInt()], async (req, res) => {
   try {
+    // Mutual invisibility covers shared DM metadata reads, not just messages.
+    if (await isBlockedBetween(req.user.id, parseInt(req.params.userId))) {
+      return res.status(403).json({ error: 'You can no longer interact with this user.' });
+    }
     const { user1, user2 } = dmPairKey(req.user.id, parseInt(req.params.userId));
     const result = await pool.query(
       `SELECT venue_name, venue_id, COUNT(*) AS vote_count, ARRAY_AGG(u.name) AS voters
@@ -634,6 +688,10 @@ router.put('/dm/:messageId/read', param('messageId').isInt(), async (req, res) =
 // GET /api/dm/:userId/pinned-venue - Get pinned venue for a DM conversation
 router.get('/dm/:userId/pinned-venue', [param('userId').isInt()], async (req, res) => {
   try {
+    // Mutual invisibility covers shared DM metadata reads, not just messages.
+    if (await isBlockedBetween(req.user.id, parseInt(req.params.userId))) {
+      return res.status(403).json({ error: 'You can no longer interact with this user.' });
+    }
     const { user1, user2 } = dmPairKey(req.user.id, parseInt(req.params.userId));
     const result = await pool.query(
       `SELECT venue_name, venue_address, venue_id, venue_rating, venue_photo_url, pinned_by, u.name AS pinned_by_name

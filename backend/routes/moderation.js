@@ -56,7 +56,31 @@ router.post('/reports',
           );
           row = r.rows[0] || null;
         } else if (content_type === 'story') {
-          const r = await pool.query('SELECT user_id AS sender_id FROM stories WHERE id = $1', [content_id]);
+          // Same visibility predicates as the story feed — a bare id lookup
+          // let any user probe/report stories they could never see.
+          const r = await pool.query(
+            `SELECT s.user_id AS sender_id FROM stories s
+             WHERE s.id = $1
+               AND s.expires_at > NOW()
+               AND s.is_hidden IS NOT TRUE
+               AND NOT EXISTS (
+                 SELECT 1 FROM user_blocks b
+                 WHERE (b.blocker_id = $2 AND b.blocked_id = s.user_id)
+                    OR (b.blocker_id = s.user_id AND b.blocked_id = $2)
+               )
+               AND (
+                 s.user_id IN (
+                   SELECT CASE WHEN requester_id = $2 THEN addressee_id ELSE requester_id END
+                   FROM friendships WHERE (requester_id = $2 OR addressee_id = $2) AND status = 'accepted'
+                 )
+                 OR s.user_id IN (
+                   SELECT fm2.user_id FROM flock_members fm1
+                   JOIN flock_members fm2 ON fm2.flock_id = fm1.flock_id AND fm2.user_id != $2 AND fm2.status = 'accepted'
+                   WHERE fm1.user_id = $2 AND fm1.status = 'accepted'
+                 )
+               )`,
+            [content_id, req.user.id]
+          );
           row = r.rows[0] || null;
         }
         if (!row) {
