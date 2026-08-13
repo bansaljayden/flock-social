@@ -36,6 +36,11 @@ router.post('/', [
          description = EXCLUDED.description,
          goals = EXCLUDED.goals,
          google_place_id = COALESCE(EXCLUDED.google_place_id, venue_profiles.google_place_id),
+         -- Verification binds to the place: re-claiming with a different place
+         -- id resets it (round 3: this reset existed only on the PUT path)
+         verified = CASE WHEN EXCLUDED.google_place_id IS NOT NULL
+                          AND EXCLUDED.google_place_id IS DISTINCT FROM venue_profiles.google_place_id
+                         THEN false ELSE venue_profiles.verified END,
          updated_at = NOW()
        RETURNING *`,
       [req.user.id, businessName, category || null, location || null, description || null, goals || [], googlePlaceId || null]

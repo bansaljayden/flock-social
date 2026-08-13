@@ -180,7 +180,9 @@ async function getUserFeedback(placeId) {
       `SELECT
         AVG(crowd_level)::numeric(4,1) AS avg_crowd,
         COUNT(*)::int AS count,
-        AVG(crowd_level - predicted_score)::numeric(5,2) AS avg_error
+        -- crowd_level is ordinal 1-3; map to the 0-100 score scale before
+        -- differencing or the "error" is just -predicted_score (round 3)
+        AVG((CASE crowd_level WHEN 1 THEN 20 WHEN 2 THEN 50 ELSE 80 END) - predicted_score)::numeric(5,2) AS avg_error
       FROM venue_feedback WHERE venue_place_id = $1`,
       [placeId]
     );

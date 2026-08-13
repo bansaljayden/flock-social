@@ -200,6 +200,13 @@ router.get('/incoming-flocks', async (req, res) => {
   try {
     const venue = await getVenueCtx(req.user.id);
     if (!venue || !venue.google_place_id) return res.json({ flocks: [] });
+    // Verified claims only (round 3): an unverified claim on an arbitrary
+    // place id must not expose which groups are privately considering it.
+    const ver = await pool.query(
+      'SELECT verified FROM venue_profiles WHERE user_id = $1',
+      [req.user.id]
+    );
+    if (!ver.rows[0]?.verified) return res.json({ flocks: [], unverified: true });
 
     // Find flocks where venue_votes reference this venue's place_id (venue_id column)
     const { rows } = await pool.query(

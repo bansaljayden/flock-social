@@ -1,6 +1,6 @@
 const pool = require('../config/database');
 const { stripHtml } = require('../utils/sanitize');
-const { moderateText, TEXT_REJECTED_MESSAGE } = require('../utils/moderation');
+const { moderateText, TEXT_REJECTED_MESSAGE, moderateImage, IMAGE_REJECTED_MESSAGE } = require('../utils/moderation');
 const { isBlockedBetween, isBlockedBetweenCached, getInvisibleUserIds } = require('../utils/blocks');
 const { pushIfOfflineDebounced } = require('../services/pushHelper');
 
@@ -147,6 +147,22 @@ function registerHandlers(io, socket) {
       const allowedTypes = ['text', 'venue_card', 'image'];
       const safeType = allowedTypes.includes(message_type) ? message_type : 'text';
 
+      // Image safety (round 3): socket sends bypassed the moderation endpoint
+      // entirely. Only data-URL images are accepted (no arbitrary remote URLs
+      // that could track recipients), and every image is screened fail-closed
+      // before it is stored or delivered.
+      if (image_url) {
+        if (!/^data:image\/(png|jpe?g|gif|webp);base64,/.test(image_url)) {
+          socket.emit('error', { message: 'Unsupported image format' });
+          return;
+        }
+        const verdict = await moderateImage(image_url);
+        if (!verdict.allowed) {
+          socket.emit('error', { message: IMAGE_REJECTED_MESSAGE });
+          return;
+        }
+      }
+
       // Verify membership
       const membership = await pool.query(
         "SELECT id FROM flock_members WHERE flock_id = $1 AND user_id = $2 AND status = 'accepted'",
@@ -201,9 +217,12 @@ function registerHandlers(io, socket) {
           );
         }
       } catch (fanoutErr) {
+        // FAIL CLOSED (round 3): broadcasting to the room here would deliver
+        // to blocked users exactly when the block filter is unavailable. The
+        // message is persisted; other members get it from history on refresh.
         console.error('Message fan-out error (flock msg):', fanoutErr.message);
-        // Fallback: room broadcast beats a silently dropped message
-        io.to(`flock:${flockId}`).emit('new_message', message);
+        socket.emit('new_message', message);
+        socket.emit('error', { message: 'Message saved, but live delivery is delayed.' });
       }
     } catch (err) {
       console.error('send_message error:', err);
@@ -214,6 +233,7 @@ function registerHandlers(io, socket) {
   // --- Typing indicators ---
 
   socket.on('typing', async (flockId) => {
+    if (!allowEvent(socket, 'typing', 60, 10_000)) return;
     if (!(await verifyMembership(flockId, user.id))) return;
     socket.to(`flock:${flockId}`).emit('user_typing', {
       userId: user.id,
@@ -223,6 +243,7 @@ function registerHandlers(io, socket) {
   });
 
   socket.on('stop_typing', async (flockId) => {
+    if (!allowEvent(socket, 'typing', 60, 10_000)) return;
     if (!(await verifyMembership(flockId, user.id))) return;
     socket.to(`flock:${flockId}`).emit('user_stopped_typing', {
       userId: user.id,
@@ -287,18 +308,28 @@ function registerHandlers(io, socket) {
   // --- Location sharing ---
 
   socket.on('update_location', async (data) => {
-    const { flockId, lat, lng } = data;
+    try {
+      if (!allowEvent(socket, 'update_location', 30, 10_000)) return;
+      const { flockId, lat, lng } = data;
 
-    if (!flockId || typeof lat !== 'number' || typeof lng !== 'number') return;
-    if (!(await verifyMembership(flockId, user.id))) return;
+      if (!flockId || typeof lat !== 'number' || typeof lng !== 'number') return;
+      if (!(await verifyMembership(flockId, user.id))) return;
 
-    socket.to(`flock:${flockId}`).emit('location_update', {
-      userId: user.id,
-      name: user.name,
-      lat,
-      lng,
-      timestamp: Date.now(),
-    });
+      // Exact coordinates never reach blocked users (round 3). Per-member
+      // fan-out instead of room broadcast; fails closed by construction.
+      const members = await pool.query(
+        "SELECT user_id FROM flock_members WHERE flock_id = $1 AND status = 'accepted' AND user_id != $2",
+        [flockId, user.id]
+      );
+      const invisible = new Set(await getInvisibleUserIds(user.id));
+      const payload = { userId: user.id, name: user.name, lat, lng, timestamp: Date.now() };
+      for (const m of members.rows) {
+        if (invisible.has(m.user_id)) continue;
+        io.to(`user:${m.user_id}`).emit('location_update', payload);
+      }
+    } catch (err) {
+      console.error('update_location error:', err.message);
+    }
   });
 
   socket.on('stop_sharing_location', async ({ flockId }) => {
@@ -371,6 +402,13 @@ function registerHandlers(io, socket) {
     try {
       const { flockId, action } = data;
       if (!flockId || !['accepted', 'declined'].includes(action)) return;
+      // Round 3: any socket could broadcast fake RSVP activity into a guessed
+      // flock id. The responder must actually hold a membership row.
+      const mem = await pool.query(
+        'SELECT status FROM flock_members WHERE flock_id = $1 AND user_id = $2',
+        [flockId, user.id]
+      );
+      if (mem.rows.length === 0) return;
 
       const flockResult = await pool.query('SELECT id, name FROM flocks WHERE id = $1', [flockId]);
       if (flockResult.rows.length === 0) return;
@@ -415,6 +453,22 @@ function registerHandlers(io, socket) {
 
       const allowedTypes = ['text', 'venue_card', 'image'];
       const safeType = allowedTypes.includes(message_type) ? message_type : 'text';
+
+      // Image safety (round 3): socket sends bypassed the moderation endpoint
+      // entirely. Only data-URL images are accepted (no arbitrary remote URLs
+      // that could track recipients), and every image is screened fail-closed
+      // before it is stored or delivered.
+      if (image_url) {
+        if (!/^data:image\/(png|jpe?g|gif|webp);base64,/.test(image_url)) {
+          socket.emit('error', { message: 'Unsupported image format' });
+          return;
+        }
+        const verdict = await moderateImage(image_url);
+        if (!verdict.allowed) {
+          socket.emit('error', { message: IMAGE_REJECTED_MESSAGE });
+          return;
+        }
+      }
 
       // Verify receiver exists
       const receiver = await pool.query('SELECT id, name FROM users WHERE id = $1', [receiverId]);

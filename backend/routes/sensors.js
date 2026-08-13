@@ -82,7 +82,7 @@ router.get('/:placeId/current', authenticate, async (req, res) => {
     const checkins = await pool.query(
       `SELECT COUNT(*)::int AS count
        FROM venue_checkins
-       WHERE venue_place_id = $1 AND created_at > NOW() - INTERVAL '1 hour'`,
+       WHERE venue_place_id = $1 AND user_id IS NOT NULL AND created_at > NOW() - INTERVAL '1 hour'`,
       [placeId]
     );
 

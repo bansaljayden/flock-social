@@ -221,6 +221,9 @@ app.use((err, req, res, _next) => {
 // Socket.io
 // ---------------------------------------------------------------------------
 const io = new Server(server, {
+  // 8MB: the chat UI accepts images up to 5MB, which base64-expands past
+  // Socket.IO's 1MB default and silently killed the send (round 3 P2)
+  maxHttpBufferSize: 8 * 1024 * 1024,
   cors: {
     origin: (origin, callback) => {
       if (!origin || allowedOrigins.includes(origin) || /^https:\/\/flock-app(-[a-z0-9]+)*\.vercel\.app$/.test(origin)) {

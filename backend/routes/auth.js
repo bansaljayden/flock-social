@@ -36,6 +36,26 @@ const TOKEN_EXPIRY = '24h';
 // block survives local-storage clears / reinstalls and is recorded on the user row.
 const { ageFromDob, MIN_AGE } = require('../utils/age');
 const UNDERAGE_MSG = 'You must be at least 13 to use Flock.';
+
+// Legacy accounts predate the DOB requirement (round 3): they must not stay
+// permanently outside the age gate. On sign-in, a null-DOB account either
+// supplies a DOB now (persisted, under-13 rejected) or gets needsDob back.
+async function enforceDobOnLogin(user, req, res) {
+  if (user.date_of_birth) return true;
+  const supplied = req.body.date_of_birth;
+  const age = ageFromDob(supplied);
+  if (age === null) {
+    res.status(403).json({ error: 'Add your date of birth to continue.', needsDob: true });
+    return false;
+  }
+  if (age < MIN_AGE) {
+    res.status(403).json({ error: UNDERAGE_MSG });
+    return false;
+  }
+  await pool.query('UPDATE users SET date_of_birth = $1 WHERE id = $2', [supplied, user.id]);
+  user.date_of_birth = supplied;
+  return true;
+}
 const { isDisposableEmail } = require('../utils/disposableEmail');
 
 // Validation rules
@@ -131,10 +151,12 @@ router.post('/login', loginValidation, async (req, res) => {
       return res.status(401).json({ error: 'Invalid email or password' });
     }
 
+    if (!(await enforceDobOnLogin(user, req, res))) return;
+
     const token = jwt.sign({ userId: user.id }, process.env.JWT_SECRET, { expiresIn: TOKEN_EXPIRY });
 
     // Strip password from response
-    const { password: _, ...safeUser } = user;
+    const { password: _, apple_refresh_token: _art, ...safeUser } = user;
     res.json({ token, user: safeUser });
   } catch (err) {
     console.error('Login error:', err);
@@ -269,8 +291,10 @@ router.post('/google', [
       }
     }
 
+        if (!(await enforceDobOnLogin(user, req, res))) return;
+
     const token = jwt.sign({ userId: user.id }, process.env.JWT_SECRET, { expiresIn: TOKEN_EXPIRY });
-    const { password: _, ...safeUser } = user;
+    const { password: _, apple_refresh_token: _art, ...safeUser } = user;
     res.json({ token, user: safeUser });
   } catch (err) {
     console.error('Google OAuth error:', err);
@@ -315,9 +339,10 @@ router.post('/apple', [
         {
           algorithms: ['RS256'],
           issuer: 'https://appleid.apple.com',
-          // audience: must be the iOS bundle identifier (and Android service ID
-          // when we add it). Set APPLE_BUNDLE_ID in Railway after Xcode setup.
-          audience: process.env.APPLE_BUNDLE_ID || undefined,
+          // FAIL CLOSED (round 3): an undefined audience makes jsonwebtoken
+          // skip the check entirely, so a valid Apple token minted for ANY
+          // app would authenticate here. Hardcoded fallback = our bundle id.
+          audience: process.env.APPLE_BUNDLE_ID || 'com.flockcorp.flock',
         },
         (err, decoded) => {
           if (err) reject(err); else resolve(decoded);
@@ -394,8 +419,10 @@ router.post('/apple', [
       } catch (e) { console.error('Apple code exchange error:', e.message); }
     }
 
+        if (!(await enforceDobOnLogin(user, req, res))) return;
+
     const token = jwt.sign({ userId: user.id }, process.env.JWT_SECRET, { expiresIn: TOKEN_EXPIRY });
-    const { password: _, ...safeUser } = user;
+    const { password: _, apple_refresh_token: _art, ...safeUser } = user;
     res.json({ token, user: safeUser });
   } catch (err) {
     console.error('Apple Sign In error:', err);

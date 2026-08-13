@@ -19,6 +19,10 @@ router.post('/register',
       const { token, deviceType } = req.body;
       const safeDeviceType = ['web', 'ios', 'android'].includes(deviceType) ? deviceType : 'web';
 
+      // A device token belongs to exactly ONE account (round 3: after an
+      // account switch the same token stayed registered to both, delivering
+      // one account's private DMs to the other's device). Transfer ownership.
+      await pool.query('DELETE FROM device_tokens WHERE token = $1 AND user_id != $2', [token, req.user.id]);
       await pool.query(
         `INSERT INTO device_tokens (user_id, token, device_type)
          VALUES ($1, $2, $3)
