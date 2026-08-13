@@ -214,6 +214,13 @@ router.post('/google', [
 
     let googleId, email, name, picture;
     if (req.body.credential) {
+      // FAIL CLOSED (round 4): an undefined audience makes verifyIdToken skip
+      // the check, so an ID token minted for any Google app would pass. The
+      // access_token branch below already fails closed via its aud comparison.
+      if (!process.env.GOOGLE_CLIENT_ID) {
+        console.error('GOOGLE_CLIENT_ID not set — refusing Google sign-in');
+        return res.status(500).json({ error: 'Google sign-in is not configured' });
+      }
       // Verify the Google ID token
       const ticket = await googleClient.verifyIdToken({
         idToken: req.body.credential,
