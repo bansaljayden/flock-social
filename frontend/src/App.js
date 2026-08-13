@@ -181,6 +181,18 @@ const CrowdRealityCheck = React.memo(function CrowdRealityCheck({ placeId, venue
 // borrowed from every runner game since the dinosaur. Auto-dismisses the
 // moment connectivity returns.
 // =============================================================================
+/* The offline game's bird is the real mascot, not a canvas ellipse.
+   Both frames are started HERE, at module scope, so they load while the app
+   is still online. The offline screen only mounts once the network is gone,
+   and by then a cold fetch would fail. drawBird falls back to the old vector
+   bird if either image has not decoded, so the game is never birdless. */
+const GAME_SPRITES = (() => {
+  if (typeof Image === 'undefined') return { perch: null, flap: null };
+  const load = (src) => { const img = new Image(); img.src = src; return img; };
+  return { perch: load('/birdie/game-perch.png'), flap: load('/birdie/game-flap.png') };
+})();
+const spriteReady = (img) => !!img && img.complete && img.naturalWidth > 0;
+
 const FlockBirdGame = () => {
   const canvasRef = React.useRef(null);
   const wrapRef = React.useRef(null);
@@ -214,6 +226,15 @@ const FlockBirdGame = () => {
     let pipes = [], score = 0, newBest = false;
     let groundX = 0, hitStopUntil = 0, flash = 0, shake = 0, diedAt = 0, scorePop = 1;
     let last = performance.now(), raf;
+
+    // ---- mascot sprite ----
+    // One scale for both frames so the bird does not change size mid-wingbeat.
+    // The COLLISION box below is untouched (±10 x, ±7 y): this is an art swap,
+    // and the game must not get harder or easier.
+    const SPRITE_SCALE = 0.42;          // 96px flap frame -> ~40px on canvas
+    const FLAP_FRAME_MS = 150;          // one wingbeat, not a flicker
+    const MAX_DRAW_TILT = 0.44;         // ~25deg; a photo past this looks broken
+    let flapFrameUntil = 0;
 
     // ---- backdrop: fixed stars + parallax skyline (0.35x speed) ----
     const stars = Array.from({ length: 24 }, (_, i) => ({
@@ -257,6 +278,7 @@ const FlockBirdGame = () => {
       vy = FLAP;
       tilt = -0.38;      // snap nose-up on flap; gravity eases it back down
       squash = 0.82;     // quick squash, springs back
+      flapFrameUntil = now + FLAP_FRAME_MS; // wings open for one beat
       sFlap();
     };
 
@@ -274,10 +296,9 @@ const FlockBirdGame = () => {
       }
     };
 
-    const drawBird = () => {
-      ctx.save();
-      ctx.translate(BIRD_X, birdY);
-      ctx.rotate(tilt);
+    // The original vector bird. Still the fallback for the first frame, and
+    // for a cold offline start where neither PNG made it into the cache.
+    const drawVectorBird = () => {
       ctx.scale(1 / squash, squash); // squash-and-stretch on flap
       ctx.fillStyle = CREAM;
       ctx.beginPath();
@@ -293,6 +314,34 @@ const FlockBirdGame = () => {
       ctx.fillStyle = NAVY;
       ctx.beginPath(); ctx.arc(6, -3.5, 1.8, 0, Math.PI * 2); ctx.fill();
       ctx.beginPath(); ctx.moveTo(13, -2); ctx.lineTo(19, 0); ctx.lineTo(13, 2); ctx.closePath(); ctx.fill();
+    };
+
+    const drawBird = (now) => {
+      const wantFlap = now < flapFrameUntil;
+      const img = wantFlap && spriteReady(GAME_SPRITES.flap)
+        ? GAME_SPRITES.flap
+        : (spriteReady(GAME_SPRITES.perch) ? GAME_SPRITES.perch : null);
+
+      ctx.save();
+      ctx.translate(BIRD_X, birdY);
+      // Nose up while rising, nose down while falling, clamped so the photo
+      // never reads as broken even in the death dive.
+      ctx.rotate(Math.max(-MAX_DRAW_TILT, Math.min(MAX_DRAW_TILT, tilt)));
+
+      if (!img) {
+        drawVectorBird();
+        ctx.restore();
+        return;
+      }
+
+      // Half the squash of the vector bird: a photograph shows the stretch,
+      // a flat shape hides it.
+      const s = 1 + (squash - 1) * 0.5;
+      ctx.scale(1 / s, s);
+      const w = img.naturalWidth * SPRITE_SCALE;
+      const h = img.naturalHeight * SPRITE_SCALE;
+      // Both frames are tight crops, so they are placed by their centre.
+      ctx.drawImage(img, -w / 2, -h / 2, w, h);
       ctx.restore();
     };
 
@@ -379,7 +428,7 @@ const FlockBirdGame = () => {
         ctx.moveTo(x, H - GROUND_H); ctx.lineTo(x + 12, H - GROUND_H);
         ctx.lineTo(x + 6, H - GROUND_H + 6); ctx.closePath(); ctx.fill();
       }
-      drawBird();
+      drawBird(now);
       // score with pop
       if (phase !== 'ready') {
         ctx.save();
@@ -541,6 +590,93 @@ const normalizeVotes = (raw, me, previous = []) => {
 
 // Members who voted plus guest-link votes, which have no identities.
 const voteTotal = (v) => (v?.voters?.length || 0) + (v?.guestCount || 0);
+
+// "1 members" was on screen in three places. One label, counted once.
+const memberCountLabel = (flock) => {
+  const n = (Array.isArray(flock?.members) && flock.members.length) || flock?.memberCount || flock?.member_count || 0;
+  return `${n} member${n === 1 ? '' : 's'}`;
+};
+
+/* ═══════════════════════════════════════════════════════════════════
+   WHEN. The create screen and the flock "Details" panel both pick a day
+   from a relative chip ("Tonight", "This Weekend") and an hour from a
+   chip ("9 PM"). Neither of those is a timestamp, and for a long time
+   neither of them was sent: every flock landed with event_time NULL,
+   which is why they all read "TBD" and never reached the Plans calendar.
+
+   These two helpers turn the pair into a real instant. new Date(y, m, d, h)
+   builds the date in the browser's own timezone, so 9 PM means 9 PM where
+   the user is standing; .toISOString() hands the API the UTC instant it
+   stores (backend/routes/flocks.js validates event_time with isISO8601).
+   ═══════════════════════════════════════════════════════════════════ */
+const FLOCK_DAY_CHOICES = ['Tonight', 'Tomorrow', 'This Weekend', 'Next Week'];
+const FLOCK_HOUR_CHOICES = ['7 PM', '8 PM', '9 PM', '10 PM', '11 PM'];
+
+const parseHourChoice = (label) => {
+  const m = /^\s*(\d{1,2})\s*(AM|PM)\s*$/i.exec(String(label || ''));
+  if (!m) return 21;
+  const h = parseInt(m[1], 10) % 12;
+  return /pm/i.test(m[2]) ? h + 12 : h;
+};
+
+const resolveEventTime = (dayLabel, hourLabel, now = new Date()) => {
+  const d = new Date(now.getFullYear(), now.getMonth(), now.getDate(), parseHourChoice(hourLabel), 0, 0, 0);
+  switch (dayLabel) {
+    case 'Tomorrow':
+      d.setDate(d.getDate() + 1);
+      break;
+    case 'This Weekend': {
+      const day = d.getDay(); // 0 Sun … 6 Sat
+      if (day === 6 || day === 0) {
+        // Already the weekend. Keep today unless that hour is behind us.
+        if (d <= now) d.setDate(d.getDate() + (((6 - day + 7) % 7) || 7));
+      } else {
+        d.setDate(d.getDate() + ((6 - day + 7) % 7));
+      }
+      break;
+    }
+    case 'Next Week':
+      d.setDate(d.getDate() + 7);
+      break;
+    case 'Tonight':
+    default:
+      // A "tonight" slot that has already gone by means tomorrow night.
+      if (d <= now) d.setDate(d.getDate() + 1);
+      break;
+  }
+  return d;
+};
+
+// One label for a flock's time, used by every surface that shows one.
+const formatEventTime = (iso) => {
+  if (!iso) return 'TBD';
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return 'TBD';
+  return d.toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' });
+};
+
+/* Momentum. The server scores a brand-new flock at 50/100 (it hands out a
+   full 20 points for "no budget to collect" and 30 for the creator's own
+   RSVP), so a plan with no venue, no time and one person read "Almost
+   There". The score is still useful as a bar; the STAGE is re-derived here
+   from the three facts a person would actually check. */
+const MOMENTUM_STAGES = [
+  { key: 'idea', label: 'Idea', color: '#94a3b8' },
+  { key: 'building', label: 'Building', color: '#f59e0b' },
+  { key: 'almost_there', label: 'Almost There', color: '#F59E0B' },
+  { key: 'locked_in', label: 'Locked In', color: '#22c55e' },
+  { key: 'lets_go', label: "Let's Go", color: '#4a7ba7' },
+];
+
+const momentumStageKey = (m) => {
+  if (!m) return 'idea';
+  const hasPeople = (m.accepted || 0) >= 2;
+  const signals = [!!m.hasVenue, !!m.hasTime, hasPeople].filter(Boolean).length;
+  if (signals === 3) return (m.score || 0) >= 85 ? 'lets_go' : 'locked_in';
+  if (signals === 2) return 'almost_there';
+  if (signals === 1) return 'building';
+  return 'idea';
+};
 
 // Memoized VenueCard — unified design for both DMs and Flocks
 const VenueCard = React.memo(({ venue, onViewDetails, onVote, colors: c, Icons: I, getCategoryColor: gcc }) => {
@@ -746,6 +882,7 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
   const watchIdRef = useRef(null);
   const mapLibreRef = useRef(null); // holds the maplibre-gl module after dynamic import
   const venuesRef = useRef([]);     // latest venues for non-React consumers (toggleMapType, etc.)
+  const fittedKeyRef = useRef(null); // result set the viewport was last framed to
   const [mapReady, setMapReady] = useState(false);
   const [mapType, setMapType] = useState(() => localStorage.getItem('flock_map_type') || 'roadmap');
 
@@ -1165,6 +1302,54 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
     // Push heat data to the source
     const heatSrc = map.getSource('venue-heat');
     if (heatSrc) heatSrc.setData({ type: 'FeatureCollection', features: heatFeatures });
+
+    /* FRAME THE RESULTS. The map opened centred on the user at a fixed zoom,
+       so a search could return 20 venues and show none of them: the chip said
+       "All 20 results" over what looked like an empty map. Fit the viewport to
+       the pins whenever the RESULT SET changes (not on every render, or a
+       pan would snap back under the user's finger). maxZoom keeps a single
+       result from diving to street level. */
+    const key = venues.map(v => v.place_id || v.id).join(',');
+    if (key === fittedKeyRef.current) return;
+    fittedKeyRef.current = key;
+
+    const points = venues
+      .filter(v => v.location?.latitude && v.location?.longitude)
+      .map(v => [v.location.longitude, v.location.latitude]);
+    if (points.length === 0) return;
+
+    /* Places sometimes returns one result on the other side of the country
+       (a search around Bethlehem PA came back with a shop in California).
+       Fitting to the raw extent then zooms out to the whole continent, which
+       is a worse empty map than the one this is fixing. So fit to the CLUSTER:
+       take the median point and drop anything absurdly far from it. The
+       outlier keeps its pin and its place in the list; it just does not get
+       to decide the viewport. */
+    const sortedLng = points.map(p => p[0]).slice().sort((a, b) => a - b);
+    const sortedLat = points.map(p => p[1]).slice().sort((a, b) => a - b);
+    const midLng = sortedLng[sortedLng.length >> 1];
+    const midLat = sortedLat[sortedLat.length >> 1];
+    const kmFromMid = ([lng, lat]) => Math.hypot(
+      (lng - midLng) * 111 * Math.cos(midLat * Math.PI / 180),
+      (lat - midLat) * 111,
+    );
+    const sortedDist = points.map(kmFromMid).sort((a, b) => a - b);
+    const medianDist = sortedDist[sortedDist.length >> 1] || 0;
+    const limitKm = Math.max(15, medianDist * 4);
+    let core = points.filter(p => kmFromMid(p) <= limitKm);
+    if (core.length < 2) core = points;
+
+    const bounds = core.reduce(
+      (b, p) => b.extend(p),
+      new ml.LngLatBounds(core[0], core[0]),
+    );
+    try {
+      map.fitBounds(bounds, {
+        padding: { top: 90, bottom: 190, left: 40, right: 40 }, // search bar above, venue cards below
+        maxZoom: 15,
+        duration: 600,
+      });
+    } catch { /* container not measured yet — the next result set re-fits */ }
   }, [venues, mapReady, buildMarkerEl]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ---------- active venue highlight (only resize the 2 changed markers) ----------
@@ -2710,6 +2895,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   const [flockInviteSearching, setFlockInviteSearching] = useState(false);
   const [flockInviteResults, setFlockInviteResults] = useState([]);
   const [flockInviteSelected, setFlockInviteSelected] = useState([]);
+  // The guest link the user just copied. Kept so the sheet can confirm it in
+  // place and show the URL, instead of copying in total silence.
+  const [copiedInviteUrl, setCopiedInviteUrl] = useState('');
   const [flockInviteSending, setFlockInviteSending] = useState(false);
 
   // Flock invite search (searches friends list)
@@ -2937,6 +3125,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   const meRef = useRef(authUser);
   meRef.current = authUser;
 
+  // Latest flocks for effects that must READ them without re-firing when the
+  // list changes identity (which it does on every message).
+  const flocksRef = useRef(flocks);
+  flocksRef.current = flocks;
+
   // Fetch flocks from API on mount
   useEffect(() => {
     setFlocksLoading(true);
@@ -3041,6 +3234,13 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
 
   // Create Flock form
   const [flockName, setFlockName] = useState('');
+  const [flockNameError, setFlockNameError] = useState('');
+  // Editing the time of an EXISTING flock (Details panel). Before this there
+  // was no path to a time at all once a flock had been created.
+  const [showTimeEditor, setShowTimeEditor] = useState(false);
+  const [timeEditDay, setTimeEditDay] = useState('Tonight');
+  const [timeEditHour, setTimeEditHour] = useState('9 PM');
+  const [savingEventTime, setSavingEventTime] = useState(false);
   const [flockDate, setFlockDate] = useState('Tonight');
   const [flockTime, setFlockTime] = useState('9 PM');
   const [flockFriends, setFlockFriends] = useState([]); // Array of { id, name, email, profile_image_url }
@@ -3278,11 +3478,18 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   const [popularVenues, setPopularVenues] = useState([]);
   const [pendingImage, setPendingImage] = useState(null);
   const [showImagePreview, setShowImagePreview] = useState(false);
-  const [showCameraPopup, setShowCameraPopup] = useState(false);
   const [showCameraViewfinder, setShowCameraViewfinder] = useState(null); // 'flock' or 'dm'
   const cameraVideoRef = useRef(null);
   const cameraStreamRef = useRef(null);
   const chatGalleryInputRef = useRef(null);
+  // Viewfinder capabilities and controls. cameraCaps is whatever THIS track
+  // actually reports; every control below is drawn only if its key is there.
+  const [cameraFacing, setCameraFacing] = useState('environment');
+  const [cameraCaps, setCameraCaps] = useState({}); // { torch, focus, zoom:{min,max,step} }
+  const [cameraTorch, setCameraTorch] = useState(false);
+  const [cameraZoom, setCameraZoom] = useState(1);
+  const [cameraShutter, setCameraShutter] = useState(false);
+  const [cameraFocusPoint, setCameraFocusPoint] = useState(null);
   const [showFlockMenu, setShowFlockMenu] = useState(false);
   const [showLeaveConfirm, setShowLeaveConfirm] = useState(false);
 
@@ -3316,7 +3523,6 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   const [showDmVenueSearch, setShowDmVenueSearch] = useState(false);
   const [dmPendingImage, setDmPendingImage] = useState(null);
   const [showDmImagePreview, setShowDmImagePreview] = useState(false);
-  const [showDmCameraPopup, setShowDmCameraPopup] = useState(false);
   const dmGalleryInputRef = useRef(null);
   const [dmSharingLocation, setDmSharingLocation] = useState(null); // userId we're sharing with
   const [dmMemberLocation, setDmMemberLocation] = useState(null); // { lat, lng, name, timestamp }
@@ -3340,7 +3546,15 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   });
   const [showPicModal, setShowPicModal] = useState(false);
   const [trustedContacts, setTrustedContacts] = useState([]);
-  const [safetyOn, setSafetyOn] = useState(true);
+  // The safety toggle used to live only in memory behind a "Save" button that
+  // fired no request at all. It now writes on the flip: locally for this
+  // device, and up to the account's synced settings.
+  const [safetyOn, setSafetyOn] = useState(() => localStorage.getItem('flock_safety_on') !== 'false');
+  const setSafetyEnabled = useCallback((on) => {
+    setSafetyOn(on);
+    localStorage.setItem('flock_safety_on', on ? 'true' : 'false');
+    queueSync({ safetyOn: on ? 'true' : 'false' });
+  }, []);
 
   // Flock Pro — entitlements come from the backend (users.is_premium via the
   // RevenueCat webhook), fetched once at boot and re-fetched after a purchase.
@@ -3461,9 +3675,37 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   }, []);
 
   // Interests
-  const [userInterests, setUserInterests] = useState(['Live Music', 'Cocktails', 'Nightlife']);
+  const [userInterests, setUserInterests] = useState(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem('flock_interests') || 'null');
+      if (Array.isArray(saved)) return saved;
+    } catch { /* malformed — fall through to the defaults */ }
+    return ['Live Music', 'Cocktails', 'Nightlife'];
+  });
+  // Same story as the safety toggle: the interests screen's "Save" never sent
+  // anything, so a chip you added was gone on the next launch.
+  useEffect(() => {
+    localStorage.setItem('flock_interests', JSON.stringify(userInterests));
+    queueSync({ userInterests });
+  }, [userInterests]);
   const [newInterest, setNewInterest] = useState('');
   const suggestedInterests = ['Sports', 'Food', 'Dancing', 'Karaoke', 'Comedy', 'Art', 'Wine', 'Beer', 'Trivia', 'Pool', 'Darts', 'Gaming'];
+
+  // pullSettings() broadcasts the account's stored settings once it has them.
+  // Adopt the two this screen owns so a second device agrees with the first.
+  useEffect(() => {
+    const onSettings = (e) => {
+      const s = e.detail || {};
+      if (s.safetyOn !== undefined && s.safetyOn !== null) {
+        const on = String(s.safetyOn) !== 'false';
+        setSafetyOn(on);
+        localStorage.setItem('flock_safety_on', on ? 'true' : 'false');
+      }
+      if (Array.isArray(s.userInterests)) setUserInterests(s.userInterests);
+    };
+    window.addEventListener('flock-settings-loaded', onSettings);
+    return () => window.removeEventListener('flock-settings-loaded', onSettings);
+  }, []);
 
   // Modals
   const [showSOS, setShowSOS] = useState(false);
@@ -3495,6 +3737,13 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
       setTimeout(() => aiInputRef.current?.focus(), 200);
     }
   }, [aiChatMode]);
+
+  // Birdie is a helper for the screen you are on, not a follower. Its bubble
+  // only lives on Home, but the OPEN panel used to stay put over every tab and
+  // every screen, covering more than half of them. Navigating puts it away.
+  useEffect(() => {
+    setAiChatMode('bubble');
+  }, [currentTab, currentScreen]);
 
   // Map venues loaded from Google Places API
   // Start empty — venues load from API based on user's actual location
@@ -3643,10 +3892,38 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
     return d < 1 ? `${Math.round(d * 1000)}m` : `${d.toFixed(1)}km`;
   }, []);
 
-  const formatDateStr = (d) => d.toISOString().split('T')[0];
+  // Local YYYY-MM-DD. toISOString() would shift the key by a day for anyone
+  // east of UTC, which put their plans on the wrong calendar cell.
+  const formatDateStr = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
   const getDaysInMonth = (d) => new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate();
   const getFirstDayOfMonth = (d) => new Date(d.getFullYear(), d.getMonth(), 1).getDay();
-  const getEventsForDate = useCallback((dateStr) => calendarEvents.filter(e => e.date === dateStr), [calendarEvents]);
+
+  // Flocks with a real time ARE plans, so they belong on the Plans calendar
+  // without anyone having to press "add to calendar" first. These are derived,
+  // not stored: they carry a string id and no delete control.
+  const flockCalendarEvents = useMemo(() => flocks
+    .filter(f => f.eventTime && f.status !== 'cancelled')
+    .map(f => {
+      const when = new Date(f.eventTime);
+      if (isNaN(when.getTime())) return null;
+      return {
+        id: `flock-${f.id}`,
+        flockId: f.id,
+        derived: true,
+        title: f.name,
+        venue: f.venue && f.venue !== 'TBD' ? f.venue : 'Venue TBD',
+        date: formatDateStr(when),
+        time: when.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }),
+        color: colors.navy,
+        members: f.memberCount || (f.members || []).length || 1,
+      };
+    })
+    .filter(Boolean), [flocks, colors.navy]);
+
+  const getEventsForDate = useCallback(
+    (dateStr) => [...calendarEvents, ...flockCalendarEvents].filter(e => e.date === dateStr),
+    [calendarEvents, flockCalendarEvents],
+  );
 
   const addEventToCalendar = useCallback((title, venue, date, time, color) => {
     const dateStr = typeof date === 'string' ? date : formatDateStr(date);
@@ -3741,6 +4018,26 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
       }).catch(err => console.error('Failed to mark flock completed:', err));
     }
   }, [flocks, authUser]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Set or change a flock's time. Same generic PUT /api/flocks/:id that
+  // saveFlockVenue and setFlockStatus use, and the same rules apply: creator
+  // only (the server answers 403 otherwise), event_time must be ISO 8601.
+  const saveFlockEventTime = useCallback(async (flockId, isoString) => {
+    const token = localStorage.getItem('flockToken');
+    const res = await fetch(`${BASE_URL}/api/flocks/${flockId}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+      body: JSON.stringify({ event_time: isoString }),
+    });
+    let data = null;
+    try { data = await res.json(); } catch { /* empty or non-JSON body */ }
+    if (!res.ok) throw new Error(data?.error || 'Could not save the time');
+    const saved = data?.flock?.event_time || isoString;
+    setFlocks(prev => prev.map(f => f.id === flockId
+      ? { ...f, eventTime: saved, time: formatEventTime(saved), momentum: f.momentum ? { ...f.momentum, hasTime: true } : f.momentum }
+      : f));
+    return saved;
+  }, []);
 
   // AI Response - powered by Gemini via backend
   const sendAiMessage = useCallback(async () => {
@@ -3875,7 +4172,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   }, [currentScreen, loadSuggestedUsers, loadAddFriendsData]);
 
   // Fetch messages from API + join socket room when opening a chat
-  const [, setMessagesLoading] = useState(false);
+  // Read again: the chat's empty state must not flash while history is still
+  // in flight, so it waits on this.
+  const [messagesLoading, setMessagesLoading] = useState(false);
   const prevFlockIdRef = useRef(null);
   const newlyCreatedFlockRef = useRef(null);
   const sharingLocationRef = useRef(sharingLocationForFlock);
@@ -3932,9 +4231,19 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
       getBudgetStatus(selectedFlockId)
         .then(data => { if (data.budgetEnabled) setBudgetStatus(data); else setBudgetStatus(null); })
         .catch(() => setBudgetStatus(null));
-      getBillSplit(selectedFlockId)
-        .then(data => setBillSplit(data.bill))
-        .catch(() => setBillSplit(null));
+      // A bill only exists after someone splits one, and the UI only offers
+      // that on a confirmed or completed flock. Asking for one on every open
+      // meant a 404 (and a red line in the console) every single time a plan
+      // was opened. Ask only when there could be an answer; the bill_created
+      // socket event covers one being made while you are sitting here.
+      const flockNow = flocksRef.current.find(f => f.id === selectedFlockId);
+      if (flockNow && (flockNow.status === 'confirmed' || flockNow.status === 'completed' || flockNow.status === 'locked')) {
+        getBillSplit(selectedFlockId)
+          .then(data => setBillSplit(data.bill))
+          .catch(() => setBillSplit(null));
+      } else {
+        setBillSplit(null);
+      }
 
     } else if (currentScreen !== 'chatDetail' && prevFlockIdRef.current) {
       // Don't leave socket room if actively sharing location (need to keep receiving updates)
@@ -4538,54 +4847,166 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
     e.target.value = '';
   }, [showToast]);
 
-  // Camera viewfinder handlers
+  /* ═══════════════════════════════════════════════════════════════════
+     CAMERA. This was one getUserMedia call and a shutter button. It now has
+     front/back flip, torch, zoom and tap-to-focus, each of which is FEATURE
+     DETECTED off MediaStreamTrack.getCapabilities() and simply absent when
+     the platform does not offer it — WKWebView supports almost none of them,
+     and a control that does nothing is worse than no control.
+
+     Track lifetime is the thing to get right: a MediaStream that is not
+     stopped leaves the camera light on. stopCameraTracks() is the ONLY way a
+     stream is released and it is called on close, on flip, on capture and on
+     unmount. Nothing else touches cameraStreamRef.
+     ═══════════════════════════════════════════════════════════════════ */
+  const stopCameraTracks = useCallback(() => {
+    const stream = cameraStreamRef.current;
+    if (stream) {
+      stream.getTracks().forEach(t => { try { t.stop(); } catch { /* already ended */ } });
+      cameraStreamRef.current = null;
+    }
+    const v = cameraVideoRef.current;
+    if (v) { try { v.srcObject = null; } catch { /* detached */ } }
+  }, []);
+
+  const readCameraCaps = useCallback(() => {
+    const track = cameraStreamRef.current?.getVideoTracks?.()[0];
+    if (!track || typeof track.getCapabilities !== 'function') { setCameraCaps({}); return; }
+    let caps = {};
+    try { caps = track.getCapabilities() || {}; } catch { caps = {}; }
+    const settings = (() => { try { return track.getSettings() || {}; } catch { return {}; } })();
+    setCameraCaps({
+      torch: !!caps.torch,
+      focus: Array.isArray(caps.focusMode) && caps.focusMode.length > 0,
+      zoom: caps.zoom ? { min: caps.zoom.min, max: caps.zoom.max, step: caps.zoom.step || 0.1 } : null,
+    });
+    if (caps.zoom) setCameraZoom(settings.zoom ?? caps.zoom.min);
+  }, []);
+
+  // Acquire (or re-acquire) the preview stream for one facing direction.
+  const startCameraStream = useCallback(async (facing) => {
+    stopCameraTracks();
+    setCameraTorch(false);
+    let stream;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: facing } }, audio: false });
+    } catch {
+      // Some devices have exactly one camera and reject the hint outright.
+      stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+    }
+    cameraStreamRef.current = stream;
+    const v = cameraVideoRef.current;
+    if (v) {
+      v.srcObject = stream;
+      try { await v.play(); } catch { /* autoplay policy; the poster frame still shows */ }
+    }
+    readCameraCaps();
+  }, [stopCameraTracks, readCameraCaps]);
+
   const openCameraViewfinder = useCallback(async (source) => {
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
       showToast('Camera not supported in this browser', 'error');
       return;
     }
     setShowCameraViewfinder(source); // 'flock' or 'dm'
-    setShowCameraPopup(false);
-    setShowDmCameraPopup(false);
+    setCameraFacing('environment');
+    setCameraCaps({});
+    setCameraFocusPoint(null);
+    // One tick for the <video> to mount before the stream is attached.
     setTimeout(async () => {
       try {
-        let stream;
-        try {
-          stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' } }, audio: false });
-        } catch {
-          // Fallback — any camera
-          stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
-        }
-        cameraStreamRef.current = stream;
-        if (cameraVideoRef.current) {
-          cameraVideoRef.current.srcObject = stream;
-          await cameraVideoRef.current.play();
-        }
+        await startCameraStream('environment');
       } catch (err) {
         console.error('Camera access error:', err);
         showToast(err.name === 'NotAllowedError' ? 'Camera permission denied. Allow it in browser settings' : 'Could not access camera: ' + (err.message || err.name), 'error');
+        stopCameraTracks();
         setShowCameraViewfinder(null);
       }
-    }, 300);
-  }, [showToast]);
+    }, 120);
+  }, [showToast, startCameraStream, stopCameraTracks]);
 
   const closeCameraViewfinder = useCallback(() => {
-    if (cameraStreamRef.current) {
-      cameraStreamRef.current.getTracks().forEach(t => t.stop());
-      cameraStreamRef.current = null;
-    }
+    stopCameraTracks();
     setShowCameraViewfinder(null);
+    setCameraCaps({});
+    setCameraTorch(false);
+    setCameraFocusPoint(null);
+  }, [stopCameraTracks]);
+
+  // Last line of defence: if this component ever unmounts with the viewfinder
+  // open (logout, hot reload, an error boundary), the camera still goes dark.
+  useEffect(() => () => stopCameraTracks(), [stopCameraTracks]);
+
+  const flipCamera = useCallback(async () => {
+    const next = cameraFacing === 'environment' ? 'user' : 'environment';
+    setCameraFacing(next);
+    setCameraFocusPoint(null);
+    try {
+      await startCameraStream(next);
+    } catch {
+      showToast('Could not switch cameras', 'error');
+      try { await startCameraStream(cameraFacing); } catch { closeCameraViewfinder(); }
+      setCameraFacing(cameraFacing);
+    }
+  }, [cameraFacing, startCameraStream, showToast, closeCameraViewfinder]);
+
+  const toggleCameraTorch = useCallback(async () => {
+    const track = cameraStreamRef.current?.getVideoTracks?.()[0];
+    if (!track) return;
+    const next = !cameraTorch;
+    try {
+      await track.applyConstraints({ advanced: [{ torch: next }] });
+      setCameraTorch(next);
+    } catch {
+      showToast('This camera has no flash', 'error');
+    }
+  }, [cameraTorch, showToast]);
+
+  const applyCameraZoom = useCallback(async (value) => {
+    setCameraZoom(value);
+    const track = cameraStreamRef.current?.getVideoTracks?.()[0];
+    if (!track) return;
+    try { await track.applyConstraints({ advanced: [{ zoom: value }] }); } catch { /* rejected mid-gesture */ }
   }, []);
+
+  // Tap to focus. Chrome on Android honours pointsOfInterest; iOS does not
+  // expose focusMode at all, so the ring is only drawn where it means
+  // something and the tap is otherwise inert.
+  const focusCameraAt = useCallback(async (e) => {
+    const track = cameraStreamRef.current?.getVideoTracks?.()[0];
+    if (!track || !cameraCaps.focus) return;
+    const rect = e.currentTarget.getBoundingClientRect();
+    const x = (e.clientX - rect.left) / rect.width;
+    const y = (e.clientY - rect.top) / rect.height;
+    const at = Date.now();
+    setCameraFocusPoint({ x: e.clientX - rect.left, y: e.clientY - rect.top, at });
+    // Clear only THIS ring, so a quick second tap is not cut short by the
+    // first tap's timer.
+    setTimeout(() => setCameraFocusPoint(prev => (prev && prev.at === at ? null : prev)), 900);
+    try {
+      await track.applyConstraints({ advanced: [{ focusMode: 'single-shot', pointsOfInterest: [{ x, y }] }] });
+    } catch { /* the ring still gives feedback; the lens just does not move */ }
+  }, [cameraCaps.focus]);
 
   const capturePhoto = useCallback(() => {
     const video = cameraVideoRef.current;
-    if (!video) return;
+    if (!video || !video.videoWidth) return;
     const canvas = document.createElement('canvas');
     canvas.width = video.videoWidth;
     canvas.height = video.videoHeight;
-    canvas.getContext('2d').drawImage(video, 0, 0);
+    const ctx = canvas.getContext('2d');
+    // The front camera preview is mirrored (everyone expects to see
+    // themselves, not a stranger), so the capture is mirrored to match.
+    // Otherwise the photo comes out flipped from what was on screen.
+    if (cameraFacing === 'user') {
+      ctx.translate(canvas.width, 0);
+      ctx.scale(-1, 1);
+    }
+    ctx.drawImage(video, 0, 0);
     const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
     const source = showCameraViewfinder;
+    setCameraShutter(true);
+    setTimeout(() => setCameraShutter(false), 160);
     closeCameraViewfinder();
     if (source === 'flock') {
       setPendingImage(dataUrl);
@@ -4594,7 +5015,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
       setDmPendingImage(dataUrl);
       setShowDmImagePreview(true);
     }
-  }, [showCameraViewfinder, closeCameraViewfinder]);
+  }, [showCameraViewfinder, closeCameraViewfinder, cameraFacing]);
 
   // Crop flow state
   const [cropImageSrc, setCropImageSrc] = useState(null); // raw image data URL for cropping
@@ -5053,15 +5474,28 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           <h2 style={{ fontSize: '20px', fontWeight: '900', color: colors.navy, margin: '0 0 4px' }}>Emergency</h2>
           <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: 0 }}>{trustedContacts.length > 0 ? `${trustedContacts.length} trusted contact${trustedContacts.length > 1 ? 's' : ''} will be notified` : 'No trusted contacts set up'}</p>
         </div>
+        {/* With no trusted contacts there is nobody to alert, so the two
+            buttons that message them are dead. Showing a full-strength red
+            primary that cannot do anything is the worst possible lie to tell
+            in an emergency: they are visibly disabled instead, and setting
+            contacts up becomes the live action. */}
+        {(() => {
+        const noContacts = trustedContacts.length === 0;
+        return (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
           <a href="tel:911" style={{ ...styles.gradientButton, background: colors.red, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', textDecoration: 'none', color: 'white', fontWeight: '700' }}>{Icons.phone('white', 16)} Call 911</a>
-          <button aria-label="Safety" className="hit44 glass-btn glass-danger" disabled={sosAlertSending} onClick={() => { if (!sosArmed) { setSosArmed(true); setTimeout(() => setSosArmed(false), 4000); } else { setSosArmed(false); handleEmergencyAlert(); } }} style={{ ...styles.gradientButton, background: colors.red, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', position: 'relative', overflow: 'hidden', opacity: sosAlertSending ? 0.6 : 1 }}>{Icons.shield('white', 16)} {sosAlertSending ? 'Sending...' : sosArmed ? 'Tap again to confirm' : 'Alert Contacts'}</button>
-          <button aria-label="Share your location" className="hit44 glass-btn glass-secondary" disabled={sosAlertSending} onClick={handleShareLocationWithContacts} style={{ ...styles.gradientButton, background: 'var(--bg-card-solid)', color: colors.navy, border: `2px solid ${colors.navy}`, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', opacity: sosAlertSending ? 0.6 : 1 }}>{Icons.mapPin(colors.navy, 16)} {sosAlertSending ? 'Sending...' : 'Share Location'}</button>
-          {trustedContacts.length === 0 && (
-            <button className="hit44 glass-btn glass-secondary" onClick={() => { setShowSOS(false); setProfileScreen('safety'); setCurrentScreen('profile'); loadTrustedContacts(); }} style={{ ...styles.gradientButton, background: 'var(--icon-bg)', color: colors.navy, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', fontSize: '13px' }}>Set Up Trusted Contacts</button>
+          {noContacts && (
+            <button className="hit44 glass-btn glass-primary" onClick={() => { setShowSOS(false); setProfileScreen('safety'); setCurrentScreen('profile'); loadTrustedContacts(); }} style={{ ...styles.gradientButton, background: colors.navyMidBg, color: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', fontSize: '13px' }}>{Icons.userPlus('white', 16)} Add trusted contacts</button>
+          )}
+          <button aria-label="Alert your trusted contacts" title={noContacts ? 'Add a trusted contact first' : undefined} className="hit44 glass-btn glass-danger" disabled={sosAlertSending || noContacts} onClick={() => { if (!sosArmed) { setSosArmed(true); setTimeout(() => setSosArmed(false), 4000); } else { setSosArmed(false); handleEmergencyAlert(); } }} style={{ ...styles.gradientButton, background: noContacts ? 'var(--bg-tertiary)' : colors.red, color: noContacts ? 'var(--text-tertiary)' : 'white', border: noContacts ? '1.5px solid var(--border-default)' : 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', position: 'relative', overflow: 'hidden', cursor: noContacts ? 'not-allowed' : 'pointer', opacity: sosAlertSending ? 0.6 : 1 }}>{Icons.shield(noContacts ? 'var(--text-tertiary)' : 'white', 16)} {sosAlertSending ? 'Sending...' : sosArmed ? 'Tap again to confirm' : 'Alert Contacts'}</button>
+          <button aria-label="Share your location" title={noContacts ? 'Add a trusted contact first' : undefined} className="hit44 glass-btn glass-secondary" disabled={sosAlertSending || noContacts} onClick={handleShareLocationWithContacts} style={{ ...styles.gradientButton, background: 'var(--bg-card-solid)', color: noContacts ? 'var(--text-tertiary)' : colors.navy, border: `2px solid ${noContacts ? 'var(--border-default)' : colors.navy}`, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', cursor: noContacts ? 'not-allowed' : 'pointer', opacity: sosAlertSending ? 0.6 : 1 }}>{Icons.mapPin(noContacts ? 'var(--text-tertiary)' : colors.navy, 16)} {sosAlertSending ? 'Sending...' : 'Share Location'}</button>
+          {noContacts && (
+            <p style={{ fontSize: '12px', color: 'var(--text-tertiary)', textAlign: 'center', margin: 0 }}>Alerts need at least one trusted contact.</p>
           )}
           <button className="hit44 glass-btn glass-secondary" disabled={sosAlertSending} onClick={() => { setSosArmed(false); setShowSOS(false); }} style={{ background: 'none', border: 'none', color: 'var(--text-tertiary)', padding: '8px', cursor: 'pointer' }}>Cancel</button>
         </div>
+        );
+        })()}
       </div>
     </div>
   );
@@ -6081,8 +6515,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                   />
                 ) : m.message_type === 'image' && m.image_url ? (
                   /* Image message */
-                  <div style={{ borderRadius: '16px', overflow: 'hidden', boxShadow: '0 2px 10px rgba(0,0,0,0.1)', borderTopRightRadius: m.sender === 'You' ? '4px' : '16px', borderTopLeftRadius: m.sender === 'You' ? '16px' : '4px' }}>
-                    <img src={m.image_url} alt="" style={{ maxWidth: '100%', maxHeight: '240px', objectFit: 'cover', display: 'block', borderRadius: '16px' }} />
+                  <div onClick={() => setShowDmReactionPicker(showDmReactionPicker === m.id ? null : m.id)} style={{ borderRadius: '18px', overflow: 'hidden', boxShadow: '0 2px 10px rgba(0,0,0,0.1)', borderTopRightRadius: m.sender === 'You' ? '4px' : '18px', borderTopLeftRadius: m.sender === 'You' ? '18px' : '4px', cursor: 'pointer', lineHeight: 0 }}>
+                    <img src={m.image_url} alt="" loading="lazy" style={{ width: '100%', maxWidth: '260px', maxHeight: '340px', objectFit: 'cover', display: 'block' }} />
                   </div>
                 ) : (
                   /* Text message */
@@ -6156,9 +6590,12 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           inset itself (SAFE-AREA CONTRACT in index.css). */}
       <div style={{ padding: '10px 12px calc(10px + var(--safe-bottom))', borderTop: '1px solid var(--divider)', backgroundColor: 'var(--bg-card-solid)' }}>
         <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-          {/* Camera button */}
-          <button aria-label="Add a photo" className="hit44" onClick={() => setShowDmCameraPopup(true)} style={{ width: '36px', height: '36px', borderRadius: '18px', backgroundColor: 'var(--bg-hover)', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', flexShrink: 0, border: 'none', position: 'relative' }}>
+          {/* Camera and camera roll, both one tap (see the flock composer). */}
+          <button aria-label="Take a photo" className="hit44" onClick={() => openCameraViewfinder('dm')} style={{ width: '36px', height: '36px', borderRadius: '18px', backgroundColor: 'var(--bg-hover)', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', flexShrink: 0, border: 'none', position: 'relative' }}>
             {Icons.camera(colors.textSecondary, 16)}
+          </button>
+          <button aria-label="Choose a photo from your library" className="hit44" onClick={() => dmGalleryInputRef.current?.click()} style={{ width: '36px', height: '36px', borderRadius: '18px', backgroundColor: 'var(--bg-hover)', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', flexShrink: 0, border: 'none' }}>
+            {Icons.image(colors.textSecondary, 16)}
           </button>
           <input ref={dmGalleryInputRef} type="file" accept="image/*" onChange={handleDmImageSelect} style={{ display: 'none' }} />
           {/* Location share button */}
@@ -6168,25 +6605,6 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
         </div>
       </div>
 
-      {/* Camera options popup */}
-      {showDmCameraPopup && (
-        <div onClick={() => setShowDmCameraPopup(false)} style={{ position: 'absolute', inset: 0, backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'flex-end', zIndex: 60 }}>
-          <div onClick={e => e.stopPropagation()} style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '20px 20px 0 0', padding: '20px', width: '100%', paddingBottom: 'calc(28px + var(--safe-bottom))' }}>
-            <div style={{ width: '36px', height: '4px', borderRadius: '2px', backgroundColor: 'var(--toggle-off)', margin: '0 auto 16px' }} />
-            <h3 style={{ fontSize: '16px', fontWeight: '800', color: colors.navy, margin: '0 0 16px', textAlign: 'center' }}>Add Photo</h3>
-            <div style={{ display: 'flex', gap: '12px' }}>
-              <button className="hit44 glass-btn glass-secondary" onClick={() => openCameraViewfinder('dm')} style={{ flex: 1, padding: '16px', borderRadius: '16px', border: `2px solid ${colors.creamDark}`, backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px', transition: 'opacity 0.2s ease' }}>
-                {Icons.camera(colors.navy, 28)}
-                <span style={{ fontSize: '13px', fontWeight: '700', color: colors.navy }}>Take Photo</span>
-              </button>
-              <button className="hit44 glass-btn glass-secondary" onClick={() => { setShowDmCameraPopup(false); setTimeout(() => dmGalleryInputRef.current?.click(), 100); }} style={{ flex: 1, padding: '16px', borderRadius: '16px', border: `2px solid ${colors.creamDark}`, backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px', transition: 'opacity 0.2s ease' }}>
-                {Icons.image(colors.navy, 28)}
-                <span style={{ fontSize: '13px', fontWeight: '700', color: colors.navy }}>Gallery</span>
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 
@@ -6207,6 +6625,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
 
   const aiAssistantModal = (isAiPanel || isAiFullscreen) && (
       <div onClick={(e) => { if (e.target === e.currentTarget) closeAiChat(); }} style={{
+        /* Birdie used to follow you across every tab, sitting over 55% of the
+           screen with no keyboard way out. It now closes when you navigate
+           (see the effect next to aiChatMode) and DialogBehavior below adds
+           Escape. The panel keeps pointerEvents 'none' on the backdrop so the
+           screen underneath is still usable while it is open. */
         position: 'absolute',
         inset: 0,
         backgroundColor: isAiFullscreen ? 'rgba(0,0,0,0.8)' : 'transparent',
@@ -6239,6 +6662,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           animation: 'birdieExpand 0.35s cubic-bezier(0.34, 1.56, 0.64, 1)',
           overflow: 'hidden',
         }}>
+          <DialogBehavior modal={isAiFullscreen} onClose={closeAiChat} label="Birdie" />
           {/* Header */}
           <div style={{ padding: isAiPanel ? '10px 12px' : '12px', borderBottom: '1px solid var(--divider)', background: colors.navyMidBg, borderRadius: isAiFullscreen ? '24px 24px 0 0' : '20px 20px 0 0', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
@@ -6523,8 +6947,12 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                       </button>
                     </div>
                   ) : (
-                    /* Flocks list */
-                    flocks.length > 0 ? flocks.filter(f => f.status === 'active' || f.status === 'confirmed').map(f => (
+                    /* Flocks list. This filtered on status 'active', which the
+                       client never produces (getFlocks maps the server's
+                       'planning' to 'voting'), so the sheet was always empty. */
+                    (() => {
+                      const shareable = flocks.filter(f => f.status !== 'completed' && f.status !== 'cancelled');
+                      return shareable.length > 0 ? shareable.map(f => (
                       <button className="hit44" key={f.id} onClick={async () => {
                         const venueData = { name: aiShareVenue.name, addr: aiShareVenue.address, stars: aiShareVenue.rating, rating: aiShareVenue.rating, price_level: aiShareVenue.price_level, place_id: aiShareVenue.place_id };
                         try {
@@ -6538,12 +6966,21 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                         <div style={{ width: '36px', height: '36px', borderRadius: '10px', backgroundColor: colors.navyBg, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                           {Icons.users('white', 16)}
                         </div>
-                        <div>
+                        <div style={{ minWidth: 0 }}>
                           <span style={{ fontSize: '13px', fontWeight: '600', color: 'var(--text-primary)', display: 'block' }}>{f.title || f.name}</span>
-                          <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>{f.members?.length || 0} members</span>
+                          <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>{memberCountLabel(f)}{f.time && f.time !== 'TBD' ? ` · ${f.time}` : ''}</span>
                         </div>
                       </button>
-                    )) : <p style={{ fontSize: '12px', color: 'var(--text-secondary)', textAlign: 'center', padding: '20px' }}>No active flocks</p>
+                      )) : (
+                        <div style={{ padding: '24px 20px', textAlign: 'center' }}>
+                          <p style={{ fontSize: '13px', fontWeight: '600', color: 'var(--text-primary)', margin: '0 0 4px' }}>No flocks to send this to yet</p>
+                          <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: '0 0 14px' }}>Start a flock and this venue can go straight into the chat.</p>
+                          <button className="hit44" onClick={() => { setAiShareVenue(null); closeAiChat(); setSelectedVenueForCreate({ name: aiShareVenue.name, addr: aiShareVenue.address, rating: aiShareVenue.rating, price_level: aiShareVenue.price_level, place_id: aiShareVenue.place_id }); setCurrentScreen('create'); }} style={{ padding: '10px 20px', borderRadius: '12px', border: 'none', background: colors.navyMidBg, color: 'white', fontWeight: '700', fontSize: '13px', cursor: 'pointer' }}>
+                            Start a flock here
+                          </button>
+                        </div>
+                      );
+                    })()
                   )}
                 </div>
               </div>
@@ -6892,7 +7329,14 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
     };
 
     const handleCreate = async () => {
-      if (!flockName.trim()) { showToast('Enter a plan name', 'error'); return; }
+      if (!flockName.trim()) {
+        setFlockNameError('Give the plan a name so your friends know what they are saying yes to.');
+        showToast('Name your plan first', 'error');
+        const input = document.getElementById('flock-name-input');
+        if (input) { try { input.focus(); } catch { /* detached */ } }
+        return;
+      }
+      setFlockNameError('');
       // If only 1 person invited, redirect to DM instead
       const invitedFriends = flockFriends.filter(f => f.id);
       if (invitedFriends.length === 1) {
@@ -6916,6 +7360,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
       const venueLat = capturedVenue?.lat || capturedVenue?.location?.latitude || null;
       const venueLng = capturedVenue?.lng || capturedVenue?.location?.longitude || null;
       const invitedIds = capturedFriends.map(f => f.id).filter(Boolean);
+      // The When/Time chips were being collected and then thrown away: the POST
+      // body carried no event_time at all, so every flock was created "TBD".
+      const capturedEventTime = resolveEventTime(flockDate, flockTime).toISOString();
 
       // Clear form immediately for snappy feel
       const capturedBudget = flockCashPool;
@@ -6924,7 +7371,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
       setFlockName(''); setFlockFriends([]); setInviteSearch(''); setInviteResults([]); setFlockCashPool(false); setFlockBudgetContext('dinner'); setFlockGhostMode(true); setSelectedVenueForCreate(null);
 
       try {
-        const data = await apiCreateFlock({ name: capturedName, venue_name: venueName, venue_address: venueAddr, venue_id: venueId, venue_latitude: venueLat || undefined, venue_longitude: venueLng || undefined, venue_rating: venueRating || undefined, venue_photo_url: venuePhoto || undefined, invited_user_ids: invitedIds.length > 0 ? invitedIds : undefined, budget_enabled: capturedBudget || undefined, budget_context: capturedBudget ? capturedBudgetCtx : undefined, ghost_mode_enabled: capturedBudget ? capturedGhostMode : undefined });
+        const data = await apiCreateFlock({ name: capturedName, venue_name: venueName, venue_address: venueAddr, venue_id: venueId, venue_latitude: venueLat || undefined, venue_longitude: venueLng || undefined, venue_rating: venueRating || undefined, venue_photo_url: venuePhoto || undefined, event_time: capturedEventTime, invited_user_ids: invitedIds.length > 0 ? invitedIds : undefined, budget_enabled: capturedBudget || undefined, budget_context: capturedBudget ? capturedBudgetCtx : undefined, ghost_mode_enabled: capturedBudget ? capturedGhostMode : undefined });
         const f = data.flock;
         const initialMessages = [];
         if (venueName) {
@@ -6942,7 +7389,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           apiSendMessage(f.id, `Check out ${venueName}!`, { message_type: 'venue_card', venue_data: venueCardData }).catch(() => {});
         }
         const invitedNames = capturedFriends.map(fr => fr.name);
-        const newFlock = { id: f.id, name: f.name, host: authUser?.name || 'You', creatorId: f.creator_id, members: invitedNames, memberCount: 1 + invitedIds.length, time: f.event_time ? new Date(f.event_time).toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' }) : `${flockDate} ${flockTime}`, eventTime: f.event_time || null, status: 'voting', venue: f.venue_name || 'TBD', venueAddress: venueAddr, venueId: venueId, venuePhoto: venuePhoto, venueRating: venueRating, venuePriceLevel: venuePriceLevel, venueLat: venueLat, venueLng: venueLng, cashPool: null, budgetEnabled: f.budget_enabled || capturedBudget, budgetContext: f.budget_context || capturedBudgetCtx, budgetLocked: false, budgetCeiling: null, ghostModeEnabled: f.ghost_mode_enabled || capturedGhostMode, votes: [], messages: initialMessages };
+        const newFlock = { id: f.id, name: f.name, host: authUser?.name || 'You', creatorId: f.creator_id, members: invitedNames, memberCount: 1 + invitedIds.length, time: formatEventTime(f.event_time || capturedEventTime), eventTime: f.event_time || capturedEventTime, status: 'voting', venue: f.venue_name || 'TBD', venueAddress: venueAddr, venueId: venueId, venuePhoto: venuePhoto, venueRating: venueRating, venuePriceLevel: venuePriceLevel, venueLat: venueLat, venueLng: venueLng, cashPool: null, budgetEnabled: f.budget_enabled || capturedBudget, budgetContext: f.budget_context || capturedBudgetCtx, budgetLocked: false, budgetCeiling: null, ghostModeEnabled: f.ghost_mode_enabled || capturedGhostMode, votes: [], messages: initialMessages };
 
         // Batch all state updates together — navigate immediately
         newlyCreatedFlockRef.current = f.id;
@@ -6958,16 +7405,19 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
 
     return (
       <div key="create-screen-container" style={{ display: 'flex', flexDirection: 'column', height: '100%', backgroundColor: 'var(--bg-card-solid)' }}>
-            <DialogBehavior modal={false} onClose={() => { setCurrentScreen('main'); setFlockName(''); setFlockFriends([]); setInviteSearch(''); setInviteResults([]); setSelectedVenueForCreate(null); }} />
+            <DialogBehavior modal={false} onClose={() => { setCurrentScreen('main'); setFlockName(''); setFlockNameError(''); setFlockFriends([]); setInviteSearch(''); setInviteResults([]); setSelectedVenueForCreate(null); }} />
         <div style={{ padding: '12px', display: 'flex', alignItems: 'center', gap: '8px', borderBottom: '1px solid var(--divider)', backgroundColor: 'var(--bg-card-solid)', flexShrink: 0 }}>
-          <button aria-label="Back" className="hit44" onClick={() => { setCurrentScreen('main'); setFlockName(''); setFlockFriends([]); setInviteSearch(''); setInviteResults([]); setSelectedVenueForCreate(null); }} style={{ width: '32px', height: '32px', borderRadius: '16px', border: 'none', backgroundColor: 'transparent', color: colors.navy, fontSize: '18px', cursor: 'pointer' }}>←</button>
+          <button aria-label="Back" className="hit44" onClick={() => { setCurrentScreen('main'); setFlockName(''); setFlockNameError(''); setFlockFriends([]); setInviteSearch(''); setInviteResults([]); setSelectedVenueForCreate(null); }} style={{ width: '32px', height: '32px', borderRadius: '16px', border: 'none', backgroundColor: 'transparent', color: colors.navy, fontSize: '18px', cursor: 'pointer' }}>←</button>
           <h1 style={{ fontSize: '18px', fontWeight: '900', color: colors.navy, margin: 0 }}>Start a Flock</h1>
         </div>
 
         <div style={{ flex: 1, padding: '16px', overflowY: 'auto', backgroundColor: 'var(--bg-primary)' }}>
           <div style={{ marginBottom: '16px' }}>
-            <label style={{ display: 'block', fontSize: '12px', fontWeight: 'bold', color: colors.navy, marginBottom: '6px' }}>What's the plan?</label>
-            <SearchInputLocal aria-label="Flock name" key="flock-name-input" id="flock-name-input" type="text" initialValue={flockName} onCommit={setFlockName} placeholder="Movie night, dinner, party..." style={styles.input} autoComplete="off" />
+            <label htmlFor="flock-name-input" style={{ display: 'block', fontSize: '12px', fontWeight: 'bold', color: colors.navy, marginBottom: '6px' }}>What's the plan?</label>
+            <SearchInputLocal aria-label="Flock name" aria-invalid={flockNameError ? 'true' : undefined} aria-describedby={flockNameError ? 'flock-name-error' : undefined} key="flock-name-input" id="flock-name-input" type="text" initialValue={flockName} onCommit={(v) => { setFlockName(v); if (v.trim()) setFlockNameError(''); }} placeholder="Movie night, dinner, party..." style={flockNameError ? { ...styles.input, borderColor: colors.red } : styles.input} autoComplete="off" />
+            {flockNameError && (
+              <p id="flock-name-error" role="alert" style={{ fontSize: '12px', fontWeight: '600', color: colors.red, margin: '6px 0 0' }}>{flockNameError}</p>
+            )}
           </div>
 
           {/* VENUE PICKER — Browse on Discover tab */}
@@ -7002,7 +7452,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           <div style={{ marginBottom: '16px' }}>
             <label style={{ display: 'block', fontSize: '12px', fontWeight: 'bold', color: colors.navy, marginBottom: '6px' }}>When</label>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '6px' }}>
-              {['Tonight', 'Tomorrow', 'This Weekend', 'Next Week'].map(d => (
+              {FLOCK_DAY_CHOICES.map(d => (
                 <button className="hit44" key={d} onClick={() => setFlockDate(d)} style={{ padding: '10px', borderRadius: '10px', border: flockDate === d ? '2px solid #2d5a87' : '1.5px solid var(--border-default)', backgroundColor: flockDate === d ? 'rgba(45,90,135,0.12)' : 'var(--bg-card-solid)', color: flockDate === d ? '#22c55e' : 'var(--text-primary)', fontWeight: '700', fontSize: '13px', cursor: 'pointer', transition: 'all 0.2s ease', boxShadow: flockDate === d ? '0 0 12px rgba(34,197,94,0.2)' : 'none' }}>{flockDate === d ? '✓ ' : ''}{d}</button>
               ))}
             </div>
@@ -7011,10 +7461,13 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           <div style={{ marginBottom: '16px' }}>
             <label style={{ display: 'block', fontSize: '12px', fontWeight: 'bold', color: colors.navy, marginBottom: '6px' }}>Time</label>
             <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
-              {['7 PM', '8 PM', '9 PM', '10 PM', '11 PM'].map(t => (
+              {FLOCK_HOUR_CHOICES.map(t => (
                 <button className="hit44" key={t} onClick={() => setFlockTime(t)} style={{ padding: '6px 14px', borderRadius: '20px', border: flockTime === t ? '2px solid #2d5a87' : '1.5px solid var(--border-default)', backgroundColor: flockTime === t ? 'rgba(45,90,135,0.12)' : 'var(--bg-card-solid)', color: flockTime === t ? '#22c55e' : 'var(--text-primary)', fontWeight: '700', fontSize: '12px', cursor: 'pointer', transition: 'all 0.2s ease', boxShadow: flockTime === t ? '0 0 10px rgba(34,197,94,0.2)' : 'none' }}>{t}</button>
               ))}
             </div>
+            <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: '8px 0 0', fontWeight: '600' }}>
+              {resolveEventTime(flockDate, flockTime).toLocaleString([], { weekday: 'long', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}
+            </p>
           </div>
 
           <div style={{ marginBottom: '16px' }}>
@@ -8529,7 +8982,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 </div>
                 {event.members > 1 && <div style={{ display: 'flex', alignItems: 'center', gap: '3px', marginTop: '4px' }}>{Icons.users(colors.textSecondary, 10)}<span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>{event.members} going</span></div>}
               </div>
-              <button className="hit44" onClick={() => { setCalendarEvents(calendarEvents.filter(e => e.id !== event.id)); if (typeof event.id === 'number') deleteCalendarEvent(event.id).catch(() => {}); }} style={{ width: '28px', height: '28px', borderRadius: '14px', backgroundColor: 'var(--accent-red-bg)', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.x(colors.red, 14)}</button>
+              {event.derived ? (
+                <button aria-label={`Open ${event.title}`} className="hit44 glass-btn glass-secondary" onClick={() => { setSelectedFlockId(event.flockId); setCurrentScreen('detail'); }} style={{ padding: '6px 12px', borderRadius: '10px', border: `1px solid ${colors.creamDark}`, backgroundColor: 'var(--icon-bg)', color: colors.navy, fontSize: '12px', fontWeight: '700', cursor: 'pointer', flexShrink: 0 }}>Open</button>
+              ) : (
+                <button aria-label={`Remove ${event.title}`} className="hit44" onClick={() => { setCalendarEvents(calendarEvents.filter(e => e.id !== event.id)); if (typeof event.id === 'number') deleteCalendarEvent(event.id).catch(() => {}); }} style={{ width: '28px', height: '28px', borderRadius: '14px', backgroundColor: 'var(--accent-red-bg)', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.x(colors.red, 14)}</button>
+              )}
             </div>
           )) : (
             <div style={{ textAlign: 'center', padding: '24px' }}>
@@ -8697,8 +9154,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                         {dm.lastMessageTime && <span style={{ fontSize: '12px', color: 'var(--text-tertiary)', fontWeight: '500' }}>{new Date(dm.lastMessageTime).toLocaleDateString([], { month: 'short', day: 'numeric' })}</span>}
                       </div>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                        {lastMsg?.sender === 'You' && <span style={{ flexShrink: 0 }}>{Icons.checkDouble('#22C55E', 11)}</span>}
-                        <p style={{ fontSize: '12px', color: dm.unread ? colors.navy : 'var(--text-tertiary)', fontWeight: dm.unread ? '500' : '400', margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{lastMsg?.sender === 'You' ? 'You: ' : ''}{lastMsg?.text || 'Start a conversation'}</p>
+                                                <p style={{ fontSize: '12px', color: dm.unread ? colors.navy : 'var(--text-tertiary)', fontWeight: dm.unread ? '500' : '400', margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{lastMsg?.sender === 'You' ? 'You: ' : ''}{lastMsg?.text || 'Start a conversation'}</p>
                       </div>
                     </div>
                     {dm.unread > 0 && (
@@ -8818,8 +9274,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
 
                         {/* Last message */}
                         <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                          {lastMsg?.sender === 'You' && <span style={{ flexShrink: 0 }}>{Icons.checkDouble('#22C55E', 11)}</span>}
-                          <p style={{ fontSize: '12px', color: hasUnread ? colors.navy : 'var(--text-tertiary)', fontWeight: hasUnread ? '500' : '400', margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{lastMsg ? `${lastMsg.sender === 'You' ? 'You' : lastMsg.sender}: ${lastMsg.text}` : 'No messages yet'}</p>
+                                                    <p style={{ fontSize: '12px', color: hasUnread ? colors.navy : 'var(--text-tertiary)', fontWeight: hasUnread ? '500' : '400', margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{lastMsg ? `${lastMsg.sender === 'You' ? 'You' : lastMsg.sender}: ${lastMsg.text}` : 'No messages yet'}</p>
                         </div>
                       </div>
 
@@ -8867,7 +9322,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
               <div style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center', minWidth: 0 }}>
                 <h2 style={{ fontWeight: '800', color: 'white', fontSize: '15px', margin: 0, lineHeight: '1.2', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{flock.name}</h2>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '5px', marginTop: '2px' }}>
-                  <span style={{ fontSize: '12px', color: 'rgba(255,255,255,0.55)', fontWeight: '500' }}>{flock.members?.length || flock.memberCount || 0} members</span>
+                  <span style={{ fontSize: '12px', color: 'rgba(255,255,255,0.55)', fontWeight: '500' }}>{memberCountLabel(flock)}</span>
                   <span style={{ fontSize: '12px', color: 'rgba(255,255,255,0.3)' }}>•</span>
                   {isTyping ? <span style={{ fontSize: '12px', color: '#86EFAC', fontWeight: '600' }}>{typingUser} is typing...</span> : <><span style={{ width: '5px', height: '5px', borderRadius: '3px', backgroundColor: '#22c55e', boxShadow: 'none' }} /><span style={{ fontSize: '12px', color: 'rgba(255,255,255,0.55)', fontWeight: '500' }}>online</span></>}
                 </div>
@@ -8876,7 +9331,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
             <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flex: chatNavOpen ? 1 : 'none', justifyContent: chatNavOpen ? 'center' : 'flex-end', flexShrink: 0 }}>
               <div style={{ display: 'flex', gap: '6px', overflow: 'hidden', maxWidth: chatNavOpen ? '300px' : '0px', opacity: chatNavOpen ? 1 : 0, transition: 'max-width 0.3s ease, opacity 0.25s ease' }}>
                 <button className="hit44 glass-btn" onClick={() => { setChatNavOpen(false); setShowVotePanel(true); loadPopularVenues(); }} style={{ width: '36px', height: '36px', minWidth: '36px', borderRadius: '10px', border: '1px solid rgba(255,255,255,0.15)', backgroundColor: flock.status === 'voting' ? colors.steel : 'rgba(255,255,255,0.08)', backdropFilter: 'blur(8px)', WebkitBackdropFilter: 'blur(8px)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.vote('white', 15)}</button>
-                <button className="hit44 glass-btn" onClick={() => { setChatNavOpen(false); setShowFlockInviteModal(true); setFlockInviteSelected([]); setFlockInviteSearch(''); setFlockInviteResults([]); }} style={{ width: '36px', height: '36px', minWidth: '36px', borderRadius: '10px', border: '1px solid rgba(255,255,255,0.15)', backgroundColor: 'rgba(255,255,255,0.08)', backdropFilter: 'blur(8px)', WebkitBackdropFilter: 'blur(8px)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.userPlus('white', 15)}</button>
+                <button className="hit44 glass-btn" onClick={() => { setChatNavOpen(false); setShowFlockInviteModal(true); setCopiedInviteUrl(''); setFlockInviteSelected([]); setFlockInviteSearch(''); setFlockInviteResults([]); }} style={{ width: '36px', height: '36px', minWidth: '36px', borderRadius: '10px', border: '1px solid rgba(255,255,255,0.15)', backgroundColor: 'rgba(255,255,255,0.08)', backdropFilter: 'blur(8px)', WebkitBackdropFilter: 'blur(8px)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.userPlus('white', 15)}</button>
                 <button className="hit44 glass-btn" onClick={() => { setChatNavOpen(false); setShowChatSearch(!showChatSearch); }} style={{ width: '36px', height: '36px', minWidth: '36px', borderRadius: '10px', border: '1px solid rgba(255,255,255,0.15)', backgroundColor: showChatSearch ? 'rgba(255,255,255,0.25)' : 'rgba(255,255,255,0.08)', backdropFilter: 'blur(8px)', WebkitBackdropFilter: 'blur(8px)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.search('white', 15)}</button>
                 <button className="hit44 glass-btn" onClick={() => { setChatNavOpen(false); setShowChatPool(true); }} style={{ width: '36px', height: '36px', minWidth: '36px', borderRadius: '10px', border: '1px solid rgba(255,255,255,0.15)', backgroundColor: 'rgba(255,255,255,0.08)', backdropFilter: 'blur(8px)', WebkitBackdropFilter: 'blur(8px)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.dollar('white', 15)}</button>
               </div>
@@ -8903,14 +9358,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
         {/* ── Momentum Meter (compact) ── */}
         {flock.momentum && flock.status !== 'completed' && (() => {
           const m = flock.momentum;
-          const stages = [
-            { key: 'idea', label: 'Idea', color: '#94a3b8' },
-            { key: 'building', label: 'Building', color: '#f59e0b' },
-            { key: 'almost_there', label: 'Almost There', color: '#F59E0B' },
-            { key: 'locked_in', label: 'Locked In', color: '#22c55e' },
-            { key: 'lets_go', label: "Let's Go", color: '#4a7ba7' },
-          ];
-          const activeIdx = stages.findIndex(s => s.key === m.stage);
+          const stages = MOMENTUM_STAGES;
+          const activeIdx = stages.findIndex(s => s.key === momentumStageKey(m));
           const activeColor = stages[activeIdx]?.color || '#94a3b8';
           return (
             <div style={{ padding: '8px 14px 10px', background: 'var(--bg-card-solid)', borderBottom: '1px solid var(--border-subtle)', flexShrink: 0 }}>
@@ -9121,6 +9570,29 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
               <p style={{ fontSize: '14px', color: 'var(--text-tertiary)', fontWeight: '500' }}>No messages match "{chatSearch}"</p>
             </div>
           )}
+
+          {/* A brand-new flock lands you here with nothing on screen at all,
+              which is the first thing anyone sees after creating one. Say what
+              this room is for and give the two openers. */}
+          {!messagesLoading && flock.messages.length === 0 && !(showChatSearch && chatSearch.trim()) && (
+            <div style={{ textAlign: 'center', padding: '48px 24px' }}>
+              <div style={{ width: '52px', height: '52px', borderRadius: '16px', background: 'var(--icon-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 12px' }}>
+                {Icons.chat(colors.navy, 24)}
+              </div>
+              <p style={{ fontSize: '15px', fontWeight: '800', color: colors.navy, margin: '0 0 4px' }}>Nothing here yet</p>
+              <p style={{ fontSize: '13px', color: 'var(--text-secondary)', margin: '0 0 16px', lineHeight: '1.5' }}>
+                This is where {flock.name} gets sorted out. Say hi, or put a place on the table for everyone to vote on.
+              </p>
+              <div style={{ display: 'flex', gap: '8px', justifyContent: 'center', flexWrap: 'wrap' }}>
+                <button className="hit44 glass-btn glass-navy" onClick={() => { setShowFlockInviteModal(true); setCopiedInviteUrl(''); setFlockInviteSelected([]); setFlockInviteSearch(''); setFlockInviteResults([]); }} style={{ padding: '10px 16px', borderRadius: '12px', border: 'none', background: colors.navyMidBg, color: 'white', fontSize: '13px', fontWeight: '700', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  {Icons.userPlus('white', 14)} Invite friends
+                </button>
+                <button className="hit44 glass-btn glass-secondary" onClick={() => { setShowVotePanel(true); loadPopularVenues(); }} style={{ padding: '10px 16px', borderRadius: '12px', border: `1.5px solid ${colors.creamDark}`, backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontSize: '13px', fontWeight: '700', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  {Icons.mapPin(colors.navy, 14)} Suggest a place
+                </button>
+              </div>
+            </div>
+          )}
           {(showChatSearch && chatSearch.trim()
             ? flock.messages.filter(m => {
                 const q = chatSearch.toLowerCase();
@@ -9172,15 +9644,17 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                   </button>
                 )}
 
-                {/* Image message */}
+                {/* Image message. Photos used to be cropped into a fixed
+                    200x150 letterbox, so a portrait shot arrived with its top
+                    and bottom cut off. They now run as large as the row allows
+                    and keep their own shape. Tapping still opens the reaction
+                    and report row, which is a 1.2 requirement. */}
                 {m.image && (
-                  <div style={{
-                    borderRadius: '16px',
-                    overflow: 'hidden',
-                    boxShadow: '0 4px 15px rgba(0,0,0,0.1)',
-                    marginBottom: '4px'
-                  }}>
-                    <img src={m.image} alt="Shared" style={{ width: '200px', height: '150px', objectFit: 'cover', display: 'block' }} />
+                  <div
+                    onClick={() => setShowReactionPicker(showReactionPicker === m.id ? null : m.id)}
+                    style={{ borderRadius: '18px', overflow: 'hidden', boxShadow: '0 4px 15px rgba(0,0,0,0.1)', marginBottom: '4px', cursor: 'pointer', lineHeight: 0 }}
+                  >
+                    <img src={m.image} alt="Shared" loading="lazy" style={{ width: '100%', maxWidth: '260px', maxHeight: '340px', objectFit: 'cover', display: 'block' }} />
                   </div>
                 )}
 
@@ -9250,11 +9724,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                       const i = m.text.toLowerCase().indexOf(q);
                       return <>{m.text.slice(0, i)}<mark style={{ backgroundColor: 'var(--search-highlight)', color: 'inherit', borderRadius: '2px', padding: '0 1px' }}>{m.text.slice(i, i + chatSearch.length)}</mark>{m.text.slice(i + chatSearch.length)}</>;
                     })() : m.text}</p>
-                    {m.sender === 'You' && (
-                      <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '4px', gap: '2px', alignItems: 'center' }}>
-                        {Icons.checkDouble('#86EFAC', 12)}
-                      </div>
-                    )}
+                    {/* The double-check receipt used to sit under every one of
+                        your own bubbles and under every conversation preview.
+                        It said the same thing on every row and cost a line of
+                        height each time, so it is gone from all three places.
+                        A send that fails still says so, once, in a toast. */}
                   </div>
                 )}
 
@@ -9391,8 +9865,16 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
         {/* Flock chat composer. This screen has no tab bar, so the composer sits
             on the physical screen edge and carries the home-indicator inset. */}
         <div style={{ padding: '10px 12px calc(10px + var(--safe-bottom))', backgroundColor: 'var(--bg-nav)', backdropFilter: 'blur(10px)', WebkitBackdropFilter: 'blur(10px)', borderTop: '1px solid var(--border-subtle)', display: 'flex', gap: '8px', alignItems: 'center', flexShrink: 0, boxShadow: 'var(--nav-shadow)' }}>
-          <button className="hit44" onClick={() => setShowCameraPopup(true)} style={{ width: '38px', height: '38px', borderRadius: '19px', border: 'none', backgroundColor: 'var(--bg-hover)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'opacity 0.2s ease', flexShrink: 0 }}>
+          {/* Two taps became one. The camera button used to open an "Add
+              Photo" sheet whose only job was to ask camera or library; the
+              library input was rendered but nothing outside that sheet ever
+              opened it. Both routes now sit in the composer, and the camera
+              screen itself carries a library button too. */}
+          <button aria-label="Take a photo" className="hit44" onClick={() => openCameraViewfinder('flock')} style={{ width: '36px', height: '36px', borderRadius: '18px', border: 'none', backgroundColor: 'var(--bg-hover)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'opacity 0.2s ease', flexShrink: 0 }}>
             {Icons.camera(colors.textSecondary, 18)}
+          </button>
+          <button aria-label="Choose a photo from your library" className="hit44" onClick={() => chatGalleryInputRef.current?.click()} style={{ width: '36px', height: '36px', borderRadius: '18px', border: 'none', backgroundColor: 'var(--bg-hover)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'opacity 0.2s ease', flexShrink: 0 }}>
+            {Icons.image(colors.textSecondary, 18)}
           </button>
           <input ref={chatGalleryInputRef} type="file" accept="image/*" onChange={handleChatImageSelect} style={{ display: 'none' }} />
           <button className="hit44" onClick={() => { if (sharingLocationForFlock === flock.id) { stopLocationSharing(); } else { const otherMembers = (flock.members || []).filter(m => m.id !== authUser?.id).length; if (otherMembers === 0) { showToast('No one else in this flock to share with', 'error'); return; } startSharingLocation(flock.id); } }} style={{ width: '38px', height: '38px', borderRadius: '19px', border: 'none', backgroundColor: sharingLocationForFlock === flock.id ? '#10b981' : 'var(--bg-hover)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'opacity 0.2s ease', flexShrink: 0 }}>{Icons.mapPin(sharingLocationForFlock === flock.id ? 'white' : colors.textSecondary, 16)}</button>
@@ -9403,25 +9885,6 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           <button className="hit44 glass-btn glass-navy" onClick={sendChatMessage} disabled={!chatInputHasText} style={{ width: '42px', height: '42px', borderRadius: '21px', border: 'none', background: colors.navyBg, color: 'white', cursor: chatInputHasText ? 'pointer' : 'default', opacity: chatInputHasText ? 1 : 0.45, display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 3px 10px rgba(13,40,71,0.10)', transition: 'opacity 0.2s ease' }}>{Icons.send('white', 18)}</button>
         </div>
 
-        {/* Camera options popup */}
-        {showCameraPopup && (
-          <div onClick={() => setShowCameraPopup(false)} style={{ position: 'absolute', inset: 0, backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'flex-end', zIndex: 60 }}>
-            <div onClick={e => e.stopPropagation()} style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '20px 20px 0 0', padding: '20px', width: '100%', paddingBottom: 'calc(28px + var(--safe-bottom))' }}>
-              <div style={{ width: '36px', height: '4px', borderRadius: '2px', backgroundColor: 'var(--toggle-off)', margin: '0 auto 16px' }} />
-              <h3 style={{ fontSize: '16px', fontWeight: '800', color: colors.navy, margin: '0 0 16px', textAlign: 'center' }}>Add Photo</h3>
-              <div style={{ display: 'flex', gap: '12px' }}>
-                <button className="hit44 glass-btn glass-secondary" onClick={() => openCameraViewfinder('flock')} style={{ flex: 1, padding: '16px', borderRadius: '16px', border: `2px solid ${colors.creamDark}`, backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px', transition: 'opacity 0.2s ease' }}>
-                  {Icons.camera(colors.navy, 28)}
-                  <span style={{ fontSize: '13px', fontWeight: '700', color: colors.navy }}>Take Photo</span>
-                </button>
-                <button className="hit44 glass-btn glass-secondary" onClick={() => { setShowCameraPopup(false); setTimeout(() => chatGalleryInputRef.current?.click(), 100); }} style={{ flex: 1, padding: '16px', borderRadius: '16px', border: `2px solid ${colors.creamDark}`, backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px', transition: 'opacity 0.2s ease' }}>
-                  {Icons.image(colors.navy, 28)}
-                  <span style={{ fontSize: '13px', fontWeight: '700', color: colors.navy }}>Gallery</span>
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
 
         {/* Money Layer Modal — Budget Submit / Bill Split */}
         {showChatPool && (() => {
@@ -9945,7 +10408,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
 
         {/* Invite Friends Modal */}
         {showFlockInviteModal && (
-          <div className="modal-backdrop" style={{ position: 'absolute', inset: 0, backgroundColor: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'flex-end', zIndex: 50 }}>
+          <div className="modal-backdrop" onClick={(e) => { if (e.target === e.currentTarget) setShowFlockInviteModal(false); }} style={{ position: 'absolute', inset: 0, backgroundColor: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'flex-end', zIndex: 50 }}>
             <DialogBehavior onClose={() => setShowFlockInviteModal(false)} label="Invite friends" />
             <div className="modal-content" style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '20px 20px 0 0', padding: '20px', width: '100%', maxHeight: '70%', overflowY: 'auto' }}>
               <div style={{ width: '40px', height: '4px', backgroundColor: 'var(--pill-bg)', borderRadius: '2px', margin: '0 auto 16px' }} />
@@ -9958,23 +10421,42 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                   This is the growth surface: every plan reaches non-users. */}
               <button className="hit44"
                 onClick={async () => {
+                  let url;
                   try {
-                    const { url } = await createFlockInviteLink(selectedFlockId);
-                    if (navigator.share && window.Capacitor?.isNativePlatform?.()) {
-                      await navigator.share({ title: 'Join my flock', url });
-                    } else {
-                      await navigator.clipboard.writeText(url);
-                      showToast('Invite link copied. Anyone with it can RSVP and vote');
-                    }
-                  } catch (e) {
-                    if (e?.name !== 'AbortError') showToast('Could not create invite link', 'error');
+                    ({ url } = await createFlockInviteLink(selectedFlockId));
+                  } catch {
+                    showToast('Could not create invite link', 'error');
+                    return;
                   }
+                  if (navigator.share && window.Capacitor?.isNativePlatform?.()) {
+                    try {
+                      await navigator.share({ title: 'Join my flock', url });
+                      return;
+                    } catch (e) {
+                      if (e?.name === 'AbortError') return; // user backed out of the share sheet
+                      // fall through to the clipboard
+                    }
+                  }
+                  // Copying can fail on an insecure origin or a denied
+                  // permission. Either way the link is shown below, so the
+                  // user is never left with nothing.
+                  try { await navigator.clipboard.writeText(url); showToast('Invite link copied'); }
+                  catch { showToast('Link ready. Copy it below'); }
+                  setCopiedInviteUrl(url);
                 }}
-                style={{ width: '100%', marginBottom: '14px', padding: '12px 14px', borderRadius: '12px', border: `1.5px dashed ${colors.steel}`, backgroundColor: 'transparent', color: colors.steel, fontWeight: '700', fontSize: '13px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}
+                style={{ width: '100%', marginBottom: copiedInviteUrl ? '8px' : '14px', padding: '12px 14px', borderRadius: '12px', border: `1.5px dashed ${colors.steel}`, backgroundColor: 'transparent', color: colors.steel, fontWeight: '700', fontSize: '13px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}
               >
                 {Icons.share ? Icons.share(colors.steel, 15) : null}
                 Share invite link (no account needed)
               </button>
+              {copiedInviteUrl && (
+                <div role="status" style={{ marginBottom: '14px', padding: '10px 12px', borderRadius: '12px', backgroundColor: 'var(--accent-green-bg)', border: '1px solid var(--border-subtle)' }}>
+                  <p style={{ fontSize: '12px', fontWeight: '700', color: 'var(--accent-green-text)', margin: '0 0 4px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    {Icons.check('var(--accent-green-text)', 13)} Copied. Anyone with this link can RSVP and vote.
+                  </p>
+                  <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: 0, wordBreak: 'break-all', fontFamily: 'monospace' }}>{copiedInviteUrl}</p>
+                </div>
+              )}
 
               {/* Selected friends chips */}
               {flockInviteSelected.length > 0 && (
@@ -10150,6 +10632,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
     const isCompleted = flock.status === 'completed';
     const isConfirmed = flock.status === 'confirmed' || flock.status === 'locked';
     const hasVenue = flock.venue && flock.venue !== 'TBD';
+    // PUT /api/flocks/:id is creator-only, so only the creator gets the control.
+    const isCreator = String(flock.creatorId) === String(authUser?.id);
 
     return (
       <div key="flock-detail-screen-container" style={{ display: 'flex', flexDirection: 'column', height: '100%', backgroundColor: 'var(--bg-primary)' }}>
@@ -10192,14 +10676,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           {/* ── Momentum Meter ── */}
           {!isCompleted && flock.momentum && (() => {
             const m = flock.momentum;
-            const stages = [
-              { key: 'idea', label: 'Idea', color: '#94a3b8' },
-              { key: 'building', label: 'Building', color: '#f59e0b' },
-              { key: 'almost_there', label: 'Almost There', color: '#F59E0B' },
-              { key: 'locked_in', label: 'Locked In', color: '#22c55e' },
-              { key: 'lets_go', label: "Let's Go", color: '#4a7ba7' },
-            ];
-            const activeIdx = stages.findIndex(s => s.key === m.stage);
+            const stages = MOMENTUM_STAGES;
+            const activeIdx = stages.findIndex(s => s.key === momentumStageKey(m));
             const activeColor = stages[activeIdx]?.color || '#94a3b8';
             return (
               <div style={{ marginTop: '12px' }}>
@@ -10420,7 +10898,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
               <h4 style={{ color: colors.navy, margin: 0, fontSize: '14px', fontWeight: '800' }}>
                 Members ({acceptedMembers.length})
               </h4>
-              <button className="hit44 glass-btn glass-navy" onClick={() => { setCurrentScreen('chatDetail'); setTimeout(() => { setShowFlockInviteModal(true); setFlockInviteSelected([]); setFlockInviteSearch(''); setFlockInviteResults([]); }, 100); }} style={{ padding: '5px 12px', background: colors.navyBg, border: 'none', borderRadius: '16px', color: 'white', fontSize: '12px', fontWeight: '700', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }}>
+              <button className="hit44 glass-btn glass-navy" onClick={() => { setCurrentScreen('chatDetail'); setTimeout(() => { setShowFlockInviteModal(true); setCopiedInviteUrl(''); setFlockInviteSelected([]); setFlockInviteSearch(''); setFlockInviteResults([]); }, 100); }} style={{ padding: '5px 12px', background: colors.navyBg, border: 'none', borderRadius: '16px', color: 'white', fontSize: '12px', fontWeight: '700', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }}>
                 {Icons.userPlus('white', 11)} Invite
               </button>
             </div>
@@ -10500,15 +10978,36 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                   <p style={{ color: colors.navy, fontSize: '14px', fontWeight: '700', margin: 0 }}>{flock.host}</p>
                 </div>
               </div>
-              {flock.time && flock.time !== 'TBD' && (
-                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                  <div style={{ width: '32px', height: '32px', borderRadius: '8px', background: 'var(--accent-amber-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{Icons.calendar(colors.amber, 14)}</div>
-                  <div>
-                    <p style={{ color: 'var(--text-tertiary)', fontSize: '12px', margin: 0, fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.3px' }}>When</p>
-                    <p style={{ color: colors.navy, fontSize: '14px', fontWeight: '700', margin: 0 }}>{flock.time}</p>
-                  </div>
+              {/* WHEN. Always shown, and the creator can change it here. This
+                  row is the only place in the app where a flock's time can be
+                  set after it was created. */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                <div style={{ width: '32px', height: '32px', borderRadius: '8px', background: 'var(--accent-amber-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{Icons.calendar(colors.amber, 14)}</div>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <p style={{ color: 'var(--text-tertiary)', fontSize: '12px', margin: 0, fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.3px' }}>When</p>
+                  <p style={{ color: colors.navy, fontSize: '14px', fontWeight: '700', margin: 0 }}>
+                    {flock.eventTime
+                      ? new Date(flock.eventTime).toLocaleString([], { weekday: 'long', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
+                      : (flock.time && flock.time !== 'TBD' ? flock.time : 'Not set yet')}
+                  </p>
                 </div>
-              )}
+                {isCreator && !isCompleted && (
+                  <button className="hit44 glass-btn glass-secondary" onClick={() => {
+                    const when = flock.eventTime ? new Date(flock.eventTime) : null;
+                    if (when && !isNaN(when.getTime())) {
+                      const h = when.getHours();
+                      const label = `${((h + 11) % 12) + 1} ${h < 12 ? 'AM' : 'PM'}`;
+                      setTimeEditHour(FLOCK_HOUR_CHOICES.includes(label) ? label : '9 PM');
+                    } else {
+                      setTimeEditHour('9 PM');
+                    }
+                    setTimeEditDay('Tonight');
+                    setShowTimeEditor(true);
+                  }} style={{ padding: '6px 12px', borderRadius: '10px', border: `1px solid ${colors.creamDark}`, backgroundColor: 'var(--icon-bg)', color: colors.navy, fontWeight: '700', fontSize: '12px', cursor: 'pointer', flexShrink: 0 }}>
+                    {flock.eventTime ? 'Change' : 'Set time'}
+                  </button>
+                )}
+              </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
                 <div style={{ width: '32px', height: '32px', borderRadius: '8px', background: isConfirmed ? 'var(--accent-green-bg)' : 'var(--accent-amber-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{isConfirmed ? Icons.check('var(--accent-green-text)', 14) : Icons.clock(colors.amber, 14)}</div>
                 <div>
@@ -10520,6 +11019,53 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           </div>
 
         </div>
+
+        {/* ── When editor ── */}
+        {showTimeEditor && (
+          <div className="modal-backdrop" onClick={(e) => { if (e.target === e.currentTarget) setShowTimeEditor(false); }} style={{ position: 'absolute', inset: 0, backgroundColor: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'flex-end', zIndex: 60 }}>
+            <DialogBehavior onClose={() => setShowTimeEditor(false)} label="Change the time" />
+            <div className="modal-content" style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '20px 20px 0 0', padding: '20px', paddingBottom: 'calc(20px + var(--safe-bottom))', width: '100%' }}>
+              <div style={{ width: '40px', height: '4px', backgroundColor: 'var(--pill-bg)', borderRadius: '2px', margin: '0 auto 16px' }} />
+              <h3 style={{ fontSize: '16px', fontWeight: '800', color: colors.navy, margin: '0 0 4px' }}>When are you going?</h3>
+              <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: '0 0 14px' }}>Everyone in the flock sees the new time, and it moves on your Plans calendar.</p>
+
+              <label style={{ display: 'block', fontSize: '12px', fontWeight: 'bold', color: colors.navy, marginBottom: '6px' }}>Day</label>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '6px', marginBottom: '14px' }}>
+                {FLOCK_DAY_CHOICES.map(d => (
+                  <button className="hit44" key={d} onClick={() => setTimeEditDay(d)} style={{ padding: '10px', borderRadius: '10px', border: timeEditDay === d ? `2px solid ${colors.steel}` : '1.5px solid var(--border-default)', backgroundColor: timeEditDay === d ? 'rgba(45,90,135,0.12)' : 'var(--bg-card-solid)', color: 'var(--text-primary)', fontWeight: '700', fontSize: '13px', cursor: 'pointer' }}>{d}</button>
+                ))}
+              </div>
+
+              <label style={{ display: 'block', fontSize: '12px', fontWeight: 'bold', color: colors.navy, marginBottom: '6px' }}>Time</label>
+              <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', marginBottom: '10px' }}>
+                {FLOCK_HOUR_CHOICES.map(t => (
+                  <button className="hit44" key={t} onClick={() => setTimeEditHour(t)} style={{ padding: '6px 14px', borderRadius: '20px', border: timeEditHour === t ? `2px solid ${colors.steel}` : '1.5px solid var(--border-default)', backgroundColor: timeEditHour === t ? 'rgba(45,90,135,0.12)' : 'var(--bg-card-solid)', color: 'var(--text-primary)', fontWeight: '700', fontSize: '12px', cursor: 'pointer' }}>{t}</button>
+                ))}
+              </div>
+              <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: '0 0 16px', fontWeight: '600' }}>
+                {resolveEventTime(timeEditDay, timeEditHour).toLocaleString([], { weekday: 'long', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}
+              </p>
+
+              <div style={{ display: 'flex', gap: '8px' }}>
+                <button className="hit44 glass-btn glass-secondary" onClick={() => setShowTimeEditor(false)} style={{ flex: 1, padding: '12px', borderRadius: '12px', border: '1px solid var(--border-mid)', backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontWeight: '600', fontSize: '14px', cursor: 'pointer' }}>Cancel</button>
+                <button className="hit44 glass-btn glass-navy" disabled={savingEventTime} onClick={async () => {
+                  setSavingEventTime(true);
+                  try {
+                    await saveFlockEventTime(flock.id, resolveEventTime(timeEditDay, timeEditHour).toISOString());
+                    setShowTimeEditor(false);
+                    showToast('Time updated');
+                  } catch (err) {
+                    showToast(err.message || 'Could not save the time', 'error');
+                  } finally {
+                    setSavingEventTime(false);
+                  }
+                }} style={{ flex: 1, padding: '12px', borderRadius: '12px', border: 'none', background: colors.navyMidBg, color: 'white', fontWeight: '700', fontSize: '14px', cursor: 'pointer', opacity: savingEventTime ? 0.6 : 1 }}>
+                  {savingEventTime ? 'Saving...' : 'Save time'}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* ── Bottom CTA ── */}
         <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, padding: '14px', background: `linear-gradient(transparent, var(--bg-primary) 30%)`, pointerEvents: 'none' }}>
@@ -10687,9 +11233,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                     <div>
                       <p style={{ fontWeight: 'bold', fontSize: '14px', color: colors.navy, margin: 0 }}>Safety Features</p>
-                      <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: 0 }}>Quick exit & check-ins</p>
+                      <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: 0 }}>Quick exit & check-ins. Saves as you switch it.</p>
                     </div>
-                    <Toggle label="Safety check-ins" on={safetyOn} onChange={() => setSafetyOn(!safetyOn)} />
+                    <Toggle label="Safety check-ins" on={safetyOn} onChange={() => setSafetyEnabled(!safetyOn)} />
                   </div>
                 </div>
 
@@ -10855,11 +11401,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
               </div>
             )}
           </div>
-          {profileScreen !== 'edit' && (
-            <div style={{ padding: '12px', backgroundColor: 'var(--bg-card-solid)', borderTop: '1px solid var(--divider)', flexShrink: 0 }}>
-              <button className="hit44 glass-btn glass-primary" onClick={(e) => { confirmClick(e); setProfileScreen('main'); }} style={{ ...styles.gradientButton, position: 'relative', overflow: 'hidden' }}>Save</button>
-            </div>
-          )}
+          {/* There used to be a footer "Save" here on the safety, interests and
+              payment screens. It sent nothing: it only navigated back. Safety
+              and interests now write the moment you change them, and payment
+              has its own real Save inside the card, so the button was a lie
+              rather than a feature. Removed; the header arrow goes back. */}
         </div>
       );
     }
@@ -11955,7 +12501,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                       <div>
                         <h4 style={{ fontSize: '13px', fontWeight: '700', color: colors.navy, margin: 0 }}>{flock.title || flock.name}</h4>
-                        <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: '2px 0' }}>{flock.member_count || flock.members || 0} members{flock.date ? ` - ${new Date(flock.date).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}` : ''}{flock.time ? ` ${flock.time}` : ''}</p>
+                        <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: '2px 0' }}>{memberCountLabel(flock)}{flock.date ? ` - ${new Date(flock.date).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}` : ''}{flock.time ? ` ${flock.time}` : ''}</p>
                       </div>
                       <span style={{ padding: '4px 8px', borderRadius: '12px', backgroundColor: flock.status === 'confirmed' ? colors.steel : colors.amber, color: 'white', fontSize: '12px', fontWeight: '600' }}>
                         {flock.status === 'confirmed' ? 'Confirmed' : 'Active'}
@@ -13842,10 +14388,6 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 setCurrentScreen('main');
               }
             }}
-          />              setSelectedDmId(null);
-                setCurrentScreen('main');
-              }
-            }}
           />
 
           {/* Flock Pro paywall — global sheet, opened by the Birdie meter or Settings */}
@@ -14198,15 +14740,84 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           {/* Full-screen fixed overlay: the close button would land under the
               Dynamic Island and the shutter under the home indicator without
               these insets (SAFE-AREA CONTRACT in index.css). */}
-          <div style={{ padding: 'calc(12px + var(--safe-top)) 16px 12px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', position: 'absolute', top: 0, left: 0, right: 0, zIndex: 2 }}>
-            <button aria-label="Close" className="hit44" onClick={closeCameraViewfinder} style={{ width: '40px', height: '40px', borderRadius: '20px', border: 'none', backgroundColor: 'rgba(0,0,0,0.5)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.x('white', 20)}</button>
-            <span style={{ fontSize: '15px', fontWeight: '700', color: 'white' }}>Take Photo</span>
-            <div style={{ width: '40px' }} />
+          <DialogBehavior onClose={closeCameraViewfinder} label="Camera" />
+          <div style={{ padding: 'calc(12px + var(--safe-top)) 16px 12px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', position: 'absolute', top: 0, left: 0, right: 0, zIndex: 3 }}>
+            <button aria-label="Close the camera" className="hit44" onClick={closeCameraViewfinder} style={{ width: '44px', height: '44px', borderRadius: '22px', border: 'none', backgroundColor: 'rgba(0,0,0,0.5)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.x('white', 20)}</button>
+            {/* Torch is drawn only when the track reports it. On iOS Safari and
+                every desktop browser it never appears, which is correct. */}
+            {cameraCaps.torch ? (
+              <button aria-label={cameraTorch ? 'Turn the flash off' : 'Turn the flash on'} aria-pressed={cameraTorch} className="hit44" onClick={toggleCameraTorch} style={{ width: '44px', height: '44px', borderRadius: '22px', border: 'none', backgroundColor: cameraTorch ? 'rgba(255,255,255,0.9)' : 'rgba(0,0,0,0.5)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                {Icons.zap(cameraTorch ? '#0f172a' : 'white', 20)}
+              </button>
+            ) : <div style={{ width: '44px' }} />}
           </div>
-          <video ref={cameraVideoRef} autoPlay playsInline muted style={{ flex: 1, objectFit: 'cover', width: '100%' }} />
-          <div style={{ padding: '24px 0 calc(36px + var(--safe-bottom))', display: 'flex', justifyContent: 'center', backgroundColor: 'rgba(0,0,0,0.6)' }}>
-            <button className="hit44" onClick={capturePhoto} style={{ width: '72px', height: '72px', borderRadius: '36px', border: '4px solid white', backgroundColor: 'rgba(255,255,255,0.3)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'opacity 0.15s ease' }}>
-              <div style={{ width: '56px', height: '56px', borderRadius: '28px', backgroundColor: 'var(--bg-card-solid)' }} />
+
+          {/* Full-bleed preview. objectFit cover on a flex child with
+              minHeight 0 is what keeps it from letterboxing or stretching on
+              a portrait sensor. The front camera is mirrored, the way every
+              selfie camera is, and capturePhoto mirrors the file to match. */}
+          <div
+            onPointerDown={focusCameraAt}
+            style={{ flex: 1, minHeight: 0, position: 'relative', overflow: 'hidden', cursor: cameraCaps.focus ? 'crosshair' : 'default' }}
+          >
+            <video
+              ref={cameraVideoRef}
+              autoPlay
+              playsInline
+              muted
+              style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block', transform: cameraFacing === 'user' ? 'scaleX(-1)' : 'none' }}
+            />
+            {cameraFocusPoint && (
+              <div aria-hidden="true" style={{ position: 'absolute', left: cameraFocusPoint.x - 34, top: cameraFocusPoint.y - 34, width: '68px', height: '68px', borderRadius: '34px', border: '2px solid rgba(255,255,255,0.9)', boxShadow: '0 0 0 1px rgba(0,0,0,0.35)', pointerEvents: 'none' }} />
+            )}
+            {/* Shutter blink. Short, and it only ever runs on a tap. */}
+            {cameraShutter && <div aria-hidden="true" style={{ position: 'absolute', inset: 0, backgroundColor: 'rgba(255,255,255,0.85)', pointerEvents: 'none' }} />}
+          </div>
+
+          {/* Zoom, again only where the track supports it. */}
+          {cameraCaps.zoom && (
+            <div style={{ padding: '10px 24px 0', display: 'flex', alignItems: 'center', gap: '10px', backgroundColor: 'rgba(0,0,0,0.6)' }}>
+              <span style={{ fontSize: '12px', color: 'rgba(255,255,255,0.7)', fontWeight: '600' }}>Zoom</span>
+              <input
+                aria-label="Zoom"
+                type="range"
+                min={cameraCaps.zoom.min}
+                max={cameraCaps.zoom.max}
+                step={cameraCaps.zoom.step}
+                value={cameraZoom}
+                onChange={(e) => applyCameraZoom(parseFloat(e.target.value))}
+                style={{ flex: 1, accentColor: '#ffffff' }}
+              />
+            </div>
+          )}
+
+          <div style={{ padding: '18px 24px calc(28px + var(--safe-bottom))', display: 'flex', justifyContent: 'space-between', alignItems: 'center', backgroundColor: 'rgba(0,0,0,0.6)' }}>
+            {/* Straight to the camera roll from inside the camera, so the two
+                photo routes are one decision instead of two screens. */}
+            <button aria-label="Choose a photo from your library" className="hit44" onClick={() => {
+              const target = showCameraViewfinder;
+              closeCameraViewfinder();
+              setTimeout(() => (target === 'dm' ? dmGalleryInputRef : chatGalleryInputRef).current?.click(), 120);
+            }} style={{ width: '44px', height: '44px', borderRadius: '12px', border: '1px solid rgba(255,255,255,0.35)', backgroundColor: 'rgba(255,255,255,0.12)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              {Icons.image('white', 20)}
+            </button>
+
+            {/* Press feedback happens on the shutter itself: it shrinks under
+                the finger and springs back. This only ever runs in response to
+                a deliberate tap, so it is not ambient motion. */}
+            <button
+              aria-label="Take a photo"
+              onClick={capturePhoto}
+              onPointerDown={(e) => { e.currentTarget.style.transform = 'scale(0.9)'; }}
+              onPointerUp={(e) => { e.currentTarget.style.transform = 'scale(1)'; }}
+              onPointerLeave={(e) => { e.currentTarget.style.transform = 'scale(1)'; }}
+              style={{ width: '72px', height: '72px', borderRadius: '36px', border: '4px solid white', backgroundColor: 'rgba(255,255,255,0.3)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 0, transition: 'transform 0.12s ease' }}
+            >
+              <div style={{ width: '56px', height: '56px', borderRadius: '28px', backgroundColor: '#ffffff' }} />
+            </button>
+
+            <button aria-label="Switch between the front and back camera" className="hit44" onClick={flipCamera} style={{ width: '44px', height: '44px', borderRadius: '22px', border: '1px solid rgba(255,255,255,0.35)', backgroundColor: 'rgba(255,255,255,0.12)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              {Icons.repeat('white', 20)}
             </button>
           </div>
         </div>
