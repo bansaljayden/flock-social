@@ -3,6 +3,7 @@ const { param, validationResult } = require('express-validator');
 const pool = require('../config/database');
 const { getWeather } = require('../services/weatherService');
 const mlPredictor = require('../services/mlPredictor');
+const { upstreamSignal } = require('../utils/upstream');
 
 const router = express.Router();
 
@@ -126,6 +127,7 @@ router.get('/:placeId.svg',
           // public badge disagree with the in-app number for the same venue.
           'X-Goog-FieldMask': 'id,displayName,types,location,rating,userRatingCount,priceLevel,currentOpeningHours',
         },
+        signal: upstreamSignal('places'), // round 12 — see utils/upstream.js
       });
       const p = await r.json();
       if (p.error) return res.status(404).send('');

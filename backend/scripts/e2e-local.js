@@ -66,16 +66,20 @@ const signup = (name, email, dob) =>
   process.env.JWT_SECRET = 'e2e-test-secret';
   process.env.IMAGE_MODERATION_REQUIRED = 'true'; // exercise the fail-closed image path (no provider configured)
 
-  // Base schema first — runMigrations() only ADDS to existing tables. Fresh DBs
-  // (local/staging) need schema.sql; prod already has it.
-  const fs = require('fs');
+  // Round 12: the harness used to apply database/schema.sql by hand before
+  // boot, which hid the fact that a REBUILT DATABASE COULD NOT BOOT — the core
+  // tables existed in no migration, so against an empty Postgres 001 (tolerant)
+  // skipped everything and 002 threw on a nonexistent device_tokens. Nothing is
+  // pre-applied now: the database below is empty and migrations alone have to
+  // build it. Assert the emptiness so this can never silently regress.
   const { Client } = require('pg');
-  const schemaSql = fs.readFileSync(path.join(__dirname, '..', 'database', 'schema.sql'), 'utf8');
-  const sc = new Client({ connectionString: process.env.DATABASE_URL });
-  await sc.connect();
-  await sc.query(schemaSql);
-  await sc.end();
-  console.log('Base schema applied.');
+  {
+    const sc = new Client({ connectionString: process.env.DATABASE_URL });
+    await sc.connect();
+    const pre = await sc.query("SELECT to_regclass('public.users') u, to_regclass('public.flocks') f");
+    check('database starts EMPTY (no users/flocks before migrations)', !pre.rows[0].u && !pre.rows[0].f, pre.rows[0]);
+    await sc.end();
+  }
 
   console.log('Booting backend (runs migrations)...');
   require('../server.js');
@@ -89,6 +93,32 @@ const signup = (name, email, dob) =>
 
   const t = await pool.query("SELECT to_regclass('public.content_reports') a, to_regclass('public.user_blocks') b, to_regclass('public.moderation_actions') c");
   check('migrations applied (moderation tables exist)', !!(t.rows[0].a && t.rows[0].b && t.rows[0].c), t.rows[0]);
+
+  // Round 12: the bootstrap + ML + alert-dedupe migrations built the whole
+  // database from nothing. If any of these is null, a fresh deploy crash-loops.
+  const core = await pool.query(`SELECT
+      to_regclass('public.users') users,
+      to_regclass('public.flocks') flocks,
+      to_regclass('public.messages') messages,
+      to_regclass('public.direct_messages') dms,
+      to_regclass('public.device_tokens') device_tokens,
+      to_regclass('public.ml_venues') ml_venues,
+      to_regclass('public.ml_venue_baselines') ml_baselines,
+      to_regclass('public.crowd_alert_sends') crowd_alert_sends`);
+  check('fresh database built from migrations alone', Object.values(core.rows[0]).every(Boolean), core.rows[0]);
+
+  const idx = await pool.query(
+    `SELECT COUNT(*)::int n FROM pg_indexes WHERE schemaname = 'public' AND indexname = ANY($1)`,
+    [['idx_messages_flock_created', 'idx_dm_sender_receiver_created', 'idx_dm_receiver_sender_created',
+      'idx_dm_reply_to', 'idx_venue_checkins_place_created', 'idx_venue_votes_user',
+      'idx_ml_venues_lat_lng', 'idx_venue_sensor_data_place_recorded']]
+  );
+  check('growth indexes created (all 8)', idx.rows[0].n === 8, idx.rows[0]);
+
+  // Every migration must be RECORDED, or the next boot replays it forever.
+  const migFiles = require('fs').readdirSync(path.join(__dirname, '..', 'migrations')).filter((f) => f.endsWith('.sql')).length;
+  const mig = await pool.query('SELECT COUNT(*)::int n FROM schema_migrations');
+  check('every migration recorded as applied', mig.rows[0].n === migFiles, { recorded: mig.rows[0].n, files: migFiles });
 
   // --- Age gate (server-side) ---
   let r = await signup('Kid', 'kid@e2e.test', '2015-01-01');
@@ -182,6 +212,26 @@ const signup = (name, email, dob) =>
   r = await req('GET', '/api/auth/me', { token: tC });
   check('banned user locked out on next request (403)', r.status === 403, r);
 
+  // --- Unauthenticated NFC check-in: shape + known-venue gate (round 12) ---
+  {
+    const longId = 'C'.repeat(300); // used to overflow VARCHAR(255) as a 500
+    let cr = await req('GET', `/api/checkin/${longId}`);
+    check('over-long place id rejected 400 (was a VARCHAR overflow 500)', cr.status === 400, cr);
+    cr = await req('GET', '/api/checkin/not a place id!');
+    check('malformed place id rejected 400', cr.status === 400, cr);
+    cr = await req('GET', '/api/checkin/ChIJfabricated0000000000');
+    check('unknown venue rejected 404 (no unbounded anon writes)', cr.status === 404, cr);
+    const rows0 = await pool.query('SELECT COUNT(*)::int n FROM venue_checkins');
+    check('no venue_checkins rows written by rejected taps', rows0.rows[0].n === 0, rows0.rows[0]);
+
+    // A venue a flock actually planned at IS known — real taps still work.
+    await pool.query('UPDATE flocks SET venue_id = $1 WHERE id = $2', ['ChIJe2eKnownVenue0001', flockId]);
+    cr = await req('GET', '/api/checkin/ChIJe2eKnownVenue0001');
+    check('known venue tap accepted (200)', cr.status === 200, cr);
+    const rows1 = await pool.query('SELECT COUNT(*)::int n FROM venue_checkins WHERE venue_place_id = $1', ['ChIJe2eKnownVenue0001']);
+    check('known venue tap recorded', rows1.rows[0].n === 1, rows1.rows[0]);
+  }
+
   // --- Banned user must STILL be able to delete their account (deletion right) ---
   r = await req('DELETE', '/api/users/me', { token: tC });
   check('banned user can still delete account (200)', r.status === 200, r);
@@ -193,6 +243,17 @@ const signup = (name, email, dob) =>
   check('token invalid after deletion', r.status === 401 || r.status === 404, r);
   const bobMsgs = await pool.query('SELECT COUNT(*)::int n FROM direct_messages WHERE sender_id = $1', [idB]);
   check('deleted user content cascade-cleared', bobMsgs.rows[0].n === 0, bobMsgs.rows[0]);
+
+  // Round 12: deletion de-attributes moderation evidence inside ONE transaction
+  // instead of three swallowed UPDATEs. Both the reporter (Bob) and the
+  // reported abuser (Carol) are gone; the reports and the ban action must not
+  // be — that is the whole point of the code path.
+  const evid = await pool.query(`SELECT
+      (SELECT COUNT(*)::int FROM content_reports) reports,
+      (SELECT COUNT(*)::int FROM content_reports WHERE reporter_id IS NOT NULL OR reported_user_id IS NOT NULL) attributed,
+      (SELECT COUNT(*)::int FROM moderation_actions WHERE action = 'user_banned') bans`);
+  check('moderation evidence survives deletion of both parties', evid.rows[0].reports > 0 && evid.rows[0].bans > 0, evid.rows[0]);
+  check('deleted users de-attributed, not cascaded away', evid.rows[0].attributed === 0, evid.rows[0]);
 
   // Verify the reviewer seed script actually runs against a migrated DB (it's the
   // App Review demo fixture — it must work). Child inherits DATABASE_URL=embedded.

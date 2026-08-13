@@ -1,3 +1,5 @@
+const { upstreamSignal } = require('../utils/upstream');
+
 const weatherCache = new Map();
 const CACHE_TTL = 30 * 60 * 1000; // 30 minutes
 
@@ -54,7 +56,10 @@ async function getWeather(lat, lon) {
     if (!allowWeatherFetch()) return null; // weather is an enhancer, fail soft
 
     const url = `https://api.openweathermap.org/data/2.5/weather?lat=${Number(lat).toFixed(2)}&lon=${Number(lon).toFixed(2)}&appid=${apiKey}&units=imperial`;
-    const response = await fetch(url);
+    // Round 12: weather is an enhancer on the critical path of crowd scoring —
+    // a hung OpenWeather socket used to hold the whole prediction request open.
+    // The catch below already degrades to null. See utils/upstream.js.
+    const response = await fetch(url, { signal: upstreamSignal('weather') });
 
     if (!response.ok) {
       console.error(`[Weather] API returned ${response.status} for ${cacheKey}`);
@@ -96,7 +101,7 @@ async function getForecast(lat, lon) {
     if (!allowWeatherFetch()) return null; // same budget as getWeather (round 8)
 
     const url = `https://api.openweathermap.org/data/2.5/forecast?lat=${Number(lat).toFixed(2)}&lon=${Number(lon).toFixed(2)}&appid=${apiKey}&units=imperial`;
-    const response = await fetch(url);
+    const response = await fetch(url, { signal: upstreamSignal('weather') }); // round 12
     if (!response.ok) return null;
 
     const data = await response.json();

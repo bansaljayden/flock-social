@@ -3,15 +3,21 @@ const bcrypt = require('bcryptjs');
 const { body, query, validationResult } = require('express-validator');
 const multer = require('multer');
 const path = require('path');
-const fs = require('fs');
 const pool = require('../config/database');
-const { authenticate } = require('../middleware/auth');
+const { authenticate, authenticateAllowBanned, signUserToken } = require('../middleware/auth');
 const { stripHtml, sanitizeArray } = require('../utils/sanitize');
 const { rejectIfProfane, moderateImage, IMAGE_REJECTED_MESSAGE } = require('../utils/moderation');
 const { revokeAppleToken, isConfigured: appleAuthConfigured } = require('../services/appleAuth');
 
 const router = express.Router();
 const SALT_ROUNDS = 10;
+
+// DELETE /api/users/me is defined FIRST, with its own ban-tolerant auth, and is
+// the only route in the app that runs without the ban check. See deleteAccount
+// at the bottom of this file and the comment on makeAuthenticate in
+// middleware/auth.js — this replaces a URL-regex carve-out that any DELETE
+// request could satisfy with a crafted query string.
+router.delete('/me', authenticateAllowBanned, deleteAccount);
 
 router.use(authenticate);
 
@@ -26,12 +32,8 @@ const IMAGE_SIGNATURES = {
   webp: [Buffer.from([0x52, 0x49, 0x46, 0x46])], // RIFF header
 };
 
-function isValidImage(filePath) {
+function isValidImage(buf) {
   try {
-    const fd = fs.openSync(filePath, 'r');
-    const buf = Buffer.alloc(12);
-    fs.readSync(fd, buf, 0, 12, 0);
-    fs.closeSync(fd);
     for (const sigs of Object.values(IMAGE_SIGNATURES)) {
       for (const sig of sigs) {
         if (buf.subarray(0, sig.length).equals(sig)) return true;
@@ -43,20 +45,21 @@ function isValidImage(filePath) {
   }
 }
 
-// Configure multer for profile image uploads
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    cb(null, path.join(__dirname, '..', 'uploads'));
-  },
-  filename: (req, file, cb) => {
-    const ext = path.extname(file.originalname).toLowerCase().replace(/[^a-z.]/g, '');
-    const safeExt = ['.jpg', '.jpeg', '.png', '.gif', '.webp'].includes(ext) ? ext : '.jpg';
-    cb(null, `profile-${req.user.id}-${Date.now()}${safeExt}`);
-  },
-});
-
+// Configure multer for profile image uploads.
+//
+// Round 12: this used multer.diskStorage into backend/uploads, and server.js
+// served that directory statically. Railway's filesystem is EPHEMERAL and no
+// volume is mounted, so every redeploy wiped the directory. The upload handler
+// already converts to a base64 data URL and stores it in
+// users.profile_image_url (the same way message images work), so the disk was
+// only ever a temp staging area whose files could — and on a crash between
+// write and unlink, did — survive as orphans until the next deploy erased
+// them. Buffering in memory removes the ephemeral-filesystem dependency
+// entirely: no volume to configure, nothing to leak, nothing to lose on
+// redeploy. The 5 MB limit below bounds the buffer, and the stored data URL is
+// separately capped at 600 KB further down.
 const upload = multer({
-  storage,
+  storage: multer.memoryStorage(),
   limits: { fileSize: 5 * 1024 * 1024 }, // 5 MB max
   fileFilter: (req, file, cb) => {
     const allowed = /jpeg|jpg|png|gif|webp/;
@@ -103,7 +106,10 @@ router.get('/profile', async (req, res) => {
 router.put('/profile',
   [
     body('name').optional().trim().customSanitizer(stripHtml).isLength({ min: 1, max: 255 }).withMessage('Name must be 1-255 characters'),
-    body('email').optional().isEmail().withMessage('Valid email required'),
+    // normalizeEmail() matches signup and login (routes/auth.js), so
+    // `v.ictim@gmail.com` cannot be stored as a distinct row that shadows
+    // `victim@gmail.com` in the LOWER(email) lookups those paths use.
+    body('email').optional().isEmail().normalizeEmail().withMessage('Valid email required'),
     body('phone').optional(),
     body('interests').optional().isArray(),
     // Optional at the validator layer: OAuth accounts have no password, and a
@@ -153,7 +159,28 @@ router.put('/profile',
       }
 
       // Check email uniqueness if changing email
-      if (email && email.toLowerCase() !== user.email.toLowerCase()) {
+      const changingEmail = Boolean(email) && email.toLowerCase() !== user.email.toLowerCase();
+      if (changingEmail) {
+        // PERMANENT EMAIL SQUAT (round 13). Nothing here ever verified that the
+        // caller owns the address they are moving to, and an OAuth row needs no
+        // password to reach this handler at all. So: sign in with your own
+        // Google account, set email = victim@gmail.com, and the victim can
+        // never join Flock — Google 409s, Apple 409s, password signup says
+        // "already registered". The round-8 claim logic in routes/auth.js
+        // deliberately refuses to claim a row that already carries an
+        // oauth_provider, so that squat is the exact case it cannot break, and
+        // no admin route exists to undo it.
+        //
+        // On an OAuth row the PROVIDER owns the address: the row's email is the
+        // one Google/Apple verified, and it is the linkage users see. Refuse to
+        // change it. (Password rows keep the edit — it is gated on the current
+        // password above, and a password row CAN still be claimed back by the
+        // address's verified owner through the OAuth claim path.)
+        if (user.oauth_provider) {
+          return res.status(400).json({
+            error: 'This account signs in with Google or Apple, so its email is managed by that provider and cannot be changed here.',
+          });
+        }
         const emailCheck = await pool.query(
           'SELECT id FROM users WHERE LOWER(email) = LOWER($1) AND id != $2',
           [email, req.user.id]
@@ -169,6 +196,10 @@ router.put('/profile',
         hashedPassword = await bcrypt.hash(new_password, SALT_ROUNDS);
       }
 
+      // A password change bumps token_version, which invalidates every JWT
+      // already outstanding for this account (round 13 — that is the whole
+      // point of changing a password you think someone else has). The caller's
+      // own token dies with the rest, so we mint and return a replacement.
       const result = await pool.query(
         `UPDATE users
          SET name = COALESCE($1, name),
@@ -176,13 +207,18 @@ router.put('/profile',
              phone = COALESCE($3, phone),
              interests = COALESCE($4, interests),
              password = COALESCE($5, password),
+             token_version = token_version + CASE WHEN $5::text IS NULL THEN 0 ELSE 1 END,
              updated_at = NOW()
          WHERE id = $6
-         RETURNING id, email, name, phone, interests, role, profile_image_url, created_at, updated_at`,
+         RETURNING id, email, name, phone, interests, role, profile_image_url, token_version, created_at, updated_at`,
         [name || null, email || null, phone || null, safeInterests, hashedPassword, req.user.id]
       );
 
-      res.json({ user: result.rows[0] });
+      const { token_version: _tv, ...safeUser } = result.rows[0];
+      res.json({
+        user: safeUser,
+        ...(hashedPassword ? { token: signUserToken(result.rows[0]) } : {}),
+      });
     } catch (err) {
       console.error('Update profile error:', err);
       res.status(500).json({ error: 'Failed to update profile' });
@@ -358,19 +394,14 @@ router.post('/upload-image', (req, res) => {
     }
 
     // Verify file content matches an actual image (magic bytes)
-    if (!isValidImage(req.file.path)) {
-      fs.unlink(req.file.path, () => {});
+    if (!isValidImage(req.file.buffer)) {
       return res.status(400).json({ error: 'File is not a valid image' });
     }
 
     try {
       // Convert to base64 data URL and store in DB (survives Railway redeploys)
-      const fileBuffer = fs.readFileSync(req.file.path);
       const mimeType = req.file.mimetype || 'image/jpeg';
-      const dataUrl = `data:${mimeType};base64,${fileBuffer.toString('base64')}`;
-
-      // Clean up temp file
-      fs.unlink(req.file.path, () => {});
+      const dataUrl = `data:${mimeType};base64,${req.file.buffer.toString('base64')}`;
 
       // Cap the STORED data URL, not just the raw upload. Avatars are stored
       // inline in users.profile_image_url and repeated on every message-history
@@ -596,7 +627,11 @@ router.patch('/settings', async (req, res) => {
 // etc. (a few FKs are ON DELETE SET NULL, which de-attribute content rather than
 // delete it). Required for Apple Guideline 5.1.1(v) and Google Play's account-
 // deletion policy. Irreversible.
-router.delete('/me', async (req, res) => {
+//
+// Registered at the TOP of this file against authenticateAllowBanned (function
+// declaration, hoisted) so the banned-user exemption is a property of this one
+// route rather than a string match every DELETE in the API could trip.
+async function deleteAccount(req, res) {
   try {
     // Apple 5.1.1(v): revoke Sign in with Apple tokens before deleting the row.
     // Round 5: when revocation is CONFIGURED and fails, abort — deleting the
@@ -615,27 +650,53 @@ router.delete('/me', async (req, res) => {
     // Moderation evidence survives the account (round 5): cascade deletes let
     // an abuser (or a reporter) erase open reports and completed action
     // history by deleting their account. De-attribute instead.
-    await pool.query('UPDATE content_reports SET reporter_id = NULL WHERE reporter_id = $1', [req.user.id]).catch(() => {});
-    await pool.query('UPDATE content_reports SET reported_user_id = NULL WHERE reported_user_id = $1', [req.user.id]).catch(() => {});
-    await pool.query('UPDATE moderation_actions SET target_user_id = NULL WHERE target_user_id = $1', [req.user.id]).catch(() => {});
+    //
+    // Round 12: these were four separate autocommit statements, three of them
+    // with `.catch(() => {})`. If a de-attribution UPDATE failed — lock
+    // timeout, a drifted database where the column is still NOT NULL, anything
+    // — the failure was swallowed and the hard DELETE ran anyway, so the
+    // CASCADE erased exactly the evidence this code exists to preserve. The
+    // live scenario is a banned abuser deleting their account. All four
+    // statements plus the DELETE now share ONE transaction with no swallowed
+    // errors: either the evidence is safely de-attributed and the account is
+    // gone, or nothing happened and the caller gets a 503 to retry.
+    const client = await pool.connect();
+    let deleted;
+    try {
+      await client.query('BEGIN');
 
-    // messages.sender_id is ON DELETE SET NULL (anonymize). Explicitly remove the
-    // user's flock messages so no authored content is retained after deletion.
-    await pool.query('DELETE FROM messages WHERE sender_id = $1', [req.user.id]).catch(() => {});
+      await client.query('UPDATE content_reports SET reporter_id = NULL WHERE reporter_id = $1', [req.user.id]);
+      await client.query('UPDATE content_reports SET reported_user_id = NULL WHERE reported_user_id = $1', [req.user.id]);
+      await client.query('UPDATE moderation_actions SET target_user_id = NULL WHERE target_user_id = $1', [req.user.id]);
 
-    const result = await pool.query(
-      'DELETE FROM users WHERE id = $1 RETURNING id',
-      [req.user.id]
-    );
-    if (result.rows.length === 0) {
-      return res.status(404).json({ error: 'Account not found' });
+      // messages.sender_id is ON DELETE SET NULL (anonymize). Explicitly remove the
+      // user's flock messages so no authored content is retained after deletion.
+      await client.query('DELETE FROM messages WHERE sender_id = $1', [req.user.id]);
+
+      const result = await client.query('DELETE FROM users WHERE id = $1 RETURNING id', [req.user.id]);
+      deleted = result.rows.length > 0;
+
+      if (!deleted) {
+        await client.query('ROLLBACK');
+        return res.status(404).json({ error: 'Account not found' });
+      }
+      await client.query('COMMIT');
+    } catch (txErr) {
+      await client.query('ROLLBACK').catch(() => {});
+      console.error('Delete account: de-attribution failed, account NOT deleted:', txErr.message);
+      return res.status(503).json({
+        error: "We couldn't finish deleting your account just now. Nothing was changed. Please try again in a minute.",
+      });
+    } finally {
+      client.release();
     }
+
     console.log(`Account deleted: user ${req.user.id} at ${new Date().toISOString()}`);
     res.json({ message: 'Account deleted' });
   } catch (err) {
     console.error('Delete account error:', err);
     res.status(500).json({ error: 'Failed to delete account' });
   }
-});
+}
 
 module.exports = router;

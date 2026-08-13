@@ -16,6 +16,8 @@
 // ---------------------------------------------------------------------------
 const jwt = require('jsonwebtoken');
 
+const { upstreamSignal } = require('../utils/upstream');
+
 const TEAM_ID = process.env.APPLE_TEAM_ID;
 const KEY_ID = process.env.APPLE_KEY_ID;
 const CLIENT_ID = process.env.APPLE_CLIENT_ID || 'com.flockcorp.flock';
@@ -48,6 +50,7 @@ async function exchangeAppleCode(code) {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body,
+    signal: upstreamSignal('oauth'), // round 12 — see utils/upstream.js
   });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) { console.error('Apple code exchange failed:', data.error || res.status); return null; }
@@ -72,6 +75,7 @@ async function revokeAppleToken(refreshToken) {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body,
+      signal: upstreamSignal('oauth'), // round 12 — deletion must not hang on Apple
     });
     if (!res.ok) { console.error('Apple token revoke failed:', res.status); return false; }
     return true;

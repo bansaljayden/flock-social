@@ -38,21 +38,17 @@ cp .env.example .env
 
 ### 3. Initialize the database
 
-Run the schema against your PostgreSQL instance:
+Nothing to do. Point `DATABASE_URL` at an empty PostgreSQL database and start the
+server: `backend/migrations/*.sql` run on boot (`db/migrate.js`) and create
+everything, starting with `000_bootstrap.sql`. Migrations must finish before the
+port opens, and a failed one halts the boot rather than serving a half-applied
+schema.
 
-```bash
-psql $DATABASE_URL -f database/schema.sql
-```
+`database/schema.sql` still exists as the readable base shape and for
+`npm run db:init`, but it is no longer required — `000_bootstrap.sql` carries the
+same tables.
 
-Or paste the contents of `database/schema.sql` into your Railway PostgreSQL console.
-
-### 4. Create the uploads directory
-
-```bash
-mkdir uploads
-```
-
-### 5. Run locally
+### 4. Run locally
 
 ```bash
 # Development (auto-restart on changes)

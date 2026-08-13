@@ -2,6 +2,7 @@ const router = require('express').Router();
 const { body, validationResult } = require('express-validator');
 const { Resend } = require('resend');
 const pool = require('../config/database');
+const { upstreamSignal } = require('../utils/upstream');
 
 const resend = process.env.RESEND_API_KEY ? new Resend(process.env.RESEND_API_KEY) : null;
 
@@ -95,7 +96,7 @@ router.post('/',
                 <p style="font-size: 14px; color: #a0aec0;">— The Flock Team</p>
               </div>
             `,
-          });
+          }, { signal: upstreamSignal('email') }); // round 12 — see utils/upstream.js
         } catch (emailErr) {
           console.error('[Waitlist] Email send failed:', emailErr.message);
         }

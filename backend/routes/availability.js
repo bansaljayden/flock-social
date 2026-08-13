@@ -2,6 +2,8 @@ const express = require('express');
 const { body, validationResult } = require('express-validator');
 const pool = require('../config/database');
 const { authenticate } = require('../middleware/auth');
+const { stripHtml } = require('../utils/sanitize');
+const { rejectIfProfane } = require('../utils/moderation');
 
 const router = express.Router();
 router.use(authenticate);
@@ -26,7 +28,10 @@ function clampExpiry(clientExpiry) {
 // POST /api/availability — set my pulse
 router.post('/',
   body('status').isIn(['down', 'maybe', 'not']).withMessage('status must be down, maybe, or not'),
-  body('note').optional().isString().isLength({ max: 80 }),
+  // Round 13: the note is UGC pushed to every friend over the
+  // `availability_updated` socket event, and it was the last free-text field
+  // with neither sanitizing nor a profanity screen.
+  body('note').optional().isString().trim().customSanitizer(stripHtml).isLength({ max: 80 }),
   body('expires_at').optional().isISO8601(),
   async (req, res) => {
     try {
@@ -36,6 +41,10 @@ router.post('/',
       }
 
       const { status, note, expires_at } = req.body;
+
+      // Same screen every other broadcast text field gets (Apple 1.2).
+      if (note && rejectIfProfane(res, note)) return;
+
       const expiry = clampExpiry(expires_at);
 
       const result = await pool.query(

@@ -2,6 +2,8 @@ const express = require('express');
 const { body, param, validationResult } = require('express-validator');
 const pool = require('../config/database');
 const { authenticate } = require('../middleware/auth');
+const { stripHtml } = require('../utils/sanitize');
+const { rejectIfProfane } = require('../utils/moderation');
 const { getInvisibleUserIds } = require('../utils/blocks');
 
 const router = express.Router();
@@ -54,9 +56,15 @@ async function collectVoteRows(flockId) {
     [flockId]
   );
 
+  // Round 13: this counted guest votes WITHOUT the is_hidden join that
+  // routes/guest.js applies, so a guest whose RSVP a moderator took down still
+  // moved the member-facing tally. A takedown has to remove them everywhere.
   const guests = await pool.query(
-    `SELECT venue_name, COUNT(*)::int AS guest_count
-     FROM guest_votes WHERE flock_id = $1 GROUP BY venue_name`,
+    `SELECT gv.venue_name, COUNT(*)::int AS guest_count
+     FROM guest_votes gv
+     JOIN guest_rsvps gr ON gr.id = gv.guest_rsvp_id
+     WHERE gv.flock_id = $1 AND COALESCE(gr.is_hidden, false) = false
+     GROUP BY gv.venue_name`,
     [flockId]
   ).catch(() => ({ rows: [] }));
   const guestByVenue = Object.fromEntries(guests.rows.map(g => [g.venue_name, g.guest_count]));
@@ -121,8 +129,15 @@ async function broadcastVotes(req, flockId, rows, venue_name, notify = true) {
 router.post('/:id/vote',
   [
     param('id').isInt(),
-    body('venue_name').trim().isLength({ min: 1 }).withMessage('Venue name is required'),
-    body('venue_id').optional().trim(),
+    // Round 13: this was the ONE venue-name write with no stripHtml, no
+    // profanity screen and no maximum length — the socket `vote_venue` handler
+    // does all three (sockets/handlers.js). The name is persisted and
+    // broadcast to the whole flock, and 255 matches the VARCHAR(255) column,
+    // so an over-long name was a 500 from Postgres instead of a 400.
+    body('venue_name').trim().customSanitizer(stripHtml)
+      .isLength({ min: 1 }).withMessage('Venue name is required')
+      .isLength({ max: 255 }).withMessage('Venue name too long'),
+    body('venue_id').optional().trim().isLength({ max: 255 }).withMessage('Venue id too long'),
   ],
   async (req, res) => {
     try {
@@ -138,6 +153,9 @@ router.post('/:id/vote',
       }
 
       const { venue_name, venue_id } = req.body;
+
+      // Same UGC screen the socket path runs (Apple 1.2).
+      if (rejectIfProfane(res, venue_name)) return;
 
       // One vote per member per flock. Switching venues used to stack a second
       // row (the unique key is per venue name), so both venues came back from
