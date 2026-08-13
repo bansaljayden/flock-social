@@ -343,6 +343,23 @@ export async function getAdminAnalytics() {
   return request('/api/admin/analytics');
 }
 
+// Venue votes — member votes carry voter identities, guest-link votes are
+// folded in as guest_count only.
+export async function getFlockVotes(flockId) {
+  return request(`/api/flocks/${flockId}/votes`);
+}
+
+export async function voteForVenue(flockId, venueName, venueId) {
+  return request(`/api/flocks/${flockId}/vote`, {
+    method: 'POST',
+    body: JSON.stringify({ venue_name: venueName, venue_id: venueId || undefined }),
+  });
+}
+
+export async function clearVenueVote(flockId) {
+  return request(`/api/flocks/${flockId}/vote`, { method: 'DELETE' });
+}
+
 // Messages
 export async function getMessages(flockId) {
   return request(`/api/flocks/${flockId}/messages`);

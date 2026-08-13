@@ -25,7 +25,7 @@ import VenueLoginScreen from './components/auth/VenueLoginScreen';
 import ModerationSheet from './components/ModerationSheet';
 import PaywallSheet from './components/PaywallSheet';
 import { initPurchases } from './services/purchases';
-import { getEntitlements, createFlockInviteLink, getVenueIntelligence, getVenueStrip } from './services/api';
+import { getEntitlements, createFlockInviteLink, getVenueIntelligence, getVenueStrip, getFlockVotes, voteForVenue, clearVenueVote } from './services/api';
 import { motion, AnimatePresence } from 'framer-motion';
 import BirdieBird from './components/ui/BirdieBird';
 import 'maplibre-gl/dist/maplibre-gl.css';
@@ -508,6 +508,38 @@ const ScrollFade = ({ children, delay = 0, className = '' }) => {
 // (/api/venues/photo?ref=...) so senders can't smuggle tracking hosts.
 // Resolve to the API origin whenever a stored value is rendered.
 const resolveVenuePhoto = (u) => (u && u.startsWith('/api/') ? `${BASE_URL}${u}` : u || null);
+
+// The server talks about votes as { venue_name, venue_id, voters, guest_count }
+// where voters are either { id, name } rows (GET /votes) or plain names (vote
+// POST + the new_vote socket event). The UI reads { venue, type, voters, ... }
+// with the signed-in user shown as 'You'. Everything that lands in flock.votes
+// goes through here so peer votes stop rendering as undefined venues.
+const normalizeVotes = (raw, me, previous = []) => {
+  if (!Array.isArray(raw)) return Array.isArray(previous) ? previous : [];
+  const myId = me?.id != null ? String(me.id) : null;
+  const myName = me?.name || null;
+  return raw
+    .map((v) => {
+      const venue = v.venue || v.venue_name || '';
+      const prior = (Array.isArray(previous) ? previous : []).find((p) => p.venue === venue);
+      return {
+        venue,
+        type: v.type || prior?.type || 'Venue',
+        place_id: v.place_id || v.venue_id || prior?.place_id || null,
+        voters: (v.voters || []).map((p) => {
+          if (typeof p === 'string') return myName && p === myName ? 'You' : p;
+          if (!p || typeof p !== 'object') return '';
+          if (myId != null && String(p.id) === myId) return 'You';
+          return p.name || '';
+        }).filter(Boolean),
+        guestCount: Number(v.guest_count ?? v.guestCount ?? 0) || 0,
+      };
+    })
+    .filter((v) => v.venue);
+};
+
+// Members who voted plus guest-link votes, which have no identities.
+const voteTotal = (v) => (v?.voters?.length || 0) + (v?.guestCount || 0);
 
 // Memoized VenueCard — unified design for both DMs and Flocks
 const VenueCard = React.memo(({ venue, onViewDetails, onVote, colors: c, Icons: I, getCategoryColor: gcc }) => {
@@ -2755,6 +2787,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   // Flocks
   const [flocks, setFlocks] = useState([]);
   const [, setFlocksLoading] = useState(true);
+  // Latest signed-in user, for socket handlers that must not resubscribe when
+  // the profile object changes identity.
+  const meRef = useRef(authUser);
+  meRef.current = authUser;
 
   // Fetch flocks from API on mount
   useEffect(() => {
@@ -2771,6 +2807,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           memberPreviews: Array.isArray(f.member_previews) ? f.member_previews : [],
           memberCount: f.member_count || 1,
           time: f.event_time ? new Date(f.event_time).toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' }) : 'TBD',
+          // Keep the raw timestamp: the display string alone can't be put on a
+          // calendar, which is why "Add to calendar" used to save today.
+          eventTime: f.event_time || null,
           status: f.status === 'planning' ? 'voting' : f.status,
           venue: f.venue_name || 'TBD',
           venueAddress: f.venue_address || null,
@@ -3167,6 +3206,31 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   const refreshEntitlements = useCallback(() => {
     getEntitlements().then(setEntitlements).catch(() => {});
   }, []);
+  // A purchase only becomes premium once RevenueCat's webhook reaches our
+  // backend, which can land after the app asks. One request could lose that
+  // race and leave a paying user locked out, so retry on a short, finite
+  // schedule and stop the moment premium shows up.
+  const upgradePollRef = useRef(null);
+  const confirmUpgrade = useCallback(() => {
+    const delays = [0, 1500, 3000, 5000, 8000]; // 5 tries over ~17s, then stop
+    let attempt = 0;
+    const again = () => {
+      attempt += 1;
+      if (attempt >= delays.length) return;
+      upgradePollRef.current = setTimeout(check, delays[attempt]);
+    };
+    const check = () => {
+      getEntitlements()
+        .then((data) => {
+          setEntitlements(data);
+          if (!data?.isPremium) again();
+        })
+        .catch(() => again());
+    };
+    clearTimeout(upgradePollRef.current);
+    check();
+  }, []);
+  useEffect(() => () => clearTimeout(upgradePollRef.current), []);
   useEffect(() => {
     refreshEntitlements();
     // Safe no-op on web; on iOS links RevenueCat's app_user_id to our user id
@@ -3453,20 +3517,34 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
     setFlocks(prev => prev.map(f => f.id === flockId ? { ...f, messages: [...f.messages, message] } : f));
   }, []);
 
+  // Pull the persisted tallies (members + guest-link votes) for one flock.
+  // Votes used to start empty on every load and only appear once a live vote
+  // arrived, so anything cast before you opened the app was invisible.
+  const loadFlockVotes = useCallback((flockId) => {
+    if (typeof flockId !== 'number') return;
+    getFlockVotes(flockId)
+      .then((data) => setFlocks(prev => prev.map(f => (
+        f.id === flockId ? { ...f, votes: normalizeVotes(data?.votes, meRef.current, f.votes) } : f
+      ))))
+      .catch(() => {});
+  }, []);
+
   const updateFlockVotes = useCallback((flockId, newVotes) => {
-    setFlocks(prev => prev.map(f => f.id === flockId ? { ...f, votes: newVotes } : f));
-    // Find which venue "You" voted for and sync to backend
-    const myVote = newVotes.find(v => v.voters.includes('You'));
-    if (myVote && typeof flockId === 'number') {
-      const token = localStorage.getItem('flockToken');
-      if (token) {
-        fetch(`${BASE_URL}/api/flocks/${flockId}/vote`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-          body: JSON.stringify({ venue_name: myVote.venue, venue_id: myVote.place_id || null }),
-        }).catch(() => {});
-      }
-    }
+    const optimistic = Array.isArray(newVotes) ? newVotes : [];
+    setFlocks(prev => prev.map(f => f.id === flockId ? { ...f, votes: optimistic } : f));
+    if (typeof flockId !== 'number') return;
+    // One vote per person per flock. Posting a new pick replaces the old row
+    // server side, and dropping your pick has to be sent as a delete or the
+    // un-vote never left the browser.
+    const myVote = optimistic.find(v => (v.voters || []).includes('You'));
+    const sync = myVote
+      ? voteForVenue(flockId, myVote.venue, myVote.place_id || null)
+      : clearVenueVote(flockId);
+    sync
+      .then((data) => setFlocks(prev => prev.map(f => (
+        f.id === flockId ? { ...f, votes: normalizeVotes(data?.votes, meRef.current, f.votes) } : f
+      ))))
+      .catch(() => {});
   }, []);
 
   // Assign or change venue on a flock (updates local state + API)
@@ -3672,9 +3750,13 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
       getFlock(selectedFlockId)
         .then((data) => {
           const members = (data.members || []).filter(m => m.status === 'accepted').map(m => ({ id: m.id, name: m.name, image: m.profile_image_url || null }));
-          setFlocks(prev => prev.map(f => f.id === selectedFlockId ? { ...f, members, memberCount: members.length, momentum: data.momentum || null } : f));
+          const eventTime = data.flock?.event_time || null;
+          setFlocks(prev => prev.map(f => f.id === selectedFlockId ? { ...f, members, memberCount: members.length, momentum: data.momentum || null, eventTime: eventTime || f.eventTime || null } : f));
         })
         .catch(() => {});
+
+      // Votes already cast (members + guests), so the panel isn't blank
+      loadFlockVotes(selectedFlockId);
 
       // Skip message fetch for just-created flocks (we already have the messages locally)
       if (newlyCreatedFlockRef.current === selectedFlockId) {
@@ -3718,7 +3800,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
       setBudgetStatus(null);
       setBillSplit(null);
     }
-  }, [currentScreen, selectedFlockId, authUser?.id]);
+  }, [currentScreen, selectedFlockId, authUser?.id, loadFlockVotes]);
 
   // Fetch flock members + momentum when opening flock detail overview
   useEffect(() => {
@@ -3726,11 +3808,13 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
       getFlock(selectedFlockId)
         .then((data) => {
           const members = (data.members || []).map(m => ({ id: m.id, name: m.name, image: m.profile_image_url || null, status: m.status }));
-          setFlocks(prev => prev.map(f => f.id === selectedFlockId ? { ...f, members, memberCount: members.filter(m => m.status === 'accepted').length, momentum: data.momentum || null } : f));
+          const eventTime = data.flock?.event_time || null;
+          setFlocks(prev => prev.map(f => f.id === selectedFlockId ? { ...f, members, memberCount: members.filter(m => m.status === 'accepted').length, momentum: data.momentum || null, eventTime: eventTime || f.eventTime || null } : f));
         })
         .catch(() => {});
+      loadFlockVotes(selectedFlockId);
     }
-  }, [currentScreen, selectedFlockId]);
+  }, [currentScreen, selectedFlockId, loadFlockVotes]);
 
   // Listen for real-time messages via WebSocket
   useEffect(() => {
@@ -3888,6 +3972,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           members: [],
           memberCount: 0,
           time: 'TBD',
+          eventTime: null,
           status: 'planning',
           venue: 'TBD',
           messages: [],
@@ -3982,13 +4067,23 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   // Listen for real-time venue votes
   useEffect(() => {
     const unsub = onNewVote((data) => {
+      if (!data) return;
+      // Guest-link votes broadcast the venue name with no tallies attached.
+      // Assigning that blindly set flock.votes to undefined and crashed the
+      // screen on the next read, so refetch the real numbers instead.
+      if (!Array.isArray(data.votes)) {
+        loadFlockVotes(data.flockId);
+        return;
+      }
       setFlocks(prev => prev.map(f => {
         if (f.id !== data.flockId) return f;
-        return { ...f, votes: data.votes };
+        // Server rows are { venue_name, voters: [names] }; the UI reads
+        // { venue, voters: [... 'You'] }.
+        return { ...f, votes: normalizeVotes(data.votes, meRef.current, f.votes) };
       }));
     });
     return unsub;
-  }, []);
+  }, [loadFlockVotes]);
 
   // Listen for venue confirmed (flock status → confirmed)
   useEffect(() => {
@@ -4062,6 +4157,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           venueRating: data.venue_rating || f.venueRating,
           venuePhoto: resolveVenuePhoto(data.venue_photo_url) || f.venuePhoto,
           time: data.event_time ? new Date(data.event_time).toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' }) : f.time,
+          eventTime: data.event_time || f.eventTime || null,
           status: data.status === 'planning' ? 'voting' : (data.status || f.status),
         };
       }));
@@ -6767,7 +6863,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           apiSendMessage(f.id, `Check out ${venueName}!`, { message_type: 'venue_card', venue_data: venueCardData }).catch(() => {});
         }
         const invitedNames = capturedFriends.map(fr => fr.name);
-        const newFlock = { id: f.id, name: f.name, host: authUser?.name || 'You', creatorId: f.creator_id, members: invitedNames, memberCount: 1 + invitedIds.length, time: f.event_time ? new Date(f.event_time).toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' }) : `${flockDate} ${flockTime}`, status: 'voting', venue: f.venue_name || 'TBD', venueAddress: venueAddr, venueId: venueId, venuePhoto: venuePhoto, venueRating: venueRating, venuePriceLevel: venuePriceLevel, venueLat: venueLat, venueLng: venueLng, cashPool: null, budgetEnabled: f.budget_enabled || capturedBudget, budgetContext: f.budget_context || capturedBudgetCtx, budgetLocked: false, budgetCeiling: null, ghostModeEnabled: f.ghost_mode_enabled || capturedGhostMode, votes: [], messages: initialMessages };
+        const newFlock = { id: f.id, name: f.name, host: authUser?.name || 'You', creatorId: f.creator_id, members: invitedNames, memberCount: 1 + invitedIds.length, time: f.event_time ? new Date(f.event_time).toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' }) : `${flockDate} ${flockTime}`, eventTime: f.event_time || null, status: 'voting', venue: f.venue_name || 'TBD', venueAddress: venueAddr, venueId: venueId, venuePhoto: venuePhoto, venueRating: venueRating, venuePriceLevel: venuePriceLevel, venueLat: venueLat, venueLng: venueLng, cashPool: null, budgetEnabled: f.budget_enabled || capturedBudget, budgetContext: f.budget_context || capturedBudgetCtx, budgetLocked: false, budgetCeiling: null, ghostModeEnabled: f.ghost_mode_enabled || capturedGhostMode, votes: [], messages: initialMessages };
 
         // Batch all state updates together — navigate immediately
         newlyCreatedFlockRef.current = f.id;
@@ -9015,9 +9111,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                       }
                     }}
                     onVote={() => {
-                      const existingVote = flock.votes.find(v => v.venue === m.venue_data.name);
+                      const current = flock.votes || [];
+                      const existingVote = current.find(v => v.venue === m.venue_data.name);
                       if (existingVote) {
-                        const newVotes = flock.votes.map(v => ({
+                        const newVotes = current.map(v => ({
                           ...v,
                           voters: v.venue === m.venue_data.name
                             ? (v.voters.includes('You') ? v.voters : [...v.voters, 'You'])
@@ -9025,7 +9122,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                         }));
                         updateFlockVotes(selectedFlockId, newVotes);
                       } else {
-                        const newVotes = [...flock.votes, { venue: m.venue_data.name, type: m.venue_data.type, voters: ['You'] }];
+                        // Moving your vote here takes it off whatever you picked before
+                        const newVotes = [
+                          ...current.map(v => ({ ...v, voters: v.voters.filter(x => x !== 'You') })),
+                          { venue: m.venue_data.name, type: m.venue_data.type, place_id: m.venue_data.place_id || null, voters: ['You'] },
+                        ];
                         updateFlockVotes(selectedFlockId, newVotes);
                       }
                     }}
@@ -9498,15 +9599,19 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
 
         {/* Vote Panel */}
         {showVotePanel && (() => {
-          const myVote = flock.votes.find(v => v.voters.includes('You'))?.venue || null;
-          const totalVoters = new Set(flock.votes.flatMap(v => v.voters)).size;
+          const flockVotes = flock.votes || [];
+          const myVote = flockVotes.find(v => v.voters.includes('You'))?.venue || null;
+          // Guests vote from the invite link and stay anonymous, so they add to
+          // the totals without adding a name.
+          const totalVoters = new Set(flockVotes.flatMap(v => v.voters)).size
+            + flockVotes.reduce((sum, v) => sum + (v.guestCount || 0), 0);
           const isCreator = flock.creatorId && String(flock.creatorId) === String(authUser?.id);
 
-          const handleQuickVote = (venueName, venueType) => {
-            const existingVote = flock.votes.find(v => v.venue === venueName);
+          const handleQuickVote = (venueName, venueType, venuePlaceId) => {
+            const existingVote = flockVotes.find(v => v.venue === venueName);
             if (existingVote) {
               if (existingVote.voters.includes('You')) return; // already voted
-              const newVotes = flock.votes.map(v => ({
+              const newVotes = flockVotes.map(v => ({
                 ...v,
                 voters: v.venue === venueName
                   ? [...v.voters, 'You']
@@ -9514,13 +9619,15 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
               }));
               updateFlockVotes(selectedFlockId, newVotes);
             } else {
-              const newVotes = [...flock.votes.map(v => ({ ...v, voters: v.voters.filter(x => x !== 'You') })), { venue: venueName, type: venueType || 'Venue', voters: ['You'] }];
+              const newVotes = [...flockVotes.map(v => ({ ...v, voters: v.voters.filter(x => x !== 'You') })), { venue: venueName, type: venueType || 'Venue', place_id: venuePlaceId || null, voters: ['You'] }];
               updateFlockVotes(selectedFlockId, newVotes);
             }
           };
 
           const handleUnvote = () => {
-            const newVotes = flock.votes.map(v => ({ ...v, voters: v.voters.filter(x => x !== 'You') })).filter(v => v.voters.length > 0);
+            const newVotes = flockVotes
+              .map(v => ({ ...v, voters: v.voters.filter(x => x !== 'You') }))
+              .filter(v => v.voters.length > 0 || (v.guestCount || 0) > 0);
             updateFlockVotes(selectedFlockId, newVotes);
           };
 
@@ -9540,15 +9647,15 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
 
           // Ensure assigned venue is in votes list
           const assignedVenue = flock.venue && flock.venue !== 'TBD' ? flock.venue : null;
-          const votesWithAssigned = assignedVenue && !flock.votes.find(v => v.venue === assignedVenue)
-            ? [{ venue: assignedVenue, type: 'Assigned', voters: [] }, ...flock.votes]
-            : flock.votes;
+          const votesWithAssigned = assignedVenue && !flockVotes.find(v => v.venue === assignedVenue)
+            ? [{ venue: assignedVenue, type: 'Assigned', voters: [], guestCount: 0 }, ...flockVotes]
+            : flockVotes;
 
           // Sort: assigned venue always first, then by vote count
           const sortedVotes = [...votesWithAssigned].sort((a, b) => {
             if (a.venue === assignedVenue && b.venue !== assignedVenue) return -1;
             if (b.venue === assignedVenue && a.venue !== assignedVenue) return 1;
-            return b.voters.length - a.voters.length;
+            return voteTotal(b) - voteTotal(a);
           });
 
           // Popular chains nearby that aren't already vote options
@@ -9574,13 +9681,14 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                     {sortedVotes.map((v, idx) => {
                       const isAssigned = v.venue === assignedVenue;
                       const isMyVote = v.voters.includes('You');
-                      const votePercent = totalVoters > 0 ? Math.round((v.voters.length / totalVoters) * 100) : 0;
-                      const isLeading = !isAssigned && idx === 0 && v.voters.length > 0;
+                      const count = voteTotal(v);
+                      const votePercent = totalVoters > 0 ? Math.round((count / totalVoters) * 100) : 0;
+                      const isLeading = !isAssigned && idx === 0 && count > 0;
                       const iconBg = isAssigned
                         ? colors.navyBg
                         : isLeading ? colors.steel : `linear-gradient(135deg, ${colors.navy}15, ${colors.navy}25)`;
                       return (
-                        <button key={v.venue} className="glass-btn glass-secondary" onClick={(e) => { confirmClick(e); isMyVote ? handleUnvote() : handleQuickVote(v.venue, v.type); }} style={{ width: '100%', textAlign: 'left', padding: '12px 14px', borderRadius: '14px', border: isAssigned ? `2px solid ${colors.navy}` : isMyVote ? `2px solid ${colors.navy}` : `1.5px solid var(--border-default)`, backgroundColor: isAssigned ? `${colors.navy}05` : isMyVote ? `${colors.navy}06` : 'var(--bg-card-solid)', cursor: 'pointer', position: 'relative', overflow: 'hidden', transition: 'opacity 0.2s' }}>
+                        <button key={v.venue} className="glass-btn glass-secondary" onClick={(e) => { confirmClick(e); isMyVote ? handleUnvote() : handleQuickVote(v.venue, v.type, v.place_id); }} style={{ width: '100%', textAlign: 'left', padding: '12px 14px', borderRadius: '14px', border: isAssigned ? `2px solid ${colors.navy}` : isMyVote ? `2px solid ${colors.navy}` : `1.5px solid var(--border-default)`, backgroundColor: isAssigned ? `${colors.navy}05` : isMyVote ? `${colors.navy}06` : 'var(--bg-card-solid)', cursor: 'pointer', position: 'relative', overflow: 'hidden', transition: 'opacity 0.2s' }}>
                           {/* Progress bar background */}
                           <div style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: `${votePercent}%`, backgroundColor: isMyVote ? `${colors.navy}10` : 'var(--bg-tertiary)', transition: 'width 0.4s ease', borderRadius: '14px' }} />
                           <div style={{ position: 'relative', display: 'flex', alignItems: 'center', gap: '10px' }}>
@@ -9593,10 +9701,17 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                                 {isAssigned && <span style={{ fontSize: '9px', fontWeight: '700', color: 'white', backgroundColor: colors.navyBg, padding: '1px 6px', borderRadius: '6px', flexShrink: 0 }}>Assigned</span>}
                                 {isLeading && <span style={{ fontSize: '9px', fontWeight: '700', color: colors.steel, backgroundColor: `${colors.steel}15`, padding: '1px 6px', borderRadius: '6px', flexShrink: 0 }}>Leading</span>}
                               </div>
-                              <p style={{ fontSize: '11px', color: 'var(--text-tertiary)', margin: '1px 0 0' }}>{v.voters.length > 0 ? v.voters.join(', ') : isAssigned ? 'Current flock venue. Tap to vote' : 'No votes yet'}</p>
+                              <p style={{ fontSize: '11px', color: 'var(--text-tertiary)', margin: '1px 0 0' }}>{(() => {
+                                const guests = v.guestCount || 0;
+                                const names = v.voters.join(', ');
+                                const guestLabel = guests > 0 ? `${guests} guest${guests !== 1 ? 's' : ''}` : '';
+                                if (names && guestLabel) return `${names} and ${guestLabel}`;
+                                if (names || guestLabel) return names || guestLabel;
+                                return isAssigned ? 'Current flock venue. Tap to vote' : 'No votes yet';
+                              })()}</p>
                             </div>
                             <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0 }}>
-                              {v.voters.length > 0 && <span style={{ fontSize: '16px', fontWeight: '900', color: isMyVote ? colors.navy : colors.textTertiary }}>{v.voters.length}</span>}
+                              {count > 0 && <span style={{ fontSize: '16px', fontWeight: '900', color: isMyVote ? colors.navy : colors.textTertiary }}>{count}</span>}
                               {isMyVote && <div style={{ width: '20px', height: '20px', borderRadius: '10px', backgroundColor: colors.navyBg, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.check('white', 12)}</div>}
                               {isCreator && !isAssigned && (
                                 <button className="glass-btn glass-primary" onClick={(e) => { e.stopPropagation(); confirmClick(e); handleConfirmVenue(v.venue); }} style={{ padding: '4px 8px', borderRadius: '8px', border: 'none', background: colors.steel, color: 'white', fontSize: '10px', fontWeight: '700', cursor: 'pointer', position: 'relative', overflow: 'hidden' }}>Confirm</button>
@@ -9619,7 +9734,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                     <p style={{ fontSize: '12px', fontWeight: '700', color: 'var(--text-tertiary)', marginBottom: '10px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Popular Chains Nearby</p>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
                       {suggestedVenues.map(venue => (
-                        <button key={venue.id || venue.name} className="glass-btn glass-secondary" onClick={(e) => { confirmClick(e); handleQuickVote(venue.name, venue.type || venue.category || 'Venue'); }} style={{ width: '100%', textAlign: 'left', padding: '10px 12px', borderRadius: '12px', border: '1px solid var(--border-default)', backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '10px', transition: 'opacity 0.2s', position: 'relative', overflow: 'hidden' }}>
+                        <button key={venue.id || venue.name} className="glass-btn glass-secondary" onClick={(e) => { confirmClick(e); handleQuickVote(venue.name, venue.type || venue.category || 'Venue', venue.place_id); }} style={{ width: '100%', textAlign: 'left', padding: '10px 12px', borderRadius: '12px', border: '1px solid var(--border-default)', backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '10px', transition: 'opacity 0.2s', position: 'relative', overflow: 'hidden' }}>
                           {venue.photo_url ? (
                             <img src={venue.photo_url} alt="" style={{ width: '36px', height: '36px', borderRadius: '8px', objectFit: 'cover', flexShrink: 0 }} onError={(e) => { e.target.onerror = null; e.target.src = 'data:image/svg+xml,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="36" height="36"><rect fill="#1a3a5c" width="36" height="36" rx="8"/></svg>'); }} />
                           ) : (
@@ -9949,7 +10064,17 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 Hosted by {flock.host} {acceptedMembers.length > 0 && <span style={{ marginLeft: '4px' }}>· {acceptedMembers.length} member{acceptedMembers.length !== 1 ? 's' : ''}</span>}
               </div>
             </div>
-            <button onClick={(e) => { confirmClick(e); addEventToCalendar(flock.name, flock.venue, new Date(), flock.time || '9 PM'); }} style={{ width: '36px', height: '36px', borderRadius: '50%', background: 'rgba(255,255,255,0.2)', border: 'none', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{Icons.calendar('white', 16)}</button>
+            <button onClick={(e) => {
+              confirmClick(e);
+              // Use the flock's real date. flock.time is only a display string,
+              // so this used to file every plan under today.
+              const when = flock.eventTime ? new Date(flock.eventTime) : null;
+              const eventDate = when && !isNaN(when.getTime()) ? when : new Date();
+              const eventTimeLabel = when && !isNaN(when.getTime())
+                ? when.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
+                : (flock.time && flock.time !== 'TBD' ? flock.time : '9 PM');
+              addEventToCalendar(flock.name, flock.venue, eventDate, eventTimeLabel);
+            }} style={{ width: '36px', height: '36px', borderRadius: '50%', background: 'rgba(255,255,255,0.2)', border: 'none', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{Icons.calendar('white', 16)}</button>
           </div>
 
           {/* Status badge */}
@@ -10244,6 +10369,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
               {flock.votes.map(v => {
                 const myVote = flock.votes.find(vt => vt.voters.includes('You'))?.venue || null;
                 const isMyVote = myVote === v.venue;
+                const count = voteTotal(v);
                 return (
                   <button key={v.venue} className="glass-btn glass-secondary" onClick={() => {
                     const newVotes = flock.votes.map(vt => ({ ...vt, voters: vt.venue === v.venue ? (vt.voters.includes('You') ? vt.voters : [...vt.voters, 'You']) : vt.voters.filter(x => x !== 'You') }));
@@ -10252,10 +10378,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                     <div>
                       <p style={{ fontSize: '13px', fontWeight: '700', color: colors.navy, margin: 0 }}>{v.venue}</p>
                       {v.type && <p style={{ fontSize: '10px', color: 'var(--text-secondary)', margin: '2px 0 0' }}>{v.type}</p>}
-                      <p style={{ fontSize: '10px', color: 'var(--text-tertiary)', margin: '2px 0 0' }}>{v.voters.join(', ')}</p>
+                      <p style={{ fontSize: '10px', color: 'var(--text-tertiary)', margin: '2px 0 0' }}>{[v.voters.join(', '), (v.guestCount || 0) > 0 ? `${v.guestCount} guest${v.guestCount !== 1 ? 's' : ''}` : ''].filter(Boolean).join(' and ')}</p>
                     </div>
                     <span style={{ padding: '5px 14px', borderRadius: '20px', fontSize: '12px', fontWeight: '700', backgroundColor: isMyVote ? colors.navyBg : 'var(--bg-card-solid)', color: isMyVote ? 'white' : colors.navy }}>
-                      {v.voters.length}
+                      {count}
                     </span>
                   </button>
                 );
@@ -13613,7 +13739,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
             trigger={paywallTrigger}
             onClose={() => setPaywallTrigger(null)}
             showToast={showToast}
-            onUpgraded={refreshEntitlements}
+            onUpgraded={confirmUpgrade}
           />
 
           {/* Full-screen venue search results overlay */}

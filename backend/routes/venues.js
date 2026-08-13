@@ -98,10 +98,10 @@ function tailorVotes(rows, invisible, { voterObjects = false } = {}) {
 
 // Broadcast the new tallies to every other accepted member, tailored to what
 // each of them is allowed to see.
-async function broadcastVotes(req, flockId, rows, venue_name) {
+async function broadcastVotes(req, flockId, rows, venue_name, notify = true) {
   const io = req.app.get('io');
   const { ids, sets } = await invisibleSetsForFlock(flockId);
-  if (io) {
+  if (io && notify) {
     for (const uid of ids) {
       if (uid === req.user.id) continue;
       const invisible = sets.get(uid) || new Set();
@@ -208,7 +208,8 @@ router.delete('/:id/vote', param('id').isInt(), async (req, res) => {
     );
 
     const rows = await collectVoteRows(flockId);
-    const myInvisible = await broadcastVotes(req, flockId, rows, removed.rows[0]?.venue_name || null);
+    // Nothing removed means nothing changed, so peers get no event.
+    const myInvisible = await broadcastVotes(req, flockId, rows, removed.rows[0]?.venue_name || null, removed.rows.length > 0);
 
     res.json({ removed: removed.rows.length, votes: tailorVotes(rows, myInvisible) });
   } catch (err) {
