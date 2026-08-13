@@ -49,6 +49,15 @@ const BASELINE_CACHE_TTL = 24 * 60 * 60 * 1000; // 24 hours (static data)
 const feedbackCache = new Map();
 const FEEDBACK_CACHE_TTL = 60 * 60 * 1000; // 1 hour
 
+// Round 8: these maps are keyed by caller-supplied place ids/coords (the batch
+// endpoint), so without a ceiling they grow forever. Oldest-first eviction —
+// Map iteration order is insertion order.
+const PREDICTOR_CACHE_MAX = 2000;
+function boundedSet(map, key, value) {
+  while (map.size >= PREDICTOR_CACHE_MAX) map.delete(map.keys().next().value);
+  map.set(key, value);
+}
+
 
 // ---------------------------------------------------------------------------
 // Initialization
@@ -105,7 +114,7 @@ async function getBaseline(placeId, dayOfWeek, hour) {
     );
 
     if (rows.length === 0) {
-      baselineCache.set(cacheKey, { data: 0, ts: Date.now() });
+      boundedSet(baselineCache, cacheKey, { data: 0, ts: Date.now() });
       return 0;
     }
 
@@ -120,7 +129,7 @@ async function getBaseline(placeId, dayOfWeek, hour) {
     }
 
     if (!hasCurrent) {
-      baselineCache.set(cacheKey, { data: 0, ts: Date.now() });
+      boundedSet(baselineCache, cacheKey, { data: 0, ts: Date.now() });
       return 0;
     }
 
@@ -130,7 +139,7 @@ async function getBaseline(placeId, dayOfWeek, hour) {
       ? Math.round(current * 0.6 + (prev || current) * 0.2 + (next || current) * 0.2)
       : current;
 
-    baselineCache.set(cacheKey, { data: val, ts: Date.now() });
+    boundedSet(baselineCache, cacheKey, { data: val, ts: Date.now() });
     return val;
   } catch (err) {
     console.error('[MLPredictor] Baseline lookup failed:', err.message);
@@ -214,7 +223,7 @@ async function getUserFeedback(placeId) {
       avgErrorMapped: parseFloat(r?.avg_error_mapped) || 0,
       avgErrorLegacy: parseFloat(r?.avg_error_legacy) || 0,
     };
-    feedbackCache.set(placeId, { data: result, ts: Date.now() });
+    boundedSet(feedbackCache, placeId, { data: result, ts: Date.now() });
     return result;
   } catch (err) {
     console.error('[MLPredictor] Feedback lookup failed:', err.message);
@@ -434,7 +443,7 @@ async function getNeighborActivity(placeId, lat, lng, dayOfWeek, hour) {
         });
       }
       entry = { ts: Date.now(), byDowHour };
-      neighborCache.set(key, entry);
+      boundedSet(neighborCache, key, entry);
     } catch {
       return none;
     }

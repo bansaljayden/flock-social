@@ -4,6 +4,8 @@ const pool = require('../config/database');
 const { authenticate } = require('../middleware/auth');
 const { stripHtml } = require('../utils/sanitize');
 const { rejectIfProfane, moderateImage, IMAGE_REJECTED_MESSAGE } = require('../utils/moderation');
+const { sanitizeVenueData, safeVenuePhotoUrl } = require('../utils/venuePayload');
+const VENUE_REJECTED_MESSAGE = "That venue card couldn't be shared.";
 const { isBlockedBetween, getInvisibleUserIds } = require('../utils/blocks');
 const { emitToFlockExcludingBlocked } = require('../sockets/handlers');
 
@@ -144,6 +146,13 @@ router.post('/flocks/:id/messages',
       // UGC text filter (Apple 1.2) — reject objectionable content before storing.
       if (rejectIfProfane(res, message_text)) return;
 
+      // Round 8: venue_data was stored verbatim — nested name/photo_url dodged
+      // the text screen and rendered sender-controlled <img> URLs (tracking).
+      const venueCheck = sanitizeVenueData(venue_data);
+      if (!venueCheck.ok) {
+        return res.status(400).json({ error: VENUE_REJECTED_MESSAGE });
+      }
+
       // Image moderation must hold on the REST transport too — the socket-only
       // check left this endpoint delivering unmoderated (and trackable) URLs.
       if (image_url) {
@@ -162,7 +171,7 @@ router.post('/flocks/:id/messages',
           req.user.id,
           message_text,
           message_type || 'text',
-          venue_data || null,
+          venueCheck.data,
           image_url || null,
         ]
       );
@@ -501,6 +510,12 @@ router.post('/dm/:userId',
       // UGC text filter (Apple 1.2) — reject objectionable content before storing.
       if (rejectIfProfane(res, message_text)) return;
 
+      // Same venue-card sanitizing as flock messages (round 8).
+      const venueCheck = sanitizeVenueData(venue_data);
+      if (!venueCheck.ok) {
+        return res.status(400).json({ error: VENUE_REJECTED_MESSAGE });
+      }
+
       // Image moderation on the REST transport too (same as flock messages).
       if (image_url) {
         const verdict = await moderateImage(image_url);
@@ -529,7 +544,7 @@ router.post('/dm/:userId',
         `INSERT INTO direct_messages (sender_id, receiver_id, message_text, message_type, venue_data, image_url, reply_to_id)
          VALUES ($1, $2, $3, $4, $5, $6, $7)
          RETURNING *`,
-        [req.user.id, receiverId, message_text, message_type || 'text', venue_data || null, image_url || null, safeReplyId]
+        [req.user.id, receiverId, message_text, message_type || 'text', venueCheck.data, image_url || null, safeReplyId]
       );
 
       const message = result.rows[0];
@@ -722,11 +737,14 @@ router.put('/dm/:userId/pinned-venue',
         return res.status(403).json({ error: 'You can no longer interact with this user.' });
       }
       const { user1, user2 } = dmPairKey(req.user.id, otherUserId);
-      const venue_name = stripHtml(req.body.venue_name);
-      const venue_address = req.body.venue_address ? stripHtml(req.body.venue_address) : null;
-      const venue_id = req.body.venue_id || null;
-      const venue_rating = req.body.venue_rating || null;
-      const venue_photo_url = req.body.venue_photo_url || null;
+      const venue_name = stripHtml(req.body.venue_name).slice(0, 255);
+      const venue_address = req.body.venue_address ? stripHtml(String(req.body.venue_address)).slice(0, 512) : null;
+      // Same screen + photo-proxy-only rule as venue cards (round 8).
+      if (rejectIfProfane(res, venue_name)) return;
+      if (venue_address && rejectIfProfane(res, venue_address)) return;
+      const venue_id = typeof req.body.venue_id === 'string' ? req.body.venue_id.slice(0, 256) : null;
+      const venue_rating = Number.isFinite(req.body.venue_rating) ? req.body.venue_rating : null;
+      const venue_photo_url = safeVenuePhotoUrl(req.body.venue_photo_url);
 
       await pool.query(
         `INSERT INTO dm_pinned_venues (user1_id, user2_id, venue_name, venue_address, venue_id, venue_rating, venue_photo_url, pinned_by, updated_at)

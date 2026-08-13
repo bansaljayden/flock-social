@@ -93,6 +93,7 @@ async function getForecast(lat, lon) {
     const cacheKey = `forecast_${getCacheKey(lat, lon)}`;
     const cached = getCached(cacheKey);
     if (cached) return cached;
+    if (!allowWeatherFetch()) return null; // same budget as getWeather (round 8)
 
     const url = `https://api.openweathermap.org/data/2.5/forecast?lat=${Number(lat).toFixed(2)}&lon=${Number(lon).toFixed(2)}&appid=${apiKey}&units=imperial`;
     const response = await fetch(url);
