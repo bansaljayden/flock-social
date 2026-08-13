@@ -429,7 +429,7 @@ router.post('/:flockId/ghost-commit',
 
       const ceiling = flockResult.rows[0].budget_ceiling ? parseFloat(flockResult.rows[0].budget_ceiling) : null;
       if (!ceiling) {
-        return res.status(400).json({ error: 'No budget ceiling set — cannot estimate share' });
+        return res.status(400).json({ error: 'No budget ceiling set, so we cannot estimate a share' });
       }
 
       // Get member count for estimated share

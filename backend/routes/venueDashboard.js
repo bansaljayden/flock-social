@@ -419,21 +419,43 @@ router.get('/public-promotions/:placeId', async (req, res) => {
 
 const { getWeather } = require('../services/weatherService');
 const mlPredictor = require('../services/mlPredictor');
+// Round 9: these Places fetches bypassed the shared paid-call budget that
+// venueSearch and crowd.js are both charged against.
+const { allowPlacesSearch } = require('../utils/placesBudget');
 const GOOGLE_KEY = process.env.GOOGLE_PLACES_API_KEY;
+const BUDGET_MESSAGE = 'Too many venue lookups right now. Try again in a little while.';
 
 // 60-min cache: Google calls cost money and forecasts don't move fast.
 const intelCache = new Map();
 const INTEL_TTL = 60 * 60 * 1000;
+const INTEL_MAX = 500;
 const cacheGet = (k) => {
   const hit = intelCache.get(k);
   if (hit && Date.now() - hit.ts < INTEL_TTL) return hit.data;
   intelCache.delete(k);
   return null;
 };
-const cacheSet = (k, data) => intelCache.set(k, { ts: Date.now(), data });
+const cacheSet = (k, data) => {
+  intelCache.set(k, { ts: Date.now(), data });
+  // Round 9: unbounded before — one entry per place id the owner can relink to.
+  if (intelCache.size > INTEL_MAX) {
+    const now = Date.now();
+    for (const [key, v] of intelCache) {
+      if (now - v.ts > INTEL_TTL) intelCache.delete(key);
+    }
+    // Fresh-but-oversized: evict oldest first (same pattern as crowd.js).
+    while (intelCache.size > INTEL_MAX) intelCache.delete(intelCache.keys().next().value);
+  }
+};
 
-async function fetchVenueBasics(placeId) {
+// Returned instead of a venue when the shared Places budget is spent, so the
+// route can answer 429 rather than pretend Google was unreachable.
+const BUDGET_EXCEEDED = Symbol('places_budget_exceeded');
+
+async function fetchVenueBasics(placeId, userId) {
   if (!GOOGLE_KEY) return null;
+  // Round 9: charge the shared budget before every paid upstream call.
+  if (!allowPlacesSearch(userId)) return BUDGET_EXCEEDED;
   const r = await fetch(`https://places.googleapis.com/v1/places/${placeId}`, {
     headers: {
       'X-Goog-Api-Key': GOOGLE_KEY,
@@ -463,7 +485,8 @@ router.get('/intelligence', async (req, res) => {
     const cached = cacheGet(`intel:${ctx.google_place_id}`);
     if (cached) return res.json(cached);
 
-    const venue = await fetchVenueBasics(ctx.google_place_id);
+    const venue = await fetchVenueBasics(ctx.google_place_id, req.user.id);
+    if (venue === BUDGET_EXCEEDED) return res.status(429).json({ error: BUDGET_MESSAGE });
     if (!venue) return res.json({ available: false, reason: 'Could not reach your Google listing right now' });
 
     const lat = venue.location?.latitude;
@@ -518,11 +541,14 @@ router.get('/strip', async (req, res) => {
     if (cached) return res.json(cached);
     if (!GOOGLE_KEY) return res.json({ available: false, reason: 'Search unavailable right now' });
 
-    const me = await fetchVenueBasics(ctx.google_place_id);
+    const me = await fetchVenueBasics(ctx.google_place_id, req.user.id);
+    if (me === BUDGET_EXCEEDED) return res.status(429).json({ error: BUDGET_MESSAGE });
     if (!me?.location) return res.json({ available: false, reason: 'Could not reach your Google listing right now' });
 
     // Same-category venues within walking distance.
     const wanted = ['bar', 'night_club', 'restaurant'].filter((t) => me.types.includes(t));
+    // Round 9: searchNearby is a second paid call — charge it separately.
+    if (!allowPlacesSearch(req.user.id)) return res.status(429).json({ error: BUDGET_MESSAGE });
     const nearby = await fetch('https://places.googleapis.com/v1/places:searchNearby', {
       method: 'POST',
       headers: {

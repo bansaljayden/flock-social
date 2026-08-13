@@ -648,11 +648,28 @@ router.post('/dm/:userId/venue-votes',
   [param('userId').isInt(), body('venue_name').trim().isLength({ min: 1, max: 255 }), body('venue_id').optional().isString()],
   async (req, res) => {
     try {
-      const { user1, user2 } = dmPairKey(req.user.id, parseInt(req.params.userId));
-      if (await isBlockedBetween(req.user.id, parseInt(req.params.userId))) {
+      // The validator chain above was decorative: without validationResult the
+      // length/type rules never rejected anything, so an unbounded venue_name
+      // reached the INSERT (round 9 follow-up).
+      const errors = validationResult(req);
+      if (!errors.isEmpty()) {
+        return res.status(400).json({ error: errors.array()[0].msg });
+      }
+
+      const otherUserId = parseInt(req.params.userId);
+      const { user1, user2 } = dmPairKey(req.user.id, otherUserId);
+      if (await isBlockedBetween(req.user.id, otherUserId)) {
         return res.status(403).json({ error: 'You can no longer interact with this user.' });
       }
+      // Round 9: the pair key was derived without ever checking the counterpart
+      // exists, so DM metadata could be written against made-up user ids.
+      const other = await pool.query('SELECT 1 FROM users WHERE id = $1', [otherUserId]);
+      if (other.rows.length === 0) {
+        return res.status(404).json({ error: 'User not found' });
+      }
       const venue_name = stripHtml(req.body.venue_name);
+      // Venue names ride into the other person's UI (round 9 follow-up).
+      if (rejectIfProfane(res, venue_name)) return;
       // Toggle: if already voted for this venue, unvote; otherwise switch vote
       const existing = await pool.query(
         `SELECT id FROM dm_venue_votes WHERE user1_id = $1 AND user2_id = $2 AND user_id = $3 AND venue_name = $4`,
@@ -735,6 +752,11 @@ router.put('/dm/:userId/pinned-venue',
       const otherUserId = parseInt(req.params.userId);
       if (await isBlockedBetween(req.user.id, otherUserId)) {
         return res.status(403).json({ error: 'You can no longer interact with this user.' });
+      }
+      // Round 9: same missing existence check as the venue-vote route.
+      const other = await pool.query('SELECT 1 FROM users WHERE id = $1', [otherUserId]);
+      if (other.rows.length === 0) {
+        return res.status(404).json({ error: 'User not found' });
       }
       const { user1, user2 } = dmPairKey(req.user.id, otherUserId);
       const venue_name = stripHtml(req.body.venue_name).slice(0, 255);

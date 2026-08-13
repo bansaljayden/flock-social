@@ -390,6 +390,37 @@ router.post('/add-by-code',
   }
 );
 
+// Contact-discovery budget (round 9). find-by-phone answers "does this phone
+// number belong to a Flock user, and who?", so an unbudgeted caller could walk
+// a number range and harvest id/name/photo for the whole user base. Contact
+// sync is something a real user does a handful of times, not hundreds, so it
+// gets a hard per-user budget in the style of utils/placesBudget.js. Kept local
+// to this route on purpose — it is not a shared resource pool.
+const CONTACT_SYNC_HOURLY = 3;
+const CONTACT_SYNC_DAILY = 10;
+const MAX_SYNC_PHONES = 200;
+const contactSyncHits = new Map(); // userId -> { hourly: number[], dayCount, dayResetAt }
+
+function allowContactSync(userId) {
+  const now = Date.now();
+  if (contactSyncHits.size > 5000) {
+    for (const [k, v] of contactSyncHits) { if (now > v.dayResetAt) contactSyncHits.delete(k); }
+    if (contactSyncHits.size > 5000) contactSyncHits.clear();
+  }
+  let entry = contactSyncHits.get(userId);
+  if (!entry || now > entry.dayResetAt) {
+    entry = { hourly: [], dayCount: 0, dayResetAt: now + 24 * 60 * 60 * 1000 };
+    contactSyncHits.set(userId, entry);
+  }
+  entry.hourly = entry.hourly.filter((t) => now - t < 3600_000);
+  if (entry.hourly.length >= CONTACT_SYNC_HOURLY || entry.dayCount >= CONTACT_SYNC_DAILY) {
+    return false;
+  }
+  entry.hourly.push(now);
+  entry.dayCount += 1;
+  return true;
+}
+
 // POST /api/friends/find-by-phone - Find users by phone numbers (for contacts sync)
 router.post('/find-by-phone',
   body('phones').isArray({ min: 1 }).withMessage('Phone numbers array required'),
@@ -403,15 +434,21 @@ router.post('/find-by-phone',
       const { phones } = req.body;
       // Bounded + type-safe: the normalized values are joined into ONE SQL
       // regex, so an unbounded array is an expensive scan and a non-string
-      // element throws (round 6).
-      if (!Array.isArray(phones) || phones.length > 500) {
-        return res.status(400).json({ error: 'Too many contacts in one sync' });
+      // element throws (round 6). Round 9 lowered the ceiling from 500 — a
+      // phone book slice that large is a lookup oracle, not a contact sync.
+      if (!Array.isArray(phones) || phones.length > MAX_SYNC_PHONES) {
+        return res.status(400).json({ error: `Sync up to ${MAX_SYNC_PHONES} contacts at a time` });
       }
+
+      if (!allowContactSync(req.user.id)) {
+        return res.status(429).json({ error: 'You have synced your contacts a few times already. Try again later.' });
+      }
+
       const normalized = phones
         .filter((p) => typeof p === 'string')
         .map((p) => p.replace(/\D/g, '').slice(-10))
         .filter((p) => p.length >= 7)
-        .slice(0, 500);
+        .slice(0, MAX_SYNC_PHONES);
       if (normalized.length === 0) return res.json({ users: [] });
 
       // Find users whose phone matches (last 10 digits comparison).
