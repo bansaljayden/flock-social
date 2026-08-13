@@ -344,17 +344,15 @@
 .lp-row .lp-lead { margin-bottom: 22px; }
 
 .lp-list { display: grid; gap: 12px; margin-top: 20px; }
-.lp-list li { list-style: none; display: flex; gap: 11px; font-size: 15.5px; color: var(--ink-2); }
+.lp-list li { list-style: none; font-size: 15.5px; color: var(--ink-2); line-height: 1.5; }
 .lp-sec-navy .lp-list li { color: var(--cream-2); }
-.lp-tick {
-  flex-shrink: 0;
-  width: 11px; height: 7px;
-  margin-top: 7px;
-  border-left: 2px solid var(--steel);
-  border-bottom: 2px solid var(--steel);
-  transform: rotate(-45deg);
-}
-.lp-sec-navy .lp-tick { border-color: var(--steel-lift); }
+/* Ruled rows, no glyphs. A column of checkmarks is the single most
+   template-looking thing a marketing page can do; the rule + rhythm carries
+   the list instead (drop 20 §H, §I). */
+.lp-list li + li { border-top: 1px solid var(--rule); }
+.lp-list li { padding: 11px 0; }
+.lp-sec-navy .lp-list li + li,
+.lp-plan-venue .lp-list li + li { border-top-color: var(--rule-cream); }
 
 /* split / money vignette */
 .lp-split {
@@ -404,7 +402,6 @@
 .lp-plan-venue .lp-plan-price small,
 .lp-plan-venue .lp-plan-note { color: var(--cream-3); }
 .lp-plan-venue .lp-list li { color: var(--cream-2); }
-.lp-plan-venue .lp-tick { border-color: var(--steel-lift); }
 .lp-plan-venue .lp-btn-navy { background: var(--cream); color: var(--navy); }
 .lp-plan-venue .lp-btn-navy:hover { background: #fffaf0; }
 
@@ -500,15 +497,19 @@
   background: var(--paper);
   padding: clamp(18px, 2.4vw, 24px);
 }
-.lp-card-head {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin-bottom: 8px;
+.lp-card h3 { margin-bottom: 7px; }
+
+/* Section plates: hand-cut linocut marks, navy ink, transparent ground.
+   One per section, never a grid of them — an icon per card is the formula
+   drop 20 §H/§I calls out. */
+.lp-plate {
+  width: clamp(84px, 9vw, 116px);
+  height: auto;
+  margin-bottom: 16px;
+  opacity: 0.92;
 }
-.lp-card-ico { display: inline-flex; flex-shrink: 0; }
-.lp-card-ico svg { width: 19px; height: 19px; }
-.lp-card h3 { margin-bottom: 0; }
+.lp-sec-navy .lp-plate,
+.lp-on-navy .lp-plate { filter: invert(1) brightness(1.9) saturate(0.35); opacity: 0.85; }
 .lp-card p { font-size: 15px; color: var(--ink-2); }
 
 /* ============ safety: the real SOS email, shown as a document ============ */
