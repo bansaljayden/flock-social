@@ -19,14 +19,16 @@ router.post('/register',
       const { token, deviceType } = req.body;
       const safeDeviceType = ['web', 'ios', 'android'].includes(deviceType) ? deviceType : 'web';
 
-      // A device token belongs to exactly ONE account (round 3: after an
-      // account switch the same token stayed registered to both, delivering
-      // one account's private DMs to the other's device). Transfer ownership.
-      await pool.query('DELETE FROM device_tokens WHERE token = $1 AND user_id != $2', [token, req.user.id]);
+      // A device token belongs to exactly ONE account. Round 4: the old
+      // delete-then-insert pair wasn't atomic — two concurrent registrations
+      // could both delete, then both insert, leaving the token on two
+      // accounts. UNIQUE(token) (migration 002) makes this single upsert a
+      // true ownership transfer.
       await pool.query(
         `INSERT INTO device_tokens (user_id, token, device_type)
          VALUES ($1, $2, $3)
-         ON CONFLICT (user_id, token) DO UPDATE SET updated_at = NOW()`,
+         ON CONFLICT (token) DO UPDATE
+         SET user_id = EXCLUDED.user_id, device_type = EXCLUDED.device_type, updated_at = NOW()`,
         [req.user.id, token, safeDeviceType]
       );
 
