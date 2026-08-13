@@ -1,6 +1,8 @@
 const pool = require('../config/database');
 const { stripHtml } = require('../utils/sanitize');
 const { moderateText, TEXT_REJECTED_MESSAGE, moderateImage, IMAGE_REJECTED_MESSAGE } = require('../utils/moderation');
+const { sanitizeVenueData, safeVenuePhotoUrl } = require('../utils/venuePayload');
+const VENUE_REJECTED_MESSAGE = "That venue card couldn't be shared.";
 const { isBlockedBetween, isBlockedBetweenCached, getInvisibleUserIds } = require('../utils/blocks');
 const { pushIfOfflineDebounced } = require('../services/pushHelper');
 
@@ -206,6 +208,14 @@ function registerHandlers(io, socket) {
         }
       }
 
+      // Venue cards carry sender-controlled text and photo URLs — same
+      // sanitizing as the REST path (round 8).
+      const venueCheck = sanitizeVenueData(venue_data);
+      if (!venueCheck.ok) {
+        socket.emit('error', { message: VENUE_REJECTED_MESSAGE });
+        return;
+      }
+
       // Verify membership
       const membership = await pool.query(
         "SELECT id FROM flock_members WHERE flock_id = $1 AND user_id = $2 AND status = 'accepted'",
@@ -226,7 +236,7 @@ function registerHandlers(io, socket) {
           user.id,
           message_text,
           safeType,
-          venue_data ? JSON.stringify(venue_data) : null,
+          venueCheck.data ? JSON.stringify(venueCheck.data) : null,
           image_url || null,
         ]
       );
@@ -596,11 +606,18 @@ function registerHandlers(io, socket) {
         if (!replyRow) return; // foreign, hidden, or nonexistent reply target — drop the message
       }
 
+      // Same venue-card sanitizing as the flock send path (round 8).
+      const dmVenueCheck = sanitizeVenueData(venue_data);
+      if (!dmVenueCheck.ok) {
+        socket.emit('error', { message: VENUE_REJECTED_MESSAGE });
+        return;
+      }
+
       // Persist to database
       const result = await pool.query(
         `INSERT INTO direct_messages (sender_id, receiver_id, message_text, message_type, venue_data, image_url, reply_to_id)
          VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
-        [user.id, receiverId, text, safeType, venue_data || null, image_url || null, replyRow ? reply_to_id : null]
+        [user.id, receiverId, text, safeType, dmVenueCheck.data ? JSON.stringify(dmVenueCheck.data) : null, image_url || null, replyRow ? reply_to_id : null]
       );
 
       const msg = result.rows[0];
@@ -738,7 +755,14 @@ function registerHandlers(io, socket) {
       if (await isBlockedBetween(user.id, receiverId)) return;
       const u1 = Math.min(user.id, receiverId);
       const u2 = Math.max(user.id, receiverId);
-      const safeName = stripHtml(typeof venue_name === 'string' ? venue_name.trim() : '');
+      const safeName = stripHtml(typeof venue_name === 'string' ? venue_name.trim() : '').slice(0, 255);
+      // Round 8: same screen + photo-proxy-only rule as venue cards.
+      if (!moderateText(safeName).allowed) return;
+      const safeAddress = typeof venue_address === 'string' ? stripHtml(venue_address.trim()).slice(0, 512) : null;
+      if (safeAddress && !moderateText(safeAddress).allowed) return;
+      const safeVenueId = typeof venue_id === 'string' ? venue_id.slice(0, 256) : null;
+      const safeRating = Number.isFinite(venue_rating) ? venue_rating : null;
+      const safePhoto = safeVenuePhotoUrl(venue_photo_url);
 
       await pool.query(
         `INSERT INTO dm_pinned_venues (user1_id, user2_id, venue_name, venue_address, venue_id, venue_rating, venue_photo_url, pinned_by, updated_at)
@@ -747,10 +771,10 @@ function registerHandlers(io, socket) {
            venue_name = EXCLUDED.venue_name, venue_address = EXCLUDED.venue_address, venue_id = EXCLUDED.venue_id,
            venue_rating = EXCLUDED.venue_rating, venue_photo_url = EXCLUDED.venue_photo_url,
            pinned_by = EXCLUDED.pinned_by, updated_at = NOW()`,
-        [u1, u2, safeName, venue_address || null, venue_id || null, venue_rating || null, venue_photo_url || null, user.id]
+        [u1, u2, safeName, safeAddress, safeVenueId, safeRating, safePhoto, user.id]
       );
 
-      const payload = { venue_name: safeName, venue_address, venue_id, venue_rating, venue_photo_url, pinned_by: user.id, pinned_by_name: user.name };
+      const payload = { venue_name: safeName, venue_address: safeAddress, venue_id: safeVenueId, venue_rating: safeRating, venue_photo_url: safePhoto, pinned_by: user.id, pinned_by_name: user.name };
       socket.to(`user:${receiverId}`).emit('dm_venue_pinned', payload);
       socket.emit('dm_venue_pinned', payload);
     } catch (err) {

@@ -4,6 +4,7 @@ const pool = require('../config/database');
 const { authenticate } = require('../middleware/auth');
 const { stripHtml } = require('../utils/sanitize');
 const { rejectIfProfane } = require('../utils/moderation');
+const { safeVenuePhotoUrl } = require('../utils/venuePayload');
 const { isBlockedBetween } = require('../utils/blocks');
 
 const { pushIfOffline } = require('../services/pushHelper');
@@ -98,6 +99,10 @@ router.post('/',
       // UGC text filter on user-writable flock fields (Apple 1.2).
       if (rejectIfProfane(res, name)) return;
       if (budget_context && rejectIfProfane(res, budget_context)) return;
+      if (venue_name && rejectIfProfane(res, venue_name)) return;
+      if (venue_address && rejectIfProfane(res, venue_address)) return;
+      // Photo URLs render as <img> for every member — proxy path only (round 8).
+      const safePhotoUrl = safeVenuePhotoUrl(venue_photo_url);
 
       console.log('[Flock Create] User:', req.user.id, '| Name:', name, '| Venue:', venue_name || '(none)');
 
@@ -110,7 +115,7 @@ router.post('/',
           `INSERT INTO flocks (name, creator_id, venue_name, venue_address, venue_id, venue_latitude, venue_longitude, venue_rating, venue_photo_url, event_time, budget_enabled, budget_context, ghost_mode_enabled)
            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
            RETURNING *`,
-          [name, req.user.id, venue_name || null, venue_address || null, venue_id || null, venue_latitude || null, venue_longitude || null, venue_rating || null, venue_photo_url || null, event_time || null, !!budget_enabled, budget_context || null, budget_enabled ? !!ghost_mode_enabled : false]
+          [name, req.user.id, venue_name || null, venue_address || null, venue_id || null, venue_latitude || null, venue_longitude || null, venue_rating || null, safePhotoUrl, event_time || null, !!budget_enabled, budget_context || null, budget_enabled ? !!ghost_mode_enabled : false]
         );
 
         const flock = flockResult.rows[0];
@@ -395,6 +400,8 @@ router.put('/:id',
       if (name && rejectIfProfane(res, name)) return;
       if (venue_name && rejectIfProfane(res, venue_name)) return;
       if (venue_address && rejectIfProfane(res, venue_address)) return;
+      // Photo-proxy-only, same as creation (round 8).
+      const safePhotoUrl = safeVenuePhotoUrl(venue_photo_url);
 
       const result = await pool.query(
         `UPDATE flocks
@@ -411,7 +418,7 @@ router.put('/:id',
              updated_at = NOW()
          WHERE id = $11
          RETURNING *`,
-        [name, venue_name, venue_address, venue_id, venue_latitude, venue_longitude, venue_rating, venue_photo_url, event_time, status, flockId]
+        [name, venue_name, venue_address, venue_id, venue_latitude, venue_longitude, venue_rating, safePhotoUrl, event_time, status, flockId]
       );
 
       // Notify flock members of the update
