@@ -608,6 +608,16 @@ const Icons = {
   ),
 
   shield: make(<path d="M4 4 20 4 20 13 12 21 4 13Z" />),
+  // Report. This is the Apple 1.2 affordance a reviewer goes looking for, and
+  // it was a bare Unicode ⚑ at four call sites — the same character that once
+  // corrupted into mojibake in the moderation sheet. A drawn glyph cannot.
+  // Open container per the system: the pennant carries no bottom edge.
+  flag: make(
+    <>
+      <path d="M6 21 6 3" />
+      <path d="M6 4 18 4 14 9 18 14 6 14" />
+    </>
+  ),
 
   sparkles: make(
     <>
