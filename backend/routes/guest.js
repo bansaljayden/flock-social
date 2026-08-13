@@ -232,11 +232,34 @@ router.post('/:token/vote',
       );
       if (!known.rows.length) return res.status(400).json({ error: 'That venue is not in this flock' });
 
-      await pool.query(
-        `INSERT INTO guest_votes (flock_id, guest_rsvp_id, venue_name)
-         VALUES ($1, $2, $3) ON CONFLICT (flock_id, guest_rsvp_id, venue_name) DO NOTHING`,
-        [link.flock_id, guest.rows[0].id, venueName]
-      );
+      // One vote per guest per flock — the same model member voting follows in
+      // routes/venues.js. Round 11: this was an INSERT ... DO NOTHING that
+      // never cleared the guest's previous pick, so a single guest could vote
+      // for every venue in the flock one after another and inflate all of them.
+      // Delete-then-insert under a per-guest advisory lock, so two taps racing
+      // each other can't both land (guest.rsvp id, not the flock: guests on the
+      // same link vote independently).
+      const guestId = guest.rows[0].id;
+      const client = await pool.connect();
+      try {
+        await client.query('BEGIN');
+        await client.query("SELECT pg_advisory_xact_lock(hashtext('guest_vote:' || $1::text))", [String(guestId)]);
+        await client.query(
+          'DELETE FROM guest_votes WHERE flock_id = $1 AND guest_rsvp_id = $2 AND venue_name <> $3',
+          [link.flock_id, guestId, venueName]
+        );
+        await client.query(
+          `INSERT INTO guest_votes (flock_id, guest_rsvp_id, venue_name)
+           VALUES ($1, $2, $3) ON CONFLICT (flock_id, guest_rsvp_id, venue_name) DO NOTHING`,
+          [link.flock_id, guestId, venueName]
+        );
+        await client.query('COMMIT');
+      } catch (txErr) {
+        await client.query('ROLLBACK').catch(() => {});
+        throw txErr;
+      } finally {
+        client.release();
+      }
 
       const venues = await guestTallies(link.flock_id);
 

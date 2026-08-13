@@ -806,9 +806,25 @@ function estimateWait(score, types, priceLevel) {
 // Best time — lowest score, excluding peak hours and closed hours
 // ---------------------------------------------------------------------------
 
+// Round 11: a venue open 10 PM to 3 AM arrives as openHour=22, closeHour=3, and
+// the old `h >= openHour && h <= closeHour` test is false at EVERY hour, so
+// bars and clubs (the core use case) were treated as closed all day and their
+// best-time / peak results were garbage in both the public demo and the
+// authenticated crowd cards. One helper does the wrap so no caller repeats it.
+// closeHour 24 is midnight (the callers already map close.hour 0 to 24), which
+// keeps a 10 AM - 12 AM day a normal, non-wrapping window.
+function hourInWindow(h, openHour, closeHour) {
+  const hour = ((h % 24) + 24) % 24;
+  const open = ((openHour % 24) + 24) % 24;
+  const close = closeHour === 24 ? 24 : ((closeHour % 24) + 24) % 24;
+  if (close > open) return hour >= open && hour <= close;   // same-day window
+  if (close === open) return true;                          // treat as open round the clock
+  return hour >= open || hour <= close;                     // wraps past midnight
+}
+
 function isOpenHour(h, types, openHour, closeHour) {
   // Use real hours from Google if available
-  if (openHour != null && closeHour != null) return h >= openHour && h <= closeHour;
+  if (openHour != null && closeHour != null) return hourInWindow(h, openHour, closeHour);
   if (hasType(types, 'bar', 'night_club') || isBarLike(types)) return (h >= 16 || h <= 2);
   if (isDinerLike(types)) return (h >= 6 && h <= 21);
   if (isFastFoodLike(types)) return (h >= 6 && h <= 23);
@@ -984,4 +1000,8 @@ module.exports = {
   findQuieterAlternatives,
   buildCalibrationAdjustment,
   getLabel,
+  // Round 11: exported so anything else that needs an open/closed check uses
+  // the wrap-aware helper instead of re-deriving `h >= open && h <= close`.
+  hourInWindow,
+  isOpenHour,
 };
