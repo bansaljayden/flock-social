@@ -2,9 +2,15 @@ const express = require('express');
 const { body, param, validationResult } = require('express-validator');
 const pool = require('../config/database');
 const { authenticate } = require('../middleware/auth');
+const { requireVenueTier } = require('../services/venueEntitlements');
 
 const router = express.Router();
 router.use(authenticate);
+
+// Paid-tier boundaries (VENUE-BILLING.md): promotions, events, and the full
+// incoming-flocks feed are Insights ('premium') features. Server-enforced —
+// the locked dashboard tabs are cosmetic. No-op until VENUE_BILLING_ENABLED.
+const requirePremium = requireVenueTier('premium');
 
 // Helper: get venue profile for current user
 async function getVenueCtx(userId) {
@@ -35,7 +41,7 @@ router.get('/promotions', async (req, res) => {
 });
 
 // POST /api/venue-dashboard/promotions
-router.post('/promotions', [
+router.post('/promotions', requirePremium, [
   body('title').trim().isLength({ min: 1 }).withMessage('Title is required'),
   body('description').optional().trim(),
   body('timeSlot').optional().trim(),
@@ -62,7 +68,7 @@ router.post('/promotions', [
 });
 
 // PUT /api/venue-dashboard/promotions/:id
-router.put('/promotions/:id', [
+router.put('/promotions/:id', requirePremium, [
   param('id').isInt(),
   body('title').optional().trim(),
   body('description').optional().trim(),
@@ -90,7 +96,7 @@ router.put('/promotions/:id', [
 });
 
 // DELETE /api/venue-dashboard/promotions/:id
-router.delete('/promotions/:id', param('id').isInt(), async (req, res) => {
+router.delete('/promotions/:id', requirePremium, param('id').isInt(), async (req, res) => {
   try {
     const { rowCount } = await pool.query(
       'DELETE FROM venue_promotions WHERE id = $1 AND venue_user_id = $2',
@@ -124,7 +130,7 @@ router.get('/events', async (req, res) => {
 });
 
 // POST /api/venue-dashboard/events
-router.post('/events', [
+router.post('/events', requirePremium, [
   body('title').trim().isLength({ min: 1 }).withMessage('Title is required'),
   body('eventDate').optional().trim(),
   body('eventTime').optional().trim(),
@@ -151,7 +157,7 @@ router.post('/events', [
 });
 
 // PUT /api/venue-dashboard/events/:id
-router.put('/events/:id', [
+router.put('/events/:id', requirePremium, [
   param('id').isInt(),
   body('title').optional().trim(),
   body('eventDate').optional().trim(),
@@ -179,7 +185,7 @@ router.put('/events/:id', [
 });
 
 // DELETE /api/venue-dashboard/events/:id
-router.delete('/events/:id', param('id').isInt(), async (req, res) => {
+router.delete('/events/:id', requirePremium, param('id').isInt(), async (req, res) => {
   try {
     const { rowCount } = await pool.query(
       'DELETE FROM venue_events WHERE id = $1 AND venue_user_id = $2',
@@ -196,7 +202,7 @@ router.delete('/events/:id', param('id').isInt(), async (req, res) => {
 // ─── INCOMING FLOCKS ─────────────────────────────────────────────────────────
 
 // GET /api/venue-dashboard/incoming-flocks — flocks that selected this venue
-router.get('/incoming-flocks', async (req, res) => {
+router.get('/incoming-flocks', requirePremium, async (req, res) => {
   try {
     const venue = await getVenueCtx(req.user.id);
     if (!venue || !venue.google_place_id) return res.json({ flocks: [] });
@@ -349,9 +355,14 @@ router.get('/public-promotions/:placeId', async (req, res) => {
   try {
     // Only VERIFIED venues publish publicly — an unverified claim on a Google
     // Place ID must not let a stranger speak as that business (audit 2026-08-12).
+    // Round 4: the join is on the promotion AUTHOR's own profile, not the place
+    // id alone — matching by place id let an unverified claimant's promotion
+    // ride on someone else's verified claim for the same place.
     const { rows } = await pool.query(
       `SELECT p.id, p.title, p.description, p.time_slot, p.days FROM venue_promotions p
-       JOIN venue_profiles vp ON vp.google_place_id = p.google_place_id AND vp.verified = true
+       JOIN venue_profiles vp ON vp.user_id = p.venue_user_id
+         AND vp.google_place_id = p.google_place_id
+         AND vp.verified = true
        WHERE p.google_place_id = $1 AND p.active = true
        ORDER BY p.created_at DESC`,
       [req.params.placeId]
