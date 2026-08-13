@@ -31,6 +31,21 @@ async function verifyMembership(flockId, userId) {
   return result.rows.length > 0;
 }
 
+// Block-aware alternative to a flock-room broadcast: emits to each accepted
+// member individually, skipping anyone blocked either way with the actor.
+// Room broadcasts leaked typing/vote identity across blocks (round 4).
+async function emitToFlockExcludingBlocked(io, flockId, actorId, event, payload) {
+  const members = await pool.query(
+    "SELECT user_id FROM flock_members WHERE flock_id = $1 AND status = 'accepted' AND user_id != $2",
+    [flockId, actorId]
+  );
+  const invisible = new Set(await getInvisibleUserIds(actorId));
+  for (const m of members.rows) {
+    if (invisible.has(m.user_id)) continue;
+    io.to(`user:${m.user_id}`).emit(event, payload);
+  }
+}
+
 function registerHandlers(io, socket) {
   const user = socket.user; // Set by authenticateSocket middleware
 
@@ -235,7 +250,7 @@ function registerHandlers(io, socket) {
   socket.on('typing', async (flockId) => {
     if (!allowEvent(socket, 'typing', 60, 10_000)) return;
     if (!(await verifyMembership(flockId, user.id))) return;
-    socket.to(`flock:${flockId}`).emit('user_typing', {
+    await emitToFlockExcludingBlocked(io, flockId, user.id, 'user_typing', {
       userId: user.id,
       name: user.name,
       flockId,
@@ -245,7 +260,7 @@ function registerHandlers(io, socket) {
   socket.on('stop_typing', async (flockId) => {
     if (!allowEvent(socket, 'typing', 60, 10_000)) return;
     if (!(await verifyMembership(flockId, user.id))) return;
-    socket.to(`flock:${flockId}`).emit('user_stopped_typing', {
+    await emitToFlockExcludingBlocked(io, flockId, user.id, 'user_stopped_typing', {
       userId: user.id,
       flockId,
     });
@@ -293,12 +308,14 @@ function registerHandlers(io, socket) {
         [flockId]
       );
 
-      io.to(`flock:${flockId}`).emit('new_vote', {
+      const votePayload = {
         flockId,
         voter: { userId: user.id, name: user.name },
         venue_name,
         votes: votes.rows,
-      });
+      };
+      socket.emit('new_vote', votePayload);
+      await emitToFlockExcludingBlocked(io, flockId, user.id, 'new_vote', votePayload);
     } catch (err) {
       console.error('vote_venue error:', err);
       socket.emit('error', { message: 'Failed to vote' });
@@ -341,10 +358,19 @@ function registerHandlers(io, socket) {
 
   // --- Friend request events ---
 
+  // These events only RELAY state that the REST endpoints already persisted —
+  // the DB row is verified first, so a bare socket emit can't fabricate a
+  // friend request or response that never happened (round 4).
   socket.on('friend_request_sent', async (data) => {
+    if (!allowEvent(socket, 'friend_event', 20, 10_000)) return;
     const { toUserId } = data;
     if (!toUserId) return;
     if (await isBlockedBetween(user.id, toUserId)) return;
+    const row = await pool.query(
+      `SELECT 1 FROM friendships WHERE requester_id = $1 AND addressee_id = $2 AND status = 'pending'`,
+      [user.id, toUserId]
+    );
+    if (row.rows.length === 0) return;
     io.to(`user:${toUserId}`).emit('friend_request_received', {
       fromUserId: user.id,
       fromUserName: user.name,
@@ -352,9 +378,16 @@ function registerHandlers(io, socket) {
   });
 
   socket.on('friend_request_response', async (data) => {
+    if (!allowEvent(socket, 'friend_event', 20, 10_000)) return;
     const { toUserId, action } = data; // action: 'accepted' | 'declined'
     if (!toUserId || !['accepted', 'declined'].includes(action)) return;
     if (await isBlockedBetween(user.id, toUserId)) return;
+    // The claimed outcome must match the persisted friendship state.
+    const row = await pool.query(
+      `SELECT 1 FROM friendships WHERE requester_id = $1 AND addressee_id = $2 AND status = $3`,
+      [toUserId, user.id, action]
+    );
+    if (row.rows.length === 0) return;
     io.to(`user:${toUserId}`).emit('friend_request_responded', {
       fromUserId: user.id,
       fromUserName: user.name,
@@ -403,12 +436,14 @@ function registerHandlers(io, socket) {
       const { flockId, action } = data;
       if (!flockId || !['accepted', 'declined'].includes(action)) return;
       // Round 3: any socket could broadcast fake RSVP activity into a guessed
-      // flock id. The responder must actually hold a membership row.
+      // flock id. Round 4: holding a row isn't enough — the persisted status
+      // must MATCH the claimed action, so the event only relays what the REST
+      // endpoint already recorded.
       const mem = await pool.query(
         'SELECT status FROM flock_members WHERE flock_id = $1 AND user_id = $2',
         [flockId, user.id]
       );
-      if (mem.rows.length === 0) return;
+      if (mem.rows.length === 0 || mem.rows[0].status !== action) return;
 
       const flockResult = await pool.query('SELECT id, name FROM flocks WHERE id = $1', [flockId]);
       if (flockResult.rows.length === 0) return;
@@ -483,11 +518,12 @@ function registerHandlers(io, socket) {
           `SELECT dm.id, dm.message_text, u.name AS sender_name
            FROM direct_messages dm JOIN users u ON u.id = dm.sender_id
            WHERE dm.id = $1
+             AND COALESCE(dm.is_hidden, false) = false
              AND ((dm.sender_id = $2 AND dm.receiver_id = $3) OR (dm.sender_id = $3 AND dm.receiver_id = $2))`,
           [reply_to_id, user.id, receiverId]
         );
         replyRow = replyResult.rows[0] || null;
-        if (!replyRow) return; // foreign or nonexistent reply target — drop the message
+        if (!replyRow) return; // foreign, hidden, or nonexistent reply target — drop the message
       }
 
       // Persist to database
@@ -558,6 +594,8 @@ function registerHandlers(io, socket) {
       if (dm.rows.length === 0) return;
       if (dm.rows[0].sender_id !== user.id && dm.rows[0].receiver_id !== user.id) return;
       const counterpart = dm.rows[0].sender_id === user.id ? dm.rows[0].receiver_id : dm.rows[0].sender_id;
+      // Blocks end all interaction, removals included (same as dm_react).
+      if (await isBlockedBetween(user.id, counterpart)) return;
 
       await pool.query(
         'DELETE FROM dm_emoji_reactions WHERE dm_id = $1 AND user_id = $2 AND emoji = $3',
@@ -652,6 +690,7 @@ function registerHandlers(io, socket) {
   // location events into their blocker's client. Cached check keeps the
   // per-keystroke cost off the database.
   socket.on('dm_share_location', async (data) => {
+    if (!allowEvent(socket, 'dm_location', 30, 10_000)) return;
     const { receiverId, lat, lng } = data;
     if (!receiverId || typeof lat !== 'number' || typeof lng !== 'number') return;
     if (await isBlockedBetweenCached(user.id, receiverId)) return;
@@ -661,6 +700,7 @@ function registerHandlers(io, socket) {
   });
 
   socket.on('dm_stop_sharing_location', async (data) => {
+    if (!allowEvent(socket, 'dm_location', 30, 10_000)) return;
     const { receiverId } = data;
     if (!receiverId) return;
     if (await isBlockedBetweenCached(user.id, receiverId)) return;
@@ -669,6 +709,7 @@ function registerHandlers(io, socket) {
 
   // DM typing indicators
   socket.on('dm_typing', async (data) => {
+    if (!allowEvent(socket, 'dm_typing', 60, 10_000)) return;
     const { receiverId } = data;
     if (!receiverId) return;
     if (await isBlockedBetweenCached(user.id, receiverId)) return;
@@ -679,6 +720,7 @@ function registerHandlers(io, socket) {
   });
 
   socket.on('dm_stop_typing', async (data) => {
+    if (!allowEvent(socket, 'dm_typing', 60, 10_000)) return;
     const { receiverId } = data;
     if (!receiverId) return;
     if (await isBlockedBetweenCached(user.id, receiverId)) return;
@@ -772,4 +814,4 @@ function registerHandlers(io, socket) {
   });
 }
 
-module.exports = { registerHandlers };
+module.exports = { registerHandlers, emitToFlockExcludingBlocked };
