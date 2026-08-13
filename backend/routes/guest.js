@@ -4,6 +4,9 @@ const { body, param, validationResult } = require('express-validator');
 const pool = require('../config/database');
 const { stripHtml } = require('../utils/sanitize');
 const { rejectIfProfane } = require('../utils/moderation');
+const { guestEntryId } = require('../utils/guestRsvp');
+const { broadcastGuestRsvp } = require('../sockets/handlers');
+const { pushIfOffline } = require('../services/pushHelper');
 
 const router = express.Router();
 
@@ -61,6 +64,63 @@ async function guestTallies(flockId) {
     [flockId]
   );
   return r.rows;
+}
+
+// Tell the members a guest answered the link.
+//
+// Round 14: the old code emitted `guest_rsvp` into the `flock:{id}` room and
+// only on first insert. Two holes: (1) nobody is in that room unless they have
+// the flock screen open, so the host normally never saw it; (2) a guest
+// CHANGING their answer (in -> out) returned early and broadcast nothing, so
+// the host's count silently drifted from the truth. Fan-out is in
+// sockets/handlers so the "reach the host wherever they are" rule has exactly
+// one implementation.
+//
+// Never throws: the RSVP is already committed, and a broadcast failure must not
+// turn a saved RSVP into a 500 the guest will retry.
+async function announceGuestRsvp(req, link, { guestId, name, status, isNew }) {
+  try {
+    const io = req.app.get('io');
+    if (!io) return;
+
+    const counts = await pool.query(
+      `SELECT
+         (SELECT COUNT(*) FROM flock_members WHERE flock_id = $1 AND status = 'accepted')::int AS members,
+         (SELECT COUNT(*) FROM guest_rsvps WHERE flock_id = $1 AND status = 'in'
+            AND COALESCE(is_hidden, false) = false)::int AS guests`,
+      [link.flock_id]
+    );
+    const guestsGoing = counts.rows[0].guests;
+    const going = counts.rows[0].members + guestsGoing;
+
+    await broadcastGuestRsvp(io, link.flock_id, {
+      flockId: link.flock_id,
+      // Same identity shape the REST roster returns, so a client can reconcile
+      // the live event against the list it already rendered.
+      guestId: guestEntryId(guestId),
+      name,
+      status,
+      isGuest: true,
+      going,
+      guestsGoing,
+    });
+
+    // An offline host still needs to know somebody answered the link — that is
+    // the whole point of sharing it. Only on a NEW yes, so a guest toggling
+    // their answer can't be used to hammer the host's notifications.
+    if (isNew && status === 'in') {
+      const host = await pool.query('SELECT creator_id, name FROM flocks WHERE id = $1', [link.flock_id]);
+      if (host.rows.length) {
+        await pushIfOffline(io, host.rows[0].creator_id,
+          `${name} is in!`,
+          host.rows[0].name,
+          { type: 'guest_rsvp', flockId: String(link.flock_id) }
+        );
+      }
+    }
+  } catch (err) {
+    console.error('Guest RSVP broadcast error:', err.message);
+  }
 }
 
 // GET /api/guest/:token — the public plan preview
@@ -138,19 +198,31 @@ router.post('/:token/rsvp',
       // Returning guest updates their RSVP; new guest gets a fresh identity.
       if (guestToken) {
         const existing = await pool.query(
-          'SELECT COALESCE(is_hidden, false) AS is_hidden FROM guest_rsvps WHERE guest_token = $1 AND flock_id = $2',
+          `SELECT name, status, COALESCE(is_hidden, false) AS is_hidden
+           FROM guest_rsvps WHERE guest_token = $1 AND flock_id = $2`,
           [guestToken, link.flock_id]
         );
         if (existing.rows.length && existing.rows[0].is_hidden) {
           return res.status(403).json({ error: 'This RSVP was removed and cannot be edited' });
         }
+        // A guest editing their answer is now broadcast (it wasn't before, which
+        // is how a host's count silently drifted). That makes an UNAUTHENTICATED
+        // route a fan-out amplifier, so a re-POST of the SAME answer — the
+        // cheapest thing to script against a link — announces nothing.
+        const prior = existing.rows[0] || null;
+        const changed = !prior || prior.name !== name || prior.status !== status;
         const upd = await pool.query(
           `UPDATE guest_rsvps SET name = $1, status = $2, updated_at = NOW()
            WHERE guest_token = $3 AND flock_id = $4 AND COALESCE(is_hidden, false) = false
-           RETURNING guest_token`,
+           RETURNING id, guest_token`,
           [name, status, guestToken, link.flock_id]
         );
-        if (upd.rows.length) return res.json({ guestToken: upd.rows[0].guest_token, status });
+        if (upd.rows.length) {
+          if (changed) {
+            await announceGuestRsvp(req, link, { guestId: upd.rows[0].id, name, status, isNew: false });
+          }
+          return res.json({ guestToken: upd.rows[0].guest_token, status });
+        }
       }
 
       // Cap guests per flock so a leaked link can't flood a plan. Hidden rows
@@ -175,7 +247,7 @@ router.post('/:token/rsvp',
 
         ins = await client.query(
           `INSERT INTO guest_rsvps (flock_id, name, status) VALUES ($1, $2, $3)
-           RETURNING guest_token, COALESCE(is_hidden, false) AS is_hidden`,
+           RETURNING id, guest_token, COALESCE(is_hidden, false) AS is_hidden`,
           [link.flock_id, name, status]
         );
         await client.query('COMMIT');
@@ -188,11 +260,8 @@ router.post('/:token/rsvp',
 
       // Let members see the RSVP land in real time. Hidden rows are never
       // broadcast (a default-false column means this is normally true).
-      const io = req.app.get('io');
-      if (io && !ins.rows[0].is_hidden) {
-        io.to(`flock:${link.flock_id}`).emit('guest_rsvp', {
-          flockId: link.flock_id, name, status,
-        });
+      if (!ins.rows[0].is_hidden) {
+        await announceGuestRsvp(req, link, { guestId: ins.rows[0].id, name, status, isNew: true });
       }
 
       res.status(201).json({ guestToken: ins.rows[0].guest_token, status });
