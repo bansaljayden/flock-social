@@ -1,9 +1,27 @@
 const express = require('express');
 const jwt = require('jsonwebtoken');
+const crypto = require('crypto');
 const pool = require('../config/database');
 const { authenticate } = require('../middleware/auth');
 
 const router = express.Router();
+
+// Round 8: the bare GET accepted ANY place id and stored it as source 'nfc',
+// which feedback verification trusts as physical presence — so visiting the
+// URL in a browser minted "verified" calibration/training feedback for any
+// venue. Real tags are ones WE programmed: their URL carries an HMAC of the
+// place id under NFC_TAG_SECRET. A tap without a valid signature still counts
+// as presence-unproven ('nfc_unverified'), which feedback does not trust.
+function nfcSigValid(placeId, sig) {
+  const secret = process.env.NFC_TAG_SECRET;
+  if (!secret || !sig || typeof sig !== 'string') return false;
+  const expected = crypto.createHmac('sha256', secret).update(String(placeId)).digest('hex').slice(0, 32);
+  try {
+    return crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(expected));
+  } catch {
+    return false;
+  }
+}
 
 // Best-effort token decode without bouncing the request — used by the NFC GET
 // route which must succeed for both authenticated and anonymous taps.
@@ -84,11 +102,12 @@ router.get('/:placeId', async (req, res) => {
       anonTapCache.set(ipKey, Date.now());
     }
 
+    const source = nfcSigValid(placeId, req.query.sig) ? 'nfc' : 'nfc_unverified';
     const insert = await pool.query(
       `INSERT INTO venue_checkins (venue_place_id, user_id, checkin_source)
-       VALUES ($1, $2, 'nfc')
+       VALUES ($1, $2, $3)
        RETURNING created_at`,
-      [placeId, userId]
+      [placeId, userId, source]
     );
     const checked_in_at = insert.rows[0].created_at;
 

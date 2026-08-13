@@ -7,6 +7,7 @@ const { OAuth2Client } = require('google-auth-library');
 const pool = require('../config/database');
 const { authenticate } = require('../middleware/auth');
 const { stripHtml, sanitizeArray } = require('../utils/sanitize');
+const { rejectIfProfane } = require('../utils/moderation');
 
 const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 
@@ -88,6 +89,10 @@ router.post('/signup', signupValidation, async (req, res) => {
 
     const { email, password, name, phone, interests, date_of_birth } = req.body;
     const safeInterests = sanitizeArray(interests || []);
+
+    // Display names are UGC shown in invites, messages, and search — the same
+    // screen profile edits already run (round 8: signup skipped it).
+    if (rejectIfProfane(res, name)) return;
 
     // Server-side age gate (C4): DOB is required, and under-13 is rejected
     // regardless of the client gate.
@@ -212,7 +217,7 @@ router.post('/google', [
       return res.status(400).json({ error: 'Google credential is required' });
     }
 
-    let googleId, email, name, picture;
+    let googleId, email, name, picture, emailVerified;
     if (req.body.credential) {
       // FAIL CLOSED (round 4): an undefined audience makes verifyIdToken skip
       // the check, so an ID token minted for any Google app would pass. The
@@ -226,7 +231,7 @@ router.post('/google', [
         idToken: req.body.credential,
         audience: process.env.GOOGLE_CLIENT_ID,
       });
-      ({ sub: googleId, email, name, picture } = ticket.getPayload());
+      ({ sub: googleId, email, name, picture, email_verified: emailVerified } = ticket.getPayload());
     } else {
       const at = req.body.access_token;
       const infoRes = await fetch(`https://oauth2.googleapis.com/tokeninfo?access_token=${encodeURIComponent(at)}`);
@@ -248,6 +253,7 @@ router.post('/google', [
         return res.status(401).json({ error: 'Google account email is not verified' });
       }
       ({ sub: googleId, email, name, picture } = profile);
+      emailVerified = profile.email_verified !== false;
     }
 
     if (!email) {
@@ -265,18 +271,31 @@ router.post('/google', [
       // Existing Google user — log in
       user = result.rows[0];
     } else {
-      // SECURITY (audit 2026-08-12): NEVER auto-link by email. Signup does not
-      // verify email ownership, so an attacker could pre-register a victim's
-      // address with a password, wait for the victim's first Google sign-in
-      // to link onto that row, and keep password access to the victim's
-      // account. Same-email accounts must log in with their original method.
-      result = await pool.query('SELECT id FROM users WHERE LOWER(email) = LOWER($1)', [email]);
+      // SECURITY (audit 2026-08-12, revised round 8): signup never verifies
+      // email ownership, so blanket-blocking same-email sign-ins let an
+      // attacker permanently SQUAT a victim's address (pre-register it with a
+      // password and lock the real owner out of OAuth forever). Google HAS
+      // verified this email, so the Google user is the address's real owner:
+      // claim a password-only row for them and clear its password, which cuts
+      // off the squatter. Rows already linked to another provider stay
+      // untouchable (no cross-provider takeover).
+      result = await pool.query('SELECT * FROM users WHERE LOWER(email) = LOWER($1)', [email]);
       if (result.rows.length > 0) {
-        return res.status(409).json({
-          error: 'An account with this email already exists. Log in with your email and password instead.',
-        });
-      }
-      {
+        const existing = result.rows[0];
+        if (existing.oauth_provider || emailVerified === false) {
+          return res.status(409).json({
+            error: 'An account with this email already exists. Log in the way you originally signed up.',
+          });
+        }
+        const claimed = await pool.query(
+          `UPDATE users SET oauth_provider = 'google', oauth_id = $1, password = NULL,
+             profile_image_url = COALESCE(profile_image_url, $2), updated_at = NOW()
+           WHERE id = $3 RETURNING *`,
+          [googleId, picture || null, existing.id]
+        );
+        user = claimed.rows[0];
+        console.warn(`[auth] Google verified-email claim of password account ${existing.id} (${email})`);
+      } else {
         // New user — create account (server-side age gate, C4).
         // DOB is REQUIRED for account creation on every path; a Google
         // sign-in without one means "sign up first" (needsDob tells the
@@ -374,14 +393,28 @@ router.post('/apple', [
     if (result.rows.length > 0) {
       user = result.rows[0];
     } else if (email) {
-      // SECURITY (audit 2026-08-12): same no-auto-link rule as Google — an
-      // unverified same-email password account must not silently absorb this
-      // Apple identity (pre-hijack vector).
-      result = await pool.query('SELECT id FROM users WHERE LOWER(email) = LOWER($1)', [email]);
+      // SECURITY (audit 2026-08-12, revised round 8): same verified-email
+      // claim rule as Google — Apple has verified this address, so a
+      // password-only row for it belongs to this person; claiming it (and
+      // clearing the password) unseats an address squatter instead of letting
+      // the squat permanently block the real owner. Rows linked to another
+      // provider are never absorbed.
+      const appleEmailVerified = payload.email_verified === true || payload.email_verified === 'true';
+      result = await pool.query('SELECT * FROM users WHERE LOWER(email) = LOWER($1)', [email]);
       if (result.rows.length > 0) {
-        return res.status(409).json({
-          error: 'An account with this email already exists. Log in with your email and password instead.',
-        });
+        const existing = result.rows[0];
+        if (existing.oauth_provider || !appleEmailVerified) {
+          return res.status(409).json({
+            error: 'An account with this email already exists. Log in the way you originally signed up.',
+          });
+        }
+        const claimed = await pool.query(
+          `UPDATE users SET oauth_provider = 'apple', oauth_id = $1, password = NULL, updated_at = NOW()
+           WHERE id = $2 RETURNING *`,
+          [appleId, existing.id]
+        );
+        user = claimed.rows[0];
+        console.warn(`[auth] Apple verified-email claim of password account ${existing.id} (${email})`);
       }
     }
 
@@ -405,11 +438,17 @@ router.post('/apple', [
       if (appleDobAge < MIN_AGE) {
         return res.status(403).json({ error: UNDERAGE_MSG });
       }
+      // users.email is NOT NULL UNIQUE — a NULL here 500'd account creation
+      // (round 8). When Apple omits the email, store a deterministic
+      // non-routable placeholder (.invalid TLD can never receive mail);
+      // linkage stays on oauth_id, and outbound mail paths skip .invalid.
+      const storedEmail = email
+        || `apple_${String(appleId).replace(/[^a-zA-Z0-9]/g, '')}@apple-signin.invalid`;
       result = await pool.query(
         `INSERT INTO users (email, name, oauth_provider, oauth_id, terms_accepted_at, date_of_birth)
          VALUES ($1, $2, 'apple', $3, NOW(), $4)
          RETURNING *`,
-        [email, fallbackName, appleId, req.body.date_of_birth || null]
+        [storedEmail, fallbackName, appleId, req.body.date_of_birth || null]
       );
       user = result.rows[0];
     }

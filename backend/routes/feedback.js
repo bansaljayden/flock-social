@@ -80,9 +80,11 @@ router.post('/',
                WHERE user_id = $1
                  AND venue_place_id = $2
                  AND created_at > NOW() - INTERVAL '3 hours'
-                 -- NFC taps prove physical presence; a self-reported manual
-                 -- check-in does not, so it cannot mint verification (round 6)
-                 AND COALESCE(checkin_source, 'nfc') <> 'manual'
+                 -- Only SIGNED NFC taps prove physical presence (round 8:
+                 -- allowlist, not blocklist — unsigned URL visits are recorded
+                 -- as 'nfc_unverified' and must not mint verification, and the
+                 -- old <> 'manual' shape would have trusted them)
+                 AND checkin_source = 'nfc'
              )
              OR EXISTS (
                SELECT 1

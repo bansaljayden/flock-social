@@ -504,6 +504,11 @@ const ScrollFade = ({ children, delay = 0, className = '' }) => {
   );
 };
 
+// The backend stores venue photo URLs as RELATIVE proxy paths
+// (/api/venues/photo?ref=...) so senders can't smuggle tracking hosts.
+// Resolve to the API origin whenever a stored value is rendered.
+const resolveVenuePhoto = (u) => (u && u.startsWith('/api/') ? `${BASE_URL}${u}` : u || null);
+
 // Memoized VenueCard — unified design for both DMs and Flocks
 const VenueCard = React.memo(({ venue, onViewDetails, onVote, colors: c, Icons: I, getCategoryColor: gcc }) => {
   const rating = venue.stars || venue.rating || null;
@@ -523,7 +528,7 @@ const VenueCard = React.memo(({ venue, onViewDetails, onVote, colors: c, Icons: 
       animation: 'cardSlideIn 0.4s ease-out'
     }}>
       {venue.photo_url && (
-        <img src={venue.photo_url} alt={venue.name} style={{ width: '100%', height: '160px', objectFit: 'cover', display: 'block' }} onError={(e) => { e.target.style.display = 'none'; }} />
+        <img src={resolveVenuePhoto(venue.photo_url)} alt={venue.name} style={{ width: '100%', height: '160px', objectFit: 'cover', display: 'block' }} onError={(e) => { e.target.style.display = 'none'; }} />
       )}
 
       <div style={{ padding: '14px' }}>
@@ -2766,7 +2771,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           venueId: f.venue_id || null,
           venueLat: f.venue_latitude || null,
           venueLng: f.venue_longitude || null,
-          venuePhoto: f.venue_photo_url || null,
+          venuePhoto: resolveVenuePhoto(f.venue_photo_url),
           venueRating: f.venue_rating || null,
           venuePriceLevel: f.venue_price_level || null,
           cashPool: null,
@@ -4049,7 +4054,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           venueLat: data.venue_latitude || f.venueLat,
           venueLng: data.venue_longitude || f.venueLng,
           venueRating: data.venue_rating || f.venueRating,
-          venuePhoto: data.venue_photo_url || f.venuePhoto,
+          venuePhoto: resolveVenuePhoto(data.venue_photo_url) || f.venuePhoto,
           time: data.event_time ? new Date(data.event_time).toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' }) : f.time,
           status: data.status === 'planning' ? 'voting' : (data.status || f.status),
         };
@@ -5181,7 +5186,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
       getDmVenueVotes(selectedDmId).then(data => setDmVenueVotes(data.votes || [])).catch(() => {});
       // Load pinned venue for this conversation
       getDmPinnedVenue(selectedDmId).then(data => {
-        if (data.venue) setDmPinnedVenue({ name: data.venue.venue_name, addr: data.venue.venue_address, place_id: data.venue.venue_id, rating: data.venue.venue_rating, photo_url: data.venue.venue_photo_url });
+        if (data.venue) setDmPinnedVenue({ name: data.venue.venue_name, addr: data.venue.venue_address, place_id: data.venue.venue_id, rating: data.venue.venue_rating, photo_url: resolveVenuePhoto(data.venue.venue_photo_url) });
         else setDmPinnedVenue(null);
       }).catch(() => {});
     }
@@ -5345,7 +5350,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   // DM pinned venue real-time sync
   useEffect(() => {
     const unsub = onDmVenuePinned((data) => {
-      setDmPinnedVenue({ name: data.venue_name, addr: data.venue_address, place_id: data.venue_id, rating: data.venue_rating, photo_url: data.venue_photo_url });
+      setDmPinnedVenue({ name: data.venue_name, addr: data.venue_address, place_id: data.venue_id, rating: data.venue_rating, photo_url: resolveVenuePhoto(data.venue_photo_url) });
     });
     return unsub;
   }, []);
