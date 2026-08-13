@@ -617,37 +617,53 @@ router.post('/:id/join', param('id').isInt(), async (req, res) => {
       return res.status(403).json({ error: 'You must be invited to join this flock' });
     }
 
-    // Flip membership to 'accepted' (idempotent if already accepted)
+    // Flip membership to 'accepted'. Round 9: the UPDATE matched unconditionally,
+    // so an already-accepted member could re-POST this route as often as they
+    // liked and every call re-broadcast the join and re-pushed a notification to
+    // the creator. `AND status <> 'accepted'` makes rowCount the record of a REAL
+    // transition; a repeat is still a 200, it just stays silent.
     const result = await pool.query(
       `UPDATE flock_members SET status = 'accepted', joined_at = NOW()
-       WHERE flock_id = $1 AND user_id = $2
+       WHERE flock_id = $1 AND user_id = $2 AND status <> 'accepted'
        RETURNING *`,
       [flockId, req.user.id]
     );
+    const transitioned = result.rowCount > 0;
 
-    // Notify flock members that someone joined
-    const io = req.app.get('io');
-    if (io) {
-      io.to(`flock:${flockId}`).emit('flock_invite_responded', {
-        flockId: parseInt(flockId),
-        userId: req.user.id,
-        userName: req.user.name,
-        userImage: req.user.profile_image_url || null,
-        action: 'accepted',
-      });
-    }
-
-    // Push notification to flock creator
-    const flockData = await pool.query('SELECT creator_id, name FROM flocks WHERE id = $1', [flockId]);
-    if (flockData.rows.length > 0 && flockData.rows[0].creator_id !== req.user.id) {
-      await pushIfOffline(io, flockData.rows[0].creator_id,
-        `${req.user.name} is going!`,
-        flockData.rows[0].name,
-        { type: 'flock_rsvp', flockId: String(flockId) }
+    let member = result.rows[0];
+    if (!transitioned) {
+      const current = await pool.query(
+        'SELECT * FROM flock_members WHERE flock_id = $1 AND user_id = $2',
+        [flockId, req.user.id]
       );
+      member = current.rows[0];
     }
 
-    res.json({ member: result.rows[0] });
+    if (transitioned) {
+      // Notify flock members that someone joined
+      const io = req.app.get('io');
+      if (io) {
+        io.to(`flock:${flockId}`).emit('flock_invite_responded', {
+          flockId: parseInt(flockId),
+          userId: req.user.id,
+          userName: req.user.name,
+          userImage: req.user.profile_image_url || null,
+          action: 'accepted',
+        });
+      }
+
+      // Push notification to flock creator
+      const flockData = await pool.query('SELECT creator_id, name FROM flocks WHERE id = $1', [flockId]);
+      if (flockData.rows.length > 0 && flockData.rows[0].creator_id !== req.user.id) {
+        await pushIfOffline(io, flockData.rows[0].creator_id,
+          `${req.user.name} is going!`,
+          flockData.rows[0].name,
+          { type: 'flock_rsvp', flockId: String(flockId) }
+        );
+      }
+    }
+
+    res.json({ member });
   } catch (err) {
     console.error('Join flock error:', err);
     res.status(500).json({ error: 'Failed to join flock' });
