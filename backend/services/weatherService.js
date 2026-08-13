@@ -56,6 +56,9 @@ async function getWeather(lat, lon) {
       humidity: data.main.humidity,
       windSpeed: data.wind.speed,
       conditions: (data.weather && data.weather[0] && data.weather[0].description) || '',
+      // OWM condition code (e.g. 800 = clear) — the ML feature vector groups
+      // on this; it was never passed through before (audit 2026-08-12)
+      conditionId: (data.weather && data.weather[0] && data.weather[0].id) || null,
       isRaining: ['rain', 'drizzle', 'thunderstorm'].some(w => weatherMain.toLowerCase().includes(w)),
     };
 

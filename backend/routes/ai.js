@@ -419,8 +419,10 @@ router.post('/chat',
       }
 
       // Get user name
+      // Data minimization for the third-party model (audit 2026-08-12): first
+      // name only — Gemini doesn't need a full legal name to be friendly.
       const userResult = await pool.query('SELECT name FROM users WHERE id = $1', [userId]);
-      const userName = userResult.rows[0]?.name || 'friend';
+      const userName = (userResult.rows[0]?.name || 'friend').split(' ')[0];
 
       // Build Gemini chat history (must start with 'user' role, no consecutive same-role)
       const history = [];
@@ -442,9 +444,11 @@ router.post('/chat',
       const lastMessage = messages[messages.length - 1];
       let userText = lastMessage.text;
 
-      // Prepend location context if available
-      if (location) {
-        userText = `[My location: ${location.lat},${location.lng}]\n${userText}`;
+      // Prepend location context if available — rounded to ~1km (2 decimals).
+      // Neighborhood-level is all venue recommendations need; exact
+      // coordinates of a minor never leave our servers for a third party.
+      if (location && Number.isFinite(+location.lat) && Number.isFinite(+location.lng)) {
+        userText = `[My approximate location: ${(+location.lat).toFixed(2)},${(+location.lng).toFixed(2)}]\n${userText}`;
       }
 
       // Create model with system instruction (includes user name + current app context)

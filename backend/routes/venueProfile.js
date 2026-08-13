@@ -97,6 +97,12 @@ router.put('/', [
         operating_hours = COALESCE($7, operating_hours),
         notification_prefs = COALESCE($8, notification_prefs),
         google_place_id = COALESCE($9, google_place_id),
+        -- Verification binds to the PLACE, not the profile row: changing the
+        -- place id resets verified so a verified owner can't pivot their badge
+        -- onto a business they don't own (audit 2026-08-12). CASE evaluates
+        -- against the OLD row, so this compares new id vs current id.
+        verified = CASE WHEN $9 IS NOT NULL AND $9 IS DISTINCT FROM google_place_id
+                        THEN false ELSE verified END,
         photo_url = COALESCE($10, photo_url),
         updated_at = NOW()
       WHERE user_id = $11

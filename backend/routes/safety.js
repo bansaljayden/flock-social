@@ -133,7 +133,7 @@ router.post('/alert', authenticate, async (req, res) => {
 
     // Check cooldown — 1 alert per 5 minutes
     const recent = await pool.query(
-      `SELECT created_at FROM emergency_alerts WHERE user_id = $1 AND created_at > NOW() - INTERVAL '5 minutes' ORDER BY created_at DESC LIMIT 1`,
+      `SELECT created_at FROM emergency_alerts WHERE user_id = $1 AND contacts_alerted > 0 AND created_at > NOW() - INTERVAL '5 minutes' ORDER BY created_at DESC LIMIT 1`,
       [req.user.id]
     );
     if (recent.rows.length > 0) {
@@ -176,14 +176,10 @@ router.post('/alert', authenticate, async (req, res) => {
         <p style="color:#9ca3af;font-size:11px">This is an automated safety alert from the Flock app.</p>
       </div>`;
 
-    // Log alert to database
-    await pool.query(
-      `INSERT INTO emergency_alerts (user_id, latitude, longitude, contacts_alerted)
-       VALUES ($1, $2, $3, $4)`,
-      [req.user.id, latitude || null, longitude || null, contacts.rows.length]
-    );
-
-    // Send emails to contacts that have an email address
+    // SEND FIRST, record truth after (audit 2026-08-12: the old order logged
+    // every contact as alerted before any email went out, returned success
+    // unconditionally, and the phantom row armed the cooldown — an SOS could
+    // fail silently AND block the retry. An emergency path must never lie.
     const alerts = [];
     let emailsSent = 0;
     let emailsSkipped = 0;
@@ -203,13 +199,29 @@ router.post('/alert', authenticate, async (req, res) => {
       }
     }
 
-    const parts = [];
-    if (emailsSent > 0) parts.push(`${emailsSent} email${emailsSent > 1 ? 's' : ''} sent`);
+    // Record what actually happened. contacts_alerted = confirmed sends only;
+    // a zero-send row does not arm the cooldown (see cooldown query above).
+    await pool.query(
+      `INSERT INTO emergency_alerts (user_id, latitude, longitude, contacts_alerted)
+       VALUES ($1, $2, $3, $4)`,
+      [req.user.id, latitude || null, longitude || null, emailsSent]
+    );
+
+    if (emailsSent === 0) {
+      // Nobody was reached — say so loudly and leave the retry path open.
+      return res.status(502).json({
+        success: false,
+        error: 'Your alert could not be delivered to any contact. Call 911 if you are in danger, and try again.',
+        alerts,
+      });
+    }
+
+    const parts = [`${emailsSent} email${emailsSent > 1 ? 's' : ''} sent`];
     if (emailsSkipped > 0) parts.push(`${emailsSkipped} contact${emailsSkipped > 1 ? 's' : ''} skipped (no email)`);
 
     res.json({
       success: true,
-      message: parts.join(', ') || 'Alert processed',
+      message: parts.join(', '),
       alerts,
     });
   } catch (err) {
