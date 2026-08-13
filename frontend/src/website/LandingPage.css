@@ -14,7 +14,10 @@
   --paper-2: #e8e1d0;
   --ink: #16283d;
   --ink-2: #33475e;
-  --ink-3: #6b7a8c;
+  /* Was #6b7a8c: 3.75:1 on --paper, 3.37:1 on --paper-2. Both under 4.5:1 and
+     this token carries every caption/meta line on the site. #586473 is the same
+     hue and saturation dropped in lightness: 5.14 / 4.62 / 6.03 on white. */
+  --ink-3: #586473;
   --cream: #f4efe3;
   --cream-2: #c8c3b2;
   --cream-3: #98937f;
@@ -306,11 +309,16 @@
 .lp-hero .lp-lead { margin-bottom: 30px; }
 .lp-hero-cta { display: flex; flex-wrap: wrap; gap: 12px; }
 
+/* Default to the paper-safe ink: this class is reused on the Birdie section,
+   which is cream, where --cream-3 measured 2.63:1. The navy hero opts back in
+   to the cream variant below (5.67:1 on navy). */
 .lp-hero-note {
   margin-top: 22px;
   font-size: 13.5px;
-  color: var(--cream-3);
+  color: var(--ink-3);
 }
+.lp-on-navy .lp-hero-note,
+.lp-sec-navy .lp-hero-note { color: var(--cream-3); }
 
 /* ============ chips (crowd labels on vignettes) ============ */
 

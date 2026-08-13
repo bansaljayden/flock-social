@@ -83,7 +83,11 @@
   --bg-elevated: #ffffff;
   --text-primary: #1e293b;
   --text-secondary: #556274;
-  --text-tertiary: #78859a;
+  /* WCAG 1.4.3: this token carries most secondary/meta text and is also the
+     placeholder colour, so it has to clear 4.5:1 on every surface it lands on.
+     Was #78859a — 3.19:1 on paper, 3.74:1 on white, 2.86:1 on --bg-tertiary.
+     #586376 keeps the same hue/saturation and measures 5.18 / 6.07 / 4.64. */
+  --text-tertiary: #586376;
   --text-on-primary: #1e293b;
   --border-color: #e8e0d0;
   --border-light: #f3f4f6;
@@ -102,7 +106,7 @@
   --toggle-off: #d1d5db;
   --toggle-knob: #ffffff;
   --accent-amber-bg: #fef3c7;
-  --accent-amber-text: #b45309;
+  --accent-amber-text: #92400e;  /* was #b45309: 3.84:1 on --bg-tertiary. Now 5.42 */
   --accent-red-bg: #fee2e2;
   --accent-green-bg: #d1fae5;
   --accent-blue-bg: #dbeafe;
@@ -114,7 +118,7 @@
   --skeleton-bg: #e5e7eb;
   --locked-overlay: rgba(255,255,255,0.9);
   --star-empty: #d1d5db;
-  --accent-green-text: #047857;
+  --accent-green-text: #065f46;  /* was #047857: 4.19:1 on --bg-tertiary. Now 5.87 */
   --accent-blue-text: #1d4ed8;
   --accent-red-text: #b91c1c;
   --accent-purple-bg: #edf2f8;   /* de-purpled 2026-07: steel-navy tint */
@@ -141,7 +145,11 @@
   --bg-elevated: #1e293b;
   --text-primary: #f1ede0;
   --text-secondary: #c8c3b2;   /* warm cream-gray (2026-08: cream more prominent in dark) */
-  --text-tertiary: #98937f;    /* warm muted cream */
+  /* Was #98937f: 3.75:1 on --bg-hover/--bg-tertiary #1e3a5c, which is where most
+     of the app's tertiary text sits in dark mode. #a9a594 is the same warm cream
+     hue lightened until it clears 4.5:1 everywhere: 7.22 on #0f172a, 5.92 on
+     #1e293b, 4.68 on #1e3a5c. Still clearly dimmer than --text-secondary. */
+  --text-tertiary: #a9a594;    /* warm muted cream */
   --text-on-primary: #f1ede0;
   --border-color: #1e3a5c;
   --border-light: #162d4a;
@@ -174,7 +182,7 @@
   --star-empty: #2d5a87;
   --accent-green-text: #34d399;
   --accent-blue-text: #60a5fa;
-  --accent-red-text: #f87171;
+  --accent-red-text: #fca5a5;   /* was #f87171: 4.18:1 on --bg-hover #1e3a5c. Now 6.10 */
   --accent-purple-bg: rgba(109,154,195,0.15);   /* de-purpled 2026-07 */
   --accent-purple-text: #a9c7e4;
   --accent-pink-bg: rgba(190,24,93,0.15);
@@ -205,8 +213,9 @@ input, textarea, select, button {
 
 /* Map attribution: keep it legal but quiet — tiny, translucent, collapsed. */
 .maplibregl-ctrl-attrib {
-  font-size: 9px !important;
-  opacity: 0.55;
+  /* 9px failed the 12px body-size floor and the opacity made it worse. */
+  font-size: 12px !important;
+  opacity: 0.8;
   border-radius: 8px;
 }
 .maplibregl-ctrl-attrib.maplibregl-compact:not(.maplibregl-compact-show) {
@@ -253,6 +262,53 @@ body.native-shell {
 }
 button, a, [role="button"], input, select, textarea {
   touch-action: manipulation;
+}
+
+/* Visible to assistive tech, invisible on screen. Used for screen titles that
+   the visual design carries some other way (the Discover screen's identity is
+   the map itself, but a screen with no h1 gives a screen-reader user nothing
+   to orient on). Not `display:none` — that would hide it from AT too. */
+.sr-only {
+  position: absolute !important;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   44pt HIT AREA (.hit44) — Apple HIG / WCAG 2.5.5.
+
+   Most of App.js's controls are drawn small on purpose (36px header icons,
+   32px calendar arrows, 24px-tall switches) and growing the VISUAL box would
+   reflow layouts that are already device-tested. This class leaves the paint
+   alone and lays a transparent, centred 44x44 minimum hit box over the button
+   with a pseudo-element, so the finger target measures 44+ even when the
+   button does not. `max()` means it is a no-op on anything already >= 44.
+
+   Two rules when adding it by hand:
+   1. The host must not clip its own overflow. A button with
+      `overflow: hidden` (ripple containers) clips the pseudo-element and the
+      hit area is lost — give those the real 44px box instead.
+   2. Never put competing ::after content on a .hit44 button.
+   ═══════════════════════════════════════════════════════════════════ */
+.hit44 {
+  position: relative;
+}
+.hit44::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: max(100%, 44px);
+  height: max(100%, 44px);
+  transform: translate(-50%, -50%);
+  /* Sits under the button's own children so it never covers icon/label paint. */
+  z-index: 0;
 }
 
 /* Film-grain texture — fixed, non-interactive, barely-there. Gives surfaces a
@@ -378,8 +434,11 @@ code {
   color: var(--text-primary) !important;
 }
 
+/* Was rgba(220,38,38,0.88): white on it composited to 4.21-4.29:1 (Log Out,
+   destructive confirms). #b91c1c at full opacity measures 6.47:1 with white on
+   every surface, and stays unambiguously "destructive red". */
 .glass-danger {
-  background: rgba(220, 38, 38, 0.88) !important;
+  background: #b91c1c !important;
   border: 1px solid rgba(255, 255, 255, 0.18) !important;
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.15), 0 1px 2px rgba(30, 41, 59, 0.10) !important;
   color: white !important;
