@@ -6,6 +6,7 @@ const { stripHtml } = require('../utils/sanitize');
 const { rejectIfProfane } = require('../utils/moderation');
 const { safeVenuePhotoUrl } = require('../utils/venuePayload');
 const { isBlockedBetween } = require('../utils/blocks');
+const { GUEST_RSVP_SELECT, toGuestEntry, combineRsvpCounts } = require('../utils/guestRsvp');
 
 const { pushIfOffline } = require('../services/pushHelper');
 
@@ -29,6 +30,17 @@ router.get('/', async (req, res) => {
               u.name AS creator_name,
               fm.status AS member_status,
               (SELECT COUNT(*) FROM flock_members WHERE flock_id = f.id AND status = 'accepted') AS member_count,
+              -- Guests RSVP from the share link and have no membership row, so
+              -- they were invisible in every count the host saw. member_count
+              -- keeps its old meaning (accounts); going_count is the number to
+              -- put next to "going".
+              (SELECT COUNT(*) FROM guest_rsvps gr
+                WHERE gr.flock_id = f.id AND gr.status = 'in'
+                  AND COALESCE(gr.is_hidden, false) = false)::int AS guest_count,
+              ((SELECT COUNT(*) FROM flock_members WHERE flock_id = f.id AND status = 'accepted')
+               + (SELECT COUNT(*) FROM guest_rsvps gr
+                   WHERE gr.flock_id = f.id AND gr.status = 'in'
+                     AND COALESCE(gr.is_hidden, false) = false))::int AS going_count,
               (SELECT json_agg(row_to_json(m) ORDER BY m.is_creator DESC, m.id)
                  FROM (
                    SELECT mu.id, mu.name, mu.profile_image_url, (mu.id = f.creator_id) AS is_creator
@@ -58,6 +70,8 @@ router.get('/', async (req, res) => {
         event_time: f.event_time,
         creator_name: f.creator_name,
         member_count: f.member_count,
+        guest_count: f.guest_count,
+        going_count: f.going_count,
         member_status: f.member_status,
         invitePreview: true,
       };
@@ -257,7 +271,10 @@ router.get('/:id', param('id').isInt(), async (req, res) => {
     if (membership.rows[0].status !== 'accepted') {
       const inv = flockResult.rows[0];
       const cnt = await pool.query(
-        `SELECT COUNT(*)::int AS n FROM flock_members WHERE flock_id = $1 AND status = 'accepted'`,
+        `SELECT
+           (SELECT COUNT(*) FROM flock_members WHERE flock_id = $1 AND status = 'accepted')::int AS n,
+           (SELECT COUNT(*) FROM guest_rsvps WHERE flock_id = $1 AND status = 'in'
+              AND COALESCE(is_hidden, false) = false)::int AS guests`,
         [flockId]
       );
       return res.json({
@@ -268,9 +285,13 @@ router.get('/:id', param('id').isInt(), async (req, res) => {
           event_time: inv.event_time,
           creator_name: inv.creator_name,
           member_count: cnt.rows[0].n,
+          // Counts only — an invitee still gets no names, guests included.
+          guest_count: cnt.rows[0].guests,
+          going_count: cnt.rows[0].n + cnt.rows[0].guests,
           member_status: membership.rows[0].status,
         },
         members: [],
+        guests: [],
         invitePreview: true,
       });
     }
@@ -284,13 +305,22 @@ router.get('/:id', param('id').isInt(), async (req, res) => {
       [flockId]
     );
 
+    // Guest-link RSVPs. Nothing in this file read this table before, so a guest
+    // who answered the share link appeared NOWHERE for the host: not in the
+    // roster, not in the counts, not in momentum. They come back as their own
+    // array (tagged is_guest, string ids) rather than mixed into `members`,
+    // where a guest id would leak into member-only, integer-keyed paths.
+    const guestsResult = await pool.query(GUEST_RSVP_SELECT, [flockId]);
+    const guests = guestsResult.rows.map(toGuestEntry);
+
     // ── Momentum Meter calculation ──
     const flock = flockResult.rows[0];
     const members = membersResult.rows;
-    const totalMembers = members.length;
-    const accepted = members.filter(m => m.status === 'accepted').length;
-    const declined = members.filter(m => m.status === 'declined').length;
-    const responded = accepted + declined;
+    const counts = combineRsvpCounts(members, guests);
+    const totalMembers = counts.total;
+    const accepted = counts.accepted;   // members + guests who said yes
+    const declined = counts.declined;
+    const responded = counts.responded;
 
     let score = 0;
 
@@ -304,12 +334,23 @@ router.get('/:id', param('id').isInt(), async (req, res) => {
     const hasVenue = flock.venue_name && flock.venue_name !== 'TBD';
     if (hasVenue) score += 20;
 
-    // Venue votes cast (0-10 pts)
+    // Venue votes cast (0-10 pts). Guests vote too (routes/guest.js), and the
+    // denominator below now includes them, so counting only member voters would
+    // have made every guest RSVP push this score DOWN. Hidden guests are
+    // excluded here exactly as they are in routes/venues.js and routes/guest.js.
     const votesResult = await pool.query(
       'SELECT COUNT(DISTINCT user_id) AS voters FROM venue_votes WHERE flock_id = $1',
       [flockId]
     );
-    const uniqueVoters = parseInt(votesResult.rows[0].voters || 0);
+    const guestVotesResult = await pool.query(
+      `SELECT COUNT(DISTINCT gv.guest_rsvp_id) AS voters
+       FROM guest_votes gv
+       JOIN guest_rsvps gr ON gr.id = gv.guest_rsvp_id
+       WHERE gv.flock_id = $1 AND COALESCE(gr.is_hidden, false) = false`,
+      [flockId]
+    );
+    const uniqueVoters =
+      parseInt(votesResult.rows[0].voters || 0) + parseInt(guestVotesResult.rows[0].voters || 0);
     if (accepted > 0) {
       score += Math.min(10, Math.round((uniqueVoters / accepted) * 10));
     }
@@ -324,8 +365,11 @@ router.get('/:id', param('id').isInt(), async (req, res) => {
         [flockId]
       );
       const submissions = parseInt(budgetResult.rows[0].submissions || 0);
-      if (accepted > 0) {
-        score += Math.min(10, Math.round((submissions / accepted) * 10));
+      // Budget submissions are account-only — a guest has no way to submit one,
+      // so the denominator stays members. Using the guest-inclusive `accepted`
+      // here would make inviting guests look like budget regress.
+      if (counts.memberAccepted > 0) {
+        score += Math.min(10, Math.round((submissions / counts.memberAccepted) * 10));
       }
       if (flock.budget_locked) score += 10;
     } else {
@@ -348,11 +392,25 @@ router.get('/:id', param('id').isInt(), async (req, res) => {
     else if (score >= 15) stage = 'building';
     else stage = 'idea';
 
-    const momentum = { score, stage, accepted, totalMembers, responded, hasVenue, hasTime: !!flock.event_time, uniqueVoters };
+    const momentum = {
+      score, stage, accepted, totalMembers, responded, hasVenue,
+      hasTime: !!flock.event_time, uniqueVoters,
+      // Broken out so the UI can say "4 going (2 guests)" without re-deriving it.
+      memberAccepted: counts.memberAccepted,
+      guestsGoing: counts.guestsGoing,
+      guestCount: counts.guestCount,
+    };
+
+    // Counts on the flock object itself, for the header/list surfaces that read
+    // the flock row rather than the roster.
+    flock.member_count = counts.memberAccepted;
+    flock.guest_count = counts.guestsGoing;
+    flock.going_count = counts.accepted;
 
     res.json({
       flock,
       members,
+      guests,
       momentum,
     });
   } catch (err) {
@@ -919,7 +977,17 @@ router.get('/:id/members', param('id').isInt(), async (req, res) => {
       [flockId]
     );
 
-    res.json({ members: result.rows });
+    // Same roster, same omission: guests were missing here too. Separate array,
+    // so a caller that only wants accounts is unaffected.
+    const guestsResult = await pool.query(GUEST_RSVP_SELECT, [flockId]);
+    const guests = guestsResult.rows.map(toGuestEntry);
+
+    res.json({
+      members: result.rows,
+      guests,
+      going_count: result.rows.filter(m => m.status === 'accepted').length
+        + guests.filter(g => g.status === 'accepted').length,
+    });
   } catch (err) {
     console.error('Get members error:', err);
     res.status(500).json({ error: 'Failed to get members' });
