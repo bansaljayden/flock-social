@@ -1,0 +1,49 @@
+/* Flock icon system — Tier C (the 24x24 UI glyphs).
+   Geometry lives in Icons.js. This file carries only two things:
+   1. non-scaling-stroke, which must sit on the shapes (it is not inherited
+      from the <svg>), so stroke-width resolves in rendered pixels.
+   2. The complete Tier C motion vocabulary: fill-on-select, rotate-on-state,
+      and the single birdie nod. Nothing else. All of it is authored
+      no-motion-first, so a reduced-motion user gets the finished mark. */
+
+.flock-icon path,
+.flock-icon circle,
+.flock-icon rect,
+.flock-icon line,
+.flock-icon polyline,
+.flock-icon polygon,
+.flock-icon ellipse {
+  vector-effect: non-scaling-stroke;
+}
+
+.flock-icon {
+  transform-origin: 50% 50%;
+  display: block;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  /* 1. Fill on select. star/starFilled and pin/pinFilled are the same path,
+        so React keeps the same node and only fill/stroke change. */
+  .flock-icon path,
+  .flock-icon circle {
+    transition: fill 120ms ease-out, stroke 120ms ease-out;
+  }
+
+  /* 2. Rotate on state. chevronUp/Right/Down are one path at three angles. */
+  .flock-icon {
+    transition: transform 160ms cubic-bezier(0.22, 1, 0.36, 1);
+  }
+
+  /* 3. The one birdie nod, on the head glyph only. */
+  .flock-icon--birdie path {
+    transform-box: fill-box;
+    transform-origin: 30% 50%;
+    animation: flock-birdie-nod 480ms cubic-bezier(0.22, 1, 0.36, 1) 1;
+  }
+
+  @keyframes flock-birdie-nod {
+    0% { transform: rotate(0deg); }
+    46% { transform: rotate(-16deg); }
+    100% { transform: rotate(0deg); }
+  }
+}
