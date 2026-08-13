@@ -1,7 +1,7 @@
 const pool = require('../config/database');
 const { stripHtml } = require('../utils/sanitize');
 const { moderateText, TEXT_REJECTED_MESSAGE } = require('../utils/moderation');
-const { isBlockedBetween } = require('../utils/blocks');
+const { isBlockedBetween, isBlockedBetweenCached } = require('../utils/blocks');
 const { pushIfOfflineDebounced } = require('../services/pushHelper');
 
 // Track which users are in which rooms for presence
@@ -284,18 +284,20 @@ function registerHandlers(io, socket) {
 
   // --- Friend request events ---
 
-  socket.on('friend_request_sent', (data) => {
+  socket.on('friend_request_sent', async (data) => {
     const { toUserId } = data;
     if (!toUserId) return;
+    if (await isBlockedBetween(user.id, toUserId)) return;
     io.to(`user:${toUserId}`).emit('friend_request_received', {
       fromUserId: user.id,
       fromUserName: user.name,
     });
   });
 
-  socket.on('friend_request_response', (data) => {
+  socket.on('friend_request_response', async (data) => {
     const { toUserId, action } = data; // action: 'accepted' | 'declined'
     if (!toUserId || !['accepted', 'declined'].includes(action)) return;
+    if (await isBlockedBetween(user.id, toUserId)) return;
     io.to(`user:${toUserId}`).emit('friend_request_responded', {
       fromUserId: user.id,
       fromUserName: user.name,
@@ -320,6 +322,8 @@ function registerHandlers(io, socket) {
       const flockName = flockResult.rows[0].name;
 
       for (const uid of invitedUserIds) {
+        // Blocked users never see each other's invites
+        if (await isBlockedBetween(user.id, uid)) continue;
         io.to(`user:${uid}`).emit('flock_invite_received', {
           flockId,
           flockName,
@@ -479,6 +483,7 @@ function registerHandlers(io, socket) {
       const { receiverId, venue_id } = data;
       const venue_name = stripHtml(typeof data.venue_name === 'string' ? data.venue_name.trim() : '');
       if (!receiverId || !venue_name) return;
+      if (await isBlockedBetween(user.id, receiverId)) return;
 
       const u1 = Math.min(user.id, receiverId);
       const u2 = Math.max(user.id, receiverId);
@@ -521,6 +526,7 @@ function registerHandlers(io, socket) {
     try {
       const { receiverId, venue_name, venue_address, venue_id, venue_rating, venue_photo_url } = data;
       if (!receiverId || !venue_name) return;
+      if (await isBlockedBetween(user.id, receiverId)) return;
       const u1 = Math.min(user.id, receiverId);
       const u2 = Math.max(user.id, receiverId);
       const safeName = stripHtml(typeof venue_name === 'string' ? venue_name.trim() : '');
@@ -544,33 +550,41 @@ function registerHandlers(io, socket) {
   });
 
   // DM location sharing
-  socket.on('dm_share_location', (data) => {
+  // Mutual-block enforcement on ephemeral DM events (audit 2026-08-12): these
+  // previously trusted any receiverId, letting a blocked user ping typing/
+  // location events into their blocker's client. Cached check keeps the
+  // per-keystroke cost off the database.
+  socket.on('dm_share_location', async (data) => {
     const { receiverId, lat, lng } = data;
     if (!receiverId || typeof lat !== 'number' || typeof lng !== 'number') return;
+    if (await isBlockedBetweenCached(user.id, receiverId)) return;
     socket.to(`user:${receiverId}`).emit('dm_location_update', {
       userId: user.id, name: user.name, lat, lng, timestamp: Date.now(),
     });
   });
 
-  socket.on('dm_stop_sharing_location', (data) => {
+  socket.on('dm_stop_sharing_location', async (data) => {
     const { receiverId } = data;
     if (!receiverId) return;
+    if (await isBlockedBetweenCached(user.id, receiverId)) return;
     socket.to(`user:${receiverId}`).emit('dm_member_stopped_sharing', { userId: user.id });
   });
 
   // DM typing indicators
-  socket.on('dm_typing', (data) => {
+  socket.on('dm_typing', async (data) => {
     const { receiverId } = data;
     if (!receiverId) return;
+    if (await isBlockedBetweenCached(user.id, receiverId)) return;
     socket.to(`user:${receiverId}`).emit('dm_user_typing', {
       userId: user.id,
       name: user.name,
     });
   });
 
-  socket.on('dm_stop_typing', (data) => {
+  socket.on('dm_stop_typing', async (data) => {
     const { receiverId } = data;
     if (!receiverId) return;
+    if (await isBlockedBetweenCached(user.id, receiverId)) return;
     socket.to(`user:${receiverId}`).emit('dm_user_stopped_typing', {
       userId: user.id,
     });
