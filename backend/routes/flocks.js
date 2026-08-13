@@ -80,7 +80,7 @@ router.post('/',
     body('venue_rating').optional().isFloat(),
     body('venue_photo_url').optional().trim(),
     body('event_time').optional().isISO8601().withMessage('Invalid event time'),
-    body('invited_user_ids').optional().isArray().withMessage('invited_user_ids must be an array'),
+    body('invited_user_ids').optional().isArray({ max: 25 }).withMessage('invited_user_ids must be an array'),
     body('budget_enabled').optional().isBoolean(),
     body('budget_context').optional().trim().isLength({ max: 100 }),
     body('ghost_mode_enabled').optional().isBoolean(),
@@ -646,7 +646,7 @@ router.post('/:id/join', param('id').isInt(), async (req, res) => {
 router.post('/:id/invite',
   [
     param('id').isInt(),
-    body('user_ids').isArray({ min: 1 }).withMessage('user_ids must be a non-empty array'),
+    body('user_ids').isArray({ min: 1, max: 25 }).withMessage('user_ids must be a non-empty array'),
   ],
   async (req, res) => {
     try {
