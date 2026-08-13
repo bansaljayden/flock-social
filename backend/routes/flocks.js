@@ -4,6 +4,7 @@ const pool = require('../config/database');
 const { authenticate } = require('../middleware/auth');
 const { stripHtml } = require('../utils/sanitize');
 const { rejectIfProfane } = require('../utils/moderation');
+const { isBlockedBetween } = require('../utils/blocks');
 
 const { pushIfOffline } = require('../services/pushHelper');
 
