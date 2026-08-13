@@ -279,6 +279,11 @@ export default function LandingPage() {
       <section className="lp-sec lp-sec-paper-2" id="how">
         <div className="lp-wrap">
           <div>
+            {/* Two birds already on the wire and a third flying in: the plans
+                mark. It used to sit on the navy Safety section, where it was
+                the wrong subject and needed a CSS invert to be visible at all.
+                This is the section it actually describes. */}
+            <img className="lp-plate lp-plate-plans" src="/marks/calendar.png" alt="" width="320" height="320" loading="lazy" />
             <p className="lp-kicker">How it works</p>
             <h2>Four steps, then you're out the door.</h2>
           </div>
@@ -303,7 +308,7 @@ export default function LandingPage() {
       <section className="lp-sec lp-sec-paper" id="crowds">
         <div className="lp-wrap lp-row">
           <div>
-            <img className="lp-plate" src="/marks/crowd.png" alt="" width="320" height="320" loading="lazy" />
+            <img className="lp-plate lp-plate-crowd" src="/marks/crowd.png" alt="" width="320" height="320" loading="lazy" />
             <p className="lp-kicker">Crowd levels</p>
             <h2>Know how busy it is before you leave.</h2>
             <p className="lp-lead">
@@ -398,7 +403,7 @@ export default function LandingPage() {
       <section className="lp-sec lp-sec-paper-2" id="money">
         <div className="lp-wrap lp-row lp-row-flip">
           <div>
-            <img className="lp-plate" src="/marks/split.png" alt="" width="320" height="320" loading="lazy" />
+            <img className="lp-plate lp-plate-split" src="/marks/split.png" alt="" width="320" height="320" loading="lazy" />
             <p className="lp-kicker">Money</p>
             <h2>Money kills more plans than distance.</h2>
             <p className="lp-lead">
@@ -456,7 +461,9 @@ export default function LandingPage() {
       <section className="lp-sec lp-sec-navy lp-on-navy" id="safety">
         <div className="lp-wrap lp-row">
           <div>
-            <img className="lp-plate" src="/marks/calendar.png" alt="" width="320" height="320" loading="lazy" />
+            {/* No plate here on purpose. The marks are navy ink with no dark
+                variant, and the SOS email beside this column is already the
+                section's visual. */}
             <p className="lp-kicker">Safety</p>
             <h2>Getting home matters as much as getting out.</h2>
             <p className="lp-lead">

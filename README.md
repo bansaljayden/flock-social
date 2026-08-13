@@ -6,7 +6,8 @@ Flock is a social planning app for going out with friends: start a flock,
 invite your people, vote on where to go, match budgets privately, split the
 bill, and get home safe. Free for users; the business is on the venue side.
 
-- **Web:** https://flock-app-w65m.vercel.app (moving to https://flockcorp.com)
+- **Web:** https://www.flockcorp.com (live since 2026-08-12; the old
+  `flock-app-w65m.vercel.app` still resolves)
 - **iOS:** Capacitor build, App Store submission in progress (App ID 6781442127)
 - **1st place, PA DECA States**
 
@@ -39,14 +40,22 @@ invariant (see below).
 
 Flock runs its own trained model, not a wrapper around someone else's busyness
 chart. `backend/services/mlPredictor.js` serves an XGBoost model (ONNX,
-v2.2.1) with 95 features: time patterns, weather, nearby events, venue
-category and popularity, per-venue baselines, and user feedback.
+**v2.5.0 "Starling"**, trained 2026-08-12) with **106 features**: time patterns,
+weather, nearby events, holiday/holiday-eve calendars, venue category and
+popularity, per-venue baselines, and user feedback.
 
-- Trained on **3.5M venue-hour observations across 31 cities**, validated
-  leave-one-city-out.
-- On fully held-out cities: **R² 0.752** vs 0.620 for the popular-times
-  baseline it starts from, **MAE 5.16**, **89.1% of predictions within 15
-  points** (metrics recorded in `backend/scripts/ml/models/model_metadata.json`).
+- Trained on **2.07M venue-hour observations across 31 cities**
+  (plus a 419K-row holdout), validated leave-one-city-out.
+- Leave-one-city-out CV: **R² 0.766** vs **0.672** for the popular-times
+  baseline it starts from, **MAE 6.50**, **83.6% of predictions within 15
+  points**.
+- Held-out cities (Barcelona, Miami, Tokyo): **R² 0.837**, **MAE 5.81**,
+  **85.1% within 15 points**, vs an 0.790 / 6.09 baseline.
+- Every number above is read from
+  `backend/scripts/ml/models/model_metadata.json`. Quote it, not this table —
+  and re-run the incumbent on the same holdout before claiming an improvement,
+  because the baselines have matured over time and old figures are not
+  comparable.
 - Venues the model doesn't know yet (no baseline, no popular-times signal)
   are answered by the rule engine in `crowdEngine.js` instead of guessing.
 
@@ -91,21 +100,38 @@ flock-app/
 | `MONEY-MODEL.md` | Monetization reality: venue B2B first, consumer Pro later |
 | `VENUE-BILLING.md` | Stripe plan for venue subscriptions (designed, not built) |
 | `PAYWALL.md` | Consumer Flock Pro runbook (built, dormant behind `PAYWALL_ENABLED`) |
-| `SUBMIT-CHECKLIST.md` | App Store submission: assets, ordered steps, privacy labels |
-| `DOMAIN.md` | flockcorp.com DNS cutover runbook |
+| `SUBMIT-CHECKLIST.md` | App Store submission: assets, ordered steps, privacy labels — **the current submission doc** |
+| `SUBMISSION-PACKET.md` · `TESTFLIGHT_TEST_INFO.md` | Paste-ready store metadata + TestFlight reviewer notes |
+| `SUBMISSION.md` · `STAGING.md` · `ADVERSARIAL-REVIEW.md` | Older compliance-era docs. Partly superseded — each carries a status banner |
+| `DOMAIN.md` | flockcorp.com DNS cutover runbook (done 2026-08-12) |
+| `PRODUCT.md` | Nav model + design intent |
+| `PUSH-SETUP.md` | FCM / APNs console steps |
+| `backend/scripts/ml/RETRAIN.md` | Crowd-model retrain runbook + ship gate |
 | `codemagic.yaml` | iOS CI: build, sign, auto-increment, TestFlight |
 
 ## Running it
 
 ```bash
-# backend (needs DATABASE_URL, JWT_SECRET, GOOGLE_PLACES_API_KEY, ... in .env)
-cd backend && npm install && npm start
+# backend
+cd backend && cp .env.example .env   # then fill it in — see the notes in that file
+npm install
+psql "$DATABASE_URL" -f database/schema.sql   # base tables; migrations run on boot
+npm start
 
 # frontend
-cd frontend && npm install && npm start
+cd frontend && cp .env.example .env
+npm install && npm start
 ```
 
-Backend tests: `cd backend && node --test`
+Both `.env.example` files list every variable the code actually reads, with a
+line per variable saying what breaks when it is missing. Several fail *open*
+(image moderation, admin provisioning) — read those before deploying.
+
+The base tables live in `backend/database/schema.sql`; the numbered files in
+`backend/migrations/` only ALTER them, so a fresh database needs the schema
+applied once first. `npm run db:init` does exactly that.
+
+Backend tests: `cd backend && node --test` · local E2E: `npm run e2e`
 
 ---
 
