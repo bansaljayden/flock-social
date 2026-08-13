@@ -61,7 +61,23 @@ workflows:
             echo "$GOOGLE_SERVICE_INFO_PLIST" | base64 -d > ios/App/App/GoogleService-Info.plist
             echo "GoogleService-Info.plist written"
           else
-            echo "WARNING: GOOGLE_SERVICE_INFO_PLIST not set — building without push config"
+            # The Xcode project lists the plist in Resources, so a MISSING file
+            # fails the archive outright. Write a valid placeholder (dummy ids)
+            # so the push-disabled build actually builds; the messaging plugin
+            # fails soft at runtime and the app runs without push.
+            cat > ios/App/App/GoogleService-Info.plist <<'PLIST'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0"><dict>
+            <key>API_KEY</key><string>invalid-placeholder</string>
+            <key>GCM_SENDER_ID</key><string>000000000000</string>
+            <key>BUNDLE_ID</key><string>com.flockcorp.flock</string>
+            <key>PROJECT_ID</key><string>placeholder</string>
+            <key>GOOGLE_APP_ID</key><string>1:000000000000:ios:0000000000000000</string>
+            <key>IS_ANALYTICS_ENABLED</key><false/>
+          </dict></plist>
+          PLIST
+            echo "WARNING: GOOGLE_SERVICE_INFO_PLIST not set — placeholder plist written, push stays OFF in this build"
           fi
       - name: Set up code signing (reuse pinned cert + App Store profile)
         script: |
