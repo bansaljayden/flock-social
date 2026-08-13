@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import './LandingPage.css';
+import LiveDemo from './LiveDemo';
 
 const API = process.env.REACT_APP_API_URL || 'https://flock-app-production.up.railway.app';
 
@@ -107,7 +108,8 @@ export default function LandingPage() {
           <a className="lp-brand" href="/"><Mark /> Flock</a>
           <nav className="lp-nav-links">
             <a href="#how">How it works</a>
-            <a href="#crowds">Crowd levels</a>
+            <a href="#try">Try it live</a>
+            <a href="#birdie">Birdie</a>
             <a href="#money">Money</a>
             <a href="#safety">Safety</a>
             <a href="#pricing">Pricing</a>
@@ -222,6 +224,55 @@ export default function LandingPage() {
               loading="lazy"
               alt="Venues near you with live crowd levels: 40% not busy, 46% moderate, plus a 12-hour forecast for each."
             />
+          </div>
+        </div>
+      </section>
+
+      {/* ---------------- live demo ---------------- */}
+      <section className="lp-sec lp-sec-paper-2" id="try">
+        <div className="lp-wrap">
+          <div>
+            <p className="lp-kicker">Try it live</p>
+            <h2>See tonight's crowds, right here.</h2>
+            <p className="lp-lead" style={{ maxWidth: 620 }}>
+              This is the actual Flock crowd map, running on this page. Search a
+              spot or use your location, tap a pin, and the same model that powers
+              the app scores it for you on the spot.
+            </p>
+          </div>
+          <LiveDemo />
+        </div>
+      </section>
+
+      {/* ---------------- birdie ---------------- */}
+      <section className="lp-sec lp-sec-paper" id="birdie">
+        <div className="lp-wrap lp-row">
+          <div className="lp-row-media">
+            {/* Real capture of the shipping app, not a mockup. */}
+            <img
+              className="lp-shot"
+              src="/screenshots/app-birdie.png"
+              width="390" height="844"
+              loading="lazy"
+              alt="Birdie answering 'Where's poppin in Philadelphia rn?' with a recommendation and venue cards."
+            />
+          </div>
+          <div>
+            <p className="lp-kicker">Birdie</p>
+            <h2>"Idk, you pick." Birdie picks.</h2>
+            <p className="lp-lead">
+              Every plan dies in the same argument: where. Ask Birdie like you'd
+              ask a friend and it answers like a local, with Flock's live crowd
+              numbers behind every recommendation.
+            </p>
+            <ul className="lp-list">
+              <li><i className="lp-tick" />Ask in plain words. "Where's poppin rn" works.</li>
+              <li><i className="lp-tick" />Every pick is backed by the live crowd model, not vibes.</li>
+              <li><i className="lp-tick" />Tap a card to see details, share it to the group, or start the plan.</li>
+            </ul>
+            <p className="lp-hero-note" style={{ marginTop: 14 }}>
+              Free accounts get 10 Birdie messages a day.
+            </p>
           </div>
         </div>
       </section>
@@ -436,7 +487,7 @@ export default function LandingPage() {
           </div>
           <div className="lp-footer-base">
             <span>© {new Date().getFullYear()} Flock Corp.</span>
-            <span>Made in Bethlehem, PA</span>
+            <span>Made by Jayden Bansal</span>
           </div>
         </div>
       </footer>
