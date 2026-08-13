@@ -66,6 +66,25 @@ const IDLE_AFTER = 2600;   // ms of pointer silence before he entertains himself
 // sits right of centre on the canvas, so the pivot does too.
 const NECK = '66% 37%';
 
+// The two photographed birds. Same loop drives both: each supplies a body, a
+// head feathered at its own neck line on an identical canvas, and the pivot
+// that neck sits on. Birdie also has a wings-spread frame; the warm bird does
+// not, so the flap layer is optional and the hop simply runs without it.
+// These are module constants on purpose — the effect keys off the object, so
+// an inline literal at the call site would restart the loop on every render.
+export const BIRDIE = {
+  body: '/birdie/birdie-body',
+  head: '/birdie/birdie-head',
+  flap: '/birdie/birdie-flap',
+  neck: NECK,
+};
+export const WARM_BIRD = {
+  body: '/birdie/warm-bird',
+  head: '/birdie/warm-bird-head',
+  flap: null,
+  neck: '62% 32%',
+};
+
 const layer = {
   position: 'absolute',
   left: 0,
@@ -80,7 +99,7 @@ const layer = {
 
 // `dark` is accepted so existing call sites keep working. The photo carries
 // its own light and reads on both surfaces, so no per-theme treatment.
-export default function BirdieBird({ size = 200, dark = false, style }) {
+export default function BirdieBird({ size = 200, dark = false, style, bird = BIRDIE }) {
   const wrapRef = useRef(null);
   const bodyRef = useRef(null);
   const carrierRef = useRef(null);
@@ -93,7 +112,8 @@ export default function BirdieBird({ size = 200, dark = false, style }) {
     const carrier = carrierRef.current;
     const head = headRef.current;
     const flap = flapRef.current;
-    if (!wrap || !body || !carrier || !head || !flap) return;
+    // flap is optional — only Birdie has a wings-spread frame.
+    if (!wrap || !body || !carrier || !head) return;
 
     const reduced = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
     if (reduced) return;
@@ -310,21 +330,23 @@ export default function BirdieBird({ size = 200, dark = false, style }) {
         carrier.style.transform = bodyT;
         // The flap frame is a whole bird, so it rides the same transform. It
         // carries its own head, so the head layer hides while it is up.
-        flap.style.transform = bodyT;
+        if (flap) flap.style.transform = bodyT;
       }
       if (headT !== lastHead) {
         lastHead = headT;
         head.style.transform = headT;
       }
-      const flapS = flapA.toFixed(3);
-      if (flapS !== lastFlap) {
-        lastFlap = flapS;
-        flap.style.opacity = flapS;
-        // Fade the perched body out underneath so folded wings do not show
-        // through the spread ones, and drop the turning head with it.
-        const under = (1 - flapA).toFixed(3);
-        body.style.opacity = under;
-        carrier.style.opacity = under;
+      if (flap) {
+        const flapS = flapA.toFixed(3);
+        if (flapS !== lastFlap) {
+          lastFlap = flapS;
+          flap.style.opacity = flapS;
+          // Fade the perched body out underneath so folded wings do not show
+          // through the spread ones, and drop the turning head with it.
+          const under = (1 - flapA).toFixed(3);
+          body.style.opacity = under;
+          carrier.style.opacity = under;
+        }
       }
 
       raf = requestAnimationFrame(frame);
@@ -358,7 +380,7 @@ export default function BirdieBird({ size = 200, dark = false, style }) {
       window.removeEventListener('pointerdown', onPointer);
       wrap.removeEventListener('pointerdown', onHop);
     };
-  }, [size]);
+  }, [size, bird]);
 
   return (
     <div
@@ -368,8 +390,8 @@ export default function BirdieBird({ size = 200, dark = false, style }) {
     >
       <img
         ref={bodyRef}
-        src="/birdie/birdie-body-400.png"
-        srcSet="/birdie/birdie-body-400.png 1x, /birdie/birdie-body.png 2x"
+        src={`${bird.body}-400.png`}
+        srcSet={`${bird.body}-400.png 1x, ${bird.body}.png 2x`}
         alt=""
         draggable={false}
         decoding="async"
@@ -383,20 +405,20 @@ export default function BirdieBird({ size = 200, dark = false, style }) {
       >
         <img
           ref={headRef}
-          src="/birdie/birdie-head-400.png"
-          srcSet="/birdie/birdie-head-400.png 1x, /birdie/birdie-head.png 2x"
+          src={`${bird.head}-400.png`}
+          srcSet={`${bird.head}-400.png 1x, ${bird.head}.png 2x`}
           alt=""
           draggable={false}
           decoding="async"
-          style={{ ...layer, transformOrigin: NECK, willChange: 'transform' }}
+          style={{ ...layer, transformOrigin: bird.neck, willChange: 'transform' }}
         />
       </div>
       {/* Wings-spread frame. Bigger than the box and offset negatively so the
           wingspan is not clipped; hidden until he hops. */}
-      <img
+      {bird.flap && <img
         ref={flapRef}
-        src="/birdie/birdie-flap-400.png"
-        srcSet="/birdie/birdie-flap-400.png 1x, /birdie/birdie-flap.png 2x"
+        src={`${bird.flap}-400.png`}
+        srcSet={`${bird.flap}-400.png 1x, ${bird.flap}.png 2x`}
         alt=""
         draggable={false}
         decoding="async"
@@ -416,7 +438,7 @@ export default function BirdieBird({ size = 200, dark = false, style }) {
           transformOrigin: '50% 88%',
           willChange: 'transform, opacity',
         }}
-      />
+      />}
     </div>
   );
 }
