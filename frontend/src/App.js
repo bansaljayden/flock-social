@@ -6111,8 +6111,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
             {/* Once the chat starts he steps aside: a whisper behind the
                 thread rather than a second thing to read. */}
             {aiMessages.length > 0 && (
-              <div style={{ position: 'absolute', inset: 0, zIndex: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', opacity: 0.08, pointerEvents: 'none' }}>
-                <BirdieBird size={isAiPanel ? 168 : 230} tone={isDark ? '#8fb3d4' : '#2d5a87'} />
+              <div style={{ position: 'absolute', inset: 0, zIndex: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', opacity: isDark ? 0.12 : 0.07, pointerEvents: 'none' }}>
+                <BirdieBird size={isAiPanel ? 148 : 200} dark={isDark} />
               </div>
             )}
 
@@ -6120,7 +6120,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 stack in normal flow so nothing overlaps him. */}
             {aiMessages.length === 0 && (
               <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '10px', padding: '0 16px 12px', pointerEvents: 'none', zIndex: 1 }}>
-                <BirdieBird size={isAiPanel ? 150 : 210} tone={isDark ? '#8fb3d4' : '#2d5a87'} style={{ marginBottom: '2px' }} />
+                <BirdieBird size={isAiPanel ? 120 : 168} dark={isDark} style={{ marginBottom: '2px' }} />
                 <p style={{ fontSize: isAiPanel ? '13px' : '14px', fontWeight: '600', color: 'var(--text-primary)', margin: 0, textAlign: 'center' }}>hey, it's Birdie.</p>
                 <p style={{ fontSize: isAiPanel ? '11px' : '12px', color: 'var(--text-secondary)', margin: 0, textAlign: 'center', maxWidth: '260px', lineHeight: 1.5 }}>where's good tonight, how packed it is, what your flock is up to. ask away.</p>
                 <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', justifyContent: 'center', pointerEvents: 'auto' }}>
