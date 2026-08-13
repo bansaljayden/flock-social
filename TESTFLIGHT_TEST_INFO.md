@@ -28,8 +28,18 @@
 
 ## Review notes (suggested)
 Demo account for review, if asked: create via in-app signup (age gate requires
-DOB 13+). Report/block: long-press any received message → flag. Account
-deletion: Profile → Delete account.
+DOB 13+, and the signup screen links Terms, Privacy Policy, and Community
+Guidelines).
+
+Report a message (single TAP, there is no long-press gesture in this app):
+single-tap the body of a message someone else sent, meaning a grey bubble on
+the left, in either a flock chat or a DM. A row appears at the bubble with
+four emoji, a reply arrow, and a red flag at the right end. Tap the red flag
+to open the Report and Block sheet, tap "Report this message", pick a reason,
+tap "Submit report". Your own messages (blue, on the right) do not offer
+Report. A DM's three-dot menu also has "Report or block <name>".
+
+Account deletion: Profile → Delete account.
 
 ## What Sign-In Information to provide
 If the reviewer prompt asks for a demo login, create a fresh account first

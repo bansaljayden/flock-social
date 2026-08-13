@@ -11,6 +11,21 @@ const colors = {
   navy: '#1a2744',
 };
 
+// Same live pages the in-app Settings screen and the paywall sheet link to.
+const TERMS_URL = 'https://www.flockcorp.com/terms';
+const PRIVACY_URL = 'https://www.flockcorp.com/privacy';
+const GUIDELINES_URL = 'https://www.flockcorp.com/guidelines';
+
+// Cream on the translucent navy card: ~11:1 against the card, well past the
+// 4.5:1 floor for 12px text. Underlined so the links read as links and not as
+// emphasis, which is what a reviewer checking "did the user agree" looks for.
+const legalLinkStyle = {
+  color: colors.cream,
+  fontWeight: '600',
+  textDecoration: 'underline',
+  textUnderlineOffset: '2px',
+};
+
 const EyeIcon = ({ size = 20 }) => (
   <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="rgba(148,163,184,0.8)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
     <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
@@ -261,6 +276,26 @@ const SignupScreen = ({ onSignupSuccess, onSwitchToLogin }) => {
             }}>
               {loading ? 'Creating account...' : 'Create Account'}
             </button>
+
+            {/* Guideline 1.2 / EULA consent. The backend stamps terms_accepted_at
+                on EVERY signup path (email, Google, Apple), so the agreement has
+                to be shown on this screen before any of those buttons are hit.
+                It sits directly under Create Account and above the Google/Apple
+                buttons so it covers all three without scrolling. The Terms page
+                carries the zero-tolerance-for-objectionable-content language
+                Apple's 1.2 template requires. */}
+            <p style={{
+              fontSize: '12px',
+              lineHeight: 1.55,
+              color: '#cbd5e1',
+              textAlign: 'center',
+              margin: '14px 2px 0',
+            }}>
+              By creating an account you agree to our{' '}
+              <a href={TERMS_URL} target="_blank" rel="noopener noreferrer" style={legalLinkStyle}>Terms</a>,{' '}
+              <a href={PRIVACY_URL} target="_blank" rel="noopener noreferrer" style={legalLinkStyle}>Privacy Policy</a>, and{' '}
+              <a href={GUIDELINES_URL} target="_blank" rel="noopener noreferrer" style={legalLinkStyle}>Community Guidelines</a>.
+            </p>
           </form>
 
           <div style={{ display: 'flex', alignItems: 'center', gap: '12px', margin: '20px 0' }}>

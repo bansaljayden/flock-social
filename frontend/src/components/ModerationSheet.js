@@ -91,7 +91,11 @@ const ModerationSheet = ({ target, onClose, showToast, onBlocked }) => {
           <div>
             <p style={{ fontSize: '13px', fontWeight: '600', color: 'var(--text-secondary)', textAlign: 'center', margin: '8px 0 12px' }}>{who}</p>
             <button style={sheetBtn} onClick={() => setMode('report')}>
-              <span aria-hidden style={{ fontSize: '16px' }}>âš‘</span> Report{contentId ? ' this message' : ' user'}
+              {/* U+2691 BLACK FLAG, written as an escape rather than a literal
+                  glyph. This character was silently double-encoded once already
+                  and rendered as garbage in the exact screen a reviewer opens to
+                  verify Guideline 1.2. An ASCII-only source escape cannot rot. */}
+              <span aria-hidden style={{ fontSize: '16px' }}>{'\u2691'}</span> Report{contentId ? ' this message' : ' user'}
             </button>
             {userId && (
               <button style={{ ...sheetBtn, color: '#EF4444' }} onClick={() => setMode('block')}>
