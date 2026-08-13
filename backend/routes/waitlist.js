@@ -12,6 +12,8 @@ let dailySends = { count: 0, resetAt: 0 };
 const WAITLIST_IP_HOURLY = 3;
 const WAITLIST_GLOBAL_DAILY = 500;
 
+// Per-IP attempt budget. Charged on every request (that's the abuse signal),
+// unlike the global send budget below.
 function allowWaitlistSignup(req) {
   const now = Date.now();
   if (now > dailySends.resetAt) {
@@ -30,8 +32,14 @@ function allowWaitlistSignup(req) {
   }
   if (entry.count >= WAITLIST_IP_HOURLY) return false;
   entry.count += 1;
-  dailySends.count += 1;
   return true;
+}
+
+// The global budget exists to bound outbound MAIL, so it is spent only when an
+// email is actually sent. Charging it up front let malformed or duplicate
+// submissions exhaust the day's 500 and block real signups (round 9).
+function chargeWaitlistSend() {
+  dailySends.count += 1;
 }
 
 // waitlist table lives in migrations/003 — route-owned DDL raced the
@@ -66,6 +74,7 @@ router.post('/',
 
       // Send confirmation email for new signups
       if (isNew && resend) {
+        chargeWaitlistSend();
         try {
           await resend.emails.send({
             from: 'Flock <hello@flockcorp.com>',

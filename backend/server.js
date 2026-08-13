@@ -246,24 +246,49 @@ app.set('io', io);
 
 // Rate limit WebSocket connections: 10 per minute per IP
 const socketConnections = new Map();
+
+// Behind Railway's proxy every socket reports the same handshake.address (the
+// proxy's own peer address), so keying on it put ALL users in one 10/minute
+// bucket — one reconnect loop locked everyone out. Trust the same single
+// forwarding hop Express does (app.set('trust proxy', 1)): the last entry in
+// X-Forwarded-For is what our proxy appended and is the only one a client
+// can't spoof (round 9).
+function socketClientIp(socket) {
+  const xff = socket.handshake.headers?.['x-forwarded-for'];
+  if (xff) {
+    const hops = String(xff).split(',').map((s) => s.trim()).filter(Boolean);
+    if (hops.length) return hops[hops.length - 1];
+  }
+  return socket.handshake.address;
+}
+
 io.use((socket, next) => {
-  const ip = socket.handshake.address;
+  const ip = socketClientIp(socket);
   const now = Date.now();
   const windowMs = 60 * 1000;
   const maxConnections = 10;
 
+  if (socketConnections.size > 10000) {
+    for (const [k, v] of socketConnections) {
+      if (!v.length || now - v[v.length - 1] > windowMs) socketConnections.delete(k);
+    }
+  }
   if (!socketConnections.has(ip)) {
     socketConnections.set(ip, []);
   }
 
   const timestamps = socketConnections.get(ip).filter(t => now - t < windowMs);
-  timestamps.push(now);
-  socketConnections.set(ip, timestamps);
 
-  if (timestamps.length > maxConnections) {
+  // Count the rejection BEFORE recording it: pushing every refused attempt
+  // kept the window permanently full, so a client that tripped the limit
+  // could never recover within the minute (round 9).
+  if (timestamps.length >= maxConnections) {
+    socketConnections.set(ip, timestamps);
     return next(new Error('Too many connections, please try again later'));
   }
 
+  timestamps.push(now);
+  socketConnections.set(ip, timestamps);
   next();
 });
 
