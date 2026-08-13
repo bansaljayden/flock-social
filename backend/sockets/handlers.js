@@ -145,15 +145,10 @@ function registerHandlers(io, socket) {
     const room = `flock:${flockId}`;
     socket.leave(room);
 
-    // Round 13: this emitted `member_offline` into any room id the caller
-    // named, with no membership check — a stranger could push fake presence
-    // events into any flock whose id they guessed. Leaving the room itself is
-    // always safe (and must stay unconditional so a removed member can still
-    // detach), but the BROADCAST is gated. join_flock already verifies.
-    const isMember = await verifyMembership(flockId, user.id);
-
     // Remove from presence tracking. Like disconnect, only announce offline
-    // when the user has no OTHER socket left in the room (round 7).
+    // when the user has no OTHER socket left in the room (round 7). This runs
+    // BEFORE the membership lookup so a bad flockId (which makes the query
+    // throw) can never leak a roomUsers entry.
     let announce = true;
     if (roomUsers.has(flockId)) {
       const users = roomUsers.get(flockId);
@@ -161,6 +156,14 @@ function registerHandlers(io, socket) {
       announce = ![...users.values()].some((u) => u.userId === user.id);
       if (users.size === 0) roomUsers.delete(flockId);
     }
+
+    // Round 13: this emitted `member_offline` into any room id the caller
+    // named, with no membership check — a stranger could push fake presence
+    // events into any flock whose id they guessed. Leaving the room and the
+    // presence bookkeeping stay unconditional (a removed member must still be
+    // able to detach); only the BROADCAST is gated. join_flock already verifies.
+    let isMember = false;
+    try { isMember = await verifyMembership(flockId, user.id); } catch (_) { isMember = false; }
 
     if (announce && isMember) {
       socket.to(room).emit('member_offline', {
