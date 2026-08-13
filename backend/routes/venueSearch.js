@@ -22,7 +22,11 @@ router.get('/photo',
       if (!API_KEY) return res.status(500).json({ error: 'API key not configured' });
 
       const photoRef = req.query.ref;
-      const maxWidth = parseInt(req.query.maxwidth) || 400;
+      // Snapped to two sizes: arbitrary maxwidth values let one photo ref mint
+      // unlimited cache entries and full-res fetches (round 5). 400 covers
+      // cards, 160 covers pins/thumbnails.
+      const requested = parseInt(req.query.maxwidth) || 400;
+      const maxWidth = requested <= 200 ? 160 : 400;
       const cacheKey = `${photoRef}|${maxWidth}`;
 
       // Check cache first

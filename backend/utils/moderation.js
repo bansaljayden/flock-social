@@ -89,6 +89,71 @@ async function moderateImage(imageUrl) {
 
 const MAX_MODERATED_IMAGE_BYTES = 8 * 1024 * 1024;
 
+// SSRF guard (round 5): remote fetches must resolve to PUBLIC addresses at
+// every hop — attacker-controlled redirects toward localhost / RFC1918 /
+// link-local (cloud metadata) are refused.
+const dns = require('dns').promises;
+const net = require('net');
+
+function isPrivateAddress(addr) {
+  if (net.isIPv6(addr)) {
+    const a = addr.toLowerCase();
+    return a === '::1' || a.startsWith('fe80') || a.startsWith('fc') || a.startsWith('fd') || a.startsWith('::ffff:127.') || a.startsWith('::ffff:10.') || a.startsWith('::ffff:192.168.');
+  }
+  const parts = addr.split('.').map(Number);
+  if (parts.length !== 4) return true;
+  const [a, b] = parts;
+  return a === 127 || a === 10 || a === 0
+    || (a === 172 && b >= 16 && b <= 31)
+    || (a === 192 && b === 168)
+    || (a === 169 && b === 254)
+    || a >= 224;
+}
+
+async function assertPublicHttpsUrl(rawUrl) {
+  let u;
+  try { u = new URL(rawUrl); } catch { throw new Error('bad image URL'); }
+  if (u.protocol !== 'https:') throw new Error('unsupported image URL scheme');
+  if (net.isIP(u.hostname) && isPrivateAddress(u.hostname)) throw new Error('blocked address');
+  if (!net.isIP(u.hostname)) {
+    const addrs = await dns.lookup(u.hostname, { all: true });
+    if (addrs.some(a => isPrivateAddress(a.address))) throw new Error('blocked address');
+  }
+  return u;
+}
+
+// Fetch with manual redirect following (each hop re-validated) and a
+// STREAMING size cap — the old arrayBuffer() buffered an endless body on the
+// heap before the size check ever ran.
+async function fetchPublicImage(rawUrl) {
+  let url = rawUrl;
+  for (let hop = 0; hop < 3; hop++) {
+    await assertPublicHttpsUrl(url);
+    const response = await fetch(url, { redirect: 'manual', signal: AbortSignal.timeout(15000) });
+    if (response.status >= 300 && response.status < 400) {
+      const loc = response.headers.get('location');
+      if (!loc) throw new Error('bad redirect');
+      url = new URL(loc, url).href;
+      continue;
+    }
+    if (!response.ok) throw new Error(`image fetch failed: ${response.status}`);
+    const type = response.headers.get('content-type') || '';
+    if (!type.startsWith('image/')) throw new Error(`not an image: ${type}`);
+    const declared = parseInt(response.headers.get('content-length') || '0', 10);
+    if (declared > MAX_MODERATED_IMAGE_BYTES) throw new Error('image too large');
+
+    const chunks = [];
+    let total = 0;
+    for await (const chunk of response.body) {
+      total += chunk.length;
+      if (total > MAX_MODERATED_IMAGE_BYTES) throw new Error('image too large');
+      chunks.push(chunk);
+    }
+    return new Blob([Buffer.concat(chunks)], { type });
+  }
+  throw new Error('too many redirects');
+}
+
 async function imageToBlob(imageUrl) {
   if (typeof imageUrl !== 'string' || imageUrl === '') {
     throw new Error('no image data');
@@ -101,13 +166,7 @@ async function imageToBlob(imageUrl) {
     return new Blob([bytes], { type: match[1] });
   }
   if (/^https:\/\//.test(imageUrl)) {
-    const response = await fetch(imageUrl, { redirect: 'follow', signal: AbortSignal.timeout(15000) });
-    if (!response.ok) throw new Error(`image fetch failed: ${response.status}`);
-    const type = response.headers.get('content-type') || '';
-    if (!type.startsWith('image/')) throw new Error(`not an image: ${type}`);
-    const bytes = Buffer.from(await response.arrayBuffer());
-    if (bytes.length > MAX_MODERATED_IMAGE_BYTES) throw new Error('image too large');
-    return new Blob([bytes], { type });
+    return fetchPublicImage(imageUrl);
   }
   throw new Error('unsupported image URL scheme');
 }

@@ -65,11 +65,24 @@ router.get('/contacts', authenticate, async (req, res) => {
 });
 
 // ── Add trusted contact ──
+// Trusted contacts are an EMAIL-SENDING surface, so they're bounded (round 5:
+// unbounded contacts + no cooldown made /share-location a harassment relay).
+const MAX_TRUSTED_CONTACTS = 5;
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
+
 router.post('/contacts', authenticate, async (req, res) => {
   try {
     const { name, phone, email, relationship } = req.body;
     if (!name || !phone) {
       return res.status(400).json({ error: 'Name and phone are required' });
+    }
+    if (email && !EMAIL_RE.test(email.trim())) {
+      return res.status(400).json({ error: 'That email address does not look right' });
+    }
+
+    const count = await pool.query('SELECT COUNT(*)::int AS n FROM trusted_contacts WHERE user_id = $1', [req.user.id]);
+    if (count.rows[0].n >= MAX_TRUSTED_CONTACTS) {
+      return res.status(400).json({ error: `You can have up to ${MAX_TRUSTED_CONTACTS} trusted contacts` });
     }
 
     const result = await pool.query(
@@ -93,6 +106,9 @@ router.put('/contacts/:id', authenticate, async (req, res) => {
     const { name, phone, email, relationship } = req.body;
     if (!name || !phone) {
       return res.status(400).json({ error: 'Name and phone are required' });
+    }
+    if (email && !EMAIL_RE.test(email.trim())) {
+      return res.status(400).json({ error: 'That email address does not look right' });
     }
     const result = await pool.query(
       `UPDATE trusted_contacts SET contact_name = $1, contact_phone = $2, contact_email = $3, relationship = $4
@@ -231,6 +247,10 @@ router.post('/alert', authenticate, async (req, res) => {
 });
 
 // ── Share location with trusted contacts ──
+// Cooldown: sharing your location is a deliberate act, not a loop. 10 min
+// between sends per user keeps the email path un-abusable (SOS has its own
+// route and is NOT limited by this).
+const shareCooldowns = new Map();
 router.post('/share-location', authenticate, async (req, res) => {
   try {
     const { latitude, longitude, timezone } = req.body;
@@ -238,8 +258,15 @@ router.post('/share-location', authenticate, async (req, res) => {
       return res.status(400).json({ error: 'Location required' });
     }
 
+    const last = shareCooldowns.get(req.user.id) || 0;
+    if (Date.now() - last < 10 * 60_000) {
+      return res.status(429).json({ error: 'You shared your location a moment ago. Give it a few minutes.' });
+    }
+    shareCooldowns.set(req.user.id, Date.now());
+    if (shareCooldowns.size > 5000) shareCooldowns.clear();
+
     const contacts = await pool.query(
-      'SELECT * FROM trusted_contacts WHERE user_id = $1',
+      'SELECT * FROM trusted_contacts WHERE user_id = $1 LIMIT 5',
       [req.user.id]
     );
     if (contacts.rows.length === 0) {
