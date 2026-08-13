@@ -14,18 +14,6 @@ const APP_STORE_LIVE = false;
 // (set up 2026-08-12). Outbound stays on Resend.
 const CONTACT_EMAIL = 'social@flockcorp.com';
 
-/* Inline stroke icons, one visual family, sized by the caller. */
-const Ico = {
-  vote: (c) => <svg viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="M9 11l3 3L22 4" /><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" /></svg>,
-  crowd: (c) => <svg viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" /><circle cx="9" cy="7" r="4" /><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75" /></svg>,
-  split: (c) => <svg viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="1" x2="12" y2="23" /><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6" /></svg>,
-  pin: (c) => <svg viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z" /><circle cx="12" cy="10" r="3" /></svg>,
-  shield: (c) => <svg viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" /></svg>,
-  chat: (c) => <svg viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="M21 11.5a8.4 8.4 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.4 8.4 0 0 1-3.8-.9L3 21l1.9-5.7a8.4 8.4 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.4 8.4 0 0 1 3.8-.9h.5a8.5 8.5 0 0 1 8 8v.5z" /></svg>,
-  calendar: (c) => <svg viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" /><line x1="16" y1="2" x2="16" y2="6" /><line x1="8" y1="2" x2="8" y2="6" /><line x1="3" y1="10" x2="21" y2="10" /></svg>,
-  bird: (c) => <svg viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="M16 7h.01" /><path d="M3.4 18H12a8 8 0 0 0 8-8V7a4 4 0 0 0-7.28-2.3L2 20" /><path d="M20 7l2 .5-2 .5" /><path d="M10 18v3" /><path d="M14 17.75V21" /></svg>,
-};
-
 /* The Flock mark: the actual logo (same asset as the app icon), not a
    hand-drawn stand-in. */
 const Mark = ({ size = 32 }) => (
@@ -202,6 +190,7 @@ export default function LandingPage() {
       <section className="lp-sec lp-sec-paper" id="crowds">
         <div className="lp-wrap lp-row">
           <div>
+            <img className="lp-plate" src="/marks/crowd.png" alt="" width="320" height="320" loading="lazy" />
             <p className="lp-kicker">Crowd levels</p>
             <h2>Know how busy it is before you leave.</h2>
             <p className="lp-lead">
@@ -210,9 +199,9 @@ export default function LandingPage() {
               runs. You stop driving across town to stand in a line.
             </p>
             <ul className="lp-list">
-              <li><i className="lp-tick" />An hour-by-hour picture of tonight</li>
-              <li><i className="lp-tick" />The best time to show up</li>
-              <li><i className="lp-tick" />A heads-up push before your spot gets packed</li>
+              <li>An hour-by-hour picture of tonight</li>
+              <li>The best time to show up</li>
+              <li>A heads-up push before your spot gets packed</li>
             </ul>
           </div>
 
@@ -258,6 +247,7 @@ export default function LandingPage() {
             />
           </div>
           <div>
+            <img className="lp-plate" src="/marks/birdie.png" alt="" width="320" height="320" loading="lazy" />
             <p className="lp-kicker">Birdie</p>
             <h2>"Idk, you pick." Birdie picks.</h2>
             <p className="lp-lead">
@@ -266,9 +256,9 @@ export default function LandingPage() {
               numbers behind every recommendation.
             </p>
             <ul className="lp-list">
-              <li><i className="lp-tick" />Ask in plain words. "Where's poppin rn" works.</li>
-              <li><i className="lp-tick" />Every pick is backed by the live crowd model, not vibes.</li>
-              <li><i className="lp-tick" />Tap a card to see details, share it to the group, or start the plan.</li>
+              <li>Ask in plain words. "Where's poppin rn" works.</li>
+              <li>Every pick is backed by the live crowd model, not vibes.</li>
+              <li>Tap a card to see details, share it to the group, or start the plan.</li>
             </ul>
             <p className="lp-hero-note" style={{ marginTop: 14 }}>
               Free accounts get 10 Birdie messages a day.
@@ -281,6 +271,7 @@ export default function LandingPage() {
       <section className="lp-sec lp-sec-paper-2" id="money">
         <div className="lp-wrap lp-row lp-row-flip">
           <div>
+            <img className="lp-plate" src="/marks/split.png" alt="" width="320" height="320" loading="lazy" />
             <p className="lp-kicker">Money</p>
             <h2>Money kills more plans than distance.</h2>
             <p className="lp-lead">
@@ -289,9 +280,9 @@ export default function LandingPage() {
               a ceiling everyone can actually afford.
             </p>
             <ul className="lp-list">
-              <li><i className="lp-tick" />Individual amounts are never shown to anyone</li>
-              <li><i className="lp-tick" />Venue picks stay under the group's ceiling</li>
-              <li><i className="lp-tick" />Split the bill and send Venmo, Cash App, or Zelle links</li>
+              <li>Individual amounts are never shown to anyone</li>
+              <li>Venue picks stay under the group's ceiling</li>
+              <li>Split the bill and send Venmo, Cash App, or Zelle links</li>
             </ul>
           </div>
 
@@ -318,18 +309,15 @@ export default function LandingPage() {
           </div>
           <div className="lp-grid">
             {[
-              { i: Ico.vote, t: 'Venue voting', d: 'Put places up, vote, and watch the group converge without a single argument.' },
-              { i: Ico.crowd, t: 'Live crowd levels', d: 'See how packed somewhere is right now and when it peaks tonight.' },
-              { i: Ico.split, t: 'Budget matching', d: 'Budgets stay private. The ceiling is shared. Then split the bill.' },
-              { i: Ico.chat, t: 'Group chat that plans', d: 'Chat, venue cards, and votes in one place instead of five apps.' },
-              { i: Ico.calendar, t: 'Plans calendar', d: 'Everything you said yes to, in one place, so nothing gets double-booked.' },
-              { i: Ico.bird, t: 'Birdie', d: 'Tell it what kind of night you want and it finds spots that fit.' },
+              { t: 'Venue voting', d: 'Put places up, vote, and watch the group converge without a single argument.' },
+              { t: 'Live crowd levels', d: 'See how packed somewhere is right now and when it peaks tonight.' },
+              { t: 'Budget matching', d: 'Budgets stay private. The ceiling is shared. Then split the bill.' },
+              { t: 'Group chat that plans', d: 'Chat, venue cards, and votes in one place instead of five apps.' },
+              { t: 'Plans calendar', d: 'Everything you said yes to, in one place, so nothing gets double-booked.' },
+              { t: 'Birdie', d: 'Tell it what kind of night you want and it finds spots that fit.' },
             ].map((f) => (
               <div className="lp-card" key={f.t}>
-                <div className="lp-card-head">
-                  <span className="lp-card-ico">{f.i('#2d5a87')}</span>
-                  <h3>{f.t}</h3>
-                </div>
+                <h3>{f.t}</h3>
                 <p>{f.d}</p>
               </div>
             ))}
@@ -341,6 +329,7 @@ export default function LandingPage() {
       <section className="lp-sec lp-sec-navy lp-on-navy" id="safety">
         <div className="lp-wrap lp-row">
           <div>
+            <img className="lp-plate" src="/marks/calendar.png" alt="" width="320" height="320" loading="lazy" />
             <p className="lp-kicker">Safety</p>
             <h2>Getting home matters as much as getting out.</h2>
             <p className="lp-lead">
@@ -349,10 +338,10 @@ export default function LandingPage() {
               people you picked where you are.
             </p>
             <ul className="lp-list">
-              <li><i className="lp-tick" />One-tap SOS to your trusted contacts</li>
-              <li><i className="lp-tick" />Live location inside the flock, off by default</li>
-              <li><i className="lp-tick" />No background tracking, ever</li>
-              <li><i className="lp-tick" />Report and block on any message or profile</li>
+              <li>One-tap SOS to your trusted contacts</li>
+              <li>Live location inside the flock, off by default</li>
+              <li>No background tracking, ever</li>
+              <li>Report and block on any message or profile</li>
             </ul>
           </div>
           <div className="lp-row-media">
@@ -391,11 +380,11 @@ export default function LandingPage() {
               <div className="lp-plan-price">$0<small>no card needed</small></div>
               <p className="lp-plan-note">Plan the night and split the bill without paying us anything.</p>
               <ul className="lp-list">
-                <li><i className="lp-tick" />Unlimited flocks and friends</li>
-                <li><i className="lp-tick" />Venue voting and group chat</li>
-                <li><i className="lp-tick" />Live crowd levels</li>
-                <li><i className="lp-tick" />Budget matching and bill splitting</li>
-                <li><i className="lp-tick" />SOS and trusted contacts</li>
+                <li>Unlimited flocks and friends</li>
+                <li>Venue voting and group chat</li>
+                <li>Live crowd levels</li>
+                <li>Budget matching and bill splitting</li>
+                <li>SOS and trusted contacts</li>
               </ul>
               <a className="lp-btn lp-btn-navy" href="/signup">Create your account</a>
             </div>
@@ -408,10 +397,10 @@ export default function LandingPage() {
                 end up somewhere else.
               </p>
               <ul className="lp-list">
-                <li><i className="lp-tick" />Show up in venue voting near you</li>
-                <li><i className="lp-tick" />Post deals and events to nearby groups</li>
-                <li><i className="lp-tick" />See how many groups considered you</li>
-                <li><i className="lp-tick" />Put an offer up on a slow night</li>
+                <li>Show up in venue voting near you</li>
+                <li>Post deals and events to nearby groups</li>
+                <li>See how many groups considered you</li>
+                <li>Put an offer up on a slow night</li>
               </ul>
               <a className="lp-btn lp-btn-navy" href={`mailto:${CONTACT_EMAIL}?subject=Flock%20for%20venues`}>
                 Get in touch
