@@ -401,8 +401,17 @@ router.post('/find-by-phone',
       }
 
       const { phones } = req.body;
-      // Normalize phones: strip non-digits
-      const normalized = phones.map(p => p.replace(/\D/g, '').slice(-10)).filter(p => p.length >= 7);
+      // Bounded + type-safe: the normalized values are joined into ONE SQL
+      // regex, so an unbounded array is an expensive scan and a non-string
+      // element throws (round 6).
+      if (!Array.isArray(phones) || phones.length > 500) {
+        return res.status(400).json({ error: 'Too many contacts in one sync' });
+      }
+      const normalized = phones
+        .filter((p) => typeof p === 'string')
+        .map((p) => p.replace(/\D/g, '').slice(-10))
+        .filter((p) => p.length >= 7)
+        .slice(0, 500);
       if (normalized.length === 0) return res.json({ users: [] });
 
       // Find users whose phone matches (last 10 digits comparison).

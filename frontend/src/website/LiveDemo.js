@@ -178,7 +178,8 @@ export default function LiveDemo() {
     setPhase('loading');
     setErrorMsg('');
     try {
-      const params = new URLSearchParams({ lat: center.lat.toFixed(4), lng: center.lng.toFixed(4), ...clockParams() });
+      // 2 decimals ≈ 1km: neighborhood is all a venue search needs.
+      const params = new URLSearchParams({ lat: center.lat.toFixed(2), lng: center.lng.toFixed(2), ...clockParams() });
       if (q) params.set('q', q);
       const res = await fetch(`${BASE_URL}/api/public/demo/venues?${params}`);
       const data = await res.json();
@@ -216,22 +217,15 @@ export default function LiveDemo() {
     map.addControl(new maplibregl.NavigationControl({ showCompass: false }), 'top-right');
     mapRef.current = map;
 
+    // Location is only ever requested by the explicit "Use my location"
+    // button — scrolling a section into view is not consent to hand a
+    // marketing page your coordinates (round 6). The demo opens on a real
+    // city so it's alive either way.
     let started = false;
     const start = () => {
       if (started) return;
       started = true;
-      const fallback = () => loadVenues(DEFAULT_CENTER, '');
-      if (!navigator.geolocation) return fallback();
-      navigator.geolocation.getCurrentPosition(
-        (pos) => {
-          const c = { lat: pos.coords.latitude, lng: pos.coords.longitude };
-          centerRef.current = c;
-          map.jumpTo({ center: [c.lng, c.lat], zoom: 13.2 });
-          loadVenues(c, '');
-        },
-        fallback,
-        { timeout: 6000, maximumAge: 300000 }
-      );
+      loadVenues(DEFAULT_CENTER, '');
     };
 
     const obs = new IntersectionObserver((entries) => {

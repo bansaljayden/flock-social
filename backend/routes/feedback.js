@@ -79,7 +79,10 @@ router.post('/',
                SELECT 1 FROM venue_checkins
                WHERE user_id = $1
                  AND venue_place_id = $2
-                 AND created_at > NOW() - INTERVAL '5 hours'
+                 AND created_at > NOW() - INTERVAL '3 hours'
+                 -- NFC taps prove physical presence; a self-reported manual
+                 -- check-in does not, so it cannot mint verification (round 6)
+                 AND COALESCE(checkin_source, 'nfc') <> 'manual'
              )
              OR EXISTS (
                SELECT 1

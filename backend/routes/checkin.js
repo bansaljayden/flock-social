@@ -22,6 +22,10 @@ async function tryAuth(req) {
 
 // If the user has any active flock at this venue, mark them as attended
 // (drives the anti-flake reliability scoring).
+// Manual check-ins are self-reported: they may record presence, but they must
+// not by themselves mint the "verified" evidence feedback trusts, and they
+// must not credit attendance without a matching flock at that venue in its
+// event window (round 6). markFlockAttendance already enforces the window.
 async function markFlockAttendance(userId, placeId) {
   if (!userId || !placeId) return;
   try {
