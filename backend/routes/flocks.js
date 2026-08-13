@@ -492,15 +492,15 @@ router.put('/:id',
       // PRIVACY: RETURNING * carries the raw budget_ceiling — apply the same
       // 3-submission threshold as every other surface before responding
       // (review round 3: an innocuous update was a fourth door to the value).
-      const updated = { ...result.rows[0] };
-      if (updated.budget_ceiling != null) {
+      const flockResponse = { ...result.rows[0] };
+      if (flockResponse.budget_ceiling != null) {
         const thr = await pool.query(
           `SELECT COUNT(*)::int AS n FROM budget_submissions WHERE flock_id = $1 AND skipped = false`,
           [flockId]
         );
-        if ((thr.rows[0]?.n || 0) < 3) updated.budget_ceiling = null;
+        if ((thr.rows[0]?.n || 0) < 3) flockResponse.budget_ceiling = null;
       }
-      res.json({ flock: updated });
+      res.json({ flock: flockResponse });
     } catch (err) {
       console.error('Update flock error:', err);
       res.status(500).json({ error: 'Failed to update flock' });
