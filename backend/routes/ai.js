@@ -11,6 +11,7 @@ const {
 } = require('../services/crowdEngine');
 const mlPredictor = require('../services/mlPredictor');
 const { isPremium, paywallEnabled } = require('../services/entitlements');
+const { allowPlacesSearch } = require('../utils/placesBudget');
 const {
   checkUserRateLimit,
   nextUtcMidnightISO,
@@ -143,6 +144,13 @@ async function executeTool(toolName, toolInput, userId, opts = {}) {
   switch (toolName) {
     case 'search_venues': {
       if (!PLACES_API_KEY) return { error: 'Google Places API not configured' };
+      // Birdie was a complete bypass of every Places cost control: the tool
+      // loop runs up to 5 iterations and executes every call the model emits,
+      // so one free account could drive thousands of PAID Places calls a day
+      // (round 12). Same shared budget as the rest of the app.
+      if (!allowPlacesSearch(userId)) {
+        return { error: 'Too many venue lookups right now. Ask again in a little while.' };
+      }
       const searchBody = { textQuery: toolInput.query, maxResultCount: 8 };
       if (toolInput.location) {
         const [lat, lng] = toolInput.location.split(',').map(Number);
@@ -180,6 +188,10 @@ async function executeTool(toolName, toolInput, userId, opts = {}) {
       // Same ML path as GET /api/crowd — Birdie must quote the numbers the
       // Discover screen shows, not a parallel rule-engine estimate.
       if (!PLACES_API_KEY) return { error: 'Google Places API not configured' };
+      // Paid Place Details call, same budget as search above (round 12).
+      if (!allowPlacesSearch(userId)) {
+        return { error: 'Too many venue lookups right now. Ask again in a little while.' };
+      }
       const placeId = toolInput.place_id;
       const resp = await fetch(`https://places.googleapis.com/v1/places/${placeId}`, {
         headers: {
