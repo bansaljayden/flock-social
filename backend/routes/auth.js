@@ -5,9 +5,12 @@ const jwksClient = require('jwks-rsa');
 const { body, validationResult } = require('express-validator');
 const { OAuth2Client } = require('google-auth-library');
 const pool = require('../config/database');
-const { authenticate } = require('../middleware/auth');
+// signUserToken is the ONLY way tokens are minted (round 13): it stamps the
+// user's token_version into the JWT so a bump revokes every outstanding token.
+const { authenticate, signUserToken } = require('../middleware/auth');
 const { stripHtml, sanitizeArray } = require('../utils/sanitize');
 const { rejectIfProfane, moderateText } = require('../utils/moderation');
+const { upstreamSignal } = require('../utils/upstream');
 
 const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 
@@ -30,7 +33,6 @@ function appleGetSigningKey(header, callback) {
 const router = express.Router();
 
 const SALT_ROUNDS = 10;
-const TOKEN_EXPIRY = '24h';
 
 // Age gate (C4) — SERVER-SIDE enforcement. The mobile neutral age screen collects
 // a DOB and sends it at account creation; we compute age here so the under-13
@@ -138,7 +140,7 @@ router.post('/signup', signupValidation, async (req, res) => {
     );
 
     const user = result.rows[0];
-    const token = jwt.sign({ userId: user.id }, process.env.JWT_SECRET, { expiresIn: TOKEN_EXPIRY });
+    const token = signUserToken(user);
 
     res.status(201).json({ token, user });
   } catch (err) {
@@ -176,10 +178,10 @@ router.post('/login', loginValidation, async (req, res) => {
 
     if (!(await enforceDobOnLogin(user, req, res))) return;
 
-    const token = jwt.sign({ userId: user.id }, process.env.JWT_SECRET, { expiresIn: TOKEN_EXPIRY });
+    const token = signUserToken(user);
 
     // Strip password from response
-    const { password: _, apple_refresh_token: _art, ...safeUser } = user;
+    const { password: _, apple_refresh_token: _art, token_version: _tv, ...safeUser } = user;
     res.json({ token, user: safeUser });
   } catch (err) {
     console.error('Login error:', err);
@@ -249,10 +251,17 @@ router.post('/google', [
         idToken: req.body.credential,
         audience: process.env.GOOGLE_CLIENT_ID,
       });
-      ({ sub: googleId, email, name, picture, email_verified: emailVerified } = ticket.getPayload());
+      // FAIL CLOSED (round 13): an ABSENT email_verified must not count as
+      // verified — the whole account-claim below hangs on this flag meaning
+      // "Google vouches for this address". Mirrors the Apple branch.
+      const gp = ticket.getPayload();
+      ({ sub: googleId, email, name, picture } = gp);
+      emailVerified = gp.email_verified === true || gp.email_verified === 'true';
     } else {
       const at = req.body.access_token;
-      const infoRes = await fetch(`https://oauth2.googleapis.com/tokeninfo?access_token=${encodeURIComponent(at)}`);
+      // Round 12: sign-in blocked on Google with no deadline — a Google
+      // brownout parked login requests (and pg pool slots) for ~5 minutes.
+      const infoRes = await fetch(`https://oauth2.googleapis.com/tokeninfo?access_token=${encodeURIComponent(at)}`, { signal: upstreamSignal('oauth') });
       if (!infoRes.ok) {
         return res.status(401).json({ error: 'Google sign-in expired, please try again' });
       }
@@ -262,6 +271,7 @@ router.post('/google', [
       }
       const profileRes = await fetch('https://openidconnect.googleapis.com/v1/userinfo', {
         headers: { Authorization: `Bearer ${at}` },
+        signal: upstreamSignal('oauth'), // round 12
       });
       if (!profileRes.ok) {
         return res.status(401).json({ error: 'Google sign-in failed' });
@@ -271,7 +281,8 @@ router.post('/google', [
         return res.status(401).json({ error: 'Google account email is not verified' });
       }
       ({ sub: googleId, email, name, picture } = profile);
-      emailVerified = profile.email_verified !== false;
+      // FAIL CLOSED (round 13): `!== false` treated an absent field as verified.
+      emailVerified = profile.email_verified === true || profile.email_verified === 'true';
     }
 
     if (!email) {
@@ -300,14 +311,21 @@ router.post('/google', [
       result = await pool.query('SELECT * FROM users WHERE LOWER(email) = LOWER($1)', [email]);
       if (result.rows.length > 0) {
         const existing = result.rows[0];
-        if (existing.oauth_provider || emailVerified === false) {
+        if (existing.oauth_provider || !emailVerified) {
           return res.status(409).json({
             error: 'An account with this email already exists. Log in the way you originally signed up.',
           });
         }
+        // Round 13: the claim transferred the ROW but not the SESSION. The
+        // squatter who pre-registered this address may be holding a JWT minted
+        // minutes ago and good for another 24h, which would keep reading the
+        // real owner's DMs, flocks and live location right through the
+        // handover. Bumping token_version invalidates every token already
+        // issued for this user id (middleware/auth.js compares the `tv` claim).
         const claimed = await pool.query(
           `UPDATE users SET oauth_provider = 'google', oauth_id = $1, password = NULL,
-             profile_image_url = COALESCE(profile_image_url, $2), updated_at = NOW()
+             profile_image_url = COALESCE(profile_image_url, $2),
+             token_version = token_version + 1, updated_at = NOW()
            WHERE id = $3 RETURNING *`,
           [googleId, picture || null, existing.id]
         );
@@ -339,8 +357,8 @@ router.post('/google', [
 
         if (!(await enforceDobOnLogin(user, req, res))) return;
 
-    const token = jwt.sign({ userId: user.id }, process.env.JWT_SECRET, { expiresIn: TOKEN_EXPIRY });
-    const { password: _, apple_refresh_token: _art, ...safeUser } = user;
+    const token = signUserToken(user);
+    const { password: _, apple_refresh_token: _art, token_version: _tv, ...safeUser } = user;
     res.json({ token, user: safeUser });
   } catch (err) {
     console.error('Google OAuth error:', err);
@@ -428,8 +446,11 @@ router.post('/apple', [
             error: 'An account with this email already exists. Log in the way you originally signed up.',
           });
         }
+        // Round 13: same session handover as the Google claim — bump
+        // token_version so any JWT the squatter still holds dies immediately.
         const claimed = await pool.query(
-          `UPDATE users SET oauth_provider = 'apple', oauth_id = $1, password = NULL, updated_at = NOW()
+          `UPDATE users SET oauth_provider = 'apple', oauth_id = $1, password = NULL,
+             token_version = token_version + 1, updated_at = NOW()
            WHERE id = $2 RETURNING *`,
           [appleId, existing.id]
         );
@@ -510,8 +531,8 @@ router.post('/apple', [
 
         if (!(await enforceDobOnLogin(user, req, res))) return;
 
-    const token = jwt.sign({ userId: user.id }, process.env.JWT_SECRET, { expiresIn: TOKEN_EXPIRY });
-    const { password: _, apple_refresh_token: _art, ...safeUser } = user;
+    const token = signUserToken(user);
+    const { password: _, apple_refresh_token: _art, token_version: _tv, ...safeUser } = user;
     res.json({ token, user: safeUser });
   } catch (err) {
     console.error('Apple Sign In error:', err);

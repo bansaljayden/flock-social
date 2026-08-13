@@ -11,8 +11,11 @@ router.use(authenticate);
 // ---------------------------------------------------------------------------
 router.post('/',
   [
-    body('venue_place_id').trim().isLength({ min: 1 }).withMessage('venue_place_id is required'),
-    body('venue_name').trim().isLength({ min: 1 }).withMessage('venue_name is required'),
+    // Round 12: min-only length checks let an over-long id/name reach a
+    // VARCHAR(255) column, where Postgres raised 22001 and the handler turned
+    // it into a 500. Both columns are VARCHAR(255); cap below that.
+    body('venue_place_id').trim().isLength({ min: 1, max: 200 }).withMessage('venue_place_id is required'),
+    body('venue_name').trim().isLength({ min: 1, max: 200 }).withMessage('venue_name is required'),
     body('crowd_level').isInt({ min: 1, max: 3 }).withMessage('crowd_level must be 1-3'),
     body('price_worth').optional().isBoolean().withMessage('price_worth must be a boolean'),
     body('rating').optional().isInt({ min: 1, max: 5 }).withMessage('rating must be 1-5'),
@@ -130,7 +133,7 @@ router.post('/',
 // GET /api/feedback/venue/:placeId — Aggregate feedback for a venue
 // ---------------------------------------------------------------------------
 router.get('/venue/:placeId',
-  param('placeId').trim().isLength({ min: 1 }).withMessage('placeId is required'),
+  param('placeId').trim().isLength({ min: 1, max: 200 }).withMessage('placeId is required'), // round 12
   async (req, res) => {
     try {
       const errors = validationResult(req);

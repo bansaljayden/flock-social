@@ -6,6 +6,40 @@ const { authenticate } = require('../middleware/auth');
 
 const router = express.Router();
 
+// ---------------------------------------------------------------------------
+// Round 12: GET /:placeId is UNAUTHENTICATED and inserted a venue_checkins row
+// for any attacker-supplied string. There was no validator of any kind, so:
+//   - ids longer than VARCHAR(255) blew up as 500s instead of 400s, and
+//   - the anonymous dedupe keys on ip|placeId, so rotating fabricated ids
+//     defeated it entirely — one IP could write ~288,000 rows/day (the general
+//     limiter's ceiling) straight into the table the ML pipeline reads and the
+//     live occupancy count sums.
+// Taps must now look like a Google place id AND name a venue we actually know.
+// ---------------------------------------------------------------------------
+const PLACE_ID_RE = /^[A-Za-z0-9_-]{6,128}$/; // Google place ids; well under VARCHAR(255)
+
+function validPlaceId(placeId) {
+  return typeof placeId === 'string' && PLACE_ID_RE.test(placeId);
+}
+
+// "Known" = a venue that exists in our world already: a claimed venue profile,
+// a deployed sensor/NFC site, a curated ML venue, or somewhere a flock has
+// actually planned to meet. NFC tags are only ever programmed for venues we
+// onboarded, so this costs a real tap nothing. Deliberately does NOT consult
+// venue_checkins — that would let the first forged row bootstrap the rest.
+async function isKnownPlace(placeId) {
+  const { rows } = await pool.query(
+    `SELECT (
+       EXISTS (SELECT 1 FROM venue_profiles WHERE google_place_id = $1)
+       OR EXISTS (SELECT 1 FROM sensor_devices WHERE venue_place_id = $1)
+       OR EXISTS (SELECT 1 FROM ml_venues WHERE google_place_id = $1)
+       OR EXISTS (SELECT 1 FROM flocks WHERE venue_id = $1)
+     ) AS known`,
+    [placeId]
+  );
+  return rows[0]?.known === true;
+}
+
 // Round 8: the bare GET accepted ANY place id and stored it as source 'nfc',
 // which feedback verification trusts as physical presence — so visiting the
 // URL in a browser minted "verified" calibration/training feedback for any
@@ -85,7 +119,8 @@ const anonTapCache = new Map(); // ip|place -> last anon tap ms
 router.get('/:placeId', async (req, res) => {
   try {
     const { placeId } = req.params;
-    if (!placeId) return res.status(400).json({ error: 'placeId required' });
+    if (!validPlaceId(placeId)) return res.status(400).json({ error: 'Invalid venue id' });
+    if (!(await isKnownPlace(placeId))) return res.status(404).json({ error: 'Unknown venue' });
 
     const userId = await tryAuth(req);
 
@@ -149,7 +184,12 @@ router.get('/:placeId', async (req, res) => {
 router.post('/:placeId', authenticate, async (req, res) => {
   try {
     const { placeId } = req.params;
-    if (!placeId) return res.status(400).json({ error: 'placeId required' });
+    // Round 12 (VARCHAR overflow): same shape check as the public tap. The
+    // known-place requirement is deliberately NOT applied here — a manual
+    // check-in is an authenticated, identified, rate-limited write from inside
+    // the app, and it legitimately happens at venues discovered through Google
+    // Places that we have never seen before.
+    if (!validPlaceId(placeId)) return res.status(400).json({ error: 'Invalid venue id' });
 
     const insert = await pool.query(
       `INSERT INTO venue_checkins (venue_place_id, user_id, checkin_source)

@@ -4,6 +4,7 @@ const pool = require('../config/database');
 const { authenticate } = require('../middleware/auth');
 const { requireVenueTier } = require('../services/venueEntitlements');
 const { rejectIfProfane } = require('../utils/moderation');
+const { upstreamSignal } = require('../utils/upstream');
 
 const router = express.Router();
 router.use(authenticate);
@@ -315,7 +316,9 @@ router.post('/reviews/:id/reply', [
 
 // POST /api/venue-dashboard/submit-review — any logged-in user can review a venue
 router.post('/submit-review', [
-  body('googlePlaceId').trim().isLength({ min: 1 }).withMessage('Place ID is required'),
+  // Round 12: venue_reviews.google_place_id is VARCHAR(255) — an unbounded id
+  // overflowed it and surfaced as a 500 instead of a 400.
+  body('googlePlaceId').trim().isLength({ min: 1, max: 200 }).withMessage('Place ID is required'),
   body('rating').isInt({ min: 1, max: 5 }).withMessage('Rating 1-5 required'),
   body('text').optional().trim().isLength({ max: 1000 }).withMessage('Review is too long (max 1000 characters)'),
 ], async (req, res) => {
@@ -461,6 +464,7 @@ async function fetchVenueBasics(placeId, userId) {
       'X-Goog-Api-Key': GOOGLE_KEY,
       'X-Goog-FieldMask': 'id,displayName,rating,userRatingCount,priceLevel,types,location,currentOpeningHours',
     },
+    signal: upstreamSignal('places'), // round 12 — see utils/upstream.js
   });
   const p = await r.json();
   if (p.error) return null;
@@ -563,6 +567,7 @@ router.get('/strip', async (req, res) => {
           circle: { center: { latitude: me.location.latitude, longitude: me.location.longitude }, radius: 1500 },
         },
       }),
+      signal: upstreamSignal('places'), // round 12
     }).then((r) => r.json());
 
     const weather = await getWeather(me.location.latitude, me.location.longitude).catch(() => null);

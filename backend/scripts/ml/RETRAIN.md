@@ -1,6 +1,12 @@
 # Crowd model: retrain runbook + the continuous-learning loop
 
-Updated 2026-08-12 (v2.3 work). Read `ml_overfitting_fixes` doctrine first
+**Currently shipped: v2.5.0 "Starling"** (`models/model_metadata.json`,
+trained 2026-08-12, 106 features, ship gate `verdict: ship` on the realtime
+holdout slice). The narrative below was written during the v2.3 work and is
+kept because the *reasoning* still holds; the version numbers in it are not
+current. Always read `model_metadata.json` for live figures.
+
+Read `ml_overfitting_fixes` doctrine first
 (memory) — high R² alone means NOTHING on this problem; the weekly rows are a
 tautology and the realtime slice is the only honest gate.
 
@@ -28,10 +34,27 @@ cd ../../.. && node --test   # backend still green
 # commit crowd_model.onnx + model_metadata.json -> push -> Railway serves it
 ```
 
-Ship gate (do not ship on overall metrics): realtime-only holdout MAE must
-beat both the previous model (v2.2.1: 33.5) and the popular-times baseline
-(40.5), and overall holdout must not regress materially (v2.2.1: MAE 5.16,
-R² 0.75). If training dies, feature pickles persist — rerun train_model.py.
+> **Gitignore trap.** `.gitignore:37` lists
+> `backend/scripts/ml/models/crowd_model.onnx`, but the file is already **tracked**,
+> and gitignore does not apply to tracked files — so committing an updated model
+> works today. If anyone ever runs `git rm --cached` on it, the ignore rule takes
+> over and every future retrain will silently fail to ship while looking like it
+> succeeded. After pushing, confirm with
+> `git log --oneline -1 -- backend/scripts/ml/models/crowd_model.onnx`.
+
+Ship gate (do not ship on overall metrics): realtime-only holdout MAE must beat
+both the incumbent model and the popular-times baseline, and overall holdout
+must not regress materially.
+
+> **Do not hardcode the incumbent's numbers here.** The old "v2.2.1: 33.5 / 40.5"
+> figures are stale and are NOT comparable to current runs — the baselines
+> matured as more realtime rows accrued, so v2.5's honest realtime MAE (21.46 vs
+> the incumbent's 22.77) sits on a completely different scale from the 33.5 that
+> once counted as the bar. **Re-run the incumbent on the same holdout every
+> time** and compare within that run. `quick_eval.py` does this and writes the
+> verdict into `ship_gate`; trust it over any number typed in a doc.
+
+If training dies, feature pickles persist — rerun train_model.py.
 
 **Round 10:** `quick_eval.py` is no longer advisory. It writes
 `ship_gate.overall_pass` from the realtime-only holdout slice, and

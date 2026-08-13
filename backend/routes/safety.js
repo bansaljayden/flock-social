@@ -3,6 +3,7 @@ const router = express.Router();
 const { Resend } = require('resend');
 const { authenticate } = require('../middleware/auth');
 const pool = require('../config/database');
+const { upstreamSignal } = require('../utils/upstream');
 
 // ── Resend email client (configured via RESEND_API_KEY on Railway) ──
 const resend = process.env.RESEND_API_KEY ? new Resend(process.env.RESEND_API_KEY) : null;
@@ -13,12 +14,15 @@ async function sendAlertEmail(to, subject, htmlBody) {
     return { skipped: true };
   }
   try {
+    // Round 12: the Resend SDK passes request options straight through to
+    // fetch, and without a deadline a slow Resend held an EMERGENCY alert open
+    // for minutes with nothing sent. 8s budget — see utils/upstream.js.
     const { data, error } = await resend.emails.send({
       from: 'Flock Safety <alerts@flockcorp.com>',
       to,
       subject,
       html: htmlBody,
-    });
+    }, { signal: upstreamSignal('email') });
     if (error) {
       console.error('[Safety] Resend error for', to, JSON.stringify(error));
       return { sent: false, error: error.message || JSON.stringify(error) };
@@ -288,20 +292,31 @@ router.post('/alert', authenticate, async (req, res) => {
     let emailsSent = 0;
     let emailsSkipped = 0;
 
+    // Round 12: these went out one at a time and awaited in sequence, so five
+    // contacts meant five serial round trips — with the new 8s deadline a
+    // brownout would still delay the last contact by half a minute. Fan out and
+    // settle: contact 3 is not held hostage by contact 1's slow send, and no
+    // single rejection can abort the loop mid-alert.
+    const withEmail = contacts.rows.filter((c) => c.contact_email);
     for (const c of contacts.rows) {
-      if (c.contact_email) {
-        const result = await sendAlertEmail(
-          c.contact_email,
-          `🚨 Emergency Alert from ${userName}`,
-          htmlBody
-        );
-        alerts.push({ contactName: c.contact_name, email: c.contact_email, sent: result.sent || false });
-        if (result.sent) emailsSent++;
-      } else {
+      if (!c.contact_email) {
         alerts.push({ contactName: c.contact_name, email: null, sent: false, reason: 'no email' });
         emailsSkipped++;
       }
     }
+
+    const settled = await Promise.allSettled(
+      withEmail.map((c) => sendAlertEmail(c.contact_email, `🚨 Emergency Alert from ${userName}`, htmlBody))
+    );
+    settled.forEach((outcome, i) => {
+      const c = withEmail[i];
+      const sent = outcome.status === 'fulfilled' && outcome.value?.sent === true;
+      if (outcome.status === 'rejected') {
+        console.error('[Safety] Alert email threw for', c.contact_email, outcome.reason?.message);
+      }
+      alerts.push({ contactName: c.contact_name, email: c.contact_email, sent });
+      if (sent) emailsSent++;
+    });
 
     // Record what actually happened on the row we already claimed.
     // contacts_alerted = confirmed sends only; leaving it at 0 means the row
@@ -387,17 +402,15 @@ router.post('/share-location', authenticate, async (req, res) => {
     let emailsSent = 0;
     let emailsSkipped = 0;
 
-    for (const c of contacts.rows) {
-      if (c.contact_email) {
-        const result = await sendAlertEmail(
-          c.contact_email,
-          `📍 ${userName} shared their location with you`,
-          htmlBody
-        );
-        if (result.sent) emailsSent++;
-      } else {
-        emailsSkipped++;
-      }
+    // Same fan-out as /alert (round 12).
+    const withEmail = contacts.rows.filter((c) => c.contact_email);
+    emailsSkipped = contacts.rows.length - withEmail.length;
+    const settled = await Promise.allSettled(
+      withEmail.map((c) => sendAlertEmail(c.contact_email, `📍 ${userName} shared their location with you`, htmlBody))
+    );
+    for (const outcome of settled) {
+      if (outcome.status === 'fulfilled' && outcome.value?.sent) emailsSent++;
+      else if (outcome.status === 'rejected') console.error('[Safety] Share email threw:', outcome.reason?.message);
     }
 
     const parts = [];

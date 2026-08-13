@@ -1,6 +1,7 @@
 const express = require('express');
 const { query, validationResult } = require('express-validator');
 const { authenticate } = require('../middleware/auth');
+const { upstreamSignal } = require('../utils/upstream');
 
 const router = express.Router();
 
@@ -196,7 +197,8 @@ router.get('/search',
       }
 
       // If user typed a keyword, also search without location (catches team names, artists, etc.)
-      const fetches = [fetch(`https://app.ticketmaster.com/discovery/v2/events.json?${localParams}`)];
+      // Round 12: every Ticketmaster call now carries a deadline (utils/upstream.js).
+      const fetches = [fetch(`https://app.ticketmaster.com/discovery/v2/events.json?${localParams}`, { signal: upstreamSignal('ticketmaster') })];
       if (searchQuery) {
         const wideParams = new URLSearchParams({
           apikey: TM_API_KEY,
@@ -209,10 +211,17 @@ router.get('/search',
           const segMap = { concert: 'Music', sports: 'Sports', arts: 'Arts & Theatre', film: 'Film', comedy: 'Arts & Theatre' };
           if (segMap[categoryFilter]) wideParams.set('classificationName', segMap[categoryFilter]);
         }
-        fetches.push(fetch(`https://app.ticketmaster.com/discovery/v2/events.json?${wideParams}`));
+        fetches.push(fetch(`https://app.ticketmaster.com/discovery/v2/events.json?${wideParams}`, { signal: upstreamSignal('ticketmaster') }));
       }
 
-      const responses = await Promise.all(fetches);
+      // allSettled, not all: the optional keyword-wide search timing out must
+      // not throw away the local results that already came back (round 12).
+      const settled = await Promise.allSettled(fetches);
+      if (settled[0].status === 'rejected') {
+        console.warn('[Events] Ticketmaster search failed:', settled[0].reason?.message);
+        return res.status(503).json({ error: 'Event search is unavailable right now. Try again in a moment.' });
+      }
+      const responses = settled.map((s) => (s.status === 'fulfilled' ? s.value : null));
 
       // Handle Ticketmaster rate limits gracefully — return empty instead of 500
       if (responses[0].status === 429) {
@@ -315,7 +324,7 @@ router.get('/featured',
         params.set('classificationName', tmClassifications.join(','));
       }
 
-      const response = await fetch(`https://app.ticketmaster.com/discovery/v2/events.json?${params}`);
+      const response = await fetch(`https://app.ticketmaster.com/discovery/v2/events.json?${params}`, { signal: upstreamSignal('ticketmaster') }); // round 12
 
       if (response.status === 429 || !response.ok) {
         // Rate limited or failed — gracefully return empty, cache it
@@ -331,8 +340,11 @@ router.get('/featured',
       // If we filtered by classification and got few results, fetch more without filter
       if (tmClassifications.length > 0 && rawEvents.length < 5) {
         params.delete('classificationName');
-        const fallbackRes = await fetch(`https://app.ticketmaster.com/discovery/v2/events.json?${params}`);
-        if (fallbackRes.ok) {
+        // The unfiltered top-up is optional — a timeout here must not lose the
+        // interest-matched events we already have (round 12).
+        const fallbackRes = await fetch(`https://app.ticketmaster.com/discovery/v2/events.json?${params}`, { signal: upstreamSignal('ticketmaster') })
+          .catch((e) => { console.warn('[Events] Featured top-up failed:', e.message); return null; });
+        if (fallbackRes?.ok) {
           const fallbackData = await fallbackRes.json();
           const fallbackEvents = fallbackData._embedded?.events || [];
           // Merge: interest-matched first, then others
@@ -376,7 +388,7 @@ router.get('/details',
         return res.status(429).json({ error: 'Event lookups are busy right now. Try again in a bit.' });
       }
 
-      const response = await fetch(`https://app.ticketmaster.com/discovery/v2/events/${eventId}?apikey=${TM_API_KEY}`);
+      const response = await fetch(`https://app.ticketmaster.com/discovery/v2/events/${eventId}?apikey=${TM_API_KEY}`, { signal: upstreamSignal('ticketmaster') }); // round 12
 
       if (!response.ok) {
         return res.status(response.status === 404 ? 404 : 502).json({ error: 'Event not found' });

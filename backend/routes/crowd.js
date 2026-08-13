@@ -4,6 +4,7 @@ const { authenticate } = require('../middleware/auth');
 const { getWeather } = require('../services/weatherService');
 const crowdEngine = require('../services/crowdEngine');
 const mlPredictor = require('../services/mlPredictor');
+const { upstreamSignal } = require('../utils/upstream');
 
 // Use ML predictor when available, fall back to rule engine
 const {
@@ -102,6 +103,9 @@ async function fetchVenueFromGoogle(placeId, clientDay) {
       'X-Goog-Api-Key': API_KEY,
       'X-Goog-FieldMask': 'id,displayName,formattedAddress,rating,userRatingCount,priceLevel,types,location,currentOpeningHours',
     },
+    // Round 12: no deadline meant a hung Google socket parked this request (and
+    // its pg pool slot) for ~5 minutes. See utils/upstream.js.
+    signal: upstreamSignal('places'),
   });
 
   const p = await response.json();
@@ -427,6 +431,7 @@ router.get('/:placeId/alternatives',
           },
           maxResultCount: 10,
         }),
+        signal: upstreamSignal('places'), // round 12
       });
 
       const searchData = await searchResponse.json();

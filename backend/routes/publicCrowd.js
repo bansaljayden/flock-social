@@ -13,6 +13,7 @@ const express = require('express');
 const { query, param, validationResult } = require('express-validator');
 const { getWeather } = require('../services/weatherService');
 const mlPredictor = require('../services/mlPredictor');
+const { upstreamSignal } = require('../utils/upstream');
 const { findBestTime, findPeakTime, getLabel } = require('../services/crowdEngine');
 
 const router = express.Router();
@@ -189,6 +190,9 @@ router.get('/demo/venues',
             maxResultCount: 8,
             locationBias: { circle: { center: { latitude: lat, longitude: lng }, radius: 8000.0 } },
           }),
+          // Round 12: a timeout lands in the catch below, which already turns
+          // an unreachable upstream into an honest 503.
+          signal: upstreamSignal('places'),
         });
       } catch (netErr) {
         console.error('[PublicDemo] Places search unreachable:', netErr.message);
@@ -287,6 +291,7 @@ router.get('/demo/venue/:placeId',
             'X-Goog-Api-Key': API_KEY,
             'X-Goog-FieldMask': PLACE_FIELDS.replaceAll('places.', ''),
           },
+          signal: upstreamSignal('places'), // round 12
         });
       } catch (netErr) {
         console.error('[PublicDemo] Places details unreachable:', netErr.message);

@@ -33,6 +33,28 @@ async function verifyMembership(flockId, userId) {
   return result.rows.length > 0;
 }
 
+// Round 13: dm_vote_venue and dm_pin_venue accepted ANY receiverId the caller
+// had not been blocked by, so a stranger could write rows into a conversation
+// they are not part of. dm_pinned_venues is keyed on the (user1, user2) PAIR
+// and upserts, so a single event from an outsider OVERWRITES whatever those two
+// people had pinned. Persisting DM handlers now require a real relationship:
+// an accepted friendship, or a DM that already exists between the two accounts.
+// (Ephemeral handlers — typing, location — keep the cheaper block-only check.)
+async function hasDmRelationship(userId, otherId) {
+  const r = await pool.query(
+    `SELECT 1 WHERE EXISTS (
+       SELECT 1 FROM friendships
+       WHERE status = 'accepted'
+         AND ((requester_id = $1 AND addressee_id = $2) OR (requester_id = $2 AND addressee_id = $1))
+     ) OR EXISTS (
+       SELECT 1 FROM direct_messages
+       WHERE (sender_id = $1 AND receiver_id = $2) OR (sender_id = $2 AND receiver_id = $1)
+     )`,
+    [userId, otherId]
+  );
+  return r.rows.length > 0;
+}
+
 // Block-aware alternative to a flock-room broadcast: emits to each accepted
 // member individually, skipping anyone blocked either way with the actor.
 // Room broadcasts leaked typing/vote identity across blocks (round 4).
@@ -119,9 +141,16 @@ function registerHandlers(io, socket) {
     }
   });
 
-  socket.on('leave_flock', (flockId) => {
+  socket.on('leave_flock', async (flockId) => {
     const room = `flock:${flockId}`;
     socket.leave(room);
+
+    // Round 13: this emitted `member_offline` into any room id the caller
+    // named, with no membership check — a stranger could push fake presence
+    // events into any flock whose id they guessed. Leaving the room itself is
+    // always safe (and must stay unconditional so a removed member can still
+    // detach), but the BROADCAST is gated. join_flock already verifies.
+    const isMember = await verifyMembership(flockId, user.id);
 
     // Remove from presence tracking. Like disconnect, only announce offline
     // when the user has no OTHER socket left in the room (round 7).
@@ -133,7 +162,7 @@ function registerHandlers(io, socket) {
       if (users.size === 0) roomUsers.delete(flockId);
     }
 
-    if (announce) {
+    if (announce && isMember) {
       socket.to(room).emit('member_offline', {
         userId: user.id,
         name: user.name,
@@ -458,6 +487,10 @@ function registerHandlers(io, socket) {
   socket.on('stop_sharing_location', async (data) => {
     const flockId = data?.flockId;
     if (!flockId) return;
+    // Round 13: no membership check — update_location right above has one, but
+    // its counterpart let any authenticated user fire `member_stopped_sharing`
+    // into any flock room they could guess the id of.
+    if (!(await verifyMembership(flockId, user.id))) return;
     socket.to(`flock:${flockId}`).emit('member_stopped_sharing', {
       userId: user.id,
     });
@@ -742,10 +775,13 @@ function registerHandlers(io, socket) {
   socket.on('dm_vote_venue', async (data) => {
     try {
       if (!allowEvent(socket, 'dm_vote_venue', 30, 10_000)) return;
-      const { receiverId, venue_id } = data;
+      const { venue_id } = data;
+      const receiverId = parseInt(data.receiverId, 10);
       const venue_name = stripHtml(typeof data.venue_name === 'string' ? data.venue_name.trim() : '');
-      if (!receiverId || !venue_name) return;
+      if (!Number.isInteger(receiverId) || receiverId === user.id || !venue_name) return;
       if (await isBlockedBetween(user.id, receiverId)) return;
+      // Round 13: this wrote dm_venue_votes rows into any pair the caller named.
+      if (!(await hasDmRelationship(user.id, receiverId))) return;
 
       const u1 = Math.min(user.id, receiverId);
       const u2 = Math.max(user.id, receiverId);
@@ -787,9 +823,13 @@ function registerHandlers(io, socket) {
   socket.on('dm_pin_venue', async (data) => {
     try {
       if (!allowEvent(socket, 'dm_pin_venue', 20, 10_000)) return;
-      const { receiverId, venue_name, venue_address, venue_id, venue_rating, venue_photo_url } = data;
-      if (!receiverId || !venue_name) return;
+      const { venue_name, venue_address, venue_id, venue_rating, venue_photo_url } = data;
+      const receiverId = parseInt(data.receiverId, 10);
+      if (!Number.isInteger(receiverId) || receiverId === user.id || !venue_name) return;
       if (await isBlockedBetween(user.id, receiverId)) return;
+      // Round 13: dm_pinned_venues upserts on the (user1, user2) pair, so
+      // without this a stranger could overwrite two other people's pinned venue.
+      if (!(await hasDmRelationship(user.id, receiverId))) return;
       const u1 = Math.min(user.id, receiverId);
       const u2 = Math.max(user.id, receiverId);
       const safeName = stripHtml(typeof venue_name === 'string' ? venue_name.trim() : '').slice(0, 255);

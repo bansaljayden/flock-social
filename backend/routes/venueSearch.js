@@ -1,6 +1,7 @@
 const express = require('express');
 const { query, validationResult } = require('express-validator');
 const { authenticate } = require('../middleware/auth');
+const { upstreamSignal } = require('../utils/upstream');
 
 const router = express.Router();
 
@@ -66,7 +67,9 @@ router.get('/photo',
 
       // Step 1: ask Google for the actual CDN url (JSON response)
       const metaUrl = `https://places.googleapis.com/v1/${photoRef}/media?maxWidthPx=${maxWidth}&key=${API_KEY}&skipHttpRedirect=true`;
-      const metaRes = await fetch(metaUrl);
+      // Round 12: both legs of the photo proxy are outbound calls with no
+      // deadline of their own — see utils/upstream.js.
+      const metaRes = await fetch(metaUrl, { signal: upstreamSignal('places') });
       if (!metaRes.ok) {
         console.error('[Photo Proxy] Google API error:', metaRes.status, 'for ref:', photoRef.slice(0, 60));
         return res.status(502).json({ error: 'Google API error' });
@@ -78,7 +81,7 @@ router.get('/photo',
       }
 
       // Step 2: fetch the actual image bytes from the CDN
-      const imgRes = await fetch(meta.photoUri);
+      const imgRes = await fetch(meta.photoUri, { signal: upstreamSignal('places') });
       if (!imgRes.ok) {
         console.error('[Photo Proxy] CDN fetch failed:', imgRes.status, 'for ref:', photoRef.slice(0, 60));
         return res.status(502).json({ error: 'CDN fetch failed' });
@@ -216,6 +219,7 @@ router.get('/search',
           'X-Goog-FieldMask': 'places.id,places.displayName,places.formattedAddress,places.rating,places.userRatingCount,places.priceLevel,places.photos,places.types,places.currentOpeningHours,places.location',
         },
         body: JSON.stringify(body),
+        signal: upstreamSignal('places'), // round 12
       });
 
       const data = await response.json();
@@ -287,6 +291,7 @@ router.get('/details',
           'X-Goog-Api-Key': API_KEY,
           'X-Goog-FieldMask': 'id,displayName,formattedAddress,nationalPhoneNumber,websiteUri,rating,userRatingCount,priceLevel,photos,currentOpeningHours,types,location,googleMapsUri',
         },
+        signal: upstreamSignal('places'), // round 12
       });
 
       const p = await response.json();

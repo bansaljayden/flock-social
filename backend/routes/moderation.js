@@ -17,7 +17,14 @@ router.use(authenticate);
 
 // venue_review added round 6: public UGC with no report path is an
 // App Review 1.2 blocker.
-const VALID_CONTENT_TYPES = ['flock_message', 'dm', 'profile', 'story', 'venue_review', 'venue_promotion'];
+//
+// guest_rsvp added round 13. Migration 005 gave guest_rsvps an is_hidden column
+// and every read honours it, but NOTHING could ever set it: the type was
+// missing here and from the admin table map, so an abusive unauthenticated
+// guest name — broadcast live to every member of the flock — had no takedown
+// path at all. Reporting it is gated below on the reporter being an accepted
+// member of that RSVP's flock.
+const VALID_CONTENT_TYPES = ['flock_message', 'dm', 'profile', 'story', 'venue_review', 'venue_promotion', 'guest_rsvp'];
 const VALID_REASONS = ['spam', 'harassment', 'hate', 'sexual', 'violence', 'self_harm', 'other'];
 
 // Round 9: every report inserted a row and paged a moderator with no ceiling,
@@ -97,6 +104,18 @@ router.post('/reports',
             `SELECT venue_user_id AS sender_id FROM venue_promotions
              WHERE id = $1 AND COALESCE(is_hidden, false) = false`,
             [content_id]
+          );
+          row = r.rows[0] || null;
+        } else if (content_type === 'guest_rsvp') {
+          // A guest RSVP is only visible to accepted members of its flock, so
+          // only they may report it. sender_id stays NULL: there is no Flock
+          // account behind a guest, which also means a reported_user_id sent
+          // alongside this type correctly fails the author check below.
+          const r = await pool.query(
+            `SELECT NULL::int AS sender_id FROM guest_rsvps gr
+             JOIN flock_members fm ON fm.flock_id = gr.flock_id AND fm.user_id = $2 AND fm.status = 'accepted'
+             WHERE gr.id = $1 AND COALESCE(gr.is_hidden, false) = false`,
+            [content_id, req.user.id]
           );
           row = r.rows[0] || null;
         } else if (content_type === 'story') {

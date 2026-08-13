@@ -154,6 +154,11 @@ router.get('/reports', async (req, res) => {
          SELECT vr.text, NULL, vr.user_id, vr.created_at, COALESCE(vr.is_hidden, false)
          FROM venue_reviews vr WHERE r.content_type = 'venue_review' AND vr.id = r.content_id
          UNION ALL
+         -- Guest RSVPs have no Flock account behind them, so author_id is NULL;
+         -- the reported content IS the guest's self-chosen display name.
+         SELECT gr.name, NULL, NULL, gr.created_at, COALESCE(gr.is_hidden, false)
+         FROM guest_rsvps gr WHERE r.content_type = 'guest_rsvp' AND gr.id = r.content_id
+         UNION ALL
          SELECT NULLIF(CONCAT_WS(': ', vp.title, vp.description), ''), NULL, vp.venue_user_id,
                 vp.created_at, COALESCE(vp.is_hidden, false)
          FROM venue_promotions vp WHERE r.content_type = 'venue_promotion' AND vp.id = r.content_id
@@ -195,50 +200,99 @@ router.put('/reports/:id', async (req, res) => {
     // three independent pool.query calls. A failure between them could ban a
     // user or hide content with NO audit record, or resolve a report that was
     // never acted on. All three commit together or none of them do.
+    // Round 13: a moderator action that performs NOTHING must not report
+    // success. `refusal` short-circuits the transaction and is answered after
+    // the client is released, so the route never rolls back and releases twice.
     const client = await pool.connect();
     let actionType;
     let banTargetId = null;
+    let refusal = null;
     try {
       await client.query('BEGIN');
 
       if (action === 'hide') {
         // Table name comes from this fixed map, never from the request body.
-        const table = { flock_message: 'messages', dm: 'direct_messages', story: 'stories', venue_review: 'venue_reviews', venue_promotion: 'venue_promotions' }[report.content_type];
-        if (table && report.content_id) {
-          await client.query(`UPDATE ${table} SET is_hidden = true WHERE id = $1`, [report.content_id]);
+        // guest_rsvps added round 13 — migration 005 built the takedown and
+        // nothing was ever wired to it, so an abusive guest RSVP name could not
+        // be removed by anyone.
+        const table = {
+          flock_message: 'messages',
+          dm: 'direct_messages',
+          story: 'stories',
+          venue_review: 'venue_reviews',
+          venue_promotion: 'venue_promotions',
+          guest_rsvp: 'guest_rsvps',
+        }[report.content_type];
+
+        // FAIL LOUDLY (round 13). A 'profile' report has no row in this map, so
+        // the UPDATE never ran — and the route still answered "Action applied",
+        // resolved the report, and wrote an audit row claiming content_hidden.
+        // A moderator was told abusive content was down while it was still
+        // live, and the audit log recorded work nobody did.
+        if (!table || !report.content_id) {
+          refusal = {
+            status: 400,
+            error: report.content_type === 'profile'
+              ? 'A profile report has no content to hide. Ban the user or dismiss the report.'
+              : 'There is nothing to hide on this report.',
+          };
+        } else {
+          // The audit action is derived from what the database actually did,
+          // never assumed.
+          const hidden = await client.query(`UPDATE ${table} SET is_hidden = true WHERE id = $1`, [report.content_id]);
+          if (hidden.rowCount === 0) {
+            refusal = { status: 404, error: 'That content no longer exists. Dismiss the report instead.' };
+          } else {
+            actionType = 'content_hidden';
+          }
         }
-        actionType = 'content_hidden';
-      } else if (action === 'ban') {
-        if (report.reported_user_id) {
-          await client.query('UPDATE users SET is_banned = true, banned_at = NOW() WHERE id = $1', [report.reported_user_id]);
-          banTargetId = report.reported_user_id;
+      } else if (action === 'ban' || action === 'unban') {
+        // Same lie, same fix: without a reported user there is nobody to ban.
+        if (!report.reported_user_id) {
+          refusal = { status: 400, error: 'This report names no user, so there is nobody to ban or unban.' };
+        } else {
+          const banned = action === 'ban';
+          const changed = await client.query(
+            banned
+              ? 'UPDATE users SET is_banned = true, banned_at = NOW() WHERE id = $1'
+              : 'UPDATE users SET is_banned = false, banned_at = NULL WHERE id = $1',
+            [report.reported_user_id]
+          );
+          if (changed.rowCount === 0) {
+            refusal = { status: 404, error: 'That user no longer exists. Dismiss the report instead.' };
+          } else {
+            actionType = banned ? 'user_banned' : 'user_unbanned';
+            if (banned) banTargetId = report.reported_user_id;
+          }
         }
-        actionType = 'user_banned';
-      } else if (action === 'unban') {
-        if (report.reported_user_id) {
-          await client.query('UPDATE users SET is_banned = false, banned_at = NULL WHERE id = $1', [report.reported_user_id]);
-        }
-        actionType = 'user_unbanned';
       } else {
         actionType = 'dismissed';
       }
 
-      await client.query(
-        'UPDATE content_reports SET status = $1, handled_by = $2, resolved_at = NOW() WHERE id = $3',
-        [newStatus, req.user.id, reportId]
-      );
-      await client.query(
-        `INSERT INTO moderation_actions (report_id, moderator_id, target_user_id, action, content_type, content_id, reason)
-         VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-        [reportId, req.user.id, report.reported_user_id || null, actionType, report.content_type, report.content_id || null, reason || null]
-      );
+      if (refusal) {
+        await client.query('ROLLBACK');
+      } else {
+        await client.query(
+          'UPDATE content_reports SET status = $1, handled_by = $2, resolved_at = NOW() WHERE id = $3',
+          [newStatus, req.user.id, reportId]
+        );
+        await client.query(
+          `INSERT INTO moderation_actions (report_id, moderator_id, target_user_id, action, content_type, content_id, reason)
+           VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+          [reportId, req.user.id, report.reported_user_id || null, actionType, report.content_type, report.content_id || null, reason || null]
+        );
 
-      await client.query('COMMIT');
+        await client.query('COMMIT');
+      }
     } catch (txErr) {
       await client.query('ROLLBACK').catch(() => {});
       throw txErr;
     } finally {
       client.release();
+    }
+
+    if (refusal) {
+      return res.status(refusal.status).json({ error: refusal.error });
     }
 
     // Ban must bite NOW: the socket handshake checks is_banned once, so an
