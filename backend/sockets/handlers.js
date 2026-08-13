@@ -340,12 +340,32 @@ function registerHandlers(io, socket) {
         return;
       }
 
-      await pool.query(
-        `INSERT INTO venue_votes (flock_id, user_id, venue_name, venue_id)
-         VALUES ($1, $2, $3, $4)
-         ON CONFLICT (flock_id, user_id, venue_name) DO NOTHING`,
-        [flockId, user.id, venue_name, venue_id]
-      );
+      // One vote per user per flock. The unique key is
+      // (flock_id, user_id, venue_name), so a plain INSERT let one person
+      // accumulate a vote on every venue they ever tapped: switching picks
+      // never cleared the previous row (round 10). Delete-then-insert in one
+      // transaction, mirroring the REST route and the DM vote handler.
+      const voteClient = await pool.connect();
+      try {
+        await voteClient.query('BEGIN');
+        await voteClient.query(
+          'DELETE FROM venue_votes WHERE flock_id = $1 AND user_id = $2 AND venue_name <> $3',
+          [flockId, user.id, venue_name]
+        );
+        await voteClient.query(
+          `INSERT INTO venue_votes (flock_id, user_id, venue_name, venue_id)
+           VALUES ($1, $2, $3, $4)
+           ON CONFLICT (flock_id, user_id, venue_name)
+           DO UPDATE SET venue_id = EXCLUDED.venue_id`,
+          [flockId, user.id, venue_name, venue_id]
+        );
+        await voteClient.query('COMMIT');
+      } catch (txErr) {
+        await voteClient.query('ROLLBACK').catch(() => {});
+        throw txErr;
+      } finally {
+        voteClient.release();
+      }
 
       // Fetch updated vote tallies (ids kept internally so each recipient's
       // blocked users can be stripped from the names list — round 5)
