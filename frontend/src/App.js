@@ -2014,10 +2014,16 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   // existing screen flow is state-based, this just slots into it.
   const nfcMatch = (typeof window !== 'undefined' && window.location?.pathname.match(/^\/checkin\/([^/?#]+)/)) || null;
   const nfcInitialPlaceId = nfcMatch ? decodeURIComponent(nfcMatch[1]) : null;
+  // Programmed tags carry ?sig=<hmac>, which is what proves the tap happened
+  // at a real tag rather than someone opening the URL. Dropping it here left
+  // every tap unverified no matter what the tag said (round 9).
+  const nfcInitialSig = (typeof window !== 'undefined'
+    && new URLSearchParams(window.location?.search || '').get('sig')) || null;
 
   const [currentTab, setCurrentTab] = useState('home');
   const [currentScreen, setCurrentScreen] = useState(nfcInitialPlaceId ? 'nfcCheckin' : 'main');
   const [nfcPlaceId, setNfcPlaceId] = useState(nfcInitialPlaceId);
+  const [nfcSig] = useState(nfcInitialSig);
   const [venueDetailReturnTo, setVenueDetailReturnTo] = useState(null);
   const [selectedFlockId, setSelectedFlockId] = useState(null);
   const [pickingVenueForCreate, setPickingVenueForCreate] = useState(false);
@@ -13109,7 +13115,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
       // Hit the NFC endpoint — works for both authed and anonymous users.
       // For authed: records with user_id and triggers flock-attendance update.
       // For anon: records with user_id NULL.
-      getNfcCheckin(placeId)
+      getNfcCheckin(placeId, nfcSig)
         .then((res) => {
           setCheckedInAt(res?.checked_in_at || new Date().toISOString());
           setStatus('ok');
