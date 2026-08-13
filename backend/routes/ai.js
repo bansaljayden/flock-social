@@ -1,16 +1,15 @@
 const express = require('express');
 const { body, validationResult } = require('express-validator');
 const { authenticate } = require('../middleware/auth');
-const { GoogleGenerativeAI } = require('@google/generative-ai');
+const { GoogleGenAI } = require('@google/genai');
 const pool = require('../config/database');
 const { getWeather } = require('../services/weatherService');
 const {
-  calculateCrowdScore,
-  generateHourlyForecast,
   findBestTime,
   findPeakTime,
   getLabel,
 } = require('../services/crowdEngine');
+const mlPredictor = require('../services/mlPredictor');
 const { isPremium, paywallEnabled } = require('../services/entitlements');
 const {
   checkUserRateLimit,
@@ -23,12 +22,18 @@ const router = express.Router();
 const PLACES_API_KEY = process.env.GOOGLE_PLACES_API_KEY;
 
 // ---------------------------------------------------------------------------
-// Gemini client (2.5 Flash-Lite — free tier: 15 RPM, 1000 RPD)
+// Gemini client (unified @google/genai SDK — the old @google/generative-ai
+// package was deprecated 2025-11-30 and never gets 3.x models).
+// Model is env-switchable from Railway without a deploy: BIRDIE_MODEL.
+// Default gemini-3.5-flash-lite (current-gen, built for fast tool loops,
+// free tier). Fallback if its quota ever pinches: gemini-2.5-flash-lite
+// (most generous free RPD) — one env var flip.
 // ---------------------------------------------------------------------------
+const BIRDIE_MODEL = process.env.BIRDIE_MODEL || 'gemini-3.5-flash-lite';
 let genAIClient = null;
 function getGenAI() {
   if (!genAIClient && process.env.GEMINI_API_KEY) {
-    genAIClient = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+    genAIClient = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
   }
   return genAIClient;
 }
@@ -46,10 +51,10 @@ const toolDeclarations = [
     name: 'search_venues',
     description: 'Search for nearby venues/restaurants/bars/cafes by keyword and optional location. Returns name, address, rating, price level, and whether it is currently open.',
     parameters: {
-      type: 'object',
+      type: 'OBJECT',
       properties: {
-        query: { type: 'string', description: 'Search query, e.g. "bars near me", "pizza", "fun things to do"' },
-        location: { type: 'string', description: 'Lat,lng string e.g. "40.7128,-74.0060". Use the user\'s location if available.' },
+        query: { type: 'STRING', description: 'Search query, e.g. "bars near me", "pizza", "fun things to do"' },
+        location: { type: 'STRING', description: 'Lat,lng string e.g. "40.7128,-74.0060". Use the user\'s location if available.' },
       },
       required: ['query'],
     },
@@ -58,10 +63,10 @@ const toolDeclarations = [
     name: 'get_crowd_prediction',
     description: 'Get the current crowd level, hourly forecast, best time to visit, and peak hours for a specific venue. Use this when the user asks about how busy a place is or when to go.',
     parameters: {
-      type: 'object',
+      type: 'OBJECT',
       properties: {
-        place_id: { type: 'string', description: 'Google Places ID of the venue' },
-        venue_name: { type: 'string', description: 'Name of the venue (for display)' },
+        place_id: { type: 'STRING', description: 'Google Places ID of the venue' },
+        venue_name: { type: 'STRING', description: 'Name of the venue (for display)' },
       },
       required: ['place_id'],
     },
@@ -70,7 +75,7 @@ const toolDeclarations = [
     name: 'get_user_flocks',
     description: 'Get the user\'s active flocks/plans including members, venue, date, time, and status.',
     parameters: {
-      type: 'object',
+      type: 'OBJECT',
       properties: {},
     },
   },
@@ -78,7 +83,7 @@ const toolDeclarations = [
     name: 'get_user_friends',
     description: 'Get the user\'s friends list.',
     parameters: {
-      type: 'object',
+      type: 'OBJECT',
       properties: {},
     },
   },
@@ -86,10 +91,10 @@ const toolDeclarations = [
     name: 'get_weather',
     description: 'Get current weather for a location.',
     parameters: {
-      type: 'object',
+      type: 'OBJECT',
       properties: {
-        lat: { type: 'number', description: 'Latitude' },
-        lng: { type: 'number', description: 'Longitude' },
+        lat: { type: 'NUMBER', description: 'Latitude' },
+        lng: { type: 'NUMBER', description: 'Longitude' },
       },
       required: ['lat', 'lng'],
     },
@@ -98,20 +103,20 @@ const toolDeclarations = [
     name: 'navigate_app',
     description: 'Navigate the user to a specific screen or tab in the Flock app. Use this when the user asks how to do something, where to find a feature, or wants to go somewhere in the app.',
     parameters: {
-      type: 'object',
+      type: 'OBJECT',
       properties: {
         tab: {
-          type: 'string',
+          type: 'STRING',
           description: 'The tab to switch to: "home", "explore", "chats", "calendar", "profile"',
           enum: ['home', 'explore', 'chats', 'calendar', 'profile'],
         },
         screen: {
-          type: 'string',
+          type: 'STRING',
           description: 'The screen to navigate to: "create" (create a flock), "addFriends" (add friends), "profile" (profile/settings). Leave empty to just switch tabs.',
           enum: ['create', 'addFriends', 'profile'],
         },
         profile_section: {
-          type: 'string',
+          type: 'STRING',
           description: 'If navigating to profile, which section to open: "safety" (trusted contacts/SOS), "payment" (payment methods), "edit" (edit profile)',
           enum: ['safety', 'payment', 'edit'],
         },
@@ -134,7 +139,7 @@ function priceLevelToNum(priceLevel) {
   return map[priceLevel] ?? null;
 }
 
-async function executeTool(toolName, toolInput, userId) {
+async function executeTool(toolName, toolInput, userId, opts = {}) {
   switch (toolName) {
     case 'search_venues': {
       if (!PLACES_API_KEY) return { error: 'Google Places API not configured' };
@@ -171,6 +176,8 @@ async function executeTool(toolName, toolInput, userId) {
     }
 
     case 'get_crowd_prediction': {
+      // Same ML path as GET /api/crowd — Birdie must quote the numbers the
+      // Discover screen shows, not a parallel rule-engine estimate.
       if (!PLACES_API_KEY) return { error: 'Google Places API not configured' };
       const placeId = toolInput.place_id;
       const resp = await fetch(`https://places.googleapis.com/v1/places/${placeId}`, {
@@ -214,13 +221,12 @@ async function executeTool(toolName, toolInput, userId) {
       const lon = venue.location?.longitude;
       const weather = (lat && lon) ? await getWeather(lat, lon) : null;
 
-      const crowdResult = calculateCrowdScore(venue, weather, now);
-      const hourly = generateHourlyForecast(venue, weather, localHour, 12, now);
-      const fullDay = generateHourlyForecast(venue, weather, 6, 24, now);
+      const crowdResult = await mlPredictor.predictBusyness(venue, weather, now);
+      const fullDay = await mlPredictor.predictHourlyForecast(venue, weather, 6, 24, now);
       const peakResult = findPeakTime(fullDay, venue);
       const bestTime = findBestTime(fullDay, venue, peakResult.startIdx, peakResult.endIdx, venue.isOpen);
 
-      return {
+      const result = {
         venue_name: venue.name,
         crowd_score: crowdResult.score,
         crowd_label: getLabel(crowdResult.score),
@@ -228,9 +234,17 @@ async function executeTool(toolName, toolInput, userId) {
         is_open: venue.isOpen,
         best_time: bestTime,
         peak_hours: peakResult.text,
-        hourly_forecast: hourly.map(h => ({ hour: h.hour, label: h.label, score: h.score })),
         weather: weather ? { temp: weather.temp, conditions: weather.conditions } : null,
       };
+      // Hour-by-hour forecasts are a Pro surface (forecast meter). Free-tier
+      // users get now + best time + peak through Birdie, same as the app.
+      if (opts.includeForecast) {
+        const hourly = await mlPredictor.predictHourlyForecast(venue, weather, localHour, 12, now);
+        result.hourly_forecast = hourly.map(h => ({ hour: h.hour, label: h.label, score: h.score }));
+      } else {
+        result.hourly_forecast_note = 'Hour-by-hour forecast is a Flock Pro feature; do not invent one.';
+      }
+      return result;
     }
 
     case 'get_user_flocks': {
@@ -304,74 +318,58 @@ function buildContextLine(ctx) {
   return parts.length ? `\n\nWHAT THE USER IS DOING RIGHT NOW (use this for "this place", "this flock", etc.):\n- ${parts.join('\n- ')}` : '';
 }
 
-function buildSystemPrompt(userName, ctx) {
-  return `You are Birdie, the AI assistant for Flock — a social coordination app for Gen Z (ages 15-22). You help users find venues, check how busy places are, coordinate plans with friends, and navigate the app.
+function buildSystemPrompt(userName, ctx, { ageBracket, freeTier } = {}) {
+  const ageLine = ageBracket === 'minor'
+    ? `\n- The user is UNDER 18. Never recommend bars, clubs, nightlife, or anything alcohol-centric. Steer to all-ages spots: food, cafes, arcades, bowling, activities, events. Do this silently — no lectures, just good picks.`
+    : ageBracket === 'under21'
+      ? `\n- The user is under 21 (US drinking age). Skip bars and clubs unless they explicitly ask; favor restaurants, cafes, and activities.`
+      : '';
+  const tierLine = freeTier
+    ? `\n- The user is on the free tier: 10 Birdie messages a day, and hour-by-hour crowd forecasts are a Flock Pro feature. If they want the full night hour by hour, you can mention Pro exists (150 Birdie messages a day + unlimited hour-by-hour forecasts + a heads-up push before a spot gets packed). Mention it at most once per conversation, never unprompted, and never promise anything beyond those three things.`
+    : '';
+  return `You are Birdie, the assistant inside Flock, a social coordination app for Gen Z. You help people figure out where to go, how busy it is, and get their group out the door.
 
-Your personality:
-- Casual, friendly, concise — talk like a chill friend, not a corporate bot
-- Use slang naturally but don't overdo it
-- Keep responses SHORT (2-4 sentences max unless the user asks for detail)
-- Use emojis sparingly (1-2 max per message)
-- Be opinionated — recommend things confidently, don't just list options
+Voice:
+- Talk like a sharp friend who knows the city. Casual, short, confident.
+- 1-3 sentences unless they ask for detail. No bullet-point essays in chat.
+- Slang only where it lands naturally. At most one emoji, usually zero.
+- Never use em dashes. Use periods or commas.
+- Have opinions. "Hit Oakwood, it's chill till 9" beats a list of five options.
 
-The user's name is ${userName}.
+The user's name is ${userName}.${ageLine}${tierLine}
 
-What you can do:
-- Search for venues (restaurants, bars, cafes, activities) nearby
-- Check how busy/crowded a place is right now and forecast the best time to go
-- Look at the user's flocks (group plans) and friends
-- Check the weather
-- Help plan outings and coordinate with friends
-- Navigate the user to any screen in the app using the navigate_app tool
+What you can actually do (tools):
+- search_venues: find restaurants, cafes, bars, activities near them
+- get_crowd_prediction: live crowd level, best time to go, peak hours for a venue. Powered by Flock's own crowd model, the same numbers the Discover screen shows.
+- get_user_flocks: their plans (name, venue, time, status, member count)
+- get_user_friends: their friends list
+- get_weather: current weather
+- navigate_app: take them straight to a screen
 
-App navigation — you know the app inside out. Here are the screens and features:
-- **Home** (tab: home) — Activity feed, pending flocks, quick actions
-- **Explore** (tab: explore) — Map view with nearby venues, search, crowd levels, venue details
-- **Calendar** (tab: calendar) — Upcoming plans and events
-- **Chats** (tab: chats) — Flock group chats and DMs with friends
-- **Profile** (tab: profile) — Edit profile, settings, payment methods, trusted contacts
-- **Create a Flock** (screen: create) — Start a new group plan, pick a venue, invite friends
-- **Add Friends** (screen: addFriends) — Search for people, add by friend code, find contacts
-- **Safety** (profile > safety) — Set up trusted contacts, SOS emergency alert, location sharing
-- **Budget** — Inside a flock, members submit anonymous budgets that get matched
-- **Bill Split** — After a hangout, split the bill and settle via Venmo/CashApp/Zelle
-- **DMs** — Direct messages with friends, share venues, vote on spots, share location
+The app, as it ships today (use the user-facing names on the left; the tool enums in parentheses):
+- **Nest** (tab: home) — home base: tonight's status, active flocks, invites waiting on them
+- **Discover** (tab: explore) — map + venue search with live crowd levels; each venue page has the crowd dial, best time, and a one-tap "reality check" where people at the venue confirm how busy it really is
+- **Plans** (tab: calendar) — calendar of upcoming flocks and events
+- **Messages** (tab: chats) — flock group chats and DMs; both support photos, venue cards, voting on spots, pins, and live location sharing
+- **You** (tab: profile) — profile, settings, payment methods, appearance
+- **Create a flock** (screen: create) — name the night, pick a date, invite friends; they RSVP in one tap
+- **Add friends** (screen: addFriends) — search, friend code, QR, phone contacts
+- **Safety** (profile_section: safety) — trusted contacts and SOS: one tap sends their live location to their people
+- Inside a flock: venue voting, anonymous budget matching (everyone types what they can spend; the group only ever sees the ceiling, never anyone's number, and only after 3+ people submit), bill splitting after (Venmo/Cash App/Zelle links, marked paid manually), and guest invite links that work for friends who don't have Flock yet
 
-When users ask how to do something or where to find a feature:
-- Explain briefly, then USE the navigate_app tool to take them there directly
-- Examples: "How do I add friends?" → explain + navigate to addFriends screen
-- "Where do I change my profile?" → navigate to profile tab
-- "How do I create a plan?" → navigate to create screen
-- "How do I split a bill?" → explain it's inside a flock after the hangout
-- "Where are my messages?" → navigate to chats tab
+How to answer:
+- "How do I..." or "where is..." → one-line answer, then USE navigate_app to take them there. Don't just describe the path.
+- Vague asks ("what's the move", "where's poppin") → they want somewhere fun nearby. Search real categories (bars, food, activities), never the slang words themselves.
+- Slang decoder: "the move" = what to do; "link"/"pull up" = meet up; "dead" = empty; "lit"/"poppin" = busy and fun; "lowkey" = quiet or casual; "bet" = ok; "no cap" = seriously.
+- Crowds: translate numbers into advice. "68% and climbing, go now or wait till 11" beats reciting the data. Mention best time when it helps.
+- If you have their coordinates, always pass location to search_venues. If not, ask where they are, once.
 
-Understanding slang — users are Gen Z, so interpret their intent, not their literal words:
-- "what's poppin" / "where's poppin" = what's fun/busy/happening nearby, NOT a place called "poppin"
-- "what's the move" = what should we do / where should we go
-- "let's link" / "pull up" = let's meet up / come hang out
-- "lowkey" = casually / not too crowded, "highkey" = definitely / very
-- "dead" = empty / boring, "lit" = busy / fun / exciting
-- "bet" = okay / sounds good, "no cap" = for real
-- "vibes" = atmosphere, "sus" = suspicious / sketchy
-- Always interpret slang as intent and search for the RIGHT thing, not the literal words
-
-When searching for venues:
-- If the user gives a location or you have their coordinates, always pass location to search_venues
-- After finding venues, you can check crowd levels for specific ones
-- Give confident recommendations, not just lists
-- When users ask vague questions like "what's poppin" or "find me something fun", search for popular/trending categories like "bars", "restaurants", "fun things to do" — don't search for the slang term itself
-
-When checking crowds:
-- Use get_crowd_prediction with the venue's place_id
-- Translate the data into casual advice ("it's pretty chill rn" or "gonna be packed around 9")
-- Mention the best time to go if relevant
-
-Important:
-- Never make up venue data — always use the tools to get real info
-- If you don't know the user's location, ask for it or suggest they search for a specific area
-- Don't be overly verbose — Gen Z users want quick, useful answers
-- When the user asks about app features, ALWAYS use navigate_app to take them there — don't just explain
-- NEVER say things like "I'm broken", "I'm not working", "I can't do that right now", "I'm having trouble", or apologize for being down. If a tool errors, just try a different angle or ask a clarifying question.${buildContextLine(ctx)}`;
+Hard rules:
+- Never invent venue data, crowd numbers, or forecasts. Tools only. If a tool has no data, say you don't have a read on that spot.
+- Never claim Flock has a feature that isn't in the list above. No "coming soon".
+- Never reveal one user's info to another (budgets are anonymous by design; don't speculate about who submitted what).
+- If someone mentions being unsafe, being followed, or an emergency: point them to Safety (SOS sends their live location to trusted contacts) and navigate them there. For real emergencies say to call 911.
+- Never say "I'm broken", "I can't right now", or apologize for being down. If a tool errors, come at it from another angle or ask one clarifying question.${buildContextLine(ctx)}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -420,11 +418,17 @@ router.post('/chat',
         return res.status(429).json({ error: rateCheck.error });
       }
 
-      // Get user name
+      // Get user name + age bracket
       // Data minimization for the third-party model (audit 2026-08-12): first
-      // name only — Gemini doesn't need a full legal name to be friendly.
-      const userResult = await pool.query('SELECT name FROM users WHERE id = $1', [userId]);
+      // name only, and age as a coarse bracket — never the birth date itself.
+      const userResult = await pool.query('SELECT name, date_of_birth FROM users WHERE id = $1', [userId]);
       const userName = (userResult.rows[0]?.name || 'friend').split(' ')[0];
+      let ageBracket = null;
+      const dob = userResult.rows[0]?.date_of_birth;
+      if (dob) {
+        const age = Math.floor((Date.now() - new Date(dob).getTime()) / (365.25 * 24 * 3600 * 1000));
+        ageBracket = age < 18 ? 'minor' : age < 21 ? 'under21' : 'adult';
+      }
 
       // Build Gemini chat history (must start with 'user' role, no consecutive same-role)
       const history = [];
@@ -453,27 +457,26 @@ router.post('/chat',
         userText = `[My approximate location: ${(+location.lat).toFixed(2)},${(+location.lng).toFixed(2)}]\n${userText}`;
       }
 
-      // Create model with system instruction (includes user name + current app context)
-      const gemini = genAI.getGenerativeModel({
-        model: 'gemini-2.5-flash-lite',
-        systemInstruction: buildSystemPrompt(userName, currentContext),
-      });
-
-      // Start chat with tools
-      const chat = gemini.startChat({
+      // Chat session on the unified SDK: model per call, system prompt and
+      // tools live in config (includes user name + current app context).
+      const chat = genAI.chats.create({
+        model: BIRDIE_MODEL,
         history,
-        tools: [{ functionDeclarations: toolDeclarations }],
+        config: {
+          systemInstruction: buildSystemPrompt(userName, currentContext, { ageBracket, freeTier }),
+          tools: [{ functionDeclarations: toolDeclarations }],
+        },
       });
 
       // Helper: send to Gemini with one retry on transient upstream errors
       async function sendWithRetry(payload) {
         try {
-          return await chat.sendMessage(payload);
+          return await chat.sendMessage({ message: payload });
         } catch (e) {
           const transient = e.status === 429 || e.status >= 500 || /quota|overloaded|unavailable|fetch failed/i.test(e.message || '');
           if (!transient) throw e;
           await new Promise(r => setTimeout(r, 800));
-          return await chat.sendMessage(payload);
+          return await chat.sendMessage({ message: payload });
         }
       }
 
@@ -485,7 +488,7 @@ router.post('/chat',
 
       while (iterations < 5) {
         iterations++;
-        const candidate = response.response.candidates?.[0];
+        const candidate = response.candidates?.[0];
         if (!candidate) break;
 
         // Check for function calls
@@ -497,7 +500,7 @@ router.post('/chat',
         for (const part of functionCalls) {
           const { name, args } = part.functionCall;
           try {
-            const result = await executeTool(name, args || {}, userId);
+            const result = await executeTool(name, args || {}, userId, { includeForecast: !freeTier });
 
             // Collect venue data for cards
             if (name === 'search_venues' && result.venues) {
@@ -537,7 +540,7 @@ router.post('/chat',
       }
 
       // Extract final text
-      const candidate = response.response.candidates?.[0];
+      const candidate = response.candidates?.[0];
       const textParts = candidate?.content?.parts?.filter(p => p.text) || [];
       const responseText = textParts.map(p => p.text).join('') || "say that one more time?";
 

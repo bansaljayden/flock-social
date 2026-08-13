@@ -44,6 +44,7 @@ const eventRoutes = require('./routes/events');
 const aiRoutes = require('./routes/ai');
 const notificationRoutes = require('./routes/notifications');
 const waitlistRoutes = require('./routes/waitlist');
+const publicCrowdRoutes = require('./routes/publicCrowd');
 const adminRoutes = require('./routes/admin');
 const venueProfileRoutes = require('./routes/venueProfile');
 const venueDashboardRoutes = require('./routes/venueDashboard');
@@ -180,6 +181,7 @@ app.use('/api/badge', apiLimiter, require('./routes/badge'));        // Embeddab
 app.use('/api/sensors', apiLimiter, sensorRoutes);              // Pi sensor ingest (x-api-key) + read APIs (JWT)
 app.use('/api/checkin', apiLimiter, checkinRoutes);             // NFC tap + manual venue check-in (anon-friendly GET)
 app.use('/api/waitlist', apiLimiter, waitlistRoutes);           // PUBLIC, no auth — MUST stay before the /api catch-alls
+app.use('/api/public', apiLimiter, publicCrowdRoutes);          // PUBLIC, no auth — website live crowd demo (own per-IP + daily caps inside)
                                                                 // (was mounted after them, which 401'd every landing-page signup)
 app.use('/api', apiLimiter, moderationRoutes);  // /api/reports, /api/blocks/* — before messages catch-all
 app.use('/api', apiLimiter, messageRoutes);     // Handles /api/flocks/:id/messages, /api/messages/:id/react, /api/dm/*
