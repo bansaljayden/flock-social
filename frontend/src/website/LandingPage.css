@@ -695,6 +695,22 @@
       the plate width so it scales with the clamp. What you then read as
       spacing is ink-to-text: flush left with the column, 14px above the
       kicker, on all three. */
+/* Section marks come from the app's own icon set now, so the site and the
+   product are drawn by the same hand. They're vectors, which means none of the
+   per-mark ink-inset math the raster plates needed applies: the artwork is the
+   box. Colour is inherited so the mark tracks whatever ground it sits on,
+   including a navy section, which the plates could never do. */
+.lp-mark {
+  display: block;
+  color: var(--navy);
+  margin: 0 0 18px;
+  line-height: 0;
+}
+.lp-mark svg {
+  width: clamp(52px, 5.4vw, 64px);
+  height: auto;
+}
+
 .lp-plate {
   display: block;
   width: var(--plate-w);
