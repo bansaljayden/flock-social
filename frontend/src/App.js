@@ -696,9 +696,18 @@ const VenueCard = React.memo(({ venue, onViewDetails, onVote, colors: c, Icons: 
       maxWidth: '280px',
       animation: 'cardSlideIn 0.4s ease-out'
     }}>
-      {venue.photo_url && (
-        <img src={resolveVenuePhoto(venue.photo_url)} alt={venue.name} style={{ width: '100%', height: '160px', objectFit: 'cover', display: 'block' }} onError={(e) => { e.target.style.display = 'none'; }} />
-      )}
+      {/* A venue with no photo used to leave a blank block. The placeholder is
+          Birdie in cream, deliberately low contrast so it recedes next to the
+          real photographs beside it. Only on the LARGE slots: at the 44px
+          thumbnail size in list rows a photograph is mud, and those keep their
+          letter. */}
+      <img
+        src={venue.photo_url ? resolveVenuePhoto(venue.photo_url) : '/marks/venue-placeholder.jpg'}
+        alt={venue.photo_url ? venue.name : ''}
+        loading="lazy"
+        style={{ width: '100%', height: '160px', objectFit: 'cover', display: 'block' }}
+        onError={(e) => { e.target.src = '/marks/venue-placeholder.jpg'; }}
+      />
 
       <div style={{ padding: '14px' }}>
         <h4 style={{ fontSize: '15px', fontWeight: '700', color: c.navy, margin: '0 0 4px' }}>{venue.name}</h4>
