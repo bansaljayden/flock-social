@@ -135,7 +135,27 @@ function setCache(key, data) {
     for (const [k, v] of venueCache) {
       if (now - v.ts > CACHE_TTL) venueCache.delete(k);
     }
+    // Fresh-but-oversized: evict oldest so unique-query spam can't grow it
+    while (venueCache.size > 200) venueCache.delete(venueCache.keys().next().value);
   }
+}
+
+// Per-user Places search budget: 30/hour fresh searches, 3000/day globally.
+const placesUserHits = new Map();
+let placesDayKey = new Date().toISOString().slice(0, 10);
+let placesDayCount = 0;
+function allowPlacesSearch(userId) {
+  const today = new Date().toISOString().slice(0, 10);
+  if (today !== placesDayKey) { placesDayKey = today; placesDayCount = 0; }
+  if (placesDayCount >= 3000) return false;
+  const now = Date.now();
+  const hits = (placesUserHits.get(userId) || []).filter((t) => now - t < 3600_000);
+  if (hits.length >= 30) return false;
+  hits.push(now);
+  placesUserHits.set(userId, hits);
+  if (placesUserHits.size > 5000) placesUserHits.clear();
+  placesDayCount++;
+  return true;
 }
 
 // Build photo URL — proxied through our backend so the API key stays server-side
@@ -158,7 +178,7 @@ function priceLevelToNum(priceLevel) {
 // GET /api/venues/search?query=restaurants+wildwood&location=lat,lng
 router.get('/search',
   [
-    query('query').trim().isLength({ min: 1 }).withMessage('Search query is required'),
+    query('query').trim().isLength({ min: 1, max: 80 }).withMessage('Search query is required'),
     query('location').optional().trim(),
   ],
   async (req, res) => {
@@ -172,14 +192,25 @@ router.get('/search',
         return res.status(500).json({ error: 'Google Places API key not configured' });
       }
 
-      const searchQuery = req.query.query;
+      const searchQuery = req.query.query.toLowerCase().trim();
       const location = req.query.location; // "lat,lng"
 
-      // Check server-side cache first
-      const cacheKey = `search:${searchQuery}|${location || ''}`;
+      // Coarse location in the key so nearby users share entries
+      let coarseLoc = '';
+      if (location) {
+        const [la, ln] = location.split(',').map(Number);
+        if (Number.isFinite(la) && Number.isFinite(ln)) coarseLoc = `${la.toFixed(2)},${ln.toFixed(2)}`;
+      }
+      const cacheKey = `search:${searchQuery}|${coarseLoc}`;
       const cached = getCached(cacheKey);
       if (cached) {
         return res.json(cached);
+      }
+
+      // Upstream budget (round 7): text search is a PAID Google call and the
+      // general API limiter alone let one account burn it with unique queries.
+      if (!allowPlacesSearch(req.user.id)) {
+        return res.status(429).json({ error: 'Searching too fast. Give it a few seconds.' });
       }
 
       // Use Places API (New) - Text Search

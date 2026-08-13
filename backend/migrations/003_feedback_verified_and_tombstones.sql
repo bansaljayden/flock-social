@@ -79,3 +79,14 @@ CREATE TABLE IF NOT EXISTS waitlist (
 -- 4) Venue reviews are public UGC and must be takedown-able (round 6 —
 --    App Review 1.2 requires reporting AND removal on every UGC surface).
 ALTER TABLE venue_reviews ADD COLUMN IF NOT EXISTS is_hidden BOOLEAN DEFAULT false;
+
+-- 5) Reportable-content types grew (venue_review, venue_promotion) but the
+--    baseline CHECK constraint still listed four types, so every new-type
+--    report 500'd at the database (round 7).
+DO $$ BEGIN
+  ALTER TABLE content_reports DROP CONSTRAINT IF EXISTS content_reports_content_type_check;
+  ALTER TABLE content_reports ADD CONSTRAINT content_reports_content_type_check
+    CHECK (content_type IN ('flock_message','dm','profile','story','venue_review','venue_promotion'));
+EXCEPTION WHEN others THEN NULL; END $$;
+
+ALTER TABLE venue_promotions ADD COLUMN IF NOT EXISTS is_hidden BOOLEAN DEFAULT false;

@@ -416,6 +416,15 @@ router.post('/apple', [
 
     // Capture an Apple refresh token so deletion can revoke it (Apple 5.1.1(v)).
     // No-op unless APPLE_* signing env is configured.
+    // Round 7: skipping the code entirely was a bypass of the fail-closed
+    // exchange. When revocation is configured and we hold no refresh token
+    // for this user yet, the code is REQUIRED.
+    {
+      const { isConfigured: appleCfg } = require('../services/appleAuth');
+      if (!authorizationCode && appleCfg() && !user.apple_refresh_token) {
+        return res.status(400).json({ error: "Apple sign-in didn't complete. Try again in a moment." });
+      }
+    }
     if (authorizationCode) {
       const { exchangeAppleCode, isConfigured: appleConfigured } = require('../services/appleAuth');
       try {

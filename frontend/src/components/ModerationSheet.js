@@ -9,7 +9,7 @@ import { reportContent, blockUser } from '../services/api';
 //
 // `target` shape (null = closed):
 //   { userId, userName, contentType, contentId }
-//     contentType ∈ 'flock_message' | 'dm' | 'profile' | 'story'  (backend contract)
+//     contentType ∈ 'flock_message' | 'dm' | 'profile' | 'story' | 'venue_review' | 'venue_promotion'  (backend contract)
 //     contentId   — message id when reporting a specific message, else undefined
 //
 // Reasons mirror VALID_REASONS in backend/routes/moderation.js exactly.
