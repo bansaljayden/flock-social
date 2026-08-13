@@ -20,6 +20,12 @@ const config: CapacitorConfig = {
           '@capacitor-firebase/messaging': {
             symlink: true,
           },
+          // The App plugin's own SwiftPM instructions require the same option;
+          // without it a clean `cap sync ios` can hit the package-identity
+          // collision before the archive step (round 6).
+          '@capacitor-firebase/app': {
+            symlink: true,
+          },
         },
       },
     },

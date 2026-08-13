@@ -87,11 +87,15 @@ function registerHandlers(io, socket) {
         flockId,
       });
 
-      // Send current online members to the joining user
-      const onlineMembers = Array.from((roomUsers.get(flockId) || new Map()).values()).map((u) => ({
-        userId: u.userId,
-        name: u.name,
-      }));
+      // Send current online members to the joining user — deduped by USER,
+      // since one person can hold several sockets (phone + tab, reconnects).
+      const seen = new Set();
+      const onlineMembers = [];
+      for (const u of (roomUsers.get(flockId) || new Map()).values()) {
+        if (seen.has(u.userId)) continue;
+        seen.add(u.userId);
+        onlineMembers.push({ userId: u.userId, name: u.name });
+      }
       socket.emit('room_members', { flockId, members: onlineMembers });
     } catch (err) {
       console.error('join_flock error:', err);
@@ -854,7 +858,11 @@ function registerHandlers(io, socket) {
     // Remove user from all tracked rooms (Map keyed by socket id — no
     // duplicate entries to leak)
     for (const [flockId, users] of roomUsers.entries()) {
+      const wasPresent = users.get(socket.id);
       if (users.delete(socket.id)) {
+        // Only report offline when the user has NO other socket in this room.
+        const stillHere = [...users.values()].some((u) => u.userId === wasPresent.userId);
+        if (stillHere) { if (users.size === 0) roomUsers.delete(flockId); continue; }
         io.to(`flock:${flockId}`).emit('member_offline', {
           userId: user.id,
           name: user.name,
