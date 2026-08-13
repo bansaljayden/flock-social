@@ -307,8 +307,10 @@ async function postBootTasks() {
 // ---------------------------------------------------------------------------
 const PORT = process.env.PORT || 5000;
 
-server.listen(PORT, async () => {
-  console.log(`Flock API running on port ${PORT} [${process.env.NODE_ENV || 'development'}]`);
+// Migrations MUST complete before the port opens — listen() accepts requests
+// immediately, so migrating inside its callback let traffic hit a half-applied
+// schema (and kept serving briefly even after a failed migration).
+async function boot() {
   try {
     await migrate(pool);
   } catch (e) {
@@ -317,11 +319,17 @@ server.listen(PORT, async () => {
   }
   await postBootTasks();
 
+  server.listen(PORT, () => {
+    console.log(`Flock API running on port ${PORT} [${process.env.NODE_ENV || 'development'}]`);
+  });
+
   // Proactive crowd alerts — check every 15 minutes
   const { checkCrowdAlerts } = require('./services/crowdAlerts');
   setInterval(checkCrowdAlerts, 15 * 60 * 1000);
   // Run once after a short delay on startup
   setTimeout(checkCrowdAlerts, 30 * 1000);
-});
+}
+
+boot();
 
 module.exports = { app, server, io };
