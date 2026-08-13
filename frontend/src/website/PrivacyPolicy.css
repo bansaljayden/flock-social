@@ -222,22 +222,31 @@
   flex-shrink: 0;
 }
 
-/* Horizontal scroller on mobile instead of a tall stacked list */
+/* Wrapping chip row on mobile instead of a tall stacked list.
+   This was a single-line horizontal scroller (grid-auto-flow: column +
+   grid-auto-columns: max-content + overflow-x: auto + white-space: nowrap).
+   At 200% text zoom in a 375px viewport the row grew to ~1978px, the ol's
+   own scroller never engaged, and the last several sections were simply
+   unreachable — no way to scroll to them, in a document that is supposed to
+   be navigable. A wrapping flex row cannot produce that state at any zoom
+   level, and it satisfies WCAG 1.4.10 (Reflow) instead of fighting it. */
 @media (max-width: 959px) {
+  .pp-toc,
+  .pp-toc-inner { min-width: 0; max-width: 100%; }
   .pp-toc ol {
-    grid-auto-flow: column;
-    grid-auto-columns: max-content;
+    display: flex;
+    flex-wrap: wrap;
     max-width: 100%;
-    overflow-x: auto;
     gap: 6px;
     padding-bottom: 6px;
-    scrollbar-width: none;
-    -webkit-overflow-scrolling: touch;
   }
-  .pp-toc ol::-webkit-scrollbar { display: none; }
   .pp-toc a {
     border: 1px solid var(--pp-rule-soft);
-    white-space: nowrap;
+    max-width: 100%;
+    /* A long section title must break rather than push the chip past the
+       viewport — that is what made the tail of the list unreachable. */
+    min-width: 0;
+    overflow-wrap: anywhere;
   }
 }
 

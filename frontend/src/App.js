@@ -121,16 +121,16 @@ const CrowdRealityCheck = React.memo(function CrowdRealityCheck({ placeId, venue
   if (!placeId) return null;
   if (sent) {
     return (
-      <p style={{ fontSize: '11px', color: 'var(--text-secondary)', margin: '0 0 8px', fontWeight: '600' }}>
+      <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: '0 0 8px', fontWeight: '600' }}>
         Thanks. Real reports sharpen the forecast for everyone.
       </p>
     );
   }
   if (!open) {
     return (
-      <button
+      <button className="hit44"
         onClick={() => setOpen(true)}
-        style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', padding: '6px 12px', margin: '0 0 8px', borderRadius: '10px', border: '1.5px solid var(--border-default)', backgroundColor: 'var(--bg-card-solid)', color: 'var(--text-secondary)', fontSize: '11px', fontWeight: '700', cursor: 'pointer' }}
+        style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', padding: '6px 12px', margin: '0 0 8px', borderRadius: '10px', border: '1.5px solid var(--border-default)', backgroundColor: 'var(--bg-card-solid)', color: 'var(--text-secondary)', fontSize: '12px', fontWeight: '700', cursor: 'pointer' }}
       >
         There now? Rate the crowd
       </button>
@@ -143,11 +143,11 @@ const CrowdRealityCheck = React.memo(function CrowdRealityCheck({ placeId, venue
   ];
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap', margin: '0 0 8px', animation: 'fadeSlideIn 0.25s ease-out' }}>
-      <span style={{ fontSize: '11px', fontWeight: '600', color: 'var(--text-secondary)' }}>
+      <span style={{ fontSize: '12px', fontWeight: '600', color: 'var(--text-secondary)' }}>
         How busy is it actually:
       </span>
       {opts.map(o => (
-        <button
+        <button className="hit44"
           key={o.level}
           disabled={busy}
           onClick={async () => {
@@ -165,7 +165,7 @@ const CrowdRealityCheck = React.memo(function CrowdRealityCheck({ placeId, venue
               setBusy(false);
             }
           }}
-          style={{ padding: '4px 12px', borderRadius: '8px', border: '1.5px solid var(--border-default)', backgroundColor: 'var(--bg-card-solid)', color: 'var(--text-primary)', fontSize: '11px', fontWeight: '600', cursor: busy ? 'wait' : 'pointer' }}
+          style={{ padding: '4px 12px', borderRadius: '8px', border: '1.5px solid var(--border-default)', backgroundColor: 'var(--bg-card-solid)', color: 'var(--text-primary)', fontSize: '12px', fontWeight: '600', cursor: busy ? 'wait' : 'pointer' }}
         >
           {o.label}
         </button>
@@ -474,7 +474,7 @@ const OfflineGate = () => {
         <p style={{ fontSize: '14px', color: 'rgba(241,237,224,0.55)', margin: 0 }}>Your plans are safe. Flock reconnects on its own.</p>
       </div>
       <FlockBirdGame />
-      <button
+      <button className="hit44"
         onClick={retry}
         disabled={checking}
         style={{ padding: '12px 28px', borderRadius: '12px', border: 'none', backgroundColor: '#f1ede0', color: '#16283d', fontSize: '14px', fontWeight: '700', cursor: checking ? 'wait' : 'pointer', opacity: checking ? 0.7 : 1 }}
@@ -570,7 +570,7 @@ const VenueCard = React.memo(({ venue, onViewDetails, onVote, colors: c, Icons: 
         {address && (
           <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '10px' }}>
             {I.mapPin(c.textSecondary, 12)}
-            <span style={{ fontSize: '11px', color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{address}</span>
+            <span style={{ fontSize: '12px', color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{address}</span>
           </div>
         )}
 
@@ -586,8 +586,8 @@ const VenueCard = React.memo(({ venue, onViewDetails, onVote, colors: c, Icons: 
 
         <div style={{ backgroundColor: 'var(--bg-tertiary)', borderRadius: '12px', padding: '10px 12px', marginBottom: '12px', border: '1px solid var(--border-default)' }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '6px' }}>
-            <span style={{ fontSize: '11px', color: 'var(--text-secondary)', fontWeight: '500' }}>Current Crowd</span>
-            <div style={{ backgroundColor: `${crowdColor}20`, color: crowdColor, padding: '2px 8px', borderRadius: '10px', fontSize: '11px', fontWeight: '700' }}>{crowd}%</div>
+            <span style={{ fontSize: '12px', color: 'var(--text-secondary)', fontWeight: '500' }}>Current Crowd</span>
+            <div style={{ backgroundColor: `${crowdColor}20`, color: crowdColor, padding: '2px 8px', borderRadius: '10px', fontSize: '12px', fontWeight: '700' }}>{crowd}%</div>
           </div>
           <div style={{ width: '100%', height: '6px', backgroundColor: 'var(--pill-bg)', borderRadius: '3px', overflow: 'hidden' }}>
             <div style={{ height: '100%', width: `${crowd}%`, backgroundColor: crowdColor, borderRadius: '3px', transition: 'width 0.5s ease-out' }} />
@@ -596,11 +596,11 @@ const VenueCard = React.memo(({ venue, onViewDetails, onVote, colors: c, Icons: 
 
         <div style={{ display: 'flex', gap: '8px' }}>
           {(venue.place_id || venue.id) && (
-            <button className="glass-btn glass-secondary" onClick={onViewDetails} style={{ flex: 1, padding: '10px', borderRadius: '10px', border: `2px solid ${c.navy}`, backgroundColor: 'var(--bg-card-solid)', color: c.navy, fontSize: '12px', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px', transition: 'opacity 0.2s ease' }}>
+            <button className="hit44 glass-btn glass-secondary" onClick={onViewDetails} style={{ flex: 1, padding: '10px', borderRadius: '10px', border: `2px solid ${c.navy}`, backgroundColor: 'var(--bg-card-solid)', color: c.navy, fontSize: '12px', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px', transition: 'opacity 0.2s ease' }}>
               {I.eye(c.navy, 14)} View Details
             </button>
           )}
-          <button className="glass-btn glass-navy" onClick={(e) => { const btn = e.currentTarget; if (!btn.classList.contains('btn-confirmed')) { btn.classList.add('btn-confirmed'); setTimeout(() => btn.classList.remove('btn-confirmed'), 1100); } onVote(); }} style={{ flex: 1, padding: '10px', borderRadius: '10px', border: 'none', background: `linear-gradient(135deg, ${c.navy}, ${c.navyMid})`, color: 'white', fontSize: '12px', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px', boxShadow: '0 2px 8px rgba(13,40,71,0.10)', transition: 'opacity 0.2s ease', position: 'relative', overflow: 'hidden' }}>
+          <button className="hit44 glass-btn glass-navy" onClick={(e) => { const btn = e.currentTarget; if (!btn.classList.contains('btn-confirmed')) { btn.classList.add('btn-confirmed'); setTimeout(() => btn.classList.remove('btn-confirmed'), 1100); } onVote(); }} style={{ flex: 1, padding: '10px', borderRadius: '10px', border: 'none', background: `linear-gradient(135deg, ${c.navy}, ${c.navyMid})`, color: 'white', fontSize: '12px', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px', boxShadow: '0 2px 8px rgba(13,40,71,0.10)', transition: 'opacity 0.2s ease', position: 'relative', overflow: 'hidden' }}>
               {I.vote('white', 14)} Vote for This
             </button>
         </div>
@@ -735,6 +735,7 @@ function metersCirclePolygon(lat, lng, radiusMeters, points = 64) {
 
 const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, activeVenue, setActiveVenue, getCategoryColor, pickingVenueForCreate, setPickingVenueForCreate, setSelectedVenueForCreate, setCurrentScreen, openVenueDetail, flockMemberLocations, calcDistance }) => {
   const mapRef = useRef(null);
+  const mapRootRef = useRef(null);   // outermost node — see the attribution note in init
   const mapInstanceRef = useRef(null);
   const markersRef = useRef([]); // [{ marker, el, venue }]
   const userMarkerRef = useRef(null);
@@ -769,7 +770,7 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
     const stroke = '#f1ede0';
     const initialMap = { Food: 'F', Nightlife: 'N', 'Live Music': 'M', Sports: 'S' };
     const initial = initialMap[category] || 'P';
-    return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 42">` +
+    return `<svg aria-hidden="true" focusable="false" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 42">` +
       `<defs><filter id="s" x="-20%" y="-10%" width="140%" height="140%"><feDropShadow dx="0" dy="2" stdDeviation="2" flood-opacity="0.35"/></filter></defs>` +
       `<path d="M16 0C7.16 0 0 7.16 0 16c0 12 16 26 16 26s16-14 16-26C32 7.16 24.84 0 16 0z" fill="${fill}" stroke="${stroke}" stroke-width="2" filter="url(#s)"/>` +
       `<circle cx="16" cy="14.5" r="9" fill="white"/>` +
@@ -919,6 +920,26 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
         antialias: true,
       });
       map.addControl(new maplibregl.AttributionControl({ compact: true }), 'bottom-left');
+
+      // KEYBOARD ORDER. MapLibre injects its control containers as the FIRST
+      // children of the map element, and the map element is the first child of
+      // this screen — so the attribution disclosure and its two credit links
+      // were the first three tab stops a keyboard user hit, ahead of every
+      // Flock control, every time the map was on screen. The credit still has
+      // to be reachable (OSM's licence requires it), so it is moved rather than
+      // removed: the container becomes the LAST child of the component root, so
+      // it is the last tab stop instead of the first. It is absolutely
+      // positioned bottom-left against a full-bleed parent either way, so it
+      // does not move on screen. The compact disclosure toggle itself is
+      // purely visual, so it drops out of the tab sequence (still clickable).
+      try {
+        const attrib = mapRef.current && mapRef.current.querySelector('.maplibregl-ctrl-bottom-left');
+        if (attrib && mapRootRef.current) {
+          mapRootRef.current.appendChild(attrib);
+          const toggle = attrib.querySelector('.maplibregl-ctrl-attrib-button');
+          if (toggle) toggle.setAttribute('tabindex', '-1');
+        }
+      } catch { /* attribution stays where MapLibre put it */ }
       mapInstanceRef.current = map;
 
       // Snappier scroll-wheel zoom — default 1/300 feels sluggish vs Snap Map.
@@ -1326,7 +1347,7 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
             <div style="font-size:13px;font-weight:700;color:#1e293b;margin:0 0 2px">${loc.name}</div>
             <div style="display:flex;align-items:center;gap:4px">
               <span style="width:6px;height:6px;border-radius:3px;background:#22c55e;display:inline-block"></span>
-              <span style="font-size:11px;color:#6b7280;font-weight:500">${dist ? dist + ' away · ' + ageStr : 'Live'}</span>
+              <span style="font-size: 12px;color:#4b5563;font-weight:500">${dist ? dist + ' away · ' + ageStr : 'Live'}</span>
             </div>
           </div>
         </div>`;
@@ -1339,7 +1360,7 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
           el.style.width = '40px';
           el.style.height = '40px';
           el.style.cursor = 'pointer';
-          el.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 40 40">
+          el.innerHTML = `<svg aria-hidden="true" focusable="false" xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 40 40">
             <circle cx="20" cy="20" r="18" fill="#1e293b" stroke="white" stroke-width="3"/>
             <circle cx="20" cy="20" r="18" fill="none" stroke="#22c55e" stroke-width="2" stroke-dasharray="4 4" opacity="0.6"/>
             <text x="20" y="26" text-anchor="middle" fill="white" font-size="16" font-weight="bold" font-family="Hanken Grotesk,sans-serif">${initial}</text>
@@ -1355,7 +1376,7 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
 
   // ---------- render ----------
   return (
-    <div style={{ position: 'absolute', inset: 0 }}>
+    <div ref={mapRootRef} style={{ position: 'absolute', inset: 0 }}>
       {!mapReady && (
         <div style={{ position: 'absolute', inset: 0, zIndex: 10, backgroundColor: '#1a2a3a', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '12px' }}>
           <div style={{ width: '32px', height: '32px', border: '3px solid rgba(255,255,255,0.15)', borderTopColor: '#6d9ac3', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
@@ -1363,8 +1384,10 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
         </div>
       )}
       <style>{`
-        .maplibregl-ctrl-attrib { font-size: 9px !important; opacity: 0.4; }
-        .maplibregl-ctrl-attrib:hover { opacity: 0.9; }
+        /* opacity 0.4 on top of grey-on-white put the legally-required credit
+           well under 4.5:1. Full opacity; MapLibre's own colours are readable. */
+        .maplibregl-ctrl-attrib { font-size: 12px !important; opacity: 1; }
+        .maplibregl-ctrl-attrib a { color: #33475e; }
         .maplibregl-ctrl-logo { display: none !important; }
         .mlb-venue-marker { user-select: none; -webkit-user-select: none; }
         /* Markers must never bleed above overlay UI (venue cards, sheets, etc.) */
@@ -1381,7 +1404,7 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
           -webkit-backdrop-filter: blur(8px);
           color: #f1f5f9;
           font-family: 'Hanken Grotesk', system-ui, -apple-system, sans-serif;
-          font-size: 10.5px;
+          font-size: 12px;
           font-weight: 700;
           letter-spacing: -0.1px;
           line-height: 1.15;
@@ -1407,7 +1430,7 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
         .mlb-label-rating {
           color: #fbbf24;
           font-weight: 800;
-          font-size: 9.5px;
+          font-size: 12px;
           letter-spacing: 0;
         }
 
@@ -1432,7 +1455,7 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
       <div ref={mapRef} style={{ width: '100%', height: '100%' }} />
 
       {/* My Location button */}
-      <button
+      <button aria-label="My Location" className="hit44"
         onClick={() => window.__flockGoToMyLocation && window.__flockGoToMyLocation()}
         style={{
           position: 'absolute', bottom: '80px', right: '12px',
@@ -1446,7 +1469,7 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
         onMouseLeave={(e) => { e.currentTarget.style.transform = 'scale(1)'; }}
         title="My Location"
       >
-        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+        <svg aria-hidden="true" focusable="false" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
           <circle cx="12" cy="12" r="4"/><line x1="12" y1="2" x2="12" y2="6"/><line x1="12" y1="18" x2="12" y2="22"/><line x1="2" y1="12" x2="6" y2="12"/><line x1="18" y1="12" x2="22" y2="12"/>
         </svg>
       </button>
@@ -1458,29 +1481,30 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
         borderRadius: '22px', overflow: 'hidden',
         boxShadow: '0 2px 8px rgba(0,0,0,0.25)', zIndex: 5,
       }}>
-        <button
+        <button aria-label="Zoom in" className="hit44"
           onClick={() => mapInstanceRef.current && mapInstanceRef.current.zoomIn({ duration: 150 })}
           style={{ width: '44px', height: '40px', border: 'none', background: 'var(--bg-card-solid)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
           title="Zoom in"
         >
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--text-primary)" strokeWidth="2.5" strokeLinecap="round">
+          <svg aria-hidden="true" focusable="false" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--text-primary)" strokeWidth="2.5" strokeLinecap="round">
             <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
           </svg>
         </button>
         <div style={{ height: '1px', background: 'var(--border-default)' }} />
-        <button
+        <button aria-label="Zoom out" className="hit44"
           onClick={() => mapInstanceRef.current && mapInstanceRef.current.zoomOut({ duration: 150 })}
           style={{ width: '44px', height: '40px', border: 'none', background: 'var(--bg-card-solid)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
           title="Zoom out"
         >
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--text-primary)" strokeWidth="2.5" strokeLinecap="round">
+          <svg aria-hidden="true" focusable="false" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--text-primary)" strokeWidth="2.5" strokeLinecap="round">
             <line x1="5" y1="12" x2="19" y2="12"/>
           </svg>
         </button>
       </div>
 
       {/* Map / Satellite toggle */}
-      <button
+      <button className="hit44"
+        aria-label={mapType === 'roadmap' ? 'Switch to satellite view' : 'Switch to map view'}
         onClick={toggleMapType}
         style={{
           position: 'absolute', bottom: '132px', right: '12px',
@@ -1495,11 +1519,11 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
         title={mapType === 'roadmap' ? 'Switch to Satellite' : 'Switch to Map'}
       >
         {mapType === 'roadmap' ? (
-          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="var(--text-primary)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <svg aria-hidden="true" focusable="false" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="var(--text-primary)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
             <circle cx="12" cy="12" r="10"/><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"/><path d="M2 12h20"/>
           </svg>
         ) : (
-          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="var(--text-primary)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <svg aria-hidden="true" focusable="false" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="var(--text-primary)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
             <polygon points="1 6 1 22 8 18 16 22 23 18 23 2 16 6 8 2 1 6"/><line x1="8" y1="2" x2="8" y2="18"/><line x1="16" y1="6" x2="16" y2="22"/>
           </svg>
         )}
@@ -1526,8 +1550,11 @@ const colorsLight = {
   nightlife: '#1a3a5c',
   music: '#2d5a87',
   sports: '#22C55E',
-  textSecondary: '#64748b',
-  textTertiary: '#94a3b8',
+  // WCAG 1.4.3. Was #64748b (4.06:1 on paper, 3.64:1 on --bg-tertiary) and
+  // #94a3b8 (2.19:1 / 1.96:1). Same hue, dropped in lightness until both clear
+  // 4.5:1 on paper, white and --bg-tertiary.
+  textSecondary: '#455263',
+  textTertiary: '#586376',
   borderDefault: '#e5e7eb',
   bgHover: '#f3f4f6',
   bgTertiary: '#e8e0d5',
@@ -1550,8 +1577,10 @@ const colorsDark = {
   nightlife: '#94a3b8',
   music: '#64748b',
   sports: '#22C55E',
-  textSecondary: '#94a3b8',
-  textTertiary: '#64748b',
+  // Was #94a3b8 (4.51:1 on --bg-hover #1e3a5c, borderline) and #64748b
+  // (3.75 / 3.07 / 2.43 — failed on every dark surface). Lightened in place.
+  textSecondary: '#c2ccd9',
+  textTertiary: '#a7b3c4',
   borderDefault: '#1e3a5c',
   bgHover: '#1e3a5c',
   bgTertiary: '#1e3a5c',
@@ -1849,7 +1878,7 @@ const PromoModal = React.memo(function PromoModal({ editing, onSave, onCancel, c
     : { title: '', desc: '', time: 'Happy Hour', days: 'Daily' });
 
   const input = { width: '100%', padding: '10px', borderRadius: '8px', border: `1px solid ${colors.creamDark}`, fontSize: '13px', boxSizing: 'border-box', backgroundColor: 'var(--bg-tertiary)', color: 'var(--text-primary)' };
-  const label = { fontSize: '11px', fontWeight: '600', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px' };
+  const label = { fontSize: '12px', fontWeight: '600', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px' };
 
   return (
     <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.8)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 50, padding: '16px' }}>
@@ -1857,9 +1886,9 @@ const PromoModal = React.memo(function PromoModal({ editing, onSave, onCancel, c
         <h2 style={{ fontSize: '18px', fontWeight: '900', color: colors.navy, margin: '0 0 16px', textAlign: 'center' }}>{editing ? 'Edit Promotion' : 'New Promotion'}</h2>
         <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
           <div><label style={label}>Title</label>
-            <input type="text" value={form.title} onChange={(e) => setForm(f => ({ ...f, title: e.target.value }))} placeholder="e.g., Half-Price Apps" style={input} autoFocus /></div>
+            <input aria-label="Deal title" type="text" value={form.title} onChange={(e) => setForm(f => ({ ...f, title: e.target.value }))} placeholder="e.g., Half-Price Apps" style={input} autoFocus /></div>
           <div><label style={label}>Description</label>
-            <input type="text" value={form.desc} onChange={(e) => setForm(f => ({ ...f, desc: e.target.value }))} placeholder="e.g., 50% off all appetizers" style={input} /></div>
+            <input aria-label="Deal description" type="text" value={form.desc} onChange={(e) => setForm(f => ({ ...f, desc: e.target.value }))} placeholder="e.g., 50% off all appetizers" style={input} /></div>
           <div><label style={label}>Time Slot</label>
             <select value={form.time} onChange={(e) => setForm(f => ({ ...f, time: e.target.value }))} style={input}>
               <option value="Happy Hour">Happy Hour (4-7pm)</option>
@@ -1877,8 +1906,8 @@ const PromoModal = React.memo(function PromoModal({ editing, onSave, onCancel, c
             </select></div>
         </div>
         <div style={{ display: 'flex', gap: '10px', marginTop: '20px' }}>
-          <button className="glass-btn glass-secondary" onClick={onCancel} style={{ flex: 1, padding: '12px', borderRadius: '8px', border: '1px solid var(--border-mid)', backgroundColor: 'var(--bg-card-solid)', color: 'var(--text-secondary)', fontWeight: '600', cursor: 'pointer' }}>Cancel</button>
-          <button className="glass-btn glass-navy" onClick={() => onSave(form)} disabled={!form.title || !form.desc} style={{ flex: 1, padding: '12px', borderRadius: '8px', border: 'none', backgroundColor: form.title && form.desc ? colors.navyBg : 'var(--toggle-off)', color: 'white', fontWeight: '600', cursor: form.title && form.desc ? 'pointer' : 'not-allowed' }}>{editing ? 'Save Changes' : 'Create'}</button>
+          <button className="hit44 glass-btn glass-secondary" onClick={onCancel} style={{ flex: 1, padding: '12px', borderRadius: '8px', border: '1px solid var(--border-mid)', backgroundColor: 'var(--bg-card-solid)', color: 'var(--text-secondary)', fontWeight: '600', cursor: 'pointer' }}>Cancel</button>
+          <button className="hit44 glass-btn glass-navy" onClick={() => onSave(form)} disabled={!form.title || !form.desc} style={{ flex: 1, padding: '12px', borderRadius: '8px', border: 'none', backgroundColor: form.title && form.desc ? colors.navyBg : 'var(--toggle-off)', color: 'white', fontWeight: '600', cursor: form.title && form.desc ? 'pointer' : 'not-allowed' }}>{editing ? 'Save Changes' : 'Create'}</button>
         </div>
       </div>
     </div>
@@ -1891,7 +1920,7 @@ const EventModal = React.memo(function EventModal({ editing, onSave, onCancel, c
     : { title: '', date: '', time: '', capacity: '' });
 
   const input = { width: '100%', padding: '10px', borderRadius: '8px', border: `1px solid ${colors.creamDark}`, fontSize: '13px', boxSizing: 'border-box', backgroundColor: 'var(--bg-tertiary)', color: 'var(--text-primary)' };
-  const label = { fontSize: '11px', fontWeight: '600', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px' };
+  const label = { fontSize: '12px', fontWeight: '600', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px' };
 
   return (
     <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.8)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 50, padding: '16px' }}>
@@ -1899,17 +1928,17 @@ const EventModal = React.memo(function EventModal({ editing, onSave, onCancel, c
         <h2 style={{ fontSize: '18px', fontWeight: '900', color: colors.navy, margin: '0 0 16px', textAlign: 'center' }}>{editing ? 'Edit Event' : 'New Event'}</h2>
         <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
           <div><label style={label}>Event Title</label>
-            <input type="text" value={form.title} onChange={(e) => setForm(f => ({ ...f, title: e.target.value }))} placeholder="e.g., Live Jazz Night" style={input} autoFocus /></div>
+            <input aria-label="Event title" type="text" value={form.title} onChange={(e) => setForm(f => ({ ...f, title: e.target.value }))} placeholder="e.g., Live Jazz Night" style={input} autoFocus /></div>
           <div><label style={label}>Date</label>
-            <input type="text" value={form.date} onChange={(e) => setForm(f => ({ ...f, date: e.target.value }))} placeholder="e.g., Jan 24" style={input} /></div>
+            <input aria-label="Event date" type="text" value={form.date} onChange={(e) => setForm(f => ({ ...f, date: e.target.value }))} placeholder="e.g., Jan 24" style={input} /></div>
           <div><label style={label}>Time</label>
-            <input type="text" value={form.time} onChange={(e) => setForm(f => ({ ...f, time: e.target.value }))} placeholder="e.g., 9:00 PM" style={input} /></div>
+            <input aria-label="Event time" type="text" value={form.time} onChange={(e) => setForm(f => ({ ...f, time: e.target.value }))} placeholder="e.g., 9:00 PM" style={input} /></div>
           <div><label style={label}>Capacity</label>
-            <input type="number" value={form.capacity} onChange={(e) => setForm(f => ({ ...f, capacity: e.target.value }))} placeholder="e.g., 60" style={input} /></div>
+            <input aria-label="Capacity" type="number" value={form.capacity} onChange={(e) => setForm(f => ({ ...f, capacity: e.target.value }))} placeholder="e.g., 60" style={input} /></div>
         </div>
         <div style={{ display: 'flex', gap: '10px', marginTop: '20px' }}>
-          <button className="glass-btn glass-secondary" onClick={onCancel} style={{ flex: 1, padding: '12px', borderRadius: '8px', border: '1px solid var(--border-mid)', backgroundColor: 'var(--bg-card-solid)', color: 'var(--text-secondary)', fontWeight: '600', cursor: 'pointer' }}>Cancel</button>
-          <button className="glass-btn glass-navy" onClick={() => onSave(form)} disabled={!form.title} style={{ flex: 1, padding: '12px', borderRadius: '8px', border: 'none', backgroundColor: form.title ? colors.navyBg : 'var(--toggle-off)', color: 'white', fontWeight: '600', cursor: form.title ? 'pointer' : 'not-allowed' }}>{editing ? 'Save Changes' : 'Create'}</button>
+          <button className="hit44 glass-btn glass-secondary" onClick={onCancel} style={{ flex: 1, padding: '12px', borderRadius: '8px', border: '1px solid var(--border-mid)', backgroundColor: 'var(--bg-card-solid)', color: 'var(--text-secondary)', fontWeight: '600', cursor: 'pointer' }}>Cancel</button>
+          <button className="hit44 glass-btn glass-navy" onClick={() => onSave(form)} disabled={!form.title} style={{ flex: 1, padding: '12px', borderRadius: '8px', border: 'none', backgroundColor: form.title ? colors.navyBg : 'var(--toggle-off)', color: 'white', fontWeight: '600', cursor: form.title ? 'pointer' : 'not-allowed' }}>{editing ? 'Save Changes' : 'Create'}</button>
         </div>
       </div>
     </div>
@@ -1947,6 +1976,107 @@ const SearchInputLocal = React.memo(function SearchInputLocal({
   }
   return <input {...inputProps} ref={inputRef} value={val} onChange={handleChange} />;
 });
+
+/* ═══════════════════════════════════════════════════════════════════
+   DIALOG BEHAVIOUR — one helper for every sheet and modal in the app.
+
+   Before this, opening the "Start a Flock" sheet left focus on <body>, Escape
+   did nothing, and Tab walked straight out of the sheet into the screen behind
+   it. There are ~20 overlays in this file and none of them managed focus.
+
+   Usage: drop it in as the FIRST CHILD of the overlay's container element.
+
+     {showThing && (
+       <div className="modal-backdrop" style={{...}}>
+         <DialogBehavior onClose={() => setShowThing(false)} label="Thing" />
+         ...
+       </div>
+     )}
+
+   It upgrades its PARENT element in place rather than wrapping it, which is
+   what lets it be added to 20 existing overlays without restructuring any of
+   their JSX or changing a single layout rule. On mount it:
+     - marks the parent role="dialog" aria-modal="true" with an accessible name
+     - moves focus to the first focusable thing inside (or the container)
+     - closes on Escape
+     - keeps Tab / Shift+Tab inside the dialog
+     - returns focus to whatever was focused before it opened, on unmount
+   Only the top-most open dialog reacts to keys, so stacked sheets behave.
+
+   Pass modal={false} for a full-screen push (the create/join screens): those
+   get focus-in, Escape and focus-return, but no dialog role and no Tab trap,
+   because they are not overlaying anything.
+   ═══════════════════════════════════════════════════════════════════ */
+const FOCUSABLE_SELECTOR = [
+  'a[href]', 'button:not([disabled])', 'input:not([disabled]):not([type="hidden"])',
+  'select:not([disabled])', 'textarea:not([disabled])',
+  '[tabindex]:not([tabindex="-1"])', '[contenteditable="true"]',
+].join(',');
+
+// Stack of currently-open dialog nodes; only the last one handles keys.
+const openDialogNodes = [];
+
+const DialogBehavior = ({ onClose, label, modal = true }) => {
+  const markerRef = React.useRef(null);
+  const onCloseRef = React.useRef(onClose);
+  onCloseRef.current = onClose;
+
+  React.useEffect(() => {
+    const node = markerRef.current && markerRef.current.parentElement;
+    if (!node) return undefined;
+    const restoreTo = document.activeElement;
+
+    if (modal) {
+      node.setAttribute('role', 'dialog');
+      node.setAttribute('aria-modal', 'true');
+    }
+    if (label) node.setAttribute('aria-label', label);
+    if (!node.hasAttribute('tabindex')) node.setAttribute('tabindex', '-1');
+
+    const focusables = () => Array.from(node.querySelectorAll(FOCUSABLE_SELECTOR))
+      .filter((el) => el.offsetWidth > 0 || el.offsetHeight > 0 || el === document.activeElement);
+
+    // One tick late: sheets animate in, and a few render their content after a
+    // state settle, so the first focusable does not exist synchronously.
+    const t = setTimeout(() => {
+      if (node.contains(document.activeElement) && document.activeElement !== document.body) return;
+      const list = focusables();
+      try { (list[0] || node).focus({ preventScroll: true }); } catch { /* detached */ }
+    }, 0);
+
+    openDialogNodes.push(node);
+    const onKeyDown = (e) => {
+      if (openDialogNodes[openDialogNodes.length - 1] !== node) return;
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        e.stopPropagation();
+        if (onCloseRef.current) onCloseRef.current();
+        return;
+      }
+      if (!modal || e.key !== 'Tab') return;
+      const list = focusables();
+      if (list.length === 0) { e.preventDefault(); node.focus({ preventScroll: true }); return; }
+      const i = list.indexOf(document.activeElement);
+      if (i === -1) { e.preventDefault(); list[0].focus(); }
+      else if (e.shiftKey && i === 0) { e.preventDefault(); list[list.length - 1].focus(); }
+      else if (!e.shiftKey && i === list.length - 1) { e.preventDefault(); list[0].focus(); }
+    };
+    document.addEventListener('keydown', onKeyDown, true);
+
+    return () => {
+      clearTimeout(t);
+      document.removeEventListener('keydown', onKeyDown, true);
+      const at = openDialogNodes.indexOf(node);
+      if (at > -1) openDialogNodes.splice(at, 1);
+      if (restoreTo && document.contains(restoreTo) && typeof restoreTo.focus === 'function') {
+        try { restoreTo.focus({ preventScroll: true }); } catch { /* gone */ }
+      }
+    };
+  }, [label, modal]);
+
+  // display:none marker: no layout, no tab stop, not in the a11y tree.
+  return <span ref={markerRef} hidden />;
+};
 
 const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   // Theme — shadows the outer static colors/styles with reactive versions
@@ -4573,8 +4703,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   }, []);
 
   // Toggle Component
-  const Toggle = ({ on, onChange }) => (
-    <button onClick={onChange} style={{ width: '44px', height: '24px', borderRadius: '12px', border: 'none', backgroundColor: on ? colors.steel : 'var(--toggle-off)', cursor: 'pointer', position: 'relative', transition: 'background-color 0.2s' }}>
+  // role="switch" + aria-checked is the only thing that makes an unlabelled
+  // 44x24 pill announce as a control with a state. `label` is passed by every
+  // caller that has a visible row title next to it.
+  const Toggle = ({ on, onChange, label }) => (
+    <button className="hit44" role="switch" aria-checked={!!on} aria-label={label} onClick={onChange} style={{ width: '44px', height: '24px', borderRadius: '12px', border: 'none', backgroundColor: on ? colors.steel : 'var(--toggle-off)', cursor: 'pointer', position: 'relative', transition: 'background-color 0.2s' }}>
       <div style={{ width: '20px', height: '20px', borderRadius: '10px', backgroundColor: 'var(--bg-card-solid)', position: 'absolute', top: '2px', left: on ? '22px' : '2px', transition: 'left 0.2s', boxShadow: '0 1px 3px rgba(0,0,0,0.2)' }} />
     </button>
   );
@@ -4583,12 +4716,12 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   const NavIcon = ({ id, active }) => {
     const color = active ? colors.navy : colors.textTertiary;
     const icons = {
-      home: <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path><polyline points="9 22 9 12 15 12 15 22"></polyline></svg>,
-      explore: <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="3 6 9 3 15 6 21 3 21 18 15 21 9 18 3 21"></polygon><line x1="9" y1="3" x2="9" y2="18"></line><line x1="15" y1="6" x2="15" y2="21"></line></svg>,
-      calendar: <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg>,
-      chat: <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>,
-      revenue: <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="1" x2="12" y2="23"></line><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"></path></svg>,
-      profile: <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg>,
+      home: <svg aria-hidden="true" focusable="false" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path><polyline points="9 22 9 12 15 12 15 22"></polyline></svg>,
+      explore: <svg aria-hidden="true" focusable="false" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="3 6 9 3 15 6 21 3 21 18 15 21 9 18 3 21"></polygon><line x1="9" y1="3" x2="9" y2="18"></line><line x1="15" y1="6" x2="15" y2="21"></line></svg>,
+      calendar: <svg aria-hidden="true" focusable="false" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg>,
+      chat: <svg aria-hidden="true" focusable="false" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>,
+      revenue: <svg aria-hidden="true" focusable="false" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="1" x2="12" y2="23"></line><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"></path></svg>,
+      profile: <svg aria-hidden="true" focusable="false" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg>,
     };
     return icons[id] || null;
   };
@@ -4613,7 +4746,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
     };
 
     return (
-      <div style={{
+      // Landmark, not a bare div: this is the app's primary navigation and it
+      // is how a screen-reader user jumps between the five screens.
+      <nav aria-label="Main" style={{
         ...styles.bottomNav,
         boxShadow: 'var(--nav-shadow)',
         backdropFilter: 'blur(12px)',
@@ -4628,7 +4763,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           { id: 'chat', label: 'Messages' },
           { id: 'profile', label: 'You' },
         ].map(t => (
-          <button key={t.id} onClick={() => handleTabClick(t.id)}
+          <button className="hit44" key={t.id} onClick={() => handleTabClick(t.id)}
+            aria-current={currentTab === t.id ? 'page' : undefined}
             style={{
               ...styles.navItem,
               backgroundColor: currentTab === t.id ? 'var(--icon-bg)' : 'transparent',
@@ -4641,7 +4777,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 <NavIcon id={t.id} active={currentTab === t.id} />
               </div>
               <span style={{
-                fontSize: '10px',
+                fontSize: '12px',
                 fontWeight: currentTab === t.id ? '700' : '500',
                 color: currentTab === t.id ? colors.navy : 'var(--text-tertiary)',
                 marginTop: '3px',
@@ -4660,7 +4796,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
             </div>
           </button>
         ))}
-      </div>
+      </nav>
     );
   };
 
@@ -4874,10 +5010,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           boxShadow: '0 4px 16px rgba(0,0,0,0.12)',
           border: '1px solid var(--border-subtle)',
         }}>
-          <p style={{ margin: 0, fontSize: '11px', color: 'var(--text-primary)', fontWeight: '500', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          <p style={{ margin: 0, fontSize: '12px', color: 'var(--text-primary)', fontWeight: '500', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
             {lastAiMessage.text.length > 50 ? lastAiMessage.text.slice(0, 50) + '...' : lastAiMessage.text}
           </p>
-          <p style={{ margin: '2px 0 0', fontSize: '9px', color: 'var(--text-tertiary)', fontWeight: '500' }}>Tap to chat</p>
+          <p style={{ margin: '2px 0 0', fontSize: '12px', color: 'var(--text-tertiary)', fontWeight: '500' }}>Tap to chat</p>
         </div>
       )}
     </div>
@@ -4910,6 +5046,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   // SOS Modal
   const SOSModal = () => showSOS && (
     <div className="modal-backdrop" style={{ position: 'absolute', inset: 0, backgroundColor: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(8px)', WebkitBackdropFilter: 'blur(8px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 50, padding: '16px' }}>
+            <DialogBehavior onClose={() => setShowSOS(false)} label="Emergency" />
       <div className="modal-content" style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '24px', padding: '24px', width: '100%', maxWidth: '300px' }}>
         <div style={{ textAlign: 'center', marginBottom: '16px' }}>
           <div style={{ width: '64px', height: '64px', borderRadius: '32px', backgroundColor: 'var(--accent-red-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 8px' }}>{Icons.bell(colors.red, 32)}</div>
@@ -4918,12 +5055,12 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
         </div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
           <a href="tel:911" style={{ ...styles.gradientButton, background: colors.red, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', textDecoration: 'none', color: 'white', fontWeight: '700' }}>{Icons.phone('white', 16)} Call 911</a>
-          <button className="glass-btn glass-danger" disabled={sosAlertSending} onClick={() => { if (!sosArmed) { setSosArmed(true); setTimeout(() => setSosArmed(false), 4000); } else { setSosArmed(false); handleEmergencyAlert(); } }} style={{ ...styles.gradientButton, background: colors.red, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', position: 'relative', overflow: 'hidden', opacity: sosAlertSending ? 0.6 : 1 }}>{Icons.shield('white', 16)} {sosAlertSending ? 'Sending...' : sosArmed ? 'Tap again to confirm' : 'Alert Contacts'}</button>
-          <button className="glass-btn glass-secondary" disabled={sosAlertSending} onClick={handleShareLocationWithContacts} style={{ ...styles.gradientButton, background: 'var(--bg-card-solid)', color: colors.navy, border: `2px solid ${colors.navy}`, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', opacity: sosAlertSending ? 0.6 : 1 }}>{Icons.mapPin(colors.navy, 16)} {sosAlertSending ? 'Sending...' : 'Share Location'}</button>
+          <button aria-label="Safety" className="hit44 glass-btn glass-danger" disabled={sosAlertSending} onClick={() => { if (!sosArmed) { setSosArmed(true); setTimeout(() => setSosArmed(false), 4000); } else { setSosArmed(false); handleEmergencyAlert(); } }} style={{ ...styles.gradientButton, background: colors.red, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', position: 'relative', overflow: 'hidden', opacity: sosAlertSending ? 0.6 : 1 }}>{Icons.shield('white', 16)} {sosAlertSending ? 'Sending...' : sosArmed ? 'Tap again to confirm' : 'Alert Contacts'}</button>
+          <button aria-label="Share your location" className="hit44 glass-btn glass-secondary" disabled={sosAlertSending} onClick={handleShareLocationWithContacts} style={{ ...styles.gradientButton, background: 'var(--bg-card-solid)', color: colors.navy, border: `2px solid ${colors.navy}`, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', opacity: sosAlertSending ? 0.6 : 1 }}>{Icons.mapPin(colors.navy, 16)} {sosAlertSending ? 'Sending...' : 'Share Location'}</button>
           {trustedContacts.length === 0 && (
-            <button className="glass-btn glass-secondary" onClick={() => { setShowSOS(false); setProfileScreen('safety'); setCurrentScreen('profile'); loadTrustedContacts(); }} style={{ ...styles.gradientButton, background: 'var(--icon-bg)', color: colors.navy, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', fontSize: '13px' }}>Set Up Trusted Contacts</button>
+            <button className="hit44 glass-btn glass-secondary" onClick={() => { setShowSOS(false); setProfileScreen('safety'); setCurrentScreen('profile'); loadTrustedContacts(); }} style={{ ...styles.gradientButton, background: 'var(--icon-bg)', color: colors.navy, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', fontSize: '13px' }}>Set Up Trusted Contacts</button>
           )}
-          <button className="glass-btn glass-secondary" disabled={sosAlertSending} onClick={() => { setSosArmed(false); setShowSOS(false); }} style={{ background: 'none', border: 'none', color: 'var(--text-tertiary)', padding: '8px', cursor: 'pointer' }}>Cancel</button>
+          <button className="hit44 glass-btn glass-secondary" disabled={sosAlertSending} onClick={() => { setSosArmed(false); setShowSOS(false); }} style={{ background: 'none', border: 'none', color: 'var(--text-tertiary)', padding: '8px', cursor: 'pointer' }}>Cancel</button>
         </div>
       </div>
     </div>
@@ -4932,15 +5069,16 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   // Check-in Modal
   const CheckinModal = () => showCheckin && (
     <div className="modal-backdrop" style={{ position: 'absolute', inset: 0, backgroundColor: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(8px)', WebkitBackdropFilter: 'blur(8px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 50, padding: '16px' }}>
+            <DialogBehavior onClose={() => setShowCheckin(false)} label="Check in" />
       <div className="modal-content" style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '24px', padding: '20px', width: '100%', maxWidth: '280px' }}>
         <div style={{ textAlign: 'center', marginBottom: '16px' }}>
           <div style={{ width: '64px', height: '64px', borderRadius: '32px', backgroundColor: 'var(--icon-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 8px' }}>{Icons.check(colors.steel, 32)}</div>
           <h2 style={{ fontSize: '20px', fontWeight: '900', color: colors.navy, margin: 0 }}>Check-in</h2>
         </div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-          <button className="glass-btn glass-primary" onClick={(e) => { confirmClick(e); setShowCheckin(false); }} style={{ ...styles.gradientButton, backgroundColor: colors.steel, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', position: 'relative', overflow: 'hidden' }}>{Icons.check('white', 16)} I'm Safe</button>
-          <button className="glass-btn glass-danger" onClick={() => { setShowCheckin(false); setShowSOS(true); }} style={{ ...styles.gradientButton, backgroundColor: colors.red, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}>{Icons.shield('white', 16)} Need Help</button>
-          <button className="glass-btn glass-secondary" onClick={() => setShowCheckin(false)} style={{ background: 'none', border: 'none', color: 'var(--text-tertiary)', padding: '8px', cursor: 'pointer' }}>Dismiss</button>
+          <button className="hit44 glass-btn glass-primary" onClick={(e) => { confirmClick(e); setShowCheckin(false); }} style={{ ...styles.gradientButton, backgroundColor: colors.steel, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', position: 'relative', overflow: 'hidden' }}>{Icons.check('white', 16)} I'm Safe</button>
+          <button className="hit44 glass-btn glass-danger" onClick={() => { setShowCheckin(false); setShowSOS(true); }} style={{ ...styles.gradientButton, backgroundColor: colors.red, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}>{Icons.shield('white', 16)} Need Help</button>
+          <button className="hit44 glass-btn glass-secondary" onClick={() => setShowCheckin(false)} style={{ background: 'none', border: 'none', color: 'var(--text-tertiary)', padding: '8px', cursor: 'pointer' }}>Dismiss</button>
         </div>
       </div>
     </div>
@@ -4949,6 +5087,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   // Profile Pic Modal
   const ProfilePicModal = () => showPicModal && (
     <div style={{ position: 'absolute', inset: 0, backgroundColor: 'rgba(0,0,0,0.8)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 50, padding: '16px' }}>
+            <DialogBehavior onClose={() => setShowPicModal(false)} label="Profile photo" />
       <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '24px', padding: '20px', width: '100%', maxWidth: '280px' }}>
         <h2 style={{ fontSize: '18px', fontWeight: '900', color: colors.navy, margin: '0 0 16px', textAlign: 'center' }}>Profile Picture</h2>
         <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
@@ -4956,8 +5095,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
             {Icons.camera('white', 16)} Upload Photo
             <input type="file" accept="image/*" onChange={handlePhotoUpload} style={{ display: 'none' }} />
           </label>
-          <button className="glass-btn glass-secondary" onClick={generateAIAvatar} style={{ ...styles.gradientButton, background: 'var(--bg-card-solid)', color: colors.navy, border: `2px solid ${colors.navy}`, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}>{Icons.robot(colors.navy, 16)} Generate AI Avatar</button>
-          <button className="glass-btn glass-secondary" onClick={() => setShowPicModal(false)} style={{ background: 'none', border: 'none', color: 'var(--text-tertiary)', padding: '8px', cursor: 'pointer' }}>Cancel</button>
+          <button className="hit44 glass-btn glass-secondary" onClick={generateAIAvatar} style={{ ...styles.gradientButton, background: 'var(--bg-card-solid)', color: colors.navy, border: `2px solid ${colors.navy}`, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}>{Icons.robot(colors.navy, 16)} Generate AI Avatar</button>
+          <button className="hit44 glass-btn glass-secondary" onClick={() => setShowPicModal(false)} style={{ background: 'none', border: 'none', color: 'var(--text-tertiary)', padding: '8px', cursor: 'pointer' }}>Cancel</button>
         </div>
       </div>
     </div>
@@ -5010,8 +5149,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
 
       {/* Action buttons */}
       <div style={{ display: 'flex', gap: '12px', marginTop: '20px', width: '280px' }}>
-        <button className="glass-btn glass-secondary" onClick={() => setCropImageSrc(null)} style={{ flex: 1, padding: '14px', borderRadius: '14px', border: '1px solid rgba(255,255,255,0.2)', backgroundColor: 'transparent', color: 'white', fontWeight: '700', fontSize: '14px', cursor: 'pointer' }}>Cancel</button>
-        <button className="glass-btn glass-navy" onClick={confirmCrop} style={{ flex: 1, padding: '14px', borderRadius: '14px', border: 'none', background: colors.navyMidBg, color: 'white', fontWeight: '700', fontSize: '14px', cursor: 'pointer' }}>Confirm</button>
+        <button className="hit44 glass-btn glass-secondary" onClick={() => setCropImageSrc(null)} style={{ flex: 1, padding: '14px', borderRadius: '14px', border: '1px solid rgba(255,255,255,0.2)', backgroundColor: 'transparent', color: 'white', fontWeight: '700', fontSize: '14px', cursor: 'pointer' }}>Cancel</button>
+        <button className="hit44 glass-btn glass-navy" onClick={confirmCrop} style={{ flex: 1, padding: '14px', borderRadius: '14px', border: 'none', background: colors.navyMidBg, color: 'white', fontWeight: '700', fontSize: '14px', cursor: 'pointer' }}>Confirm</button>
       </div>
     </div>
   );
@@ -5033,6 +5172,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   // Admin Access Modal - role-based, no password needed
   const adminPromptModal = showAdminPrompt && (
     <div style={{ position: 'absolute', inset: 0, backgroundColor: 'rgba(0,0,0,0.8)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 50, padding: '16px' }}>
+            <DialogBehavior onClose={() => setShowAdminPrompt(false)} label="Admin access" />
       <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '24px', padding: '20px', width: '100%', maxWidth: '280px' }}>
         <div style={{ textAlign: 'center', marginBottom: '16px' }}>
           <div style={{ width: '48px', height: '48px', borderRadius: '24px', backgroundColor: 'var(--icon-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 8px' }}>
@@ -5042,9 +5182,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: '4px 0 0' }}>{authUser?.role === 'admin' ? 'Switch to admin mode?' : 'Admin access is restricted'}</p>
         </div>
         <div style={{ display: 'flex', gap: '8px' }}>
-          <button className="glass-btn glass-secondary" onClick={() => setShowAdminPrompt(false)} style={{ flex: 1, padding: '12px', borderRadius: '12px', border: '1px solid var(--border-mid)', backgroundColor: 'var(--bg-card-solid)', fontWeight: '600', cursor: 'pointer' }}>Cancel</button>
+          <button className="hit44 glass-btn glass-secondary" onClick={() => setShowAdminPrompt(false)} style={{ flex: 1, padding: '12px', borderRadius: '12px', border: '1px solid var(--border-mid)', backgroundColor: 'var(--bg-card-solid)', fontWeight: '600', cursor: 'pointer' }}>Cancel</button>
           {authUser?.role === 'admin' && (
-            <button className="glass-btn glass-navy" onClick={handleAdminModeSelect} style={{ flex: 1, padding: '12px', borderRadius: '12px', border: 'none', background: colors.navyMidBg, color: 'white', fontWeight: '600', cursor: 'pointer' }}>Access</button>
+            <button className="hit44 glass-btn glass-navy" onClick={handleAdminModeSelect} style={{ flex: 1, padding: '12px', borderRadius: '12px', border: 'none', background: colors.navyMidBg, color: 'white', fontWeight: '600', cursor: 'pointer' }}>Access</button>
           )}
         </div>
       </div>
@@ -5111,22 +5251,23 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
 
     return showNewDmModal && (
       <div style={{ position: 'absolute', inset: 0, backgroundColor: 'rgba(0,0,0,0.8)', display: 'flex', alignItems: 'flex-end', zIndex: 50 }}>
+            <DialogBehavior onClose={() => setShowNewDmModal(false)} label="New message" />
         <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '24px 24px 0 0', width: '100%', height: '70%', display: 'flex', flexDirection: 'column' }}>
           <div style={{ padding: '16px', borderBottom: '1px solid var(--divider)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
             <div>
               <h2 style={{ fontSize: '18px', fontWeight: '900', color: colors.navy, margin: 0 }}>New Message</h2>
-              <p style={{ fontSize: '11px', color: 'var(--text-secondary)', margin: 0 }}>Search for someone to message</p>
+              <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: 0 }}>Search for someone to message</p>
             </div>
-            <button onClick={() => { setShowNewDmModal(false); setDmSearchText(''); setDmModalResults([]); }} style={{ width: '32px', height: '32px', borderRadius: '16px', border: 'none', backgroundColor: 'var(--icon-bg)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <button aria-label="Close" className="hit44" onClick={() => { setShowNewDmModal(false); setDmSearchText(''); setDmModalResults([]); }} style={{ width: '32px', height: '32px', borderRadius: '16px', border: 'none', backgroundColor: 'var(--icon-bg)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
               {Icons.x(colors.navy, 16)}
             </button>
           </div>
           <div style={{ padding: '12px' }}>
-            <SearchInputLocal type="text" initialValue={dmSearchText} onCommit={handleDmSearch} placeholder="Search by name or email..." style={{ width: '100%', padding: '12px 16px', borderRadius: '12px', border: `1.5px solid ${dmSearchText ? colors.navy : colors.creamDark}`, fontSize: '14px', outline: 'none', boxSizing: 'border-box', backgroundColor: 'var(--bg-tertiary)', color: 'var(--text-primary)', fontWeight: '500', transition: 'opacity 0.2s ease' }} autoComplete="off" />
+            <SearchInputLocal aria-label="Search people by name or email" type="text" initialValue={dmSearchText} onCommit={handleDmSearch} placeholder="Search by name or email..." style={{ width: '100%', padding: '12px 16px', borderRadius: '12px', border: `1.5px solid ${dmSearchText ? colors.navy : colors.creamDark}`, fontSize: '14px', outline: 'none', boxSizing: 'border-box', backgroundColor: 'var(--bg-tertiary)', color: 'var(--text-primary)', fontWeight: '500', transition: 'opacity 0.2s ease' }} autoComplete="off" />
           </div>
           <div style={{ flex: 1, overflowY: 'auto', padding: '0 12px 12px' }}>
             {!dmSearchText.trim() && usersToShow.length > 0 && (
-              <p style={{ fontSize: '10px', fontWeight: '600', color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.5px', padding: '4px 4px 8px', margin: 0 }}>Suggested</p>
+              <p style={{ fontSize: '12px', fontWeight: '600', color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.5px', padding: '4px 4px 8px', margin: 0 }}>Suggested</p>
             )}
             {dmModalSearching && (
               <div style={{ textAlign: 'center', padding: '20px 0' }}>
@@ -5145,7 +5286,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
               </div>
             )}
             {!dmModalSearching && usersToShow.map(user => (
-              <button key={user.id} onClick={() => startNewDmWithUser(user)} style={{ width: '100%', textAlign: 'left', padding: '10px 8px', borderRadius: '12px', border: 'none', backgroundColor: 'transparent', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '4px', transition: 'background-color 0.15s' }}
+              <button className="hit44" key={user.id} onClick={() => startNewDmWithUser(user)} style={{ width: '100%', textAlign: 'left', padding: '10px 8px', borderRadius: '12px', border: 'none', backgroundColor: 'transparent', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '4px', transition: 'background-color 0.15s' }}
                 onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = colors.cream; }}
                 onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = 'transparent'; }}
               >
@@ -5154,7 +5295,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 </div>
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <h3 style={{ fontSize: '14px', fontWeight: '700', color: colors.navy, margin: 0 }}>{user.name}</h3>
-                  <p style={{ fontSize: '11px', color: 'var(--text-secondary)', margin: '1px 0 0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{user.email}</p>
+                  <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: '1px 0 0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{user.email}</p>
                 </div>
                 <span style={{ fontSize: '16px', color: 'var(--text-tertiary)' }}>›</span>
               </button>
@@ -5469,27 +5610,27 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
       {/* Header */}
       <div style={{ padding: '6px 10px 5px 4px', background: colors.navyBg, flexShrink: 0, boxShadow: '0 2px 10px rgba(0,0,0,0.1)' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-          <button onClick={() => { setCurrentScreen('main'); setChatInput(''); setShowDmMenu(false); setShowDeleteDmConfirm(false); setShowDmChatSearch(false); setDmChatSearch(''); setShowDmVotePanel(false); setShowDmVenueSearch(false); setDmReplyingTo(null); setDmNavOpen(false); if (dmSharingLocation) { dmStopSharingLocation(dmSharingLocation); setDmSharingLocation(null); } }} style={{ width: '34px', height: '34px', borderRadius: '17px', background: 'none', border: 'none', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{Icons.arrowLeft('white', 20)}</button>
+          <button aria-label="Back" className="hit44" onClick={() => { setCurrentScreen('main'); setChatInput(''); setShowDmMenu(false); setShowDeleteDmConfirm(false); setShowDmChatSearch(false); setDmChatSearch(''); setShowDmVotePanel(false); setShowDmVenueSearch(false); setDmReplyingTo(null); setDmNavOpen(false); if (dmSharingLocation) { dmStopSharingLocation(dmSharingLocation); setDmSharingLocation(null); } }} style={{ width: '34px', height: '34px', borderRadius: '17px', background: 'none', border: 'none', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{Icons.arrowLeft('white', 20)}</button>
           <div style={{ width: '34px', height: '34px', borderRadius: '17px', backgroundColor: 'rgba(255,255,255,0.2)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '13px', fontWeight: '700', color: 'white', overflow: 'hidden', flexShrink: 0 }}>
             {selectedDm.image ? <img src={selectedDm.image} alt="" style={{ width: '34px', height: '34px', borderRadius: '17px', objectFit: 'cover' }} /> : (selectedDm.name?.[0]?.toUpperCase() || '?')}
           </div>
           <h2 style={{ flex: 1, fontWeight: '800', color: 'white', fontSize: '15px', margin: 0, lineHeight: '1.3', minWidth: 0 }}>{selectedDm.name}</h2>
           <div style={{ display: 'flex', alignItems: 'center', gap: '4px', flexShrink: 0 }}>
             <div style={{ display: 'flex', gap: '4px', overflow: 'hidden', maxWidth: dmNavOpen ? '114px' : '0px', opacity: dmNavOpen ? 1 : 0, transition: 'max-width 0.3s ease, opacity 0.25s ease' }}>
-              <button className="glass-btn" onClick={() => { setDmNavOpen(false); setShowDmVotePanel(!showDmVotePanel); if (!showDmVotePanel) loadPopularVenues(); }} style={{ width: '34px', height: '34px', minWidth: '34px', borderRadius: '17px', border: 'none', backgroundColor: 'rgba(255,255,255,0.15)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.vote('white', 14)}</button>
-              <button className="glass-btn" onClick={() => { setDmNavOpen(false); setShowDmChatSearch(!showDmChatSearch); }} style={{ width: '34px', height: '34px', minWidth: '34px', borderRadius: '17px', border: 'none', backgroundColor: showDmChatSearch ? 'rgba(255,255,255,0.35)' : 'rgba(255,255,255,0.15)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.search('white', 15)}</button>
-              <button className="glass-btn" onClick={() => { setDmNavOpen(false); setShowDmCashPool(true); }} style={{ width: '34px', height: '34px', minWidth: '34px', borderRadius: '17px', border: 'none', backgroundColor: 'rgba(255,255,255,0.15)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.dollar('white', 15)}</button>
+              <button aria-label="Venue voting" className="hit44 glass-btn" onClick={() => { setDmNavOpen(false); setShowDmVotePanel(!showDmVotePanel); if (!showDmVotePanel) loadPopularVenues(); }} style={{ width: '34px', height: '34px', minWidth: '34px', borderRadius: '17px', border: 'none', backgroundColor: 'rgba(255,255,255,0.15)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.vote('white', 14)}</button>
+              <button aria-label="Search" className="hit44 glass-btn" onClick={() => { setDmNavOpen(false); setShowDmChatSearch(!showDmChatSearch); }} style={{ width: '34px', height: '34px', minWidth: '34px', borderRadius: '17px', border: 'none', backgroundColor: showDmChatSearch ? 'rgba(255,255,255,0.35)' : 'rgba(255,255,255,0.15)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.search('white', 15)}</button>
+              <button aria-label="Split the bill" className="hit44 glass-btn" onClick={() => { setDmNavOpen(false); setShowDmCashPool(true); }} style={{ width: '34px', height: '34px', minWidth: '34px', borderRadius: '17px', border: 'none', backgroundColor: 'rgba(255,255,255,0.15)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.dollar('white', 15)}</button>
             </div>
-            <button onClick={() => setDmNavOpen(!dmNavOpen)} style={{ height: '34px', minWidth: dmNavOpen ? '34px' : 'auto', width: dmNavOpen ? '34px' : 'auto', borderRadius: '12px', border: '1px solid rgba(255,255,255,0.18)', backgroundColor: dmNavOpen ? 'rgba(255,255,255,0.25)' : 'rgba(255,255,255,0.1)', backdropFilter: 'blur(12px)', WebkitBackdropFilter: 'blur(12px)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px', padding: dmNavOpen ? '0' : '0 12px', fontSize: '12px', fontWeight: '700', flexShrink: 0, transition: 'all 0.3s ease', boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.12)' }}>{dmNavOpen ? Icons.x('white', 14) : <span style={{ fontSize: '12px', fontWeight: '700' }}>Features</span>}</button>
+            <button className="hit44" onClick={() => setDmNavOpen(!dmNavOpen)} style={{ height: '34px', minWidth: dmNavOpen ? '34px' : 'auto', width: dmNavOpen ? '34px' : 'auto', borderRadius: '12px', border: '1px solid rgba(255,255,255,0.18)', backgroundColor: dmNavOpen ? 'rgba(255,255,255,0.25)' : 'rgba(255,255,255,0.1)', backdropFilter: 'blur(12px)', WebkitBackdropFilter: 'blur(12px)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px', padding: dmNavOpen ? '0' : '0 12px', fontSize: '12px', fontWeight: '700', flexShrink: 0, transition: 'all 0.3s ease', boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.12)' }}>{dmNavOpen ? Icons.x('white', 14) : <span style={{ fontSize: '12px', fontWeight: '700' }}>Features</span>}</button>
           </div>
           <div style={{ position: 'relative', flexShrink: 0 }}>
-            <button onClick={() => setShowDmMenu(!showDmMenu)} style={{ width: '34px', height: '34px', borderRadius: '17px', border: 'none', backgroundColor: 'rgba(255,255,255,0.15)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.moreVertical('white', 16)}</button>
+            <button aria-label="More options" className="hit44" onClick={() => setShowDmMenu(!showDmMenu)} style={{ width: '34px', height: '34px', borderRadius: '17px', border: 'none', backgroundColor: 'rgba(255,255,255,0.15)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.moreVertical('white', 16)}</button>
             {showDmMenu && (
               <div style={{ position: 'absolute', top: '38px', right: 0, backgroundColor: 'var(--bg-card-solid)', borderRadius: '14px', boxShadow: '0 8px 24px rgba(0,0,0,0.12)', minWidth: '200px', zIndex: 60, overflow: 'hidden', border: '1px solid var(--border-subtle)' }}>
-                <button className="glass-btn" onClick={() => { setShowDmMenu(false); setModerationTarget({ userId: selectedDmId, userName: selectedDm.name, contentType: 'profile' }); }} style={{ width: '100%', padding: '14px 16px', display: 'flex', alignItems: 'center', gap: '10px', border: 'none', borderBottom: '1px solid var(--border-subtle)', backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer', fontSize: '14px', fontWeight: '600', color: 'var(--text-primary)' }}>
+                <button className="hit44 glass-btn" onClick={() => { setShowDmMenu(false); setModerationTarget({ userId: selectedDmId, userName: selectedDm.name, contentType: 'profile' }); }} style={{ width: '100%', padding: '14px 16px', display: 'flex', alignItems: 'center', gap: '10px', border: 'none', borderBottom: '1px solid var(--border-subtle)', backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer', fontSize: '14px', fontWeight: '600', color: 'var(--text-primary)' }}>
                   <span aria-hidden style={{ fontSize: '15px' }}>⚑</span> Report or block {selectedDm.name}
                 </button>
-                <button className="glass-btn glass-danger" onClick={() => { setShowDmMenu(false); setShowDeleteDmConfirm(true); }} style={{ width: '100%', padding: '14px 16px', display: 'flex', alignItems: 'center', gap: '10px', border: 'none', backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer', fontSize: '14px', fontWeight: '600', color: '#EF4444' }}>
+                <button className="hit44 glass-btn glass-danger" onClick={() => { setShowDmMenu(false); setShowDeleteDmConfirm(true); }} style={{ width: '100%', padding: '14px 16px', display: 'flex', alignItems: 'center', gap: '10px', border: 'none', backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer', fontSize: '14px', fontWeight: '600', color: '#EF4444' }}>
                   {Icons.x('#EF4444', 16)} Delete Conversation
                 </button>
               </div>
@@ -5497,7 +5638,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           </div>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: '5px', paddingLeft: '74px', marginTop: '2px' }}>
-          {dmIsTyping ? <span style={{ fontSize: '11px', color: '#86EFAC', fontWeight: '600' }}>{dmTypingUser || selectedDm.name} is typing...</span> : dmSharingLocation ? <span style={{ fontSize: '11px', color: '#34d399', fontWeight: '600', display: 'inline-flex', alignItems: 'center', gap: '4px' }}><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#34d399" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z" /><circle cx="12" cy="10" r="3" /></svg>sharing location</span> : <><span style={{ width: '5px', height: '5px', borderRadius: '3px', backgroundColor: '#22c55e', boxShadow: 'none' }} /><span style={{ fontSize: '11px', color: 'rgba(255,255,255,0.55)', fontWeight: '500' }}>online</span></>}
+          {dmIsTyping ? <span style={{ fontSize: '12px', color: '#86EFAC', fontWeight: '600' }}>{dmTypingUser || selectedDm.name} is typing...</span> : dmSharingLocation ? <span style={{ fontSize: '12px', color: '#34d399', fontWeight: '600', display: 'inline-flex', alignItems: 'center', gap: '4px' }}><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#34d399" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z" /><circle cx="12" cy="10" r="3" /></svg>sharing location</span> : <><span style={{ width: '5px', height: '5px', borderRadius: '3px', backgroundColor: '#22c55e', boxShadow: 'none' }} /><span style={{ fontSize: '12px', color: 'rgba(255,255,255,0.55)', fontWeight: '500' }}>online</span></>}
         </div>
       </div>
 
@@ -5507,8 +5648,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
       {/* Chat search bar */}
       {showDmChatSearch && (
         <div style={{ padding: '8px 12px', backgroundColor: 'var(--bg-card-solid)', borderBottom: '1px solid var(--divider)', display: 'flex', gap: '8px', alignItems: 'center', flexShrink: 0 }}>
-          <SearchInputLocal inputRef={dmChatSearchRef} type="text" initialValue={dmChatSearch} onCommit={setDmChatSearch} placeholder="Search messages..." style={{ flex: 1, padding: '8px 12px', borderRadius: '20px', backgroundColor: 'var(--bg-hover)', color: 'var(--text-primary)', border: 'none', fontSize: '13px', outline: 'none' }} />
-          {dmChatSearch && <button onClick={() => setDmChatSearch('')} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '4px' }}>{Icons.x(colors.textSecondary, 14)}</button>}
+          <SearchInputLocal aria-label="Search messages" inputRef={dmChatSearchRef} type="text" initialValue={dmChatSearch} onCommit={setDmChatSearch} placeholder="Search messages..." style={{ flex: 1, padding: '8px 12px', borderRadius: '20px', backgroundColor: 'var(--bg-hover)', color: 'var(--text-primary)', border: 'none', fontSize: '13px', outline: 'none' }} />
+          {dmChatSearch && <button aria-label="Close" className="hit44" onClick={() => setDmChatSearch('')} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '4px' }}>{Icons.x(colors.textSecondary, 14)}</button>}
         </div>
       )}
 
@@ -5516,9 +5657,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
       {dmSharingLocation && (
         <div style={{ padding: '8px 14px', background: 'linear-gradient(135deg, #059669, #047857)', flexShrink: 0, display: 'flex', alignItems: 'center', gap: '8px' }}>
           <div style={{ width: '8px', height: '8px', borderRadius: '4px', backgroundColor: '#34d399', animation: 'pulse 2s ease-in-out infinite', boxShadow: 'none' }} />
-          <p style={{ fontSize: '11px', fontWeight: '600', color: 'white', margin: 0, flex: 1 }}>Sharing live location with {selectedDm.name}</p>
-          {dmMemberLocation && <span style={{ fontSize: '10px', color: '#a7f3d0', fontWeight: '500' }}>{selectedDm.name} sharing too</span>}
-          <button onClick={() => { dmStopSharingLocation(dmSharingLocation); setDmSharingLocation(null); }} style={{ padding: '4px 10px', borderRadius: '10px', border: '1px solid rgba(255,255,255,0.3)', background: 'rgba(255,255,255,0.15)', color: 'white', fontSize: '10px', fontWeight: '600', cursor: 'pointer' }}>Stop</button>
+          <p style={{ fontSize: '12px', fontWeight: '600', color: 'white', margin: 0, flex: 1 }}>Sharing live location with {selectedDm.name}</p>
+          {dmMemberLocation && <span style={{ fontSize: '12px', color: '#a7f3d0', fontWeight: '500' }}>{selectedDm.name} sharing too</span>}
+          <button className="hit44" onClick={() => { dmStopSharingLocation(dmSharingLocation); setDmSharingLocation(null); }} style={{ padding: '4px 10px', borderRadius: '10px', border: '1px solid rgba(255,255,255,0.3)', background: 'rgba(255,255,255,0.15)', color: 'white', fontSize: '12px', fontWeight: '600', cursor: 'pointer' }}>Stop</button>
         </div>
       )}
 
@@ -5527,7 +5668,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
         <div style={{ padding: '10px 14px', background: `linear-gradient(135deg, ${colors.navy}08, ${colors.steel}12)`, borderBottom: `1px solid ${colors.creamDark}`, flexShrink: 0 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
             {dmPinnedVenue.photo_url ? (
-              <img src={dmPinnedVenue.photo_url} alt="" style={{ width: '52px', height: '52px', borderRadius: '12px', objectFit: 'cover', flexShrink: 0, boxShadow: '0 2px 8px rgba(0,0,0,0.1)' }} onError={(e) => { e.target.onerror = null; e.target.src = 'data:image/svg+xml,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="52" height="52"><rect fill="#1a3a5c" width="52" height="52" rx="12"/></svg>'); }} />
+              <img src={dmPinnedVenue.photo_url} alt="" style={{ width: '52px', height: '52px', borderRadius: '12px', objectFit: 'cover', flexShrink: 0, boxShadow: '0 2px 8px rgba(0,0,0,0.1)' }} onError={(e) => { e.target.onerror = null; e.target.src = 'data:image/svg+xml,' + encodeURIComponent('<svg aria-hidden="true" focusable="false" xmlns="http://www.w3.org/2000/svg" width="52" height="52"><rect fill="#1a3a5c" width="52" height="52" rx="12"/></svg>'); }} />
             ) : (
               <div style={{ width: '52px', height: '52px', borderRadius: '12px', background: colors.navyBg, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, boxShadow: '0 2px 8px rgba(13,40,71,0.10)' }}>
                 {Icons.mapPin('white', 22)}
@@ -5536,13 +5677,13 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
             <div style={{ flex: 1, minWidth: 0 }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                 <h4 style={{ fontSize: '13px', fontWeight: '800', color: colors.navy, margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{dmPinnedVenue.name}</h4>
-                {dmPinnedVenue.rating && <span style={{ fontSize: '11px', fontWeight: '700', color: '#F59E0B', display: 'flex', alignItems: 'center', gap: '2px', flexShrink: 0 }}>{Icons.starFilled('#F59E0B', 11)} {dmPinnedVenue.rating}</span>}
+                {dmPinnedVenue.rating && <span style={{ fontSize: '12px', fontWeight: '700', color: '#F59E0B', display: 'flex', alignItems: 'center', gap: '2px', flexShrink: 0 }}>{Icons.starFilled('#F59E0B', 11)} {dmPinnedVenue.rating}</span>}
               </div>
-              {dmPinnedVenue.addr && <p style={{ fontSize: '11px', color: 'var(--text-secondary)', margin: '2px 0 0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{dmPinnedVenue.addr}</p>}
+              {dmPinnedVenue.addr && <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: '2px 0 0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{dmPinnedVenue.addr}</p>}
             </div>
             <div style={{ display: 'flex', gap: '4px', flexShrink: 0 }}>
               <button
-                className="glass-btn glass-navy"
+                className="hit44 glass-btn glass-navy"
                 onClick={() => {
                   setVenueDetailReturnTo({ tab: 'chats', screen: 'dmDetail', dmId: selectedDmId });
                   setCurrentTab('explore');
@@ -5555,22 +5696,22 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                     }, 300);
                   }
                 }}
-                style={{ padding: '8px 10px', borderRadius: '10px', border: 'none', background: colors.steel, color: 'white', fontSize: '10px', fontWeight: '700', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px', boxShadow: '0 1px 2px rgba(30,41,59,0.10)' }}
+                style={{ padding: '8px 10px', borderRadius: '10px', border: 'none', background: colors.steel, color: 'white', fontSize: '12px', fontWeight: '700', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px', boxShadow: '0 1px 2px rgba(30,41,59,0.10)' }}
               >
                 {Icons.mapPin('white', 12)} Map
               </button>
-              <button className="glass-btn glass-secondary" onClick={() => { setPickingVenueForDm(true); setPickingVenueForCreate(true); setCurrentTab('explore'); setCurrentScreen('main'); }} style={{ padding: '8px 10px', borderRadius: '10px', border: `1px solid ${colors.creamDark}`, background: 'var(--bg-card-solid)', color: colors.navy, fontSize: '10px', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '3px' }}>
+              <button className="hit44 glass-btn glass-secondary" onClick={() => { setPickingVenueForDm(true); setPickingVenueForCreate(true); setCurrentTab('explore'); setCurrentScreen('main'); }} style={{ padding: '8px 10px', borderRadius: '10px', border: `1px solid ${colors.creamDark}`, background: 'var(--bg-card-solid)', color: colors.navy, fontSize: '12px', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '3px' }}>
                 Change
               </button>
             </div>
           </div>
         </div>
       ) : (
-        <button className="glass-btn glass-secondary" onClick={() => { setPickingVenueForDm(true); setPickingVenueForCreate(true); setCurrentTab('explore'); setCurrentScreen('main'); }} style={{ margin: '0', padding: '10px 14px', background: `linear-gradient(135deg, var(--bg-primary), var(--bg-card-solid))`, borderBottom: `1px solid ${colors.creamDark}`, border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '10px', width: '100%', flexShrink: 0 }}>
+        <button className="hit44 glass-btn glass-secondary" onClick={() => { setPickingVenueForDm(true); setPickingVenueForCreate(true); setCurrentTab('explore'); setCurrentScreen('main'); }} style={{ margin: '0', padding: '10px 14px', background: `linear-gradient(135deg, var(--bg-primary), var(--bg-card-solid))`, borderBottom: `1px solid ${colors.creamDark}`, border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '10px', width: '100%', flexShrink: 0 }}>
           <div style={{ width: '40px', height: '40px', borderRadius: '12px', border: `2px dashed ${colors.steel}`, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.mapPin(colors.steel, 18)}</div>
           <div style={{ flex: 1, textAlign: 'left' }}>
             <p style={{ fontSize: '13px', fontWeight: '700', color: colors.navy, margin: 0 }}>Add a Venue</p>
-            <p style={{ fontSize: '11px', color: 'var(--text-secondary)', margin: '1px 0 0' }}>Pick a spot on the map</p>
+            <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: '1px 0 0' }}>Pick a spot on the map</p>
           </div>
           <div style={{ color: colors.steel, fontWeight: '700', fontSize: '20px' }}>+</div>
         </button>
@@ -5581,7 +5722,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
         <div style={{ padding: '10px 14px', borderBottom: `1px solid ${colors.creamDark}`, backgroundColor: 'var(--bg-card-solid)', flexShrink: 0 }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
             <h3 style={{ fontSize: '12px', fontWeight: 'bold', color: colors.navy, margin: 0 }}>Cash Pool</h3>
-            <span style={{ fontSize: '10px', padding: '2px 8px', borderRadius: '10px', fontWeight: '500', backgroundColor: dmCashPool.collected >= dmCashPool.total ? 'var(--accent-green-bg)' : 'var(--accent-amber-bg)', color: dmCashPool.collected >= dmCashPool.total ? 'var(--accent-green-text)' : 'var(--accent-amber-text)' }}>
+            <span style={{ fontSize: '12px', padding: '2px 8px', borderRadius: '10px', fontWeight: '500', backgroundColor: dmCashPool.collected >= dmCashPool.total ? 'var(--accent-green-bg)' : 'var(--accent-amber-bg)', color: dmCashPool.collected >= dmCashPool.total ? 'var(--accent-green-text)' : 'var(--accent-amber-text)' }}>
               ${dmCashPool.collected}/${dmCashPool.total}
             </span>
           </div>
@@ -5589,7 +5730,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
             <div style={{ height: '100%', width: `${(dmCashPool.collected / dmCashPool.total) * 100}%`, background: colors.navyMidBg, borderRadius: '4px', transition: 'width 0.6s ease-out', boxShadow: dmCashPool.collected >= dmCashPool.total ? 'none' : 'none' }} />
           </div>
           {!dmCashPool.paid.includes('You') ? (
-            <button className="glass-btn glass-primary" onClick={(e) => { confirmClick(e); setDmCashPool(prev => ({ ...prev, paid: [...prev.paid, 'You'], collected: prev.collected + prev.perPerson })); sendDmMessage({ text: `I paid $${dmCashPool.perPerson} to the pool!`, noReply: true }); }} style={{ width: '100%', padding: '8px', borderRadius: '12px', border: 'none', background: colors.navyMidBg, color: 'white', fontWeight: '700', fontSize: '13px', cursor: 'pointer', position: 'relative', overflow: 'hidden' }}>Pay ${dmCashPool.perPerson}</button>
+            <button className="hit44 glass-btn glass-primary" onClick={(e) => { confirmClick(e); setDmCashPool(prev => ({ ...prev, paid: [...prev.paid, 'You'], collected: prev.collected + prev.perPerson })); sendDmMessage({ text: `I paid $${dmCashPool.perPerson} to the pool!`, noReply: true }); }} style={{ width: '100%', padding: '8px', borderRadius: '12px', border: 'none', background: colors.navyMidBg, color: 'white', fontWeight: '700', fontSize: '13px', cursor: 'pointer', position: 'relative', overflow: 'hidden' }}>Pay ${dmCashPool.perPerson}</button>
           ) : (
             <div style={{ textAlign: 'center', padding: '4px', color: colors.steel, fontWeight: '600', fontSize: '12px' }}>Paid</div>
           )}
@@ -5655,14 +5796,15 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
 
         return (
           <div className="modal-backdrop" style={{ position: 'absolute', inset: 0, backgroundColor: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'flex-end', zIndex: 50 }}>
+            <DialogBehavior onClose={() => setShowDmVotePanel(false)} label="Vote on a venue" />
             <div className="modal-content" style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '20px 20px 0 0', padding: '20px', width: '100%', maxHeight: '80%', overflowY: 'auto' }}>
               {/* Header */}
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
                 <div>
                   <h2 style={{ fontSize: '18px', fontWeight: '900', color: colors.navy, margin: 0, display: 'flex', alignItems: 'center', gap: '8px' }}>{Icons.vote(colors.navy, 20)} Vote for a Venue</h2>
-                  <p style={{ fontSize: '11px', color: 'var(--text-tertiary)', margin: '2px 0 0' }}>{totalVoters} vote{totalVoters !== 1 ? 's' : ''} cast{myVote ? ` • You voted for ${myVote}` : ''}</p>
+                  <p style={{ fontSize: '12px', color: 'var(--text-tertiary)', margin: '2px 0 0' }}>{totalVoters} vote{totalVoters !== 1 ? 's' : ''} cast{myVote ? ` • You voted for ${myVote}` : ''}</p>
                 </div>
-                <button onClick={() => setShowDmVotePanel(false)} style={{ width: '32px', height: '32px', borderRadius: '16px', backgroundColor: 'var(--bg-hover)', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.x(colors.textSecondary, 18)}</button>
+                <button aria-label="Close" className="hit44" onClick={() => setShowDmVotePanel(false)} style={{ width: '32px', height: '32px', borderRadius: '16px', backgroundColor: 'var(--bg-hover)', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.x(colors.textSecondary, 18)}</button>
               </div>
 
               {/* Current votes */}
@@ -5677,7 +5819,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                       ? colors.navyBg
                       : isLeading ? colors.steel : `linear-gradient(135deg, ${colors.navy}15, ${colors.navy}25)`;
                     return (
-                      <button key={v.venue_name} className="glass-btn glass-secondary" onClick={(e) => { confirmClick(e); isMyVote ? handleDmUnvote() : handleDmQuickVote(v.venue_name, v.venue_id); }} style={{ width: '100%', textAlign: 'left', padding: '12px 14px', borderRadius: '14px', border: v.isPinned ? `2px solid ${colors.navy}` : isMyVote ? `2px solid ${colors.navy}` : '1.5px solid var(--border-default)', backgroundColor: v.isPinned ? `${colors.navy}05` : isMyVote ? `${colors.navy}06` : 'var(--bg-card-solid)', cursor: 'pointer', position: 'relative', overflow: 'hidden', transition: 'opacity 0.2s' }}>
+                      <button key={v.venue_name} className="hit44 glass-btn glass-secondary" onClick={(e) => { confirmClick(e); isMyVote ? handleDmUnvote() : handleDmQuickVote(v.venue_name, v.venue_id); }} style={{ width: '100%', textAlign: 'left', padding: '12px 14px', borderRadius: '14px', border: v.isPinned ? `2px solid ${colors.navy}` : isMyVote ? `2px solid ${colors.navy}` : '1.5px solid var(--border-default)', backgroundColor: v.isPinned ? `${colors.navy}05` : isMyVote ? `${colors.navy}06` : 'var(--bg-card-solid)', cursor: 'pointer', position: 'relative', overflow: 'hidden', transition: 'opacity 0.2s' }}>
                         {/* Progress bar background */}
                         <div style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: `${votePercent}%`, backgroundColor: isMyVote ? `${colors.navy}10` : 'var(--bg-tertiary)', transition: 'width 0.4s ease', borderRadius: '14px' }} />
                         <div style={{ position: 'relative', display: 'flex', alignItems: 'center', gap: '10px' }}>
@@ -5687,10 +5829,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                           <div style={{ flex: 1, minWidth: 0 }}>
                             <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                               <h4 style={{ fontSize: '14px', fontWeight: '700', color: colors.navy, margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{v.venue_name}</h4>
-                              {v.isPinned && <span style={{ fontSize: '9px', fontWeight: '700', color: 'white', backgroundColor: colors.navyBg, padding: '1px 6px', borderRadius: '6px', flexShrink: 0 }}>Pinned</span>}
-                              {isLeading && <span style={{ fontSize: '9px', fontWeight: '700', color: colors.steel, backgroundColor: `${colors.steel}15`, padding: '1px 6px', borderRadius: '6px', flexShrink: 0 }}>Leading</span>}
+                              {v.isPinned && <span style={{ fontSize: '12px', fontWeight: '700', color: 'white', backgroundColor: colors.navyBg, padding: '1px 6px', borderRadius: '6px', flexShrink: 0 }}>Pinned</span>}
+                              {isLeading && <span style={{ fontSize: '12px', fontWeight: '700', color: colors.steel, backgroundColor: `${colors.steel}15`, padding: '1px 6px', borderRadius: '6px', flexShrink: 0 }}>Leading</span>}
                             </div>
-                            <p style={{ fontSize: '11px', color: 'var(--text-tertiary)', margin: '1px 0 0' }}>{(v.voters || []).length > 0 ? (v.voters || []).join(', ') : v.isPinned ? 'Current pinned venue. Tap to vote' : 'No votes yet'}</p>
+                            <p style={{ fontSize: '12px', color: 'var(--text-tertiary)', margin: '1px 0 0' }}>{(v.voters || []).length > 0 ? (v.voters || []).join(', ') : v.isPinned ? 'Current pinned venue. Tap to vote' : 'No votes yet'}</p>
                           </div>
                           <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0 }}>
                             {voteCount > 0 && <span style={{ fontSize: '16px', fontWeight: '900', color: isMyVote ? colors.navy : colors.textTertiary }}>{voteCount}</span>}
@@ -5713,9 +5855,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                   <p style={{ fontSize: '12px', fontWeight: '700', color: 'var(--text-tertiary)', marginBottom: '10px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Popular Chains Nearby</p>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
                     {suggestedVenues.map(venue => (
-                      <button key={venue.id || venue.name} className="glass-btn glass-secondary" onClick={(e) => { confirmClick(e); handleDmQuickVote(venue.name, venue.place_id); }} style={{ width: '100%', textAlign: 'left', padding: '10px 12px', borderRadius: '12px', border: '1px solid var(--border-default)', backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '10px', transition: 'opacity 0.2s', position: 'relative', overflow: 'hidden' }}>
+                      <button key={venue.id || venue.name} className="hit44 glass-btn glass-secondary" onClick={(e) => { confirmClick(e); handleDmQuickVote(venue.name, venue.place_id); }} style={{ width: '100%', textAlign: 'left', padding: '10px 12px', borderRadius: '12px', border: '1px solid var(--border-default)', backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '10px', transition: 'opacity 0.2s', position: 'relative', overflow: 'hidden' }}>
                         {venue.photo_url ? (
-                          <img src={venue.photo_url} alt="" style={{ width: '36px', height: '36px', borderRadius: '8px', objectFit: 'cover', flexShrink: 0 }} onError={(e) => { e.target.onerror = null; e.target.src = 'data:image/svg+xml,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="36" height="36"><rect fill="#1a3a5c" width="36" height="36" rx="8"/></svg>'); }} />
+                          <img src={venue.photo_url} alt="" style={{ width: '36px', height: '36px', borderRadius: '8px', objectFit: 'cover', flexShrink: 0 }} onError={(e) => { e.target.onerror = null; e.target.src = 'data:image/svg+xml,' + encodeURIComponent('<svg aria-hidden="true" focusable="false" xmlns="http://www.w3.org/2000/svg" width="36" height="36"><rect fill="#1a3a5c" width="36" height="36" rx="8"/></svg>'); }} />
                         ) : (
                           <div style={{ width: '36px', height: '36px', borderRadius: '8px', background: `linear-gradient(135deg, ${getCategoryColor(venue.category)}, ${getCategoryColor(venue.category)}cc)`, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
                             {Icons.mapPin('white', 14)}
@@ -5723,9 +5865,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                         )}
                         <div style={{ flex: 1, minWidth: 0 }}>
                           <p style={{ fontSize: '13px', fontWeight: '600', color: colors.navy, margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{venue.name}</p>
-                          <p style={{ fontSize: '10px', color: 'var(--text-tertiary)', margin: '1px 0 0' }}>{venue.type || venue.category}{venue.stars ? ` • ${venue.stars}★` : ''}{venue.price ? ` • ${venue.price}` : ''}</p>
+                          <p style={{ fontSize: '12px', color: 'var(--text-tertiary)', margin: '1px 0 0' }}>{venue.type || venue.category}{venue.stars ? ` • ${venue.stars}★` : ''}{venue.price ? ` • ${venue.price}` : ''}</p>
                         </div>
-                        <div style={{ padding: '6px 12px', borderRadius: '10px', backgroundColor: `${colors.navy}08`, color: colors.navy, fontSize: '11px', fontWeight: '700', flexShrink: 0 }}>
+                        <div style={{ padding: '6px 12px', borderRadius: '10px', backgroundColor: `${colors.navy}08`, color: colors.navy, fontSize: '12px', fontWeight: '700', flexShrink: 0 }}>
                           {Icons.vote(colors.navy, 12)} Vote
                         </div>
                       </button>
@@ -5735,7 +5877,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
               )}
 
               {/* Browse more button */}
-              <button className="glass-btn glass-secondary" onClick={() => { setShowDmVotePanel(false); setShowDmVenueSearch(true); }} style={{ width: '100%', padding: '12px', borderRadius: '12px', border: `2px dashed ${colors.creamDark}`, backgroundColor: 'transparent', color: 'var(--text-tertiary)', fontSize: '13px', fontWeight: '600', cursor: 'pointer', marginTop: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}>
+              <button className="hit44 glass-btn glass-secondary" onClick={() => { setShowDmVotePanel(false); setShowDmVenueSearch(true); }} style={{ width: '100%', padding: '12px', borderRadius: '12px', border: `2px dashed ${colors.creamDark}`, backgroundColor: 'transparent', color: 'var(--text-tertiary)', fontSize: '13px', fontWeight: '600', cursor: 'pointer', marginTop: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}>
                 {Icons.plus(colors.textTertiary, 14)} Share a venue to chat
               </button>
             </div>
@@ -5746,10 +5888,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
       {/* Venue Share Modal — matches flock style exactly */}
       {showDmVenueSearch && (
         <div className="modal-backdrop" style={{ position: 'absolute', inset: 0, backgroundColor: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'flex-end', zIndex: 50 }}>
+            <DialogBehavior onClose={() => setShowDmVenueSearch(false)} label="Share a venue" />
           <div className="modal-content" style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '20px 20px 0 0', padding: '20px', width: '100%', maxHeight: '70%', overflowY: 'auto' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
               <h2 style={{ fontSize: '18px', fontWeight: '900', color: colors.navy, margin: 0, display: 'flex', alignItems: 'center', gap: '8px' }}>{Icons.mapPin(colors.navy, 20)} Share a Venue</h2>
-              <button onClick={() => setShowDmVenueSearch(false)} style={{ width: '32px', height: '32px', borderRadius: '16px', backgroundColor: 'var(--bg-hover)', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.x(colors.textSecondary, 18)}</button>
+              <button aria-label="Close" className="hit44" onClick={() => setShowDmVenueSearch(false)} style={{ width: '32px', height: '32px', borderRadius: '16px', backgroundColor: 'var(--bg-hover)', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.x(colors.textSecondary, 18)}</button>
             </div>
 
             {/* Current pinned venue display */}
@@ -5759,11 +5902,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                   {Icons.mapPin('white', 18)}
                 </div>
                 <div style={{ flex: 1, minWidth: 0 }}>
-                  <p style={{ fontSize: '10px', fontWeight: '600', color: colors.steel, margin: '0 0 2px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Pinned Venue</p>
+                  <p style={{ fontSize: '12px', fontWeight: '600', color: colors.steel, margin: '0 0 2px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Pinned Venue</p>
                   <p style={{ fontSize: '14px', fontWeight: '700', color: colors.navy, margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{dmPinnedVenue.name}</p>
-                  {dmPinnedVenue.addr && <p style={{ fontSize: '11px', color: 'var(--text-secondary)', margin: '2px 0 0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{dmPinnedVenue.addr}</p>}
+                  {dmPinnedVenue.addr && <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: '2px 0 0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{dmPinnedVenue.addr}</p>}
                 </div>
-                <button className="glass-btn glass-primary" onClick={(e) => { confirmClick(e); sendDmMessage({ text: `Check out ${dmPinnedVenue.name}!`, message_type: 'venue_card', venue_data: { name: dmPinnedVenue.name, addr: dmPinnedVenue.addr, stars: dmPinnedVenue.rating, rating: dmPinnedVenue.rating, photo_url: dmPinnedVenue.photo_url, place_id: dmPinnedVenue.place_id }, noReply: true }); setShowDmVenueSearch(false); }} style={{ padding: '8px 12px', borderRadius: '10px', border: 'none', background: colors.steel, color: 'white', fontSize: '11px', fontWeight: '700', cursor: 'pointer', whiteSpace: 'nowrap', position: 'relative', overflow: 'hidden' }}>Share This</button>
+                <button className="hit44 glass-btn glass-primary" onClick={(e) => { confirmClick(e); sendDmMessage({ text: `Check out ${dmPinnedVenue.name}!`, message_type: 'venue_card', venue_data: { name: dmPinnedVenue.name, addr: dmPinnedVenue.addr, stars: dmPinnedVenue.rating, rating: dmPinnedVenue.rating, photo_url: dmPinnedVenue.photo_url, place_id: dmPinnedVenue.place_id }, noReply: true }); setShowDmVenueSearch(false); }} style={{ padding: '8px 12px', borderRadius: '10px', border: 'none', background: colors.steel, color: 'white', fontSize: '12px', fontWeight: '700', cursor: 'pointer', whiteSpace: 'nowrap', position: 'relative', overflow: 'hidden' }}>Share This</button>
               </div>
             ) : (
               <div style={{ padding: '10px 12px', borderRadius: '12px', backgroundColor: 'var(--bg-tertiary)', border: '1px solid var(--border-default)', marginBottom: '16px' }}>
@@ -5774,7 +5917,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
             <p style={{ fontSize: '12px', fontWeight: '600', color: 'var(--text-secondary)', marginBottom: '12px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Or select a different venue:</p>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
               {allVenues.map(venue => (
-                <button
+                <button className="hit44"
                   key={venue.id}
                   onClick={(e) => {
                     confirmClick(e);
@@ -5788,9 +5931,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                   </div>
                   <div style={{ flex: 1 }}>
                     <p style={{ fontSize: '14px', fontWeight: '600', color: colors.navy, margin: 0 }}>{venue.name}</p>
-                    <p style={{ fontSize: '11px', color: 'var(--text-secondary)', margin: '2px 0 0' }}>{venue.type} {venue.price ? `\u2022 ${venue.price}` : ''}</p>
+                    <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: '2px 0 0' }}>{venue.type} {venue.price ? `\u2022 ${venue.price}` : ''}</p>
                   </div>
-                  <div style={{ padding: '4px 10px', borderRadius: '12px', backgroundColor: venue.crowd > 70 ? '#FEE2E2' : venue.crowd > 40 ? '#FEF3C7' : '#D1FAE5', color: venue.crowd > 70 ? colors.red : venue.crowd > 40 ? colors.amber : colors.steel, fontSize: '11px', fontWeight: '600' }}>
+                  <div style={{ padding: '4px 10px', borderRadius: '12px', backgroundColor: venue.crowd > 70 ? '#FEE2E2' : venue.crowd > 40 ? '#FEF3C7' : '#D1FAE5', color: venue.crowd > 70 ? colors.red : venue.crowd > 40 ? colors.amber : colors.steel, fontSize: '12px', fontWeight: '600' }}>
                     {venue.crowd}%
                   </div>
                 </button>
@@ -5803,18 +5946,19 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
       {/* Cash Pool Creation Modal */}
       {showDmCashPool && (
         <div className="modal-backdrop" style={{ position: 'absolute', inset: 0, backgroundColor: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'flex-end', zIndex: 50 }}>
+            <DialogBehavior onClose={() => setShowDmCashPool(false)} label="Cash pool" />
           <div className="modal-content" style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '20px 20px 0 0', padding: '20px', width: '100%' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
               <h2 style={{ fontSize: '18px', fontWeight: '900', color: colors.navy, margin: 0 }}>Cash Pool</h2>
-              <button onClick={() => setShowDmCashPool(false)} style={{ width: '32px', height: '32px', borderRadius: '16px', backgroundColor: 'var(--bg-hover)', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.x(colors.textSecondary, 18)}</button>
+              <button aria-label="Close" className="hit44" onClick={() => setShowDmCashPool(false)} style={{ width: '32px', height: '32px', borderRadius: '16px', backgroundColor: 'var(--bg-hover)', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.x(colors.textSecondary, 18)}</button>
             </div>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '16px', marginBottom: '16px' }}>
-              <button className="glass-btn glass-secondary" onClick={() => setDmCashPoolAmount(prev => Math.max(5, prev - 5))} style={{ width: '44px', height: '44px', borderRadius: '22px', border: `2px solid ${colors.navy}`, backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontWeight: 'bold', cursor: 'pointer', fontSize: '18px' }}>−</button>
+              <button aria-label="Zoom out" className="hit44 glass-btn glass-secondary" onClick={() => setDmCashPoolAmount(prev => Math.max(5, prev - 5))} style={{ width: '44px', height: '44px', borderRadius: '22px', border: `2px solid ${colors.navy}`, backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontWeight: 'bold', cursor: 'pointer', fontSize: '18px' }}>−</button>
               <span style={{ fontSize: '36px', fontWeight: '900', width: '100px', textAlign: 'center', color: colors.navy }}>${dmCashPoolAmount}</span>
-              <button className="glass-btn glass-secondary" onClick={() => setDmCashPoolAmount(prev => prev + 5)} style={{ width: '44px', height: '44px', borderRadius: '22px', border: `2px solid ${colors.navy}`, backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontWeight: 'bold', cursor: 'pointer', fontSize: '18px' }}>+</button>
+              <button aria-label="Zoom in" className="hit44 glass-btn glass-secondary" onClick={() => setDmCashPoolAmount(prev => prev + 5)} style={{ width: '44px', height: '44px', borderRadius: '22px', border: `2px solid ${colors.navy}`, backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontWeight: 'bold', cursor: 'pointer', fontSize: '18px' }}>+</button>
             </div>
             <p style={{ fontSize: '13px', color: 'var(--text-secondary)', textAlign: 'center', marginBottom: '20px' }}>Per person • Total: ${dmCashPoolAmount * 2}</p>
-            <button className="glass-btn glass-navy" onClick={(e) => {
+            <button className="hit44 glass-btn glass-navy" onClick={(e) => {
               confirmClick(e);
               setDmCashPool({ perPerson: dmCashPoolAmount, total: dmCashPoolAmount * 2, collected: 0, paid: [] });
               sendDmMessage({ text: `Cash Pool: $${dmCashPoolAmount}/person. Let's split it!`, noReply: true });
@@ -5827,6 +5971,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
       {/* Delete DM Confirmation Modal */}
       {showDeleteDmConfirm && (
         <div style={{ position: 'absolute', inset: 0, backgroundColor: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(8px)', WebkitBackdropFilter: 'blur(8px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 60, padding: '16px' }}>
+            <DialogBehavior onClose={() => setShowDeleteDmConfirm(false)} label="Delete conversation" />
           <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '24px', padding: '24px', width: '100%', maxWidth: '300px' }}>
             <div style={{ textAlign: 'center', marginBottom: '16px' }}>
               <div style={{ width: '48px', height: '48px', borderRadius: '24px', backgroundColor: 'var(--accent-red-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 12px' }}>{Icons.x('#EF4444', 24)}</div>
@@ -5834,8 +5979,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
               <p style={{ fontSize: '13px', color: 'var(--text-secondary)', margin: 0, lineHeight: '1.4' }}>Delete this conversation with {selectedDm.name}? Messages will be removed from your view.</p>
             </div>
             <div style={{ display: 'flex', gap: '8px' }}>
-              <button className="glass-btn glass-secondary" onClick={() => setShowDeleteDmConfirm(false)} style={{ flex: 1, padding: '12px', borderRadius: '12px', border: `2px solid ${colors.creamDark}`, backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontWeight: '700', fontSize: '14px', cursor: 'pointer' }}>Cancel</button>
-              <button className="glass-btn glass-danger" onClick={() => {
+              <button className="hit44 glass-btn glass-secondary" onClick={() => setShowDeleteDmConfirm(false)} style={{ flex: 1, padding: '12px', borderRadius: '12px', border: `2px solid ${colors.creamDark}`, backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontWeight: '700', fontSize: '14px', cursor: 'pointer' }}>Cancel</button>
+              <button className="hit44 glass-btn glass-danger" onClick={() => {
                 const dmUserId = selectedDm.userId;
                 setDirectMessages(prev => prev.filter(d => d.userId !== dmUserId));
                 const updated = [...deletedDmUserIds, dmUserId];
@@ -5855,8 +6000,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
         <div style={{ position: 'absolute', inset: 0, backgroundColor: 'rgba(0,0,0,0.9)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', zIndex: 50, padding: '20px' }}>
           <img src={dmPendingImage} alt="Preview" style={{ maxWidth: '100%', maxHeight: '60%', borderRadius: '12px', objectFit: 'contain' }} />
           <div style={{ display: 'flex', gap: '12px', marginTop: '20px' }}>
-            <button className="glass-btn glass-secondary" onClick={() => { setShowDmImagePreview(false); setDmPendingImage(null); }} style={{ padding: '12px 24px', borderRadius: '24px', border: '2px solid var(--bg-card-solid)', backgroundColor: 'transparent', color: 'white', fontSize: '14px', fontWeight: '700', cursor: 'pointer' }}>Cancel</button>
-            <button className="glass-btn glass-navy" onClick={() => { sendDmMessage({ text: 'Photo', message_type: 'image', image_url: dmPendingImage, noReply: true }); setShowDmImagePreview(false); setDmPendingImage(null); }} style={{ padding: '12px 24px', borderRadius: '24px', border: 'none', background: colors.navyBg, color: 'white', fontSize: '14px', fontWeight: '700', cursor: 'pointer' }}>Send</button>
+            <button className="hit44 glass-btn glass-secondary" onClick={() => { setShowDmImagePreview(false); setDmPendingImage(null); }} style={{ padding: '12px 24px', borderRadius: '24px', border: '2px solid var(--bg-card-solid)', backgroundColor: 'transparent', color: 'white', fontSize: '14px', fontWeight: '700', cursor: 'pointer' }}>Cancel</button>
+            <button className="hit44 glass-btn glass-navy" onClick={() => { sendDmMessage({ text: 'Photo', message_type: 'image', image_url: dmPendingImage, noReply: true }); setShowDmImagePreview(false); setDmPendingImage(null); }} style={{ padding: '12px 24px', borderRadius: '24px', border: 'none', background: colors.navyBg, color: 'white', fontSize: '14px', fontWeight: '700', cursor: 'pointer' }}>Send</button>
           </div>
         </div>
       )}
@@ -5868,7 +6013,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           return m.text?.toLowerCase().includes(q) || m.sender?.toLowerCase().includes(q);
         }).length > 0 && (
           <div style={{ textAlign: 'center', marginBottom: '12px' }}>
-            <span style={{ fontSize: '11px', color: 'var(--text-secondary)', backgroundColor: 'var(--bg-card)', padding: '4px 12px', borderRadius: '12px' }}>
+            <span style={{ fontSize: '12px', color: 'var(--text-secondary)', backgroundColor: 'var(--bg-card)', padding: '4px 12px', borderRadius: '12px' }}>
               {selectedDm.messages.filter(m => { const q = dmChatSearch.toLowerCase(); return m.text?.toLowerCase().includes(q) || m.sender?.toLowerCase().includes(q); }).length} matching messages
             </span>
           </div>
@@ -5887,7 +6032,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
             : selectedDm.messages
           ).map((m) => (
             <div key={m.id} style={{ display: 'flex', gap: '10px', marginBottom: '12px', flexDirection: m.sender === 'You' ? 'row-reverse' : 'row' }}>
-              <div style={{ width: '32px', height: '32px', borderRadius: '16px', background: colors.navyBg, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '11px', color: 'white', fontWeight: '700', flexShrink: 0, overflow: 'hidden' }}>
+              <div style={{ width: '32px', height: '32px', borderRadius: '16px', background: colors.navyBg, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '12px', color: 'white', fontWeight: '700', flexShrink: 0, overflow: 'hidden' }}>
                 {m.sender === 'You'
                   ? (profilePic ? <img src={profilePic} alt="" style={{ width: '32px', height: '32px', borderRadius: '16px', objectFit: 'cover' }} /> : 'Y')
                   : (selectedDm.image ? <img src={selectedDm.image} alt="" style={{ width: '32px', height: '32px', borderRadius: '16px', objectFit: 'cover' }} /> : (selectedDm.name?.[0]?.toUpperCase() || '?'))
@@ -5897,8 +6042,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 {/* Reply reference */}
                 {m.reply_to && (
                   <div style={{ padding: '4px 10px', marginBottom: '2px', borderRadius: '8px', backgroundColor: 'var(--bg-tertiary)', border: '1px solid var(--border-default)' }}>
-                    <span style={{ fontSize: '10px', fontWeight: '600', color: colors.navy }}>{m.reply_to.sender}</span>
-                    <p style={{ fontSize: '10px', color: 'var(--text-secondary)', margin: '1px 0 0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{m.reply_to.text}</p>
+                    <span style={{ fontSize: '12px', fontWeight: '600', color: colors.navy }}>{m.reply_to.sender}</span>
+                    <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: '1px 0 0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{m.reply_to.text}</p>
                   </div>
                 )}
                 {/* Venue card message — uses same VenueCard component as flocks */}
@@ -5961,18 +6106,18 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 {showDmReactionPicker === m.id && (
                   <div style={{ display: 'flex', gap: '4px', marginTop: '4px', backgroundColor: 'var(--bg-card-solid)', borderRadius: '16px', padding: '4px 8px', boxShadow: '0 2px 12px rgba(0,0,0,0.15)', position: 'absolute', [m.sender === 'You' ? 'right' : 'left']: 0, bottom: '-8px', zIndex: 5 }}>
                     {dmReactions.map(emoji => (
-                      <button key={emoji} onClick={(e) => { e.stopPropagation(); dmReact(m.id, emoji, selectedDmId); setShowDmReactionPicker(null); }} style={{ fontSize: '18px', background: 'none', border: 'none', cursor: 'pointer', padding: '4px', borderRadius: '8px', transition: 'transform 0.15s' }}
+                      <button className="hit44" key={emoji} onClick={(e) => { e.stopPropagation(); dmReact(m.id, emoji, selectedDmId); setShowDmReactionPicker(null); }} style={{ fontSize: '18px', background: 'none', border: 'none', cursor: 'pointer', padding: '4px', borderRadius: '8px', transition: 'transform 0.15s' }}
                         onMouseEnter={(e) => { e.currentTarget.style.transform = 'scale(1.3)'; }}
                         onMouseLeave={(e) => { e.currentTarget.style.transform = 'scale(1)'; }}
                       >{emoji}</button>
                     ))}
-                    <button onClick={(e) => { e.stopPropagation(); setDmReplyingTo(m); setShowDmReactionPicker(null); }} style={{ fontSize: '14px', background: 'none', border: 'none', cursor: 'pointer', padding: '4px 6px', borderRadius: '8px', color: colors.navy, fontWeight: '700' }} title="Reply">{Icons.reply(colors.navy, 14)}</button>
+                    <button aria-label="Reply" className="hit44" onClick={(e) => { e.stopPropagation(); setDmReplyingTo(m); setShowDmReactionPicker(null); }} style={{ fontSize: '14px', background: 'none', border: 'none', cursor: 'pointer', padding: '4px 6px', borderRadius: '8px', color: colors.navy, fontWeight: '700' }} title="Reply">{Icons.reply(colors.navy, 14)}</button>
                     {m.sender !== 'You' && (
-                      <button onClick={(e) => { e.stopPropagation(); setShowDmReactionPicker(null); setModerationTarget({ userId: selectedDmId, userName: selectedDm.name, contentType: 'dm', contentId: m.id }); }} style={{ fontSize: '14px', background: 'none', border: 'none', cursor: 'pointer', padding: '4px 6px', borderRadius: '8px', color: '#EF4444', fontWeight: '700' }} title="Report">⚑</button>
+                      <button aria-label="Report" className="hit44" onClick={(e) => { e.stopPropagation(); setShowDmReactionPicker(null); setModerationTarget({ userId: selectedDmId, userName: selectedDm.name, contentType: 'dm', contentId: m.id }); }} style={{ fontSize: '14px', background: 'none', border: 'none', cursor: 'pointer', padding: '4px 6px', borderRadius: '8px', color: '#EF4444', fontWeight: '700' }} title="Report">⚑</button>
                     )}
                   </div>
                 )}
-                <p style={{ fontSize: '9px', color: 'var(--text-tertiary)', margin: '4px 4px 0', textAlign: m.sender === 'You' ? 'right' : 'left' }}>{getRelativeTime(m.time)}</p>
+                <p style={{ fontSize: '12px', color: 'var(--text-tertiary)', margin: '4px 4px 0', textAlign: m.sender === 'You' ? 'right' : 'left' }}>{getRelativeTime(m.time)}</p>
               </div>
             </div>
           ))
@@ -5980,9 +6125,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
         {/* Typing indicator */}
         <div style={{ height: '50px', overflow: 'hidden', opacity: dmIsTyping ? 1 : 0, transition: 'opacity 0.2s ease', pointerEvents: dmIsTyping ? 'auto' : 'none' }}>
           <div style={{ display: 'flex', gap: '10px' }}>
-            <div style={{ width: '32px', height: '32px', borderRadius: '16px', backgroundColor: 'var(--bg-card-solid)', border: '2px solid var(--border-subtle)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '11px', fontWeight: '700', color: colors.navy }}>{selectedDm.name?.[0] || '?'}</div>
+            <div style={{ width: '32px', height: '32px', borderRadius: '16px', backgroundColor: 'var(--bg-card-solid)', border: '2px solid var(--border-subtle)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '12px', fontWeight: '700', color: colors.navy }}>{selectedDm.name?.[0] || '?'}</div>
             <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start' }}>
-              <span style={{ fontSize: '11px', color: colors.navy, fontWeight: '600', marginBottom: '4px', paddingLeft: '4px' }}>{dmTypingUser || selectedDm.name}</span>
+              <span style={{ fontSize: '12px', color: colors.navy, fontWeight: '600', marginBottom: '4px', paddingLeft: '4px' }}>{dmTypingUser || selectedDm.name}</span>
               <div style={{ padding: '10px 16px', backgroundColor: 'var(--bg-card-solid)', borderRadius: '18px', borderBottomLeftRadius: '4px', boxShadow: '0 2px 10px rgba(0,0,0,0.05)', display: 'flex', alignItems: 'center', gap: '3px' }}>
                 <div style={{ width: '7px', height: '7px', borderRadius: '50%', backgroundColor: colors.navyBg, animation: 'typingDot 1.4s ease-in-out infinite', opacity: 0.7 }} />
                 <div style={{ width: '7px', height: '7px', borderRadius: '50%', backgroundColor: colors.navyBg, animation: 'typingDot 1.4s ease-in-out 0.2s infinite', opacity: 0.7 }} />
@@ -5998,10 +6143,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
       {dmReplyingTo && (
         <div style={{ padding: '8px 12px', borderTop: '1px solid var(--divider)', backgroundColor: 'var(--bg-tertiary)', display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0 }}>
           <div style={{ flex: 1, paddingLeft: '10px', borderRadius: '8px', backgroundColor: 'var(--bg-tertiary)', padding: '6px 10px' }}>
-            <span style={{ fontSize: '11px', fontWeight: '700', color: colors.navy }}>Replying to {dmReplyingTo.sender}</span>
-            <p style={{ fontSize: '11px', color: 'var(--text-secondary)', margin: '1px 0 0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{dmReplyingTo.text}</p>
+            <span style={{ fontSize: '12px', fontWeight: '700', color: colors.navy }}>Replying to {dmReplyingTo.sender}</span>
+            <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: '1px 0 0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{dmReplyingTo.text}</p>
           </div>
-          <button onClick={() => setDmReplyingTo(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '4px' }}>{Icons.x(colors.textSecondary, 14)}</button>
+          <button aria-label="Close" className="hit44" onClick={() => setDmReplyingTo(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '4px' }}>{Icons.x(colors.textSecondary, 14)}</button>
         </div>
       )}
 
@@ -6012,14 +6157,14 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
       <div style={{ padding: '10px 12px calc(10px + var(--safe-bottom))', borderTop: '1px solid var(--divider)', backgroundColor: 'var(--bg-card-solid)' }}>
         <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
           {/* Camera button */}
-          <button onClick={() => setShowDmCameraPopup(true)} style={{ width: '36px', height: '36px', borderRadius: '18px', backgroundColor: 'var(--bg-hover)', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', flexShrink: 0, border: 'none', position: 'relative' }}>
+          <button aria-label="Add a photo" className="hit44" onClick={() => setShowDmCameraPopup(true)} style={{ width: '36px', height: '36px', borderRadius: '18px', backgroundColor: 'var(--bg-hover)', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', flexShrink: 0, border: 'none', position: 'relative' }}>
             {Icons.camera(colors.textSecondary, 16)}
           </button>
           <input ref={dmGalleryInputRef} type="file" accept="image/*" onChange={handleDmImageSelect} style={{ display: 'none' }} />
           {/* Location share button */}
-          <button onClick={() => { if (dmSharingLocation) { dmStopSharingLocation(dmSharingLocation); setDmSharingLocation(null); setDmMemberLocation(null); } else { setDmSharingLocation(selectedDmId); } }} style={{ width: '36px', height: '36px', borderRadius: '18px', backgroundColor: dmSharingLocation ? '#10b981' : 'var(--bg-hover)', border: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', flexShrink: 0 }}>{Icons.mapPin(dmSharingLocation ? 'white' : colors.textSecondary, 16)}</button>
-          <input data-dm-input type="text" defaultValue="" onChange={handleDmInputChange} onKeyDown={(e) => e.key === 'Enter' && sendDmMessage()} placeholder={dmReplyingTo ? `Reply...` : `Message ${selectedDm.name}...`} style={{ flex: 1, padding: '15px 18px', borderRadius: '24px', backgroundColor: 'var(--bg-hover)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)', fontSize: '16px', outline: 'none' }} autoComplete="off" />
-          <button className="glass-btn glass-navy" onClick={() => sendDmMessage()} disabled={!chatInputHasText} style={{ width: '42px', height: '42px', borderRadius: '21px', border: 'none', background: chatInputHasText ? colors.navyBg : 'var(--pill-bg)', color: 'white', cursor: chatInputHasText ? 'pointer' : 'default', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.send('white', 18)}</button>
+          <button aria-label="Share your location" className="hit44" onClick={() => { if (dmSharingLocation) { dmStopSharingLocation(dmSharingLocation); setDmSharingLocation(null); setDmMemberLocation(null); } else { setDmSharingLocation(selectedDmId); } }} style={{ width: '36px', height: '36px', borderRadius: '18px', backgroundColor: dmSharingLocation ? '#10b981' : 'var(--bg-hover)', border: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', flexShrink: 0 }}>{Icons.mapPin(dmSharingLocation ? 'white' : colors.textSecondary, 16)}</button>
+          <input data-dm-input aria-label="Message" type="text" defaultValue="" onChange={handleDmInputChange} onKeyDown={(e) => e.key === 'Enter' && sendDmMessage()} placeholder={dmReplyingTo ? `Reply...` : `Message ${selectedDm.name}...`} style={{ flex: 1, padding: '15px 18px', borderRadius: '24px', backgroundColor: 'var(--bg-hover)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)', fontSize: '16px', outline: 'none' }} autoComplete="off" />
+          <button aria-label="Send" className="hit44 glass-btn glass-navy" onClick={() => sendDmMessage()} disabled={!chatInputHasText} style={{ width: '42px', height: '42px', borderRadius: '21px', border: 'none', background: chatInputHasText ? colors.navyBg : 'var(--pill-bg)', color: 'white', cursor: chatInputHasText ? 'pointer' : 'default', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.send('white', 18)}</button>
         </div>
       </div>
 
@@ -6030,11 +6175,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
             <div style={{ width: '36px', height: '4px', borderRadius: '2px', backgroundColor: 'var(--toggle-off)', margin: '0 auto 16px' }} />
             <h3 style={{ fontSize: '16px', fontWeight: '800', color: colors.navy, margin: '0 0 16px', textAlign: 'center' }}>Add Photo</h3>
             <div style={{ display: 'flex', gap: '12px' }}>
-              <button className="glass-btn glass-secondary" onClick={() => openCameraViewfinder('dm')} style={{ flex: 1, padding: '16px', borderRadius: '16px', border: `2px solid ${colors.creamDark}`, backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px', transition: 'opacity 0.2s ease' }}>
+              <button className="hit44 glass-btn glass-secondary" onClick={() => openCameraViewfinder('dm')} style={{ flex: 1, padding: '16px', borderRadius: '16px', border: `2px solid ${colors.creamDark}`, backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px', transition: 'opacity 0.2s ease' }}>
                 {Icons.camera(colors.navy, 28)}
                 <span style={{ fontSize: '13px', fontWeight: '700', color: colors.navy }}>Take Photo</span>
               </button>
-              <button className="glass-btn glass-secondary" onClick={() => { setShowDmCameraPopup(false); setTimeout(() => dmGalleryInputRef.current?.click(), 100); }} style={{ flex: 1, padding: '16px', borderRadius: '16px', border: `2px solid ${colors.creamDark}`, backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px', transition: 'opacity 0.2s ease' }}>
+              <button className="hit44 glass-btn glass-secondary" onClick={() => { setShowDmCameraPopup(false); setTimeout(() => dmGalleryInputRef.current?.click(), 100); }} style={{ flex: 1, padding: '16px', borderRadius: '16px', border: `2px solid ${colors.creamDark}`, backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px', transition: 'opacity 0.2s ease' }}>
                 {Icons.image(colors.navy, 28)}
                 <span style={{ fontSize: '13px', fontWeight: '700', color: colors.navy }}>Gallery</span>
               </button>
@@ -6105,23 +6250,23 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
               </div>
               <div>
                 <h2 style={{ fontSize: isAiPanel ? '14px' : '15px', fontWeight: 'bold', color: 'white', margin: 0 }}>Birdie</h2>
-                <p style={{ fontSize: '10px', color: 'rgba(255,255,255,0.7)', margin: 0 }}>knows what's good tonight</p>
+                <p style={{ fontSize: '12px', color: 'rgba(255,255,255,0.7)', margin: 0 }}>knows what's good tonight</p>
               </div>
             </div>
             <div style={{ display: 'flex', gap: '6px' }}>
               {/* Expand/Collapse toggle */}
-              <button onClick={toggleAiFullscreen} style={{ width: '28px', height: '28px', borderRadius: '14px', backgroundColor: 'rgba(255,255,255,0.15)', border: 'none', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'background-color 0.2s ease' }}
+              <button className="hit44" onClick={toggleAiFullscreen} style={{ width: '28px', height: '28px', borderRadius: '14px', backgroundColor: 'rgba(255,255,255,0.15)', border: 'none', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'background-color 0.2s ease' }}
                 onMouseEnter={e => e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.25)'}
                 onMouseLeave={e => e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.15)'}
               >
                 {isAiFullscreen ? (
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round"><polyline points="4 14 10 14 10 20" /><polyline points="20 10 14 10 14 4" /><line x1="14" y1="10" x2="21" y2="3" /><line x1="3" y1="21" x2="10" y2="14" /></svg>
+                  <svg aria-hidden="true" focusable="false" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round"><polyline points="4 14 10 14 10 20" /><polyline points="20 10 14 10 14 4" /><line x1="14" y1="10" x2="21" y2="3" /><line x1="3" y1="21" x2="10" y2="14" /></svg>
                 ) : (
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round"><polyline points="15 3 21 3 21 9" /><polyline points="9 21 3 21 3 15" /><line x1="21" y1="3" x2="14" y2="10" /><line x1="3" y1="21" x2="10" y2="14" /></svg>
+                  <svg aria-hidden="true" focusable="false" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round"><polyline points="15 3 21 3 21 9" /><polyline points="9 21 3 21 3 15" /><line x1="21" y1="3" x2="14" y2="10" /><line x1="3" y1="21" x2="10" y2="14" /></svg>
                 )}
               </button>
               {/* Close */}
-              <button onClick={closeAiChat} style={{ width: '28px', height: '28px', borderRadius: '14px', backgroundColor: 'rgba(255,255,255,0.15)', border: 'none', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'background-color 0.2s ease' }}
+              <button aria-label="Close" className="hit44" onClick={closeAiChat} style={{ width: '28px', height: '28px', borderRadius: '14px', backgroundColor: 'rgba(255,255,255,0.15)', border: 'none', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'background-color 0.2s ease' }}
                 onMouseEnter={e => e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.25)'}
                 onMouseLeave={e => e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.15)'}
               >{Icons.x('white', 14)}</button>
@@ -6147,7 +6292,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 <p style={{ fontSize: isAiPanel ? '11px' : '12px', color: 'var(--text-secondary)', margin: 0, textAlign: 'center', maxWidth: '260px', lineHeight: 1.5 }}>where's good tonight, how packed it is, what your flock is up to. ask away.</p>
                 <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', justifyContent: 'center', pointerEvents: 'auto' }}>
                   {aiSuggestedQuestions.slice(0, isAiPanel ? 2 : 4).map((q, i) => (
-                    <button key={i} onClick={() => { aiInputValueRef.current = q.text; setAiInputHasText(true); aiInputHasTextRef.current = true; if (aiInputRef.current) aiInputRef.current.value = q.text; setTimeout(() => sendAiMessage(), 50); }} style={{ padding: '7px 12px', borderRadius: '16px', border: '1px solid var(--border-subtle)', backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer', fontSize: '12px', color: colors.navy, fontWeight: '600', display: 'flex', alignItems: 'center', gap: '5px' }}>
+                    <button className="hit44" key={i} onClick={() => { aiInputValueRef.current = q.text; setAiInputHasText(true); aiInputHasTextRef.current = true; if (aiInputRef.current) aiInputRef.current.value = q.text; setTimeout(() => sendAiMessage(), 50); }} style={{ padding: '7px 12px', borderRadius: '16px', border: '1px solid var(--border-subtle)', backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer', fontSize: '12px', color: colors.navy, fontWeight: '600', display: 'flex', alignItems: 'center', gap: '5px' }}>
                       {q.icon(colors.navy, 12)}
                       {q.text}
                     </button>
@@ -6168,7 +6313,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                   {/* Venue Cards from AI */}
                   {/* Navigation button from AI */}
                   {msg.navigate && (
-                    <button onClick={() => {
+                    <button className="hit44" onClick={() => {
                       const nav = msg.navigate;
                       if (nav.screen) setCurrentScreen(nav.screen);
                       else setCurrentScreen('main');
@@ -6203,20 +6348,20 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '8px' }}>
                               <h4 style={{ fontSize: '14px', fontWeight: '700', color: 'var(--text-primary)', margin: 0, lineHeight: 1.25 }}>{v.name}</h4>
                               {v.is_open != null && (
-                                <span style={{ fontSize: '10px', fontWeight: '600', padding: '2px 7px', borderRadius: '999px', backgroundColor: v.is_open ? 'var(--accent-green-bg)' : 'var(--accent-red-bg)', color: v.is_open ? 'var(--accent-green-text)' : 'var(--accent-red-text)', flexShrink: 0 }}>{v.is_open ? 'Open' : 'Closed'}</span>
+                                <span style={{ fontSize: '12px', fontWeight: '600', padding: '2px 7px', borderRadius: '999px', backgroundColor: v.is_open ? 'var(--accent-green-bg)' : 'var(--accent-red-bg)', color: v.is_open ? 'var(--accent-green-text)' : 'var(--accent-red-text)', flexShrink: 0 }}>{v.is_open ? 'Open' : 'Closed'}</span>
                               )}
                             </div>
 
                             {/* One meta line: price · rating · street */}
                             <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginTop: '4px', minWidth: 0 }}>
-                              {v.price_level != null && <span style={{ fontSize: '11px', color: 'var(--text-secondary)', fontWeight: '600', flexShrink: 0 }}>{'$'.repeat(v.price_level || 1)}</span>}
+                              {v.price_level != null && <span style={{ fontSize: '12px', color: 'var(--text-secondary)', fontWeight: '600', flexShrink: 0 }}>{'$'.repeat(v.price_level || 1)}</span>}
                               {v.rating && (
-                                <span style={{ display: 'inline-flex', alignItems: 'center', gap: '3px', fontSize: '11px', color: 'var(--text-secondary)', fontWeight: '600', flexShrink: 0 }}>
+                                <span style={{ display: 'inline-flex', alignItems: 'center', gap: '3px', fontSize: '12px', color: 'var(--text-secondary)', fontWeight: '600', flexShrink: 0 }}>
                                   {Icons.starFilled('#d97706', 11)}{v.rating}
                                 </span>
                               )}
                               {v.address && (
-                                <span style={{ fontSize: '11px', color: 'var(--text-tertiary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{v.address.split(',')[0]}</span>
+                                <span style={{ fontSize: '12px', color: 'var(--text-tertiary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{v.address.split(',')[0]}</span>
                               )}
                             </div>
 
@@ -6224,7 +6369,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                             {crowd != null && (
                               <div style={{ marginTop: '10px' }}>
                                 <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: '4px' }}>
-                                  <span style={{ fontSize: '11px', color: 'var(--text-secondary)', fontWeight: '500' }}>{v.crowd_label || 'Crowd right now'}</span>
+                                  <span style={{ fontSize: '12px', color: 'var(--text-secondary)', fontWeight: '500' }}>{v.crowd_label || 'Crowd right now'}</span>
                                   <span style={{ fontSize: '12px', fontWeight: '700', color: crowdColor }}>{crowd}%</span>
                                 </div>
                                 <div style={{ width: '100%', height: '4px', backgroundColor: 'var(--bg-tertiary)', borderRadius: '2px', overflow: 'hidden' }}>
@@ -6235,13 +6380,13 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
 
                             <div style={{ display: 'flex', gap: '6px', marginTop: '12px' }}>
                               {v.place_id && (
-                                <button className="fab-press" onClick={() => {
+                                <button className="hit44 fab-press" onClick={() => {
                                   openVenueDetail(v.place_id, { name: v.name, formatted_address: v.address, place_id: v.place_id, rating: v.rating });
                                 }} style={{ flex: 1, padding: '9px', borderRadius: '10px', border: '1px solid var(--border-default)', backgroundColor: 'transparent', color: 'var(--text-primary)', fontSize: '12px', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '5px' }}>
                                   Details
                                 </button>
                               )}
-                              <button className="fab-press" onClick={() => setAiShareVenue(v)} style={{ flex: 1, padding: '9px', borderRadius: '10px', border: 'none', background: colors.navyBg, color: 'white', fontSize: '12px', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '5px' }}>
+                              <button className="hit44 fab-press" onClick={() => setAiShareVenue(v)} style={{ flex: 1, padding: '9px', borderRadius: '10px', border: 'none', background: colors.navyBg, color: 'white', fontSize: '12px', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '5px' }}>
                                 {Icons.send('white', 12)} Share
                               </button>
                             </div>
@@ -6261,7 +6406,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                   <img src={isDark ? "/birdie-avatar.png" : "/birdie-avatar-light.png"} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
                 </div>
                 <div style={{ backgroundColor: 'var(--bg-hover)', borderRadius: '16px', borderTopLeftRadius: '4px', padding: '10px 16px', display: 'flex', alignItems: 'center', boxShadow: '0 1px 3px rgba(0,0,0,0.05)' }}>
-                  <svg width="32" height="24" viewBox="0 0 32 24" xmlns="http://www.w3.org/2000/svg">
+                  <svg aria-hidden="true" focusable="false" width="32" height="24" viewBox="0 0 32 24" xmlns="http://www.w3.org/2000/svg">
                     <circle cx="6" cy="12" r="3" fill={isDark ? '#e8e4df' : '#9a958f'} opacity="0.9">
                       <animate id="b1" begin="0;b3.end+0.2s" attributeName="cy" calcMode="spline" dur="0.6s" values="12;6;12" keySplines=".33,.66,.66,1;.33,0,.66,.33" />
                       <animate begin="0;b3.end+0.2s" attributeName="opacity" dur="0.6s" values="0.35;1;0.35" />
@@ -6285,10 +6430,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
               carries its own chips under the bird */}
           {!aiTyping && aiMessages.length > 0 && (
             <div style={{ padding: isAiPanel ? '6px 10px' : '8px 12px', borderTop: '1px solid var(--divider)', backgroundColor: 'var(--bg-tertiary)', flexShrink: 0 }}>
-              {isAiFullscreen && <p style={{ fontSize: '9px', fontWeight: '600', color: 'var(--text-secondary)', marginBottom: '6px', textTransform: 'uppercase' }}>Try asking</p>}
+              {isAiFullscreen && <p style={{ fontSize: '12px', fontWeight: '600', color: 'var(--text-secondary)', marginBottom: '6px', textTransform: 'uppercase' }}>Try asking</p>}
               <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
                 {(isAiPanel ? aiSuggestedQuestions.slice(0, 2) : aiSuggestedQuestions).map((q, i) => (
-                  <button key={i} onClick={() => { aiInputValueRef.current = q.text; setAiInputHasText(true); aiInputHasTextRef.current = true; if (aiInputRef.current) aiInputRef.current.value = q.text; setTimeout(() => sendAiMessage(), 50); }} style={{ padding: isAiPanel ? '5px 8px' : '6px 10px', borderRadius: '16px', border: '1px solid var(--border-subtle)', backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer', fontSize: isAiPanel ? '10px' : '11px', color: colors.navy, fontWeight: '500', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                  <button className="hit44" key={i} onClick={() => { aiInputValueRef.current = q.text; setAiInputHasText(true); aiInputHasTextRef.current = true; if (aiInputRef.current) aiInputRef.current.value = q.text; setTimeout(() => sendAiMessage(), 50); }} style={{ padding: isAiPanel ? '5px 8px' : '6px 10px', borderRadius: '16px', border: '1px solid var(--border-subtle)', backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer', fontSize: isAiPanel ? '10px' : '11px', color: colors.navy, fontWeight: '500', display: 'flex', alignItems: 'center', gap: '4px' }}>
                     {q.icon(colors.navy, isAiPanel ? 10 : 12)}
                     {q.text}
                   </button>
@@ -6302,9 +6447,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
             <div style={{ borderRadius: '20px', backgroundColor: 'var(--bg-hover)', border: '1.5px solid var(--border-subtle)', padding: '6px', transition: 'border-color 0.3s ease, box-shadow 0.3s ease', boxShadow: aiInputHasText ? '0 0 0 1px rgba(45,90,135,0.15), 0 4px 16px rgba(0,0,0,0.08)' : '0 2px 8px rgba(0,0,0,0.04)', borderColor: aiInputHasText ? 'rgba(30,58,92,0.25)' : 'var(--border-subtle)' }}>
               {/* Text input row */}
               <div style={{ display: 'flex', alignItems: 'flex-end', gap: '0', padding: '0 2px 0 10px' }}>
-                <input ref={aiInputRef} type="text" defaultValue="" onInput={(e) => { aiInputValueRef.current = e.target.value; const has = !!e.target.value; if (has !== aiInputHasTextRef.current) { aiInputHasTextRef.current = has; setAiInputHasText(has); } }} onKeyDown={(e) => e.key === 'Enter' && sendAiMessage()} placeholder="Ask me anything..." style={{ flex: 1, padding: '11px 0', backgroundColor: 'transparent', color: 'var(--text-primary)', border: 'none', fontSize: '15px', outline: 'none', fontWeight: '500', lineHeight: '1.4' }} autoComplete="off" />
-                <button className="fab-press" onClick={sendAiMessage} disabled={!aiInputHasText && !aiTyping} style={{ width: '34px', height: '34px', minWidth: '34px', borderRadius: '17px', border: 'none', background: aiInputHasText ? '#1e293b' : 'transparent', color: 'white', cursor: aiInputHasText ? 'pointer' : 'default', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1)', transform: aiInputHasText ? 'scale(1)' : 'scale(0.85)', opacity: aiInputHasText ? 1 : 0.4, boxShadow: aiInputHasText ? '0 4px 12px rgba(30,58,92,0.30)' : 'none' }}>
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ transition: 'transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1)', transform: aiInputHasText ? 'translateY(-1px)' : 'translateY(0)' }}>
+                <input aria-label="Ask me anything" ref={aiInputRef} type="text" defaultValue="" onInput={(e) => { aiInputValueRef.current = e.target.value; const has = !!e.target.value; if (has !== aiInputHasTextRef.current) { aiInputHasTextRef.current = has; setAiInputHasText(has); } }} onKeyDown={(e) => e.key === 'Enter' && sendAiMessage()} placeholder="Ask me anything..." style={{ flex: 1, padding: '11px 0', backgroundColor: 'transparent', color: 'var(--text-primary)', border: 'none', fontSize: '15px', outline: 'none', fontWeight: '500', lineHeight: '1.4' }} autoComplete="off" />
+                <button className="hit44 fab-press" onClick={sendAiMessage} disabled={!aiInputHasText && !aiTyping} style={{ width: '34px', height: '34px', minWidth: '34px', borderRadius: '17px', border: 'none', background: aiInputHasText ? '#1e293b' : 'transparent', color: 'white', cursor: aiInputHasText ? 'pointer' : 'default', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1)', transform: aiInputHasText ? 'scale(1)' : 'scale(0.85)', opacity: aiInputHasText ? 1 : 0.4, boxShadow: aiInputHasText ? '0 4px 12px rgba(30,58,92,0.30)' : 'none' }}>
+                  <svg aria-hidden="true" focusable="false" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ transition: 'transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1)', transform: aiInputHasText ? 'translateY(-1px)' : 'translateY(0)' }}>
                     <line x1="12" y1="19" x2="12" y2="5" /><polyline points="5 12 12 5 19 12" />
                   </svg>
                 </button>
@@ -6316,7 +6461,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                   { icon: Icons.mapPin, label: 'Crowds', prefix: 'How busy is ', color: 'var(--accent-steel, #2d5a87)' },
                   { icon: Icons.users, label: 'My Flocks', prefix: 'What are my upcoming plans?', color: 'var(--accent-steel, #2d5a87)' },
                 ].map((action, i) => (
-                  <button key={i} className="fab-press" onClick={() => {
+                  <button key={i} className="hit44 fab-press" onClick={() => {
                     if (action.prefix.endsWith('?')) {
                       aiInputValueRef.current = action.prefix;
                       setAiInputHasText(true);
@@ -6327,7 +6472,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                       setAiInputHasText(true);
                       if (aiInputRef.current) { aiInputRef.current.value = action.prefix; aiInputRef.current.focus(); }
                     }
-                  }} style={{ display: 'flex', alignItems: 'center', gap: '4px', padding: '4px 10px', borderRadius: '12px', border: 'none', backgroundColor: 'transparent', cursor: 'pointer', transition: 'all 0.25s ease', fontSize: '11px', fontWeight: '600', color: 'var(--text-tertiary)' }}
+                  }} style={{ display: 'flex', alignItems: 'center', gap: '4px', padding: '4px 10px', borderRadius: '12px', border: 'none', backgroundColor: 'transparent', cursor: 'pointer', transition: 'all 0.25s ease', fontSize: '12px', fontWeight: '600', color: 'var(--text-tertiary)' }}
                   onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = 'rgba(45,90,135,0.08)'; e.currentTarget.style.color = action.color; }}
                   onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = 'transparent'; e.currentTarget.style.color = 'var(--text-tertiary)'; }}
                   >
@@ -6338,11 +6483,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 <div style={{ flex: 1 }} />
                 {/* Free-tier meter surfaces only when it's about to matter */}
                 {entitlements?.paywallEnabled && !isPro && aiRemaining != null && aiRemaining <= 5 ? (
-                  <span style={{ fontSize: '10px', color: aiRemaining === 0 ? 'var(--accent-red-text)' : 'var(--text-tertiary)', fontWeight: '600' }}>
+                  <span style={{ fontSize: '12px', color: aiRemaining === 0 ? 'var(--accent-red-text)' : 'var(--text-tertiary)', fontWeight: '600' }}>
                     {aiRemaining === 0 ? 'Out of chirps today' : `${aiRemaining} chirp${aiRemaining === 1 ? '' : 's'} left today`}
                   </span>
                 ) : (
-                  <span style={{ fontSize: '10px', color: 'var(--text-tertiary)', fontWeight: '500', opacity: 0.6 }}>Birdie AI</span>
+                  <span style={{ fontSize: '12px', color: 'var(--text-tertiary)', fontWeight: '500', opacity: 0.6 }}>Birdie AI</span>
                 )}
               </div>
             </div>
@@ -6357,18 +6502,18 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                     <h3 style={{ fontSize: '15px', fontWeight: '700', color: 'var(--text-primary)', margin: 0 }}>
                       Send {aiShareVenue.name}
                     </h3>
-                    <p style={{ fontSize: '11px', color: 'var(--text-secondary)', margin: '2px 0 0' }}>
+                    <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: '2px 0 0' }}>
                       {aiShareVenue._shareToDm ? 'Choose a friend' : 'Choose a flock'}
                     </p>
                   </div>
-                  <button onClick={() => setAiShareVenue(null)} style={{ width: '28px', height: '28px', borderRadius: '14px', backgroundColor: 'var(--bg-hover)', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.x('var(--text-secondary)', 14)}</button>
+                  <button aria-label="Close" className="hit44" onClick={() => setAiShareVenue(null)} style={{ width: '28px', height: '28px', borderRadius: '14px', backgroundColor: 'var(--bg-hover)', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.x('var(--text-secondary)', 14)}</button>
                 </div>
                 <div style={{ flex: 1, overflowY: 'auto', padding: '8px' }}>
                   {aiShareVenue._shareToDm ? (
                     /* DM — navigate to DM tab with venue in clipboard */
                     <div style={{ padding: '20px', textAlign: 'center' }}>
                       <p style={{ fontSize: '13px', color: 'var(--text-secondary)', marginBottom: '12px' }}>Open your DMs to share <strong>{aiShareVenue.name}</strong></p>
-                      <button onClick={() => {
+                      <button className="hit44" onClick={() => {
                         setAiShareVenue(null);
                         closeAiChat();
                         setCurrentTab('chat');
@@ -6380,7 +6525,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                   ) : (
                     /* Flocks list */
                     flocks.length > 0 ? flocks.filter(f => f.status === 'active' || f.status === 'confirmed').map(f => (
-                      <button key={f.id} onClick={async () => {
+                      <button className="hit44" key={f.id} onClick={async () => {
                         const venueData = { name: aiShareVenue.name, addr: aiShareVenue.address, stars: aiShareVenue.rating, rating: aiShareVenue.rating, price_level: aiShareVenue.price_level, place_id: aiShareVenue.place_id };
                         try {
                           await apiSendMessage(f.id, `Check out ${aiShareVenue.name}!`, { message_type: 'venue_card', venue_data: venueData });
@@ -6395,7 +6540,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                         </div>
                         <div>
                           <span style={{ fontSize: '13px', fontWeight: '600', color: 'var(--text-primary)', display: 'block' }}>{f.title || f.name}</span>
-                          <span style={{ fontSize: '10px', color: 'var(--text-secondary)' }}>{f.members?.length || 0} members</span>
+                          <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>{f.members?.length || 0} members</span>
                         </div>
                       </button>
                     )) : <p style={{ fontSize: '12px', color: 'var(--text-secondary)', textAlign: 'center', padding: '20px' }}>No active flocks</p>
@@ -6465,23 +6610,23 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           {/* Mode options */}
           <div style={{ width: '100%', maxWidth: '340px' }}>
             {/* User Mode */}
-            <button className="glass-btn glass-secondary" onClick={() => selectMode('user')} style={modeBtn}>
+            <button className="hit44 glass-btn glass-secondary" onClick={() => selectMode('user')} style={modeBtn}>
               <div style={{ width: '44px', height: '44px', borderRadius: '12px', overflow: 'hidden', flexShrink: 0 }}>
                 <img src="/flock-logo.png" alt="Flock" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
               </div>
               <div style={{ flex: 1 }}>
                 <h3 style={{ fontSize: '15px', fontWeight: '800', color: 'white', margin: '0 0 2px', textShadow: '0 1px 3px rgba(0,0,0,0.4)' }}>I'm Going Out</h3>
-                <p style={{ fontSize: '11px', color: 'rgba(255,255,255,0.7)', margin: 0, textShadow: '0 1px 2px rgba(0,0,0,0.3)' }}>Coordinate with friends, find venues</p>
+                <p style={{ fontSize: '12px', color: 'rgba(255,255,255,0.7)', margin: 0, textShadow: '0 1px 2px rgba(0,0,0,0.3)' }}>Coordinate with friends, find venues</p>
               </div>
               <span style={{ fontSize: '18px', color: 'rgba(255,255,255,0.5)' }}>›</span>
             </button>
 
             {/* Venue Owner Mode */}
             {(authUser?.role === 'venue_owner' || authUser?.role === 'admin') && (
-              <button className="glass-btn glass-secondary" onClick={() => selectMode('venue')} style={modeBtn}>
+              <button className="hit44 glass-btn glass-secondary" onClick={() => selectMode('venue')} style={modeBtn}>
                 <div style={{ flex: 1 }}>
                   <h3 style={{ fontSize: '15px', fontWeight: '800', color: 'white', margin: '0 0 2px', textShadow: '0 1px 3px rgba(0,0,0,0.4)' }}>Venue Dashboard</h3>
-                  <p style={{ fontSize: '11px', color: 'rgba(255,255,255,0.7)', margin: 0, textShadow: '0 1px 2px rgba(0,0,0,0.3)' }}>Manage your venue, see traffic</p>
+                  <p style={{ fontSize: '12px', color: 'rgba(255,255,255,0.7)', margin: 0, textShadow: '0 1px 2px rgba(0,0,0,0.3)' }}>Manage your venue, see traffic</p>
                 </div>
                 <span style={{ fontSize: '18px', color: 'rgba(255,255,255,0.5)' }}>›</span>
               </button>
@@ -6489,10 +6634,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
 
             {/* Admin Mode */}
             {authUser?.role === 'admin' && (
-              <button className="glass-btn glass-secondary" onClick={() => selectMode('admin')} style={modeBtn}>
+              <button className="hit44 glass-btn glass-secondary" onClick={() => selectMode('admin')} style={modeBtn}>
                 <div style={{ flex: 1 }}>
                   <h3 style={{ fontSize: '15px', fontWeight: '800', color: 'white', margin: '0 0 2px', textShadow: '0 1px 3px rgba(0,0,0,0.4)' }}>Admin Dashboard</h3>
-                  <p style={{ fontSize: '11px', color: 'rgba(255,255,255,0.7)', margin: 0, textShadow: '0 1px 2px rgba(0,0,0,0.3)' }}>Platform analytics & revenue</p>
+                  <p style={{ fontSize: '12px', color: 'rgba(255,255,255,0.7)', margin: 0, textShadow: '0 1px 2px rgba(0,0,0,0.3)' }}>Platform analytics & revenue</p>
                 </div>
                 <span style={{ fontSize: '18px', color: 'rgba(255,255,255,0.5)' }}>›</span>
               </button>
@@ -6500,7 +6645,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           </div>
         </div>
 
-        <p style={{ fontSize: '11px', color: 'rgba(148,163,184,0.3)', textAlign: 'center', margin: '0 0 16px', position: 'relative', zIndex: 1 }}>You can switch modes anytime in your profile</p>
+        <p style={{ fontSize: '12px', color: 'rgba(148,163,184,0.3)', textAlign: 'center', margin: '0 0 16px', position: 'relative', zIndex: 1 }}>You can switch modes anytime in your profile</p>
       </div>
     );
   };
@@ -6519,18 +6664,18 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
           <div>
             <div style={{ height: '12px', overflow: 'hidden', position: 'relative' }}>
-              <div key={greetingIdx} style={{ fontSize: '10px', color: 'var(--text-tertiary)', margin: 0, letterSpacing: '0.3px', fontWeight: '500', lineHeight: 1, animation: 'slotSpin 0.4s cubic-bezier(0.34, 1.56, 0.64, 1)' }}>{greetings[greetingIdx]()}</div>
+              <div key={greetingIdx} style={{ fontSize: '12px', color: 'var(--text-tertiary)', margin: 0, letterSpacing: '0.3px', fontWeight: '500', lineHeight: 1, animation: 'slotSpin 0.4s cubic-bezier(0.34, 1.56, 0.64, 1)' }}>{greetings[greetingIdx]()}</div>
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '4px' }}>
               <h1 style={{ fontFamily: 'var(--font-display)', fontSize: '23px', fontWeight: '600', margin: 0, color: 'var(--text-primary)', letterSpacing: '-0.005em', lineHeight: 1.1 }}>Hey, {profileName.split(' ')[0]}</h1>
               {themeMode === 'auto' && isNightModeActive && (
-                <span style={{ display: 'inline-flex', alignItems: 'center', gap: '3px', padding: '2px 7px', borderRadius: '6px', backgroundColor: 'rgba(109,154,195,0.15)', fontSize: '9px', fontWeight: '700', color: '#a9c7e4', letterSpacing: '0.3px' }}>
+                <span style={{ display: 'inline-flex', alignItems: 'center', gap: '3px', padding: '2px 7px', borderRadius: '6px', backgroundColor: 'rgba(109,154,195,0.15)', fontSize: '12px', fontWeight: '700', color: '#a9c7e4', letterSpacing: '0.3px' }}>
                   {Icons.moon('#a9c7e4', 10)} NIGHT
                 </span>
               )}
             </div>
           </div>
-          <button onClick={() => setCurrentTab('profile')} style={{ position: 'relative', background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}>
+          <button className="hit44" aria-label="Your profile" onClick={() => setCurrentTab('profile')} style={{ position: 'relative', background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}>
             <div style={{ width: '36px', height: '36px', borderRadius: '18px', backgroundColor: 'var(--bg-card-solid)', border: '1px solid var(--border-default)', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden' }}>
               {profilePic ? <img src={profilePic} alt="" style={{ width: '36px', height: '36px', objectFit: 'cover', display: 'block' }} /> : Icons.user('var(--text-secondary)', 18)}
             </div>
@@ -6546,28 +6691,36 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
 
         {/* Tonight — full-width segmented pulse control (the actionable hero of the header) */}
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px', borderRadius: '14px', backgroundColor: 'var(--bg-card-solid)', border: '1px solid var(--border-default)', boxShadow: 'var(--card-shadow-sm)' }}>
-          <span style={{ fontSize: '11px', fontWeight: '700', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px', paddingLeft: '8px', flexShrink: 0 }}>Tonight?</span>
+          <span style={{ fontSize: '12px', fontWeight: '700', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px', paddingLeft: '8px', flexShrink: 0 }}>Tonight?</span>
           <div style={{ display: 'flex', flex: 1, gap: '4px' }}>
             {[
-              { key: 'down', fill: '#10b981', label: 'Down' },
-              { key: 'maybe', fill: '#f59e0b', label: 'Maybe' },
-              { key: 'not', fill: 'var(--text-secondary)', label: 'Not' },
+              // Fills are the ACTIVE background under white 11px text, so they have
+              // to clear 4.5:1 with white, not just "read as green/amber".
+              // #10b981 was 2.54:1 and #f59e0b was 2.15:1. #047857 = 5.48:1,
+              // #b45309 = 5.02:1.
+              { key: 'down', fill: '#047857', label: 'Down' },
+              { key: 'maybe', fill: '#b45309', label: 'Maybe' },
+              { key: 'not', fill: '#3f4a5a', label: 'Not' },
             ].map(opt => {
               const active = myPulse?.status === opt.key;
               return (
-                <button
+                <button className="hit44"
                   key={opt.key}
                   onClick={() => handleSetPulse(opt.key)}
                   disabled={pulseSaving}
-                  aria-label={opt.label}
+                  aria-label={`Tonight: ${opt.label}`}
+                  aria-pressed={active}
                   style={{
                     flex: 1,
-                    padding: '8px 0',
+                    // 44pt minimum tappable height (Apple HIG). This is the most
+                    // tapped control in the app and measured 34.5px.
+                    minHeight: '44px',
+                    padding: '10px 0',
                     borderRadius: '9px',
                     border: active ? '1px solid transparent' : '1px solid var(--border-default)',
                     backgroundColor: active ? opt.fill : 'transparent',
                     color: active ? '#ffffff' : 'var(--text-secondary)',
-                    fontSize: '11px',
+                    fontSize: '12px',
                     fontWeight: '700',
                     cursor: pulseSaving ? 'wait' : 'pointer',
                     opacity: pulseSaving ? 0.6 : 1,
@@ -6590,7 +6743,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           const needsAction = flocks.filter(f => f.status === 'voting');
           if (needsAction.length === 0) return null;
           return (
-            <ScrollFade><button
+            <ScrollFade><button className="hit44"
               onClick={() => { setSelectedFlockId(needsAction[0].id); setCurrentScreen('detail'); }}
               style={{
                 width: '100%',
@@ -6609,11 +6762,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
             >
               <div style={{ flex: 1, minWidth: 0 }}>
                 <p style={{ fontSize: '13px', fontWeight: '700', color: 'var(--text-primary)', margin: 0, letterSpacing: '-0.1px' }}>{needsAction[0].name}</p>
-                <p style={{ fontSize: '11px', color: 'var(--text-secondary)', margin: '2px 0 0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: '2px 0 0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                   {needsAction.length === 1 ? 'Needs your vote' : `${needsAction.length - 1} other ${needsAction.length - 1 === 1 ? 'flock needs' : 'flocks need'} your vote too`}
                 </p>
               </div>
-              <span style={{ fontSize: '10px', fontWeight: '600', padding: '3px 8px', borderRadius: '8px', backgroundColor: 'rgba(45,90,135,0.12)', color: 'var(--accent-purple-text)', display: 'inline-flex', alignItems: 'center', gap: '3px', flexShrink: 0 }}>
+              <span style={{ fontSize: '12px', fontWeight: '600', padding: '3px 8px', borderRadius: '8px', backgroundColor: 'rgba(45,90,135,0.12)', color: 'var(--accent-purple-text)', display: 'inline-flex', alignItems: 'center', gap: '3px', flexShrink: 0 }}>
                 {Icons.vote('var(--accent-purple-text)', 10)} Needs Votes
               </span>
             </button></ScrollFade>
@@ -6623,7 +6776,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
         {/* Primary action — one full-width hero CTA (login-language: navy on light, cream on dark) */}
         <ScrollFade delay={1}><button
           onClick={() => setCurrentScreen('create')}
-          className="neo-btn-primary"
+          className="hit44 neo-btn-primary"
           style={{
             width: '100%',
             padding: '16px',
@@ -6649,9 +6802,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
         {/* Flocks — header row with quiet Add-friends ghost */}
         <ScrollFade delay={3}><div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', margin: '0 0 8px' }}>
           <h2 style={{ fontSize: '12px', fontWeight: 'bold', color: colors.navy, margin: 0 }}>Your Flocks</h2>
-          <button
+          <button className="hit44"
             onClick={() => setCurrentScreen('addFriends')}
-            style={{ display: 'flex', alignItems: 'center', gap: '5px', padding: '5px 10px', borderRadius: '8px', border: '1px solid var(--border-default)', background: 'transparent', color: 'var(--text-secondary)', fontSize: '11px', fontWeight: '700', cursor: 'pointer' }}
+            style={{ display: 'flex', alignItems: 'center', gap: '5px', padding: '5px 10px', borderRadius: '8px', border: '1px solid var(--border-default)', background: 'transparent', color: 'var(--text-secondary)', fontSize: '12px', fontWeight: '700', cursor: 'pointer' }}
           >
             {Icons.userPlus('var(--text-secondary)', 12)} Add friends
           </button>
@@ -6665,7 +6818,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           )}
           {flocks.map((f, idx) => {
             return (
-              <ScrollFade key={`fade-${f.id}`} delay={Math.min(idx + 4, 7)}><button
+              <ScrollFade key={`fade-${f.id}`} delay={Math.min(idx + 4, 7)}><button className="hit44"
                 key={f.id}
                 onClick={() => { setSelectedFlockId(f.id); setCurrentScreen('detail'); }}
                 style={{
@@ -6684,20 +6837,20 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '8px' }}>
                   <div>
                     <h3 style={{ fontSize: '15px', fontWeight: '800', color: colors.navy, margin: 0 }}>{f.name}</h3>
-                    <p style={{ fontSize: '10px', color: 'var(--text-secondary)', margin: '2px 0 0', display: 'flex', alignItems: 'center', gap: '3px' }}>{Icons.mapPin(colors.textSecondary, 10)} {f.venue}</p>
+                    <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: '2px 0 0', display: 'flex', alignItems: 'center', gap: '3px' }}>{Icons.mapPin(colors.textSecondary, 10)} {f.venue}</p>
                   </div>
-                  <span style={{ fontSize: '9px', padding: '3px 8px', borderRadius: '10px', fontWeight: '600', backgroundColor: f.status === 'voting' ? 'rgba(45,90,135,0.12)' : 'var(--icon-bg)', color: f.status === 'voting' ? 'var(--accent-purple-text)' : 'var(--text-secondary)', display: 'flex', alignItems: 'center', gap: '3px' }}>
+                  <span style={{ fontSize: '12px', padding: '3px 8px', borderRadius: '10px', fontWeight: '600', backgroundColor: f.status === 'voting' ? 'rgba(45,90,135,0.12)' : 'var(--icon-bg)', color: f.status === 'voting' ? 'var(--accent-purple-text)' : 'var(--text-secondary)', display: 'flex', alignItems: 'center', gap: '3px' }}>
                     {f.status === 'voting' ? Icons.vote('var(--accent-purple-text)', 9) : Icons.check('var(--text-secondary)', 9)} {f.status === 'voting' ? 'Needs Votes' : 'Locked In'}
                   </span>
                 </div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                   <div style={{ display: 'flex' }}>
                     {f.members.slice(0, 4).map((m, j) => (
-                      <div key={j} style={{ width: '24px', height: '24px', borderRadius: '50%', border: '2px solid var(--bg-card-solid)', backgroundColor: colors.navyMidBg, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '9px', fontWeight: 'bold', color: 'white', marginLeft: j > 0 ? '-6px' : 0 }}>{m[0]}</div>
+                      <div key={j} style={{ width: '24px', height: '24px', borderRadius: '50%', border: '2px solid var(--bg-card-solid)', backgroundColor: colors.navyMidBg, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '12px', fontWeight: 'bold', color: 'white', marginLeft: j > 0 ? '-6px' : 0 }}>{m[0]}</div>
                     ))}
-                    {f.members.length > 4 && <div style={{ width: '24px', height: '24px', borderRadius: '50%', border: '2px solid var(--bg-card-solid)', backgroundColor: 'var(--icon-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '9px', fontWeight: 'bold', color: colors.navy, marginLeft: '-6px' }}>+{f.members.length - 4}</div>}
+                    {f.members.length > 4 && <div style={{ width: '24px', height: '24px', borderRadius: '50%', border: '2px solid var(--bg-card-solid)', backgroundColor: 'var(--icon-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '12px', fontWeight: 'bold', color: colors.navy, marginLeft: '-6px' }}>+{f.members.length - 4}</div>}
                   </div>
-                  <span style={{ fontSize: '10px', fontWeight: '600', padding: '2px 8px', borderRadius: '10px', backgroundColor: 'var(--icon-bg)', color: colors.navy }}>{f.time}</span>
+                  <span style={{ fontSize: '12px', fontWeight: '600', padding: '2px 8px', borderRadius: '10px', backgroundColor: 'var(--icon-bg)', color: colors.navy }}>{f.time}</span>
                 </div>
               </button></ScrollFade>
             );
@@ -6727,7 +6880,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
       return (
         <span style={{ display: 'inline-flex', alignItems: 'center', gap: '1px' }}>
           {[...Array(5)].map((_, i) => (
-            <svg key={i} width={12} height={12} viewBox="0 0 24 24" fill={i < full ? '#F59E0B' : (i === full && half ? 'url(#halfStar)' : 'var(--star-empty)')} stroke="none">
+            <svg aria-hidden="true" focusable="false" key={i} width={12} height={12} viewBox="0 0 24 24" fill={i < full ? '#F59E0B' : (i === full && half ? 'url(#halfStar)' : 'var(--star-empty)')} stroke="none">
               {i === full && half && (
                 <defs><linearGradient id="halfStar"><stop offset="50%" stopColor="#F59E0B"/><stop offset="50%" stopColor="var(--star-empty)"/></linearGradient></defs>
               )}
@@ -6805,15 +6958,16 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
 
     return (
       <div key="create-screen-container" style={{ display: 'flex', flexDirection: 'column', height: '100%', backgroundColor: 'var(--bg-card-solid)' }}>
+            <DialogBehavior modal={false} onClose={() => { setCurrentScreen('main'); setFlockName(''); setFlockFriends([]); setInviteSearch(''); setInviteResults([]); setSelectedVenueForCreate(null); }} />
         <div style={{ padding: '12px', display: 'flex', alignItems: 'center', gap: '8px', borderBottom: '1px solid var(--divider)', backgroundColor: 'var(--bg-card-solid)', flexShrink: 0 }}>
-          <button onClick={() => { setCurrentScreen('main'); setFlockName(''); setFlockFriends([]); setInviteSearch(''); setInviteResults([]); setSelectedVenueForCreate(null); }} style={{ width: '32px', height: '32px', borderRadius: '16px', border: 'none', backgroundColor: 'transparent', color: colors.navy, fontSize: '18px', cursor: 'pointer' }}>←</button>
+          <button aria-label="Back" className="hit44" onClick={() => { setCurrentScreen('main'); setFlockName(''); setFlockFriends([]); setInviteSearch(''); setInviteResults([]); setSelectedVenueForCreate(null); }} style={{ width: '32px', height: '32px', borderRadius: '16px', border: 'none', backgroundColor: 'transparent', color: colors.navy, fontSize: '18px', cursor: 'pointer' }}>←</button>
           <h1 style={{ fontSize: '18px', fontWeight: '900', color: colors.navy, margin: 0 }}>Start a Flock</h1>
         </div>
 
         <div style={{ flex: 1, padding: '16px', overflowY: 'auto', backgroundColor: 'var(--bg-primary)' }}>
           <div style={{ marginBottom: '16px' }}>
             <label style={{ display: 'block', fontSize: '12px', fontWeight: 'bold', color: colors.navy, marginBottom: '6px' }}>What's the plan?</label>
-            <SearchInputLocal key="flock-name-input" id="flock-name-input" type="text" initialValue={flockName} onCommit={setFlockName} placeholder="Movie night, dinner, party..." style={styles.input} autoComplete="off" />
+            <SearchInputLocal aria-label="Flock name" key="flock-name-input" id="flock-name-input" type="text" initialValue={flockName} onCommit={setFlockName} placeholder="Movie night, dinner, party..." style={styles.input} autoComplete="off" />
           </div>
 
           {/* VENUE PICKER — Browse on Discover tab */}
@@ -6823,23 +6977,23 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
             {selectedVenueForCreate ? (
               <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '10px', border: `2px solid ${colors.steel}`, display: 'flex', alignItems: 'center', gap: '10px' }}>
                 {selectedVenueForCreate.photo_url ? (
-                  <img src={selectedVenueForCreate.photo_url} alt="" style={{ width: '48px', height: '48px', borderRadius: '8px', objectFit: 'cover' }} onError={(e) => { e.target.onerror = null; e.target.src = 'data:image/svg+xml,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48"><rect fill="#1a3a5c" width="48" height="48" rx="8"/></svg>'); }} />
+                  <img src={selectedVenueForCreate.photo_url} alt="" style={{ width: '48px', height: '48px', borderRadius: '8px', objectFit: 'cover' }} onError={(e) => { e.target.onerror = null; e.target.src = 'data:image/svg+xml,' + encodeURIComponent('<svg aria-hidden="true" focusable="false" xmlns="http://www.w3.org/2000/svg" width="48" height="48"><rect fill="#1a3a5c" width="48" height="48" rx="8"/></svg>'); }} />
                 ) : (
                   <div style={{ width: '48px', height: '48px', borderRadius: '8px', backgroundColor: 'var(--icon-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.mapPin(colors.navy, 20)}</div>
                 )}
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <p style={{ fontWeight: 'bold', fontSize: '14px', color: colors.navy, margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{selectedVenueForCreate.name}</p>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginTop: '2px' }}>
-                    {selectedVenueForCreate.rating && <span style={{ fontSize: '11px', fontWeight: '700', color: colors.navy }}>{selectedVenueForCreate.rating}</span>}
+                    {selectedVenueForCreate.rating && <span style={{ fontSize: '12px', fontWeight: '700', color: colors.navy }}>{selectedVenueForCreate.rating}</span>}
                     {selectedVenueForCreate.rating && <StarRating rating={selectedVenueForCreate.rating} />}
-                    {selectedVenueForCreate.price_level && <span style={{ fontSize: '11px', color: 'var(--text-secondary)', fontWeight: '600' }}>{priceLabel(selectedVenueForCreate.price_level)}</span>}
+                    {selectedVenueForCreate.price_level && <span style={{ fontSize: '12px', color: 'var(--text-secondary)', fontWeight: '600' }}>{priceLabel(selectedVenueForCreate.price_level)}</span>}
                   </div>
-                  <p style={{ fontSize: '10px', color: 'var(--text-secondary)', margin: '2px 0 0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{selectedVenueForCreate.addr}</p>
+                  <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: '2px 0 0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{selectedVenueForCreate.addr}</p>
                 </div>
-                <button className="glass-btn glass-secondary" onClick={() => { setPickingVenueForCreate(true); setCurrentTab('explore'); setCurrentScreen('main'); }} style={{ padding: '4px 10px', borderRadius: '8px', border: `1px solid ${colors.creamDark}`, backgroundColor: 'var(--icon-bg)', color: colors.navy, fontWeight: '600', fontSize: '11px', cursor: 'pointer', flexShrink: 0 }}>Change</button>
+                <button className="hit44 glass-btn glass-secondary" onClick={() => { setPickingVenueForCreate(true); setCurrentTab('explore'); setCurrentScreen('main'); }} style={{ padding: '4px 10px', borderRadius: '8px', border: `1px solid ${colors.creamDark}`, backgroundColor: 'var(--icon-bg)', color: colors.navy, fontWeight: '600', fontSize: '12px', cursor: 'pointer', flexShrink: 0 }}>Change</button>
               </div>
             ) : (
-              <button className="glass-btn glass-secondary" onClick={() => { setPickingVenueForCreate(true); setCurrentTab('explore'); setCurrentScreen('main'); }} style={{ width: '100%', padding: '14px', borderRadius: '12px', border: `2px dashed ${colors.creamDark}`, backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontWeight: '700', fontSize: '14px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
+              <button className="hit44 glass-btn glass-secondary" onClick={() => { setPickingVenueForCreate(true); setCurrentTab('explore'); setCurrentScreen('main'); }} style={{ width: '100%', padding: '14px', borderRadius: '12px', border: `2px dashed ${colors.creamDark}`, backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontWeight: '700', fontSize: '14px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
                 {Icons.mapPin(colors.steel, 18)} Browse Venues
               </button>
             )}
@@ -6849,7 +7003,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
             <label style={{ display: 'block', fontSize: '12px', fontWeight: 'bold', color: colors.navy, marginBottom: '6px' }}>When</label>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '6px' }}>
               {['Tonight', 'Tomorrow', 'This Weekend', 'Next Week'].map(d => (
-                <button key={d} onClick={() => setFlockDate(d)} style={{ padding: '10px', borderRadius: '10px', border: flockDate === d ? '2px solid #2d5a87' : '1.5px solid var(--border-default)', backgroundColor: flockDate === d ? 'rgba(45,90,135,0.12)' : 'var(--bg-card-solid)', color: flockDate === d ? '#22c55e' : 'var(--text-primary)', fontWeight: '700', fontSize: '13px', cursor: 'pointer', transition: 'all 0.2s ease', boxShadow: flockDate === d ? '0 0 12px rgba(34,197,94,0.2)' : 'none' }}>{flockDate === d ? '✓ ' : ''}{d}</button>
+                <button className="hit44" key={d} onClick={() => setFlockDate(d)} style={{ padding: '10px', borderRadius: '10px', border: flockDate === d ? '2px solid #2d5a87' : '1.5px solid var(--border-default)', backgroundColor: flockDate === d ? 'rgba(45,90,135,0.12)' : 'var(--bg-card-solid)', color: flockDate === d ? '#22c55e' : 'var(--text-primary)', fontWeight: '700', fontSize: '13px', cursor: 'pointer', transition: 'all 0.2s ease', boxShadow: flockDate === d ? '0 0 12px rgba(34,197,94,0.2)' : 'none' }}>{flockDate === d ? '✓ ' : ''}{d}</button>
               ))}
             </div>
           </div>
@@ -6858,7 +7012,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
             <label style={{ display: 'block', fontSize: '12px', fontWeight: 'bold', color: colors.navy, marginBottom: '6px' }}>Time</label>
             <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
               {['7 PM', '8 PM', '9 PM', '10 PM', '11 PM'].map(t => (
-                <button key={t} onClick={() => setFlockTime(t)} style={{ padding: '6px 14px', borderRadius: '20px', border: flockTime === t ? '2px solid #2d5a87' : '1.5px solid var(--border-default)', backgroundColor: flockTime === t ? 'rgba(45,90,135,0.12)' : 'var(--bg-card-solid)', color: flockTime === t ? '#22c55e' : 'var(--text-primary)', fontWeight: '700', fontSize: '12px', cursor: 'pointer', transition: 'all 0.2s ease', boxShadow: flockTime === t ? '0 0 10px rgba(34,197,94,0.2)' : 'none' }}>{t}</button>
+                <button className="hit44" key={t} onClick={() => setFlockTime(t)} style={{ padding: '6px 14px', borderRadius: '20px', border: flockTime === t ? '2px solid #2d5a87' : '1.5px solid var(--border-default)', backgroundColor: flockTime === t ? 'rgba(45,90,135,0.12)' : 'var(--bg-card-solid)', color: flockTime === t ? '#22c55e' : 'var(--text-primary)', fontWeight: '700', fontSize: '12px', cursor: 'pointer', transition: 'all 0.2s ease', boxShadow: flockTime === t ? '0 0 10px rgba(34,197,94,0.2)' : 'none' }}>{t}</button>
               ))}
             </div>
           </div>
@@ -6871,11 +7025,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
               <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', marginBottom: '8px' }}>
                 {flockFriends.map(f => (
                   <div key={f.id} style={{ display: 'flex', alignItems: 'center', gap: '4px', padding: '4px 8px 4px 4px', borderRadius: '20px', backgroundColor: colors.navyBg, color: 'white' }}>
-                    <div style={{ width: '22px', height: '22px', borderRadius: '11px', backgroundColor: 'rgba(255,255,255,0.2)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '10px', fontWeight: '700' }}>
+                    <div style={{ width: '22px', height: '22px', borderRadius: '11px', backgroundColor: 'rgba(255,255,255,0.2)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '12px', fontWeight: '700' }}>
                       {f.profile_image_url ? <img src={f.profile_image_url} alt="" style={{ width: '22px', height: '22px', borderRadius: '11px', objectFit: 'cover' }} /> : f.name[0]?.toUpperCase()}
                     </div>
                     <span style={{ fontSize: '12px', fontWeight: '600' }}>{f.name.split(' ')[0]}</span>
-                    <button onClick={() => setFlockFriends(prev => prev.filter(x => x.id !== f.id))} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '0 2px', display: 'flex', alignItems: 'center' }}>{Icons.x('rgba(255,255,255,0.7)', 12)}</button>
+                    <button aria-label="Close" className="hit44" onClick={() => setFlockFriends(prev => prev.filter(x => x.id !== f.id))} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '0 2px', display: 'flex', alignItems: 'center' }}>{Icons.x('rgba(255,255,255,0.7)', 12)}</button>
                   </div>
                 ))}
               </div>
@@ -6884,11 +7038,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
             {/* Suggested friends - quick add */}
             {suggestedUsers.filter(u => !flockFriends.some(f => f.id === u.id)).length > 0 && (
               <div style={{ marginBottom: '8px' }}>
-                <p style={{ fontSize: '10px', fontWeight: '600', color: 'var(--text-tertiary)', margin: '0 0 6px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Suggested</p>
+                <p style={{ fontSize: '12px', fontWeight: '600', color: 'var(--text-tertiary)', margin: '0 0 6px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Suggested</p>
                 <div style={{ display: 'flex', gap: '6px', overflowX: 'auto', paddingBottom: '4px' }}>
                   {suggestedUsers.filter(u => !flockFriends.some(f => f.id === u.id)).slice(0, 5).map(user => (
-                    <button key={user.id} className="glass-btn glass-secondary" onClick={() => setFlockFriends(prev => [...prev, user])} style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '6px 10px', borderRadius: '20px', border: `1.5px solid ${colors.creamDark}`, backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer', flexShrink: 0, transition: 'opacity 0.15s ease' }}>
-                      <div style={{ width: '24px', height: '24px', borderRadius: '12px', backgroundColor: colors.navyMidBg, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '10px', fontWeight: '700', color: 'white', overflow: 'hidden', flexShrink: 0 }}>
+                    <button key={user.id} className="hit44 glass-btn glass-secondary" onClick={() => setFlockFriends(prev => [...prev, user])} style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '6px 10px', borderRadius: '20px', border: `1.5px solid ${colors.creamDark}`, backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer', flexShrink: 0, transition: 'opacity 0.15s ease' }}>
+                      <div style={{ width: '24px', height: '24px', borderRadius: '12px', backgroundColor: colors.navyMidBg, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '12px', fontWeight: '700', color: 'white', overflow: 'hidden', flexShrink: 0 }}>
                         {user.profile_image_url ? <img src={user.profile_image_url} alt="" style={{ width: '24px', height: '24px', borderRadius: '12px', objectFit: 'cover' }} /> : user.name[0]?.toUpperCase()}
                       </div>
                       <span style={{ fontSize: '12px', fontWeight: '600', color: colors.navy, whiteSpace: 'nowrap' }}>{user.name.split(' ')[0]}</span>
@@ -6901,7 +7055,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
 
             {/* Search input */}
             <div style={{ position: 'relative' }}>
-              <input
+              <input aria-label="Search people by name or email"
                 type="text"
                 value={inviteSearch}
                 onChange={(e) => handleInviteSearch(e.target.value)}
@@ -6911,7 +7065,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
               />
               <span style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)' }}>{Icons.search(colors.textTertiary, 14)}</span>
               {inviteSearch && (
-                <button onClick={() => { setInviteSearch(''); setInviteResults([]); }} style={{ position: 'absolute', right: '8px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', padding: '4px' }}>{Icons.x(colors.textTertiary, 14)}</button>
+                <button aria-label="Close" className="hit44" onClick={() => { setInviteSearch(''); setInviteResults([]); }} style={{ position: 'absolute', right: '8px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', padding: '4px' }}>{Icons.x(colors.textTertiary, 14)}</button>
               )}
             </div>
 
@@ -6919,13 +7073,13 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
             {inviteSearching && (
               <div style={{ textAlign: 'center', padding: '10px 0' }}>
                 <div style={{ display: 'inline-block', width: '14px', height: '14px', border: `2px solid ${colors.creamDark}`, borderTopColor: colors.navy, borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
-                <span style={{ fontSize: '11px', color: 'var(--text-secondary)', marginLeft: '6px' }}>Searching...</span>
+                <span style={{ fontSize: '12px', color: 'var(--text-secondary)', marginLeft: '6px' }}>Searching...</span>
               </div>
             )}
             {!inviteSearching && inviteSearch.trim().length >= 1 && inviteResults.length > 0 && (
               <div style={{ maxHeight: '160px', overflowY: 'auto', borderRadius: '10px', border: `1px solid ${colors.creamDark}`, backgroundColor: 'var(--bg-card-solid)', marginTop: '6px' }}>
                 {inviteResults.filter(u => !flockFriends.some(f => f.id === u.id)).map((user, i, arr) => (
-                  <button key={user.id} onClick={() => {
+                  <button className="hit44" key={user.id} onClick={() => {
                     setFlockFriends(prev => [...prev, user]);
                     setInviteSearch('');
                     setInviteResults([]);
@@ -6935,41 +7089,41 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                     </div>
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <p style={{ fontWeight: '700', fontSize: '13px', color: colors.navy, margin: 0 }}>{user.name}</p>
-                      <p style={{ fontSize: '10px', color: 'var(--text-tertiary)', margin: '1px 0 0' }}>{user.email}</p>
+                      <p style={{ fontSize: '12px', color: 'var(--text-tertiary)', margin: '1px 0 0' }}>{user.email}</p>
                     </div>
-                    <div style={{ padding: '4px 10px', borderRadius: '8px', backgroundColor: 'var(--icon-bg)', color: colors.steel, fontSize: '11px', fontWeight: '700', flexShrink: 0 }}>Add</div>
+                    <div style={{ padding: '4px 10px', borderRadius: '8px', backgroundColor: 'var(--icon-bg)', color: colors.steel, fontSize: '12px', fontWeight: '700', flexShrink: 0 }}>Add</div>
                   </button>
                 ))}
               </div>
             )}
             {!inviteSearching && inviteSearch.trim().length >= 1 && inviteResults.length === 0 && (
-              <p style={{ fontSize: '11px', color: 'var(--text-tertiary)', textAlign: 'center', padding: '8px 0', margin: 0 }}>No users found</p>
+              <p style={{ fontSize: '12px', color: 'var(--text-tertiary)', textAlign: 'center', padding: '8px 0', margin: 0 }}>No users found</p>
             )}
           </div>
 
           <div style={{ marginBottom: '16px' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
               <label style={{ fontSize: '12px', fontWeight: 'bold', color: colors.navy, display: 'flex', alignItems: 'center', gap: '4px' }}>{Icons.dollar(colors.navy, 14)} Group Budget</label>
-              <Toggle on={flockCashPool} onChange={() => setFlockCashPool(!flockCashPool)} />
+              <Toggle label="Shared cash pool" on={flockCashPool} onChange={() => setFlockCashPool(!flockCashPool)} />
             </div>
             {flockCashPool && (
               <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', border: `1px solid ${colors.creamDark}` }}>
-                <p style={{ fontSize: '11px', color: 'var(--text-secondary)', marginBottom: '8px', margin: '0 0 8px' }}>What's this for?</p>
+                <p style={{ fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '8px', margin: '0 0 8px' }}>What's this for?</p>
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginBottom: '10px' }}>
                   {['dinner', 'drinks', 'movie', 'concert', 'activity'].map(ctx => (
-                    <button key={ctx} className={flockBudgetContext === ctx ? '' : 'glass-btn glass-secondary'} onClick={() => setFlockBudgetContext(ctx)}
+                    <button key={ctx} className={`hit44 ${flockBudgetContext === ctx ? '' : 'glass-btn glass-secondary'}`} onClick={() => setFlockBudgetContext(ctx)}
                       style={{ padding: '6px 14px', borderRadius: '20px', border: flockBudgetContext === ctx ? `2px solid ${colors.steel}` : '1.5px solid var(--border-color)', backgroundColor: flockBudgetContext === ctx ? `${colors.steel}B3` : 'var(--bg-card-solid)', fontSize: '12px', fontWeight: flockBudgetContext === ctx ? '800' : '600', color: flockBudgetContext === ctx ? '#ffffff' : colors.navy, cursor: 'pointer', textTransform: 'capitalize', transition: 'all 0.2s ease', boxShadow: flockBudgetContext === ctx ? `0 0 12px ${colors.steel}66` : 'none' }}>
                       {ctx}
                     </button>
                   ))}
                 </div>
-                <p style={{ fontSize: '10px', color: 'var(--text-tertiary)', margin: 0 }}>Members will set their own budget anonymously after joining</p>
+                <p style={{ fontSize: '12px', color: 'var(--text-tertiary)', margin: 0 }}>Members will set their own budget anonymously after joining</p>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '10px', paddingTop: '10px', borderTop: '1px solid var(--divider)' }}>
                   <div>
-                    <p style={{ fontSize: '11px', fontWeight: '600', color: colors.navy, margin: '0 0 1px' }}>Ghost Mode</p>
-                    <p style={{ fontSize: '10px', color: 'var(--text-tertiary)', margin: 0 }}>Let members pre-commit their share before going out</p>
+                    <p style={{ fontSize: '12px', fontWeight: '600', color: colors.navy, margin: '0 0 1px' }}>Ghost Mode</p>
+                    <p style={{ fontSize: '12px', color: 'var(--text-tertiary)', margin: 0 }}>Let members pre-commit their share before going out</p>
                   </div>
-                  <Toggle on={flockGhostMode} onChange={() => setFlockGhostMode(!flockGhostMode)} />
+                  <Toggle label="Ghost mode" on={flockGhostMode} onChange={() => setFlockGhostMode(!flockGhostMode)} />
                 </div>
               </div>
             )}
@@ -6977,7 +7131,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
         </div>
 
         <div style={{ padding: '12px 16px 16px', flexShrink: 0 }}>
-          <button className="glass-btn glass-primary" onClick={handleCreate} disabled={isLoading} style={{
+          <button className="hit44 glass-btn glass-primary" onClick={handleCreate} disabled={isLoading} style={{
             width: '100%', padding: '16px', borderRadius: '16px', border: 'none',
             background: colors.navy,
             color: 'white', fontWeight: '800', fontSize: '15px', cursor: 'pointer',
@@ -6995,21 +7149,22 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   // JOIN SCREEN
   const JoinScreen = () => (
     <div key="join-screen-container" style={{ display: 'flex', flexDirection: 'column', height: '100%', backgroundColor: 'var(--bg-card-solid)' }}>
+            <DialogBehavior modal={false} onClose={() => { setCurrentScreen('main'); setJoinCode(''); }} />
       <div style={{ padding: '12px', display: 'flex', alignItems: 'center', gap: '8px', borderBottom: '1px solid var(--divider)', backgroundColor: 'var(--bg-card-solid)', flexShrink: 0 }}>
-        <button onClick={() => { setCurrentScreen('main'); setJoinCode(''); }} style={{ width: '32px', height: '32px', borderRadius: '16px', border: 'none', backgroundColor: 'transparent', color: colors.navy, fontSize: '18px', cursor: 'pointer' }}>←</button>
+        <button aria-label="Back" className="hit44" onClick={() => { setCurrentScreen('main'); setJoinCode(''); }} style={{ width: '32px', height: '32px', borderRadius: '16px', border: 'none', backgroundColor: 'transparent', color: colors.navy, fontSize: '18px', cursor: 'pointer' }}>←</button>
         <h1 style={{ fontSize: '18px', fontWeight: '900', color: colors.navy, margin: 0 }}>Join a Flock</h1>
       </div>
       <div style={{ flex: 1, padding: '16px', backgroundColor: 'var(--bg-primary)' }}>
         <div style={{ marginBottom: '16px' }}>
           <label style={{ display: 'block', fontSize: '12px', fontWeight: 'bold', color: colors.navy, marginBottom: '6px' }}>Enter Code</label>
-          <SearchInputLocal key="join-code-input" id="join-code-input" type="text" initialValue={joinCode} onCommit={setJoinCode} transform={(v) => v.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 6)} placeholder="ABC123" maxLength={6} style={{ ...styles.input, fontSize: '20px', textAlign: 'center', letterSpacing: '8px', textTransform: 'uppercase' }} autoComplete="off" />
+          <SearchInputLocal aria-label="Flock join code" key="join-code-input" id="join-code-input" type="text" initialValue={joinCode} onCommit={setJoinCode} transform={(v) => v.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 6)} placeholder="ABC123" maxLength={6} style={{ ...styles.input, fontSize: '20px', textAlign: 'center', letterSpacing: '8px', textTransform: 'uppercase' }} autoComplete="off" />
         </div>
         {/* "Scan QR" button removed: it only toasted "coming soon", and a dead
             button that advertises itself is a named tell (SLOP-AUDIT.md C1).
             Restore it WITH a working scanner or not at all. */}
       </div>
       <div style={{ padding: '12px', backgroundColor: 'var(--bg-card-solid)', borderTop: '1px solid var(--divider)', flexShrink: 0 }}>
-        <button className="glass-btn glass-navy" onClick={(e) => { if (joinCode.length === 6) { confirmClick(e); setJoinCode(''); setCurrentScreen('main'); } else { showToast('Enter a valid code', 'error'); }}} style={{ ...styles.gradientButton, position: 'relative', overflow: 'hidden' }}>Join Flock</button>
+        <button className="hit44 glass-btn glass-navy" onClick={(e) => { if (joinCode.length === 6) { confirmClick(e); setJoinCode(''); setCurrentScreen('main'); } else { showToast('Enter a valid code', 'error'); }}} style={{ ...styles.gradientButton, position: 'relative', overflow: 'hidden' }}>Join Flock</button>
       </div>
     </div>
   );
@@ -7017,28 +7172,31 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   // EXPLORE SCREEN
   const ExploreScreen = () => (
     <div key="explore-screen-container" style={{ display: 'flex', flexDirection: 'column', height: '100%', backgroundColor: 'var(--pill-bg)' }}>
+      {/* Discover's title is the map itself, so there was no h1 at all here and
+          a screen-reader user landed on a page with no name. */}
+      <h1 className="sr-only">Discover</h1>
       {pickingVenueForCreate && (
         <div style={{ padding: '10px 14px', background: colors.navyMidBg, display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0, boxShadow: '0 2px 8px rgba(13,40,71,0.10)' }}>
           <span style={{ color: 'white', fontSize: '12px', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '6px' }}>{Icons.mapPin('white', 14)} Tap venue to select</span>
-          <button className="glass-btn glass-secondary" onClick={() => { setPickingVenueForCreate(false); if (pickingVenueForDm) { setPickingVenueForDm(false); setCurrentTab('chats'); setCurrentScreen('dmDetail'); } else if (pickingVenueForFlockId) { setSelectedFlockId(pickingVenueForFlockId); setPickingVenueForFlockId(null); setCurrentTab('chats'); setCurrentScreen('chatDetail'); } else { setCurrentScreen('create'); } }} style={{ backgroundColor: 'rgba(255,255,255,0.2)', border: 'none', borderRadius: '12px', padding: '4px 12px', color: 'white', fontSize: '11px', cursor: 'pointer', fontWeight: '500', transition: 'opacity 0.2s ease' }}>Cancel</button>
+          <button className="hit44 glass-btn glass-secondary" onClick={() => { setPickingVenueForCreate(false); if (pickingVenueForDm) { setPickingVenueForDm(false); setCurrentTab('chats'); setCurrentScreen('dmDetail'); } else if (pickingVenueForFlockId) { setSelectedFlockId(pickingVenueForFlockId); setPickingVenueForFlockId(null); setCurrentTab('chats'); setCurrentScreen('chatDetail'); } else { setCurrentScreen('create'); } }} style={{ backgroundColor: 'rgba(255,255,255,0.2)', border: 'none', borderRadius: '12px', padding: '4px 12px', color: 'white', fontSize: '12px', cursor: 'pointer', fontWeight: '500', transition: 'opacity 0.2s ease' }}>Cancel</button>
         </div>
       )}
 
       <div style={{ padding: '10px 12px', display: 'flex', alignItems: 'center', gap: '6px', backgroundColor: 'var(--bg-card-solid)', boxShadow: '0 2px 12px rgba(0,0,0,0.08)', zIndex: 20, flexShrink: 0 }}>
         <div style={{ flex: 1, position: 'relative' }}>
-          <input key="search-input" id="search-input" type="text" value={venueQuery} onChange={(e) => handleVenueQueryChange(e.target.value)} placeholder="Search restaurants, bars, venues..." style={{ width: '100%', padding: '12px 14px 12px 38px', paddingRight: venueQuery ? '36px' : '14px', borderRadius: '14px', backgroundColor: 'var(--bg-tertiary)', color: 'var(--text-primary)', border: `2px solid ${venueQuery ? colors.navy : colors.borderDefault}`, fontSize: '13px', outline: 'none', boxSizing: 'border-box', transition: 'opacity 0.2s ease', fontWeight: '500' }} autoComplete="off" />
+          <input aria-label="Search venues" key="search-input" id="search-input" type="text" value={venueQuery} onChange={(e) => handleVenueQueryChange(e.target.value)} placeholder="Search restaurants, bars, venues..." style={{ width: '100%', padding: '12px 14px 12px 38px', paddingRight: venueQuery ? '36px' : '14px', borderRadius: '14px', backgroundColor: 'var(--bg-tertiary)', color: 'var(--text-primary)', border: `2px solid ${venueQuery ? colors.navy : colors.borderDefault}`, fontSize: '13px', outline: 'none', boxSizing: 'border-box', transition: 'opacity 0.2s ease', fontWeight: '500' }} autoComplete="off" />
           <span style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', transition: 'opacity 0.2s ease' }}>{Icons.search(venueQuery ? colors.navy : colors.textTertiary, 16)}</span>
           {venueQuery && (
-            <button onClick={() => { setVenueQuery(''); setVenueResults([]); setShowSearchDropdown(false); setShowSearchResults(false); setActiveVenue(null); const lat = parseFloat(localStorage.getItem('flock_user_lat')); const lng = parseFloat(localStorage.getItem('flock_user_lng')); if (lat && lng) { setMapVenuesLoaded(false); loadVenuesAtLocation(lat, lng); } else { setMapVenuesLoaded(false); requestUserLocation(false); } }} title="Clear search" style={{ position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', padding: '2px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.x('#64748b', 16)}</button>
+            <button aria-label="Clear search" className="hit44" onClick={() => { setVenueQuery(''); setVenueResults([]); setShowSearchDropdown(false); setShowSearchResults(false); setActiveVenue(null); const lat = parseFloat(localStorage.getItem('flock_user_lat')); const lng = parseFloat(localStorage.getItem('flock_user_lng')); if (lat && lng) { setMapVenuesLoaded(false); loadVenuesAtLocation(lat, lng); } else { setMapVenuesLoaded(false); requestUserLocation(false); } }} title="Clear search" style={{ position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', padding: '2px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.x('#64748b', 16)}</button>
           )}
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: '4px', flexShrink: 0 }}>
           <div style={{ display: 'flex', gap: '4px', overflow: 'hidden', maxWidth: discoverNavOpen ? '124px' : '0px', opacity: discoverNavOpen ? 1 : 0, transition: 'max-width 0.3s ease, opacity 0.25s ease' }}>
-            <button onClick={() => { setDiscoverNavOpen(false); setMapVenuesLoaded(false); setVenueQuery(''); setVenueResults([]); setShowSearchDropdown(false); setShowSearchResults(false); setActiveVenue(null); requestUserLocation(true); }} style={{ width: '36px', height: '36px', minWidth: '36px', borderRadius: '12px', border: '1px solid var(--border-default)', background: 'var(--bg-card-solid)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', animation: locationLoading ? 'spin 1s linear infinite' : 'none' }}>{Icons.crosshair('var(--text-primary)', 15)}</button>
-            <button onClick={() => { setDiscoverNavOpen(false); setShowEventsView(true); setActiveVenue(null); if (userLocation && !featuredEventsLoading) { setFeaturedEventsLoading(true); getFeaturedEvents(`${userLocation.lat},${userLocation.lng}`, userInterests).then(data => setFeaturedEvents(data.events || [])).catch(err => console.error('[Events] Fetch failed:', err)).finally(() => setFeaturedEventsLoading(false)); } }} style={{ width: '36px', height: '36px', minWidth: '36px', borderRadius: '12px', border: '1px solid var(--border-default)', background: 'var(--bg-card-solid)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.zap('var(--text-primary)', 15)}</button>
-            <button onClick={() => { setDiscoverNavOpen(false); setShowConnectPanel(true); }} style={{ width: '36px', height: '36px', minWidth: '36px', borderRadius: '12px', border: '1px solid var(--border-default)', background: 'var(--bg-card-solid)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.users('var(--text-primary)', 15)}</button>
+            <button aria-label="Recenter the map on me" className="hit44" onClick={() => { setDiscoverNavOpen(false); setMapVenuesLoaded(false); setVenueQuery(''); setVenueResults([]); setShowSearchDropdown(false); setShowSearchResults(false); setActiveVenue(null); requestUserLocation(true); }} style={{ width: '36px', height: '36px', minWidth: '36px', borderRadius: '12px', border: '1px solid var(--border-default)', background: 'var(--bg-card-solid)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', animation: locationLoading ? 'spin 1s linear infinite' : 'none' }}>{Icons.crosshair('var(--text-primary)', 15)}</button>
+            <button aria-label="Events" className="hit44" onClick={() => { setDiscoverNavOpen(false); setShowEventsView(true); setActiveVenue(null); if (userLocation && !featuredEventsLoading) { setFeaturedEventsLoading(true); getFeaturedEvents(`${userLocation.lat},${userLocation.lng}`, userInterests).then(data => setFeaturedEvents(data.events || [])).catch(err => console.error('[Events] Fetch failed:', err)).finally(() => setFeaturedEventsLoading(false)); } }} style={{ width: '36px', height: '36px', minWidth: '36px', borderRadius: '12px', border: '1px solid var(--border-default)', background: 'var(--bg-card-solid)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.zap('var(--text-primary)', 15)}</button>
+            <button aria-label="Friends" className="hit44" onClick={() => { setDiscoverNavOpen(false); setShowConnectPanel(true); }} style={{ width: '36px', height: '36px', minWidth: '36px', borderRadius: '12px', border: '1px solid var(--border-default)', background: 'var(--bg-card-solid)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.users('var(--text-primary)', 15)}</button>
           </div>
-          <button onClick={() => setDiscoverNavOpen(!discoverNavOpen)} style={{ height: '42px', minWidth: discoverNavOpen ? '42px' : 'auto', width: discoverNavOpen ? '42px' : 'auto', borderRadius: '14px', border: '1px solid var(--border-default)', background: 'var(--bg-card-solid)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px', padding: discoverNavOpen ? '0' : '0 14px', fontSize: '12px', fontWeight: '700', color: 'var(--text-primary)', flexShrink: 0, transition: 'all 0.3s ease' }}>{discoverNavOpen ? Icons.x('var(--text-primary)', 16) : <span style={{ fontSize: '12px', fontWeight: '700', whiteSpace: 'nowrap' }}>Features</span>}</button>
+          <button className="hit44" onClick={() => setDiscoverNavOpen(!discoverNavOpen)} style={{ height: '42px', minWidth: discoverNavOpen ? '42px' : 'auto', width: discoverNavOpen ? '42px' : 'auto', borderRadius: '14px', border: '1px solid var(--border-default)', background: 'var(--bg-card-solid)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px', padding: discoverNavOpen ? '0' : '0 14px', fontSize: '12px', fontWeight: '700', color: 'var(--text-primary)', flexShrink: 0, transition: 'all 0.3s ease' }}>{discoverNavOpen ? Icons.x('var(--text-primary)', 16) : <span style={{ fontSize: '12px', fontWeight: '700', whiteSpace: 'nowrap' }}>Features</span>}</button>
         </div>
       </div>
 
@@ -7056,14 +7214,14 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           {venueSearching && (
             <div style={{ textAlign: 'center', padding: '20px 0' }}>
               <div style={{ display: 'inline-block', width: '20px', height: '20px', border: `3px solid var(--border-default)`, borderTopColor: colors.navy, borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
-              <p style={{ fontSize: '11px', color: 'var(--text-secondary)', margin: '8px 0 0' }}>Searching venues...</p>
+              <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: '8px 0 0' }}>Searching venues...</p>
             </div>
           )}
           {!venueSearching && venueResults.length > 0 && (
             <div style={{ padding: '4px 12px 8px' }}>
               {/* View All — first thing you see */}
               <button
-                className="glass-btn glass-navy"
+                className="hit44 glass-btn glass-navy"
                 onClick={() => { setShowSearchResults(true); setShowSearchDropdown(false); }}
                 style={{ width: '100%', padding: '11px 14px', borderRadius: '12px', border: 'none', background: colors.navyBg, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', margin: '4px 0 8px', transition: 'opacity 0.2s', boxShadow: '0 2px 8px rgba(13,40,71,0.10)' }}
               >
@@ -7072,7 +7230,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 {Icons.arrowRight('white', 14)}
               </button>
               {venueResults.filter(v => { const mp = budgetStatus?.isReady && budgetStatus?.ceiling ? getMaxPriceLevel(budgetStatus.ceiling) : 4; return !v.price_level || v.price_level <= mp; }).slice(0, 4).map((venue) => (
-                <button
+                <button aria-label="Report"
                   key={venue.place_id}
                   onClick={() => {
                     setShowSearchDropdown(false);
@@ -7085,25 +7243,25 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                   onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = 'var(--bg-tertiary)'; }}
                 >
                   {venue.photo_url ? (
-                    <img src={venue.photo_url} alt="" style={{ width: '48px', height: '48px', borderRadius: '10px', objectFit: 'cover', flexShrink: 0 }} onError={(e) => { e.target.onerror = null; e.target.src = 'data:image/svg+xml,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48"><rect fill="#1a3a5c" width="48" height="48" rx="10"/></svg>'); }} />
+                    <img src={venue.photo_url} alt="" style={{ width: '48px', height: '48px', borderRadius: '10px', objectFit: 'cover', flexShrink: 0 }} onError={(e) => { e.target.onerror = null; e.target.src = 'data:image/svg+xml,' + encodeURIComponent('<svg aria-hidden="true" focusable="false" xmlns="http://www.w3.org/2000/svg" width="48" height="48"><rect fill="#1a3a5c" width="48" height="48" rx="10"/></svg>'); }} />
                   ) : (
                     <div style={{ width: '48px', height: '48px', borderRadius: '10px', backgroundColor: 'var(--pill-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{Icons.mapPin(colors.navyMid, 20)}</div>
                   )}
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <p style={{ fontWeight: '700', fontSize: '13px', color: colors.navy, margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{venue.name}</p>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginTop: '2px', flexWrap: 'wrap' }}>
-                      {venue.rating && <span style={{ fontSize: '11px', fontWeight: '700', color: colors.navy }}>{venue.rating} ★</span>}
-                      {venue.user_ratings_total > 0 && <span style={{ fontSize: '10px', color: 'var(--text-tertiary)' }}>({venue.user_ratings_total})</span>}
-                      {venue.price_level && <span style={{ fontSize: '11px', color: 'var(--text-secondary)', fontWeight: '600' }}>{'$'.repeat(venue.price_level)}</span>}
+                      {venue.rating && <span style={{ fontSize: '12px', fontWeight: '700', color: colors.navy }}>{venue.rating} ★</span>}
+                      {venue.user_ratings_total > 0 && <span style={{ fontSize: '12px', color: 'var(--text-tertiary)' }}>({venue.user_ratings_total})</span>}
+                      {venue.price_level && <span style={{ fontSize: '12px', color: 'var(--text-secondary)', fontWeight: '600' }}>{'$'.repeat(venue.price_level)}</span>}
                       {userLocation && venue.location && (() => {
                         const dLat = (venue.location.latitude - userLocation.lat) * Math.PI / 180;
                         const dLng = (venue.location.longitude - userLocation.lng) * Math.PI / 180;
                         const a = Math.sin(dLat/2)**2 + Math.cos(userLocation.lat*Math.PI/180)*Math.cos(venue.location.latitude*Math.PI/180)*Math.sin(dLng/2)**2;
                         const dist = 6371 * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
-                        return <span style={{ fontSize: '10px', color: colors.steel, fontWeight: '600' }}>{dist < 1 ? `${Math.round(dist*1000)}m` : `${dist.toFixed(1)}km`}</span>;
+                        return <span style={{ fontSize: '12px', color: colors.steel, fontWeight: '600' }}>{dist < 1 ? `${Math.round(dist*1000)}m` : `${dist.toFixed(1)}km`}</span>;
                       })()}
                     </div>
-                    <p style={{ fontSize: '10px', color: 'var(--text-secondary)', margin: '2px 0 0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{venue.formatted_address}</p>
+                    <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: '2px 0 0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{venue.formatted_address}</p>
                   </div>
                   <div style={{ flexShrink: 0, display: 'flex', alignItems: 'center', gap: '3px' }}>
                     {Icons.chevronRight(colors.navyMid, 16)}
@@ -7150,19 +7308,19 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
             zIndex: 35, boxShadow: '0 1px 3px rgba(5,150,105,0.15)',
           }}>
             <div style={{ width: '8px', height: '8px', borderRadius: '4px', backgroundColor: '#34d399', animation: 'pulse 2s ease-in-out infinite', boxShadow: 'none', flexShrink: 0 }} />
-            <p style={{ fontSize: '11px', fontWeight: '600', color: 'white', margin: 0, flex: 1 }}>
+            <p style={{ fontSize: '12px', fontWeight: '600', color: 'white', margin: 0, flex: 1 }}>
               Live location · {Object.keys(flockMemberLocations).length > 0 ? `${Object.keys(flockMemberLocations).length} member${Object.keys(flockMemberLocations).length > 1 ? 's' : ''} nearby` : 'Waiting for others...'}
             </p>
-            <button onClick={stopLocationSharing} style={{ padding: '4px 10px', borderRadius: '10px', border: '1px solid rgba(255,255,255,0.3)', background: 'rgba(255,255,255,0.15)', color: 'white', fontSize: '10px', fontWeight: '600', cursor: 'pointer' }}>Stop</button>
+            <button className="hit44" onClick={stopLocationSharing} style={{ padding: '4px 10px', borderRadius: '10px', border: '1px solid rgba(255,255,255,0.3)', background: 'rgba(255,255,255,0.15)', color: 'white', fontSize: '12px', fontWeight: '600', cursor: 'pointer' }}>Stop</button>
           </div>
         )}
 
         {/* Floating "See All Results" on map */}
         {allVenues.length > 0 && !activeVenue && !showConnectPanel && !pickingVenueForCreate && (
           <button
-            className="glass-btn glass-secondary"
+            className="hit44 glass-btn glass-secondary"
             onClick={() => { setShowSearchResults(true); setShowSearchDropdown(false); }}
-            style={{ position: 'absolute', bottom: '12px', right: '12px', padding: '5px 10px', borderRadius: '9px', border: '1px solid var(--border-default)', background: 'var(--bg-card-solid)', color: 'var(--text-secondary)', fontSize: '11px', fontWeight: '600', cursor: 'pointer', boxShadow: 'var(--card-shadow-sm)' }}
+            style={{ position: 'absolute', bottom: '12px', right: '12px', padding: '5px 10px', borderRadius: '9px', border: '1px solid var(--border-default)', background: 'var(--bg-card-solid)', color: 'var(--text-secondary)', fontSize: '12px', fontWeight: '600', cursor: 'pointer', boxShadow: 'var(--card-shadow-sm)' }}
           >
             All {allVenues.length} results
           </button>
@@ -7174,15 +7332,15 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
             <div style={{ padding: '12px', borderBottom: '1px solid var(--divider)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexShrink: 0 }}>
               <h2 style={{ fontSize: '14px', fontWeight: '900', color: colors.navy, margin: 0, display: 'flex', alignItems: 'center', gap: '6px' }}>{Icons.users(colors.navy, 16)} Find Your People</h2>
               <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                <button className="glass-btn glass-secondary" onClick={() => { setShowConnectPanel(false); setConnectSearch(''); setConnectResults([]); setCurrentScreen('addFriends'); }} style={{ padding: '4px 10px', borderRadius: '10px', backgroundColor: 'var(--icon-bg)', border: 'none', cursor: 'pointer', fontSize: '11px', fontWeight: '600', color: colors.navy }}>See All</button>
-                <button onClick={() => { setShowConnectPanel(false); setConnectSearch(''); setConnectResults([]); }} style={{ width: '28px', height: '28px', borderRadius: '14px', backgroundColor: 'var(--bg-hover)', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.x(colors.textSecondary, 14)}</button>
+                <button className="hit44 glass-btn glass-secondary" onClick={() => { setShowConnectPanel(false); setConnectSearch(''); setConnectResults([]); setCurrentScreen('addFriends'); }} style={{ padding: '4px 10px', borderRadius: '10px', backgroundColor: 'var(--icon-bg)', border: 'none', cursor: 'pointer', fontSize: '12px', fontWeight: '600', color: colors.navy }}>See All</button>
+                <button className="hit44" onClick={() => { setShowConnectPanel(false); setConnectSearch(''); setConnectResults([]); }} style={{ width: '28px', height: '28px', borderRadius: '14px', backgroundColor: 'var(--bg-hover)', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.x(colors.textSecondary, 14)}</button>
               </div>
             </div>
 
             {/* Search input */}
             <div style={{ padding: '8px 12px', borderBottom: '1px solid var(--border-light)', flexShrink: 0 }}>
               <div style={{ position: 'relative' }}>
-                <input
+                <input aria-label="Search people by name or email"
                   type="text"
                   value={connectSearch}
                   onChange={(e) => handleConnectSearch(e.target.value)}
@@ -7192,7 +7350,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 />
                 <span style={{ position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)' }}>{Icons.search(connectSearch ? colors.navy : colors.textTertiary, 14)}</span>
                 {connectSearch && (
-                  <button onClick={() => { setConnectSearch(''); setConnectResults([]); }} style={{ position: 'absolute', right: '8px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', padding: '4px' }}>{Icons.x(colors.textTertiary, 14)}</button>
+                  <button className="hit44" onClick={() => { setConnectSearch(''); setConnectResults([]); }} style={{ position: 'absolute', right: '8px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', padding: '4px' }}>{Icons.x(colors.textTertiary, 14)}</button>
                 )}
               </div>
             </div>
@@ -7219,20 +7377,20 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                     </div>
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <p style={{ fontWeight: '700', fontSize: '13px', color: colors.navy, margin: 0 }}>{user.name}</p>
-                      <p style={{ fontSize: '10px', color: 'var(--text-secondary)', margin: '1px 0 0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{user.email}</p>
+                      <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: '1px 0 0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{user.email}</p>
                     </div>
                     <div style={{ display: 'flex', gap: '6px', flexShrink: 0 }}>
                       {status === 'accepted' ? (
-                        <span style={{ padding: '6px 12px', borderRadius: '20px', backgroundColor: 'var(--accent-green-bg)', color: 'var(--accent-green-text)', fontSize: '11px', fontWeight: '700' }}>Friends</span>
+                        <span style={{ padding: '6px 12px', borderRadius: '20px', backgroundColor: 'var(--accent-green-bg)', color: 'var(--accent-green-text)', fontSize: '12px', fontWeight: '700' }}>Friends</span>
                       ) : status === 'pending' ? (
-                        <span style={{ padding: '6px 12px', borderRadius: '20px', backgroundColor: 'var(--pill-bg)', color: 'var(--text-secondary)', fontSize: '11px', fontWeight: '700' }}>Pending</span>
+                        <span style={{ padding: '6px 12px', borderRadius: '20px', backgroundColor: 'var(--pill-bg)', color: 'var(--text-secondary)', fontSize: '12px', fontWeight: '700' }}>Pending</span>
                       ) : (
-                        <button className="glass-btn glass-navy" onClick={(e) => { confirmClick(e); handleSendFriendRequest(user); }} style={{ padding: '6px 12px', borderRadius: '20px', border: 'none', backgroundColor: colors.navyBg, color: 'white', fontSize: '11px', fontWeight: '700', cursor: 'pointer', position: 'relative', overflow: 'hidden' }}>Add Friend</button>
+                        <button className="hit44 glass-btn glass-navy" onClick={(e) => { confirmClick(e); handleSendFriendRequest(user); }} style={{ padding: '6px 12px', borderRadius: '20px', border: 'none', backgroundColor: colors.navyBg, color: 'white', fontSize: '12px', fontWeight: '700', cursor: 'pointer', position: 'relative', overflow: 'hidden' }}>Add Friend</button>
                       )}
-                      <button className="glass-btn glass-secondary" onClick={() => {
+                      <button className="hit44 glass-btn glass-secondary" onClick={() => {
                         setShowConnectPanel(false); setConnectSearch(''); setConnectResults([]);
                         startNewDmWithUser(user);
-                      }} style={{ padding: '6px 12px', borderRadius: '20px', border: `1.5px solid ${colors.creamDark}`, backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontSize: '11px', fontWeight: '700', cursor: 'pointer' }}>Message</button>
+                      }} style={{ padding: '6px 12px', borderRadius: '20px', border: `1.5px solid ${colors.creamDark}`, backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontSize: '12px', fontWeight: '700', cursor: 'pointer' }}>Message</button>
                     </div>
                   </div>
                 );
@@ -7242,7 +7400,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 <div style={{ textAlign: 'center', padding: '24px 16px' }}>
                   <div style={{ width: '48px', height: '48px', borderRadius: '24px', backgroundColor: 'var(--icon-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 10px' }}>{Icons.search(colors.navy, 22)}</div>
                   <p style={{ fontSize: '13px', fontWeight: '600', color: colors.navy, margin: '0 0 4px' }}>Search for people</p>
-                  <p style={{ fontSize: '11px', color: 'var(--text-tertiary)', margin: 0 }}>Find friends by name or email</p>
+                  <p style={{ fontSize: '12px', color: 'var(--text-tertiary)', margin: 0 }}>Find friends by name or email</p>
                 </div>
               )}
             </div>
@@ -7260,22 +7418,22 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
             transition={{ type: 'spring', damping: 22, stiffness: 260, mass: 0.8 }}
             onClick={(e) => e.stopPropagation()} style={{ position: 'absolute', bottom: '12px', left: '8px', right: '8px', top: 'auto', backgroundColor: 'var(--bg-card-solid)', borderRadius: '16px', boxShadow: '0 8px 24px rgba(0,0,0,0.15)', zIndex: 45, overflow: 'hidden', maxHeight: 'calc(100% - 24px)', overflowY: 'auto', WebkitOverflowScrolling: 'touch' }}>
             <div style={{ padding: '8px 10px 10px', position: 'relative' }}>
-              <button onClick={() => setActiveVenue(null)} style={{ position: 'absolute', top: '6px', right: '8px', width: '24px', height: '24px', borderRadius: '12px', backgroundColor: 'var(--bg-tertiary)', border: '1px solid var(--border-default)', color: 'var(--text-secondary)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1 }}>{Icons.x('var(--text-secondary)', 12)}</button>
+              <button className="hit44" onClick={() => setActiveVenue(null)} style={{ position: 'absolute', top: '6px', right: '8px', width: '24px', height: '24px', borderRadius: '12px', backgroundColor: 'var(--bg-tertiary)', border: '1px solid var(--border-default)', color: 'var(--text-secondary)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1 }}>{Icons.x('var(--text-secondary)', 12)}</button>
               <motion.div initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.08, type: 'spring', damping: 20, stiffness: 300 }} style={{ marginBottom: '4px', paddingRight: '32px' }}>
                 <h3 style={{ fontSize: '15px', fontWeight: '900', margin: 0, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{activeVenue.name}</h3>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginTop: '1px' }}>
-                  <span style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>{(() => {
+                  <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>{(() => {
                     const types = activeVenue.types || [];
                     if (types.length > 0) return types[0].replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
                     return activeVenue.type || 'Place';
                   })()} • {activeVenue.price}</span>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '2px' }}>
                     {Icons.party('#fbbf24', 10)}
-                    <span style={{ fontSize: '11px', fontWeight: '700', color: 'var(--text-primary)' }}>{activeVenue.stars}</span>
+                    <span style={{ fontSize: '12px', fontWeight: '700', color: 'var(--text-primary)' }}>{activeVenue.stars}</span>
                   </div>
                 </div>
               </motion.div>
-              <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.14, type: 'spring', damping: 18, stiffness: 280 }} style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '10px', color: 'var(--text-secondary)', marginBottom: '4px' }}>
+              <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.14, type: 'spring', damping: 18, stiffness: 280 }} style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '4px' }}>
                 {Icons.mapPin(colors.textSecondary, 12)}
                 <span>{activeVenue.addr}</span>
               </motion.div>
@@ -7574,20 +7732,24 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
               <motion.div initial={{ opacity: 0, y: 20, scale: 0.97 }} animate={{ opacity: 1, y: 0, scale: 1 }} transition={{ delay: 0.15, type: 'spring', damping: 20, stiffness: 300 }} style={{ backgroundColor: 'var(--bg-tertiary)', borderRadius: '12px', padding: '6px 10px 8px', marginBottom: '6px', border: '1px solid var(--border-subtle)' }}>
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', marginBottom: '4px', gap: '4px' }}>
                   {crowdLoading ? (
-                    <span style={{ fontSize: '9px', color: 'var(--text-secondary)' }}>Loading...</span>
+                    <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>Loading...</span>
                   ) : (
                     <>
+                      {/* The dot is decorative so it keeps the vivid hue; the LABEL
+                          has to be readable on the pale card. #22C55E measured
+                          1.85:1 and colors.amber 1.64:1 on --bg-tertiary. The
+                          accent-*-text tokens are theme-aware and clear 4.5:1. */}
                       <div style={{ width: '6px', height: '6px', borderRadius: '3px', backgroundColor: hasWeather ? '#22C55E' : colors.amber, animation: hasWeather ? 'pulse 2s ease-in-out infinite' : 'none' }} />
-                      <span style={{ fontSize: '9px', color: hasWeather ? '#22C55E' : colors.amber, fontWeight: '500' }}>{hasWeather ? 'LIVE' : 'ESTIMATED'}</span>
+                      <span style={{ fontSize: '12px', color: hasWeather ? 'var(--accent-green-text)' : 'var(--accent-amber-text)', fontWeight: '600' }}>{hasWeather ? 'LIVE' : 'ESTIMATED'}</span>
                     </>
                   )}
                 </div>
                 {/* Calibration indicator */}
                 {cd?.calibration?.feedbackUsed && (
                   <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '8px', flexWrap: 'wrap' }}>
-                    <span style={{ fontSize: '9px', color: 'var(--text-secondary)', fontWeight: '500' }}>Calibrated from {cd.calibration.reportCount} user report{cd.calibration.reportCount !== 1 ? 's' : ''}</span>
+                    <span style={{ fontSize: '12px', color: 'var(--text-secondary)', fontWeight: '500' }}>Calibrated from {cd.calibration.reportCount} user report{cd.calibration.reportCount !== 1 ? 's' : ''}</span>
                     {Math.abs(cd.calibration.predictionDrift) > 15 && (
-                      <span style={{ fontSize: '9px', padding: '1px 6px', borderRadius: '8px', backgroundColor: cd.calibration.predictionDrift > 0 ? 'rgba(239,68,68,0.1)' : 'rgba(34,197,94,0.1)', color: cd.calibration.predictionDrift > 0 ? colors.red : '#16a34a', fontWeight: '600' }}>
+                      <span style={{ fontSize: '12px', padding: '1px 6px', borderRadius: '8px', backgroundColor: cd.calibration.predictionDrift > 0 ? 'rgba(239,68,68,0.1)' : 'rgba(34,197,94,0.1)', color: cd.calibration.predictionDrift > 0 ? colors.red : '#16a34a', fontWeight: '600' }}>
                         {cd.calibration.predictionDrift > 0 ? 'Trending busier than expected' : 'Trending quieter than expected'}
                       </span>
                     )}
@@ -7599,7 +7761,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                   {isClosed ? (
                     <div style={{ width: '60px', height: '60px', borderRadius: '30px', backgroundColor: 'var(--border-default)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
                       <div style={{ width: '48px', height: '48px', borderRadius: '24px', backgroundColor: 'var(--bg-card-solid)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                        <span style={{ fontSize: '11px', fontWeight: '900', color: 'var(--text-tertiary)' }}>---</span>
+                        <span style={{ fontSize: '12px', fontWeight: '900', color: 'var(--text-tertiary)' }}>---</span>
                       </div>
                     </div>
                   ) : !cd ? (
@@ -7622,7 +7784,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                             {Icons.clock(colors.steel, 12)}
                             {cd?.forecastAccess?.locked ? (
                               <span onClick={(e) => { e.stopPropagation(); setPaywallTrigger('forecast'); }} style={{ fontSize: '12px', fontWeight: 'bold', color: colors.steel, cursor: 'pointer' }}>
-                                Best time to visit: <span aria-hidden style={{ filter: 'blur(4px)', userSelect: 'none' }}>9 PM</span> <span style={{ fontSize: '10px', fontWeight: '700', letterSpacing: '0.5px' }}>PRO</span>
+                                Best time to visit: <span aria-hidden style={{ filter: 'blur(4px)', userSelect: 'none' }}>9 PM</span> <span style={{ fontSize: '12px', fontWeight: '700', letterSpacing: '0.5px' }}>PRO</span>
                               </span>
                             ) : (
                               <span style={{ fontSize: '12px', fontWeight: 'bold', color: colors.steel }}>Best time to visit: {bestText}</span>
@@ -7632,13 +7794,13 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                       </>
                     ) : (
                       <>
-                        <p style={{ fontSize: '14px', fontWeight: '700', color: crowdColor, margin: 0 }}>{label} <span style={{ fontSize: '10px', fontWeight: '500', color: 'var(--text-tertiary)' }}>({score}% capacity filled)</span></p>
+                        <p style={{ fontSize: '14px', fontWeight: '700', color: crowdColor, margin: 0 }}>{label} <span style={{ fontSize: '12px', fontWeight: '500', color: 'var(--text-tertiary)' }}>({score}% capacity filled)</span></p>
                         <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: '3px 0' }}>{waitText === 'No wait' ? 'No wait expected' : /^\d|^~/.test(waitText) ? `Est. wait: ${waitText}` : waitText}</p>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
                           {Icons.clock(colors.steel, 12)}
                           {cd?.forecastAccess?.locked ? (
                             <span onClick={(e) => { e.stopPropagation(); setPaywallTrigger('forecast'); }} style={{ fontSize: '12px', fontWeight: 'bold', color: colors.steel, cursor: 'pointer' }}>
-                              Least crowded: <span aria-hidden style={{ filter: 'blur(4px)', userSelect: 'none' }}>9 PM</span> <span style={{ fontSize: '10px', fontWeight: '700', letterSpacing: '0.5px' }}>PRO</span>
+                              Least crowded: <span aria-hidden style={{ filter: 'blur(4px)', userSelect: 'none' }}>9 PM</span> <span style={{ fontSize: '12px', fontWeight: '700', letterSpacing: '0.5px' }}>PRO</span>
                             </span>
                           ) : (
                             <span style={{ fontSize: '12px', fontWeight: 'bold', color: colors.steel }}>Least crowded: {bestText}</span>
@@ -7658,11 +7820,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 <motion.div initial={{ opacity: 0, y: 16, scale: 0.95 }} animate={{ opacity: 1, y: 0, scale: 1 }} transition={{ delay: 0.4, type: 'spring', damping: 20, stiffness: 280 }} style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '6px' }}>
                   {partySize === null ? (
                     <>
-                      <span style={{ fontSize: '9px', fontWeight: '600', color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>Group:</span>
+                      <span style={{ fontSize: '12px', fontWeight: '600', color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>Group:</span>
                       <div style={{ display: 'flex', gap: '4px', flex: 1 }}>
                         {[1, 2, 3, 4, 5, 6, '7+'].map(n => (
-                          <button key={n} onClick={() => setPartySize(typeof n === 'number' ? n : 7)}
-                            style={{ flex: 1, padding: '3px 0', borderRadius: '6px', border: '1px solid var(--border-default)', background: 'var(--bg-card-solid)', color: 'var(--text-primary)', fontSize: '9px', fontWeight: '700', cursor: 'pointer', transition: 'all 0.15s ease' }}
+                          <button className="hit44" key={n} onClick={() => setPartySize(typeof n === 'number' ? n : 7)}
+                            style={{ flex: 1, padding: '3px 0', borderRadius: '6px', border: '1px solid var(--border-default)', background: 'var(--bg-card-solid)', color: 'var(--text-primary)', fontSize: '12px', fontWeight: '700', cursor: 'pointer', transition: 'all 0.15s ease' }}
                             onMouseEnter={e => { e.currentTarget.style.background = 'rgba(45,90,135,0.14)'; e.currentTarget.style.borderColor = '#2d5a87'; e.currentTarget.style.color = '#2d5a87'; }}
                             onMouseLeave={e => { e.currentTarget.style.background = 'var(--bg-card-solid)'; e.currentTarget.style.borderColor = 'var(--border-default)'; e.currentTarget.style.color = 'var(--text-primary)'; }}>
                             {n}
@@ -7676,9 +7838,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                     return (
                       <>
                         <div style={{ width: '6px', height: '6px', borderRadius: '3px', backgroundColor: admission.color, flexShrink: 0 }} />
-                        <span style={{ fontSize: '10px', fontWeight: '700', color: admission.color }}>{admission.text}</span>
-                        <span style={{ fontSize: '9px', color: 'var(--text-tertiary)' }}>({partySize})</span>
-                        <button onClick={() => setPartySize(null)} style={{ fontSize: '9px', color: 'var(--text-tertiary)', background: 'none', border: 'none', cursor: 'pointer', textDecoration: 'underline', marginLeft: 'auto' }}>Change</button>
+                        <span style={{ fontSize: '12px', fontWeight: '700', color: admission.color }}>{admission.text}</span>
+                        <span style={{ fontSize: '12px', color: 'var(--text-tertiary)' }}>({partySize})</span>
+                        <button className="hit44" onClick={() => setPartySize(null)} style={{ fontSize: '12px', color: 'var(--text-tertiary)', background: 'none', border: 'none', cursor: 'pointer', textDecoration: 'underline', marginLeft: 'auto' }}>Change</button>
                       </>
                     );
                   })()}
@@ -7687,7 +7849,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 {/* Hourly Forecast Graph — fades in immediately, bars animate up */}
                 <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.2, duration: 0.4, ease: 'easeOut' }} style={{ marginBottom: '6px' }}>
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '4px' }}>
-                    <p style={{ fontSize: '9px', fontWeight: '600', color: 'var(--text-secondary)', textTransform: 'uppercase', margin: 0 }}>Expected Crowd by Hour</p>
+                    <p style={{ fontSize: '12px', fontWeight: '600', color: 'var(--text-secondary)', textTransform: 'uppercase', margin: 0 }}>Expected Crowd by Hour</p>
                     {(() => {
                       if (!cd && !isClosed) return null; // no trend claims while loading
                       // Trend arrow: compare "Now" to next-hour prediction.
@@ -7700,7 +7862,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                       const label = diff >= 5 ? 'Rising' : diff <= -5 ? 'Falling' : 'Steady';
                       const color = diff >= 5 ? colors.red : diff <= -5 ? colors.steel : 'var(--text-secondary)';
                       return (
-                        <span style={{ fontSize: '9px', fontWeight: '700', color, letterSpacing: '0.3px' }}>{arrow} {label}</span>
+                        <span style={{ fontSize: '12px', fontWeight: '700', color, letterSpacing: '0.3px' }}>{arrow} {label}</span>
                       );
                     })()}
                   </div>
@@ -7737,7 +7899,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                   </div>
                   <div style={{ display: 'flex', gap: '2px', marginTop: '2px' }}>
                     {(!cd && !isClosed) ? null : chartBars.map((b, i) => (
-                      <span key={i} style={{ flex: 1, textAlign: 'center', fontSize: '7px', color: b.isNow ? 'var(--text-primary)' : 'var(--text-tertiary)', fontWeight: b.isNow ? '800' : '400', minWidth: 0, overflow: 'hidden' }}>{b.isNow ? 'Now' : b.h.hour}</span>
+                      <span key={i} style={{ flex: 1, textAlign: 'center', fontSize: '12px', color: b.isNow ? 'var(--text-primary)' : 'var(--text-tertiary)', fontWeight: b.isNow ? '800' : '400', minWidth: 0, overflow: 'hidden' }}>{b.isNow ? 'Now' : b.h.hour}</span>
                     ))}
                   </div>
                 </motion.div>
@@ -7747,26 +7909,26 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                   <div style={{ flex: 1, backgroundColor: 'var(--bg-card-solid)', borderRadius: '8px', padding: '4px 8px', border: '1px solid var(--border-subtle)' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '4px', marginBottom: '2px' }}>
                       {Icons.trendingUp(colors.red, 10)}
-                      <span style={{ fontSize: '8px', color: 'var(--text-secondary)', textTransform: 'uppercase' }}>Busiest Hours</span>
+                      <span style={{ fontSize: '12px', color: 'var(--text-secondary)', textTransform: 'uppercase' }}>Busiest Hours</span>
                     </div>
-                    <span style={{ fontSize: '11px', fontWeight: '700', color: closedAllDay ? colors.red : colors.navy }}>{closedAllDay ? 'Closed Today' : peakText}</span>
+                    <span style={{ fontSize: '12px', fontWeight: '700', color: closedAllDay ? colors.red : colors.navy }}>{closedAllDay ? 'Closed Today' : peakText}</span>
                   </div>
                   <div style={{ flex: 1, backgroundColor: 'var(--bg-card-solid)', borderRadius: '8px', padding: '4px 8px', border: '1px solid var(--border-subtle)' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '4px', marginBottom: '2px' }}>
                       {Icons.zap(colors.amber, 10)}
-                      <span style={{ fontSize: '8px', color: 'var(--text-secondary)', textTransform: 'uppercase' }}>{isClosed ? 'Status' : /^\d|^~|wait/i.test(waitText) ? 'Est. Wait Right Now' : 'Crowd Level'}</span>
+                      <span style={{ fontSize: '12px', color: 'var(--text-secondary)', textTransform: 'uppercase' }}>{isClosed ? 'Status' : /^\d|^~|wait/i.test(waitText) ? 'Est. Wait Right Now' : 'Crowd Level'}</span>
                     </div>
-                    <span style={{ fontSize: '11px', fontWeight: '700', color: isClosed ? colors.red : colors.navy }}>{isClosed ? 'Closed' : waitText}</span>
+                    <span style={{ fontSize: '12px', fontWeight: '700', color: isClosed ? colors.red : colors.navy }}>{isClosed ? 'Closed' : waitText}</span>
                   </div>
                 </motion.div>
 
                 {/* Quieter Options */}
                 {(crowdAlternatives.length > 0 || (!cd && allVenues.filter(v => v.id !== activeVenue.id && v.category === activeVenue.category).length > 0)) && (
                 <motion.div initial={{ opacity: 0, y: 14 }} animate={cd ? { opacity: 1, y: 0 } : { opacity: 0, y: 14 }} transition={{ delay: 1.0, duration: 0.4, ease: 'easeOut' }}>
-                  <p style={{ fontSize: '9px', fontWeight: '600', color: 'var(--text-secondary)', marginBottom: '4px', textTransform: 'uppercase' }}>Less Crowded Nearby</p>
+                  <p style={{ fontSize: '12px', fontWeight: '600', color: 'var(--text-secondary)', marginBottom: '4px', textTransform: 'uppercase' }}>Less Crowded Nearby</p>
                   <div style={{ display: 'flex', gap: '6px' }}>
                     {(crowdAlternatives.length > 0 ? crowdAlternatives.slice(0, 2) : allVenues.filter(v => v.id !== activeVenue.id && v.category === activeVenue.category && v.crowd < score && v.opening_hours?.openNow !== false).sort((a, b) => a.crowd - b.crowd).slice(0, 2)).map((v, i) => (
-                      <button key={v.placeId || v.id || i} className="glass-btn glass-secondary" onClick={() => {
+                      <button key={v.placeId || v.id || i} className="hit44 glass-btn glass-secondary" onClick={() => {
                         const pid = v.placeId || v.place_id;
                         if (pid) {
                           setVenueDetailHistory(prev => [...prev, { activeVenue, crowdData: cd, crowdAlternatives }]);
@@ -7775,10 +7937,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                           setActiveVenue(v);
                         }
                       }} style={{ flex: 1, padding: '6px', backgroundColor: 'var(--bg-card-solid)', border: '1px solid var(--border-subtle)', borderRadius: '8px', cursor: 'pointer', textAlign: 'left' }}>
-                        <p style={{ fontSize: '10px', fontWeight: '600', color: colors.navy, margin: 0 }}>{v.name}</p>
+                        <p style={{ fontSize: '12px', fontWeight: '600', color: colors.navy, margin: 0 }}>{v.name}</p>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '4px', marginTop: '2px' }}>
                           <div style={{ width: '6px', height: '6px', borderRadius: '3px', backgroundColor: (v.score || v.crowd) > 70 ? colors.red : (v.score || v.crowd) > 40 ? colors.amber : '#22C55E' }} />
-                          <span style={{ fontSize: '9px', color: 'var(--text-secondary)' }}>{v.label || ((v.score || v.crowd) > 70 ? 'Very Busy' : (v.score || v.crowd) > 40 ? 'Moderate' : 'Not Busy')}</span>
+                          <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>{v.label || ((v.score || v.crowd) > 70 ? 'Very Busy' : (v.score || v.crowd) > 40 ? 'Moderate' : 'Not Busy')}</span>
                         </div>
                       </button>
                     ))}
@@ -7801,7 +7963,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                         window.__flockPanToVenue({ place_id: prev.activeVenue.place_id, lat: loc?.latitude, lng: loc?.longitude, name: prev.activeVenue.name, address: prev.activeVenue.addr || prev.activeVenue.formatted_address, rating: prev.activeVenue.stars || prev.activeVenue.rating, photo_url: prev.activeVenue.photo_url });
                       }
                     }
-                  }} className="glass-btn glass-secondary" style={{ width: '100%', padding: '8px', marginTop: '8px', borderRadius: '10px', border: `1px solid ${colors.navy}30`, backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontSize: '11px', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px' }}>
+                  }} className="hit44 glass-btn glass-secondary" style={{ width: '100%', padding: '8px', marginTop: '8px', borderRadius: '10px', border: `1px solid ${colors.navy}30`, backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontSize: '12px', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px' }}>
                     {Icons.arrowLeft(colors.navy, 14)} Back to {venueDetailHistory[venueDetailHistory.length - 1]?.activeVenue?.name || 'Previous Venue'}
                   </button>
                 )}
@@ -7851,26 +8013,26 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '10px' }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '7px' }}>
                         <span className="flock-pulse-dot" style={{ width: '7px', height: '7px', borderRadius: '50%', backgroundColor: '#10b981', display: 'inline-block' }} />
-                        <span style={{ fontSize: '11px', fontWeight: '700', color: 'var(--text-primary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Live Occupancy</span>
+                        <span style={{ fontSize: '12px', fontWeight: '700', color: 'var(--text-primary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Live Occupancy</span>
                       </div>
-                      {ageStr && <span style={{ fontSize: '9px', color: 'var(--text-tertiary)' }}>{ageStr}</span>}
+                      {ageStr && <span style={{ fontSize: '12px', color: 'var(--text-tertiary)' }}>{ageStr}</span>}
                     </div>
 
                     <div style={{ display: 'flex', alignItems: 'baseline', gap: '6px', marginBottom: '6px' }}>
                       <span style={{ fontSize: '26px', fontWeight: '800', color: 'var(--text-primary)', letterSpacing: '-0.5px', lineHeight: 1 }}>~{sd.thermal_headcount}</span>
-                      <span style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>people right now</span>
+                      <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>people right now</span>
                     </div>
 
                     {noiseLabel && (
                       <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '12px' }}>
                         <div style={{ width: '6px', height: '6px', borderRadius: '50%', backgroundColor: noiseLabel.color }} />
                         <span style={{ fontSize: '12px', fontWeight: '700', color: noiseLabel.color }}>{noiseLabel.text}</span>
-                        <span style={{ fontSize: '10px', color: 'var(--text-tertiary)' }}>· {Number(sd.noise_db).toFixed(0)} dB</span>
+                        <span style={{ fontSize: '12px', color: 'var(--text-tertiary)' }}>· {Number(sd.noise_db).toFixed(0)} dB</span>
                       </div>
                     )}
 
                     <div>
-                      <p style={{ fontSize: '9px', fontWeight: '600', color: 'var(--text-tertiary)', margin: '0 0 4px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Last 12 Hours</p>
+                      <p style={{ fontSize: '12px', fontWeight: '600', color: 'var(--text-tertiary)', margin: '0 0 4px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Last 12 Hours</p>
                       <div style={{ display: 'flex', alignItems: 'flex-end', gap: '3px', height: '36px' }}>
                         {slots.map((s, i) => {
                           const val = s.reading?.thermal_headcount;
@@ -7882,13 +8044,13 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                         })}
                       </div>
                       <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '4px' }}>
-                        <span style={{ fontSize: '8px', color: 'var(--text-tertiary)' }}>{slots[0].hour === 0 ? '12 AM' : slots[0].hour < 12 ? `${slots[0].hour} AM` : slots[0].hour === 12 ? '12 PM' : `${slots[0].hour - 12} PM`}</span>
-                        <span style={{ fontSize: '8px', color: 'var(--text-tertiary)' }}>now</span>
+                        <span style={{ fontSize: '12px', color: 'var(--text-tertiary)' }}>{slots[0].hour === 0 ? '12 AM' : slots[0].hour < 12 ? `${slots[0].hour} AM` : slots[0].hour === 12 ? '12 PM' : `${slots[0].hour - 12} PM`}</span>
+                        <span style={{ fontSize: '12px', color: 'var(--text-tertiary)' }}>now</span>
                       </div>
                     </div>
 
                     {sensorData.recent_checkins > 0 && (
-                      <p style={{ fontSize: '10px', color: 'var(--text-secondary)', margin: '10px 0 0' }}>
+                      <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: '10px 0 0' }}>
                         {sensorData.recent_checkins} check-in{sensorData.recent_checkins === 1 ? '' : 's'} in the last hour
                       </p>
                     )}
@@ -7924,7 +8086,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                       setPickingVenueForCreate(false);
                       setCurrentScreen('create');
                     }
-                  }} className="glass-btn glass-primary" style={{ width: '100%', padding: '9px', borderRadius: '10px', border: 'none', backgroundColor: colors.steel, color: 'white', fontWeight: '700', fontSize: '12px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}>{Icons.check('white', 14)} Select Venue</button>
+                  }} className="hit44 glass-btn glass-primary" style={{ width: '100%', padding: '9px', borderRadius: '10px', border: 'none', backgroundColor: colors.steel, color: 'white', fontWeight: '700', fontSize: '12px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}>{Icons.check('white', 14)} Select Venue</button>
                 ) : venueDetailReturnTo ? (
                   <button onClick={() => {
                     setVenueDetailHistory([]);
@@ -7935,16 +8097,16 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                     setCurrentScreen(ret.screen);
                     if (ret.flockId) setSelectedFlockId(ret.flockId);
                     if (ret.dmId) setSelectedDmId(ret.dmId);
-                  }} className="glass-btn glass-navy" style={{ width: '100%', padding: '14px', borderRadius: '12px', border: 'none', background: colors.navyBg, color: 'white', fontWeight: '800', fontSize: '14px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}>{Icons.arrowLeft('white', 16)} Back to Chat</button>
+                  }} className="hit44 glass-btn glass-navy" style={{ width: '100%', padding: '14px', borderRadius: '12px', border: 'none', background: colors.navyBg, color: 'white', fontWeight: '800', fontSize: '14px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}>{Icons.arrowLeft('white', 16)} Back to Chat</button>
                 ) : (
-                  <button className="glass-btn glass-navy" onClick={(e) => { confirmClick(e); setSelectedVenueForCreate({ ...activeVenue, addr: activeVenue.addr || activeVenue.formatted_address, lat: activeVenue.location?.latitude, lng: activeVenue.location?.longitude }); setActiveVenue(null); setCurrentScreen('create'); }} style={{ width: '100%', padding: '10px', borderRadius: '10px', border: 'none', background: colors.navyBg, color: 'white', fontWeight: '700', fontSize: '12px', cursor: 'pointer', textAlign: 'center' }}>Start Flock Here</button>
+                  <button className="hit44 glass-btn glass-navy" onClick={(e) => { confirmClick(e); setSelectedVenueForCreate({ ...activeVenue, addr: activeVenue.addr || activeVenue.formatted_address, lat: activeVenue.location?.latitude, lng: activeVenue.location?.longitude }); setActiveVenue(null); setCurrentScreen('create'); }} style={{ width: '100%', padding: '10px', borderRadius: '10px', border: 'none', background: colors.navyBg, color: 'white', fontWeight: '700', fontSize: '12px', cursor: 'pointer', textAlign: 'center' }}>Start Flock Here</button>
                 )}
                 {activeVenue.place_id && (() => {
                   const checkedIn = checkinDoneAt && (Date.now() - checkinDoneAt < 2 * 60 * 60 * 1000);
                   const label = checkinJustSaved ? 'Checked In ✓' : checkedIn ? 'Checked In ✓' : 'Check In';
                   const disabled = checkedIn || checkinSaving;
                   return (
-                    <button
+                    <button className="hit44"
                       onClick={() => handleCheckIn(activeVenue.place_id)}
                       disabled={disabled}
                       style={{
@@ -7967,9 +8129,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 })()}
                 <div style={{ display: 'flex', gap: '8px' }}>
                   {activeVenue.place_id && (
-                    <button className="glass-btn glass-secondary" onClick={() => { openVenueDetail(activeVenue.place_id, { name: activeVenue.name, formatted_address: activeVenue.addr, place_id: activeVenue.place_id, rating: activeVenue.stars, photo_url: activeVenue.photo_url }); }} style={{ flex: 1, padding: '10px', borderRadius: '10px', border: '1.5px solid var(--border-default)', backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', fontSize: '11px', fontWeight: '600', color: 'var(--text-secondary)' }}>{Icons.eye('var(--text-secondary)', 14)} Details</button>
+                    <button className="hit44 glass-btn glass-secondary" onClick={() => { openVenueDetail(activeVenue.place_id, { name: activeVenue.name, formatted_address: activeVenue.addr, place_id: activeVenue.place_id, rating: activeVenue.stars, photo_url: activeVenue.photo_url }); }} style={{ flex: 1, padding: '10px', borderRadius: '10px', border: '1.5px solid var(--border-default)', backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', fontSize: '12px', fontWeight: '600', color: 'var(--text-secondary)' }}>{Icons.eye('var(--text-secondary)', 14)} Details</button>
                   )}
-                  <button className="glass-btn glass-secondary" onClick={(e) => { confirmClick(e); addEventToCalendar(`Visit ${activeVenue.name}`, activeVenue.name, new Date(), '8 PM', getCategoryColor(activeVenue.category)); }} style={{ flex: 1, padding: '10px', borderRadius: '10px', border: '1.5px solid var(--border-default)', backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', fontSize: '11px', fontWeight: '600', color: 'var(--text-secondary)' }}>{Icons.calendar('var(--text-secondary)', 14)} Add to Calendar</button>
+                  <button className="hit44 glass-btn glass-secondary" onClick={(e) => { confirmClick(e); addEventToCalendar(`Visit ${activeVenue.name}`, activeVenue.name, new Date(), '8 PM', getCategoryColor(activeVenue.category)); }} style={{ flex: 1, padding: '10px', borderRadius: '10px', border: '1.5px solid var(--border-default)', backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', fontSize: '12px', fontWeight: '600', color: 'var(--text-secondary)' }}>{Icons.calendar('var(--text-secondary)', 14)} Add to Calendar</button>
                 </div>
               </motion.div>
             </div>
@@ -7984,11 +8146,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           {/* Events header */}
           <div style={{ backgroundColor: 'var(--bg-card-solid)', borderBottom: '1px solid var(--border-default)', flexShrink: 0 }}>
             <div style={{ padding: '12px 12px 8px', display: 'flex', alignItems: 'center', gap: '10px' }}>
-              <button onClick={() => { setShowEventsView(false); setEventsSearchQuery(''); }} style={{ width: '38px', height: '38px', borderRadius: '12px', border: 'none', backgroundColor: 'var(--bg-tertiary)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, transition: 'opacity 0.2s' }}>
+              <button className="hit44" onClick={() => { setShowEventsView(false); setEventsSearchQuery(''); }} style={{ width: '38px', height: '38px', borderRadius: '12px', border: 'none', backgroundColor: 'var(--bg-tertiary)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, transition: 'opacity 0.2s' }}>
                 {Icons.arrowLeft(colors.navy, 18)}
               </button>
               <div style={{ flex: 1, position: 'relative' }}>
-                <input
+                <input aria-label="Search events"
                   type="text"
                   placeholder="Search concerts, games, shows..."
                   value={eventsSearchQuery}
@@ -8016,7 +8178,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 />
                 <span style={{ position: 'absolute', left: '11px', top: '50%', transform: 'translateY(-50%)' }}>{Icons.search(eventsSearchQuery ? '#F59E0B' : colors.textTertiary, 15)}</span>
                 {eventsSearchQuery && (
-                  <button onClick={() => {
+                  <button className="hit44" onClick={() => {
                     setEventsSearchQuery('');
                     if (userLocation) {
                       setFeaturedEventsLoading(true);
@@ -8035,7 +8197,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 {Icons.zap('#F59E0B', 16)}
                 <span style={{ fontSize: '14px', fontWeight: '800', color: colors.navy }}>Live Events</span>
               </div>
-              <span style={{ fontSize: '11px', fontWeight: '600', color: 'var(--text-tertiary)' }}>{eventsSearchQuery ? 'Search results' : 'This week nearby'}</span>
+              <span style={{ fontSize: '12px', fontWeight: '600', color: 'var(--text-tertiary)' }}>{eventsSearchQuery ? 'Search results' : 'This week nearby'}</span>
             </div>
           </div>
 
@@ -8079,11 +8241,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                       <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(transparent 50%, rgba(0,0,0,0.7) 100%)' }} />
                       {/* Category badge */}
                       <div style={{ position: 'absolute', top: '10px', left: '10px', padding: '4px 10px', borderRadius: '10px', backgroundColor: catColor, display: 'flex', alignItems: 'center', gap: '4px' }}>
-                        <span style={{ fontSize: '10px', fontWeight: '800', color: 'white', textTransform: 'uppercase', letterSpacing: '0.5px' }}>{event.category}</span>
+                        <span style={{ fontSize: '12px', fontWeight: '800', color: 'white', textTransform: 'uppercase', letterSpacing: '0.5px' }}>{event.category}</span>
                       </div>
                       {/* Date badge */}
                       <div style={{ position: 'absolute', top: '10px', right: '10px', padding: '4px 10px', borderRadius: '10px', backgroundColor: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(8px)' }}>
-                        <span style={{ fontSize: '10px', fontWeight: '700', color: 'white' }}>{dateStr}</span>
+                        <span style={{ fontSize: '12px', fontWeight: '700', color: 'white' }}>{dateStr}</span>
                       </div>
                     </div>
                   )}
@@ -8097,30 +8259,30 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                         </span>
                       )}
                       {dist != null && (
-                        <span style={{ fontSize: '10px', fontWeight: '700', color: colors.steel }}>{dist < 1 ? `${Math.round(dist*1000)}m` : `${dist.toFixed(1)}km`}</span>
+                        <span style={{ fontSize: '12px', fontWeight: '700', color: colors.steel }}>{dist < 1 ? `${Math.round(dist*1000)}m` : `${dist.toFixed(1)}km`}</span>
                       )}
                     </div>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
                       {timeStr && (
-                        <span style={{ fontSize: '11px', fontWeight: '600', color: colors.navy, display: 'flex', alignItems: 'center', gap: '3px' }}>
+                        <span style={{ fontSize: '12px', fontWeight: '600', color: colors.navy, display: 'flex', alignItems: 'center', gap: '3px' }}>
                           {Icons.clock(colors.navy, 11)} {timeStr}
                         </span>
                       )}
                       {!event.image_url && dateStr && (
-                        <span style={{ fontSize: '11px', fontWeight: '600', color: 'var(--text-secondary)' }}>{dateStr}</span>
+                        <span style={{ fontSize: '12px', fontWeight: '600', color: 'var(--text-secondary)' }}>{dateStr}</span>
                       )}
                       {event.genre && event.genre !== event.category && (
-                        <span style={{ fontSize: '10px', fontWeight: '600', color: catColor, backgroundColor: `${catColor}15`, padding: '2px 8px', borderRadius: '8px' }}>{event.genre}</span>
+                        <span style={{ fontSize: '12px', fontWeight: '600', color: catColor, backgroundColor: `${catColor}15`, padding: '2px 8px', borderRadius: '8px' }}>{event.genre}</span>
                       )}
                       {event.price_range && (
-                        <span style={{ fontSize: '10px', fontWeight: '700', color: 'var(--text-secondary)' }}>
+                        <span style={{ fontSize: '12px', fontWeight: '700', color: 'var(--text-secondary)' }}>
                           ${event.price_range.min}{event.price_range.max ? `\u2013$${event.price_range.max}` : '+'}
                         </span>
                       )}
                     </div>
                     {/* Action buttons */}
                     <div style={{ display: 'flex', gap: '8px', marginTop: '10px' }}>
-                      <button className="glass-btn glass-navy" onClick={(e) => {
+                      <button className="hit44 glass-btn glass-navy" onClick={(e) => {
                         e.stopPropagation();
                         setSelectedVenueForCreate({ name: event.venue_name || event.name, addr: event.venue_address, lat: event.location?.latitude, lng: event.location?.longitude, photo_url: event.image_url, event_name: event.name });
                         setShowEventsView(false);
@@ -8128,7 +8290,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                       }} style={{ flex: 1, padding: '9px', borderRadius: '10px', border: 'none', background: colors.navyBg, color: 'white', fontWeight: '700', fontSize: '12px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '5px' }}>
                         {Icons.users('white', 13)} Start Flock
                       </button>
-                      <button className="glass-btn glass-secondary" onClick={(e) => {
+                      <button className="hit44 glass-btn glass-secondary" onClick={(e) => {
                         e.stopPropagation();
                         setEventDetailLoading(true);
                         setEventDetail({ ...event, photos: [], venue_details: null });
@@ -8155,7 +8317,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           {categoryExpanded && (
             <div style={{ display: 'flex', gap: '6px', alignItems: 'center', overflowX: 'auto', scrollbarWidth: 'none', msOverflowStyle: 'none', WebkitOverflowScrolling: 'touch', flex: 1, minWidth: 0 }}>
               {['All', 'Food', 'Nightlife', 'Live Music', 'Sports'].map(c => (
-                <button key={c} className="glass-btn glass-secondary" onClick={() => {
+                <button key={c} className="hit44 glass-btn glass-secondary" onClick={() => {
                   setActiveVenue(null); setCategoryExpanded(false);
                   if (c === 'All') { setCategory('All'); setVenueQuery(''); requestUserLocation(true); return; }
                   setCategory(c);
@@ -8163,7 +8325,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                   padding: '6px 12px', borderRadius: '14px', border: 'none',
                   backgroundColor: category === c ? colors.navyBg : 'var(--bg-hover)',
                   color: category === c ? colors.cream : 'var(--text-primary)',
-                  fontWeight: '600', fontSize: '11px', cursor: 'pointer', whiteSpace: 'nowrap',
+                  fontWeight: '600', fontSize: '12px', cursor: 'pointer', whiteSpace: 'nowrap',
                   flexShrink: 0, animation: 'fadeSlideIn 0.2s ease-out both',
                 }}>
                   {c}
@@ -8171,7 +8333,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
               ))}
             </div>
           )}
-          <button onClick={() => setCategoryExpanded(!categoryExpanded)} style={{
+          <button className="hit44" onClick={() => setCategoryExpanded(!categoryExpanded)} style={{
             height: '36px', minWidth: categoryExpanded ? '36px' : 'auto', width: categoryExpanded ? '36px' : '100%',
             borderRadius: '14px', border: '1px solid var(--border-default)', background: 'var(--bg-card-solid)',
             cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px',
@@ -8232,16 +8394,16 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
         {/* Header */}
         <div style={{ padding: '12px', background: colors.navyBg, flexShrink: 0 }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '10px' }}>
-            <button onClick={() => setCalendarMonth(new Date(calendarMonth.getFullYear(), calendarMonth.getMonth() - 1, 1))} style={{ width: '32px', height: '32px', borderRadius: '16px', border: 'none', backgroundColor: 'rgba(255,255,255,0.2)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.arrowLeft('white', 16)}</button>
+            <button className="hit44" onClick={() => setCalendarMonth(new Date(calendarMonth.getFullYear(), calendarMonth.getMonth() - 1, 1))} style={{ width: '32px', height: '32px', borderRadius: '16px', border: 'none', backgroundColor: 'rgba(255,255,255,0.2)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.arrowLeft('white', 16)}</button>
             <div style={{ textAlign: 'center' }}>
               <h1 style={{ fontSize: '18px', fontWeight: '900', color: 'white', margin: 0 }}>{monthNames[calendarMonth.getMonth()]}</h1>
-              <p style={{ fontSize: '10px', color: 'rgba(255,255,255,0.6)', margin: 0 }}>{calendarMonth.getFullYear()}</p>
+              <p style={{ fontSize: '12px', color: 'rgba(255,255,255,0.6)', margin: 0 }}>{calendarMonth.getFullYear()}</p>
             </div>
-            <button onClick={() => setCalendarMonth(new Date(calendarMonth.getFullYear(), calendarMonth.getMonth() + 1, 1))} style={{ width: '32px', height: '32px', borderRadius: '16px', border: 'none', backgroundColor: 'rgba(255,255,255,0.2)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.arrowRight('white', 16)}</button>
+            <button className="hit44" onClick={() => setCalendarMonth(new Date(calendarMonth.getFullYear(), calendarMonth.getMonth() + 1, 1))} style={{ width: '32px', height: '32px', borderRadius: '16px', border: 'none', backgroundColor: 'rgba(255,255,255,0.2)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.arrowRight('white', 16)}</button>
           </div>
           {/* Today Quick Jump */}
           <div style={{ display: 'flex', gap: '8px' }}>
-            <button className="glass-btn glass-secondary" onClick={() => { setCalendarMonth(today); setSelectedDate(today); }} style={{ flex: 1, padding: '8px', borderRadius: '10px', border: 'none', backgroundColor: 'rgba(255,255,255,0.15)', color: 'white', fontSize: '11px', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px' }}>
+            <button className="hit44 glass-btn glass-secondary" onClick={() => { setCalendarMonth(today); setSelectedDate(today); }} style={{ flex: 1, padding: '8px', borderRadius: '10px', border: 'none', backgroundColor: 'rgba(255,255,255,0.15)', color: 'white', fontSize: '12px', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px' }}>
               {Icons.zap('#F59E0B', 12)}
               Jump to Today
             </button>
@@ -8250,7 +8412,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
 
         {/* Day names header */}
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: '2px', padding: '8px', backgroundColor: 'var(--bg-card-solid)' }}>
-          {dayNames.map((d, i) => <div key={i} style={{ textAlign: 'center', fontSize: '10px', fontWeight: 'bold', color: 'var(--text-tertiary)' }}>{d}</div>)}
+          {dayNames.map((d, i) => <div key={i} style={{ textAlign: 'center', fontSize: '12px', fontWeight: 'bold', color: 'var(--text-tertiary)' }}>{d}</div>)}
         </div>
 
         {/* Calendar grid */}
@@ -8264,7 +8426,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
             const isTodayDate = isToday(dateStr);
             const isBusy = events.length >= 2;
             return (
-              <button key={day} onClick={() => setSelectedDate(new Date(calendarMonth.getFullYear(), calendarMonth.getMonth(), day))} style={{ height: '40px', borderRadius: '10px', border: isTodayDate && !isSelected ? `2px solid ${colors.steel}` : 'none', backgroundColor: isSelected ? colors.navyBg : isBusy ? 'var(--icon-bg)' : 'transparent', color: isSelected ? 'white' : isTodayDate ? colors.steel : 'inherit', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', position: 'relative' }}>
+              <button className="hit44" key={day} onClick={() => setSelectedDate(new Date(calendarMonth.getFullYear(), calendarMonth.getMonth(), day))} style={{ height: '40px', borderRadius: '10px', border: isTodayDate && !isSelected ? `2px solid ${colors.steel}` : 'none', backgroundColor: isSelected ? colors.navyBg : isBusy ? 'var(--icon-bg)' : 'transparent', color: isSelected ? 'white' : isTodayDate ? colors.steel : 'inherit', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', position: 'relative' }}>
                 <span style={{ fontSize: '12px', fontWeight: isTodayDate || isSelected ? '700' : '500' }}>{day}</span>
                 {events.length > 0 && (
                   <div style={{ display: 'flex', gap: '2px', marginTop: '2px' }}>
@@ -8303,31 +8465,31 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                   </div>
                   <div style={{ textAlign: 'right' }}>
                     <p style={{ fontSize: '13px', fontWeight: '700', color: colors.navy, margin: 0 }}>{selectedDate.toLocaleDateString('en-US', { weekday: 'long' })}</p>
-                    <p style={{ fontSize: '10px', color: 'var(--text-secondary)', margin: '2px 0 0' }}>{selectedDate.toLocaleDateString('en-US', { month: 'long', day: 'numeric' })}</p>
+                    <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: '2px 0 0' }}>{selectedDate.toLocaleDateString('en-US', { month: 'long', day: 'numeric' })}</p>
                     <div style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', marginTop: '4px', padding: '2px 8px', borderRadius: '10px', backgroundColor: isLive ? 'rgba(16,185,129,0.15)' : 'rgba(59,130,246,0.15)' }}>
                       <div style={{ width: '5px', height: '5px', borderRadius: '50%', backgroundColor: isLive ? '#10b981' : '#3b82f6', animation: isLive ? 'pulse 2s ease-in-out infinite' : 'none' }} />
-                      <span style={{ fontSize: '9px', fontWeight: '700', color: isLive ? '#10b981' : '#3b82f6' }}>{isLive ? 'LIVE' : 'FORECAST'}</span>
+                      <span style={{ fontSize: '12px', fontWeight: '700', color: isLive ? '#10b981' : '#3b82f6' }}>{isLive ? 'LIVE' : 'FORECAST'}</span>
                     </div>
                   </div>
                 </div>
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '1px', backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)' }}>
                   <div style={{ padding: '10px', textAlign: 'center', backgroundColor: isDark ? 'rgba(30,58,92,0.5)' : 'rgba(219,234,254,0.5)' }}>
-                    <p style={{ fontSize: '9px', color: 'var(--text-tertiary)', margin: 0, fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Feels Like</p>
+                    <p style={{ fontSize: '12px', color: 'var(--text-tertiary)', margin: 0, fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Feels Like</p>
                     <p style={{ fontSize: '16px', fontWeight: '800', color: colors.navy, margin: '2px 0 0' }}>{Math.round(w.feelsLike)}°</p>
                   </div>
                   <div style={{ padding: '10px', textAlign: 'center', backgroundColor: isDark ? 'rgba(30,58,92,0.5)' : 'rgba(219,234,254,0.5)' }}>
-                    <p style={{ fontSize: '9px', color: 'var(--text-tertiary)', margin: 0, fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Humidity</p>
+                    <p style={{ fontSize: '12px', color: 'var(--text-tertiary)', margin: 0, fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Humidity</p>
                     <p style={{ fontSize: '16px', fontWeight: '800', color: colors.navy, margin: '2px 0 0' }}>{w.humidity}%</p>
                   </div>
                   <div style={{ padding: '10px', textAlign: 'center', backgroundColor: isDark ? 'rgba(30,58,92,0.5)' : 'rgba(219,234,254,0.5)' }}>
-                    <p style={{ fontSize: '9px', color: 'var(--text-tertiary)', margin: 0, fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Wind</p>
-                    <p style={{ fontSize: '16px', fontWeight: '800', color: colors.navy, margin: '2px 0 0' }}>{Math.round(w.windSpeed)}<span style={{ fontSize: '10px', fontWeight: '600' }}> mph</span></p>
+                    <p style={{ fontSize: '12px', color: 'var(--text-tertiary)', margin: 0, fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Wind</p>
+                    <p style={{ fontSize: '16px', fontWeight: '800', color: colors.navy, margin: '2px 0 0' }}>{Math.round(w.windSpeed)}<span style={{ fontSize: '12px', fontWeight: '600' }}> mph</span></p>
                   </div>
                 </div>
                 {(isRainy || isSnowy || w.windSpeed > 20) && (
                   <div style={{ padding: '8px 16px', display: 'flex', alignItems: 'center', gap: '6px', backgroundColor: isDark ? 'rgba(251,191,36,0.1)' : 'rgba(251,191,36,0.12)' }}>
                     {Icons.zap('#f59e0b', 12)}
-                    <span style={{ fontSize: '11px', color: '#b45309', fontWeight: '600' }}>
+                    <span style={{ fontSize: '12px', color: '#b45309', fontWeight: '600' }}>
                       {isRainy ? 'Rain expected. Indoor spots are the move' : isSnowy ? 'Snow expected. Plan around it' : 'High winds. Outdoor plans may suffer'}
                     </span>
                   </div>
@@ -8344,11 +8506,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
 
           {/* Selected date events header */}
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
-            <h3 style={{ fontSize: '14px', fontWeight: '900', color: colors.navy, margin: 0, display: 'flex', alignItems: 'center', gap: '6px' }}>
+            <h2 style={{ fontSize: '14px', fontWeight: '900', color: colors.navy, margin: 0, display: 'flex', alignItems: 'center', gap: '6px' }}>
               {Icons.calendar(colors.navy, 14)}
               {isToday(selectedDateStr) ? 'Today' : selectedDate.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}
-            </h3>
-            <button className="glass-btn glass-navy" onClick={() => setShowAddEvent(true)} style={{ padding: '6px 12px', borderRadius: '20px', border: 'none', background: colors.navyMidBg, color: 'white', fontSize: '10px', fontWeight: 'bold', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }}>
+            </h2>
+            <button className="hit44 glass-btn glass-navy" onClick={() => setShowAddEvent(true)} style={{ padding: '6px 12px', borderRadius: '20px', border: 'none', background: colors.navyMidBg, color: 'white', fontSize: '12px', fontWeight: 'bold', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }}>
               {Icons.plus('white', 12)} Add
             </button>
           </div>
@@ -8362,12 +8524,12 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
               <div style={{ flex: 1 }}>
                 <p style={{ fontWeight: 'bold', fontSize: '14px', color: colors.navy, margin: 0 }}>{event.title}</p>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '2px' }}>
-                  <span style={{ fontSize: '10px', color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', gap: '3px' }}>{Icons.clock(colors.textSecondary, 10)} {event.time}</span>
-                  <span style={{ fontSize: '10px', color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', gap: '3px' }}>{Icons.mapPin(colors.textSecondary, 10)} {event.venue}</span>
+                  <span style={{ fontSize: '12px', color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', gap: '3px' }}>{Icons.clock(colors.textSecondary, 10)} {event.time}</span>
+                  <span style={{ fontSize: '12px', color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', gap: '3px' }}>{Icons.mapPin(colors.textSecondary, 10)} {event.venue}</span>
                 </div>
-                {event.members > 1 && <div style={{ display: 'flex', alignItems: 'center', gap: '3px', marginTop: '4px' }}>{Icons.users(colors.textSecondary, 10)}<span style={{ fontSize: '9px', color: 'var(--text-secondary)' }}>{event.members} going</span></div>}
+                {event.members > 1 && <div style={{ display: 'flex', alignItems: 'center', gap: '3px', marginTop: '4px' }}>{Icons.users(colors.textSecondary, 10)}<span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>{event.members} going</span></div>}
               </div>
-              <button onClick={() => { setCalendarEvents(calendarEvents.filter(e => e.id !== event.id)); if (typeof event.id === 'number') deleteCalendarEvent(event.id).catch(() => {}); }} style={{ width: '28px', height: '28px', borderRadius: '14px', backgroundColor: 'var(--accent-red-bg)', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.x(colors.red, 14)}</button>
+              <button className="hit44" onClick={() => { setCalendarEvents(calendarEvents.filter(e => e.id !== event.id)); if (typeof event.id === 'number') deleteCalendarEvent(event.id).catch(() => {}); }} style={{ width: '28px', height: '28px', borderRadius: '14px', backgroundColor: 'var(--accent-red-bg)', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.x(colors.red, 14)}</button>
             </div>
           )) : (
             <div style={{ textAlign: 'center', padding: '24px' }}>
@@ -8380,24 +8542,24 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           {showAddEvent && (
             <div style={{ ...styles.card, marginTop: '12px', border: `2px solid ${colors.navy}` }}>
               <h4 style={{ fontSize: '13px', fontWeight: 'bold', color: colors.navy, margin: '0 0 10px', display: 'flex', alignItems: 'center', gap: '6px' }}>{Icons.plus(colors.navy, 14)} New Event</h4>
-              <SearchInputLocal key="event-title" id="event-title" type="text" initialValue={newEventTitle} onCommit={setNewEventTitle} placeholder="Event title" style={{ ...styles.input, marginBottom: '8px' }} autoComplete="off" />
-              <SearchInputLocal key="event-venue" id="event-venue" type="text" initialValue={newEventVenue} onCommit={setNewEventVenue} placeholder="Venue (optional)" style={{ ...styles.input, marginBottom: '10px' }} autoComplete="off" />
+              <SearchInputLocal aria-label="Event title" key="event-title" id="event-title" type="text" initialValue={newEventTitle} onCommit={setNewEventTitle} placeholder="Event title" style={{ ...styles.input, marginBottom: '8px' }} autoComplete="off" />
+              <SearchInputLocal aria-label="Venue (optional)" key="event-venue" id="event-venue" type="text" initialValue={newEventVenue} onCommit={setNewEventVenue} placeholder="Venue (optional)" style={{ ...styles.input, marginBottom: '10px' }} autoComplete="off" />
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '10px' }}>
-                <span style={{ fontSize: '10px', fontWeight: '600', color: 'var(--text-secondary)', flexShrink: 0 }}>Time</span>
+                <span style={{ fontSize: '12px', fontWeight: '600', color: 'var(--text-secondary)', flexShrink: 0 }}>Time</span>
                 <input type="time" value={newEventTime} onChange={(e) => setNewEventTime(e.target.value)} style={{ flex: 1, padding: '9px 12px', borderRadius: '10px', border: '1px solid var(--border-default)', fontSize: '14px', outline: 'none', backgroundColor: 'var(--bg-tertiary)', color: 'var(--text-primary)' }} />
               </div>
               {/* Event categories */}
-              <p style={{ fontSize: '10px', fontWeight: '600', color: 'var(--text-secondary)', marginBottom: '6px' }}>Category</p>
+              <p style={{ fontSize: '12px', fontWeight: '600', color: 'var(--text-secondary)', marginBottom: '6px' }}>Category</p>
               <div style={{ display: 'flex', gap: '6px', marginBottom: '10px', flexWrap: 'wrap' }}>
                 {eventCategories.map(cat => (
-                  <button key={cat.id} onClick={() => setNewEventCategory(cat.id)} style={{ padding: '6px 10px', borderRadius: '10px', border: newEventCategory === cat.id ? `2px solid ${cat.color}` : '1px solid var(--border-default)', backgroundColor: newEventCategory === cat.id ? `${cat.color}18` : 'var(--bg-card-solid)', cursor: 'pointer', fontSize: '10px', color: cat.color, fontWeight: '600', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                  <button className="hit44" key={cat.id} onClick={() => setNewEventCategory(cat.id)} style={{ padding: '6px 10px', borderRadius: '10px', border: newEventCategory === cat.id ? `2px solid ${cat.color}` : '1px solid var(--border-default)', backgroundColor: newEventCategory === cat.id ? `${cat.color}18` : 'var(--bg-card-solid)', cursor: 'pointer', fontSize: '12px', color: cat.color, fontWeight: '600', display: 'flex', alignItems: 'center', gap: '4px' }}>
                     {cat.icon(cat.color, 12)} {cat.label}
                   </button>
                 ))}
               </div>
               <div style={{ display: 'flex', gap: '8px' }}>
-                <button className="glass-btn glass-secondary" onClick={() => { setShowAddEvent(false); setNewEventTitle(''); setNewEventVenue(''); setNewEventTime(''); }} style={{ flex: 1, padding: '10px', borderRadius: '10px', border: '1px solid var(--border-mid)', backgroundColor: 'var(--bg-card-solid)', fontWeight: '600', fontSize: '13px', cursor: 'pointer' }}>Cancel</button>
-                <button className="glass-btn glass-navy" onClick={(e) => { if (newEventTitle.trim()) { confirmClick(e); const timeLabel = newEventTime ? new Date('1970-01-01T' + newEventTime + ':00').toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }) : 'TBD'; addEventToCalendar(newEventTitle, newEventVenue || 'TBD', selectedDate, timeLabel, (eventCategories.find(cat => cat.id === newEventCategory) || { color: colors.navy }).color); setNewEventTitle(''); setNewEventVenue(''); setNewEventTime(''); setShowAddEvent(false); }}} style={{ flex: 1, padding: '10px', borderRadius: '10px', border: 'none', background: colors.navyMidBg, color: 'white', fontWeight: 'bold', fontSize: '13px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px', position: 'relative', overflow: 'hidden' }}>{Icons.check('white', 14)} Add</button>
+                <button className="hit44 glass-btn glass-secondary" onClick={() => { setShowAddEvent(false); setNewEventTitle(''); setNewEventVenue(''); setNewEventTime(''); }} style={{ flex: 1, padding: '10px', borderRadius: '10px', border: '1px solid var(--border-mid)', backgroundColor: 'var(--bg-card-solid)', fontWeight: '600', fontSize: '13px', cursor: 'pointer' }}>Cancel</button>
+                <button className="hit44 glass-btn glass-navy" onClick={(e) => { if (newEventTitle.trim()) { confirmClick(e); const timeLabel = newEventTime ? new Date('1970-01-01T' + newEventTime + ':00').toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }) : 'TBD'; addEventToCalendar(newEventTitle, newEventVenue || 'TBD', selectedDate, timeLabel, (eventCategories.find(cat => cat.id === newEventCategory) || { color: colors.navy }).color); setNewEventTitle(''); setNewEventVenue(''); setNewEventTime(''); setShowAddEvent(false); }}} style={{ flex: 1, padding: '10px', borderRadius: '10px', border: 'none', background: colors.navyMidBg, color: 'white', fontWeight: 'bold', fontSize: '13px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px', position: 'relative', overflow: 'hidden' }}>{Icons.check('white', 14)} Add</button>
               </div>
             </div>
           )}
@@ -8411,7 +8573,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                   <div style={{ width: '4px', height: '32px', borderRadius: '2px', backgroundColor: event.color }} />
                   <div style={{ flex: 1 }}>
                     <p style={{ fontSize: '12px', fontWeight: '600', color: colors.navy, margin: 0 }}>{event.title}</p>
-                    <p style={{ fontSize: '10px', color: 'var(--text-secondary)', margin: 0 }}>{event.dayLabel} at {event.time}</p>
+                    <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: 0 }}>{event.dayLabel} at {event.time}</p>
                   </div>
                 </div>
               ))}
@@ -8480,16 +8642,16 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <div>
               <h1 style={{ fontFamily: 'var(--font-display)', fontSize: '24px', fontWeight: '600', color: 'white', margin: 0, letterSpacing: '-0.005em' }}>Messages</h1>
-              <p style={{ fontSize: '11px', color: 'rgba(255,255,255,0.5)', margin: '2px 0 0', fontWeight: '500' }}>{totalConversations} conversation{totalConversations !== 1 ? 's' : ''}</p>
+              <p style={{ fontSize: '12px', color: 'rgba(255,255,255,0.5)', margin: '2px 0 0', fontWeight: '500' }}>{totalConversations} conversation{totalConversations !== 1 ? 's' : ''}</p>
             </div>
             <div style={{ display: 'flex', gap: '6px' }}>
-              <button onClick={() => setEditingFlockList(!editingFlockList)} style={{ width: '36px', height: '36px', borderRadius: '12px', border: editingFlockList ? '2px solid white' : 'none', backgroundColor: editingFlockList ? 'rgba(255,255,255,0.25)' : 'rgba(255,255,255,0.12)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'opacity 0.2s' }}>
+              <button className="hit44" onClick={() => setEditingFlockList(!editingFlockList)} style={{ width: '36px', height: '36px', borderRadius: '12px', border: editingFlockList ? '2px solid white' : 'none', backgroundColor: editingFlockList ? 'rgba(255,255,255,0.25)' : 'rgba(255,255,255,0.12)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'opacity 0.2s' }}>
                 {Icons.gripVertical('white', 16)}
               </button>
-              <button onClick={() => setShowNewDmModal(true)} style={{ width: '36px', height: '36px', borderRadius: '12px', border: 'none', backgroundColor: 'var(--icon-bg)', color: colors.navy, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'opacity 0.2s', boxShadow: '0 2px 8px rgba(0,0,0,0.15)' }}>
+              <button className="hit44" onClick={() => setShowNewDmModal(true)} style={{ width: '36px', height: '36px', borderRadius: '12px', border: 'none', backgroundColor: 'var(--icon-bg)', color: colors.navy, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'opacity 0.2s', boxShadow: '0 2px 8px rgba(0,0,0,0.15)' }}>
                 {Icons.plus(colors.navy, 16)}
               </button>
-              <button onClick={() => { setShowChatSearch(!showChatSearch); if (!showChatSearch) setTimeout(() => chatListSearchRef.current?.focus(), 50); }} style={{ width: '36px', height: '36px', borderRadius: '12px', border: 'none', backgroundColor: showChatSearch ? 'rgba(255,255,255,0.25)' : 'rgba(255,255,255,0.12)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'opacity 0.2s' }}>
+              <button className="hit44" onClick={() => { setShowChatSearch(!showChatSearch); if (!showChatSearch) setTimeout(() => chatListSearchRef.current?.focus(), 50); }} style={{ width: '36px', height: '36px', borderRadius: '12px', border: 'none', backgroundColor: showChatSearch ? 'rgba(255,255,255,0.25)' : 'rgba(255,255,255,0.12)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'opacity 0.2s' }}>
                 {Icons.search('white', 16)}
               </button>
             </div>
@@ -8498,7 +8660,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           {/* Search bar */}
           {showChatSearch && (
             <div style={{ marginTop: '12px', position: 'relative' }}>
-              <SearchInputLocal inputRef={chatListSearchRef} type="text" initialValue={chatSearch} onCommit={setChatSearch} placeholder="Search conversations..." style={{ width: '100%', padding: '10px 14px 10px 36px', borderRadius: '12px', border: 'none', fontSize: '13px', fontWeight: '500', outline: 'none', backgroundColor: 'var(--bg-input)', color: 'var(--text-primary)', boxSizing: 'border-box' }} autoComplete="off" />
+              <SearchInputLocal aria-label="Search conversations" inputRef={chatListSearchRef} type="text" initialValue={chatSearch} onCommit={setChatSearch} placeholder="Search conversations..." style={{ width: '100%', padding: '10px 14px 10px 36px', borderRadius: '12px', border: 'none', fontSize: '13px', fontWeight: '500', outline: 'none', backgroundColor: 'var(--bg-input)', color: 'var(--text-primary)', boxSizing: 'border-box' }} autoComplete="off" />
               <span style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)' }}>{Icons.search(colors.textTertiary, 14)}</span>
             </div>
           )}
@@ -8506,8 +8668,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           {/* Edit mode banner */}
           {editingFlockList && (
             <div style={{ marginTop: '10px', padding: '8px 12px', backgroundColor: 'rgba(255,255,255,0.15)', borderRadius: '10px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <span style={{ fontSize: '11px', color: 'rgba(255,255,255,0.9)', fontWeight: '600', flex: 1 }}>Tap arrows to reorder, pin to keep on top</span>
-              <button onClick={() => setEditingFlockList(false)} style={{ background: 'none', border: 'none', color: colors.cream, cursor: 'pointer', fontSize: '12px', fontWeight: '700', padding: '2px 8px' }}>Done</button>
+              <span style={{ fontSize: '12px', color: 'rgba(255,255,255,0.9)', fontWeight: '600', flex: 1 }}>Tap arrows to reorder, pin to keep on top</span>
+              <button className="hit44" onClick={() => setEditingFlockList(false)} style={{ background: 'none', border: 'none', color: colors.cream, cursor: 'pointer', fontSize: '12px', fontWeight: '700', padding: '2px 8px' }}>Done</button>
             </div>
           )}
         </div>
@@ -8517,13 +8679,13 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           {filteredDms.length > 0 && (
             <>
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '12px 4px 8px' }}>
-                <span style={{ fontSize: '11px', fontWeight: '700', color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Direct Messages</span>
+                <span style={{ fontSize: '12px', fontWeight: '700', color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Direct Messages</span>
                 <div style={{ flex: 1, height: '1px', backgroundColor: 'var(--pill-bg)' }} />
               </div>
               {filteredDms.map((dm) => {
                 const lastMsg = dm.messages?.length > 0 ? dm.messages[dm.messages.length - 1] : (dm.lastMessage ? { text: dm.lastMessage, sender: dm.lastMessageIsYou ? 'You' : dm.name } : null);
                 return (
-                  <button key={`dm-${dm.userId}`} onClick={() => { setSelectedDmId(dm.userId); setCurrentScreen('dmDetail'); setDirectMessages(prev => prev.map(d => d.userId === dm.userId ? { ...d, unread: 0 } : d)); }} style={{ width: '100%', textAlign: 'left', backgroundColor: 'var(--bg-card-solid)', borderRadius: '16px', padding: '12px 14px', marginBottom: '6px', border: dm.unread ? `1.5px solid ${colors.navy}15` : `1px solid var(--border-default)`, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '12px', transition: 'opacity 0.2s', boxShadow: dm.unread ? '0 2px 12px rgba(13,40,71,0.08)' : '0 1px 4px rgba(0,0,0,0.03)' }}>
+                  <button className="hit44" key={`dm-${dm.userId}`} onClick={() => { setSelectedDmId(dm.userId); setCurrentScreen('dmDetail'); setDirectMessages(prev => prev.map(d => d.userId === dm.userId ? { ...d, unread: 0 } : d)); }} style={{ width: '100%', textAlign: 'left', backgroundColor: 'var(--bg-card-solid)', borderRadius: '16px', padding: '12px 14px', marginBottom: '6px', border: dm.unread ? `1.5px solid ${colors.navy}15` : `1px solid var(--border-default)`, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '12px', transition: 'opacity 0.2s', boxShadow: dm.unread ? '0 2px 12px rgba(13,40,71,0.08)' : '0 1px 4px rgba(0,0,0,0.03)' }}>
                     <div style={{ position: 'relative', flexShrink: 0 }}>
                       <div style={{ width: '46px', height: '46px', borderRadius: '23px', background: colors.navyBg, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '18px', fontWeight: '700', color: 'white', overflow: 'hidden' }}>
                         {dm.image ? <img src={dm.image} alt="" style={{ width: '46px', height: '46px', borderRadius: '23px', objectFit: 'cover' }} /> : (dm.name?.[0]?.toUpperCase() || '?')}
@@ -8531,8 +8693,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                     </div>
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '3px' }}>
-                        <h3 style={{ fontSize: '14px', fontWeight: dm.unread ? '800' : '600', color: colors.navy, margin: 0 }}>{dm.name}</h3>
-                        {dm.lastMessageTime && <span style={{ fontSize: '10px', color: 'var(--text-tertiary)', fontWeight: '500' }}>{new Date(dm.lastMessageTime).toLocaleDateString([], { month: 'short', day: 'numeric' })}</span>}
+                        <h2 style={{ fontSize: '14px', fontWeight: dm.unread ? '800' : '600', color: colors.navy, margin: 0 }}>{dm.name}</h2>
+                        {dm.lastMessageTime && <span style={{ fontSize: '12px', color: 'var(--text-tertiary)', fontWeight: '500' }}>{new Date(dm.lastMessageTime).toLocaleDateString([], { month: 'short', day: 'numeric' })}</span>}
                       </div>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
                         {lastMsg?.sender === 'You' && <span style={{ flexShrink: 0 }}>{Icons.checkDouble('#22C55E', 11)}</span>}
@@ -8540,7 +8702,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                       </div>
                     </div>
                     {dm.unread > 0 && (
-                      <div style={{ width: '20px', height: '20px', borderRadius: '10px', background: 'linear-gradient(135deg, #EF4444, #DC2626)', color: 'white', fontSize: '10px', fontWeight: '700', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                      <div style={{ width: '20px', height: '20px', borderRadius: '10px', background: 'linear-gradient(135deg, #EF4444, #DC2626)', color: 'white', fontSize: '12px', fontWeight: '700', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
                         {dm.unread}
                       </div>
                     )}
@@ -8554,9 +8716,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           {pendingFlockInvites.length > 0 && (
             <>
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '12px 4px 8px' }}>
-                <span style={{ fontSize: '11px', fontWeight: '700', color: '#F59E0B', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Pending Invites</span>
+                <span style={{ fontSize: '12px', fontWeight: '700', color: '#F59E0B', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Pending Invites</span>
                 <div style={{ flex: 1, height: '1px', backgroundColor: 'var(--pill-bg)' }} />
-                <span style={{ width: '18px', height: '18px', borderRadius: '9px', background: '#F59E0B', color: 'white', fontSize: '10px', fontWeight: '700', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{pendingFlockInvites.length}</span>
+                <span style={{ width: '18px', height: '18px', borderRadius: '9px', background: '#F59E0B', color: 'white', fontSize: '12px', fontWeight: '700', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{pendingFlockInvites.length}</span>
               </div>
               {pendingFlockInvites.map((f) => (
                 <div key={`invite-${f.id}`} style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '16px', padding: '12px 14px', marginBottom: '6px', border: '1.5px solid #FDE68A', display: 'flex', alignItems: 'center', gap: '12px', boxShadow: '0 2px 12px rgba(245,158,11,0.08)' }}>
@@ -8564,14 +8726,14 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                     {Icons.mail('white', 20)}
                   </div>
                   <div style={{ flex: 1, minWidth: 0 }}>
-                    <h3 style={{ fontSize: '14px', fontWeight: '700', color: colors.navy, margin: '0 0 2px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{f.name}</h3>
-                    <p style={{ fontSize: '11px', color: 'var(--text-secondary)', margin: 0 }}>Invited by {f.host}</p>
+                    <h2 style={{ fontSize: '14px', fontWeight: '700', color: colors.navy, margin: '0 0 2px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{f.name}</h2>
+                    <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: 0 }}>Invited by {f.host}</p>
                   </div>
                   <div style={{ display: 'flex', gap: '6px', flexShrink: 0 }}>
-                    <button onClick={() => handleDeclineFlockInvite(f.id)} style={{ width: '32px', height: '32px', borderRadius: '10px', border: '1.5px solid var(--border-default)', backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                    <button className="hit44" onClick={() => handleDeclineFlockInvite(f.id)} style={{ width: '32px', height: '32px', borderRadius: '10px', border: '1.5px solid var(--border-default)', backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                       {Icons.x(colors.textTertiary, 14)}
                     </button>
-                    <button onClick={() => handleAcceptFlockInvite(f.id)} style={{ width: '32px', height: '32px', borderRadius: '10px', border: 'none', background: colors.navyBg, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                    <button className="hit44" onClick={() => handleAcceptFlockInvite(f.id)} style={{ width: '32px', height: '32px', borderRadius: '10px', border: 'none', background: colors.navyBg, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                       {Icons.check('white', 14)}
                     </button>
                   </div>
@@ -8584,15 +8746,20 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           {filteredFlocks.length > 0 && (
             <>
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '12px 4px 8px' }}>
-                <span style={{ fontSize: '11px', fontWeight: '700', color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Flocks</span>
+                <span style={{ fontSize: '12px', fontWeight: '700', color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Flocks</span>
                 <div style={{ flex: 1, height: '1px', backgroundColor: 'var(--pill-bg)' }} />
-                <span style={{ fontSize: '10px', color: 'var(--text-tertiary)', fontWeight: '500' }}>{filteredFlocks.length}</span>
+                <span style={{ fontSize: '12px', color: 'var(--text-tertiary)', fontWeight: '500' }}>{filteredFlocks.length}</span>
               </div>
               {filteredFlocks.map((f, idx) => {
                 const isPinned = pinnedFlockIds.includes(f.id);
                 const lastMsg = f.messages[f.messages.length - 1];
                 const hasUnread = f.messages.some(m => m.sender !== 'You' && !m.read);
                 const statusColor = f.status === 'completed' ? '#4a7ba7' : f.status === 'confirmed' ? '#22C55E' : f.status === 'voting' ? '#F59E0B' : colors.steel;
+                // statusColor is the DOT (decorative, keeps the vivid hue). The chip
+                // LABEL sits on a 8%-alpha wash of the same hue, where the vivid
+                // versions measured 2.02:1 ("Voting") to 2.28:1. These tokens are
+                // theme-aware and clear 4.5:1 on both the light and dark card.
+                const statusTextColor = f.status === 'completed' ? 'var(--accent-blue-text)' : f.status === 'confirmed' ? 'var(--accent-green-text)' : f.status === 'voting' ? 'var(--accent-amber-text)' : 'var(--accent-purple-text)';
                 const statusLabel = f.status === 'completed' ? 'Done' : f.status === 'confirmed' ? 'Confirmed' : f.status === 'voting' ? 'Voting' : 'Planning';
 
                 return (
@@ -8600,17 +8767,17 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                     {/* Edit controls */}
                     {editingFlockList && (
                       <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'center', gap: '2px', paddingRight: '6px', flexShrink: 0 }}>
-                        <button onClick={(e) => { e.stopPropagation(); moveFlockUp(f.id); }} style={{ width: '26px', height: '26px', borderRadius: '8px', border: 'none', backgroundColor: idx === 0 ? 'var(--bg-hover)' : 'var(--bg-card-solid)', cursor: idx === 0 ? 'default' : 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 1px 3px rgba(0,0,0,0.08)', opacity: idx === 0 ? 0.4 : 1 }}>
+                        <button className="hit44" onClick={(e) => { e.stopPropagation(); moveFlockUp(f.id); }} style={{ width: '26px', height: '26px', borderRadius: '8px', border: 'none', backgroundColor: idx === 0 ? 'var(--bg-hover)' : 'var(--bg-card-solid)', cursor: idx === 0 ? 'default' : 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 1px 3px rgba(0,0,0,0.08)', opacity: idx === 0 ? 0.4 : 1 }}>
                           {Icons.chevronUp(colors.navy, 14)}
                         </button>
-                        <button onClick={(e) => { e.stopPropagation(); moveFlockDown(f.id); }} style={{ width: '26px', height: '26px', borderRadius: '8px', border: 'none', backgroundColor: idx === filteredFlocks.length - 1 ? 'var(--bg-hover)' : 'var(--bg-card-solid)', cursor: idx === filteredFlocks.length - 1 ? 'default' : 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 1px 3px rgba(0,0,0,0.08)', opacity: idx === filteredFlocks.length - 1 ? 0.4 : 1 }}>
+                        <button className="hit44" onClick={(e) => { e.stopPropagation(); moveFlockDown(f.id); }} style={{ width: '26px', height: '26px', borderRadius: '8px', border: 'none', backgroundColor: idx === filteredFlocks.length - 1 ? 'var(--bg-hover)' : 'var(--bg-card-solid)', cursor: idx === filteredFlocks.length - 1 ? 'default' : 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 1px 3px rgba(0,0,0,0.08)', opacity: idx === filteredFlocks.length - 1 ? 0.4 : 1 }}>
                           {Icons.chevronDown(colors.navy, 14)}
                         </button>
                       </div>
                     )}
 
                     {/* Flock card */}
-                    <button onClick={() => { if (editingFlockList) return; setSelectedFlockId(f.id); setCurrentScreen('chatDetail'); simulateTyping(); }} style={{ flex: 1, textAlign: 'left', backgroundColor: isPinned ? `${colors.navy}06` : 'var(--bg-card-solid)', borderRadius: '16px', padding: '12px 14px', border: isPinned ? `1.5px solid ${colors.navy}18` : `1px solid var(--border-default)`, cursor: editingFlockList ? 'default' : 'pointer', display: 'flex', alignItems: 'center', gap: '12px', transition: 'opacity 0.2s', boxShadow: isPinned ? '0 2px 12px rgba(13,40,71,0.06)' : '0 1px 4px rgba(0,0,0,0.03)', position: 'relative', overflow: 'hidden' }}>
+                    <button className="hit44" onClick={() => { if (editingFlockList) return; setSelectedFlockId(f.id); setCurrentScreen('chatDetail'); simulateTyping(); }} style={{ flex: 1, textAlign: 'left', backgroundColor: isPinned ? `${colors.navy}06` : 'var(--bg-card-solid)', borderRadius: '16px', padding: '12px 14px', border: isPinned ? `1.5px solid ${colors.navy}18` : `1px solid var(--border-default)`, cursor: editingFlockList ? 'default' : 'pointer', display: 'flex', alignItems: 'center', gap: '12px', transition: 'opacity 0.2s', boxShadow: isPinned ? '0 2px 12px rgba(13,40,71,0.06)' : '0 1px 4px rgba(0,0,0,0.03)', position: 'relative', overflow: 'hidden' }}>
                       {/* Avatar — group chat photo */}
                       <div style={{ position: 'relative', flexShrink: 0 }}>
                         {(() => {
@@ -8626,7 +8793,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                         })()}
                         {/* Status dot */}
                         <div style={{ position: 'absolute', bottom: '-1px', right: '-1px', width: '14px', height: '14px', borderRadius: '7px', backgroundColor: statusColor, border: '2px solid var(--bg-card-solid)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                          {f.status === 'confirmed' && <span style={{ fontSize: '7px', color: 'white', fontWeight: '900' }}>&#10003;</span>}
+                          {f.status === 'confirmed' && <span style={{ fontSize: '12px', color: 'white', fontWeight: '900' }}>&#10003;</span>}
                         </div>
                       </div>
 
@@ -8635,18 +8802,18 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '2px' }}>
                           <div style={{ display: 'flex', alignItems: 'center', gap: '5px', minWidth: 0 }}>
                             {isPinned && <span style={{ flexShrink: 0 }}>{Icons.pinFilled(colors.navy, 11)}</span>}
-                            <h3 style={{ fontSize: '14px', fontWeight: hasUnread ? '800' : '600', color: colors.navy, margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{f.name}</h3>
+                            <h2 style={{ fontSize: '14px', fontWeight: hasUnread ? '800' : '600', color: colors.navy, margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{f.name}</h2>
                           </div>
-                          <span style={{ fontSize: '10px', color: hasUnread ? colors.navy : '#b0b0b0', fontWeight: hasUnread ? '600' : '400', flexShrink: 0, marginLeft: '8px' }}>{getRelativeTime(lastMsg?.time)}</span>
+                          <span style={{ fontSize: '12px', color: hasUnread ? colors.navy : '#b0b0b0', fontWeight: hasUnread ? '600' : '400', flexShrink: 0, marginLeft: '8px' }}>{getRelativeTime(lastMsg?.time)}</span>
                         </div>
 
                         {/* Venue + status row */}
                         <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '3px' }}>
-                          <span style={{ fontSize: '10px', fontWeight: '600', color: statusColor, backgroundColor: `${statusColor}15`, padding: '1px 6px', borderRadius: '6px' }}>{statusLabel}</span>
+                          <span style={{ fontSize: '12px', fontWeight: '600', color: statusTextColor, backgroundColor: `${statusColor}15`, padding: '1px 6px', borderRadius: '6px' }}>{statusLabel}</span>
                           {f.venue && f.venue !== 'TBD' && (
-                            <span style={{ fontSize: '10px', color: 'var(--text-tertiary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{f.venue}</span>
+                            <span style={{ fontSize: '12px', color: 'var(--text-tertiary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{f.venue}</span>
                           )}
-                          <span style={{ fontSize: '10px', color: 'var(--text-tertiary)', marginLeft: 'auto', flexShrink: 0 }}>{f.memberCount || 0} {Icons.users(colors.textTertiary, 10)}</span>
+                          <span style={{ fontSize: '12px', color: 'var(--text-tertiary)', marginLeft: 'auto', flexShrink: 0 }}>{f.memberCount || 0} {Icons.users(colors.textTertiary, 10)}</span>
                         </div>
 
                         {/* Last message */}
@@ -8658,7 +8825,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
 
                       {/* Pin button (edit mode) or unread badge */}
                       {editingFlockList ? (
-                        <button onClick={(e) => { e.stopPropagation(); togglePin(f.id); }} style={{ width: '32px', height: '32px', borderRadius: '10px', border: 'none', backgroundColor: isPinned ? `${colors.navy}12` : 'var(--bg-tertiary)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, transition: 'opacity 0.2s' }}>
+                        <button className="hit44" onClick={(e) => { e.stopPropagation(); togglePin(f.id); }} style={{ width: '32px', height: '32px', borderRadius: '10px', border: 'none', backgroundColor: isPinned ? `${colors.navy}12` : 'var(--bg-tertiary)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, transition: 'opacity 0.2s' }}>
                           {isPinned ? Icons.pinFilled(colors.navy, 16) : Icons.pin(colors.textTertiary, 16)}
                         </button>
                       ) : hasUnread && (
@@ -8695,31 +8862,31 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
       <div key="chat-detail-screen-container" style={{ display: 'flex', flexDirection: 'column', height: '100%', backgroundColor: 'var(--bg-card-solid)' }}>
         <div style={{ padding: '10px 10px 8px 6px', background: colors.navyBg, flexShrink: 0, boxShadow: '0 2px 10px rgba(0,0,0,0.1)' }}>
           <div style={{ display: 'flex', alignItems: 'stretch', gap: '6px' }}>
-            <button onClick={() => { setCurrentScreen('main'); setChatInput(''); setReplyingTo(null); setShowFlockMenu(false); setShowLeaveConfirm(false); setShowChatSearch(false); setChatSearch(''); setShowVotePanel(false); setChatNavOpen(false); }} style={{ width: '34px', borderRadius: '10px', background: 'none', border: 'none', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{Icons.arrowLeft('white', 20)}</button>
+            <button className="hit44" onClick={() => { setCurrentScreen('main'); setChatInput(''); setReplyingTo(null); setShowFlockMenu(false); setShowLeaveConfirm(false); setShowChatSearch(false); setChatSearch(''); setShowVotePanel(false); setChatNavOpen(false); }} style={{ width: '34px', borderRadius: '10px', background: 'none', border: 'none', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{Icons.arrowLeft('white', 20)}</button>
             {!chatNavOpen && (
               <div style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center', minWidth: 0 }}>
                 <h2 style={{ fontWeight: '800', color: 'white', fontSize: '15px', margin: 0, lineHeight: '1.2', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{flock.name}</h2>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '5px', marginTop: '2px' }}>
-                  <span style={{ fontSize: '11px', color: 'rgba(255,255,255,0.55)', fontWeight: '500' }}>{flock.members?.length || flock.memberCount || 0} members</span>
-                  <span style={{ fontSize: '11px', color: 'rgba(255,255,255,0.3)' }}>•</span>
-                  {isTyping ? <span style={{ fontSize: '11px', color: '#86EFAC', fontWeight: '600' }}>{typingUser} is typing...</span> : <><span style={{ width: '5px', height: '5px', borderRadius: '3px', backgroundColor: '#22c55e', boxShadow: 'none' }} /><span style={{ fontSize: '11px', color: 'rgba(255,255,255,0.55)', fontWeight: '500' }}>online</span></>}
+                  <span style={{ fontSize: '12px', color: 'rgba(255,255,255,0.55)', fontWeight: '500' }}>{flock.members?.length || flock.memberCount || 0} members</span>
+                  <span style={{ fontSize: '12px', color: 'rgba(255,255,255,0.3)' }}>•</span>
+                  {isTyping ? <span style={{ fontSize: '12px', color: '#86EFAC', fontWeight: '600' }}>{typingUser} is typing...</span> : <><span style={{ width: '5px', height: '5px', borderRadius: '3px', backgroundColor: '#22c55e', boxShadow: 'none' }} /><span style={{ fontSize: '12px', color: 'rgba(255,255,255,0.55)', fontWeight: '500' }}>online</span></>}
                 </div>
               </div>
             )}
             <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flex: chatNavOpen ? 1 : 'none', justifyContent: chatNavOpen ? 'center' : 'flex-end', flexShrink: 0 }}>
               <div style={{ display: 'flex', gap: '6px', overflow: 'hidden', maxWidth: chatNavOpen ? '300px' : '0px', opacity: chatNavOpen ? 1 : 0, transition: 'max-width 0.3s ease, opacity 0.25s ease' }}>
-                <button className="glass-btn" onClick={() => { setChatNavOpen(false); setShowVotePanel(true); loadPopularVenues(); }} style={{ width: '36px', height: '36px', minWidth: '36px', borderRadius: '10px', border: '1px solid rgba(255,255,255,0.15)', backgroundColor: flock.status === 'voting' ? colors.steel : 'rgba(255,255,255,0.08)', backdropFilter: 'blur(8px)', WebkitBackdropFilter: 'blur(8px)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.vote('white', 15)}</button>
-                <button className="glass-btn" onClick={() => { setChatNavOpen(false); setShowFlockInviteModal(true); setFlockInviteSelected([]); setFlockInviteSearch(''); setFlockInviteResults([]); }} style={{ width: '36px', height: '36px', minWidth: '36px', borderRadius: '10px', border: '1px solid rgba(255,255,255,0.15)', backgroundColor: 'rgba(255,255,255,0.08)', backdropFilter: 'blur(8px)', WebkitBackdropFilter: 'blur(8px)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.userPlus('white', 15)}</button>
-                <button className="glass-btn" onClick={() => { setChatNavOpen(false); setShowChatSearch(!showChatSearch); }} style={{ width: '36px', height: '36px', minWidth: '36px', borderRadius: '10px', border: '1px solid rgba(255,255,255,0.15)', backgroundColor: showChatSearch ? 'rgba(255,255,255,0.25)' : 'rgba(255,255,255,0.08)', backdropFilter: 'blur(8px)', WebkitBackdropFilter: 'blur(8px)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.search('white', 15)}</button>
-                <button className="glass-btn" onClick={() => { setChatNavOpen(false); setShowChatPool(true); }} style={{ width: '36px', height: '36px', minWidth: '36px', borderRadius: '10px', border: '1px solid rgba(255,255,255,0.15)', backgroundColor: 'rgba(255,255,255,0.08)', backdropFilter: 'blur(8px)', WebkitBackdropFilter: 'blur(8px)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.dollar('white', 15)}</button>
+                <button className="hit44 glass-btn" onClick={() => { setChatNavOpen(false); setShowVotePanel(true); loadPopularVenues(); }} style={{ width: '36px', height: '36px', minWidth: '36px', borderRadius: '10px', border: '1px solid rgba(255,255,255,0.15)', backgroundColor: flock.status === 'voting' ? colors.steel : 'rgba(255,255,255,0.08)', backdropFilter: 'blur(8px)', WebkitBackdropFilter: 'blur(8px)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.vote('white', 15)}</button>
+                <button className="hit44 glass-btn" onClick={() => { setChatNavOpen(false); setShowFlockInviteModal(true); setFlockInviteSelected([]); setFlockInviteSearch(''); setFlockInviteResults([]); }} style={{ width: '36px', height: '36px', minWidth: '36px', borderRadius: '10px', border: '1px solid rgba(255,255,255,0.15)', backgroundColor: 'rgba(255,255,255,0.08)', backdropFilter: 'blur(8px)', WebkitBackdropFilter: 'blur(8px)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.userPlus('white', 15)}</button>
+                <button className="hit44 glass-btn" onClick={() => { setChatNavOpen(false); setShowChatSearch(!showChatSearch); }} style={{ width: '36px', height: '36px', minWidth: '36px', borderRadius: '10px', border: '1px solid rgba(255,255,255,0.15)', backgroundColor: showChatSearch ? 'rgba(255,255,255,0.25)' : 'rgba(255,255,255,0.08)', backdropFilter: 'blur(8px)', WebkitBackdropFilter: 'blur(8px)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.search('white', 15)}</button>
+                <button className="hit44 glass-btn" onClick={() => { setChatNavOpen(false); setShowChatPool(true); }} style={{ width: '36px', height: '36px', minWidth: '36px', borderRadius: '10px', border: '1px solid rgba(255,255,255,0.15)', backgroundColor: 'rgba(255,255,255,0.08)', backdropFilter: 'blur(8px)', WebkitBackdropFilter: 'blur(8px)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.dollar('white', 15)}</button>
               </div>
-              <button onClick={() => setChatNavOpen(!chatNavOpen)} style={{ height: '42px', minWidth: chatNavOpen ? '42px' : 'auto', width: chatNavOpen ? '42px' : 'auto', borderRadius: '14px', border: '1px solid rgba(255,255,255,0.18)', backgroundColor: chatNavOpen ? 'rgba(255,255,255,0.25)' : 'rgba(255,255,255,0.1)', backdropFilter: 'blur(12px)', WebkitBackdropFilter: 'blur(12px)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px', padding: chatNavOpen ? '0' : '0 18px', fontSize: '14px', fontWeight: '700', flexShrink: 0, transition: 'all 0.3s ease', boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.12)' }}>{chatNavOpen ? Icons.x('white', 16) : <span style={{ fontSize: '14px', fontWeight: '700' }}>Features</span>}</button>
+              <button className="hit44" onClick={() => setChatNavOpen(!chatNavOpen)} style={{ height: '42px', minWidth: chatNavOpen ? '42px' : 'auto', width: chatNavOpen ? '42px' : 'auto', borderRadius: '14px', border: '1px solid rgba(255,255,255,0.18)', backgroundColor: chatNavOpen ? 'rgba(255,255,255,0.25)' : 'rgba(255,255,255,0.1)', backdropFilter: 'blur(12px)', WebkitBackdropFilter: 'blur(12px)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px', padding: chatNavOpen ? '0' : '0 18px', fontSize: '14px', fontWeight: '700', flexShrink: 0, transition: 'all 0.3s ease', boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.12)' }}>{chatNavOpen ? Icons.x('white', 16) : <span style={{ fontSize: '14px', fontWeight: '700' }}>Features</span>}</button>
             </div>
             <div style={{ position: 'relative', flexShrink: 0 }}>
-              <button onClick={() => setShowFlockMenu(!showFlockMenu)} style={{ width: '42px', height: '42px', borderRadius: '14px', border: '1px solid rgba(255,255,255,0.18)', backgroundColor: 'rgba(255,255,255,0.1)', backdropFilter: 'blur(12px)', WebkitBackdropFilter: 'blur(12px)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.12)' }}>{Icons.moreVertical('white', 18)}</button>
+              <button className="hit44" onClick={() => setShowFlockMenu(!showFlockMenu)} style={{ width: '42px', height: '42px', borderRadius: '14px', border: '1px solid rgba(255,255,255,0.18)', backgroundColor: 'rgba(255,255,255,0.1)', backdropFilter: 'blur(12px)', WebkitBackdropFilter: 'blur(12px)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.12)' }}>{Icons.moreVertical('white', 18)}</button>
               {showFlockMenu && (
                 <div style={{ position: 'absolute', top: '38px', right: 0, backgroundColor: 'var(--bg-card-solid)', borderRadius: '14px', boxShadow: '0 8px 24px rgba(0,0,0,0.12)', minWidth: '180px', zIndex: 60, overflow: 'hidden', border: '1px solid var(--border-subtle)' }}>
-                  <button className="glass-btn glass-danger" onClick={() => { setShowFlockMenu(false); setShowLeaveConfirm(true); }} style={{ width: '100%', padding: '14px 16px', display: 'flex', alignItems: 'center', gap: '10px', border: 'none', backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer', fontSize: '14px', fontWeight: '600', color: '#EF4444' }}>
+                  <button className="hit44 glass-btn glass-danger" onClick={() => { setShowFlockMenu(false); setShowLeaveConfirm(true); }} style={{ width: '100%', padding: '14px 16px', display: 'flex', alignItems: 'center', gap: '10px', border: 'none', backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer', fontSize: '14px', fontWeight: '600', color: '#EF4444' }}>
                     {Icons.doorOpen('#EF4444', 16)} Leave Flock
                   </button>
                 </div>
@@ -8748,14 +8915,14 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           return (
             <div style={{ padding: '8px 14px 10px', background: 'var(--bg-card-solid)', borderBottom: '1px solid var(--border-subtle)', flexShrink: 0 }}>
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '6px' }}>
-                <span style={{ fontSize: '10px', fontWeight: '700', color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Momentum</span>
+                <span style={{ fontSize: '12px', fontWeight: '700', color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Momentum</span>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                  <span style={{ fontSize: '10px', color: 'var(--text-secondary)' }}>
+                  <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
                     {m.accepted}/{m.totalMembers} RSVPs
                     {m.hasVenue ? ' · Venue set' : ''}
                     {m.hasTime ? ' · Time set' : ''}
                   </span>
-                  <span style={{ fontSize: '11px', fontWeight: '800', color: activeColor }}>{stages[activeIdx]?.label}</span>
+                  <span style={{ fontSize: '12px', fontWeight: '800', color: activeColor }}>{stages[activeIdx]?.label}</span>
                 </div>
               </div>
               <div style={{ display: 'flex', gap: '3px', height: '4px' }}>
@@ -8771,7 +8938,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
         {showChatSearch && (
           <div style={{ padding: '8px 12px', backgroundColor: 'var(--bg-card-solid)', borderBottom: '1px solid var(--border-default)', flexShrink: 0, animation: 'fadeIn 0.2s ease-out' }}>
             <div style={{ position: 'relative' }}>
-              <SearchInputLocal
+              <SearchInputLocal aria-label="Search messages in this flock"
                 inputRef={chatSearchRef}
                 type="text"
                 initialValue={chatSearch}
@@ -8781,10 +8948,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 autoComplete="off"
               />
               <span style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)' }}>{Icons.search(chatSearch ? colors.navy : colors.textTertiary, 14)}</span>
-              <button onClick={() => { setShowChatSearch(false); setChatSearch(''); }} style={{ position: 'absolute', right: '8px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', padding: '4px' }}>{Icons.x(colors.textTertiary, 16)}</button>
+              <button className="hit44" onClick={() => { setShowChatSearch(false); setChatSearch(''); }} style={{ position: 'absolute', right: '8px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', padding: '4px' }}>{Icons.x(colors.textTertiary, 16)}</button>
             </div>
             {chatSearch.trim() && (
-              <p style={{ fontSize: '10px', color: 'var(--text-secondary)', margin: '6px 0 0 4px', fontWeight: '500' }}>
+              <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: '6px 0 0 4px', fontWeight: '500' }}>
                 {flock.messages.filter(m => {
                   const q = chatSearch.toLowerCase();
                   return (m.text || '').toLowerCase().includes(q) || (m.sender || '').toLowerCase().includes(q);
@@ -8799,7 +8966,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           <div style={{ padding: '10px 14px', background: `linear-gradient(135deg, ${colors.navy}08, ${colors.steel}12)`, borderBottom: `1px solid ${colors.creamDark}`, flexShrink: 0 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
               {flock.venuePhoto ? (
-                <img src={flock.venuePhoto} alt="" style={{ width: '52px', height: '52px', borderRadius: '12px', objectFit: 'cover', flexShrink: 0, boxShadow: '0 2px 8px rgba(0,0,0,0.1)' }} onError={(e) => { e.target.onerror = null; e.target.src = 'data:image/svg+xml,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="52" height="52"><rect fill="#1a3a5c" width="52" height="52" rx="12"/></svg>'); }} />
+                <img src={flock.venuePhoto} alt="" style={{ width: '52px', height: '52px', borderRadius: '12px', objectFit: 'cover', flexShrink: 0, boxShadow: '0 2px 8px rgba(0,0,0,0.1)' }} onError={(e) => { e.target.onerror = null; e.target.src = 'data:image/svg+xml,' + encodeURIComponent('<svg aria-hidden="true" focusable="false" xmlns="http://www.w3.org/2000/svg" width="52" height="52"><rect fill="#1a3a5c" width="52" height="52" rx="12"/></svg>'); }} />
               ) : (
                 <div style={{ width: '52px', height: '52px', borderRadius: '12px', background: colors.navyBg, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, boxShadow: '0 2px 8px rgba(13,40,71,0.10)' }}>
                   {Icons.mapPin('white', 22)}
@@ -8809,13 +8976,13 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                   <h4 style={{ fontSize: '13px', fontWeight: '800', color: colors.navy, margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{flock.venue}</h4>
                   {flock.venueRating && (
-                    <span style={{ fontSize: '11px', fontWeight: '700', color: '#F59E0B', display: 'flex', alignItems: 'center', gap: '2px', flexShrink: 0 }}>
+                    <span style={{ fontSize: '12px', fontWeight: '700', color: '#F59E0B', display: 'flex', alignItems: 'center', gap: '2px', flexShrink: 0 }}>
                       {Icons.starFilled('#F59E0B', 11)} {flock.venueRating}
                     </span>
                   )}
                 </div>
                 {flock.venueAddress && (
-                  <p style={{ fontSize: '11px', color: 'var(--text-secondary)', margin: '2px 0 0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{flock.venueAddress}</p>
+                  <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: '2px 0 0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{flock.venueAddress}</p>
                 )}
               </div>
               <div style={{ display: 'flex', gap: '4px', flexShrink: 0 }}>
@@ -8832,14 +8999,14 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                       }, 300);
                     }
                   }}
-                  className="glass-btn glass-primary" style={{ padding: '8px 10px', borderRadius: '10px', border: 'none', background: colors.steel, color: 'white', fontSize: '10px', fontWeight: '700', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px', boxShadow: '0 1px 2px rgba(30,41,59,0.10)' }}
+                  className="hit44 glass-btn glass-primary" style={{ padding: '8px 10px', borderRadius: '10px', border: 'none', background: colors.steel, color: 'white', fontSize: '12px', fontWeight: '700', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px', boxShadow: '0 1px 2px rgba(30,41,59,0.10)' }}
                 >
                   {Icons.mapPin('white', 12)} Map
                 </button>
                 <button
-                  className="glass-btn glass-secondary"
+                  className="hit44 glass-btn glass-secondary"
                   onClick={() => { setPickingVenueForCreate(true); setPickingVenueForFlockId(flock.id); setCurrentTab('explore'); setCurrentScreen('main'); }}
-                  style={{ padding: '8px 10px', borderRadius: '10px', border: `1px solid ${colors.creamDark}`, background: 'var(--bg-card-solid)', color: colors.navy, fontSize: '10px', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '3px' }}
+                  style={{ padding: '8px 10px', borderRadius: '10px', border: `1px solid ${colors.creamDark}`, background: 'var(--bg-card-solid)', color: colors.navy, fontSize: '12px', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '3px' }}
                 >
                   Change
                 </button>
@@ -8847,7 +9014,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
             </div>
           </div>
         ) : (
-          <button
+          <button className="hit44"
             onClick={() => { setPickingVenueForCreate(true); setPickingVenueForFlockId(flock.id); setCurrentTab('explore'); setCurrentScreen('main'); }}
             style={{ margin: '0', padding: '10px 14px', background: `linear-gradient(135deg, var(--bg-primary), var(--bg-card-solid))`, borderBottom: `1px solid ${colors.creamDark}`, border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '10px', width: '100%', flexShrink: 0 }}
           >
@@ -8856,7 +9023,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
             </div>
             <div style={{ flex: 1, textAlign: 'left' }}>
               <p style={{ fontSize: '13px', fontWeight: '700', color: colors.navy, margin: 0 }}>Add a Venue</p>
-              <p style={{ fontSize: '11px', color: 'var(--text-secondary)', margin: '1px 0 0' }}>Pick a spot for this flock</p>
+              <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: '1px 0 0' }}>Pick a spot for this flock</p>
             </div>
             <div style={{ color: colors.steel, fontWeight: '700', fontSize: '20px' }}>+</div>
           </button>
@@ -8870,10 +9037,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
             </div>
             <div style={{ flex: 1, minWidth: 0 }}>
               <p style={{ fontSize: '12px', fontWeight: '700', color: 'var(--accent-green-text)', margin: 0 }}>Share your location with the group?</p>
-              <p style={{ fontSize: '10px', color: 'var(--accent-green-text)', margin: '1px 0 0' }}>Members can see where everyone is on the map</p>
+              <p style={{ fontSize: '12px', color: 'var(--accent-green-text)', margin: '1px 0 0' }}>Members can see where everyone is on the map</p>
             </div>
-            <button className="glass-btn glass-primary" onClick={(e) => { confirmClick(e); startSharingLocation(flock.id); }} style={{ padding: '6px 12px', borderRadius: '14px', border: 'none', background: '#10b981', color: 'white', fontSize: '11px', fontWeight: '700', cursor: 'pointer', flexShrink: 0, position: 'relative', overflow: 'hidden' }}>Share</button>
-            <button onClick={() => { setLocationBannerDismissed(prev => { const next = { ...prev, [flock.id]: true }; localStorage.setItem('flock_loc_dismissed', JSON.stringify(next)); return next; }); }} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '4px', flexShrink: 0 }}>{Icons.x(colors.textSecondary, 14)}</button>
+            <button className="hit44 glass-btn glass-primary" onClick={(e) => { confirmClick(e); startSharingLocation(flock.id); }} style={{ padding: '6px 12px', borderRadius: '14px', border: 'none', background: '#10b981', color: 'white', fontSize: '12px', fontWeight: '700', cursor: 'pointer', flexShrink: 0, position: 'relative', overflow: 'hidden' }}>Share</button>
+            <button className="hit44" onClick={() => { setLocationBannerDismissed(prev => { const next = { ...prev, [flock.id]: true }; localStorage.setItem('flock_loc_dismissed', JSON.stringify(next)); return next; }); }} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '4px', flexShrink: 0 }}>{Icons.x(colors.textSecondary, 14)}</button>
           </div>
         )}
 
@@ -8881,11 +9048,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
         {sharingLocationForFlock === flock.id && (
           <div style={{ padding: '8px 14px', background: 'linear-gradient(135deg, #059669, #047857)', flexShrink: 0, display: 'flex', alignItems: 'center', gap: '8px' }}>
             <div style={{ width: '8px', height: '8px', borderRadius: '4px', backgroundColor: '#34d399', animation: 'pulse 2s ease-in-out infinite', boxShadow: 'none' }} />
-            <p style={{ fontSize: '11px', fontWeight: '600', color: 'white', margin: 0, flex: 1 }}>Sharing location with {flock.name}</p>
+            <p style={{ fontSize: '12px', fontWeight: '600', color: 'white', margin: 0, flex: 1 }}>Sharing location with {flock.name}</p>
             {Object.keys(flockMemberLocations).length > 0 && (
-              <span style={{ fontSize: '10px', color: '#a7f3d0', fontWeight: '500' }}>{Object.keys(flockMemberLocations).length} sharing</span>
+              <span style={{ fontSize: '12px', color: '#a7f3d0', fontWeight: '500' }}>{Object.keys(flockMemberLocations).length} sharing</span>
             )}
-            <button onClick={stopLocationSharing} style={{ padding: '4px 10px', borderRadius: '10px', border: '1px solid rgba(255,255,255,0.3)', background: 'rgba(255,255,255,0.15)', color: 'white', fontSize: '10px', fontWeight: '600', cursor: 'pointer' }}>Stop</button>
+            <button className="hit44" onClick={stopLocationSharing} style={{ padding: '4px 10px', borderRadius: '10px', border: '1px solid rgba(255,255,255,0.3)', background: 'rgba(255,255,255,0.15)', color: 'white', fontSize: '12px', fontWeight: '600', cursor: 'pointer' }}>Stop</button>
           </div>
         )}
 
@@ -8906,7 +9073,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 </p>
               )}
             </div>
-            <span style={{ fontSize: '10px', color: 'var(--text-tertiary)' }}>{Icons.arrowLeft(colors.textTertiary, 10)}</span>
+            <span style={{ fontSize: '12px', color: 'var(--text-tertiary)' }}>{Icons.arrowLeft(colors.textTertiary, 10)}</span>
           </div>
         )}
 
@@ -8916,14 +9083,14 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
               <div style={{ flex: 1, minWidth: 0 }}>
                 <p style={{ fontSize: '12px', fontWeight: '700', color: colors.navy, margin: '0 0 2px' }}>Lock in your share?</p>
-                <p style={{ fontSize: '11px', color: 'var(--text-secondary)', margin: 0 }}>Pre-commit ${budgetStatus.ceiling} to tonight's plan</p>
+                <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: 0 }}>Pre-commit ${budgetStatus.ceiling} to tonight's plan</p>
               </div>
-              <button className="glass-btn glass-navy" onClick={async () => {
+              <button className="hit44 glass-btn glass-navy" onClick={async () => {
                 try {
                   await ghostCommit(selectedFlockId);
                   showToast('Committed');
                 } catch (err) { showToast(err.message, 'error'); }
-              }} style={{ padding: '6px 14px', borderRadius: '14px', border: 'none', background: colors.navyMidBg, color: 'white', fontSize: '11px', fontWeight: '700', cursor: 'pointer', flexShrink: 0 }}>
+              }} style={{ padding: '6px 14px', borderRadius: '14px', border: 'none', background: colors.navyMidBg, color: 'white', fontSize: '12px', fontWeight: '700', cursor: 'pointer', flexShrink: 0 }}>
                 Commit ${budgetStatus.ceiling}
               </button>
             </div>
@@ -8941,7 +9108,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                   : `Bill: $${billSplit.totalWithTip?.toFixed(2)} · ${billSplit.shares?.filter(s => s.settled).length}/${billSplit.shares?.length} settled`}
               </p>
             </div>
-            <span style={{ fontSize: '10px', color: 'var(--text-tertiary)' }}>View</span>
+            <span style={{ fontSize: '12px', color: 'var(--text-tertiary)' }}>View</span>
           </div>
         )}
 
@@ -8984,7 +9151,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 </div>
               )}
               <div style={{ position: 'relative', flexShrink: 0 }}>
-                <div style={{ width: '34px', height: '34px', borderRadius: '17px', background: m.sender === 'You' ? colors.navyBg : 'white', border: m.sender === 'You' ? 'none' : '2px solid rgba(13,40,71,0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '11px', fontWeight: '700', color: m.sender === 'You' ? 'white' : colors.navy, boxShadow: m.sender === 'You' ? '0 3px 10px rgba(13,40,71,0.10)' : '0 2px 6px rgba(0,0,0,0.06)', overflow: 'hidden' }}>
+                <div style={{ width: '34px', height: '34px', borderRadius: '17px', background: m.sender === 'You' ? colors.navyBg : 'white', border: m.sender === 'You' ? 'none' : '2px solid rgba(13,40,71,0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '12px', fontWeight: '700', color: m.sender === 'You' ? 'white' : colors.navy, boxShadow: m.sender === 'You' ? '0 3px 10px rgba(13,40,71,0.10)' : '0 2px 6px rgba(0,0,0,0.06)', overflow: 'hidden' }}>
                   {(() => {
                     const imgUrl = m.sender === 'You' ? profilePic : (m.senderImage ? (m.senderImage.startsWith('/uploads/') ? `${BASE_URL}${m.senderImage}` : m.senderImage) : (flock.members?.find(mb => mb.name === m.sender)?.image ? (flock.members.find(mb => mb.name === m.sender).image.startsWith('/uploads/') ? `${BASE_URL}${flock.members.find(mb => mb.name === m.sender).image}` : flock.members.find(mb => mb.name === m.sender).image) : null));
                     return imgUrl ? <img src={imgUrl} alt="" style={{ width: '34px', height: '34px', borderRadius: '17px', objectFit: 'cover' }} /> : m.sender[0];
@@ -8995,12 +9162,12 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
               <div style={{ maxWidth: '72%', display: 'inline-flex', flexDirection: 'column', alignItems: m.sender === 'You' ? 'flex-end' : 'flex-start' }}>
                 {/* Sender name and timestamp */}
                 <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '4px', padding: '0 4px' }}>
-                  <span style={{ fontSize: '11px', color: colors.navy, fontWeight: '600' }}>{m.sender}</span>
-                  <span style={{ fontSize: '10px', color: 'var(--text-tertiary)' }}>•</span>
-                  <span style={{ fontSize: '10px', color: 'var(--text-tertiary)', fontWeight: '500' }}>{m.time || getRelativeTime(m.time)}</span>
+                  <span style={{ fontSize: '12px', color: colors.navy, fontWeight: '600' }}>{m.sender}</span>
+                  <span style={{ fontSize: '12px', color: 'var(--text-tertiary)' }}>•</span>
+                  <span style={{ fontSize: '12px', color: 'var(--text-tertiary)', fontWeight: '500' }}>{m.time || getRelativeTime(m.time)}</span>
                 </div>
                 {m.failed && (
-                  <button onClick={() => retryFailedMessage(flock.id, m)} style={{ background: 'none', border: 'none', padding: '0 4px 4px', cursor: 'pointer', fontSize: '10px', fontWeight: '600', color: 'var(--accent-red-text, #b91c1c)', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                  <button className="hit44" onClick={() => retryFailedMessage(flock.id, m)} style={{ background: 'none', border: 'none', padding: '0 4px 4px', cursor: 'pointer', fontSize: '12px', fontWeight: '600', color: 'var(--accent-red-text, #b91c1c)', display: 'flex', alignItems: 'center', gap: '4px' }}>
                     Didn't send. Tap to retry
                   </button>
                 )}
@@ -9104,7 +9271,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                     animation: 'reactionPop 0.25s ease-out'
                   }}>
                     {reactions.map(r => (
-                      <button
+                      <button className="hit44"
                         key={r}
                         onClick={(e) => { e.stopPropagation(); addReactionToMessage(flock.id, m.id, r); }}
                         style={{
@@ -9118,9 +9285,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                         }}
                       >{r}</button>
                     ))}
-                    <button onClick={(e) => { e.stopPropagation(); setReplyingTo(m); setShowReactionPicker(null); }} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '6px', display: 'flex', alignItems: 'center', borderRadius: '10px' }}>{Icons.reply(colors.textSecondary, 18)}</button>
+                    <button className="hit44" onClick={(e) => { e.stopPropagation(); setReplyingTo(m); setShowReactionPicker(null); }} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '6px', display: 'flex', alignItems: 'center', borderRadius: '10px' }}>{Icons.reply(colors.textSecondary, 18)}</button>
                     {m.sender !== 'You' && (
-                      <button onClick={(e) => { e.stopPropagation(); setShowReactionPicker(null); setModerationTarget({ userId: m.senderId, userName: m.sender, contentType: 'flock_message', contentId: m.id }); }} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '6px', display: 'flex', alignItems: 'center', borderRadius: '10px', fontSize: '16px', color: '#EF4444' }} title="Report">⚑</button>
+                      <button className="hit44" onClick={(e) => { e.stopPropagation(); setShowReactionPicker(null); setModerationTarget({ userId: m.senderId, userName: m.sender, contentType: 'flock_message', contentId: m.id }); }} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '6px', display: 'flex', alignItems: 'center', borderRadius: '10px', fontSize: '16px', color: '#EF4444' }} title="Report">⚑</button>
                     )}
                   </div>
                 )}
@@ -9145,7 +9312,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                         }}
                       >
                         {r}
-                        <span style={{ fontSize: '10px', color: 'var(--text-tertiary)', fontWeight: '500' }}>1</span>
+                        <span style={{ fontSize: '12px', color: 'var(--text-tertiary)', fontWeight: '500' }}>1</span>
                       </span>
                     ))}
                   </div>
@@ -9157,9 +9324,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           {/* Enhanced typing indicator with user name — fixed height to prevent layout shift */}
           <div style={{ height: '58px', overflow: 'hidden', opacity: isTyping ? 1 : 0, transition: 'opacity 0.2s ease', pointerEvents: isTyping ? 'auto' : 'none' }}>
             <div style={{ display: 'flex', gap: '10px' }}>
-              <div style={{ width: '34px', height: '34px', borderRadius: '17px', backgroundColor: 'var(--bg-card-solid)', border: '2px solid var(--border-subtle)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '11px', fontWeight: '700', color: colors.navy }}>{typingUser?.[0] || 'A'}</div>
+              <div style={{ width: '34px', height: '34px', borderRadius: '17px', backgroundColor: 'var(--bg-card-solid)', border: '2px solid var(--border-subtle)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '12px', fontWeight: '700', color: colors.navy }}>{typingUser?.[0] || 'A'}</div>
               <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start' }}>
-                <span style={{ fontSize: '11px', color: colors.navy, fontWeight: '600', marginBottom: '4px', paddingLeft: '4px' }}>{typingUser || 'Someone'}</span>
+                <span style={{ fontSize: '12px', color: colors.navy, fontWeight: '600', marginBottom: '4px', paddingLeft: '4px' }}>{typingUser || 'Someone'}</span>
                 <div style={{ padding: '12px 16px', backgroundColor: 'var(--bg-card-solid)', borderRadius: '18px', borderBottomLeftRadius: '4px', boxShadow: '0 2px 10px rgba(0,0,0,0.05)', display: 'flex', alignItems: 'center', gap: '3px' }}>
                   <div style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: colors.navyBg, animation: 'typingDot 1.4s ease-in-out infinite', opacity: 0.7 }} />
                   <div style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: colors.navyBg, animation: 'typingDot 1.4s ease-in-out 0.2s infinite', opacity: 0.7 }} />
@@ -9176,10 +9343,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           <div style={{ padding: '10px 16px', backgroundColor: 'var(--bg-tertiary)', borderTop: '1px solid var(--border-subtle)', display: 'flex', alignItems: 'center', gap: '10px', animation: 'slideUp 0.2s ease-out' }}>
             <div style={{ width: '3px', height: '36px', backgroundColor: colors.navyBg, borderRadius: '2px' }} />
             <div style={{ flex: 1 }}>
-              <p style={{ fontSize: '11px', fontWeight: '600', color: colors.navy, margin: 0 }}>Replying to {replyingTo.sender}</p>
-              <p style={{ fontSize: '11px', color: 'var(--text-secondary)', margin: '2px 0 0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{replyingTo.text}</p>
+              <p style={{ fontSize: '12px', fontWeight: '600', color: colors.navy, margin: 0 }}>Replying to {replyingTo.sender}</p>
+              <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: '2px 0 0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{replyingTo.text}</p>
             </div>
-            <button onClick={() => setReplyingTo(null)} style={{ width: '28px', height: '28px', borderRadius: '14px', backgroundColor: 'var(--bg-hover)', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'background-color 0.2s ease' }}>{Icons.x(colors.textSecondary, 16)}</button>
+            <button className="hit44" onClick={() => setReplyingTo(null)} style={{ width: '28px', height: '28px', borderRadius: '14px', backgroundColor: 'var(--bg-hover)', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'background-color 0.2s ease' }}>{Icons.x(colors.textSecondary, 16)}</button>
           </div>
         )}
 
@@ -9188,7 +9355,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           <div style={{ padding: '12px 16px', backgroundColor: 'var(--bg-tertiary)', borderTop: '1px solid var(--border-subtle)', display: 'flex', alignItems: 'center', gap: '12px', animation: 'slideUp 0.2s ease-out' }}>
             <div style={{ position: 'relative' }}>
               <img src={pendingImage} alt="Preview" style={{ width: '60px', height: '60px', objectFit: 'cover', borderRadius: '12px', boxShadow: '0 2px 8px rgba(0,0,0,0.1)' }} />
-              <button
+              <button className="hit44"
                 onClick={() => { setPendingImage(null); setShowImagePreview(false); }}
                 style={{ position: 'absolute', top: '-6px', right: '-6px', width: '22px', height: '22px', borderRadius: '11px', backgroundColor: colors.red, border: '2px solid var(--bg-card-solid)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
               >
@@ -9197,9 +9364,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
             </div>
             <div style={{ flex: 1 }}>
               <p style={{ fontSize: '12px', fontWeight: '600', color: colors.navy, margin: 0 }}>Ready to send</p>
-              <p style={{ fontSize: '11px', color: 'var(--text-secondary)', margin: '2px 0 0' }}>Tap send to share this image</p>
+              <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: '2px 0 0' }}>Tap send to share this image</p>
             </div>
-            <button
+            <button className="hit44"
               onClick={() => shareImageToChat(selectedFlockId)}
               style={{
                 width: '44px',
@@ -9224,16 +9391,16 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
         {/* Flock chat composer. This screen has no tab bar, so the composer sits
             on the physical screen edge and carries the home-indicator inset. */}
         <div style={{ padding: '10px 12px calc(10px + var(--safe-bottom))', backgroundColor: 'var(--bg-nav)', backdropFilter: 'blur(10px)', WebkitBackdropFilter: 'blur(10px)', borderTop: '1px solid var(--border-subtle)', display: 'flex', gap: '8px', alignItems: 'center', flexShrink: 0, boxShadow: 'var(--nav-shadow)' }}>
-          <button onClick={() => setShowCameraPopup(true)} style={{ width: '38px', height: '38px', borderRadius: '19px', border: 'none', backgroundColor: 'var(--bg-hover)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'opacity 0.2s ease', flexShrink: 0 }}>
+          <button className="hit44" onClick={() => setShowCameraPopup(true)} style={{ width: '38px', height: '38px', borderRadius: '19px', border: 'none', backgroundColor: 'var(--bg-hover)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'opacity 0.2s ease', flexShrink: 0 }}>
             {Icons.camera(colors.textSecondary, 18)}
           </button>
           <input ref={chatGalleryInputRef} type="file" accept="image/*" onChange={handleChatImageSelect} style={{ display: 'none' }} />
-          <button onClick={() => { if (sharingLocationForFlock === flock.id) { stopLocationSharing(); } else { const otherMembers = (flock.members || []).filter(m => m.id !== authUser?.id).length; if (otherMembers === 0) { showToast('No one else in this flock to share with', 'error'); return; } startSharingLocation(flock.id); } }} style={{ width: '38px', height: '38px', borderRadius: '19px', border: 'none', backgroundColor: sharingLocationForFlock === flock.id ? '#10b981' : 'var(--bg-hover)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'opacity 0.2s ease', flexShrink: 0 }}>{Icons.mapPin(sharingLocationForFlock === flock.id ? 'white' : colors.textSecondary, 16)}</button>
-          <input key="chat-input" id="chat-input" type="text" defaultValue="" onChange={handleChatInputChange} onKeyDown={(e) => e.key === 'Enter' && sendChatMessage()} placeholder={replyingTo ? 'Reply...' : 'Type a message...'} style={{ flex: 1, padding: '15px 18px', borderRadius: '24px', backgroundColor: 'var(--bg-hover)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)', fontSize: '16px', outline: 'none', fontWeight: '500', transition: 'opacity 0.2s ease' }} autoComplete="off" />
+          <button className="hit44" onClick={() => { if (sharingLocationForFlock === flock.id) { stopLocationSharing(); } else { const otherMembers = (flock.members || []).filter(m => m.id !== authUser?.id).length; if (otherMembers === 0) { showToast('No one else in this flock to share with', 'error'); return; } startSharingLocation(flock.id); } }} style={{ width: '38px', height: '38px', borderRadius: '19px', border: 'none', backgroundColor: sharingLocationForFlock === flock.id ? '#10b981' : 'var(--bg-hover)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'opacity 0.2s ease', flexShrink: 0 }}>{Icons.mapPin(sharingLocationForFlock === flock.id ? 'white' : colors.textSecondary, 16)}</button>
+          <input key="chat-input" id="chat-input" aria-label="Message" type="text" defaultValue="" onChange={handleChatInputChange} onKeyDown={(e) => e.key === 'Enter' && sendChatMessage()} placeholder={replyingTo ? 'Reply...' : 'Type a message...'} style={{ flex: 1, padding: '15px 18px', borderRadius: '24px', backgroundColor: 'var(--bg-hover)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)', fontSize: '16px', outline: 'none', fontWeight: '500', transition: 'opacity 0.2s ease' }} autoComplete="off" />
           {/* The mic button that lived here only toasted "coming soon" (dead
               button, SLOP-AUDIT.md C1). The send button now stays put and
               disables when the input is empty. */}
-          <button className="glass-btn glass-navy" onClick={sendChatMessage} disabled={!chatInputHasText} style={{ width: '42px', height: '42px', borderRadius: '21px', border: 'none', background: colors.navyBg, color: 'white', cursor: chatInputHasText ? 'pointer' : 'default', opacity: chatInputHasText ? 1 : 0.45, display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 3px 10px rgba(13,40,71,0.10)', transition: 'opacity 0.2s ease' }}>{Icons.send('white', 18)}</button>
+          <button className="hit44 glass-btn glass-navy" onClick={sendChatMessage} disabled={!chatInputHasText} style={{ width: '42px', height: '42px', borderRadius: '21px', border: 'none', background: colors.navyBg, color: 'white', cursor: chatInputHasText ? 'pointer' : 'default', opacity: chatInputHasText ? 1 : 0.45, display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 3px 10px rgba(13,40,71,0.10)', transition: 'opacity 0.2s ease' }}>{Icons.send('white', 18)}</button>
         </div>
 
         {/* Camera options popup */}
@@ -9243,11 +9410,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
               <div style={{ width: '36px', height: '4px', borderRadius: '2px', backgroundColor: 'var(--toggle-off)', margin: '0 auto 16px' }} />
               <h3 style={{ fontSize: '16px', fontWeight: '800', color: colors.navy, margin: '0 0 16px', textAlign: 'center' }}>Add Photo</h3>
               <div style={{ display: 'flex', gap: '12px' }}>
-                <button className="glass-btn glass-secondary" onClick={() => openCameraViewfinder('flock')} style={{ flex: 1, padding: '16px', borderRadius: '16px', border: `2px solid ${colors.creamDark}`, backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px', transition: 'opacity 0.2s ease' }}>
+                <button className="hit44 glass-btn glass-secondary" onClick={() => openCameraViewfinder('flock')} style={{ flex: 1, padding: '16px', borderRadius: '16px', border: `2px solid ${colors.creamDark}`, backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px', transition: 'opacity 0.2s ease' }}>
                   {Icons.camera(colors.navy, 28)}
                   <span style={{ fontSize: '13px', fontWeight: '700', color: colors.navy }}>Take Photo</span>
                 </button>
-                <button className="glass-btn glass-secondary" onClick={() => { setShowCameraPopup(false); setTimeout(() => chatGalleryInputRef.current?.click(), 100); }} style={{ flex: 1, padding: '16px', borderRadius: '16px', border: `2px solid ${colors.creamDark}`, backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px', transition: 'opacity 0.2s ease' }}>
+                <button className="hit44 glass-btn glass-secondary" onClick={() => { setShowCameraPopup(false); setTimeout(() => chatGalleryInputRef.current?.click(), 100); }} style={{ flex: 1, padding: '16px', borderRadius: '16px', border: `2px solid ${colors.creamDark}`, backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px', transition: 'opacity 0.2s ease' }}>
                   {Icons.image(colors.navy, 28)}
                   <span style={{ fontSize: '13px', fontWeight: '700', color: colors.navy }}>Gallery</span>
                 </button>
@@ -9272,10 +9439,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
 
           return (
             <div className="modal-backdrop" style={{ position: 'absolute', inset: 0, backgroundColor: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'flex-end', zIndex: 50 }}>
+            <DialogBehavior onClose={() => { setShowChatPool(false); setShowCreateBill(false); }} label="Cash pool" />
               <div className="modal-content" style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '20px 20px 0 0', padding: '20px', width: '100%', maxHeight: '85%', overflowY: 'auto' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
                   <h2 style={{ fontSize: '18px', fontWeight: '900', color: colors.navy, margin: 0 }}>{showBillCreate && !hasBudget ? 'Split the Bill' : hasBudget ? 'Group Budget' : 'Split the Bill'}</h2>
-                  <button onClick={() => { setShowChatPool(false); setShowCreateBill(false); }} style={{ width: '32px', height: '32px', borderRadius: '16px', backgroundColor: 'var(--bg-hover)', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.x(colors.textSecondary, 18)}</button>
+                  <button className="hit44" onClick={() => { setShowChatPool(false); setShowCreateBill(false); }} style={{ width: '32px', height: '32px', borderRadius: '16px', backgroundColor: 'var(--bg-hover)', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.x(colors.textSecondary, 18)}</button>
                 </div>
 
                 {/* Budget Submission Section */}
@@ -9285,24 +9453,24 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                     {ctx && <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: '0 0 14px' }}>For {ctx}</p>}
                     <div style={{ display: 'flex', gap: '8px', marginBottom: '12px' }}>
                       {presets.map(p => (
-                        <button key={p} className="glass-btn glass-secondary" onClick={() => { setBudgetAmount(p); setBudgetCustom(''); }}
+                        <button key={p} className="hit44 glass-btn glass-secondary" onClick={() => { setBudgetAmount(p); setBudgetCustom(''); }}
                           style={{ flex: 1, padding: '12px 4px', borderRadius: '12px', border: budgetAmount === p ? `2px solid ${colors.steel}` : '1.5px solid var(--border-color)', backgroundColor: budgetAmount === p ? `${colors.steel}12` : 'var(--bg-card-solid)', fontSize: '15px', fontWeight: '800', color: budgetAmount === p ? colors.steel : colors.navy, cursor: 'pointer' }}>
                           ${p}{p === presets[presets.length - 1] ? '+' : ''}
                         </button>
                       ))}
                     </div>
                     <div style={{ marginBottom: '14px' }}>
-                      <p style={{ fontSize: '11px', color: 'var(--text-secondary)', margin: '0 0 6px' }}>Or enter a custom amount</p>
+                      <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: '0 0 6px' }}>Or enter a custom amount</p>
                       <div style={{ position: 'relative' }}>
                         <span style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', fontSize: '15px', fontWeight: '700', color: colors.navy }}>$</span>
-                        <SearchInputLocal type="number" initialValue={budgetCustom} onCommit={(v) => { setBudgetCustom(v); setBudgetAmount(null); }} placeholder="0" style={{ ...styles.input, paddingLeft: '28px', fontSize: '15px', fontWeight: '700' }} />
+                        <SearchInputLocal aria-label="Amount" type="number" initialValue={budgetCustom} onCommit={(v) => { setBudgetCustom(v); setBudgetAmount(null); }} placeholder="0" style={{ ...styles.input, paddingLeft: '28px', fontSize: '15px', fontWeight: '700' }} />
                       </div>
                     </div>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '16px' }}>
                       {Icons.lock(colors.textTertiary, 12)}
-                      <p style={{ fontSize: '11px', color: 'var(--text-tertiary)', margin: 0 }}>This is anonymous. No one sees your answer.</p>
+                      <p style={{ fontSize: '12px', color: 'var(--text-tertiary)', margin: 0 }}>This is anonymous. No one sees your answer.</p>
                     </div>
-                    <button className="glass-btn glass-primary" disabled={budgetSubmitting} onClick={async () => {
+                    <button className="hit44 glass-btn glass-primary" disabled={budgetSubmitting} onClick={async () => {
                       const amt = budgetCustom ? parseFloat(budgetCustom) : budgetAmount;
                       if (!amt || amt <= 0) { showToast('Select or enter an amount', 'error'); return; }
                       setBudgetSubmitting(true);
@@ -9326,7 +9494,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                         setShowChatPool(false);
                       } catch (err) { showToast(err.message, 'error'); }
                       setBudgetSubmitting(false);
-                    }} className="glass-btn glass-secondary" style={{ width: '100%', padding: '12px', marginTop: '8px', border: 'none', backgroundColor: 'transparent', color: 'var(--text-secondary)', fontSize: '13px', fontWeight: '600', cursor: 'pointer' }}>
+                    }} className="hit44 glass-btn glass-secondary" style={{ width: '100%', padding: '12px', marginTop: '8px', border: 'none', backgroundColor: 'transparent', color: 'var(--text-secondary)', fontSize: '13px', fontWeight: '600', cursor: 'pointer' }}>
                       Skip, any budget works
                     </button>
                   </div>
@@ -9349,16 +9517,16 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                       </div>
                     )}
                     {!budgetStatus?.budgetLocked && budgetStatus?.userAmount && (
-                      <p style={{ fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '12px' }}>Your budget: ${budgetStatus.userAmount} · <button onClick={() => { setBudgetAmount(budgetStatus.userAmount); setBudgetCustom(''); setBudgetStatus(prev => ({ ...prev, userSubmitted: false })); }} style={{ background: 'none', border: 'none', color: colors.steel, fontWeight: '700', cursor: 'pointer', padding: 0, fontSize: '12px' }}>Change</button></p>
+                      <p style={{ fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '12px' }}>Your budget: ${budgetStatus.userAmount} · <button className="hit44" onClick={() => { setBudgetAmount(budgetStatus.userAmount); setBudgetCustom(''); setBudgetStatus(prev => ({ ...prev, userSubmitted: false })); }} style={{ background: 'none', border: 'none', color: colors.steel, fontWeight: '700', cursor: 'pointer', padding: 0, fontSize: '12px' }}>Change</button></p>
                     )}
                     {isCreator && !budgetStatus?.budgetLocked && (
                       <div style={{ display: 'flex', gap: '8px', marginBottom: '12px' }}>
-                        <button className="glass-btn glass-primary" onClick={async () => { try { await lockBudget(selectedFlockId); setBudgetStatus(prev => ({ ...prev, budgetLocked: true })); showToast('Budget locked'); } catch (err) { showToast(err.message, 'error'); } }} style={{ flex: 1, padding: '10px', borderRadius: '10px', border: `1.5px solid ${colors.navy}`, backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontWeight: '700', fontSize: '12px', cursor: 'pointer' }}>Lock Budget</button>
-                        <button className="glass-btn glass-secondary" onClick={async () => { try { const d = await sendBudgetReminder(selectedFlockId); showToast(`Reminded ${d.reminded} member${d.reminded !== 1 ? 's' : ''}`); } catch (err) { showToast(err.message, 'error'); } }} style={{ flex: 1, padding: '10px', borderRadius: '10px', border: `1.5px solid var(--border-color)`, backgroundColor: 'var(--bg-card-solid)', color: 'var(--text-secondary)', fontWeight: '700', fontSize: '12px', cursor: 'pointer' }}>Send Reminder</button>
+                        <button className="hit44 glass-btn glass-primary" onClick={async () => { try { await lockBudget(selectedFlockId); setBudgetStatus(prev => ({ ...prev, budgetLocked: true })); showToast('Budget locked'); } catch (err) { showToast(err.message, 'error'); } }} style={{ flex: 1, padding: '10px', borderRadius: '10px', border: `1.5px solid ${colors.navy}`, backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontWeight: '700', fontSize: '12px', cursor: 'pointer' }}>Lock Budget</button>
+                        <button className="hit44 glass-btn glass-secondary" onClick={async () => { try { const d = await sendBudgetReminder(selectedFlockId); showToast(`Reminded ${d.reminded} member${d.reminded !== 1 ? 's' : ''}`); } catch (err) { showToast(err.message, 'error'); } }} style={{ flex: 1, padding: '10px', borderRadius: '10px', border: `1.5px solid var(--border-color)`, backgroundColor: 'var(--bg-card-solid)', color: 'var(--text-secondary)', fontWeight: '700', fontSize: '12px', cursor: 'pointer' }}>Send Reminder</button>
                       </div>
                     )}
                     {isConfirmedOrComplete && (
-                      <button className="glass-btn glass-primary" onClick={() => setShowCreateBill(true)} style={{ ...styles.gradientButton, padding: '14px' }}>Split the Bill</button>
+                      <button className="hit44 glass-btn glass-primary" onClick={() => setShowCreateBill(true)} style={{ ...styles.gradientButton, padding: '14px' }}>Split the Bill</button>
                     )}
                   </div>
                 )}
@@ -9367,7 +9535,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 {!hasBudget && !showCreateBill && !billSplit && (
                   <div>
                     <p style={{ fontSize: '13px', color: 'var(--text-secondary)', marginBottom: '16px' }}>Create a bill split after your hangout</p>
-                    <button className="glass-btn glass-primary" onClick={() => setShowCreateBill(true)} style={{ ...styles.gradientButton, padding: '14px' }}>Split the Bill</button>
+                    <button className="hit44 glass-btn glass-primary" onClick={() => setShowCreateBill(true)} style={{ ...styles.gradientButton, padding: '14px' }}>Split the Bill</button>
                   </div>
                 )}
 
@@ -9378,7 +9546,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                       <label style={{ display: 'block', fontSize: '12px', fontWeight: '700', color: colors.navy, marginBottom: '6px' }}>Who paid?</label>
                       <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
                         {[{ id: authUser?.id, name: 'Me' }, ...(flock.members || []).filter(m => typeof m === 'object' && m.id && String(m.id) !== String(authUser?.id)).map(m => ({ id: m.id, name: m.name || m }))].map(m => (
-                          <button key={m.id || m.name} className="glass-btn glass-secondary" onClick={() => setBillPaidBy(m.id || authUser?.id)}
+                          <button key={m.id || m.name} className="hit44 glass-btn glass-secondary" onClick={() => setBillPaidBy(m.id || authUser?.id)}
                             style={{ padding: '8px 14px', borderRadius: '20px', border: (billPaidBy || authUser?.id) === m.id ? `2px solid ${colors.steel}` : '1.5px solid var(--border-color)', backgroundColor: (billPaidBy || authUser?.id) === m.id ? `${colors.steel}12` : 'var(--bg-card-solid)', fontSize: '12px', fontWeight: '700', color: (billPaidBy || authUser?.id) === m.id ? colors.steel : colors.navy, cursor: 'pointer' }}>
                             {m.name}
                           </button>
@@ -9389,14 +9557,14 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                       <label style={{ display: 'block', fontSize: '12px', fontWeight: '700', color: colors.navy, marginBottom: '6px' }}>What was the total?</label>
                       <div style={{ position: 'relative' }}>
                         <span style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', fontSize: '16px', fontWeight: '800', color: colors.navy }}>$</span>
-                        <SearchInputLocal type="number" initialValue={billTotal} onCommit={setBillTotal} placeholder="0.00" style={{ ...styles.input, paddingLeft: '28px', fontSize: '16px', fontWeight: '800' }} />
+                        <SearchInputLocal aria-label="Bill total" type="number" initialValue={billTotal} onCommit={setBillTotal} placeholder="0.00" style={{ ...styles.input, paddingLeft: '28px', fontSize: '16px', fontWeight: '800' }} />
                       </div>
                     </div>
                     <div style={{ marginBottom: '14px' }}>
                       <label style={{ display: 'block', fontSize: '12px', fontWeight: '700', color: colors.navy, marginBottom: '6px' }}>Add tip?</label>
                       <div style={{ display: 'flex', gap: '6px' }}>
                         {[0, 15, 18, 20, 25].map(t => (
-                          <button key={t} className="glass-btn glass-secondary" onClick={() => setBillTip(t)}
+                          <button key={t} className="hit44 glass-btn glass-secondary" onClick={() => setBillTip(t)}
                             style={{ flex: 1, padding: '8px 2px', borderRadius: '10px', border: billTip === t ? `2px solid ${colors.steel}` : '1.5px solid var(--border-color)', backgroundColor: billTip === t ? `${colors.steel}12` : 'var(--bg-card-solid)', fontSize: '12px', fontWeight: '700', color: billTip === t ? colors.steel : colors.navy, cursor: 'pointer' }}>
                             {t === 0 ? 'None' : `${t}%`}
                           </button>
@@ -9418,10 +9586,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                           <span style={{ fontSize: '13px', fontWeight: '800', color: colors.navy }}>Total</span>
                           <span style={{ fontSize: '13px', fontWeight: '800', color: colors.steel }}>${(parseFloat(billTotal) * (1 + billTip / 100)).toFixed(2)}</span>
                         </div>
-                        <p style={{ fontSize: '11px', color: 'var(--text-tertiary)', margin: '6px 0 0', textAlign: 'center' }}>Equal split · ~${(parseFloat(billTotal) * (1 + billTip / 100) / Math.max(1, flock.members?.length || flock.memberCount || 1)).toFixed(2)} each</p>
+                        <p style={{ fontSize: '12px', color: 'var(--text-tertiary)', margin: '6px 0 0', textAlign: 'center' }}>Equal split · ~${(parseFloat(billTotal) * (1 + billTip / 100) / Math.max(1, flock.members?.length || flock.memberCount || 1)).toFixed(2)} each</p>
                       </div>
                     )}
-                    <button className="glass-btn glass-primary" disabled={!billTotal || parseFloat(billTotal) <= 0} onClick={async () => {
+                    <button className="hit44 glass-btn glass-primary" disabled={!billTotal || parseFloat(billTotal) <= 0} onClick={async () => {
                       try {
                         const data = await createBillSplit(selectedFlockId, {
                           totalAmount: parseFloat(billTotal),
@@ -9445,22 +9613,22 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                     <div style={{ padding: '14px', borderRadius: '12px', backgroundColor: 'var(--bg-primary)', marginBottom: '14px' }}>
                       <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px' }}>
                         <span style={{ fontSize: '13px', fontWeight: '800', color: colors.navy }}>Total: ${billSplit.totalWithTip?.toFixed(2)}</span>
-                        {billSplit.tipPercent > 0 && <span style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>includes {billSplit.tipPercent}% tip</span>}
+                        {billSplit.tipPercent > 0 && <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>includes {billSplit.tipPercent}% tip</span>}
                       </div>
-                      <p style={{ fontSize: '11px', color: 'var(--text-secondary)', margin: '0 0 10px' }}>Paid by {billSplit.paidBy?.name || 'Unknown'}</p>
+                      <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: '0 0 10px' }}>Paid by {billSplit.paidBy?.name || 'Unknown'}</p>
                       <div style={{ borderTop: '1px solid var(--divider)', paddingTop: '8px' }}>
                         {(billSplit.shares || []).map(s => (
                           <div key={s.userId} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '6px 0' }}>
                             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                               <span style={{ fontSize: '13px', fontWeight: '600', color: colors.navy }}>{s.name}</span>
-                              {s.committed && !s.settled && <span style={{ fontSize: '9px', fontWeight: '700', color: colors.amber, backgroundColor: `${colors.amber}20`, padding: '1px 6px', borderRadius: '4px' }}>Pre-committed</span>}
+                              {s.committed && !s.settled && <span style={{ fontSize: '12px', fontWeight: '700', color: colors.amber, backgroundColor: `${colors.amber}20`, padding: '1px 6px', borderRadius: '4px' }}>Pre-committed</span>}
                             </div>
                             <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                               <span style={{ fontSize: '13px', fontWeight: '700', color: colors.navy }}>${s.amount?.toFixed(2)}</span>
                               {s.settled ? (
                                 <span style={{ color: '#22C55E', fontSize: '14px' }}>{Icons.check('#22C55E', 16)}</span>
                               ) : (
-                                <span style={{ fontSize: '10px', color: 'var(--text-tertiary)' }}>Owes</span>
+                                <span style={{ fontSize: '12px', color: 'var(--text-tertiary)' }}>Owes</span>
                               )}
                             </div>
                           </div>
@@ -9469,7 +9637,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                     </div>
                     {/* Settle Up button for current user if they owe */}
                     {billSplit.shares?.find(s => String(s.userId) === String(authUser?.id) && !s.settled) && (
-                      <button className="glass-btn glass-primary" onClick={async () => {
+                      <button className="hit44 glass-btn glass-primary" onClick={async () => {
                         try {
                           const result = await getPaymentLinks(selectedFlockId);
                           if (result.methods && result.methods.length > 0) {
@@ -9500,7 +9668,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                       </button>
                     )}
                     {billSplit.shares?.find(s => String(s.userId) === String(authUser?.id) && !s.settled) && (
-                      <button className="glass-btn glass-secondary" onClick={async () => {
+                      <button className="hit44 glass-btn glass-secondary" onClick={async () => {
                         try {
                           await settleShare(selectedFlockId);
                           setBillSplit(prev => ({
@@ -9593,14 +9761,15 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
 
           return (
             <div className="modal-backdrop" style={{ position: 'absolute', inset: 0, backgroundColor: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'flex-end', zIndex: 50 }}>
+            <DialogBehavior onClose={() => setShowVotePanel(false)} label="Vote on a venue" />
               <div className="modal-content" style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '20px 20px 0 0', padding: '20px', width: '100%', maxHeight: '80%', overflowY: 'auto' }}>
                 {/* Header */}
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
                   <div>
                     <h2 style={{ fontSize: '18px', fontWeight: '900', color: colors.navy, margin: 0, display: 'flex', alignItems: 'center', gap: '8px' }}>{Icons.vote(colors.navy, 20)} Vote for a Venue</h2>
-                    <p style={{ fontSize: '11px', color: 'var(--text-tertiary)', margin: '2px 0 0' }}>{totalVoters} vote{totalVoters !== 1 ? 's' : ''} cast{myVote ? ` • You voted for ${myVote}` : ''}</p>
+                    <p style={{ fontSize: '12px', color: 'var(--text-tertiary)', margin: '2px 0 0' }}>{totalVoters} vote{totalVoters !== 1 ? 's' : ''} cast{myVote ? ` • You voted for ${myVote}` : ''}</p>
                   </div>
-                  <button onClick={() => setShowVotePanel(false)} style={{ width: '32px', height: '32px', borderRadius: '16px', backgroundColor: 'var(--bg-hover)', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.x(colors.textSecondary, 18)}</button>
+                  <button className="hit44" onClick={() => setShowVotePanel(false)} style={{ width: '32px', height: '32px', borderRadius: '16px', backgroundColor: 'var(--bg-hover)', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.x(colors.textSecondary, 18)}</button>
                 </div>
 
                 {/* Current votes */}
@@ -9616,7 +9785,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                         ? colors.navyBg
                         : isLeading ? colors.steel : `linear-gradient(135deg, ${colors.navy}15, ${colors.navy}25)`;
                       return (
-                        <button key={v.venue} className="glass-btn glass-secondary" onClick={(e) => { confirmClick(e); isMyVote ? handleUnvote() : handleQuickVote(v.venue, v.type, v.place_id); }} style={{ width: '100%', textAlign: 'left', padding: '12px 14px', borderRadius: '14px', border: isAssigned ? `2px solid ${colors.navy}` : isMyVote ? `2px solid ${colors.navy}` : `1.5px solid var(--border-default)`, backgroundColor: isAssigned ? `${colors.navy}05` : isMyVote ? `${colors.navy}06` : 'var(--bg-card-solid)', cursor: 'pointer', position: 'relative', overflow: 'hidden', transition: 'opacity 0.2s' }}>
+                        <button key={v.venue} className="hit44 glass-btn glass-secondary" onClick={(e) => { confirmClick(e); isMyVote ? handleUnvote() : handleQuickVote(v.venue, v.type, v.place_id); }} style={{ width: '100%', textAlign: 'left', padding: '12px 14px', borderRadius: '14px', border: isAssigned ? `2px solid ${colors.navy}` : isMyVote ? `2px solid ${colors.navy}` : `1.5px solid var(--border-default)`, backgroundColor: isAssigned ? `${colors.navy}05` : isMyVote ? `${colors.navy}06` : 'var(--bg-card-solid)', cursor: 'pointer', position: 'relative', overflow: 'hidden', transition: 'opacity 0.2s' }}>
                           {/* Progress bar background */}
                           <div style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: `${votePercent}%`, backgroundColor: isMyVote ? `${colors.navy}10` : 'var(--bg-tertiary)', transition: 'width 0.4s ease', borderRadius: '14px' }} />
                           <div style={{ position: 'relative', display: 'flex', alignItems: 'center', gap: '10px' }}>
@@ -9626,10 +9795,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                             <div style={{ flex: 1, minWidth: 0 }}>
                               <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                                 <h4 style={{ fontSize: '14px', fontWeight: '700', color: colors.navy, margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{v.venue}</h4>
-                                {isAssigned && <span style={{ fontSize: '9px', fontWeight: '700', color: 'white', backgroundColor: colors.navyBg, padding: '1px 6px', borderRadius: '6px', flexShrink: 0 }}>Assigned</span>}
-                                {isLeading && <span style={{ fontSize: '9px', fontWeight: '700', color: colors.steel, backgroundColor: `${colors.steel}15`, padding: '1px 6px', borderRadius: '6px', flexShrink: 0 }}>Leading</span>}
+                                {isAssigned && <span style={{ fontSize: '12px', fontWeight: '700', color: 'white', backgroundColor: colors.navyBg, padding: '1px 6px', borderRadius: '6px', flexShrink: 0 }}>Assigned</span>}
+                                {isLeading && <span style={{ fontSize: '12px', fontWeight: '700', color: colors.steel, backgroundColor: `${colors.steel}15`, padding: '1px 6px', borderRadius: '6px', flexShrink: 0 }}>Leading</span>}
                               </div>
-                              <p style={{ fontSize: '11px', color: 'var(--text-tertiary)', margin: '1px 0 0' }}>{(() => {
+                              <p style={{ fontSize: '12px', color: 'var(--text-tertiary)', margin: '1px 0 0' }}>{(() => {
                                 const guests = v.guestCount || 0;
                                 const names = v.voters.join(', ');
                                 const guestLabel = guests > 0 ? `${guests} guest${guests !== 1 ? 's' : ''}` : '';
@@ -9642,7 +9811,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                               {count > 0 && <span style={{ fontSize: '16px', fontWeight: '900', color: isMyVote ? colors.navy : colors.textTertiary }}>{count}</span>}
                               {isMyVote && <div style={{ width: '20px', height: '20px', borderRadius: '10px', backgroundColor: colors.navyBg, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.check('white', 12)}</div>}
                               {isCreator && !isAssigned && (
-                                <button className="glass-btn glass-primary" onClick={(e) => { e.stopPropagation(); confirmClick(e); handleConfirmVenue(v.venue); }} style={{ padding: '4px 8px', borderRadius: '8px', border: 'none', background: colors.steel, color: 'white', fontSize: '10px', fontWeight: '700', cursor: 'pointer', position: 'relative', overflow: 'hidden' }}>Confirm</button>
+                                <button className="hit44 glass-btn glass-primary" onClick={(e) => { e.stopPropagation(); confirmClick(e); handleConfirmVenue(v.venue); }} style={{ padding: '4px 8px', borderRadius: '8px', border: 'none', background: colors.steel, color: 'white', fontSize: '12px', fontWeight: '700', cursor: 'pointer', position: 'relative', overflow: 'hidden' }}>Confirm</button>
                               )}
                             </div>
                           </div>
@@ -9662,9 +9831,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                     <p style={{ fontSize: '12px', fontWeight: '700', color: 'var(--text-tertiary)', marginBottom: '10px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Popular Chains Nearby</p>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
                       {suggestedVenues.map(venue => (
-                        <button key={venue.id || venue.name} className="glass-btn glass-secondary" onClick={(e) => { confirmClick(e); handleQuickVote(venue.name, venue.type || venue.category || 'Venue', venue.place_id); }} style={{ width: '100%', textAlign: 'left', padding: '10px 12px', borderRadius: '12px', border: '1px solid var(--border-default)', backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '10px', transition: 'opacity 0.2s', position: 'relative', overflow: 'hidden' }}>
+                        <button key={venue.id || venue.name} className="hit44 glass-btn glass-secondary" onClick={(e) => { confirmClick(e); handleQuickVote(venue.name, venue.type || venue.category || 'Venue', venue.place_id); }} style={{ width: '100%', textAlign: 'left', padding: '10px 12px', borderRadius: '12px', border: '1px solid var(--border-default)', backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '10px', transition: 'opacity 0.2s', position: 'relative', overflow: 'hidden' }}>
                           {venue.photo_url ? (
-                            <img src={venue.photo_url} alt="" style={{ width: '36px', height: '36px', borderRadius: '8px', objectFit: 'cover', flexShrink: 0 }} onError={(e) => { e.target.onerror = null; e.target.src = 'data:image/svg+xml,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="36" height="36"><rect fill="#1a3a5c" width="36" height="36" rx="8"/></svg>'); }} />
+                            <img src={venue.photo_url} alt="" style={{ width: '36px', height: '36px', borderRadius: '8px', objectFit: 'cover', flexShrink: 0 }} onError={(e) => { e.target.onerror = null; e.target.src = 'data:image/svg+xml,' + encodeURIComponent('<svg aria-hidden="true" focusable="false" xmlns="http://www.w3.org/2000/svg" width="36" height="36"><rect fill="#1a3a5c" width="36" height="36" rx="8"/></svg>'); }} />
                           ) : (
                             <div style={{ width: '36px', height: '36px', borderRadius: '8px', background: `linear-gradient(135deg, ${getCategoryColor(venue.category)}, ${getCategoryColor(venue.category)}cc)`, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
                               {Icons.mapPin('white', 14)}
@@ -9672,9 +9841,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                           )}
                           <div style={{ flex: 1, minWidth: 0 }}>
                             <p style={{ fontSize: '13px', fontWeight: '600', color: colors.navy, margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{venue.name}</p>
-                            <p style={{ fontSize: '10px', color: 'var(--text-tertiary)', margin: '1px 0 0' }}>{venue.type || venue.category}{venue.stars ? ` • ${venue.stars}★` : ''}{venue.price ? ` • ${venue.price}` : ''}</p>
+                            <p style={{ fontSize: '12px', color: 'var(--text-tertiary)', margin: '1px 0 0' }}>{venue.type || venue.category}{venue.stars ? ` • ${venue.stars}★` : ''}{venue.price ? ` • ${venue.price}` : ''}</p>
                           </div>
-                          <div style={{ padding: '6px 12px', borderRadius: '10px', backgroundColor: `${colors.navy}08`, color: colors.navy, fontSize: '11px', fontWeight: '700', flexShrink: 0 }}>
+                          <div style={{ padding: '6px 12px', borderRadius: '10px', backgroundColor: `${colors.navy}08`, color: colors.navy, fontSize: '12px', fontWeight: '700', flexShrink: 0 }}>
                             {Icons.vote(colors.navy, 12)} Vote
                           </div>
                         </button>
@@ -9684,7 +9853,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 )}
 
                 {/* Browse more button */}
-                <button className="glass-btn glass-secondary" onClick={() => { setShowVotePanel(false); setShowVenueShareModal(true); }} style={{ width: '100%', padding: '12px', borderRadius: '12px', border: `2px dashed ${colors.creamDark}`, backgroundColor: 'transparent', color: 'var(--text-tertiary)', fontSize: '13px', fontWeight: '600', cursor: 'pointer', marginTop: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}>
+                <button className="hit44 glass-btn glass-secondary" onClick={() => { setShowVotePanel(false); setShowVenueShareModal(true); }} style={{ width: '100%', padding: '12px', borderRadius: '12px', border: `2px dashed ${colors.creamDark}`, backgroundColor: 'transparent', color: 'var(--text-tertiary)', fontSize: '13px', fontWeight: '600', cursor: 'pointer', marginTop: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}>
                   {Icons.plus(colors.textTertiary, 14)} Share a venue to chat
                 </button>
               </div>
@@ -9695,10 +9864,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
         {/* Venue Share Modal */}
         {showVenueShareModal && (
           <div className="modal-backdrop" style={{ position: 'absolute', inset: 0, backgroundColor: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'flex-end', zIndex: 50 }}>
+            <DialogBehavior onClose={() => setShowVenueShareModal(false)} label="Share a venue" />
             <div className="modal-content" style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '20px 20px 0 0', padding: '20px', width: '100%', maxHeight: '70%', overflowY: 'auto' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
                 <h2 style={{ fontSize: '18px', fontWeight: '900', color: colors.navy, margin: 0, display: 'flex', alignItems: 'center', gap: '8px' }}>{Icons.mapPin(colors.navy, 20)} Share a Venue</h2>
-                <button onClick={() => setShowVenueShareModal(false)} style={{ width: '32px', height: '32px', borderRadius: '16px', backgroundColor: 'var(--bg-hover)', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.x(colors.textSecondary, 18)}</button>
+                <button className="hit44" onClick={() => setShowVenueShareModal(false)} style={{ width: '32px', height: '32px', borderRadius: '16px', backgroundColor: 'var(--bg-hover)', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.x(colors.textSecondary, 18)}</button>
               </div>
 
               {/* Current venue display */}
@@ -9708,11 +9878,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                     {Icons.mapPin('white', 18)}
                   </div>
                   <div style={{ flex: 1, minWidth: 0 }}>
-                    <p style={{ fontSize: '10px', fontWeight: '600', color: colors.steel, margin: '0 0 2px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Current Venue</p>
+                    <p style={{ fontSize: '12px', fontWeight: '600', color: colors.steel, margin: '0 0 2px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Current Venue</p>
                     <p style={{ fontSize: '14px', fontWeight: '700', color: colors.navy, margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{flock.venue}</p>
-                    {flock.venueAddress && <p style={{ fontSize: '11px', color: 'var(--text-secondary)', margin: '2px 0 0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{flock.venueAddress}</p>}
+                    {flock.venueAddress && <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: '2px 0 0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{flock.venueAddress}</p>}
                   </div>
-                  <button className="glass-btn glass-primary" onClick={(e) => { confirmClick(e); shareVenueToChat(selectedFlockId, { name: flock.venue, addr: flock.venueAddress, place_id: flock.venueId, stars: flock.venueRating, photo_url: flock.venuePhoto, category: 'Food', crowd: 50, price: '$$' }); }} style={{ padding: '8px 12px', borderRadius: '10px', border: 'none', background: colors.steel, color: 'white', fontSize: '11px', fontWeight: '700', cursor: 'pointer', whiteSpace: 'nowrap', position: 'relative', overflow: 'hidden' }}>Share This</button>
+                  <button className="hit44 glass-btn glass-primary" onClick={(e) => { confirmClick(e); shareVenueToChat(selectedFlockId, { name: flock.venue, addr: flock.venueAddress, place_id: flock.venueId, stars: flock.venueRating, photo_url: flock.venuePhoto, category: 'Food', crowd: 50, price: '$$' }); }} style={{ padding: '8px 12px', borderRadius: '10px', border: 'none', background: colors.steel, color: 'white', fontSize: '12px', fontWeight: '700', cursor: 'pointer', whiteSpace: 'nowrap', position: 'relative', overflow: 'hidden' }}>Share This</button>
                 </div>
               ) : (
                 <div style={{ padding: '10px 12px', borderRadius: '12px', backgroundColor: 'var(--bg-tertiary)', border: '1px solid var(--border-default)', marginBottom: '16px' }}>
@@ -9723,7 +9893,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
               <p style={{ fontSize: '12px', fontWeight: '600', color: 'var(--text-secondary)', marginBottom: '12px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Or select a different venue:</p>
               <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
                 {budgetFilteredVenues.map(venue => (
-                  <button
+                  <button className="hit44"
                     key={venue.id}
                     onClick={(e) => { confirmClick(e); shareVenueToChat(selectedFlockId, venue); }}
                     style={{
@@ -9754,14 +9924,14 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                     </div>
                     <div style={{ flex: 1 }}>
                       <p style={{ fontSize: '14px', fontWeight: '600', color: colors.navy, margin: 0 }}>{venue.name}</p>
-                      <p style={{ fontSize: '11px', color: 'var(--text-secondary)', margin: '2px 0 0' }}>{venue.type} • {venue.price}</p>
+                      <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: '2px 0 0' }}>{venue.type} • {venue.price}</p>
                     </div>
                     <div style={{
                       padding: '4px 10px',
                       borderRadius: '12px',
                       backgroundColor: venue.crowd > 70 ? '#FEE2E2' : venue.crowd > 40 ? '#FEF3C7' : '#D1FAE5',
                       color: venue.crowd > 70 ? colors.red : venue.crowd > 40 ? colors.amber : colors.steel,
-                      fontSize: '11px',
+                      fontSize: '12px',
                       fontWeight: '600'
                     }}>
                       {venue.crowd}%
@@ -9776,16 +9946,17 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
         {/* Invite Friends Modal */}
         {showFlockInviteModal && (
           <div className="modal-backdrop" style={{ position: 'absolute', inset: 0, backgroundColor: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'flex-end', zIndex: 50 }}>
+            <DialogBehavior onClose={() => setShowFlockInviteModal(false)} label="Invite friends" />
             <div className="modal-content" style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '20px 20px 0 0', padding: '20px', width: '100%', maxHeight: '70%', overflowY: 'auto' }}>
               <div style={{ width: '40px', height: '4px', backgroundColor: 'var(--pill-bg)', borderRadius: '2px', margin: '0 auto 16px' }} />
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
                 <h3 style={{ fontSize: '16px', fontWeight: '800', color: colors.navy, margin: 0 }}>Invite Friends</h3>
-                <button onClick={() => setShowFlockInviteModal(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '4px' }}>{Icons.x(colors.textTertiary, 20)}</button>
+                <button className="hit44" onClick={() => setShowFlockInviteModal(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '4px' }}>{Icons.x(colors.textTertiary, 20)}</button>
               </div>
 
               {/* Guest link — anyone with it can RSVP and vote, no account.
                   This is the growth surface: every plan reaches non-users. */}
-              <button
+              <button className="hit44"
                 onClick={async () => {
                   try {
                     const { url } = await createFlockInviteLink(selectedFlockId);
@@ -9810,11 +9981,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', marginBottom: '12px' }}>
                   {flockInviteSelected.map(f => (
                     <div key={f.id} style={{ display: 'flex', alignItems: 'center', gap: '4px', padding: '4px 8px 4px 4px', borderRadius: '20px', backgroundColor: colors.navyBg, color: 'white' }}>
-                      <div style={{ width: '22px', height: '22px', borderRadius: '11px', backgroundColor: 'rgba(255,255,255,0.2)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '10px', fontWeight: '700', overflow: 'hidden' }}>
+                      <div style={{ width: '22px', height: '22px', borderRadius: '11px', backgroundColor: 'rgba(255,255,255,0.2)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '12px', fontWeight: '700', overflow: 'hidden' }}>
                         {f.profile_image_url ? <img src={f.profile_image_url} alt="" style={{ width: '22px', height: '22px', borderRadius: '11px', objectFit: 'cover' }} /> : f.name[0]?.toUpperCase()}
                       </div>
                       <span style={{ fontSize: '12px', fontWeight: '600' }}>{f.name.split(' ')[0]}</span>
-                      <button onClick={() => setFlockInviteSelected(prev => prev.filter(x => x.id !== f.id))} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '0 2px', display: 'flex', alignItems: 'center' }}>{Icons.x('rgba(255,255,255,0.7)', 12)}</button>
+                      <button className="hit44" onClick={() => setFlockInviteSelected(prev => prev.filter(x => x.id !== f.id))} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '0 2px', display: 'flex', alignItems: 'center' }}>{Icons.x('rgba(255,255,255,0.7)', 12)}</button>
                     </div>
                   ))}
                 </div>
@@ -9822,7 +9993,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
 
               {/* Search input */}
               <div style={{ position: 'relative', marginBottom: '12px' }}>
-                <input
+                <input aria-label="Search friends"
                   type="text"
                   value={flockInviteSearch}
                   onChange={(e) => handleFlockInviteSearch(e.target.value)}
@@ -9832,7 +10003,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 />
                 <span style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)' }}>{Icons.search(colors.textTertiary, 14)}</span>
                 {flockInviteSearch && (
-                  <button onClick={() => { setFlockInviteSearch(''); setFlockInviteResults([]); }} style={{ position: 'absolute', right: '8px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', padding: '4px' }}>{Icons.x(colors.textTertiary, 14)}</button>
+                  <button className="hit44" onClick={() => { setFlockInviteSearch(''); setFlockInviteResults([]); }} style={{ position: 'absolute', right: '8px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', padding: '4px' }}>{Icons.x(colors.textTertiary, 14)}</button>
                 )}
               </div>
 
@@ -9840,7 +10011,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
               {flockInviteSearching && (
                 <div style={{ textAlign: 'center', padding: '10px 0' }}>
                   <div style={{ display: 'inline-block', width: '14px', height: '14px', border: `2px solid ${colors.creamDark}`, borderTopColor: colors.navy, borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
-                  <span style={{ fontSize: '11px', color: 'var(--text-secondary)', marginLeft: '6px' }}>Searching...</span>
+                  <span style={{ fontSize: '12px', color: 'var(--text-secondary)', marginLeft: '6px' }}>Searching...</span>
                 </div>
               )}
               {!flockInviteSearching && flockInviteResults.length > 0 && (
@@ -9852,7 +10023,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                       const pulse = friendsPulses.find(p => p.id === friend.id);
                       const dot = pulse?.status === 'down' ? '#10b981' : pulse?.status === 'maybe' ? '#f59e0b' : null;
                       return (
-                        <button key={friend.id} onClick={() => setFlockInviteSelected(prev => [...prev, friend])} style={{ width: '100%', padding: '10px 12px', display: 'flex', alignItems: 'center', gap: '10px', border: 'none', borderBottom: i < arr.length - 1 ? `1px solid ${colors.creamDark}` : 'none', backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer', textAlign: 'left' }}>
+                        <button className="hit44" key={friend.id} onClick={() => setFlockInviteSelected(prev => [...prev, friend])} style={{ width: '100%', padding: '10px 12px', display: 'flex', alignItems: 'center', gap: '10px', border: 'none', borderBottom: i < arr.length - 1 ? `1px solid ${colors.creamDark}` : 'none', backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer', textAlign: 'left' }}>
                           <div style={{ position: 'relative', flexShrink: 0 }}>
                             <div style={{ width: '36px', height: '36px', borderRadius: '18px', backgroundColor: colors.navyMidBg, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '13px', fontWeight: '700', color: 'white', overflow: 'hidden' }}>
                               {friend.profile_image_url ? <img src={friend.profile_image_url} alt="" style={{ width: '36px', height: '36px', borderRadius: '18px', objectFit: 'cover' }} /> : friend.name[0]?.toUpperCase()}
@@ -9862,25 +10033,25 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                           <div style={{ flex: 1 }}>
                             <p style={{ fontWeight: '700', fontSize: '14px', color: colors.navy, margin: 0 }}>{friend.name}</p>
                             {pulse && pulse.status !== 'not' && (
-                              <p style={{ fontSize: '10px', color: pulse.status === 'down' ? '#10b981' : '#f59e0b', margin: '2px 0 0', fontWeight: '700' }}>
+                              <p style={{ fontSize: '12px', color: pulse.status === 'down' ? '#10b981' : '#f59e0b', margin: '2px 0 0', fontWeight: '700' }}>
                                 {pulse.status === 'down' ? 'Down to hang tonight' : 'Convince me'}
                               </p>
                             )}
                           </div>
-                          <div style={{ padding: '4px 10px', borderRadius: '8px', backgroundColor: 'var(--icon-bg)', color: colors.steel, fontSize: '11px', fontWeight: '700' }}>Add</div>
+                          <div style={{ padding: '4px 10px', borderRadius: '8px', backgroundColor: 'var(--icon-bg)', color: colors.steel, fontSize: '12px', fontWeight: '700' }}>Add</div>
                         </button>
                       );
                     })}
                 </div>
               )}
               {!flockInviteSearching && flockInviteSearch.trim().length >= 1 && flockInviteResults.length === 0 && (
-                <p style={{ fontSize: '11px', color: 'var(--text-tertiary)', textAlign: 'center', padding: '8px 0', margin: 0 }}>No friends found</p>
+                <p style={{ fontSize: '12px', color: 'var(--text-tertiary)', textAlign: 'center', padding: '8px 0', margin: 0 }}>No friends found</p>
               )}
 
               {/* When search is empty: show friends who are down/maybe (the magic) */}
               {!flockInviteSearching && flockInviteSearch.trim().length === 0 && friendsPulses.filter(p => p.status !== 'not').length > 0 && (
                 <div style={{ marginTop: '4px' }}>
-                  <p style={{ fontSize: '11px', fontWeight: '800', color: 'var(--text-secondary)', margin: '0 0 8px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Available tonight</p>
+                  <p style={{ fontSize: '12px', fontWeight: '800', color: 'var(--text-secondary)', margin: '0 0 8px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Available tonight</p>
                   <div style={{ maxHeight: '240px', overflowY: 'auto', borderRadius: '10px', border: `1px solid ${colors.creamDark}`, backgroundColor: 'var(--bg-card-solid)' }}>
                     {friendsPulses
                       .filter(p => p.status !== 'not')
@@ -9889,7 +10060,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                       .map((friend, i, arr) => {
                         const isDown = friend.status === 'down';
                         return (
-                          <button key={friend.id} onClick={() => setFlockInviteSelected(prev => [...prev, friend])} style={{ width: '100%', padding: '10px 12px', display: 'flex', alignItems: 'center', gap: '10px', border: 'none', borderBottom: i < arr.length - 1 ? `1px solid ${colors.creamDark}` : 'none', backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer', textAlign: 'left' }}>
+                          <button className="hit44" key={friend.id} onClick={() => setFlockInviteSelected(prev => [...prev, friend])} style={{ width: '100%', padding: '10px 12px', display: 'flex', alignItems: 'center', gap: '10px', border: 'none', borderBottom: i < arr.length - 1 ? `1px solid ${colors.creamDark}` : 'none', backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer', textAlign: 'left' }}>
                             <div style={{ position: 'relative', flexShrink: 0 }}>
                               <div style={{ width: '36px', height: '36px', borderRadius: '18px', backgroundColor: colors.navyMidBg, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '13px', fontWeight: '700', color: 'white', overflow: 'hidden' }}>
                                 {friend.profile_image_url ? <img src={friend.profile_image_url} alt="" style={{ width: '36px', height: '36px', borderRadius: '18px', objectFit: 'cover' }} /> : friend.name[0]?.toUpperCase()}
@@ -9898,11 +10069,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                             </div>
                             <div style={{ flex: 1 }}>
                               <p style={{ fontWeight: '700', fontSize: '14px', color: colors.navy, margin: 0 }}>{friend.name}</p>
-                              <p style={{ fontSize: '10px', color: isDown ? '#10b981' : '#f59e0b', margin: '2px 0 0', fontWeight: '700' }}>
+                              <p style={{ fontSize: '12px', color: isDown ? '#10b981' : '#f59e0b', margin: '2px 0 0', fontWeight: '700' }}>
                                 {isDown ? 'Down to hang tonight' : 'Convince me'}
                               </p>
                             </div>
-                            <div style={{ padding: '4px 10px', borderRadius: '8px', backgroundColor: 'var(--icon-bg)', color: colors.steel, fontSize: '11px', fontWeight: '700' }}>Add</div>
+                            <div style={{ padding: '4px 10px', borderRadius: '8px', backgroundColor: 'var(--icon-bg)', color: colors.steel, fontSize: '12px', fontWeight: '700' }}>Add</div>
                           </button>
                         );
                       })}
@@ -9915,7 +10086,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 <button
                   onClick={handleSendFlockInvites}
                   disabled={flockInviteSending}
-                  className="glass-btn glass-navy" style={{ width: '100%', padding: '14px', borderRadius: '14px', border: 'none', background: colors.navyBg, color: 'white', fontSize: '14px', fontWeight: '800', cursor: 'pointer', marginTop: '12px', opacity: flockInviteSending ? 0.7 : 1 }}
+                  className="hit44 glass-btn glass-navy" style={{ width: '100%', padding: '14px', borderRadius: '14px', border: 'none', background: colors.navyBg, color: 'white', fontSize: '14px', fontWeight: '800', cursor: 'pointer', marginTop: '12px', opacity: flockInviteSending ? 0.7 : 1 }}
                 >
                   {flockInviteSending ? 'Sending...' : `Invite ${flockInviteSelected.length} Friend${flockInviteSelected.length > 1 ? 's' : ''}`}
                 </button>
@@ -9927,6 +10098,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
         {/* Leave Flock Confirmation Modal */}
         {showLeaveConfirm && (
           <div className="modal-backdrop" style={{ position: 'absolute', inset: 0, backgroundColor: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(8px)', WebkitBackdropFilter: 'blur(8px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 50, padding: '16px' }}>
+            <DialogBehavior onClose={() => setShowLeaveConfirm(false)} label="Leave flock" />
             <div className="modal-content" style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '24px', padding: '24px', width: '100%', maxWidth: '300px' }}>
               <div style={{ textAlign: 'center', marginBottom: '16px' }}>
                 <div style={{ width: '48px', height: '48px', borderRadius: '24px', backgroundColor: 'var(--accent-red-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 12px' }}>{Icons.doorOpen('#EF4444', 24)}</div>
@@ -9938,7 +10110,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 </p>
               </div>
               <div style={{ display: 'flex', gap: '8px' }}>
-                <button className="glass-btn glass-secondary" onClick={() => setShowLeaveConfirm(false)} style={{ flex: 1, padding: '12px', borderRadius: '12px', border: `2px solid ${colors.creamDark}`, backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontWeight: '700', fontSize: '14px', cursor: 'pointer' }}>Cancel</button>
+                <button className="hit44 glass-btn glass-secondary" onClick={() => setShowLeaveConfirm(false)} style={{ flex: 1, padding: '12px', borderRadius: '12px', border: `2px solid ${colors.creamDark}`, backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontWeight: '700', fontSize: '14px', cursor: 'pointer' }}>Cancel</button>
                 <button onClick={async () => {
                   try {
                     setIsLoading(true);
@@ -9959,7 +10131,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                   } finally {
                     setIsLoading(false);
                   }
-                }} className="glass-btn glass-danger" style={{ flex: 1, padding: '12px', borderRadius: '12px', border: 'none', backgroundColor: '#EF4444', color: 'white', fontWeight: '700', fontSize: '14px', cursor: 'pointer' }}>
+                }} className="hit44 glass-btn glass-danger" style={{ flex: 1, padding: '12px', borderRadius: '12px', border: 'none', backgroundColor: '#EF4444', color: 'white', fontWeight: '700', fontSize: '14px', cursor: 'pointer' }}>
                   {isLoading ? 'Leaving...' : 'Leave'}
                 </button>
               </div>
@@ -9985,7 +10157,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
         {/* ── Header with navy gradient ── */}
         <div style={{ background: colors.navyBg, padding: '16px', paddingTop: '20px', flexShrink: 0 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '14px' }}>
-            <button onClick={() => setCurrentScreen('main')} style={{ width: '36px', height: '36px', borderRadius: '50%', background: 'rgba(255,255,255,0.2)', border: 'none', color: 'white', fontSize: '18px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>←</button>
+            <button className="hit44" onClick={() => setCurrentScreen('main')} style={{ width: '36px', height: '36px', borderRadius: '50%', background: 'rgba(255,255,255,0.2)', border: 'none', color: 'white', fontSize: '18px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>←</button>
             <div style={{ flex: 1, minWidth: 0 }}>
               <h1 style={{ color: 'white', margin: 0, fontSize: '20px', fontWeight: '800', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{flock.name}</h1>
               <div style={{ color: 'rgba(255,255,255,0.75)', fontSize: '13px', marginTop: '3px' }}>
@@ -10032,7 +10204,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
             return (
               <div style={{ marginTop: '12px' }}>
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '6px' }}>
-                  <span style={{ fontSize: '11px', fontWeight: '700', color: 'rgba(255,255,255,0.6)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Momentum</span>
+                  <span style={{ fontSize: '12px', fontWeight: '700', color: 'rgba(255,255,255,0.6)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Momentum</span>
                   <span style={{ fontSize: '12px', fontWeight: '800', color: activeColor }}>{stages[activeIdx]?.label}</span>
                 </div>
                 {/* Progress bar */}
@@ -10043,17 +10215,17 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 </div>
                 {/* Signal summary */}
                 <div style={{ display: 'flex', gap: '10px', marginTop: '8px', flexWrap: 'wrap' }}>
-                  <span style={{ fontSize: '11px', color: m.accepted === m.totalMembers ? 'rgba(134,239,172,0.9)' : 'rgba(255,255,255,0.5)' }}>
+                  <span style={{ fontSize: '12px', color: m.accepted === m.totalMembers ? 'rgba(134,239,172,0.9)' : 'rgba(255,255,255,0.5)' }}>
                     {m.accepted}/{m.totalMembers} RSVPs
                   </span>
-                  <span style={{ fontSize: '11px', color: m.hasVenue ? 'rgba(134,239,172,0.9)' : 'rgba(255,255,255,0.5)' }}>
+                  <span style={{ fontSize: '12px', color: m.hasVenue ? 'rgba(134,239,172,0.9)' : 'rgba(255,255,255,0.5)' }}>
                     {m.hasVenue ? 'Venue set' : 'No venue'}
                   </span>
-                  <span style={{ fontSize: '11px', color: m.hasTime ? 'rgba(134,239,172,0.9)' : 'rgba(255,255,255,0.5)' }}>
+                  <span style={{ fontSize: '12px', color: m.hasTime ? 'rgba(134,239,172,0.9)' : 'rgba(255,255,255,0.5)' }}>
                     {m.hasTime ? 'Time set' : 'No time'}
                   </span>
                   {m.uniqueVoters > 0 && (
-                    <span style={{ fontSize: '11px', color: 'rgba(255,255,255,0.5)' }}>
+                    <span style={{ fontSize: '12px', color: 'rgba(255,255,255,0.5)' }}>
                       {m.uniqueVoters} voted
                     </span>
                   )}
@@ -10066,7 +10238,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
         {/* Slide to complete bar — only for confirmed flocks */}
         {isConfirmed && (
           <div style={{ padding: '10px 16px', flexShrink: 0, borderBottom: '1px solid var(--border-subtle)' }}>
-            <p style={{ fontSize: '10px', fontWeight: '600', color: 'var(--text-secondary)', margin: '0 0 6px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Hangout done? Slide to complete</p>
+            <p style={{ fontSize: '12px', fontWeight: '600', color: 'var(--text-secondary)', margin: '0 0 6px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Hangout done? Slide to complete</p>
             <div
               ref={slideRef}
               style={{ position: 'relative', height: '44px', borderRadius: '22px', backgroundColor: 'var(--bg-tertiary)', border: '1px solid var(--border-default)', overflow: 'hidden', touchAction: 'none', userSelect: 'none' }}
@@ -10153,12 +10325,12 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 )}
                 <div style={{ display: 'flex', gap: '8px' }}>
                   {flock.venueId && (
-                    <button className="glass-btn glass-secondary" onClick={() => openVenueDetail(flock.venueId, { name: flock.venue, formatted_address: flock.venueAddress, place_id: flock.venueId, rating: flock.venueRating, photo_url: flock.venuePhoto })} style={{ flex: 1, padding: '10px', background: 'var(--icon-bg)', border: `1.5px solid ${colors.navyMid}`, borderRadius: '10px', color: colors.navyMid, fontSize: '13px', fontWeight: '700', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '5px' }}>
+                    <button className="hit44 glass-btn glass-secondary" onClick={() => openVenueDetail(flock.venueId, { name: flock.venue, formatted_address: flock.venueAddress, place_id: flock.venueId, rating: flock.venueRating, photo_url: flock.venuePhoto })} style={{ flex: 1, padding: '10px', background: 'var(--icon-bg)', border: `1.5px solid ${colors.navyMid}`, borderRadius: '10px', color: colors.navyMid, fontSize: '13px', fontWeight: '700', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '5px' }}>
                       {Icons.eye(colors.navyMid, 14)} Details
                     </button>
                   )}
                   {flock.venueLat && flock.venueLng && (
-                    <button className="glass-btn glass-navy" onClick={() => window.open(`https://maps.google.com/?q=${flock.venueLat},${flock.venueLng}`, '_blank')} style={{ flex: 1, padding: '10px', background: colors.navyBg, border: 'none', borderRadius: '10px', color: 'white', fontSize: '13px', fontWeight: '700', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '5px' }}>
+                    <button className="hit44 glass-btn glass-navy" onClick={() => window.open(`https://maps.google.com/?q=${flock.venueLat},${flock.venueLng}`, '_blank')} style={{ flex: 1, padding: '10px', background: colors.navyBg, border: 'none', borderRadius: '10px', color: 'white', fontSize: '13px', fontWeight: '700', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '5px' }}>
                       {Icons.mapPin('white', 14)} Directions
                     </button>
                   )}
@@ -10178,30 +10350,30 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
             <div style={{ ...styles.card, marginBottom: '12px', overflow: 'hidden' }}>
               <p style={{ color: colors.navy, fontSize: '14px', fontWeight: '800', margin: '0 0 10px' }}>How was {flock.venue}?</p>
 
-              <p style={{ fontSize: '11px', color: 'var(--text-secondary)', margin: '0 0 8px', fontWeight: '600' }}>Was it busy?</p>
+              <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: '0 0 8px', fontWeight: '600' }}>Was it busy?</p>
               <div style={{ display: 'flex', gap: '8px', marginBottom: '14px' }}>
                 {[{ level: 1, label: 'Quiet', color: colors.steel }, { level: 2, label: 'Moderate', color: colors.amber }, { level: 3, label: 'Packed', color: colors.red }].map(opt => (
-                  <button key={opt.level} className="glass-btn glass-secondary" onClick={() => setFeedbackState(prev => ({ ...prev, crowdLevel: opt.level }))} style={{ flex: 1, padding: '12px 6px', borderRadius: '10px', border: feedbackState.crowdLevel === opt.level ? `2px solid ${opt.color}` : '1.5px solid var(--border-default)', backgroundColor: feedbackState.crowdLevel === opt.level ? `${opt.color}15` : 'var(--bg-card-solid)', cursor: 'pointer', textAlign: 'center', transition: 'opacity 0.15s ease' }}>
+                  <button key={opt.level} className="hit44 glass-btn glass-secondary" onClick={() => setFeedbackState(prev => ({ ...prev, crowdLevel: opt.level }))} style={{ flex: 1, padding: '12px 6px', borderRadius: '10px', border: feedbackState.crowdLevel === opt.level ? `2px solid ${opt.color}` : '1.5px solid var(--border-default)', backgroundColor: feedbackState.crowdLevel === opt.level ? `${opt.color}15` : 'var(--bg-card-solid)', cursor: 'pointer', textAlign: 'center', transition: 'opacity 0.15s ease' }}>
                     <div style={{ width: '8px', height: '8px', borderRadius: '4px', backgroundColor: opt.color, margin: '0 auto 6px' }} />
                     <span style={{ fontSize: '12px', fontWeight: '700', color: feedbackState.crowdLevel === opt.level ? opt.color : colors.navy }}>{opt.label}</span>
                   </button>
                 ))}
               </div>
 
-              <p style={{ fontSize: '11px', color: 'var(--text-secondary)', margin: '0 0 8px', fontWeight: '600' }}>Worth the price?</p>
+              <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: '0 0 8px', fontWeight: '600' }}>Worth the price?</p>
               <div style={{ display: 'flex', gap: '8px', marginBottom: '14px' }}>
                 {[{ val: true, label: 'Yes', color: colors.steel }, { val: false, label: 'No', color: colors.red }].map(opt => (
-                  <button key={String(opt.val)} className="glass-btn glass-secondary" onClick={() => setFeedbackState(prev => ({ ...prev, priceWorth: opt.val }))} style={{ flex: 1, padding: '12px 6px', borderRadius: '10px', border: feedbackState.priceWorth === opt.val ? `2px solid ${opt.color}` : '1.5px solid var(--border-default)', backgroundColor: feedbackState.priceWorth === opt.val ? `${opt.color}15` : 'var(--bg-card-solid)', cursor: 'pointer', textAlign: 'center', transition: 'opacity 0.15s ease' }}>
+                  <button key={String(opt.val)} className="hit44 glass-btn glass-secondary" onClick={() => setFeedbackState(prev => ({ ...prev, priceWorth: opt.val }))} style={{ flex: 1, padding: '12px 6px', borderRadius: '10px', border: feedbackState.priceWorth === opt.val ? `2px solid ${opt.color}` : '1.5px solid var(--border-default)', backgroundColor: feedbackState.priceWorth === opt.val ? `${opt.color}15` : 'var(--bg-card-solid)', cursor: 'pointer', textAlign: 'center', transition: 'opacity 0.15s ease' }}>
                     <span style={{ fontSize: '12px', fontWeight: '700', color: feedbackState.priceWorth === opt.val ? opt.color : colors.navy }}>{opt.label}</span>
                   </button>
                 ))}
               </div>
 
-              <p style={{ fontSize: '11px', color: 'var(--text-secondary)', margin: '0 0 8px', fontWeight: '600' }}>Rate it (optional)</p>
+              <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: '0 0 8px', fontWeight: '600' }}>Rate it (optional)</p>
               <div style={{ display: 'flex', gap: '4px', marginBottom: '16px' }}>
                 {[1, 2, 3, 4, 5].map(star => (
-                  <button key={star} onClick={() => setFeedbackState(prev => ({ ...prev, rating: prev.rating === star ? null : star }))} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '2px', transition: 'opacity 0.15s ease' }}>
-                    <svg width={22} height={22} viewBox="0 0 24 24" fill={feedbackState.rating >= star ? '#F59E0B' : 'var(--star-empty)'} stroke="none"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"></polygon></svg>
+                  <button className="hit44" key={star} onClick={() => setFeedbackState(prev => ({ ...prev, rating: prev.rating === star ? null : star }))} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '2px', transition: 'opacity 0.15s ease' }}>
+                    <svg aria-hidden="true" focusable="false" width={22} height={22} viewBox="0 0 24 24" fill={feedbackState.rating >= star ? '#F59E0B' : 'var(--star-empty)'} stroke="none"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"></polygon></svg>
                   </button>
                 ))}
               </div>
@@ -10231,11 +10403,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                       setFeedbackSubmitting(false);
                     }
                   }}
-                  className="glass-btn glass-primary" style={{ flex: 1, padding: '11px', borderRadius: '10px', border: 'none', background: feedbackState.crowdLevel ? colors.navyBg : 'var(--border-default)', color: feedbackState.crowdLevel ? 'white' : 'var(--text-tertiary)', fontSize: '13px', fontWeight: '700', cursor: feedbackState.crowdLevel ? 'pointer' : 'not-allowed', opacity: feedbackSubmitting ? 0.6 : 1 }}
+                  className="hit44 glass-btn glass-primary" style={{ flex: 1, padding: '11px', borderRadius: '10px', border: 'none', background: feedbackState.crowdLevel ? colors.navyBg : 'var(--border-default)', color: feedbackState.crowdLevel ? 'white' : 'var(--text-tertiary)', fontSize: '13px', fontWeight: '700', cursor: feedbackState.crowdLevel ? 'pointer' : 'not-allowed', opacity: feedbackSubmitting ? 0.6 : 1 }}
                 >
                   {feedbackSubmitting ? 'Submitting...' : 'Submit'}
                 </button>
-                <button className="glass-btn glass-secondary" onClick={() => setSubmittedFeedback(prev => new Set(prev).add(flock.id))} style={{ padding: '11px 18px', borderRadius: '10px', border: '1.5px solid var(--border-default)', background: 'var(--bg-card-solid)', color: 'var(--text-secondary)', fontSize: '13px', fontWeight: '600', cursor: 'pointer' }}>
+                <button className="hit44 glass-btn glass-secondary" onClick={() => setSubmittedFeedback(prev => new Set(prev).add(flock.id))} style={{ padding: '11px 18px', borderRadius: '10px', border: '1.5px solid var(--border-default)', background: 'var(--bg-card-solid)', color: 'var(--text-secondary)', fontSize: '13px', fontWeight: '600', cursor: 'pointer' }}>
                   Skip
                 </button>
               </div>
@@ -10248,7 +10420,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
               <h4 style={{ color: colors.navy, margin: 0, fontSize: '14px', fontWeight: '800' }}>
                 Members ({acceptedMembers.length})
               </h4>
-              <button className="glass-btn glass-navy" onClick={() => { setCurrentScreen('chatDetail'); setTimeout(() => { setShowFlockInviteModal(true); setFlockInviteSelected([]); setFlockInviteSearch(''); setFlockInviteResults([]); }, 100); }} style={{ padding: '5px 12px', background: colors.navyBg, border: 'none', borderRadius: '16px', color: 'white', fontSize: '11px', fontWeight: '700', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }}>
+              <button className="hit44 glass-btn glass-navy" onClick={() => { setCurrentScreen('chatDetail'); setTimeout(() => { setShowFlockInviteModal(true); setFlockInviteSelected([]); setFlockInviteSearch(''); setFlockInviteResults([]); }, 100); }} style={{ padding: '5px 12px', background: colors.navyBg, border: 'none', borderRadius: '16px', color: 'white', fontSize: '12px', fontWeight: '700', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }}>
                 {Icons.userPlus('white', 11)} Invite
               </button>
             </div>
@@ -10266,7 +10438,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                       ) : (
                         <div style={{ width: '44px', height: '44px', borderRadius: '50%', background: bgColors[i % bgColors.length], display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', fontWeight: '700', fontSize: '16px', border: '2px solid var(--bg-card-solid)', boxShadow: '0 2px 6px rgba(0,0,0,0.1)' }}>{initial}</div>
                       )}
-                      <span style={{ fontSize: '10px', color: 'var(--text-secondary)', textAlign: 'center', maxWidth: '56px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontWeight: '600' }}>{mName.split(' ')[0]}</span>
+                      <span style={{ fontSize: '12px', color: 'var(--text-secondary)', textAlign: 'center', maxWidth: '56px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontWeight: '600' }}>{mName.split(' ')[0]}</span>
                     </div>
                   );
                 })}
@@ -10278,15 +10450,15 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
 
           {/* Quick Actions */}
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', marginBottom: '12px' }}>
-            <button className="glass-btn glass-navy" onClick={() => { setCurrentScreen('chatDetail'); }} style={{ ...styles.card, border: 'none', cursor: 'pointer', textAlign: 'center', padding: '16px 10px' }}>
-              <div style={{ width: '40px', height: '40px', borderRadius: '12px', background: colors.navyBg, display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 8px' }}><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/><circle cx="9" cy="10" r="1" fill="white" stroke="none"/><circle cx="12" cy="10" r="1" fill="white" stroke="none"/><circle cx="15" cy="10" r="1" fill="white" stroke="none"/></svg></div>
+            <button className="hit44 glass-btn glass-navy" onClick={() => { setCurrentScreen('chatDetail'); }} style={{ ...styles.card, border: 'none', cursor: 'pointer', textAlign: 'center', padding: '16px 10px' }}>
+              <div style={{ width: '40px', height: '40px', borderRadius: '12px', background: colors.navyBg, display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 8px' }}><svg aria-hidden="true" focusable="false" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/><circle cx="9" cy="10" r="1" fill="white" stroke="none"/><circle cx="12" cy="10" r="1" fill="white" stroke="none"/><circle cx="15" cy="10" r="1" fill="white" stroke="none"/></svg></div>
               <p style={{ color: colors.navy, fontWeight: '800', fontSize: '13px', margin: '0 0 2px' }}>Chat</p>
-              <p style={{ color: 'var(--text-tertiary)', fontSize: '10px', margin: 0 }}>{flock.messages?.length > 0 ? `${flock.messages.length} messages` : 'Start chatting'}</p>
+              <p style={{ color: 'var(--text-tertiary)', fontSize: '12px', margin: 0 }}>{flock.messages?.length > 0 ? `${flock.messages.length} messages` : 'Start chatting'}</p>
             </button>
-            <button className="glass-btn glass-secondary" onClick={() => { setPickingVenueForFlockId(flock.id); setPickingVenueForCreate(true); setCurrentTab('explore'); setCurrentScreen('main'); }} style={{ ...styles.card, border: 'none', cursor: 'pointer', textAlign: 'center', padding: '16px 10px' }}>
-              <div style={{ width: '40px', height: '40px', borderRadius: '12px', background: '#f59e0b', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 8px' }}><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><polygon points="1 6 1 22 8 18 16 22 23 18 23 2 16 6 8 2 1 6"/><line x1="8" y1="2" x2="8" y2="18"/><line x1="16" y1="6" x2="16" y2="22"/><circle cx="12" cy="9" r="2.5"/><path d="M12 11.5 L12 13"/></svg></div>
+            <button className="hit44 glass-btn glass-secondary" onClick={() => { setPickingVenueForFlockId(flock.id); setPickingVenueForCreate(true); setCurrentTab('explore'); setCurrentScreen('main'); }} style={{ ...styles.card, border: 'none', cursor: 'pointer', textAlign: 'center', padding: '16px 10px' }}>
+              <div style={{ width: '40px', height: '40px', borderRadius: '12px', background: '#f59e0b', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 8px' }}><svg aria-hidden="true" focusable="false" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><polygon points="1 6 1 22 8 18 16 22 23 18 23 2 16 6 8 2 1 6"/><line x1="8" y1="2" x2="8" y2="18"/><line x1="16" y1="6" x2="16" y2="22"/><circle cx="12" cy="9" r="2.5"/><path d="M12 11.5 L12 13"/></svg></div>
               <p style={{ color: colors.navy, fontWeight: '800', fontSize: '13px', margin: '0 0 2px' }}>{hasVenue ? 'Change Venue' : 'Pick Venue'}</p>
-              <p style={{ color: 'var(--text-tertiary)', fontSize: '10px', margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{hasVenue ? flock.venue : 'Search places'}</p>
+              <p style={{ color: 'var(--text-tertiary)', fontSize: '12px', margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{hasVenue ? flock.venue : 'Search places'}</p>
             </button>
           </div>
 
@@ -10299,14 +10471,14 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 const isMyVote = myVote === v.venue;
                 const count = voteTotal(v);
                 return (
-                  <button key={v.venue} className="glass-btn glass-secondary" onClick={() => {
+                  <button key={v.venue} className="hit44 glass-btn glass-secondary" onClick={() => {
                     const newVotes = flock.votes.map(vt => ({ ...vt, voters: vt.venue === v.venue ? (vt.voters.includes('You') ? vt.voters : [...vt.voters, 'You']) : vt.voters.filter(x => x !== 'You') }));
                     updateFlockVotes(selectedFlockId, newVotes);
                   }} style={{ width: '100%', textAlign: 'left', background: isMyVote ? 'var(--bg-hover)' : 'var(--bg-card-solid)', border: isMyVote ? `1.5px solid ${colors.navy}` : '1.5px solid var(--border-default)', borderRadius: '10px', padding: '11px', cursor: 'pointer', display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
                     <div>
                       <p style={{ fontSize: '13px', fontWeight: '700', color: colors.navy, margin: 0 }}>{v.venue}</p>
-                      {v.type && <p style={{ fontSize: '10px', color: 'var(--text-secondary)', margin: '2px 0 0' }}>{v.type}</p>}
-                      <p style={{ fontSize: '10px', color: 'var(--text-tertiary)', margin: '2px 0 0' }}>{[v.voters.join(', '), (v.guestCount || 0) > 0 ? `${v.guestCount} guest${v.guestCount !== 1 ? 's' : ''}` : ''].filter(Boolean).join(' and ')}</p>
+                      {v.type && <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: '2px 0 0' }}>{v.type}</p>}
+                      <p style={{ fontSize: '12px', color: 'var(--text-tertiary)', margin: '2px 0 0' }}>{[v.voters.join(', '), (v.guestCount || 0) > 0 ? `${v.guestCount} guest${v.guestCount !== 1 ? 's' : ''}` : ''].filter(Boolean).join(' and ')}</p>
                     </div>
                     <span style={{ padding: '5px 14px', borderRadius: '20px', fontSize: '12px', fontWeight: '700', backgroundColor: isMyVote ? colors.navyBg : 'var(--bg-card-solid)', color: isMyVote ? 'white' : colors.navy }}>
                       {count}
@@ -10324,7 +10496,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
               <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
                 <div style={{ width: '32px', height: '32px', borderRadius: '8px', background: colors.navyBg, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{Icons.user('white', 14)}</div>
                 <div>
-                  <p style={{ color: 'var(--text-tertiary)', fontSize: '10px', margin: 0, fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.3px' }}>Created by</p>
+                  <p style={{ color: 'var(--text-tertiary)', fontSize: '12px', margin: 0, fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.3px' }}>Created by</p>
                   <p style={{ color: colors.navy, fontSize: '14px', fontWeight: '700', margin: 0 }}>{flock.host}</p>
                 </div>
               </div>
@@ -10332,7 +10504,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
                   <div style={{ width: '32px', height: '32px', borderRadius: '8px', background: 'var(--accent-amber-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{Icons.calendar(colors.amber, 14)}</div>
                   <div>
-                    <p style={{ color: 'var(--text-tertiary)', fontSize: '10px', margin: 0, fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.3px' }}>When</p>
+                    <p style={{ color: 'var(--text-tertiary)', fontSize: '12px', margin: 0, fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.3px' }}>When</p>
                     <p style={{ color: colors.navy, fontSize: '14px', fontWeight: '700', margin: 0 }}>{flock.time}</p>
                   </div>
                 </div>
@@ -10340,7 +10512,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
               <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
                 <div style={{ width: '32px', height: '32px', borderRadius: '8px', background: isConfirmed ? 'var(--accent-green-bg)' : 'var(--accent-amber-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{isConfirmed ? Icons.check('var(--accent-green-text)', 14) : Icons.clock(colors.amber, 14)}</div>
                 <div>
-                  <p style={{ color: 'var(--text-tertiary)', fontSize: '10px', margin: 0, fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.3px' }}>Status</p>
+                  <p style={{ color: 'var(--text-tertiary)', fontSize: '12px', margin: 0, fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.3px' }}>Status</p>
                   <p style={{ color: colors.navy, fontSize: '14px', fontWeight: '700', margin: 0 }}>{isConfirmed ? 'Locked In' : 'Still Planning'}</p>
                 </div>
               </div>
@@ -10351,7 +10523,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
 
         {/* ── Bottom CTA ── */}
         <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, padding: '14px', background: `linear-gradient(transparent, var(--bg-primary) 30%)`, pointerEvents: 'none' }}>
-          <button className="glass-btn glass-navy" onClick={() => setCurrentScreen('chatDetail')} style={{ width: '100%', padding: '14px', background: colors.navyBg, border: 'none', borderRadius: '14px', color: 'white', fontSize: '15px', fontWeight: '800', cursor: 'pointer', boxShadow: '0 6px 20px rgba(13,40,71,0.10)', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', pointerEvents: 'auto' }}>
+          <button className="hit44 glass-btn glass-navy" onClick={() => setCurrentScreen('chatDetail')} style={{ width: '100%', padding: '14px', background: colors.navyBg, border: 'none', borderRadius: '14px', color: 'white', fontSize: '15px', fontWeight: '800', cursor: 'pointer', boxShadow: '0 6px 20px rgba(13,40,71,0.10)', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', pointerEvents: 'auto' }}>
             {Icons.chat('white', 18)} Open Chat
           </button>
         </div>
@@ -10366,7 +10538,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
       return (
         <div key={`profile-${profileScreen}-container`} style={{ display: 'flex', flexDirection: 'column', height: '100%', backgroundColor: 'var(--bg-primary)' }}>
           <div style={{ padding: '12px', display: 'flex', alignItems: 'center', gap: '8px', borderBottom: '1px solid var(--divider)', backgroundColor: 'var(--bg-card-solid)', flexShrink: 0 }}>
-            <button onClick={() => setProfileScreen('main')} style={{ background: 'none', border: 'none', color: colors.navy, fontSize: '18px', cursor: 'pointer' }}>←</button>
+            <button className="hit44" onClick={() => setProfileScreen('main')} style={{ background: 'none', border: 'none', color: colors.navy, fontSize: '18px', cursor: 'pointer' }}>←</button>
             <h1 style={{ fontSize: '18px', fontWeight: '900', color: colors.navy, margin: 0 }}>{profileScreen === 'edit' ? 'Edit Profile' : profileScreen === 'safety' ? 'Safety' : profileScreen === 'interests' ? 'Interests' : 'Payment'}</h1>
           </div>
           <div style={{ flex: 1, padding: '16px', overflowY: 'auto' }}>
@@ -10385,7 +10557,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 const [editLoading, setEditLoading] = React.useState(false);
 
                 const EyeSvg = ({ show }) => (
-                  <svg width={18} height={18} viewBox="0 0 24 24" fill="none" stroke="var(--text-secondary)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <svg aria-hidden="true" focusable="false" width={18} height={18} viewBox="0 0 24 24" fill="none" stroke="var(--text-secondary)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                     {show ? (
                       <>
                         <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24" />
@@ -10439,10 +10611,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 return (
                   <div>
                     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', marginBottom: '16px' }}>
-                      <button onClick={() => setShowPicModal(true)} style={{ width: '80px', height: '80px', borderRadius: '40px', background: colors.navyBg, border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', position: 'relative' }}>
+                      <button className="hit44" onClick={() => setShowPicModal(true)} style={{ width: '80px', height: '80px', borderRadius: '40px', background: colors.navyBg, border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', position: 'relative' }}>
                         {profilePic ? <img src={profilePic} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : Icons.user('white', 32)}
                       </button>
-                      <button onClick={() => { if (profilePic) { setCropImageSrc(profilePic); setCropZoom(1); setCropOffset({ x: 0, y: 0 }); } else { setShowPicModal(true); } }} style={{ marginTop: '6px', padding: '4px 12px', borderRadius: '8px', border: 'none', backgroundColor: 'transparent', color: colors.steel, fontSize: '11px', fontWeight: '600', cursor: 'pointer' }}>
+                      <button className="hit44" onClick={() => { if (profilePic) { setCropImageSrc(profilePic); setCropZoom(1); setCropOffset({ x: 0, y: 0 }); } else { setShowPicModal(true); } }} style={{ marginTop: '6px', padding: '4px 12px', borderRadius: '8px', border: 'none', backgroundColor: 'transparent', color: colors.steel, fontSize: '12px', fontWeight: '600', cursor: 'pointer' }}>
                         Edit Photo
                       </button>
                     </div>
@@ -10473,30 +10645,30 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                       <div style={{ marginBottom: '12px' }}>
                         <label style={{ display: 'block', fontSize: '12px', fontWeight: 'bold', color: colors.navy, marginBottom: '4px' }}>Current Password *</label>
                         <div style={pwFieldStyle}>
-                          <input type={showCurrentPw ? 'text' : 'password'} value={currentPw} onChange={(e) => setCurrentPw(e.target.value)} placeholder="Required to save changes" style={{ ...styles.input, paddingRight: '40px' }} autoComplete="off" />
-                          <button type="button" onClick={() => setShowCurrentPw(!showCurrentPw)} style={eyeBtnStyle}><EyeSvg show={showCurrentPw} /></button>
+                          <input aria-label="Current password" type={showCurrentPw ? 'text' : 'password'} value={currentPw} onChange={(e) => setCurrentPw(e.target.value)} placeholder="Required to save changes" style={{ ...styles.input, paddingRight: '40px' }} autoComplete="off" />
+                          <button className="hit44" type="button" aria-label={showCurrentPw ? 'Hide current password' : 'Show current password'} onClick={() => setShowCurrentPw(!showCurrentPw)} style={eyeBtnStyle}><EyeSvg show={showCurrentPw} /></button>
                         </div>
                       </div>
                       <div style={{ marginBottom: '12px' }}>
                         <label style={{ display: 'block', fontSize: '12px', fontWeight: 'bold', color: colors.navy, marginBottom: '4px' }}>New Password <span style={{ fontWeight: 'normal', color: 'var(--text-secondary)' }}>(optional)</span></label>
                         <div style={pwFieldStyle}>
-                          <input type={showNewPw ? 'text' : 'password'} value={newPw} onChange={(e) => setNewPw(e.target.value)} placeholder="Min 8 characters" style={{ ...styles.input, paddingRight: '40px' }} autoComplete="off" />
-                          <button type="button" onClick={() => setShowNewPw(!showNewPw)} style={eyeBtnStyle}><EyeSvg show={showNewPw} /></button>
+                          <input aria-label="New password" type={showNewPw ? 'text' : 'password'} value={newPw} onChange={(e) => setNewPw(e.target.value)} placeholder="Min 8 characters" style={{ ...styles.input, paddingRight: '40px' }} autoComplete="off" />
+                          <button className="hit44" type="button" aria-label={showNewPw ? 'Hide new password' : 'Show new password'} onClick={() => setShowNewPw(!showNewPw)} style={eyeBtnStyle}><EyeSvg show={showNewPw} /></button>
                         </div>
                       </div>
                       {newPw && (
                         <div style={{ marginBottom: '12px' }}>
                           <label style={{ display: 'block', fontSize: '12px', fontWeight: 'bold', color: colors.navy, marginBottom: '4px' }}>Confirm New Password</label>
-                          <input type="password" value={confirmPw} onChange={(e) => setConfirmPw(e.target.value)} placeholder="Re-enter new password" style={styles.input} autoComplete="off" />
+                          <input aria-label="Confirm new password" type="password" value={confirmPw} onChange={(e) => setConfirmPw(e.target.value)} placeholder="Re-enter new password" style={styles.input} autoComplete="off" />
                           {confirmPw && newPw !== confirmPw && (
-                            <p style={{ fontSize: '11px', color: colors.red, margin: '4px 0 0' }}>Passwords do not match</p>
+                            <p style={{ fontSize: '12px', color: colors.red, margin: '4px 0 0' }}>Passwords do not match</p>
                           )}
                         </div>
                       )}
                     </div>
 
                     <button
-                      className="glass-btn glass-primary"
+                      className="hit44 glass-btn glass-primary"
                       onClick={(e) => { confirmClick(e); handleSaveProfile(); }}
                       disabled={editLoading}
                       style={{ ...styles.gradientButton, marginTop: '8px', opacity: editLoading ? 0.7 : 1, position: 'relative', overflow: 'hidden' }}
@@ -10515,9 +10687,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                     <div>
                       <p style={{ fontWeight: 'bold', fontSize: '14px', color: colors.navy, margin: 0 }}>Safety Features</p>
-                      <p style={{ fontSize: '10px', color: 'var(--text-secondary)', margin: 0 }}>Quick exit & check-ins</p>
+                      <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: 0 }}>Quick exit & check-ins</p>
                     </div>
-                    <Toggle on={safetyOn} onChange={() => setSafetyOn(!safetyOn)} />
+                    <Toggle label="Safety check-ins" on={safetyOn} onChange={() => setSafetyOn(!safetyOn)} />
                   </div>
                 </div>
 
@@ -10526,13 +10698,13 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                   <div style={{ width: '36px', height: '36px', borderRadius: '10px', background: 'var(--accent-red-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{Icons.shield(colors.red, 18)}</div>
                   <div>
                     <p style={{ fontWeight: '700', fontSize: '13px', color: colors.navy, margin: '0 0 4px' }}>Emergency Contacts</p>
-                    <p style={{ fontSize: '11px', color: 'var(--text-secondary)', margin: 0, lineHeight: '1.4' }}>Add trusted contacts who will receive alerts when you use the emergency button. They'll get a message with your location.</p>
+                    <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: 0, lineHeight: '1.4' }}>Add trusted contacts who will receive alerts when you use the emergency button. They'll get a message with your location.</p>
                   </div>
                 </div>
 
                 {/* Trusted contacts list */}
                 <div style={styles.card}>
-                  <h3 style={{ fontWeight: 'bold', fontSize: '14px', color: colors.navy, margin: '0 0 12px' }}>Trusted Contacts ({trustedContacts.length})</h3>
+                  <h2 style={{ fontWeight: 'bold', fontSize: '14px', color: colors.navy, margin: '0 0 12px' }}>Trusted Contacts ({trustedContacts.length})</h2>
 
                   {safetyLoading && trustedContacts.length === 0 && (
                     <p style={{ fontSize: '13px', color: 'var(--text-secondary)', textAlign: 'center', padding: '16px 0' }}>Loading...</p>
@@ -10551,16 +10723,16 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                       <div style={{ flex: 1, minWidth: 0 }}>
                         <p style={{ fontWeight: '600', fontSize: '14px', color: colors.navy, margin: 0 }}>{c.contact_name}</p>
                         <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: '2px 0 0' }}>{c.contact_phone}</p>
-                        {c.contact_email && <p style={{ fontSize: '11px', color: 'var(--text-tertiary)', margin: '1px 0 0' }}>{c.contact_email}</p>}
-                        {c.relationship && <span style={{ display: 'inline-block', marginTop: '3px', padding: '1px 8px', background: 'var(--icon-bg)', borderRadius: '10px', fontSize: '10px', color: 'var(--text-secondary)', textTransform: 'capitalize' }}>{c.relationship}</span>}
+                        {c.contact_email && <p style={{ fontSize: '12px', color: 'var(--text-tertiary)', margin: '1px 0 0' }}>{c.contact_email}</p>}
+                        {c.relationship && <span style={{ display: 'inline-block', marginTop: '3px', padding: '1px 8px', background: 'var(--icon-bg)', borderRadius: '10px', fontSize: '12px', color: 'var(--text-secondary)', textTransform: 'capitalize' }}>{c.relationship}</span>}
                       </div>
-                      <button onClick={() => handleEditContact(c)} style={{ background: 'none', border: 'none', color: colors.navy, fontSize: '12px', fontWeight: '600', cursor: 'pointer' }}>Edit</button>
-                      <button onClick={() => handleDeleteContact(c.id)} style={{ background: 'none', border: 'none', color: colors.red, fontSize: '12px', fontWeight: '600', cursor: 'pointer' }}>Remove</button>
+                      <button className="hit44" onClick={() => handleEditContact(c)} style={{ background: 'none', border: 'none', color: colors.navy, fontSize: '12px', fontWeight: '600', cursor: 'pointer' }}>Edit</button>
+                      <button className="hit44" onClick={() => handleDeleteContact(c.id)} style={{ background: 'none', border: 'none', color: colors.red, fontSize: '12px', fontWeight: '600', cursor: 'pointer' }}>Remove</button>
                     </div>
                   ))}
 
                   {/* Add contact button */}
-                  <button className="glass-btn glass-secondary" onClick={() => setShowAddContact(true)} style={{ width: '100%', padding: '12px', borderRadius: '10px', border: `2px dashed ${colors.creamDark}`, backgroundColor: 'transparent', color: colors.navy, fontWeight: '600', fontSize: '13px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', marginTop: '12px' }}>
+                  <button className="hit44 glass-btn glass-secondary" onClick={() => setShowAddContact(true)} style={{ width: '100%', padding: '12px', borderRadius: '10px', border: `2px dashed ${colors.creamDark}`, backgroundColor: 'transparent', color: colors.navy, fontWeight: '600', fontSize: '13px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', marginTop: '12px' }}>
                     {Icons.plus(colors.navy, 14)} Add Trusted Contact
                   </button>
                 </div>
@@ -10572,22 +10744,22 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                       <h3 style={{ fontWeight: '800', fontSize: '18px', color: colors.navy, margin: '0 0 16px' }}>{editingContact ? 'Edit Contact' : 'Add Trusted Contact'}</h3>
 
                       <div style={{ marginBottom: '10px' }}>
-                        <label style={{ display: 'block', fontSize: '11px', fontWeight: '600', color: 'var(--text-secondary)', marginBottom: '4px' }}>Name *</label>
-                        <SearchInputLocal type="text" initialValue={newContact.name} onCommit={(v) => setNewContact(prev => ({ ...prev, name: v }))} placeholder="Contact name" style={{ ...styles.input, width: '100%' }} autoComplete="off" />
+                        <label style={{ display: 'block', fontSize: '12px', fontWeight: '600', color: 'var(--text-secondary)', marginBottom: '4px' }}>Name *</label>
+                        <SearchInputLocal aria-label="Contact name" type="text" initialValue={newContact.name} onCommit={(v) => setNewContact(prev => ({ ...prev, name: v }))} placeholder="Contact name" style={{ ...styles.input, width: '100%' }} autoComplete="off" />
                       </div>
 
                       <div style={{ marginBottom: '10px' }}>
-                        <label style={{ display: 'block', fontSize: '11px', fontWeight: '600', color: 'var(--text-secondary)', marginBottom: '4px' }}>Phone Number *</label>
-                        <SearchInputLocal type="tel" initialValue={newContact.phone} onCommit={(v) => setNewContact(prev => ({ ...prev, phone: v }))} placeholder="+1 234 567 8900" style={{ ...styles.input, width: '100%' }} autoComplete="off" />
+                        <label style={{ display: 'block', fontSize: '12px', fontWeight: '600', color: 'var(--text-secondary)', marginBottom: '4px' }}>Phone Number *</label>
+                        <SearchInputLocal aria-label="Phone number" type="tel" initialValue={newContact.phone} onCommit={(v) => setNewContact(prev => ({ ...prev, phone: v }))} placeholder="+1 234 567 8900" style={{ ...styles.input, width: '100%' }} autoComplete="off" />
                       </div>
 
                       <div style={{ marginBottom: '10px' }}>
-                        <label style={{ display: 'block', fontSize: '11px', fontWeight: '600', color: 'var(--text-secondary)', marginBottom: '4px' }}>Email * <span style={{ fontWeight: '400', color: 'var(--text-tertiary)' }}>(alerts sent here)</span></label>
-                        <SearchInputLocal type="email" initialValue={newContact.email} onCommit={(v) => setNewContact(prev => ({ ...prev, email: v }))} placeholder="email@example.com" style={{ ...styles.input, width: '100%' }} autoComplete="off" />
+                        <label style={{ display: 'block', fontSize: '12px', fontWeight: '600', color: 'var(--text-secondary)', marginBottom: '4px' }}>Email * <span style={{ fontWeight: '400', color: 'var(--text-tertiary)' }}>(alerts sent here)</span></label>
+                        <SearchInputLocal aria-label="Email address" type="email" initialValue={newContact.email} onCommit={(v) => setNewContact(prev => ({ ...prev, email: v }))} placeholder="email@example.com" style={{ ...styles.input, width: '100%' }} autoComplete="off" />
                       </div>
 
                       <div style={{ marginBottom: '16px' }}>
-                        <label style={{ display: 'block', fontSize: '11px', fontWeight: '600', color: 'var(--text-secondary)', marginBottom: '4px' }}>Relationship (optional)</label>
+                        <label style={{ display: 'block', fontSize: '12px', fontWeight: '600', color: 'var(--text-secondary)', marginBottom: '4px' }}>Relationship (optional)</label>
                         <select value={newContact.relationship} onChange={(e) => setNewContact({ ...newContact, relationship: e.target.value })} style={{ ...styles.input, width: '100%', appearance: 'auto' }}>
                           <option value="">Select...</option>
                           <option value="parent">Parent</option>
@@ -10600,8 +10772,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                       </div>
 
                       <div style={{ display: 'flex', gap: '8px' }}>
-                        <button className="glass-btn glass-secondary" onClick={() => { setShowAddContact(false); setEditingContact(null); setNewContact({ name: '', phone: '', email: '', relationship: '' }); }} style={{ flex: 1, padding: '12px', borderRadius: '10px', border: '1px solid var(--border-mid)', backgroundColor: 'var(--bg-card-solid)', fontWeight: '600', fontSize: '14px', cursor: 'pointer', color: colors.navy }}>Cancel</button>
-                        <button className="glass-btn glass-navy" disabled={safetyLoading} onClick={handleSaveContact} style={{ flex: 1, padding: '12px', borderRadius: '10px', border: 'none', background: colors.navyMidBg, color: 'white', fontWeight: '600', fontSize: '14px', cursor: 'pointer', opacity: safetyLoading ? 0.6 : 1 }}>{safetyLoading ? 'Saving...' : editingContact ? 'Save Changes' : 'Add Contact'}</button>
+                        <button className="hit44 glass-btn glass-secondary" onClick={() => { setShowAddContact(false); setEditingContact(null); setNewContact({ name: '', phone: '', email: '', relationship: '' }); }} style={{ flex: 1, padding: '12px', borderRadius: '10px', border: '1px solid var(--border-mid)', backgroundColor: 'var(--bg-card-solid)', fontWeight: '600', fontSize: '14px', cursor: 'pointer', color: colors.navy }}>Cancel</button>
+                        <button className="hit44 glass-btn glass-navy" disabled={safetyLoading} onClick={handleSaveContact} style={{ flex: 1, padding: '12px', borderRadius: '10px', border: 'none', background: colors.navyMidBg, color: 'white', fontWeight: '600', fontSize: '14px', cursor: 'pointer', opacity: safetyLoading ? 0.6 : 1 }}>{safetyLoading ? 'Saving...' : editingContact ? 'Save Changes' : 'Add Contact'}</button>
                       </div>
                     </div>
                   </div>
@@ -10611,25 +10783,25 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
             {profileScreen === 'interests' && (
               <div>
                 <div style={styles.card}>
-                  <h3 style={{ fontWeight: 'bold', fontSize: '14px', color: colors.navy, margin: '0 0 12px' }}>Your Interests</h3>
+                  <h2 style={{ fontWeight: 'bold', fontSize: '14px', color: colors.navy, margin: '0 0 12px' }}>Your Interests</h2>
                   <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginBottom: '12px' }}>
                     {userInterests.map(interest => (
                       <div key={interest} style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '6px 12px', borderRadius: '20px', background: colors.navyMidBg, color: 'white', fontSize: '12px', fontWeight: '600' }}>
                         {interest}
-                        <button onClick={(e) => { confirmClick(e); setUserInterests(userInterests.filter(i => i !== interest)); }} style={{ background: 'none', border: 'none', color: 'rgba(255,255,255,0.7)', cursor: 'pointer', padding: 0, display: 'flex', position: 'relative', overflow: 'hidden' }}>{Icons.x('rgba(255,255,255,0.7)', 14)}</button>
+                        <button className="hit44" onClick={(e) => { confirmClick(e); setUserInterests(userInterests.filter(i => i !== interest)); }} style={{ background: 'none', border: 'none', color: 'rgba(255,255,255,0.7)', cursor: 'pointer', padding: 0, display: 'flex', position: 'relative', overflow: 'hidden' }}>{Icons.x('rgba(255,255,255,0.7)', 14)}</button>
                       </div>
                     ))}
                   </div>
                   <div style={{ display: 'flex', gap: '8px' }}>
-                    <SearchInputLocal type="text" initialValue={newInterest} onCommit={setNewInterest} placeholder="Add an interest..." style={{ ...styles.input, flex: 1 }} autoComplete="off" />
-                    <button className="glass-btn glass-navy" onClick={(e) => { if (newInterest.trim() && !userInterests.includes(newInterest.trim())) { confirmClick(e); setUserInterests([...userInterests, newInterest.trim()]); setNewInterest(''); }}} style={{ padding: '0 16px', borderRadius: '8px', border: 'none', background: colors.navyMidBg, color: 'white', fontWeight: 'bold', fontSize: '14px', cursor: 'pointer', position: 'relative', overflow: 'hidden' }}>Add</button>
+                    <SearchInputLocal aria-label="Add an interest" type="text" initialValue={newInterest} onCommit={setNewInterest} placeholder="Add an interest..." style={{ ...styles.input, flex: 1 }} autoComplete="off" />
+                    <button className="hit44 glass-btn glass-navy" onClick={(e) => { if (newInterest.trim() && !userInterests.includes(newInterest.trim())) { confirmClick(e); setUserInterests([...userInterests, newInterest.trim()]); setNewInterest(''); }}} style={{ padding: '0 16px', borderRadius: '8px', border: 'none', background: colors.navyMidBg, color: 'white', fontWeight: 'bold', fontSize: '14px', cursor: 'pointer', position: 'relative', overflow: 'hidden' }}>Add</button>
                   </div>
                 </div>
                 <div style={styles.card}>
-                  <h3 style={{ fontWeight: 'bold', fontSize: '14px', color: colors.navy, margin: '0 0 12px' }}>Suggested Interests</h3>
+                  <h2 style={{ fontWeight: 'bold', fontSize: '14px', color: colors.navy, margin: '0 0 12px' }}>Suggested Interests</h2>
                   <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
                     {suggestedInterests.filter(s => !userInterests.includes(s)).map(interest => (
-                      <button key={interest} className="glass-btn glass-secondary" onClick={(e) => { confirmClick(e); setUserInterests([...userInterests, interest]); }} style={{ padding: '6px 12px', borderRadius: '20px', border: `1px solid ${colors.creamDark}`, backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontSize: '12px', fontWeight: '500', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px', position: 'relative', overflow: 'hidden' }}>
+                      <button key={interest} className="hit44 glass-btn glass-secondary" onClick={(e) => { confirmClick(e); setUserInterests([...userInterests, interest]); }} style={{ padding: '6px 12px', borderRadius: '20px', border: `1px solid ${colors.creamDark}`, backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontSize: '12px', fontWeight: '500', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px', position: 'relative', overflow: 'hidden' }}>
                         {Icons.plus(colors.navy, 12)} {interest}
                       </button>
                     ))}
@@ -10640,15 +10812,15 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
             {profileScreen === 'payment' && (
               <div>
                 <div style={styles.card}>
-                  <h3 style={{ fontWeight: 'bold', fontSize: '14px', color: colors.navy, margin: '0 0 4px' }}>Payment Methods</h3>
-                  <p style={{ fontSize: '11px', color: 'var(--text-secondary)', margin: '0 0 16px' }}>Add your handles so friends can pay you after a hangout</p>
+                  <h2 style={{ fontWeight: 'bold', fontSize: '14px', color: colors.navy, margin: '0 0 4px' }}>Payment Methods</h2>
+                  <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: '0 0 16px' }}>Add your handles so friends can pay you after a hangout</p>
 
                   {/* Venmo */}
                   <div style={{ marginBottom: '16px' }}>
                     <label style={{ fontSize: '12px', fontWeight: '700', color: colors.navy, marginBottom: '6px', display: 'block' }}>Venmo</label>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                       <span style={{ fontSize: '14px', fontWeight: '600', color: colors.navy }}>@</span>
-                      <SearchInputLocal type="text" initialValue={venmoUsername} onCommit={setVenmoUsername} transform={(v) => v.replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 50)} placeholder="your-venmo-username" style={{ ...styles.input, flex: 1 }} autoComplete="off" />
+                      <SearchInputLocal aria-label="Venmo username" type="text" initialValue={venmoUsername} onCommit={setVenmoUsername} transform={(v) => v.replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 50)} placeholder="your-venmo-username" style={{ ...styles.input, flex: 1 }} autoComplete="off" />
                     </div>
                   </div>
 
@@ -10657,18 +10829,18 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                     <label style={{ fontSize: '12px', fontWeight: '700', color: colors.navy, marginBottom: '6px', display: 'block' }}>Cash App</label>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                       <span style={{ fontSize: '14px', fontWeight: '600', color: colors.navy }}>$</span>
-                      <SearchInputLocal type="text" initialValue={cashappCashtag} onCommit={setCashappCashtag} transform={(v) => v.replace(/[^a-zA-Z0-9_]/g, '').slice(0, 50)} placeholder="your-cashtag" style={{ ...styles.input, flex: 1 }} autoComplete="off" />
+                      <SearchInputLocal aria-label="Cash App cashtag" type="text" initialValue={cashappCashtag} onCommit={setCashappCashtag} transform={(v) => v.replace(/[^a-zA-Z0-9_]/g, '').slice(0, 50)} placeholder="your-cashtag" style={{ ...styles.input, flex: 1 }} autoComplete="off" />
                     </div>
                   </div>
 
                   {/* Zelle */}
                   <div style={{ marginBottom: '16px' }}>
                     <label style={{ fontSize: '12px', fontWeight: '700', color: colors.navy, marginBottom: '6px', display: 'block' }}>Zelle</label>
-                    <SearchInputLocal type="text" initialValue={zelleIdentifier} onCommit={setZelleIdentifier} transform={(v) => v.slice(0, 255)} placeholder="email or phone number" style={{ ...styles.input, width: '100%', boxSizing: 'border-box' }} autoComplete="off" />
-                    <p style={{ fontSize: '10px', color: 'var(--text-tertiary)', margin: '4px 0 0' }}>Enter the email or phone registered with your bank for Zelle</p>
+                    <SearchInputLocal aria-label="Zelle email or phone number" type="text" initialValue={zelleIdentifier} onCommit={setZelleIdentifier} transform={(v) => v.slice(0, 255)} placeholder="email or phone number" style={{ ...styles.input, width: '100%', boxSizing: 'border-box' }} autoComplete="off" />
+                    <p style={{ fontSize: '12px', color: 'var(--text-tertiary)', margin: '4px 0 0' }}>Enter the email or phone registered with your bank for Zelle</p>
                   </div>
 
-                  <button className="glass-btn glass-primary" disabled={paymentSaving} onClick={async (e) => {
+                  <button className="hit44 glass-btn glass-primary" disabled={paymentSaving} onClick={async (e) => {
                     confirmClick(e);
                     setPaymentSaving(true);
                     try {
@@ -10685,7 +10857,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           </div>
           {profileScreen !== 'edit' && (
             <div style={{ padding: '12px', backgroundColor: 'var(--bg-card-solid)', borderTop: '1px solid var(--divider)', flexShrink: 0 }}>
-              <button className="glass-btn glass-primary" onClick={(e) => { confirmClick(e); setProfileScreen('main'); }} style={{ ...styles.gradientButton, position: 'relative', overflow: 'hidden' }}>Save</button>
+              <button className="hit44 glass-btn glass-primary" onClick={(e) => { confirmClick(e); setProfileScreen('main'); }} style={{ ...styles.gradientButton, position: 'relative', overflow: 'hidden' }}>Save</button>
             </div>
           )}
         </div>
@@ -10695,10 +10867,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
     return (
       <div key="profile-main-container" style={{ display: 'flex', flexDirection: 'column', height: '100%', backgroundColor: 'var(--bg-primary)' }}>
         <div style={{ padding: '20px', textAlign: 'center', background: colors.navyBg, flexShrink: 0 }}>
-          <button onClick={() => setShowPicModal(true)} style={{ width: '80px', height: '80px', borderRadius: '40px', margin: '0 auto', backgroundColor: 'rgba(255,255,255,0.2)', border: '4px solid rgba(255,255,255,0.3)', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', cursor: 'pointer' }}>
+          <button className="hit44" onClick={() => setShowPicModal(true)} style={{ width: '80px', height: '80px', borderRadius: '40px', margin: '0 auto', backgroundColor: 'rgba(255,255,255,0.2)', border: '4px solid rgba(255,255,255,0.3)', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', cursor: 'pointer' }}>
             {profilePic ? <img src={profilePic} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : Icons.user('white', 32)}
           </button>
-          <button onClick={() => { if (profilePic) { setCropImageSrc(profilePic); setCropZoom(1); setCropOffset({ x: 0, y: 0 }); } else { setShowPicModal(true); } }} style={{ display: 'block', margin: '4px auto 8px', padding: '2px 10px', borderRadius: '6px', border: 'none', backgroundColor: 'transparent', color: 'rgba(255,255,255,0.7)', fontSize: '10px', fontWeight: '600', cursor: 'pointer' }}>Edit Photo</button>
+          <button className="hit44" onClick={() => { if (profilePic) { setCropImageSrc(profilePic); setCropZoom(1); setCropOffset({ x: 0, y: 0 }); } else { setShowPicModal(true); } }} style={{ display: 'block', margin: '4px auto 8px', padding: '2px 10px', borderRadius: '6px', border: 'none', backgroundColor: 'transparent', color: 'rgba(255,255,255,0.7)', fontSize: '12px', fontWeight: '600', cursor: 'pointer' }}>Edit Photo</button>
           <h1 style={{ fontSize: '20px', fontWeight: '900', color: 'white', margin: 0 }}>{profileName}</h1>
           <p style={{ fontSize: '12px', color: 'rgba(255,255,255,0.6)', margin: 0 }}>@{profileHandle}</p>
         </div>
@@ -10708,17 +10880,17 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
             {[{ l: 'Flocks', v: flocks.length }, { l: 'Friends', v: friendCount }, { l: 'Streak', v: streak, hasIcon: true }, { l: 'Reliable', v: reliabilityScore != null ? `${Math.round(reliabilityScore)}%` : '--' }].map(s => (
               <div key={s.l} style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '8px', textAlign: 'center', boxShadow: 'var(--card-shadow-sm)' }}>
                 <p style={{ fontSize: '18px', fontWeight: '900', color: colors.navy, margin: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px' }}>{s.v}{s.hasIcon && Icons.flame('#F59E0B', 16)}</p>
-                <p style={{ fontSize: '9px', color: 'var(--text-secondary)', margin: 0 }}>{s.l}</p>
+                <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: 0 }}>{s.l}</p>
               </div>
             ))}
           </div>
 
           {/* Add Friends Button */}
-          <button className="glass-btn glass-secondary" onClick={() => setCurrentScreen('addFriends')} style={{ width: '100%', padding: '14px', borderRadius: '14px', border: 'none', background: colors.navyBg, color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '12px', boxShadow: '0 4px 12px rgba(13,40,71,0.10)', position: 'relative', overflow: 'hidden' }}>
+          <button className="hit44 glass-btn glass-secondary" onClick={() => setCurrentScreen('addFriends')} style={{ width: '100%', padding: '14px', borderRadius: '14px', border: 'none', background: colors.navyBg, color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '12px', boxShadow: '0 4px 12px rgba(13,40,71,0.10)', position: 'relative', overflow: 'hidden' }}>
             <div style={{ width: '36px', height: '36px', borderRadius: '12px', backgroundColor: 'rgba(255,255,255,0.2)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.userPlus('white', 18)}</div>
             <div style={{ flex: 1, textAlign: 'left' }}>
               <span className="shimmer-text" style={{ fontWeight: '700', fontSize: '15px', display: 'block' }}>Add Friends</span>
-              <span style={{ fontSize: '11px', opacity: 0.7 }}>Find people, scan QR, sync contacts</span>
+              <span style={{ fontSize: '12px', opacity: 0.7 }}>Find people, scan QR, sync contacts</span>
             </div>
             {pendingRequests.length > 0 && <span style={{ padding: '4px 10px', borderRadius: '12px', backgroundColor: colors.amber, fontSize: '12px', fontWeight: '700' }}>{pendingRequests.length}</span>}
             <span style={{ opacity: 0.6 }}>›</span>
@@ -10731,7 +10903,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
               { l: 'Safety', s: 'safety', icon: Icons.shield },
               { l: 'Payment', s: 'payment', icon: Icons.creditCard },
             ].map(m => (
-              <button key={m.s} className="glass-btn glass-secondary" onClick={() => { setProfileScreen(m.s); if (m.s === 'safety') loadTrustedContacts(); if (m.s === 'payment') { setVenmoUsername(authUser?.venmo_username || ''); setCashappCashtag(authUser?.cashapp_cashtag || ''); setZelleIdentifier(authUser?.zelle_identifier || ''); } }} style={{ width: '100%', padding: '12px', textAlign: 'left', borderBottom: '1px solid var(--border-light)', display: 'flex', alignItems: 'center', gap: '12px', backgroundColor: 'var(--bg-card-solid)', border: 'none', cursor: 'pointer' }}>
+              <button key={m.s} className="hit44 glass-btn glass-secondary" onClick={() => { setProfileScreen(m.s); if (m.s === 'safety') loadTrustedContacts(); if (m.s === 'payment') { setVenmoUsername(authUser?.venmo_username || ''); setCashappCashtag(authUser?.cashapp_cashtag || ''); setZelleIdentifier(authUser?.zelle_identifier || ''); } }} style={{ width: '100%', padding: '12px', textAlign: 'left', borderBottom: '1px solid var(--border-light)', display: 'flex', alignItems: 'center', gap: '12px', backgroundColor: 'var(--bg-card-solid)', border: 'none', cursor: 'pointer' }}>
                 <div style={{ width: '32px', height: '32px', borderRadius: '8px', backgroundColor: 'var(--icon-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{m.icon(colors.navy, 18)}</div>
                 <span style={{ flex: 1, fontWeight: '600', fontSize: '14px', color: colors.navy }}>{m.l}</span>
                 <span style={{ color: 'var(--text-tertiary)' }}>›</span>
@@ -10743,9 +10915,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 <div style={{ width: '32px', height: '32px', borderRadius: '8px', backgroundColor: 'var(--icon-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.mapPin(colors.navy, 18)}</div>
                 <div style={{ flex: 1 }}>
                   <span style={{ fontWeight: '600', fontSize: '14px', color: colors.navy, display: 'block' }}>Location</span>
-                  <span style={{ fontSize: '11px', color: 'var(--text-tertiary)' }}>{locationEnabled ? 'Venues and maps use your location' : 'Location is turned off'}</span>
+                  <span style={{ fontSize: '12px', color: 'var(--text-tertiary)' }}>{locationEnabled ? 'Venues and maps use your location' : 'Location is turned off'}</span>
                 </div>
-                <Toggle on={locationEnabled} onChange={() => toggleLocation(!locationEnabled)} />
+                <Toggle label="Location services" on={locationEnabled} onChange={() => toggleLocation(!locationEnabled)} />
               </div>
             </div>
             {/* Smart Night Mode */}
@@ -10755,13 +10927,13 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 <div style={{ width: '32px', height: '32px', borderRadius: '8px', backgroundColor: 'var(--icon-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.moon(colors.navy, 18)}</div>
                 <div style={{ flex: 1 }}>
                   <span style={{ fontWeight: '600', fontSize: '14px', color: colors.navy, display: 'block' }}>Smart Night Mode</span>
-                  <span style={{ fontSize: '11px', color: 'var(--text-tertiary)' }}>Auto dark at 8 PM, light at 6 AM</span>
+                  <span style={{ fontSize: '12px', color: 'var(--text-tertiary)' }}>Auto dark at 8 PM, light at 6 AM</span>
                 </div>
-                <Toggle on={themeMode === 'auto'} onChange={() => setAutoMode(themeMode !== 'auto')} />
+                <Toggle label="Match device appearance" on={themeMode === 'auto'} onChange={() => setAutoMode(themeMode !== 'auto')} />
               </div>
               {/* Night mode active badge */}
               {themeMode === 'auto' && isNightModeActive && (
-                <div style={{ marginTop: '8px', marginLeft: '44px', display: 'inline-flex', alignItems: 'center', gap: '4px', padding: '4px 10px', borderRadius: '8px', backgroundColor: 'var(--accent-purple-bg)', fontSize: '11px', fontWeight: '600', color: 'var(--accent-purple-text)' }}>
+                <div style={{ marginTop: '8px', marginLeft: '44px', display: 'inline-flex', alignItems: 'center', gap: '4px', padding: '4px 10px', borderRadius: '8px', backgroundColor: 'var(--accent-purple-bg)', fontSize: '12px', fontWeight: '600', color: 'var(--accent-purple-text)' }}>
                   {Icons.moon('var(--accent-purple-text)', 12)} Night mode active
                 </div>
               )}
@@ -10770,7 +10942,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginTop: '10px', paddingTop: '10px', borderTop: '1px solid var(--border-light)' }}>
                   <div style={{ width: '32px', height: '32px', borderRadius: '8px', backgroundColor: 'var(--icon-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{isDark ? Icons.moon(colors.navy, 18) : Icons.sun(colors.navy, 18)}</div>
                   <span style={{ flex: 1, fontWeight: '600', fontSize: '14px', color: colors.navy }}>Dark Mode</span>
-                  <Toggle on={isDark} onChange={toggleTheme} />
+                  <Toggle label="Dark mode" on={isDark} onChange={toggleTheme} />
                 </div>
               )}
             </div>
@@ -10782,9 +10954,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 {notifStatus === 'granted' ? (
                   <span style={{ fontSize: '12px', fontWeight: '600', color: '#22c55e' }}>On</span>
                 ) : notifStatus === 'denied' ? (
-                  <span style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>Blocked in browser</span>
+                  <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>Blocked in browser</span>
                 ) : (
-                    <button className="glass-btn glass-secondary" onClick={() => requestNotificationPermission().then((token) => {
+                    <button className="hit44 glass-btn glass-secondary" onClick={() => requestNotificationPermission().then((token) => {
                       // null = denied or registration failed — saying
                       // "enabled" without a registered token was a lie.
                       if (token) { setNotifStatus('granted'); showToast('Notifications enabled!'); }
@@ -10795,7 +10967,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
             </div>
             {/* Flock Pro — hidden until the backend flips PAYWALL_ENABLED (or the user is already Pro) */}
             {(entitlements?.paywallEnabled || isPro) && (
-              <button className="glass-btn glass-secondary" onClick={() => { if (!isPro) setPaywallTrigger('settings'); }} style={{ width: '100%', padding: '12px', textAlign: 'left', borderTop: '1px solid var(--border-light)', display: 'flex', alignItems: 'center', gap: '12px', backgroundColor: 'var(--bg-card-solid)', border: 'none', cursor: isPro ? 'default' : 'pointer' }}>
+              <button className="hit44 glass-btn glass-secondary" onClick={() => { if (!isPro) setPaywallTrigger('settings'); }} style={{ width: '100%', padding: '12px', textAlign: 'left', borderTop: '1px solid var(--border-light)', display: 'flex', alignItems: 'center', gap: '12px', backgroundColor: 'var(--bg-card-solid)', border: 'none', cursor: isPro ? 'default' : 'pointer' }}>
                 <div style={{ width: '32px', height: '32px', borderRadius: '8px', backgroundColor: 'var(--icon-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.sparkles(colors.navy, 18)}</div>
                 <span style={{ flex: 1, fontWeight: '600', fontSize: '14px', color: colors.navy }}>Flock Pro</span>
                 {isPro ? (
@@ -10805,12 +10977,14 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 )}
               </button>
             )}
-            <button className="glass-btn glass-danger" onClick={() => { if (onLogout) onLogout(); }} style={{ width: '100%', padding: '12px', textAlign: 'left', display: 'flex', alignItems: 'center', gap: '12px', backgroundColor: 'var(--bg-card-solid)', border: 'none', cursor: 'pointer', color: colors.red }}>
-              {Icons.logout(colors.red, 18)}
+            {/* .glass-danger paints this solid red with white text (both !important),
+                so the icon must be white too — colors.red on red was invisible. */}
+            <button className="hit44 glass-btn glass-danger" onClick={() => { if (onLogout) onLogout(); }} style={{ width: '100%', minHeight: '44px', padding: '12px', textAlign: 'left', display: 'flex', alignItems: 'center', gap: '12px', border: 'none', cursor: 'pointer' }}>
+              {Icons.logout('#ffffff', 18)}
               <span style={{ fontWeight: '600', fontSize: '14px' }}>Log Out</span>
             </button>
             {/* Delete account (Apple Guideline 5.1.1(v)) — permanent, in-app */}
-            <button onClick={() => { setDeleteConfirmText(''); setShowDeleteAccount(true); }} style={{ width: '100%', marginTop: '10px', padding: '12px', textAlign: 'left', display: 'flex', alignItems: 'center', gap: '12px', backgroundColor: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--text-tertiary)' }}>
+            <button className="hit44" onClick={() => { setDeleteConfirmText(''); setShowDeleteAccount(true); }} style={{ width: '100%', marginTop: '10px', padding: '12px', textAlign: 'left', display: 'flex', alignItems: 'center', gap: '12px', backgroundColor: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--text-tertiary)' }}>
               {Icons.trash('var(--text-tertiary)', 18)}
               <span style={{ fontWeight: '600', fontSize: '14px' }}>Delete account</span>
             </button>
@@ -10819,14 +10993,15 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           {/* Delete-account confirmation — requires typing DELETE; hard-delete is irreversible */}
           {showDeleteAccount && (
             <div onClick={() => !deletingAccount && setShowDeleteAccount(false)} style={{ position: 'absolute', inset: 0, zIndex: 210, backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '24px' }}>
+            <DialogBehavior onClose={() => setShowDeleteAccount(false)} label="Delete account" />
               <div onClick={(e) => e.stopPropagation()} style={{ width: '100%', maxWidth: '360px', backgroundColor: 'var(--bg-card-solid)', borderRadius: '18px', padding: '22px', boxShadow: '0 8px 24px rgba(0,0,0,0.15)', fontFamily: "'Hanken Grotesk', -apple-system, BlinkMacSystemFont, sans-serif" }}>
                 <h3 style={{ fontSize: '17px', fontWeight: '800', color: 'var(--text-primary)', margin: '0 0 8px' }}>Delete your account?</h3>
                 <p style={{ fontSize: '13px', color: 'var(--text-secondary)', margin: '0 0 16px', lineHeight: 1.5 }}>This permanently deletes your account, messages, flocks, friends, and payment settings. <strong>This cannot be undone.</strong></p>
                 <p style={{ fontSize: '12px', fontWeight: '600', color: 'var(--text-secondary)', margin: '0 0 6px' }}>Type <strong>DELETE</strong> to confirm</p>
-                <input value={deleteConfirmText} onChange={(e) => setDeleteConfirmText(e.target.value)} placeholder="DELETE" autoCapitalize="characters" style={{ width: '100%', boxSizing: 'border-box', padding: '12px', borderRadius: '12px', border: '1px solid var(--border-default)', backgroundColor: 'var(--bg-hover)', color: 'var(--text-primary)', fontSize: '14px', outline: 'none', marginBottom: '16px', fontFamily: 'inherit' }} />
+                <input aria-label="Type DELETE to confirm" value={deleteConfirmText} onChange={(e) => setDeleteConfirmText(e.target.value)} placeholder="DELETE" autoCapitalize="characters" style={{ width: '100%', boxSizing: 'border-box', padding: '12px', borderRadius: '12px', border: '1px solid var(--border-default)', backgroundColor: 'var(--bg-hover)', color: 'var(--text-primary)', fontSize: '14px', outline: 'none', marginBottom: '16px', fontFamily: 'inherit' }} />
                 <div style={{ display: 'flex', gap: '10px' }}>
-                  <button onClick={() => setShowDeleteAccount(false)} disabled={deletingAccount} style={{ flex: 1, padding: '13px', borderRadius: '12px', border: '1px solid var(--border-default)', backgroundColor: 'transparent', color: 'var(--text-secondary)', fontSize: '14px', fontWeight: '600', cursor: 'pointer' }}>Cancel</button>
-                  <button
+                  <button className="hit44" onClick={() => setShowDeleteAccount(false)} disabled={deletingAccount} style={{ flex: 1, padding: '13px', borderRadius: '12px', border: '1px solid var(--border-default)', backgroundColor: 'transparent', color: 'var(--text-secondary)', fontSize: '14px', fontWeight: '600', cursor: 'pointer' }}>Cancel</button>
+                  <button className="hit44"
                     disabled={deletingAccount || deleteConfirmText.trim().toUpperCase() !== 'DELETE'}
                     onClick={async () => {
                       setDeletingAccount(true);
@@ -10850,7 +11025,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           {/* Admin Access Button - Small and subtle at bottom */}
           {/* Admin Access — admin role only */}
           {authUser?.role === 'admin' && (
-            <button
+            <button className="hit44"
               onClick={() => setShowAdminPrompt(true)}
               style={{
                 marginTop: '16px',
@@ -10859,7 +11034,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 border: `1px dashed ${colors.creamDark}`,
                 backgroundColor: 'transparent',
                 color: 'var(--text-tertiary)',
-                fontSize: '10px',
+                fontSize: '12px',
                 cursor: 'pointer',
                 display: 'flex',
                 alignItems: 'center',
@@ -10873,7 +11048,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
 
           {/* Venue Dashboard — venue_owner or admin only */}
           {(authUser?.role === 'venue_owner' || authUser?.role === 'admin') && (
-            <button
+            <button className="hit44"
               onClick={() => setCurrentScreen('venueDashboard')}
               style={{
                 marginTop: '8px',
@@ -10882,7 +11057,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 border: `1px dashed ${colors.creamDark}`,
                 backgroundColor: 'transparent',
                 color: 'var(--text-tertiary)',
-                fontSize: '10px',
+                fontSize: '12px',
                 cursor: 'pointer',
                 display: 'flex',
                 alignItems: 'center',
@@ -10896,7 +11071,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
 
           {/* Switch Mode Button — only show if user has multiple modes */}
           {userMode && (authUser?.role === 'venue_owner' || authUser?.role === 'admin') && (
-            <button
+            <button className="hit44"
               onClick={switchMode}
               style={{
                 marginTop: '8px',
@@ -10905,7 +11080,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 border: '1px solid #EF4444',
                 backgroundColor: 'rgba(239,68,68,0.1)',
                 color: '#EF4444',
-                fontSize: '10px',
+                fontSize: '12px',
                 cursor: 'pointer',
                 display: 'flex',
                 alignItems: 'center',
@@ -10919,10 +11094,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
 
           {/* Legal Links */}
           <div style={{ marginTop: '24px', paddingTop: '16px', borderTop: `1px solid ${colors.creamDark}` }}>
-            <p style={{ fontSize: '10px', color: 'var(--text-tertiary)', marginBottom: '12px', textAlign: 'center', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Legal</p>
+            <p style={{ fontSize: '12px', color: 'var(--text-tertiary)', marginBottom: '12px', textAlign: 'center', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Legal</p>
             <div style={{ display: 'flex', gap: '8px', justifyContent: 'center' }}>
               <button
-                className="glass-btn glass-secondary" onClick={() => window.open('https://www.flockcorp.com/terms', '_blank')}
+                className="hit44 glass-btn glass-secondary" onClick={() => window.open('https://www.flockcorp.com/terms', '_blank')}
                 style={{
                   padding: '10px 16px',
                   borderRadius: '10px',
@@ -10940,7 +11115,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 {Icons.fileText(colors.navy, 14)} Terms of Service
               </button>
               <button
-                className="glass-btn glass-secondary" onClick={() => window.open('https://www.flockcorp.com/privacy', '_blank')}
+                className="hit44 glass-btn glass-secondary" onClick={() => window.open('https://www.flockcorp.com/privacy', '_blank')}
                 style={{
                   padding: '10px 16px',
                   borderRadius: '10px',
@@ -10958,7 +11133,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 {Icons.shield(colors.navy, 14)} Privacy Policy
               </button>
             </div>
-            <p style={{ fontSize: '10px', color: 'var(--text-tertiary)', marginTop: '16px', textAlign: 'center' }}>Flock v1.0.0</p>
+            <p style={{ fontSize: '12px', color: 'var(--text-tertiary)', marginTop: '16px', textAlign: 'center' }}>Flock v1.0.0</p>
           </div>
 
         </div>
@@ -11395,12 +11570,12 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
     const LockedTab = ({ requiredTier, featureName, description }) => (
       <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '16px', padding: '32px 20px', textAlign: 'center', margin: '12px 0', border: `2px dashed ${requiredTier === 'pro' ? '#2d5a87' : 'var(--accent-amber-text)'}` }}>
         <div style={{ display: 'flex', justifyContent: 'center', marginBottom: '10px' }} aria-hidden>
-          <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke={requiredTier === 'pro' ? '#2d5a87' : 'var(--accent-amber-text)'} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" /><path d="M7 11V7a5 5 0 0 1 10 0v4" /></svg>
+          <svg aria-hidden="true" focusable="false" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke={requiredTier === 'pro' ? '#2d5a87' : 'var(--accent-amber-text)'} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" /><path d="M7 11V7a5 5 0 0 1 10 0v4" /></svg>
         </div>
         <h3 style={{ fontSize: '16px', fontWeight: '800', color: 'var(--text-primary)', margin: '0 0 6px' }}>{featureName}</h3>
         <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: '0 0 16px', lineHeight: '1.5' }}>{description}</p>
-        <p style={{ fontSize: '11px', color: requiredTier === 'pro' ? 'var(--accent-purple-text)' : 'var(--accent-amber-text)', fontWeight: '700', margin: '0 0 12px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Requires {requiredTier === 'pro' ? 'Pro · $75/mo' : 'Premium · $35/mo'}</p>
-        <button className="glass-btn glass-primary" onClick={() => setShowUpgradeModal(true)} style={{ padding: '10px 20px', borderRadius: '10px', border: 'none', background: requiredTier === 'pro' ? '#2d5a87' : 'var(--accent-amber-text)', color: 'white', fontWeight: '700', fontSize: '12px', cursor: 'pointer' }}>
+        <p style={{ fontSize: '12px', color: requiredTier === 'pro' ? 'var(--accent-purple-text)' : 'var(--accent-amber-text)', fontWeight: '700', margin: '0 0 12px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Requires {requiredTier === 'pro' ? 'Pro · $75/mo' : 'Premium · $35/mo'}</p>
+        <button className="hit44 glass-btn glass-primary" onClick={() => setShowUpgradeModal(true)} style={{ padding: '10px 20px', borderRadius: '10px', border: 'none', background: requiredTier === 'pro' ? '#2d5a87' : 'var(--accent-amber-text)', color: 'white', fontWeight: '700', fontSize: '12px', cursor: 'pointer' }}>
           Upgrade to {requiredTier === 'pro' ? 'Pro' : 'Premium'}
         </button>
       </div>
@@ -11411,14 +11586,14 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
         {/* Header */}
         <div style={{ padding: '16px', background: colors.navyBg, flexShrink: 0 }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-            <button onClick={switchMode} style={{ width: '32px', height: '32px', borderRadius: '16px', border: 'none', backgroundColor: 'rgba(255,255,255,0.2)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <button aria-label="Back" className="hit44" onClick={switchMode} style={{ width: '32px', height: '32px', borderRadius: '16px', border: 'none', backgroundColor: 'rgba(255,255,255,0.2)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
               {Icons.arrowLeft('white', 16)}
             </button>
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <span style={{ ...tierBadge[venueData.tier], padding: '4px 10px', borderRadius: '12px', fontSize: '10px', fontWeight: '700', backgroundColor: tierBadge[venueData.tier].bg, color: tierBadge[venueData.tier].color }}>
+              <span style={{ ...tierBadge[venueData.tier], padding: '4px 10px', borderRadius: '12px', fontSize: '12px', fontWeight: '700', backgroundColor: tierBadge[venueData.tier].bg, color: tierBadge[venueData.tier].color }}>
                 {tierBadge[venueData.tier].label}
               </span>
-              <button onClick={onLogout} style={{ width: '32px', height: '32px', borderRadius: '16px', border: 'none', backgroundColor: 'rgba(255,255,255,0.2)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <button aria-label="Log out" className="hit44" onClick={onLogout} style={{ width: '32px', height: '32px', borderRadius: '16px', border: 'none', backgroundColor: 'rgba(255,255,255,0.2)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                 {Icons.logout('white', 14)}
               </button>
             </div>
@@ -11437,7 +11612,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 </span>
               )}
               {venueLogoUploading && (
-                <div style={{ position: 'absolute', inset: 0, backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '9px', color: 'white' }}>…</div>
+                <div style={{ position: 'absolute', inset: 0, backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '12px', color: 'white' }}>…</div>
               )}
               <div style={{ position: 'absolute', bottom: -2, right: -2, width: '18px', height: '18px', borderRadius: '9px', backgroundColor: colors.steel, display: 'flex', alignItems: 'center', justifyContent: 'center', border: '2px solid var(--bg-primary)' }}>
                 {Icons.camera('white', 10)}
@@ -11446,7 +11621,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
             </div>
             <div style={{ flex: 1 }}>
               <h1 style={{ fontSize: '18px', fontWeight: '900', color: 'white', margin: 0 }}>Welcome, {venueData.name}</h1>
-              <p style={{ fontSize: '10px', color: 'rgba(255,255,255,0.7)', margin: 0 }}>{venueProfile?.category || venueOnboardingData.category || 'Venue Dashboard'}{(venueProfile?.location || venueOnboardingData.location) ? ` · ${venueProfile?.location || venueOnboardingData.location}` : ''}</p>
+              <p style={{ fontSize: '12px', color: 'rgba(255,255,255,0.7)', margin: 0 }}>{venueProfile?.category || venueOnboardingData.category || 'Venue Dashboard'}{(venueProfile?.location || venueOnboardingData.location) ? ` · ${venueProfile?.location || venueOnboardingData.location}` : ''}</p>
             </div>
           </div>
         </div>
@@ -11454,9 +11629,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
         {/* Tab Navigation */}
         <div style={{ display: 'flex', backgroundColor: 'var(--bg-card-solid)', borderBottom: '1px solid var(--border-default)', flexShrink: 0 }}>
           {venueTabs.map(tab => (
-            <button key={tab.id} onClick={() => setVenueTab(tab.id)} style={{ flex: 1, padding: '10px 4px', border: 'none', backgroundColor: 'transparent', cursor: 'pointer', borderBottom: venueTab === tab.id ? `2px solid ${colors.navy}` : '2px solid transparent', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '2px' }}>
+            <button className="hit44" key={tab.id} onClick={() => setVenueTab(tab.id)} style={{ flex: 1, padding: '10px 4px', border: 'none', backgroundColor: 'transparent', cursor: 'pointer', borderBottom: venueTab === tab.id ? `2px solid ${colors.navy}` : '2px solid transparent', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '2px' }}>
               {tab.icon(venueTab === tab.id ? colors.navy : colors.textTertiary, 16)}
-              <span style={{ fontSize: '9px', fontWeight: venueTab === tab.id ? '700' : '500', color: venueTab === tab.id ? colors.navy : colors.textTertiary }}>{tab.label}</span>
+              <span style={{ fontSize: '12px', fontWeight: venueTab === tab.id ? '700' : '500', color: venueTab === tab.id ? colors.navy : colors.textTertiary }}>{tab.label}</span>
             </button>
           ))}
         </div>
@@ -11484,24 +11659,24 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           {/* Key metrics — all computed, none invented */}
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '8px', marginBottom: '12px' }}>
             <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
-              <p style={{ fontSize: '9px', color: 'var(--text-secondary)', margin: 0, textTransform: 'uppercase' }}>Right Now</p>
+              <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: 0, textTransform: 'uppercase' }}>Right Now</p>
               <p style={{ fontSize: '24px', fontWeight: '900', color: intelReady && venueIntel.now.score > 70 ? colors.red : colors.steel, margin: '4px 0 0' }}>{intelReady ? `${venueIntel.now.score}` : '–'}</p>
-              <p style={{ fontSize: '10px', color: 'var(--text-secondary)', margin: '2px 0 0' }}>{intelReady ? venueIntel.now.label : ''}</p>
+              <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: '2px 0 0' }}>{intelReady ? venueIntel.now.label : ''}</p>
             </div>
             <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
-              <p style={{ fontSize: '9px', color: 'var(--text-secondary)', margin: 0, textTransform: 'uppercase' }}>Tonight's Peak</p>
+              <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: 0, textTransform: 'uppercase' }}>Tonight's Peak</p>
               <p style={{ fontSize: '24px', fontWeight: '900', color: colors.navy, margin: '4px 0 0' }}>{tonightPeak ? tonightPeak.score : '–'}</p>
-              <p style={{ fontSize: '10px', color: 'var(--text-secondary)', margin: '2px 0 0' }}>{tonightPeak ? `around ${tonightPeak.hour}` : ''}</p>
+              <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: '2px 0 0' }}>{tonightPeak ? `around ${tonightPeak.hour}` : ''}</p>
             </div>
             <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
-              <p style={{ fontSize: '9px', color: 'var(--text-secondary)', margin: 0, textTransform: 'uppercase' }}>Groups Eyeing You</p>
+              <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: 0, textTransform: 'uppercase' }}>Groups Eyeing You</p>
               <p style={{ fontSize: '24px', fontWeight: '900', color: colors.navy, margin: '4px 0 0' }}>{realIncomingFlocks.length}</p>
-              <p style={{ fontSize: '10px', color: 'var(--text-secondary)', margin: '2px 0 0' }}>flocks with you in their vote</p>
+              <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: '2px 0 0' }}>flocks with you in their vote</p>
             </div>
             <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
-              <p style={{ fontSize: '9px', color: 'var(--text-secondary)', margin: 0, textTransform: 'uppercase' }}>Biggest Night Ahead</p>
+              <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: 0, textTransform: 'uppercase' }}>Biggest Night Ahead</p>
               <p style={{ fontSize: '24px', fontWeight: '900', color: colors.navy, margin: '4px 0 0' }}>{weekPeak ? weekPeak.weekday : '–'}</p>
-              <p style={{ fontSize: '10px', color: 'var(--text-secondary)', margin: '2px 0 0' }}>{weekPeak ? `projected ${weekPeak.peakScore} at ${weekPeak.peakHour}` : ''}</p>
+              <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: '2px 0 0' }}>{weekPeak ? `projected ${weekPeak.peakScore} at ${weekPeak.peakHour}` : ''}</p>
             </div>
           </div>
 
@@ -11513,8 +11688,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 {venueIntel.week.map((d) => (
                   <div key={d.date} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
                     <div style={{ width: '100%', height: `${Math.max(3, (d.peakScore || 0) * 0.55)}px`, backgroundColor: d.peakScore > 70 ? colors.red : d.peakScore > 45 ? colors.amber : colors.steel, borderRadius: '4px 4px 0 0' }} />
-                    <span style={{ fontSize: '8px', color: 'var(--text-secondary)', marginTop: '4px' }}>{d.weekday}</span>
-                    <span style={{ fontSize: '9px', fontWeight: '600', color: colors.navy }}>{d.peakScore ?? '–'}</span>
+                    <span style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: '4px' }}>{d.weekday}</span>
+                    <span style={{ fontSize: '12px', fontWeight: '600', color: colors.navy }}>{d.peakScore ?? '–'}</span>
                   </div>
                 ))}
               </div>
@@ -11532,10 +11707,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                   <span style={{ width: '80px', height: '6px', borderRadius: '3px', backgroundColor: 'var(--bg-hover)', overflow: 'hidden', flexShrink: 0 }}>
                     <span style={{ display: 'block', height: '100%', width: `${Math.min(100, v.peakScore || 0)}%`, backgroundColor: v.you ? colors.steel : 'var(--text-tertiary)', borderRadius: '3px' }} />
                   </span>
-                  <span style={{ fontSize: '11px', fontWeight: '700', color: colors.navy, width: '26px', textAlign: 'right', flexShrink: 0 }}>{v.peakScore ?? '–'}</span>
+                  <span style={{ fontSize: '12px', fontWeight: '700', color: colors.navy, width: '26px', textAlign: 'right', flexShrink: 0 }}>{v.peakScore ?? '–'}</span>
                 </div>
               ))}
-              <p style={{ fontSize: '9px', color: 'var(--text-tertiary)', margin: '8px 0 0' }}>Projected evening peaks within 1.5 km, from Flock's crowd model.</p>
+              <p style={{ fontSize: '12px', color: 'var(--text-tertiary)', margin: '8px 0 0' }}>Projected evening peaks within 1.5 km, from Flock's crowd model.</p>
             </div>
           )}
 
@@ -11543,8 +11718,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           {intelReady && venueProfile?.google_place_id && (
             <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', marginBottom: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
               <h3 style={{ fontSize: '12px', fontWeight: '700', color: colors.navy, margin: '0 0 6px' }}>Live Badge for Your Website</h3>
-              <p style={{ fontSize: '11px', color: 'var(--text-secondary)', margin: '0 0 10px', lineHeight: 1.5 }}>A live "how busy is it" badge, updated every 15 minutes by Flock's crowd model. Paste this where your site's HTML goes:</p>
-              <button
+              <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: '0 0 10px', lineHeight: 1.5 }}>A live "how busy is it" badge, updated every 15 minutes by Flock's crowd model. Paste this where your site's HTML goes:</p>
+              <button className="hit44"
                 onClick={async () => {
                   const snippet = `<img src="${BASE_URL}/api/badge/${venueProfile.google_place_id}.svg" alt="How busy is ${venueData.name}? Live from Flock" height="36">`;
                   try { await navigator.clipboard.writeText(snippet); showToast('Embed code copied'); } catch { showToast('Could not copy', 'error'); }
@@ -11580,30 +11755,30 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                     <h3 style={{ fontSize: '13px', fontWeight: '700', color: colors.navy, margin: 0 }}>Live Sensor</h3>
                   </div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                    <span style={{ fontSize: '10px', fontWeight: '700', padding: '2px 8px', borderRadius: '8px', backgroundColor: online ? 'var(--accent-green-bg)' : 'var(--accent-red-bg)', color: online ? 'var(--accent-green-text)' : 'var(--accent-red-text)' }}>{online ? 'Online' : 'Offline'}</span>
-                    <span style={{ fontSize: '9px', color: 'var(--text-tertiary)' }}>last seen {lastSeenMin === 0 ? 'just now' : `${lastSeenMin} min ago`}</span>
+                    <span style={{ fontSize: '12px', fontWeight: '700', padding: '2px 8px', borderRadius: '8px', backgroundColor: online ? 'var(--accent-green-bg)' : 'var(--accent-red-bg)', color: online ? 'var(--accent-green-text)' : 'var(--accent-red-text)' }}>{online ? 'Online' : 'Offline'}</span>
+                    <span style={{ fontSize: '12px', color: 'var(--text-tertiary)' }}>last seen {lastSeenMin === 0 ? 'just now' : `${lastSeenMin} min ago`}</span>
                   </div>
                 </div>
 
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '8px', marginBottom: '12px' }}>
                   <div>
-                    <p style={{ fontSize: '9px', color: 'var(--text-secondary)', margin: 0, textTransform: 'uppercase' }}>Currently Inside</p>
+                    <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: 0, textTransform: 'uppercase' }}>Currently Inside</p>
                     <p style={{ fontSize: '28px', fontWeight: '900', color: colors.navy, margin: '4px 0 0', lineHeight: 1 }}>~{sd.thermal_headcount}</p>
                   </div>
                   <div>
-                    <p style={{ fontSize: '9px', color: 'var(--text-secondary)', margin: 0, textTransform: 'uppercase' }}>Noise Level</p>
+                    <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: 0, textTransform: 'uppercase' }}>Noise Level</p>
                     {noiseLabel ? (
                       <p style={{ fontSize: '18px', fontWeight: '800', color: noiseLabel.color, margin: '4px 0 0', lineHeight: 1 }}>
-                        {noiseLabel.text} <span style={{ fontSize: '11px', color: 'var(--text-tertiary)', fontWeight: '600' }}>{Number(sd.noise_db).toFixed(0)} dB</span>
+                        {noiseLabel.text} <span style={{ fontSize: '12px', color: 'var(--text-tertiary)', fontWeight: '600' }}>{Number(sd.noise_db).toFixed(0)} dB</span>
                       </p>
                     ) : <p style={{ fontSize: '18px', color: 'var(--text-tertiary)', margin: '4px 0 0' }}>—</p>}
                   </div>
                   <div>
-                    <p style={{ fontSize: '9px', color: 'var(--text-secondary)', margin: 0, textTransform: 'uppercase' }}>Today's Door Count</p>
+                    <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: 0, textTransform: 'uppercase' }}>Today's Door Count</p>
                     <p style={{ fontSize: '20px', fontWeight: '800', color: colors.navy, margin: '4px 0 0' }}>{todaysIr}</p>
                   </div>
                   <div>
-                    <p style={{ fontSize: '9px', color: 'var(--text-secondary)', margin: 0, textTransform: 'uppercase' }}>Last Hour Check-ins</p>
+                    <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: 0, textTransform: 'uppercase' }}>Last Hour Check-ins</p>
                     <p style={{ fontSize: '20px', fontWeight: '800', color: colors.navy, margin: '4px 0 0' }}>{ownerSensorData.recent_checkins || 0}</p>
                   </div>
                 </div>
@@ -11622,7 +11797,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                   });
                   return (
                     <div>
-                      <p style={{ fontSize: '9px', fontWeight: '600', color: 'var(--text-secondary)', margin: '0 0 6px', textTransform: 'uppercase' }}>Last 24 Hours</p>
+                      <p style={{ fontSize: '12px', fontWeight: '600', color: 'var(--text-secondary)', margin: '0 0 6px', textTransform: 'uppercase' }}>Last 24 Hours</p>
                       <div style={{ display: 'flex', alignItems: 'flex-end', gap: '2px', height: '52px' }}>
                         {slots.map((r, i) => {
                           if (!r) {
@@ -11642,7 +11817,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           {/* Post a Deal */}
           <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', marginBottom: '12px', boxShadow: 'var(--card-shadow-sm)', position: 'relative' }}>
             <h3 style={{ fontSize: '12px', fontWeight: '700', color: colors.navy, margin: '0 0 10px', display: 'flex', alignItems: 'center', gap: '6px' }}>{Icons.zap(colors.amber, 14)} Post a Deal</h3>
-            <SearchInputLocal
+            <SearchInputLocal aria-label="Deal description"
               type="text"
               initialValue={dealDescription}
               onCommit={setDealDescription}
@@ -11652,12 +11827,12 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
             />
             <div style={{ display: 'flex', gap: '6px', marginBottom: '8px' }}>
               {['Happy Hour', 'Late Night', 'Weekend', 'All Day'].map(slot => (
-                <button key={slot} className="glass-btn glass-secondary" onClick={() => setDealTimeSlot(slot)} style={{ padding: '6px 10px', borderRadius: '16px', border: `1px solid ${dealTimeSlot === slot ? colors.navy : colors.creamDark}`, backgroundColor: dealTimeSlot === slot ? colors.navyBg : 'var(--bg-card-solid)', color: dealTimeSlot === slot ? 'white' : colors.navy, fontSize: '10px', fontWeight: '500', cursor: 'pointer' }} disabled={isFeatureLocked('Post deals')}>
+                <button key={slot} className="hit44 glass-btn glass-secondary" onClick={() => setDealTimeSlot(slot)} style={{ padding: '6px 10px', borderRadius: '16px', border: `1px solid ${dealTimeSlot === slot ? colors.navy : colors.creamDark}`, backgroundColor: dealTimeSlot === slot ? colors.navyBg : 'var(--bg-card-solid)', color: dealTimeSlot === slot ? 'white' : colors.navy, fontSize: '12px', fontWeight: '500', cursor: 'pointer' }} disabled={isFeatureLocked('Post deals')}>
                   {slot}
                 </button>
               ))}
             </div>
-            <button onClick={async () => {
+            <button className="hit44" onClick={async () => {
               if (!dealDescription.trim()) return;
               try {
                 const created = await createVenuePromotion({
@@ -11677,7 +11852,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
             }} style={{ width: '100%', padding: '10px', borderRadius: '8px', border: 'none', background: colors.navyMidBg, color: 'white', fontWeight: '600', fontSize: '12px', cursor: 'pointer' }} disabled={isFeatureLocked('Post deals') || !dealDescription.trim()}>
               Post Deal
             </button>
-            {isFeatureLocked('Post deals') && <div style={{ position: 'absolute', inset: 0, backgroundColor: 'var(--locked-overlay)', borderRadius: '12px', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>{Icons.shield(colors.textTertiary, 24)}<span style={{ fontSize: '10px', color: 'var(--text-secondary)', marginTop: '4px' }}>Premium Feature</span></div>}
+            {isFeatureLocked('Post deals') && <div style={{ position: 'absolute', inset: 0, backgroundColor: 'var(--locked-overlay)', borderRadius: '12px', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>{Icons.shield(colors.textTertiary, 24)}<span style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: '4px' }}>Premium Feature</span></div>}
           </div>
 
           {/* Today, hour by hour — from the model */}
@@ -11688,11 +11863,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 {venueIntel.todayHourly.map((h, i) => (
                   <div key={i} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
                     <div style={{ width: '100%', height: `${Math.max(2, h.score * 0.5)}px`, backgroundColor: h.score > 70 ? colors.red : h.score > 45 ? colors.amber : colors.steel, borderRadius: '2px' }} />
-                    {i % 3 === 0 && <span style={{ fontSize: '7px', color: 'var(--text-secondary)', marginTop: '4px', whiteSpace: 'nowrap' }}>{h.hour}</span>}
+                    {i % 3 === 0 && <span style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: '4px', whiteSpace: 'nowrap' }}>{h.hour}</span>}
                   </div>
                 ))}
               </div>
-              <p style={{ fontSize: '9px', color: 'var(--text-tertiary)', margin: '8px 0 0' }}>
+              <p style={{ fontSize: '12px', color: 'var(--text-tertiary)', margin: '8px 0 0' }}>
                 {venueIntel.model ? `Flock crowd model v${venueIntel.model}` : 'Flock rule engine (model learns your venue as data arrives)'}
               </p>
             </div>
@@ -11700,7 +11875,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
 
           {/* Upgrade Button (if not Pro) */}
           {venueTier !== 'pro' && (
-            <button className="glass-btn glass-primary" onClick={() => setShowUpgradeModal(true)} style={{ width: '100%', padding: '14px', borderRadius: '12px', border: 'none', background: '#2d5a87', color: 'white', fontWeight: '700', fontSize: '14px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', boxShadow: '0 4px 12px rgba(45,90,135,0.3)' }}>
+            <button className="hit44 glass-btn glass-primary" onClick={() => setShowUpgradeModal(true)} style={{ width: '100%', padding: '14px', borderRadius: '12px', border: 'none', background: '#2d5a87', color: 'white', fontWeight: '700', fontSize: '14px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', boxShadow: '0 4px 12px rgba(45,90,135,0.3)' }}>
               {Icons.sparkles('white', 18)} Upgrade to {venueTier === 'free' ? 'Premium' : 'Pro'}
             </button>
           )}
@@ -11713,7 +11888,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           {venueTab === 'promotions' && can.postDeals && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
               {/* Create New Promotion Button */}
-              <button className="glass-btn glass-navy" onClick={() => openPromoModal()} style={{ width: '100%', padding: '14px', borderRadius: '12px', border: 'none', background: colors.navyMidBg, color: 'white', fontWeight: '700', fontSize: '14px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
+              <button className="hit44 glass-btn glass-navy" onClick={() => openPromoModal()} style={{ width: '100%', padding: '14px', borderRadius: '12px', border: 'none', background: colors.navyMidBg, color: 'white', fontWeight: '700', fontSize: '14px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
                 {Icons.plus('white', 18)} Create Promotion
               </button>
 
@@ -11721,28 +11896,28 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
               <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
                 <h3 style={{ fontSize: '12px', fontWeight: '700', color: colors.navy, margin: '0 0 10px' }}>Active Promotions ({promotions.length})</h3>
                 {promotions.length === 0 ? (
-                  <p style={{ fontSize: '11px', color: 'var(--text-tertiary)', textAlign: 'center', padding: '20px' }}>No promotions yet. Create your first one!</p>
+                  <p style={{ fontSize: '12px', color: 'var(--text-tertiary)', textAlign: 'center', padding: '20px' }}>No promotions yet. Create your first one!</p>
                 ) : promotions.map(promo => (
                   <div key={promo.id} style={{ padding: '10px', backgroundColor: 'var(--bg-card-solid)', borderRadius: '8px', marginBottom: '8px' }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
                       <div style={{ flex: 1 }}>
                         <h4 style={{ fontSize: '13px', fontWeight: '700', color: colors.navy, margin: 0 }}>{promo.title}</h4>
-                        <p style={{ fontSize: '11px', color: 'var(--text-secondary)', margin: '2px 0' }}>{promo.description || promo.desc}</p>
-                        <p style={{ fontSize: '10px', color: 'var(--text-tertiary)', margin: 0 }}>{promo.time_slot || promo.time} - {promo.days}</p>
+                        <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: '2px 0' }}>{promo.description || promo.desc}</p>
+                        <p style={{ fontSize: '12px', color: 'var(--text-tertiary)', margin: 0 }}>{promo.time_slot || promo.time} - {promo.days}</p>
                       </div>
                       <div style={{ display: 'flex', gap: '6px' }}>
-                        <button onClick={() => openPromoModal(promo)} style={{ padding: '6px', borderRadius: '6px', border: 'none', backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer' }}>{Icons.edit(colors.navy, 14)}</button>
-                        <button onClick={() => deletePromo(promo.id)} style={{ padding: '6px', borderRadius: '6px', border: 'none', backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer' }}>{Icons.trash(colors.red, 14)}</button>
+                        <button aria-label="Edit" className="hit44" onClick={() => openPromoModal(promo)} style={{ padding: '6px', borderRadius: '6px', border: 'none', backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer' }}>{Icons.edit(colors.navy, 14)}</button>
+                        <button aria-label="Delete" className="hit44" onClick={() => deletePromo(promo.id)} style={{ padding: '6px', borderRadius: '6px', border: 'none', backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer' }}>{Icons.trash(colors.red, 14)}</button>
                       </div>
                     </div>
                     <div style={{ display: 'flex', gap: '12px', marginTop: '8px' }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
                         {Icons.eye(colors.textSecondary, 12)}
-                        <span style={{ fontSize: '10px', color: 'var(--text-secondary)' }}>{promo.views} views</span>
+                        <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>{promo.views} views</span>
                       </div>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
                         {Icons.checkCircle(colors.steel, 12)}
-                        <span style={{ fontSize: '10px', color: 'var(--text-secondary)' }}>{promo.claims} claims</span>
+                        <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>{promo.claims} claims</span>
                       </div>
                     </div>
                   </div>
@@ -11751,8 +11926,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
 
               {/* Promotion Tips */}
               <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', border: `1px dashed ${colors.creamDark}` }}>
-                <h4 style={{ fontSize: '11px', fontWeight: '700', color: colors.navy, margin: '0 0 6px', display: 'flex', alignItems: 'center', gap: '4px' }}>{Icons.sparkles(colors.amber, 12)} Pro Tips</h4>
-                <ul style={{ margin: 0, paddingLeft: '16px', fontSize: '10px', color: 'var(--text-secondary)' }}>
+                <h4 style={{ fontSize: '12px', fontWeight: '700', color: colors.navy, margin: '0 0 6px', display: 'flex', alignItems: 'center', gap: '4px' }}>{Icons.sparkles(colors.amber, 12)} Pro Tips</h4>
+                <ul style={{ margin: 0, paddingLeft: '16px', fontSize: '12px', color: 'var(--text-secondary)' }}>
                   <li>Happy Hour promos get 3x more engagement</li>
                   <li>Add specific discounts for better conversion</li>
                   <li>Weekend promos should be posted by Thursday</li>
@@ -11768,7 +11943,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           {venueTab === 'events' && can.events && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
               {/* Create Event Button */}
-              <button className="glass-btn glass-navy" onClick={() => openEventModal()} style={{ width: '100%', padding: '14px', borderRadius: '12px', border: 'none', background: colors.navyMidBg, color: 'white', fontWeight: '700', fontSize: '14px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
+              <button className="hit44 glass-btn glass-navy" onClick={() => openEventModal()} style={{ width: '100%', padding: '14px', borderRadius: '12px', border: 'none', background: colors.navyMidBg, color: 'white', fontWeight: '700', fontSize: '14px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
                 {Icons.plus('white', 18)} Create Event
               </button>
 
@@ -11780,32 +11955,32 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                       <div>
                         <h4 style={{ fontSize: '13px', fontWeight: '700', color: colors.navy, margin: 0 }}>{flock.title || flock.name}</h4>
-                        <p style={{ fontSize: '10px', color: 'var(--text-secondary)', margin: '2px 0' }}>{flock.member_count || flock.members || 0} members{flock.date ? ` - ${new Date(flock.date).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}` : ''}{flock.time ? ` ${flock.time}` : ''}</p>
+                        <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: '2px 0' }}>{flock.member_count || flock.members || 0} members{flock.date ? ` - ${new Date(flock.date).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}` : ''}{flock.time ? ` ${flock.time}` : ''}</p>
                       </div>
-                      <span style={{ padding: '4px 8px', borderRadius: '12px', backgroundColor: flock.status === 'confirmed' ? colors.steel : colors.amber, color: 'white', fontSize: '9px', fontWeight: '600' }}>
+                      <span style={{ padding: '4px 8px', borderRadius: '12px', backgroundColor: flock.status === 'confirmed' ? colors.steel : colors.amber, color: 'white', fontSize: '12px', fontWeight: '600' }}>
                         {flock.status === 'confirmed' ? 'Confirmed' : 'Active'}
                       </span>
                     </div>
                   </div>
-                )) : <p style={{ fontSize: '11px', color: 'var(--text-tertiary)', textAlign: 'center', padding: '20px' }}>No incoming flocks yet</p>}
+                )) : <p style={{ fontSize: '12px', color: 'var(--text-tertiary)', textAlign: 'center', padding: '20px' }}>No incoming flocks yet</p>}
               </div>
 
               {/* Your Events */}
               <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
                 <h3 style={{ fontSize: '12px', fontWeight: '700', color: colors.navy, margin: '0 0 10px', display: 'flex', alignItems: 'center', gap: '6px' }}>{Icons.calendar(colors.navy, 14)} Your Events ({venueEventsList.length})</h3>
                 {venueEventsList.length === 0 ? (
-                  <p style={{ fontSize: '11px', color: 'var(--text-tertiary)', textAlign: 'center', padding: '20px' }}>No events yet. Create your first one!</p>
+                  <p style={{ fontSize: '12px', color: 'var(--text-tertiary)', textAlign: 'center', padding: '20px' }}>No events yet. Create your first one!</p>
                 ) : venueEventsList.map(event => (
                   <div key={event.id} style={{ padding: '10px', backgroundColor: 'var(--bg-card-solid)', borderRadius: '8px', marginBottom: '8px' }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
                       <div style={{ flex: 1 }}>
                         <h4 style={{ fontSize: '13px', fontWeight: '700', color: colors.navy, margin: 0 }}>{event.title}</h4>
-                        <p style={{ fontSize: '10px', color: 'var(--text-secondary)', margin: '2px 0' }}>{event.date} at {event.time}</p>
-                        <p style={{ fontSize: '10px', color: 'var(--text-tertiary)', margin: 0 }}>{event.rsvps}/{event.capacity} RSVPs</p>
+                        <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: '2px 0' }}>{event.date} at {event.time}</p>
+                        <p style={{ fontSize: '12px', color: 'var(--text-tertiary)', margin: 0 }}>{event.rsvps}/{event.capacity} RSVPs</p>
                       </div>
                       <div style={{ display: 'flex', gap: '6px' }}>
-                        <button onClick={() => openEventModal(event)} style={{ padding: '6px', borderRadius: '6px', border: 'none', backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer' }}>{Icons.edit(colors.navy, 14)}</button>
-                        <button onClick={() => deleteEvent(event.id)} style={{ padding: '6px', borderRadius: '6px', border: 'none', backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer' }}>{Icons.trash(colors.red, 14)}</button>
+                        <button aria-label="Edit" className="hit44" onClick={() => openEventModal(event)} style={{ padding: '6px', borderRadius: '6px', border: 'none', backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer' }}>{Icons.edit(colors.navy, 14)}</button>
+                        <button aria-label="Delete" className="hit44" onClick={() => deleteEvent(event.id)} style={{ padding: '6px', borderRadius: '6px', border: 'none', backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer' }}>{Icons.trash(colors.red, 14)}</button>
                       </div>
                     </div>
                   </div>
@@ -11817,10 +11992,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 <h3 style={{ fontSize: '12px', fontWeight: '700', color: colors.navy, margin: '0 0 10px' }}>This Week</h3>
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: '4px', textAlign: 'center' }}>
                   {['S', 'M', 'T', 'W', 'T', 'F', 'S'].map((d, i) => (
-                    <div key={i} style={{ fontSize: '9px', fontWeight: '600', color: 'var(--text-tertiary)', padding: '4px' }}>{d}</div>
+                    <div key={i} style={{ fontSize: '12px', fontWeight: '600', color: 'var(--text-tertiary)', padding: '4px' }}>{d}</div>
                   ))}
                   {[19, 20, 21, 22, 23, 24, 25].map((day, i) => (
-                    <div key={day} style={{ padding: '8px 4px', borderRadius: '6px', backgroundColor: i === 5 || i === 6 ? colors.navyBg : 'transparent', color: i === 5 || i === 6 ? 'white' : colors.navy, fontSize: '11px', fontWeight: '600' }}>
+                    <div key={day} style={{ padding: '8px 4px', borderRadius: '6px', backgroundColor: i === 5 || i === 6 ? colors.navyBg : 'transparent', color: i === 5 || i === 6 ? 'white' : colors.navy, fontSize: '12px', fontWeight: '600' }}>
                       {day}
                       {(i === 5 || i === 6) && <div style={{ width: '4px', height: '4px', borderRadius: '2px', backgroundColor: colors.amber, margin: '2px auto 0' }} />}
                     </div>
@@ -11842,12 +12017,12 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                       <div style={{ display: 'flex', gap: '2px', justifyContent: 'center', margin: '4px 0' }}>
                         {[1, 2, 3, 4, 5].map(s => s <= Math.round(reviewStats.average) ? Icons.starFilled(colors.amber, 14) : Icons.star(colors.amber, 14))}
                       </div>
-                      <p style={{ fontSize: '10px', color: 'var(--text-secondary)', margin: 0 }}>{reviewStats.total} review{reviewStats.total !== 1 ? 's' : ''}</p>
+                      <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: 0 }}>{reviewStats.total} review{reviewStats.total !== 1 ? 's' : ''}</p>
                     </div>
                     <div style={{ flex: 1 }}>
                       {[5, 4, 3, 2, 1].map(rating => (
                         <div key={rating} style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '4px' }}>
-                          <span style={{ fontSize: '10px', color: 'var(--text-secondary)', width: '12px' }}>{rating}</span>
+                          <span style={{ fontSize: '12px', color: 'var(--text-secondary)', width: '12px' }}>{rating}</span>
                           <div style={{ flex: 1, height: '6px', backgroundColor: 'var(--bg-tertiary)', borderRadius: '3px', overflow: 'hidden' }}>
                             <div style={{ height: '100%', width: `${reviewStats.total > 0 ? (reviewStats.distribution[rating - 1] / reviewStats.total * 100) : 0}%`, backgroundColor: colors.amber, borderRadius: '3px' }} />
                           </div>
@@ -11878,28 +12053,28 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                             </div>
                           </div>
                         </div>
-                        <span style={{ fontSize: '9px', color: 'var(--text-tertiary)' }}>{review.date}</span>
+                        <span style={{ fontSize: '12px', color: 'var(--text-tertiary)' }}>{review.date}</span>
                       </div>
-                      <p style={{ fontSize: '11px', color: 'var(--text-secondary)', margin: '8px 0 0', lineHeight: '1.4' }}>{review.text}</p>
+                      <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: '8px 0 0', lineHeight: '1.4' }}>{review.text}</p>
                       {review.reply && (
                         <div style={{ marginTop: '8px', padding: '8px', backgroundColor: 'var(--bg-tertiary)', borderRadius: '8px', border: '1px solid var(--border-default)' }}>
-                          <p style={{ fontSize: '10px', fontWeight: '600', color: colors.steel, margin: '0 0 2px' }}>Owner Reply</p>
-                          <p style={{ fontSize: '11px', color: 'var(--text-secondary)', margin: 0 }}>{review.reply}</p>
+                          <p style={{ fontSize: '12px', fontWeight: '600', color: colors.steel, margin: '0 0 2px' }}>Owner Reply</p>
+                          <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: 0 }}>{review.reply}</p>
                         </div>
                       )}
                       {!review.replied && replyingToReview !== review.id && (
-                        <button className="glass-btn glass-secondary" onClick={() => { setReplyingToReview(review.id); setReplyText(''); }} style={{ marginTop: '8px', padding: '6px 10px', borderRadius: '6px', border: `1px solid ${colors.navy}`, backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontSize: '10px', fontWeight: '500', cursor: 'pointer' }}>
+                        <button className="hit44 glass-btn glass-secondary" onClick={() => { setReplyingToReview(review.id); setReplyText(''); }} style={{ marginTop: '8px', padding: '6px 10px', borderRadius: '6px', border: `1px solid ${colors.navy}`, backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontSize: '12px', fontWeight: '500', cursor: 'pointer' }}>
                           Reply
                         </button>
                       )}
                       {replyingToReview === review.id && (
                         <div style={{ marginTop: '8px', display: 'flex', gap: '6px' }}>
-                          <SearchInputLocal initialValue={replyText} onCommit={setReplyText} placeholder="Write your reply..." autoFocus style={{ flex: 1, padding: '6px 10px', borderRadius: '6px', border: `1px solid ${colors.creamDark}`, fontSize: '11px', backgroundColor: 'var(--bg-card-solid)', color: 'var(--text-primary)' }} />
-                          <button className="glass-btn glass-navy" onClick={() => handleReplyToReview(review.id)} style={{ padding: '6px 12px', borderRadius: '6px', border: 'none', backgroundColor: colors.navy, color: 'white', fontSize: '10px', fontWeight: '600', cursor: 'pointer' }}>Send</button>
-                          <button className="glass-btn glass-secondary" onClick={() => setReplyingToReview(null)} style={{ padding: '6px 8px', borderRadius: '6px', border: `1px solid ${colors.creamDark}`, backgroundColor: 'var(--bg-card-solid)', color: 'var(--text-secondary)', fontSize: '10px', cursor: 'pointer' }}>Cancel</button>
+                          <SearchInputLocal aria-label="Your reply" initialValue={replyText} onCommit={setReplyText} placeholder="Write your reply..." autoFocus style={{ flex: 1, padding: '6px 10px', borderRadius: '6px', border: `1px solid ${colors.creamDark}`, fontSize: '12px', backgroundColor: 'var(--bg-card-solid)', color: 'var(--text-primary)' }} />
+                          <button className="hit44 glass-btn glass-navy" onClick={() => handleReplyToReview(review.id)} style={{ padding: '6px 12px', borderRadius: '6px', border: 'none', backgroundColor: colors.navy, color: 'white', fontSize: '12px', fontWeight: '600', cursor: 'pointer' }}>Send</button>
+                          <button className="hit44 glass-btn glass-secondary" onClick={() => setReplyingToReview(null)} style={{ padding: '6px 8px', borderRadius: '6px', border: `1px solid ${colors.creamDark}`, backgroundColor: 'var(--bg-card-solid)', color: 'var(--text-secondary)', fontSize: '12px', cursor: 'pointer' }}>Cancel</button>
                         </div>
                       )}
-                      {review.replied && !review.reply && <p style={{ fontSize: '10px', color: colors.steel, margin: '8px 0 0', display: 'flex', alignItems: 'center', gap: '4px' }}>{Icons.checkCircle(colors.steel, 12)} Replied</p>}
+                      {review.replied && !review.reply && <p style={{ fontSize: '12px', color: colors.steel, margin: '8px 0 0', display: 'flex', alignItems: 'center', gap: '4px' }}>{Icons.checkCircle(colors.steel, 12)} Replied</p>}
                     </div>
                   ))}
                 </div>
@@ -11915,25 +12090,25 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
                   <h3 style={{ fontSize: '12px', fontWeight: '700', color: colors.navy, margin: 0, display: 'flex', alignItems: 'center', gap: '6px' }}>{Icons.building(colors.navy, 14)} Venue Information</h3>
                   {!editingVenueInfo ? (
-                    <button onClick={() => setEditingVenueInfo(true)} style={{ padding: '4px 8px', borderRadius: '6px', border: 'none', backgroundColor: 'var(--icon-bg)', color: colors.navy, fontSize: '10px', fontWeight: '500', cursor: 'pointer' }}>Edit</button>
+                    <button className="hit44" onClick={() => setEditingVenueInfo(true)} style={{ padding: '4px 8px', borderRadius: '6px', border: 'none', backgroundColor: 'var(--icon-bg)', color: colors.navy, fontSize: '12px', fontWeight: '500', cursor: 'pointer' }}>Edit</button>
                   ) : (
-                    <button onClick={() => {
+                    <button className="hit44" onClick={() => {
                       setEditingVenueInfo(false);
                       updateVenueProfile({ businessName: venueInfo.name, location: venueInfo.address, phone: venueInfo.phone }).catch(() => {});
-                    }} style={{ padding: '4px 8px', borderRadius: '6px', border: 'none', backgroundColor: colors.steel, color: 'white', fontSize: '10px', fontWeight: '500', cursor: 'pointer' }}>Save</button>
+                    }} style={{ padding: '4px 8px', borderRadius: '6px', border: 'none', backgroundColor: colors.steel, color: 'white', fontSize: '12px', fontWeight: '500', cursor: 'pointer' }}>Save</button>
                   )}
                 </div>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                   <div>
-                    <label style={{ fontSize: '10px', fontWeight: '600', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px' }}>Venue Name</label>
+                    <label style={{ fontSize: '12px', fontWeight: '600', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px' }}>Venue Name</label>
                     <SearchInputLocal type="text" initialValue={venueInfo.name} onCommit={(v) => setVenueInfo(prev => ({ ...prev, name: v }))} disabled={!editingVenueInfo} style={{ width: '100%', padding: '8px', borderRadius: '6px', border: `1px solid ${editingVenueInfo ? colors.navy : colors.creamDark}`, fontSize: '12px', boxSizing: 'border-box', backgroundColor: editingVenueInfo ? 'var(--bg-card-solid)' : 'var(--bg-tertiary)', color: 'var(--text-primary)' }} />
                   </div>
                   <div>
-                    <label style={{ fontSize: '10px', fontWeight: '600', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px' }}>Address</label>
+                    <label style={{ fontSize: '12px', fontWeight: '600', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px' }}>Address</label>
                     <SearchInputLocal type="text" initialValue={venueInfo.address} onCommit={(v) => setVenueInfo(prev => ({ ...prev, address: v }))} disabled={!editingVenueInfo} style={{ width: '100%', padding: '8px', borderRadius: '6px', border: `1px solid ${editingVenueInfo ? colors.navy : colors.creamDark}`, fontSize: '12px', boxSizing: 'border-box', backgroundColor: editingVenueInfo ? 'var(--bg-card-solid)' : 'var(--bg-tertiary)', color: 'var(--text-primary)' }} />
                   </div>
                   <div>
-                    <label style={{ fontSize: '10px', fontWeight: '600', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px' }}>Phone</label>
+                    <label style={{ fontSize: '12px', fontWeight: '600', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px' }}>Phone</label>
                     <SearchInputLocal type="text" initialValue={venueInfo.phone} onCommit={(v) => setVenueInfo(prev => ({ ...prev, phone: v }))} disabled={!editingVenueInfo} style={{ width: '100%', padding: '8px', borderRadius: '6px', border: `1px solid ${editingVenueInfo ? colors.navy : colors.creamDark}`, fontSize: '12px', boxSizing: 'border-box', backgroundColor: editingVenueInfo ? 'var(--bg-card-solid)' : 'var(--bg-tertiary)', color: 'var(--text-primary)' }} />
                   </div>
                 </div>
@@ -11944,13 +12119,13 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 <h3 style={{ fontSize: '12px', fontWeight: '700', color: colors.navy, margin: '0 0 10px', display: 'flex', alignItems: 'center', gap: '6px' }}>{Icons.clock(colors.navy, 14)} Operating Hours</h3>
                 {operatingHours.length > 0 ? operatingHours.map((slot, i) => (
                   <div key={slot.days} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 0', borderBottom: i < operatingHours.length - 1 ? `1px solid ${colors.cream}` : 'none' }}>
-                    <span style={{ fontSize: '11px', fontWeight: '500', color: colors.navy }}>{slot.days}</span>
-                    <span style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>{slot.close ? `${slot.open} - ${slot.close}` : slot.open}</span>
+                    <span style={{ fontSize: '12px', fontWeight: '500', color: colors.navy }}>{slot.days}</span>
+                    <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>{slot.close ? `${slot.open} - ${slot.close}` : slot.open}</span>
                   </div>
                 )) : (
-                  <p style={{ fontSize: '11px', color: 'var(--text-secondary)', margin: '4px 0', fontStyle: 'italic' }}>No hours set. Tap Edit Hours to add</p>
+                  <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: '4px 0', fontStyle: 'italic' }}>No hours set. Tap Edit Hours to add</p>
                 )}
-                <button onClick={() => setShowHoursModal(true)} style={{ marginTop: '8px', width: '100%', padding: '8px', borderRadius: '6px', border: `1px solid ${colors.creamDark}`, backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontSize: '11px', fontWeight: '500', cursor: 'pointer' }}>
+                <button className="hit44" onClick={() => setShowHoursModal(true)} style={{ marginTop: '8px', width: '100%', padding: '8px', borderRadius: '6px', border: `1px solid ${colors.creamDark}`, backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontSize: '12px', fontWeight: '500', cursor: 'pointer' }}>
                   Edit Hours
                 </button>
               </div>
@@ -11960,8 +12135,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 <h3 style={{ fontSize: '12px', fontWeight: '700', color: colors.navy, margin: '0 0 10px', display: 'flex', alignItems: 'center', gap: '6px' }}>{Icons.bell(colors.navy, 14)} Notifications</h3>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 0', borderBottom: `1px solid ${colors.cream}` }}>
                   <div>
-                    <p style={{ fontSize: '11px', fontWeight: '500', color: colors.navy, margin: 0 }}>New bookings</p>
-                    <p style={{ fontSize: '9px', color: 'var(--text-tertiary)', margin: 0 }}>Get notified when a flock books</p>
+                    <p style={{ fontSize: '12px', fontWeight: '500', color: colors.navy, margin: 0 }}>New bookings</p>
+                    <p style={{ fontSize: '12px', color: 'var(--text-tertiary)', margin: 0 }}>Get notified when a flock books</p>
                   </div>
                   <div onClick={() => { const next = {...notifications, bookings: !notifications.bookings}; setNotifications(next); updateVenueProfile({ notificationPrefs: next }).catch(() => {}); }} style={{ width: '36px', height: '20px', borderRadius: '10px', backgroundColor: notifications.bookings ? colors.steel : 'var(--toggle-off)', cursor: 'pointer', position: 'relative' }}>
                     <div style={{ position: 'absolute', top: '2px', left: notifications.bookings ? '18px' : '2px', width: '16px', height: '16px', borderRadius: '8px', backgroundColor: 'var(--bg-card-solid)', transition: 'left 0.2s' }} />
@@ -11969,8 +12144,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 </div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 0', borderBottom: `1px solid ${colors.cream}` }}>
                   <div>
-                    <p style={{ fontSize: '11px', fontWeight: '500', color: colors.navy, margin: 0 }}>New reviews</p>
-                    <p style={{ fontSize: '9px', color: 'var(--text-tertiary)', margin: 0 }}>Alerts for customer reviews</p>
+                    <p style={{ fontSize: '12px', fontWeight: '500', color: colors.navy, margin: 0 }}>New reviews</p>
+                    <p style={{ fontSize: '12px', color: 'var(--text-tertiary)', margin: 0 }}>Alerts for customer reviews</p>
                   </div>
                   <div onClick={() => { const next = {...notifications, reviews: !notifications.reviews}; setNotifications(next); updateVenueProfile({ notificationPrefs: next }).catch(() => {}); }} style={{ width: '36px', height: '20px', borderRadius: '10px', backgroundColor: notifications.reviews ? colors.steel : 'var(--toggle-off)', cursor: 'pointer', position: 'relative' }}>
                     <div style={{ position: 'absolute', top: '2px', left: notifications.reviews ? '18px' : '2px', width: '16px', height: '16px', borderRadius: '8px', backgroundColor: 'var(--bg-card-solid)', transition: 'left 0.2s' }} />
@@ -11978,8 +12153,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 </div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 0' }}>
                   <div>
-                    <p style={{ fontSize: '11px', fontWeight: '500', color: colors.navy, margin: 0 }}>Weekly reports</p>
-                    <p style={{ fontSize: '9px', color: 'var(--text-tertiary)', margin: 0 }}>Performance summary emails</p>
+                    <p style={{ fontSize: '12px', fontWeight: '500', color: colors.navy, margin: 0 }}>Weekly reports</p>
+                    <p style={{ fontSize: '12px', color: 'var(--text-tertiary)', margin: 0 }}>Performance summary emails</p>
                   </div>
                   <div onClick={() => { const next = {...notifications, weekly: !notifications.weekly}; setNotifications(next); updateVenueProfile({ notificationPrefs: next }).catch(() => {}); }} style={{ width: '36px', height: '20px', borderRadius: '10px', backgroundColor: notifications.weekly ? colors.steel : 'var(--toggle-off)', cursor: 'pointer', position: 'relative' }}>
                     <div style={{ position: 'absolute', top: '2px', left: notifications.weekly ? '18px' : '2px', width: '16px', height: '16px', borderRadius: '8px', backgroundColor: 'var(--bg-card-solid)', transition: 'left 0.2s' }} />
@@ -11993,10 +12168,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px', backgroundColor: 'var(--bg-card-solid)', borderRadius: '8px' }}>
                   <div>
                     <p style={{ fontSize: '12px', fontWeight: '700', color: colors.navy, margin: 0 }}>{tierBadge[venueData.tier].label} Plan</p>
-                    <p style={{ fontSize: '10px', color: 'var(--text-secondary)', margin: 0 }}>{venueTier === 'free' ? 'Free forever' : venueTier === 'premium' ? '$35/month' : '$75/month'}</p>
+                    <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: 0 }}>{venueTier === 'free' ? 'Free forever' : venueTier === 'premium' ? '$35/month' : '$75/month'}</p>
                   </div>
                   {venueTier !== 'pro' && (
-                    <button onClick={() => setShowUpgradeModal(true)} style={{ padding: '6px 12px', borderRadius: '6px', border: 'none', background: '#2d5a87', color: 'white', fontSize: '10px', fontWeight: '600', cursor: 'pointer' }}>
+                    <button className="hit44" onClick={() => setShowUpgradeModal(true)} style={{ padding: '6px 12px', borderRadius: '6px', border: 'none', background: '#2d5a87', color: 'white', fontSize: '12px', fontWeight: '600', cursor: 'pointer' }}>
                       Upgrade
                     </button>
                   )}
@@ -12006,7 +12181,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
               {/* Danger Zone */}
               <div style={{ backgroundColor: 'var(--accent-red-bg)', borderRadius: '12px', padding: '12px', border: `1px solid var(--accent-red-text)22` }}>
                 <h3 style={{ fontSize: '12px', fontWeight: '700', color: colors.red, margin: '0 0 10px', display: 'flex', alignItems: 'center', gap: '6px' }}>{Icons.alertCircle(colors.red, 14)} Danger Zone</h3>
-                <button className="glass-btn glass-danger" onClick={() => { if (window.confirm('Are you sure you want to deactivate your venue listing?')) showToast('Venue deactivated', 'success'); }} style={{ width: '100%', padding: '8px', borderRadius: '6px', border: `1px solid ${colors.red}`, backgroundColor: 'var(--bg-card-solid)', color: colors.red, fontSize: '11px', fontWeight: '500', cursor: 'pointer' }}>
+                <button className="hit44 glass-btn glass-danger" onClick={() => { if (window.confirm('Are you sure you want to deactivate your venue listing?')) showToast('Venue deactivated', 'success'); }} style={{ width: '100%', padding: '8px', borderRadius: '6px', border: `1px solid ${colors.red}`, backgroundColor: 'var(--bg-card-solid)', color: colors.red, fontSize: '12px', fontWeight: '500', cursor: 'pointer' }}>
                   Deactivate Venue Listing
                 </button>
               </div>
@@ -12016,6 +12191,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           {/* Upgrade Modal */}
           {showUpgradeModal && (
             <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.8)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 50, padding: '16px' }}>
+            <DialogBehavior onClose={() => setShowUpgradeModal(false)} label="Upgrade" />
               <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '24px', padding: '20px', width: '100%', maxWidth: '320px', maxHeight: '80%', overflowY: 'auto' }}>
                 <h2 style={{ fontSize: '18px', fontWeight: '900', color: colors.navy, margin: '0 0 16px', textAlign: 'center' }}>Choose Your Plan</h2>
 
@@ -12025,10 +12201,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                     <span style={{ fontWeight: '700', color: colors.navy }}>Free</span>
                     <span style={{ fontWeight: '900', color: colors.navy }}>$0/mo</span>
                   </div>
-                  <ul style={{ margin: 0, paddingLeft: '16px', fontSize: '11px', color: 'var(--text-secondary)' }}>
+                  <ul style={{ margin: 0, paddingLeft: '16px', fontSize: '12px', color: 'var(--text-secondary)' }}>
                     {features.free.map(f => <li key={f} style={{ marginBottom: '2px' }}>{f}</li>)}
                   </ul>
-                  {venueTier === 'free' && <span style={{ display: 'block', textAlign: 'center', fontSize: '10px', color: colors.steel, fontWeight: '600', marginTop: '8px' }}>Current Plan</span>}
+                  {venueTier === 'free' && <span style={{ display: 'block', textAlign: 'center', fontSize: '12px', color: colors.steel, fontWeight: '600', marginTop: '8px' }}>Current Plan</span>}
                 </div>
 
                 {/* Premium Tier */}
@@ -12037,10 +12213,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                     <span style={{ fontWeight: '700', color: 'var(--accent-amber-text)' }}>Premium</span>
                     <span style={{ fontWeight: '900', color: 'var(--accent-amber-text)' }}>$35/mo</span>
                   </div>
-                  <ul style={{ margin: 0, paddingLeft: '16px', fontSize: '11px', color: 'var(--text-secondary)' }}>
+                  <ul style={{ margin: 0, paddingLeft: '16px', fontSize: '12px', color: 'var(--text-secondary)' }}>
                     {features.premium.map(f => <li key={f} style={{ marginBottom: '2px' }}>{f}</li>)}
                   </ul>
-                  {venueTier === 'premium' ? <span style={{ display: 'block', textAlign: 'center', fontSize: '10px', color: 'var(--accent-amber-text)', fontWeight: '600', marginTop: '8px' }}>Current Plan</span> : venueTier === 'free' && <button onClick={() => { setVenueTier('premium'); updateVenueProfile({ tier: 'premium' }).catch(() => {}); setShowUpgradeModal(false); }} style={{ width: '100%', padding: '8px', borderRadius: '8px', border: 'none', backgroundColor: 'var(--accent-amber-text)', color: 'white', fontWeight: '600', fontSize: '12px', cursor: 'pointer', marginTop: '8px' }}>Upgrade</button>}
+                  {venueTier === 'premium' ? <span style={{ display: 'block', textAlign: 'center', fontSize: '12px', color: 'var(--accent-amber-text)', fontWeight: '600', marginTop: '8px' }}>Current Plan</span> : venueTier === 'free' && <button className="hit44" onClick={() => { setVenueTier('premium'); updateVenueProfile({ tier: 'premium' }).catch(() => {}); setShowUpgradeModal(false); }} style={{ width: '100%', padding: '8px', borderRadius: '8px', border: 'none', backgroundColor: 'var(--accent-amber-text)', color: 'white', fontWeight: '600', fontSize: '12px', cursor: 'pointer', marginTop: '8px' }}>Upgrade</button>}
                 </div>
 
                 {/* Pro Tier */}
@@ -12049,13 +12225,13 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                     <span style={{ fontWeight: '700', color: 'var(--accent-purple-text)' }}>Pro</span>
                     <span style={{ fontWeight: '900', color: 'var(--accent-purple-text)' }}>$75/mo</span>
                   </div>
-                  <ul style={{ margin: 0, paddingLeft: '16px', fontSize: '11px', color: 'var(--text-secondary)' }}>
+                  <ul style={{ margin: 0, paddingLeft: '16px', fontSize: '12px', color: 'var(--text-secondary)' }}>
                     {features.pro.map(f => <li key={f} style={{ marginBottom: '2px' }}>{f}</li>)}
                   </ul>
-                  {venueTier === 'pro' ? <span style={{ display: 'block', textAlign: 'center', fontSize: '10px', color: 'var(--accent-purple-text)', fontWeight: '600', marginTop: '8px' }}>Current Plan</span> : <button onClick={() => { setVenueTier('pro'); updateVenueProfile({ tier: 'pro' }).catch(() => {}); setShowUpgradeModal(false); }} style={{ width: '100%', padding: '8px', borderRadius: '8px', border: 'none', background: '#2d5a87', color: 'white', fontWeight: '600', fontSize: '12px', cursor: 'pointer', marginTop: '8px' }}>Upgrade to Pro</button>}
+                  {venueTier === 'pro' ? <span style={{ display: 'block', textAlign: 'center', fontSize: '12px', color: 'var(--accent-purple-text)', fontWeight: '600', marginTop: '8px' }}>Current Plan</span> : <button className="hit44" onClick={() => { setVenueTier('pro'); updateVenueProfile({ tier: 'pro' }).catch(() => {}); setShowUpgradeModal(false); }} style={{ width: '100%', padding: '8px', borderRadius: '8px', border: 'none', background: '#2d5a87', color: 'white', fontWeight: '600', fontSize: '12px', cursor: 'pointer', marginTop: '8px' }}>Upgrade to Pro</button>}
                 </div>
 
-                <button onClick={() => setShowUpgradeModal(false)} style={{ width: '100%', padding: '10px', borderRadius: '8px', border: '1px solid var(--border-mid)', backgroundColor: 'var(--bg-card-solid)', color: 'var(--text-secondary)', fontWeight: '500', cursor: 'pointer' }}>Cancel</button>
+                <button className="hit44" onClick={() => setShowUpgradeModal(false)} style={{ width: '100%', padding: '10px', borderRadius: '8px', border: '1px solid var(--border-mid)', backgroundColor: 'var(--bg-card-solid)', color: 'var(--text-secondary)', fontWeight: '500', cursor: 'pointer' }}>Cancel</button>
               </div>
             </div>
           )}
@@ -12109,23 +12285,24 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           {/* Hours Modal */}
           {showHoursModal && (
             <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.8)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 50, padding: '16px' }}>
+            <DialogBehavior onClose={() => setShowHoursModal(false)} label="Venue hours" />
               <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '24px', padding: '20px', width: '100%', maxWidth: '340px', maxHeight: '80%', overflowY: 'auto' }}>
                 <h2 style={{ fontSize: '18px', fontWeight: '900', color: colors.navy, margin: '0 0 16px', textAlign: 'center' }}>Edit Operating Hours</h2>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
                   {operatingHours.map((slot, index) => (
                     <div key={index} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '8px', backgroundColor: 'var(--bg-card-solid)', borderRadius: '8px' }}>
-                      <input value={slot.days} onChange={(e) => { const updated = [...operatingHours]; updated[index] = {...updated[index], days: e.target.value}; setOperatingHours(updated); }} style={{ width: '70px', padding: '6px', borderRadius: '6px', border: `1px solid ${colors.creamDark}`, fontSize: '11px', backgroundColor: 'var(--bg-card-solid)', color: 'var(--text-primary)' }} />
-                      <input value={slot.open} onChange={(e) => { const updated = [...operatingHours]; updated[index] = {...updated[index], open: e.target.value}; setOperatingHours(updated); }} style={{ flex: 1, padding: '6px', borderRadius: '6px', border: `1px solid ${colors.creamDark}`, fontSize: '11px', backgroundColor: 'var(--bg-card-solid)', color: 'var(--text-primary)' }} />
-                      <span style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>to</span>
-                      <input value={slot.close} onChange={(e) => { const updated = [...operatingHours]; updated[index] = {...updated[index], close: e.target.value}; setOperatingHours(updated); }} style={{ flex: 1, padding: '6px', borderRadius: '6px', border: `1px solid ${colors.creamDark}`, fontSize: '11px', backgroundColor: 'var(--bg-card-solid)', color: 'var(--text-primary)' }} />
-                      <button onClick={() => setOperatingHours(operatingHours.filter((_, i) => i !== index))} style={{ padding: '4px', border: 'none', background: 'none', cursor: 'pointer' }}>{Icons.trash(colors.red, 14)}</button>
+                      <input value={slot.days} onChange={(e) => { const updated = [...operatingHours]; updated[index] = {...updated[index], days: e.target.value}; setOperatingHours(updated); }} style={{ width: '70px', padding: '6px', borderRadius: '6px', border: `1px solid ${colors.creamDark}`, fontSize: '12px', backgroundColor: 'var(--bg-card-solid)', color: 'var(--text-primary)' }} />
+                      <input value={slot.open} onChange={(e) => { const updated = [...operatingHours]; updated[index] = {...updated[index], open: e.target.value}; setOperatingHours(updated); }} style={{ flex: 1, padding: '6px', borderRadius: '6px', border: `1px solid ${colors.creamDark}`, fontSize: '12px', backgroundColor: 'var(--bg-card-solid)', color: 'var(--text-primary)' }} />
+                      <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>to</span>
+                      <input value={slot.close} onChange={(e) => { const updated = [...operatingHours]; updated[index] = {...updated[index], close: e.target.value}; setOperatingHours(updated); }} style={{ flex: 1, padding: '6px', borderRadius: '6px', border: `1px solid ${colors.creamDark}`, fontSize: '12px', backgroundColor: 'var(--bg-card-solid)', color: 'var(--text-primary)' }} />
+                      <button aria-label="Delete" className="hit44" onClick={() => setOperatingHours(operatingHours.filter((_, i) => i !== index))} style={{ padding: '4px', border: 'none', background: 'none', cursor: 'pointer' }}>{Icons.trash(colors.red, 14)}</button>
                     </div>
                   ))}
-                  <button onClick={() => setOperatingHours([...operatingHours, { days: '', open: '', close: '' }])} style={{ padding: '8px', borderRadius: '6px', border: `1px dashed ${colors.creamDark}`, backgroundColor: 'transparent', color: colors.navy, fontSize: '11px', fontWeight: '500', cursor: 'pointer' }}>+ Add Hours</button>
+                  <button className="hit44" onClick={() => setOperatingHours([...operatingHours, { days: '', open: '', close: '' }])} style={{ padding: '8px', borderRadius: '6px', border: `1px dashed ${colors.creamDark}`, backgroundColor: 'transparent', color: colors.navy, fontSize: '12px', fontWeight: '500', cursor: 'pointer' }}>+ Add Hours</button>
                 </div>
                 <div style={{ display: 'flex', gap: '10px', marginTop: '20px' }}>
-                  <button onClick={() => setShowHoursModal(false)} style={{ flex: 1, padding: '12px', borderRadius: '8px', border: '1px solid var(--border-mid)', backgroundColor: 'var(--bg-card-solid)', color: 'var(--text-secondary)', fontWeight: '600', cursor: 'pointer' }}>Cancel</button>
-                  <button onClick={() => { setShowHoursModal(false); updateVenueProfile({ operatingHours }).catch(() => {}); }} style={{ flex: 1, padding: '12px', borderRadius: '8px', border: 'none', backgroundColor: colors.navyBg, color: 'white', fontWeight: '600', cursor: 'pointer' }}>Save Hours</button>
+                  <button className="hit44" onClick={() => setShowHoursModal(false)} style={{ flex: 1, padding: '12px', borderRadius: '8px', border: '1px solid var(--border-mid)', backgroundColor: 'var(--bg-card-solid)', color: 'var(--text-secondary)', fontWeight: '600', cursor: 'pointer' }}>Cancel</button>
+                  <button className="hit44" onClick={() => { setShowHoursModal(false); updateVenueProfile({ operatingHours }).catch(() => {}); }} style={{ flex: 1, padding: '12px', borderRadius: '8px', border: 'none', backgroundColor: colors.navyBg, color: 'white', fontWeight: '600', cursor: 'pointer' }}>Save Hours</button>
                 </div>
               </div>
             </div>
@@ -12217,7 +12394,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
     };
 
     const labelStyle = {
-      fontSize: '11px',
+      fontSize: '12px',
       fontWeight: '700',
       color: colors.navy,
       marginBottom: '4px',
@@ -12225,7 +12402,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
     };
 
     const helperStyle = {
-      fontSize: '9px',
+      fontSize: '12px',
       color: 'var(--text-tertiary)',
       marginTop: '2px',
     };
@@ -12243,13 +12420,13 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
         {/* Header */}
         <div style={{ padding: '16px', background: colors.navyBg, flexShrink: 0 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-            <button onClick={switchMode} style={{ width: '32px', height: '32px', borderRadius: '16px', border: 'none', backgroundColor: 'rgba(255,255,255,0.2)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <button aria-label="Back" className="hit44" onClick={switchMode} style={{ width: '32px', height: '32px', borderRadius: '16px', border: 'none', backgroundColor: 'rgba(255,255,255,0.2)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
               {Icons.arrowLeft('white', 16)}
             </button>
             {Icons.briefcase('white', 24)}
             <div>
               <h1 style={{ fontSize: '18px', fontWeight: '900', color: 'white', margin: 0 }}>Admin Dashboard</h1>
-              <p style={{ fontSize: '10px', color: 'rgba(255,255,255,0.7)', margin: 0 }}>Manage your Flock platform</p>
+              <p style={{ fontSize: '12px', color: 'rgba(255,255,255,0.7)', margin: 0 }}>Manage your Flock platform</p>
             </div>
           </div>
         </div>
@@ -12257,9 +12434,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
         {/* Tab Navigation */}
         <div style={{ display: 'flex', backgroundColor: 'var(--bg-card-solid)', borderBottom: '1px solid var(--border-default)', flexShrink: 0, padding: '8px 4px', gap: '4px' }}>
           {adminTabs.map(tab => (
-            <button key={tab.id} onClick={() => setAdminTab(tab.id)} style={{ flex: 1, padding: '12px 4px', border: 'none', backgroundColor: adminTab === tab.id ? colors.navyBg : 'var(--bg-card-solid)', borderRadius: '10px', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '4px', transition: 'opacity 0.2s' }}>
+            <button className="hit44" key={tab.id} onClick={() => setAdminTab(tab.id)} style={{ flex: 1, padding: '12px 4px', border: 'none', backgroundColor: adminTab === tab.id ? colors.navyBg : 'var(--bg-card-solid)', borderRadius: '10px', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '4px', transition: 'opacity 0.2s' }}>
               {tab.icon(adminTab === tab.id ? 'white' : colors.navy, 18)}
-              <span style={{ fontSize: '10px', fontWeight: '700', color: adminTab === tab.id ? 'white' : colors.navy }}>{tab.label}</span>
+              <span style={{ fontSize: '12px', fontWeight: '700', color: adminTab === tab.id ? 'white' : colors.navy }}>{tab.label}</span>
             </button>
           ))}
         </div>
@@ -12373,14 +12550,14 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
 
               {/* Revenue Breakdown */}
               <div style={cardStyle}>
-                <h4 style={{ fontSize: '10px', fontWeight: '700', color: 'var(--text-secondary)', margin: '0 0 8px', textTransform: 'uppercase' }}>Revenue Breakdown</h4>
+                <h4 style={{ fontSize: '12px', fontWeight: '700', color: 'var(--text-secondary)', margin: '0 0 8px', textTransform: 'uppercase' }}>Revenue Breakdown</h4>
                 <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
-                  <span style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>Subscriptions</span>
-                  <span style={{ fontSize: '11px', fontWeight: '600', color: colors.navy }}>{formatCurrency(subscriptionRevenue)}</span>
+                  <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>Subscriptions</span>
+                  <span style={{ fontSize: '12px', fontWeight: '600', color: colors.navy }}>{formatCurrency(subscriptionRevenue)}</span>
                 </div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px' }}>
-                  <span style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>Transactions</span>
-                  <span style={{ fontSize: '11px', fontWeight: '600', color: colors.navy }}>{formatCurrency(transactionRevenue)}</span>
+                  <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>Transactions</span>
+                  <span style={{ fontSize: '12px', fontWeight: '600', color: colors.navy }}>{formatCurrency(transactionRevenue)}</span>
                 </div>
                 <div style={{ borderTop: `1px solid ${colors.creamDark}`, paddingTop: '8px' }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -12388,7 +12565,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                     <span style={{ fontSize: '18px', fontWeight: '900', color: colors.navy }}>{formatCurrency(totalMonthlyRevenue)}</span>
                   </div>
                   <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '4px' }}>
-                    <span style={{ fontSize: '10px', color: 'var(--text-secondary)' }}>Annual (ARR)</span>
+                    <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>Annual (ARR)</span>
                     <span style={{ fontSize: '12px', fontWeight: '700', color: colors.navyMid }}>{formatCurrency(annualRevenue)}</span>
                   </div>
                 </div>
@@ -12396,17 +12573,17 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
 
               {/* Profitability */}
               <div style={{ ...cardStyle, background: isProfitable ? 'linear-gradient(135deg, #d1fae5, #a7f3d0)' : 'linear-gradient(135deg, #fee2e2, #fecaca)' }}>
-                <h4 style={{ fontSize: '10px', fontWeight: '700', color: isProfitable ? 'var(--accent-green-text)' : 'var(--accent-red-text)', margin: '0 0 8px', textTransform: 'uppercase' }}>
+                <h4 style={{ fontSize: '12px', fontWeight: '700', color: isProfitable ? 'var(--accent-green-text)' : 'var(--accent-red-text)', margin: '0 0 8px', textTransform: 'uppercase' }}>
                   {isProfitable ? 'Profitable' : 'Not Profitable'}
                 </h4>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <span style={{ fontSize: '11px', color: isProfitable ? 'var(--accent-green-text)' : 'var(--accent-red-text)' }}>Monthly Profit</span>
+                  <span style={{ fontSize: '12px', color: isProfitable ? 'var(--accent-green-text)' : 'var(--accent-red-text)' }}>Monthly Profit</span>
                   <span style={{ fontSize: '16px', fontWeight: '900', color: isProfitable ? 'var(--accent-green-text)' : 'var(--accent-red-text)' }}>
                     {monthlyProfit >= 0 ? '+' : ''}{formatCurrency(monthlyProfit)}
                   </span>
                 </div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '4px' }}>
-                  <span style={{ fontSize: '10px', color: isProfitable ? 'var(--accent-green-text)' : 'var(--accent-red-text)' }}>Profit Margin</span>
+                  <span style={{ fontSize: '12px', color: isProfitable ? 'var(--accent-green-text)' : 'var(--accent-red-text)' }}>Profit Margin</span>
                   <span style={{ fontSize: '12px', fontWeight: '700', color: isProfitable ? 'var(--accent-green-text)' : 'var(--accent-red-text)' }}>
                     {profitMargin.toFixed(1)}%
                   </span>
@@ -12415,17 +12592,17 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
 
               {/* Unit Economics */}
               <div style={cardStyle}>
-                <h4 style={{ fontSize: '10px', fontWeight: '700', color: 'var(--text-secondary)', margin: '0 0 8px', textTransform: 'uppercase' }}>Unit Economics</h4>
+                <h4 style={{ fontSize: '12px', fontWeight: '700', color: 'var(--text-secondary)', margin: '0 0 8px', textTransform: 'uppercase' }}>Unit Economics</h4>
                 <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
-                  <span style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>Revenue/Venue</span>
-                  <span style={{ fontSize: '11px', fontWeight: '600', color: colors.navy }}>{formatCurrency(revenuePerVenue)}/mo</span>
+                  <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>Revenue/Venue</span>
+                  <span style={{ fontSize: '12px', fontWeight: '600', color: colors.navy }}>{formatCurrency(revenuePerVenue)}/mo</span>
                 </div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px' }}>
-                  <span style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>Break-Even Point</span>
-                  <span style={{ fontSize: '11px', fontWeight: '600', color: colors.navy }}>{breakEvenVenues} venues</span>
+                  <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>Break-Even Point</span>
+                  <span style={{ fontSize: '12px', fontWeight: '600', color: colors.navy }}>{breakEvenVenues} venues</span>
                 </div>
                 <div style={{ padding: '8px', borderRadius: '8px', backgroundColor: isAboveBreakEven ? 'var(--accent-green-bg)' : 'var(--accent-amber-bg)', textAlign: 'center' }}>
-                  <span style={{ fontSize: '10px', fontWeight: '700', color: isAboveBreakEven ? 'var(--accent-green-text)' : 'var(--accent-amber-text)' }}>
+                  <span style={{ fontSize: '12px', fontWeight: '700', color: isAboveBreakEven ? 'var(--accent-green-text)' : 'var(--accent-amber-text)' }}>
                     {isAboveBreakEven
                       ? `${numVenues - breakEvenVenues} venues above break-even`
                       : `Need ${breakEvenVenues - numVenues} more venues`}
@@ -12435,8 +12612,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
 
               {/* Business Model Info */}
               <div style={{ ...cardStyle, backgroundColor: 'var(--bg-card-solid)', border: `1px solid ${colors.creamDark}` }}>
-                <h4 style={{ fontSize: '10px', fontWeight: '700', color: colors.navy, margin: '0 0 6px' }}>Business Model</h4>
-                <p style={{ fontSize: '9px', color: 'var(--text-secondary)', margin: 0, lineHeight: '1.4' }}>
+                <h4 style={{ fontSize: '12px', fontWeight: '700', color: colors.navy, margin: '0 0 6px' }}>Business Model</h4>
+                <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: 0, lineHeight: '1.4' }}>
                   Flock generates revenue through <strong>venue subscriptions</strong> (recurring, predictable)
                   and <strong>transaction fees</strong> (scales with activity). This dual-revenue model provides
                   stability while capturing upside from platform growth.
@@ -12453,15 +12630,15 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '8px' }}>
                 <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', textAlign: 'center', boxShadow: 'var(--card-shadow-sm)' }}>
                   <p style={{ fontSize: '24px', fontWeight: '900', color: colors.navy, margin: 0 }}>3,200</p>
-                  <p style={{ fontSize: '9px', color: 'var(--text-secondary)', margin: 0 }}>Total Users</p>
+                  <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: 0 }}>Total Users</p>
                 </div>
                 <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', textAlign: 'center', boxShadow: 'var(--card-shadow-sm)' }}>
                   <p style={{ fontSize: '24px', fontWeight: '900', color: colors.steel, margin: 0 }}>2,850</p>
-                  <p style={{ fontSize: '9px', color: 'var(--text-secondary)', margin: 0 }}>Active</p>
+                  <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: 0 }}>Active</p>
                 </div>
                 <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', textAlign: 'center', boxShadow: 'var(--card-shadow-sm)' }}>
                   <p style={{ fontSize: '24px', fontWeight: '900', color: colors.amber, margin: 0 }}>+156</p>
-                  <p style={{ fontSize: '9px', color: 'var(--text-secondary)', margin: 0 }}>This Week</p>
+                  <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: 0 }}>This Week</p>
                 </div>
               </div>
 
@@ -12472,7 +12649,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                   {[45, 52, 38, 65, 78, 92, 110].map((val, i) => (
                     <div key={i} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
                       <div style={{ width: '100%', height: `${val * 0.5}px`, backgroundColor: colors.navyBg, borderRadius: '4px 4px 0 0', minHeight: '4px' }} />
-                      <span style={{ fontSize: '8px', color: 'var(--text-tertiary)', marginTop: '4px' }}>{['S', 'M', 'T', 'W', 'T', 'F', 'S'][i]}</span>
+                      <span style={{ fontSize: '12px', color: 'var(--text-tertiary)', marginTop: '4px' }}>{['S', 'M', 'T', 'W', 'T', 'F', 'S'][i]}</span>
                     </div>
                   ))}
                 </div>
@@ -12489,14 +12666,14 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                       </div>
                       <div>
                         <p style={{ fontSize: '12px', fontWeight: '600', color: colors.navy, margin: 0 }}>{user.name}</p>
-                        <p style={{ fontSize: '9px', color: 'var(--text-tertiary)', margin: 0 }}>{user.email}</p>
+                        <p style={{ fontSize: '12px', color: 'var(--text-tertiary)', margin: 0 }}>{user.email}</p>
                       </div>
                     </div>
                     <div style={{ textAlign: 'right' }}>
-                      <span style={{ padding: '2px 6px', borderRadius: '8px', backgroundColor: user.status === 'active' ? 'var(--accent-green-bg)' : 'var(--accent-amber-bg)', color: user.status === 'active' ? 'var(--accent-green-text)' : 'var(--accent-amber-text)', fontSize: '9px', fontWeight: '600' }}>
+                      <span style={{ padding: '2px 6px', borderRadius: '8px', backgroundColor: user.status === 'active' ? 'var(--accent-green-bg)' : 'var(--accent-amber-bg)', color: user.status === 'active' ? 'var(--accent-green-text)' : 'var(--accent-amber-text)', fontSize: '12px', fontWeight: '600' }}>
                         {user.status}
                       </span>
-                      <p style={{ fontSize: '9px', color: 'var(--text-tertiary)', margin: '4px 0 0' }}>{user.flocks} flocks</p>
+                      <p style={{ fontSize: '12px', color: 'var(--text-tertiary)', margin: '4px 0 0' }}>{user.flocks} flocks</p>
                     </div>
                   </div>
                 ))}
@@ -12511,15 +12688,15 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '8px' }}>
                 <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', textAlign: 'center', boxShadow: 'var(--card-shadow-sm)' }}>
                   <p style={{ fontSize: '24px', fontWeight: '900', color: colors.navy, margin: 0 }}>117</p>
-                  <p style={{ fontSize: '9px', color: 'var(--text-secondary)', margin: 0 }}>Total Venues</p>
+                  <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: 0 }}>Total Venues</p>
                 </div>
                 <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', textAlign: 'center', boxShadow: 'var(--card-shadow-sm)' }}>
                   <p style={{ fontSize: '24px', fontWeight: '900', color: 'var(--accent-purple-text)', margin: 0 }}>28</p>
-                  <p style={{ fontSize: '9px', color: 'var(--text-secondary)', margin: 0 }}>Pro Tier</p>
+                  <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: 0 }}>Pro Tier</p>
                 </div>
                 <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', textAlign: 'center', boxShadow: 'var(--card-shadow-sm)' }}>
                   <p style={{ fontSize: '24px', fontWeight: '900', color: 'var(--accent-amber-text)', margin: 0 }}>45</p>
-                  <p style={{ fontSize: '9px', color: 'var(--text-secondary)', margin: 0 }}>Premium</p>
+                  <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: 0 }}>Premium</p>
                 </div>
               </div>
 
@@ -12532,9 +12709,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                   <div style={{ width: '38%', backgroundColor: 'var(--text-tertiary)' }} title="Free" />
                 </div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '8px' }}>
-                  <span style={{ fontSize: '9px', color: 'var(--accent-purple-text)', fontWeight: '600' }}>Pro 24%</span>
-                  <span style={{ fontSize: '9px', color: 'var(--accent-amber-text)', fontWeight: '600' }}>Premium 38%</span>
-                  <span style={{ fontSize: '9px', color: 'var(--text-tertiary)', fontWeight: '600' }}>Free 38%</span>
+                  <span style={{ fontSize: '12px', color: 'var(--accent-purple-text)', fontWeight: '600' }}>Pro 24%</span>
+                  <span style={{ fontSize: '12px', color: 'var(--accent-amber-text)', fontWeight: '600' }}>Premium 38%</span>
+                  <span style={{ fontSize: '12px', color: 'var(--text-tertiary)', fontWeight: '600' }}>Free 38%</span>
                 </div>
               </div>
 
@@ -12549,12 +12726,12 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                       </div>
                       <div>
                         <p style={{ fontSize: '12px', fontWeight: '600', color: colors.navy, margin: 0 }}>{venue.name}</p>
-                        <p style={{ fontSize: '9px', color: 'var(--text-tertiary)', margin: 0 }}>{venue.city} • {venue.rating} {Icons.starFilled(colors.amber, 10)}</p>
+                        <p style={{ fontSize: '12px', color: 'var(--text-tertiary)', margin: 0 }}>{venue.city} • {venue.rating} {Icons.starFilled(colors.amber, 10)}</p>
                       </div>
                     </div>
                     <div style={{ textAlign: 'right' }}>
                       <p style={{ fontSize: '12px', fontWeight: '700', color: colors.navy, margin: 0 }}>${venue.revenue}</p>
-                      <span style={{ padding: '2px 6px', borderRadius: '8px', backgroundColor: venue.tier === 'pro' ? 'var(--accent-purple-bg)' : venue.tier === 'premium' ? 'var(--accent-amber-bg)' : 'var(--icon-bg)', color: venue.tier === 'pro' ? 'var(--accent-purple-text)' : venue.tier === 'premium' ? 'var(--accent-amber-text)' : 'var(--text-secondary)', fontSize: '9px', fontWeight: '600' }}>
+                      <span style={{ padding: '2px 6px', borderRadius: '8px', backgroundColor: venue.tier === 'pro' ? 'var(--accent-purple-bg)' : venue.tier === 'premium' ? 'var(--accent-amber-bg)' : 'var(--icon-bg)', color: venue.tier === 'pro' ? 'var(--accent-purple-text)' : venue.tier === 'premium' ? 'var(--accent-amber-text)' : 'var(--text-secondary)', fontSize: '12px', fontWeight: '600' }}>
                         {venue.tier === 'pro' ? 'Pro $75' : venue.tier === 'premium' ? 'Premium $35' : 'Free'}
                       </span>
                     </div>
@@ -12573,11 +12750,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
                   <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '8px', padding: '10px', textAlign: 'center' }}>
                     <p style={{ fontSize: '20px', fontWeight: '900', color: colors.navy, margin: 0 }}>4</p>
-                    <p style={{ fontSize: '9px', color: 'var(--text-secondary)', margin: 0 }}>Active Cities</p>
+                    <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: 0 }}>Active Cities</p>
                   </div>
                   <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '8px', padding: '10px', textAlign: 'center' }}>
                     <p style={{ fontSize: '20px', fontWeight: '900', color: colors.steel, margin: 0 }}>$44.8K</p>
-                    <p style={{ fontSize: '9px', color: 'var(--text-secondary)', margin: 0 }}>Total Revenue</p>
+                    <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: 0 }}>Total Revenue</p>
                   </div>
                 </div>
               </div>
@@ -12590,11 +12767,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
                       <div>
                         <p style={{ fontSize: '13px', fontWeight: '700', color: colors.navy, margin: 0 }}>{city.name}</p>
-                        <p style={{ fontSize: '9px', color: 'var(--text-tertiary)', margin: 0 }}>{city.users} users • {city.venues} venues</p>
+                        <p style={{ fontSize: '12px', color: 'var(--text-tertiary)', margin: 0 }}>{city.users} users • {city.venues} venues</p>
                       </div>
                       <div style={{ textAlign: 'right' }}>
                         <p style={{ fontSize: '12px', fontWeight: '700', color: colors.navy, margin: 0 }}>${(city.revenue / 1000).toFixed(1)}K</p>
-                        <span style={{ fontSize: '9px', color: colors.steel, fontWeight: '600' }}>+{city.growth}%</span>
+                        <span style={{ fontSize: '12px', color: colors.steel, fontWeight: '600' }}>+{city.growth}%</span>
                       </div>
                     </div>
                     <div style={{ height: '6px', backgroundColor: 'var(--bg-tertiary)', borderRadius: '3px', overflow: 'hidden' }}>
@@ -12606,10 +12783,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
 
               {/* Expansion Opportunities */}
               <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', border: `1px dashed ${colors.creamDark}` }}>
-                <h4 style={{ fontSize: '11px', fontWeight: '700', color: colors.navy, margin: '0 0 6px', display: 'flex', alignItems: 'center', gap: '4px' }}>{Icons.globe(colors.steel, 12)} Expansion Targets</h4>
+                <h4 style={{ fontSize: '12px', fontWeight: '700', color: colors.navy, margin: '0 0 6px', display: 'flex', alignItems: 'center', gap: '4px' }}>{Icons.globe(colors.steel, 12)} Expansion Targets</h4>
                 <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
                   {['Denver', 'Phoenix', 'Nashville', 'Atlanta'].map(city => (
-                    <span key={city} style={{ padding: '4px 10px', borderRadius: '12px', backgroundColor: 'var(--bg-card-solid)', fontSize: '10px', fontWeight: '500', color: colors.navy }}>
+                    <span key={city} style={{ padding: '4px 10px', borderRadius: '12px', backgroundColor: 'var(--bg-card-solid)', fontSize: '12px', fontWeight: '500', color: colors.navy }}>
                       {city}
                     </span>
                   ))}
@@ -12624,14 +12801,14 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
               {/* Transaction Stats */}
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '8px' }}>
                 <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
-                  <p style={{ fontSize: '9px', color: 'var(--text-secondary)', margin: '0 0 4px', textTransform: 'uppercase' }}>Today's Volume</p>
+                  <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: '0 0 4px', textTransform: 'uppercase' }}>Today's Volume</p>
                   <p style={{ fontSize: '20px', fontWeight: '900', color: colors.navy, margin: 0 }}>$3,240</p>
-                  <span style={{ fontSize: '10px', color: colors.steel }}>+18% vs yesterday</span>
+                  <span style={{ fontSize: '12px', color: colors.steel }}>+18% vs yesterday</span>
                 </div>
                 <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
-                  <p style={{ fontSize: '9px', color: 'var(--text-secondary)', margin: '0 0 4px', textTransform: 'uppercase' }}>This Month</p>
+                  <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: '0 0 4px', textTransform: 'uppercase' }}>This Month</p>
                   <p style={{ fontSize: '20px', fontWeight: '900', color: colors.navy, margin: 0 }}>$48.2K</p>
-                  <span style={{ fontSize: '10px', color: colors.steel }}>+12% vs last month</span>
+                  <span style={{ fontSize: '12px', color: colors.steel }}>+12% vs last month</span>
                 </div>
               </div>
 
@@ -12641,18 +12818,18 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 <div style={{ display: 'flex', gap: '8px' }}>
                   <div style={{ flex: 1, textAlign: 'center', padding: '10px', backgroundColor: 'var(--bg-card-solid)', borderRadius: '8px' }}>
                     <p style={{ fontSize: '14px', fontWeight: '900', color: colors.navy, margin: 0 }}>69%</p>
-                    <p style={{ fontSize: '9px', color: 'var(--text-secondary)', margin: '4px 0 0' }}>Venue Subs</p>
-                    <p style={{ fontSize: '8px', color: 'var(--text-tertiary)', margin: '2px 0 0' }}>$35-75/mo</p>
+                    <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: '4px 0 0' }}>Venue Subs</p>
+                    <p style={{ fontSize: '12px', color: 'var(--text-tertiary)', margin: '2px 0 0' }}>$35-75/mo</p>
                   </div>
                   <div style={{ flex: 1, textAlign: 'center', padding: '10px', backgroundColor: 'var(--bg-card-solid)', borderRadius: '8px' }}>
                     <p style={{ fontSize: '14px', fontWeight: '900', color: colors.navy, margin: 0 }}>23%</p>
-                    <p style={{ fontSize: '9px', color: 'var(--text-secondary)', margin: '4px 0 0' }}>Txn Fees</p>
-                    <p style={{ fontSize: '8px', color: 'var(--text-tertiary)', margin: '2px 0 0' }}>2.5%</p>
+                    <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: '4px 0 0' }}>Txn Fees</p>
+                    <p style={{ fontSize: '12px', color: 'var(--text-tertiary)', margin: '2px 0 0' }}>2.5%</p>
                   </div>
                   <div style={{ flex: 1, textAlign: 'center', padding: '10px', backgroundColor: 'var(--bg-card-solid)', borderRadius: '8px' }}>
                     <p style={{ fontSize: '14px', fontWeight: '900', color: colors.navy, margin: 0 }}>8%</p>
-                    <p style={{ fontSize: '9px', color: 'var(--text-secondary)', margin: '4px 0 0' }}>User Subs</p>
-                    <p style={{ fontSize: '8px', color: 'var(--text-tertiary)', margin: '2px 0 0' }}>$15-30/mo</p>
+                    <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: '4px 0 0' }}>User Subs</p>
+                    <p style={{ fontSize: '12px', color: 'var(--text-tertiary)', margin: '2px 0 0' }}>$15-30/mo</p>
                   </div>
                 </div>
               </div>
@@ -12663,13 +12840,13 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 {adminTransactions.map(txn => (
                   <div key={txn.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 0', borderBottom: `1px solid ${colors.cream}` }}>
                     <div>
-                      <p style={{ fontSize: '11px', fontWeight: '600', color: colors.navy, margin: 0 }}>{txn.venue}</p>
-                      <p style={{ fontSize: '9px', color: 'var(--text-tertiary)', margin: 0 }}>{txn.id} • {txn.date}</p>
+                      <p style={{ fontSize: '12px', fontWeight: '600', color: colors.navy, margin: 0 }}>{txn.venue}</p>
+                      <p style={{ fontSize: '12px', color: 'var(--text-tertiary)', margin: 0 }}>{txn.id} • {txn.date}</p>
                     </div>
                     <div style={{ textAlign: 'right' }}>
                       <p style={{ fontSize: '12px', fontWeight: '700', color: colors.navy, margin: 0 }}>${txn.amount}</p>
                       <div style={{ display: 'flex', gap: '4px', alignItems: 'center', justifyContent: 'flex-end' }}>
-                        <span style={{ padding: '2px 6px', borderRadius: '8px', backgroundColor: txn.type === 'booking' ? 'var(--accent-blue-bg)' : 'var(--accent-pink-bg)', color: txn.type === 'booking' ? 'var(--accent-blue-text)' : 'var(--accent-pink-text)', fontSize: '8px', fontWeight: '600' }}>
+                        <span style={{ padding: '2px 6px', borderRadius: '8px', backgroundColor: txn.type === 'booking' ? 'var(--accent-blue-bg)' : 'var(--accent-pink-bg)', color: txn.type === 'booking' ? 'var(--accent-blue-text)' : 'var(--accent-pink-text)', fontSize: '12px', fontWeight: '600' }}>
                           {txn.type}
                         </span>
                         <span style={{ width: '6px', height: '6px', borderRadius: '3px', backgroundColor: txn.status === 'completed' ? colors.steel : colors.amber }} />
@@ -12691,13 +12868,13 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                   {['Q1', 'Q2', 'Q3', 'Q4'].map((q, i) => (
                     <div key={q} style={{ textAlign: 'center' }}>
                       <div style={{ height: `${40 + i * 20}px`, backgroundColor: colors.navyBg, borderRadius: '4px', marginBottom: '4px', opacity: 0.3 + i * 0.2 }} />
-                      <p style={{ fontSize: '10px', fontWeight: '600', color: colors.navy, margin: 0 }}>{q}</p>
-                      <p style={{ fontSize: '9px', color: 'var(--text-secondary)', margin: 0 }}>${[18, 28, 38, 46][i]}K</p>
+                      <p style={{ fontSize: '12px', fontWeight: '600', color: colors.navy, margin: 0 }}>{q}</p>
+                      <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: 0 }}>${[18, 28, 38, 46][i]}K</p>
                     </div>
                   ))}
                 </div>
                 <div style={{ padding: '8px', backgroundColor: 'var(--accent-green-bg)', borderRadius: '8px', textAlign: 'center' }}>
-                  <p style={{ fontSize: '10px', fontWeight: '700', color: 'var(--accent-green-text)', margin: 0 }}>Y1 Projected: $130K | Y2: $435K | Y3: $1.14M</p>
+                  <p style={{ fontSize: '12px', fontWeight: '700', color: 'var(--accent-green-text)', margin: 0 }}>Y1 Projected: $130K | Y2: $435K | Y3: $1.14M</p>
                 </div>
               </div>
 
@@ -12712,8 +12889,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 ].map(item => (
                   <div key={item.metric} style={{ marginBottom: '10px' }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
-                      <span style={{ fontSize: '11px', fontWeight: '500', color: colors.navy }}>{item.metric}</span>
-                      <span style={{ fontSize: '10px', color: 'var(--text-secondary)' }}>{item.current} / {item.target}</span>
+                      <span style={{ fontSize: '12px', fontWeight: '500', color: colors.navy }}>{item.metric}</span>
+                      <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>{item.current} / {item.target}</span>
                     </div>
                     <div style={{ height: '6px', backgroundColor: 'var(--bg-tertiary)', borderRadius: '3px', overflow: 'hidden' }}>
                       <div style={{ height: '100%', width: `${item.progress}%`, backgroundColor: colors.steel, borderRadius: '3px' }} />
@@ -12734,13 +12911,13 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                   <div key={item.lever} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 0', borderBottom: `1px solid ${colors.cream}` }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                       {item.icon(colors.navy, 14)}
-                      <span style={{ fontSize: '11px', fontWeight: '500', color: colors.navy }}>{item.lever}</span>
+                      <span style={{ fontSize: '12px', fontWeight: '500', color: colors.navy }}>{item.lever}</span>
                     </div>
                     <div style={{ display: 'flex', gap: '6px' }}>
-                      <span style={{ padding: '2px 6px', borderRadius: '8px', backgroundColor: item.impact === 'Very High' ? 'var(--accent-green-bg)' : item.impact === 'High' ? 'var(--accent-blue-bg)' : 'var(--accent-amber-bg)', color: item.impact === 'Very High' ? 'var(--accent-green-text)' : item.impact === 'High' ? 'var(--accent-blue-text)' : 'var(--accent-amber-text)', fontSize: '8px', fontWeight: '600' }}>
+                      <span style={{ padding: '2px 6px', borderRadius: '8px', backgroundColor: item.impact === 'Very High' ? 'var(--accent-green-bg)' : item.impact === 'High' ? 'var(--accent-blue-bg)' : 'var(--accent-amber-bg)', color: item.impact === 'Very High' ? 'var(--accent-green-text)' : item.impact === 'High' ? 'var(--accent-blue-text)' : 'var(--accent-amber-text)', fontSize: '12px', fontWeight: '600' }}>
                         {item.impact}
                       </span>
-                      <span style={{ padding: '2px 6px', borderRadius: '8px', backgroundColor: 'var(--icon-bg)', color: 'var(--text-secondary)', fontSize: '8px', fontWeight: '500' }}>
+                      <span style={{ padding: '2px 6px', borderRadius: '8px', backgroundColor: 'var(--icon-bg)', color: 'var(--text-secondary)', fontSize: '12px', fontWeight: '500' }}>
                         {item.effort}
                       </span>
                     </div>
@@ -12750,8 +12927,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
 
               {/* Strategic Notes */}
               <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', border: `1px dashed ${colors.creamDark}`, marginBottom: '12px' }}>
-                <h4 style={{ fontSize: '11px', fontWeight: '700', color: colors.navy, margin: '0 0 6px', display: 'flex', alignItems: 'center', gap: '4px' }}>{Icons.sparkles(colors.amber, 12)} Key Insights</h4>
-                <ul style={{ margin: 0, paddingLeft: '16px', fontSize: '10px', color: 'var(--text-secondary)' }}>
+                <h4 style={{ fontSize: '12px', fontWeight: '700', color: colors.navy, margin: '0 0 6px', display: 'flex', alignItems: 'center', gap: '4px' }}>{Icons.sparkles(colors.amber, 12)} Key Insights</h4>
+                <ul style={{ margin: 0, paddingLeft: '16px', fontSize: '12px', color: 'var(--text-secondary)' }}>
                   <li>Austin market nearing saturation: prioritize Dallas/Houston</li>
                   <li>Pro tier conversion at 24%: above industry average</li>
                   <li>User acquisition cost trending down 15% MoM</li>
@@ -12779,24 +12956,24 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 const effectiveMonthly = monthlyTotal + annualTotal / 12;
                 const row = (name, amount, sub) => (
                   <div key={name} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', padding: '5px 0', borderTop: '1px solid var(--border-light)' }}>
-                    <span style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>{name}</span>
-                    <span style={{ fontSize: '11px', fontWeight: '700', color: colors.navy }}>{amount}<span style={{ fontWeight: '500', color: 'var(--text-tertiary)' }}>{sub}</span></span>
+                    <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>{name}</span>
+                    <span style={{ fontSize: '12px', fontWeight: '700', color: colors.navy }}>{amount}<span style={{ fontWeight: '500', color: 'var(--text-tertiary)' }}>{sub}</span></span>
                   </div>
                 );
                 return (
                   <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: '8px' }}>
-                      <h4 style={{ fontSize: '11px', fontWeight: '700', color: colors.navy, margin: 0 }}>Expenses</h4>
-                      <span style={{ fontSize: '13px', fontWeight: '900', color: colors.navy }}>${effectiveMonthly.toFixed(0)}<span style={{ fontSize: '9px', fontWeight: '500', color: 'var(--text-tertiary)' }}>/mo effective</span></span>
+                      <h4 style={{ fontSize: '12px', fontWeight: '700', color: colors.navy, margin: 0 }}>Expenses</h4>
+                      <span style={{ fontSize: '13px', fontWeight: '900', color: colors.navy }}>${effectiveMonthly.toFixed(0)}<span style={{ fontSize: '12px', fontWeight: '500', color: 'var(--text-tertiary)' }}>/mo effective</span></span>
                     </div>
                     {MONTHLY.map((e) => row(e.name, `$${e.usd}`, '/mo'))}
                     {ANNUAL.map((e) => row(e.name, `$${e.usd}`, '/yr'))}
                     {ONE_TIME.map((e) => row(e.name, `$${e.usd.toLocaleString()}`, ' once'))}
                     <div style={{ display: 'flex', justifyContent: 'space-between', padding: '7px 0 0', marginTop: '3px', borderTop: '1px solid var(--border-default)' }}>
-                      <span style={{ fontSize: '10px', fontWeight: '600', color: 'var(--text-secondary)' }}>Recurring ${monthlyTotal}/mo + ${annualTotal}/yr</span>
-                      <span style={{ fontSize: '10px', fontWeight: '600', color: 'var(--text-secondary)' }}>One-time invested: ${oneTimeTotal.toLocaleString()}</span>
+                      <span style={{ fontSize: '12px', fontWeight: '600', color: 'var(--text-secondary)' }}>Recurring ${monthlyTotal}/mo + ${annualTotal}/yr</span>
+                      <span style={{ fontSize: '12px', fontWeight: '600', color: 'var(--text-secondary)' }}>One-time invested: ${oneTimeTotal.toLocaleString()}</span>
                     </div>
-                    <p style={{ fontSize: '9px', color: 'var(--text-tertiary)', margin: '7px 0 0' }}>Free tier: {FREE_TIER.join(' · ')}</p>
+                    <p style={{ fontSize: '12px', color: 'var(--text-tertiary)', margin: '7px 0 0' }}>Free tier: {FREE_TIER.join(' · ')}</p>
                   </div>
                 );
               })()}
@@ -12827,12 +13004,12 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
             ];
             return (
               <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                {researchLoading && <p style={{ textAlign: 'center', fontSize: '11px', color: 'var(--text-secondary)' }}>Loading...</p>}
+                {researchLoading && <p style={{ textAlign: 'center', fontSize: '12px', color: 'var(--text-secondary)' }}>Loading...</p>}
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '8px' }}>
                   {statCards.map(s => (
                     <div key={s.label} style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', textAlign: 'center', boxShadow: 'var(--card-shadow-sm)' }}>
                       <p style={{ fontSize: '20px', fontWeight: '900', color: s.color, margin: '0 0 2px' }}>{s.value}</p>
-                      <p style={{ fontSize: '9px', fontWeight: '600', color: 'var(--text-secondary)', margin: 0, textTransform: 'uppercase', letterSpacing: '0.5px' }}>{s.label}</p>
+                      <p style={{ fontSize: '12px', fontWeight: '600', color: 'var(--text-secondary)', margin: 0, textTransform: 'uppercase', letterSpacing: '0.5px' }}>{s.label}</p>
                     </div>
                   ))}
                 </div>
@@ -12843,8 +13020,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                     return (
                       <div key={p.stall_point} style={{ marginBottom: '8px' }}>
                         <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '3px' }}>
-                          <span style={{ fontSize: '11px', fontWeight: '600', color: colors.navy, textTransform: 'capitalize' }}>{p.stall_point}</span>
-                          <span style={{ fontSize: '10px', color: 'var(--text-secondary)' }}>{p.count} ({pct}%)</span>
+                          <span style={{ fontSize: '12px', fontWeight: '600', color: colors.navy, textTransform: 'capitalize' }}>{p.stall_point}</span>
+                          <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>{p.count} ({pct}%)</span>
                         </div>
                         <div style={{ height: '8px', backgroundColor: 'var(--bg-tertiary)', borderRadius: '4px', overflow: 'hidden' }}>
                           <div style={{ height: '100%', width: `${pct}%`, backgroundColor: stallColors[p.stall_point] || colors.navy, borderRadius: '4px' }} />
@@ -12864,19 +13041,19 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                     ].map(item => (
                       <div key={item.label} style={{ textAlign: 'center', padding: '8px 4px', borderRadius: '8px', backgroundColor: 'var(--bg-tertiary)' }}>
                         <p style={{ fontSize: '18px', fontWeight: '900', color: item.color, margin: '0 0 2px' }}>{item.value}</p>
-                        <p style={{ fontSize: '8px', fontWeight: '600', color: 'var(--text-secondary)', margin: 0 }}>{item.label}</p>
+                        <p style={{ fontSize: '12px', fontWeight: '600', color: 'var(--text-secondary)', margin: 0 }}>{item.label}</p>
                       </div>
                     ))}
                   </div>
                 </div>
                 <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', boxShadow: 'var(--card-shadow-sm)', textAlign: 'center' }}>
-                  <p style={{ fontSize: '11px', fontWeight: '600', color: 'var(--text-secondary)', margin: '0 0 4px' }}>New Users This Week</p>
+                  <p style={{ fontSize: '12px', fontWeight: '600', color: 'var(--text-secondary)', margin: '0 0 4px' }}>New Users This Week</p>
                   <p style={{ fontSize: '28px', fontWeight: '900', color: colors.steel, margin: 0 }}>+{data.newUsersThisWeek || 0}</p>
                 </div>
-                <button onClick={() => { if (demoMode) fetchResearchLive(); else setResearchDemoMode(true); }}
+                <button className="hit44" onClick={() => { if (demoMode) fetchResearchLive(); else setResearchDemoMode(true); }}
                   style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', padding: '6px', width: '100%', border: 'none', background: 'transparent', cursor: 'pointer' }}>
                   <span style={{ width: '6px', height: '6px', borderRadius: '3px', background: demoMode ? '#D97706' : colors.steel }} />
-                  <span style={{ fontSize: '9px', fontWeight: '600', color: 'var(--text-tertiary)' }}>{researchLoading ? 'Loading...' : demoMode ? 'Demo data · Tap for live' : 'Live data · Tap for demo'}</span>
+                  <span style={{ fontSize: '12px', fontWeight: '600', color: 'var(--text-tertiary)' }}>{researchLoading ? 'Loading...' : demoMode ? 'Demo data · Tap for live' : 'Live data · Tap for demo'}</span>
                 </button>
               </div>
             );
@@ -12945,7 +13122,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
         <h2 style={{ fontSize: '20px', fontWeight: '800', color: '#f0ead8', margin: '0 0 6px' }}>What's your venue called?</h2>
         <p style={{ fontSize: '13px', color: 'rgba(148,163,184,0.6)', margin: '0 0 24px' }}>Search for your venue or type the name.</p>
         <div style={{ position: 'relative' }}>
-          <input value={query} onChange={(e) => handleChange(e.target.value)}
+          <input aria-label="Venue name" value={query} onChange={(e) => handleChange(e.target.value)}
             onFocus={() => suggestions.length > 0 && setShowSuggestions(true)}
             placeholder="e.g. The Blue Heron Bar"
             autoComplete="off" data-lpignore="true" data-form-type="other"
@@ -12953,12 +13130,12 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           {showSuggestions && suggestions.length > 0 && (
             <div style={{ position: 'absolute', top: '100%', left: 0, right: 0, marginTop: '4px', borderRadius: '12px', overflow: 'hidden', border: '1px solid rgba(148,163,184,0.15)', backgroundColor: 'rgba(15,23,42,0.95)', backdropFilter: 'blur(12px)', zIndex: 10 }}>
               {suggestions.map((v, i) => (
-                <button key={v.place_id || i} onClick={() => pickVenue(v)} style={{
+                <button className="hit44" key={v.place_id || i} onClick={() => pickVenue(v)} style={{
                   width: '100%', padding: '12px 16px', border: 'none', borderBottom: i < suggestions.length - 1 ? '1px solid rgba(148,163,184,0.08)' : 'none',
                   background: 'transparent', cursor: 'pointer', textAlign: 'left', display: 'flex', flexDirection: 'column', gap: '2px',
                 }}>
                   <span style={{ fontSize: '14px', fontWeight: '600', color: '#f0ead8' }}>{v.name}</span>
-                  <span style={{ fontSize: '11px', color: 'rgba(148,163,184,0.5)' }}>{v.formatted_address || v.vicinity || ''}</span>
+                  <span style={{ fontSize: '12px', color: 'rgba(148,163,184,0.5)' }}>{v.formatted_address || v.vicinity || ''}</span>
                 </button>
               ))}
             </div>
@@ -12985,7 +13162,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           <h2 style={{ fontSize: '20px', fontWeight: '800', color: '#f0ead8', margin: '0 0 6px' }}>What's your venue called?</h2>
           <p style={{ fontSize: '13px', color: 'rgba(148,163,184,0.6)', margin: '0 0 24px' }}>Search for your venue or type the name.</p>
           <div style={{ position: 'relative' }}>
-            <input value={venueSearchQuery} onChange={(e) => {
+            <input aria-label="Venue name" value={venueSearchQuery} onChange={(e) => {
               const val = e.target.value;
               setVenueSearchQuery(val);
               setVenueOnboardingData(d => ({ ...d, businessName: val }));
@@ -13005,7 +13182,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
             {venueSearchResults.length > 0 && (
               <div style={{ position: 'absolute', top: '100%', left: 0, right: 0, marginTop: '4px', borderRadius: '12px', overflow: 'hidden', border: '1px solid rgba(148,163,184,0.15)', backgroundColor: 'rgba(15,23,42,0.95)', backdropFilter: 'blur(12px)', zIndex: 10 }}>
                 {venueSearchResults.map((v, i) => (
-                  <button key={v.place_id || i} onClick={() => {
+                  <button className="hit44" key={v.place_id || i} onClick={() => {
                     const cat = (v.types || [])[0]?.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()) || '';
                     const categoryMap = { 'Bar': 'Bar / Nightclub', 'Night Club': 'Bar / Nightclub', 'Restaurant': 'Restaurant', 'Cafe': 'Cafe / Coffee', 'Brewery': 'Brewery / Winery', 'Winery': 'Brewery / Winery' };
                     const matchedCat = Object.entries(categoryMap).find(([k]) => cat.toLowerCase().includes(k.toLowerCase()));
@@ -13036,7 +13213,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                     background: 'transparent', cursor: 'pointer', textAlign: 'left', display: 'flex', flexDirection: 'column', gap: '2px',
                   }}>
                     <span style={{ fontSize: '14px', fontWeight: '600', color: '#f0ead8' }}>{v.name}</span>
-                    <span style={{ fontSize: '11px', color: 'rgba(148,163,184,0.5)' }}>{v.formatted_address || v.vicinity || ''}</span>
+                    <span style={{ fontSize: '12px', color: 'rgba(148,163,184,0.5)' }}>{v.formatted_address || v.vicinity || ''}</span>
                   </button>
                 ))}
               </div>
@@ -13051,7 +13228,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           <p style={{ fontSize: '13px', color: 'rgba(148,163,184,0.6)', margin: '0 0 20px' }}>Pick the best fit. You can change this later.</p>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
             {venueCategories.map(cat => (
-              <button key={cat} onClick={() => setVenueOnboardingData(d => ({ ...d, category: cat }))} style={{ padding: '10px 16px', borderRadius: '20px', border: venueOnboardingData.category === cat ? '2px solid #f0ead8' : '1.5px solid rgba(148,163,184,0.15)', backgroundColor: venueOnboardingData.category === cat ? 'rgba(240,234,216,0.12)' : 'rgba(255,255,255,0.04)', color: venueOnboardingData.category === cat ? '#f0ead8' : 'rgba(148,163,184,0.7)', fontSize: '13px', fontWeight: '600', cursor: 'pointer', transition: 'all 0.15s' }}>
+              <button className="hit44" key={cat} onClick={() => setVenueOnboardingData(d => ({ ...d, category: cat }))} style={{ padding: '10px 16px', borderRadius: '20px', border: venueOnboardingData.category === cat ? '2px solid #f0ead8' : '1.5px solid rgba(148,163,184,0.15)', backgroundColor: venueOnboardingData.category === cat ? 'rgba(240,234,216,0.12)' : 'rgba(255,255,255,0.04)', color: venueOnboardingData.category === cat ? '#f0ead8' : 'rgba(148,163,184,0.7)', fontSize: '13px', fontWeight: '600', cursor: 'pointer', transition: 'all 0.15s' }}>
                 {cat}
               </button>
             ))}
@@ -13063,7 +13240,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center', padding: '24px' }}>
           <h2 style={{ fontSize: '20px', fontWeight: '800', color: '#f0ead8', margin: '0 0 6px' }}>Where are you located?</h2>
           <p style={{ fontSize: '13px', color: 'rgba(148,163,184,0.6)', margin: '0 0 24px' }}>City or full address, so nearby customers can find you.</p>
-          <input value={venueOnboardingData.location} onChange={(e) => setVenueOnboardingData(d => ({ ...d, location: e.target.value }))} placeholder="e.g. Austin, TX or 123 Main St" autoComplete="off" data-lpignore="true" data-form-type="other" style={{ width: '100%', padding: '14px 16px', borderRadius: '12px', border: '1.5px solid rgba(148,163,184,0.15)', fontSize: '16px', fontWeight: '500', outline: 'none', boxSizing: 'border-box', backgroundColor: 'rgba(255,255,255,0.06)', color: 'white' }} autoFocus />
+          <input aria-label="Venue address" value={venueOnboardingData.location} onChange={(e) => setVenueOnboardingData(d => ({ ...d, location: e.target.value }))} placeholder="e.g. Austin, TX or 123 Main St" autoComplete="off" data-lpignore="true" data-form-type="other" style={{ width: '100%', padding: '14px 16px', borderRadius: '12px', border: '1.5px solid rgba(148,163,184,0.15)', fontSize: '16px', fontWeight: '500', outline: 'none', boxSizing: 'border-box', backgroundColor: 'rgba(255,255,255,0.06)', color: 'white' }} autoFocus />
         </div>
       ),
       // Step 4: Goals
@@ -13075,9 +13252,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
             {venueGoals.map(goal => {
               const selected = venueOnboardingData.goals.includes(goal);
               return (
-                <button key={goal} onClick={() => setVenueOnboardingData(d => ({ ...d, goals: selected ? d.goals.filter(g => g !== goal) : [...d.goals, goal] }))} style={{ padding: '12px 16px', borderRadius: '12px', border: selected ? '2px solid #f0ead8' : '1.5px solid rgba(148,163,184,0.15)', backgroundColor: selected ? 'rgba(240,234,216,0.1)' : 'rgba(255,255,255,0.04)', color: selected ? '#f0ead8' : 'rgba(148,163,184,0.7)', fontSize: '14px', fontWeight: '600', cursor: 'pointer', textAlign: 'left', display: 'flex', alignItems: 'center', gap: '10px', transition: 'all 0.15s' }}>
+                <button className="hit44" key={goal} onClick={() => setVenueOnboardingData(d => ({ ...d, goals: selected ? d.goals.filter(g => g !== goal) : [...d.goals, goal] }))} style={{ padding: '12px 16px', borderRadius: '12px', border: selected ? '2px solid #f0ead8' : '1.5px solid rgba(148,163,184,0.15)', backgroundColor: selected ? 'rgba(240,234,216,0.1)' : 'rgba(255,255,255,0.04)', color: selected ? '#f0ead8' : 'rgba(148,163,184,0.7)', fontSize: '14px', fontWeight: '600', cursor: 'pointer', textAlign: 'left', display: 'flex', alignItems: 'center', gap: '10px', transition: 'all 0.15s' }}>
                   <div style={{ width: '20px', height: '20px', borderRadius: '6px', border: selected ? '2px solid #f0ead8' : '2px solid rgba(148,163,184,0.2)', backgroundColor: selected ? '#f0ead8' : 'transparent', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                    {selected && <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#0f172a" strokeWidth="3"><polyline points="20 6 9 17 4 12"/></svg>}
+                    {selected && <svg aria-hidden="true" focusable="false" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#0f172a" strokeWidth="3"><polyline points="20 6 9 17 4 12"/></svg>}
                   </div>
                   {goal}
                 </button>
@@ -13091,7 +13268,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center', padding: '24px' }}>
           <h2 style={{ fontSize: '20px', fontWeight: '800', color: '#f0ead8', margin: '0 0 6px' }}>Describe your venue in a line</h2>
           <p style={{ fontSize: '13px', color: 'rgba(148,163,184,0.6)', margin: '0 0 24px' }}>What makes your place special? This shows on your Flock listing.</p>
-          <textarea value={venueOnboardingData.description} onChange={(e) => setVenueOnboardingData(d => ({ ...d, description: e.target.value }))} placeholder="e.g. Craft cocktail bar with live jazz on weekends" rows={3} autoComplete="off" data-lpignore="true" data-form-type="other" style={{ width: '100%', padding: '14px 16px', borderRadius: '12px', border: '1.5px solid rgba(148,163,184,0.15)', fontSize: '15px', fontWeight: '500', outline: 'none', boxSizing: 'border-box', backgroundColor: 'rgba(255,255,255,0.06)', color: 'white', resize: 'none', fontFamily: 'inherit' }} autoFocus />
+          <textarea aria-label="Venue description" value={venueOnboardingData.description} onChange={(e) => setVenueOnboardingData(d => ({ ...d, description: e.target.value }))} placeholder="e.g. Craft cocktail bar with live jazz on weekends" rows={3} autoComplete="off" data-lpignore="true" data-form-type="other" style={{ width: '100%', padding: '14px 16px', borderRadius: '12px', border: '1.5px solid rgba(148,163,184,0.15)', fontSize: '15px', fontWeight: '500', outline: 'none', boxSizing: 'border-box', backgroundColor: 'rgba(255,255,255,0.06)', color: 'white', resize: 'none', fontFamily: 'inherit' }} autoFocus />
         </div>
       ),
     ];
@@ -13132,7 +13309,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
             ))}
           </div>
           {venueOnboardingStep > 0 && (
-            <button onClick={() => setVenueOnboardingStep(s => s - 1)} style={{ background: 'none', border: 'none', color: 'rgba(148,163,184,0.6)', fontSize: '13px', cursor: 'pointer', padding: '8px 0', fontWeight: '500' }}>Back</button>
+            <button className="hit44" onClick={() => setVenueOnboardingStep(s => s - 1)} style={{ background: 'none', border: 'none', color: 'rgba(148,163,184,0.6)', fontSize: '13px', cursor: 'pointer', padding: '8px 0', fontWeight: '500' }}>Back</button>
           )}
         </div>
 
@@ -13141,7 +13318,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
 
         {/* Next button */}
         <div style={{ padding: '16px 24px 24px', flexShrink: 0 }}>
-          <button onClick={handleNext} disabled={!canAdvance()} style={{
+          <button className="hit44" onClick={handleNext} disabled={!canAdvance()} style={{
             width: '100%', padding: '14px', borderRadius: '14px', border: 'none',
             background: canAdvance() ? 'linear-gradient(135deg, #f0ead8 0%, #d4c9a8 100%)' : 'rgba(148,163,184,0.1)',
             color: canAdvance() ? '#1a2744' : 'rgba(148,163,184,0.3)',
@@ -13215,8 +13392,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
             </div>
             <h1 style={{ fontSize: '24px', fontWeight: '800', margin: '0 0 8px', color: '#f1ede0', letterSpacing: '-0.4px' }}>You're checked in!</h1>
             <p style={{ fontSize: '13px', color: 'rgba(241,237,224,0.6)', margin: '0 0 8px' }}>{new Date(checkedInAt).toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' })}</p>
-            <p style={{ fontSize: '11px', color: 'rgba(241,237,224,0.4)', margin: '0 0 28px', wordBreak: 'break-all', maxWidth: '320px' }}>{placeId}</p>
-            <button
+            <p style={{ fontSize: '12px', color: 'rgba(241,237,224,0.4)', margin: '0 0 28px', wordBreak: 'break-all', maxWidth: '320px' }}>{placeId}</p>
+            <button className="hit44"
               onClick={goToVenue}
               style={{ padding: '14px 32px', borderRadius: '14px', border: 'none', background: '#1e293b', color: 'white', fontWeight: '700', fontSize: '14px', cursor: 'pointer', boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.12), 0 1px 2px rgba(30,41,59,0.10)' }}
             >View venue in Flock</button>
@@ -13268,7 +13445,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
         {/* Header */}
         <div style={{ padding: '16px', background: colors.navyBg, flexShrink: 0 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '12px' }}>
-            <button onClick={() => setCurrentScreen('main')} style={{ width: '32px', height: '32px', borderRadius: '16px', border: 'none', backgroundColor: 'rgba(255,255,255,0.15)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.arrowLeft('white', 18)}</button>
+            <button aria-label="Back" className="hit44" onClick={() => setCurrentScreen('main')} style={{ width: '32px', height: '32px', borderRadius: '16px', border: 'none', backgroundColor: 'rgba(255,255,255,0.15)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.arrowLeft('white', 18)}</button>
             <h1 style={{ fontSize: '20px', fontWeight: '900', color: 'white', margin: 0, flex: 1 }}>Add Friends</h1>
             {pendingRequests.length > 0 && (
               <span style={{ padding: '4px 10px', borderRadius: '12px', backgroundColor: colors.amber, color: 'white', fontSize: '12px', fontWeight: '700' }}>{pendingRequests.length} new</span>
@@ -13278,8 +13455,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           {/* Tab Navigation */}
           <div style={{ display: 'flex', gap: '4px', paddingBottom: '2px' }}>
             {tabs.map(tab => (
-              <button key={tab.id} onClick={() => setAddFriendsTab(tab.id)} style={{
-                flex: 1, padding: '8px 4px', borderRadius: '16px', border: 'none', cursor: 'pointer', fontSize: '11px', fontWeight: '700', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '3px', transition: 'opacity 0.2s ease',
+              <button className="hit44" key={tab.id} onClick={() => setAddFriendsTab(tab.id)} style={{
+                flex: 1, padding: '8px 4px', borderRadius: '16px', border: 'none', cursor: 'pointer', fontSize: '12px', fontWeight: '700', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '3px', transition: 'opacity 0.2s ease',
                 backgroundColor: addFriendsTab === tab.id ? 'white' : 'rgba(255,255,255,0.15)',
                 color: addFriendsTab === tab.id ? colors.navy : 'rgba(255,255,255,0.8)',
               }}>
@@ -13298,8 +13475,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
             <div style={{ marginBottom: '16px' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '10px' }}>
                 <div style={{ width: '28px', height: '28px', borderRadius: '14px', backgroundColor: 'var(--accent-amber-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.userPlus('var(--accent-amber-text)', 14)}</div>
-                <h3 style={{ fontSize: '14px', fontWeight: '800', color: colors.navy, margin: 0 }}>Friend Requests</h3>
-                <span style={{ padding: '2px 8px', borderRadius: '10px', backgroundColor: colors.amber, color: 'white', fontSize: '11px', fontWeight: '700' }}>{pendingRequests.length}</span>
+                <h2 style={{ fontSize: '14px', fontWeight: '800', color: colors.navy, margin: 0 }}>Friend Requests</h2>
+                <span style={{ padding: '2px 8px', borderRadius: '10px', backgroundColor: colors.amber, color: 'white', fontSize: '12px', fontWeight: '700' }}>{pendingRequests.length}</span>
               </div>
               {pendingRequests.map(req => (
                 <div key={req.id} style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '10px', borderRadius: '14px', backgroundColor: 'var(--bg-card-solid)', marginBottom: '8px', border: `1.5px solid #fde68a`, boxShadow: '0 1px 4px rgba(0,0,0,0.06)' }}>
@@ -13308,11 +13485,13 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                   </div>
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <p style={{ fontWeight: '700', fontSize: '14px', color: colors.navy, margin: 0 }}>{req.name}</p>
-                    <p style={{ fontSize: '10px', color: 'var(--text-tertiary)', margin: '2px 0 0' }}>Wants to be your friend</p>
+                    <p style={{ fontSize: '12px', color: 'var(--text-tertiary)', margin: '2px 0 0' }}>Wants to be your friend</p>
                   </div>
                   <div style={{ display: 'flex', gap: '6px', flexShrink: 0 }}>
-                    <button onClick={(e) => { confirmClick(e); handleAcceptFriendRequest(req.id); }} style={{ width: '36px', height: '36px', borderRadius: '18px', border: 'none', backgroundColor: '#22c55e', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', position: 'relative', overflow: 'hidden' }}>{Icons.check('white', 18)}</button>
-                    <button onClick={() => handleDeclineFriendRequest(req.id)} style={{ width: '36px', height: '36px', borderRadius: '18px', border: 'none', backgroundColor: 'var(--bg-hover)', color: 'var(--text-secondary)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.x(colors.textSecondary, 16)}</button>
+                    {/* Ripple container clips overflow, so .hit44's pseudo hit area
+                        would be clipped — this pair gets the real 44px box. */}
+                    <button aria-label="Accept friend request" onClick={(e) => { confirmClick(e); handleAcceptFriendRequest(req.id); }} style={{ width: '44px', height: '44px', borderRadius: '22px', border: 'none', backgroundColor: '#047857', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', position: 'relative', overflow: 'hidden' }}>{Icons.check('white', 18)}</button>
+                    <button aria-label="Decline friend request" className="hit44" onClick={() => handleDeclineFriendRequest(req.id)} style={{ width: '36px', height: '36px', borderRadius: '18px', border: 'none', backgroundColor: 'var(--bg-hover)', color: 'var(--text-secondary)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.x(colors.textSecondary, 16)}</button>
                   </div>
                 </div>
               ))}
@@ -13322,7 +13501,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           {/* Outgoing Requests */}
           {outgoingRequests.length > 0 && addFriendsTab === 'username' && (
             <div style={{ marginBottom: '16px' }}>
-              <h4 style={{ fontSize: '11px', fontWeight: '700', color: 'var(--text-tertiary)', margin: '0 0 8px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Sent Requests</h4>
+              <h4 style={{ fontSize: '12px', fontWeight: '700', color: 'var(--text-tertiary)', margin: '0 0 8px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Sent Requests</h4>
               {outgoingRequests.map(req => (
                 <div key={req.id} style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '10px', borderRadius: '12px', backgroundColor: 'var(--bg-card-solid)', marginBottom: '6px' }}>
                   <div style={{ width: '38px', height: '38px', borderRadius: '19px', backgroundColor: colors.navyMidBg, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '14px', fontWeight: '700', color: 'white', flexShrink: 0, overflow: 'hidden' }}>
@@ -13330,9 +13509,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                   </div>
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <p style={{ fontWeight: '600', fontSize: '13px', color: colors.navy, margin: 0 }}>{req.name}</p>
-                    <p style={{ fontSize: '10px', color: 'var(--text-tertiary)', margin: '1px 0 0' }}>Pending</p>
+                    <p style={{ fontSize: '12px', color: 'var(--text-tertiary)', margin: '1px 0 0' }}>Pending</p>
                   </div>
-                  <button className="glass-btn glass-secondary" onClick={() => handleCancelOutgoingRequest(req.id)} style={{ padding: '6px 12px', borderRadius: '16px', border: `1px solid ${colors.creamDark}`, backgroundColor: 'var(--bg-card-solid)', color: 'var(--text-secondary)', fontSize: '11px', fontWeight: '600', cursor: 'pointer' }}>Cancel</button>
+                  <button className="hit44 glass-btn glass-secondary" onClick={() => handleCancelOutgoingRequest(req.id)} style={{ padding: '6px 12px', borderRadius: '16px', border: `1px solid ${colors.creamDark}`, backgroundColor: 'var(--bg-card-solid)', color: 'var(--text-secondary)', fontSize: '12px', fontWeight: '600', cursor: 'pointer' }}>Cancel</button>
                 </div>
               ))}
             </div>
@@ -13342,11 +13521,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           {addFriendsTab === 'username' && (
             <div>
               <div style={{ position: 'relative', marginBottom: '12px' }}>
-                <SearchInputLocal type="text" initialValue={addFriendsSearch} onCommit={handleAddFriendsSearch} placeholder="Search by name..." autoComplete="off"
+                <SearchInputLocal aria-label="Search by name" type="text" initialValue={addFriendsSearch} onCommit={handleAddFriendsSearch} placeholder="Search by name..." autoComplete="off"
                   style={{ width: '100%', padding: '12px 12px 12px 38px', borderRadius: '14px', border: `1.5px solid ${addFriendsSearch ? colors.navy : colors.borderDefault}`, fontSize: '14px', outline: 'none', boxSizing: 'border-box', backgroundColor: 'var(--bg-card-solid)', color: 'var(--text-primary)', fontWeight: '500', transition: 'opacity 0.2s ease' }}
                 />
                 <span style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)' }}>{Icons.search(addFriendsSearch ? colors.navy : colors.textTertiary, 16)}</span>
-                {addFriendsSearch && <button onClick={() => { setAddFriendsSearch(''); setAddFriendsResults([]); }} style={{ position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', padding: '4px' }}>{Icons.x(colors.textTertiary, 14)}</button>}
+                {addFriendsSearch && <button aria-label="Close" className="hit44" onClick={() => { setAddFriendsSearch(''); setAddFriendsResults([]); }} style={{ position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', padding: '4px' }}>{Icons.x(colors.textTertiary, 14)}</button>}
               </div>
 
               {addFriendsSearching && (
@@ -13376,9 +13555,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                       ) : status === 'pending' ? (
                         <span style={{ padding: '6px 14px', borderRadius: '20px', backgroundColor: 'var(--pill-bg)', color: 'var(--text-secondary)', fontSize: '12px', fontWeight: '700' }}>Pending</span>
                       ) : (
-                        <button className="glass-btn glass-navy" onClick={(e) => { confirmClick(e); handleSendFriendRequest(user); }} style={{ padding: '8px 16px', borderRadius: '20px', border: 'none', background: colors.navyBg, color: 'white', fontSize: '12px', fontWeight: '700', cursor: 'pointer', position: 'relative', overflow: 'hidden' }}>Add</button>
+                        <button className="hit44 glass-btn glass-navy" onClick={(e) => { confirmClick(e); handleSendFriendRequest(user); }} style={{ padding: '8px 16px', borderRadius: '20px', border: 'none', background: colors.navyBg, color: 'white', fontSize: '12px', fontWeight: '700', cursor: 'pointer', position: 'relative', overflow: 'hidden' }}>Add</button>
                       )}
-                      <button className="glass-btn glass-secondary" onClick={() => { setCurrentScreen('main'); startNewDmWithUser(user); }} style={{ padding: '8px 12px', borderRadius: '20px', border: `1.5px solid ${colors.creamDark}`, backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontSize: '12px', fontWeight: '600', cursor: 'pointer' }}>{Icons.messageSquare(colors.navy, 14)}</button>
+                      <button aria-label="Message" className="hit44 glass-btn glass-secondary" onClick={() => { setCurrentScreen('main'); startNewDmWithUser(user); }} style={{ padding: '8px 12px', borderRadius: '20px', border: `1.5px solid ${colors.creamDark}`, backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontSize: '12px', fontWeight: '600', cursor: 'pointer' }}>{Icons.messageSquare(colors.navy, 14)}</button>
                     </div>
                   </div>
                 );
@@ -13405,7 +13584,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 </div>
               ) : (
                 <>
-                  <h3 style={{ fontSize: '14px', fontWeight: '800', color: colors.navy, margin: '0 0 10px', display: 'flex', alignItems: 'center', gap: '6px' }}>{Icons.zap(colors.amber, 16)} Quick Add</h3>
+                  <h2 style={{ fontSize: '14px', fontWeight: '800', color: colors.navy, margin: '0 0 10px', display: 'flex', alignItems: 'center', gap: '6px' }}>{Icons.zap(colors.amber, 16)} Quick Add</h2>
                   {friendSuggestions.map(user => {
                     const status = friendStatuses[user.id] || 'none';
                     return (
@@ -13415,14 +13594,14 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                         </div>
                         <div style={{ flex: 1, minWidth: 0 }}>
                           <p style={{ fontWeight: '700', fontSize: '14px', color: colors.navy, margin: 0 }}>{user.name}</p>
-                          <p style={{ fontSize: '11px', color: 'var(--text-secondary)', margin: '2px 0 0' }}>{user.mutual_count} mutual friend{parseInt(user.mutual_count) !== 1 ? 's' : ''}</p>
+                          <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: '2px 0 0' }}>{user.mutual_count} mutual friend{parseInt(user.mutual_count) !== 1 ? 's' : ''}</p>
                         </div>
                         {status === 'accepted' ? (
                           <span style={{ padding: '6px 14px', borderRadius: '20px', backgroundColor: 'var(--accent-green-bg)', color: 'var(--accent-green-text)', fontSize: '12px', fontWeight: '700' }}>Friends</span>
                         ) : status === 'pending' ? (
                           <span style={{ padding: '6px 14px', borderRadius: '20px', backgroundColor: 'var(--pill-bg)', color: 'var(--text-secondary)', fontSize: '12px', fontWeight: '700' }}>Pending</span>
                         ) : (
-                          <button className="glass-btn glass-navy" onClick={(e) => { confirmClick(e); handleSendFriendRequest(user); }} style={{ padding: '8px 16px', borderRadius: '20px', border: 'none', background: colors.navyBg, color: 'white', fontSize: '12px', fontWeight: '700', cursor: 'pointer', position: 'relative', overflow: 'hidden' }}>Add</button>
+                          <button className="hit44 glass-btn glass-navy" onClick={(e) => { confirmClick(e); handleSendFriendRequest(user); }} style={{ padding: '8px 16px', borderRadius: '20px', border: 'none', background: colors.navyBg, color: 'white', fontSize: '12px', fontWeight: '700', cursor: 'pointer', position: 'relative', overflow: 'hidden' }}>Add</button>
                         )}
                       </div>
                     );
@@ -13437,8 +13616,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
             <div>
               {/* My QR Code */}
               <div style={{ textAlign: 'center', padding: '20px', backgroundColor: 'var(--bg-card-solid)', borderRadius: '20px', marginBottom: '16px', boxShadow: '0 2px 12px rgba(0,0,0,0.08)' }}>
-                <h3 style={{ fontSize: '16px', fontWeight: '800', color: colors.navy, margin: '0 0 4px' }}>My Flock Code</h3>
-                <p style={{ fontSize: '11px', color: 'var(--text-tertiary)', margin: '0 0 16px' }}>Friends can scan this to add you</p>
+                <h2 style={{ fontSize: '16px', fontWeight: '800', color: colors.navy, margin: '0 0 4px' }}>My Flock Code</h2>
+                <p style={{ fontSize: '12px', color: 'var(--text-tertiary)', margin: '0 0 16px' }}>Friends can scan this to add you</p>
                 <div style={{ display: 'inline-block', padding: '16px', backgroundColor: 'var(--bg-card-solid)', borderRadius: '16px', border: `3px solid ${colors.cream}` }}>
                   {myFriendCode ? (
                     <QRCodeSVG value={JSON.stringify({ type: 'flock_friend', code: myFriendCode })} size={180} level="H" bgColor="white" fgColor={colors.navy} />
@@ -13450,27 +13629,27 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 </div>
                 {myFriendCode && (
                   <div style={{ marginTop: '14px' }}>
-                    <p style={{ fontSize: '10px', color: 'var(--text-tertiary)', margin: '0 0 6px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Your Code</p>
-                    <button className="glass-btn glass-secondary" onClick={() => { navigator.clipboard?.writeText(myFriendCode); showToast('Code copied!'); }} style={{ padding: '8px 20px', borderRadius: '10px', border: `2px solid ${colors.cream}`, backgroundColor: 'var(--icon-bg)', color: colors.navy, fontSize: '16px', fontWeight: '800', cursor: 'pointer', letterSpacing: '2px', fontFamily: 'monospace' }}>{myFriendCode}</button>
-                    <p style={{ fontSize: '10px', color: 'var(--text-tertiary)', margin: '6px 0 0' }}>Tap to copy</p>
+                    <p style={{ fontSize: '12px', color: 'var(--text-tertiary)', margin: '0 0 6px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Your Code</p>
+                    <button className="hit44 glass-btn glass-secondary" onClick={() => { navigator.clipboard?.writeText(myFriendCode); showToast('Code copied!'); }} style={{ padding: '8px 20px', borderRadius: '10px', border: `2px solid ${colors.cream}`, backgroundColor: 'var(--icon-bg)', color: colors.navy, fontSize: '16px', fontWeight: '800', cursor: 'pointer', letterSpacing: '2px', fontFamily: 'monospace' }}>{myFriendCode}</button>
+                    <p style={{ fontSize: '12px', color: 'var(--text-tertiary)', margin: '6px 0 0' }}>Tap to copy</p>
                   </div>
                 )}
               </div>
 
               {/* Scan button */}
-              <button className="glass-btn glass-navy" onClick={startQrScanner} style={{ width: '100%', padding: '14px', borderRadius: '14px', border: 'none', background: colors.navyBg, color: 'white', fontSize: '15px', fontWeight: '700', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', marginBottom: '16px', boxShadow: '0 4px 12px rgba(13,40,71,0.10)' }}>
+              <button className="hit44 glass-btn glass-navy" onClick={startQrScanner} style={{ width: '100%', padding: '14px', borderRadius: '14px', border: 'none', background: colors.navyBg, color: 'white', fontSize: '15px', fontWeight: '700', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', marginBottom: '16px', boxShadow: '0 4px 12px rgba(13,40,71,0.10)' }}>
                 {Icons.camera('white', 18)} Scan a Friend's Code
               </button>
 
               {/* Enter friend's code */}
               <div style={{ padding: '16px', backgroundColor: 'var(--bg-card-solid)', borderRadius: '16px', boxShadow: '0 2px 8px rgba(0,0,0,0.06)' }}>
                 <h4 style={{ fontSize: '14px', fontWeight: '700', color: colors.navy, margin: '0 0 4px' }}>Or Enter Code Manually</h4>
-                <p style={{ fontSize: '11px', color: 'var(--text-tertiary)', margin: '0 0 10px' }}>Ask your friend for their Flock code</p>
+                <p style={{ fontSize: '12px', color: 'var(--text-tertiary)', margin: '0 0 10px' }}>Ask your friend for their Flock code</p>
                 <div style={{ display: 'flex', gap: '8px' }}>
-                  <input type="text" value={friendCodeInput} onChange={(e) => setFriendCodeInput(e.target.value.toUpperCase())} placeholder="FLOCK-XXXX" maxLength={15}
+                  <input aria-label="Friend code" type="text" value={friendCodeInput} onChange={(e) => setFriendCodeInput(e.target.value.toUpperCase())} placeholder="FLOCK-XXXX" maxLength={15}
                     style={{ flex: 1, padding: '12px', borderRadius: '12px', border: `1.5px solid ${friendCodeInput ? colors.navy : colors.borderDefault}`, fontSize: '15px', fontWeight: '600', fontFamily: 'monospace', letterSpacing: '1px', outline: 'none', boxSizing: 'border-box', textAlign: 'center' }}
                   />
-                  <button className="glass-btn glass-navy" onClick={(e) => { if (!friendCodeLoading) { confirmClick(e); handleAddByCode(); } }} disabled={friendCodeLoading || !friendCodeInput.trim()}
+                  <button className="hit44 glass-btn glass-navy" onClick={(e) => { if (!friendCodeLoading) { confirmClick(e); handleAddByCode(); } }} disabled={friendCodeLoading || !friendCodeInput.trim()}
                     style={{ padding: '12px 20px', borderRadius: '12px', border: 'none', background: friendCodeInput.trim() ? colors.navyBg : 'var(--pill-bg)', color: friendCodeInput.trim() ? 'white' : 'var(--text-tertiary)', fontSize: '14px', fontWeight: '700', cursor: friendCodeInput.trim() ? 'pointer' : 'default', position: 'relative', overflow: 'hidden', opacity: friendCodeLoading ? 0.7 : 1 }}>
                     {friendCodeLoading ? '...' : 'Add'}
                   </button>
@@ -13480,9 +13659,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
               {/* QR Scanner Modal */}
               {showQrScanner && (
                 <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.95)', zIndex: 1000, display: 'flex', flexDirection: 'column' }}>
+            <DialogBehavior onClose={() => stopQrScanner()} label="Scan Flock code" />
                   {/* Fixed overlay covers the Dynamic Island: pad the header by the top inset. */}
                   <div style={{ padding: 'calc(16px + var(--safe-top)) 16px 16px', display: 'flex', alignItems: 'center', gap: '12px', flexShrink: 0 }}>
-                    <button onClick={stopQrScanner} style={{ width: '36px', height: '36px', borderRadius: '18px', border: 'none', backgroundColor: 'rgba(255,255,255,0.15)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.x('white', 18)}</button>
+                    <button aria-label="Close" className="hit44" onClick={stopQrScanner} style={{ width: '36px', height: '36px', borderRadius: '18px', border: 'none', backgroundColor: 'rgba(255,255,255,0.15)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.x('white', 18)}</button>
                     <h3 style={{ fontSize: '16px', fontWeight: '800', color: 'white', margin: 0 }}>Scan Flock Code</h3>
                   </div>
                   <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '20px' }}>
@@ -13504,7 +13684,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
             <div>
               {contactsUsers.length > 0 ? (
                 <>
-                  <h3 style={{ fontSize: '14px', fontWeight: '800', color: colors.navy, margin: '0 0 10px' }}>Contacts on Flock</h3>
+                  <h2 style={{ fontSize: '14px', fontWeight: '800', color: colors.navy, margin: '0 0 10px' }}>Contacts on Flock</h2>
                   {contactsUsers.map(user => {
                     const status = friendStatuses[user.id] || user.friendship_status || 'none';
                     return (
@@ -13514,19 +13694,19 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                         </div>
                         <div style={{ flex: 1, minWidth: 0 }}>
                           <p style={{ fontWeight: '700', fontSize: '14px', color: colors.navy, margin: 0 }}>{user.name}</p>
-                          <p style={{ fontSize: '11px', color: 'var(--text-secondary)', margin: '2px 0 0' }}>From your contacts</p>
+                          <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: '2px 0 0' }}>From your contacts</p>
                         </div>
                         {status === 'accepted' ? (
                           <span style={{ padding: '6px 14px', borderRadius: '20px', backgroundColor: 'var(--accent-green-bg)', color: 'var(--accent-green-text)', fontSize: '12px', fontWeight: '700' }}>Friends</span>
                         ) : status === 'pending' ? (
                           <span style={{ padding: '6px 14px', borderRadius: '20px', backgroundColor: 'var(--pill-bg)', color: 'var(--text-secondary)', fontSize: '12px', fontWeight: '700' }}>Pending</span>
                         ) : (
-                          <button className="glass-btn glass-navy" onClick={(e) => { confirmClick(e); handleSendFriendRequest(user); }} style={{ padding: '8px 16px', borderRadius: '20px', border: 'none', background: colors.navyBg, color: 'white', fontSize: '12px', fontWeight: '700', cursor: 'pointer', position: 'relative', overflow: 'hidden' }}>Add</button>
+                          <button className="hit44 glass-btn glass-navy" onClick={(e) => { confirmClick(e); handleSendFriendRequest(user); }} style={{ padding: '8px 16px', borderRadius: '20px', border: 'none', background: colors.navyBg, color: 'white', fontSize: '12px', fontWeight: '700', cursor: 'pointer', position: 'relative', overflow: 'hidden' }}>Add</button>
                         )}
                       </div>
                     );
                   })}
-                  <button className="glass-btn glass-secondary" onClick={handleSyncContacts} style={{ width: '100%', padding: '12px', borderRadius: '12px', border: `1.5px solid ${colors.creamDark}`, backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontSize: '13px', fontWeight: '600', cursor: 'pointer', marginTop: '8px' }}>Refresh Contacts</button>
+                  <button className="hit44 glass-btn glass-secondary" onClick={handleSyncContacts} style={{ width: '100%', padding: '12px', borderRadius: '12px', border: `1.5px solid ${colors.creamDark}`, backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontSize: '13px', fontWeight: '600', cursor: 'pointer', marginTop: '8px' }}>Refresh Contacts</button>
                 </>
               ) : (
                 <div style={{ textAlign: 'center', padding: '40px 16px' }}>
@@ -13538,7 +13718,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                       : 'Contact sync is only available on mobile browsers (Chrome Android)'}
                   </p>
                   {contactsSupported && (
-                    <button className="glass-btn glass-navy" onClick={(e) => { confirmClick(e); handleSyncContacts(); }} disabled={contactsLoading}
+                    <button className="hit44 glass-btn glass-navy" onClick={(e) => { confirmClick(e); handleSyncContacts(); }} disabled={contactsLoading}
                       style={{ padding: '14px 28px', borderRadius: '14px', border: 'none', background: colors.navyBg, color: 'white', fontSize: '15px', fontWeight: '700', cursor: 'pointer', position: 'relative', overflow: 'hidden', opacity: contactsLoading ? 0.7 : 1 }}>
                       {contactsLoading ? 'Searching...' : 'Sync Contacts'}
                     </button>
@@ -13546,7 +13726,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                   {!contactsSupported && (
                     <div style={{ padding: '12px', borderRadius: '12px', backgroundColor: 'var(--accent-amber-bg)', border: '1px solid #fde68a' }}>
                       <p style={{ fontSize: '12px', color: '#92400e', margin: 0, fontWeight: '500' }}>Share your Flock Code with friends instead!</p>
-                      <button className="glass-btn glass-navy" onClick={() => setAddFriendsTab('qr')} style={{ marginTop: '8px', padding: '8px 16px', borderRadius: '10px', border: 'none', backgroundColor: colors.navyBg, color: 'white', fontSize: '12px', fontWeight: '600', cursor: 'pointer' }}>Go to QR Code</button>
+                      <button className="hit44 glass-btn glass-navy" onClick={() => setAddFriendsTab('qr')} style={{ marginTop: '8px', padding: '8px 16px', borderRadius: '10px', border: 'none', backgroundColor: colors.navyBg, color: 'white', fontSize: '12px', fontWeight: '600', cursor: 'pointer' }}>Go to QR Code</button>
                     </div>
                   )}
                 </div>
@@ -13645,7 +13825,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           <div style={{ position: 'absolute', inset: 0, zIndex: isExploreVisible ? 1 : -1, visibility: isExploreVisible ? 'visible' : 'hidden', pointerEvents: isExploreVisible ? 'auto' : 'none' }}>
             {ExploreScreen()}
           </div>
-          {renderScreen()}
+          {/* Landmark: the app had no main/nav/header at all, so "skip to
+              content" and landmark navigation had nothing to land on. */}
+          <main style={{ display: 'contents' }}>{renderScreen()}</main>
 
           {/* UGC moderation sheet (report / block) — global so it works from chat + DMs */}
           <ModerationSheet
@@ -13657,6 +13839,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
               setDirectMessages(prev => prev.filter(d => String(d.userId) !== String(blockedId)));
               if (String(selectedDmId) === String(blockedId)) {
                 setSelectedDmId(null);
+                setCurrentScreen('main');
+              }
+            }}
+          />              setSelectedDmId(null);
                 setCurrentScreen('main');
               }
             }}
@@ -13704,7 +13890,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 <div style={{ backgroundColor: 'var(--bg-card-solid)', flexShrink: 0, boxShadow: '0 2px 12px rgba(0,0,0,0.06)' }}>
                   <div style={{ padding: '10px 12px', display: 'flex', alignItems: 'center', gap: '10px' }}>
                     <div style={{ flex: 1, position: 'relative' }}>
-                      <input
+                      <input aria-label="Search venues"
                         ref={searchResultsInputRef}
                         type="text"
                         value={venueQuery}
@@ -13716,19 +13902,19 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                       />
                       <span style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)' }}>{Icons.search(venueQuery ? colors.navy : colors.textTertiary, 16)}</span>
                       {venueQuery && (
-                        <button onClick={() => { setShowSearchResults(false); setVenueQuery(''); setVenueResults([]); setShowSearchDropdown(false); }} style={{ position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', padding: '2px' }}>{Icons.x(colors.textTertiary, 16)}</button>
+                        <button aria-label="Close" className="hit44" onClick={() => { setShowSearchResults(false); setVenueQuery(''); setVenueResults([]); setShowSearchDropdown(false); }} style={{ position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', padding: '2px' }}>{Icons.x(colors.textTertiary, 16)}</button>
                       )}
                     </div>
                   </div>
 
                   {/* Back to map + count + sort */}
                   <div style={{ padding: '0 12px 10px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                    <button onClick={() => setShowSearchResults(false)} style={{ display: 'flex', alignItems: 'center', gap: '4px', background: 'none', border: 'none', cursor: 'pointer', padding: '4px 0', flexShrink: 0 }}>
+                    <button className="hit44" onClick={() => setShowSearchResults(false)} style={{ display: 'flex', alignItems: 'center', gap: '4px', background: 'none', border: 'none', cursor: 'pointer', padding: '4px 0', flexShrink: 0 }}>
                       {Icons.arrowLeft(colors.navy, 14)}
                       <span style={{ fontSize: '12px', fontWeight: '600', color: colors.navy }}>Map</span>
                     </button>
                     <div style={{ width: '1px', height: '16px', backgroundColor: 'var(--pill-bg)', flexShrink: 0 }} />
-                    <span style={{ fontSize: '11px', fontWeight: '600', color: 'var(--text-tertiary)', flexShrink: 0 }}>{sorted.length} result{sorted.length !== 1 ? 's' : ''}</span>
+                    <span style={{ fontSize: '12px', fontWeight: '600', color: 'var(--text-tertiary)', flexShrink: 0 }}>{sorted.length} result{sorted.length !== 1 ? 's' : ''}</span>
                     <div style={{ flex: 1 }} />
                     <div style={{ display: 'flex', gap: '4px' }}>
                       {[
@@ -13736,7 +13922,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                         { id: 'recommended', label: 'Recommended' },
                         { id: 'distance', label: 'Closest' },
                       ].map(s => (
-                        <button key={s.id} onClick={() => setSearchResultsSort(s.id)} style={{ padding: '5px 10px', borderRadius: '8px', border: 'none', backgroundColor: searchResultsSort === s.id ? colors.navyBg : 'var(--bg-hover)', color: searchResultsSort === s.id ? 'white' : 'var(--text-secondary)', fontSize: '10px', fontWeight: '700', cursor: 'pointer', transition: 'background-color 0.15s ease' }}>
+                        <button className="hit44" key={s.id} onClick={() => setSearchResultsSort(s.id)} style={{ padding: '5px 10px', borderRadius: '8px', border: 'none', backgroundColor: searchResultsSort === s.id ? colors.navyBg : 'var(--bg-hover)', color: searchResultsSort === s.id ? 'white' : 'var(--text-secondary)', fontSize: '12px', fontWeight: '700', cursor: 'pointer', transition: 'background-color 0.15s ease' }}>
                           {s.label}
                         </button>
                       ))}
@@ -13795,7 +13981,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                     })();
 
                     return (
-                      <button
+                      <button className="hit44"
                         key={venue.place_id || venue.id}
                         onClick={() => {
                           setShowSearchResults(false);
@@ -13813,12 +13999,12 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                               {venue.trending && (
                                 <div style={{ position: 'absolute', top: '8px', left: '8px', padding: '3px 8px', borderRadius: '8px', backgroundColor: 'rgba(245,158,11,0.9)', display: 'flex', alignItems: 'center', gap: '3px' }}>
                                   {Icons.flame('#fff', 10)}
-                                  <span style={{ fontSize: '9px', fontWeight: '700', color: 'white' }}>Trending</span>
+                                  <span style={{ fontSize: '12px', fontWeight: '700', color: 'white' }}>Trending</span>
                                 </div>
                               )}
                               <div style={{ position: 'absolute', top: '8px', right: '8px', padding: '4px 8px', borderRadius: '10px', backgroundColor: `${crowdColor}18`, backdropFilter: 'blur(8px)', WebkitBackdropFilter: 'blur(8px)', display: 'flex', alignItems: 'center', gap: '4px' }}>
                                 <div style={{ width: '6px', height: '6px', borderRadius: '3px', backgroundColor: crowdColor }} />
-                                <span style={{ fontSize: '10px', fontWeight: '700', color: crowdColor }}>{crowdScore}%</span>
+                                <span style={{ fontSize: '12px', fontWeight: '700', color: crowdColor }}>{crowdScore}%</span>
                               </div>
                             </>
                           )}
@@ -13829,7 +14015,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                           <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '8px', marginBottom: '6px' }}>
                             <div style={{ flex: 1, minWidth: 0 }}>
                               <h3 style={{ fontSize: '15px', fontWeight: '800', color: colors.navy, margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{venue.name}</h3>
-                              <p style={{ fontSize: '11px', color: 'var(--text-tertiary)', margin: '2px 0 0', fontWeight: '500' }}>{venue.type}{venue.price ? ` • ${venue.price}` : ''}</p>
+                              <p style={{ fontSize: '12px', color: 'var(--text-tertiary)', margin: '2px 0 0', fontWeight: '500' }}>{venue.type}{venue.price ? ` • ${venue.price}` : ''}</p>
                             </div>
                             {venue.stars && (
                               <div style={{ display: 'flex', alignItems: 'center', gap: '3px', padding: '3px 8px', borderRadius: '8px', backgroundColor: '#FEF3C7', flexShrink: 0 }}>
@@ -13841,23 +14027,23 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
 
                           <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', marginBottom: '8px' }}>
                             {dist != null && (
-                              <span style={{ fontSize: '11px', fontWeight: '600', color: colors.steel, display: 'flex', alignItems: 'center', gap: '3px' }}>
+                              <span style={{ fontSize: '12px', fontWeight: '600', color: colors.steel, display: 'flex', alignItems: 'center', gap: '3px' }}>
                                 {Icons.mapPin(colors.steel, 11)} {dist < 1 ? `${Math.round(dist*1000)}m` : `${dist.toFixed(1)}km`}
                               </span>
                             )}
                             {!venue.photo_url && (
-                              <span style={{ fontSize: '10px', fontWeight: '600', color: crowdColor, backgroundColor: `${crowdColor}12`, padding: '2px 8px', borderRadius: '8px', display: 'flex', alignItems: 'center', gap: '3px' }}>
+                              <span style={{ fontSize: '12px', fontWeight: '600', color: crowdColor, backgroundColor: `${crowdColor}12`, padding: '2px 8px', borderRadius: '8px', display: 'flex', alignItems: 'center', gap: '3px' }}>
                                 <div style={{ width: '5px', height: '5px', borderRadius: '3px', backgroundColor: crowdColor }} />
                                 {crowdLabel} {crowdScore}%
                               </span>
                             )}
-                            <span style={{ fontSize: '10px', fontWeight: '600', color: colors.navy, display: 'flex', alignItems: 'center', gap: '3px' }}>
+                            <span style={{ fontSize: '12px', fontWeight: '600', color: colors.navy, display: 'flex', alignItems: 'center', gap: '3px' }}>
                               {Icons.clock(colors.navy, 10)} {venue.crowd > 70 ? 'Very Busy' : venue.crowd > 40 ? 'Moderate' : 'Not Busy'}
                             </span>
                           </div>
 
                           {venue.addr && (
-                            <p style={{ fontSize: '11px', color: 'var(--text-tertiary)', margin: '0 0 8px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{venue.addr}</p>
+                            <p style={{ fontSize: '12px', color: 'var(--text-tertiary)', margin: '0 0 8px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{venue.addr}</p>
                           )}
 
                           <div style={{ display: 'flex', alignItems: 'flex-end', gap: '2px', height: '28px' }}>
@@ -13866,7 +14052,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                                 <div style={{ width: '100%', height: `${h * 0.28}px`, borderRadius: '1.5px', backgroundColor: h > 70 ? '#EF444440' : h > 40 ? '#F59E0B40' : '#22C55E40', transition: 'height 0.3s' }} />
                               </div>
                             ))}
-                            <span style={{ fontSize: '8px', color: 'var(--text-tertiary)', marginLeft: '4px', whiteSpace: 'nowrap', flexShrink: 0 }}>12h</span>
+                            <span style={{ fontSize: '12px', color: 'var(--text-tertiary)', marginLeft: '4px', whiteSpace: 'nowrap', flexShrink: 0 }}>12h</span>
                           </div>
                         </div>
                       </button>
@@ -13891,18 +14077,18 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
               <img src={eventDetail.photos?.[0] || eventDetail.image_url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} onError={(e) => { e.target.style.display = 'none'; }} />
             )}
             <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(transparent 30%, rgba(0,0,0,0.8) 100%)' }} />
-            <button onClick={() => setEventDetail(null)} style={{ position: 'absolute', top: 'calc(12px + var(--safe-top))', left: '12px', width: '36px', height: '36px', borderRadius: '18px', border: 'none', backgroundColor: 'rgba(0,0,0,0.5)', backdropFilter: 'blur(8px)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.arrowLeft('white', 18)}</button>
+            <button aria-label="Back" className="hit44" onClick={() => setEventDetail(null)} style={{ position: 'absolute', top: 'calc(12px + var(--safe-top))', left: '12px', width: '36px', height: '36px', borderRadius: '18px', border: 'none', backgroundColor: 'rgba(0,0,0,0.5)', backdropFilter: 'blur(8px)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.arrowLeft('white', 18)}</button>
             {eventDetail.status === 'onsale' && (
               <div style={{ position: 'absolute', top: 'calc(12px + var(--safe-top))', right: '12px', padding: '5px 12px', borderRadius: '10px', backgroundColor: '#22C55E' }}>
-                <span style={{ fontSize: '11px', fontWeight: '800', color: 'white' }}>On Sale</span>
+                <span style={{ fontSize: '12px', fontWeight: '800', color: 'white' }}>On Sale</span>
               </div>
             )}
             <div style={{ position: 'absolute', bottom: '14px', left: '14px', right: '14px' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '4px' }}>
                 {(() => { const cc = { concert: '#4a7ba7', sports: '#22C55E', arts: '#EC4899', comedy: '#F59E0B', festival: '#EF4444', film: '#3B82F6', other: 'white' }; return (
-                  <span style={{ fontSize: '10px', fontWeight: '800', color: cc[eventDetail.category] || 'white', textTransform: 'uppercase', letterSpacing: '1px' }}>{eventDetail.segment || eventDetail.category}</span>
+                  <span style={{ fontSize: '12px', fontWeight: '800', color: cc[eventDetail.category] || 'white', textTransform: 'uppercase', letterSpacing: '1px' }}>{eventDetail.segment || eventDetail.category}</span>
                 ); })()}
-                {eventDetail.genre && <span style={{ fontSize: '10px', color: 'rgba(255,255,255,0.7)' }}>{eventDetail.genre}{eventDetail.subgenre && eventDetail.subgenre !== eventDetail.genre ? ` / ${eventDetail.subgenre}` : ''}</span>}
+                {eventDetail.genre && <span style={{ fontSize: '12px', color: 'rgba(255,255,255,0.7)' }}>{eventDetail.genre}{eventDetail.subgenre && eventDetail.subgenre !== eventDetail.genre ? ` / ${eventDetail.subgenre}` : ''}</span>}
               </div>
               <h1 style={{ margin: 0, fontSize: '22px', fontWeight: '900', color: 'white', lineHeight: '1.2' }}>{eventDetail.name}</h1>
             </div>
@@ -13933,7 +14119,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                   {Icons.dollar(colors.navy, 18)}
                   <div>
                     <p style={{ margin: 0, fontSize: '13px', fontWeight: '700', color: colors.navy }}>${eventDetail.price_range.min}{eventDetail.price_range.max ? ` – $${eventDetail.price_range.max}` : '+'}</p>
-                    <p style={{ margin: '2px 0 0', fontSize: '11px', color: 'var(--text-tertiary)' }}>{eventDetail.price_range.currency}</p>
+                    <p style={{ margin: '2px 0 0', fontSize: '12px', color: 'var(--text-tertiary)' }}>{eventDetail.price_range.currency}</p>
                   </div>
                 </div>
               )}
@@ -13948,7 +14134,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                     <p style={{ margin: 0, fontSize: '14px', fontWeight: '700', color: colors.navy }}>{eventDetail.venue_details?.name || eventDetail.venue_name}</p>
                     <p style={{ margin: '3px 0 0', fontSize: '12px', color: 'var(--text-secondary)' }}>{eventDetail.venue_details ? [eventDetail.venue_details.address, eventDetail.venue_details.city, eventDetail.venue_details.state, eventDetail.venue_details.postal_code].filter(Boolean).join(', ') : eventDetail.venue_address}</p>
                     {eventDetail.venue_details?.upcoming_events > 0 && (
-                      <p style={{ margin: '4px 0 0', fontSize: '11px', color: 'var(--text-tertiary)', fontWeight: '600' }}>{eventDetail.venue_details.upcoming_events} upcoming events at this venue</p>
+                      <p style={{ margin: '4px 0 0', fontSize: '12px', color: 'var(--text-tertiary)', fontWeight: '600' }}>{eventDetail.venue_details.upcoming_events} upcoming events at this venue</p>
                     )}
                   </div>
                 </div>
@@ -13973,21 +14159,21 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
             {eventDetail.please_note && (
               <div style={{ marginBottom: '16px', padding: '12px', borderRadius: '12px', backgroundColor: '#FEF3C7', border: '1px solid #FDE68A' }}>
                 <p style={{ fontSize: '12px', fontWeight: '700', color: '#92400E', margin: '0 0 4px' }}>Please Note</p>
-                <p style={{ fontSize: '11px', color: '#78350F', lineHeight: '1.4', margin: 0 }}>{eventDetail.please_note}</p>
+                <p style={{ fontSize: '12px', color: '#78350F', lineHeight: '1.4', margin: 0 }}>{eventDetail.please_note}</p>
               </div>
             )}
 
 
             {/* Distance */}
             {eventDetail.distance_miles && (
-              <p style={{ fontSize: '11px', color: 'var(--text-tertiary)', fontWeight: '600', marginBottom: '16px' }}>{Icons.mapPin(colors.steel, 11)} {eventDetail.distance_miles.toFixed(1)} miles away</p>
+              <p style={{ fontSize: '12px', color: 'var(--text-tertiary)', fontWeight: '600', marginBottom: '16px' }}>{Icons.mapPin(colors.steel, 11)} {eventDetail.distance_miles.toFixed(1)} miles away</p>
             )}
           </div>
 
           {/* Bottom action bar. Sits on the physical screen edge (fixed overlay),
               so it carries the home-indicator inset. */}
           <div style={{ padding: '12px 16px calc(12px + var(--safe-bottom))', backgroundColor: 'var(--bg-card-solid)', borderTop: '1px solid var(--border-default)', display: 'flex', gap: '10px', flexShrink: 0 }}>
-            <button onClick={() => {
+            <button className="hit44" onClick={() => {
               setSelectedVenueForCreate({ name: eventDetail.venue_name || eventDetail.name, addr: eventDetail.venue_address, lat: eventDetail.location?.latitude, lng: eventDetail.location?.longitude, photo_url: eventDetail.image_url, event_name: eventDetail.name });
               setEventDetail(null);
               setShowEventsView(false);
@@ -13996,7 +14182,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
               {Icons.users('white', 16)} Start Flock
             </button>
             {eventDetail.url && (
-              <button onClick={() => window.open(eventDetail.url, '_blank')} style={{ padding: '12px 20px', borderRadius: '12px', border: `2px solid ${colors.navy}`, backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontWeight: '700', fontSize: '14px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}>
+              <button className="hit44" onClick={() => window.open(eventDetail.url, '_blank')} style={{ padding: '12px 20px', borderRadius: '12px', border: `2px solid ${colors.navy}`, backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontWeight: '700', fontSize: '14px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}>
                 Tickets {Icons.arrowRight(colors.navy, 14)}
               </button>
             )}
@@ -14013,13 +14199,13 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
               Dynamic Island and the shutter under the home indicator without
               these insets (SAFE-AREA CONTRACT in index.css). */}
           <div style={{ padding: 'calc(12px + var(--safe-top)) 16px 12px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', position: 'absolute', top: 0, left: 0, right: 0, zIndex: 2 }}>
-            <button onClick={closeCameraViewfinder} style={{ width: '40px', height: '40px', borderRadius: '20px', border: 'none', backgroundColor: 'rgba(0,0,0,0.5)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.x('white', 20)}</button>
+            <button aria-label="Close" className="hit44" onClick={closeCameraViewfinder} style={{ width: '40px', height: '40px', borderRadius: '20px', border: 'none', backgroundColor: 'rgba(0,0,0,0.5)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.x('white', 20)}</button>
             <span style={{ fontSize: '15px', fontWeight: '700', color: 'white' }}>Take Photo</span>
             <div style={{ width: '40px' }} />
           </div>
           <video ref={cameraVideoRef} autoPlay playsInline muted style={{ flex: 1, objectFit: 'cover', width: '100%' }} />
           <div style={{ padding: '24px 0 calc(36px + var(--safe-bottom))', display: 'flex', justifyContent: 'center', backgroundColor: 'rgba(0,0,0,0.6)' }}>
-            <button onClick={capturePhoto} style={{ width: '72px', height: '72px', borderRadius: '36px', border: '4px solid white', backgroundColor: 'rgba(255,255,255,0.3)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'opacity 0.15s ease' }}>
+            <button className="hit44" onClick={capturePhoto} style={{ width: '72px', height: '72px', borderRadius: '36px', border: '4px solid white', backgroundColor: 'rgba(255,255,255,0.3)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'opacity 0.15s ease' }}>
               <div style={{ width: '56px', height: '56px', borderRadius: '28px', backgroundColor: 'var(--bg-card-solid)' }} />
             </button>
           </div>
@@ -14033,7 +14219,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
             <h3 style={{ fontSize: '16px', fontWeight: '800', color: colors.navy, margin: '0 0 4px' }}>Pay {paymentOptions.payTo}</h3>
             <p style={{ fontSize: '13px', color: 'var(--text-secondary)', margin: '0 0 16px' }}>${paymentOptions.amount.toFixed(2)} · {paymentOptions.note}</p>
             {paymentOptions.methods.map(m => (
-              <button key={m.method} onClick={() => {
+              <button className="hit44" key={m.method} onClick={() => {
                 // Opening the payment app proves nothing about payment —
                 // same as the single-method path, the user confirms with
                 // "Mark as paid" afterward. Auto-settling here recorded
@@ -14049,11 +14235,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 </span>
                 <div>
                   <div style={{ fontWeight: '700', fontSize: '14px', color: colors.navy }}>{m.label}</div>
-                  <div style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>{m.method === 'zelle' ? m.handle : `Pay ${m.handle}`}</div>
+                  <div style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>{m.method === 'zelle' ? m.handle : `Pay ${m.handle}`}</div>
                 </div>
               </button>
             ))}
-            <button onClick={() => setShowPaymentPicker(false)} style={{ width: '100%', padding: '12px', border: 'none', backgroundColor: 'transparent', color: 'var(--text-secondary)', fontSize: '13px', fontWeight: '600', cursor: 'pointer', marginTop: '4px' }}>Cancel</button>
+            <button className="hit44" onClick={() => setShowPaymentPicker(false)} style={{ width: '100%', padding: '12px', border: 'none', backgroundColor: 'transparent', color: 'var(--text-secondary)', fontSize: '13px', fontWeight: '600', cursor: 'pointer', marginTop: '4px' }}>Cancel</button>
           </div>
         </div>
       )}
@@ -14085,8 +14271,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                   <img src={venueDetailModal.photos[venueDetailPhotoIdx] || venueDetailModal.photos[0]} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} onError={(e) => { e.target.src = ''; e.target.parentElement.style.background = `linear-gradient(135deg, #1e293b, #1a3a5c)`; e.target.style.display = 'none'; }} />
                   {venueDetailModal.photos.length > 1 && (
                     <>
-                      <button onClick={(e) => { e.stopPropagation(); setVenueDetailPhotoIdx(i => i > 0 ? i - 1 : venueDetailModal.photos.length - 1); }} style={{ position: 'absolute', left: '8px', top: '50%', transform: 'translateY(-50%)', width: '32px', height: '32px', borderRadius: '16px', backgroundColor: 'rgba(0,0,0,0.5)', border: 'none', color: 'white', cursor: 'pointer', fontSize: '16px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>‹</button>
-                      <button onClick={(e) => { e.stopPropagation(); setVenueDetailPhotoIdx(i => i < venueDetailModal.photos.length - 1 ? i + 1 : 0); }} style={{ position: 'absolute', right: '8px', top: '50%', transform: 'translateY(-50%)', width: '32px', height: '32px', borderRadius: '16px', backgroundColor: 'rgba(0,0,0,0.5)', border: 'none', color: 'white', cursor: 'pointer', fontSize: '16px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>›</button>
+                      <button aria-label="Previous" className="hit44" onClick={(e) => { e.stopPropagation(); setVenueDetailPhotoIdx(i => i > 0 ? i - 1 : venueDetailModal.photos.length - 1); }} style={{ position: 'absolute', left: '8px', top: '50%', transform: 'translateY(-50%)', width: '32px', height: '32px', borderRadius: '16px', backgroundColor: 'rgba(0,0,0,0.5)', border: 'none', color: 'white', cursor: 'pointer', fontSize: '16px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>‹</button>
+                      <button aria-label="Next" className="hit44" onClick={(e) => { e.stopPropagation(); setVenueDetailPhotoIdx(i => i < venueDetailModal.photos.length - 1 ? i + 1 : 0); }} style={{ position: 'absolute', right: '8px', top: '50%', transform: 'translateY(-50%)', width: '32px', height: '32px', borderRadius: '16px', backgroundColor: 'rgba(0,0,0,0.5)', border: 'none', color: 'white', cursor: 'pointer', fontSize: '16px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>›</button>
                       <div style={{ position: 'absolute', bottom: '10px', left: '50%', transform: 'translateX(-50%)', display: 'flex', gap: '5px' }}>
                         {venueDetailModal.photos.map((_, i) => (
                           <div key={i} style={{ width: '7px', height: '7px', borderRadius: '50%', backgroundColor: i === venueDetailPhotoIdx ? 'white' : 'rgba(255,255,255,0.4)', transition: 'background-color 0.2s' }} />
@@ -14103,7 +14289,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
               {/* Overlay gradient */}
               <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: '80px', background: 'linear-gradient(transparent, rgba(0,0,0,0.7))' }} />
               {/* Close button */}
-              <button onClick={closeVenueDetail} style={{ position: 'absolute', top: '12px', right: '12px', width: '34px', height: '34px', borderRadius: '17px', backgroundColor: 'rgba(0,0,0,0.5)', border: 'none', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', backdropFilter: 'blur(10px)' }}>{Icons.x('white', 18)}</button>
+              <button aria-label="Close" className="hit44" onClick={closeVenueDetail} style={{ position: 'absolute', top: '12px', right: '12px', width: '34px', height: '34px', borderRadius: '17px', backgroundColor: 'rgba(0,0,0,0.5)', border: 'none', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', backdropFilter: 'blur(10px)' }}>{Icons.x('white', 18)}</button>
               {/* Name overlay */}
               <div style={{ position: 'absolute', bottom: '12px', left: '14px', right: '14px' }}>
                 <h2 style={{ color: 'white', fontSize: '20px', fontWeight: '900', margin: 0, textShadow: '0 2px 8px rgba(0,0,0,0.5)' }}>{venueDetailModal.name}</h2>
@@ -14128,19 +14314,19 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                           {Icons.starFilled('#F59E0B', 16)}
                           <span style={{ fontSize: '18px', fontWeight: '900', color: colors.navy }}>{venueDetailModal.rating}</span>
                         </div>
-                        <p style={{ fontSize: '10px', color: 'var(--text-secondary)', margin: 0 }}>{venueDetailModal.user_ratings_total ? `${venueDetailModal.user_ratings_total} reviews` : 'Rating'}</p>
+                        <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: 0 }}>{venueDetailModal.user_ratings_total ? `${venueDetailModal.user_ratings_total} reviews` : 'Rating'}</p>
                       </div>
                     )}
                     {venueDetailModal.price_level != null && (
                       <div style={{ flex: 1, backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '10px', textAlign: 'center', border: '1px solid var(--border-subtle)' }}>
                         <p style={{ fontSize: '18px', fontWeight: '900', color: colors.navy, margin: '0 0 2px' }}>{'$'.repeat(venueDetailModal.price_level || 1)}</p>
-                        <p style={{ fontSize: '10px', color: 'var(--text-secondary)', margin: 0 }}>Price</p>
+                        <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: 0 }}>Price</p>
                       </div>
                     )}
                     {venueDetailModal.opening_hours && (
                       <div style={{ flex: 1, backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '10px', textAlign: 'center', border: '1px solid var(--border-subtle)' }}>
                         <div style={{ marginBottom: '2px' }}>{Icons.clock(venueDetailModal.opening_hours.openNow ? colors.steel : colors.red, 18)}</div>
-                        <p style={{ fontSize: '10px', color: venueDetailModal.opening_hours.openNow ? colors.steel : colors.red, fontWeight: '600', margin: 0 }}>{venueDetailModal.opening_hours.openNow ? 'Open Now' : 'Closed'}</p>
+                        <p style={{ fontSize: '12px', color: venueDetailModal.opening_hours.openNow ? colors.steel : colors.red, fontWeight: '600', margin: 0 }}>{venueDetailModal.opening_hours.openNow ? 'Open Now' : 'Closed'}</p>
                       </div>
                     )}
                   </div>
@@ -14152,7 +14338,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                       {venueDetailModal.opening_hours.weekdayDescriptions.map((day, i) => {
                         const today = new Date().getDay();
                         const isToday = i === (today === 0 ? 6 : today - 1);
-                        return <p key={i} style={{ fontSize: '11px', color: isToday ? colors.navy : colors.textSecondary, fontWeight: isToday ? '700' : '400', margin: '3px 0', padding: isToday ? '3px 6px' : '0', backgroundColor: isToday ? `${colors.navy}10` : 'transparent', borderRadius: '6px' }}>{day}</p>;
+                        return <p key={i} style={{ fontSize: '12px', color: isToday ? colors.navy : colors.textSecondary, fontWeight: isToday ? '700' : '400', margin: '3px 0', padding: isToday ? '3px 6px' : '0', backgroundColor: isToday ? `${colors.navy}10` : 'transparent', borderRadius: '6px' }}>{day}</p>;
                       })}
                     </div>
                   )}
@@ -14179,10 +14365,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                   {/* View Menu */}
                   {!venueDetailModal.loading && (
                     <a href={venueDetailModal.menu_url || `https://www.google.com/search?q=${encodeURIComponent((venueDetailModal.name || '') + ' ' + (venueDetailModal.formatted_address || '') + ' menu')}`} target="_blank" rel="noopener noreferrer" style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '12px', backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', border: '1px solid var(--border-subtle)', textDecoration: 'none', marginBottom: '14px', transition: 'background-color 0.15s' }}>
-                      <svg width={18} height={18} viewBox="0 0 24 24" fill="none" stroke={colors.navy} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="4" y1="6" x2="20" y2="6"></line><line x1="4" y1="10" x2="20" y2="10"></line><line x1="4" y1="14" x2="16" y2="14"></line><line x1="4" y1="18" x2="12" y2="18"></line></svg>
+                      <svg aria-hidden="true" focusable="false" width={18} height={18} viewBox="0 0 24 24" fill="none" stroke={colors.navy} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="4" y1="6" x2="20" y2="6"></line><line x1="4" y1="10" x2="20" y2="10"></line><line x1="4" y1="14" x2="16" y2="14"></line><line x1="4" y1="18" x2="12" y2="18"></line></svg>
                       <div style={{ flex: 1 }}>
                         <span style={{ fontSize: '13px', fontWeight: '700', color: colors.navy }}>View Menu</span>
-                        <p style={{ fontSize: '10px', color: 'var(--text-secondary)', margin: '1px 0 0' }}>{venueDetailModal.menu_url ? 'Official menu' : 'Search online'}</p>
+                        <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: '1px 0 0' }}>{venueDetailModal.menu_url ? 'Official menu' : 'Search online'}</p>
                       </div>
                       {Icons.externalLink(colors.textTertiary, 14)}
                     </a>
@@ -14192,7 +14378,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                   {venueDetailModal.types && venueDetailModal.types.length > 0 && (
                     <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginBottom: '16px' }}>
                       {venueDetailModal.types.slice(0, 6).map((t, i) => (
-                        <span key={i} style={{ fontSize: '10px', padding: '4px 10px', borderRadius: '20px', backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontWeight: '600', border: '1px solid var(--border-subtle)' }}>{t.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())}</span>
+                        <span key={i} style={{ fontSize: '12px', padding: '4px 10px', borderRadius: '20px', backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontWeight: '600', border: '1px solid var(--border-subtle)' }}>{t.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())}</span>
                       ))}
                     </div>
                   )}
@@ -14207,8 +14393,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 {venueDetailPromos.map(p => (
                   <div key={p.id} style={{ padding: '10px', backgroundColor: 'var(--bg-tertiary)', borderRadius: '10px', marginBottom: '6px', border: `1px solid ${colors.steel}33` }}>
                     <p style={{ fontSize: '12px', fontWeight: '700', color: 'var(--text-primary)', margin: 0 }}>{p.title}</p>
-                    {p.description && <p style={{ fontSize: '11px', color: 'var(--text-secondary)', margin: '2px 0 0' }}>{p.description}</p>}
-                    <p style={{ fontSize: '10px', color: 'var(--text-tertiary)', margin: '2px 0 0' }}>{p.time_slot}{p.days ? ` · ${p.days}` : ''}</p>
+                    {p.description && <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: '2px 0 0' }}>{p.description}</p>}
+                    <p style={{ fontSize: '12px', color: 'var(--text-tertiary)', margin: '2px 0 0' }}>{p.time_slot}{p.days ? ` · ${p.days}` : ''}</p>
                   </div>
                 ))}
               </div>
@@ -14219,7 +14405,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
                 <h4 style={{ fontSize: '13px', fontWeight: '700', color: 'var(--text-primary)', margin: 0 }}>{Icons.star(colors.amber, 14)} Flock Reviews ({venueDetailReviews.length})</h4>
                 {!showReviewForm && (
-                  <button className="glass-btn glass-secondary" onClick={() => { setShowReviewForm(true); setReviewRating(0); setReviewText(''); }} style={{ padding: '4px 10px', borderRadius: '6px', border: `1px solid ${colors.navy}`, backgroundColor: 'transparent', color: colors.navy, fontSize: '10px', fontWeight: '600', cursor: 'pointer' }}>
+                  <button className="hit44 glass-btn glass-secondary" onClick={() => { setShowReviewForm(true); setReviewRating(0); setReviewText(''); }} style={{ padding: '4px 10px', borderRadius: '6px', border: `1px solid ${colors.navy}`, backgroundColor: 'transparent', color: colors.navy, fontSize: '12px', fontWeight: '600', cursor: 'pointer' }}>
                     Write Review
                   </button>
                 )}
@@ -14228,17 +14414,17 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
               {/* Review Form */}
               {showReviewForm && (
                 <div style={{ padding: '12px', backgroundColor: 'var(--bg-tertiary)', borderRadius: '10px', marginBottom: '8px' }}>
-                  <p style={{ fontSize: '11px', fontWeight: '600', color: 'var(--text-primary)', margin: '0 0 6px' }}>Your Rating</p>
+                  <p style={{ fontSize: '12px', fontWeight: '600', color: 'var(--text-primary)', margin: '0 0 6px' }}>Your Rating</p>
                   <div style={{ display: 'flex', gap: '4px', marginBottom: '8px' }}>
                     {[1, 2, 3, 4, 5].map(s => (
-                      <button key={s} onClick={() => setReviewRating(s)} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '2px' }}>
+                      <button aria-label="Rate" className="hit44" key={s} onClick={() => setReviewRating(s)} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '2px' }}>
                         {s <= reviewRating ? Icons.starFilled(colors.amber, 22) : Icons.star(colors.disabled, 22)}
                       </button>
                     ))}
                   </div>
-                  <SearchInputLocal as="textarea" initialValue={reviewText} onCommit={setReviewText} placeholder="How was your experience?" rows={3} style={{ width: '100%', padding: '8px 10px', borderRadius: '8px', border: '1px solid var(--border-subtle)', fontSize: '12px', backgroundColor: 'var(--bg-card-solid)', color: 'var(--text-primary)', resize: 'none', fontFamily: 'inherit', boxSizing: 'border-box' }} />
+                  <SearchInputLocal aria-label="Your review" as="textarea" initialValue={reviewText} onCommit={setReviewText} placeholder="How was your experience?" rows={3} style={{ width: '100%', padding: '8px 10px', borderRadius: '8px', border: '1px solid var(--border-subtle)', fontSize: '12px', backgroundColor: 'var(--bg-card-solid)', color: 'var(--text-primary)', resize: 'none', fontFamily: 'inherit', boxSizing: 'border-box' }} />
                   <div style={{ display: 'flex', gap: '6px', marginTop: '8px' }}>
-                    <button className="glass-btn glass-primary" disabled={!reviewRating || reviewSubmitting} onClick={async () => {
+                    <button className="hit44 glass-btn glass-primary" disabled={!reviewRating || reviewSubmitting} onClick={async () => {
                       setReviewSubmitting(true);
                       try {
                         await submitVenueReview(venueDetailModal.place_id, reviewRating, reviewText);
@@ -14250,7 +14436,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                     }} style={{ flex: 1, padding: '8px', borderRadius: '8px', border: 'none', backgroundColor: reviewRating ? colors.navy : colors.disabled, color: 'white', fontSize: '12px', fontWeight: '600', cursor: reviewRating ? 'pointer' : 'not-allowed' }}>
                       {reviewSubmitting ? 'Submitting...' : 'Submit Review'}
                     </button>
-                    <button className="glass-btn glass-secondary" onClick={() => setShowReviewForm(false)} style={{ padding: '8px 12px', borderRadius: '8px', border: '1px solid var(--border-subtle)', backgroundColor: 'var(--bg-card-solid)', color: 'var(--text-secondary)', fontSize: '12px', cursor: 'pointer' }}>Cancel</button>
+                    <button className="hit44 glass-btn glass-secondary" onClick={() => setShowReviewForm(false)} style={{ padding: '8px 12px', borderRadius: '8px', border: '1px solid var(--border-subtle)', backgroundColor: 'var(--bg-card-solid)', color: 'var(--text-secondary)', fontSize: '12px', cursor: 'pointer' }}>Cancel</button>
                   </div>
                 </div>
               )}
@@ -14260,28 +14446,28 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 <div key={r.id} style={{ padding: '10px', backgroundColor: 'var(--bg-tertiary)', borderRadius: '8px', marginBottom: '6px' }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                      <div style={{ width: '24px', height: '24px', borderRadius: '12px', backgroundColor: colors.navyBg, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', fontSize: '10px', fontWeight: '700' }}>
+                      <div style={{ width: '24px', height: '24px', borderRadius: '12px', backgroundColor: colors.navyBg, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', fontSize: '12px', fontWeight: '700' }}>
                         {(r.name || '?').charAt(0).toUpperCase()}
                       </div>
-                      <span style={{ fontSize: '11px', fontWeight: '600', color: 'var(--text-primary)' }}>{r.name || 'Anonymous'}</span>
+                      <span style={{ fontSize: '12px', fontWeight: '600', color: 'var(--text-primary)' }}>{r.name || 'Anonymous'}</span>
                     </div>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                       <div style={{ display: 'flex', gap: '1px' }}>
                         {[1, 2, 3, 4, 5].map(s => s <= r.rating ? Icons.starFilled(colors.amber, 10) : Icons.star(colors.disabled, 10))}
                       </div>
-                      <button onClick={() => setModerationTarget({ userId: r.user_id, userName: r.name || 'this reviewer', contentType: 'venue_review', contentId: r.id })} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '2px 4px', fontSize: '11px', color: 'var(--text-tertiary)' }} title="Report review">⚑</button>
+                      <button aria-label="Report review" className="hit44" onClick={() => setModerationTarget({ userId: r.user_id, userName: r.name || 'this reviewer', contentType: 'venue_review', contentId: r.id })} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '2px 4px', fontSize: '12px', color: 'var(--text-tertiary)' }} title="Report review">⚑</button>
                     </div>
                   </div>
-                  {r.text && <p style={{ fontSize: '11px', color: 'var(--text-secondary)', margin: '4px 0 0', lineHeight: '1.4' }}>{r.text}</p>}
+                  {r.text && <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: '4px 0 0', lineHeight: '1.4' }}>{r.text}</p>}
                   {r.venue_reply && (
                     <div style={{ marginTop: '6px', padding: '6px 8px', backgroundColor: 'var(--bg-card-solid)', borderRadius: '6px', borderLeft: `2px solid ${colors.steel}` }}>
-                      <p style={{ fontSize: '9px', fontWeight: '600', color: colors.steel, margin: '0 0 1px' }}>Owner Reply</p>
-                      <p style={{ fontSize: '10px', color: 'var(--text-secondary)', margin: 0 }}>{r.venue_reply}</p>
+                      <p style={{ fontSize: '12px', fontWeight: '600', color: colors.steel, margin: '0 0 1px' }}>Owner Reply</p>
+                      <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: 0 }}>{r.venue_reply}</p>
                     </div>
                   )}
                 </div>
               )) : !showReviewForm && (
-                <p style={{ fontSize: '11px', color: 'var(--text-tertiary)', textAlign: 'center', padding: '12px' }}>No reviews yet. Be the first!</p>
+                <p style={{ fontSize: '12px', color: 'var(--text-tertiary)', textAlign: 'center', padding: '12px' }}>No reviews yet. Be the first!</p>
               )}
             </div>
 
@@ -14296,7 +14482,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                   {Icons.mapPin(colors.navy, 16)} Get Directions
                 </a>
               ) : null}
-              <button onClick={(e) => {
+              <button aria-label="Back" onClick={(e) => {
                 confirmClick(e);
                 const photoUrl = (venueDetailModal.photos && venueDetailModal.photos[0]) || venueDetailModal.photo_url || null;
                 if (pickingVenueForDm) {
@@ -14323,7 +14509,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                   setVenueDetailModal(null);
                   setCurrentScreen('create');
                 }
-              }} className="glass-btn glass-primary" style={{ flex: 1, padding: '12px', borderRadius: '12px', border: 'none', background: colors.navyBg, color: 'white', fontSize: '13px', fontWeight: '700', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', boxShadow: '0 4px 12px rgba(13,40,71,0.10)', position: 'relative', overflow: 'hidden' }}>
+              }} className="hit44 glass-btn glass-primary" style={{ flex: 1, padding: '12px', borderRadius: '12px', border: 'none', background: colors.navyBg, color: 'white', fontSize: '13px', fontWeight: '700', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', boxShadow: '0 4px 12px rgba(13,40,71,0.10)', position: 'relative', overflow: 'hidden' }}>
                 {venueDetailReturnTo ? Icons.arrowLeft('white', 16) : Icons.plus('white', 16)} {pickingVenueForDm ? 'Pin to DM' : venueDetailReturnTo ? 'Back to Chat' : 'Add to Flock'}
               </button>
             </div>
@@ -14335,6 +14521,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
       {SOSModal()}
       {showAttendanceModal && (
         <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(8px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 60, padding: '16px' }}>
+            <DialogBehavior onClose={() => setShowAttendanceModal(false)} label="Who showed up" />
           <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '24px', padding: '24px', width: '100%', maxWidth: '340px', maxHeight: '80vh', overflow: 'auto' }}>
             <div style={{ textAlign: 'center', marginBottom: '16px' }}>
               <h2 style={{ fontSize: '18px', fontWeight: '900', color: 'var(--text-primary)', margin: '0 0 4px' }}>Who showed up?</h2>
@@ -14342,14 +14529,14 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '20px' }}>
               {attendanceMembers.map(m => (
-                <button key={m.id} onClick={() => setAttendanceChecks(prev => ({ ...prev, [m.id]: !prev[m.id] }))}
+                <button className="hit44" key={m.id} onClick={() => setAttendanceChecks(prev => ({ ...prev, [m.id]: !prev[m.id] }))}
                   style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '12px', borderRadius: '14px', border: `1.5px solid ${attendanceChecks[m.id] ? 'rgba(45,90,135,0.45)' : 'var(--border-default)'}`, background: attendanceChecks[m.id] ? 'rgba(45,90,135,0.08)' : 'var(--bg-card-solid)', cursor: 'pointer', width: '100%', textAlign: 'left' }}>
                   <div style={{ width: '36px', height: '36px', borderRadius: '18px', background: `linear-gradient(135deg, ${colors.steel}, ${colors.navy})`, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: '14px', fontWeight: '700', flexShrink: 0 }}>
                     {(m.name || '?')[0].toUpperCase()}
                   </div>
                   <span style={{ flex: 1, fontSize: '14px', fontWeight: '600', color: 'var(--text-primary)' }}>{m.name}</span>
                   <div style={{ width: '24px', height: '24px', borderRadius: '12px', border: `2px solid ${attendanceChecks[m.id] ? colors.steel : 'var(--border-default)'}`, background: attendanceChecks[m.id] ? colors.steel : 'transparent', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                    {attendanceChecks[m.id] && <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="#fff" strokeWidth="2.5" strokeLinecap="round"><path d="M3 8.5l3 3 7-7.5"/></svg>}
+                    {attendanceChecks[m.id] && <svg aria-hidden="true" focusable="false" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="#fff" strokeWidth="2.5" strokeLinecap="round"><path d="M3 8.5l3 3 7-7.5"/></svg>}
                   </div>
                 </button>
               ))}
@@ -14363,10 +14550,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                   getUserStats().then(d => setReliabilityScore(d.reliabilityScore || null)).catch(() => {});
                 } catch (err) { showToast('Failed to record', 'error'); }
                 finally { setAttendanceSubmitting(false); setShowAttendanceModal(false); }
-              }} className="glass-btn glass-primary" style={{ flex: 1, padding: '13px', borderRadius: '14px', border: 'none', background: `linear-gradient(135deg, ${colors.steel}, ${colors.navy})`, color: '#fff', fontSize: '14px', fontWeight: '700', cursor: 'pointer', opacity: attendanceSubmitting ? 0.6 : 1 }}>
+              }} className="hit44 glass-btn glass-primary" style={{ flex: 1, padding: '13px', borderRadius: '14px', border: 'none', background: `linear-gradient(135deg, ${colors.steel}, ${colors.navy})`, color: '#fff', fontSize: '14px', fontWeight: '700', cursor: 'pointer', opacity: attendanceSubmitting ? 0.6 : 1 }}>
                 {attendanceSubmitting ? 'Saving...' : 'Confirm'}
               </button>
-              <button className="glass-btn glass-secondary" onClick={() => setShowAttendanceModal(false)} style={{ padding: '13px 18px', borderRadius: '14px', border: '1.5px solid var(--border-default)', background: 'var(--bg-card-solid)', color: 'var(--text-secondary)', fontSize: '14px', fontWeight: '600', cursor: 'pointer' }}>Skip</button>
+              <button className="hit44 glass-btn glass-secondary" onClick={() => setShowAttendanceModal(false)} style={{ padding: '13px 18px', borderRadius: '14px', border: '1.5px solid var(--border-default)', background: 'var(--bg-card-solid)', color: 'var(--text-secondary)', fontSize: '14px', fontWeight: '600', cursor: 'pointer' }}>Skip</button>
             </div>
           </div>
         </div>

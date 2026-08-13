@@ -11,7 +11,11 @@
          values while it is present. Honouring those insets is the app's job:
          see the SAFE-AREA CONTRACT block at the top of src/index.css. Removing
          this tag to "fix" clipped content is the wrong fix. -->
-    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+    <!-- No maximum-scale / user-scalable=no. Blocking pinch zoom fails WCAG 1.4.4
+         (Resize Text) and is the only enlargement mechanism a low-vision user has
+         in an app whose type is hardcoded px. Do not re-add them: if pinch zoom
+         reveals a broken fixed element, fix the element. -->
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <meta name="theme-color" content="#0b1a2e" />
     <meta name="description" content="Vote on where to go, see how busy it is before you leave, and split the bill after. Flock turns the group chat argument into an actual plan. Free." />
 
