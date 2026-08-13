@@ -71,6 +71,10 @@ const LoginScreen = ({ onLoginSuccess, onSwitchToSignup, onSwitchToVenueLogin })
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  // Legacy accounts created before the age gate have no DOB on file. The
+  // backend answers 403 {needsDob: true}; we collect a date and retry.
+  const [needsDob, setNeedsDob] = useState(false);
+  const [dob, setDob] = useState('');
 
   // Custom-styled Google button (the rendered GIS button ignores dark theming
   // when it shows the personalized "Continue as ..." variant). Access token is
@@ -79,10 +83,15 @@ const LoginScreen = ({ onLoginSuccess, onSwitchToSignup, onSwitchToVenueLogin })
     onSuccess: async (tokenResponse) => {
       setLoading(true);
       try {
-        const data = await googleLoginWithToken(tokenResponse.access_token);
+        const data = await googleLoginWithToken(tokenResponse.access_token, needsDob && dob ? dob : undefined);
         onLoginSuccess(data.user);
       } catch (err) {
-        setError(err.message || 'Google sign-in failed');
+        if (err.data?.needsDob) {
+          setNeedsDob(true);
+          setError('Add your date of birth above, then tap Continue with Google again.');
+        } else {
+          setError(err.message || 'Google sign-in failed');
+        }
       } finally {
         setLoading(false);
       }
@@ -95,10 +104,15 @@ const LoginScreen = ({ onLoginSuccess, onSwitchToSignup, onSwitchToVenueLogin })
     setError('');
     setLoading(true);
     try {
-      const data = await login(email, password);
+      const data = await login(email, password, needsDob && dob ? dob : undefined);
       onLoginSuccess(data.user);
     } catch (err) {
-      setError(err.message);
+      if (err.data?.needsDob) {
+        setNeedsDob(true);
+        setError(needsDob && dob ? err.message : 'One more thing: add your date of birth to continue.');
+      } else {
+        setError(err.message);
+      }
     } finally {
       setLoading(false);
     }
@@ -172,6 +186,13 @@ const LoginScreen = ({ onLoginSuccess, onSwitchToSignup, onSwitchToVenueLogin })
                 </button>
               </div>
             </div>
+
+            {needsDob && (
+              <div style={{ marginBottom: '28px' }}>
+                <label style={{ display: 'block', fontSize: '12px', fontWeight: '600', color: 'rgba(148,163,184,0.7)', marginBottom: '8px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Date of birth</label>
+                <input type="date" value={dob} onChange={(e) => setDob(e.target.value)} required className="login-input" />
+              </div>
+            )}
 
             <button type="submit" disabled={loading} className="login-btn" style={{ opacity: loading ? 0.7 : 1, cursor: loading ? 'not-allowed' : 'pointer' }}>
               {loading ? 'Signing in...' : 'Sign In'}
