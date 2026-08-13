@@ -58,3 +58,4 @@ frontend/public/birdie/birdie-idle.mp4
 
 # python bytecode
 flock-sensor/__pycache__/
+frontend/public/birdie/flap-src.png
