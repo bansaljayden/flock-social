@@ -6,23 +6,8 @@ const { authenticate } = require('../middleware/auth');
 const router = express.Router();
 router.use(authenticate);
 
-// Auto-create table on boot
-(async () => {
-  try {
-    await pool.query(`
-      CREATE TABLE IF NOT EXISTS availability_pulses (
-        user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
-        status VARCHAR(10) NOT NULL CHECK (status IN ('down', 'maybe', 'not')),
-        note TEXT,
-        set_at TIMESTAMPTZ DEFAULT NOW(),
-        expires_at TIMESTAMPTZ NOT NULL
-      )
-    `);
-    await pool.query(`CREATE INDEX IF NOT EXISTS idx_availability_expires ON availability_pulses(expires_at)`);
-  } catch (err) {
-    console.error('Failed to ensure availability_pulses table:', err.message);
-  }
-})();
+// availability_pulses table lives in migrations/003 — route-owned DDL raced
+// the migration runner on fresh deployments (see REVIEW-ROUND5).
 
 // Default expiry: end of "tonight" — 4am next-day in user's local TZ.
 // Frontend sends `expires_at` so the server doesn't need to know the user's TZ.

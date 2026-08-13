@@ -15,20 +15,8 @@ const SALT_ROUNDS = 10;
 
 router.use(authenticate);
 
-// Auto-create user_settings table for cross-device preference sync
-(async () => {
-  try {
-    await pool.query(`
-      CREATE TABLE IF NOT EXISTS user_settings (
-        user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
-        settings JSONB NOT NULL DEFAULT '{}',
-        updated_at TIMESTAMPTZ DEFAULT NOW()
-      )
-    `);
-  } catch (err) {
-    console.error('Failed to ensure user_settings table:', err.message);
-  }
-})();
+// user_settings table lives in migrations/003 — route-owned DDL raced the
+// migration runner on fresh deployments (see REVIEW-ROUND5).
 
 // Magic bytes for image validation
 const IMAGE_SIGNATURES = {
@@ -383,6 +371,17 @@ router.post('/upload-image', (req, res) => {
 
       // Clean up temp file
       fs.unlink(req.file.path, () => {});
+
+      // Cap the STORED data URL, not just the raw upload. Avatars are stored
+      // inline in users.profile_image_url and repeated on every message-history
+      // row and socket send, so a multi-MB base64 avatar amplifies into
+      // hundreds of MB of transfer (REVIEW-ROUND5). 600KB keeps that bounded.
+      const MAX_AVATAR_DATA_URL_BYTES = 600 * 1024;
+      if (Buffer.byteLength(dataUrl) > MAX_AVATAR_DATA_URL_BYTES) {
+        return res.status(400).json({
+          error: 'That photo is too large to use as a profile picture. Please pick a smaller photo (under about 400 KB).',
+        });
+      }
 
       // Image moderation (A2b) — synchronous + FAIL-CLOSED. This is the only
       // upload endpoint, so screening here gates every user image before its
