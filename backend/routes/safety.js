@@ -32,12 +32,34 @@ async function sendAlertEmail(to, subject, htmlBody) {
 }
 
 // ── Test email endpoint ──
+// Round 8: account emails are unverified, so without a throttle this was a
+// relay for Flock-branded mail to any address an attacker set on their own
+// account. 1 test per 10 minutes, 3 per day, per user.
+const testEmailLog = new Map(); // userId -> { lastAt, dayCount, dayResetAt }
 router.get('/test-email', authenticate, async (req, res) => {
   if (!process.env.RESEND_API_KEY) {
     return res.json({ ok: false, error: 'RESEND_API_KEY not set' });
   }
   try {
+    const now = Date.now();
+    if (testEmailLog.size > 5000) {
+      for (const [k, v] of testEmailLog) { if (now > v.dayResetAt) testEmailLog.delete(k); }
+    }
+    let entry = testEmailLog.get(req.user.id);
+    if (!entry || now > entry.dayResetAt) {
+      entry = { lastAt: 0, dayCount: 0, dayResetAt: now + 24 * 60 * 60 * 1000 };
+      testEmailLog.set(req.user.id, entry);
+    }
+    if (now - entry.lastAt < 10 * 60 * 1000 || entry.dayCount >= 3) {
+      return res.status(429).json({ ok: false, error: 'Test email already sent. Try again later.' });
+    }
+    entry.lastAt = now;
+    entry.dayCount += 1;
+
     const user = await pool.query('SELECT name, email FROM users WHERE id = $1', [req.user.id]);
+    if (!user.rows[0]?.email || user.rows[0].email.endsWith('.invalid')) {
+      return res.json({ ok: false, error: 'No email address on file' });
+    }
     const result = await sendAlertEmail(
       user.rows[0].email,
       'Flock Safety — Test Email',

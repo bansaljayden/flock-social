@@ -140,23 +140,9 @@ function setCache(key, data) {
   }
 }
 
-// Per-user Places search budget: 30/hour fresh searches, 3000/day globally.
-const placesUserHits = new Map();
-let placesDayKey = new Date().toISOString().slice(0, 10);
-let placesDayCount = 0;
-function allowPlacesSearch(userId) {
-  const today = new Date().toISOString().slice(0, 10);
-  if (today !== placesDayKey) { placesDayKey = today; placesDayCount = 0; }
-  if (placesDayCount >= 3000) return false;
-  const now = Date.now();
-  const hits = (placesUserHits.get(userId) || []).filter((t) => now - t < 3600_000);
-  if (hits.length >= 30) return false;
-  hits.push(now);
-  placesUserHits.set(userId, hits);
-  if (placesUserHits.size > 5000) placesUserHits.clear();
-  placesDayCount++;
-  return true;
-}
+// Per-user Places budget: 30/hour fresh calls, 3000/day globally. Shared with
+// crowd.js so its Places fetches draw from the SAME pool (round 8).
+const { allowPlacesSearch } = require('../utils/placesBudget');
 
 // Build photo URL — proxied through our backend so the API key stays server-side
 function photoUrl(photoName, maxWidth = 400) {
@@ -289,6 +275,12 @@ router.get('/details',
       const detailCacheKey = `detail:${placeId}`;
       const cached = getCached(detailCacheKey);
       if (cached) return res.json(cached);
+
+      // Round 8: details is the same PAID Google surface as text search —
+      // rotating valid place ids bypassed the shared budget entirely.
+      if (!allowPlacesSearch(req.user.id)) {
+        return res.status(429).json({ error: 'Loading venues too fast. Give it a few seconds.' });
+      }
 
       const response = await fetch(`https://places.googleapis.com/v1/places/${placeId}`, {
         headers: {

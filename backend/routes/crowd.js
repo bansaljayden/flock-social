@@ -71,8 +71,13 @@ function setCache(key, data) {
     for (const [k, v] of crowdCache) {
       if (now - v.ts > CACHE_TTL) crowdCache.delete(k);
     }
+    // Fresh-but-oversized: evict oldest so unique-key spam can't grow it (round 8)
+    while (crowdCache.size > 200) crowdCache.delete(crowdCache.keys().next().value);
   }
 }
+
+// Paid-call budget shared with venueSearch (round 8: these fetches bypassed it)
+const { allowPlacesSearch } = require('../utils/placesBudget');
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -149,15 +154,24 @@ router.get('/:placeId',
 
       const placeId = req.params.placeId;
 
+      // Use client's local time if provided, else fall back to server time.
+      // Parse BEFORE building the cache key: raw query strings like '12a'/'12b'
+      // parseInt to the same prediction but minted distinct cache entries and
+      // Google calls (round 8).
+      const now = new Date();
+      let localHour = req.query.localHour != null ? parseInt(req.query.localHour, 10) : now.getHours();
+      let localDay = req.query.localDay != null ? parseInt(req.query.localDay, 10) : now.getDay();
+      if (!Number.isInteger(localHour) || localHour < 0 || localHour > 23) localHour = now.getHours();
+      if (!Number.isInteger(localDay) || localDay < 0 || localDay > 6) localDay = now.getDay();
+
       // Check cache (include local time in key so different hours aren't stale)
-      const cacheKey = `full:${placeId}:${req.query.localHour || ''}:${req.query.localDay || ''}`;
+      const cacheKey = `full:${placeId}:${localHour}:${localDay}`;
       const cached = getCached(cacheKey);
       if (cached) return res.json(await gateForecast(cached, req.user.id, { count: true }));
 
-      // Use client's local time if provided, else fall back to server time
-      const now = new Date();
-      const localHour = req.query.localHour != null ? parseInt(req.query.localHour, 10) : now.getHours();
-      const localDay = req.query.localDay != null ? parseInt(req.query.localDay, 10) : now.getDay();
+      if (!allowPlacesSearch(req.user.id)) {
+        return res.status(429).json({ error: 'Loading venues too fast. Give it a few seconds.' });
+      }
 
       // Fetch venue from Google Places
       const venue = await fetchVenueFromGoogle(placeId, localDay);
@@ -261,7 +275,24 @@ router.post('/batch',
         return res.status(400).json({ error: errors.array()[0].msg });
       }
 
-      const { venues, localHour, localDay } = req.body;
+      const { venues: rawVenues, localHour, localDay } = req.body;
+      // Round 8: items were passed to the predictor as arbitrary objects,
+      // pushing attacker-shaped keys into its caches. Keep only known fields
+      // with the right types; malformed items score as low-signal venues.
+      const venues = rawVenues.slice(0, 20).map((v) => ({
+        place_id: typeof v?.place_id === 'string' ? v.place_id.slice(0, 256) : null,
+        name: typeof v?.name === 'string' ? v.name.slice(0, 256) : '',
+        rating: Number.isFinite(v?.rating) ? v.rating : null,
+        user_ratings_total: Number.isFinite(v?.user_ratings_total) ? v.user_ratings_total : 0,
+        price_level: Number.isInteger(v?.price_level) ? v.price_level : null,
+        types: Array.isArray(v?.types) ? v.types.filter((t) => typeof t === 'string').slice(0, 10) : [],
+        location: (v?.location && Number.isFinite(v.location.latitude) && Number.isFinite(v.location.longitude))
+          ? { latitude: v.location.latitude, longitude: v.location.longitude }
+          : null,
+        isOpen: typeof v?.isOpen === 'boolean' ? v.isOpen : null,
+        openHour: Number.isInteger(v?.openHour) ? v.openHour : null,
+        closeHour: Number.isInteger(v?.closeHour) ? v.closeHour : null,
+      }));
       const now = new Date();
 
       // Use client's local time if provided
@@ -347,8 +378,15 @@ router.get('/:placeId/alternatives',
 
       // Use client's local time if provided, else fall back to server time
       const now = new Date();
-      const localHour = req.query.localHour != null ? parseInt(req.query.localHour, 10) : now.getHours();
-      const localDay = req.query.localDay != null ? parseInt(req.query.localDay, 10) : now.getDay();
+      let localHour = req.query.localHour != null ? parseInt(req.query.localHour, 10) : now.getHours();
+      let localDay = req.query.localDay != null ? parseInt(req.query.localDay, 10) : now.getDay();
+      if (!Number.isInteger(localHour) || localHour < 0 || localHour > 23) localHour = now.getHours();
+      if (!Number.isInteger(localDay) || localDay < 0 || localDay > 6) localDay = now.getDay();
+
+      // Two paid Google calls per request — budget them (round 8)
+      if (!allowPlacesSearch(req.user.id)) {
+        return res.status(429).json({ error: 'Loading venues too fast. Give it a few seconds.' });
+      }
 
       // Fetch target venue
       const target = await fetchVenueFromGoogle(placeId, localDay);
