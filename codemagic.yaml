@@ -50,6 +50,19 @@ workflows:
         script: npm run build
       - name: Capacitor sync iOS
         script: npx cap sync ios
+      - name: Write GoogleService-Info.plist (push notifications)
+        script: |
+          # The plist holds a Firebase client API key, so it lives in the
+          # flock_web env group (var GOOGLE_SERVICE_INFO_PLIST, base64 of the
+          # file) instead of git — zero-keys-in-repo policy. Skipping when the
+          # var is absent keeps builds green until it's configured; push simply
+          # stays off in that build.
+          if [ -n "${GOOGLE_SERVICE_INFO_PLIST:-}" ]; then
+            echo "$GOOGLE_SERVICE_INFO_PLIST" | base64 -d > ios/App/App/GoogleService-Info.plist
+            echo "GoogleService-Info.plist written"
+          else
+            echo "WARNING: GOOGLE_SERVICE_INFO_PLIST not set — building without push config"
+          fi
       - name: Set up code signing (reuse pinned cert + App Store profile)
         script: |
           keychain initialize
