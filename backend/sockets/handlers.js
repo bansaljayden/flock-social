@@ -1,11 +1,26 @@
 const pool = require('../config/database');
 const { stripHtml } = require('../utils/sanitize');
 const { moderateText, TEXT_REJECTED_MESSAGE } = require('../utils/moderation');
-const { isBlockedBetween, isBlockedBetweenCached } = require('../utils/blocks');
+const { isBlockedBetween, isBlockedBetweenCached, getInvisibleUserIds } = require('../utils/blocks');
 const { pushIfOfflineDebounced } = require('../services/pushHelper');
 
 // Track which users are in which rooms for presence
 const roomUsers = new Map(); // flockId -> Set of { socketId, userId, name }
+
+// Per-socket token buckets for mutating events (audit 2026-08-12): Express
+// rate limits stop at the handshake — after that a single connection could
+// flood the database and push infrastructure without any ceiling.
+const socketBuckets = new Map(); // socket.id -> Map(event -> {count, resetAt})
+function allowEvent(socket, event, limit, windowMs) {
+  let events = socketBuckets.get(socket.id);
+  if (!events) { events = new Map(); socketBuckets.set(socket.id, events); }
+  const now = Date.now();
+  let b = events.get(event);
+  if (!b || now >= b.resetAt) { b = { count: 0, resetAt: now + windowMs }; events.set(event, b); }
+  b.count++;
+  return b.count <= limit;
+}
+function clearBuckets(socketId) { socketBuckets.delete(socketId); }
 
 // Reusable membership check for socket handlers
 async function verifyMembership(flockId, userId) {
@@ -108,6 +123,10 @@ function registerHandlers(io, socket) {
 
   socket.on('send_message', async (data) => {
     try {
+      if (!allowEvent(socket, 'send_message', 20, 10_000)) {
+        socket.emit('error', { message: 'Slow down a moment.' });
+        return;
+      }
       const { flockId, message_type, venue_data, image_url } = data;
       const message_text = stripHtml(typeof data.message_text === 'string' ? data.message_text.trim() : '');
 
@@ -158,10 +177,10 @@ function registerHandlers(io, socket) {
       message.sender_image = user.profile_image_url || null;
       message.reactions = [];
 
-      // Broadcast to all members in the room (including sender)
-      io.to(`flock:${flockId}`).emit('new_message', message);
-
-      // Push notifications to offline flock members
+      // Fan out per-member instead of to the whole room, so mutual blocks are
+      // honored live (the room broadcast let blocked users inject messages
+      // into their blocker's open client — HTTP history filters them, sockets
+      // didn't). Sender always gets their own echo.
       try {
         const flockInfo = await pool.query('SELECT name FROM flocks WHERE id = $1', [flockId]);
         const flockName = flockInfo.rows[0]?.name || 'Flock';
@@ -169,16 +188,22 @@ function registerHandlers(io, socket) {
           "SELECT user_id FROM flock_members WHERE flock_id = $1 AND status = 'accepted' AND user_id != $2",
           [flockId, user.id]
         );
+        const invisible = new Set(await getInvisibleUserIds(user.id));
         const preview = (message_text || '').substring(0, 100);
+        socket.emit('new_message', message);
         for (const m of members.rows) {
+          if (invisible.has(m.user_id)) continue;
+          io.to(`user:${m.user_id}`).emit('new_message', message);
           pushIfOfflineDebounced(io, m.user_id,
             `${user.name} in ${flockName}`,
             preview,
             { type: 'flock_message', flockId: String(flockId) }
           );
         }
-      } catch (pushErr) {
-        console.error('Push notification error (flock msg):', pushErr.message);
+      } catch (fanoutErr) {
+        console.error('Message fan-out error (flock msg):', fanoutErr.message);
+        // Fallback: room broadcast beats a silently dropped message
+        io.to(`flock:${flockId}`).emit('new_message', message);
       }
     } catch (err) {
       console.error('send_message error:', err);
@@ -209,6 +234,7 @@ function registerHandlers(io, socket) {
 
   socket.on('vote_venue', async (data) => {
     try {
+      if (!allowEvent(socket, 'vote_venue', 30, 10_000)) return;
       const { flockId, venue_id } = data;
       const venue_name = stripHtml(typeof data.venue_name === 'string' ? data.venue_name.trim() : '');
 
@@ -367,6 +393,10 @@ function registerHandlers(io, socket) {
 
   socket.on('send_dm', async (data) => {
     try {
+      if (!allowEvent(socket, 'send_dm', 20, 10_000)) {
+        socket.emit('error', { message: 'Slow down a moment.' });
+        return;
+      }
       const { receiverId, message_type, venue_data, image_url, reply_to_id } = data;
       const text = stripHtml(typeof data.message_text === 'string' ? data.message_text.trim() : '');
       if (!receiverId || (!text && message_type !== 'image')) return;
@@ -437,14 +467,19 @@ function registerHandlers(io, socket) {
   });
 
   // DM reactions (real-time)
+  // DM reactions: the counterpart is DERIVED from the message row, never
+  // trusted from the client, and mutual blocks apply (audit 2026-08-12).
   socket.on('dm_react', async (data) => {
     try {
-      const { dmId, emoji, receiverId } = data;
-      if (!dmId || !emoji || !receiverId) return;
+      if (!allowEvent(socket, 'dm_react', 30, 10_000)) return;
+      const { dmId, emoji } = data;
+      if (!dmId || !emoji) return;
 
       const dm = await pool.query('SELECT sender_id, receiver_id FROM direct_messages WHERE id = $1', [dmId]);
       if (dm.rows.length === 0) return;
       if (dm.rows[0].sender_id !== user.id && dm.rows[0].receiver_id !== user.id) return;
+      const counterpart = dm.rows[0].sender_id === user.id ? dm.rows[0].receiver_id : dm.rows[0].sender_id;
+      if (await isBlockedBetween(user.id, counterpart)) return;
 
       await pool.query(
         `INSERT INTO dm_emoji_reactions (dm_id, user_id, emoji) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING`,
@@ -452,7 +487,7 @@ function registerHandlers(io, socket) {
       );
 
       const payload = { dmId, emoji, userId: user.id, userName: user.name };
-      socket.to(`user:${receiverId}`).emit('dm_reaction_added', payload);
+      socket.to(`user:${counterpart}`).emit('dm_reaction_added', payload);
       socket.emit('dm_reaction_added', payload);
     } catch (err) {
       console.error('dm_react error:', err);
@@ -461,8 +496,14 @@ function registerHandlers(io, socket) {
 
   socket.on('dm_remove_react', async (data) => {
     try {
-      const { dmId, emoji, receiverId } = data;
-      if (!dmId || !emoji || !receiverId) return;
+      if (!allowEvent(socket, 'dm_react', 30, 10_000)) return;
+      const { dmId, emoji } = data;
+      if (!dmId || !emoji) return;
+
+      const dm = await pool.query('SELECT sender_id, receiver_id FROM direct_messages WHERE id = $1', [dmId]);
+      if (dm.rows.length === 0) return;
+      if (dm.rows[0].sender_id !== user.id && dm.rows[0].receiver_id !== user.id) return;
+      const counterpart = dm.rows[0].sender_id === user.id ? dm.rows[0].receiver_id : dm.rows[0].sender_id;
 
       await pool.query(
         'DELETE FROM dm_emoji_reactions WHERE dm_id = $1 AND user_id = $2 AND emoji = $3',
@@ -470,7 +511,7 @@ function registerHandlers(io, socket) {
       );
 
       const payload = { dmId, emoji, userId: user.id };
-      socket.to(`user:${receiverId}`).emit('dm_reaction_removed', payload);
+      socket.to(`user:${counterpart}`).emit('dm_reaction_removed', payload);
       socket.emit('dm_reaction_removed', payload);
     } catch (err) {
       console.error('dm_remove_react error:', err);
@@ -480,6 +521,7 @@ function registerHandlers(io, socket) {
   // DM venue voting (real-time)
   socket.on('dm_vote_venue', async (data) => {
     try {
+      if (!allowEvent(socket, 'dm_vote_venue', 30, 10_000)) return;
       const { receiverId, venue_id } = data;
       const venue_name = stripHtml(typeof data.venue_name === 'string' ? data.venue_name.trim() : '');
       if (!receiverId || !venue_name) return;
@@ -524,6 +566,7 @@ function registerHandlers(io, socket) {
   // DM pin venue (real-time sync)
   socket.on('dm_pin_venue', async (data) => {
     try {
+      if (!allowEvent(socket, 'dm_pin_venue', 20, 10_000)) return;
       const { receiverId, venue_name, venue_address, venue_id, venue_rating, venue_photo_url } = data;
       if (!receiverId || !venue_name) return;
       if (await isBlockedBetween(user.id, receiverId)) return;
@@ -652,6 +695,7 @@ function registerHandlers(io, socket) {
   // --- Cleanup on disconnect ---
 
   socket.on('disconnect', () => {
+    clearBuckets(socket.id);
     // Remove user from all tracked rooms
     for (const [flockId, users] of roomUsers.entries()) {
       for (const u of users) {

@@ -25,10 +25,14 @@ async function tryAuth(req) {
 async function markFlockAttendance(userId, placeId) {
   if (!userId || !placeId) return;
   try {
-    await pool.query(
-      `UPDATE flock_members SET status = 'attended'
+    // status stays 'accepted' (the CHECK constraint only allows invited/
+    // accepted/declined — the old status='attended' write violated it and the
+    // swallowed error meant check-ins NEVER fed reliability scoring, audit
+    // 2026-08-12). Attendance lives in its own column, which scoring reads.
+    const r = await pool.query(
+      `UPDATE flock_members SET attendance = 'attended'
        WHERE user_id = $1
-         AND status IN ('accepted', 'confirmed')
+         AND status = 'accepted'
          AND flock_id IN (
            SELECT id FROM flocks
            WHERE (venue_id = $2 OR venue_data->>'place_id' = $2)
@@ -36,9 +40,10 @@ async function markFlockAttendance(userId, placeId) {
          )`,
       [userId, placeId]
     );
+    if (r.rowCount > 0) console.log(`[Checkin] attendance recorded for user ${userId} at ${placeId} (${r.rowCount} flock[s])`);
   } catch (err) {
-    // Non-fatal — schema may differ; never block the checkin
-    console.warn('Flock attendance update failed (non-fatal):', err.message);
+    // Non-fatal — never block the checkin, but the failure must be loud
+    console.error('Flock attendance update FAILED:', err.message);
   }
 }
 

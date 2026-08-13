@@ -17,7 +17,9 @@ router.post('/',
     body('price_worth').optional().isBoolean().withMessage('price_worth must be a boolean'),
     body('rating').optional().isInt({ min: 1, max: 5 }).withMessage('rating must be 1-5'),
     body('predicted_score').optional().isInt({ min: 0, max: 100 }).withMessage('predicted_score must be 0-100'),
-    body('flock_id').optional().isUUID().withMessage('flock_id must be a valid UUID'),
+    // Flock ids are integers (SERIAL) — the old UUID validator rejected every
+    // legitimate post-hangout feedback submission (audit 2026-08-12)
+    body('flock_id').optional().isInt().withMessage('flock_id must be a valid flock id'),
   ],
   async (req, res) => {
     try {
@@ -35,6 +37,24 @@ router.post('/',
         predicted_score,
         flock_id,
       } = req.body;
+
+      // Anti-forgery (audit 2026-08-12): one report per user per venue per 2h
+      // window. Unlimited reports let a single account own a venue's live
+      // calibration AND poison future training labels. Newest report wins
+      // within the window (people can correct themselves).
+      await pool.query(
+        `DELETE FROM venue_feedback
+         WHERE user_id = $1 AND venue_place_id = $2 AND created_at > NOW() - INTERVAL '2 hours'`,
+        [req.user.id, venue_place_id]
+      );
+      const recentCount = await pool.query(
+        `SELECT COUNT(*)::int AS n FROM venue_feedback
+         WHERE user_id = $1 AND created_at > NOW() - INTERVAL '1 hour'`,
+        [req.user.id]
+      );
+      if ((recentCount.rows[0]?.n || 0) >= 10) {
+        return res.status(429).json({ error: 'Too many reports in a short time. Try again later.' });
+      }
 
       const result = await pool.query(
         `INSERT INTO venue_feedback
