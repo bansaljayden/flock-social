@@ -8,7 +8,7 @@ const pool = require('../config/database');
 const { authenticate } = require('../middleware/auth');
 const { stripHtml, sanitizeArray } = require('../utils/sanitize');
 const { rejectIfProfane, moderateImage, IMAGE_REJECTED_MESSAGE } = require('../utils/moderation');
-const { revokeAppleToken } = require('../services/appleAuth');
+const { revokeAppleToken, isConfigured: appleAuthConfigured } = require('../services/appleAuth');
 
 const router = express.Router();
 const SALT_ROUNDS = 10;
@@ -588,11 +588,25 @@ router.patch('/settings', async (req, res) => {
 router.delete('/me', async (req, res) => {
   try {
     // Apple 5.1.1(v): revoke Sign in with Apple tokens before deleting the row.
+    // Round 5: when revocation is CONFIGURED and fails, abort — deleting the
+    // row destroys the only stored refresh token, so a swallowed failure would
+    // make revocation permanently impossible. Unconfigured env stays a no-op.
     const u = await pool.query('SELECT oauth_provider, apple_refresh_token FROM users WHERE id = $1', [req.user.id]);
     if (u.rows.length === 0) return res.status(404).json({ error: 'Account not found' });
-    if (u.rows[0].oauth_provider === 'apple' && u.rows[0].apple_refresh_token) {
-      try { await revokeAppleToken(u.rows[0].apple_refresh_token); } catch (_) { /* never block deletion */ }
+    if (u.rows[0].oauth_provider === 'apple' && u.rows[0].apple_refresh_token && appleAuthConfigured()) {
+      let revoked = false;
+      try { revoked = await revokeAppleToken(u.rows[0].apple_refresh_token); } catch (_) { revoked = false; }
+      if (!revoked) {
+        return res.status(503).json({ error: "We couldn't disconnect your Apple sign-in just now. Try again in a minute." });
+      }
     }
+
+    // Moderation evidence survives the account (round 5): cascade deletes let
+    // an abuser (or a reporter) erase open reports and completed action
+    // history by deleting their account. De-attribute instead.
+    await pool.query('UPDATE content_reports SET reporter_id = NULL WHERE reporter_id = $1', [req.user.id]).catch(() => {});
+    await pool.query('UPDATE content_reports SET reported_user_id = NULL WHERE reported_user_id = $1', [req.user.id]).catch(() => {});
+    await pool.query('UPDATE moderation_actions SET target_user_id = NULL WHERE target_user_id = $1', [req.user.id]).catch(() => {});
 
     // messages.sender_id is ON DELETE SET NULL (anonymize). Explicitly remove the
     // user's flock messages so no authored content is retained after deletion.

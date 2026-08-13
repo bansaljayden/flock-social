@@ -15,7 +15,7 @@ const requirePremium = requireVenueTier('premium');
 // Helper: get venue profile for current user
 async function getVenueCtx(userId) {
   const { rows } = await pool.query(
-    'SELECT id, google_place_id FROM venue_profiles WHERE user_id = $1',
+    'SELECT id, google_place_id, verified FROM venue_profiles WHERE user_id = $1',
     [userId]
   );
   return rows[0] || null;
@@ -269,14 +269,19 @@ router.get('/reviews', async (req, res) => {
 // POST /api/venue-dashboard/reviews/:id/reply — venue owner replies to a review
 router.post('/reviews/:id/reply', [
   param('id').isInt(),
-  body('reply').trim().isLength({ min: 1 }).withMessage('Reply is required'),
+  body('reply').trim().isLength({ min: 1, max: 1000 }).withMessage('Reply is required (max 1000 characters)'),
 ], async (req, res) => {
   try {
     const errors = validationResult(req);
     if (!errors.isEmpty()) return res.status(400).json({ error: errors.array()[0].msg });
 
+    // Round 5: only the VERIFIED claim holder speaks as the business. An
+    // unverified claim on the same place id must never write a reply that
+    // later rides the legitimate owner's verified badge.
     const venue = await getVenueCtx(req.user.id);
     if (!venue) return res.status(403).json({ error: 'Not a venue owner' });
+    if (!venue.verified) return res.status(403).json({ error: 'Replies unlock once your venue is verified' });
+    if (rejectIfProfane(res, req.body.reply)) return;
 
     const { rows } = await pool.query(
       `UPDATE venue_reviews SET venue_reply = $1, venue_replied_at = NOW()
@@ -297,13 +302,15 @@ router.post('/reviews/:id/reply', [
 router.post('/submit-review', [
   body('googlePlaceId').trim().isLength({ min: 1 }).withMessage('Place ID is required'),
   body('rating').isInt({ min: 1, max: 5 }).withMessage('Rating 1-5 required'),
-  body('text').optional().trim(),
+  body('text').optional().trim().isLength({ max: 1000 }).withMessage('Review is too long (max 1000 characters)'),
 ], async (req, res) => {
   try {
     const errors = validationResult(req);
     if (!errors.isEmpty()) return res.status(400).json({ error: errors.array()[0].msg });
 
     const { googlePlaceId, rating, text } = req.body;
+    // Reviews are UGC — same text screen as every other user-writable field.
+    if (text && rejectIfProfane(res, text)) return;
     const { rows } = await pool.query(
       `INSERT INTO venue_reviews (google_place_id, user_id, rating, text)
        VALUES ($1, $2, $3, $4)
@@ -333,11 +340,16 @@ router.get('/public-reviews/:placeId', async (req, res) => {
               vr.created_at, u.name, u.profile_image_url
        FROM venue_reviews vr
        JOIN users u ON u.id = vr.user_id
-       LEFT JOIN venue_profiles vp ON vp.google_place_id = vr.google_place_id
+       LEFT JOIN venue_profiles vp ON vp.google_place_id = vr.google_place_id AND vp.verified = true
        WHERE vr.google_place_id = $1
+         AND NOT EXISTS (
+           SELECT 1 FROM user_blocks b
+           WHERE (b.blocker_id = $2 AND b.blocked_id = vr.user_id)
+              OR (b.blocker_id = vr.user_id AND b.blocked_id = $2)
+         )
        ORDER BY vr.created_at DESC
        LIMIT 50`,
-      [req.params.placeId]
+      [req.params.placeId, req.user.id]
     );
 
     const total = rows.length;
