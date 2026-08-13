@@ -30,12 +30,20 @@ python train_model.py
 echo ""
 
 # Step 4: Evaluate
-echo "[4/5] Evaluating model..."
+echo "[4/6] Evaluating model..."
 python evaluate_model.py
 echo ""
 
-# Step 5: Export to ONNX
-echo "[5/5] Exporting to ONNX..."
+# Step 5: Ship gate
+# Round 10: mlPredictor.init() refuses to promote an artifact whose ship_gate
+# does not pass, so the gate has to be part of the pipeline — not an optional
+# follow-up step in RETRAIN.md. quick_eval.py must run AFTER evaluate_model.py.
+echo "[5/6] Ship gate (realtime-only holdout)..."
+python quick_eval.py
+echo ""
+
+# Step 6: Export to ONNX
+echo "[6/6] Exporting to ONNX..."
 python export_model.py
 echo ""
 
@@ -60,5 +68,10 @@ if 'evaluation' in m:
     if h:
         print(f'  Holdout RMSE: {h.get(\"rmse\", \"?\")}')
         print(f'  Holdout R²: {h.get(\"r2\", \"?\")}')
+g = m.get('ship_gate')
+if g:
+    print(f'  SHIP GATE: {\"PASS\" if g.get(\"overall_pass\") else \"FAIL\"} ({g.get(\"gate_basis\", \"?\")}) — the backend refuses to load a FAIL artifact')
+else:
+    print('  SHIP GATE: not computed — the backend will promote this artifact unverified')
 "
 echo ""

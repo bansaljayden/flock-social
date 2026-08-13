@@ -309,9 +309,66 @@ def add_geographic_features(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-def add_baseline_features(df: pd.DataFrame) -> pd.DataFrame:
-    """Add baseline busyness and data freshness features."""
-    # Baseline busyness — smooth with adjacent hours so model learns gradual transitions
+CAT_KEYS = ['venue_category', 'day_of_week', 'hour']
+REFINED_KEYS = ['venue_category', '_price_tier', '_popularity', 'day_of_week', 'hour']
+
+
+def _slice_keys(df: pd.DataFrame) -> pd.DataFrame:
+    """Price/popularity tier columns used to slice the refined baseline."""
+    df['_price_tier'] = (df['price_level'].fillna(2) >= 2).astype(int)
+    df['_popularity'] = (df['rating'].fillna(4.0) >= 4.3).astype(int)
+    return df
+
+
+def build_category_baseline_maps(df: pd.DataFrame) -> Dict:
+    """Category/refined baseline lookups — TRAINING DATA ONLY.
+
+    Round 10 (leakage): both lookups are averages of busyness_pct, i.e. the
+    LABEL, and neither is in get_feature_columns' exclude set. The holdout
+    split used to call add_baseline_features() on itself, so held-out labels
+    built the held-out rows' own features — the model was handed the answer and
+    every holdout number was inflated. Same class of bug as the popular_times
+    leak in the retrain doctrine: a feature that quietly carries the label.
+
+    They stay in the feature set (a category's typical shape is genuinely
+    useful and inference can compute it from metadata alone), but the lookup is
+    now fit on training rows and merely APPLIED to holdout, exactly like the
+    climate norms in add_climate_anomaly.
+    """
+    df = _slice_keys(df.copy())
+
+    cat = (
+        df.groupby(CAT_KEYS)['busyness_pct'].mean().round(1)
+        .rename('category_baseline').reset_index()
+        .sort_values(CAT_KEYS)
+    )
+    cat['_prev'] = cat.groupby(['venue_category', 'day_of_week'])['category_baseline'].shift(1)
+    cat['_next'] = cat.groupby(['venue_category', 'day_of_week'])['category_baseline'].shift(-1)
+    cat['_prev'] = cat['_prev'].fillna(cat['category_baseline'])
+    cat['_next'] = cat['_next'].fillna(cat['category_baseline'])
+    # Smooth across adjacent hours so the model sees gradual transitions.
+    cat['smooth'] = (cat['category_baseline'] * 0.6 + cat['_prev'] * 0.2 + cat['_next'] * 0.2).round(1)
+
+    refined = df.groupby(REFINED_KEYS)['busyness_pct'].mean().round(1)
+
+    return {
+        'category': cat.set_index(CAT_KEYS)['smooth'],
+        'refined': refined,
+        'global_mean': round(float(df['busyness_pct'].mean()), 1),
+    }
+
+
+def add_baseline_features(df: pd.DataFrame, cat_maps: Dict = None) -> Tuple[pd.DataFrame, Dict]:
+    """Add baseline busyness and data freshness features.
+
+    cat_maps: category/refined baseline lookups. None means "fit them from this
+    frame" (training); pass the training maps for holdout/eval so no held-out
+    label ever reaches a feature.
+    """
+    # Baseline busyness — smooth with adjacent hours so model learns gradual
+    # transitions. This mirrors mlPredictor.getBaseline's runtime blend
+    # (current*0.6 + prev*0.2 + next*0.2); it only runs when venue_id survives
+    # the export (round 10 fix in export_training_data.js).
     df['baseline_busyness'] = df['baseline_busyness'].fillna(0)
     if 'venue_id' in df.columns:
         df = df.sort_values(['venue_id', 'day_of_week', 'hour'])
@@ -322,28 +379,23 @@ def add_baseline_features(df: pd.DataFrame) -> pd.DataFrame:
         mask = df['baseline_busyness'] > 0
         df.loc[mask, 'baseline_busyness'] = (df.loc[mask, 'baseline_busyness'] * 0.6 + df.loc[mask, '_bl_prev'] * 0.2 + df.loc[mask, '_bl_next'] * 0.2).round(1)
         df.drop(columns=['_bl_prev', '_bl_next'], inplace=True)
+    else:
+        logger.warning('venue_id missing — skipping baseline smoothing; the model '
+                       'will learn deltas against RAW baselines while production '
+                       'serves smoothed ones. Re-run export_training_data.js.')
 
-    # Category-level baseline — average busyness for this venue type at this day/hour
-    cat_baseline = df.groupby(['venue_category', 'day_of_week', 'hour'])['busyness_pct'].transform('mean')
-    df['category_baseline'] = cat_baseline.round(1)
-    # Smooth category baselines: blend with adjacent hours via shift
-    cat_lookup = df.groupby(['venue_category', 'day_of_week', 'hour'])['category_baseline'].first().reset_index()
-    cat_lookup = cat_lookup.sort_values(['venue_category', 'day_of_week', 'hour'])
-    cat_lookup['_prev'] = cat_lookup.groupby(['venue_category', 'day_of_week'])['category_baseline'].shift(1)
-    cat_lookup['_next'] = cat_lookup.groupby(['venue_category', 'day_of_week'])['category_baseline'].shift(-1)
-    cat_lookup['_prev'] = cat_lookup['_prev'].fillna(cat_lookup['category_baseline'])
-    cat_lookup['_next'] = cat_lookup['_next'].fillna(cat_lookup['category_baseline'])
-    cat_lookup['category_baseline_smooth'] = (cat_lookup['category_baseline'] * 0.6 + cat_lookup['_prev'] * 0.2 + cat_lookup['_next'] * 0.2).round(1)
-    smooth_map = cat_lookup.set_index(['venue_category', 'day_of_week', 'hour'])['category_baseline_smooth']
-    df['category_baseline'] = df.set_index(['venue_category', 'day_of_week', 'hour']).index.map(smooth_map).values
-    df['category_baseline'] = df['category_baseline'].fillna(cat_baseline.round(1))
+    if cat_maps is None:
+        cat_maps = build_category_baseline_maps(df)
+
+    df = _slice_keys(df)
+
+    # Category-level baseline — typical busyness for this venue type at this day/hour
+    df['category_baseline'] = df.set_index(CAT_KEYS).index.map(cat_maps['category']).values
+    df['category_baseline'] = df['category_baseline'].fillna(cat_maps['global_mean'])
 
     # Refined category baseline — sliced by price tier and popularity
     # Splits venues into budget ($0-1) vs premium ($2+) and popular (rating>=4.3) vs average
-    df['_price_tier'] = (df['price_level'].fillna(2) >= 2).astype(str)
-    df['_popularity'] = (df['rating'].fillna(4.0) >= 4.3).astype(str)
-    refined_baseline = df.groupby(['venue_category', '_price_tier', '_popularity', 'day_of_week', 'hour'])['busyness_pct'].transform('mean')
-    df['refined_category_baseline'] = refined_baseline.round(1)
+    df['refined_category_baseline'] = df.set_index(REFINED_KEYS).index.map(cat_maps['refined']).values
     # Fill gaps where a specific slice has too few samples — fall back to broad category
     df['refined_category_baseline'] = df['refined_category_baseline'].fillna(df['category_baseline'])
     df.drop(columns=['_price_tier', '_popularity'], inplace=True)
@@ -354,7 +406,7 @@ def add_baseline_features(df: pd.DataFrame) -> pd.DataFrame:
     # Data freshness — realtime observations are more reliable
     df['is_realtime'] = df['is_realtime'].fillna(0).astype(int)
 
-    return df
+    return df, cat_maps
 
 
 def add_user_feedback_features(df: pd.DataFrame) -> pd.DataFrame:
@@ -415,6 +467,9 @@ def get_feature_columns(df: pd.DataFrame) -> List[str]:
         'sample_weight',  # training weight — NEVER a feature (encodes row provenance = label regime)
         '_vkey', 'lat_band', 'temp_norm', 'neighbor_count',  # v2.4 intermediates (log_neighbor_count is the feature)
         'observed_date',  # raw date string — v2.5 holiday features are derived from it
+        # Round 10 additions:
+        'venue_id',  # identifier — a feature here is pure venue memorization
+        'label_provenance',  # raw string; encodes label regime like sample_weight
     }
     feature_cols = [c for c in df.columns if c not in exclude]
     return sorted(feature_cols)
@@ -451,7 +506,7 @@ def main():
     train_df = add_temporal_features(train_df)
     train_df, venue_metadata = add_venue_features(train_df)
     train_df = add_weather_features(train_df)
-    train_df = add_baseline_features(train_df)
+    train_df, cat_baseline_maps = add_baseline_features(train_df)
     train_df = add_user_feedback_features(train_df)
     train_df = add_event_features(train_df)
     # v2.4 features (sunset/anomaly/neighbors) — see function docstrings
@@ -488,7 +543,8 @@ def main():
                     holdout_df.loc[holdout_df[tc] == t, col_name] = 1
 
         holdout_df = add_weather_features(holdout_df)
-        holdout_df = add_baseline_features(holdout_df)
+        # TRAIN maps — holdout labels must never build holdout features (round 10)
+        holdout_df, _ = add_baseline_features(holdout_df, cat_maps=cat_baseline_maps)
         holdout_df = add_user_feedback_features(holdout_df)
         holdout_df = add_event_features(holdout_df)
         holdout_df = add_astronomy_features(holdout_df)
@@ -526,12 +582,32 @@ def main():
     # to drown the real deviations like v2.2.1 (where they were 91% of the
     # loss and taught delta=0 everywhere).
     train_df = train_df[train_df['baseline_busyness'] > 0]
-    train_df['sample_weight'] = np.where(train_df['is_realtime'] == 1, 1.0, 0.05)
+    # Round 10 (provenance): collection_mode='realtime' says WHEN a row was
+    # taken, not that the number was observed. collectRealtime.js falls back to
+    # BestTime's own forecast when live traffic is unavailable, and those rows
+    # were carrying weight 1.0 — a vendor's prediction outranking every other
+    # label in the corpus, and teaching the model to reproduce a competitor's
+    # model rather than reality. Forecast-derived labels now sit between weekly
+    # and live. Rows collected before label_provenance existed stay at 1.0:
+    # their provenance is genuinely unknown and silently demoting the whole
+    # historical corpus would be a bigger change than the bug.
+    if 'label_provenance' not in train_df.columns:
+        train_df['label_provenance'] = 'unknown'
+    train_df['label_provenance'] = train_df['label_provenance'].fillna('unknown')
+    is_forecast_label = (train_df['is_realtime'] == 1) & (train_df['label_provenance'] == 'forecast')
+    train_df['sample_weight'] = np.where(
+        train_df['is_realtime'] != 1, 0.05,
+        np.where(is_forecast_label, 0.3, 1.0),
+    )
     n_rt = int((train_df['is_realtime'] == 1).sum())
+    n_fc = int(is_forecast_label.sum())
+    total_w = float(train_df['sample_weight'].sum())
+    rt_w = float(train_df.loc[train_df['is_realtime'] == 1, 'sample_weight'].sum())
     logger.info(
         f'v2.3.1 blend: {before_filter} -> {len(train_df)} rows with baseline>0 '
-        f'({n_rt} realtime @ weight 1.0, {len(train_df) - n_rt} weekly @ weight 0.05; '
-        f'effective realtime share of loss: {n_rt / (n_rt + 0.05 * (len(train_df) - n_rt)) * 100:.0f}%)'
+        f'({n_rt} realtime of which {n_fc} vendor-forecast @ weight 0.3, '
+        f'{len(train_df) - n_rt} weekly @ weight 0.05; '
+        f'effective realtime share of loss: {rt_w / total_w * 100:.0f}%)'
     )
     if n_rt < 50000:
         raise ValueError(f'Only {n_rt} realtime rows — expected 100K+. Check is_realtime/baseline columns.')
@@ -603,23 +679,22 @@ def main():
         with open(SCRIPT_DIR / 'features_holdout.pkl', 'wb') as f:
             pickle.dump(holdout_data, f)
 
-    # Compute category baseline lookup table (category × day × hour → avg busyness)
-    cat_baselines = train_df.groupby(['venue_category', 'day_of_week', 'hour'])['busyness_pct'].mean()
-    cat_baseline_dict = {}
-    for (cat, dow, hour), val in cat_baselines.items():
-        key = f'{cat}_{int(dow)}_{int(hour)}'
-        cat_baseline_dict[key] = round(float(val), 1)
+    # Category/refined baseline lookups shipped to Node for inference.
+    # Round 10: these are now the EXACT maps used to build the training
+    # features (see build_category_baseline_maps) instead of a second,
+    # independently-computed set. The old code recomputed raw group means here
+    # while training used a smoothed lookup, so mlPredictor served
+    # category_baseline values the model had never been trained against.
+    cat_baseline_dict = {
+        f'{cat}_{int(dow)}_{int(hour)}': round(float(val), 1)
+        for (cat, dow, hour), val in cat_baseline_maps['category'].items()
+    }
     logger.info(f'Category baseline lookup: {len(cat_baseline_dict)} entries')
 
-    # Refined baseline lookup (category × price_tier × popularity × day × hour)
-    train_df['_pt'] = (train_df['price_level'].fillna(2) >= 2).astype(int)
-    train_df['_pop'] = (train_df['rating'].fillna(4.0) >= 4.3).astype(int)
-    ref_baselines = train_df.groupby(['venue_category', '_pt', '_pop', 'day_of_week', 'hour'])['busyness_pct'].mean()
-    ref_baseline_dict = {}
-    for (cat, pt, pop, dow, hour), val in ref_baselines.items():
-        key = f'{cat}_{int(pt)}_{int(pop)}_{int(dow)}_{int(hour)}'
-        ref_baseline_dict[key] = round(float(val), 1)
-    train_df.drop(columns=['_pt', '_pop'], inplace=True)
+    ref_baseline_dict = {
+        f'{cat}_{int(pt)}_{int(pop)}_{int(dow)}_{int(hour)}': round(float(val), 1)
+        for (cat, pt, pop, dow, hour), val in cat_baseline_maps['refined'].items()
+    }
     logger.info(f'Refined baseline lookup: {len(ref_baseline_dict)} entries')
 
     # Save metadata

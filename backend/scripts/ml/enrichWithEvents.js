@@ -7,6 +7,7 @@
 require('dotenv').config({ path: require('path').join(__dirname, '..', '..', '.env') });
 
 const { Pool } = require('pg');
+const { CITIES } = require('./config');
 
 if (!process.env.DATABASE_URL && process.env.PGHOST) {
   const host = process.env.PGHOST;
@@ -38,6 +39,24 @@ function distanceKm(lat1, lon1, lat2, lon2) {
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
+// Round 10: the local calendar date a training row was observed on. Same rule
+// as train/export_training_data.js — realtime rows only. Weekly rows are a
+// synthetic "typical week" with no observation date, so no specific one-off
+// event can be attributed to them.
+const dateFmtCache = {};
+function observedDateOf(row) {
+  if (row.observed_date) return row.observed_date; // already YYYY-MM-DD (to_char)
+  if (row.collection_mode !== 'realtime' || !row.collected_at) return null;
+  const tz = CITIES[row.city]?.tz;
+  if (!tz) return null;
+  if (!dateFmtCache[tz]) {
+    dateFmtCache[tz] = new Intl.DateTimeFormat('en-CA', {
+      timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit',
+    });
+  }
+  return dateFmtCache[tz].format(new Date(row.collected_at));
+}
+
 // Check if hour falls within event's active window
 function isHourInRange(hour, startHour, endHour) {
   if (endHour >= startHour) {
@@ -51,8 +70,12 @@ function isHourInRange(hour, startHour, endHour) {
 async function main() {
   console.log('[Enrich] Loading events from ml_events...');
   const { rows: events } = await pool.query(
-    `SELECT id, city, venue_lat, venue_lng, event_date, event_start_hour,
-            event_end_hour, event_type, estimated_attendance
+    // to_char keeps the calendar date exactly as stored — reading a DATE back
+    // through JS Date and calling getUTCDay()/getDate() shifts it by the
+    // process timezone.
+    `SELECT id, city, venue_lat, venue_lng,
+            to_char(event_date, 'YYYY-MM-DD') AS event_date,
+            event_start_hour, event_end_hour, event_type, estimated_attendance
      FROM ml_events`
   );
 
@@ -64,17 +87,17 @@ async function main() {
 
   console.log(`[Enrich] Loaded ${events.length} events`);
 
-  // Group events by city, then by day_of_week for fast lookup
-  // day_of_week: 0=Sun, 1=Mon, ..., 6=Sat (JavaScript convention)
-  const eventsByCityDow = {};
+  // Round 10: events are indexed by city + ACTUAL DATE, not city + weekday.
+  // The old weekday index applied a single Saturday concert to every Saturday
+  // row in that city — training then learned "this venue is always busy on
+  // Saturdays because of an event" from one night. Rows are now joined on the
+  // date they were actually observed.
+  const eventsByCityDate = new Map();
   for (const event of events) {
-    const city = event.city;
-    if (!eventsByCityDow[city]) {
-      eventsByCityDow[city] = { 0: [], 1: [], 2: [], 3: [], 4: [], 5: [], 6: [] };
-    }
-    const date = new Date(event.event_date);
-    const dow = date.getUTCDay(); // 0=Sun
-    eventsByCityDow[city][dow].push({
+    if (!event.event_date) continue;
+    const key = `${event.city}|${event.event_date}`;
+    if (!eventsByCityDate.has(key)) eventsByCityDate.set(key, []);
+    eventsByCityDate.get(key).push({
       lat: parseFloat(event.venue_lat),
       lng: parseFloat(event.venue_lng),
       startHour: event.event_start_hour,
@@ -85,8 +108,12 @@ async function main() {
   }
 
   // Log event distribution
-  for (const [city, dows] of Object.entries(eventsByCityDow)) {
-    const total = Object.values(dows).reduce((s, arr) => s + arr.length, 0);
+  const perCity = {};
+  for (const [key, list] of eventsByCityDate) {
+    const city = key.split('|')[0];
+    perCity[city] = (perCity[city] || 0) + list.length;
+  }
+  for (const [city, total] of Object.entries(perCity)) {
     console.log(`  ${city}: ${total} events`);
   }
 
@@ -107,12 +134,15 @@ async function main() {
   const CHUNK_SIZE = 5000;
   let processed = 0;
   let enriched = 0;
+  let dateless = 0;
   let offset = 0;
 
   while (offset < totalRows) {
     // Fetch chunk with venue info
     const { rows: chunk } = await pool.query(
-      `SELECT t.id, t.day_of_week, t.hour, v.city, v.latitude, v.longitude
+      `SELECT t.id, t.day_of_week, t.hour, t.collection_mode, t.collected_at,
+              to_char(t.observed_date, 'YYYY-MM-DD') AS observed_date,
+              v.city, v.latitude, v.longitude
        FROM ml_training_data t
        JOIN ml_venues v ON t.venue_id = v.id
        ORDER BY t.id
@@ -125,13 +155,16 @@ async function main() {
     // Process each row
     const updates = [];
     for (const row of chunk) {
-      const cityEvents = eventsByCityDow[row.city];
-      if (!cityEvents) {
+      // Dateless rows (weekly "typical week" snapshots) get no events — a
+      // one-off concert did not happen on a synthetic average Tuesday.
+      const rowDate = observedDateOf(row);
+      if (!rowDate) {
         updates.push({ id: row.id, hasEvent: false });
+        dateless++;
         continue;
       }
 
-      const dowEvents = cityEvents[row.day_of_week] || [];
+      const dowEvents = eventsByCityDate.get(`${row.city}|${rowDate}`) || [];
       if (dowEvents.length === 0) {
         updates.push({ id: row.id, hasEvent: false });
         continue;
@@ -245,6 +278,7 @@ async function main() {
 
   console.log(`\n[Enrich] Done!`);
   console.log(`  Total rows: ${summary[0].total}`);
+  console.log(`  Dateless rows (weekly — never event-matched): ${dateless}`);
   console.log(`  Rows with nearby events: ${summary[0].with_events}`);
   console.log(`  Avg attendance (when event): ${Math.round(summary[0].avg_attendance || 0)}`);
   console.log(`  Avg nearby events (when event): ${parseFloat(summary[0].avg_nearby_count || 0).toFixed(1)}`);

@@ -5,6 +5,12 @@ import posthog from 'posthog-js';
 import './index.css';
 import reportWebVitals from './reportWebVitals';
 
+// Guest invite URLs carry a bearer token in the path (/i/<token>): anyone
+// holding one can RSVP and vote as that guest. Keep them out of every
+// analytics and error payload that leaves the device.
+const scrubGuestToken = (v) =>
+  (typeof v === 'string' ? v.replace(/\/i\/[A-Za-z0-9_-]+/g, '/i/:token') : v);
+
 // Sentry (B3) — no-op until REACT_APP_SENTRY_DSN is set (Vercel env). Never commit the DSN.
 if (process.env.REACT_APP_SENTRY_DSN) {
   Sentry.init({
@@ -12,6 +18,27 @@ if (process.env.REACT_APP_SENTRY_DSN) {
     environment: process.env.NODE_ENV,
     integrations: [Sentry.browserTracingIntegration()],
     tracesSampleRate: 0.1,
+    // Round 10: PostHog scrubbed invite tokens but Sentry did not, so an error
+    // or transaction raised on a guest page exported a replayable token in its
+    // URL. Same scrub on every field that can carry one.
+    beforeSend(event) {
+      if (!event) return event;
+      if (event.request?.url) event.request.url = scrubGuestToken(event.request.url);
+      if (event.request?.headers?.Referer) event.request.headers.Referer = scrubGuestToken(event.request.headers.Referer);
+      if (Array.isArray(event.breadcrumbs)) {
+        for (const b of event.breadcrumbs) {
+          if (b?.data?.url) b.data.url = scrubGuestToken(b.data.url);
+          if (typeof b?.message === 'string') b.message = scrubGuestToken(b.message);
+        }
+      }
+      return event;
+    },
+    beforeSendTransaction(event) {
+      if (!event) return event;
+      if (event.request?.url) event.request.url = scrubGuestToken(event.request.url);
+      if (typeof event.transaction === 'string') event.transaction = scrubGuestToken(event.transaction);
+      return event;
+    },
   });
 }
 
@@ -30,7 +57,7 @@ if (process.env.REACT_APP_POSTHOG_KEY) {
     // every event before it leaves the device.
     before_send: (event) => {
       if (!event) return event;
-      const scrub = (v) => (typeof v === 'string' ? v.replace(/\/i\/[A-Za-z0-9_-]+/g, '/i/:token') : v);
+      const scrub = scrubGuestToken;
       if (event.properties) {
         for (const k of ['$current_url', '$pathname', '$referrer', '$initial_current_url', '$initial_referrer']) {
           if (event.properties[k]) event.properties[k] = scrub(event.properties[k]);

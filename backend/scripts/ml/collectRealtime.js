@@ -36,6 +36,12 @@ async function ensureHolidayColumns() {
   await pool.query(`ALTER TABLE ml_training_data ADD COLUMN IF NOT EXISTS special_night VARCHAR(40)`);
   await pool.query(`ALTER TABLE ml_training_data ADD COLUMN IF NOT EXISTS special_night_effect VARCHAR(8)`);
   await pool.query(`ALTER TABLE ml_training_data ADD COLUMN IF NOT EXISTS special_night_conf VARCHAR(4)`);
+  // Round 10: 'live' when BestTime reported live foot traffic, 'forecast' when
+  // we fell back to their forecast. Both land in collection_mode='realtime',
+  // and before this column existed both were exported as is_realtime=1 and
+  // trained at sample weight 1.0 — a vendor forecast carrying more confidence
+  // than any other label in the corpus. NULL on rows collected before this.
+  await pool.query(`ALTER TABLE ml_training_data ADD COLUMN IF NOT EXISTS label_source VARCHAR(10)`);
 }
 
 async function collectRealtime() {
@@ -61,6 +67,8 @@ async function collectRealtime() {
 
   let totalRows = 0;
   let skipped = 0;
+  let liveRows = 0;
+  let forecastRows = 0;
 
   for (const [cityKey, cityVenues] of Object.entries(byCity)) {
     const cityConfig = CITIES[cityKey];
@@ -82,8 +90,11 @@ async function collectRealtime() {
         continue;
       }
 
-      // Use live busyness if available, else forecasted
-      const busyness = live.liveAvailable ? live.liveBusyness : live.forecastedBusyness;
+      // Use live busyness if available, else forecasted. Round 10: record
+      // WHICH, so training can stop treating a vendor forecast as ground truth.
+      const usedLive = !!live.liveAvailable && live.liveBusyness != null;
+      const busyness = usedLive ? live.liveBusyness : live.forecastedBusyness;
+      const labelSource = usedLive ? 'live' : 'forecast';
       if (busyness == null) {
         skipped++;
         continue;
@@ -118,9 +129,10 @@ async function collectRealtime() {
              temperature, humidity, wind_speed, weather_condition, is_raining,
              event_nearby, event_distance_km, event_size, event_type, event_hours_until,
              baseline_busyness, busyness_pct,
-             observed_date, is_holiday_eve, special_night, special_night_effect, special_night_conf)
+             observed_date, is_holiday_eve, special_night, special_night_effect, special_night_conf,
+             label_source)
           VALUES ($1, 'realtime', $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23,
-                  $24, $25, $26, $27, $28)`,
+                  $24, $25, $26, $27, $28, $29)`,
           [
             venue.id,
             local.dayOfWeek,
@@ -150,9 +162,11 @@ async function collectRealtime() {
             special?.name ?? null,
             special?.effect ?? null,
             special?.conf ?? null,
+            labelSource,
           ]
         );
         totalRows++;
+        if (usedLive) liveRows++; else forecastRows++;
       } catch (err) {
         console.error(`  Insert error for ${venue.name}:`, err.message);
       }
@@ -161,7 +175,8 @@ async function collectRealtime() {
     }
   }
 
-  console.log(`\n[ML:Realtime] Done. ${totalRows} rows inserted. ${skipped} venues skipped.`);
+  console.log(`\n[ML:Realtime] Done. ${totalRows} rows inserted `
+    + `(${liveRows} live-observed, ${forecastRows} vendor-forecast). ${skipped} venues skipped.`);
 }
 
 async function run() {

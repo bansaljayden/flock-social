@@ -149,17 +149,37 @@ router.post('/:token/rsvp',
       }
 
       // Cap guests per flock so a leaked link can't flood a plan. Hidden rows
-      // still count toward the cap — a takedown must not free up a slot.
-      const count = await pool.query('SELECT COUNT(*)::int AS n FROM guest_rsvps WHERE flock_id = $1', [link.flock_id]);
-      if (count.rows[0].n >= 50) {
-        return res.status(429).json({ error: 'This flock has too many guest RSVPs' });
-      }
+      // still count toward the cap: a takedown must not free up a slot.
+      //
+      // Round 10: the count and the insert were separate statements on an
+      // UNAUTHENTICATED route, so concurrent requests all read the same
+      // under-cap number and every one of them landed. Both now run in one
+      // transaction behind a per-flock advisory lock, which serializes
+      // concurrent RSVPs on the same link.
+      const client = await pool.connect();
+      let ins;
+      try {
+        await client.query('BEGIN');
+        await client.query("SELECT pg_advisory_xact_lock(hashtext('guest_rsvp:' || $1::text))", [String(link.flock_id)]);
 
-      const ins = await pool.query(
-        `INSERT INTO guest_rsvps (flock_id, name, status) VALUES ($1, $2, $3)
-         RETURNING guest_token, COALESCE(is_hidden, false) AS is_hidden`,
-        [link.flock_id, name, status]
-      );
+        const count = await client.query('SELECT COUNT(*)::int AS n FROM guest_rsvps WHERE flock_id = $1', [link.flock_id]);
+        if (count.rows[0].n >= 50) {
+          await client.query('ROLLBACK');
+          return res.status(429).json({ error: 'This flock has too many guest RSVPs' });
+        }
+
+        ins = await client.query(
+          `INSERT INTO guest_rsvps (flock_id, name, status) VALUES ($1, $2, $3)
+           RETURNING guest_token, COALESCE(is_hidden, false) AS is_hidden`,
+          [link.flock_id, name, status]
+        );
+        await client.query('COMMIT');
+      } catch (txErr) {
+        await client.query('ROLLBACK').catch(() => {});
+        throw txErr;
+      } finally {
+        client.release();
+      }
 
       // Let members see the RSVP land in real time. Hidden rows are never
       // broadcast (a default-false column means this is normally true).

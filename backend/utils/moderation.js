@@ -107,7 +107,19 @@ async function moderateImage(imageUrl) {
       }
     );
 
-    if (!response.ok) throw new Error(`vision ${response.status}`);
+    if (!response.ok) {
+      // Surface Google's own reason. A bare status is not actionable: 403
+      // alone could be SERVICE_DISABLED (API not enabled on the project),
+      // BILLING_DISABLED (no billing account, common on Firebase-created
+      // projects), or API_KEY_SERVICE_BLOCKED (key restricted to other APIs).
+      let detail = '';
+      try {
+        const body = await response.json();
+        const reason = body?.error?.details?.[0]?.reason || body?.error?.status || '';
+        detail = ` ${reason} ${body?.error?.message || ''}`.trimEnd();
+      } catch { /* body was not JSON */ }
+      throw new Error(`vision ${response.status}${detail}`);
+    }
     const data = await response.json();
     const verdict = data?.responses?.[0];
     if (verdict?.error) throw new Error(verdict.error.message || 'vision error');
