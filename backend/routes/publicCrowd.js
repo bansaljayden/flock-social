@@ -66,11 +66,11 @@ function priceLevelToNum(priceLevel) {
   return map[priceLevel] ?? null;
 }
 
-function toVenueShape(p) {
+function toVenueShape(p, localDay) {
   let openHour = null, closeHour = null;
   const periods = p.currentOpeningHours?.periods;
   if (periods && periods.length) {
-    const today = new Date().getDay();
+    const today = localDay != null ? localDay : new Date().getDay();
     const todayPeriod = periods.find(pd => pd.open?.day === today);
     if (todayPeriod) {
       openHour = todayPeriod.open?.hour ?? null;
@@ -99,11 +99,26 @@ const PLACE_FIELDS = 'places.id,places.displayName,places.formattedAddress,place
 // GET /api/public/demo/venues?lat=..&lng=..&q=..
 // Area search -> up to 8 venues, each scored by the live model.
 // ---------------------------------------------------------------------------
+// Visitors' clocks, not Railway's: the server runs UTC, so scoring "now" with
+// server time shifts every prediction by the visitor's UTC offset. Same
+// localHour/localDay contract as GET /api/crowd.
+function clientNow(req) {
+  const now = new Date();
+  const localHour = req.query.localHour != null ? parseInt(req.query.localHour, 10) : now.getHours();
+  const localDay = req.query.localDay != null ? parseInt(req.query.localDay, 10) : now.getDay();
+  const t = new Date(now);
+  t.setDate(t.getDate() + (localDay - t.getDay()));
+  t.setHours(localHour, 0, 0, 0);
+  return { time: t, localHour, localDay };
+}
+
 router.get('/demo/venues',
   [
     query('lat').isFloat({ min: -90, max: 90 }),
     query('lng').isFloat({ min: -180, max: 180 }),
     query('q').optional().trim().isLength({ max: 60 }),
+    query('localHour').optional().isInt({ min: 0, max: 23 }),
+    query('localDay').optional().isInt({ min: 0, max: 6 }),
   ],
   async (req, res) => {
     try {
@@ -114,8 +129,9 @@ router.get('/demo/venues',
       const lat = +(+req.query.lat).toFixed(2); // ~1km buckets = shared cache
       const lng = +(+req.query.lng).toFixed(2);
       const q = (req.query.q || 'restaurants and bars').toLowerCase();
+      const { time: scoreTime, localHour } = clientNow(req);
 
-      const cacheKey = `area:${lat}:${lng}:${q}:${new Date().getHours()}`;
+      const cacheKey = `area:${lat}:${lng}:${q}:${localHour}`;
       const cached = getCache(cacheKey);
       if (cached) return res.json(cached);
 
@@ -140,13 +156,12 @@ router.get('/demo/venues',
 
       // One weather lookup for the whole area
       const weather = await getWeather(lat, lng).catch(() => null);
-      const now = new Date();
 
       const venues = [];
       for (const p of places) {
-        const v = toVenueShape(p);
+        const v = toVenueShape(p, req.query.localDay != null ? parseInt(req.query.localDay, 10) : null);
         try {
-          const scored = await mlPredictor.predictBusyness(v, weather, now);
+          const scored = await mlPredictor.predictBusyness(v, weather, scoreTime);
           venues.push({
             place_id: v.place_id,
             name: v.name,
@@ -176,7 +191,11 @@ router.get('/demo/venues',
 // GET /api/public/demo/venue/:placeId — the full card: dial + forecast + best time
 // ---------------------------------------------------------------------------
 router.get('/demo/venue/:placeId',
-  [param('placeId').trim().isLength({ min: 1, max: 200 })],
+  [
+    param('placeId').trim().isLength({ min: 1, max: 200 }),
+    query('localHour').optional().isInt({ min: 0, max: 23 }),
+    query('localDay').optional().isInt({ min: 0, max: 6 }),
+  ],
   async (req, res) => {
     try {
       const errors = validationResult(req);
@@ -184,7 +203,8 @@ router.get('/demo/venue/:placeId',
       if (!API_KEY) return res.status(503).json({ error: DEMO_BUSY_MSG });
 
       const placeId = req.params.placeId;
-      const cacheKey = `venue:${placeId}:${new Date().getHours()}`;
+      const { time: scoreTime, localHour } = clientNow(req);
+      const cacheKey = `venue:${placeId}:${localHour}`;
       const cached = getCache(cacheKey);
       if (cached) return res.json(cached);
 
@@ -199,16 +219,14 @@ router.get('/demo/venue/:placeId',
       const p = await resp.json();
       if (p.error || !p.id) return res.status(404).json({ error: 'Venue not found' });
 
-      const v = toVenueShape(p);
+      const v = toVenueShape(p, req.query.localDay != null ? parseInt(req.query.localDay, 10) : null);
       const lat = v.location?.latitude;
       const lng = v.location?.longitude;
       const weather = (lat && lng) ? await getWeather(lat, lng).catch(() => null) : null;
-      const now = new Date();
-      const localHour = now.getHours();
 
-      const scored = await mlPredictor.predictBusyness(v, weather, now);
-      const hourly = await mlPredictor.predictHourlyForecast(v, weather, localHour, 12, now);
-      const fullDay = await mlPredictor.predictHourlyForecast(v, weather, 6, 24, now);
+      const scored = await mlPredictor.predictBusyness(v, weather, scoreTime);
+      const hourly = await mlPredictor.predictHourlyForecast(v, weather, localHour, 12, scoreTime);
+      const fullDay = await mlPredictor.predictHourlyForecast(v, weather, 6, 24, scoreTime);
       const peakResult = findPeakTime(fullDay, v);
       const bestTime = findBestTime(fullDay, v, peakResult.startIdx, peakResult.endIdx, v.isOpen);
 
