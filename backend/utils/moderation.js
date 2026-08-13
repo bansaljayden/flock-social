@@ -18,7 +18,7 @@ const { Filter } = require('content-checker');
 const filter = new Filter({ openModeratorAPIKey: process.env.OPENMODERATOR_API_KEY });
 
 const TEXT_REJECTED_MESSAGE =
-  "That doesn't fit our community guidelines — please rephrase and try again.";
+  "That doesn't fit our community guidelines. Rephrase and try again.";
 
 /**
  * Screen user-supplied text before storing it. Synchronous + offline.
