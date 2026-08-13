@@ -95,6 +95,33 @@ function toVenueShape(p, localDay) {
 
 const PLACE_FIELDS = 'places.id,places.displayName,places.formattedAddress,places.rating,places.userRatingCount,places.priceLevel,places.types,places.currentOpeningHours,places.location';
 
+// The full venue card: current score + best time + peak + 12h forecast.
+async function buildCard(v, weather, scoreTime, localHour) {
+  const scored = await mlPredictor.predictBusyness(v, weather, scoreTime);
+  const [hourly, fullDay] = await Promise.all([
+    mlPredictor.predictHourlyForecast(v, weather, localHour, 12, scoreTime),
+    mlPredictor.predictHourlyForecast(v, weather, 6, 24, scoreTime),
+  ]);
+  const peakResult = findPeakTime(fullDay, v);
+  const bestTime = findBestTime(fullDay, v, peakResult.startIdx, peakResult.endIdx, v.isOpen);
+  return {
+    place_id: v.place_id,
+    name: v.name,
+    address: v.formatted_address,
+    rating: v.rating,
+    reviews: v.user_ratings_total,
+    price_level: v.price_level,
+    is_open: v.isOpen,
+    score: scored.score,
+    label: getLabel(scored.score),
+    confidence: scored.confidence,
+    best_time: bestTime,
+    peak_hours: peakResult.text,
+    hourly: hourly.map(h => ({ hour: h.hour, label: h.label, score: h.score })),
+    as_of: Date.now(),
+  };
+}
+
 // ---------------------------------------------------------------------------
 // GET /api/public/demo/venues?lat=..&lng=..&q=..
 // Area search -> up to 8 venues, each scored by the live model.
@@ -154,15 +181,16 @@ router.get('/demo/venues',
       const places = (data.places || []).filter(p => p.location);
       if (places.length === 0) return res.json({ venues: [] });
 
-      // One weather lookup for the whole area
+      // One weather lookup for the whole area; venues scored in parallel —
+      // serial scoring made the first paint feel like dial-up.
       const weather = await getWeather(lat, lng).catch(() => null);
+      const localDayParam = req.query.localDay != null ? parseInt(req.query.localDay, 10) : null;
 
-      const venues = [];
-      for (const p of places) {
-        const v = toVenueShape(p, req.query.localDay != null ? parseInt(req.query.localDay, 10) : null);
+      const venues = (await Promise.all(places.map(async (p) => {
+        const v = toVenueShape(p, localDayParam);
         try {
           const scored = await mlPredictor.predictBusyness(v, weather, scoreTime);
-          venues.push({
+          return {
             place_id: v.place_id,
             name: v.name,
             address: v.formatted_address,
@@ -171,13 +199,26 @@ router.get('/demo/venues',
             lat: v.location.latitude,
             lng: v.location.longitude,
             is_open: v.isOpen,
+            photo_url: `/api/venues/photo/${encodeURIComponent(v.place_id)}`,
             score: scored.score,
             label: getLabel(scored.score),
-          });
-        } catch { /* skip venues the model can't score */ }
-      }
+          };
+        } catch { return null; } // skip venues the model can't score
+      }))).filter(Boolean);
 
       const result = { venues };
+
+      // Embed the busiest venue's full card so the section renders in ONE
+      // round trip instead of venues -> card chaining.
+      if (venues.length > 0) {
+        try {
+          const busiest = [...venues].sort((a, b) => b.score - a.score)[0];
+          const bp = places.find(p => p.id === busiest.place_id);
+          const bv = toVenueShape(bp, localDayParam);
+          result.card = await buildCard(bv, weather, scoreTime, localHour);
+        } catch { /* card arrives via the venue endpoint instead */ }
+      }
+
       setCache(cacheKey, result, 20 * 60_000);
       res.json(result);
     } catch (err) {
@@ -224,27 +265,7 @@ router.get('/demo/venue/:placeId',
       const lng = v.location?.longitude;
       const weather = (lat && lng) ? await getWeather(lat, lng).catch(() => null) : null;
 
-      const scored = await mlPredictor.predictBusyness(v, weather, scoreTime);
-      const hourly = await mlPredictor.predictHourlyForecast(v, weather, localHour, 12, scoreTime);
-      const fullDay = await mlPredictor.predictHourlyForecast(v, weather, 6, 24, scoreTime);
-      const peakResult = findPeakTime(fullDay, v);
-      const bestTime = findBestTime(fullDay, v, peakResult.startIdx, peakResult.endIdx, v.isOpen);
-
-      const result = {
-        place_id: v.place_id,
-        name: v.name,
-        address: v.formatted_address,
-        rating: v.rating,
-        reviews: v.user_ratings_total,
-        price_level: v.price_level,
-        is_open: v.isOpen,
-        score: scored.score,
-        label: getLabel(scored.score),
-        confidence: scored.confidence,
-        best_time: bestTime,
-        peak_hours: peakResult.text,
-        hourly: hourly.map(h => ({ hour: h.hour, label: h.label, score: h.score })),
-      };
+      const result = await buildCard(v, weather, scoreTime, localHour);
       setCache(cacheKey, result, 10 * 60_000);
       res.json(result);
     } catch (err) {
