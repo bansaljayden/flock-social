@@ -1,5 +1,6 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { getToken, BASE_URL } from '../services/api';
+import Icons from '../components/ui/Icons';
 
 // Admin-only moderation console (A6). Routed at /admin/moderation.
 // Backed by GET/PUT /api/admin/reports + GET /api/admin/moderation-actions,
@@ -81,7 +82,7 @@ export default function ModerationDashboard() {
         <h1 style={S.h1}>Moderation</h1>
         <p style={S.sub}>
           Report queue. Act promptly. Hide content and/or ban the user. Every action is logged.
-          <button onClick={load} style={S.refresh}>↻ Refresh</button>
+          <button onClick={load} style={S.refresh}>{Icons.repeat('currentColor', 14)} Refresh</button>
         </p>
 
         {error && (
@@ -99,7 +100,7 @@ export default function ModerationDashboard() {
         {loading ? <p style={S.dim}>Loading…</p> : (
           <>
             <h2 style={S.h2}>Reports</h2>
-            {reports.length === 0 ? <p style={S.dim}>No reports. 🎉</p> : (
+            {reports.length === 0 ? <p style={S.dim}>Queue is clear.</p> : (
               <div style={S.list}>
                 {reports.map((r) => (
                   <div key={r.id} style={{ ...S.card, opacity: r.status === 'open' ? 1 : 0.6 }}>
@@ -166,7 +167,7 @@ const S = {
   h1: { fontSize: 28, margin: '0 0 4px' },
   h2: { fontSize: 18, margin: '28px 0 12px', color: '#c7c7cd' },
   sub: { color: '#9a9aa3', margin: '0 0 20px', fontSize: 14 },
-  refresh: { marginLeft: 12, background: 'transparent', color: '#6cb8ff', border: 'none', cursor: 'pointer', fontSize: 14 },
+  refresh: { marginLeft: 12, background: 'transparent', color: '#6cb8ff', border: 'none', cursor: 'pointer', fontSize: 14, display: 'inline-flex', alignItems: 'center', gap: 5, verticalAlign: -3, padding: 0, fontFamily: 'inherit' },
   err: { background: '#3a1416', border: '1px solid #e5484d', color: '#ffb3b6', padding: '10px 14px', borderRadius: 10, marginBottom: 16, fontSize: 14 },
   counts: { display: 'flex', gap: 12, marginBottom: 8 },
   badge: { background: '#17171b', border: '1px solid #25252b', borderRadius: 12, padding: '12px 18px', minWidth: 88, textAlign: 'center' },
@@ -184,7 +185,9 @@ const S = {
   details: { marginTop: 8, fontSize: 14, color: '#c7c7cd', fontStyle: 'italic' },
   actions: { display: 'flex', gap: 8, marginTop: 12, flexWrap: 'wrap' },
   btn: { background: '#222228', color: '#e7e7ea', border: '1px solid #33333a', borderRadius: 8, padding: '7px 12px', cursor: 'pointer', fontSize: 13 },
-  btnHide: { background: '#2a2150', color: '#c9bbff', border: '1px solid #4a3aa0', borderRadius: 8, padding: '7px 12px', cursor: 'pointer', fontSize: 13 },
+  // Steel, not the violet it used to be. Purple is off-palette everywhere in
+  // Flock (SLOP-AUDIT.md A1/H2) and this is still a Flock surface.
+  btnHide: { background: '#12283c', color: '#a8cbe8', border: '1px solid #2d5a87', borderRadius: 8, padding: '7px 12px', cursor: 'pointer', fontSize: 13 },
   btnBan: { background: '#3a1416', color: '#ffb3b6', border: '1px solid #e5484d', borderRadius: 8, padding: '7px 12px', cursor: 'pointer', fontSize: 13 },
   log: { display: 'flex', flexDirection: 'column', gap: 6 },
   logRow: { fontSize: 13, color: '#c7c7cd', padding: '6px 10px', background: '#141417', borderRadius: 8 },

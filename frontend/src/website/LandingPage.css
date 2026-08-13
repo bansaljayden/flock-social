@@ -606,21 +606,65 @@
 }
 .lp-card h3 { margin-bottom: 7px; }
 
-/* Section plates: hand-cut linocut marks, navy ink, transparent ground.
-   One per section, never a grid of them — an icon per card is the formula
-   drop 20 §H/§I calls out. */
+/* Section plates: the bird marks. Solid navy specimens, gull marks and
+   hairlines on a transparent ground, at most one steel element each. One per
+   section, never a grid of them — an icon per card is the formula drop 20
+   §H/§I calls out.
+
+   PLATES LIVE ON PAPER, NEVER ON NAVY. The art is navy ink and there is no
+   dark variant of it. The old `filter: invert(1) brightness(1.9)` faked one:
+   it re-rasterizes the image every frame (banned inside the Capacitor
+   WKWebView for exactly that reason) and it flattened the steel accent, which
+   is the one element that means "you". A plate that needs to sit on navy gets
+   moved to a paper section instead. If one ever genuinely has to, use
+   `mask-image` + `background: currentColor` — compositor-safe, no filter — and
+   accept that a mask is monochrome, so only use it on a plate with no steel.
+
+   Every mark is centred on its ink, so the old hardcoded `-10px` nudge is
+   gone: measured ink boxes inside the 320px canvas are crowd 278x276, split
+   220x278, plans 276x95, each with dx/dy from centre of 0.0px. Two things do
+   still differ per mark, and both are handled by measurement rather than by a
+   magic number.
+
+   1. ASPECT RATIO. Width is set per mark so the three read at the same optical
+      size (equal geometric mean of the rendered ink), not the same box width.
+      Measured at 1280px: 88.6 / 88.0 / 88.7.
+   2. THE TRANSPARENT CANVAS. Each mark keeps its own clear margin, which for
+      the plans wire is 113 units top and bottom against 95 units of ink. Left
+      as-is that canvas, not the CSS, would set the spacing, and the kicker
+      would sit 76px below a wire that looks 14px away. So the canvas is
+      trimmed back per mark from its measured inset, expressed as a fraction of
+      the plate width so it scales with the clamp. What you then read as
+      spacing is ink-to-text: flush left with the column, 14px above the
+      kicker, on all three. */
 .lp-plate {
   display: block;
-  width: clamp(76px, 8vw, 104px);
+  width: var(--plate-w);
   height: auto;
-  /* The generated plates carry uneven internal padding, so they read
-     off-axis against the kicker/headline. Pull left by the average inset so
-     the ink lines up with the text column, not the bounding box. */
-  margin: 0 0 14px -10px;
-  opacity: 0.92;
+  margin:
+    calc(var(--plate-w) * var(--ink-t) * -1)
+    0
+    calc(14px - var(--plate-w) * var(--ink-b))
+    calc(var(--plate-w) * var(--ink-l) * -1);
 }
-.lp-sec-navy .lp-plate,
-.lp-on-navy .lp-plate { filter: invert(1) brightness(1.9) saturate(0.35); opacity: 0.85; }
+/* crowd: near-square ink (21/22/21/22 inset), the reference size */
+.lp-plate-crowd {
+  --plate-w: clamp(76px, 8vw, 104px);
+  --ink-t: 0.0688; --ink-b: 0.0688; --ink-l: 0.0656;
+}
+/* split: the lens is narrow, so its side inset is 50 units and the box runs
+   wider to land on the same optical size */
+.lp-plate-split {
+  --plate-w: clamp(85px, 8.9vw, 116px);
+  --ink-t: 0.0656; --ink-b: 0.0656; --ink-l: 0.1563;
+}
+/* plans: a wire, so the ink is a wide band only 95 units tall. The width floor
+   is set by legibility rather than by the ratio: the perched specimens need
+   ~30px of height to keep beak and tail, which a 148px box gives. */
+.lp-plate-plans {
+  --plate-w: clamp(148px, 13.7vw, 178px);
+  --ink-t: 0.3531; --ink-b: 0.3500; --ink-l: 0.0688;
+}
 .lp-card p { font-size: 15px; color: var(--ink-2); }
 
 /* ============ safety: the real SOS email, shown as a document ============ */
@@ -763,6 +807,9 @@
 .lpd-card-title h3 { font-size: 19px; line-height: 1.15; margin: 0; }
 .lpd-label { margin: 4px 0 0; font-size: 13px; font-weight: 700; }
 .lpd-addr { margin: 4px 0 0; font-size: 13px; color: var(--ink-3); }
+/* The star sits on the text baseline rather than beside it as a foreign
+   object. Colour is inherited, so it stays on the --ink-3 contrast token. */
+.lpd-rating { display: inline-flex; align-items: center; gap: 3px; vertical-align: -2px; }
 
 .lpd-best { margin: 16px 0 0; font-size: 14px; color: var(--ink-2); }
 .lpd-best strong { color: var(--ink); }

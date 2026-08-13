@@ -2,6 +2,10 @@ import React, { useEffect, useRef, useState, useCallback } from 'react';
 import maplibregl from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
 import { BASE_URL } from '../services/api';
+// The rating used to be a bare "*" character. Emoji and stray Unicode glyphs
+// standing in for icons are a named tell (SLOP-AUDIT.md H14); this is the
+// product's own star, same path the app uses.
+import Icons from '../components/ui/Icons';
 
 // ---------------------------------------------------------------------------
 // Live crowd demo for the marketing site. A real slice of the app's Discover
@@ -339,7 +343,18 @@ export default function LiveDemo() {
                   <h3>{selected.name}</h3>
                   <p className="lpd-label" style={{ color: crowdColor(selected.score) }}>{selected.label}</p>
                   <p className="lpd-addr">
-                    {selected.rating ? `★ ${selected.rating} · ` : ''}
+                    {selected.rating ? (
+                      <>
+                        {/* The separator stays outside the span: .lpd-rating is
+                            an inline-flex box, which would swallow the spaces
+                            around it. */}
+                        <span className="lpd-rating">
+                          {Icons.starFilled('currentColor', 13)}
+                          {selected.rating}
+                        </span>
+                        {' · '}
+                      </>
+                    ) : ''}
                     {(selected.address || '').split(',')[0]}
                     {selected.is_open != null ? ` · ${selected.is_open ? 'Open now' : 'Closed'}` : ''}
                   </p>
