@@ -380,7 +380,10 @@ router.use(authenticate);
 
 router.post('/chat',
   [
-    body('messages').isArray({ min: 1 }).withMessage('messages array is required'),
+    // Bounded: without caps, the 1MB JSON limit was the effective prompt
+    // ceiling, and each accepted request can fan out into 6 Gemini calls.
+    body('messages').isArray({ min: 1, max: 24 }).withMessage('messages array is required'),
+    body('messages.*.text').optional().isString().isLength({ max: 4000 }).withMessage('Message too long'),
     body('location').optional(),
     body('currentContext').optional(),
   ],
