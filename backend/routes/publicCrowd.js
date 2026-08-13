@@ -75,6 +75,10 @@ function toVenueShape(p, localDay) {
     if (todayPeriod) {
       openHour = todayPeriod.open?.hour ?? null;
       closeHour = todayPeriod.close?.hour ?? null;
+      // Midnight close is 24, not 0, so a 10 AM - 12 AM day stays a normal
+      // window. An overnight venue still lands here as open 22 / close 3 —
+      // that wrap is handled by crowdEngine.hourInWindow (round 11), which is
+      // the single place open/closed is decided.
       if (closeHour === 0) closeHour = 24;
     }
   }
@@ -166,20 +170,40 @@ router.get('/demo/venues',
 
       if (!allowDemo(req)) return res.status(429).json({ error: DEMO_BUSY_MSG });
 
-      const resp = await fetch('https://places.googleapis.com/v1/places:searchText', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-Goog-Api-Key': API_KEY,
-          'X-Goog-FieldMask': PLACE_FIELDS,
-        },
-        body: JSON.stringify({
-          textQuery: q,
-          maxResultCount: 8,
-          locationBias: { circle: { center: { latitude: lat, longitude: lng }, radius: 8000.0 } },
-        }),
-      });
+      // Round 11: resp.ok was never checked, so a quota, auth or upstream
+      // outage came back as a 200 with an empty venue list and the marketing
+      // page told visitors their city had no spots. An upstream failure is now
+      // an explicit 503 the page can be honest about; only a real zero-result
+      // search returns 200 with an empty list.
+      let resp;
+      try {
+        resp = await fetch('https://places.googleapis.com/v1/places:searchText', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Goog-Api-Key': API_KEY,
+            'X-Goog-FieldMask': PLACE_FIELDS,
+          },
+          body: JSON.stringify({
+            textQuery: q,
+            maxResultCount: 8,
+            locationBias: { circle: { center: { latitude: lat, longitude: lng }, radius: 8000.0 } },
+          }),
+        });
+      } catch (netErr) {
+        console.error('[PublicDemo] Places search unreachable:', netErr.message);
+        return res.status(503).json({ error: DEMO_BUSY_MSG, unavailable: true });
+      }
+      if (!resp.ok) {
+        console.error(`[PublicDemo] Places search failed: HTTP ${resp.status}`);
+        return res.status(503).json({ error: DEMO_BUSY_MSG, unavailable: true });
+      }
+
       const data = await resp.json();
+      if (data.error) {
+        console.error('[PublicDemo] Places search error:', data.error.message || data.error.status);
+        return res.status(503).json({ error: DEMO_BUSY_MSG, unavailable: true });
+      }
       const places = (data.places || []).filter(p => p.location);
       if (places.length === 0) return res.json({ venues: [] });
 
@@ -254,12 +278,26 @@ router.get('/demo/venue/:placeId',
 
       if (!allowDemo(req)) return res.status(429).json({ error: DEMO_BUSY_MSG });
 
-      const resp = await fetch(`https://places.googleapis.com/v1/places/${encodeURIComponent(placeId)}`, {
-        headers: {
-          'X-Goog-Api-Key': API_KEY,
-          'X-Goog-FieldMask': PLACE_FIELDS.replaceAll('places.', ''),
-        },
-      });
+      // Round 11: same as the area search — an upstream failure used to read as
+      // "Venue not found". Only a real upstream 404 is a 404 now.
+      let resp;
+      try {
+        resp = await fetch(`https://places.googleapis.com/v1/places/${encodeURIComponent(placeId)}`, {
+          headers: {
+            'X-Goog-Api-Key': API_KEY,
+            'X-Goog-FieldMask': PLACE_FIELDS.replaceAll('places.', ''),
+          },
+        });
+      } catch (netErr) {
+        console.error('[PublicDemo] Places details unreachable:', netErr.message);
+        return res.status(503).json({ error: DEMO_BUSY_MSG, unavailable: true });
+      }
+      if (!resp.ok) {
+        if (resp.status === 404) return res.status(404).json({ error: 'Venue not found' });
+        console.error(`[PublicDemo] Places details failed: HTTP ${resp.status}`);
+        return res.status(503).json({ error: DEMO_BUSY_MSG, unavailable: true });
+      }
+
       const p = await resp.json();
       if (p.error || !p.id) return res.status(404).json({ error: 'Venue not found' });
 

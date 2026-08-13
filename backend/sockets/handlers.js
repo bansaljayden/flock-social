@@ -345,9 +345,18 @@ function registerHandlers(io, socket) {
       // accumulate a vote on every venue they ever tapped: switching picks
       // never cleared the previous row (round 10). Delete-then-insert in one
       // transaction, mirroring the REST route and the DM vote handler.
+      //
+      // Round 11: the transaction had no lock, so two rapid switches could both
+      // DELETE before either INSERTed and both commit — the unique key is per
+      // venue name, so the member ends up with two live votes. Serialize per
+      // (flock, user) with the same advisory lock the REST route takes.
       const voteClient = await pool.connect();
       try {
         await voteClient.query('BEGIN');
+        await voteClient.query(
+          "SELECT pg_advisory_xact_lock(hashtext('flockvote:' || $1::text || ':' || $2::text))",
+          [String(flockId), String(user.id)]
+        );
         await voteClient.query(
           'DELETE FROM venue_votes WHERE flock_id = $1 AND user_id = $2 AND venue_name <> $3',
           [flockId, user.id, venue_name]

@@ -75,13 +75,18 @@ function boundedSet(map, key, value) {
 // wrote overall_pass from those aggregate slices, which is why v2.5.0-starling
 // carries overall_pass:false despite quick_eval printing "VERDICT: SHIP".)
 //
+// Round 11: an absent or malformed gate used to return promote:true, so any
+// hand-edited, truncated or pre-gate metadata bypassed the check silently —
+// exactly the case the gate exists to catch. Missing gate now FAILS closed:
+// the rule engine serves and the refusal is logged at error level.
+//
 // Escape hatch: ML_SHIP_GATE_OVERRIDE=true promotes a failing artifact anyway,
 // loudly. Intended for local debugging, not production.
 function evaluateShipGate(meta) {
   const gate = meta && meta.ship_gate;
   if (!gate || typeof gate !== 'object') {
-    // Models predating the gate (v2.2 and earlier) have no verdict to honor.
-    return { promote: true, reason: 'no ship_gate in metadata — promoting unverified artifact' };
+    // No verdict means nothing has verified this artifact. Do not promote it.
+    return { promote: false, reason: 'no valid ship_gate in metadata — the artifact is unverified' };
   }
   if (gate.overall_pass === true) {
     const basis = gate.gate_basis || 'unspecified';
@@ -113,7 +118,7 @@ async function init() {
     const overridden = !gate.promote && process.env.ML_SHIP_GATE_OVERRIDE === 'true';
 
     if (!gate.promote && !overridden) {
-      console.warn(`[MLPredictor] REFUSING to promote model v${version}: ${gate.reason}. Serving rule engine instead.`);
+      console.error(`[MLPredictor] REFUSING to promote model v${version}: ${gate.reason}. Serving rule engine instead. Set ML_SHIP_GATE_OVERRIDE=true to force promotion.`);
       return false;
     }
     if (overridden) {
