@@ -32,11 +32,12 @@
 	<array>
 		<string>armv7</string>
 	</array>
+	<!-- Portrait only. Every screen in the app is laid out as a single portrait
+	     column (bottom tab bar, full-height chat, bottom sheets), so declaring
+	     landscape advertised a layout the app has never supported. -->
 	<key>UISupportedInterfaceOrientations</key>
 	<array>
 		<string>UIInterfaceOrientationPortrait</string>
-		<string>UIInterfaceOrientationLandscapeLeft</string>
-		<string>UIInterfaceOrientationLandscapeRight</string>
 	</array>
 	<key>UISupportedInterfaceOrientations~ipad</key>
 	<array>
@@ -47,29 +48,30 @@
 	</array>
 	<key>UIViewControllerBasedStatusBarAppearance</key>
 	<true/>
+	<!-- When-in-use only, and that is the whole story: the app reads location
+	     through the web navigator.geolocation API for nearby venues, in-flock
+	     live share, and the SOS alert. No always-authorization API is reachable
+	     any more (the unused @capacitor/geolocation plugin was removed, which is
+	     what forced the ITMS-90683 always-usage string that used to sit here),
+	     and no location background mode is declared. -->
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>Flock uses your location to show nearby venues and crowd levels, share live location with your group while a flock is active, and send your location to trusted contacts when you tap SOS.</string>
-	<!-- ITMS-90683: the Capacitor geolocation plugin's code references the
-	     always-location API, so Apple requires this purpose string to EXIST
-	     even though Flock never requests always access (no background modes
-	     are declared; the app is when-in-use only). -->
-	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
-	<string>Flock only uses your location while you are using the app: to show nearby venues and crowd levels, share live location with your group while a flock is active, and send your location to trusted contacts when you tap SOS. Flock does not track your location in the background.</string>
+	<!-- Camera: the in-app viewfinder uses getUserMedia inside the web view.
+	     Photo library read: the "choose from gallery" file input. There is no
+	     save-to-library flow anywhere in the app, so no NSPhotoLibraryAdd. -->
 	<key>NSCameraUsageDescription</key>
 	<string>Flock uses the camera to take photos for your stories and chat messages.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>Flock accesses your photos so you can share them in stories and chat messages.</string>
-	<key>NSPhotoLibraryAddUsageDescription</key>
-	<string>Flock saves photos to your library when you choose to download them.</string>
+	<!-- Payment apps only. The bill-split screen opens Venmo, Cash App, and
+	     Zelle handles, so it needs to query whether those apps are installed.
+	     tel/sms/mailto are handled by the system without being declared. -->
 	<key>LSApplicationQueriesSchemes</key>
 	<array>
 		<string>venmo</string>
 		<string>cashapp</string>
 		<string>cash-app</string>
 		<string>zelle</string>
-		<string>tel</string>
-		<string>sms</string>
-		<string>mailto</string>
 	</array>
 	<key>UIBackgroundModes</key>
 	<array>
