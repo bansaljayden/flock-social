@@ -70,6 +70,14 @@ router.post('/:flockId/submit',
           return res.status(400).json({ error: 'Budget has been locked' });
         }
 
+        // Prior state of THIS user's row — needed to detect a true threshold
+        // crossing (an edit by one of the original three must not re-push).
+        const priorRow = await client.query(
+          'SELECT skipped FROM budget_submissions WHERE flock_id = $1 AND user_id = $2',
+          [flockId, userId]
+        );
+        const hadNonSkipBefore = priorRow.rows.length > 0 && priorRow.rows[0].skipped === false;
+
         // UPSERT budget submission
         await client.query(
           `INSERT INTO budget_submissions (flock_id, user_id, amount, skipped, updated_at)
@@ -92,6 +100,14 @@ router.post('/:flockId/submit',
           [ceiling, flockId]
         );
 
+        // Was the ceiling already public before this submission? Pushes fire
+        // only on the CROSSING — every later edit replaying "Budget set!" to
+        // the whole group was notification spam (round 7).
+        const beforeCount = await client.query(
+          `SELECT COUNT(*)::int AS n FROM budget_submissions
+           WHERE flock_id = $1 AND skipped = false AND user_id != $2`,
+          [flockId, userId]
+        );
         // Count submissions
         const countResult = await client.query(
           `SELECT
@@ -139,8 +155,9 @@ router.post('/:flockId/submit',
         });
       }
 
-      // Push "Budget set!" when ceiling is first available
-      if (isReady && visibleCeiling) {
+      // Push "Budget set!" only when this submission CROSSED the threshold
+      const wasReadyBefore = ((beforeCount.rows[0]?.n || 0) + (hadNonSkipBefore ? 1 : 0)) >= 3;
+      if (isReady && visibleCeiling && !wasReadyBefore) {
         const flockNameResult = await pool.query('SELECT name FROM flocks WHERE id = $1', [flockId]);
         const flockName = flockNameResult.rows[0]?.name || 'Flock';
         const membersResult = await pool.query(

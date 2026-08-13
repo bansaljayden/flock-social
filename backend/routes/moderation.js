@@ -17,7 +17,7 @@ router.use(authenticate);
 
 // venue_review added round 6: public UGC with no report path is an
 // App Review 1.2 blocker.
-const VALID_CONTENT_TYPES = ['flock_message', 'dm', 'profile', 'story', 'venue_review'];
+const VALID_CONTENT_TYPES = ['flock_message', 'dm', 'profile', 'story', 'venue_review', 'venue_promotion'];
 const VALID_REASONS = ['spam', 'harassment', 'hate', 'sexual', 'violence', 'self_harm', 'other'];
 
 // POST /api/reports — file a report against content or a user.
@@ -62,6 +62,13 @@ router.post('/reports',
           // Public surface: anyone who can see the review can report it.
           const r = await pool.query(
             `SELECT user_id AS sender_id FROM venue_reviews
+             WHERE id = $1 AND COALESCE(is_hidden, false) = false`,
+            [content_id]
+          );
+          row = r.rows[0] || null;
+        } else if (content_type === 'venue_promotion') {
+          const r = await pool.query(
+            `SELECT venue_user_id AS sender_id FROM venue_promotions
              WHERE id = $1 AND COALESCE(is_hidden, false) = false`,
             [content_id]
           );

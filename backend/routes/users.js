@@ -561,15 +561,27 @@ router.get('/settings', async (req, res) => {
 // PATCH /api/users/settings - Merge partial settings into stored JSONB
 router.patch('/settings', async (req, res) => {
   try {
-    const partial = req.body && typeof req.body === 'object' ? req.body : {};
+    // Bounded (round 7): a plain object only (arrays CONCATENATE under
+    // jsonb ||), payload capped, and the MERGED result capped — otherwise one
+    // account can grow a single row without limit.
+    const partial = req.body && typeof req.body === 'object' && !Array.isArray(req.body) ? req.body : {};
+    if (JSON.stringify(partial).length > 8192) {
+      return res.status(400).json({ error: 'Settings payload too large' });
+    }
+    const current = await pool.query('SELECT settings FROM user_settings WHERE user_id = $1', [req.user.id]);
+    const merged = { ...(current.rows[0]?.settings || {}), ...partial };
+    const serialized = JSON.stringify(merged);
+    if (serialized.length > 16384) {
+      return res.status(400).json({ error: 'Settings storage limit reached' });
+    }
     const result = await pool.query(
       `INSERT INTO user_settings (user_id, settings, updated_at)
        VALUES ($1, $2::jsonb, NOW())
        ON CONFLICT (user_id) DO UPDATE
-       SET settings = user_settings.settings || EXCLUDED.settings,
+       SET settings = EXCLUDED.settings,
            updated_at = NOW()
        RETURNING settings`,
-      [req.user.id, JSON.stringify(partial)]
+      [req.user.id, serialized]
     );
     res.json({ settings: result.rows[0].settings });
   } catch (err) {

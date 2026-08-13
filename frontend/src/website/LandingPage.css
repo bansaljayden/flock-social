@@ -503,9 +503,13 @@
    One per section, never a grid of them — an icon per card is the formula
    drop 20 §H/§I calls out. */
 .lp-plate {
-  width: clamp(84px, 9vw, 116px);
+  display: block;
+  width: clamp(76px, 8vw, 104px);
   height: auto;
-  margin-bottom: 16px;
+  /* The generated plates carry uneven internal padding, so they read
+     off-axis against the kicker/headline. Pull left by the average inset so
+     the ink lines up with the text column, not the bounding box. */
+  margin: 0 0 14px -10px;
   opacity: 0.92;
 }
 .lp-sec-navy .lp-plate,

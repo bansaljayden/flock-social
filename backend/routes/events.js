@@ -266,6 +266,10 @@ router.get('/featured',
       const cached = getCached(cacheKey);
       if (cached) return res.json(cached);
 
+      if (!allowUpstream(req.user.id)) {
+        return res.status(429).json({ error: 'Event search is busy right now. Try again in a bit.' });
+      }
+
       const [lat, lng] = location.split(',').map(Number);
 
       // Map user interests to Ticketmaster classification keywords
@@ -367,6 +371,10 @@ router.get('/details',
       const cacheKey = `event_detail:${eventId}`;
       const cached = getCached(cacheKey);
       if (cached) return res.json(cached);
+
+      if (!allowUpstream(req.user.id)) {
+        return res.status(429).json({ error: 'Event lookups are busy right now. Try again in a bit.' });
+      }
 
       const response = await fetch(`https://app.ticketmaster.com/discovery/v2/events/${eventId}?apikey=${TM_API_KEY}`);
 
