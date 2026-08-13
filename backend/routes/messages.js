@@ -270,7 +270,8 @@ router.get('/dm', async (req, res) => {
                 u.name AS other_name, u.profile_image_url AS other_image
          FROM direct_messages dm
          JOIN users u ON u.id = CASE WHEN dm.sender_id = $1 THEN dm.receiver_id ELSE dm.sender_id END
-         WHERE dm.sender_id = $1 OR dm.receiver_id = $1
+         WHERE (dm.sender_id = $1 OR dm.receiver_id = $1)
+           AND COALESCE(dm.is_hidden, false) = false
        ) sub
        ORDER BY other_id, created_at DESC`,
       [req.user.id]
@@ -320,8 +321,12 @@ router.get('/dm/:userId',
   ],
   async (req, res) => {
     try {
+      const errors = validationResult(req);
+      if (!errors.isEmpty()) {
+        return res.status(400).json({ error: errors.array()[0].msg });
+      }
       const otherUserId = parseInt(req.params.userId);
-      const limit = parseInt(req.query.limit) || 50;
+      const limit = Math.min(parseInt(req.query.limit) || 50, 100);
       const before = req.query.before ? parseInt(req.query.before) : null;
 
       // Mutual block: hide the conversation entirely if either side blocked the other.
@@ -339,6 +344,7 @@ router.get('/dm/:userId',
           JOIN users u ON u.id = dm.sender_id
           WHERE ((dm.sender_id = $1 AND dm.receiver_id = $2)
               OR (dm.sender_id = $2 AND dm.receiver_id = $1))
+            AND COALESCE(dm.is_hidden, false) = false
             AND dm.id < $3
           ORDER BY dm.created_at DESC
           LIMIT $4`;
@@ -348,8 +354,9 @@ router.get('/dm/:userId',
           SELECT dm.*, u.name AS sender_name, u.profile_image_url AS sender_image
           FROM direct_messages dm
           JOIN users u ON u.id = dm.sender_id
-          WHERE (dm.sender_id = $1 AND dm.receiver_id = $2)
-             OR (dm.sender_id = $2 AND dm.receiver_id = $1)
+          WHERE ((dm.sender_id = $1 AND dm.receiver_id = $2)
+             OR (dm.sender_id = $2 AND dm.receiver_id = $1))
+            AND COALESCE(dm.is_hidden, false) = false
           ORDER BY dm.created_at DESC
           LIMIT $3`;
         params = [req.user.id, otherUserId, limit];
@@ -388,6 +395,7 @@ router.get('/dm/:userId',
           `SELECT dm.id, dm.message_text, u.name AS sender_name
            FROM direct_messages dm JOIN users u ON u.id = dm.sender_id
            WHERE dm.id = ANY($1)
+             AND COALESCE(dm.is_hidden, false) = false
              AND ((dm.sender_id = $2 AND dm.receiver_id = $3) OR (dm.sender_id = $3 AND dm.receiver_id = $2))`,
           [replyIds, req.user.id, otherUserId]
         );
@@ -507,6 +515,10 @@ router.post('/dm/messages/:id/react',
       if (dm.rows[0].sender_id !== req.user.id && dm.rows[0].receiver_id !== req.user.id) {
         return res.status(403).json({ error: 'Not authorized' });
       }
+      const counterpart = dm.rows[0].sender_id === req.user.id ? dm.rows[0].receiver_id : dm.rows[0].sender_id;
+      if (await isBlockedBetween(req.user.id, counterpart)) {
+        return res.status(403).json({ error: 'You can no longer interact with this user.' });
+      }
 
       const result = await pool.query(
         `INSERT INTO dm_emoji_reactions (dm_id, user_id, emoji) VALUES ($1, $2, $3) ON CONFLICT (dm_id, user_id, emoji) DO NOTHING RETURNING *`,
@@ -562,6 +574,9 @@ router.post('/dm/:userId/venue-votes',
   async (req, res) => {
     try {
       const { user1, user2 } = dmPairKey(req.user.id, parseInt(req.params.userId));
+      if (await isBlockedBetween(req.user.id, parseInt(req.params.userId))) {
+        return res.status(403).json({ error: 'You can no longer interact with this user.' });
+      }
       const venue_name = stripHtml(req.body.venue_name);
       // Toggle: if already voted for this venue, unvote; otherwise switch vote
       const existing = await pool.query(
@@ -639,6 +654,9 @@ router.put('/dm/:userId/pinned-venue',
   async (req, res) => {
     try {
       const otherUserId = parseInt(req.params.userId);
+      if (await isBlockedBetween(req.user.id, otherUserId)) {
+        return res.status(403).json({ error: 'You can no longer interact with this user.' });
+      }
       const { user1, user2 } = dmPairKey(req.user.id, otherUserId);
       const venue_name = stripHtml(req.body.venue_name);
       const venue_address = req.body.venue_address ? stripHtml(req.body.venue_address) : null;

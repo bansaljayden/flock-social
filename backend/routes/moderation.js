@@ -33,6 +33,38 @@ router.post('/reports',
 
       const { content_type, content_id, reported_user_id, reason, details } = req.body;
 
+      // Round 3: a report must reference REAL content the reporter can see,
+      // authored by the person being reported — otherwise users can frame
+      // accounts or probe private message ids via the report pipeline.
+      if (content_id) {
+        let row = null;
+        if (content_type === 'message') {
+          const r = await pool.query(
+            `SELECT m.sender_id FROM messages m
+             JOIN flock_members fm ON fm.flock_id = m.flock_id AND fm.user_id = $2 AND fm.status = 'accepted'
+             WHERE m.id = $1`,
+            [content_id, req.user.id]
+          );
+          row = r.rows[0] || null;
+        } else if (content_type === 'dm') {
+          const r = await pool.query(
+            `SELECT sender_id FROM direct_messages
+             WHERE id = $1 AND (sender_id = $2 OR receiver_id = $2)`,
+            [content_id, req.user.id]
+          );
+          row = r.rows[0] || null;
+        } else if (content_type === 'story') {
+          const r = await pool.query('SELECT user_id AS sender_id FROM stories WHERE id = $1', [content_id]);
+          row = r.rows[0] || null;
+        }
+        if (!row) {
+          return res.status(400).json({ error: 'That content could not be found' });
+        }
+        if (reported_user_id && row.sender_id !== reported_user_id) {
+          return res.status(400).json({ error: 'Reported user does not match the content author' });
+        }
+      }
+
       const result = await pool.query(
         `INSERT INTO content_reports (reporter_id, reported_user_id, content_type, content_id, reason, details)
          VALUES ($1, $2, $3, $4, $5, $6)
