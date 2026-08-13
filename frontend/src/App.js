@@ -3402,11 +3402,15 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
     );
   }, [loadVenuesAtLocation]);
 
-  // Load venues on mount
+  // Load venues on mount — but never against an explicit opt-out (round 3:
+  // this fired unconditionally, so on an already-granted device the opt-out
+  // silently un-opted itself on every reload).
   useEffect(() => {
     if (!venueLoadAttemptedRef.current) {
       venueLoadAttemptedRef.current = true;
-      requestUserLocation();
+      if (localStorage.getItem('flock_location_enabled') !== 'false') {
+        requestUserLocation();
+      }
     }
   }, [requestUserLocation]);
 
@@ -4089,12 +4093,18 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
       const tempId = Date.now();
       addMessageToFlock(selectedFlockId, { id: tempId, sender: 'You', senderId: authUser?.id, senderImage: profilePic, time: 'Now', text, reactions: [] });
 
-      // Send via WebSocket (instant) + HTTP (persistent)
-      socketSendMessage(selectedFlockId, text);
-      try {
-        await apiSendMessage(selectedFlockId, text);
-      } catch {
-        // WebSocket already sent it, HTTP is just backup persistence
+      // Send via WebSocket when connected, HTTP only as the fallback —
+      // both paths persist server-side, so firing both stored every
+      // message twice (round 3: duplicates appeared on history reload).
+      const sock = getSocket();
+      if (sock?.connected) {
+        socketSendMessage(selectedFlockId, text);
+      } else {
+        try {
+          await apiSendMessage(selectedFlockId, text);
+        } catch {
+          showToast('Message failed to send', 'error');
+        }
       }
     }
   }, [selectedFlockId, addMessageToFlock, authUser]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -9340,9 +9350,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                               if (m.deepLink) window.open(m.deepLink, '_blank');
                               else if (m.webLink) window.open(m.webLink, '_blank');
                               else if (m.instructions) showToast(m.instructions);
-                              await settleShare(selectedFlockId);
-                              setBillSplit(prev => ({ ...prev, shares: prev.shares.map(s => String(s.userId) === String(authUser?.id) ? { ...s, settled: true } : s) }));
-                              showToast('Settled up');
+                              // Opening the payment app proves nothing about
+                              // payment — the user confirms with "Mark as paid"
+                              showToast('After paying, tap "Mark as paid"');
                             } else {
                               setPaymentOptions(result);
                               setShowPaymentPicker(true);
@@ -9353,11 +9363,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                             showToast('Marked as settled');
                           }
                         } catch (err) {
-                          try {
-                            await settleShare(selectedFlockId);
-                            setBillSplit(prev => ({ ...prev, shares: prev.shares.map(s => String(s.userId) === String(authUser?.id) ? { ...s, settled: true } : s) }));
-                            showToast('Marked as settled');
-                          } catch (e2) { showToast(e2.message, 'error'); }
+                          // A failed payment-link lookup is NOT a payment —
+                          // never mark the debt settled on an error path
+                          showToast('Could not load payment links. Use "Mark as Paid" after paying.', 'error');
                         }
                       }} style={{ ...styles.gradientButton, padding: '14px', marginBottom: '8px' }}>
                         Settle Up · ${billSplit.shares.find(s => String(s.userId) === String(authUser?.id))?.amount?.toFixed(2)}

@@ -33,7 +33,10 @@ router.post('/webhook', express.json(), async (req, res) => {
     else if (INACTIVE.includes(type)) premium = false;
 
     if (premium !== null) {
-      await pool.query('UPDATE users SET is_premium = $1 WHERE id = $2', [premium, appUserId]).catch(() => {});
+      // No swallowed errors here (round 3): returning 200 on a failed write
+      // makes RevenueCat mark the event delivered and never retry, leaving
+      // entitlements permanently stale. A 500 triggers their retry queue.
+      await pool.query('UPDATE users SET is_premium = $1 WHERE id = $2', [premium, appUserId]);
     }
     res.json({ ok: true });
   } catch (err) {

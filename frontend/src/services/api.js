@@ -202,6 +202,9 @@ export async function getCurrentUser() {
 
 export function logout() {
   clearToken();
+  // Round 3: without reset, activity on a shared device stays attributed to
+  // the previous account, and the next login can merge identities.
+  try { posthog.reset(); } catch (_) { /* analytics only */ }
 }
 
 // Flock Pro — { isPremium, paywallEnabled, birdie: { limit, used, remaining } }.
