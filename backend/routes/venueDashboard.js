@@ -342,6 +342,7 @@ router.get('/public-reviews/:placeId', async (req, res) => {
        JOIN users u ON u.id = vr.user_id
        LEFT JOIN venue_profiles vp ON vp.google_place_id = vr.google_place_id AND vp.verified = true
        WHERE vr.google_place_id = $1
+         AND COALESCE(vr.is_hidden, false) = false
          AND NOT EXISTS (
            SELECT 1 FROM user_blocks b
            WHERE (b.blocker_id = $2 AND b.blocked_id = vr.user_id)

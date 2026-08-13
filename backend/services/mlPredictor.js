@@ -26,6 +26,20 @@ let useML = false;
 // Event cache: key = "lat,lng,hour" → { data, ts }
 const eventCache = new Map();
 const EVENT_CACHE_TTL = 60 * 60 * 1000; // 1 hour
+const EVENT_CACHE_MAX = 500;
+// Upstream budget (round 6): the public demo builds current + 12h + 24h
+// forecasts per card, and each prediction can reach Ticketmaster. Cap the
+// daily fan-out here, where every prediction path converges.
+let eventDayKey = new Date().toISOString().slice(0, 10);
+let eventDayCount = 0;
+const EVENT_DAILY_BUDGET = 1500;
+function allowEventFetch() {
+  const today = new Date().toISOString().slice(0, 10);
+  if (today !== eventDayKey) { eventDayKey = today; eventDayCount = 0; }
+  if (eventDayCount >= EVENT_DAILY_BUDGET) return false;
+  eventDayCount++;
+  return true;
+}
 
 // Baseline cache: key = "placeId_dow_hour" → baseline value
 const baselineCache = new Map();
@@ -285,6 +299,8 @@ async function getNearbyEvents(lat, lng, timestamp) {
   const cacheKey = `${lat.toFixed(3)},${lng.toFixed(3)},${new Date(timestamp).getHours()}`;
   const cached = eventCache.get(cacheKey);
   if (cached && Date.now() - cached.ts < EVENT_CACHE_TTL) return cached.data;
+  // Budget applies only to cache MISSES (real upstream calls).
+  if (!allowEventFetch()) return noEvents;
 
   try {
     const ts = timestamp ? new Date(timestamp) : new Date();
@@ -308,6 +324,7 @@ async function getNearbyEvents(lat, lng, timestamp) {
     );
 
     if (!response.ok) {
+      if (eventCache.size >= EVENT_CACHE_MAX) eventCache.delete(eventCache.keys().next().value);
       eventCache.set(cacheKey, { data: noEvents, ts: Date.now() });
       return noEvents;
     }
@@ -316,6 +333,7 @@ async function getNearbyEvents(lat, lng, timestamp) {
     const events = data._embedded?.events || [];
 
     if (events.length === 0) {
+      if (eventCache.size >= EVENT_CACHE_MAX) eventCache.delete(eventCache.keys().next().value);
       eventCache.set(cacheKey, { data: noEvents, ts: Date.now() });
       return noEvents;
     }

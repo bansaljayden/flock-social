@@ -417,13 +417,23 @@ router.post('/apple', [
     // Capture an Apple refresh token so deletion can revoke it (Apple 5.1.1(v)).
     // No-op unless APPLE_* signing env is configured.
     if (authorizationCode) {
+      const { exchangeAppleCode, isConfigured: appleConfigured } = require('../services/appleAuth');
       try {
-        const { exchangeAppleCode } = require('../services/appleAuth');
         const tokens = await exchangeAppleCode(authorizationCode);
         if (tokens?.refresh_token) {
           await pool.query('UPDATE users SET apple_refresh_token = $1 WHERE id = $2', [tokens.refresh_token, user.id]);
+        } else if (appleConfigured()) {
+          // Round 6: no refresh token means account deletion could never revoke
+          // the Apple grant (5.1.1(v)). Fail the sign-in instead of creating an
+          // unrevokeable account. Unconfigured env stays a no-op as before.
+          return res.status(503).json({ error: "Apple sign-in didn't complete. Try again in a moment." });
         }
-      } catch (e) { console.error('Apple code exchange error:', e.message); }
+      } catch (e) {
+        console.error('Apple code exchange error:', e.message);
+        if (appleConfigured()) {
+          return res.status(503).json({ error: "Apple sign-in didn't complete. Try again in a moment." });
+        }
+      }
     }
 
         if (!(await enforceDobOnLogin(user, req, res))) return;

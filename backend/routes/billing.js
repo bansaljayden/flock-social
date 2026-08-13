@@ -128,6 +128,13 @@ router.post('/:flockId/create',
           'SELECT id, paid_by FROM bill_splits WHERE flock_id = $1',
           [flockId]
         );
+        if (existingBill.rows.length === 0 && payerId !== userId && userId !== flockCreatorId) {
+          // Round 6: creating the FIRST bill with someone else as payer let any
+          // member assign visible debts in another member's name. Only the
+          // payer themselves (or the flock creator) can open a bill.
+          await client.query('ROLLBACK');
+          return res.status(403).json({ error: 'Only the person who paid can start the bill' });
+        }
         if (existingBill.rows.length > 0) {
           const prevPayer = existingBill.rows[0].paid_by;
           if (userId !== prevPayer && userId !== flockCreatorId) {
