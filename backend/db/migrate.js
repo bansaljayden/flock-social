@@ -13,7 +13,24 @@
 const fs = require('fs');
 const path = require('path');
 
+// Fixed app-wide key for pg_advisory_lock — serializes migration runs across
+// replicas / rolling deploys so two boots can't race the same file.
+const MIGRATION_LOCK_KEY = 727501842;
+
 async function migrate(pool) {
+  // The advisory lock is session-scoped, so hold one dedicated connection for
+  // the whole run and release the lock before returning it to the pool.
+  const lockClient = await pool.connect();
+  try {
+    await lockClient.query('SELECT pg_advisory_lock($1)', [MIGRATION_LOCK_KEY]);
+    await runMigrations(pool);
+  } finally {
+    await lockClient.query('SELECT pg_advisory_unlock($1)', [MIGRATION_LOCK_KEY]).catch(() => {});
+    lockClient.release();
+  }
+}
+
+async function runMigrations(pool) {
   await pool.query(
     `CREATE TABLE IF NOT EXISTS schema_migrations (
        name TEXT PRIMARY KEY,
@@ -37,14 +54,23 @@ async function migrate(pool) {
         .split(/;\s*(?:\r?\n|$)/)
         .map((s) => s.replace(/^\s*--[^\n]*\n?/gm, '').trim())
         .filter(Boolean);
+      let failures = 0;
       for (const stmt of stmts) {
         try {
           await pool.query(stmt);
         } catch (e) {
+          failures += 1;
           console.warn(`[migrate] ${file} tolerant skip: ${e.message}`);
         }
       }
-      await pool.query('INSERT INTO schema_migrations (name) VALUES ($1) ON CONFLICT DO NOTHING', [file]);
+      if (failures === 0) {
+        await pool.query('INSERT INTO schema_migrations (name) VALUES ($1) ON CONFLICT DO NOTHING', [file]);
+      } else {
+        // A transient error (lock, dependency, drift) must not permanently
+        // skip DDL: leave the file pending so the next boot replays it. The
+        // statements are idempotent, so replay is safe and cheap.
+        console.error(`[migrate] ${file}: ${failures} statement(s) failed — NOT recording as applied, will retry next boot`);
+      }
     } else {
       const client = await pool.connect();
       try {
