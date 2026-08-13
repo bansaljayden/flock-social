@@ -3248,13 +3248,6 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   const [newInterest, setNewInterest] = useState('');
   const suggestedInterests = ['Sports', 'Food', 'Dancing', 'Karaoke', 'Comedy', 'Art', 'Wine', 'Beer', 'Trivia', 'Pool', 'Darts', 'Gaming'];
 
-  // Payment Methods
-  const [paymentMethods, setPaymentMethods] = useState([
-    { id: 1, brand: 'Visa', last4: '4242', expiry: '12/26', isDefault: true },
-  ]);
-  const [showAddCard, setShowAddCard] = useState(false);
-  const [newCard, setNewCard] = useState({ number: '', expiry: '', cvv: '', name: '' });
-
   // Modals
   const [showSOS, setShowSOS] = useState(false);
   const [showCheckin, setShowCheckin] = useState(false);
@@ -10525,57 +10518,6 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                   }} style={{ ...styles.gradientButton, marginTop: '4px', opacity: paymentSaving ? 0.5 : 1 }}>
                     {paymentSaving ? 'Saving...' : 'Save'}
                   </button>
-                </div>
-                <div style={styles.card}>
-                  <h3 style={{ fontWeight: 'bold', fontSize: '14px', color: colors.navy, margin: '0 0 12px' }}>Saved Cards</h3>
-                  {paymentMethods.length === 0 ? (
-                    <p style={{ fontSize: '13px', color: 'var(--text-secondary)', textAlign: 'center', padding: '16px 0' }}>No payment methods saved</p>
-                  ) : (
-                    paymentMethods.map(card => (
-                      <div key={card.id} style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '12px', borderRadius: '12px', backgroundColor: 'var(--bg-card-solid)', marginBottom: '8px' }}>
-                        <div style={{ width: '44px', height: '28px', borderRadius: '4px', background: card.brand === 'Visa' ? 'linear-gradient(135deg, #1A1F71, #2E3691)' : 'linear-gradient(135deg, #EB001B, #F79E1B)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', fontSize: '10px', fontWeight: 'bold' }}>
-                          {card.brand}
-                        </div>
-                        <div style={{ flex: 1 }}>
-                          <p style={{ fontSize: '14px', fontWeight: '600', color: colors.navy, margin: 0 }}>•••• {card.last4}</p>
-                          <p style={{ fontSize: '11px', color: 'var(--text-secondary)', margin: 0 }}>Expires {card.expiry}</p>
-                        </div>
-                        {card.isDefault && <span style={{ fontSize: '9px', fontWeight: '600', color: '#22C55E', backgroundColor: '#DCFCE7', padding: '2px 6px', borderRadius: '4px' }}>Default</span>}
-                        <button onClick={(e) => { confirmClick(e); setPaymentMethods(paymentMethods.filter(c => c.id !== card.id)); }} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '4px', position: 'relative', overflow: 'hidden' }}>{Icons.x(colors.textTertiary, 16)}</button>
-                      </div>
-                    ))
-                  )}
-                  {!showAddCard ? (
-                    <button className="glass-btn glass-secondary" onClick={() => setShowAddCard(true)} style={{ width: '100%', padding: '12px', borderRadius: '12px', border: `2px dashed ${colors.creamDark}`, backgroundColor: 'transparent', color: colors.navy, fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', marginTop: '8px' }}>
-                      {Icons.plus(colors.navy, 16)} Add New Card
-                    </button>
-                  ) : (
-                    <div style={{ marginTop: '12px', padding: '16px', borderRadius: '12px', backgroundColor: 'var(--bg-primary)' }}>
-                      <h4 style={{ fontSize: '13px', fontWeight: '700', color: colors.navy, margin: '0 0 12px' }}>Add New Card</h4>
-                      <div style={{ marginBottom: '10px' }}>
-                        <label style={{ display: 'block', fontSize: '11px', fontWeight: '600', color: 'var(--text-secondary)', marginBottom: '4px' }}>Card Number</label>
-                        <SearchInputLocal type="text" initialValue={newCard.number} onCommit={(v) => setNewCard(prev => ({ ...prev, number: v }))} transform={(raw) => { const v = raw.replace(/\D/g, '').slice(0, 16); return v.replace(/(\d{4})/g, '$1 ').trim(); }} placeholder="1234 5678 9012 3456" style={{ ...styles.input, letterSpacing: '1px' }} autoComplete="off" />
-                      </div>
-                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', marginBottom: '10px' }}>
-                        <div>
-                          <label style={{ display: 'block', fontSize: '11px', fontWeight: '600', color: 'var(--text-secondary)', marginBottom: '4px' }}>Expiry</label>
-                          <SearchInputLocal type="text" initialValue={newCard.expiry} onCommit={(v) => setNewCard(prev => ({ ...prev, expiry: v }))} transform={(raw) => { let v = raw.replace(/\D/g, '').slice(0, 4); if (v.length > 2) v = v.slice(0, 2) + '/' + v.slice(2); return v; }} placeholder="MM/YY" style={styles.input} autoComplete="off" />
-                        </div>
-                        <div>
-                          <label style={{ display: 'block', fontSize: '11px', fontWeight: '600', color: 'var(--text-secondary)', marginBottom: '4px' }}>CVV</label>
-                          <SearchInputLocal type="text" initialValue={newCard.cvv} onCommit={(v) => setNewCard(prev => ({ ...prev, cvv: v }))} transform={(raw) => raw.replace(/\D/g, '').slice(0, 3)} placeholder="123" style={styles.input} autoComplete="off" />
-                        </div>
-                      </div>
-                      <div style={{ marginBottom: '12px' }}>
-                        <label style={{ display: 'block', fontSize: '11px', fontWeight: '600', color: 'var(--text-secondary)', marginBottom: '4px' }}>Cardholder Name</label>
-                        <SearchInputLocal type="text" initialValue={newCard.name} onCommit={(v) => setNewCard(prev => ({ ...prev, name: v }))} placeholder="John Doe" style={styles.input} autoComplete="off" />
-                      </div>
-                      <div style={{ display: 'flex', gap: '8px' }}>
-                        <button className="glass-btn glass-secondary" onClick={() => { setShowAddCard(false); setNewCard({ number: '', expiry: '', cvv: '', name: '' }); }} style={{ flex: 1, padding: '12px', borderRadius: '8px', border: '1px solid var(--border-mid)', backgroundColor: 'var(--bg-card-solid)', fontWeight: '600', cursor: 'pointer' }}>Cancel</button>
-                        <button className="glass-btn glass-navy" onClick={(e) => { if (newCard.number.length >= 19 && newCard.expiry.length === 5 && newCard.cvv.length === 3 && newCard.name.trim()) { confirmClick(e); const brand = newCard.number.startsWith('4') ? 'Visa' : 'MC'; setPaymentMethods([...paymentMethods, { id: Date.now(), brand, last4: newCard.number.slice(-4), expiry: newCard.expiry, isDefault: paymentMethods.length === 0 }]); setNewCard({ number: '', expiry: '', cvv: '', name: '' }); setShowAddCard(false); } else { showToast('Please fill all fields', 'error'); }}} style={{ flex: 1, padding: '12px', borderRadius: '8px', border: 'none', background: colors.navyMidBg, color: 'white', fontWeight: '600', cursor: 'pointer', position: 'relative', overflow: 'hidden' }}>Add Card</button>
-                      </div>
-                    </div>
-                  )}
                 </div>
               </div>
             )}

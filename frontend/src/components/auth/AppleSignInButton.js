@@ -14,7 +14,10 @@ const isNativeIos = () =>
   window.Capacitor?.isNativePlatform?.() &&
   window.Capacitor?.getPlatform?.() === 'ios';
 
-const AppleSignInButton = ({ onSuccess, onError }) => {
+// `dob` (optional): passed through on account CREATION — the server requires a
+// date of birth for new accounts on every auth path (age gate). Existing
+// accounts sign in fine without it.
+const AppleSignInButton = ({ onSuccess, onError, dob }) => {
   const [busy, setBusy] = useState(false);
 
   if (!isNativeIos()) return null;
@@ -35,7 +38,7 @@ const AppleSignInButton = ({ onSuccess, onError }) => {
       const fullName = (r.givenName || r.familyName)
         ? { givenName: r.givenName || '', familyName: r.familyName || '' }
         : undefined;
-      const data = await appleLogin(r.identityToken, fullName, r.authorizationCode);
+      const data = await appleLogin(r.identityToken, fullName, r.authorizationCode, dob);
       onSuccess?.(data.user);
     } catch (err) {
       // User-cancelled flows should stay quiet; real failures surface.

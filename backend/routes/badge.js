@@ -58,9 +58,10 @@ router.get('/:placeId.svg',
         return res.send(hit.svg);
       }
 
-      // Claimed venues only.
+      // Claimed AND verified venues only — the badge burns Google quota and
+      // speaks with Flock's name; unverified claims get neither.
       const claimed = await pool.query(
-        'SELECT 1 FROM venue_profiles WHERE google_place_id = $1 LIMIT 1',
+        'SELECT 1 FROM venue_profiles WHERE google_place_id = $1 AND verified = true LIMIT 1',
         [placeId]
       );
       if (!claimed.rows.length) return res.status(404).send('');

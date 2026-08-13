@@ -162,10 +162,11 @@ export async function googleLogin(credential, dateOfBirth) {
 // identityToken; the backend verifies it against Apple's JWKS and issues our
 // JWT (backend/routes/auth.js POST /apple). fullName only arrives on the very
 // FIRST authorization for an Apple ID, so pass it through when present.
-export async function appleLogin(identityToken, fullName, authorizationCode) {
+export async function appleLogin(identityToken, fullName, authorizationCode, dateOfBirth) {
   const body = { identityToken };
   if (fullName) body.fullName = fullName;
   if (authorizationCode) body.authorizationCode = authorizationCode;
+  if (dateOfBirth) body.date_of_birth = dateOfBirth; // required server-side for NEW accounts (age gate)
   const data = await request('/api/auth/apple', {
     method: 'POST',
     body: JSON.stringify(body),
