@@ -38,7 +38,9 @@ router.post('/reports',
       // accounts or probe private message ids via the report pipeline.
       if (content_id) {
         let row = null;
-        if (content_type === 'message') {
+        // 'flock_message' is the validated type name — checking 'message' here
+        // made every legitimate group-chat report 400 as "not found"
+        if (content_type === 'flock_message') {
           const r = await pool.query(
             `SELECT m.sender_id FROM messages m
              JOIN flock_members fm ON fm.flock_id = m.flock_id AND fm.user_id = $2 AND fm.status = 'accepted'

@@ -35,7 +35,9 @@ async function markFlockAttendance(userId, placeId) {
          AND status = 'accepted'
          AND flock_id IN (
            SELECT id FROM flocks
-           WHERE (venue_id = $2 OR venue_data->>'place_id' = $2)
+           -- flocks has no venue_data column — referencing it made PostgreSQL
+           -- reject the whole UPDATE, so attendance was never recorded
+           WHERE venue_id = $2
              AND status NOT IN ('completed', 'cancelled')
              -- Only within the event window (round 3: checking in today must
              -- not pre-credit attendance for next week's flock — reliability
