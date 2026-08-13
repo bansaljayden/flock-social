@@ -13,7 +13,7 @@ import {
 } from './lib/finance';
 import { getCurrentUser, logout, isLoggedIn, getFlocks, getFlock, createFlock as apiCreateFlock, getMessages, sendMessage as apiSendMessage, updateProfile, searchVenues, searchUsers, getSuggestedUsers, sendFriendRequest, getVenueDetails, leaveFlock as apiLeaveFlock, getDMConversations, getDMs, getDmVenueVotes, getDmPinnedVenue, BASE_URL, inviteToFlock, acceptFlockInvite, declineFlockInvite, getFriends, acceptFriendRequest, declineFriendRequest, getPendingRequests, getOutgoingRequests, getFriendSuggestions, addFriendByCode, findFriendsByPhone, removeFriend, getTrustedContacts, addTrustedContact, updateTrustedContact, deleteTrustedContact, sendEmergencyAlert, shareLocationWithContacts, getUserStats, getCrowdPrediction, getCrowdBatch, getCrowdAlternatives, getWeather, submitVenueFeedback, uploadProfileImage, saveProfileImageUrl, submitBudget, getBudgetStatus, lockBudget, sendBudgetReminder, createBillSplit, getBillSplit, settleShare, ghostCommit, updatePaymentMethods, getPaymentLinks, getFeaturedEvents, searchEvents, getEventDetails, sendAiChat, getWeatherForecast, submitAttendance, getAdminAnalytics, createVenueProfile, getVenueProfile, updateVenueProfile, getVenuePromotions, createVenuePromotion, updateVenuePromotion, deleteVenuePromotion, getVenueEvents, createVenueEvent, updateVenueEvent, deleteVenueEvent, getIncomingFlocks, getVenueReviews, replyToReview, submitVenueReview, getPublicReviews, getPublicPromotions, deleteAccount } from './services/api';
 import { connectSocket, disconnectSocket, getSocket, joinFlock, leaveFlock, sendMessage as socketSendMessage, sendImageMessage as socketSendImage, startTyping, stopTyping, onNewMessage, onUserTyping, onUserStoppedTyping, emitLocation, stopSharingLocation as socketStopSharing, onLocationUpdate, onMemberStoppedSharing, socketSendDm, onNewDm, dmStartTyping, dmStopTyping, onDmUserTyping, onDmUserStoppedTyping, dmReact, dmRemoveReact, onDmReactionAdded, onDmReactionRemoved, dmVoteVenue, onDmNewVote, dmShareLocation, dmStopSharingLocation, onDmLocationUpdate, onDmMemberStoppedSharing, dmPinVenue, onDmVenuePinned, emitFlockInvite, emitFlockInviteResponse, onFlockInviteReceived, onFlockInviteResponded, emitFriendRequest, emitFriendResponse, onFriendRequestReceived, onFriendRequestResponded, onBudgetUpdated, onBudgetLocked, onBudgetReminder, onBillCreated, onShareSettled, onBillFullySettled, onGhostCommitted, onNewVote, onVenueSelected, onFlockReactionAdded, onFlockReactionRemoved, onFlockDeleted, onFlockUpdated, onFlockMemberLeft } from './services/socket';
-import { requestNotificationPermission, onForegroundMessage } from './services/firebase';
+import { requestNotificationPermission, onForegroundMessage, getNotificationStatus } from './services/firebase';
 import { unregisterAllTokens, setAvailability, clearAvailability, getMyAvailability, getFriendsAvailability, getSensorCurrent, getSensorHistory, checkInManual, getNfcCheckin, getCalendarEvents, createCalendarEvent, deleteCalendarEvent } from './services/api';
 import { joinVenueRoom, leaveVenueRoom, onVenueSensorUpdate, onVenueCheckin } from './services/socket';
 import { pullSettings, queueSync } from './services/userSettings';
@@ -2363,7 +2363,6 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
     try {
       const data = await sendFriendRequest(user.id);
       setFriendStatuses(prev => ({ ...prev, [user.id]: data.status || 'pending' }));
-      emitFriendRequest(user.id);
     } catch (err) {
       showToast(err.message || 'Failed to send request', 'error');
     }
@@ -2402,7 +2401,6 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
       await acceptFriendRequest(userId);
       setPendingRequests(prev => prev.filter(r => r.id !== userId));
       setFriendStatuses(prev => ({ ...prev, [userId]: 'accepted' }));
-      emitFriendResponse(userId, 'accepted');
       showToast('Friend request accepted!');
     } catch (err) {
       showToast(err.message || 'Failed to accept', 'error');
@@ -2413,7 +2411,6 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
     try {
       await declineFriendRequest(userId);
       setPendingRequests(prev => prev.filter(r => r.id !== userId));
-      emitFriendResponse(userId, 'declined');
     } catch (err) {
       showToast(err.message || 'Failed to decline', 'error');
     }
@@ -2553,7 +2550,6 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
     try {
       const userIds = flockInviteSelected.map(f => f.id);
       await inviteToFlock(selectedFlockId, userIds);
-      emitFlockInvite(selectedFlockId, userIds);
       showToast(`Invited ${flockInviteSelected.length} friend${flockInviteSelected.length > 1 ? 's' : ''}!`);
       setShowFlockInviteModal(false);
       setFlockInviteSelected([]);
@@ -2570,7 +2566,6 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   const handleAcceptFlockInvite = useCallback(async (flockId) => {
     try {
       await acceptFlockInvite(flockId);
-      emitFlockInviteResponse(flockId, 'accepted');
       const invite = pendingFlockInvites.find(f => f.id === flockId);
       if (invite) {
         setPendingFlockInvites(prev => prev.filter(f => f.id !== flockId));
@@ -2586,7 +2581,6 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   const handleDeclineFlockInvite = useCallback(async (flockId) => {
     try {
       await declineFlockInvite(flockId);
-      emitFlockInviteResponse(flockId, 'declined');
       setPendingFlockInvites(prev => prev.filter(f => f.id !== flockId));
       showToast('Invite declined');
     } catch (err) {
@@ -3040,6 +3034,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   // Chat — use refs for input values to avoid full re-renders on every keystroke
   const [chatInputHasText, setChatInputHasText] = useState(false);
   const chatInputRef = useRef('');
+  // Optimistic flock messages awaiting their server echo: tempId -> {flockId, text, timer}
+  const pendingEchoRef = useRef(new Map());
   const setChatInput = useCallback((val) => {
     chatInputRef.current = val;
     setChatInputHasText(!!val);
@@ -3724,8 +3720,27 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   // Listen for real-time messages via WebSocket
   useEffect(() => {
     const unsub = onNewMessage((msg) => {
-      // Don't duplicate own messages (loose equality handles string/number mismatch)
-      if (String(msg.sender_id) === String(authUser?.id)) return;
+      // Own echo = the server's acknowledgement that the socket send was
+      // persisted. Reconcile the optimistic entry with the real row (id,
+      // timestamp) instead of ignoring it — ignoring left temp ids forever
+      // and gave no signal when a send was dropped (round 4).
+      if (String(msg.sender_id) === String(authUser?.id)) {
+        const entry = [...pendingEchoRef.current.entries()]
+          .find(([, p]) => p.flockId === msg.flock_id && p.text === (msg.message_text || ''));
+        if (entry) {
+          const [tempId, p] = entry;
+          clearTimeout(p.timer);
+          pendingEchoRef.current.delete(tempId);
+          setFlocks(prev => prev.map(f => {
+            if (f.id !== msg.flock_id) return f;
+            return {
+              ...f,
+              messages: (f.messages || []).map(m => (m.id === tempId ? { ...m, id: msg.id, pending: false } : m)),
+            };
+          }));
+        }
+        return;
+      }
       const mapped = {
         id: msg.id,
         sender: msg.sender_name || 'Unknown',
@@ -4091,7 +4106,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
 
       // Optimistic local update
       const tempId = Date.now();
-      addMessageToFlock(selectedFlockId, { id: tempId, sender: 'You', senderId: authUser?.id, senderImage: profilePic, time: 'Now', text, reactions: [] });
+      addMessageToFlock(selectedFlockId, { id: tempId, sender: 'You', senderId: authUser?.id, senderImage: profilePic, time: 'Now', text, reactions: [], pending: true });
 
       // Send via WebSocket when connected, HTTP only as the fallback —
       // both paths persist server-side, so firing both stored every
@@ -4099,6 +4114,20 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
       const sock = getSocket();
       if (sock?.connected) {
         socketSendMessage(selectedFlockId, text);
+        // A connected socket doesn't prove persistence — rate limits,
+        // moderation, or a DB failure drop the message with no echo. If no
+        // echo arrives, retry once over HTTP; if that fails too, say so.
+        const flockIdAtSend = selectedFlockId;
+        const timer = setTimeout(async () => {
+          if (!pendingEchoRef.current.has(tempId)) return;
+          pendingEchoRef.current.delete(tempId);
+          try {
+            await apiSendMessage(flockIdAtSend, text);
+          } catch {
+            showToast('Message failed to send', 'error');
+          }
+        }, 8000);
+        pendingEchoRef.current.set(tempId, { flockId: flockIdAtSend, text, timer });
       } else {
         try {
           await apiSendMessage(selectedFlockId, text);
@@ -4280,11 +4309,18 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
       venue_data: venueData,
     });
 
-    // Send via socket (instant) + HTTP (persistent)
-    socketSendMessage(flockId, msgText, { message_type: 'venue_card', venue_data: venueData });
-    try {
-      await apiSendMessage(flockId, msgText, { message_type: 'venue_card', venue_data: venueData });
-    } catch {}
+    // ONE transport only — both paths persist server-side, so firing both
+    // stored every shared venue twice (same fix text messages got in round 3).
+    const sock = getSocket();
+    if (sock?.connected) {
+      socketSendMessage(flockId, msgText, { message_type: 'venue_card', venue_data: venueData });
+    } else {
+      try {
+        await apiSendMessage(flockId, msgText, { message_type: 'venue_card', venue_data: venueData });
+      } catch {
+        showToast('Venue failed to send', 'error');
+      }
+    }
 
     setShowVenueShareModal(false);
   }, [addMessageToFlock, authUser, profilePic]);
@@ -10631,7 +10667,12 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 ) : notifStatus === 'denied' ? (
                   <span style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>Blocked in browser</span>
                 ) : (
-                    <button className="glass-btn glass-secondary" onClick={() => requestNotificationPermission().then(() => { setNotifStatus('granted'); showToast('Notifications enabled!'); }).catch(() => {})} style={{ padding: '6px 12px', borderRadius: '8px', border: `1px solid ${colors.navy}`, backgroundColor: 'var(--icon-bg)', color: colors.navy, fontSize: '12px', fontWeight: '700', cursor: 'pointer' }}>Enable</button>
+                    <button className="glass-btn glass-secondary" onClick={() => requestNotificationPermission().then((token) => {
+                      // null = denied or registration failed — saying
+                      // "enabled" without a registered token was a lie.
+                      if (token) { setNotifStatus('granted'); showToast('Notifications enabled!'); }
+                      else { setNotifStatus(getNotificationStatus()); showToast("Notifications aren't on. Check your device settings.", 'error'); }
+                    }).catch(() => showToast("Notifications aren't on. Check your device settings.", 'error'))} style={{ padding: '6px 12px', borderRadius: '8px', border: `1px solid ${colors.navy}`, backgroundColor: 'var(--icon-bg)', color: colors.navy, fontSize: '12px', fontWeight: '700', cursor: 'pointer' }}>Enable</button>
                 )}
               </div>
             </div>
@@ -13866,15 +13907,15 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
             <h3 style={{ fontSize: '16px', fontWeight: '800', color: colors.navy, margin: '0 0 4px' }}>Pay {paymentOptions.payTo}</h3>
             <p style={{ fontSize: '13px', color: 'var(--text-secondary)', margin: '0 0 16px' }}>${paymentOptions.amount.toFixed(2)} · {paymentOptions.note}</p>
             {paymentOptions.methods.map(m => (
-              <button key={m.method} onClick={async () => {
+              <button key={m.method} onClick={() => {
+                // Opening the payment app proves nothing about payment —
+                // same as the single-method path, the user confirms with
+                // "Mark as paid" afterward. Auto-settling here recorded
+                // canceled payments as paid (round 4).
                 if (m.deepLink) window.open(m.deepLink, '_blank');
                 else if (m.webLink) window.open(m.webLink, '_blank');
                 else if (m.instructions) showToast(m.instructions);
-                try {
-                  await settleShare(selectedFlockId);
-                  setBillSplit(prev => ({ ...prev, shares: prev.shares.map(s => String(s.userId) === String(authUser?.id) ? { ...s, settled: true } : s) }));
-                  showToast('Settled up');
-                } catch (err) { showToast(err.message, 'error'); }
+                showToast('After paying, tap "Mark as paid"');
                 setShowPaymentPicker(false);
               }} style={{ width: '100%', padding: '14px', marginBottom: '8px', borderRadius: '12px', border: '1px solid var(--border-default)', backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '12px', textAlign: 'left' }}>
                 <span style={{ width: '40px', height: '40px', borderRadius: '10px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '18px', background: m.method === 'venmo' ? 'linear-gradient(135deg, #3D95CE, #008CFF)' : m.method === 'cashapp' ? 'linear-gradient(135deg, #00C244, #00D64B)' : 'linear-gradient(135deg, #6C1CD3, #8A2BE2)', flexShrink: 0 }}>
@@ -14634,9 +14675,35 @@ const FlockApp = () => {
           requestNotificationPermission().catch(() => {});
         }
       })
-      .catch(() => {
-        logout();
-        setAuthUser(null);
+      .catch((err) => {
+        // Only an actual auth rejection ends the session. A cold start with
+        // no network used to land here and call logout(), so going through a
+        // tunnel deleted your login (round 4). Keep the token and retry when
+        // connectivity returns; OfflineGate covers the UI meanwhile.
+        if (err?.status === 401 || err?.status === 403) {
+          logout();
+          setAuthUser(null);
+          return;
+        }
+        let retryTimer = null;
+        const retry = () => {
+          getCurrentUser()
+            .then((d) => {
+              setAuthUser(d.user || d);
+              window.removeEventListener('online', retry);
+              if (retryTimer) clearInterval(retryTimer);
+            })
+            .catch((e) => {
+              if (e?.status === 401 || e?.status === 403) {
+                logout();
+                setAuthUser(null);
+                window.removeEventListener('online', retry);
+                if (retryTimer) clearInterval(retryTimer);
+              }
+            });
+        };
+        window.addEventListener('online', retry);
+        retryTimer = setInterval(retry, 15000);
       })
       .finally(() => setAuthChecking(false));
   }, []);
