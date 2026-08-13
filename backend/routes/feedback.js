@@ -42,30 +42,49 @@ router.post('/',
       // window. Unlimited reports let a single account own a venue's live
       // calibration AND poison future training labels. Newest report wins
       // within the window (people can correct themselves).
-      await pool.query(
-        `DELETE FROM venue_feedback
-         WHERE user_id = $1 AND venue_place_id = $2 AND created_at > NOW() - INTERVAL '2 hours'`,
-        [req.user.id, venue_place_id]
-      );
-      const recentCount = await pool.query(
-        `SELECT COUNT(*)::int AS n FROM venue_feedback
-         WHERE user_id = $1 AND created_at > NOW() - INTERVAL '1 hour'`,
-        [req.user.id]
-      );
-      if ((recentCount.rows[0]?.n || 0) >= 10) {
-        return res.status(429).json({ error: 'Too many reports in a short time. Try again later.' });
+      // Round 4: the dedup + hourly cap + insert run in ONE transaction under
+      // a per-user advisory lock — as autocommit statements, concurrent
+      // submissions could all pass the count and blow through both limits.
+      const client = await pool.connect();
+      let inserted;
+      try {
+        await client.query('BEGIN');
+        await client.query('SELECT pg_advisory_xact_lock($1, $2)', [81422, req.user.id]);
+
+        await client.query(
+          `DELETE FROM venue_feedback
+           WHERE user_id = $1 AND venue_place_id = $2 AND created_at > NOW() - INTERVAL '2 hours'`,
+          [req.user.id, venue_place_id]
+        );
+        const recentCount = await client.query(
+          `SELECT COUNT(*)::int AS n FROM venue_feedback
+           WHERE user_id = $1 AND created_at > NOW() - INTERVAL '1 hour'`,
+          [req.user.id]
+        );
+        if ((recentCount.rows[0]?.n || 0) >= 10) {
+          await client.query('ROLLBACK');
+          return res.status(429).json({ error: 'Too many reports in a short time. Try again later.' });
+        }
+
+        const result = await client.query(
+          `INSERT INTO venue_feedback
+            (user_id, flock_id, venue_place_id, venue_name, crowd_level, price_worth, rating, predicted_score, day_of_week, hour)
+          VALUES
+            ($1, $2, $3, $4, $5, $6, $7, $8, EXTRACT(DOW FROM NOW()), EXTRACT(HOUR FROM NOW()))
+          RETURNING *`,
+          [req.user.id, flock_id || null, venue_place_id, venue_name, crowd_level, price_worth ?? null, rating || null, predicted_score ?? null]
+        );
+        inserted = result.rows[0];
+
+        await client.query('COMMIT');
+      } catch (txErr) {
+        await client.query('ROLLBACK').catch(() => {});
+        throw txErr;
+      } finally {
+        client.release();
       }
 
-      const result = await pool.query(
-        `INSERT INTO venue_feedback
-          (user_id, flock_id, venue_place_id, venue_name, crowd_level, price_worth, rating, predicted_score, day_of_week, hour)
-        VALUES
-          ($1, $2, $3, $4, $5, $6, $7, $8, EXTRACT(DOW FROM NOW()), EXTRACT(HOUR FROM NOW()))
-        RETURNING *`,
-        [req.user.id, flock_id || null, venue_place_id, venue_name, crowd_level, price_worth ?? null, rating || null, predicted_score ?? null]
-      );
-
-      res.status(201).json(result.rows[0]);
+      res.status(201).json(inserted);
     } catch (err) {
       console.error('[Feedback] Submit error:', err);
       res.status(500).json({ error: 'Failed to submit feedback' });
