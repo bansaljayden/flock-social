@@ -78,11 +78,13 @@ router.put('/', [
   body('operatingHours').optional().isArray(),
   body('notificationPrefs').optional().isObject(),
   body('googlePlaceId').optional().trim(),
-  body('tier').optional().isIn(['free', 'premium', 'pro']),
+  // tier is intentionally NOT accepted from the client — it maps to paid
+  // plans and is set server-side only (audit 2026-08-12: clients could
+  // PATCH themselves to 'pro').
   body('photoUrl').optional().trim(),
 ], async (req, res) => {
   try {
-    const { businessName, category, location, description, goals, phone, operatingHours, notificationPrefs, googlePlaceId, tier, photoUrl } = req.body;
+    const { businessName, category, location, description, goals, phone, operatingHours, notificationPrefs, googlePlaceId, photoUrl } = req.body;
 
     const result = await pool.query(
       `UPDATE venue_profiles SET
@@ -95,14 +97,13 @@ router.put('/', [
         operating_hours = COALESCE($7, operating_hours),
         notification_prefs = COALESCE($8, notification_prefs),
         google_place_id = COALESCE($9, google_place_id),
-        tier = COALESCE($10, tier),
-        photo_url = COALESCE($11, photo_url),
+        photo_url = COALESCE($10, photo_url),
         updated_at = NOW()
-      WHERE user_id = $12
+      WHERE user_id = $11
       RETURNING *`,
       [businessName || null, category || null, location || null, description || null, goals || null,
        phone || null, operatingHours ? JSON.stringify(operatingHours) : null,
-       notificationPrefs ? JSON.stringify(notificationPrefs) : null, googlePlaceId || null, tier || null, photoUrl || null, req.user.id]
+       notificationPrefs ? JSON.stringify(notificationPrefs) : null, googlePlaceId || null, photoUrl || null, req.user.id]
     );
 
     if (result.rows.length === 0) {

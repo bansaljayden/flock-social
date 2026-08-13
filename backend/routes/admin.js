@@ -188,6 +188,39 @@ router.put('/reports/:id', async (req, res) => {
   }
 });
 
+// ---------------------------------------------------------------------------
+// Venue verification: admin flips verified after checking real ownership
+// (public badge/promotions/review-replies are gated on it).
+// ---------------------------------------------------------------------------
+router.get('/venues/unverified', async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT vp.id, vp.user_id, vp.business_name, vp.location, vp.google_place_id, vp.created_at, u.email
+       FROM venue_profiles vp JOIN users u ON u.id = vp.user_id
+       WHERE vp.verified = false ORDER BY vp.created_at DESC`
+    );
+    res.json({ venues: result.rows });
+  } catch (err) {
+    console.error('Admin unverified venues error:', err);
+    res.status(500).json({ error: 'Failed to load venues' });
+  }
+});
+
+router.put('/venues/:profileId/verify', async (req, res) => {
+  try {
+    const verified = req.body.verified !== false;
+    const result = await pool.query(
+      'UPDATE venue_profiles SET verified = $1, updated_at = NOW() WHERE id = $2 RETURNING id, business_name, verified',
+      [verified, parseInt(req.params.profileId, 10)]
+    );
+    if (result.rows.length === 0) return res.status(404).json({ error: 'Venue profile not found' });
+    res.json(result.rows[0]);
+  } catch (err) {
+    console.error('Admin verify venue error:', err);
+    res.status(500).json({ error: 'Failed to update verification' });
+  }
+});
+
 // GET /api/admin/moderation-actions — audit log
 router.get('/moderation-actions', async (req, res) => {
   try {

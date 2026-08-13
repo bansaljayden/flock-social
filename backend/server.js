@@ -179,6 +179,8 @@ app.use('/api/guest', apiLimiter, require('./routes/guest').router); // Guest li
 app.use('/api/badge', apiLimiter, require('./routes/badge'));        // Embeddable live-busyness SVG (public, claimed venues only)
 app.use('/api/sensors', apiLimiter, sensorRoutes);              // Pi sensor ingest (x-api-key) + read APIs (JWT)
 app.use('/api/checkin', apiLimiter, checkinRoutes);             // NFC tap + manual venue check-in (anon-friendly GET)
+app.use('/api/waitlist', apiLimiter, waitlistRoutes);           // PUBLIC, no auth — MUST stay before the /api catch-alls
+                                                                // (was mounted after them, which 401'd every landing-page signup)
 app.use('/api', apiLimiter, moderationRoutes);  // /api/reports, /api/blocks/* — before messages catch-all
 app.use('/api', apiLimiter, messageRoutes);     // Handles /api/flocks/:id/messages, /api/messages/:id/react, /api/dm/*
 app.use('/api/users', apiLimiter, userRoutes);
@@ -195,7 +197,6 @@ app.use('/api/events', apiLimiter, eventRoutes);      // Handles /api/events/sea
 app.use('/api/ai', aiLimiter, aiRoutes);             // Handles /api/ai/chat (Birdie AI assistant)
 app.use('/api/entitlements', apiLimiter, entitlementsRoutes); // Handles /api/entitlements (Flock Pro paywall status)
 app.use('/api/notifications', apiLimiter, notificationRoutes); // Handles /api/notifications/register, unregister
-app.use('/api/waitlist', apiLimiter, waitlistRoutes);          // Handles /api/waitlist (public, no auth)
 app.use('/api/admin', apiLimiter, adminRoutes);               // Handles /api/admin/* (admin only)
 app.use('/api/venue-profile', apiLimiter, venueProfileRoutes); // Handles /api/venue-profile (venue owners)
 app.use('/api/venue-dashboard', apiLimiter, venueDashboardRoutes); // Handles promotions, events, reviews CRUD
@@ -712,8 +713,24 @@ async function runMigrations() {
       console.log('Guest invite migration complete');
     } catch (e) { console.error('Guest invite migration error:', e.message); }
 
-    // Ensure admin account has admin role
-    await pool.query(`UPDATE users SET role = 'admin' WHERE LOWER(email) = LOWER('bansaljayden@gmail.com') AND role != 'admin'`).catch(() => {});
+    // Venue verification (audit 2026-08-12): claims are self-serve, but public
+    // surfaces (badge, promotions, review replies) require verified = true,
+    // set only by an admin after checking real ownership.
+    try {
+      await pool.query('ALTER TABLE venue_profiles ADD COLUMN IF NOT EXISTS verified BOOLEAN DEFAULT false');
+    } catch (e) { console.error('venue verified migration error:', e.message); }
+
+    // Admin provisioning — by IMMUTABLE user id via env, never by email.
+    // (The old email-based promotion was a privilege-escalation hole: signup
+    // doesn't verify email ownership, so anyone registering that address
+    // would have been promoted on the next boot.) Role persists in the DB;
+    // ADMIN_USER_IDS is only needed to (re)provision, e.g. "14" or "14,27".
+    if (process.env.ADMIN_USER_IDS) {
+      const ids = process.env.ADMIN_USER_IDS.split(',').map(s => parseInt(s.trim(), 10)).filter(Number.isInteger);
+      if (ids.length > 0) {
+        await pool.query(`UPDATE users SET role = 'admin' WHERE id = ANY($1) AND role != 'admin'`, [ids]).catch(() => {});
+      }
+    }
 
     // Keep demo stories alive — refresh expiration for seeded picsum stories
     await pool.query(

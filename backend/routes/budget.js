@@ -262,6 +262,19 @@ router.post('/:flockId/lock',
         return res.status(400).json({ error: 'Budget matching is not enabled for this flock' });
       }
 
+      // PRIVACY INVARIANT (README "hard invariants"): the ceiling is the MIN of
+      // submissions, so revealing it below the 3-submission threshold exposes an
+      // individual's exact budget. The status endpoints enforce >= 3; locking
+      // must too, or a creator could lock after one submission and read it.
+      const countResult = await pool.query(
+        `SELECT COUNT(*)::int AS n FROM budget_submissions
+         WHERE flock_id = $1 AND skipped = false`,
+        [flockId]
+      );
+      if ((countResult.rows[0]?.n || 0) < 3) {
+        return res.status(400).json({ error: 'Budget locks after at least 3 people have submitted' });
+      }
+
       await pool.query(
         'UPDATE flocks SET budget_locked = true, updated_at = NOW() WHERE id = $1',
         [flockId]
