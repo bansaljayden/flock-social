@@ -173,14 +173,16 @@ router.post('/:flockId/create',
         await client.query('COMMIT');
 
         // Build response with names
+        // Round 4: mirror the DB truth computed above — recomputing settled as
+        // payer-only told every client that previously paid members owed again.
         const shareDetails = shares.map(s => {
           const member = members.find(m => m.id === s.userId);
           return {
             userId: s.userId,
             name: member?.name || 'Unknown',
             amount: s.amount,
-            settled: s.userId === payerId,
-            committed: existingCommitments.has(s.userId),
+            settled: !!s.settled,
+            committed: !!s.committed,
           };
         });
 
@@ -207,6 +209,7 @@ router.post('/:flockId/create',
         const payerName = payer?.name || 'Someone';
         for (const share of shares) {
           if (share.userId === payerId) continue; // Don't notify the payer
+          if (share.settled) continue; // Already paid — "you owe" would be false
           await pushIfOffline(io, share.userId,
             'Bill split created',
             `You owe ${payerName} $${share.amount.toFixed(2)} for ${flockName}`,

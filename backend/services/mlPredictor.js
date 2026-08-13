@@ -169,7 +169,7 @@ function baselineFromPopularTimes(popularTimes, dayOfWeek, hour) {
 // ---------------------------------------------------------------------------
 
 async function getUserFeedback(placeId) {
-  const noFeedback = { avgCrowd: 0, count: 0, avgError: 0 };
+  const noFeedback = { avgCrowd: 0, count: 0, avgErrorMapped: 0, avgErrorLegacy: 0 };
   if (!pool || !placeId) return noFeedback;
 
   const cached = feedbackCache.get(placeId);
@@ -180,9 +180,14 @@ async function getUserFeedback(placeId) {
       `SELECT
         AVG(crowd_level)::numeric(4,1) AS avg_crowd,
         COUNT(*)::int AS count,
-        -- crowd_level is ordinal 1-3; map to the 0-100 score scale before
-        -- differencing or the "error" is just -predicted_score (round 3)
-        AVG((CASE crowd_level WHEN 1 THEN 20 WHEN 2 THEN 50 ELSE 80 END) - predicted_score)::numeric(5,2) AS avg_error
+        -- Two variants of the feedback-error feature. 'mapped' (20/50/80 minus
+        -- score, one scale) is the sane definition and what the training
+        -- export now emits; 'legacy' (raw ordinal minus score) is what models
+        -- trained before round 3 — including shipped v2.5-starling — actually
+        -- saw. Feature assembly picks by model metadata so inference always
+        -- matches the checked-in model's training distribution.
+        AVG((CASE crowd_level WHEN 1 THEN 20 WHEN 2 THEN 50 ELSE 80 END) - predicted_score)::numeric(5,2) AS avg_error_mapped,
+        AVG(crowd_level - predicted_score)::numeric(5,2) AS avg_error_legacy
       FROM venue_feedback WHERE venue_place_id = $1`,
       [placeId]
     );
@@ -190,7 +195,8 @@ async function getUserFeedback(placeId) {
     const result = {
       avgCrowd: parseFloat(r?.avg_crowd) || 0,
       count: parseInt(r?.count) || 0,
-      avgError: parseFloat(r?.avg_error) || 0,
+      avgErrorMapped: parseFloat(r?.avg_error_mapped) || 0,
+      avgErrorLegacy: parseFloat(r?.avg_error_legacy) || 0,
     };
     feedbackCache.set(placeId, { data: result, ts: Date.now() });
     return result;
@@ -536,7 +542,12 @@ function buildFeatureVector(venue, weather, timestamp, eventData, feedback, base
     avg_user_crowd: feedback?.avgCrowd || 0,
     log_user_feedback_count: Math.log((feedback?.count || 0) + 1),
     has_user_feedback: (feedback?.count > 0) ? 1 : 0,
-    avg_prediction_error: feedback?.avgError || 0,
+    // Match the checked-in model's training distribution: only models whose
+    // metadata declares mapped semantics get the mapped feature (see
+    // getUserFeedback). v2.5-starling and earlier trained on the legacy one.
+    avg_prediction_error: (metadata.feedback_error_semantics === 'mapped'
+      ? feedback?.avgErrorMapped
+      : feedback?.avgErrorLegacy) || 0,
     // v2.4 features (older models simply don't list these in feature_names)
     ...astronomyFeatures(lat, month, hour),
     ...(() => {

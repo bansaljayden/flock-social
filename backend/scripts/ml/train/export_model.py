@@ -82,6 +82,12 @@ def main():
     metadata['delta_clamp_range'] = metadata.get('delta_clamp_range', [-30, 30])
     metadata['model_type'] = model_name
     metadata['onnx_input_name'] = input_name
+    # Feedback-error feature semantics. The training export now computes
+    # avg_prediction_error as mapped 20/50/80 minus score; models exported from
+    # here on declare that, and mlPredictor.js serves the matching variant.
+    # (Models without this key — v2.5-starling and earlier — trained on the
+    # legacy raw-ordinal difference and are served that at inference.)
+    metadata['feedback_error_semantics'] = 'mapped'
     metadata['trained_at'] = datetime.now(timezone.utc).isoformat()
 
     # Compute feature types for Node.js

@@ -27,7 +27,11 @@ router.post('/webhook', express.json(), async (req, res) => {
     if (!appUserId) return res.status(400).json({ error: 'Missing app_user_id' });
 
     const ACTIVE = ['INITIAL_PURCHASE', 'RENEWAL', 'UNCANCELLATION', 'PRODUCT_CHANGE'];
-    const INACTIVE = ['CANCELLATION', 'EXPIRATION', 'SUBSCRIPTION_PAUSED', 'BILLING_ISSUE'];
+    // Round 4: CANCELLATION only means auto-renew was switched off — the
+    // customer keeps their entitlement until the paid period ends, when
+    // RevenueCat sends EXPIRATION. Same for BILLING_ISSUE (grace period).
+    // Revoking on those events took away access people had paid for.
+    const INACTIVE = ['EXPIRATION', 'SUBSCRIPTION_PAUSED'];
     let premium = null;
     if (ACTIVE.includes(type)) premium = true;
     else if (INACTIVE.includes(type)) premium = false;
