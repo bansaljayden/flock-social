@@ -1606,7 +1606,10 @@ const makeStyles = (c, isDark, fullBleed = isFullBleedNow()) => ({
   // Full-bleed: the fake notch becomes a real safe-area spacer so content
   // clears the actual status bar / Dynamic Island (viewport-fit=cover).
   notch: fullBleed ? {
-    height: 'env(safe-area-inset-top)',
+    // Status-bar / Dynamic Island spacer. var(--safe-top) is defined once in
+    // index.css (see the SAFE-AREA CONTRACT block there) and resolves to 0px
+    // on the web, so this row disappears entirely off-device.
+    height: 'var(--safe-top)',
     backgroundColor: 'var(--bg-primary)',
     flexShrink: 0,
   } : {
@@ -1633,8 +1636,19 @@ const makeStyles = (c, isDark, fullBleed = isFullBleedNow()) => ({
   bottomNav: {
     display: 'flex',
     justifyContent: 'space-around',
-    // extra bottom padding = iPhone home-indicator safe area (Capacitor)
-    padding: '8px 4px calc(8px + env(safe-area-inset-bottom))',
+    // ── SAFE AREA — DO NOT REPLACE THIS SHORTHAND ──────────────────────
+    // The trailing var(--safe-bottom) is the iPhone home-indicator inset
+    // (see the SAFE-AREA CONTRACT block in index.css). The nav's background
+    // still runs to the physical screen edge; only its CONTENT is lifted
+    // clear, which is what a native tab bar does.
+    //
+    // This is the single source of truth for the tab bar's padding. If you
+    // need different spacing, change the numbers HERE. Do not add a second
+    // `padding:` shorthand at the render site — React applies the later key
+    // last, so a plain `padding: '10px 8px 12px'` silently deletes the
+    // inset and the active-tab dot lands under the home indicator. That
+    // exact regression is what this comment exists to prevent.
+    padding: '10px 8px calc(12px + var(--safe-bottom))',
     backgroundColor: 'var(--bg-nav)',
     borderTop: 'var(--nav-border)',
     flexShrink: 0,
@@ -4695,8 +4709,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
         boxShadow: 'var(--nav-shadow)',
         backdropFilter: 'blur(12px)',
         WebkitBackdropFilter: 'blur(12px)',
-        borderTop: 'var(--nav-border)',
-        padding: '10px 8px 12px'
+        // No `padding` here on purpose. It lives in styles.bottomNav so the
+        // home-indicator inset survives — see the comment at that definition.
       }}>
         {[
           { id: 'home', label: 'Nest' },
@@ -6083,7 +6097,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
       )}
 
       {/* Input bar — text + camera + venue search + send */}
-      <div style={{ padding: '10px 12px', borderTop: '1px solid var(--divider)', backgroundColor: 'var(--bg-card-solid)' }}>
+      {/* DM composer. The DM conversation screen does not render the tab bar,
+          so this row IS the bottom of the phone and carries the home-indicator
+          inset itself (SAFE-AREA CONTRACT in index.css). */}
+      <div style={{ padding: '10px 12px calc(10px + var(--safe-bottom))', borderTop: '1px solid var(--divider)', backgroundColor: 'var(--bg-card-solid)' }}>
         <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
           {/* Camera button */}
           <button onClick={() => setShowDmCameraPopup(true)} style={{ width: '36px', height: '36px', borderRadius: '18px', backgroundColor: 'var(--bg-hover)', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', flexShrink: 0, border: 'none', position: 'relative' }}>
@@ -6100,7 +6117,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
       {/* Camera options popup */}
       {showDmCameraPopup && (
         <div onClick={() => setShowDmCameraPopup(false)} style={{ position: 'absolute', inset: 0, backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'flex-end', zIndex: 60 }}>
-          <div onClick={e => e.stopPropagation()} style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '20px 20px 0 0', padding: '20px', width: '100%', paddingBottom: '28px' }}>
+          <div onClick={e => e.stopPropagation()} style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '20px 20px 0 0', padding: '20px', width: '100%', paddingBottom: 'calc(28px + var(--safe-bottom))' }}>
             <div style={{ width: '36px', height: '4px', borderRadius: '2px', backgroundColor: 'var(--toggle-off)', margin: '0 auto 16px' }} />
             <h3 style={{ fontSize: '16px', fontWeight: '800', color: colors.navy, margin: '0 0 16px', textAlign: 'center' }}>Add Photo</h3>
             <div style={{ display: 'flex', gap: '12px' }}>
@@ -9295,7 +9312,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
         )}
 
         {/* Input area */}
-        <div style={{ padding: '10px 12px', backgroundColor: 'var(--bg-nav)', backdropFilter: 'blur(10px)', WebkitBackdropFilter: 'blur(10px)', borderTop: '1px solid var(--border-subtle)', display: 'flex', gap: '8px', alignItems: 'center', flexShrink: 0, boxShadow: 'var(--nav-shadow)' }}>
+        {/* Flock chat composer. This screen has no tab bar, so the composer sits
+            on the physical screen edge and carries the home-indicator inset. */}
+        <div style={{ padding: '10px 12px calc(10px + var(--safe-bottom))', backgroundColor: 'var(--bg-nav)', backdropFilter: 'blur(10px)', WebkitBackdropFilter: 'blur(10px)', borderTop: '1px solid var(--border-subtle)', display: 'flex', gap: '8px', alignItems: 'center', flexShrink: 0, boxShadow: 'var(--nav-shadow)' }}>
           <button onClick={() => setShowCameraPopup(true)} style={{ width: '38px', height: '38px', borderRadius: '19px', border: 'none', backgroundColor: 'var(--bg-hover)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'opacity 0.2s ease', flexShrink: 0 }}>
             {Icons.camera(colors.textSecondary, 18)}
           </button>
@@ -9311,7 +9330,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
         {/* Camera options popup */}
         {showCameraPopup && (
           <div onClick={() => setShowCameraPopup(false)} style={{ position: 'absolute', inset: 0, backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'flex-end', zIndex: 60 }}>
-            <div onClick={e => e.stopPropagation()} style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '20px 20px 0 0', padding: '20px', width: '100%', paddingBottom: '28px' }}>
+            <div onClick={e => e.stopPropagation()} style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '20px 20px 0 0', padding: '20px', width: '100%', paddingBottom: 'calc(28px + var(--safe-bottom))' }}>
               <div style={{ width: '36px', height: '4px', borderRadius: '2px', backgroundColor: 'var(--toggle-off)', margin: '0 auto 16px' }} />
               <h3 style={{ fontSize: '16px', fontWeight: '800', color: colors.navy, margin: '0 0 16px', textAlign: 'center' }}>Add Photo</h3>
               <div style={{ display: 'flex', gap: '12px' }}>
@@ -10640,7 +10659,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 {/* Add Contact Modal */}
                 {showAddContact && (
                   <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'flex-end', zIndex: 1000 }}>
-                    <div style={{ background: 'var(--bg-card-solid)', width: '100%', borderRadius: '20px 20px 0 0', padding: '20px', maxHeight: '80vh', overflowY: 'auto' }}>
+                    <div style={{ background: 'var(--bg-card-solid)', width: '100%', borderRadius: '20px 20px 0 0', padding: '20px', maxHeight: '80vh', overflowY: 'auto', paddingBottom: 'calc(20px + var(--safe-bottom))' }}>
                       <h3 style={{ fontWeight: '800', fontSize: '18px', color: colors.navy, margin: '0 0 16px' }}>{editingContact ? 'Edit Contact' : 'Add Trusted Contact'}</h3>
 
                       <div style={{ marginBottom: '10px' }}>
@@ -13552,7 +13571,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
               {/* QR Scanner Modal */}
               {showQrScanner && (
                 <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.95)', zIndex: 1000, display: 'flex', flexDirection: 'column' }}>
-                  <div style={{ padding: '16px', display: 'flex', alignItems: 'center', gap: '12px', flexShrink: 0 }}>
+                  {/* Fixed overlay covers the Dynamic Island: pad the header by the top inset. */}
+                  <div style={{ padding: 'calc(16px + var(--safe-top)) 16px 16px', display: 'flex', alignItems: 'center', gap: '12px', flexShrink: 0 }}>
                     <button onClick={stopQrScanner} style={{ width: '36px', height: '36px', borderRadius: '18px', border: 'none', backgroundColor: 'rgba(255,255,255,0.15)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.x('white', 18)}</button>
                     <h3 style={{ fontSize: '16px', fontWeight: '800', color: 'white', margin: 0 }}>Scan Flock Code</h3>
                   </div>
@@ -13952,15 +13972,19 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
       {/* Event Detail Overlay */}
       {eventDetail && (
         <div style={{ position: 'fixed', inset: 0, zIndex: 200, backgroundColor: 'var(--bg-primary)', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-          {/* Header image */}
-          <div style={{ position: 'relative', height: '220px', flexShrink: 0, backgroundColor: colors.navyBg }}>
+          {/* Header image. position:fixed escapes the app shell, so this overlay
+              covers the Dynamic Island and the home indicator itself and has to
+              carry both insets (SAFE-AREA CONTRACT in index.css). The image grows
+              by the top inset rather than shifting down, so it still bleeds into
+              the status bar the way a native hero header does. */}
+          <div style={{ position: 'relative', height: 'calc(220px + var(--safe-top))', flexShrink: 0, backgroundColor: colors.navyBg }}>
             {(eventDetail.photos?.[0] || eventDetail.image_url) && (
-              <img src={eventDetail.photos?.[0] || eventDetail.image_url} alt="" style={{ width: '100%', height: '220px', objectFit: 'cover' }} onError={(e) => { e.target.style.display = 'none'; }} />
+              <img src={eventDetail.photos?.[0] || eventDetail.image_url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} onError={(e) => { e.target.style.display = 'none'; }} />
             )}
             <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(transparent 30%, rgba(0,0,0,0.8) 100%)' }} />
-            <button onClick={() => setEventDetail(null)} style={{ position: 'absolute', top: '12px', left: '12px', width: '36px', height: '36px', borderRadius: '18px', border: 'none', backgroundColor: 'rgba(0,0,0,0.5)', backdropFilter: 'blur(8px)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.arrowLeft('white', 18)}</button>
+            <button onClick={() => setEventDetail(null)} style={{ position: 'absolute', top: 'calc(12px + var(--safe-top))', left: '12px', width: '36px', height: '36px', borderRadius: '18px', border: 'none', backgroundColor: 'rgba(0,0,0,0.5)', backdropFilter: 'blur(8px)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.arrowLeft('white', 18)}</button>
             {eventDetail.status === 'onsale' && (
-              <div style={{ position: 'absolute', top: '12px', right: '12px', padding: '5px 12px', borderRadius: '10px', backgroundColor: '#22C55E' }}>
+              <div style={{ position: 'absolute', top: 'calc(12px + var(--safe-top))', right: '12px', padding: '5px 12px', borderRadius: '10px', backgroundColor: '#22C55E' }}>
                 <span style={{ fontSize: '11px', fontWeight: '800', color: 'white' }}>On Sale</span>
               </div>
             )}
@@ -14051,8 +14075,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
             )}
           </div>
 
-          {/* Bottom action bar */}
-          <div style={{ padding: '12px 16px', backgroundColor: 'var(--bg-card-solid)', borderTop: '1px solid var(--border-default)', display: 'flex', gap: '10px', flexShrink: 0 }}>
+          {/* Bottom action bar. Sits on the physical screen edge (fixed overlay),
+              so it carries the home-indicator inset. */}
+          <div style={{ padding: '12px 16px calc(12px + var(--safe-bottom))', backgroundColor: 'var(--bg-card-solid)', borderTop: '1px solid var(--border-default)', display: 'flex', gap: '10px', flexShrink: 0 }}>
             <button onClick={() => {
               setSelectedVenueForCreate({ name: eventDetail.venue_name || eventDetail.name, addr: eventDetail.venue_address, lat: eventDetail.location?.latitude, lng: eventDetail.location?.longitude, photo_url: eventDetail.image_url, event_name: eventDetail.name });
               setEventDetail(null);
@@ -14075,13 +14100,16 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
       {/* Camera Viewfinder */}
       {showCameraViewfinder && (
         <div style={{ position: 'fixed', inset: 0, backgroundColor: '#000', zIndex: 9999, display: 'flex', flexDirection: 'column' }}>
-          <div style={{ padding: '12px 16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', position: 'absolute', top: 0, left: 0, right: 0, zIndex: 2 }}>
+          {/* Full-screen fixed overlay: the close button would land under the
+              Dynamic Island and the shutter under the home indicator without
+              these insets (SAFE-AREA CONTRACT in index.css). */}
+          <div style={{ padding: 'calc(12px + var(--safe-top)) 16px 12px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', position: 'absolute', top: 0, left: 0, right: 0, zIndex: 2 }}>
             <button onClick={closeCameraViewfinder} style={{ width: '40px', height: '40px', borderRadius: '20px', border: 'none', backgroundColor: 'rgba(0,0,0,0.5)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.x('white', 20)}</button>
             <span style={{ fontSize: '15px', fontWeight: '700', color: 'white' }}>Take Photo</span>
             <div style={{ width: '40px' }} />
           </div>
           <video ref={cameraVideoRef} autoPlay playsInline muted style={{ flex: 1, objectFit: 'cover', width: '100%' }} />
-          <div style={{ padding: '24px 0 36px', display: 'flex', justifyContent: 'center', backgroundColor: 'rgba(0,0,0,0.6)' }}>
+          <div style={{ padding: '24px 0 calc(36px + var(--safe-bottom))', display: 'flex', justifyContent: 'center', backgroundColor: 'rgba(0,0,0,0.6)' }}>
             <button onClick={capturePhoto} style={{ width: '72px', height: '72px', borderRadius: '36px', border: '4px solid white', backgroundColor: 'rgba(255,255,255,0.3)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'opacity 0.15s ease' }}>
               <div style={{ width: '56px', height: '56px', borderRadius: '28px', backgroundColor: 'var(--bg-card-solid)' }} />
             </button>
@@ -14092,7 +14120,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
       {/* Payment Picker Modal */}
       {showPaymentPicker && paymentOptions && (
         <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.5)', zIndex: 9999, display: 'flex', alignItems: 'flex-end', justifyContent: 'center' }} onClick={() => setShowPaymentPicker(false)}>
-          <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '16px 16px 0 0', padding: '20px', width: '100%', maxWidth: '420px' }} onClick={e => e.stopPropagation()}>
+          <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '16px 16px 0 0', padding: '20px', width: '100%', maxWidth: '420px', paddingBottom: 'calc(20px + var(--safe-bottom))' }} onClick={e => e.stopPropagation()}>
             <h3 style={{ fontSize: '16px', fontWeight: '800', color: colors.navy, margin: '0 0 4px' }}>Pay {paymentOptions.payTo}</h3>
             <p style={{ fontSize: '13px', color: 'var(--text-secondary)', margin: '0 0 16px' }}>${paymentOptions.amount.toFixed(2)} · {paymentOptions.note}</p>
             {paymentOptions.methods.map(m => (
