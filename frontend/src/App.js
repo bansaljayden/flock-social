@@ -12,7 +12,7 @@ import {
   calculateProfitMargin
 } from './lib/finance';
 import { getCurrentUser, logout, isLoggedIn, getFlocks, getFlock, createFlock as apiCreateFlock, getMessages, sendMessage as apiSendMessage, updateProfile, searchVenues, searchUsers, getSuggestedUsers, sendFriendRequest, getVenueDetails, leaveFlock as apiLeaveFlock, getDMConversations, getDMs, sendDM as apiSendDM, getDmVenueVotes, getDmPinnedVenue, BASE_URL, inviteToFlock, acceptFlockInvite, declineFlockInvite, getFriends, acceptFriendRequest, declineFriendRequest, getPendingRequests, getOutgoingRequests, getFriendSuggestions, addFriendByCode, findFriendsByPhone, removeFriend, getTrustedContacts, addTrustedContact, updateTrustedContact, deleteTrustedContact, sendEmergencyAlert, shareLocationWithContacts, getUserStats, getCrowdPrediction, getCrowdBatch, getCrowdAlternatives, getWeather, submitVenueFeedback, uploadProfileImage, saveProfileImageUrl, submitBudget, getBudgetStatus, lockBudget, sendBudgetReminder, createBillSplit, getBillSplit, settleShare, ghostCommit, updatePaymentMethods, getPaymentLinks, getFeaturedEvents, searchEvents, getEventDetails, sendAiChat, getWeatherForecast, submitAttendance, getAdminAnalytics, createVenueProfile, getVenueProfile, updateVenueProfile, getVenuePromotions, createVenuePromotion, updateVenuePromotion, deleteVenuePromotion, getVenueEvents, createVenueEvent, updateVenueEvent, deleteVenueEvent, getIncomingFlocks, getVenueReviews, replyToReview, submitVenueReview, getPublicReviews, getPublicPromotions, deleteAccount } from './services/api';
-import { connectSocket, disconnectSocket, getSocket, joinFlock, leaveFlock, sendMessage as socketSendMessage, sendImageMessage as socketSendImage, startTyping, stopTyping, onNewMessage, onUserTyping, onUserStoppedTyping, emitLocation, stopSharingLocation as socketStopSharing, onLocationUpdate, onMemberStoppedSharing, socketSendDm, onNewDm, dmStartTyping, dmStopTyping, onDmUserTyping, onDmUserStoppedTyping, dmReact, dmRemoveReact, onDmReactionAdded, onDmReactionRemoved, dmVoteVenue, onDmNewVote, dmShareLocation, dmStopSharingLocation, onDmLocationUpdate, onDmMemberStoppedSharing, dmPinVenue, onDmVenuePinned, onFlockInviteReceived, onFlockInviteResponded, onFriendRequestReceived, onFriendRequestResponded, onBudgetUpdated, onBudgetLocked, onBudgetReminder, onBillCreated, onShareSettled, onBillFullySettled, onGhostCommitted, onNewVote, onVenueSelected, onFlockReactionAdded, onFlockReactionRemoved, onFlockDeleted, onFlockUpdated, onFlockMemberLeft } from './services/socket';
+import { connectSocket, disconnectSocket, getSocket, joinFlock, leaveFlock, sendMessage as socketSendMessage, sendImageMessage as socketSendImage, startTyping, stopTyping, onNewMessage, onUserTyping, onUserStoppedTyping, emitLocation, stopSharingLocation as socketStopSharing, onLocationUpdate, onMemberStoppedSharing, socketSendDm, onNewDm, dmStartTyping, dmStopTyping, onDmUserTyping, onDmUserStoppedTyping, dmReact, dmRemoveReact, onDmReactionAdded, onDmReactionRemoved, dmVoteVenue, onDmNewVote, dmShareLocation, dmStopSharingLocation, onDmLocationUpdate, onDmMemberStoppedSharing, dmPinVenue, onDmVenuePinned, onFlockInviteReceived, onFlockInviteResponded, onFriendRequestReceived, onFriendRequestResponded, onBudgetUpdated, onBudgetLocked, onBudgetReminder, onBillCreated, onShareSettled, onBillFullySettled, onGhostCommitted, onNewVote, onVenueSelected, onFlockReactionAdded, onFlockReactionRemoved, onFlockDeleted, onFlockUpdated, onFlockMemberLeft, onGuestRsvp } from './services/socket';
 import { requestNotificationPermission, onForegroundMessage, getNotificationStatus } from './services/firebase';
 import { unregisterAllTokens, setAvailability, clearAvailability, getMyAvailability, getFriendsAvailability, getSensorCurrent, getSensorHistory, checkInManual, getNfcCheckin, getCalendarEvents, createCalendarEvent, deleteCalendarEvent } from './services/api';
 import { joinVenueRoom, leaveVenueRoom, onVenueSensorUpdate, onVenueCheckin } from './services/socket';
@@ -3242,7 +3242,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           memberStatus: f.member_status,
           members: [],
           memberPreviews: Array.isArray(f.member_previews) ? f.member_previews : [],
-          memberCount: f.member_count || 1,
+          // going_count includes guests who RSVPed through the share link;
+          // member_count is accounts only and stays as the fallback.
+          memberCount: f.going_count ?? f.member_count ?? 1,
           time: f.event_time ? new Date(f.event_time).toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' }) : 'TBD',
           // Keep the raw timestamp: the display string alone can't be put on a
           // calendar, which is why "Add to calendar" used to save today.
@@ -4326,8 +4328,14 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
       getFlock(selectedFlockId)
         .then((data) => {
           const members = (data.members || []).filter(m => m.status === 'accepted').map(m => ({ id: m.id, name: m.name, image: m.profile_image_url || null }));
+          // Guests RSVP from the public share link and have no account. They
+          // belong in the roster and in "going", but deliberately NOT in
+          // flock.members: that array feeds the bill-split payer picker and the
+          // location-share guard, both of which take real user ids. Their ids
+          // are namespaced strings ("guest:12") so a stray one is loud.
+          const guests = (data.guests || []).map(g => ({ id: g.id, name: g.name, status: g.status, isGuest: true }));
           const eventTime = data.flock?.event_time || null;
-          setFlocks(prev => prev.map(f => f.id === selectedFlockId ? { ...f, members, memberCount: members.length, momentum: data.momentum || null, eventTime: eventTime || f.eventTime || null } : f));
+          setFlocks(prev => prev.map(f => f.id === selectedFlockId ? { ...f, members, guests, memberCount: (data.momentum?.accepted ?? members.length), momentum: data.momentum || null, eventTime: eventTime || f.eventTime || null } : f));
         })
         .catch(() => {});
 
@@ -4605,6 +4613,21 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
 
     return () => { unsubReq(); unsubResp(); };
   }, [showToast]);
+
+  // Guest RSVPs arrive from the public share link, not from a member's client,
+  // so the socket is the only path they reach us on. Without this the host
+  // simply never learns that someone answered.
+  useEffect(() => {
+    const unsub = onGuestRsvp((data) => {
+      setFlocks(prev => prev.map(f => {
+        if (String(f.id) !== String(data.flockId)) return f;
+        const entry = { id: data.guestId, name: data.name, status: data.status === 'in' ? 'accepted' : 'declined', isGuest: true };
+        const guests = [...(f.guests || []).filter(g => g.id !== data.guestId), entry];
+        return { ...f, guests, memberCount: data.going };
+      }));
+    });
+    return unsub;
+  }, []);
 
   // Money layer socket listeners
   useEffect(() => {
@@ -10799,6 +10822,12 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
     const flock = getSelectedFlock();
     if (!flock) return null;
     const acceptedMembers = (flock.members || []).filter(m => typeof m === 'object' ? (m.status === 'accepted' || !m.status) : true);
+    // Guests are merged for DISPLAY only. flock.guests stays its own array
+    // because flock.members feeds the bill-split payer picker and the
+    // location-share guard, which both require real account ids.
+    const goingGuests = (flock.guests || []).filter(g => g.status === 'accepted');
+    const goingCount = acceptedMembers.length + goingGuests.length;
+    const roster = [...acceptedMembers, ...goingGuests];
     const isCompleted = flock.status === 'completed';
     const isConfirmed = flock.status === 'confirmed' || flock.status === 'locked';
     const hasVenue = flock.venue && flock.venue !== 'TBD';
@@ -10815,7 +10844,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
             <div style={{ flex: 1, minWidth: 0 }}>
               <h1 style={{ color: 'white', margin: 0, fontSize: '20px', fontWeight: '800', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{flock.name}</h1>
               <div style={{ color: 'rgba(255,255,255,0.75)', fontSize: '13px', marginTop: '3px' }}>
-                Hosted by {flock.host} {acceptedMembers.length > 0 && <span style={{ marginLeft: '4px' }}>· {acceptedMembers.length} member{acceptedMembers.length !== 1 ? 's' : ''}</span>}
+                Hosted by {flock.host} {goingCount > 0 && <span style={{ marginLeft: '4px' }}>· {goingCount} going</span>}
               </div>
             </div>
             <button onClick={(e) => {
@@ -11066,27 +11095,29 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           <div style={{ ...styles.card, marginBottom: '12px' }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px' }}>
               <h4 style={{ color: colors.navy, margin: 0, fontSize: '14px', fontWeight: '800' }}>
-                Members ({acceptedMembers.length})
+                Going ({goingCount})
               </h4>
               <button className="hit44 glass-btn glass-navy" onClick={() => { setCurrentScreen('chatDetail'); setTimeout(() => { setShowFlockInviteModal(true); setCopiedInviteUrl(''); setFlockInviteSelected([]); setFlockInviteSearch(''); setFlockInviteResults([]); }, 100); }} style={{ padding: '5px 12px', background: colors.navyBg, border: 'none', borderRadius: '16px', color: 'white', fontSize: '12px', fontWeight: '700', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }}>
                 {Icons.userPlus('white', 11)} Invite
               </button>
             </div>
-            {acceptedMembers.length > 0 ? (
+            {roster.length > 0 ? (
               <div style={{ display: 'flex', gap: '12px', overflowX: 'auto', paddingBottom: '4px' }}>
-                {acceptedMembers.map((member, i) => {
+                {roster.map((member, i) => {
                   const mName = typeof member === 'string' ? member : (member.name || 'User');
                   const mImage = typeof member === 'object' ? member.image : null;
                   const initial = mName[0]?.toUpperCase() || '?';
+                  const isGuest = typeof member === 'object' && member.isGuest === true;
                   const bgColors = [colors.navy, colors.navyMid, colors.steel, colors.amber, '#4a7ba7', '#ec4899'];
                   return (
-                    <div key={i} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '5px', minWidth: '54px' }}>
+                    <div key={typeof member === 'object' && member.id != null ? String(member.id) : i} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '5px', minWidth: '54px' }}>
                       {mImage ? (
                         <img src={mImage} alt="" style={{ width: '44px', height: '44px', borderRadius: '50%', objectFit: 'cover', border: '2px solid var(--bg-card-solid)', boxShadow: '0 2px 6px rgba(0,0,0,0.1)' }} />
                       ) : (
                         <div style={{ width: '44px', height: '44px', borderRadius: '50%', background: bgColors[i % bgColors.length], display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', fontWeight: '700', fontSize: '16px', border: '2px solid var(--bg-card-solid)', boxShadow: '0 2px 6px rgba(0,0,0,0.1)' }}>{initial}</div>
                       )}
                       <span style={{ fontSize: '12px', color: 'var(--text-secondary)', textAlign: 'center', maxWidth: '56px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontWeight: '600' }}>{mName.split(' ')[0]}</span>
+                      {isGuest && <span style={{ fontSize: '10px', fontWeight: '700', color: 'var(--text-tertiary)', letterSpacing: '0.3px' }}>GUEST</span>}
                     </div>
                   );
                 })}
