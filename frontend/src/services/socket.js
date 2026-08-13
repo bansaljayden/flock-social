@@ -444,6 +444,14 @@ export function onFlockMemberLeft(callback) {
   return register('flock_member_left', callback);
 }
 
+// Guest RSVPs come in from the public share link, so they never originate in a
+// member's client. The socket is the only way they reach the host live. The
+// server fans this out to each accepted member's personal room rather than the
+// flock room, which a client only joins while it is on the chat screen.
+export function onGuestRsvp(callback) {
+  return register('guest_rsvp', callback);
+}
+
 // --- Budget events ---
 
 export function onBudgetUpdated(callback) {
