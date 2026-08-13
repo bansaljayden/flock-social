@@ -10,6 +10,7 @@ const { body, param, validationResult } = require('express-validator');
 const pool = require('../config/database');
 const { authenticate } = require('../middleware/auth');
 const { stripHtml } = require('../utils/sanitize');
+const { invalidateBlockCache } = require('../utils/blocks');
 
 const router = express.Router();
 router.use(authenticate);
@@ -157,6 +158,16 @@ router.post('/blocks/:userId', [param('userId').isInt()], async (req, res) => {
       [req.user.id, blockedId]
     ).catch(() => {});
 
+    // The 30s block cache must not outlive the block itself — live location/
+    // typing events check the cached variant (round 5).
+    invalidateBlockCache(req.user.id, blockedId);
+
+    // Tell the blocked user's client to stop any live DM location interval
+    // aimed at the blocker; the server already refuses the events, this stops
+    // the pointless emitting too.
+    const io = req.app.get('io');
+    if (io) io.to(`user:${blockedId}`).emit('blocked_by', { userId: req.user.id });
+
     res.status(201).json({ message: 'User blocked' });
   } catch (err) {
     console.error('Block user error:', err);
@@ -173,6 +184,7 @@ router.delete('/blocks/:userId', [param('userId').isInt()], async (req, res) => 
       [req.user.id, blockedId]
     );
     if (result.rows.length === 0) return res.status(404).json({ error: 'Not blocked' });
+    invalidateBlockCache(req.user.id, blockedId);
     res.json({ message: 'User unblocked' });
   } catch (err) {
     console.error('Unblock user error:', err);
