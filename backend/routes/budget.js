@@ -50,6 +50,8 @@ router.post('/:flockId/submit',
       const client = await pool.connect();
       let countRow;
       let ceiling;
+      let hadNonSkipBefore = false;
+      let othersNonSkipBefore = 0;
       try {
         await client.query('BEGIN');
 
@@ -76,7 +78,7 @@ router.post('/:flockId/submit',
           'SELECT skipped FROM budget_submissions WHERE flock_id = $1 AND user_id = $2',
           [flockId, userId]
         );
-        const hadNonSkipBefore = priorRow.rows.length > 0 && priorRow.rows[0].skipped === false;
+        hadNonSkipBefore = priorRow.rows.length > 0 && priorRow.rows[0].skipped === false;
 
         // UPSERT budget submission
         await client.query(
@@ -108,6 +110,7 @@ router.post('/:flockId/submit',
            WHERE flock_id = $1 AND skipped = false AND user_id != $2`,
           [flockId, userId]
         );
+        othersNonSkipBefore = beforeCount.rows[0]?.n || 0;
         // Count submissions
         const countResult = await client.query(
           `SELECT
@@ -156,7 +159,7 @@ router.post('/:flockId/submit',
       }
 
       // Push "Budget set!" only when this submission CROSSED the threshold
-      const wasReadyBefore = ((beforeCount.rows[0]?.n || 0) + (hadNonSkipBefore ? 1 : 0)) >= 3;
+      const wasReadyBefore = (othersNonSkipBefore + (hadNonSkipBefore ? 1 : 0)) >= 3;
       if (isReady && visibleCeiling && !wasReadyBefore) {
         const flockNameResult = await pool.query('SELECT name FROM flocks WHERE id = $1', [flockId]);
         const flockName = flockNameResult.rows[0]?.name || 'Flock';

@@ -5,6 +5,35 @@ const pool = require('../config/database');
 
 const resend = process.env.RESEND_API_KEY ? new Resend(process.env.RESEND_API_KEY) : null;
 
+// Round 7 budget: 3 signups/hour per IP, 500 confirmation sends/day globally.
+// In-memory is fine on the single-instance deployment.
+const ipHourly = new Map(); // ip -> { count, resetAt }
+let dailySends = { count: 0, resetAt: 0 };
+const WAITLIST_IP_HOURLY = 3;
+const WAITLIST_GLOBAL_DAILY = 500;
+
+function allowWaitlistSignup(req) {
+  const now = Date.now();
+  if (now > dailySends.resetAt) {
+    dailySends = { count: 0, resetAt: now + 24 * 60 * 60 * 1000 };
+  }
+  if (dailySends.count >= WAITLIST_GLOBAL_DAILY) return false;
+
+  const ip = req.ip || 'unknown';
+  if (ipHourly.size > 5000) {
+    for (const [k, v] of ipHourly) { if (now > v.resetAt) ipHourly.delete(k); }
+  }
+  let entry = ipHourly.get(ip);
+  if (!entry || now > entry.resetAt) {
+    entry = { count: 0, resetAt: now + 60 * 60 * 1000 };
+    ipHourly.set(ip, entry);
+  }
+  if (entry.count >= WAITLIST_IP_HOURLY) return false;
+  entry.count += 1;
+  dailySends.count += 1;
+  return true;
+}
+
 // waitlist table lives in migrations/003 — route-owned DDL raced the
 // migration runner on fresh deployments (see REVIEW-ROUND5).
 

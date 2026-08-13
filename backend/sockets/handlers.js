@@ -49,6 +49,20 @@ async function emitToFlockExcludingBlocked(io, flockId, actorId, event, payload)
 function registerHandlers(io, socket) {
   const user = socket.user; // Set by authenticateSocket middleware
 
+  // Every handler goes through this wrapper: a malformed payload (null where
+  // an object is destructured) or a DB error inside a handler without its own
+  // try/catch became an unhandled rejection that killed the whole process on
+  // Node 18+ (round 8). Handlers keep their local try/catch; this is the net.
+  const rawOn = socket.on.bind(socket);
+  socket.on = (event, handler) =>
+    rawOn(event, async (...args) => {
+      try {
+        await handler(...args);
+      } catch (err) {
+        console.error(`socket ${event} handler error:`, err.message);
+      }
+    });
+
   // --- Flock room management ---
 
   socket.on('join_flock', async (flockId) => {
@@ -394,7 +408,8 @@ function registerHandlers(io, socket) {
     }
   });
 
-  socket.on('stop_sharing_location', async ({ flockId }) => {
+  socket.on('stop_sharing_location', async (data) => {
+    const flockId = data?.flockId;
     if (!flockId) return;
     socket.to(`flock:${flockId}`).emit('member_stopped_sharing', {
       userId: user.id,
