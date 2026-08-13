@@ -155,7 +155,7 @@ async function executeTool(toolName, toolInput, userId, opts = {}) {
         headers: {
           'Content-Type': 'application/json',
           'X-Goog-Api-Key': PLACES_API_KEY,
-          'X-Goog-FieldMask': 'places.id,places.displayName,places.formattedAddress,places.rating,places.userRatingCount,places.priceLevel,places.types,places.currentOpeningHours,places.location',
+          'X-Goog-FieldMask': 'places.id,places.displayName,places.formattedAddress,places.rating,places.userRatingCount,places.priceLevel,places.types,places.currentOpeningHours,places.location,places.photos',
         },
         body: JSON.stringify(searchBody),
       });
@@ -171,6 +171,7 @@ async function executeTool(toolName, toolInput, userId, opts = {}) {
         is_open: p.currentOpeningHours?.openNow ?? null,
         lat: p.location?.latitude,
         lng: p.location?.longitude,
+        photo_url: p.photos?.[0]?.name ? `/api/venues/photo?ref=${encodeURIComponent(p.photos[0].name)}&maxwidth=400` : null,
       }));
       return { venues };
     }
