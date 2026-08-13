@@ -68,31 +68,12 @@ router.post('/:flockId/create',
       // Calculate total with tip
       const totalWithTip = Math.round(totalAmount * (1 + tipPercent / 100) * 100) / 100;
 
-      // Check for an existing bill + preserved states.
-      // AUTHORIZATION (audit 2026-08-12): any member may CREATE the bill, but
-      // replacing an existing one is restricted to its payer or the flock
-      // creator — before this, any member could rewrite the amount/payer and
-      // erase everyone's settlement records.
-      const existingBill = await pool.query(
-        'SELECT id, paid_by FROM bill_splits WHERE flock_id = $1',
-        [flockId]
-      );
+      // Existing-bill authorization + preserved states are read INSIDE the
+      // transaction below, under the flock row lock — checking here let two
+      // concurrent "first" bills both pass and the loser silently overwrite
+      // the winner without being its payer (round 5).
       const existingCommitments = new Map();
       const existingSettled = new Map();
-      if (existingBill.rows.length > 0) {
-        const prevPayer = existingBill.rows[0].paid_by;
-        if (userId !== prevPayer && userId !== flockCreatorId) {
-          return res.status(403).json({ error: 'Only the person who paid or the flock creator can change this bill' });
-        }
-        const shareResult = await pool.query(
-          'SELECT user_id, committed, settled, settled_at FROM bill_split_shares WHERE bill_id = $1',
-          [existingBill.rows[0].id]
-        );
-        for (const row of shareResult.rows) {
-          if (row.committed) existingCommitments.set(row.user_id, true);
-          if (row.settled) existingSettled.set(row.user_id, row.settled_at || new Date());
-        }
-      }
 
       // Calculate shares
       let shares;
@@ -139,6 +120,29 @@ router.post('/:flockId/create',
       const client = await pool.connect();
       try {
         await client.query('BEGIN');
+
+        // Serialize bill writes per flock, then authorize replacement against
+        // the row that actually exists at commit time.
+        await client.query('SELECT id FROM flocks WHERE id = $1 FOR UPDATE', [flockId]);
+        const existingBill = await client.query(
+          'SELECT id, paid_by FROM bill_splits WHERE flock_id = $1',
+          [flockId]
+        );
+        if (existingBill.rows.length > 0) {
+          const prevPayer = existingBill.rows[0].paid_by;
+          if (userId !== prevPayer && userId !== flockCreatorId) {
+            await client.query('ROLLBACK');
+            return res.status(403).json({ error: 'Only the person who paid or the flock creator can change this bill' });
+          }
+          const shareResult = await client.query(
+            'SELECT user_id, committed, settled, settled_at FROM bill_split_shares WHERE bill_id = $1',
+            [existingBill.rows[0].id]
+          );
+          for (const row of shareResult.rows) {
+            if (row.committed) existingCommitments.set(row.user_id, true);
+            if (row.settled) existingSettled.set(row.user_id, row.settled_at || new Date());
+          }
+        }
 
         // UPSERT bill_splits
         const billResult = await client.query(
