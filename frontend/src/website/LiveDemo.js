@@ -296,7 +296,7 @@ export default function LiveDemo() {
         mapRef.current?.jumpTo({ center: [c.lng, c.lat], zoom: 13.2 });
         loadVenues(c, queryText.trim());
       },
-      () => { setErrorMsg("Couldn't get your location. Search a city or spot instead."); }
+      () => { setErrorMsg("Couldn’t get your location. Search a city or spot instead."); }
     );
   };
 

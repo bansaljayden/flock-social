@@ -58,19 +58,50 @@
   margin: 0;
   text-wrap: balance;
 }
-/* Fraunces carries the headlines. Its optical sizing picks the display cut
-   automatically. -0.03em tracking was tuned for Satoshi's loose grotesque
-   fitting; on a bracketed serif it jams the serifs together, so headlines run
-   near-neutral. Weight 600, not 700: the serif brackets add their own mass. */
+/* Fraunces carries the headlines. -0.03em tracking was tuned for Satoshi's
+   loose grotesque fitting; on a bracketed serif it jams the serifs together, so
+   headlines run near-neutral. Weight 600, not 700: the serif brackets add their
+   own mass.
+
+   OPTICAL SIZE IS THE SYSTEM. The bundled Fraunces subset kept `opsz` (9-144)
+   and dropped SOFT and WONK — verified in the browser: setting 'WONK' 1 or
+   'SOFT' 100 changes nothing, setting 'opsz' 9 vs 144 changes the same string
+   from 1014px to 817px. So opsz is the one axis available, and it is enough to
+   give one family three real voices instead of one face at three sizes:
+
+     opsz 144  h1        the display cut. Thin hairlines, high contrast.
+     opsz auto h2        tracks the size, lands mid-range. The reading cut.
+     opsz 9    captions  the text cut. Sturdy, slabby, holds at 14px.
+
+   Before this the serif only ever appeared as "the headline font", which is
+   the definition of a display face sitting on a page rather than working. */
 .lp h1, .lp h2 {
   font-family: var(--font-display);
   font-weight: 600;
   letter-spacing: -0.005em;
 }
-.lp h1 { font-size: clamp(40px, 5.2vw, 64px); }
-.lp h2 { font-size: clamp(32px, 4.6vw, 54px); }
+/* Fluid ramps solved for their endpoints rather than eyeballed with vw, so the
+   h1:h2 ratio holds across the range instead of collapsing to 1.1 on desktop.
+   Was 64/54 = 1.19 at every width, which is why every heading on the page read
+   as equally important. Now 34/27.6 at 320px and 72/45.5 at 1280px. */
+.lp h1 {
+  font-size: clamp(34px, 1.33rem + 3.96vw, 72px);
+  font-variation-settings: 'opsz' 144;
+}
+.lp h2 { font-size: clamp(27px, 1.35rem + 1.87vw, 46px); }
 .lp h3 { font-size: clamp(18px, 2vw, 21px); font-weight: 700; letter-spacing: -0.015em; }
 .lp p { margin: 0; text-wrap: pretty; }
+/* Keeps a closing phrase off its own line when the wrap algorithms won't.
+   font-family must be restated: index.css sets it on the universal selector
+   (`*, *::before, *::after { font-family: var(--font-body) }`), and a rule that
+   matches an element directly always beats what it would have inherited, no
+   matter the specificity. Any inline element inside a heading on this page
+   silently drops out of Fraunces into Hanken without this line. */
+.lp-keep {
+  white-space: nowrap;
+  font-family: inherit;
+  font-variation-settings: inherit;
+}
 
 .lp-lead {
   font-size: clamp(17px, 1.8vw, 20px);
@@ -111,6 +142,7 @@
 .lp-brand {
   display: flex;
   align-items: center;
+  min-height: 44px; /* the mark alone is 32px; the tap target has to be 44 */
   gap: 10px;
   font-weight: 700;
   font-size: 17px;
@@ -274,40 +306,91 @@
 .lp-sec { padding: clamp(56px, 8vw, 96px) 0; scroll-margin-top: 72px; }
 .lp-sec-navy { background: var(--navy); color: var(--cream-2); }
 .lp-sec-paper { background: var(--paper); }
-.lp-sec-paper-2 { background: var(--paper-2); }
 
+/* There used to be a second cream, --paper-2, alternating section by section.
+   It is a 6% lightness step: too small to signal a chapter, too visible to be
+   nothing, so it read as stripes. Navy now does all the chaptering (it means
+   "the night", and it lands on the hero, the crowd demo, safety and the CTA),
+   and where two cream sections do sit next to each other they are separated by
+   a hairline, which is what a printed page does. --paper-2 survives as a token
+   because the chat bubbles are built on it. */
+.lp-sec-ruled { border-top: 1px solid var(--rule); }
+
+/* The kicker is the field guide's plate label, so it is set in the serif's
+   text cut (opsz 9) rather than as another 14px sans eyebrow. It also appears
+   on four sections now instead of nine: it was above every single heading,
+   including "The problem" over a headline that states the problem and "Money"
+   over a headline containing the word money. A label that narrates the sentence
+   beneath it is scaffolding. The four that remain are the four the menu links
+   to, so the label confirms where the jump landed. */
 .lp-kicker {
-  font-size: 14px;
+  font-family: var(--font-display);
+  font-variation-settings: 'opsz' 9;
+  font-size: 15px;
   font-weight: 600;
   color: var(--steel);
-  margin-bottom: 14px;
+  margin-bottom: 12px;
 }
 .lp-sec-navy .lp-kicker { color: var(--steel-lift); }
+
+/* Printed-plate caption: the same text cut, one step down, used under the hero
+   phone. A field guide captions its plates; this page had a photograph of a
+   phone floating with a drop shadow and no explanation. */
+.lp-plate-cap {
+  font-family: var(--font-display);
+  font-variation-settings: 'opsz' 9;
+  font-size: 13.5px;
+  line-height: 1.45;
+  color: var(--cream-3);
+  margin: 16px auto 0;
+  max-width: min(284px, 78vw);
+  text-align: left;
+}
 
 /* ============ hero ============ */
 
 .lp-hero {
   background:
     radial-gradient(120% 90% at 50% -10%, #1b2a44 0%, var(--navy) 55%, var(--navy-deep) 100%);
-  padding: clamp(64px, 9vw, 104px) 0 clamp(56px, 8vw, 96px);
+  padding: clamp(56px, 8vw, 92px) 0 clamp(56px, 8vw, 96px);
   position: relative;
   overflow: hidden;
 }
+
+/* The headline spans the full measure; the supporting copy and the phone hang
+   under it. In the old half-width column "Plans die in the group chat. Flock is
+   where they happen." broke into four ragged lines at 1280 — two sentences at
+   72px need about 900px to sit on two. Giving the h1 the whole grid is also the
+   only composition here that isn't text-left / image-right. */
 .lp-hero-in {
   display: grid;
-  gap: clamp(40px, 6vw, 64px);
-  align-items: center;
+  gap: clamp(28px, 4vw, 40px) clamp(40px, 6vw, 64px);
+  align-items: start;
 }
 @media (min-width: 940px) {
-  .lp-hero-in { grid-template-columns: 1.05fr 0.95fr; }
+  .lp-hero-in { grid-template-columns: minmax(0, 1fr) minmax(0, 300px); }
+  .lp-hero-in > h1,
+  .lp-hero-rule { grid-column: 1 / -1; }
+}
+
+/* The rule under the chapter title. It is also what replaced .lp-hero-glow: a
+   pair of rotated, blurred radial blobs behind the headline. Nothing in a
+   printed field guide glows, and a soft luminous blob behind hero text is the
+   single most generic thing a dark hero can do. */
+.lp-hero-rule {
+  height: 0;
+  width: 100%;
+  margin: 0;
+  border: 0;
+  border-top: 1px solid var(--rule-cream);
 }
 
 /* .lp-badge removed: the pill badge above the hero H1 is a named AI-site
    tell (SLOP-AUDIT.md A4). The DECA proof line lives in .lp-hero-note now. */
 
-.lp-hero h1 { margin-bottom: 20px; }
-.lp-hero .lp-lead { margin-bottom: 30px; }
+.lp-hero .lp-lead { margin-bottom: 30px; max-width: 46ch; }
 .lp-hero-cta { display: flex; flex-wrap: wrap; gap: 12px; }
+.lp-phone-wrap { margin: 0; }
 
 /* Default to the paper-safe ink: this class is reused on the Birdie section,
    which is cream, where --cream-3 measured 2.63:1. The navy hero opts back in
@@ -315,23 +398,14 @@
 .lp-hero-note {
   margin-top: 22px;
   font-size: 13.5px;
+  max-width: 52ch;
   color: var(--ink-3);
 }
 .lp-on-navy .lp-hero-note,
 .lp-sec-navy .lp-hero-note { color: var(--cream-3); }
 
-/* ============ chips (crowd labels on vignettes) ============ */
-
-.lp-chip {
-  font-size: 11px;
-  font-weight: 700;
-  padding: 4px 9px;
-  border-radius: 999px;
-  white-space: nowrap;
-}
-.lp-chip-quiet { background: rgba(34, 197, 94, 0.14); color: #4ade80; }
-.lp-chip-mid { background: rgba(245, 158, 11, 0.14); color: #fbbf24; }
-.lp-chip-steel { background: rgba(109, 154, 195, 0.16); color: var(--steel-lift); }
+/* .lp-chip / .lp-chip-quiet / .lp-chip-mid / .lp-chip-steel deleted: no markup
+   has used them since the vignettes were replaced. */
 
 /* ============ real app screenshots ============ */
 
@@ -345,15 +419,31 @@
   background: var(--paper);
 }
 .lp-shot-hero {
+  /* A touch smaller than the body screenshots: it is a plate in the margin of
+     the headline, not the subject of the fold, and every 10px of width here
+     costs 22px of hero height. */
+  width: min(284px, 78vw);
   border-color: rgba(244, 239, 227, 0.16);
   box-shadow: 0 34px 80px rgba(0, 0, 0, 0.5);
 }
-/* forecast card tucked under the screenshot on wide screens */
-.lp-media-pair { display: grid; gap: 22px; justify-items: center; }
-@media (min-width: 620px) {
-  .lp-media-pair { grid-template-columns: minmax(0, 300px) minmax(0, 1fr); align-items: center; justify-items: stretch; }
-  .lp-media-pair .lp-shot { margin: 0; }
+/* The copy block runs ~270px and a whole 390x844 phone runs ~615px, which left
+   a 340px hole under the buttons. Centring the copy against the plate only
+   moved the hole: it pushed the lead 240px away from the headline it answers.
+   So the plate is cropped instead. A field guide crops its plates to the
+   specimen, the cut lands under the third flock card, and the fold now closes
+   inside a 900px viewport instead of running 220px past it. Mobile keeps the
+   whole phone: stacked, there is nothing to balance. (Declared after .lp-shot
+   so its `height: auto` doesn't win on equal specificity.) */
+.lp-shot-hero {
+  height: 470px;
+  object-fit: cover;
+  object-position: top center;
 }
+@media (min-width: 940px) {
+  /* cuts clean under the second flock card, not through one */
+  .lp-shot-hero { height: 410px; }
+}
+/* .lp-media-pair deleted: unused. */
 
 /* App Store badge */
 .lp-appstore {
@@ -569,42 +659,10 @@
   font-size: 13px;
 }
 
-/* ============ hero glow (the one gradient, angled + soft) ============ */
+/* .lp-hero-glow deleted along with its markup. See .lp-hero-rule above.
+   .lp-grid / .lp-card deleted with the "In the app" section they belonged to. */
 
-.lp-hero-glow {
-  position: absolute;
-  inset: -30% -10% auto -10%;
-  height: 90%;
-  background:
-    radial-gradient(60% 60% at 22% 40%, rgba(45, 90, 135, 0.42) 0%, transparent 70%),
-    radial-gradient(50% 55% at 78% 25%, rgba(109, 154, 195, 0.22) 0%, transparent 72%);
-  transform: rotate(-6deg);
-  pointer-events: none;
-  filter: blur(8px);
-}
 .lp-hero-in { position: relative; z-index: 1; }
-
-/* ============ feature grid ============ */
-
-/* One ruled block, like the steps grid: hairline dividers instead of six
-   floating white cards. The icon sits inline with the title, not in the
-   40px rounded "icon badge" square every AI page ships (SLOP-AUDIT.md A14). */
-.lp-grid {
-  display: grid;
-  gap: 1px;
-  background: var(--rule);
-  border: 1px solid var(--rule);
-  border-radius: 18px;
-  overflow: hidden;
-  margin-top: clamp(28px, 4vw, 44px);
-}
-@media (min-width: 700px) { .lp-grid { grid-template-columns: repeat(2, 1fr); } }
-@media (min-width: 1020px) { .lp-grid { grid-template-columns: repeat(3, 1fr); } }
-.lp-card {
-  background: var(--paper);
-  padding: clamp(18px, 2.4vw, 24px);
-}
-.lp-card h3 { margin-bottom: 7px; }
 
 /* Section plates: the bird marks. Solid navy specimens, gull marks and
    hairlines on a transparent ground, at most one steel element each. One per
@@ -647,11 +705,12 @@
     calc(14px - var(--plate-w) * var(--ink-b))
     calc(var(--plate-w) * var(--ink-l) * -1);
 }
-/* crowd: near-square ink (21/22/21/22 inset), the reference size */
-.lp-plate-crowd {
-  --plate-w: clamp(76px, 8vw, 104px);
-  --ink-t: 0.0688; --ink-b: 0.0688; --ink-l: 0.0656;
-}
+/* .lp-plate-crowd retired with the standalone crowd section. Its mark had
+   nowhere honest to go: the section it labelled is navy now, and plates are
+   navy ink with no dark variant (see the note above). Two plates on two cream
+   sections is a system; a third faked onto a dark ground with a filter is the
+   thing the note exists to prevent. /public/marks/crowd.png is untouched and
+   available if a cream crowd section ever comes back. */
 /* split: the lens is narrow, so its side inset is 50 units and the box runs
    wider to land on the same optical size */
 .lp-plate-split {
@@ -665,7 +724,18 @@
   --plate-w: clamp(148px, 13.7vw, 178px);
   --ink-t: 0.3531; --ink-b: 0.3500; --ink-l: 0.0688;
 }
-.lp-card p { font-size: 15px; color: var(--ink-2); }
+
+/* One line closing the steps, carrying the two things the deleted "In the app"
+   grid actually added. Ruled off the block above so it reads as a footnote to
+   the four steps rather than a fifth one. */
+.lp-steps-after {
+  margin-top: 20px;
+  padding-top: 16px;
+  border-top: 1px solid var(--rule);
+  font-size: 15.5px;
+  max-width: 62ch;
+  color: var(--ink-2);
+}
 
 /* ============ safety: the real SOS email, shown as a document ============ */
 
@@ -722,11 +792,7 @@
 }
 .lp-cta-in { max-width: 720px; }
 .lp-cta-row { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 26px; }
-.lp-cta-divider {
-  margin-top: 26px; padding-top: 22px;
-  border-top: 1px solid var(--rule-cream);
-  font-size: 14px; color: var(--cream-3);
-}
+/* .lp-cta-divider deleted: unused. */
 .lp-form button:disabled { opacity: 0.65; cursor: default; }
 
 /* ============ motion ============ */
@@ -740,11 +806,42 @@
 /* ============ live demo (#try) ============ */
 /* A working slice of Discover: real map, real pins, real model output. */
 
+/* The head sits above the demo rather than beside a screenshot: heading and
+   lead on the left, the three claims ruled on the right, and then the demo
+   full width underneath proving all of it. The demo is the widest element on
+   the page on purpose. It is the only thing here no competitor can screenshot
+   their way to, so it gets the most room. */
+.lp-demo-head {
+  display: grid;
+  gap: clamp(20px, 3vw, 48px);
+  align-items: start;
+}
+@media (min-width: 900px) {
+  .lp-demo-head { grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr); }
+  /* Bottom-aligned so the three claims finish level with the paragraph they
+     summarise, instead of starting at the kicker and leaving a hole under. */
+  .lp-demo-head .lp-list { margin-top: 0; align-self: end; }
+}
+.lp-demo-head h2 { margin-bottom: 16px; }
+
+/* The line that turns the demo from a widget into evidence. Ruled top and set
+   at lead size so it reads as a statement about what follows, not a caption. */
+.lp-demo-proof {
+  margin: clamp(32px, 4vw, 44px) 0 20px;
+  padding-top: 20px;
+  border-top: 1px solid var(--rule-cream);
+  font-size: clamp(16px, 1.5vw, 18px);
+  max-width: 62ch;
+  color: var(--cream-2);
+}
+
 .lpd { margin-top: 34px; }
 
 .lpd-controls { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin-bottom: 14px; }
 .lpd-input {
-  flex: 1 1 220px; min-width: 0;
+  /* Capped, not greedy. At full row width a cream-filled field is the loudest
+     thing in a navy section, and it is a search box, not the headline. */
+  flex: 1 1 220px; min-width: 0; max-width: 360px;
   padding: 12px 16px; font: inherit; font-size: 15px;
   color: var(--ink); background: #fff;
   border: 1px solid var(--rule); border-radius: 12px; outline: none;
@@ -851,3 +948,29 @@
   .lpd-map { min-height: 320px; }
   .lpd-card { border-left: none; border-top: 1px solid var(--rule); min-height: 0; }
 }
+
+/* ---- the demo on navy ----
+   Only the chrome around the stage changes. The stage itself stays a light
+   plate: the basemap is light, the dial and the bars were built against white,
+   and a light rectangle pinned to a dark page is exactly the read we want —
+   a specimen, not a widget. Nothing inside .lpd-stage is retinted. */
+.lp-sec-navy .lpd-stage {
+  border-color: rgba(244, 239, 227, 0.14);
+  box-shadow: 0 28px 64px rgba(5, 10, 20, 0.45);
+}
+.lp-sec-navy .lpd-input {
+  background: rgba(244, 239, 227, 0.07);
+  border-color: var(--rule-cream);
+  color: var(--cream);
+}
+.lp-sec-navy .lpd-input::placeholder { color: var(--cream-3); }
+.lp-sec-navy .lpd-input:focus {
+  border-color: var(--steel-lift);
+  box-shadow: 0 0 0 3px rgba(109, 154, 195, 0.22);
+}
+.lp-sec-navy .lpd-locate { color: var(--cream-2); border-color: var(--rule-cream); }
+.lp-sec-navy .lpd-locate:hover { color: var(--cream); border-color: var(--cream); }
+/* Scoped to the control row so the "Get the full picture" button inside the
+   white card keeps its navy fill. */
+.lp-sec-navy .lpd-controls .lp-btn-navy { background: var(--cream); color: var(--navy); }
+.lp-sec-navy .lpd-controls .lp-btn-navy:hover { background: #fffaf0; }
