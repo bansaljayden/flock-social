@@ -162,15 +162,44 @@ def main():
             logger.info('VERDICT: ❌ DO NOT SHIP — fails overall holdout and not enough realtime to verify.')
 
     # Save to metadata
+    # Round 10: the persisted gate used to disagree with the verdict printed
+    # above. It wrote overall_pass = train_pass AND hold_pass — both AGGREGATE
+    # slices, which this script itself documents as misleading (84% of holdout
+    # rows are weekly rows where busyness == baseline by construction, so the
+    # popular_times baseline is unbeatable there and a ≥5-MAE gain is
+    # arithmetically impossible against a baseline whose MAE is ~6). The
+    # realtime-only slice was computed, printed as "THE HONEST TEST", used for
+    # the VERDICT — and then thrown away. Consumers (mlPredictor.init) that
+    # read overall_pass therefore saw "reject" for a model this script shipped.
+    # overall_pass now carries the same decision the verdict prints, and the
+    # aggregate flags are kept but clearly labelled as diagnostics.
+    if rt_pass is not None:
+        overall_pass = bool(rt_pass)
+        gate_basis = 'holdout_realtime'
+        verdict = 'ship' if rt_pass else 'do_not_ship'
+    else:
+        overall_pass = bool(hold_pass)
+        gate_basis = 'holdout_overall_provisional'
+        verdict = 'provisional_ship' if hold_pass else 'do_not_ship'
+
     meta['ship_gate'] = {
+        # Decision — realtime-only holdout when we have enough realtime rows.
+        'overall_pass': overall_pass,
+        'gate_basis': gate_basis,
+        'verdict': verdict,
+        'realtime_rows': rt_count,
+        'realtime_mae_improvement': round(rt_mae_delta, 4) if rt_mae_delta is not None else None,
+        'realtime_r2_improvement': round(rt_r2_delta, 4) if rt_r2_delta is not None else None,
+        'realtime_pass': bool(rt_pass) if rt_pass is not None else None,
+        # Diagnostics only — dominated by weekly rows where baseline == label.
         'training_mae_improvement': round(train_mae_delta, 4),
         'training_r2_improvement': round(train_r2_delta, 4),
         'holdout_mae_improvement': round(hold_mae_delta, 4),
         'holdout_r2_improvement': round(hold_r2_delta, 4),
-        'training_pass': bool(train_pass),
-        'holdout_pass': bool(hold_pass),
-        'overall_pass': bool(train_pass and hold_pass),
-        'criteria': 'MAE down ≥5 OR R² up ≥0.10 vs popular_times-only baseline',
+        'training_pass_diagnostic': bool(train_pass),
+        'holdout_pass_diagnostic': bool(hold_pass),
+        'criteria': 'MAE down ≥5 OR R² up ≥0.10 vs popular_times-only baseline, '
+                    'measured on the realtime-only holdout slice',
     }
     meta['evaluation'] = {
         'training_loco_cv': model_train_metrics,

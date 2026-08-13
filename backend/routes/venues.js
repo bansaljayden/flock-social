@@ -38,6 +38,85 @@ async function verifyFlockMember(flockId, userId) {
   return result.rows.length > 0;
 }
 
+// Every tally in this file comes from here so the REST responses, the socket
+// broadcasts and the GET all agree: member votes carry identities (kept
+// internally so each recipient's blocked users can be stripped), guest-link
+// votes are counts only.
+async function collectVoteRows(flockId) {
+  const raw = await pool.query(
+    `SELECT venue_name, venue_id, COUNT(*)::int AS member_count,
+            ARRAY_AGG(json_build_object('id', u.id, 'name', u.name)) AS voter_rows
+     FROM venue_votes vv
+     JOIN users u ON u.id = vv.user_id
+     WHERE vv.flock_id = $1
+     GROUP BY venue_name, venue_id
+     ORDER BY member_count DESC`,
+    [flockId]
+  );
+
+  const guests = await pool.query(
+    `SELECT venue_name, COUNT(*)::int AS guest_count
+     FROM guest_votes WHERE flock_id = $1 GROUP BY venue_name`,
+    [flockId]
+  ).catch(() => ({ rows: [] }));
+  const guestByVenue = Object.fromEntries(guests.rows.map(g => [g.venue_name, g.guest_count]));
+
+  const rows = raw.rows.map(v => ({
+    venue_name: v.venue_name,
+    venue_id: v.venue_id,
+    member_count: v.member_count,
+    guest_count: guestByVenue[v.venue_name] || 0,
+    voter_rows: v.voter_rows || [],
+  }));
+  // Venues only guests have voted on so far still show up for members.
+  for (const [name, n] of Object.entries(guestByVenue)) {
+    if (!rows.some(r => r.venue_name === name)) {
+      rows.push({ venue_name: name, venue_id: null, member_count: 0, guest_count: n, voter_rows: [] });
+    }
+  }
+  return rows;
+}
+
+// Wire shape for one recipient. vote_count is the total the vote bars are drawn
+// from (members + guests); guest_count lets the UI say "+2 guests".
+// voterObjects keeps the { id, name } rows the GET has always returned; the
+// POST/DELETE and socket payloads stay a names array.
+function tailorVotes(rows, invisible, { voterObjects = false } = {}) {
+  return rows
+    .map(v => {
+      const visible = v.voter_rows.filter(p => !invisible.has(p.id));
+      return {
+        venue_name: v.venue_name,
+        venue_id: v.venue_id,
+        vote_count: v.member_count + v.guest_count,
+        guest_count: v.guest_count,
+        voters: voterObjects ? visible : visible.map(p => p.name),
+      };
+    })
+    .sort((a, b) => b.vote_count - a.vote_count);
+}
+
+// Broadcast the new tallies to every other accepted member, tailored to what
+// each of them is allowed to see.
+async function broadcastVotes(req, flockId, rows, venue_name) {
+  const io = req.app.get('io');
+  const { ids, sets } = await invisibleSetsForFlock(flockId);
+  if (io) {
+    for (const uid of ids) {
+      if (uid === req.user.id) continue;
+      const invisible = sets.get(uid) || new Set();
+      if (invisible.has(req.user.id)) continue; // blocked pair: no event at all
+      io.to(`user:${uid}`).emit('new_vote', {
+        flockId: parseInt(flockId, 10),
+        voter: { userId: req.user.id, name: req.user.name },
+        venue_name,
+        votes: tailorVotes(rows, invisible),
+      });
+    }
+  }
+  return sets.get(req.user.id) || new Set();
+}
+
 // POST /api/flocks/:id/vote - Vote for a venue
 router.post('/:id/vote',
   [
@@ -60,58 +139,46 @@ router.post('/:id/vote',
 
       const { venue_name, venue_id } = req.body;
 
-      const result = await pool.query(
-        `INSERT INTO venue_votes (flock_id, user_id, venue_name, venue_id)
-         VALUES ($1, $2, $3, $4)
-         ON CONFLICT (flock_id, user_id, venue_name) DO NOTHING
-         RETURNING *`,
-        [flockId, req.user.id, venue_name, venue_id || null]
-      );
-
-      if (result.rows.length === 0) {
-        return res.status(400).json({ error: 'Already voted for this venue' });
+      // One vote per member per flock. Switching venues used to stack a second
+      // row (the unique key is per venue name), so both venues came back from
+      // the server (round 10). Replace the old row inside one transaction.
+      const client = await pool.connect();
+      let vote;
+      let changed;
+      try {
+        await client.query('BEGIN');
+        const before = await client.query(
+          'SELECT venue_name FROM venue_votes WHERE flock_id = $1 AND user_id = $2',
+          [flockId, req.user.id]
+        );
+        changed = !(before.rows.length === 1 && before.rows[0].venue_name === venue_name);
+        await client.query(
+          'DELETE FROM venue_votes WHERE flock_id = $1 AND user_id = $2 AND venue_name <> $3',
+          [flockId, req.user.id, venue_name]
+        );
+        const upsert = await client.query(
+          `INSERT INTO venue_votes (flock_id, user_id, venue_name, venue_id)
+           VALUES ($1, $2, $3, $4)
+           ON CONFLICT (flock_id, user_id, venue_name)
+           DO UPDATE SET venue_id = COALESCE(EXCLUDED.venue_id, venue_votes.venue_id)
+           RETURNING *`,
+          [flockId, req.user.id, venue_name, venue_id || null]
+        );
+        await client.query('COMMIT');
+        vote = upsert.rows[0];
+      } catch (err) {
+        await client.query('ROLLBACK').catch(() => {});
+        throw err;
+      } finally {
+        client.release();
       }
 
-      // Return updated vote counts (voters carry ids internally so blocks can
-      // be applied per recipient; the wire shape stays a names array)
-      const votes = await pool.query(
-        `SELECT venue_name, venue_id, COUNT(*) AS vote_count,
-                ARRAY_AGG(json_build_object('id', u.id, 'name', u.name)) AS voter_rows
-         FROM venue_votes vv
-         JOIN users u ON u.id = vv.user_id
-         WHERE vv.flock_id = $1
-         GROUP BY venue_name, venue_id
-         ORDER BY vote_count DESC`,
-        [flockId]
-      );
+      const rows = await collectVoteRows(flockId);
+      const myInvisible = await broadcastVotes(req, flockId, rows, venue_name);
 
-      const tailorVotes = (invisible) => votes.rows.map(v => ({
-        venue_name: v.venue_name,
-        venue_id: v.venue_id,
-        vote_count: v.vote_count,
-        voters: (v.voter_rows || []).filter(p => !invisible.has(p.id)).map(p => p.name),
-      }));
-
-      // Notify flock members in real-time — per member, with that member's
-      // blocked users removed from voter lists (and from the voter line).
-      const io = req.app.get('io');
-      const { ids, sets } = await invisibleSetsForFlock(flockId);
-      if (io) {
-        for (const uid of ids) {
-          if (uid === req.user.id) continue;
-          const invisible = sets.get(uid) || new Set();
-          if (invisible.has(req.user.id)) continue; // blocked pair: no event at all
-          io.to(`user:${uid}`).emit('new_vote', {
-            flockId: parseInt(flockId),
-            voter: { userId: req.user.id, name: req.user.name },
-            venue_name,
-            votes: tailorVotes(invisible),
-          });
-        }
-      }
-
-      const myInvisible = sets.get(req.user.id) || new Set();
-      res.status(201).json({ vote: result.rows[0], votes: tailorVotes(myInvisible) });
+      // Re-voting for the venue you already picked is a no-op, not an error:
+      // the client re-sends its current pick whenever the vote list changes.
+      res.status(changed ? 201 : 200).json({ vote, votes: tailorVotes(rows, myInvisible) });
     } catch (err) {
       console.error('Vote error:', err);
       res.status(500).json({ error: 'Failed to vote' });
@@ -119,9 +186,45 @@ router.post('/:id/vote',
   }
 );
 
+// DELETE /api/flocks/:id/vote - Take back my vote
+// Without this an un-vote in the UI never reached the server and came back on
+// the next refresh (round 10).
+router.delete('/:id/vote', param('id').isInt(), async (req, res) => {
+  try {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ error: errors.array()[0].msg });
+    }
+
+    const flockId = req.params.id;
+
+    if (!(await verifyFlockMember(flockId, req.user.id))) {
+      return res.status(403).json({ error: 'Not a member of this flock' });
+    }
+
+    const removed = await pool.query(
+      'DELETE FROM venue_votes WHERE flock_id = $1 AND user_id = $2 RETURNING venue_name',
+      [flockId, req.user.id]
+    );
+
+    const rows = await collectVoteRows(flockId);
+    const myInvisible = await broadcastVotes(req, flockId, rows, removed.rows[0]?.venue_name || null);
+
+    res.json({ removed: removed.rows.length, votes: tailorVotes(rows, myInvisible) });
+  } catch (err) {
+    console.error('Unvote error:', err);
+    res.status(500).json({ error: 'Failed to remove vote' });
+  }
+});
+
 // GET /api/flocks/:id/votes - Get vote counts for a flock
 router.get('/:id/votes', param('id').isInt(), async (req, res) => {
   try {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ error: errors.array()[0].msg });
+    }
+
     const flockId = req.params.id;
 
     if (!(await verifyFlockMember(flockId, req.user.id))) {
@@ -129,42 +232,9 @@ router.get('/:id/votes', param('id').isInt(), async (req, res) => {
     }
 
     const invisible = new Set(await getInvisibleUserIds(req.user.id));
-    const raw = await pool.query(
-      `SELECT venue_name, venue_id, COUNT(*) AS vote_count,
-              ARRAY_AGG(json_build_object('id', u.id, 'name', u.name)) AS voters
-       FROM venue_votes vv
-       JOIN users u ON u.id = vv.user_id
-       WHERE vv.flock_id = $1
-       GROUP BY venue_name, venue_id
-       ORDER BY vote_count DESC`,
-      [flockId]
-    );
-    // Counts stay honest; blocked identities disappear from the lists.
-    const result = { rows: raw.rows.map(v => ({ ...v, voters: (v.voters || []).filter(p => !invisible.has(p.id)) })) };
+    const rows = await collectVoteRows(flockId);
 
-    // Fold in guest-link votes (no identities, counts only). vote_count stays
-    // the total the vote bars are drawn from; guest_count lets the UI say
-    // "+2 guests" if it wants to.
-    const guests = await pool.query(
-      `SELECT venue_name, COUNT(*)::int AS guest_count
-       FROM guest_votes WHERE flock_id = $1 GROUP BY venue_name`,
-      [flockId]
-    ).catch(() => ({ rows: [] }));
-    const guestByVenue = Object.fromEntries(guests.rows.map((g) => [g.venue_name, g.guest_count]));
-    const votes = result.rows.map((v) => ({
-      ...v,
-      guest_count: guestByVenue[v.venue_name] || 0,
-      vote_count: parseInt(v.vote_count, 10) + (guestByVenue[v.venue_name] || 0),
-    }));
-    // Venues only guests have voted on so far still show up for members.
-    for (const [name, n] of Object.entries(guestByVenue)) {
-      if (!votes.some((v) => v.venue_name === name)) {
-        votes.push({ venue_name: name, venue_id: null, vote_count: n, guest_count: n, voters: [] });
-      }
-    }
-    votes.sort((a, b) => b.vote_count - a.vote_count);
-
-    res.json({ votes });
+    res.json({ votes: tailorVotes(rows, invisible, { voterObjects: true }) });
   } catch (err) {
     console.error('Get votes error:', err);
     res.status(500).json({ error: 'Failed to get votes' });
