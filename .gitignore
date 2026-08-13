@@ -44,3 +44,6 @@ backend/scripts/ml/models/spot_check.py
 # local training run logs
 backend/scripts/ml/train/train_v*.log
 backend/scripts/ml/train/train_v*.err
+
+# Security review working notes (do not commit)
+REVIEW-ROUND3-gpt56sol.md
