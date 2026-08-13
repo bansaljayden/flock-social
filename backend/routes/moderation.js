@@ -20,6 +20,28 @@ router.use(authenticate);
 const VALID_CONTENT_TYPES = ['flock_message', 'dm', 'profile', 'story', 'venue_review', 'venue_promotion'];
 const VALID_REASONS = ['spam', 'harassment', 'hate', 'sexual', 'violence', 'self_harm', 'other'];
 
+// Round 9: every report inserted a row and paged a moderator with no ceiling,
+// so one account could bury real reports below the dashboard's LIMIT 200 view
+// and spam the alert channel. 10 reports/hour per user, in-memory (matches
+// waitlist.js) — fine on the single-instance deployment.
+const reportHourly = new Map(); // userId -> { count, resetAt }
+const REPORTS_PER_HOUR = 10;
+
+function allowReport(userId) {
+  const now = Date.now();
+  if (reportHourly.size > 5000) {
+    for (const [k, v] of reportHourly) { if (now > v.resetAt) reportHourly.delete(k); }
+  }
+  let entry = reportHourly.get(userId);
+  if (!entry || now > entry.resetAt) {
+    entry = { count: 0, resetAt: now + 60 * 60 * 1000 };
+    reportHourly.set(userId, entry);
+  }
+  if (entry.count >= REPORTS_PER_HOUR) return false;
+  entry.count += 1;
+  return true;
+}
+
 // POST /api/reports — file a report against content or a user.
 router.post('/reports',
   [
@@ -31,6 +53,10 @@ router.post('/reports',
   ],
   async (req, res) => {
     try {
+      if (!allowReport(req.user.id)) {
+        return res.status(429).json({ error: 'You have filed a lot of reports recently. Try again in a little while.' });
+      }
+
       const errors = validationResult(req);
       if (!errors.isEmpty()) return res.status(400).json({ error: errors.array()[0].msg });
 
@@ -107,6 +133,28 @@ router.post('/reports',
         if (reported_user_id && row.sender_id !== reported_user_id) {
           return res.status(400).json({ error: 'Reported user does not match the content author' });
         }
+      }
+
+      // Round 9: one reporter re-filing the same target repeatedly inserted a
+      // new row and re-paged moderators every time. While their earlier report
+      // is still unhandled, answer the same success without a second row or a
+      // second alert. The response is identical either way, so a reporter
+      // learns nothing about what is already in the queue.
+      const dupe = await pool.query(
+        `SELECT id, status, created_at FROM content_reports
+         WHERE reporter_id = $1
+           AND content_type = $2
+           AND content_id IS NOT DISTINCT FROM $3::int
+           AND reported_user_id IS NOT DISTINCT FROM $4::int
+           AND status IN ('open', 'under_review')
+         LIMIT 1`,
+        [req.user.id, content_type, content_id || null, reported_user_id || null]
+      );
+      if (dupe.rows.length > 0) {
+        return res.status(201).json({
+          message: 'Report received. Our team will review it promptly.',
+          report: dupe.rows[0],
+        });
       }
 
       const result = await pool.query(

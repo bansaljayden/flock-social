@@ -314,8 +314,12 @@ function registerHandlers(io, socket) {
   socket.on('vote_venue', async (data) => {
     try {
       if (!allowEvent(socket, 'vote_venue', 30, 10_000)) return;
-      const { flockId, venue_id } = data;
+      const { flockId } = data;
       const venue_name = stripHtml(typeof data.venue_name === 'string' ? data.venue_name.trim() : '');
+      // Round 9: the vote name is persisted and broadcast to the whole flock,
+      // so it needs the same screen every other user-writable field gets.
+      // 255 matches the VARCHAR(255) venue_id columns.
+      const venue_id = typeof data.venue_id === 'string' ? data.venue_id.slice(0, 255) : null;
 
       // Validate inputs
       if (!flockId || !venue_name) {
@@ -324,6 +328,10 @@ function registerHandlers(io, socket) {
       }
       if (venue_name.length > 255) {
         socket.emit('error', { message: 'Venue name too long' });
+        return;
+      }
+      if (!moderateText(venue_name).allowed) {
+        socket.emit('error', { message: TEXT_REJECTED_MESSAGE });
         return;
       }
 
@@ -336,7 +344,7 @@ function registerHandlers(io, socket) {
         `INSERT INTO venue_votes (flock_id, user_id, venue_name, venue_id)
          VALUES ($1, $2, $3, $4)
          ON CONFLICT (flock_id, user_id, venue_name) DO NOTHING`,
-        [flockId, user.id, venue_name, venue_id || null]
+        [flockId, user.id, venue_name, venue_id]
       );
 
       // Fetch updated vote tallies (ids kept internally so each recipient's
@@ -832,7 +840,23 @@ function registerHandlers(io, socket) {
   socket.on('select_venue', async (data) => {
     try {
       if (!allowEvent(socket, 'select_venue', 10, 10_000)) return;
-      const { flockId, venue_name, venue_address, venue_id } = data;
+      const { flockId } = data;
+      // Round 9: these went straight from the wire into the flock row and the
+      // broadcast. Clamp and screen them like every other venue text field.
+      const venue_name = stripHtml(typeof data.venue_name === 'string' ? data.venue_name.trim() : '').slice(0, 255);
+      const venue_address = typeof data.venue_address === 'string'
+        ? stripHtml(data.venue_address.trim()).slice(0, 512) || null
+        : null;
+      const venue_id = typeof data.venue_id === 'string' ? data.venue_id.slice(0, 255) : null;
+
+      if (!venue_name) {
+        socket.emit('error', { message: 'Venue name is required' });
+        return;
+      }
+      if (!moderateText(venue_name).allowed || (venue_address && !moderateText(venue_address).allowed)) {
+        socket.emit('error', { message: TEXT_REJECTED_MESSAGE });
+        return;
+      }
 
       // Only the flock creator can confirm a venue
       const flock = await pool.query('SELECT creator_id FROM flocks WHERE id = $1', [flockId]);
@@ -845,7 +869,7 @@ function registerHandlers(io, socket) {
         `UPDATE flocks
          SET venue_name = $1, venue_address = $2, venue_id = $3, status = 'confirmed', updated_at = NOW()
          WHERE id = $4`,
-        [venue_name, venue_address || null, venue_id || null, flockId]
+        [venue_name, venue_address, venue_id, flockId]
       );
 
       io.to(`flock:${flockId}`).emit('venue_selected', {

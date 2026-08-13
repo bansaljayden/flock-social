@@ -588,7 +588,7 @@ router.post('/chat',
     } catch (err) {
       console.error('[AI] Chat error:', err);
       if (err.status === 429 || err.message?.includes('quota')) {
-        return res.status(429).json({ error: 'one sec, lots of people chatting rn — try that again' });
+        return res.status(429).json({ error: 'one sec, lots of people chatting rn. try that again' });
       }
       res.status(500).json({ error: 'hmm gimme a sec, hit me again' });
     }

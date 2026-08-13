@@ -7,7 +7,7 @@ const { OAuth2Client } = require('google-auth-library');
 const pool = require('../config/database');
 const { authenticate } = require('../middleware/auth');
 const { stripHtml, sanitizeArray } = require('../utils/sanitize');
-const { rejectIfProfane } = require('../utils/moderation');
+const { rejectIfProfane, moderateText } = require('../utils/moderation');
 
 const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 
@@ -58,6 +58,24 @@ async function enforceDobOnLogin(user, req, res) {
   return true;
 }
 const { isDisposableEmail } = require('../utils/disposableEmail');
+
+// Round 9: display names created through OAuth skipped the profanity screen the
+// password signup path runs, and the provider name is user-controlled (a Google
+// or Apple profile name is whatever the user typed). Screen it here too, but a
+// failed screen must NOT 400 the sign-in and lock someone out of their account:
+// fall back to a generated placeholder derived from the email local part, then
+// "Friend". The user can rename in onboarding.
+function safeOAuthDisplayName(rawName, email, provider) {
+  const candidate = typeof rawName === 'string' ? stripHtml(rawName.trim()).trim() : '';
+  if (candidate && moderateText(candidate).allowed) return candidate;
+
+  const local = typeof email === 'string'
+    ? email.split('@')[0].replace(/[^A-Za-z0-9._-]/g, '').slice(0, 40)
+    : '';
+  const placeholder = local && moderateText(local).allowed ? local : 'Friend';
+  console.warn(`[auth] ${provider} display name failed moderation or was empty — storing placeholder "${placeholder}"`);
+  return placeholder;
+}
 
 // Validation rules
 const signupValidation = [
@@ -307,11 +325,13 @@ router.post('/google', [
         if (dobAge < MIN_AGE) {
           return res.status(403).json({ error: UNDERAGE_MSG });
         }
+        // Round 9: the provider name is UGC and was stored unscreened here.
+        const googleName = safeOAuthDisplayName(name, email, 'Google');
         result = await pool.query(
           `INSERT INTO users (email, name, oauth_provider, oauth_id, profile_image_url, terms_accepted_at, date_of_birth)
            VALUES ($1, $2, 'google', $3, $4, NOW(), $5)
            RETURNING *`,
-          [email, name, googleId, picture, req.body.date_of_birth || null]
+          [email, googleName, googleId, picture, req.body.date_of_birth || null]
         );
         user = result.rows[0];
       }
@@ -426,8 +446,12 @@ router.post('/apple', [
       const givenName = fullName?.givenName ? stripHtml(String(fullName.givenName).trim()) : '';
       const familyName = fullName?.familyName ? stripHtml(String(fullName.familyName).trim()) : '';
       const composedName = [givenName, familyName].filter(Boolean).join(' ').trim();
-      const fallbackName = composedName
-        || (email ? email.split('@')[0] : 'Friend');
+      // Round 9: fullName comes from the client and was stored unscreened.
+      const fallbackName = safeOAuthDisplayName(
+        composedName || (email ? email.split('@')[0] : ''),
+        email,
+        'Apple'
+      );
 
       // DOB required for creation, same as email + Google paths. Apple never
       // supplies it, so the client must send it (signup screen's DOB field).

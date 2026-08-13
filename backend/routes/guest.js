@@ -2,6 +2,7 @@ const express = require('express');
 const crypto = require('crypto');
 const { body, param, validationResult } = require('express-validator');
 const pool = require('../config/database');
+const { rejectIfProfane } = require('../utils/moderation');
 
 const router = express.Router();
 
@@ -44,12 +45,17 @@ async function resolveLink(token) {
 
 // Member + guest vote tallies for a flock, grouped by venue name. No voter
 // identities are exposed on the guest surface, only counts.
+// Round 9: a hidden (taken-down) guest RSVP contributes nothing anywhere, votes
+// included, so a moderator action fully removes them from the public surface.
 async function guestTallies(flockId) {
   const r = await pool.query(
     `SELECT venue_name, SUM(c)::int AS votes FROM (
        SELECT venue_name, COUNT(*) AS c FROM venue_votes WHERE flock_id = $1 GROUP BY venue_name
        UNION ALL
-       SELECT venue_name, COUNT(*) AS c FROM guest_votes WHERE flock_id = $1 GROUP BY venue_name
+       SELECT gv.venue_name, COUNT(*) AS c FROM guest_votes gv
+       JOIN guest_rsvps gr ON gr.id = gv.guest_rsvp_id
+       WHERE gv.flock_id = $1 AND COALESCE(gr.is_hidden, false) = false
+       GROUP BY gv.venue_name
      ) t GROUP BY venue_name ORDER BY votes DESC LIMIT 12`,
     [flockId]
   );
@@ -72,7 +78,7 @@ router.get('/:token',
         pool.query(
           `SELECT
              (SELECT COUNT(*) FROM flock_members WHERE flock_id = $1 AND status = 'accepted')::int AS members,
-             (SELECT COUNT(*) FROM guest_rsvps WHERE flock_id = $1 AND status = 'in')::int AS guests`,
+             (SELECT COUNT(*) FROM guest_rsvps WHERE flock_id = $1 AND status = 'in' AND COALESCE(is_hidden, false) = false)::int AS guests`,
           [link.flock_id]
         ),
       ]);
@@ -103,6 +109,8 @@ router.get('/:token',
 router.post('/:token/rsvp',
   [
     param('token').trim().isLength({ min: 8, max: 20 }),
+    // max 60 matches the guest_rsvps.name column cap, so an over-long name is a
+    // 400 here instead of a database error.
     body('name').trim().isLength({ min: 1, max: 60 }).withMessage('Tell them who you are'),
     body('status').isIn(['in', 'out']).withMessage('RSVP must be in or out'),
     body('guestToken').optional().isUUID(),
@@ -117,30 +125,46 @@ router.post('/:token/rsvp',
 
       const { name, status, guestToken } = req.body;
 
+      // Round 9: this is an UNAUTHENTICATED write whose value is broadcast to
+      // every member over the socket, so it gets the same profanity screen as
+      // every other user-writable text field.
+      if (rejectIfProfane(res, name)) return;
+
       // Returning guest updates their RSVP; new guest gets a fresh identity.
       if (guestToken) {
+        const existing = await pool.query(
+          'SELECT COALESCE(is_hidden, false) AS is_hidden FROM guest_rsvps WHERE guest_token = $1 AND flock_id = $2',
+          [guestToken, link.flock_id]
+        );
+        if (existing.rows.length && existing.rows[0].is_hidden) {
+          return res.status(403).json({ error: 'This RSVP was removed and cannot be edited' });
+        }
         const upd = await pool.query(
           `UPDATE guest_rsvps SET name = $1, status = $2, updated_at = NOW()
-           WHERE guest_token = $3 AND flock_id = $4 RETURNING guest_token`,
+           WHERE guest_token = $3 AND flock_id = $4 AND COALESCE(is_hidden, false) = false
+           RETURNING guest_token`,
           [name, status, guestToken, link.flock_id]
         );
         if (upd.rows.length) return res.json({ guestToken: upd.rows[0].guest_token, status });
       }
 
-      // Cap guests per flock so a leaked link can't flood a plan.
+      // Cap guests per flock so a leaked link can't flood a plan. Hidden rows
+      // still count toward the cap — a takedown must not free up a slot.
       const count = await pool.query('SELECT COUNT(*)::int AS n FROM guest_rsvps WHERE flock_id = $1', [link.flock_id]);
       if (count.rows[0].n >= 50) {
         return res.status(429).json({ error: 'This flock has too many guest RSVPs' });
       }
 
       const ins = await pool.query(
-        `INSERT INTO guest_rsvps (flock_id, name, status) VALUES ($1, $2, $3) RETURNING guest_token`,
+        `INSERT INTO guest_rsvps (flock_id, name, status) VALUES ($1, $2, $3)
+         RETURNING guest_token, COALESCE(is_hidden, false) AS is_hidden`,
         [link.flock_id, name, status]
       );
 
-      // Let members see the RSVP land in real time.
+      // Let members see the RSVP land in real time. Hidden rows are never
+      // broadcast (a default-false column means this is normally true).
       const io = req.app.get('io');
-      if (io) {
+      if (io && !ins.rows[0].is_hidden) {
         io.to(`flock:${link.flock_id}`).emit('guest_rsvp', {
           flockId: link.flock_id, name, status,
         });
@@ -172,7 +196,8 @@ router.post('/:token/vote',
       const { guestToken, venueName } = req.body;
 
       const guest = await pool.query(
-        'SELECT id FROM guest_rsvps WHERE guest_token = $1 AND flock_id = $2',
+        `SELECT id FROM guest_rsvps
+         WHERE guest_token = $1 AND flock_id = $2 AND COALESCE(is_hidden, false) = false`,
         [guestToken, link.flock_id]
       );
       if (!guest.rows.length) return res.status(403).json({ error: 'RSVP first, then vote' });
