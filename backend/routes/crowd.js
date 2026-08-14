@@ -498,12 +498,40 @@ router.post('/batch',
       }));
       const now = new Date();
 
-      // Use client's local time if provided
-      const clientTime = new Date(now);
-      if (localHour != null && localDay != null) {
-        clientTime.setDate(clientTime.getDate() + crowdEngine.weekdayOffset(clientTime.getDay(), localDay));
-        clientTime.setHours(localHour, 0, 0, 0);
-      }
+      // WHOSE CLOCK: each venue's own, not the viewer's — and not one shared
+      // clock for the whole list either.
+      //
+      // Rounds 13-15 moved the card, the alternatives list, the marketing demo
+      // and the owner dashboard onto the venue's wall clock and left THIS list
+      // behind, even though it is the list the card sits under: for a venue
+      // outside the viewer's zone its detail page scored 8 PM at the door while
+      // the vote-list row beside it scored 11 PM in the viewer's living room.
+      //
+      // The difference from every other surface is that these venues arrive in
+      // the REQUEST BODY rather than from Google, so there is no single clock to
+      // put the request on: a list can hold venues in three time zones at once
+      // and each one has to answer on its own. That is why the feedback lookup
+      // below is a (venue_place_id, day_of_week, hour) tuple list rather than
+      // one (day, hour) window shared by every venue — the score and the reports
+      // calibrating it are read on the SAME clock, per venue, or this endpoint
+      // publishes a number calibrated against a different hour of the week.
+      //
+      // A venue whose client did not send utcOffsetMinutes falls back to the
+      // caller's clock, exactly as before, which is also the right answer for
+      // the overwhelmingly common case where the venue is local anyway.
+      const fallbackHour = localHour != null ? localHour : now.getHours();
+      const fallbackDay = localDay != null ? localDay : now.getDay();
+      const clocks = venues.map((v) => {
+        const vc = crowdEngine.venueLocalNow(v.utcOffsetMinutes, now);
+        const hour = vc ? vc.hour : fallbackHour;
+        const day = vc ? vc.day : fallbackDay;
+        // Same three lines as the card: nearest matching weekday, then the hour.
+        // weekdayOffset rather than a signed weekday difference — see round 14.
+        const at = new Date(now);
+        at.setDate(at.getDate() + crowdEngine.weekdayOffset(at.getDay(), day));
+        at.setHours(hour, 0, 0, 0);
+        return { hour, day, at, local: !!vc };
+      });
 
       // Get weather once from the first venue's location.
       //
@@ -513,46 +541,54 @@ router.post('/batch',
       // like GET /api/weather. Identify the caller so the per-user hourly
       // ceiling applies. Real browsing is unaffected: the reading is cached per
       // ~1km coordinate bucket and a cache hit charges nothing.
+      //
+      // KNOWN LIMIT, and it is louder now that each venue answers on its own
+      // clock: this is ONE reading for the whole list, so a venue in another
+      // time zone is scored against the first venue's weather. It stays one
+      // call on purpose — per-venue readings would be up to twenty paid weather
+      // calls per vote-list scroll, and weather is a small term in the feature
+      // vector next to the hour. A list spanning zones is the rare case; a list
+      // of twenty is the common one.
       const firstLoc = venues[0]?.location;
       const weather = (firstLoc?.latitude && firstLoc?.longitude)
         ? await getWeather(firstLoc.latitude, firstLoc.longitude, { userId: req.user.id })
         : null;
 
-      // Bulk query feedback for all venues at once (non-blocking)
-      const placeIds = venues.map(v => v.place_id).filter(Boolean);
-      const batchHour = localHour != null ? localHour : clientTime.getHours();
-      const batchDay = localDay != null ? localDay : clientTime.getDay();
+      // Bulk query feedback for all venues at once (non-blocking).
+      //
+      // One (venue_place_id, day_of_week, hour) tuple per venue per window
+      // slot, because each venue is scored on its own clock above and a
+      // calibration read on a different clock than the score it adjusts is
+      // worse than no calibration at all. Three parallel arrays rather than an
+      // inlined tuple list: the parameter COUNT is then fixed at three however
+      // many venues arrive (20 venues x 3 slots would otherwise be 180 bind
+      // parameters), and idx_venue_feedback_day_hour — (venue_place_id,
+      // day_of_week, hour), migration 001 — is still the index this probes.
+      //
+      // Deduped as it is built: the same place id twice in one body is one
+      // question, not two. (Two DIFFERENT venues sharing a clock are still two
+      // tuples — the place id is part of the key.)
+      const fbPlaceIds = [];
+      const fbDays = [];
+      const fbHours = [];
+      const seenSlot = new Set();
+      venues.forEach((v, i) => {
+        if (!v.place_id) return;
+        for (const [d, h] of feedbackWindow(clocks[i].day, clocks[i].hour)) {
+          const slot = `${v.place_id}|${d}|${h}`;
+          if (seenSlot.has(slot)) continue;
+          seenSlot.add(slot);
+          fbPlaceIds.push(v.place_id);
+          fbDays.push(d);
+          fbHours.push(h);
+        }
+      });
 
-      // KNOWN GAP, left whole rather than half-fixed (audit round 6).
-      //
-      // Rounds 13-15 moved the card, the alternatives list, the marketing demo
-      // and the owner dashboard onto the venue's own wall clock. THIS LIST WAS
-      // NOT MOVED, and it is the list the card sits under: for a venue outside
-      // the viewer's zone its detail page scores 8 PM at the door while the
-      // vote-list row beside it scores 11 PM in the viewer's living room. Both
-      // halves of the /alternatives note below apply word for word — the score
-      // printed here is a different hour's answer, and the feedback lookup is
-      // keyed on (day_of_week, hour), so it reads a different weekly bucket
-      // than the card's: verified reporters can move one surface and leave the
-      // other untouched.
-      //
-      // Why it is not fixed here. The venues arrive in the REQUEST BODY rather
-      // than from Google, so each carries its own utcOffsetMinutes and the
-      // window below stops being one (day, hour) pair set shared by every venue
-      // — the statement has to become a (venue_place_id, day_of_week, hour)
-      // tuple list, which changes its parameter layout.
-      // __tests__/paidCallBudgets.test.js pins these parameters POSITIONALLY
-      // ($1 = the place id array, $2..$7 = the three pairs), and that file
-      // belongs to another area of this audit. Doing only the scoring half
-      // without the lookup half would be WORSE than leaving it: the score and
-      // the reports calibrating it would then disagree inside one response.
-      //
-      // Impact is bounded. Venues in a vote list come from a Places search near
-      // the user, so the two clocks are the same in almost every real request;
-      // it bites when a group plans somewhere in another time zone.
       let feedbackByVenue = {};
       try {
-        const fbResult = await pool.query(
+        // An empty tuple list is a round trip that can only return zero rows:
+        // every item in this body was malformed enough to lose its place id.
+        const fbResult = fbPlaceIds.length === 0 ? { rows: [] } : await pool.query(
           // Same projection as the single-venue read above, and for the same
           // reason: without user_id and created_at on the row, the per-account
           // dedupe and the 28-day window inside buildCalibrationAdjustment have
@@ -586,11 +622,12 @@ router.post('/batch',
           // to fix. __tests__/presenceParity.test.js fails if a LIMIT ever
           // appears here without one, and if the FK stops being CASCADE.
           `SELECT venue_place_id, crowd_level, predicted_score, user_id, created_at FROM venue_feedback
-           WHERE venue_place_id = ANY($1::text[])
-             AND (day_of_week, hour) IN (($2::int, $3::int), ($4::int, $5::int), ($6::int, $7::int))
+           WHERE (venue_place_id, day_of_week, hour) IN (
+                   SELECT w.place_id, w.dow, w.hr
+                     FROM unnest($1::text[], $2::int[], $3::int[]) AS w(place_id, dow, hr))
              AND verified = true -- only presence-verified reports: Sybil accounts could steer public predictions (REVIEW-ROUND5)
              AND created_at > NOW() - INTERVAL '28 days'`,
-          [placeIds, ...feedbackWindow(batchDay, batchHour).flat()]
+          [fbPlaceIds, fbDays, fbHours]
         );
         for (const row of fbResult.rows) {
           if (!feedbackByVenue[row.venue_place_id]) feedbackByVenue[row.venue_place_id] = [];
@@ -600,25 +637,48 @@ router.post('/batch',
         console.error('[Crowd] Batch feedback query failed, using raw scores:', fbErr.message);
       }
 
-      const predictions = await Promise.all(venues.map(async v => {
-        // One clock for the whole list — see the KNOWN GAP note above.
-        const result = await mlPredictor.predictBusyness(v, weather, clientTime);
-        const cal = buildCalibrationAdjustment(feedbackByVenue[v.place_id] || [], result.score);
-        const boost = cal.feedbackUsed ? Math.min(15, cal.reportCount * 3) : 0;
-        return {
-          placeId: v.place_id,
-          name: v.name,
-          score: cal.adjustedScore,
-          label: getLabel(cal.adjustedScore),
-          rawEngineScore: result.score,
-          confidence: Math.min(100, result.confidence + boost),
-          calibration: {
-            feedbackUsed: cal.feedbackUsed,
-            reportCount: cal.reportCount,
-            predictionDrift: cal.predictionDrift || 0,
-          },
-        };
-      }));
+      // One venue's failure is one venue's failure. predictBusyness reads a
+      // venue-shaped object built from REQUEST BODY fields, so a single
+      // malformed item that throws inside it used to reject this Promise.all
+      // and return a 500 for the whole list: nineteen good venues lost their
+      // scores because of the twentieth. /alternatives already guards each
+      // neighbour individually and drops the one that failed; this is the same
+      // rule, and the client keys predictions by placeId, so a missing entry
+      // degrades to "no crowd badge on that row" instead of an empty list.
+      const predictions = (await Promise.all(venues.map(async (v, i) => {
+        const clock = clocks[i];
+        try {
+          const result = await mlPredictor.predictBusyness(v, weather, clock.at);
+          const cal = buildCalibrationAdjustment(feedbackByVenue[v.place_id] || [], result.score);
+          const boost = cal.feedbackUsed ? Math.min(15, cal.reportCount * 3) : 0;
+          return {
+            placeId: v.place_id,
+            name: v.name,
+            score: cal.adjustedScore,
+            label: getLabel(cal.adjustedScore),
+            rawEngineScore: result.score,
+            confidence: Math.min(100, result.confidence + boost),
+            calibration: {
+              feedbackUsed: cal.feedbackUsed,
+              reportCount: cal.reportCount,
+              predictionDrift: cal.predictionDrift || 0,
+            },
+            // The clock THIS row was scored and calibrated on, same field the
+            // card publishes, so a client can label the row with the venue's
+            // hour rather than the phone's. `local` is false when the caller
+            // sent no offset for this venue and it fell back to their clock.
+            venueClock: {
+              hour: clock.hour,
+              day: clock.day,
+              utcOffsetMinutes: clock.local ? Number(v.utcOffsetMinutes) : null,
+              local: clock.local,
+            },
+          };
+        } catch (err) {
+          console.error('[Crowd] Batch venue prediction failed, dropping', v.place_id, err.message);
+          return null;
+        }
+      }))).filter(Boolean);
 
       res.json({
         predictions,
@@ -652,6 +712,36 @@ router.get('/:placeId/alternatives',
       let localDay = req.query.localDay != null ? parseInt(req.query.localDay, 10) : now.getDay();
       if (!Number.isInteger(localHour) || localHour < 0 || localHour > 23) localHour = now.getHours();
       if (!Number.isInteger(localDay) || localDay < 0 || localDay > 6) localDay = now.getDay();
+
+      // Cached like the card, and for a stronger reason than the card has: this
+      // is the only request in this file that makes TWO paid Google calls, and
+      // it had no cache at all, so the only thing standing between a client that
+      // re-asks and a Google invoice was the 30-per-user-hour budget — fifteen
+      // requests. Same 10-minute TTL and the same key shape as
+      // GET /:placeId, since it answers the same question about the same venue
+      // at the same hour, and nothing in the payload is user-specific (no
+      // paywall gate here, unlike the card).
+      //
+      // Read BEFORE the charge, deliberately: utils/placesBudget.js says cache
+      // hits must be answered before the charge, because charging for a call we
+      // did not make masks the real burn rate. The key uses the CALLER's clock
+      // rather than the venue's — the venue's offset is not known until the
+      // Place Details call below has already happened — which is the same
+      // trade-off the card makes: two viewers in different zones mint two
+      // entries holding the same answer, and neither ever sees the other's.
+      //
+      // `currentVenue.score` can now be up to a TTL older than the card's own
+      // number, where before it was always fresh against a card that could be
+      // ten minutes stale. The bound on how far the two may drift is the same
+      // ten minutes either way; what changes is which side is the stale one.
+      //
+      // These entries share the card's 200-entry cap, so a busy process evicts
+      // the oldest of BOTH kinds. That is the right direction — an evicted entry
+      // costs a re-fetch, and the cap is what stops unique-key spam growing the
+      // map — but it does mean the card's effective cache depth is now shared.
+      const cacheKey = `alt:${placeId}:${localHour}:${localDay}`;
+      const cachedAlts = getCached(cacheKey);
+      if (cachedAlts) return res.json(cachedAlts);
 
       // Two paid Google calls per request — a Place Details for the target and
       // a Text Search for the neighbours — so charge two. Round 15: the comment
@@ -817,10 +907,16 @@ router.get('/:placeId/alternatives',
         .sort((a, b) => a.score - b.score)
         .slice(0, 3);
 
-      res.json({
+      // Only a real answer is remembered. A 502 above returns before this line,
+      // so an outage is never cached as "we looked and found nothing quieter" —
+      // the same mistake round 19 fixed one level up, which caching would have
+      // re-introduced for ten minutes at a time.
+      const payload = {
         currentVenue: { name: target.name, score: targetScore },
         alternatives,
-      });
+      };
+      setCache(cacheKey, payload);
+      res.json(payload);
     } catch (err) {
       console.error('[Crowd] Alternatives error:', err);
       res.status(500).json({ error: 'Failed to find alternatives' });
