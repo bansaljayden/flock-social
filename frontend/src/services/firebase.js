@@ -1,6 +1,7 @@
 import { initializeApp } from 'firebase/app';
-import { getMessaging, getToken, onMessage } from 'firebase/messaging';
-import { registerDeviceToken } from './api';
+import { getMessaging, getToken, onMessage, deleteToken } from 'firebase/messaging';
+import { registerDeviceToken, unregisterDeviceToken, unregisterAllTokens } from './api';
+import { startPushNavigation, handleNotificationData } from './pushNavigation';
 
 const firebaseConfig = {
   apiKey: process.env.REACT_APP_FIREBASE_API_KEY,
@@ -10,8 +11,30 @@ const firebaseConfig = {
   appId: process.env.REACT_APP_FIREBASE_APP_ID,
 };
 
+const AUTH_TOKEN_KEY = 'flockToken';
+// Persisted so a logout in a page load that never re-registered still knows
+// which token belongs to THIS device. Without it, logout has to fall back to
+// deleting every token on the account.
+const PUSH_TOKEN_KEY = 'flock_push_token';
+
 let messaging = null;
 let swRegistration = null;
+// The FCM token this device is currently registered with, so logout can
+// unregister exactly this device instead of every device on the account.
+let currentPushToken = null;
+
+function rememberPushToken(token) {
+  currentPushToken = token;
+  try {
+    if (token) localStorage.setItem(PUSH_TOKEN_KEY, token);
+    else localStorage.removeItem(PUSH_TOKEN_KEY);
+  } catch (err) { /* private mode */ }
+}
+
+function knownPushToken() {
+  if (currentPushToken) return currentPushToken;
+  try { return localStorage.getItem(PUSH_TOKEN_KEY); } catch (err) { return null; }
+}
 
 function getFirebaseMessaging() {
   if (messaging) return messaging;
@@ -31,25 +54,39 @@ function getFirebaseMessaging() {
   }
 }
 
-// Register service worker and inject Firebase config
+// Register the service worker with the Firebase config in its URL.
+//
+// A service worker is restarted from scratch every time the browser wakes it
+// for a push, so anything handed over by postMessage is gone by then — the
+// worker came up unconfigured and the browser showed its own "site updated in
+// the background" placeholder instead of the notification. The URL is part of
+// the registration, so the worker can read its config on every startup.
+// postMessage is kept purely to upgrade a worker registered by an older build.
+function serviceWorkerUrl() {
+  const params = new URLSearchParams();
+  params.set('apiKey', firebaseConfig.apiKey || '');
+  params.set('authDomain', firebaseConfig.authDomain || '');
+  params.set('projectId', firebaseConfig.projectId || '');
+  params.set('messagingSenderId', firebaseConfig.messagingSenderId || '');
+  params.set('appId', firebaseConfig.appId || '');
+  return `/firebase-messaging-sw.js?${params.toString()}`;
+}
+
 async function registerServiceWorker() {
   if (swRegistration) return swRegistration;
   if (!('serviceWorker' in navigator)) return null;
+  if (!firebaseConfig.apiKey || !firebaseConfig.messagingSenderId) return null;
 
   try {
-    // Register the service worker
-    swRegistration = await navigator.serviceWorker.register('/firebase-messaging-sw.js');
+    swRegistration = await navigator.serviceWorker.register(serviceWorkerUrl());
 
-    // Post Firebase config to the service worker
-    if (swRegistration.active) {
-      swRegistration.active.postMessage({ type: 'FIREBASE_CONFIG', config: firebaseConfig });
-    }
-    // Also listen for the SW to activate and send config
-    navigator.serviceWorker.addEventListener('controllerchange', () => {
-      if (navigator.serviceWorker.controller) {
-        navigator.serviceWorker.controller.postMessage({ type: 'FIREBASE_CONFIG', config: firebaseConfig });
-      }
-    });
+    // Belt and braces for a worker installed by a build that predates the
+    // query-string config.
+    const post = (worker) => {
+      if (worker) worker.postMessage({ type: 'FIREBASE_CONFIG', config: firebaseConfig });
+    };
+    post(swRegistration.active);
+    navigator.serviceWorker.ready.then((reg) => post(reg.active)).catch(() => {});
 
     return swRegistration;
   } catch (err) {
@@ -80,13 +117,18 @@ async function requestNativePermission() {
     if (!token) return null;
     const platform = window.Capacitor.getPlatform() === 'android' ? 'android' : 'ios';
     await registerDeviceToken(token, platform);
+    rememberPushToken(token);
+    markSessionRegistered();
     // Firebase rotates tokens while the app stays installed; without this
     // subscription the backend keeps the stale token and push silently dies
     // until the next login (round 4).
     if (!tokenRotationSubscribed) {
       tokenRotationSubscribed = true;
       FirebaseMessaging.addListener('tokenReceived', (event) => {
-        if (event?.token) registerDeviceToken(event.token, platform).catch(() => {});
+        if (event?.token) {
+          rememberPushToken(event.token);
+          registerDeviceToken(event.token, platform).catch(() => {});
+        }
       }).catch(() => { tokenRotationSubscribed = false; });
     }
     localStorage.removeItem('flock_notif_denied');
@@ -132,6 +174,8 @@ export async function requestNotificationPermission() {
     const token = await getToken(m, tokenOptions);
     if (token) {
       await registerDeviceToken(token, 'web');
+      rememberPushToken(token);
+      markSessionRegistered();
       localStorage.removeItem('flock_notif_denied');
       return token;
     }
@@ -141,6 +185,147 @@ export async function requestNotificationPermission() {
     console.warn('[Firebase] Token registration failed:', err.message);
     return null;
   }
+}
+
+// ---------------------------------------------------------------------------
+// Session watcher
+//
+// Round 7: the ONLY caller of requestNotificationPermission on startup sat
+// behind `if (isLoggedIn())` in an effect with an empty dependency list. That
+// effect runs once, on mount, before anybody has signed in — so a user who
+// signed up or logged in during the session never registered a token and never
+// received a single notification until the next cold start of the app. On a
+// shared device it was worse: logout deleted the row, the next account logged
+// in and registered nothing.
+//
+// Registration is a property of the SESSION, not of one mount. The watcher
+// keys off the stored auth token: a new token means a new session (fresh
+// login, signup, or account switch), and every new session registers this
+// device exactly once.
+// ---------------------------------------------------------------------------
+let handledAuthToken = null;
+let attempts = 0;
+let syncInFlight = false;
+const MAX_ATTEMPTS = 5;
+
+function readAuthToken() {
+  try { return localStorage.getItem(AUTH_TOKEN_KEY); } catch (err) { return null; }
+}
+
+// Any successful registration settles this session, wherever it came from —
+// the watcher, the mount effect, or the Enable button in settings.
+function markSessionRegistered() {
+  handledAuthToken = readAuthToken();
+  attempts = 0;
+}
+
+async function syncPushForSession() {
+  const authToken = readAuthToken();
+
+  if (!authToken) {
+    // Signed out. Arm for whoever signs in next.
+    handledAuthToken = null;
+    attempts = 0;
+    return;
+  }
+  if (handledAuthToken === authToken || syncInFlight) return;
+
+  syncInFlight = true;
+  try {
+    const token = await requestNotificationPermission();
+    if (token) {
+      handledAuthToken = authToken;
+      attempts = 0;
+      return;
+    }
+    // No token. If the answer is settled, stop asking; if it merely failed
+    // (offline, backend hiccup), let the next tick try again.
+    const status = getNotificationStatus();
+    attempts += 1;
+    if (status === 'denied' || status === 'unsupported' || attempts >= MAX_ATTEMPTS) {
+      handledAuthToken = authToken;
+    }
+  } catch (err) {
+    attempts += 1;
+    if (attempts >= MAX_ATTEMPTS) handledAuthToken = authToken;
+  } finally {
+    syncInFlight = false;
+  }
+}
+
+// A session that used up its attempts because the backend was briefly down
+// would otherwise stay unregistered for the whole page load. Coming back to
+// the tab or regaining connectivity re-arms it — but only when permission is
+// already settled in our favour, so nobody is prompted twice.
+function rearmIfUnresolved() {
+  if (currentPushToken) return;
+  const status = getNotificationStatus();
+  if (status === 'denied' || status === 'unsupported') return;
+  if (!isNativeApp() && status !== 'granted') return;
+  handledAuthToken = null;
+  attempts = 0;
+}
+
+let watcherStarted = false;
+
+export function startPushSessionWatcher() {
+  if (watcherStarted || typeof window === 'undefined') return;
+  watcherStarted = true;
+
+  const tick = () => { syncPushForSession(); };
+  const retry = () => { rearmIfUnresolved(); syncPushForSession(); };
+
+  tick();
+  // Logging in does not fire an event this module can hear: it happens inside
+  // React state in another file, in an already-focused tab. A cheap poll (one
+  // localStorage read) is what makes "sign in and notifications work" true
+  // without reaching into App.js.
+  setInterval(tick, 2000);
+  window.addEventListener('focus', retry);
+  window.addEventListener('online', retry);
+  window.addEventListener('storage', tick); // another tab signed in or out
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') retry();
+  });
+}
+
+/**
+ * Logout. Removes THIS device's token only, so signing out of a laptop does
+ * not kill notifications on the phone.
+ *
+ * The account-wide fallback is for a device that registered before the token
+ * was persisted locally: leaving a live token pointed at the account someone
+ * just signed out of is worse than being over-broad, and it stops happening
+ * after that device's first login on this build.
+ *
+ * Fires the unregister call synchronously so the request captures the auth
+ * header before the caller clears the session.
+ */
+export function unregisterPushToken() {
+  handledAuthToken = null;
+  attempts = 0;
+  const token = knownPushToken();
+  rememberPushToken(null);
+
+  const request = token
+    ? unregisterDeviceToken(token).catch(() => {})
+    : unregisterAllTokens().catch(() => {});
+
+  // Drop the token on the device too, so the next account on this device gets
+  // a fresh one rather than inheriting the previous user's subscription.
+  Promise.resolve().then(async () => {
+    try {
+      if (isNativeApp()) {
+        const { FirebaseMessaging } = await import('@capacitor-firebase/messaging');
+        await FirebaseMessaging.deleteToken();
+        return;
+      }
+      const m = getFirebaseMessaging();
+      if (m) await deleteToken(m);
+    } catch (err) { /* the server-side row is already gone */ }
+  });
+
+  return request;
 }
 
 // Listen for foreground messages
@@ -185,6 +370,21 @@ export function getNotificationStatus() {
     // our own denial marker so the settings UI stays truthful.
     return localStorage.getItem('flock_notif_denied') === 'true' ? 'denied' : 'default';
   }
-  if (!('Notification' in window)) return 'unsupported';
+  if (typeof window === 'undefined' || !('Notification' in window)) return 'unsupported';
   return Notification.permission; // 'granted', 'denied', or 'default'
+}
+
+// Re-exported so App.js has a single import for "take me to the thing the
+// notification was about".
+export { onPushNavigate, peekPendingNavigation } from './pushNavigation';
+
+// Both are safe to run at import time and both are no-ops outside a browser.
+startPushNavigation();
+startPushSessionWatcher();
+
+// Foreground pushes on native carry the same data payload; nothing consumes it
+// until the user taps, but keeping the shape in one place means the tap
+// handler and the toast handler cannot drift apart.
+export function routeNotification(data) {
+  handleNotificationData(data);
 }
