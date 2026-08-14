@@ -1,5 +1,11 @@
 # Making flockcorp.com live
 
+> **Status: DONE 2026-08-12. This is now a record of what was done, not a task.**
+> Re-verified 2026-08-14 by request: `www.flockcorp.com` and `/privacy`, `/terms`,
+> `/support`, `/guidelines`, `/about`, `/delete-account` all return **200**, and
+> the bare apex returns **308** to www exactly as the checklist below says. Only
+> two items remain open; both are at the bottom.
+
 Goal: everything lives at **flockcorp.com** — the site, the app, and the legal
 pages — instead of `flock-app-w65m.vercel.app`.
 
@@ -126,7 +132,21 @@ Only once the domain resolves:
 - [x] Google OAuth origins added (flockcorp.com + www) — verify the button
       renders at flockcorp.com/app on next device test
 - [x] `PUBLIC_WEB_URL` set on Railway
-- [ ] App Store Connect URLs updated to flockcorp.com (do with next TestFlight pass)
+- [ ] App Store Connect URLs updated to flockcorp.com (do with next TestFlight pass).
+      The repo docs you paste from now carry the `https://www.flockcorp.com/...`
+      forms: `SUBMIT-CHECKLIST.md` §4.3 and `SUBMISSION-PACKET.md` were swapped
+      over 2026-08-14. Use the **www** form, since the apex only 308-redirects.
+      `TESTFLIGHT_TEST_INFO.md`, `SUBMISSION.md` and `ADVERSARIAL-REVIEW.md` were
+      not part of that pass and may still carry `flock-app-w65m.vercel.app` —
+      check them before pasting.
+- [ ] Submit flockcorp.com to **Google Search Console** (`SLOP-AUDIT.md` §E asks
+      for this and points at this file, so it lives here). Being findable by
+      searching the exact name is one of the scored items.
+- [ ] Confirm `support@flockcorp.com` and `safety@flockcorp.com` actually deliver.
+      `social@` is proven; those two are used as the venue-sales contact, the
+      account-suspended message, and the Play Console child-safety contact, and
+      were **not** verified. A store listing pointing at a dead mailbox is worse
+      than no mailbox.
 - [x] **social@flockcorp.com LIVE 2026-08-12** via Cloudflare Email Routing
       (forwards to Jayden's Gmail; Resend keeps outbound — Resend Receiving was
       never needed). Verified with a real send; site contact swapped site-wide.
