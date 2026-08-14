@@ -3,7 +3,7 @@ const { body, param, query, validationResult } = require('express-validator');
 const pool = require('../config/database');
 const { authenticate } = require('../middleware/auth');
 const { stripHtml } = require('../utils/sanitize');
-const { rejectIfProfane, moderateImage, IMAGE_REJECTED_MESSAGE } = require('../utils/moderation');
+const { rejectIfProfane, moderateImage, imageRejectionMessage } = require('../utils/moderation');
 const { sanitizeVenueData, safeVenuePhotoUrl } = require('../utils/venuePayload');
 const VENUE_REJECTED_MESSAGE = "That venue card couldn't be shared.";
 const { isBlockedBetween, getInvisibleUserIds } = require('../utils/blocks');
@@ -175,10 +175,16 @@ router.post('/flocks/:id/messages',
 
       // Image moderation must hold on the REST transport too — the socket-only
       // check left this endpoint delivering unmoderated (and trackable) URLs.
+      //
+      // Round 18: the `(png|jpe?g|gif|webp)` allowlist above is NOT the
+      // animation gate and must not be mistaken for one — an APNG arrives as
+      // `image/png` and an animated WebP as `image/webp`, so tightening this
+      // regex would close nothing. moderateImage inspects the actual bytes and
+      // refuses multi-frame files there, for every upload path at once.
       if (image_url) {
         const verdict = await moderateImage(image_url);
         if (!verdict.allowed) {
-          return res.status(400).json({ error: IMAGE_REJECTED_MESSAGE });
+          return res.status(400).json({ error: imageRejectionMessage(verdict), moderation: verdict.reason });
         }
       }
 
@@ -589,11 +595,12 @@ router.post('/dm/:userId',
         return res.status(400).json({ error: VENUE_REJECTED_MESSAGE });
       }
 
-      // Image moderation on the REST transport too (same as flock messages).
+      // Image moderation on the REST transport too (same as flock messages),
+      // including the byte-level multi-frame gate — see the note there.
       if (image_url) {
         const verdict = await moderateImage(image_url);
         if (!verdict.allowed) {
-          return res.status(400).json({ error: IMAGE_REJECTED_MESSAGE });
+          return res.status(400).json({ error: imageRejectionMessage(verdict), moderation: verdict.reason });
         }
       }
 
