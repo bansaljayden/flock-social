@@ -182,9 +182,27 @@
 	     page. Turning the capability on without that work would replace "opens
 	     Safari" with "opens the app on whatever screen it was already on". -->
 
-	<!-- The app's only cryptography is HTTPS/TLS to the API, which is exempt.
-	     Declaring it here is what skips the export-compliance question on every
-	     single TestFlight upload. -->
+	<!-- Export compliance, verified against the bundle on 2026-08-14. The only
+	     cryptography this app performs is standard TLS supplied by the OS: the
+	     web layer talks HTTPS/WSS through WKWebView's stack, and every native
+	     plugin (Sign in with Apple, Firebase Messaging, RevenueCat) rides OS
+	     frameworks that do the same. What was checked, so the next reader does
+	     not have to re-derive it: no crypto library appears in frontend
+	     package.json dependencies, no file under frontend/src calls WebCrypto
+	     or any cipher API, and the one lockfile hit (crypto-random-string) is
+	     react-scripts build tooling that never ships. That usage is exempt, so
+	     false is the correct value, and declaring it here answers App Store
+	     Connect's export question once instead of on every single upload.
+
+	     France: the French declaration obligation attaches to NON exempt
+	     encryption only, so this value also means no French paperwork exists
+	     for this app. The day someone adds encryption of their own (an E2E
+	     chat layer, a custom cipher, a bundled crypto library) this key flips,
+	     the per-build question returns, and the France answer has to be
+	     revisited in the same change. iosShellConfigMatchesCode.test.js pins
+	     the premise: it fails if a crypto dependency or a WebCrypto call ever
+	     appears, which is the moment this comment stops being true.
+	     Submission-day answers live in APP-STORE-SUBMISSION.md at repo root. -->
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
 </dict>

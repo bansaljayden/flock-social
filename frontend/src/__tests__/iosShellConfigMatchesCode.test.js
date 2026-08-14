@@ -538,6 +538,48 @@ describe('the declared device and orientation support is real', () => {
     expect(stripComments(infoPlist)).toMatch(/<key>ITSAppUsesNonExemptEncryption<\/key>\s*<false\/>/);
   });
 
+  test('the export exemption is earned: nothing shipped performs its own crypto', () => {
+    // ITSAppUsesNonExemptEncryption=false rests on one claim: the app's only
+    // cryptography is standard TLS supplied by the OS (WKWebView for the web
+    // layer, OS frameworks for the plugins). Two ways that claim silently
+    // rots, both checked here so the failure lands on the commit that adds
+    // the crypto instead of in an export review:
+    //   1. a crypto library joins the runtime dependencies, or
+    //   2. source starts calling WebCrypto or a cipher API directly.
+    // If either fires legitimately, the fix is NOT to loosen this test: flip
+    // the plist key, re-answer the export questions (France included), and
+    // update APP-STORE-SUBMISSION.md in the same change.
+    const CRYPTO_DEP =
+      /crypto|cipher|sodium|forge|sjcl|nacl|jsencrypt|openpgp|aes-js|bcrypt|argon2/i;
+    for (const dep of Object.keys(pkg.dependencies)) {
+      expect(dep).not.toMatch(CRYPTO_DEP);
+    }
+
+    // Every shipped source file. Tests are excluded because they may spell
+    // the very patterns they hunt (this file does).
+    const files = [];
+    const walk = (dir) => {
+      for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+        if (entry.name === '__tests__') continue;
+        const p = path.join(dir, entry.name);
+        if (entry.isDirectory()) walk(p);
+        else if (/\.(js|jsx|ts|tsx)$/.test(entry.name) && !/\.test\.\w+$/.test(entry.name)) {
+          files.push(p);
+        }
+      }
+    };
+    walk(path.join(REPO, 'frontend', 'src'));
+    expect(files.length).toBeGreaterThan(30); // the walk found the real tree
+
+    const CRYPTO_CALL =
+      /crypto\.subtle|CryptoJS|createCipher|createDecipher|createSign\(|\bpbkdf2\b|\bscrypt\b/;
+    for (const f of files) {
+      // Object form so a failure names the file instead of printing "true".
+      expect({ file: path.relative(REPO, f), callsCrypto: CRYPTO_CALL.test(fs.readFileSync(f, 'utf8')) })
+        .toEqual({ file: path.relative(REPO, f), callsCrypto: false });
+    }
+  });
+
   test('both storyboards the plist names actually exist', () => {
     // A storyboard named here and missing from the bundle is a launch crash,
     // and the first thing a reviewer would see.
