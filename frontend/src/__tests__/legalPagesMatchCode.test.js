@@ -227,7 +227,12 @@ describe('privacy claims that depend on how the code behaves', () => {
   test('SOS alerts go by email only, so no page implies a text message', () => {
     const safety = read('backend', 'routes', 'safety.js');
     expect(safety).not.toMatch(/twilio|sendSms|messagingServiceSid/i);
-    expect(safety).toMatch(/alerts are sent by email/);
+    // Case-insensitive on purpose. This pins that the route TELLS the user
+    // alerts go by email, which is the property the privacy policy depends on.
+    // It previously matched a lowercase literal and broke the day that sentence
+    // was moved into a validation message and gained a capital A, which is a
+    // spelling changing, not the behaviour.
+    expect(safety).toMatch(/alerts are sent by email/i);
     expect(privacy).toMatch(/SOS alerts are sent by <strong>email only<\/strong>/);
   });
 

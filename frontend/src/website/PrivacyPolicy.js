@@ -99,18 +99,32 @@ export default function PrivacyPolicy() {
 
   return (
     <main className="pp">
-      <a href="/landing" className="pp-back">&larr; flockcorp.com</a>
+      {/* Twelve contents links stand between the top of the document and the
+          first word of the policy. Without this a keyboard user pays that toll
+          on every visit. */}
+      <a className="pp-skip" href="#pp-body">Skip to the policy</a>
+
+      <a href="/landing" className="pp-back">
+        {/* The glyph is decoration. Left in the link's text it becomes part of
+            the accessible name, which speech engines render as "left arrow
+            flockcorp.com" or, worse, drop entirely and leave the name looking
+            like a stray character. */}
+        <span aria-hidden="true">&larr;</span> flockcorp.com
+      </a>
 
       <div className="pp-shell">
-        <nav className="pp-toc" aria-label="Sections">
+        {/* Named from the heading a sighted reader sees, so the landmark and
+            the label on screen cannot drift apart. It said "Sections" while
+            the page said "Contents". */}
+        <nav className="pp-toc" aria-labelledby="pp-toc-label">
           <div className="pp-toc-inner">
-          <p className="pp-toc-label">Contents</p>
+          <p className="pp-toc-label" id="pp-toc-label">Contents</p>
           <ol>
             {SECTIONS.map((s, i) => (
               <li key={s.id}>
                 <a
                   href={`#${s.id}`}
-                  aria-current={activeId === s.id ? 'true' : undefined}
+                  aria-current={activeId === s.id ? 'location' : undefined}
                   onClick={() => { pinnedRef.current = s.id; setActiveId(s.id); }}
                 >
                   <span className="pp-toc-num">{String(i + 1).padStart(2, '0')}</span>
@@ -122,14 +136,20 @@ export default function PrivacyPolicy() {
           </div>
         </nav>
 
-        <div>
+        {/* tabIndex -1 makes this a real jump destination. A skip link that
+            points at a non-focusable element moves the SCROLL and leaves focus
+            behind in the contents rail, so the next Tab walks straight back
+            into the list the user just asked to skip. */}
+        <div id="pp-body" tabIndex={-1}>
           <header className="pp-header">
             <h1>Privacy Policy</h1>
             <p className="pp-meta">Effective {EFFECTIVE_DATE}</p>
           </header>
 
-          <aside className="pp-summary">
-            <h2>The short version</h2>
+          {/* <aside> is a complementary landmark. Unnamed, it is announced as
+              "complementary" with nothing to say what it complements. */}
+          <aside className="pp-summary" aria-labelledby="pp-summary-title">
+            <h2 id="pp-summary-title">The short version</h2>
             <ul>
               <li>We collect what Flock needs to work: your account, your plans, your messages.</li>
               <li>Location is used only while you're using the app. Never in the background.</li>

@@ -11,7 +11,11 @@ export default function TermsOfService() {
 
   return (
     <main className="pp">
-      <a href="/landing" className="pp-back">&larr; flockcorp.com</a>
+      {/* The arrow is decoration and must stay out of the link's accessible
+          name, or it is announced as "left arrow flockcorp.com". */}
+      <a href="/landing" className="pp-back">
+        <span aria-hidden="true">&larr;</span> flockcorp.com
+      </a>
 
       <header className="pp-header">
         <h1>Terms of Service &amp; EULA</h1>

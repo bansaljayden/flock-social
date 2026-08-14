@@ -780,11 +780,15 @@ describe('About and Support', () => {
   });
 
   test('the meta lines and footer links step off the failing --pp-ink-3 token', () => {
-    // PrivacyPolicy.css's --pp-ink-3 is #6b7a8c, which measures 3.75:1 on the
-    // cream paper despite a comment claiming 4.6:1. These two pages override
-    // it; the token itself is a cross-file finding, not this pass's to edit.
+    // This used to assert --pp-ink-3 was BROKEN: it was #6b7a8c at 3.75:1 on the
+    // cream paper, behind a comment claiming 4.6:1, and this pass could not edit
+    // that file. It has since been fixed to #586473 (5.14:1 on paper, 4.70:1 on
+    // the panels), so an assertion that it is still under 4.5 now fails for the
+    // right reason. Flipped to assert the property rather than the defect: a
+    // test that pins a known bug has to be flipped the day the bug is fixed, and
+    // if that is forgotten it reads as a regression.
     const pp = tokens(readCss('PrivacyPolicy.css'), '.pp {');
-    expect(contrast(pp['--pp-ink-3'], pp['--pp-paper'])).toBeLessThan(4.5);
+    expectRatio(pp['--pp-ink-3'], pp['--pp-paper'], 4.5, 'the meta token on paper');
     expectRatio(pp['--pp-ink-2'], pp['--pp-paper'], 4.5, 'the token they moved to');
 
     // The override itself is a SOURCE scan, not a render assertion, and this is
