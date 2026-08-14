@@ -266,7 +266,11 @@ test('verified is never settable by the client on either route', async () => {
 
 test('changing the place id resets verification on the create path as well', async () => {
   handlers = [noClaimConflict, roleUpdate, [/INSERT INTO venue_profiles/, () => ({ rows: [profileRow] })]];
-  await call('POST', '/api/venue-profile', { businessName: 'Bar', googlePlaceId: 'p2' });
+  // 'place_p2', not 'p2': the write path now requires a shaped place id, and the
+  // sibling tests above already use 'place_x'. Assert the status first so a
+  // rejected body fails here rather than as an undefined read on the next line.
+  const res = await call('POST', '/api/venue-profile', { businessName: 'Bar', googlePlaceId: 'place_p2' });
+  assert.strictEqual(res.status, 201, 'the create body was rejected before the insert ran');
   const insert = ran(/INSERT INTO venue_profiles/)[0];
   assert.ok(/verified = CASE WHEN EXCLUDED\.google_place_id IS NOT NULL/.test(insert.sql));
 });
