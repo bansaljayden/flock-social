@@ -162,6 +162,8 @@ test('send_dm delivers a numeric-STRING id to the room that id actually names', 
   const { socket } = connect({ id: 1, name: 'Ava' });
   routes = [
     [/FROM user_blocks/, []],
+    // Round 18: send_dm requires a real relationship, like its REST twin.
+    [/SELECT 1 WHERE EXISTS/, [{ '?column?': 1 }]],
     [/SELECT id, name FROM users WHERE id = \$1/, [{ id: 7, name: 'Bo' }]],
     [/INSERT INTO direct_messages/, [{ id: 99, sender_id: 1, receiver_id: 7 }]],
   ];
@@ -182,6 +184,7 @@ test('send_dm refuses a malformed reply target instead of silently dropping the 
   const { socket } = connect({ id: 1, name: 'Ava' });
   routes = [
     [/FROM user_blocks/, []],
+    [/SELECT 1 WHERE EXISTS/, [{ '?column?': 1 }]],
     [/SELECT id, name FROM users WHERE id = \$1/, [{ id: 7, name: 'Bo' }]],
   ];
 
@@ -200,6 +203,7 @@ test('a valid string reply id is coerced before it reaches the query', async () 
   const { socket } = connect({ id: 1, name: 'Ava' });
   routes = [
     [/FROM user_blocks/, []],
+    [/SELECT 1 WHERE EXISTS/, [{ '?column?': 1 }]],
     [/SELECT id, name FROM users WHERE id = \$1/, [{ id: 7, name: 'Bo' }]],
     [/FROM direct_messages dm JOIN users/, [{ id: 12, message_text: 'earlier', sender_name: 'Bo' }]],
     [/INSERT INTO direct_messages/, [{ id: 99 }]],
@@ -637,6 +641,9 @@ test('socket-originated flock events carry the integer id the client matches on'
   routes = [
     [/SELECT creator_id FROM flocks/, [{ creator_id: 1 }]],
     [/UPDATE flocks/, []],
+    // Round 18: venue_selected names who confirmed, so the broadcast is now
+    // block-filtered like every other identity-bearing flock event.
+    [/FROM user_blocks/, []],
   ];
 
   // App.js matches with `f.id !== data.flockId` against the integer id the REST
