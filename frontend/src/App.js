@@ -1078,8 +1078,9 @@ function contactSyncAvailable() {
 //            because Zelle lives inside each bank's own app and has no shared
 //            scheme to open
 //
-// The Pay control used to be `if (m.deepLink) window.open(m.deepLink)`, with
-// webLink reached only when deepLink was NULL. On iOS that is a control that
+// The Pay control used to test the deep link and open it straight away, with
+// the web link reached only when the deep link was NULL. On iOS that is a
+// control that
 // cannot succeed for anybody without the wallet app installed: window.open on a
 // non-http URL reaches Capacitor's WebViewDelegationHandler, which calls
 // UIApplication.open(url), and -open: on a scheme no installed app claims fails
@@ -2939,6 +2940,11 @@ const PromoModal = React.memo(function PromoModal({ editing, onSave, onCancel, c
 
   return (
     <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.8)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 50, padding: '16px' }}>
+      {/* The Upgrade sheet and the Hours modal on this same screen both do
+          this; these two were the only modals on the venue dashboard that did
+          not, so Escape did nothing and Tab walked straight out of the dialog
+          into the dashboard behind it. */}
+      <DialogBehavior onClose={onCancel} label={editing ? 'Edit promotion' : 'New promotion'} />
       <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '24px', padding: '20px', width: '100%', maxWidth: '320px' }}>
         <h2 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy, margin: '0 0 16px', textAlign: 'center' }}>{editing ? 'Edit Promotion' : 'New Promotion'}</h2>
         <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
@@ -2981,6 +2987,7 @@ const EventModal = React.memo(function EventModal({ editing, onSave, onCancel, c
 
   return (
     <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.8)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 50, padding: '16px' }}>
+      <DialogBehavior onClose={onCancel} label={editing ? 'Edit event' : 'New event'} />
       <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '24px', padding: '20px', width: '100%', maxWidth: '320px' }}>
         <h2 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy, margin: '0 0 16px', textAlign: 'center' }}>{editing ? 'Edit Event' : 'New Event'}</h2>
         <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
@@ -3188,15 +3195,12 @@ const PROFILE_SUBSCREEN_TITLES = {
   payment: 'Payment',
 };
 
-// Same circle-and-slash the report/block sheet uses, in the (color, size)
-// shape the settings rows call their icons with. Emoji are not UI icons here
-// (SLOP-AUDIT H14) and there is no ban glyph in the icon set.
-const blockGlyph = (color, size) => (
-  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-    <circle cx="12" cy="12" r="10" />
-    <line x1="4.9" y1="4.9" x2="19.1" y2="19.1" />
-  </svg>
-);
+// blockGlyph lived here: a hand-rolled circle-and-slash with round caps, a
+// hardcoded 2px stroke at every size, and an r=10 ring — three separate
+// departures from components/ui/Icons.js, sitting on the one screen an App
+// Review reviewer opens to check Guideline 1.2. Icons.ban is that mark drawn to
+// the system (r=9 open ring, 45deg slash, size-derived stroke), so the three
+// call sites use it directly and the local copy is gone.
 
 const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   // Theme — shadows the outer static colors/styles with reactive versions
@@ -3481,14 +3485,22 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
     }
   }, [verifyCooldown]);
 
-  const fetchResearchLive = useCallback(() => {
+  // `quiet` is the automatic read on entering the tab: it still records the
+  // failure in state, it just does not throw a toast at somebody who did not
+  // press anything.
+  const fetchResearchLive = useCallback((quiet = false) => {
     setResearchLoading(true);
-    getAdminAnalytics().then(d => {
+    setResearchError(false);
+    return getAdminAnalytics().then(d => {
       setResearchLiveData(d);
       setResearchDemoMode(false);
     }).catch(err => {
       console.error('[Research] Fetch error:', err);
-      showToast('Could not load live data', 'error');
+      // A failed read must not leave the last good numbers on screen under a
+      // "Live data" label either, so the data is cleared with the flag set.
+      setResearchLiveData(null);
+      setResearchError(true);
+      if (!quiet) showToast('Could not load live data', 'error');
     }).finally(() => setResearchLoading(false));
   }, [showToast]);
 
@@ -4320,7 +4332,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
 
   // Tap a payment method. One entry point for both the single-method "Settle
   // Up" button and the picker sheet, so the two cannot drift the way they did
-  // when each had its own copy of `if (m.deepLink) window.open(...)`.
+  // when each had its own copy of the open-the-deep-link line.
   const startPaymentHandoff = useCallback((method, ctx) => {
     if (paymentHandoffRef.current) {
       paymentHandoffRef.current();
@@ -4382,8 +4394,15 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   // Live by default. It opened on demo data showing 8,500 users, which is the
   // first thing anyone sees when they tap Research.
   const [researchDemoMode, setResearchDemoMode] = useState(false);
+  // null means NOBODY HAS ASKED, which is not the same fact as "the answer was
+  // zero". Nothing fetched on mount or on tab entry, so opening Research
+  // degraded this null to an empty object and every card fell through its own
+  // zero default, printing "Total Flocks 0" and "0%" under a label reading
+  // "Live data". Getting a real number took tapping the toggle twice. The
+  // three states are kept apart below and rendered apart.
   const [researchLiveData, setResearchLiveData] = useState(null);
   const [researchLoading, setResearchLoading] = useState(false);
+  const [researchError, setResearchError] = useState(false);
   const [, setVenueDetailLoading] = useState(false);
   const [venueDetailPhotoIdx, setVenueDetailPhotoIdx] = useState(0);
 
@@ -4927,6 +4946,47 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   const [venueTier, setVenueTier] = useState('free'); // 'free', 'premium', 'pro'
   const [venueTab, setVenueTab] = useState('analytics'); // Lifted to App level to persist across re-renders
   const [adminTab, setAdminTab] = useState('revenue'); // Lifted to App level to persist across re-renders
+
+  // Revenue simulator state, lifted here for the same reason adminTab was, and
+  // the reason is worth writing down because the shape recurs in this file.
+  //
+  // RevenueScreen is an arrow function declared INSIDE this component and
+  // mounted as an element rather than called. Every render of FlockAppInner
+  // creates a new function identity, React sees a different component type, and
+  // it unmounts and remounts the whole subtree. Any useState declared inside it
+  // is therefore reset to its default, not by anything the admin did, but by
+  // any unrelated state change out here: a toast appearing, a socket event, the
+  // weather effect landing. The six simulator fields would snap back to the
+  // pitch-deck defaults mid-edit, which reads as the app fighting you and is
+  // impossible to reproduce on purpose.
+  //
+  // Up here they survive, because this component is not the one remounting.
+  // The real fix is to stop redeclaring RevenueScreen per render; that is a
+  // bigger change than this pass owns, and hoisting the state is what the
+  // adminTab line above already did about it.
+  const [numVenues, setNumVenues] = useState(20);
+  const [subscriptionPrice, setSubscriptionPrice] = useState(50); // avg of $35 Premium + $75 Pro
+  const [eventsPerVenue, setEventsPerVenue] = useState(12);
+  const [avgSpend, setAvgSpend] = useState(120);
+  const [takeRate, setTakeRate] = useState(2.5); // pitch deck: 2.5% transaction fee
+  const [operatingCosts, setOperatingCosts] = useState(2000);
+
+  // Read the research analytics when the tab is first opened. Nothing did this:
+  // not a mount effect, not a tab-change effect, nothing. The panel simply
+  // rendered whatever the empty-object fallback degraded to, which was a screen
+  // of zeros presented as measurements.
+  //
+  // A ref rather than a state guard, because the obvious `if (!researchLiveData)`
+  // version retries forever the moment the request fails: the failure leaves the
+  // data null, the loading flag flips back, the effect re-runs. Once per session
+  // on entry; after that the toggle and the Try again button are the ways to
+  // ask.
+  const researchAskedRef = useRef(false);
+  useEffect(() => {
+    if (adminTab !== 'research' || researchAskedRef.current) return;
+    researchAskedRef.current = true;
+    fetchResearchLive(true);
+  }, [adminTab, fetchResearchLive]);
 
   // Check URL for admin/venue mode on mount — gated by role
   useEffect(() => {
@@ -13701,7 +13761,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
             {profileScreen === 'blocked' && (
               <div>
                 <div style={{ ...styles.card, display: 'flex', gap: '10px', alignItems: 'flex-start' }}>
-                  <div style={{ width: '36px', height: '36px', borderRadius: '10px', background: 'var(--accent-red-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{blockGlyph(colors.red, 18)}</div>
+                  <div style={{ width: '36px', height: '36px', borderRadius: '10px', background: 'var(--accent-red-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{Icons.ban(colors.red, 18)}</div>
                   <div>
                     <p style={{ fontWeight: '600', fontSize: 'var(--t-label)', color: colors.navy, margin: '0 0 4px' }}>What blocking does</p>
                     {/* Every clause here is something the server actually
@@ -13726,7 +13786,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
 
                 {!blockedLoading && !blockedError && blockedUsers.length === 0 && (
                   <div style={{ ...styles.card, textAlign: 'center', padding: '28px 20px' }}>
-                    <div style={{ marginBottom: '10px', display: 'flex', justifyContent: 'center' }}>{blockGlyph('var(--text-tertiary)', 34)}</div>
+                    <div style={{ marginBottom: '10px', display: 'flex', justifyContent: 'center' }}>{Icons.ban('var(--text-tertiary)', 34)}</div>
                     <p style={{ fontSize: 'var(--t-body)', fontWeight: '600', color: colors.navy, margin: '0 0 4px' }}>You have not blocked anyone</p>
                     {/* Both routes verified against the code they describe: a
                         tap on a message bubble opens the actions row with the
@@ -13913,7 +13973,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
               { l: 'Edit Profile', s: 'edit', icon: Icons.edit },
               { l: 'Interests', s: 'interests', icon: Icons.target },
               { l: 'Safety', s: 'safety', icon: Icons.shield },
-              { l: 'Blocked accounts', s: 'blocked', icon: blockGlyph },
+              { l: 'Blocked accounts', s: 'blocked', icon: Icons.ban },
               { l: 'Payment', s: 'payment', icon: Icons.creditCard },
             ].map(m => (
               <button key={m.s} className="hit44 glass-btn glass-secondary" onClick={() => { setProfileScreen(m.s); if (m.s === 'safety') loadTrustedContacts(); if (m.s === 'blocked') { setUnblockTarget(null); loadBlockedUsers(); } if (m.s === 'payment') { setVenmoUsername(authUser?.venmo_username || ''); setCashappCashtag(authUser?.cashapp_cashtag || ''); setZelleIdentifier(authUser?.zelle_identifier || ''); } }} style={{ width: '100%', padding: '12px', textAlign: 'left', borderBottom: '1px solid var(--border-light)', display: 'flex', alignItems: 'center', gap: '12px', backgroundColor: 'var(--bg-card-solid)', border: 'none', cursor: 'pointer' }}>
@@ -14264,7 +14324,6 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   const [editingVenueInfo, setEditingVenueInfo] = useState(false);
   const [operatingHours, setOperatingHours] = useState([]);
   const [showHoursModal, setShowHoursModal] = useState(false);
-  const [venueNotifications, setVenueNotifications] = useState({ bookings: true, reviews: true, weekly: false });
   const [dealDescription, setDealDescription] = useState('');
   const [dealTimeSlot, setDealTimeSlot] = useState('Happy Hour');
   const [realIncomingFlocks, setRealIncomingFlocks] = useState([]);
@@ -14558,15 +14617,14 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           }
           // Load saved logo
           if (p.photo_url) setVenueLogoUrl(p.photo_url);
-          // Load saved operating hours and notification prefs
+          // Load saved operating hours. (Notification prefs used to be
+          // hydrated here too; the panel that read them is gone, see the note
+          // in the Settings tab.)
           // Validate hours have real open/close times (not just "Open 24 hours" from bad parse)
           const savedHours = p.operating_hours && Array.isArray(p.operating_hours) ? p.operating_hours : [];
           const hoursValid = savedHours.length > 0 && savedHours.some(h => h.open && h.close && h.open !== 'Open 24 hours' && h.open !== 'Closed');
           if (hoursValid) {
             setOperatingHours(savedHours);
-          }
-          if (p.notification_prefs && typeof p.notification_prefs === 'object') {
-            setVenueNotifications(p.notification_prefs);
           }
 
           // The venue's own Google place id, which is what the Live Sensor
@@ -14764,13 +14822,15 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
     }));
     const reviewStats = venueReviewsData.stats;
 
-    // Settings state — hoisted to FlockAppInner
-    const notifications = venueNotifications;
-    const setNotifications = setVenueNotifications;
 
     const venueTabs = [
       { id: 'analytics', label: 'Analytics', icon: Icons.barChart },
-      { id: 'promotions', label: 'Promotions', icon: Icons.gift },
+      // Was Icons.gift. A wrapped present means "a gift", and nothing on this
+      // tab is one: it is the owner posting a happy-hour deal, and the tab's
+      // own first heading is "Post a Deal" under Icons.zap — so the tab and its
+      // contents disagreed about what the tab was. Icons.tag is the price tag,
+      // which is what an offer is, and it reads down to 12px.
+      { id: 'promotions', label: 'Promotions', icon: Icons.tag },
       { id: 'events', label: 'Events', icon: Icons.calendar },
       { id: 'reviews', label: 'Reviews', icon: Icons.star },
       { id: 'settings', label: 'Settings', icon: Icons.settings }
@@ -14945,14 +15005,13 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
       ],
     };
 
-    // There used to be an `isFeatureLocked(feature)` here that took a feature
-    // NAME and looked it up in the lists above with .includes(). It is gone,
-    // and this is what it cost while it was here.
+    // A helper used to sit here that took a feature NAME and looked it up in
+    // the lists above with .includes(). It is gone, and this is what it cost.
     //
-    // Every one of its four call sites passed 'Post deals'. The premium list
-    // spells the same feature 'Post deals and specials'. .includes() is exact,
-    // so the lookup missed, the function fell through to its closing `return
-    // true`, and a venue PAYING for Premium opened the Analytics tab to find
+    // Every one of its four call sites passed the short form of the deals
+    // feature. The premium list spells that feature out in full. .includes() is
+    // exact, so the lookup missed, the helper fell through to its closing
+    // return, and a venue PAYING for Premium opened the Analytics tab to find
     // Post-a-Deal greyed out under a "Premium Feature" overlay, on the plan
     // that includes it. Only Pro escaped, through the early return on the first
     // line. The failure was silent in both directions: a typo could not throw,
@@ -15014,10 +15073,15 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
             </div>
           </div>
           <div style={{ marginTop: '12px', display: 'flex', alignItems: 'center', gap: '12px' }}>
-            <div
+            {/* Was a <div onClick> whose only affordance was a 10px camera
+                glyph, carrying its meaning in a `title` — a tooltip is not an
+                accessible name and does not exist on touch at all. A real
+                button, keyboard reachable, with the name on the control. */}
+            <button
+              type="button"
               onClick={() => venueLogoInputRef.current?.click()}
-              title="Upload venue logo"
-              style={{ width: '48px', height: '48px', borderRadius: '12px', backgroundColor: 'rgba(255,255,255,0.2)', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', overflow: 'hidden', position: 'relative', flexShrink: 0 }}
+              aria-label={venueLogoUrl ? 'Replace venue logo' : 'Upload venue logo'}
+              style={{ width: '48px', height: '48px', padding: 0, border: 'none', borderRadius: '12px', backgroundColor: 'rgba(255,255,255,0.2)', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', overflow: 'hidden', position: 'relative', flexShrink: 0 }}
             >
               {venueLogoUrl ? (
                 <img src={venueLogoUrl} alt="Logo" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
@@ -15029,11 +15093,15 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
               {venueLogoUploading && (
                 <div style={{ position: 'absolute', inset: 0, backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 'var(--t-meta)', color: 'white' }}>…</div>
               )}
-              <div style={{ position: 'absolute', bottom: -2, right: -2, width: '18px', height: '18px', borderRadius: '9px', backgroundColor: colors.steel, display: 'flex', alignItems: 'center', justifyContent: 'center', border: '2px solid var(--bg-primary)' }}>
-                {Icons.camera('white', 10)}
-              </div>
+              {/* 10px was two bands below anything this set is drawn for: the
+                  camera's lens is an r=5 circle inside an 18-unit box, which at
+                  10px is a 4px ring with a 1px wall — it rendered as a smudge.
+                  20px badge, 12px glyph. */}
+              <span style={{ position: 'absolute', bottom: -2, right: -2, width: '20px', height: '20px', borderRadius: '10px', backgroundColor: colors.steel, display: 'flex', alignItems: 'center', justifyContent: 'center', border: '2px solid var(--bg-primary)' }}>
+                {Icons.camera('white', 12)}
+              </span>
               <input ref={venueLogoInputRef} type="file" accept="image/*" onChange={handleVenueLogoUpload} style={{ display: 'none' }} />
-            </div>
+            </button>
             <div style={{ flex: 1 }}>
               <h1 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: 'white', margin: 0 }}>Welcome, {venueData.name}</h1>
               <p style={{ fontSize: 'var(--t-meta)', color: 'rgba(255,255,255,0.7)', margin: 0 }}>{venueProfile?.category || venueOnboardingData.category || 'Venue Dashboard'}{(venueProfile?.location || venueOnboardingData.location) ? ` · ${venueProfile?.location || venueOnboardingData.location}` : ''}</p>
@@ -15304,7 +15372,13 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           {/* Upgrade Button (if not Pro) */}
           {venueTier !== 'pro' && (
             <button className="hit44 glass-btn glass-primary" onClick={() => setShowUpgradeModal(true)} style={{ width: '100%', padding: '14px', borderRadius: '12px', border: 'none', background: '#2d5a87', color: 'white', fontWeight: '600', fontSize: 'var(--t-body)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', boxShadow: '0 4px 12px rgba(45,90,135,0.3)' }}>
-              {Icons.sparkles('white', 18)} Upgrade to {venueTier === 'free' ? 'Premium' : 'Pro'}
+              {/* Icons.sparkles was here. Two things wrong with it: the glyph is
+                  two stacked gull marks, which at 18px reads as a double caret
+                  (scroll-to-top), not as a sparkle; and a sparkle on a paid
+                  upgrade button is the 2023 AI-product tic SLOP-AUDIT exists to
+                  catch. The button is the only thing on this row and the
+                  sentence already says what it does, so it needs no mark. */}
+              Upgrade to {venueTier === 'free' ? 'Premium' : 'Pro'}
             </button>
           )}
           </>)}
@@ -15540,8 +15614,16 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                   <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
                     <div style={{ textAlign: 'center' }}>
                       <p style={{ fontSize: 'var(--t-display)', fontWeight: '600', color: colors.navy, margin: 0 }}>{reviewStats.average}</p>
-                      <div style={{ display: 'flex', gap: '2px', justifyContent: 'center', margin: '4px 0' }}>
-                        {[1, 2, 3, 4, 5].map(s => s <= Math.round(reviewStats.average) ? Icons.starFilled(colors.amber, 14) : Icons.star(colors.amber, 14))}
+                      {/* The rating was five aria-hidden icons and nothing else,
+                          so a screen reader got the number above and then
+                          silence. role="img" on the row carries it once; the
+                          glyphs stay decorative rather than announcing
+                          "star star star star star". Empty stars move from
+                          colors.amber to --star-empty, matching the per-review
+                          rows below — the same scale was drawn two ways on one
+                          tab. */}
+                      <div role="img" aria-label={`${reviewStats.average} out of 5 stars`} style={{ display: 'flex', gap: '2px', justifyContent: 'center', margin: '4px 0' }}>
+                        {[1, 2, 3, 4, 5].map(s => <React.Fragment key={s}>{s <= Math.round(reviewStats.average) ? Icons.starFilled(colors.amber, 14) : Icons.star('var(--star-empty)', 14)}</React.Fragment>)}
                       </div>
                       <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0 }}>{reviewStats.total} review{reviewStats.total !== 1 ? 's' : ''}</p>
                     </div>
@@ -15582,8 +15664,14 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                           </div>
                           <div>
                             <p style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: colors.navy, margin: 0 }}>{review.user}</p>
-                            <div style={{ display: 'flex', gap: '1px' }}>
-                              {[1, 2, 3, 4, 5].map(s => s <= review.rating ? Icons.starFilled(colors.amber, 10) : Icons.star(colors.disabled, 10))}
+                            {/* Empty stars were colors.disabled (#e5e7eb), which
+                                on this white card is 1.2:1 — not merely dim,
+                                invisible, so a 2-star review read as a 2-star
+                                SCALE. --star-empty is the token for this and it
+                                holds up in both themes. 10px was below every
+                                size the set is drawn for; 12 is the floor. */}
+                            <div role="img" aria-label={`${review.rating} out of 5 stars`} style={{ display: 'flex', gap: '1px' }}>
+                              {[1, 2, 3, 4, 5].map(s => <React.Fragment key={s}>{s <= review.rating ? Icons.starFilled(colors.amber, 12) : Icons.star('var(--star-empty)', 12)}</React.Fragment>)}
                             </div>
                           </div>
                         </div>
@@ -15608,7 +15696,15 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                           <button className="hit44 glass-btn glass-secondary" onClick={() => setReplyingToReview(null)} style={{ padding: '6px 8px', borderRadius: '6px', border: `1px solid ${colors.creamDark}`, backgroundColor: 'var(--bg-card-solid)', color: 'var(--text-secondary)', fontSize: 'var(--t-meta)', cursor: 'pointer' }}>Cancel</button>
                         </div>
                       )}
-                      {review.replied && !review.reply && <p style={{ fontSize: 'var(--t-meta)', color: colors.steel, margin: '8px 0 0', display: 'flex', alignItems: 'center', gap: '4px' }}>{Icons.checkCircle(colors.steel, 12)} Replied</p>}
+                      {/* A "Replied" badge used to render here, on a condition
+                          that asked for a review which HAD been replied to and
+                          whose reply text was missing. Both of those fields are
+                          derived from the same column a few hundred lines up
+                          (the mapper sets one to the boolean of venue_reply and
+                          the other to venue_reply itself), so the first implies
+                          the second and the condition is false for every row
+                          that can exist. The reply itself renders just above,
+                          which is the stronger signal anyway. */}
                     </div>
                   ))}
                 </div>
@@ -15662,7 +15758,12 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
               <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
                 <h3 style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: colors.navy, margin: '0 0 10px', display: 'flex', alignItems: 'center', gap: '6px' }}>{Icons.clock(colors.navy, 14)} Operating Hours</h3>
                 {operatingHours.length > 0 ? operatingHours.map((slot, i) => (
-                  <div key={slot.days} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 0', borderBottom: i < operatingHours.length - 1 ? `1px solid ${colors.cream}` : 'none' }}>
+                  // Index, not slot.days. "+ Add Hours" in the editor appends
+                  // { days: '', open: '', close: '' }, so two added rows both
+                  // key on the empty string and React collides them. The
+                  // editor's own list a few hundred lines down already keys on
+                  // the index for this exact reason.
+                  <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 0', borderBottom: i < operatingHours.length - 1 ? `1px solid ${colors.cream}` : 'none' }}>
                     <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: colors.navy }}>{slot.days}</span>
                     <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)' }}>{slot.close ? `${slot.open} - ${slot.close}` : slot.open}</span>
                   </div>
@@ -15674,37 +15775,38 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 </button>
               </div>
 
-              {/* Notification Settings */}
-              <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
-                <h3 style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: colors.navy, margin: '0 0 10px', display: 'flex', alignItems: 'center', gap: '6px' }}>{Icons.bell(colors.navy, 14)} Notifications</h3>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 0', borderBottom: `1px solid ${colors.cream}` }}>
-                  <div>
-                    <p style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: colors.navy, margin: 0 }}>New bookings</p>
-                    <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: 0 }}>Get notified when a flock books</p>
-                  </div>
-                  <div role="switch" tabIndex={0} aria-checked={!!notifications.bookings} aria-label="New bookings notifications" onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); const next = {...notifications, bookings: !notifications.bookings}; setNotifications(next); updateVenueProfile({ notificationPrefs: next }).catch(() => {}); } }} onClick={() => { const next = {...notifications, bookings: !notifications.bookings}; setNotifications(next); updateVenueProfile({ notificationPrefs: next }).catch(() => {}); }} style={{ width: '36px', height: '20px', borderRadius: '10px', backgroundColor: notifications.bookings ? colors.steel : 'var(--toggle-off)', cursor: 'pointer', position: 'relative' }}>
-                    <div style={{ position: 'absolute', top: '2px', left: notifications.bookings ? '18px' : '2px', width: '16px', height: '16px', borderRadius: '8px', backgroundColor: 'var(--bg-card-solid)', transition: 'left 0.2s' }} />
-                  </div>
-                </div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 0', borderBottom: `1px solid ${colors.cream}` }}>
-                  <div>
-                    <p style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: colors.navy, margin: 0 }}>New reviews</p>
-                    <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: 0 }}>Alerts for customer reviews</p>
-                  </div>
-                  <div role="switch" tabIndex={0} aria-checked={!!notifications.reviews} aria-label="New reviews notifications" onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); const next = {...notifications, reviews: !notifications.reviews}; setNotifications(next); updateVenueProfile({ notificationPrefs: next }).catch(() => {}); } }} onClick={() => { const next = {...notifications, reviews: !notifications.reviews}; setNotifications(next); updateVenueProfile({ notificationPrefs: next }).catch(() => {}); }} style={{ width: '36px', height: '20px', borderRadius: '10px', backgroundColor: notifications.reviews ? colors.steel : 'var(--toggle-off)', cursor: 'pointer', position: 'relative' }}>
-                    <div style={{ position: 'absolute', top: '2px', left: notifications.reviews ? '18px' : '2px', width: '16px', height: '16px', borderRadius: '8px', backgroundColor: 'var(--bg-card-solid)', transition: 'left 0.2s' }} />
-                  </div>
-                </div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 0' }}>
-                  <div>
-                    <p style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: colors.navy, margin: 0 }}>Weekly reports</p>
-                    <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: 0 }}>Performance summary emails</p>
-                  </div>
-                  <div role="switch" tabIndex={0} aria-checked={!!notifications.weekly} aria-label="Weekly reports notifications" onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); const next = {...notifications, weekly: !notifications.weekly}; setNotifications(next); updateVenueProfile({ notificationPrefs: next }).catch(() => {}); } }} onClick={() => { const next = {...notifications, weekly: !notifications.weekly}; setNotifications(next); updateVenueProfile({ notificationPrefs: next }).catch(() => {}); }} style={{ width: '36px', height: '20px', borderRadius: '10px', backgroundColor: notifications.weekly ? colors.steel : 'var(--toggle-off)', cursor: 'pointer', position: 'relative' }}>
-                    <div style={{ position: 'absolute', top: '2px', left: notifications.weekly ? '18px' : '2px', width: '16px', height: '16px', borderRadius: '8px', backgroundColor: 'var(--bg-card-solid)', transition: 'left 0.2s' }} />
-                  </div>
-                </div>
-              </div>
+              {/* The Notifications panel used to sit here: three switches, one
+                  offering to tell the owner when a flock books their venue, one
+                  for new customer reviews, one for a weekly performance summary
+                  by email.
+
+                  It is gone because none of those three notifications exists,
+                  and none of them can be made to exist from this file.
+                  backend/routes/venueProfile.js carries the audit that
+                  established it: notification_prefs is WRITTEN by this
+                  dashboard and read nowhere in the backend, and the reason it
+                  is read nowhere is that there is nothing to read it. Every
+                  pushAlways / pushIfOffline / pushIfOfflineDebounced call in
+                  routes/, services/ and sockets/ addresses a flock member, a DM
+                  recipient, a flock creator or an admin, never a venue owner.
+                  routes/venueDashboard.js inserts a review and notifies nobody.
+                  services/emailService.js sends verification and password reset
+                  and nothing else, with no digest, no template and no
+                  scheduler. That comment names this file as the place to fix
+                  it, because the route cannot.
+
+                  So this was not a wiring bug. It was three controls for a
+                  feature that was never built, on a screen a venue is paying
+                  $35 a month for: flip the booking switch and the flip is
+                  stored and nothing else in the product changes, ever.
+                  SLOP-AUDIT rule 5, no dead buttons, and the most expensive
+                  kind, because the promise is the reason to pay.
+
+                  The SERVER side deliberately stays as it is. PUT
+                  /api/venue-profile still accepts and merges the preference
+                  object, so the day a real owner notification ships the
+                  setting has somewhere to live and this panel comes back with
+                  it. What must not come back is the panel without the sends. */}
 
               {/* Subscription */}
               <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
@@ -15916,20 +16018,22 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   const RevenueScreen = () => {
     // adminTab state is now at App level to persist across re-renders
 
-    // Admin tabs definition
+    // Admin tabs definition.
+    //
+    // Two of these three tabs used to carry the IDENTICAL Icons.barChart, so a
+    // three-tab bar offered two tabs you could not tell apart without reading,
+    // and the labels did not help either: "Revenue" and "Money" are the same
+    // word twice. The tab whose id is already `projections` is now labelled
+    // Projections and carries trendingUp, which is what it actually shows.
+    // Three tabs, three glyphs, three distinct meanings.
     const adminTabs = [
       { id: 'revenue', label: 'Revenue', icon: Icons.dollar },
-      { id: 'projections', label: 'Money', icon: Icons.barChart },
+      { id: 'projections', label: 'Projections', icon: Icons.trendingUp },
       { id: 'research', label: 'Research', icon: Icons.barChart }
     ];
 
-    // Revenue simulator state — defaults match pitch deck projections
-    const [numVenues, setNumVenues] = useState(20);
-    const [subscriptionPrice, setSubscriptionPrice] = useState(50); // avg of $35 Premium + $75 Pro
-    const [eventsPerVenue, setEventsPerVenue] = useState(12);
-    const [avgSpend, setAvgSpend] = useState(120);
-    const [takeRate, setTakeRate] = useState(2.5); // pitch deck: 2.5% transaction fee
-    const [operatingCosts, setOperatingCosts] = useState(2000);
+    // Revenue simulator state lives at FlockAppInner level, next to adminTab
+    // and for the same reason. See the note there.
 
     // Calculate all metrics
     const subscriptionRevenue = calculateSubscriptionRevenue(numVenues, subscriptionPrice);
@@ -16002,6 +16106,47 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
               <p style={{ fontSize: 'var(--t-meta)', color: 'rgba(255,255,255,0.7)', margin: 0 }}>Manage your Flock platform</p>
             </div>
           </div>
+          {/* The moderation console, which nothing in the app linked to. It is
+              the Guideline 1.2 operator surface (reports queue, takedowns, the
+              audit log) and the only way in was typing /admin/moderation into
+              a URL bar.
+
+              It is a link on the WEB and a printed address inside the iOS
+              shell, and that split is not timidity. The native WebView is
+              served from capacitor://localhost, and the console reads its
+              bearer token from localStorage on whatever origin it loads on.
+              Opening https://www.flockcorp.com/admin/moderation from inside
+              the app hands it to Safari, which is a different origin with no
+              token, and the console has no signed-out state at all: every
+              request 401s and the page sits there empty. Navigating the
+              WebView to the path in place does authenticate, but the console
+              has no link back to the app and index.js reads the URL once at
+              boot, so the admin is stranded until they force-quit. A button
+              that lands on either of those is a button that does not work, so
+              on iOS this says where the console is instead of pretending to
+              open it. Rendering the console inside this screen is the real
+              fix; it is a bigger change than this pass owns. */}
+          {(() => {
+            const isNative = typeof window !== 'undefined' && window.Capacitor?.isNativePlatform?.() === true;
+            const boxStyle = { marginTop: '12px', padding: '10px 12px', borderRadius: '10px', backgroundColor: 'rgba(255,255,255,0.12)', display: 'flex', alignItems: 'center', gap: '8px' };
+            if (isNative) {
+              return (
+                <div style={boxStyle}>
+                  {Icons.shield('rgba(255,255,255,0.75)', 16)}
+                  <span style={{ fontSize: 'var(--t-meta)', color: 'rgba(255,255,255,0.75)', lineHeight: 1.4 }}>
+                    Reports and takedowns live at flockcorp.com/admin/moderation. Open it in a browser where you are signed in.
+                  </span>
+                </div>
+              );
+            }
+            return (
+              <a href="/admin/moderation" target="_blank" rel="noopener noreferrer" className="hit44" style={{ ...boxStyle, textDecoration: 'none', cursor: 'pointer' }}>
+                {Icons.shield('white', 16)}
+                <span style={{ fontSize: 'var(--t-meta)', fontWeight: '600', color: 'white' }}>Moderation console</span>
+                <span style={{ fontSize: 'var(--t-meta)', color: 'rgba(255,255,255,0.7)', marginLeft: 'auto' }}>Reports and takedowns</span>
+              </a>
+            );
+          })()}
         </div>
 
         {/* Tab Navigation */}
@@ -16153,8 +16298,18 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 </div>
               </div>
 
-              {/* Profitability */}
-              <div style={{ ...cardStyle, background: isProfitable ? 'linear-gradient(135deg, #d1fae5, #a7f3d0)' : 'linear-gradient(135deg, #fee2e2, #fecaca)' }}>
+              {/* Profitability.
+                  The background used to be a hardcoded light mint gradient (or
+                  the light red pair) while every piece of text on it uses the
+                  accent TOKENS, which flip to a light green and a light red in
+                  dark mode. Light on light, about 1.7:1: the profit headline
+                  and the margin were unreadable in dark mode, and this is the
+                  one card on the screen whose whole job is a single number.
+                  --accent-green-bg / --accent-red-bg are the tokens those text
+                  colours are already designed against and they flip together,
+                  so the pair stays legible in both themes. Flat rather than a
+                  gradient, which is also what the design rules ask for. */}
+              <div style={{ ...cardStyle, background: isProfitable ? 'var(--accent-green-bg)' : 'var(--accent-red-bg)' }}>
                 <h4 style={{ fontSize: 'var(--t-micro)', fontWeight: '700', color: isProfitable ? 'var(--accent-green-text)' : 'var(--accent-red-text)', margin: '0 0 8px', textTransform: 'uppercase' }}>
                   {isProfitable ? 'Profitable' : 'Not Profitable'}
                 </h4>
@@ -16359,20 +16514,61 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 { stall_point: 'budget', count: 55 },
               ],
               reliabilityDistribution: { reliable: 3240, moderate: 1870, flaky: 390, unscored: 3000 },
-            } : (researchLiveData || {});
+            } : researchLiveData;
+
+            // The toggle, in one place so the two directions stay symmetrical.
+            const modeToggle = (
+              <button className="hit44" disabled={researchLoading} onClick={() => { if (demoMode) fetchResearchLive(); else setResearchDemoMode(true); }}
+                style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', padding: '6px', width: '100%', border: 'none', background: 'transparent', cursor: researchLoading ? 'default' : 'pointer' }}>
+                <span style={{ width: '6px', height: '6px', borderRadius: '3px', background: demoMode ? '#D97706' : colors.steel }} />
+                <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: 'var(--text-tertiary)' }}>{researchLoading ? 'Reading the database...' : demoMode ? 'Demo data · Tap for live' : 'Live data · Tap for demo'}</span>
+              </button>
+            );
+
+            // Nothing has been measured: the read is in flight, it failed, or
+            // it has not happened. None of those is a zero, and printing them
+            // as zeros under a "Live data" label is inventing a measurement.
+            if (!data) {
+              return (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                  <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '20px 14px', textAlign: 'center', boxShadow: 'var(--card-shadow-sm)' }} role="status">
+                    <h3 style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: colors.navy, margin: '0 0 6px' }}>
+                      {researchLoading ? 'Reading the database' : researchError ? 'These numbers did not load' : 'Nothing read yet'}
+                    </h3>
+                    <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0, lineHeight: 1.5 }}>
+                      {researchLoading
+                        ? 'One moment.'
+                        : researchError
+                          ? 'The analytics request failed, so there is nothing here to show. This is not a reading of zero.'
+                          : 'Tap below to read the live numbers, or switch to demo data.'}
+                    </p>
+                    {!researchLoading && (
+                      <button className="hit44 glass-btn glass-primary" onClick={() => fetchResearchLive()} style={{ ...styles.gradientButton, padding: '12px', marginTop: '14px' }}>
+                        {researchError ? 'Try again' : 'Read live numbers'}
+                      </button>
+                    )}
+                  </div>
+                  {modeToggle}
+                </div>
+              );
+            }
+
             const stallColors = { completed: colors.steel, venue: '#F59E0B', rsvp: '#EF4444', confirmation: '#4a7ba7', budget: '#3B82F6' };
             const stallTotal = (data.stallPointDistribution || []).reduce((s, p) => s + parseInt(p.count), 0) || 1;
+            // A field the response did not carry is not a zero either, so it
+            // says so rather than rendering one.
+            const has = (v) => typeof v === 'number' && Number.isFinite(v);
+            const stat = (v, render) => (has(v) ? render(v) : 'No data');
             const statCards = [
-              { label: 'Total Flocks', value: data.totalFlocks || 0, color: colors.navy },
-              { label: 'Completion Rate', value: `${data.completionRate || 0}%`, color: colors.steel },
-              { label: 'Avg Group Size', value: data.avgGroupSize || 0, color: colors.navy },
-              { label: 'Budget Adoption', value: `${data.budgetAdoptionRate || 0}%`, color: colors.steel },
-              { label: 'Time to Confirm', value: `${data.avgTimeToConfirmation || 0}m`, color: colors.navy },
-              { label: 'Total Users', value: (data.totalUsers || 0).toLocaleString(), color: colors.navy },
+              { label: 'Total Flocks', value: stat(data.totalFlocks, (v) => v.toLocaleString()), color: colors.navy },
+              { label: 'Completion Rate', value: stat(data.completionRate, (v) => `${v}%`), color: colors.steel },
+              { label: 'Avg Group Size', value: stat(data.avgGroupSize, (v) => v), color: colors.navy },
+              { label: 'Budget Adoption', value: stat(data.budgetAdoptionRate, (v) => `${v}%`), color: colors.steel },
+              { label: 'Time to Confirm', value: stat(data.avgTimeToConfirmation, (v) => `${v}m`), color: colors.navy },
+              { label: 'Total Users', value: stat(data.totalUsers, (v) => v.toLocaleString()), color: colors.navy },
             ];
             return (
               <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                {researchLoading && <p style={{ textAlign: 'center', fontSize: 'var(--t-meta)', color: 'var(--text-secondary)' }}>Loading...</p>}
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '8px' }}>
                   {statCards.map(s => (
                     <div key={s.label} style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', textAlign: 'center', boxShadow: 'var(--card-shadow-sm)' }}>
@@ -16416,13 +16612,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 </div>
                 <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', boxShadow: 'var(--card-shadow-sm)', textAlign: 'center' }}>
                   <p style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: 'var(--text-secondary)', margin: '0 0 4px' }}>New Users This Week</p>
-                  <p style={{ fontSize: 'var(--t-display)', fontWeight: '600', color: colors.steel, margin: 0 }}>+{data.newUsersThisWeek || 0}</p>
+                  <p style={{ fontSize: 'var(--t-display)', fontWeight: '600', color: colors.steel, margin: 0 }}>
+                    {has(data.newUsersThisWeek) ? `+${data.newUsersThisWeek.toLocaleString()}` : 'No data'}
+                  </p>
                 </div>
-                <button className="hit44" onClick={() => { if (demoMode) fetchResearchLive(); else setResearchDemoMode(true); }}
-                  style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', padding: '6px', width: '100%', border: 'none', background: 'transparent', cursor: 'pointer' }}>
-                  <span style={{ width: '6px', height: '6px', borderRadius: '3px', background: demoMode ? '#D97706' : colors.steel }} />
-                  <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: 'var(--text-tertiary)' }}>{researchLoading ? 'Loading...' : demoMode ? 'Demo data · Tap for live' : 'Live data · Tap for demo'}</span>
-                </button>
+                {modeToggle}
               </div>
             );
           })()}
@@ -18009,8 +18203,13 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                       <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: 'var(--text-primary)' }}>{r.name || 'Anonymous'}</span>
                     </div>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                      <div style={{ display: 'flex', gap: '1px' }}>
-                        {[1, 2, 3, 4, 5].map(s => s <= r.rating ? Icons.starFilled(colors.amber, 10) : Icons.star(colors.disabled, 10))}
+                      {/* Same invisible-empty-star defect as the venue
+                          dashboard's own review list: colors.disabled is
+                          #e5e7eb, 1.2:1 on this card, so a 2-star review read
+                          as a 2-star scale. --star-empty, 12px floor, and one
+                          label for the row rather than five silent glyphs. */}
+                      <div role="img" aria-label={`${r.rating} out of 5 stars`} style={{ display: 'flex', gap: '1px' }}>
+                        {[1, 2, 3, 4, 5].map(s => <React.Fragment key={s}>{s <= r.rating ? Icons.starFilled(colors.amber, 12) : Icons.star('var(--star-empty)', 12)}</React.Fragment>)}
                       </div>
                       <button aria-label="Report review" className="hit44" onClick={() => setModerationTarget({ userId: r.user_id, userName: r.name || 'this reviewer', contentType: 'venue_review', contentId: r.id })} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '2px 4px', fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)' }} title="Report review">{Icons.flag('currentColor', 13)}</button>
                     </div>
