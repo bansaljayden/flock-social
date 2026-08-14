@@ -300,7 +300,11 @@ export default function LiveDemo() {
     );
   };
 
-  const maxHourly = selected?.hourly?.length ? Math.max(...selected.hourly.map(h => h.score), 1) : 1;
+  // The chart runs forward from the venue's current hour, so say so out loud
+  // for anyone reading it with a screen reader.
+  const chartSummary = selected?.hourly?.length
+    ? `Crowd forecast for the next ${selected.hourly.length} hours, starting now: ${selected.hourly.map(h => `${h.hour} ${h.score} percent`).join(', ')}`
+    : 'Hour by hour crowd forecast';
   const scoredAt = selected ? (selected.as_of || selected.fetched_at) : null;
   void ageTick; // freshness label re-renders on the 5s tick
 
@@ -366,17 +370,41 @@ export default function LiveDemo() {
               )}
 
               {selected.hourly && selected.hourly.length > 0 && (
-                <div className="lpd-chart" role="img" aria-label="Hour by hour crowd forecast">
-                  {selected.hourly.map((h) => (
-                    <div className="lpd-bar-col" key={h.hour}>
-                      <div
-                        className="lpd-bar"
-                        style={{ height: `${Math.max(8, (h.score / maxHourly) * 100)}%`, backgroundColor: crowdColor(h.score) }}
-                        title={`${h.hour}: ${h.score}%`}
-                      />
-                      <span className="lpd-bar-hour">{String(h.hour).replace(' ', '')}</span>
-                    </div>
-                  ))}
+                <div className="lpd-chart" role="img" aria-label={chartSummary}>
+                  {selected.hourly.map((h, i) => {
+                    // The card's own hour is bar 0 and the backend names the
+                    // recommended hour, so the ring below always sits on the
+                    // hour the sentence above named.
+                    const isNow = i === 0;
+                    const isBest = !!selected.best_hour && h.hour === selected.best_hour;
+                    return (
+                      <div className="lpd-bar-col" key={h.hour}>
+                        <div
+                          className="lpd-bar"
+                          style={{
+                            // Height is the percentage itself, the same number
+                            // the dial counts to. Scaling to the tallest bar
+                            // made a quiet 30% night look packed.
+                            height: `${Math.max(6, h.score)}%`,
+                            backgroundColor: crowdColor(h.score),
+                            boxShadow: isBest ? '0 0 0 2px #16283D' : 'none',
+                          }}
+                          title={`${h.hour}: ${h.score}% busy${isNow ? ' (now)' : ''}${isBest ? ' (best of the next 12 hours)' : ''}`}
+                        />
+                        <span
+                          className="lpd-bar-hour"
+                          // Every other label is hidden by the stylesheet to
+                          // stop them colliding. Now and the recommended hour
+                          // are the two that have to be readable.
+                          style={isNow || isBest
+                            ? { visibility: 'visible', fontWeight: 700, color: '#16283D' }
+                            : undefined}
+                        >
+                          {isNow ? 'Now' : String(h.hour).replace(' ', '')}
+                        </span>
+                      </div>
+                    );
+                  })}
                 </div>
               )}
 
