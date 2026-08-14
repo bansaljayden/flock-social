@@ -2,18 +2,27 @@
  * Flock icon system - Tier C.
  *
  * One geometry, obeyed 90-odd times:
- *   - butt caps, miter joins, zero corner radius
- *   - every straight segment at exactly 0 / 45 / 90 degrees
- *   - circular arcs only, never elliptical, and every radius is a whole unit
- *     or a half. Across the set: 1.5, 2, 2.5, 3, 3.5, 4, 5, 6, 7, 8, 9, 11.
- *     No arbitrary decimals.
- *   - EVERY CONTAINER IS DRAWN OPEN: any ring of r >= 7 is cut by a 30 degree
- *     gap centred on the upper-right diagonal; any rectangular container is
- *     missing its bottom edge. Rings under r=7 stay closed - the gap does not
- *     read at that radius and looks like damage.
+ *   - round caps, round joins. (Butt caps + miter joins + zero radius were the
+ *     set's 2015 tell. Retired 2026-08: the caps live on the shared <svg>
+ *     props, so most glyphs kept their paths and simply re-capped.)
+ *   - straight segments default to 0 / 45 / 90 degrees. Gentle curves are
+ *     allowed where a glyph's IDENTITY needs them - a dollar sign's bowls, a
+ *     bell's skirt, a bow's loops, a mug's handle - and only there. A curve is
+ *     always a circular arc, never elliptical, and every radius is a whole
+ *     unit or a half. No arbitrary decimals.
+ *   - CONTAINERS ARE CLOSED. The old signature cut every ring of r >= 7 with
+ *     a 30 degree gap and deleted every rectangular container's bottom edge.
+ *     That signature is retired - the brand-identity job moved to the bird
+ *     mascots - and an open box now reads as unfinished, not as a voice. A
+ *     gap survives only where the gap IS the glyph's meaning: doorOpen's
+ *     doorway, the doors on home and building, share's open top and logout's
+ *     open side (the arrow leaves through them), repeat's arc break (the loop
+ *     restarts there), and the mug's rim.
  *   - stroke-width is derived from the render size and applied with
- *     vector-effect: non-scaling-stroke, so optical weight is comparable at
- *     10px and at 40px.
+ *     vector-effect: non-scaling-stroke. The exact contract, with the
+ *     measurements behind it, is documented on sw() below - the short form is
+ *     one size:stroke ratio (10.5:1) held across every size the app draws,
+ *     with a 1px floor and a 4.5px ceiling that does not engage until 47px.
  *   - a solid mark carries the same stroke as an outlined one, so a filled
  *     glyph does not read half a stroke smaller than its neighbours and a
  *     star/starFilled swap does not visibly shrink. The two exceptions below
@@ -64,13 +73,13 @@ import './icons.css';
  * section heading looks like in the venue dashboard.
  *
  * One ratio, held everywhere: 10.5:1. That is heavier than Lucide/Feather
- * (12:1) on purpose - this set is thin-walled and open, and it needs the
- * weight - but it no longer drifts. The floor exists because below ~1px a
- * stroke stops being antialiased into a visible line on a 1x display; the
- * ceiling stops a 96px marketing render from turning into a blob. The ceiling
- * sits at 4.5, i.e. it does not engage until 47px - deliberately clear of 40,
- * the largest size any call site in App.js asks for, so the ratio genuinely
- * holds everywhere the app draws an icon rather than everywhere but the top.
+ * (12:1) on purpose - this set is thin-walled, and it needs the weight - but
+ * it no longer drifts. The floor exists because below ~1px a stroke stops
+ * being antialiased into a visible line on a 1x display; the ceiling stops a
+ * 96px marketing render from turning into a blob. The ceiling sits at 4.5,
+ * i.e. it does not engage until 47px - deliberately clear of 40, the largest
+ * size any call site in App.js asks for, so the ratio genuinely holds
+ * everywhere the app draws an icon rather than everywhere but the top.
  *
  * Old -> new at the sizes actually used: 10 -> 1.25/1.00, 12 -> 1.25/1.14,
  * 14 -> 1.5/1.33, 16 -> 1.5/1.52, 18 -> 1.75/1.71, 24 -> 2/2.29,
@@ -84,12 +93,13 @@ const sw = (size) =>
 const r2 = (n) => Math.round(n * 100) / 100;
 
 /**
- * The open ring. For radius r about (cx, cy) the arc runs from theta=60deg
- * counter-clockwise the long way round to theta=30deg, leaving a 30deg gap on
- * the upper-right diagonal.
- *   r=11 -> M17.5 2.47A11 11 0 1 0 21.53 6.5
+ * The open ring - the ONE survivor of the old open-container signature, kept
+ * because `repeat` needs it: the 30 degree gap on the upper-right diagonal is
+ * where the loop restarts and the arrowhead sits on it, so there the gap is
+ * meaning, not style. Every other ring in the set is a closed <circle>.
+ * For radius r about (cx, cy) the arc runs from theta=60deg counter-clockwise
+ * the long way round to theta=30deg.
  *   r=9  -> M16.5 4.21A9 9 0 1 0 19.79 7.5
- *   r=7  -> M15.5 5.94A7 7 0 1 0 18.06 8.5
  */
 const ring = (cx, cy, r) =>
   `M${r2(cx + r * 0.5)} ${r2(cy - r * 0.866)}A${r} ${r} 0 1 0 ${r2(cx + r * 0.866)} ${r2(cy - r * 0.5)}`;
@@ -123,9 +133,8 @@ const svg = (size, children, style, label) => (
     fill="none"
     stroke="currentColor"
     strokeWidth={sw(size)}
-    strokeLinecap="butt"
-    strokeLinejoin="miter"
-    strokeMiterlimit="4"
+    strokeLinecap="round"
+    strokeLinejoin="round"
     role={label ? 'img' : undefined}
     aria-label={label || undefined}
     aria-hidden={label ? undefined : true}
@@ -180,13 +189,14 @@ const BIRDIE_D =
   'M6.5 11 2 13 6.5 15Z' +
   'M13.6 9A1.4 1.4 0 1 1 16.4 9A1.4 1.4 0 1 1 13.6 9Z';
 
-// mug - beer and coffee are the same mark. The handle is 6 units tall, not 4,
-// and the two steam ticks are gone: floating above the rim they read as
-// antennae, and they made no sense on `beer` at all.
+// mug - beer and coffee are the same mark. Closed at the bottom (with r=2
+// corner arcs so it sits like crockery, not like a box), open at the rim -
+// the rim is where the drink is, so that gap is meaning. The handle is a full
+// semicircular loop, which is the single detail that says "mug" at 12px.
 const MUG = (
   <>
-    <path d="M5 20 5 8 17 8 17 20" />
-    <path d="M17 10 21 10 21 16 17 16" />
+    <path d="M5 8 5 18A2 2 0 0 0 7 20L15 20A2 2 0 0 0 17 18L17 8" />
+    <path d="M17 10A3 3 0 0 1 17 16" />
   </>
 );
 
@@ -199,19 +209,23 @@ const STEM = (
   </>
 );
 
-// chat / messageSquare - an open-bottom container: the missing edge is the mouth.
-const CHAT = (
-  <>
-    <path d="M4 18 4 6 20 6 20 18" />
-    <path d="M8 18 8 22 12 18" />
-  </>
-);
+// chat / messageSquare - a closed bubble with the tail drawn as part of the
+// outline. The old version was an open-bottom box with a floating tail; the
+// closed contour is the universal speech-bubble silhouette.
+const CHAT = <path d="M4 6 20 6 20 18 12 18 9 21 9 18 4 18Z" />;
 
-// party / partyPopper
+// party / partyPopper - a popper cone with a burst actually leaving it: three
+// straight rays fanning up / diagonal / out from the mouth, two confetti dots
+// in the spaces between. The old three parallel 45deg dashes read as motion
+// lines, not a party; arc streamers were tried and read as scattered noise.
 const PARTY = (
   <>
-    <path d="M3 21 3 15 9 21Z" />
-    <path d="M9 13 13 9M12 17 17 12M15 20 20 15" />
+    <path d="M3 21 3 13 11 21Z" />
+    <path d="M7.5 10 7.5 4" />
+    <path d="M11 12.5 16 7.5" />
+    <path d="M13.5 16 20 16" />
+    {dot(13, 4)}
+    {dot(20, 10.5)}
   </>
 );
 
@@ -234,10 +248,9 @@ const Icons = {
   /* --- the top ten by usage, drawn to the spec's own coordinates --- */
 
   // 1. mapPin. Refuses the teardrop-with-a-hole: a ring above a chevron whose
-  // arms are the ring's own 45deg diagonals continued. The head is r=6, so per
-  // the system's own rule it is CLOSED - it used to carry the 30deg gap, which
-  // at the 10-14px this icon mostly renders at was ~1.5px of noise in the most
-  // used glyph in the app.
+  // arms are the ring's own 45deg diagonals continued. Closed head - at the
+  // 10-14px this icon mostly renders at, any gap is noise in the most used
+  // glyph in the app.
   mapPin: make(
     <>
       <circle cx="12" cy="11" r="6" />
@@ -248,11 +261,11 @@ const Icons = {
   // 2. x
   x: make(<path d="M6 6 18 18M18 6 6 18" />),
 
-  // 3. search. The gap sits on the upper-right diagonal, the handle on the
-  // lower-right, so neither eats the other.
+  // 3. search. Closed lens; the handle starts on the ring's own lower-right
+  // diagonal.
   search: make(
     <>
-      <path d={ring(10, 10, 7)} />
+      <circle cx="10" cy="10" r="7" />
       <path d="M14.95 14.95 20 20" />
     </>
   ),
@@ -293,27 +306,24 @@ const Icons = {
     color: '#F59E0B',
   }),
 
-  // 9. clock. Hands at exactly 90 and 0, so the glyph is 0/90 plus one arc.
+  // 9. clock. Hands at exactly 90 and 0, so the glyph is 0/90 plus one circle.
   clock: make(
     <>
-      <path d={ring(12, 12, 9)} />
+      <circle cx="12" cy="12" r="9" />
       <path d="M12 6.5 12 12 17 12" />
     </>
   ),
 
-  // 10. calendar. The header rule is not decoration and it is not the
-  // "box-with-a-grid" this glyph used to refuse - it is the one line that stops
-  // this being a chat bubble. The old drawing was an open box carrying THREE
-  // dots on a single row at y=13.5, which at the 14 and 18px the venue
-  // dashboard calls it at is an ellipsis inside a rounded container: the
-  // universal typing indicator, and a direct collision with `chat`, which is
-  // also an open box. Two dots instead of three (an ellipsis needs three) on
-  // the lower row, 8 units apart, well clear of the 5-unit minimum.
-  // Hangers + header rule is the classic and it is pure 0/90, so nothing here
-  // costs the system anything.
+  // 10. calendar. Closed box, header rule, hangers. The header rule is not
+  // decoration - it is the one line that stops this being a chat bubble. The
+  // old drawing was an open box carrying THREE dots on a single row at y=13.5,
+  // which at the 14 and 18px the venue dashboard calls it at is an ellipsis
+  // inside a rounded container: the universal typing indicator, and a direct
+  // collision with `chat`. Two dots instead of three (an ellipsis needs three)
+  // on the lower row, 8 units apart, well clear of the 5-unit minimum.
   calendar: make(
     <>
-      <path d="M4 20 4 7 20 7 20 20" />
+      <path d="M4 7 20 7 20 20 4 20Z" />
       <path d="M8 7 8 4M16 7 16 4" />
       <path d="M4 11 20 11" />
       {dot(8, 15.5)}
@@ -337,7 +347,7 @@ const Icons = {
 
   alertCircle: make(
     <>
-      <path d={ring(12, 12, 9)} />
+      <circle cx="12" cy="12" r="9" />
       <path d="M12 6.5 12 13" />
       {dot(12, 16.5)}
     </>
@@ -354,7 +364,7 @@ const Icons = {
   // rather than floating just below it.
   award: make(
     <>
-      <path d={ring(12, 9, 7)} />
+      <circle cx="12" cy="9" r="7" />
       <path d="M8 14 8 22 12 18 16 22 16 14" />
     </>
   ),
@@ -366,15 +376,14 @@ const Icons = {
   // had each hand-rolled the same round-capped circle-and-slash instead, which
   // is the one screen an App Review reviewer opens to check Guideline 1.2.
   //
-  // Obeys the system: r=9 so the ring carries the 30deg gap on the upper-right
-  // diagonal, and the slash is a 45deg segment whose two ends land exactly on
-  // that radius (6.36 * sqrt(2) = 9.0). It runs UPPER-LEFT to LOWER-RIGHT on
-  // purpose. The other diagonal terminates at theta=45deg, dead centre of the
-  // ring's own gap, so the bar would stop in mid-air and read as damage rather
-  // than as a bar across a circle.
+  // The ring is CLOSED: a full circle struck by a bar is the international
+  // prohibition sign, and the old 30deg gap existed only to serve the retired
+  // open-container signature. The slash is a 45deg chord whose two ends land
+  // exactly on the r=9 ring (6.36 * sqrt(2) = 9.0), running upper-left to
+  // lower-right - the orientation of the real prohibition mark.
   ban: make(
     <>
-      <path d={ring(12, 12, 9)} />
+      <circle cx="12" cy="12" r="9" />
       <path d="M5.64 5.64 18.36 18.36" />
     </>
   ),
@@ -382,7 +391,6 @@ const Icons = {
   // Three bars standing on a baseline. Without the baseline they are three
   // floating tally marks and the glyph reads as a signal-strength meter, which
   // is what it looked like sitting in the venue dashboard's Analytics tab.
-  // The axis is a rule, not a container, so it takes no open-bottom treatment.
   barChart: make(
     <>
       <path d="M5 20 5 14M12 20 12 6M19 20 19 10" />
@@ -392,29 +400,30 @@ const Icons = {
 
   beer: MUG_ICON,
 
-  // The flared rim is the whole difference between a bell and an arch. It is
-  // drawn as two stubs so the mouth stays open per the system: the body ended
-  // in mid-air with a floating dash and read as a headphone.
+  // A real bell: dome, flared skirt closing on its own bottom rule, clapper
+  // tucked just under it. The old drawing ended the body in mid-air with two
+  // floating rim stubs and read as a headphone band.
   bell: make(
     <>
-      <path d="M6 17 6 11A6 6 0 0 1 18 11L18 17" />
-      <path d="M3 17 6 17M18 17 21 17" />
-      {dot(12, 20)}
+      <path d="M4 18 6 16 6 10A6 6 0 0 1 18 10L18 16 20 18Z" />
+      {dot(12, 20.5)}
     </>
   ),
 
   briefcase: make(
     <>
-      <path d="M3 20 3 8 21 8 21 20" />
+      <path d="M3 8 21 8 21 20 3 20Z" />
       <path d="M9 8 9 5 15 5 15 8" />
     </>
   ),
 
   // One floor rule, not two. Two rules plus a door put four horizontals inside
-  // 16 units, which at 14px (its only size) closed into a solid block.
+  // 16 units, which at 14px (its only size) closed into a solid block. The
+  // shell closes; the door keeps its open bottom - it is a doorway on the
+  // ground line, which is a gap with meaning.
   building: make(
     <>
-      <path d="M5 20 5 4 19 4 19 20" />
+      <path d="M5 4 19 4 19 20 5 20Z" />
       <path d="M5 9 19 9" />
       <path d="M10 20 10 14 14 14 14 20" />
     </>
@@ -422,7 +431,7 @@ const Icons = {
 
   camera: make(
     <>
-      <path d="M3 20 3 7 21 7 21 20" />
+      <path d="M3 7 21 7 21 20 3 20Z" />
       <circle cx="12" cy="13.5" r="5" />
       <path d="M8 7 11 4 13 4 16 7" />
     </>
@@ -432,7 +441,7 @@ const Icons = {
 
   checkCircle: make(
     <>
-      <path d={ring(12, 12, 9)} />
+      <circle cx="12" cy="12" r="9" />
       <path d="M7.5 12.5 10.5 15.5 16.5 9.5" />
     </>
   ),
@@ -449,7 +458,7 @@ const Icons = {
   chevronRight: make(CHEVRON, { style: ROT(90) }),
   chevronDown: make(CHEVRON, { style: ROT(180) }),
 
-  cloud: make(<path d="M4 18 4 14A4 4 0 0 1 9 10A5 5 0 0 1 15 9A5 5 0 0 1 20 14L20 18" />, {
+  cloud: make(<path d="M4 18 4 14A4 4 0 0 1 9 10A5 5 0 0 1 15 9A5 5 0 0 1 20 14L20 18Z" />, {
     color: '#9ca3af',
   }),
 
@@ -461,23 +470,19 @@ const Icons = {
   // It is a short NE needle with a square arrowhead instead: direction, not denial.
   compass: make(
     <>
-      <path d={ring(12, 12, 9)} />
+      <circle cx="12" cy="12" r="9" />
       <path d="M9 15 15 9" />
       <path d="M11 9 15 9 15 13" />
     </>
   ),
 
   // Box + one full-width stripe read as a table. The short second rule is what
-  // makes it a card. Also pulled in from 2..22, which was the widest glyph here.
-  //
-  // The container was 18 x 13, which is 1.38:1 - closer to square than to a
-  // card, and a near-square open box is the same silhouette as `layers`,
-  // `briefcase` and half a dozen others in this set. Now 18 x 11 (1.64:1,
-  // against a real card's 1.586), and the two interior rules are re-spaced so
-  // nothing sits closer than 4 units to its neighbour.
+  // makes it a card. 18 x 11 (1.64:1, against a real card's 1.586), and the
+  // two interior rules are spaced so nothing sits closer than 4 units to its
+  // neighbour.
   creditCard: make(
     <>
-      <path d="M3 18 3 7 21 7 21 18" />
+      <path d="M3 7 21 7 21 18 3 18Z" />
       <path d="M3 11 21 11" />
       <path d="M6 15 12 15" />
     </>
@@ -487,29 +492,27 @@ const Icons = {
   // cross read as a divided pie rather than a sight.
   crosshair: make(
     <>
-      <path d={ring(12, 12, 7)} />
+      <circle cx="12" cy="12" r="7" />
       <path d="M12 3 12 21" />
       <path d="M3 12 21 12" />
     </>
   ),
 
-  // The S is built from horizontals and verticals only - a geometric dollar.
-  // The identity of this glyph is the RISERS, not the bars: three parallel
-  // horizontals crossed by a full-height vertical is a double-dagger, and that
-  // is exactly what this rendered as in the admin dashboard's Revenue tab at
-  // 18px. The riser length equals the bar spacing, so the fix is to spread the
-  // bars: 6.5 units apart (was 5) and 8 wide (was 10). At 14px that turns a
-  // 1.4px gap between strokes into 2.5px, and the S-motion survives.
-  //
-  // Honest limit: a $ that reads instantly at 12px needs the curved bowls of a
-  // real S, and the 0/45/90 rule forbids them. This is as far as the rule goes.
+  // A real dollar sign. The old one was an S built from horizontals and
+  // verticals only, and its own comment admitted the honest limit: "a $ that
+  // reads instantly at 12px needs the curved bowls of a real S". The curve
+  // allowance exists for exactly this glyph. Two r=3.5 semicircular bowls -
+  // upper bowl opening right, lower bowl opening left, the S-motion - crossed
+  // by the full-height riser.
   dollar: make(
     <>
-      <path d="M16 5.5 8 5.5 8 12 16 12 16 18.5 8 18.5" />
+      <path d="M17 5 9.5 5A3.5 3.5 0 0 0 9.5 12L14.5 12A3.5 3.5 0 0 1 14.5 19L7 19" />
       <path d="M12 3 12 21" />
     </>
   ),
 
+  // The one open-bottom rectangle left in the set, because here the missing
+  // edge IS the glyph: a doorway you can walk through.
   doorOpen: make(
     <>
       <path d="M4 20 4 4 16 4 16 20" />
@@ -549,9 +552,21 @@ const Icons = {
     </>
   ),
 
+  // The eye, struck: "the password is visible, press to hide it". Same
+  // outline as `eye` so the show/hide toggle swaps without a shift; the
+  // strike is one 45 degree segment. The pupil stays so the two states share
+  // their DOM nodes.
+  eyeOff: make(
+    <>
+      <path d="M3 12A11 11 0 0 1 21 12A11 11 0 0 1 3 12Z" />
+      <circle cx="12" cy="12" r="2" fill="currentColor" stroke="none" />
+      <path d="M5 19 19 5" />
+    </>
+  ),
+
   fileText: make(
     <>
-      <path d="M5 20 5 3 15 3 19 7 19 20" />
+      <path d="M5 3 15 3 19 7 19 20 5 20Z" />
       <path d="M15 3 15 7 19 7" />
       <path d="M8 12 16 12" />
       <path d="M8 16 16 16" />
@@ -566,32 +581,30 @@ const Icons = {
 
   gamepad: make(
     <>
-      <path d="M3 18 3 7 21 7 21 18" />
+      <path d="M3 7 21 7 21 18 3 18Z" />
       <path d="M7 11 7 15M5 13 9 13" />
       <circle cx="16.5" cy="13" r="1.5" />
     </>
   ),
 
-  // The bow was an open V floating above the lid, arms splaying up and outward
-  // from the centre - which is a tote bag's handles, and that is what this read
-  // as. Two closed triangles resting ON the lid instead: a bow is a bow because
-  // it is two solid loops, and an outline that closes cannot be mistaken for a
-  // handle. Both triangles are 45deg, so nothing moves off-system.
+  // A wrapped present: closed box, ribbon, and a bow whose two loops are real
+  // loops - a 3/4 arc closed by its own chord. The old open-V bow read as a
+  // tote bag's handles; a loop that closes cannot be mistaken for a handle.
   gift: make(
     <>
-      <path d="M4 20 4 10 20 10 20 20" />
+      <path d="M4 10 20 10 20 20 4 20Z" />
       <path d="M12 10 12 20" />
-      <path d="M12 10 8 6 12 6Z" />
-      <path d="M12 10 16 6 12 6Z" />
+      <path d="M12 10A2.5 2.5 0 1 1 9.5 7.5L12 10Z" />
+      <path d="M12 10A2.5 2.5 0 1 0 14.5 7.5L12 10Z" />
     </>
   ),
 
-  // The meridian was an rx=5 ry=9 ellipse on an 18-unit chord, which is both
+  // The meridian was an rx=5 ry=9 ellipse on an 18-unit chord, which is
   // off-system and impossible: the UA silently scaled the radii to fit. Two
   // r=11 circular arcs give the same lens honestly.
   globe: make(
     <>
-      <path d={ring(12, 12, 9)} />
+      <circle cx="12" cy="12" r="9" />
       <path d="M3 12 21 12" />
       <path d="M12 3A11 11 0 0 1 12 21A11 11 0 0 1 12 3Z" />
     </>
@@ -601,17 +614,18 @@ const Icons = {
 
   heart: make(<path d="M12 20 4 12A5 5 0 0 1 12 7A5 5 0 0 1 20 12Z" />),
 
+  // Walls, floor and door are one contour: the floor runs wall-to-door on each
+  // side, so the house is grounded and the doorway stays a real gap.
   home: make(
     <>
       <path d="M3 11 12 2 21 11" />
-      <path d="M5 20 5 9M19 20 19 9" />
-      <path d="M10 20 10 15 14 15 14 20" />
+      <path d="M5 9 5 20 10 20 10 15 14 15 14 20 19 20 19 9" />
     </>
   ),
 
   image: make(
     <>
-      <path d="M3 20 3 4 21 4 21 20" />
+      <path d="M3 4 21 4 21 20 3 20Z" />
       <circle cx="8" cy="9" r="3" />
       <path d="M4 18 10 12 14 16 20 10" />
     </>
@@ -619,7 +633,7 @@ const Icons = {
 
   laugh: make(
     <>
-      <path d={ring(12, 12, 9)} />
+      <circle cx="12" cy="12" r="9" />
       <path d="M8 14A5 5 0 0 0 16 14" />
       {dot(9, 10)}
       {dot(15, 10)}
@@ -628,7 +642,7 @@ const Icons = {
 
   layers: make(
     <>
-      <path d="M4 20 4 12 20 12 20 20" />
+      <path d="M4 12 20 12 20 20 4 20Z" />
       <path d="M6 9 18 9" />
       <path d="M8 6 16 6" />
     </>
@@ -636,16 +650,18 @@ const Icons = {
 
   lock: make(
     <>
-      <path d="M5 20 5 11 19 11 19 20" />
+      <path d="M5 11 19 11 19 20 5 20Z" />
       <path d="M8 11 8 7A4 4 0 0 1 16 7L16 11" />
     </>
   ),
 
-  // The shaft starts on the door's own edge. Starting it inside the doorway put
-  // a T-junction on the wall that filled in at 14px.
+  // The frame is open on the RIGHT, where the arrow leaves - a gap with
+  // meaning, per the container rule. The shaft starts on the frame's own edge:
+  // starting it inside the doorway put a T-junction on the wall that filled in
+  // at 14px.
   logout: make(
     <>
-      <path d="M4 20 4 4 12 4 12 20" />
+      <path d="M12 4 4 4 4 20 12 20" />
       <path d="M12 12 21 12" />
       <path d="M16 7 21 12 16 17" />
     </>
@@ -653,15 +669,18 @@ const Icons = {
 
   mail: make(
     <>
-      <path d="M4 19 4 6 20 6 20 19" />
+      <path d="M4 6 20 6 20 19 4 19Z" />
       <path d="M4 6 12 14 20 6" />
     </>
   ),
 
+  // A folded tri-panel map - the universal map silhouette. The old drawing was
+  // a generic box with a route line inside it, which read as "screenshot".
   map: make(
     <>
-      <path d="M4 20 4 6 20 6 20 20" />
-      <path d="M7 17 12 12 12 9 17 9" />
+      <path d="M9 4 3 6 3 20 9 18 15 20 21 18 21 4 15 6Z" />
+      <path d="M9 4 9 18" />
+      <path d="M15 6 15 20" />
     </>
   ),
 
@@ -700,33 +719,39 @@ const Icons = {
     { color: '#2d5a87' }
   ),
 
-  // Four wells, not three: three dots inside a ring read as a face.
+  // A real palette: the disc carries a thumb notch bitten deep into its
+  // lower-right edge (theta -20..-70 on the r=9 ring, indented by an r=4 arc,
+  // 2.75 units at its deepest), and four paint wells arc along the upper-left,
+  // every neighbouring pair 5+ units apart. The old ring-plus-four-symmetric-
+  // dots read as a die face; a small bottom-centre notch was tried and read as
+  // a 9-ball. The deep asymmetric bite is the identity.
   palette: make(
     <>
-      <path d={ring(12, 12, 9)} />
-      {dot(9, 9)}
-      {dot(15, 9)}
-      {dot(9, 15)}
-      {dot(15, 15)}
+      <path d="M20.46 15.08A9 9 0 1 0 15.08 20.46A4 4 0 0 0 20.46 15.08Z" />
+      {dot(7, 13.5)}
+      {dot(9, 8.5)}
+      {dot(14, 6.5)}
+      {dot(18, 10)}
     </>
   ),
 
   party: PARTY_ICON,
   partyPopper: PARTY_ICON,
 
-  // Earpiece slot plus a button dot. Without the dot this is the same tall open
-  // box as doorOpen and read as a doorway.
+  // A handset-era slab reads as a doorway; a rounded slab with an earpiece
+  // slot and a home dot reads as the phone in your hand. The r=2 corner arcs
+  // are identity, not decoration.
   phone: make(
     <>
-      <path d="M7 20 7 3 17 3 17 20" />
+      <path d="M9 3 15 3A2 2 0 0 1 17 5L17 18A2 2 0 0 1 15 20L9 20A2 2 0 0 1 7 18L7 5A2 2 0 0 1 9 3Z" />
       <path d="M10 6 14 6" />
-      {dot(12, 17.5)}
+      {dot(12, 17)}
     </>
   ),
 
   pieChart: make(
     <>
-      <path d={ring(12, 12, 9)} />
+      <circle cx="12" cy="12" r="9" />
       <path d="M12 12 12 3" />
       <path d="M12 12 18.36 18.36" />
     </>
@@ -736,17 +761,20 @@ const Icons = {
   pin: make(<path d={PIN_D} fill="transparent" stroke="currentColor" />),
   pinFilled: make(<path d={PIN_D} fill="currentColor" stroke="currentColor" />),
 
+  // A slice held tip-down: crust arc across the top, wedge to a point, two
+  // pepperoni. The old tip-up wedge with the arc at its base read as a
+  // protractor.
   pizza: make(
     <>
-      <path d="M12 3 4 11A11 11 0 0 0 20 11Z" />
-      {dot(12, 8)}
-      {dot(9.5, 12.5)}
-      {dot(14.5, 12.5)}
+      <path d="M12 21 5.5 6A12 12 0 0 1 18.5 6Z" />
+      {dot(9.5, 9)}
+      {dot(14.5, 11)}
     </>,
     { color: '#F97316' }
   ),
 
   // The ring's own gap is where the loop restarts; the arrowhead sits on it.
+  // This is the one glyph that keeps the open ring - here the gap is meaning.
   repeat: make(
     <>
       <path d={ring(12, 12, 9)} />
@@ -765,7 +793,15 @@ const Icons = {
   // Birdie again, under the name the assistant surfaces are wired to.
   robot: BIRDIE_ICON,
 
-  send: make(<path d="M6 4 14 12 6 20Z" fill="currentColor" stroke="currentColor" />),
+  // A paper plane, not a play button. The solid right-pointing triangle this
+  // replaces is the universal "play" mark and said nothing about sending.
+  // Outline plus the fold line from tip to keel, both stroked-only.
+  send: make(
+    <>
+      <path d="M21 3 3.5 9.5 10.5 13.5 14.5 20.5Z" />
+      <path d="M21 3 10.5 13.5" />
+    </>
+  ),
 
   settings: make(
     <>
@@ -775,12 +811,13 @@ const Icons = {
     </>
   ),
 
-  // Tray walls run from y=13 so they read as a container the arrow leaves.
+  // The tray closes across its bottom; the top stays open because the arrow
+  // leaves through it - a gap with meaning.
   share: make(
     <>
       <path d="M12 19 12 5" />
       <path d="M7 10 12 5 17 10" />
-      <path d="M5 13 5 21M19 13 19 21" />
+      <path d="M5 13 5 21 19 21 19 13" />
     </>
   ),
 
@@ -789,12 +826,11 @@ const Icons = {
   // Report. This is the Apple 1.2 affordance a reviewer goes looking for, and
   // it was a bare Unicode U+2691 at four call sites - the same character that
   // once corrupted into mojibake in the moderation sheet. A drawn glyph cannot.
-  // Open container per the system: the pennant carries no bottom edge, and its
-  // left edge is the pole. The swallowtail notch is 45deg (it was 51.3deg).
+  // The pennant closes back onto its own pole; the swallowtail notch is 45deg.
   flag: make(
     <>
       <path d="M6 21 6 3" />
-      <path d="M6 4 18 4 13 9 18 14 6 14" />
+      <path d="M6 4 18 4 13 9 18 14 6 14Z" />
     </>
   ),
 
@@ -807,7 +843,7 @@ const Icons = {
 
   sports: make(
     <>
-      <path d={ring(12, 12, 9)} />
+      <circle cx="12" cy="12" r="9" />
       <path d="M4.5 8 19.5 8M4.5 16 19.5 16" />
     </>,
     { color: '#22C55E' }
@@ -832,7 +868,7 @@ const Icons = {
   // which is the only size this is drawn at.
   target: make(
     <>
-      <path d={ring(12, 12, 9)} />
+      <circle cx="12" cy="12" r="9" />
       <circle cx="12" cy="12" r="5" />
       {dot(12, 12)}
     </>
@@ -840,16 +876,18 @@ const Icons = {
 
   thumbsUp: make(
     <>
-      <path d="M7 20 7 10 18 10 18 20" />
+      <path d="M7 10 18 10 18 20 7 20Z" />
       <path d="M7 10 7 6 11 2 11 10" />
     </>
   ),
 
+  // Lid, handle, and a can that stands on its own base - r=2 corner arcs so
+  // the base reads as a can, not a crate.
   trash: make(
     <>
       <path d="M3 6 21 6" />
       <path d="M9 6 9 3 15 3 15 6" />
-      <path d="M6 6 6 20M18 6 18 20" />
+      <path d="M6 6 6 18A2 2 0 0 0 8 20L16 20A2 2 0 0 0 18 18L18 6" />
     </>
   ),
 
@@ -886,7 +924,7 @@ const Icons = {
   // of its neighbours, and it is called at sizes 9 and 10.
   vote: make(
     <>
-      <path d="M4 20 4 7 20 7 20 20" />
+      <path d="M4 7 20 7 20 20 4 20Z" />
       <path d="M8 13 11 16 16 11" />
     </>
   ),

@@ -48,11 +48,11 @@
  *      on what the SERVER can honour, never on the report still being open —
  *      so the one-action-per-report bug cannot come back by accident.
  *
- *   6. THE ICON SYSTEM. All three files used hand-rolled inline SVG with round
- *      caps and cubic curves, which is not the geometry components/ui/Icons.js
- *      is built on. The `ban` glyph added for the Block control is checked
- *      against the system's own rules by computing them, not by matching the
- *      string it was drawn with.
+ *   6. THE ICON SYSTEM. All three files used hand-rolled inline SVG, drawn to
+ *      whatever geometry the author felt like that day rather than the one
+ *      components/ui/Icons.js is built on. The `ban` glyph added for the Block
+ *      control is checked against the system's own rules by computing them,
+ *      not by matching the string it was drawn with.
  *
  *   7. DRIFT. NOUNS in the sheet is diffed against VALID_CONTENT_TYPES in
  *      backend/routes/moderation.js. This repo has shipped "a route widened a
@@ -752,10 +752,11 @@ describe('icons come from components/ui/Icons.js', () => {
     expect(svgs).toHaveLength(2);
     for (const el of svgs) {
       expect(el.getAttribute('class')).toContain('flock-icon');
-      // The geometry contract: butt caps, miter joins. A round-capped glyph
-      // beside these reads as a different product.
-      expect(el.getAttribute('stroke-linecap')).toBe('butt');
-      expect(el.getAttribute('stroke-linejoin')).toBe('miter');
+      // The geometry contract: round caps, round joins (the 2026-08
+      // modernization — butt/miter was the set's 2015 tell). A glyph carrying
+      // different caps beside these reads as a different product.
+      expect(el.getAttribute('stroke-linecap')).toBe('round');
+      expect(el.getAttribute('stroke-linejoin')).toBe('round');
       // Each sits beside its own text label, so it must not be announced.
       expect(el.getAttribute('aria-hidden')).toBe('true');
       expect(el.getAttribute('aria-label')).toBeNull();
@@ -777,51 +778,61 @@ describe('icons come from components/ui/Icons.js', () => {
   describe('Icons.ban, the glyph added for the Block control', () => {
     // Nothing in the set said "this person cannot reach you": shield is the SOS
     // mark, lock reads as private, x reads as close, minus reads as remove.
-    const paths = () => {
+    const parts = () => {
       const { container } = render(React.createElement('div', null, Icons.ban('currentColor', 18)));
-      return [...container.querySelectorAll('path')].map((p) => p.getAttribute('d'));
+      return {
+        circles: [...container.querySelectorAll('circle')],
+        paths: [...container.querySelectorAll('path')].map((p) => p.getAttribute('d')),
+      };
     };
 
-    test('it exists and is a ring plus one straight bar', () => {
+    test('it exists and is a closed ring plus one straight bar', () => {
       expect(typeof Icons.ban).toBe('function');
-      const d = paths();
-      expect(d).toHaveLength(2);
-      expect(d[0]).toMatch(/A9 9 0 1 0/);          // the open ring at r=9
-      expect(d[1]).toMatch(/^M[\d.]+ [\d.]+ [\d.]+ [\d.]+$/); // one segment, no curve
+      const { circles, paths } = parts();
+      // A full circle struck by a bar is the international prohibition sign.
+      // The ring used to carry the set's 30deg signature gap; the 2026-08
+      // geometry retired the open-container signature and the ring closed
+      // with it, drawn as a real <circle> at r=9.
+      expect(circles).toHaveLength(1);
+      expect(circles[0].getAttribute('cx')).toBe('12');
+      expect(circles[0].getAttribute('cy')).toBe('12');
+      expect(circles[0].getAttribute('r')).toBe('9');
+      expect(paths).toHaveLength(1);
+      expect(paths[0]).toMatch(/^M[\d.]+ [\d.]+ [\d.]+ [\d.]+$/); // one segment, no curve
     });
 
     test('the bar is a true 45 degree chord with both ends on the ring', () => {
-      const [, slash] = paths();
-      const [x1, y1, x2, y2] = slash.replace('M', '').split(/\s+/).map(Number);
+      const { paths } = parts();
+      const [x1, y1, x2, y2] = paths[0].replace('M', '').split(/\s+/).map(Number);
       const r = (x, y) => Math.hypot(x - 12, y - 12);
-      // Every straight segment in this set runs at exactly 0 / 45 / 90 degrees.
+      // Straight segments in this set default to exactly 0 / 45 / 90 degrees.
       expect(Math.abs(Math.abs(x2 - x1) - Math.abs(y2 - y1))).toBeLessThan(0.01);
-      // Both ends land on the ring's own radius, whole-unit per the system.
+      // Both ends land on the ring's own radius, whole-unit per the system —
+      // a chord that stops short of the ring reads as a minus inside a circle.
       expect(r(x1, y1)).toBeCloseTo(9, 1);
       expect(r(x2, y2)).toBeCloseTo(9, 1);
     });
 
-    test('neither end of the bar terminates inside the ring\'s 30 degree gap', () => {
-      // The ring at r >= 7 is cut by a 30deg gap centred on the upper-right
-      // diagonal, spanning theta 30..60. The other diagonal would put an
-      // endpoint at theta=45 — dead centre of the gap — so the bar would stop
-      // in mid-air and read as damage rather than as a bar across a circle.
-      const [, slash] = paths();
-      const [x1, y1, x2, y2] = slash.replace('M', '').split(/\s+/).map(Number);
-      const theta = (x, y) => {
-        const deg = (Math.atan2(12 - y, x - 12) * 180) / Math.PI;
-        return (deg + 360) % 360;
-      };
-      for (const t of [theta(x1, y1), theta(x2, y2)]) {
-        expect(t > 30 && t < 60).toBe(false);
-      }
+    test('the bar runs upper-left to lower-right, the prohibition orientation', () => {
+      // Replaces the retired ring-gap test: the 30deg gap that test protected
+      // the bar from no longer exists (the ring is closed), but the diagonal
+      // it forced is still the one that matters — upper-left to lower-right is
+      // how the real prohibition sign draws its slash, and the mirrored
+      // diagonal reads as a struck-through zero.
+      const { paths } = parts();
+      const [x1, y1, x2, y2] = paths[0].replace('M', '').split(/\s+/).map(Number);
+      const [sx, sy, ex, ey] = x1 < x2 ? [x1, y1, x2, y2] : [x2, y2, x1, y1];
+      expect(sx).toBeLessThan(12);
+      expect(sy).toBeLessThan(12);
+      expect(ex).toBeGreaterThan(12);
+      expect(ey).toBeGreaterThan(12);
     });
 
     test('it obeys the shared geometry and is decorative unless labelled', () => {
       const { container } = render(React.createElement('div', null, Icons.ban('#EF4444', 17)));
       const svg = container.querySelector('svg');
-      expect(svg.getAttribute('stroke-linecap')).toBe('butt');
-      expect(svg.getAttribute('stroke-linejoin')).toBe('miter');
+      expect(svg.getAttribute('stroke-linecap')).toBe('round');
+      expect(svg.getAttribute('stroke-linejoin')).toBe('round');
       expect(svg.getAttribute('aria-hidden')).toBe('true');
 
       const labelled = render(React.createElement('div', null, Icons.ban('#EF4444', 17, 'Block this account')));

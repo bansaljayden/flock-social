@@ -3,6 +3,7 @@ import { signup, googleLoginWithToken, resendVerificationEmail } from '../../ser
 import { useGoogleLogin } from '@react-oauth/google';
 import AppleSignInButton from './AppleSignInButton';
 import AuthShell, { AUTH, AuthError, AuthRule, GoogleG, PasswordEye } from './AuthShell';
+import Icons from '../ui/Icons';
 
 // Same live pages the in-app Settings screen and the paywall sheet link to.
 const TERMS_URL = 'https://www.flockcorp.com/terms';
@@ -228,12 +229,22 @@ const SignupScreen = ({ onSignupSuccess, onSwitchToLogin }) => {
               placeholder="At least 8 characters"
               autoComplete="new-password"
               minLength={8}
+              aria-describedby="signup-pw-rules"
               required
             />
             <PasswordEye shown={showPassword} onToggle={() => setShowPassword(!showPassword)} />
           </div>
+          {/* The full rule set, described ON the field. The visible checklist
+              only exists once the field has content, so without this a screen
+              reader lands on an empty password field and hears nothing about
+              what a valid password is; the placeholder names one rule of
+              three. sr-only, because the visual design already carries the
+              rules through the placeholder and the live checklist. */}
+          <p className="sr-only" id="signup-pw-rules">
+            Password must be at least 8 characters, with one uppercase letter and one number.
+          </p>
           {password.length > 0 && (
-            <ul style={{ listStyle: 'none', margin: '12px 0 0', padding: 0, display: 'grid', gap: '7px' }}>
+            <ul aria-label="Password requirements" style={{ listStyle: 'none', margin: '12px 0 0', padding: 0, display: 'grid', gap: '7px' }}>
               {pwChecks.map((c) => (
                 <li
                   key={c.label}
@@ -243,10 +254,21 @@ const SignupScreen = ({ onSignupSuccess, onSwitchToLogin }) => {
                     color: c.ok ? AUTH.green : AUTH.cream2,
                   }}
                 >
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                    {c.ok ? <polyline points="20 6 9 17 4 12" /> : <circle cx="12" cy="12" r="9" />}
-                  </svg>
+                  {/* System glyphs (Icons.check met / Icons.minus not-yet),
+                      same pair as VenueLoginScreen; the old row drew a local
+                      <svg> from outside the icon system. Decorative: the
+                      state is announced by the sr-only text below, and shown
+                      visually by glyph shape plus colour, so neither channel
+                      is colour-only (1.4.1). */}
+                  <span aria-hidden="true" style={{ display: 'inline-flex', flexShrink: 0 }}>
+                    {(c.ok ? Icons.check : Icons.minus)('currentColor', 14)}
+                  </span>
                   {c.label}
+                  {/* The met/unmet signal a screen reader was never getting:
+                      the old row encoded state in colour and a glyph, both
+                      aria-hidden, so "8 characters" read identically whether
+                      satisfied or not. */}
+                  <span className="sr-only">{c.ok ? ', met' : ', not met yet'}</span>
                 </li>
               ))}
             </ul>
