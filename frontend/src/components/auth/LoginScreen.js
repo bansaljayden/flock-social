@@ -2,9 +2,20 @@ import React, { useState } from 'react';
 import { login, googleLoginWithToken } from '../../services/api';
 import { useGoogleLogin } from '@react-oauth/google';
 import AppleSignInButton from './AppleSignInButton';
-import AuthShell, { AuthError, AuthRule, GoogleG, PasswordEye } from './AuthShell';
+import AuthShell, { AuthError, AuthLabelRow, AuthNotice, AuthRule, GoogleG, PasswordEye } from './AuthShell';
+import {
+  ForgotPasswordScreen, ResetPasswordScreen, isPasswordResetRoute,
+} from './PasswordReset';
 
 const LoginScreen = ({ onLoginSuccess, onSwitchToSignup, onSwitchToVenueLogin }) => {
+  // The password-reset screens hang off this one rather than off App.js: the
+  // emailed link lands on /reset-password, index.js sends every unknown path to
+  // the app, and the app renders this screen for anyone without a session. So
+  // this component is already the thing on screen when the link is opened, and
+  // it can route to the reset screen itself. Nothing in App.js needs to know.
+  const [view, setView] = useState(() => (isPasswordResetRoute() ? 'reset' : 'login'));
+  // Carried back from the reset flow, e.g. "Your password is set. Sign in."
+  const [notice, setNotice] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -65,10 +76,35 @@ const LoginScreen = ({ onLoginSuccess, onSwitchToSignup, onSwitchToVenueLogin })
     </>
   );
 
+  if (view === 'reset') {
+    return (
+      <ResetPasswordScreen
+        // Only the "password updated" screen reports a change. The dead-link
+        // and "changed my mind" exits call this with nothing, so the sign-in
+        // screen never announces something that did not happen.
+        onSignIn={(result) => {
+          setNotice(result?.updated ? 'Password updated. Sign in with the new one.' : '');
+          setView('login');
+        }}
+        onRequestNew={() => setView('forgot')}
+      />
+    );
+  }
+
+  if (view === 'forgot') {
+    return (
+      <ForgotPasswordScreen
+        initialEmail={email}
+        onBack={() => setView('login')}
+      />
+    );
+  }
+
   return (
     <AuthShell hero={hero}>
       <form onSubmit={handleSubmit}>
         <AuthError>{error}</AuthError>
+        <AuthNotice>{notice}</AuthNotice>
 
         {/* The retry field the error message points at. It sits first so
             "below" in that copy is literally true, and so it is the next
@@ -105,7 +141,20 @@ const LoginScreen = ({ onLoginSuccess, onSwitchToSignup, onSwitchToVenueLogin })
         </div>
 
         <div className="auth-field-row" style={{ marginBottom: '24px' }}>
-          <label className="auth-label" htmlFor="login-password">Password</label>
+          {/* The way back in for anyone who cannot remember it. It sits on the
+              password label's line, which is where people look for it, and it
+              carries whatever is already typed in the email field so the next
+              screen does not ask for it twice. */}
+          <AuthLabelRow>
+            <label className="auth-label" htmlFor="login-password">Password</label>
+            <button
+              type="button"
+              className="auth-link hit44"
+              onClick={() => { setError(''); setNotice(''); setView('forgot'); }}
+            >
+              Forgot password?
+            </button>
+          </AuthLabelRow>
           <div className="auth-pw-wrap">
             <input
               id="login-password"
