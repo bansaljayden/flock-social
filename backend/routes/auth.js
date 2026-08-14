@@ -16,6 +16,9 @@ const {
 const { stripHtml, sanitizeArray } = require('../utils/sanitize');
 const { rejectIfProfane, moderateText } = require('../utils/moderation');
 const { upstreamSignal } = require('../utils/upstream');
+// Shape before content — see validators/shape.js. Used ONLY where a sanitizer
+// runs ahead of rejectNonStringFields below; see the note there.
+const { freeText } = require('../validators/shape');
 
 const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 
@@ -959,6 +962,34 @@ function safeOAuthDisplayName(rawName, email, provider) {
 }
 
 // ARRAY-SHAPED FIELDS WALK PAST express-validator. Given
+//
+// ROUND 20 NOTE — WHY THIS STAYS, AND WHERE IT IS NOT ENOUGH ON ITS OWN.
+//
+// validators/shape.js is now the one spelling of this rule and every other
+// router imports `scalarOnly` from it. This function is deliberately not
+// replaced by it, because it is the strictly STRONGER rule on the fields it
+// covers: `isScalar` admits any non-object, so it would let a NUMBER through,
+// and a number is exactly the shape that still hurts here —
+// `{"date_of_birth": 946684800000}` reaches ageFromDob (`new Date(x)` parses a
+// millisecond count) and then a DATE column.
+//
+// But it runs INSIDE THE HANDLER, which is after the validator chain, and that
+// position is load-bearing in a way nobody had tested. An ARRAY survives the
+// chain intact and is caught here. An OBJECT does not: express-validator's
+// `trim()` stringifies its input, so `{"name": {}}` had already become the
+// STRING "[object Object]" by the time this saw it, sailed through as a
+// perfectly good string, satisfied isLength, and was stored in users.name —
+// the column rendered on every invite, roster, chat row and push in the app,
+// written from an UNAUTHENTICATED route. The `$ne`-style object that is the
+// reflex probe for this lands in exactly the same place.
+//
+// So any field whose chain carries a SANITIZER needs the shape settled inside
+// the chain, ahead of it — which is what `freeText` on `name` below does (it is
+// scalarOnly followed by the sanitizers), and the same on PUT
+// /api/users/profile. Fields with no sanitizer (password,
+// date_of_birth, the OAuth tokens) reach this function unmodified and are fully
+// covered by it. The rule is the one validators/shape.js states: settle the
+// shape before anything else looks at the value.
 // `{"email": ["a@b.com"], "password": ["Password1"]}` every chain below runs
 // PER ELEMENT, every element passes, sanitizers write back element by element
 // and never collapse the array — so `req.body.email` is STILL an array when the
@@ -987,7 +1018,22 @@ const signupValidation = [
     .isLength({ min: 8 }).withMessage('Password must be at least 8 characters')
     .matches(/[A-Z]/).withMessage('Password must contain at least one uppercase letter')
     .matches(/[0-9]/).withMessage('Password must contain at least one number'),
-  body('name').trim().customSanitizer(stripHtml).isLength({ min: 1, max: 255 }).withMessage('Name is required'),
+  // freeText = shape -> trim -> stripHtml -> trim, the whole rule in one link.
+  // The TRAILING trim is the half this chain was missing: stripHtml('<b> </b>')
+  // is a single space, which satisfies isLength({ min: 1 }) and sails past
+  // rejectIfProfane, so "a name is required" accepted a BLANK name — on the
+  // unauthenticated route, into the column rendered on every invite, roster,
+  // chat row and push. Sanitize, then trim, then measure.
+  freeText(body('name'), 'name').isLength({ min: 1, max: 255 }).withMessage('Name is required'),
+  // ROUND 20. `interests` had NO validator on the one account-creation path
+  // that accepts it, while PUT /api/users/profile has carried isArray() all
+  // along. sanitizeArray() returns a non-array untouched by design (it is a
+  // per-element sanitizer, not a shape check), so `{"interests": "x"}` or
+  // `{"interests": {"a": 1}}` went straight to pg as a scalar parameter for the
+  // TEXT[] column and came back a 500 — on an UNAUTHENTICATED route, from a
+  // body shape the caller picks. `nullable` because `sanitizeArray(null || [])`
+  // already reads a null as "none given".
+  body('interests').optional({ nullable: true }).isArray().withMessage('Invalid interests'),
   // Phone is deliberately NOT accepted at signup. It has no UNIQUE constraint
   // and drives contact-sync friend discovery, so accepting it here let an
   // attacker claim a victim's number from a fresh account that only ever proved
@@ -1445,8 +1491,13 @@ router.post('/logout-all', authenticate, async (req, res) => {
 //     trusting userinfo — otherwise any third-party app's token could log
 //     its users into Flock accounts.
 router.post('/google', [
-  body('credential').optional().isString(),
-  body('access_token').optional().isString(),
+  // `optional({ nullable: true })` (round 20): `optional()` skips only
+  // `undefined`, and the handler below already reads a missing credential as
+  // absent — `if (!req.body.credential && !req.body.access_token)` is what
+  // decides. A client that spells the unused half of this pair as an explicit
+  // null was answered "Invalid value" by the chain instead.
+  body('credential').optional({ nullable: true }).isString(),
+  body('access_token').optional({ nullable: true }).isString(),
 ], async (req, res) => {
   try {
     // TYPE before CONTENT — see rejectNonStringFields.
@@ -1469,6 +1520,21 @@ router.post('/google', [
       if (!process.env.GOOGLE_CLIENT_ID) {
         console.error('GOOGLE_CLIENT_ID not set — refusing Google sign-in');
         return res.status(500).json({ error: 'Google sign-in is not configured' });
+      }
+      // SHAPE BEFORE CONTENT, one level up (round 20). A Google ID token is a
+      // JWT: three base64url segments. Anything else is not a token that could
+      // ever verify, and handing it to verifyIdToken threw
+      // "Wrong number of segments in token: …" — a message the catch at the
+      // bottom of this handler does not recognise, so it fell through to
+      // `500 Google sign-in failed`. That is an UNAUTHENTICATED 500 anyone can
+      // produce with `{"credential": "x"}`, which is log noise, Sentry noise,
+      // and a difference an attacker can read. The Apple branch never had this
+      // because jsonwebtoken raises a JsonWebTokenError the catch already maps
+      // to 401. Checked here rather than by widening that catch, because
+      // widening it would also swallow a real Google certificate-fetch outage
+      // and report it to every user as "your sign-in expired".
+      if (!/^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(req.body.credential)) {
+        return res.status(401).json({ error: 'Google sign-in expired, please try again' });
       }
       // Verify the Google ID token
       const ticket = await googleClient.verifyIdToken({
@@ -1693,9 +1759,15 @@ router.post('/apple/nonce', (req, res) => {
 
 router.post('/apple', [
   body('identityToken').notEmpty().withMessage('Apple identityToken is required'),
-  body('fullName').optional().isObject(),
-  body('authorizationCode').optional(),
-  body('nonce').optional().isString().isLength({ max: 200 }),
+  // `fullName` is LEGITIMATELY structured — Apple's SDK hands over
+  // `{ givenName, familyName }` — so it keeps isObject() rather than a scalar
+  // guard, and the handler re-derives both halves through String() + stripHtml
+  // before they can reach a column. `nullable` on all three for the same reason
+  // as the Google branch: the handler already treats absent as absent
+  // (`fullName?.givenName`, `typeof req.body.nonce === 'string' ? … : ''`).
+  body('fullName').optional({ nullable: true }).isObject(),
+  body('authorizationCode').optional({ nullable: true }),
+  body('nonce').optional({ nullable: true }).isString().isLength({ max: 200 }),
 ], async (req, res) => {
   try {
     // TYPE before CONTENT — see rejectNonStringFields. `fullName` is checked by

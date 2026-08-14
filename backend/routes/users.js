@@ -14,9 +14,16 @@ const {
   TOKEN_ALGORITHMS,
   UNVERIFIED_MESSAGE,
 } = require('../middleware/auth');
-const { stripHtml, sanitizeArray } = require('../utils/sanitize');
+// stripHtml is no longer imported here: the one chain that called it is now
+// freeText(), which applies it (and the trailing trim it was missing).
+const { sanitizeArray } = require('../utils/sanitize');
 const { rejectIfProfane, moderateImage, imageRejectionMessage } = require('../utils/moderation');
 const { revokeAppleToken, isConfigured: appleAuthConfigured } = require('../services/appleAuth');
+// Shape before content — see validators/shape.js. PUT /profile settles its own
+// shape in the handler with a STRICTER rule (string-or-absent, which also
+// refuses a number reaching a text column), so it keeps that check; every other
+// write in this file uses the shared predicate.
+const { scalarOnly, freeText } = require('../validators/shape');
 
 const router = express.Router();
 const SALT_ROUNDS = 10;
@@ -507,11 +514,30 @@ function maybePurgeExpired(now = Date.now()) {
 // PUT /api/users/profile - Update current user's profile (requires current password)
 router.put('/profile',
   [
-    body('name').optional().trim().customSanitizer(stripHtml).isLength({ min: 1, max: 255 }).withMessage('Name must be 1-255 characters'),
+    // `optional({ nullable: true })` throughout (round 20): the handler below
+    // already reads a falsy value as "leave this column alone" — `name || null`,
+    // `Boolean(email)`, `if (new_password)`, and a bcrypt compare against '' —
+    // while express-validator's `optional()` skips only `undefined`. A client
+    // that spells an untouched field as an explicit null (which the phone field
+    // beside them has accepted since round 16) was answered 400 by the chain for
+    // a submission the handler knows how to serve.
+    // `scalarOnly` at the HEAD of this chain, not in the handler loop below
+    // (round 20). That loop catches an array, because an array survives the
+    // chain intact — but `trim()` stringifies an OBJECT, so `{"name": {}}` had
+    // already become the string "[object Object]" by the time the loop saw it,
+    // passed as a perfectly good string, and was stored in users.name. Shape has
+    // to be settled before the first sanitizer, not after the last one.
+    // freeText = shape -> trim -> stripHtml -> trim, and the trailing trim is
+    // the half this chain was missing: stripHtml('<b> </b>') is a single space,
+    // which satisfies isLength({ min: 1 }) and sails past rejectIfProfane, so
+    // the rename accepted a BLANK name into the column every roster, invite,
+    // chat row and push renders. Sanitize, then trim, then measure.
+    freeText(body('name').optional({ nullable: true }), 'name')
+      .isLength({ min: 1, max: 255 }).withMessage('Name must be 1-255 characters'),
     // normalizeEmail() matches signup and login (routes/auth.js), so
     // `v.ictim@gmail.com` cannot be stored as a distinct row that shadows
     // `victim@gmail.com` in the LOWER(email) lookups those paths use.
-    body('email').optional().isEmail().normalizeEmail().withMessage('Valid email required'),
+    body('email').optional({ nullable: true }).isEmail().normalizeEmail().withMessage('Valid email required'),
     // Round 16: this was `body('phone').optional()` with NO validation at all,
     // while signup runs isMobilePhone(). Two separate problems came out of that:
     // anything at all could be written into the column (a name, a URL, an
@@ -524,13 +550,13 @@ router.put('/profile',
     body('phone').optional({ nullable: true, checkFalsy: true }).trim()
       .isMobilePhone().withMessage('Invalid phone number')
       .isLength({ max: 20 }).withMessage('Phone number is too long'),
-    body('interests').optional().isArray(),
+    body('interests').optional({ nullable: true }).isArray(),
     // Optional at the validator layer: OAuth accounts have no password, and a
     // notEmpty() here 400'd their profile edits before the OAuth-aware handler
     // below could run. Password accounts still fail closed — the bcrypt
     // compare against a missing value returns 401.
-    body('current_password').optional().isString(),
-    body('new_password').optional()
+    body('current_password').optional({ nullable: true }).isString(),
+    body('new_password').optional({ nullable: true })
       .isLength({ min: 8 }).withMessage('New password must be at least 8 characters')
       .matches(/[A-Z]/).withMessage('Password must contain at least one uppercase letter')
       .matches(/[0-9]/).withMessage('Password must contain at least one number'),
@@ -963,7 +989,11 @@ router.get('/stats', async (req, res) => {
 
 // GET /api/users/search?q= - Search users by name only (no email exposure)
 router.get('/search',
-  query('q').trim().isLength({ min: 1 }).withMessage('Search query is required'),
+  // `?q[]=a&q[]=b` is an array to express and satisfies isLength by coercion.
+  // `String(req.query.q)` below already flattened it to "a,b" so it never
+  // reached pg structured — but a search term that silently means something
+  // other than what was typed is worth refusing rather than guessing at.
+  scalarOnly(query('q'), 'search query').trim().isLength({ min: 1 }).withMessage('Search query is required'),
   async (req, res) => {
     try {
       const errors = validationResult(req);
@@ -1116,7 +1146,13 @@ router.post('/upload-image', (req, res) => {
 // PUT /api/users/profile-image - Save an external avatar URL (e.g. DiceBear)
 router.put('/profile-image',
   [
-    body('url').trim().isURL({ protocols: ['https'], require_protocol: true }).withMessage('Valid HTTPS URL required'),
+    // Shape first (round 20). `{"url": ["https://api.dicebear.com/x"]}`
+    // satisfied isURL by coercion and stayed an array, and `new URL(value)`
+    // stringifies its argument — so the host allowlist below passed too, and the
+    // array went to pg as a parameter for users.profile_image_url (TEXT). A 500
+    // on the one route in this file that writes the avatar every roster, message
+    // row and push renders.
+    scalarOnly(body('url'), 'URL').trim().isURL({ protocols: ['https'], require_protocol: true }).withMessage('Valid HTTPS URL required'),
   ],
   async (req, res) => {
     try {
@@ -1151,7 +1187,16 @@ router.put('/profile-image',
 // PUT /api/users/venmo-username — Update Venmo username
 router.put('/venmo-username',
   [
-    body('venmo_username').optional({ nullable: true }).trim().isLength({ max: 50 }).withMessage('Venmo username too long')
+    // SHAPE BEFORE CONTENT (round 20). A payment handle is the field that
+    // decides who gets paid when a bill is split, and `{"venmo_username":
+    // ["evil"]}` satisfied both isLength and matches() — express-validator
+    // stringifies a one-element array before testing it — then stayed an array,
+    // so `venmo_username.replace(/^@/, '')` below threw a TypeError and the
+    // route answered 500. An empty array was worse in kind: `[]` is TRUTHY in
+    // JavaScript, so it took the "clean it" branch instead of the "clear it"
+    // branch and threw there too.
+    scalarOnly(body('venmo_username').optional({ nullable: true }), 'Venmo username')
+      .trim().isLength({ max: 50 }).withMessage('Venmo username too long')
       .matches(/^[a-zA-Z0-9_-]*$/).withMessage('Venmo username can only contain letters, numbers, hyphens, and underscores'),
   ],
   async (req, res) => {
@@ -1181,13 +1226,20 @@ router.put('/venmo-username',
 // PUT /api/users/payment-methods — Update all payment method handles
 router.put('/payment-methods',
   [
-    body('venmo_username').optional({ nullable: true }).trim().isLength({ max: 50 })
+    // Same guard as PUT /venmo-username above, on all three handles. The Zelle
+    // field fails differently and no more happily: nothing calls .replace() on
+    // it, so a one-element array sailed through the whole handler and reached
+    // pg as a text[] parameter for zelle_identifier VARCHAR(255).
+    scalarOnly(body('venmo_username').optional({ nullable: true }), 'Venmo username')
+      .trim().isLength({ max: 50 })
       .withMessage('Venmo username too long')
       .matches(/^[a-zA-Z0-9_-]*$/).withMessage('Venmo username can only contain letters, numbers, hyphens, and underscores'),
-    body('cashapp_cashtag').optional({ nullable: true }).trim().isLength({ max: 50 })
+    scalarOnly(body('cashapp_cashtag').optional({ nullable: true }), 'Cash App cashtag')
+      .trim().isLength({ max: 50 })
       .withMessage('Cash App cashtag too long')
       .matches(/^[a-zA-Z0-9_]*$/).withMessage('Cashtag can only contain letters, numbers, and underscores'),
-    body('zelle_identifier').optional({ nullable: true }).trim().isLength({ max: 255 })
+    scalarOnly(body('zelle_identifier').optional({ nullable: true }), 'Zelle identifier')
+      .trim().isLength({ max: 255 })
       .withMessage('Zelle identifier too long'),
   ],
   async (req, res) => {
