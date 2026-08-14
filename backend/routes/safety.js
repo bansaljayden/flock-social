@@ -311,6 +311,35 @@ const MAX_ESCALATIONS = 3;                 // delivered alerts per 15 min, ceili
 const MAX_ATTEMPTS_PER_WINDOW = 6;         // outer bound: any attempt, delivered or not
 const ESCALATION_METERS = 250;             // "I have moved" threshold
 
+// Round 18 — THE LOCATION FOLLOW-UP.
+//
+// The client no longer holds an SOS back for up to fifteen seconds waiting on a
+// GPS fix. It sends the alert immediately, waits a few seconds for a fix, and
+// posts the coordinates as a second alert. That second alert is the only one
+// that tells a contact WHERE to go — and this route refused it, because a
+// follow-up arriving seconds behind the first is inside ALERT_FLOOR_MS.
+//
+// The client's answer was to wait the floor out: App.js sits on the fix it
+// already has for a full sixty-five seconds before posting it. So the location
+// for an emergency alert reliably arrived over a minute after the alert, and
+// the delay was the server's rule, not the satellite's.
+//
+// This is the one case the floor should not hold. The follow-up adds
+// information to an alert that has ALREADY gone out, so it cannot reach anyone
+// who was not about to be reached anyway, and the person it helps is by
+// definition someone in trouble. With this in place App.js can post the fix the
+// moment it has one; its own chase gives up at 45s, which fits inside the
+// window below with room to spare.
+//
+// Not derived from ALERT_FLOOR_MS on purpose. Today it is the same sixty
+// seconds, so the exemption covers the floor exactly and nothing beyond it —
+// past the floor the ordinary escalation path already lets a first location
+// through, because isEscalation counts "they had no location and now they do"
+// as an escalation. There is therefore no gap at any point on the timeline.
+// Deriving the window would mean a future change to the floor silently widened
+// the exemption with it; this is its own policy and stays its own.
+const LOCATION_FOLLOWUP_WINDOW_MS = 60 * 1000;
+
 const CALL_911 = 'If you are in danger, call 911.';
 
 // Metres between two coordinate pairs (haversine). Only ever compared against
@@ -334,6 +363,35 @@ function isEscalation(coords, previous) {
   const hadLocation = previous.latitude != null && previous.longitude != null;
   if (!hadLocation) return true;
   return metresBetween(coords, { lat: Number(previous.latitude), lng: Number(previous.longitude) }) > ESCALATION_METERS;
+}
+
+// True when this request is a location-only follow-up to an alert that went out
+// without one, and is therefore exempt from the send floor. Three bounds, all
+// required:
+//
+//   1. It must ACTUALLY ADD A LOCATION. No coordinates, no exemption, so a bare
+//      re-tap can never buy one.
+//   2. The previous alert must GENUINELY HAVE HAD NO LOCATION. If it carried
+//      coordinates, this is an ordinary update and the floor plus the 250 m
+//      escalation rule apply as before.
+//   3. It must be PROMPT. The client chases its fix for seconds, not minutes.
+//
+// ONCE. There is no counter for this because there does not need to be one:
+// bound 2 is the counter. A granted follow-up writes its coordinates into the
+// claim row inside the same advisory-locked transaction, BEFORE a single email
+// leaves, so the next request through this function — concurrent or not — reads
+// a most-recent alert that HAS a location and is refused. The allowance is spent
+// atomically at claim time.
+//
+// The one way it is granted twice is a follow-up whose sends ALL failed: that
+// row backdates itself out of the way like any other total failure, so the
+// earlier no-location alert is once again the most recent. An attempt that
+// reached nobody has not spent anything, and MAX_ATTEMPTS_PER_WINDOW is the
+// ceiling on that loop, exactly as it is for a failing first alert.
+function isLocationFollowUp(coords, previous, ageMs) {
+  if (!coords || !previous) return false;
+  if (previous.latitude != null || previous.longitude != null) return false;
+  return Number(ageMs) <= LOCATION_FOLLOWUP_WINDOW_MS;
 }
 
 function agoPhrase(ms) {
@@ -394,9 +452,20 @@ router.post('/alert', authenticate, async (req, res) => {
         const ageMs = Number(last.age_ms) || 0;
         const delivered = last.contacts_alerted > 0;
 
+        // The floor's one exemption (see isLocationFollowUp). Evaluated once,
+        // here, so both floor refusals below answer the same question and
+        // cannot drift apart.
+        const locationFollowUp = isLocationFollowUp(coords, last, ageMs);
+
         // In flight: a claim row with nothing confirmed yet. This is the only
         // refusal that is purely about concurrency, and it lapses in 60s.
-        if (!delivered && ageMs < ALERT_FLOOR_MS) {
+        //
+        // The follow-up is exempt HERE too, and this is the branch it actually
+        // meets in production: the first alert's emails are still fanning out
+        // three seconds later, so contacts_alerted is still 0 and the row still
+        // reads as in flight. Exempting only the delivered-floor branch below
+        // would have left the fix inert for the timing it was written for.
+        if (!delivered && ageMs < ALERT_FLOOR_MS && !locationFollowUp) {
           await client.query('ROLLBACK');
           return res.status(429).json({
             error: 'An alert is already going out. Give it a moment before trying again.',
@@ -407,7 +476,9 @@ router.post('/alert', authenticate, async (req, res) => {
           const sentAgo = agoPhrase(ageMs);
           const reached = `${last.contacts_alerted} contact${last.contacts_alerted === 1 ? '' : 's'}`;
 
-          if (ageMs < ALERT_FLOOR_MS) {
+          // Same exemption on the delivered side: the first alert is confirmed
+          // out, it just could not say where. Everything else keeps the floor.
+          if (ageMs < ALERT_FLOOR_MS && !locationFollowUp) {
             await client.query('ROLLBACK');
             return res.status(429).json({
               error: `Your alert went out to ${reached} ${sentAgo}. Hang on a moment before sending another. ${CALL_911}`,
@@ -739,9 +810,11 @@ module.exports.__test = {
   safeSubjectText,
   metresBetween,
   isEscalation,
+  isLocationFollowUp,
   agoPhrase,
   ALERT_COOLDOWN_MS,
   ALERT_FLOOR_MS,
+  LOCATION_FOLLOWUP_WINDOW_MS,
   MAX_ESCALATIONS,
   MAX_ATTEMPTS_PER_WINDOW,
   ESCALATION_METERS,
