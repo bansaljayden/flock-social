@@ -22,7 +22,10 @@ const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
 
 const { authenticateSocket } = require('./middleware/auth');
-const { registerHandlers } = require('./sockets/handlers');
+// CHAT_IMAGE_MAX_BYTES is the ceiling the socket handler enforces on a chat
+// photo's data: URL. The REST body limit below is derived from it so the two
+// transports accept exactly the same image. See the JSON body limits block.
+const { registerHandlers, CHAT_IMAGE_MAX_BYTES } = require('./sockets/handlers');
 
 // Route imports
 const authRoutes = require('./routes/auth');
@@ -139,7 +142,56 @@ app.use(helmet({
   crossOriginResourcePolicy: { policy: 'cross-origin' },
   hsts: { maxAge: 31536000, includeSubDomains: true, preload: true },
 }));
-app.use(express.json({ limit: '1mb' }));
+// ---------------------------------------------------------------------------
+// JSON body limits
+// ---------------------------------------------------------------------------
+// Chat photos travel INSIDE the message body as a base64 data: URL, on
+// whichever transport is up. Socket.IO was deliberately raised to 8MB to carry
+// them (maxHttpBufferSize, below); express.json() was left at the 1mb it
+// shipped with, and nobody reconciled the two. base64 inflates by ~4/3, so 1mb
+// of body is roughly a 750KB photo — past that the REST path died on a
+// body-parser 413, and the REST path is the FALLBACK the socket client uses
+// when its connection is down. A photo therefore failed precisely on the weak
+// signal that put the send on that transport in the first place, and went
+// through the moment the socket came back. routes/messages.js has carried a
+// comment acknowledging this cap for a while.
+//
+// This is NOT fixed by raising the limit globally, and the blast radius is the
+// reason. express.json() is mounted ahead of every route AND ahead of every
+// rate limiter (apiLimiter/authLimiter are mounted per-router further down), so
+// the body is fully buffered into memory before any limiter can refuse the
+// request. Raising it globally would hand an UNAUTHENTICATED client a bigger
+// free buffer on /api/auth/login, /api/waitlist and /api/public — none of which
+// carry an image — on a single Railway instance that also runs ONNX inference.
+// The endpoints that legitimately carry an image are three authenticated POSTs,
+// so those get their own parser and everything else keeps the 1mb ceiling.
+//
+// The size is derived rather than picked. CHAT_IMAGE_MAX_BYTES is what
+// sockets/handlers.js enforces on the data: URL itself, so REST has to fit that
+// same image plus the rest of the body: up to 5000 characters of message text
+// (as much as 6 bytes each once JSON-escapes them), a sanitized venue card, and
+// the keys. 64KB covers all of it several times over. The result is that
+// neither transport is the narrower one, and the number that decides it lives
+// in exactly one place.
+const JSON_BODY_ENVELOPE_BYTES = 64 * 1024;
+const imageJsonParser = express.json({ limit: CHAT_IMAGE_MAX_BYTES + JSON_BODY_ENVELOPE_BYTES });
+const defaultJsonParser = express.json({ limit: '1mb' });
+
+// POSTs whose body legitimately carries a base64 image. Anchored and
+// case-insensitive: Express routes case-insensitively by default, so a
+// `/api/DM/5` that reaches the DM handler must reach the same parser.
+const IMAGE_BODY_ROUTES = [
+  /^\/api\/flocks\/\d+\/messages\/?$/i,  // flock chat photo — REST twin of send_message
+  /^\/api\/dm\/\d+\/?$/i,                // DM photo — REST twin of send_dm
+  /^\/api\/stories\/?$/i,                // story photo (route caps the data URL at 700KB itself)
+];
+
+app.use((req, res, next) => {
+  const parser = req.method === 'POST' && IMAGE_BODY_ROUTES.some((re) => re.test(req.path))
+    ? imageJsonParser
+    : defaultJsonParser;
+  return parser(req, res, next);
+});
 app.use(express.urlencoded({ extended: true }));
 
 // Round 12: the /uploads static mount is gone. Nothing writes to that
@@ -246,18 +298,61 @@ app.use((req, res) => {
 // Sentry error capture — must precede the custom error handler (B3; no-op without DSN)
 Sentry.setupExpressErrorHandler(app);
 
+// ---------------------------------------------------------------------------
 // Global error handler
-app.use((err, req, res, _next) => {
+// ---------------------------------------------------------------------------
+// body-parser marks every error it raises with a `type` and the correct HTTP
+// status. This handler ignored both and answered 500 "Internal server error" to
+// all of them, so a photo that overran the body limit told the user the SERVER
+// had broken — a 413 reported as a 500, with wording that offers no way to
+// recover. That now reaches a person: the client toasts these strings rather
+// than console.warn-ing them. The status has to be honest and the sentence has
+// to say what to do about it. Everything else stays deliberately opaque.
+const BODY_PARSER_CLIENT_ERRORS = new Set([
+  'entity.parse.failed',
+  'entity.verify.failed',
+  'request.aborted',
+  'request.size.invalid',
+  'stream.encoding.set',
+  'stream.not.readable',
+  'parameters.too.many',
+  'charset.unsupported',
+  'encoding.unsupported',
+]);
+
+app.use((err, req, res, next) => {
+  // Something already started writing this response — a second write is an
+  // ERR_HTTP_HEADERS_SENT crash on a request that may well have succeeded.
+  // Hand it to Express's default handler, which closes the connection.
+  if (res.headersSent) return next(err);
+
+  if (err && err.type === 'entity.too.large') {
+    return res.status(413).json({
+      error: "That's too large to send. If it has a photo, try a smaller one.",
+    });
+  }
+  if (err && BODY_PARSER_CLIENT_ERRORS.has(err.type)) {
+    const status = Number(err.status || err.statusCode);
+    return res.status(status >= 400 && status < 500 ? status : 400)
+      .json({ error: 'That request could not be read.' });
+  }
+
   console.error('Unhandled error:', err);
-  res.status(500).json({ error: 'Internal server error' });
+  return res.status(500).json({ error: 'Internal server error' });
 });
 
 // ---------------------------------------------------------------------------
 // Socket.io
 // ---------------------------------------------------------------------------
 const io = new Server(server, {
-  // 8MB: the chat UI accepts images up to 5MB, which base64-expands past
-  // Socket.IO's 1MB default and silently killed the send (round 3 P2)
+  // 8MB: Socket.IO's 1MB default silently killed any image send, because a
+  // chat photo travels base64-encoded inside the message frame (round 3 P2).
+  //
+  // This is a FRAME ceiling, not the photo ceiling. The photo ceiling is
+  // CHAT_IMAGE_MAX_BYTES in sockets/handlers.js, which is the same number the
+  // REST body limit above is derived from; this stays comfortably above it so
+  // an oversized send is refused by the handler, with a sentence explaining
+  // why, rather than being dropped by the transport with no error at all.
   maxHttpBufferSize: 8 * 1024 * 1024,
   cors: {
     origin: (origin, callback) => {

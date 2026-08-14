@@ -1,7 +1,15 @@
 const jwt = require('jsonwebtoken');
 const pool = require('../config/database');
 const { stripHtml } = require('../utils/sanitize');
-const { moderateText, TEXT_REJECTED_MESSAGE, moderateImage, IMAGE_REJECTED_MESSAGE } = require('../utils/moderation');
+// imageRejectionMessage, NOT IMAGE_REJECTED_MESSAGE. utils/moderation.js
+// documents the function as the thing call sites are supposed to use, and it is
+// the only one that can tell the two refusals apart: an image refused for being
+// ANIMATED is a policy decision ("try a still photo"), not a safety verdict.
+// Both send paths here reached past it for the constant, so a user whose sunset
+// GIF was refused was told it had failed a safety check, which is both wrong and
+// unactionable. It matters more now that the client shows these strings as a
+// toast instead of console.warn-ing them (App.js, the 'error' listener).
+const { moderateText, TEXT_REJECTED_MESSAGE, moderateImage, imageRejectionMessage } = require('../utils/moderation');
 const { sanitizeVenueData, safeVenuePhotoUrl } = require('../utils/venuePayload');
 const VENUE_REJECTED_MESSAGE = "That venue card couldn't be shared.";
 const { isBlockedBetween, isBlockedBetweenCached, getInvisibleUserIds } = require('../utils/blocks');
@@ -23,6 +31,64 @@ const { TOKEN_ALGORITHMS } = require('../middleware/auth');
 // the other. The raw id the client sent is kept per entry, because it is what
 // goes back out in the payload and App.js compares it with ===.
 const roomUsers = new Map(); // String(flockId) -> Map(socketId -> { socketId, userId, name, flockId })
+
+// ---------------------------------------------------------------------------
+// Chat photo ceiling — ONE number, both transports
+// ---------------------------------------------------------------------------
+// A chat photo travels inside the message body as a base64 data: URL, over
+// whichever transport is up, and is stored verbatim in messages.image_url /
+// direct_messages.image_url. Until now neither transport put a number on it:
+//
+//   * the socket's only ceiling was Socket.IO's 8MB maxHttpBufferSize, which is
+//     a frame-size safety valve, not a product decision. It let a ~5.9MB data
+//     URL into a TEXT column that is then re-sent to every member on every
+//     history page load, and again to every recipient on the live fan-out;
+//   * REST's only ceiling was `express.json({ limit: '1mb' })`, an unrelated
+//     global that happens to sit in front of the route. Neither number was
+//     chosen with the other in mind, so the fallback transport was ~8x narrower
+//     than the primary one — and the fallback is the one that comes out when
+//     the network is already bad, which is exactly when a big photo hurts.
+//
+// So: one explicit ceiling, enforced here and used to size the REST body limit
+// in server.js (which imports this constant), and both transports now accept
+// exactly the same photo. 1MiB of data URL is ~768KB of image after base64's
+// 4/3 inflation. The client resizes to at most 700KiB before sending
+// (CHAT_IMAGE_MAX_CHARS in App.js), so nothing a current client can produce is
+// refused, and there is ~46% of headroom for the client to be retuned without
+// needing a backend deploy. It also lines up with the rest of the app's image
+// paths: stories cap a data URL at 700KiB, avatars at ~400KB.
+const CHAT_IMAGE_MAX_BYTES = 1024 * 1024;
+
+// Wording for the refusals below. These strings are shown to the user verbatim
+// (App.js toasts the server's 'error' channel), and both send paths must use
+// the SAME one for the same condition — a divergence here reads to the user as
+// two different products.
+const IMAGE_TOO_LARGE_MESSAGE = 'That photo is too large to send. Try a smaller one.';
+const IMAGE_FORMAT_MESSAGE = 'Unsupported image format';
+// Matches routes/messages.js's EMPTY_MESSAGE exactly, for the same reason.
+const EMPTY_MESSAGE = 'Message is required';
+const MESSAGE_TOO_LONG_MESSAGE = 'Message too long (max 5000 characters)';
+
+// The one gate both send paths use for an inbound image. Returns null when
+// there is no image, or { ok } / { ok: false, message } otherwise.
+//
+// `typeof image_url === 'string'` is load-bearing, not decoration: the regex
+// test coerces, so `['data:image/png;base64,AAAA']` passed the old check as a
+// string, then went to Buffer.byteLength (a TypeError) and to pg as an array
+// literal. Same shape class the REST twin closes with scalarOnly().
+function checkInboundImage(image_url) {
+  if (image_url === undefined || image_url === null || image_url === '') return null;
+  if (typeof image_url !== 'string'
+      || !/^data:image\/(png|jpe?g|gif|webp);base64,/.test(image_url)) {
+    return { ok: false, message: IMAGE_FORMAT_MESSAGE };
+  }
+  // Byte length, not .length: the prefix and the base64 body are ASCII, so the
+  // two agree today, but what the body limit in server.js counts is bytes.
+  if (Buffer.byteLength(image_url, 'utf8') > CHAT_IMAGE_MAX_BYTES) {
+    return { ok: false, message: IMAGE_TOO_LARGE_MESSAGE };
+  }
+  return { ok: true };
+}
 
 // Drop one socket's presence from one flock, cleaning up the empty room entry.
 function forgetPresence(flockKey, socketId) {
@@ -729,16 +795,37 @@ function registerHandlers(io, socket) {
         socket.emit('error', { message: 'Slow down a moment.' });
         return;
       }
-      const { flockId, message_type, venue_data, image_url } = data;
-      const message_text = stripHtml(typeof data.message_text === 'string' ? data.message_text.trim() : '');
+      // `data` is whatever came off the wire, including nothing at all. It used
+      // to be destructured bare, so `socket.emit('send_message')` threw a
+      // TypeError into the catch below and came back as the generic "Failed to
+      // send message" — a server-fault sentence for a client-shaped mistake.
+      // send_dm has always read its payload defensively (`data?.receiverId`).
+      const { flockId, message_type, venue_data, image_url } = data || {};
+      const message_text = stripHtml(typeof data?.message_text === 'string' ? data.message_text.trim() : '');
 
       // Validate inputs
-      if (!flockId || (!message_text && message_type !== 'image')) {
-        socket.emit('error', { message: 'Message text is required' });
+      if (!flockId) {
+        socket.emit('error', { message: 'That flock could not be found.' });
+        return;
+      }
+      // A message must CARRY something: text or an image.
+      //
+      // The old rule was `!message_text && message_type !== 'image'`, which is
+      // a test of the TYPE LABEL rather than of the payload, and it was wrong in
+      // both directions. A bare `{ message_type: 'image' }` with no image and no
+      // text passed it and stored an empty row (a blank bubble in the thread),
+      // while a photo whose caller had not set message_type was refused even
+      // though it carried an image. routes/messages.js already spells the rule
+      // as "text or an image" and its comment asks this handler to adopt that
+      // one rather than the other way round; this is that. Nothing a real client
+      // sends changes: every image send carries image_url.
+      const imageCheck = checkInboundImage(image_url);
+      if (!message_text && !imageCheck) {
+        socket.emit('error', { message: EMPTY_MESSAGE });
         return;
       }
       if (message_text.length > 5000) {
-        socket.emit('error', { message: 'Message too long (max 5000 characters)' });
+        socket.emit('error', { message: MESSAGE_TOO_LONG_MESSAGE });
         return;
       }
       // UGC text filter (Apple 1.2) — reject objectionable content before storing.
@@ -753,27 +840,30 @@ function registerHandlers(io, socket) {
       // entirely. Only data-URL images are accepted (no arbitrary remote URLs
       // that could track recipients), and every image is screened fail-closed
       // before it is stored or delivered.
-      if (image_url) {
-        if (!/^data:image\/(png|jpe?g|gif|webp);base64,/.test(image_url)) {
-          socket.emit('error', { message: 'Unsupported image format' });
+      if (imageCheck) {
+        if (!imageCheck.ok) {
+          socket.emit('error', { message: imageCheck.message });
           return;
         }
         // Round 16: an image send was charged the same single token as a
         // one-word text message, and an image is not the same thing. Each one
         // costs a PAID Google Vision call (utils/moderation.js), a row holding
-        // up to Socket.IO's 8MB frame ceiling, and that payload again for every
-        // recipient. The REST twin is capped at a 1MB body by
-        // `express.json({ limit: '1mb' })` and 300 requests per 15 minutes; the
-        // socket path allowed 2 per second of an 8x larger payload with no
-        // separate ceiling at all. Its own bucket, so photos are metered as
-        // photos and normal chat is unaffected.
+        // up to CHAT_IMAGE_MAX_BYTES, and that payload again for every
+        // recipient. The REST twin is capped by the body limit in server.js and
+        // 300 requests per 15 minutes; the socket path allowed 2 per second of a
+        // far larger payload with no separate ceiling at all. Its own bucket, so
+        // photos are metered as photos and normal chat is unaffected.
+        //
+        // The format and size checks are deliberately AHEAD of this bucket:
+        // refusing a malformed or oversized frame costs nothing, so it should
+        // not consume a token the user needs for a photo that would work.
         if (!allowEvent(socket, 'send_image', 10, 60_000)) {
           socket.emit('error', { message: 'Slow down a moment.' });
           return;
         }
         const verdict = await moderateImage(image_url);
         if (!verdict.allowed) {
-          socket.emit('error', { message: IMAGE_REJECTED_MESSAGE });
+          socket.emit('error', { message: imageRejectionMessage(verdict) });
           return;
         }
       }
@@ -1357,8 +1447,25 @@ function registerHandlers(io, socket) {
       // connected", so neither can be read off the other.
       const receiverId = asId(data?.receiverId);
       if (receiverId === null || receiverId === user.id) return;
-      if (!text && message_type !== 'image') return;
-      if (text.length > 5000) return;
+
+      // Same "text or an image" rule as the flock path above, for the same
+      // reasons — and these two refusals now SAY something. They used to be
+      // bare `return`s, so the message vanished server-side while the client sat
+      // on a pending bubble that declared itself failed eight seconds later with
+      // no reason attached. The REST twin answers 400 with a worded error for
+      // both conditions; the silence was the divergence, not the rejection. (The
+      // refusals above this line stay silent on purpose: whether an id exists,
+      // and whether you are connected to it, must not be readable off the
+      // response.)
+      const dmImageCheck = checkInboundImage(image_url);
+      if (!text && !dmImageCheck) {
+        socket.emit('error', { message: EMPTY_MESSAGE });
+        return;
+      }
+      if (text.length > 5000) {
+        socket.emit('error', { message: MESSAGE_TOO_LONG_MESSAGE });
+        return;
+      }
 
       // Mutual block — no DMs in either direction.
       if (await isBlockedBetween(user.id, receiverId)) {
@@ -1383,27 +1490,26 @@ function registerHandlers(io, socket) {
       // entirely. Only data-URL images are accepted (no arbitrary remote URLs
       // that could track recipients), and every image is screened fail-closed
       // before it is stored or delivered.
-      if (image_url) {
-        if (!/^data:image\/(png|jpe?g|gif|webp);base64,/.test(image_url)) {
-          socket.emit('error', { message: 'Unsupported image format' });
+      if (dmImageCheck) {
+        if (!dmImageCheck.ok) {
+          socket.emit('error', { message: dmImageCheck.message });
           return;
         }
         // Round 16: an image send was charged the same single token as a
         // one-word text message, and an image is not the same thing. Each one
         // costs a PAID Google Vision call (utils/moderation.js), a row holding
-        // up to Socket.IO's 8MB frame ceiling, and that payload again for every
-        // recipient. The REST twin is capped at a 1MB body by
-        // `express.json({ limit: '1mb' })` and 300 requests per 15 minutes; the
-        // socket path allowed 2 per second of an 8x larger payload with no
-        // separate ceiling at all. Its own bucket, so photos are metered as
-        // photos and normal chat is unaffected.
+        // up to CHAT_IMAGE_MAX_BYTES, and that payload again for the recipient.
+        // The REST twin is capped by the body limit in server.js and 300
+        // requests per 15 minutes; the socket path allowed 2 per second of a far
+        // larger payload with no separate ceiling at all. Its own bucket, so
+        // photos are metered as photos and normal chat is unaffected.
         if (!allowEvent(socket, 'send_image', 10, 60_000)) {
           socket.emit('error', { message: 'Slow down a moment.' });
           return;
         }
         const verdict = await moderateImage(image_url);
         if (!verdict.allowed) {
-          socket.emit('error', { message: IMAGE_REJECTED_MESSAGE });
+          socket.emit('error', { message: imageRejectionMessage(verdict) });
           return;
         }
       }
@@ -1962,4 +2068,12 @@ module.exports = {
   __resetRateLimiters,
   MAX_SOCKETS_PER_USER,
   USER_LIMIT_MULTIPLIER,
+  // server.js sizes the REST body limit from this, so the two transports cannot
+  // drift apart again without someone editing the number they share.
+  CHAT_IMAGE_MAX_BYTES,
+  checkInboundImage,
+  IMAGE_TOO_LARGE_MESSAGE,
+  IMAGE_FORMAT_MESSAGE,
+  EMPTY_MESSAGE,
+  MESSAGE_TOO_LONG_MESSAGE,
 };
