@@ -26,7 +26,7 @@ import VenueLoginScreen from './components/auth/VenueLoginScreen';
 import ModerationSheet from './components/ModerationSheet';
 import PaywallSheet from './components/PaywallSheet';
 import { initPurchases } from './services/purchases';
-import { getEntitlements, createFlockInviteLink, getVenueIntelligence, getVenueStrip, getFlockVotes, voteForVenue, clearVenueVote, getBlockedUsers, unblockUser, blockUser } from './services/api';
+import { getEntitlements, createFlockInviteLink, getVenueIntelligence, getVenueStrip, getFlockVotes, voteForVenue, clearVenueVote, getBlockedUsers, unblockUser, blockUser, saveFlockVenue, setFlockStatus, setFlockEventTime } from './services/api';
 import { motion, AnimatePresence } from 'framer-motion';
 import BirdieBird from './components/ui/BirdieBird';
 import Icons from './components/ui/Icons';
@@ -509,7 +509,16 @@ const OfflineGate = () => {
   const retry = async () => {
     setChecking(true);
     try {
-      // Any HTTP response at all (even a 401) proves the network path works
+      // Any HTTP response at all (even a 401) proves the network path works.
+      //
+      // The one raw fetch left in this file, and deliberately so. request()
+      // in services/api.js is wrong for a connectivity PROBE in three ways:
+      // it throws before sending whenever navigator.onLine is false, which is
+      // exactly the state this button exists to disprove; it turns a 401 into
+      // a thrown error, so the one response that best proves the network is
+      // alive would read as "still offline"; and it attaches the stored token,
+      // so a probe that happened to run on an expired session would trip the
+      // session-expiry teardown and sign the user out of a tap on "Try again".
       await fetch(`${BASE_URL}/api/auth/me`, { cache: 'no-store' });
       setOffline(false);
     } catch (_) {
@@ -681,17 +690,71 @@ const sameSend = (local, server) => {
     && localImage === (server.image_url || null);
 };
 
-// A history fetch replaces the whole message list, and it cannot know about a
-// send the server never confirmed. Carry those bubbles forward — otherwise
-// stepping out of a chat and back in silently deletes a failed photo and the
-// retry attached to it — minus any the history now contains, which is the case
-// where the send actually landed while the client was giving up on it.
-const keepUnsettled = (local, history) => (local || []).filter((m) => (m.pending || m.failed)
-  && !(history || []).some((h) => sameSend(m, {
+// Message and DM primary keys are SERIAL, i.e. int4. Optimistic bubbles are
+// minted with Date.now(), which is ~1.8e12 and therefore unmistakable: any id
+// past this ceiling is a local placeholder, never a row the server issued.
+// Without this test a not-yet-reconciled venue card looks like the newest
+// message in the flock and survives every history read as a duplicate.
+const SERVER_ID_MAX = 2147483647;
+const isServerId = (id) => typeof id === 'number' && Number.isInteger(id) && id > 0 && id <= SERVER_ID_MAX;
+
+// Fold a freshly fetched history into what is already on screen.
+//
+// A history fetch replaces the whole message list, and it cannot know about
+// bubbles that legitimately belong there.
+//
+// 1. Sends the server never confirmed. Carry those forward — otherwise
+//    stepping out of a chat and back in silently deletes a failed photo and
+//    the retry attached to it — minus any the history now contains, which is
+//    the case where the send actually landed while the client was giving up on
+//    it. (This was `keepUnsettled`.)
+// 2. Rows the SOCKET delivered after the server had already built the history
+//    response. On screen entry that race is a few hundred milliseconds wide.
+//    On the reconnect catch-up it is wide open, because live delivery resumes
+//    the instant the room is re-entered while the HTTP read is still in
+//    flight — so a catch-up meant to close a gap could open a new one. Only
+//    rows strictly NEWER than everything the history returned are carried: ids
+//    are serial, so "newer" is decidable. A local row missing from the middle
+//    of the returned window was hidden by a moderator or deleted and must stay
+//    gone; resurrecting it is the failure mode this avoids.
+// 3. `keepOlder` — rows OLDER than the oldest the history returned. The route
+//    answers with the newest 50, so a catch-up in a busy chat would otherwise
+//    slice scrollback off the top of a conversation the user is reading. Those
+//    rows are outside the window rather than absent from it, so the deletion
+//    argument above does not apply. Screen entry does NOT ask for this: it is
+//    the one moment a clean read of the server's truth is wanted, and the local
+//    list there can be a stale session's.
+const mergeHistory = (local, history, { keepOlder = false } = {}) => {
+  const hist = history || [];
+  const mine = local || [];
+  const settled = (m) => !m.pending && !m.failed;
+  const unsettled = mine.filter((m) => (m.pending || m.failed) && !hist.some((h) => sameSend(m, {
     message_text: h.text,
     message_type: h.message_type,
     image_url: h.image_url || h.image || null,
   })));
+
+  let oldestId = null;
+  let newestId = null;
+  for (const h of hist) {
+    if (!isServerId(h.id)) continue;
+    if (oldestId === null || h.id < oldestId) oldestId = h.id;
+    if (newestId === null || h.id > newestId) newestId = h.id;
+  }
+  // An empty history says nothing about ordering, so nothing is positioned
+  // against it.
+  if (newestId === null) return [...hist, ...unsettled];
+
+  const older = keepOlder ? mine.filter((m) => settled(m) && isServerId(m.id) && m.id < oldestId) : [];
+  const newer = mine.filter((m) => settled(m) && isServerId(m.id) && m.id > newestId);
+  return [...older, ...hist, ...newer, ...unsettled];
+};
+
+// How often the socket's liveness is sampled, and how close together two
+// history reads of the SAME conversation are allowed to be. See the reconnect
+// catch-up in App for why liveness is polled rather than subscribed to.
+const SOCKET_SAMPLE_MS = 2000;
+const CATCHUP_MIN_GAP_MS = 12000;
 
 // One-line summary of a message for the places that can only show one line: the
 // conversation list, the reply bar, a quoted reply.
@@ -4571,7 +4634,18 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
       .catch(() => {});
   }, []);
 
-  // Assign or change venue on a flock (updates local state + API)
+  // Assign or change venue on a flock. Optimistic locally, then reconciled
+  // against what the server actually stored.
+  //
+  // This used to be a bare fetch() that read the token out of localStorage and
+  // ended in `.catch(console.error)`, so every refusal — 403 (not the creator),
+  // 404 (deleted flock), 400 — rendered as success and then reverted on the
+  // next load with nothing said. Worse, it sent `venue_latitude: null` for any
+  // venue with no coordinates, and express-validator's `.optional()` skips
+  // `undefined` only: that 400'd the whole request, so confirming a venue with
+  // no lat/lng or no rating could never save at all. saveFlockVenue() in the
+  // api layer strips nullish keys instead of sending them, and routes the call
+  // through request(), which owns auth, session expiry and honest error copy.
   const updateFlockVenue = useCallback((flockId, venue) => {
     const vName = venue.name;
     const vAddr = venue.addr || venue.formatted_address || '';
@@ -4581,32 +4655,63 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
     const vPhoto = venue.photo_url || null;
     const vRating = venue.stars || venue.rating || null;
     const vPriceLevel = venue.price_level || null;
+    // What is on screen right now, so a refusal can put it back rather than
+    // leaving the user looking at a venue the flock is not actually at.
+    const before = flocksRef.current.find(f => f.id === flockId) || null;
+    const previous = before && {
+      venue: before.venue, venueAddress: before.venueAddress, venueId: before.venueId,
+      venueLat: before.venueLat, venueLng: before.venueLng, venuePhoto: before.venuePhoto,
+      venueRating: before.venueRating, venuePriceLevel: before.venuePriceLevel,
+    };
     // Update local state immediately
     setFlocks(prev => prev.map(f => f.id === flockId ? { ...f, venue: vName, venueAddress: vAddr, venueId: vId, venueLat: vLat, venueLng: vLng, venuePhoto: vPhoto, venueRating: vRating, venuePriceLevel: vPriceLevel } : f));
-    // Also update the API
-    const token = localStorage.getItem('flockToken');
-    if (token && typeof flockId === 'number') {
-      fetch(`${BASE_URL}/api/flocks/${flockId}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ venue_name: vName, venue_address: vAddr, venue_id: vId, venue_latitude: vLat, venue_longitude: vLng, venue_rating: vRating, venue_photo_url: vPhoto }),
-      }).catch(err => console.error('Failed to update flock venue:', err));
-    }
-    // Toast removed — venue updates visually
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+    // A flock that exists only in local state (no numeric id) has nothing to
+    // save against; the optimistic write is the whole story.
+    if (typeof flockId !== 'number') return Promise.resolve();
+    return saveFlockVenue(flockId, { name: vName, addr: vAddr, place_id: vId, lat: vLat, lng: vLng, rating: vRating, photo_url: vPhoto })
+      .then((data) => {
+        // Reconcile against what was actually stored. The server rewrites some
+        // of this: safeVenuePhotoUrl normalises our absolute proxy url back
+        // down to the RELATIVE path (and returns null for anything that is not
+        // our proxy), so the photo has to go through resolveVenuePhoto on the
+        // way back in — exactly as the initial flock load does. Assigning the
+        // raw value would point an <img> at the frontend origin.
+        const saved = data?.flock;
+        if (!saved) return;
+        setFlocks(prev => prev.map(f => f.id === flockId ? {
+          ...f,
+          venue: saved.venue_name ?? f.venue,
+          venueAddress: saved.venue_address ?? f.venueAddress,
+          venueId: saved.venue_id ?? f.venueId,
+          venueLat: saved.venue_latitude ?? f.venueLat,
+          venueLng: saved.venue_longitude ?? f.venueLng,
+          venuePhoto: resolveVenuePhoto(saved.venue_photo_url) ?? f.venuePhoto,
+          venueRating: saved.venue_rating ?? f.venueRating,
+        } : f));
+      })
+      .catch((err) => {
+        if (previous) setFlocks(prev => prev.map(f => f.id === flockId ? { ...f, ...previous } : f));
+        // A dead session already announced itself through api.js's own toast.
+        if (!err?.sessionExpired) showToast(err?.message || "Couldn't save that venue", 'error');
+      });
+  }, [showToast]);
 
-  // Mark a flock as completed (post-hangout)
+  // Mark a flock as completed (post-hangout). The attendance sheet used to live
+  // inside the `.then` of a raw fetch with no status check, so on a refusal it
+  // simply never opened and the user was told nothing; on a 403 it opened
+  // anyway, because a 403 body still resolves the promise.
   const markFlockCompleted = useCallback((flockId) => {
+    const before = flocksRef.current.find(f => f.id === flockId) || null;
+    const previousStatus = before ? before.status : null;
     setFlocks(prev => prev.map(f => f.id === flockId ? { ...f, status: 'completed' } : f));
-    const token = localStorage.getItem('flockToken');
-    if (token && typeof flockId === 'number') {
-      fetch(`${BASE_URL}/api/flocks/${flockId}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ status: 'completed' }),
-      }).then(() => {
-        const flock = flocks.find(f => f.id === flockId);
-        if (flock && String(flock.creatorId) === String(authUser?.id)) {
+    if (typeof flockId !== 'number') return Promise.resolve();
+    return setFlockStatus(flockId, 'completed')
+      .then(() => {
+        showToast('Flock marked as done!');
+        // Read the roster fresh: `flocks` in a closure was a stale snapshot and
+        // was also why this callback was rebuilt on every flock state change.
+        const flock = flocksRef.current.find(f => f.id === flockId);
+        if (flock && String(flock.creatorId) === String(meRef.current?.id)) {
           const accepted = (flock.members || []).filter(m => m.status === 'accepted');
           if (accepted.length > 0) {
             setAttendanceFlockId(flockId);
@@ -4617,23 +4722,18 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
             setShowAttendanceModal(true);
           }
         }
-      }).catch(err => console.error('Failed to mark flock completed:', err));
-    }
-  }, [flocks, authUser]); // eslint-disable-line react-hooks/exhaustive-deps
+      })
+      .catch((err) => {
+        if (previousStatus) setFlocks(prev => prev.map(f => f.id === flockId ? { ...f, status: previousStatus } : f));
+        if (!err?.sessionExpired) showToast(err?.message || "Couldn't mark this done", 'error');
+      });
+  }, [showToast]);
 
   // Set or change a flock's time. Same generic PUT /api/flocks/:id that
   // saveFlockVenue and setFlockStatus use, and the same rules apply: creator
   // only (the server answers 403 otherwise), event_time must be ISO 8601.
   const saveFlockEventTime = useCallback(async (flockId, isoString) => {
-    const token = localStorage.getItem('flockToken');
-    const res = await fetch(`${BASE_URL}/api/flocks/${flockId}`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
-      body: JSON.stringify({ event_time: isoString }),
-    });
-    let data = null;
-    try { data = await res.json(); } catch { /* empty or non-JSON body */ }
-    if (!res.ok) throw new Error(data?.error || 'Could not save the time');
+    const data = await setFlockEventTime(flockId, isoString);
     const saved = data?.flock?.event_time || isoString;
     setFlocks(prev => prev.map(f => f.id === flockId
       ? { ...f, eventTime: saved, time: formatEventTime(saved), momentum: f.momentum ? { ...f.momentum, hasTime: true } : f.momentum }
@@ -4824,10 +4924,77 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
         : f));
     } catch { /* keep the roster already on screen */ }
   }, []);
+
+  // When each conversation's history was last read, keyed 'flock:12' / 'dm:7'.
+  // Stamped at the START of a fetch, so the reconnect catch-up below cannot
+  // fire a second read on top of one that is still in flight.
+  const historyReadAtRef = useRef({});
+
+  // One flock-chat history read, shared by screen entry and the reconnect
+  // catch-up so the two cannot drift in how they merge.
+  const loadFlockMessages = useCallback((flockId, { showSpinner = false, keepOlder = false } = {}) => {
+    historyReadAtRef.current[`flock:${flockId}`] = Date.now();
+    if (showSpinner) setMessagesLoading(true);
+    return getMessages(flockId)
+      .then((data) => {
+        const msgs = (data.messages || []).map(m => ({
+          id: m.id,
+          sender: String(m.sender_id) === String(meRef.current?.id) ? 'You' : (m.sender_name || 'Unknown'),
+          senderId: m.sender_id,
+          senderImage: m.sender_image || null,
+          time: new Date(m.created_at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }),
+          text: m.message_text,
+          message_type: m.message_type || 'text',
+          venue_data: m.venue_data || null,
+          reactions: (m.reactions || []).map(r => r.emoji),
+          ...(m.image_url ? { image: m.image_url } : {}),
+        }));
+        setFlocks(prev => prev.map(f => f.id === flockId
+          ? { ...f, messages: mergeHistory(f.messages, msgs, { keepOlder }) }
+          : f));
+      })
+      .catch(() => {
+        // A failed read must not look like a successful one to the throttle,
+        // or a reconnect into a still-broken backend would be rate-limited
+        // out of the retry it actually needs.
+        historyReadAtRef.current[`flock:${flockId}`] = 0;
+      })
+      .finally(() => { if (showSpinner) setMessagesLoading(false); });
+  }, []);
+
+  // The DM twin of loadFlockMessages, for the same two callers.
+  const loadDmMessages = useCallback((userId, { keepOlder = false } = {}) => {
+    historyReadAtRef.current[`dm:${userId}`] = Date.now();
+    return getDMs(userId)
+      .then((data) => {
+        const msgs = (data.messages || []).map(m => ({
+          id: m.id,
+          sender: String(m.sender_id) === String(meRef.current?.id) ? 'You' : (m.sender_name || 'Unknown'),
+          senderId: m.sender_id,
+          text: m.message_text,
+          time: new Date(m.created_at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }),
+          message_type: m.message_type || 'text',
+          venue_data: m.venue_data,
+          image_url: m.image_url,
+          reactions: m.reactions || [],
+          reply_to: m.reply_to ? { id: m.reply_to.id, text: m.reply_to.message_text, sender: m.reply_to.sender_name } : null,
+        }));
+        setDirectMessages(prev => prev.map(d => d.userId === userId
+          ? { ...d, messages: mergeHistory(d.messages, msgs, { keepOlder }), unread: 0 }
+          : d));
+      })
+      .catch(() => { historyReadAtRef.current[`dm:${userId}`] = 0; });
+  }, []);
+
   useEffect(() => {
     if (currentScreen === 'chatDetail' && selectedFlockId) {
-      // Leave previous room
-      if (prevFlockIdRef.current && prevFlockIdRef.current !== selectedFlockId) {
+      // Leave previous room — unless a live location share is still running in
+      // it. `member_stopped_sharing` is a room broadcast, so dropping the room
+      // while sharing leaves every peer's pin frozen on the map. The exit path
+      // below already made that exception; walking chat-to-chat did not, so the
+      // guard was one-sided. stopLocationSharing releases the room afterwards.
+      if (prevFlockIdRef.current && prevFlockIdRef.current !== selectedFlockId
+          && sharingLocationRef.current !== prevFlockIdRef.current) {
         leaveFlock(prevFlockIdRef.current);
       }
       prevFlockIdRef.current = selectedFlockId;
@@ -4846,27 +5013,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
         newlyCreatedFlockRef.current = null;
       } else {
         // Fetch message history via HTTP
-        setMessagesLoading(true);
-        getMessages(selectedFlockId)
-          .then((data) => {
-            const msgs = (data.messages || []).map(m => ({
-              id: m.id,
-              sender: String(m.sender_id) === String(authUser?.id) ? 'You' : (m.sender_name || 'Unknown'),
-              senderId: m.sender_id,
-              senderImage: m.sender_image || null,
-              time: new Date(m.created_at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }),
-              text: m.message_text,
-              message_type: m.message_type || 'text',
-              venue_data: m.venue_data || null,
-              reactions: (m.reactions || []).map(r => r.emoji),
-              ...(m.image_url ? { image: m.image_url } : {}),
-            }));
-            setFlocks(prev => prev.map(f => f.id === selectedFlockId
-              ? { ...f, messages: [...msgs, ...keepUnsettled(f.messages, msgs)] }
-              : f));
-          })
-          .catch(() => {})
-          .finally(() => setMessagesLoading(false));
+        loadFlockMessages(selectedFlockId, { showSpinner: true });
       }
       // Load budget status and bill split
       getBudgetStatus(selectedFlockId)
@@ -4895,7 +5042,107 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
       setBudgetStatus(null);
       setBillSplit(null);
     }
-  }, [currentScreen, selectedFlockId, authUser?.id, loadFlockVotes, refreshFlockRoster]);
+  }, [currentScreen, selectedFlockId, loadFlockVotes, refreshFlockRoster, loadFlockMessages]);
+
+  // --- Reconnect catch-up ---------------------------------------------------
+  //
+  // socket.js replays its room registry on 'connect', so live traffic resumes
+  // after a drop. What it cannot replay is what was SAID while the connection
+  // was down: history is read over HTTP on screen entry only, so a drop in the
+  // middle of a conversation left a hole that stayed invisible until the user
+  // backed out of the chat and opened it again.
+  //
+  // Liveness is sampled, not subscribed to. socket.io's 'connect' fires on the
+  // instance, and binding to whatever getSocket() returns is precisely the
+  // coupling socket.js's registry exists to remove — the instance is replaced
+  // on a token swap, a fatal-auth teardown or a session expiry, and a listener
+  // welded to the old one goes quiet for good. Reading `.connected` on a timer
+  // is instance-agnostic and costs a boolean. The price is that a drop shorter
+  // than one sample is never seen; that is the deliberate trade, and the socket
+  // reconnect itself takes longer than a sample in every real case.
+  const socketAliveRef = useRef(null); // null until the first sample
+  const [reconnectTick, setReconnectTick] = useState(0);
+  useEffect(() => {
+    const id = setInterval(() => {
+      const live = !!getSocket()?.connected;
+      if (socketAliveRef.current === live) return;
+      const firstSample = socketAliveRef.current === null;
+      socketAliveRef.current = live;
+      // A first connect is not a RE-connect: the screen that needs history
+      // fetches its own on entry.
+      if (live && !firstSample) setReconnectTick(n => n + 1);
+    }, SOCKET_SAMPLE_MS);
+    return () => clearInterval(id);
+  }, []);
+
+  // What a catch-up would target, read at fire time rather than closed over.
+  const catchUpTargetRef = useRef(null);
+  catchUpTargetRef.current = { screen: currentScreen, flockId: selectedFlockId, dmId: selectedDmId };
+  const catchUpTimerRef = useRef(null);
+  const catchUpPendingRef = useRef(false);
+  const runCatchUpRef = useRef(null);
+
+  const runCatchUp = useCallback(() => {
+    // Nobody is looking. Hold the intent and flush it when they are, rather
+    // than either spending the request or losing the gap.
+    if (typeof document !== 'undefined' && document.visibilityState === 'hidden') {
+      catchUpPendingRef.current = true;
+      return;
+    }
+    catchUpPendingRef.current = false;
+    const { screen, flockId, dmId } = catchUpTargetRef.current || {};
+    let key = null;
+    let read = null;
+    if (screen === 'chatDetail' && typeof flockId === 'number') {
+      key = `flock:${flockId}`;
+      // keepOlder: this runs mid-conversation, so it must not slice scrollback
+      // off the top of what the user is already reading.
+      read = () => loadFlockMessages(flockId, { keepOlder: true });
+    } else if (screen === 'dmDetail' && dmId) {
+      key = `dm:${dmId}`;
+      read = () => loadDmMessages(dmId, { keepOlder: true });
+    }
+    if (!key) return; // no conversation open, nothing to catch up on
+    const waitMs = CATCHUP_MIN_GAP_MS - (Date.now() - (historyReadAtRef.current[key] || 0));
+    if (waitMs <= 0) {
+      // A deferred read is now redundant — this one covers the same window.
+      if (catchUpTimerRef.current) {
+        clearTimeout(catchUpTimerRef.current);
+        catchUpTimerRef.current = null;
+      }
+      read();
+      return;
+    }
+    // Throttled, not cancelled. A reconnect landing seconds after a screen-entry
+    // read still missed whatever arrived while the socket was down, so the read
+    // is deferred to the end of the window instead of dropped. One timer, so a
+    // flapping connection collapses into a single deferred read rather than a
+    // queue of them — which is the whole reason this is throttled at all.
+    if (catchUpTimerRef.current) return;
+    catchUpTimerRef.current = setTimeout(() => {
+      catchUpTimerRef.current = null;
+      runCatchUpRef.current?.();
+    }, waitMs);
+  }, [loadFlockMessages, loadDmMessages]);
+  runCatchUpRef.current = runCatchUp;
+
+  useEffect(() => {
+    if (reconnectTick) runCatchUp();
+  }, [reconnectTick, runCatchUp]);
+
+  useEffect(() => {
+    const onVisible = () => {
+      if (document.visibilityState === 'visible' && catchUpPendingRef.current) runCatchUp();
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => {
+      document.removeEventListener('visibilitychange', onVisible);
+      if (catchUpTimerRef.current) {
+        clearTimeout(catchUpTimerRef.current);
+        catchUpTimerRef.current = null;
+      }
+    };
+  }, [runCatchUp]);
 
   // Fetch flock members + momentum when opening flock detail overview
   useEffect(() => {
@@ -5012,17 +5259,54 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   // --- Live location sharing ---
 
   const startSharingLocation = useCallback((flockId) => {
-    if (!userLocation) {
-      // Toast removed — banner shows location status
+    if (userLocation) {
+      emitLocation(flockId, userLocation.lat, userLocation.lng);
+      setSharingLocationForFlock(flockId);
       return;
     }
-    emitLocation(flockId, userLocation.lat, userLocation.lng);
-    setSharingLocationForFlock(flockId);
-  }, [userLocation]); // eslint-disable-line react-hooks/exhaustive-deps
+    // No fix yet. This used to return in silence behind a comment claiming the
+    // banner explained it; the banner reads "Share your location with the
+    // group?" and says nothing about permission, so on a device that had never
+    // granted location the Share button did nothing at all, every time, with no
+    // way to find out why. Asking for a fix IS what the tap means, and a tap is
+    // the gesture the browser wants before it will prompt.
+    if (!navigator.geolocation) {
+      showToast("This device can't share a location", 'error');
+      return;
+    }
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        const { latitude, longitude } = pos.coords;
+        setUserLocation({ lat: latitude, lng: longitude });
+        emitLocation(flockId, latitude, longitude);
+        setSharingLocationForFlock(flockId);
+      },
+      (err) => {
+        showToast(err?.code === 1
+          ? 'Flock needs location access to share where you are. Turn it on in Settings.'
+          : "Couldn't get your location. Try again in a second.", 'error');
+      },
+      { enableHighAccuracy: true, timeout: 10000, maximumAge: 30000 }
+    );
+  }, [userLocation, showToast]);
 
   const stopLocationSharing = useCallback(() => {
-    if (!sharingLocationForFlock) return;
-    socketStopSharing(sharingLocationForFlock);
+    const flockId = sharingLocationForFlock;
+    if (!flockId) return;
+    socketStopSharing(flockId);
+    // Release the socket room the share was holding open.
+    //
+    // The chat effect keeps the room while a share is live on purpose: peers
+    // announce `member_stopped_sharing` to `flock:{id}`, so a client outside
+    // the room would keep a stale pin on the map forever. Nothing ever handed
+    // it back, though — the room outlived the share for the whole session, and
+    // since socket.js replays its join registry on 'connect', it was re-entered
+    // on every reconnect too, against a server cap of 50 flock rooms per
+    // connection. Leaving cannot break a share the user still wants: this runs
+    // only once sharing has stopped, `update_location` fans out per member to
+    // `user:{id}` rather than through the room, and if the flock's chat is
+    // still on screen the screen owns the room and keeps it.
+    if (prevFlockIdRef.current !== flockId) leaveFlock(flockId);
     setSharingLocationForFlock(null);
     setFlockMemberLocations({});
   }, [sharingLocationForFlock]);
@@ -5535,9 +5819,24 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
     };
     const msgText = `Check out ${venue.name}!`;
 
-    // Optimistic local update
+    // Optimistic local update.
+    //
+    // NOTE (audit round 5): this hand-rolls what transmitFlockMessage already
+    // owns, and it should be folded into it. Doing that requires passing
+    // `venue_data` through transmitFlockMessage, and the exact source text of
+    // its two send calls is pinned by regexes in
+    // backend/__tests__/socketRoomRejoin.test.js ("transmitFlockMessage must
+    // pass text and image in a single send"), which is not a file this pass
+    // owns. The consequences of leaving it split are real and recorded here so
+    // the next person can fix both together: the socket path below registers
+    // nothing in pendingEchoRef, so this bubble keeps its Date.now() id
+    // forever and a reaction or a report on the card you just shared addresses
+    // a row number the server has never seen; and a socket send the server
+    // drops (rate limit, moderation) leaves the card on screen looking sent,
+    // with no failed state and no tap-to-retry.
+    const localId = Date.now();
     addMessageToFlock(flockId, {
-      id: Date.now(),
+      id: localId,
       sender: 'You',
       senderId: authUser?.id,
       senderImage: profilePic,
@@ -5563,6 +5862,15 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
         // api.js already words the offline, unreachable and timeout cases; the
         // fallback only covers an error with no message at all.
         showToast(err?.message || "That venue card didn't send. Try again.", 'error');
+        // Round 5: the toast was the whole response, so a card the server
+        // refused sat on screen looking sent until the next history read
+        // quietly removed it. Take it back now. It is dropped rather than
+        // flagged `failed` on purpose: tap-to-retry routes through
+        // transmitFlockMessage, which cannot carry venue_data (see the note
+        // above), so a retry would re-send the card as a bare text message.
+        setFlocks(prev => prev.map(f => f.id === flockId
+          ? { ...f, messages: (f.messages || []).filter(m => m.id !== localId) }
+          : f));
       }
     }
 
@@ -6775,25 +7083,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   // Load messages when opening a DM conversation
   useEffect(() => {
     if (currentScreen === 'dmDetail' && selectedDmId) {
-      getDMs(selectedDmId)
-        .then(data => {
-          const msgs = (data.messages || []).map(m => ({
-            id: m.id,
-            sender: m.sender_id === authUser?.id ? 'You' : (m.sender_name || 'Unknown'),
-            senderId: m.sender_id,
-            text: m.message_text,
-            time: new Date(m.created_at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }),
-            message_type: m.message_type || 'text',
-            venue_data: m.venue_data,
-            image_url: m.image_url,
-            reactions: m.reactions || [],
-            reply_to: m.reply_to ? { id: m.reply_to.id, text: m.reply_to.message_text, sender: m.reply_to.sender_name } : null,
-          }));
-          setDirectMessages(prev => prev.map(d => d.userId === selectedDmId
-            ? { ...d, messages: [...msgs, ...keepUnsettled(d.messages, msgs)], unread: 0 }
-            : d));
-        })
-        .catch(() => {});
+      loadDmMessages(selectedDmId);
       // Load venue votes for this conversation
       getDmVenueVotes(selectedDmId).then(data => setDmVenueVotes(data.votes || [])).catch(() => {});
       // Load pinned venue for this conversation
@@ -6802,7 +7092,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
         else setDmPinnedVenue(null);
       }).catch(() => {});
     }
-  }, [currentScreen, selectedDmId, authUser]);
+  }, [currentScreen, selectedDmId, loadDmMessages]);
 
   // Socket-sent DMs waiting for their own echo back from the server, keyed by
   // the optimistic bubble's temp id. Same job as pendingEchoRef in flock chat:
@@ -10582,6 +10872,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
     // React answers by unmounting the entire app.
     if (!flock) return <MissingFlockPanel />;
     const reactions = ['❤️', '👍', '😂', '🔥'];
+    // PUT /api/flocks/:id is creator-only. The venue controls below are the
+    // same route the vote panel's Confirm button already gates on this.
+    const isCreator = String(flock.creatorId) === String(authUser?.id);
 
     return (
       <div key="chat-detail-screen-container" style={{ display: 'flex', flexDirection: 'column', height: '100%', backgroundColor: 'var(--bg-card-solid)' }}>
@@ -10722,17 +11015,19 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 >
                   {Icons.mapPin('white', 12)} Map
                 </button>
-                <button
-                  className="hit44 glass-btn glass-secondary"
-                  onClick={() => { setPickingVenueForCreate(true); setPickingVenueForFlockId(flock.id); setCurrentTab('explore'); setCurrentScreen('main'); }}
-                  style={{ padding: '8px 10px', borderRadius: '10px', border: `1px solid ${colors.creamDark}`, background: 'var(--bg-card-solid)', color: colors.navy, fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '3px' }}
-                >
-                  Change
-                </button>
+                {isCreator && (
+                  <button
+                    className="hit44 glass-btn glass-secondary"
+                    onClick={() => { setPickingVenueForCreate(true); setPickingVenueForFlockId(flock.id); setCurrentTab('explore'); setCurrentScreen('main'); }}
+                    style={{ padding: '8px 10px', borderRadius: '10px', border: `1px solid ${colors.creamDark}`, background: 'var(--bg-card-solid)', color: colors.navy, fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '3px' }}
+                  >
+                    Change
+                  </button>
+                )}
               </div>
             </div>
           </div>
-        ) : (
+        ) : isCreator ? (
           <button className="hit44"
             onClick={() => { setPickingVenueForCreate(true); setPickingVenueForFlockId(flock.id); setCurrentTab('explore'); setCurrentScreen('main'); }}
             style={{ margin: '0', padding: '10px 14px', background: `linear-gradient(135deg, var(--bg-primary), var(--bg-card-solid))`, borderBottom: `1px solid ${colors.creamDark}`, border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '10px', width: '100%', flexShrink: 0 }}
@@ -10746,6 +11041,23 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
             </div>
             <div style={{ color: colors.steel, fontWeight: '700', fontSize: 'var(--t-title)' }}>+</div>
           </button>
+        ) : (
+          // Everyone used to get "Add a Venue", but the route behind it is
+          // creator-only, so for every other member the whole venue-picker flow
+          // ended in a 403 that never reached the screen. Voting is the thing
+          // they can actually do, so say that instead of offering a dead button.
+          <div style={{ margin: '0', padding: '10px 14px', background: `linear-gradient(135deg, var(--bg-primary), var(--bg-card-solid))`, borderBottom: `1px solid ${colors.creamDark}`, display: 'flex', alignItems: 'center', gap: '10px', width: '100%', flexShrink: 0 }}>
+            <div style={{ width: '40px', height: '40px', borderRadius: '12px', border: `2px dashed ${colors.steel}`, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              {Icons.mapPin(colors.steel, 18)}
+            </div>
+            <div style={{ flex: 1, textAlign: 'left' }}>
+              <p style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: colors.navy, margin: 0 }}>No venue yet</p>
+              {/* flock.host falls back to the literal string 'Unknown' when the
+                  list endpoint has no creator_name, so it is not safe to print
+                  as a person's name. */}
+              <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '1px 0 0' }}>{flock.host && flock.host !== 'Unknown' ? `${flock.host} picks the spot. Vote to say where you want to go.` : 'The host picks the spot. Vote to say where you want to go.'}</p>
+            </div>
+          </div>
         )}
 
         {/* Live location sharing banner */}
@@ -11881,6 +12193,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                     setIsLoading(true);
                     const flockId = flock.id;
                     await apiLeaveFlock(flockId);
+                    // A live share into a flock you just left keeps a GPS fix
+                    // going out every 10 seconds that the server now drops on
+                    // the membership check — battery spent on nothing.
+                    if (sharingLocationRef.current === flockId) stopLocationSharing();
                     setFlocks(prev => prev.filter(f => f.id !== flockId));
                     setShowLeaveConfirm(false);
                     setShowFlockMenu(false);
@@ -12023,8 +12339,12 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           })()}
         </div>
 
-        {/* Slide to complete bar — only for confirmed flocks */}
-        {isConfirmed && (
+        {/* Slide to complete bar — confirmed flocks, creator only.
+            PUT /api/flocks/:id is creator-only, exactly like the time editor
+            below, which is already gated. This one was not, so every other
+            member got a slider that flipped the status locally, was refused by
+            the server, and silently reverted on the next load. */}
+        {isConfirmed && isCreator && (
           <div style={{ padding: '10px 16px', flexShrink: 0, borderBottom: '1px solid var(--border-subtle)' }}>
             <p style={{ fontSize: 'var(--t-micro)', fontWeight: '700', color: 'var(--text-secondary)', margin: '0 0 6px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Hangout done? Slide to complete</p>
             <div
@@ -12045,8 +12365,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
               onTouchEnd={() => {
                 slidingRef.current = false;
                 if (slideProgress > 85) {
+                  // markFlockCompleted owns the toast now: announcing success
+                  // here fired even when the server refused the change.
                   markFlockCompleted(flock.id);
-                  showToast('Flock marked as done!');
                 }
                 setSlideProgress(0);
               }}
@@ -12067,7 +12388,6 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 slidingRef.current = false;
                 if (slideProgress > 85) {
                   markFlockCompleted(flock.id);
-                  showToast('Flock marked as done!');
                 }
                 setSlideProgress(0);
               }}
@@ -12283,10 +12603,20 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
               <p style={{ color: colors.navy, fontWeight: '600', fontSize: 'var(--t-label)', margin: '0 0 2px' }}>Chat</p>
               <p style={{ color: 'var(--text-tertiary)', fontSize: 'var(--t-meta)', margin: 0 }}>{flock.messages?.length > 0 ? `${flock.messages.length} messages` : 'Start chatting'}</p>
             </button>
-            <button className="hit44 glass-btn glass-secondary" onClick={() => { setPickingVenueForFlockId(flock.id); setPickingVenueForCreate(true); setCurrentTab('explore'); setCurrentScreen('main'); }} style={{ ...styles.card, border: 'none', cursor: 'pointer', textAlign: 'center', padding: '16px 10px' }}>
+            {/* Setting the venue is PUT /api/flocks/:id, creator-only. Everyone
+                else used to get the same "Pick Venue" tile and a venue-picker
+                flow that ended in a 403 nobody ever saw. They get the action
+                they actually have instead. */}
+            <button className="hit44 glass-btn glass-secondary" onClick={() => {
+              if (isCreator) {
+                setPickingVenueForFlockId(flock.id); setPickingVenueForCreate(true); setCurrentTab('explore'); setCurrentScreen('main');
+              } else {
+                setCurrentScreen('chatDetail'); setShowVotePanel(true); loadPopularVenues();
+              }
+            }} style={{ ...styles.card, border: 'none', cursor: 'pointer', textAlign: 'center', padding: '16px 10px' }}>
               <div style={{ width: '40px', height: '40px', borderRadius: '12px', background: '#f59e0b', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 8px' }}><svg aria-hidden="true" focusable="false" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><polygon points="1 6 1 22 8 18 16 22 23 18 23 2 16 6 8 2 1 6"/><line x1="8" y1="2" x2="8" y2="18"/><line x1="16" y1="6" x2="16" y2="22"/><circle cx="12" cy="9" r="2.5"/><path d="M12 11.5 L12 13"/></svg></div>
-              <p style={{ color: colors.navy, fontWeight: '600', fontSize: 'var(--t-label)', margin: '0 0 2px' }}>{hasVenue ? 'Change Venue' : 'Pick Venue'}</p>
-              <p style={{ color: 'var(--text-tertiary)', fontSize: 'var(--t-meta)', margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{hasVenue ? flock.venue : 'Search places'}</p>
+              <p style={{ color: colors.navy, fontWeight: '600', fontSize: 'var(--t-label)', margin: '0 0 2px' }}>{isCreator ? (hasVenue ? 'Change Venue' : 'Pick Venue') : 'Vote on Venue'}</p>
+              <p style={{ color: 'var(--text-tertiary)', fontSize: 'var(--t-meta)', margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{hasVenue ? flock.venue : (isCreator ? 'Search places' : 'Say where you want to go')}</p>
             </button>
           </div>
 
