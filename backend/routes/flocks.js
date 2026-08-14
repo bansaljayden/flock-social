@@ -5,7 +5,7 @@ const { authenticate } = require('../middleware/auth');
 const { stripHtml } = require('../utils/sanitize');
 const { rejectIfProfane } = require('../utils/moderation');
 const { safeVenuePhotoUrl } = require('../utils/venuePayload');
-const { isBlockedBetween } = require('../utils/blocks');
+const { isBlockedBetween, getInvisibleUserIds } = require('../utils/blocks');
 const { GUEST_RSVP_SELECT, toGuestEntry, combineRsvpCounts } = require('../utils/guestRsvp');
 const { createUserBudget } = require('../utils/probeBudget');
 const { isPlaceIdShaped } = require('../utils/places');
@@ -90,7 +90,15 @@ router.get('/', async (req, res) => {
               CASE WHEN (SELECT COUNT(*) FROM budget_submissions bs
                          WHERE bs.flock_id = f.id AND bs.skipped = false) >= 3
                    THEN f.budget_ceiling ELSE NULL END AS budget_ceiling,
-              u.name AS creator_name,
+              -- Blocks: the host's name is a name like any other. Withheld in
+              -- SQL (free, versus a second round trip) rather than post-filtered;
+              -- the client already falls back to "Unknown" for a host it cannot
+              -- name. The flock itself stays visible — you are still in it.
+              CASE WHEN EXISTS (
+                SELECT 1 FROM user_blocks b
+                WHERE (b.blocker_id = $1 AND b.blocked_id = f.creator_id)
+                   OR (b.blocker_id = f.creator_id AND b.blocked_id = $1)
+              ) THEN NULL ELSE u.name END AS creator_name,
               fm.status AS member_status,
               (SELECT COUNT(*) FROM flock_members WHERE flock_id = f.id AND status = 'accepted') AS member_count,
               -- Guests RSVP from the share link and have no membership row, so
@@ -104,12 +112,23 @@ router.get('/', async (req, res) => {
                + (SELECT COUNT(*) FROM guest_rsvps gr
                    WHERE gr.flock_id = f.id AND gr.status = 'in'
                      AND COALESCE(gr.is_hidden, false) = false))::int AS going_count,
+              -- Blocks: member_previews carries a NAME and an AVATAR for up to
+              -- four people, and had no block predicate at all — so a blocked
+              -- user's face sat on the flock card of the person who blocked
+              -- them, on the app's home list. Filtered IN SQL rather than after
+              -- the fact because of the LIMIT 4: post-filtering would return
+              -- three faces where four visible members exist.
               (SELECT json_agg(row_to_json(m) ORDER BY m.is_creator DESC, m.id)
                  FROM (
                    SELECT mu.id, mu.name, mu.profile_image_url, (mu.id = f.creator_id) AS is_creator
                    FROM flock_members mfm
                    JOIN users mu ON mu.id = mfm.user_id
                    WHERE mfm.flock_id = f.id AND mfm.status = 'accepted'
+                     AND NOT EXISTS (
+                       SELECT 1 FROM user_blocks b
+                       WHERE (b.blocker_id = $1 AND b.blocked_id = mu.id)
+                          OR (b.blocker_id = mu.id AND b.blocked_id = $1)
+                     )
                    ORDER BY (mu.id = f.creator_id) DESC, mfm.id
                    LIMIT 4
                  ) m
@@ -326,6 +345,11 @@ router.post('/',
 // GET /api/flocks/activity - Recent activity from user's flocks
 router.get('/activity', async (req, res) => {
   try {
+    // Blocks: every row here is "{name} did {thing}". Unfiltered, this feed
+    // narrated a blocked user's movements to the person who blocked them — the
+    // one surface where they'd keep showing up by name every time they joined
+    // or declined anything in a shared flock. Both branches get the predicate:
+    // the first names the CREATOR, the second names the member who responded.
     const result = await pool.query(
       `(
         SELECT 'created' AS action, f.creator_id AS user_id, u.name AS user_name,
@@ -334,6 +358,11 @@ router.get('/activity', async (req, res) => {
         JOIN users u ON u.id = f.creator_id
         JOIN flock_members fm ON fm.flock_id = f.id AND fm.user_id = $1 AND fm.status = 'accepted'
         WHERE f.created_at > NOW() - INTERVAL '7 days'
+          AND NOT EXISTS (
+            SELECT 1 FROM user_blocks b
+            WHERE (b.blocker_id = $1 AND b.blocked_id = f.creator_id)
+               OR (b.blocker_id = f.creator_id AND b.blocked_id = $1)
+          )
       )
       UNION ALL
       (
@@ -348,6 +377,11 @@ router.get('/activity', async (req, res) => {
         WHERE fm2.user_id != $1
           AND fm2.joined_at > NOW() - INTERVAL '7 days'
           AND fm2.status IN ('accepted', 'declined')
+          AND NOT EXISTS (
+            SELECT 1 FROM user_blocks b
+            WHERE (b.blocker_id = $1 AND b.blocked_id = fm2.user_id)
+               OR (b.blocker_id = fm2.user_id AND b.blocked_id = $1)
+          )
       )
       ORDER BY happened_at DESC
       LIMIT 20`,
@@ -384,11 +418,18 @@ router.get('/:id', param('id').isInt({ min: 1, max: INT4_MAX }), async (req, res
               CASE WHEN (SELECT COUNT(*) FROM budget_submissions bs
                          WHERE bs.flock_id = f.id AND bs.skipped = false) >= 3
                    THEN f.budget_ceiling ELSE NULL END AS budget_ceiling,
-              u.name AS creator_name
+              -- Same host rule as the list route, and applied here so the
+              -- invite-preview branch below (which returns before any roster
+              -- filtering) is covered by it too.
+              CASE WHEN EXISTS (
+                SELECT 1 FROM user_blocks b
+                WHERE (b.blocker_id = $2 AND b.blocked_id = f.creator_id)
+                   OR (b.blocker_id = f.creator_id AND b.blocked_id = $2)
+              ) THEN NULL ELSE u.name END AS creator_name
        FROM flocks f
        JOIN users u ON u.id = f.creator_id
        WHERE f.id = $1`,
-      [flockId]
+      [flockId, req.user.id]
     );
 
     if (flockResult.rows.length === 0) {
@@ -446,6 +487,7 @@ router.get('/:id', param('id').isInt({ min: 1, max: INT4_MAX }), async (req, res
     // ── Momentum Meter calculation ──
     const flock = flockResult.rows[0];
     const members = membersResult.rows;
+    // Counts come from the FULL roster on purpose (see visibleMembers below).
     const counts = combineRsvpCounts(members, guests);
     const totalMembers = counts.total;
     const accepted = counts.accepted;   // members + guests who said yes
@@ -537,9 +579,23 @@ router.get('/:id', param('id').isInt({ min: 1, max: INT4_MAX }), async (req, res
     flock.guest_count = counts.guestsGoing;
     flock.going_count = counts.accepted;
 
+    // Blocks: the roster is name + avatar + reliability score per member and had
+    // no block filter, so blocking someone you share a flock with removed them
+    // from your friends list and your DMs and left them sitting in the roster.
+    //
+    // Filtered HERE rather than in the query above because the counts and the
+    // momentum score are derived from that roster: a SQL predicate would have
+    // silently decremented "going" for the blocker only, so two people looking
+    // at the same plan would read a different headcount and a different momentum
+    // score — and the list route's member_count (a plain COUNT) would disagree
+    // with the detail route's on the same screen. A head count is not identity;
+    // the name and the face are, and those are what stop being served.
+    const invisible = new Set(await getInvisibleUserIds(req.user.id));
+    const visibleMembers = members.filter((m) => !invisible.has(m.id));
+
     res.json({
       flock,
-      members,
+      members: visibleMembers,
       guests,
       momentum,
     });
@@ -621,7 +677,12 @@ router.put('/:id',
       const io = req.app.get('io');
       const updated = result.rows[0];
       if (io) {
-        io.to(`flock:${flockId}`).emit('flock_updated', {
+        // Block-aware per-member fan-out: this payload carries `updatedBy`, the
+        // editor's NAME, so a room broadcast handed a blocked user's name
+        // straight to the person who blocked them every time the plan changed.
+        // Same helper the RSVP/leave events already use. Guarded: a fan-out
+        // failure must not 500 an update that already committed.
+        await emitToFlockExcludingBlocked(io, flockId, req.user.id, 'flock_updated', {
           flockId: parseInt(flockId),
           name: updated.name,
           venue_name: updated.venue_name,
@@ -634,7 +695,7 @@ router.put('/:id',
           event_time: updated.event_time,
           status: updated.status,
           updatedBy: req.user.name,
-        });
+        }).catch((e) => console.error('flock_updated fan-out failed:', e.message));
       }
 
       // Push "It's happening!" when flock is confirmed
@@ -747,7 +808,14 @@ router.delete('/:id', param('id').isInt({ min: 1, max: INT4_MAX }).withMessage('
     const io = req.app.get('io');
     const nameResult = await pool.query('SELECT name FROM flocks WHERE id = $1', [flockId]);
     if (io) {
-      io.to(`flock:${flockId}`).emit('flock_deleted', { flockId: parseInt(flockId), flockName: nameResult.rows[0]?.name, deletedBy: req.user.name });
+      // `deletedBy` is the deleter's NAME, so this needs the same block-aware
+      // fan-out as every other actor-naming event. AWAITED, and deliberately
+      // before the DELETE below: the helper reads flock_members to find its
+      // recipients, and the delete CASCADEs those rows away — fire-and-forget
+      // here would race the delete and reach nobody at all.
+      await emitToFlockExcludingBlocked(io, flockId, req.user.id, 'flock_deleted', {
+        flockId: parseInt(flockId), flockName: nameResult.rows[0]?.name, deletedBy: req.user.name,
+      }).catch((e) => console.error('flock_deleted fan-out failed:', e.message));
     }
 
     await pool.query('DELETE FROM flocks WHERE id = $1', [flockId]);
@@ -1007,11 +1075,16 @@ router.post('/:id/invite',
               invitedBy: { userId: req.user.id, name: req.user.name },
             });
           }
-          io.to(`flock:${flockId}`).emit('flock_members_invited', {
+          // `invitedBy` names the inviter, so the room broadcast leaked that
+          // name to anyone in the flock who had blocked them. Per-member,
+          // block-aware fan-out — and it also reaches members who are in the
+          // app but not sitting on this flock's screen, who were never in the
+          // room to begin with.
+          await emitToFlockExcludingBlocked(io, flockId, req.user.id, 'flock_members_invited', {
             flockId,
             invitedBy: { userId: req.user.id, name: req.user.name },
             invitedUserIds: invited.map(i => i.user_id),
-          });
+          }).catch((e) => console.error('flock_members_invited fan-out failed:', e.message));
 
           // Push notifications for offline invited users — concurrent, so a
           // 25-person invite is not 25 sequential Firebase round trips before
@@ -1123,9 +1196,13 @@ router.post('/:id/leave', param('id').isInt({ min: 1, max: INT4_MAX }).withMessa
     const io = req.app.get('io');
 
     if (isCreator) {
-      // Notify all members before deleting
+      // Notify all members before deleting. Block-aware (`deletedBy` is a name)
+      // and awaited: the fan-out reads flock_members, which the DELETE on the
+      // next line cascades away, so the read has to finish first.
       if (io) {
-        io.to(`flock:${flockId}`).emit('flock_deleted', { flockId: parseInt(flockId), flockName, deletedBy: req.user.name });
+        await emitToFlockExcludingBlocked(io, flockId, req.user.id, 'flock_deleted', {
+          flockId: parseInt(flockId), flockName, deletedBy: req.user.name,
+        }).catch((e) => console.error('flock_deleted fan-out failed:', e.message));
       }
       // Creator leaving deletes the entire flock (cascade removes members, messages, votes)
       await pool.query('DELETE FROM flocks WHERE id = $1', [flockId]);
@@ -1209,8 +1286,14 @@ router.get('/:id/members', param('id').isInt({ min: 1, max: INT4_MAX }).withMess
     const guestsResult = await pool.query(GUEST_RSVP_SELECT, [flockId]);
     const guests = guestsResult.rows.map(toGuestEntry);
 
+    // Blocks, same rule as GET /:id: the names and avatars of blocked users are
+    // withheld, the head count is not. going_count is still computed from the
+    // full roster so this route, GET /:id and the flock list all answer with the
+    // same number of people.
+    const invisible = new Set(await getInvisibleUserIds(req.user.id));
+
     res.json({
-      members: result.rows,
+      members: result.rows.filter((m) => !invisible.has(m.id)),
       guests,
       going_count: result.rows.filter(m => m.status === 'accepted').length
         + guests.filter(g => g.status === 'accepted').length,

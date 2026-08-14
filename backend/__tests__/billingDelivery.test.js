@@ -122,6 +122,11 @@ const THREE = [{ id: 1, name: 'Ava' }, { id: 2, name: 'Ben' }, { id: 3, name: 'C
 function scriptBillCreate({ members = THREE, acceptedAtEmit = members } = {}) {
   handlers = [
     [/SELECT user_id FROM flock_members WHERE flock_id = \$1 AND status/, () => ({ rows: acceptedAtEmit.map((m) => ({ user_id: m.id })) })],
+    // bill_created is now built per recipient (2026-08-14 block audit), so the
+    // fan-out reads the block table for the member set. Nobody blocks anybody
+    // in this default world; takedownLeaks.test.js is where the filtering is
+    // exercised.
+    [/FROM user_blocks/, () => ({ rows: [] })],
     [/SELECT id FROM flock_members WHERE flock_id = \$1 AND user_id = \$2/, () => ({ rows: [{ id: 1 }] })],
     [/SELECT u\.id, u\.name FROM flock_members/, () => ({ rows: members })],
     [/SELECT name, creator_id FROM flocks/, () => ({ rows: [{ name: 'Dinner', creator_id: 1 }] })],
@@ -179,6 +184,9 @@ test('share_settled and bill_fully_settled use the same per-member delivery', as
     [/SELECT id FROM bill_splits WHERE flock_id/, () => ({ rows: [{ id: 7 }] })],
     [/UPDATE bill_split_shares SET settled/, () => ({ rows: [{ id: 1 }] })],
     [/SELECT COUNT\(\*\) AS count FROM bill_split_shares/, () => ({ rows: [{ count: '0' }] })],
+    // share_settled names the settler, so its recipient list is block-filtered
+    // (2026-08-14). Nobody blocks anybody here; the actor stays a recipient.
+    [/FROM user_blocks/, () => ({ rows: [] })],
   ];
 
   const res = await call('POST', '/api/billing/42/settle');
@@ -199,6 +207,7 @@ test('the fully-settled check counts a NULL settled flag as unsettled', async ()
     [/SELECT id FROM bill_splits WHERE flock_id/, () => ({ rows: [{ id: 7 }] })],
     [/UPDATE bill_split_shares SET settled/, () => ({ rows: [{ id: 1 }] })],
     [/SELECT COUNT\(\*\) AS count FROM bill_split_shares/, () => ({ rows: [{ count: '1' }] })],
+    [/FROM user_blocks/, () => ({ rows: [] })],
   ];
 
   await call('POST', '/api/billing/42/settle');
@@ -377,6 +386,9 @@ function scriptPaymentLinks(payer) {
   handlers = [
     [/SELECT id FROM flock_members WHERE flock_id = \$1 AND user_id = \$2/, () => ({ rows: [{ id: 1 }] })],
     [/FROM bill_splits bs\s+JOIN flocks f/, () => ({ rows: [{ id: 7, paid_by: 2, flock_id: 42, flock_name: 'Dinner' }] })],
+    // These routes hand over the payer's payment handles, so they refuse a
+    // blocked payer (2026-08-14). Nobody blocks anybody in this fixture.
+    [/SELECT 1 FROM user_blocks/, () => ({ rows: [] })],
     [/SELECT amount FROM bill_split_shares/, () => ({ rows: [{ amount: '30.00' }] })],
     [/FROM users WHERE id = \$1/, () => ({ rows: [payer] })],
   ];

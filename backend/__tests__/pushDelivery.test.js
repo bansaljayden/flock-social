@@ -279,12 +279,31 @@ test('a deleted account is not pushed to on the strength of a leftover token', a
   assert.strictEqual(res.reason, 'not-visible');
 });
 
-test('a visibility lookup that fails does not silence the whole feature', async () => {
+// Reversed by the 2026-08-14 safety audit. This used to assert fail-OPEN, on
+// the reasoning that a blip must not mute notifications. But canNotify is a
+// block-enforcement point — the only one in the codebase that failed open —
+// and failing open there means a database blip pushes a blocked user's name to
+// the lock screen of the person who blocked them. Every sibling check (blocks
+// helpers, the socket presence fan-out, moderation reads) already fails closed.
+// A dropped notification is recoverable the moment the user opens the app; a
+// delivered one is not.
+test('a visibility lookup that fails suppresses the push instead of guessing', async () => {
   reset();
   on(/FROM user_blocks/i, () => ({ rows: [] }));
   on(/FROM users u/i, () => Promise.reject(new Error('connection terminated')));
   const res = await pushHelper.pushIfOffline(offline, 1, 'T', 'B', { type: 'flock_message', flockId: 7 });
-  assert.strictEqual(res.sent, 1, 'fails open: a database blip must not mute notifications');
+  assert.strictEqual(res.reason, 'not-visible', 'fails closed: an unanswerable block check sends nothing');
+  assert.strictEqual(sends.length, 0);
+});
+
+// The block lookup itself throws BEFORE the visibility query — same rule.
+test('a block lookup that throws suppresses the push', async () => {
+  reset();
+  on(/FROM user_blocks/i, () => Promise.reject(new Error('connection terminated')));
+  on(/FROM users u/i, () => ({ rows: [{ is_banned: false, can_see: true }] }));
+  const res = await pushHelper.pushIfOffline(offline, 1, 'T', 'B', { type: 'dm_message', senderId: 2 });
+  assert.strictEqual(res.reason, 'not-visible');
+  assert.strictEqual(sends.length, 0);
 });
 
 // ---------------------------------------------------------------------------

@@ -39,7 +39,115 @@ const INT4_MAX = 2147483647;
 // this rule has ONE definition — routes/guest.js and routes/flocks.js reach for
 // the same module for the same reason.
 // ---------------------------------------------------------------------------
-const { emitToFlockMembers } = require('../sockets/handlers');
+const { emitToFlockMembers, emitToFlockExcludingBlocked } = require('../sockets/handlers');
+const { getInvisibleUserIds, isBlockedBetween } = require('../utils/blocks');
+
+// Refuses a settle-up flow whose whole payload is one blocked person's identity
+// (name + Venmo / Cash App / Zelle handle — a stronger identifier than anything
+// the bill sheet renders). GET /:flockId withholds a blocked payer's NAME, so
+// handing over their payment handles one tap later would have made that
+// redaction decorative.
+//
+// The cost is real and deliberate: while a block is in place between them, the
+// debtor cannot pull the payer's handles out of Flock and has to unblock (or
+// settle outside the app) to pay. Same direction-neutral wording as the DM
+// routes, so which side blocked whom cannot be read off the refusal.
+async function refuseIfBlockedPayer(res, userId, payerId) {
+  if (payerId == null) return false;
+  if (await isBlockedBetween(userId, payerId)) {
+    res.status(403).json({ error: 'You can no longer interact with this user.' });
+    return true;
+  }
+  return false;
+}
+
+// ---------------------------------------------------------------------------
+// Blocks on the bill (audit 2026-08-14)
+//
+// Reaching the right ROOM was only half of it. `bill_created` names EVERY
+// member and the exact amount each one owes, so it is not an event with one
+// actor to filter on — every recipient needs their own view of it. A blocked
+// user's name and their debt were being delivered, live, to the person who
+// blocked them, on every bill and every bill edit.
+//
+// So the payload is rebuilt per recipient: shares belonging to someone they
+// cannot see are dropped, and if the PAYER is someone they cannot see, the
+// payer's name is withheld (the id stays — the client falls back to "Unknown",
+// which is what it already renders for a member it cannot name).
+//
+// What is deliberately NOT redacted is `totalAmount` / `totalWithTip`. The bill
+// total is a fact about the table, not about a person, and a total that
+// silently shrank per viewer would have people arguing over which number is
+// real. GET /:flockId applies the identical rule — a leak that survives one
+// refresh is not closed.
+// ---------------------------------------------------------------------------
+const NOBODY = new Set();
+
+// One query for the whole member set, not one per recipient: {id -> Set(ids
+// invisible to them)}, both directions of every block.
+async function invisibilityMap(userIds) {
+  const map = new Map();
+  if (!userIds.length) return map;
+  const r = await pool.query(
+    `SELECT blocker_id, blocked_id FROM user_blocks
+     WHERE blocker_id = ANY($1::int[]) OR blocked_id = ANY($1::int[])`,
+    [userIds]
+  );
+  for (const row of r.rows) {
+    if (!map.has(row.blocker_id)) map.set(row.blocker_id, new Set());
+    if (!map.has(row.blocked_id)) map.set(row.blocked_id, new Set());
+    map.get(row.blocker_id).add(row.blocked_id);
+    map.get(row.blocked_id).add(row.blocker_id);
+  }
+  return map;
+}
+
+function billFor(bill, invisible) {
+  if (!invisible || invisible.size === 0) return bill;
+  return {
+    ...bill,
+    paidBy: invisible.has(bill.paidBy?.id)
+      ? { id: bill.paidBy.id, name: null }
+      : bill.paidBy,
+    shares: (bill.shares || []).filter((s) => !invisible.has(s.userId)),
+  };
+}
+
+// Recipients for an event that NAMES one actor (share_settled, ghost_committed
+// — bill_created is the harder case handled above). Accepted members minus
+// anyone blocked with the actor in either direction.
+//
+// Not sockets/handlers.js's emitToFlockExcludingBlocked, which also drops the
+// ACTOR from the recipient list: right for the flock events it was written for,
+// wrong here, because the person who just settled needs their own bill sheet to
+// update on their other devices.
+async function visibleRecipients(flockId, actorId) {
+  const members = await pool.query(
+    "SELECT user_id FROM flock_members WHERE flock_id = $1 AND status = 'accepted'",
+    [flockId]
+  );
+  const invisible = new Set(await getInvisibleUserIds(actorId));
+  return members.rows.map((r) => r.user_id).filter((id) => !invisible.has(id));
+}
+
+// Same membership rule as emitToFlockMembers (re-read at emit time, personal
+// rooms), with a per-recipient payload on top.
+async function emitBillCreated(io, flockId, bill) {
+  if (!io) return [];
+  const members = await pool.query(
+    "SELECT user_id FROM flock_members WHERE flock_id = $1 AND status = 'accepted'",
+    [flockId]
+  );
+  const ids = members.rows.map((r) => r.user_id);
+  const blocks = await invisibilityMap(ids);
+  for (const id of ids) {
+    io.to(`user:${id}`).emit('bill_created', {
+      flockId,
+      bill: billFor(bill, blocks.get(id) || NOBODY),
+    });
+  }
+  return ids;
+}
 
 // POST /api/billing/:flockId/create — Create a bill split
 router.post('/:flockId/create',
@@ -96,6 +204,13 @@ router.post('/:flockId/create',
       if (members.length === 0) {
         return res.status(400).json({ error: 'No accepted members in this flock' });
       }
+
+      // Read PRE-COMMIT, on purpose. It only shapes the 201 body, but every
+      // query after the COMMIT below is post-commit work: a throw there answers
+      // 500 for a bill that exists, and the client's retry rewrites the split it
+      // thinks failed. Asking here means a block-lookup failure is a clean 500
+      // with nothing written.
+      const invisibleToCreator = new Set(await getInvisibleUserIds(userId));
 
       // Get flock name + creator
       const flockResult = await pool.query('SELECT name, creator_id FROM flocks WHERE id = $1', [flockId]);
@@ -340,13 +455,20 @@ router.post('/:flockId/create',
 
       // Answer FIRST, then notify. The response is the part the caller is
       // waiting on and the part that must not depend on Firebase being up.
-      res.status(201).json({ bill });
+      //
+      // Filtered like every other view of this bill: the creator picked SHARE
+      // IDS, the server supplied the names, so an unfiltered 201 would show a
+      // blocked member's name once and then have it vanish on the next GET.
+      // `bill` itself stays whole for the fan-out below, which needs the full
+      // set to build each member's own view.
+      res.status(201).json({ bill: billFor(bill, invisibleToCreator) });
 
       const io = req.app.get('io');
-      // Per-member fan-out, membership re-read at emit time — see
-      // emitToFlockMembers. This payload names every member and what they owe.
+      // Per-member fan-out, membership re-read at emit time, and one payload
+      // per recipient — this event names every member and what they owe, so
+      // "who may receive it" was never the whole question. See emitBillCreated.
       try {
-        await emitToFlockMembers(io, flockId, 'bill_created', { flockId, bill });
+        await emitBillCreated(io, flockId, bill);
       } catch (emitErr) {
         console.error('bill_created fan-out failed:', emitErr.message);
       }
@@ -428,6 +550,12 @@ router.get('/:flockId',
         [bill.id]
       );
 
+      // Same block rule as the bill_created fan-out. Without it the socket
+      // filtering was theatre: the names and amounts it withheld came straight
+      // back on the next GET, which is what the client calls when it opens the
+      // bill sheet.
+      const invisible = new Set(await getInvisibleUserIds(userId));
+
       res.json({
         bill: {
           id: bill.id,
@@ -436,15 +564,20 @@ router.get('/:flockId',
           tipPercent: parseFloat(bill.tip_percent),
           totalWithTip,
           splitType: bill.split_type,
-          paidBy: { id: bill.paid_by, name: bill.payer_name },
-          shares: sharesResult.rows.map(s => ({
-            userId: s.user_id,
-            name: s.name,
-            amount: parseFloat(s.amount),
-            committed: s.committed,
-            settled: s.settled,
-            settledAt: s.settled_at,
-          })),
+          paidBy: {
+            id: bill.paid_by,
+            name: invisible.has(bill.paid_by) ? null : bill.payer_name,
+          },
+          shares: sharesResult.rows
+            .filter((s) => !invisible.has(s.user_id))
+            .map(s => ({
+              userId: s.user_id,
+              name: s.name,
+              amount: parseFloat(s.amount),
+              committed: s.committed,
+              settled: s.settled,
+              settledAt: s.settled_at,
+            })),
           createdAt: bill.created_at,
         },
       });
@@ -510,11 +643,15 @@ router.post('/:flockId/settle',
       const io = req.app.get('io');
       if (io) {
         try {
+          // Blocks: `userName` is the settler's name (round 2 of the same
+          // audit — bill_created was not the only event here that names a
+          // person). bill_fully_settled below names nobody and stays unfiltered:
+          // "this bill is closed" is a fact about the bill.
           await emitToFlockMembers(io, flockId, 'share_settled', {
             flockId,
             userId,
             userName: req.user.name,
-          });
+          }, await visibleRecipients(flockId, userId));
 
           // Round 16: `settled = false` silently ignores NULL, and the column
           // has no NOT NULL constraint — a row written by anything that omits
@@ -660,12 +797,13 @@ router.post('/:flockId/ghost-commit',
       const io = req.app.get('io');
       if (io) {
         try {
+          // Blocks: names a person AND the money they just committed to.
           await emitToFlockMembers(io, flockId, 'ghost_committed', {
             flockId,
             userId,
             userName: req.user.name,
             estimatedShare,
-          });
+          }, await visibleRecipients(flockId, userId));
         } catch (emitErr) {
           console.error('Ghost commit fan-out failed:', emitErr.message);
         }
@@ -716,6 +854,7 @@ router.get('/:flockId/venmo-link',
         return res.status(404).json({ error: 'No bill found for this flock' });
       }
       const bill = billResult.rows[0];
+      if (await refuseIfBlockedPayer(res, userId, bill.paid_by)) return;
 
       // Get the user's share
       const shareResult = await pool.query(
@@ -809,6 +948,7 @@ router.get('/:flockId/payment-links',
         return res.status(404).json({ error: 'No bill found for this flock' });
       }
       const bill = billResult.rows[0];
+      if (await refuseIfBlockedPayer(res, userId, bill.paid_by)) return;
 
       // Get the user's share amount
       const shareResult = await pool.query(
