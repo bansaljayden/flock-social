@@ -193,11 +193,20 @@ router.post('/:flockId/create',
         return res.status(400).json({ error: 'Payer must be a member of the flock' });
       }
 
-      // Get accepted members
+      // Get accepted members.
+      //
+      // ORDER BY is load-bearing, not tidiness: the equal split hands its
+      // leftover cents to the FIRST members of this list, and without an
+      // explicit order Postgres may return the same roster in a different
+      // sequence on the next read (a plan change, an UPDATE that moved a row).
+      // The extra cent would then land on a different person every time the
+      // bill was re-created, so "why do I owe a cent more than Ben" would have
+      // no stable answer. Lowest user id carries it.
       const membersResult = await pool.query(
         `SELECT u.id, u.name FROM flock_members fm
          JOIN users u ON u.id = fm.user_id
-         WHERE fm.flock_id = $1 AND fm.status = 'accepted'`,
+         WHERE fm.flock_id = $1 AND fm.status = 'accepted'
+         ORDER BY u.id`,
         [flockId]
       );
       const members = membersResult.rows;
@@ -217,8 +226,25 @@ router.post('/:flockId/create',
       const flockName = flockResult.rows[0]?.name || 'Flock';
       const flockCreatorId = flockResult.rows[0]?.creator_id;
 
+      // Quantize the two inputs to the precision their columns actually hold,
+      // BEFORE anything is computed from them or written.
+      //
+      // (mutation audit follow-up, 2026-08-14) Same disease as the share
+      // rounding below, one level up. `total_amount` is DECIMAL(8,2) and
+      // `tip_percent` is DECIMAL(4,1), and both were echoed back at the
+      // client's precision while Postgres quietly rounded what it stored. A
+      // bill posted as $33.333 answered 33.333 from POST and 33.33 from
+      // GET /:flockId; an 18.55% tip was stored as 18.6, so GET recomputed
+      // totalWithTip as 118.60 on a bill whose shares add up to 118.55 — the
+      // sheet stops balancing on refresh, with no edit in between.
+      //
+      // Rounding here means the response, the shares and the row are all
+      // derived from one number, and the two endpoints answer identically.
+      const billTotal = Math.round(Number(totalAmount) * 100) / 100;
+      const tipPct = Math.round(Number(tipPercent) * 10) / 10;
+
       // Calculate total with tip
-      const totalWithTip = Math.round(totalAmount * (1 + tipPercent / 100) * 100) / 100;
+      const totalWithTip = Math.round(billTotal * (1 + tipPct / 100) * 100) / 100;
 
       // Existing-bill authorization + preserved states are read INSIDE the
       // transaction below, under the flock row lock — checking here let two
@@ -291,14 +317,36 @@ router.post('/:flockId/create',
 
         shares = parsed.map(s => ({ userId: s.userId, amount: s.cents / 100 }));
       } else {
-        // Equal split with penny rounding
+        // Equal split, in integer cents — the same representation the custom
+        // branch above was moved to, and for the same reason.
+        //
+        // (mutation audit 2026-08-14) The old arithmetic divided in DOLLARS and
+        // then handed the leftover cents out as `baseShare + 0.01`. Neither
+        // 0.01 nor 33.33 is representable in binary floating point, so about
+        // 23% of (total, member count) pairs produced a share the client could
+        // not render: $100.00 split three ways answered 33.339999999999996
+        // while the DECIMAL(8,2) column stored the same share as 33.34. Three
+        // surfaces then disagreed about one debt — the 201 body and the socket
+        // payload carried the artifact, GET /:flockId (parseFloat off the
+        // column) carried 33.34, and the push notification's toFixed(2)
+        // carried a third rendering. The cent TOTALS were always right, so no
+        // money was lost; what was lost was two friends being able to agree on
+        // what one of them owes.
+        //
+        // Cents stay integers end to end and the divide by 100 happens once,
+        // at the edge, which is the only place a rounding decision is made.
+        // The leftover is deterministic and bounded: the first
+        // `remainderCents` members in id order take exactly one extra cent
+        // each (remainderCents < memberCount always), so the shares sum to the
+        // total exactly and no share is more than a cent above the even split.
         const memberCount = members.length;
-        const baseShare = Math.floor(totalWithTip * 100 / memberCount) / 100;
-        const remainderCents = Math.round((totalWithTip - baseShare * memberCount) * 100);
+        const totalCents = Math.round(totalWithTip * 100);
+        const baseCents = Math.floor(totalCents / memberCount);
+        const remainderCents = totalCents - baseCents * memberCount;
 
         shares = members.map((m, i) => ({
           userId: m.id,
-          amount: i < remainderCents ? baseShare + 0.01 : baseShare,
+          amount: (baseCents + (i < remainderCents ? 1 : 0)) / 100,
         }));
       }
 
@@ -361,7 +409,7 @@ router.post('/:flockId/create',
            ON CONFLICT (flock_id) DO UPDATE
            SET total_amount = $2, split_type = $3, paid_by = $4, tip_percent = $5, updated_at = NOW()
            RETURNING id`,
-          [flockId, totalAmount, splitType, payerId, tipPercent]
+          [flockId, billTotal, splitType, payerId, tipPct]
         );
         billId = billResult.rows[0].id;
 
@@ -438,14 +486,16 @@ router.post('/:flockId/create',
       const bill = {
         id: billId,
         flockId,
-        // Round 16: echoed straight back off the request body. isFloat() accepts
-        // the STRING "90", so this endpoint could answer with a string where
-        // GET /api/billing/:flockId (parseFloat) always answers with a number —
-        // two endpoints returning the same object in two shapes. The client
-        // reaches for `?.toFixed(2)` on these fields, which a string does not
-        // have.
-        totalAmount: Number(totalAmount),
-        tipPercent: Number(tipPercent),
+        // These two were echoed straight back off the request body. Round 16
+        // fixed the TYPE (isFloat() accepts the string "90", so this endpoint
+        // could answer with a string where GET /api/billing/:flockId always
+        // answers with a number, and the client reaches for `?.toFixed(2)` on
+        // them); the 2026-08-14 pass fixed the PRECISION, which was the same
+        // mismatch a decimal place deeper. Both now come from the quantized
+        // values above — the ones the columns will hold and the shares were
+        // divided against.
+        totalAmount: billTotal,
+        tipPercent: tipPct,
         totalWithTip,
         splitType,
         paidBy: { id: payerId, name: payer?.name || 'Unknown' },
