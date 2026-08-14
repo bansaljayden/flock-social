@@ -47,6 +47,52 @@ const str = (v, max) => {
 // print next to a venue name.
 const inRange = (v, lo, hi) => (Number.isFinite(v) && v >= lo && v <= hi ? v : null);
 
+// PRICE AND RATING: ONE NAME EACH ON THE WIRE.
+//
+// Clients send four fields for two facts. `stars` and `rating` are the same
+// number under two names (venuesToMapPins builds `stars`, Google and the stored
+// message row call it `rating`). `price` is the string a card prints ('$$') and
+// `price_level` is the integer Google derives it from (0-4). Round 8 already
+// read `stars` as an input alias for `rating` and did not echo it back, and the
+// card's `venue.stars || venue.rating` fallback is why nobody noticed. `price`
+// had neither half: it was read by nothing and echoed as nothing.
+//
+// The contract, written down once so both sides can agree on it:
+//
+//   * The sanitized venue carries `rating` (number 0-5) and `price_level`
+//     (integer 0-4) and NEITHER of the other two names. One name per fact, so
+//     two spellings of the same number can never disagree inside one card, and
+//     no free-text display string is stored where a sender could put anything
+//     they like into what the recipient reads as a price.
+//   * `stars` and `price` are accepted as INPUT ALIASES and normalised onto
+//     those two. That is the half that was missing. A venue whose `price_level`
+//     was anything but an integer 0-4 (absent, a numeric string, one of the
+//     Places v1 'PRICE_LEVEL_MODERATE' names a caller forgot to map through
+//     priceLevelToNum) lost its price completely on the round trip while
+//     `price: '$$'` sat beside it in the same payload. The sender kept seeing
+//     '$$' from their local copy; every recipient got a card with no price.
+//   * Nothing new is trusted. The alias is read only as a COUNT of '$'
+//     characters and clamped to the same 0-4 the integer is, so the most a
+//     hostile `price` can do is set a price level, which is what `price_level`
+//     already does.
+//
+// The client half of the contract: VenueCard renders
+// `venue.price || '$'.repeat(venue.price_level)` and `venue.stars ||
+// venue.rating`, and every openVenueDetail call site reads `stars || rating`,
+// so both facts survive on the canonical name alone. If a card ever comes back
+// blank, fix the card's fallback; do not add `stars`/`price` to the output.
+const PRICE_STRING = /^\$+$/;
+function priceLevelOf(raw) {
+  if (Number.isInteger(raw.price_level) && raw.price_level >= 0 && raw.price_level <= 4) {
+    return raw.price_level;
+  }
+  if (typeof raw.price === 'string') {
+    const p = raw.price.trim();
+    if (PRICE_STRING.test(p) && p.length <= 4) return p.length;
+  }
+  return null;
+}
+
 // Returns { ok: true, data } with only known, clamped fields (data may be
 // null if nothing usable), or { ok: false } when text fails moderation.
 function sanitizeVenueData(raw) {
@@ -69,7 +115,8 @@ function sanitizeVenueData(raw) {
     addr,
     rating: inRange(raw.rating ?? raw.stars, 0, 5),
     user_ratings_total: inRange(raw.user_ratings_total, 0, 1e9),
-    price_level: Number.isInteger(raw.price_level) && raw.price_level >= 0 && raw.price_level <= 4 ? raw.price_level : null,
+    // See priceLevelOf: `price` is an input alias, not a second output field.
+    price_level: priceLevelOf(raw),
     type: str(raw.type, 64),
     // Dropped silently until round 20. The card renders a category colour and
     // icon and a crowd percentage, and the flock-create card sends its
