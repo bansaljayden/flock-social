@@ -26,7 +26,7 @@ import VenueLoginScreen from './components/auth/VenueLoginScreen';
 import ModerationSheet from './components/ModerationSheet';
 import PaywallSheet from './components/PaywallSheet';
 import { initPurchases } from './services/purchases';
-import { getEntitlements, createFlockInviteLink, getVenueIntelligence, getVenueStrip, getFlockVotes, voteForVenue, clearVenueVote, getBlockedUsers, unblockUser } from './services/api';
+import { getEntitlements, createFlockInviteLink, getVenueIntelligence, getVenueStrip, getFlockVotes, voteForVenue, clearVenueVote, getBlockedUsers, unblockUser, blockUser } from './services/api';
 import { motion, AnimatePresence } from 'framer-motion';
 import BirdieBird from './components/ui/BirdieBird';
 import Icons from './components/ui/Icons';
@@ -3454,6 +3454,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           name: f.name,
           host: f.creator_name || 'Unknown',
           creatorId: f.creator_id,
+          // Same person as creatorId here, but kept separate because the
+          // socket-pushed invite below sets it to whoever sent the invite,
+          // which is not always the creator. It is the id behind the "Invited
+          // by" name, and it is what lets that name be reported or blocked.
+          hostId: f.creator_id,
           memberStatus: f.member_status,
           members: [],
           memberPreviews: Array.isArray(f.member_previews) ? f.member_previews : [],
@@ -3859,6 +3864,19 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   }), []);
   // UGC moderation (Apple 1.2): null = closed, else { userId, userName, contentType, contentId }
   const [moderationTarget, setModerationTarget] = useState(null);
+  // Person card (Apple 1.2 again). Every report/block entry point used to hang
+  // off a piece of content — a message, a review, a guest name — so anyone who
+  // had not yet said anything in front of you could not be reported or blocked
+  // at all. A reviewer probes exactly that: open a roster, tap a member who has
+  // never posted, look for the controls. This is the surface that answers it.
+  //
+  // Shape: { id, name, image } and nothing else. The card renders only what the
+  // screen it was opened from was already showing, and it never fetches: a
+  // report path must not double as a way to see more of someone than you could
+  // before you tapped.
+  const [userProfileTarget, setUserProfileTarget] = useState(null);
+  const [profileBlockStep, setProfileBlockStep] = useState(false);
+  const [profileBlocking, setProfileBlocking] = useState(false);
   // Blocked accounts. Apple 1.2 wants the block, and a block nobody can lift is
   // a punishment the product hands out once and never takes back — getBlockedUsers
   // and unblockUser have existed in services/api.js the whole time with no caller.
@@ -4872,6 +4890,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           id: data.flockId,
           name: data.flockName,
           host: data.invitedBy.name,
+          // NOT creatorId: whoever sent the invite need not be the creator, and
+          // FlockDetailScreen gates its edit controls on creatorId. This is the
+          // id behind the name on the invite row, nothing more.
+          hostId: data.invitedBy.userId,
           memberStatus: 'invited',
           members: [],
           memberCount: 0,
@@ -5746,6 +5768,83 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
       setUnblockingId(null);
     }
   }, [showToast]);
+
+  // Everything the client has to forget the moment a block lands. This used to
+  // live inline on <ModerationSheet onBlocked>, which meant a block started
+  // anywhere else did none of it and the person stayed on screen — name, face
+  // and messages — until the screen changed. One function, both callers.
+  const handleUserBlocked = useCallback((blockedId) => {
+    const id = String(blockedId);
+    blockedIdsRef.current.add(id);
+    // Drop the blocked user's DM thread and leave their conversation.
+    setDirectMessages(prev => prev.filter(d => String(d.userId) !== id));
+    if (String(selectedDmId) === id) {
+      setSelectedDmId(null);
+      setCurrentScreen('main');
+    }
+    // The DM was the only thing this used to clean up, so someone blocked from
+    // a flock chat stayed right there on screen, messages and all, until you
+    // navigated away and back. The server hides their messages from the next
+    // fetch; this is the copy already rendered, and their seat in the roster.
+    setFlocks(prev => prev.map(f => {
+      const messages = Array.isArray(f.messages) ? f.messages.filter(m => String(m.senderId) !== id) : null;
+      const members = Array.isArray(f.members) ? f.members.filter(m => String(m.id) !== id) : null;
+      const msgChanged = messages && messages.length !== f.messages.length;
+      const memChanged = members && members.length !== f.members.length;
+      if (!msgChanged && !memChanged) return f;
+      return { ...f, ...(msgChanged ? { messages } : {}), ...(memChanged ? { members } : {}) };
+    }));
+    // Availability pulses are the other place a name and face sit in client
+    // state between refreshes: the "Available tonight" list in the invite sheet
+    // reads straight off this array.
+    setFriendsPulses(prev => prev.filter(p => String(p.id) !== id));
+    // Friend-finding lists hold a name and a face too, and a search result or a
+    // pending request is one of the places you are most likely to block from.
+    setPendingRequests(prev => prev.filter(r => String(r.id) !== id));
+    setOutgoingRequests(prev => prev.filter(r => String(r.id) !== id));
+    setAddFriendsResults(prev => prev.filter(u => String(u.id) !== id));
+    setFriendSuggestions(prev => prev.filter(u => String(u.id) !== id));
+    setConnectResults(prev => prev.filter(u => String(u.id) !== id));
+    // Then ask the server, so the counts under the roster are its numbers
+    // rather than our subtraction.
+    if (selectedFlockId) refreshFlockRoster(selectedFlockId);
+  }, [selectedDmId, selectedFlockId, refreshFlockRoster]);
+
+  // Open the person card. Callers hand over exactly what their own row already
+  // renders; anything missing stays missing rather than being fetched.
+  const openUserProfile = useCallback((person) => {
+    if (!person || person.id == null) return;
+    setProfileBlockStep(false);
+    setProfileBlocking(false);
+    setUserProfileTarget({
+      id: person.id,
+      name: person.name || 'This person',
+      image: person.image || null,
+    });
+  }, []);
+
+  const closeUserProfile = useCallback(() => {
+    if (profileBlocking) return;
+    setUserProfileTarget(null);
+    setProfileBlockStep(false);
+  }, [profileBlocking]);
+
+  const confirmProfileBlock = useCallback(async () => {
+    const person = userProfileTarget;
+    if (!person || person.id == null) return;
+    setProfileBlocking(true);
+    try {
+      await blockUser(person.id);
+      handleUserBlocked(person.id);
+      showToast(`${person.name} blocked`);
+      setUserProfileTarget(null);
+      setProfileBlockStep(false);
+    } catch (err) {
+      showToast(err.message || 'Could not block. Try again.', 'error');
+    } finally {
+      setProfileBlocking(false);
+    }
+  }, [userProfileTarget, handleUserBlocked, showToast]);
 
   // --- Safety handlers ---
   const loadTrustedContacts = useCallback(async () => {
@@ -6671,9 +6770,20 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
       <div style={{ padding: '6px 10px 5px 4px', background: colors.navyBg, flexShrink: 0, boxShadow: '0 2px 10px rgba(0,0,0,0.1)' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
           <button aria-label="Back" className="hit44" onClick={() => { setCurrentScreen('main'); setChatInput(''); setShowDmMenu(false); setShowDeleteDmConfirm(false); setShowDmChatSearch(false); setDmChatSearch(''); setShowDmVotePanel(false); setShowDmVenueSearch(false); setDmReplyingTo(null); setDmNavOpen(false); if (dmSharingLocation) { dmStopSharingLocation(dmSharingLocation); setDmSharingLocation(null); } }} style={{ width: '34px', height: '34px', borderRadius: '17px', background: 'none', border: 'none', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{Icons.arrowLeft('white', 20)}</button>
-          <div style={{ width: '34px', height: '34px', borderRadius: '17px', backgroundColor: 'rgba(255,255,255,0.2)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 'var(--t-label)', fontWeight: '600', color: 'white', overflow: 'hidden', flexShrink: 0 }}>
+          {/* The avatar opens the person card. The overflow menu already carries
+              report/block for this thread, but the face is where people reach
+              first, and it is the same control the roster now has.
+              No overflow:hidden on the button: it would clip .hit44's pseudo
+              hit box, and at 34px the 44pt target is the whole point of the
+              class. The <img> already rounds itself. */}
+          <button
+            className="hit44"
+            aria-label={`About ${selectedDm.name}`}
+            onClick={() => openUserProfile({ id: selectedDmId, name: selectedDm.name, image: selectedDm.image })}
+            style={{ width: '34px', height: '34px', borderRadius: '17px', backgroundColor: 'rgba(255,255,255,0.2)', border: 'none', padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 'var(--t-label)', fontWeight: '600', color: 'white', flexShrink: 0, cursor: 'pointer' }}
+          >
             {selectedDm.image ? <img src={selectedDm.image} alt="" style={{ width: '34px', height: '34px', borderRadius: '17px', objectFit: 'cover' }} /> : (selectedDm.name?.[0]?.toUpperCase() || '?')}
-          </div>
+          </button>
           <h2 style={{ flex: 1, fontFamily: 'var(--font-display)', letterSpacing: '-0.005em', fontWeight: '600', color: 'white', fontSize: 'var(--t-title)', margin: 0, lineHeight: '1.3', minWidth: 0 }}>{selectedDm.name}</h2>
           <div style={{ display: 'flex', alignItems: 'center', gap: '4px', flexShrink: 0 }}>
             <div style={{ display: 'flex', gap: '4px', overflow: 'hidden', maxWidth: dmNavOpen ? '114px' : '0px', opacity: dmNavOpen ? 1 : 0, transition: 'max-width 0.3s ease, opacity 0.25s ease' }}>
@@ -8515,9 +8625,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 const status = friendStatuses[user.id] || 'none';
                 return (
                   <div key={user.id} style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '10px', borderRadius: '12px', backgroundColor: 'var(--bg-card-solid)', marginBottom: '8px' }}>
-                    <div style={{ width: '42px', height: '42px', borderRadius: '21px', backgroundColor: colors.navyMidBg, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 'var(--t-body)', fontWeight: '600', color: 'white', flexShrink: 0, overflow: 'hidden' }}>
+                    <button className="hit44" aria-label={`About ${user.name}`} onClick={() => openUserProfile({ id: user.id, name: user.name, image: user.profile_image_url })} style={{ width: '42px', height: '42px', borderRadius: '21px', backgroundColor: colors.navyMidBg, border: 'none', padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 'var(--t-body)', fontWeight: '600', color: 'white', flexShrink: 0, cursor: 'pointer' }}>
                       {user.profile_image_url ? <img src={user.profile_image_url} alt="" style={{ width: '42px', height: '42px', borderRadius: '21px', objectFit: 'cover' }} /> : user.name[0]?.toUpperCase()}
-                    </div>
+                    </button>
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <p style={{ fontWeight: '600', fontSize: 'var(--t-label)', color: colors.navy, margin: 0 }}>{user.name}</p>
                       <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '1px 0 0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{user.email}</p>
@@ -9874,7 +9984,22 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                   </div>
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <h2 style={{ fontSize: 'var(--t-body)', fontWeight: '600', color: colors.navy, margin: '0 0 2px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{f.name}</h2>
-                    <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0 }}>Invited by {f.host}</p>
+                    {/* An invite can arrive from someone you have never met and
+                        whose flock you cannot see yet, so this name was the one
+                        place in the app with a person and no way to act on
+                        them. Tapping it opens the person card. */}
+                    <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0 }}>
+                      Invited by{' '}
+                      {f.hostId != null ? (
+                        <button
+                          aria-label={`About ${f.host}`}
+                          onClick={() => openUserProfile({ id: f.hostId, name: f.host })}
+                          style={{ background: 'none', border: 'none', padding: 0, fontSize: 'inherit', fontFamily: 'inherit', fontWeight: '600', color: colors.navy, textDecoration: 'underline', cursor: 'pointer' }}
+                        >
+                          {f.host}
+                        </button>
+                      ) : f.host}
+                    </p>
                   </div>
                   <div style={{ display: 'flex', gap: '6px', flexShrink: 0 }}>
                     <button className="hit44" onClick={() => handleDeclineFlockInvite(f.id)} style={{ width: '32px', height: '32px', borderRadius: '10px', border: '1.5px solid var(--border-default)', backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -11654,9 +11779,17 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                   const mImage = typeof member === 'object' ? member.image : null;
                   const initial = mName[0]?.toUpperCase() || '?';
                   const isGuest = typeof member === 'object' && member.isGuest === true;
+                  const mId = typeof member === 'object' ? member.id : null;
+                  // The roster is the whole point of the person card: these are
+                  // people you share a plan with who may never have typed a
+                  // word, and before this there was nothing to tap. Guests have
+                  // no Flock account behind them, and you cannot report
+                  // yourself, so both stay plain.
+                  const canOpen = !isGuest && mId != null && String(mId) !== String(authUser?.id);
                   const bgColors = [colors.navy, colors.navyMid, colors.steel, colors.amber, '#4a7ba7', '#ec4899'];
-                  return (
-                    <div key={typeof member === 'object' && member.id != null ? String(member.id) : i} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '5px', minWidth: '54px' }}>
+                  const boxStyle = { display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '5px', minWidth: '54px' };
+                  const inner = (
+                    <>
                       {mImage ? (
                         <img src={mImage} alt="" style={{ width: '44px', height: '44px', borderRadius: '50%', objectFit: 'cover', border: '2px solid var(--bg-card-solid)', boxShadow: '0 2px 6px rgba(0,0,0,0.1)' }} />
                       ) : (
@@ -11664,7 +11797,21 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                       )}
                       <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', textAlign: 'center', maxWidth: '56px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontWeight: '500' }}>{mName.split(' ')[0]}</span>
                       {isGuest && <span style={{ fontSize: 'var(--t-micro)', fontWeight: '700', color: 'var(--text-tertiary)', letterSpacing: '0.3px' }}>GUEST</span>}
-                    </div>
+                    </>
+                  );
+                  const rowKey = typeof member === 'object' && member.id != null ? String(member.id) : i;
+                  return canOpen ? (
+                    <button
+                      key={rowKey}
+                      className="hit44"
+                      aria-label={`About ${mName}`}
+                      onClick={() => openUserProfile({ id: mId, name: mName, image: mImage })}
+                      style={{ ...boxStyle, background: 'none', border: 'none', padding: 0, cursor: 'pointer', flexShrink: 0 }}
+                    >
+                      {inner}
+                    </button>
+                  ) : (
+                    <div key={rowKey} style={{ ...boxStyle, flexShrink: 0 }}>{inner}</div>
                   );
                 })}
               </div>
@@ -13636,7 +13783,12 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px', backgroundColor: 'var(--bg-card-solid)', borderRadius: '8px' }}>
                   <div>
                     <p style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: colors.navy, margin: 0 }}>{tierBadge[venueData.tier].label} Plan</p>
-                    <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0 }}>{venueTier === 'free' ? 'Free forever' : venueTier === 'premium' ? '$35/month' : '$75/month'}</p>
+                    <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0 }}>{/* "Free forever" was a promise about future pricing that nobody has
+                        made. The tier is free today; that is all this can say.
+                        The two prices below are stale against VENUE-BILLING.md
+                        ($49 / $149) and are deliberately left alone: changing a
+                        price is the founder's call, not a cleanup. */}
+                    {venueTier === 'free' ? 'Free' : venueTier === 'premium' ? '$35/month' : '$75/month'}</p>
                   </div>
                   {venueTier !== 'pro' && (
                     <button className="hit44" onClick={() => setShowUpgradeModal(true)} style={{ padding: '6px 12px', borderRadius: '6px', border: 'none', background: '#2d5a87', color: 'white', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer' }}>
@@ -14756,9 +14908,12 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
               </div>
               {pendingRequests.map(req => (
                 <div key={req.id} style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '10px', borderRadius: '14px', backgroundColor: 'var(--bg-card-solid)', marginBottom: '8px', border: `1.5px solid #fde68a`, boxShadow: '0 1px 4px rgba(0,0,0,0.06)' }}>
-                  <div style={{ width: '44px', height: '44px', borderRadius: '22px', backgroundColor: colors.navyMidBg, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 'var(--t-body)', fontWeight: '600', color: 'white', flexShrink: 0, overflow: 'hidden' }}>
+                  {/* An incoming request from a stranger is one of the places
+                      someone most needs the block, and there is no content to
+                      hang it off. The face opens the person card. */}
+                  <button className="hit44" aria-label={`About ${req.name}`} onClick={() => openUserProfile({ id: req.id, name: req.name, image: req.profile_image_url })} style={{ width: '44px', height: '44px', borderRadius: '22px', backgroundColor: colors.navyMidBg, border: 'none', padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 'var(--t-body)', fontWeight: '600', color: 'white', flexShrink: 0, cursor: 'pointer' }}>
                     {req.profile_image_url ? <img src={req.profile_image_url} alt="" style={{ width: '44px', height: '44px', borderRadius: '22px', objectFit: 'cover' }} /> : req.name[0]?.toUpperCase()}
-                  </div>
+                  </button>
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <p style={{ fontWeight: '600', fontSize: 'var(--t-body)', color: colors.navy, margin: 0 }}>{req.name}</p>
                     <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: '2px 0 0' }}>Wants to be your friend</p>
@@ -14780,9 +14935,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
               <h4 style={{ fontSize: 'var(--t-micro)', fontWeight: '700', color: 'var(--text-tertiary)', margin: '0 0 8px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Sent Requests</h4>
               {outgoingRequests.map(req => (
                 <div key={req.id} style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '10px', borderRadius: '12px', backgroundColor: 'var(--bg-card-solid)', marginBottom: '6px' }}>
-                  <div style={{ width: '38px', height: '38px', borderRadius: '19px', backgroundColor: colors.navyMidBg, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 'var(--t-body)', fontWeight: '600', color: 'white', flexShrink: 0, overflow: 'hidden' }}>
+                  <button className="hit44" aria-label={`About ${req.name}`} onClick={() => openUserProfile({ id: req.id, name: req.name, image: req.profile_image_url })} style={{ width: '38px', height: '38px', borderRadius: '19px', backgroundColor: colors.navyMidBg, border: 'none', padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 'var(--t-body)', fontWeight: '600', color: 'white', flexShrink: 0, cursor: 'pointer' }}>
                     {req.profile_image_url ? <img src={req.profile_image_url} alt="" style={{ width: '38px', height: '38px', borderRadius: '19px', objectFit: 'cover' }} /> : req.name[0]?.toUpperCase()}
-                  </div>
+                  </button>
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <p style={{ fontWeight: '600', fontSize: 'var(--t-label)', color: colors.navy, margin: 0 }}>{req.name}</p>
                     <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: '1px 0 0' }}>Pending</p>
@@ -14819,9 +14974,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 const status = friendStatuses[user.id] || 'none';
                 return (
                   <div key={user.id} style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '10px', borderRadius: '14px', backgroundColor: 'var(--bg-card-solid)', marginBottom: '8px', boxShadow: '0 1px 3px rgba(0,0,0,0.06)' }}>
-                    <div style={{ width: '44px', height: '44px', borderRadius: '22px', backgroundColor: colors.navyMidBg, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 'var(--t-body)', fontWeight: '600', color: 'white', flexShrink: 0, overflow: 'hidden' }}>
+                    <button className="hit44" aria-label={`About ${user.name}`} onClick={() => openUserProfile({ id: user.id, name: user.name, image: user.profile_image_url })} style={{ width: '44px', height: '44px', borderRadius: '22px', backgroundColor: colors.navyMidBg, border: 'none', padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 'var(--t-body)', fontWeight: '600', color: 'white', flexShrink: 0, cursor: 'pointer' }}>
                       {user.profile_image_url ? <img src={user.profile_image_url} alt="" style={{ width: '44px', height: '44px', borderRadius: '22px', objectFit: 'cover' }} /> : user.name[0]?.toUpperCase()}
-                    </div>
+                    </button>
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <p style={{ fontWeight: '600', fontSize: 'var(--t-body)', color: colors.navy, margin: 0 }}>{user.name}</p>
                     </div>
@@ -14865,9 +15020,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                     const status = friendStatuses[user.id] || 'none';
                     return (
                       <div key={user.id} style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '10px', borderRadius: '14px', backgroundColor: 'var(--bg-card-solid)', marginBottom: '8px', boxShadow: '0 1px 3px rgba(0,0,0,0.06)' }}>
-                        <div style={{ width: '44px', height: '44px', borderRadius: '22px', backgroundColor: colors.navyMidBg, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 'var(--t-body)', fontWeight: '600', color: 'white', flexShrink: 0, overflow: 'hidden' }}>
+                        <button className="hit44" aria-label={`About ${user.name}`} onClick={() => openUserProfile({ id: user.id, name: user.name, image: user.profile_image_url })} style={{ width: '44px', height: '44px', borderRadius: '22px', backgroundColor: colors.navyMidBg, border: 'none', padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 'var(--t-body)', fontWeight: '600', color: 'white', flexShrink: 0, cursor: 'pointer' }}>
                           {user.profile_image_url ? <img src={user.profile_image_url} alt="" style={{ width: '44px', height: '44px', borderRadius: '22px', objectFit: 'cover' }} /> : user.name[0]?.toUpperCase()}
-                        </div>
+                        </button>
                         <div style={{ flex: 1, minWidth: 0 }}>
                           <p style={{ fontWeight: '600', fontSize: 'var(--t-body)', color: colors.navy, margin: 0 }}>{user.name}</p>
                           <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '2px 0 0' }}>{user.mutual_count} mutual friend{parseInt(user.mutual_count) !== 1 ? 's' : ''}</p>
@@ -14965,9 +15120,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                     const status = friendStatuses[user.id] || user.friendship_status || 'none';
                     return (
                       <div key={user.id} style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '10px', borderRadius: '14px', backgroundColor: 'var(--bg-card-solid)', marginBottom: '8px', boxShadow: '0 1px 3px rgba(0,0,0,0.06)' }}>
-                        <div style={{ width: '44px', height: '44px', borderRadius: '22px', backgroundColor: colors.navyMidBg, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 'var(--t-body)', fontWeight: '600', color: 'white', flexShrink: 0, overflow: 'hidden' }}>
+                        <button className="hit44" aria-label={`About ${user.name}`} onClick={() => openUserProfile({ id: user.id, name: user.name, image: user.profile_image_url })} style={{ width: '44px', height: '44px', borderRadius: '22px', backgroundColor: colors.navyMidBg, border: 'none', padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 'var(--t-body)', fontWeight: '600', color: 'white', flexShrink: 0, cursor: 'pointer' }}>
                           {user.profile_image_url ? <img src={user.profile_image_url} alt="" style={{ width: '44px', height: '44px', borderRadius: '22px', objectFit: 'cover' }} /> : user.name[0]?.toUpperCase()}
-                        </div>
+                        </button>
                         <div style={{ flex: 1, minWidth: 0 }}>
                           <p style={{ fontWeight: '600', fontSize: 'var(--t-body)', color: colors.navy, margin: 0 }}>{user.name}</p>
                           <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '2px 0 0' }}>From your contacts</p>
@@ -15103,37 +15258,80 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
             target={moderationTarget}
             onClose={() => setModerationTarget(null)}
             showToast={showToast}
-            onBlocked={(blockedId) => {
-              const id = String(blockedId);
-              blockedIdsRef.current.add(id);
-              // Drop the blocked user's DM thread and leave their conversation.
-              setDirectMessages(prev => prev.filter(d => String(d.userId) !== id));
-              if (String(selectedDmId) === id) {
-                setSelectedDmId(null);
-                setCurrentScreen('main');
-              }
-              // The DM was the only thing this used to clean up, so someone
-              // blocked from a flock chat stayed right there on screen, messages
-              // and all, until you navigated away and back. The server hides
-              // their messages from the next fetch; this is the copy already
-              // rendered, and their seat in the roster.
-              setFlocks(prev => prev.map(f => {
-                const messages = Array.isArray(f.messages) ? f.messages.filter(m => String(m.senderId) !== id) : null;
-                const members = Array.isArray(f.members) ? f.members.filter(m => String(m.id) !== id) : null;
-                const msgChanged = messages && messages.length !== f.messages.length;
-                const memChanged = members && members.length !== f.members.length;
-                if (!msgChanged && !memChanged) return f;
-                return { ...f, ...(msgChanged ? { messages } : {}), ...(memChanged ? { members } : {}) };
-              }));
-              // Availability pulses are the other place a name and face sit in
-              // client state between refreshes: the "Available tonight" list in
-              // the invite sheet reads straight off this array.
-              setFriendsPulses(prev => prev.filter(p => String(p.id) !== id));
-              // Then ask the server, so the counts under the roster are its
-              // numbers rather than our subtraction.
-              if (selectedFlockId) refreshFlockRoster(selectedFlockId);
-            }}
+            onBlocked={handleUserBlocked}
           />
+
+          {/* Person card (report / block someone who has posted nothing) */}
+          {userProfileTarget && (
+            <div
+              onClick={closeUserProfile}
+              style={{ position: 'absolute', inset: 0, zIndex: 190, backgroundColor: 'rgba(0,0,0,0.45)', display: 'flex', alignItems: 'flex-end', justifyContent: 'center' }}
+            >
+              <div
+                onClick={(e) => e.stopPropagation()}
+                style={{ width: '100%', maxWidth: '440px', backgroundColor: 'var(--bg-card-solid)', borderTopLeftRadius: '20px', borderTopRightRadius: '20px', overflow: 'hidden', boxShadow: '0 -8px 30px rgba(0,0,0,0.25)', animation: 'fadeInUp 0.25s ease-out' }}
+              >
+                <DialogBehavior onClose={closeUserProfile} label={`About ${userProfileTarget.name}`} />
+                <div style={{ width: '38px', height: '4px', borderRadius: '2px', backgroundColor: 'var(--border-default)', margin: '10px auto 4px' }} />
+
+                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px', padding: '14px 16px 16px' }}>
+                  {userProfileTarget.image ? (
+                    <img src={userProfileTarget.image} alt="" style={{ width: '68px', height: '68px', borderRadius: '34px', objectFit: 'cover' }} />
+                  ) : (
+                    <div style={{ width: '68px', height: '68px', borderRadius: '34px', background: colors.navyMidBg, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', fontWeight: '600', fontSize: 'var(--t-title)' }}>
+                      {userProfileTarget.name[0]?.toUpperCase() || '?'}
+                    </div>
+                  )}
+                  <h3 style={{ fontFamily: 'var(--font-display)', fontSize: 'var(--t-title)', fontWeight: '700', color: 'var(--text-primary)', margin: 0, textAlign: 'center', wordBreak: 'break-word' }}>{userProfileTarget.name}</h3>
+                </div>
+
+                {profileBlockStep ? (
+                  <div style={{ padding: '0 16px 20px' }}>
+                    <h4 style={{ fontSize: 'var(--t-body)', fontWeight: '700', color: 'var(--text-primary)', margin: '0 0 6px' }}>Block {userProfileTarget.name}?</h4>
+                    <p style={{ fontSize: 'var(--t-label)', color: 'var(--text-secondary)', margin: '0 0 16px', lineHeight: 1.5 }}>
+                      They won't be able to message you or see your activity, and you won't see theirs. Blocking is mutual, and it ends the friendship if you have one. You can undo the block in Settings, under Blocked accounts.
+                    </p>
+                    <div style={{ display: 'flex', gap: '10px' }}>
+                      <button className="hit44" onClick={() => setProfileBlockStep(false)} disabled={profileBlocking} style={{ flex: 1, padding: '13px', borderRadius: '12px', border: '1px solid var(--border-default)', backgroundColor: 'transparent', color: 'var(--text-secondary)', fontSize: 'var(--t-label)', fontWeight: '600', cursor: profileBlocking ? 'not-allowed' : 'pointer' }}>Cancel</button>
+                      <button className="hit44" onClick={confirmProfileBlock} disabled={profileBlocking} style={{ flex: 2, padding: '13px', borderRadius: '12px', border: 'none', backgroundColor: '#EF4444', color: 'white', fontSize: 'var(--t-label)', fontWeight: '700', cursor: profileBlocking ? 'not-allowed' : 'pointer', opacity: profileBlocking ? 0.6 : 1 }}>
+                        {profileBlocking ? 'Blocking...' : `Block ${userProfileTarget.name}`}
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <div>
+                    <button
+                      className="hit44 glass-btn"
+                      onClick={() => {
+                        const person = userProfileTarget;
+                        setUserProfileTarget(null);
+                        setProfileBlockStep(false);
+                        setModerationTarget({ userId: person.id, userName: person.name, contentType: 'profile' });
+                      }}
+                      style={{ width: '100%', padding: '15px 16px', textAlign: 'left', border: 'none', borderTop: '1px solid var(--border-subtle)', backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer', fontSize: 'var(--t-body)', fontWeight: '600', color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: '10px' }}
+                    >
+                      <span aria-hidden style={{ display: 'inline-flex' }}>{Icons.flag('currentColor', 16)}</span> Report {userProfileTarget.name}
+                    </button>
+                    <button
+                      className="hit44 glass-btn glass-danger"
+                      onClick={() => setProfileBlockStep(true)}
+                      style={{ width: '100%', padding: '15px 16px', textAlign: 'left', border: 'none', borderTop: '1px solid var(--border-subtle)', backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer', fontSize: 'var(--t-body)', fontWeight: '600', color: '#EF4444', display: 'flex', alignItems: 'center', gap: '10px' }}
+                    >
+                      <svg aria-hidden="true" focusable="false" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#EF4444" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}><circle cx="12" cy="12" r="10" /><line x1="4.9" y1="4.9" x2="19.1" y2="19.1" /></svg>
+                      Block {userProfileTarget.name}
+                    </button>
+                    <button
+                      className="hit44"
+                      onClick={closeUserProfile}
+                      style={{ width: '100%', padding: '15px 16px', border: 'none', borderTop: '1px solid var(--border-subtle)', backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer', fontSize: 'var(--t-body)', fontWeight: '600', color: 'var(--text-secondary)', textAlign: 'center' }}
+                    >
+                      Close
+                    </button>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
 
           {/* Flock Pro paywall — global sheet, opened by the Birdie meter or Settings */}
           <PaywallSheet
