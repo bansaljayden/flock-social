@@ -31,8 +31,11 @@ router.get('/promotions', async (req, res) => {
     const venue = await getVenueCtx(req.user.id);
     if (!venue) return res.json({ promotions: [] });
 
+    // venue_promotions grows with usage and one owner can create arbitrarily
+    // many over time — this list had no ceiling. A generous cap bounds the worst
+    // case without hiding any realistic set.
     const { rows } = await pool.query(
-      'SELECT * FROM venue_promotions WHERE venue_user_id = $1 ORDER BY created_at DESC',
+      'SELECT * FROM venue_promotions WHERE venue_user_id = $1 ORDER BY created_at DESC LIMIT 200',
       [req.user.id]
     );
     res.json({ promotions: rows });
@@ -109,6 +112,11 @@ router.put('/promotions/:id', requirePremium, [
 // DELETE /api/venue-dashboard/promotions/:id
 router.delete('/promotions/:id', requirePremium, param('id').isInt(), async (req, res) => {
   try {
+    // param('id').isInt() was declared but its result was never read, so a
+    // non-numeric id (e.g. /promotions/abc) reached Postgres as a string and came
+    // back a 500 instead of a 404 (same class as the PUT routes above already guard).
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) return res.status(404).json({ error: 'Promotion not found' });
     const { rowCount } = await pool.query(
       'DELETE FROM venue_promotions WHERE id = $1 AND venue_user_id = $2',
       [req.params.id, req.user.id]
@@ -129,8 +137,9 @@ router.get('/events', async (req, res) => {
     const venue = await getVenueCtx(req.user.id);
     if (!venue) return res.json({ events: [] });
 
+    // Same unbounded-growth cap as the promotions list above.
     const { rows } = await pool.query(
-      'SELECT * FROM venue_events WHERE venue_user_id = $1 ORDER BY created_at DESC',
+      'SELECT * FROM venue_events WHERE venue_user_id = $1 ORDER BY created_at DESC LIMIT 200',
       [req.user.id]
     );
     res.json({ events: rows });
@@ -203,6 +212,10 @@ router.put('/events/:id', requirePremium, [
 // DELETE /api/venue-dashboard/events/:id
 router.delete('/events/:id', requirePremium, param('id').isInt(), async (req, res) => {
   try {
+    // Same unenforced validator as the promotions DELETE: read it so a
+    // non-numeric id is a 404 rather than a Postgres 500.
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) return res.status(404).json({ error: 'Event not found' });
     const { rowCount } = await pool.query(
       'DELETE FROM venue_events WHERE id = $1 AND venue_user_id = $2',
       [req.params.id, req.user.id]
@@ -464,10 +477,12 @@ router.get('/public-promotions/:placeId', async (req, res) => {
          AND vp.google_place_id = p.google_place_id
          AND vp.verified = true
        WHERE p.google_place_id = $1 AND p.active = true AND COALESCE(p.is_hidden, false) = false
-       ORDER BY p.created_at DESC`,
+       ORDER BY p.created_at DESC
+       LIMIT 100`,
       [req.params.placeId]
     );
-    // Increment view count
+    // Increment view count (bounded by the LIMIT above, so the ANY($1) set never
+    // grows without limit either).
     if (rows.length > 0) {
       const ids = rows.map(r => r.id);
       await pool.query(

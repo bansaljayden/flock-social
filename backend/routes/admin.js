@@ -335,10 +335,15 @@ router.get('/venues/unverified', async (req, res) => {
 
 router.put('/venues/:profileId/verify', async (req, res) => {
   try {
+    // A non-numeric :profileId used to reach Postgres as NaN and surface as a
+    // 500 ("invalid input syntax for type integer"); it is a 404. venue_profiles.id
+    // is a SERIAL integer, so anything that is not all digits names no row.
+    const profileId = /^\d+$/.test(String(req.params.profileId)) ? parseInt(req.params.profileId, 10) : null;
+    if (profileId === null) return res.status(404).json({ error: 'Venue profile not found' });
     const verified = req.body.verified !== false;
     const result = await pool.query(
       'UPDATE venue_profiles SET verified = $1, updated_at = NOW() WHERE id = $2 RETURNING id, business_name, verified',
-      [verified, parseInt(req.params.profileId, 10)]
+      [verified, profileId]
     );
     if (result.rows.length === 0) return res.status(404).json({ error: 'Venue profile not found' });
     res.json(result.rows[0]);
@@ -357,9 +362,13 @@ router.post('/venues/:userId/tier', async (req, res) => {
     if (!['free', 'premium', 'pro'].includes(tier)) {
       return res.status(400).json({ error: 'tier must be free, premium, or pro' });
     }
+    // A non-numeric :userId reached Postgres as NaN and came back a 500; users.id
+    // is an integer key, so a non-digit id names no venue owner — 404, not 500.
+    const targetUserId = /^\d+$/.test(String(req.params.userId)) ? parseInt(req.params.userId, 10) : null;
+    if (targetUserId === null) return res.status(404).json({ error: 'Venue profile not found' });
     const result = await pool.query(
       'UPDATE venue_profiles SET tier = $1, updated_at = NOW() WHERE user_id = $2 RETURNING id, business_name, tier',
-      [tier, parseInt(req.params.userId, 10)]
+      [tier, targetUserId]
     );
     if (result.rows.length === 0) return res.status(404).json({ error: 'Venue profile not found' });
     console.log(`[Admin] venue tier: user ${req.params.userId} -> ${tier} by admin ${req.user.id} (${reason || 'no reason given'})`);
