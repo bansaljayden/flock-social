@@ -281,6 +281,13 @@ router.post('/flocks/:id/messages',
       // `image/png` and an animated WebP as `image/webp`, so tightening this
       // regex would close nothing. moderateImage inspects the actual bytes and
       // refuses multi-frame files there, for every upload path at once.
+      //
+      // This line is BILLED, once per image. The socket twin charges a
+      // 'send_image' bucket before its own call; this route is metered by the
+      // billed-image limiter in server.js, which is mounted ahead of every
+      // router and keyed on the account rather than the address, so the two
+      // transports cost roughly the same per minute. Until it existed, the only
+      // ceiling in front of this call was apiLimiter at 3000 per 15 minutes.
       if (image_url) {
         const verdict = await moderateImage(image_url);
         if (!verdict.allowed) {
@@ -730,7 +737,8 @@ router.post('/dm/:userId',
       }
 
       // Image moderation on the REST transport too (same as flock messages),
-      // including the byte-level multi-frame gate — see the note there.
+      // including the byte-level multi-frame gate — and metered by the same
+      // per-account billed-image limiter in server.js. See the note there.
       if (image_url) {
         const verdict = await moderateImage(image_url);
         if (!verdict.allowed) {
