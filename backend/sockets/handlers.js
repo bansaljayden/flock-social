@@ -561,6 +561,53 @@ async function emitToFlockMembers(io, flockId, event, payload, recipients) {
   return ids;
 }
 
+// --- Venue content viewers -------------------------------------------------
+//
+// `venue_content:{placeId}` holds the sockets that have a venue's PUBLIC UGC on
+// screen: the reviews and promotions the venue detail card renders from
+// /public-reviews and /public-promotions. Its ONE consumer today is the
+// moderation takedown in routes/admin.js, which needs to retract a hidden
+// review or promotion from every open card rather than only from its author's.
+//
+// WHY THIS IS NOT `venue:{placeId}`. That room already exists a few hundred
+// lines up and it is tempting to reuse. It holds the wrong people in both
+// directions:
+//
+//   - It MISSES viewers. The client joins it from the map bottom sheet
+//     (`activeVenue`), while the reviews and promotions live in state keyed on
+//     the detail modal, which also opens from a flock card, a search result and
+//     a chat share. Every card opened without a map pin would hear nothing.
+//   - It ADDS the wrong ones. Map-sheet viewers hold no review or promotion
+//     state, and the venue OWNER joins their own `venue:{placeId}` from the
+//     dashboard — the one surface App.js deliberately does not retract reviews
+//     from, because its header stats come from the server.
+//
+// Those two sets also have different lifetimes: the crowd feed is worth holding
+// while a pin is selected, and this one is worth holding exactly as long as the
+// content it can retract. Merging them would make a future change to who may
+// subscribe to crowd levels silently change who hears about a takedown.
+//
+// Same privacy profile as the crowd room, so the same gate: reviews and
+// promotions here are already served to any signed-in account by
+// /public-reviews and /public-promotions, and the PAYLOAD carries no words, no
+// author and no reason — a content type and an id, so the worst a subscriber
+// learns is that a row they could already read is gone.
+const VENUE_CONTENT_ROOM = (placeId) => `venue_content:${placeId}`;
+
+// Returns whether it emitted, so a caller (and a test) can tell "delivered to
+// an empty room" from "refused to build a room name".
+//
+// isPlaceIdShaped on the EMIT side as well as the join side. The value comes
+// out of venue_reviews/venue_promotions, where google_place_id is a plain
+// VARCHAR with no format constraint and is written from a client-supplied
+// string on the claim path, so this is the one place a stored value would
+// otherwise become a room name.
+function emitToVenueContentViewers(io, placeId, event, payload) {
+  if (!io || !isPlaceIdShaped(placeId)) return false;
+  io.to(VENUE_CONTENT_ROOM(placeId)).emit(event, payload);
+  return true;
+}
+
 // Guest RSVPs come in over an UNAUTHENTICATED share link (routes/guest.js), so
 // there is no connected socket to broadcast from — the REST route calls this.
 // Kept as its own name because routes/guest.js already imports it.
@@ -785,6 +832,58 @@ function registerHandlers(io, socket) {
     if (!placeId) return;
     venueRooms.delete(placeId);
     socket.leave(`venue:${placeId}`);
+  });
+
+  // --- Venue CONTENT rooms (live moderation takedowns on public venue UGC) ---
+  //
+  // Deliberately a SECOND subscription rather than a flag on join_venue: see
+  // the note above emitToVenueContentViewers for why the crowd room is the
+  // wrong set of people. A client joins this one when it opens a venue card
+  // that is holding reviews or promotions and leaves it when that card closes
+  // or changes venue, so the room's membership is the set of screens a takedown
+  // can actually retract from.
+  //
+  // Same gate as join_venue, for the same reason: a socket must not be able to
+  // mint arbitrary room names, and "the id names a venue we already know" is
+  // the rule utils/places.js exists to define once. Same eviction policy too —
+  // a real client holds one card at a time, so hitting the cap means stale
+  // rooms and refusing the one the user is looking at would be the bug. The Set
+  // is separate from venueRooms so the two subscriptions cannot evict each
+  // other; a card open on the same venue as the map sheet needs both.
+  const venueContentRooms = new Set(); // insertion ordered — oldest evicted first
+  socket.on('join_venue_content', async (data) => {
+    if (!allowEvent(socket, 'join_venue_content', 30, 10_000)) return;
+    const placeId = typeof data === 'string' ? data : data?.placeId;
+    if (!isPlaceIdShaped(placeId)) return;
+    if (!venueContentRooms.has(placeId)) {
+      if (!(await isKnownVenue(placeId))) return;
+      while (venueContentRooms.size >= MAX_VENUE_ROOMS_PER_SOCKET) {
+        const oldest = venueContentRooms.values().next().value;
+        venueContentRooms.delete(oldest);
+        socket.leave(VENUE_CONTENT_ROOM(oldest));
+      }
+    }
+    venueContentRooms.add(placeId);
+    socket.join(VENUE_CONTENT_ROOM(placeId));
+  });
+
+  // No shape check on the way OUT, matching leave_venue: leaving a room you
+  // could never have joined is a no-op, and refusing a malformed id here would
+  // only strand a socket in a room it wanted to drop. The bare-string form is
+  // accepted for the same reason join does, and that half IS tested.
+  //
+  // `if (!placeId) return` is PARITY WITH leave_venue, not a tested guard, and
+  // saying so is cheaper than letting the next reader assume it protects
+  // something. Deleting it changes no observable behaviour: Set.delete and
+  // socket.leave are both no-ops for a member that is not there, and
+  // `venue_content:undefined` is a room name Socket.io never creates because
+  // nothing ever joins it. MEASURED, by removing the line and watching every
+  // test in __tests__/takedownAudience.test.js still pass.
+  socket.on('leave_venue_content', (data) => {
+    const placeId = typeof data === 'string' ? data : data?.placeId;
+    if (!placeId) return;
+    venueContentRooms.delete(placeId);
+    socket.leave(VENUE_CONTENT_ROOM(placeId));
   });
 
   // --- Real-time messaging ---
@@ -2071,6 +2170,10 @@ module.exports = {
   // so nothing leaks, but the room is not a membership list, so members who are
   // not looking at that flock never see the guest's vote arrive.
   emitToFlockMembers,
+  // Round 22: routes/admin.js needs to reach the people holding a venue card,
+  // and the room name is defined here rather than spelled in the route.
+  emitToVenueContentViewers,
+  VENUE_CONTENT_ROOM,
   broadcastGuestRsvp,
   // Exported for tests: the security-relevant decisions, isolated from timers
   // and from Socket.io.

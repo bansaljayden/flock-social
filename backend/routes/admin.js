@@ -3,7 +3,10 @@ const pool = require('../config/database');
 const { authenticate } = require('../middleware/auth');
 // Round 18: a takedown has to reach the people looking at the content right
 // now, the same way a ban force-disconnects instead of waiting for a refetch.
-const { emitToFlockMembers } = require('../sockets/handlers');
+// Round 22: the venue half of the same idea. Both room names are defined in
+// sockets/handlers.js and neither is built by string interpolation here — a
+// route that spells a room name itself is how the two halves drift.
+const { emitToFlockMembers, emitToVenueContentViewers } = require('../sockets/handlers');
 
 const router = express.Router();
 router.use(authenticate);
@@ -519,62 +522,117 @@ router.get('/reports/:id/content', async (req, res) => {
 //
 // `audience` is the SQL the takedown UPDATE returns, captured inside the
 // transaction before it can change underneath us. Every entry returns the same
-// two column names so the caller does not branch: `flock_id` (fan out to
-// accepted members) and `notify_*` user ids (personal rooms). 'profile' is
-// deliberately absent — a profile report has no row to hide.
+// THREE column names so the caller does not branch: `flock_id` (fan out to
+// accepted members), `notify_*` user ids (personal rooms), and `place_id` (the
+// venue-content room — the people with that venue's card open right now).
+// 'profile' is deliberately absent — a profile report has no row to hide.
 //
-// ROUND 20, HONEST SCOPE. This block used to claim the emit reaches "the people
-// who can currently see the content". That is true for exactly two of the six
-// entries and the comment was doing real harm, because it reads as a guarantee
-// that the takedown retracts content from live screens everywhere:
+// ROUND 22 — WHO IS TOLD, RE-DECIDED PER TYPE.
 //
-//   flock_message  TRUE  — every accepted member, re-read at emit time.
-//   guest_rsvp     TRUE  — same, and a guest has no account to tell.
-//   dm             TRUE  — a DM has exactly two viewers and both are told.
-//   story          NO    — the AUTHOR only. Its viewers are the author's
-//                          friends and flock mates, computed per viewer by the
-//                          feed query; there is no room that holds them.
-//   venue_review   NO    — the author only.
-//   venue_promotion NO   — the venue owner only.
-//   venue_event    NO    — the venue owner only.
+// Round 20 wrote the honest table below and then declined to widen ANY of the
+// four narrow types. It gave three reasons. The load-bearing one has since
+// become false, so the decision is re-made here rather than re-explained:
 //
-// The comment is corrected rather than the audience widened, deliberately:
+//   flock_message   every accepted member, re-read at emit time.
+//   guest_rsvp      same, and a guest has no account to tell.
+//   dm              both participants.
+//   venue_review    the author AND everyone holding that venue's card.  WIDENED
+//   venue_promotion the venue owner AND everyone holding that card.     WIDENED
+//   venue_event     the venue owner only.        (still narrow — see below)
+//   story           the author only.             (still narrow — see below)
 //
-//   * There is no venue viewer room to emit into. `venue:{placeId}` exists in
-//     sockets/handlers.js for crowd updates, and its members are whoever asked
-//     for live crowd levels, which is neither the set looking at the reviews
-//     nor a set anyone maintains for this purpose.
-//   * A story's audience is a per-viewer SQL predicate (see
-//     utils/relationships.js), so widening means running a fan-out query per
-//     takedown and emitting into hundreds of personal rooms for content that
-//     expires in 24 hours anyway.
-//   * Nothing on the client listens. `content_removed` has no handler in
-//     frontend/src for ANY type, so today the widening would be fan-out with no
-//     receiver. The three narrow emits are already ahead of the client.
+// WHAT CHANGED. Round 20's decisive reason was "nothing on the client listens,
+// so widening is fan-out with no receiver". That is no longer true.
+// frontend/src/services/socket.js registers `content_removed` and
+// `content_restored` through the subscription registry that replays across a
+// socket rebuild, and frontend/src/App.js has a per-type handler with drop and
+// mark behaviour written per content type. The two venue types are the ones the
+// gap hurt: /public-reviews and /public-promotions fill `venueDetailReviews`
+// and `venueDetailPromos`, and the effect that loads them is keyed on the open
+// card and never refetches, so a taken-down review or promotion stayed on every
+// open card for as long as the app stayed open.
 //
-// What actually protects a reader in the meantime is that every read path
-// filters is_hidden, so the content is gone the moment anything refetches. The
-// live retraction is the optimisation, not the takedown. If the client ever
-// grows a handler, widen story first: it is the type where the gap between "the
-// author knows" and "the viewers stop seeing it" lasts longest.
+// THE CLIENT STILL OWES TWO THINGS, and neither is in this file's gift. Until
+// they land, the room emit below is addressed at an empty room — which is a
+// server that is ready rather than a server that is guessing, and is the same
+// order the flock and DM emits shipped in:
+//
+//   1. join_venue_content / leave_venue_content, fired with the venue detail
+//      card. Nothing joins the room yet. socket.js's registry replays room
+//      joins on reconnect, so this rides for free once it is wired.
+//   2. venue_promotion has to DROP from `venueDetailPromos` as well as mark in
+//      `promotions`. App.js's venue_promotion branch only calls
+//      setModerationHidden on the owner's own list today, which is right for
+//      the owner (routes/venueDashboard.js keeps a hidden promotion visible and
+//      marked, so silently dropping it would explain nothing) and wrong for a
+//      viewer, who must simply stop seeing it. Both calls, unconditionally:
+//      neither list contains the other's rows. venue_review already does the
+//      viewer half (dropContentById on venueDetailReviews).
+//
+// THE ROOM. The venue-viewer room did not exist and reusing the crowd room was
+// not an option, which is why round 20 stopped here. `venue:{placeId}` is
+// joined off `activeVenue` (the map bottom sheet) and off the venue OWNER's own
+// dashboard; the review and promotion state is keyed on `venueDetailModal`,
+// which is also opened from a flock card, a search result and a chat share. The
+// crowd room is therefore wrong in both directions at once: it misses every
+// card that was opened without a map pin, and it delivers to map-sheet viewers
+// who hold none of this state and to the owner dashboard, which App.js
+// deliberately does NOT retract from (its review header stats come from the
+// server, so dropping a row there prints "12 reviews" over eleven).
+// `venue_content:{placeId}` in sockets/handlers.js is joined and left with the
+// card that holds the content, which is exactly the lifetime of the state being
+// retracted. See emitToVenueContentViewers there for the room's own rules.
+//
+// WHAT STAYS NARROW, on current facts rather than round 20's:
+//
+//   venue_event — there is no public route that serves a venue event to
+//     anybody. routes/venueDashboard.js has /public-reviews and
+//     /public-promotions and no events twin, so the owner IS the whole
+//     audience. This is the one type round 20's "fan-out with no receiver"
+//     sentence still describes. Widen it in the same commit that ships a public
+//     events route, and not before.
+//   story — the audience is a per-viewer SQL predicate (utils/relationships.js:
+//     friends, flock mates, minus blocks), so widening means one fan-out query
+//     per takedown. That COST is not the reason and round 20 overstated it:
+//     takedowns happen at the rate a moderator clicks a button, not at traffic
+//     rate, the predicate is two indexed EXISTS clauses, and it is bounded by
+//     the author's own friend and flock-mate count. The real reason is that
+//     there is nobody to tell: the launch client renders no stories at all
+//     (`getStories` in frontend/src/services/api.js has zero callers and App.js
+//     does not contain the word), which is why App.js's TAKEDOWN_HANDLED marks
+//     story 'none' and frontend/src/__tests__/contentTakedownWiring.test.js
+//     pins that claim to the absence of the reader. Round 20 named story as the
+//     type to widen FIRST; on current facts it is the one to widen LAST, and
+//     the commit that ships a story feed is the one that owes it.
+//
+// Still true, and still the thing that actually protects a reader: every read
+// path filters is_hidden, so the content is gone the moment anything refetches.
+// The live retraction is the optimisation, not the takedown.
 const TAKEDOWN_TARGETS = {
   // Flock chat: the audience is the flock, not the author.
-  flock_message: { table: 'messages', audience: 'flock_id, NULL::int AS notify_a, NULL::int AS notify_b' },
+  flock_message: { table: 'messages', audience: 'flock_id, NULL::int AS notify_a, NULL::int AS notify_b, NULL::text AS place_id' },
   // A DM has exactly two people who can see it, and both need to be told: the
   // recipient so it leaves their thread, the author so a takedown is not silent.
-  dm: { table: 'direct_messages', audience: 'NULL::int AS flock_id, sender_id AS notify_a, receiver_id AS notify_b' },
-  story: { table: 'stories', audience: 'NULL::int AS flock_id, user_id AS notify_a, NULL::int AS notify_b' },
-  venue_review: { table: 'venue_reviews', audience: 'NULL::int AS flock_id, user_id AS notify_a, NULL::int AS notify_b' },
-  venue_promotion: { table: 'venue_promotions', audience: 'NULL::int AS flock_id, venue_user_id AS notify_a, NULL::int AS notify_b' },
+  dm: { table: 'direct_messages', audience: 'NULL::int AS flock_id, sender_id AS notify_a, receiver_id AS notify_b, NULL::text AS place_id' },
+  story: { table: 'stories', audience: 'NULL::int AS flock_id, user_id AS notify_a, NULL::int AS notify_b, NULL::text AS place_id' },
+  // The two public venue types. `google_place_id` is what addresses the room,
+  // and it is read out of the row being hidden rather than off the report, so
+  // it names the venue the content is actually attached to.
+  venue_review: { table: 'venue_reviews', audience: 'NULL::int AS flock_id, user_id AS notify_a, NULL::int AS notify_b, google_place_id AS place_id' },
+  venue_promotion: { table: 'venue_promotions', audience: 'NULL::int AS flock_id, venue_user_id AS notify_a, NULL::int AS notify_b, google_place_id AS place_id' },
   // venue_event: is_hidden added by migration 019. Nothing serves venue events
   // publicly yet, so no report can be filed against one from a real screen
   // today — but routes/moderation.js accepts the type, which means one CAN
   // arrive, and a report the queue cannot action is the failure this map exists
   // to prevent (round 13's guest_rsvp hole, which sat open for two rounds).
-  venue_event: { table: 'venue_events', audience: 'NULL::int AS flock_id, venue_user_id AS notify_a, NULL::int AS notify_b' },
+  //
+  // venue_events HAS a google_place_id column, so the NULL here is a decision
+  // and not a schema limit: with no public route serving events, the room would
+  // be addressed at nobody. Change this line and the events route together.
+  venue_event: { table: 'venue_events', audience: 'NULL::int AS flock_id, venue_user_id AS notify_a, NULL::int AS notify_b, NULL::text AS place_id' },
   // A guest RSVP has no account behind it, so there is nobody personal to tell;
   // the flock members watching the roster are the whole audience.
-  guest_rsvp: { table: 'guest_rsvps', audience: 'flock_id, NULL::int AS notify_a, NULL::int AS notify_b' },
+  guest_rsvp: { table: 'guest_rsvps', audience: 'flock_id, NULL::int AS notify_a, NULL::int AS notify_b, NULL::text AS place_id' },
 };
 
 // PUT /api/admin/reports/:id — take a moderation action:
@@ -714,6 +772,32 @@ router.put('/reports/:id', async (req, res) => {
               // Nullable on purpose: messages.sender_id is ON DELETE SET NULL,
               // and a guest RSVP has no account behind it at all.
               userIds: [row.notify_a, row.notify_b].filter((id) => id != null),
+              // Read from the SAME row and the SAME statement as the user ids,
+              // for the reason the RETURNING exists at all: a second read would
+              // see a world the takedown has already changed, and on a rollback
+              // it would address a venue about an event that never happened.
+              //
+              // It does NOT make hide and un-hide address the same room — they
+              // are separate requests, and an owner who moves a promotion to a
+              // different place id between them moves its audience with it.
+              // That is correct rather than a gap: /public-promotions serves by
+              // place id, so after the move the old venue's card no longer
+              // carries the row and the new venue's card does. What IS
+              // guaranteed is that hide and un-hide compute their audience the
+              // same way from the same column, which is what stops a takedown
+              // from being wider than its reversal.
+              //
+              // `typeof` rather than `?? null` is BELT AND BRACES, and worth
+              // saying so rather than letting it read as a tested guard: every
+              // non-string google_place_id is refused a second time by
+              // emitToVenueContentViewers, so swapping this for `?? null`
+              // changes no behaviour (MEASURED — the mutation passes every test
+              // in __tests__/takedownAudience.test.js). It earns its place by
+              // making `audience.placeId` honestly `string | null` for anything
+              // that reads this object later, rather than "whatever the column
+              // held", which is how the value would reach a room name if a
+              // future caller trusted it without the helper.
+              placeId: typeof row.place_id === 'string' ? row.place_id : null,
             };
           }
         }
@@ -815,9 +899,10 @@ router.put('/reports/:id', async (req, res) => {
     // their content is gone when it is still live.
     //
     // How far this reaches depends entirely on the TAKEDOWN_TARGETS entry, and
-    // for four of the seven types it reaches the author and nobody else. The
-    // table up there lists which is which and why the narrow ones stay narrow;
-    // do not read the paragraph above as a promise that every viewer is told.
+    // for two of the seven types (story, venue_event) it reaches the author and
+    // nobody else. The table up there lists which is which and why those two
+    // stay narrow; do not read the paragraph above as a promise that every
+    // viewer is told.
     //
     // Deliberate deviation worth naming: the un-hide emits 'content_restored',
     // not 'content_removed' with an inverted flag. A client that has already
@@ -851,6 +936,24 @@ router.put('/reports/:id', async (req, res) => {
           for (const uid of new Set(audience.userIds)) {
             if (already.has(uid)) continue;
             io.to(`user:${uid}`).emit(event, payload);
+          }
+          // The venue card viewers, LAST — the author is owed the notice
+          // whatever happens to the room emit, and this one is addressed to a
+          // room rather than to a list of ids.
+          //
+          // It is not de-duplicated against the personal rooms above, and it
+          // cannot be: a room emit has no id list to subtract. So an author or
+          // a venue owner who is looking at the public card their own content
+          // sits on is told twice. That is a deliberate no-op rather than an
+          // oversight — every reducer on the client half is idempotent and
+          // returns the SAME array it was given when nothing matched
+          // (dropContentById, setModerationHidden in frontend/src/App.js), so
+          // the second delivery costs one comparison and no re-render. The
+          // alternative is chaining Socket.io's .except() on the personal
+          // rooms, which would make an exactly-once guarantee depend on room
+          // bookkeeping in order to save a comparison.
+          if (audience.placeId) {
+            emitToVenueContentViewers(io, audience.placeId, event, payload);
           }
         }
       } catch (emitErr) {
