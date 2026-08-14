@@ -537,6 +537,15 @@ export async function saveFlockVenue(flockId, venue = {}) {
   });
 }
 
+// Set or change a flock's time. Same PUT /api/flocks/:id, same creator-only
+// rule; `eventTime` must be ISO 8601 or the server answers 400.
+export async function setFlockEventTime(flockId, eventTime) {
+  return request(`/api/flocks/${flockId}`, {
+    method: 'PUT',
+    body: JSON.stringify({ event_time: eventTime }),
+  });
+}
+
 // Move a flock through its lifecycle. Statuses match the server's enum
 // exactly; anything else is rejected here rather than spending a round trip.
 const FLOCK_STATUSES = ['planning', 'confirmed', 'completed', 'cancelled'];
