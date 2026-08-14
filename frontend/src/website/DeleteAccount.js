@@ -20,7 +20,11 @@ export default function DeleteAccount() {
 
   return (
     <main className="pp">
-      <a href="/landing" className="pp-back">&larr; flockcorp.com</a>
+      {/* The arrow is decoration and must stay out of the link's accessible
+          name, or it is announced as "left arrow flockcorp.com". */}
+      <a href="/landing" className="pp-back">
+        <span aria-hidden="true">&larr;</span> flockcorp.com
+      </a>
 
       <header className="pp-header">
         <h1>Delete your Flock account</h1>
@@ -66,7 +70,16 @@ export default function DeleteAccount() {
           Email us from the address on your account and we'll delete it for you:
         </p>
         <p>
-          <a href={mailto}>Request deletion by email &rarr;</a>{' '}
+          {/* This is the whole deletion path for someone who has already
+              uninstalled, so its name has to survive being read aloud. The
+              arrow is decoration; the parenthetical says out loud that the
+              link hands off to a mail app with a draft already written, which
+              is otherwise a surprise you only discover by activating it. */}
+          <a href={mailto}>
+            Request deletion by email
+            <span className="pp-sr-only"> (opens a new message in your email app)</span>
+            <span aria-hidden="true"> &rarr;</span>
+          </a>{' '}
           (or write to <a href={`mailto:${SUPPORT_EMAIL}`}>{SUPPORT_EMAIL}</a>)
         </p>
         <p>

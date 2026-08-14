@@ -7,10 +7,41 @@
   /* Light: cream paper, navy ink */
   --pp-paper: #f1ede0;
   --pp-paper-2: #e9e3d3;      /* recessed panels */
-  --pp-ink: #16283d;          /* headings — 13.5:1 on paper */
-  --pp-ink-2: #33475e;        /* body — 7.9:1 on paper */
-  --pp-ink-3: #6b7a8c;        /* meta — 4.6:1 on paper */
-  --pp-accent: #2d5a87;       /* steel navy — 6.4:1 on paper */
+  /* Ratios below are WCAG 2.x, computed rather than eyeballed, and re-derived
+     whenever a value here moves. The old set of numbers in this block was
+     wrong in all four places (13.5 / 7.9 / 4.6 / 6.4 against a real 12.76 /
+     8.14 / 3.75 / 6.13), and the one that mattered — --pp-ink-3 — was a WCAG
+     1.4.3 FAILURE hiding behind a passing-looking comment. A comment that
+     states a ratio is a claim; frontend/src/__tests__/legalPagesAccessibility
+     .test.js now recomputes every one of them from the hex in this file, so a
+     wrong number fails a test instead of surviving four audits.
+     Format: ratio on --pp-paper / on --pp-paper-2. */
+  --pp-ink: #16283d;          /* headings — 12.76 / 11.67 */
+  --pp-ink-2: #33475e;        /* body — 8.14 / 7.44 */
+  /* Was #6b7a8c: 3.75 / 3.42, i.e. under 4.5:1 on both grounds, for text no
+     bigger than 16px. #586473 is the same hue and saturation dropped in
+     lightness, and is already what LandingPage.css uses for the identical role.
+
+     WHERE THIS TOKEN ACTUALLY LANDS, measured in Chromium rather than read off
+     the selector list. It is DECLARED on .pp-back, .pp-meta, .pp-toc a,
+     .pp-toc-label, .pp-summary p, .pp-footer a and .pp li::marker, but the
+     cascade takes most of those away from it:
+       .pp-back, .pp-toc a  -> --pp-accent, because `.pp a` (0,1,1) outranks a
+                               bare class (0,1,0)
+       .pp-meta, .pp-toc-label, .pp-summary p
+                            -> --pp-ink-2, because `.pp p` (0,1,1) ties or
+                               outranks them and is declared later in the file
+       .pp-footer a         -> --pp-ink-3, the one text surface it wins (it is
+                               declared after `.pp a` at equal specificity)
+       .pp li::marker       -> --pp-ink-3
+     So the shipped failure was the footer links (13px) and the list markers,
+     on Privacy, About and Support. Real, and worth fixing. Smaller than the
+     selector list suggests, and the difference matters: a token whose declared
+     reach is not its real reach is how a wrong ratio survives a reading.
+     If anyone ever raises those selectors' specificity to match the intent,
+     more surfaces move onto this token and it has to already be safe. */
+  --pp-ink-3: #586473;        /* meta — 5.14 / 4.70 */
+  --pp-accent: #2d5a87;       /* steel navy — 6.13 / 5.61 */
   --pp-rule: rgba(22, 40, 61, 0.14);
   --pp-rule-soft: rgba(22, 40, 61, 0.08);
 
@@ -30,10 +61,12 @@
   .pp {
     --pp-paper: #0f172a;
     --pp-paper-2: #172236;
-    --pp-ink: #f4efe3;
-    --pp-ink-2: #c8c3b2;      /* the cream-warm secondary from the app */
-    --pp-ink-3: #98937f;
-    --pp-accent: #6d9ac3;     /* steel navy, dark-mode pair */
+    /* Same format: on --pp-paper / on --pp-paper-2. This set was already
+       passing; the numbers are recorded so it stays that way. */
+    --pp-ink: #f4efe3;        /* headings — 15.56 / 13.88 */
+    --pp-ink-2: #c8c3b2;      /* the cream-warm secondary from the app — 10.12 / 9.03 */
+    --pp-ink-3: #98937f;      /* meta — 5.79 / 5.17 */
+    --pp-accent: #6d9ac3;     /* steel navy, dark-mode pair — 6.00 / 5.35 */
     --pp-rule: rgba(244, 239, 227, 0.16);
     --pp-rule-soft: rgba(244, 239, 227, 0.09);
   }
@@ -73,6 +106,77 @@
   }
 }
 
+/* ---------- utilities ---------- */
+
+/* Visible to a screen reader, not to the eye. Clip rather than display:none or
+   visibility:hidden, both of which remove the text from the accessibility tree
+   as well and would defeat the purpose. Local rather than reusing index.css's
+   .sr-only, for the reason LandingPage.css gives for .lp-sr: index.css is the
+   APP's stylesheet and these pages must not start depending on it. */
+.pp-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* The Privacy Policy puts a twelve-entry contents rail in front of the
+   document, so a keyboard or switch user pays twelve tabs before reaching a
+   word of the policy on every visit. This jumps them past it. It is the first
+   focusable thing in the document and it is off-screen until focused, which is
+   an accepted skip-link pattern and not a scroll-triggered reveal: nothing
+   about it is gated on a scroll handler or an animation.
+
+   SELECTOR SPECIFICITY IS LOAD-BEARING HERE, not stylistic. `.pp a` further
+   down this file is (0,1,1) and a bare `.pp-skip` is (0,1,0), so a bare class
+   loses `color` and `border-bottom` to it: the label paints in --pp-accent on
+   the --pp-ink block, which measures 2.08:1 light and 2.59:1 dark. Verified in
+   Chromium, not reasoned about. `.pp a.pp-skip` is (0,2,1) and wins.
+   Do not simplify these selectors back to a bare class. */
+.pp a.pp-skip {
+  position: fixed;
+  top: 8px;
+  left: 8px;
+  z-index: 100;
+  transform: translateY(-200%);
+  padding: 12px 18px;
+  border-radius: 10px;
+  background: var(--pp-ink);
+  color: var(--pp-paper);
+  font-size: 15px;
+  font-weight: 700;
+  text-decoration: none;
+  border: 0;
+}
+/* :focus as well as :focus-visible. A skip link is reached only by keyboard,
+   and if an engine ever declines to treat that as "visible" focus the link
+   stays off-screen while holding focus, which is the classic invisible-focus
+   bug rather than a cosmetic one. */
+.pp a.pp-skip:focus,
+.pp a.pp-skip:focus-visible { transform: none; }
+/* The generic .pp a:focus-visible ring is --pp-accent at +3px, drawn OUTSIDE
+   this block on whatever the page happens to show behind it. Drawn inside, in
+   --pp-paper on --pp-ink, it measures 12.76:1 light and 15.56:1 dark.
+   .pp a.pp-skip:focus-visible is (0,3,1) and beats the (0,2,1) generic. */
+.pp a.pp-skip:focus,
+.pp a.pp-skip:focus-visible {
+  outline: 3px solid var(--pp-paper);
+  outline-offset: -6px;
+}
+
+/* The skip target. Not focusable by Tab; focusable as a jump destination, so
+   the browser moves focus there instead of moving the scroll and leaving focus
+   back up in the contents rail. */
+#pp-body {
+  scroll-margin-top: 28px;
+}
+#pp-body:focus { outline: none; }
+
 /* ---------- masthead ---------- */
 
 .pp-back {
@@ -82,7 +186,17 @@
   font-size: 14px;
   font-weight: 500;
   border: 0;
-  margin-bottom: clamp(28px, 5vw, 44px);
+  /* WCAG 2.5.8 wants 24px. What this rule DECLARES is 14px at the inherited
+     line-height of 1.7, i.e. a 23.8px box, which misses. Chromium measures the
+     shipped link at 24.8px, and the extra 0.8px is a 1px border-bottom this
+     rule did not ask for and cannot see: `border: 0` here loses to `.pp a`'s
+     `border-bottom` further down the file. So today it passes by accident, and
+     the accident is exactly the kind of thing a later tidy-up removes. Four
+     pixels of vertical padding makes it 32.8px on its own terms. Padding on an
+     inline-block costs no horizontal layout; the margin below gives back the
+     8px so nothing moves. */
+  padding: 4px 0;
+  margin-bottom: clamp(24px, 5vw, 40px);
   transition: color 0.18s cubic-bezier(0.22, 1, 0.36, 1);
 }
 .pp-back:hover { color: var(--pp-accent); }
@@ -176,6 +290,19 @@
     top: 40px;
     max-height: calc(100vh - 80px);
     overflow-y: auto;
+    /* overflow-y:auto forces the computed overflow-x from `visible` to `auto`,
+       so this is a scroll container on both axes and it clips to its PADDING
+       box. The focus ring on a contents entry is a 2px outline at a 3px
+       offset, i.e. 5px outside a link that fills the whole column. With no
+       padding, Chromium clips exactly those 5px off each side: measured, and
+       screenshotted. What survives is the ring's top and bottom edges as two
+       disconnected horizontal lines with no corners, which does not read as a
+       focus indicator at all. 6px of padding leaves 0px clipped and the ring
+       draws whole.
+
+       (Outlines do not contribute to scrollWidth, so this never produced a
+       stray horizontal scrollbar. Only the clipping is real.) */
+    padding: 6px;
     scrollbar-width: thin;
   }
 }
@@ -209,7 +336,12 @@
 }
 .pp-toc a:hover { color: var(--pp-ink); background: var(--pp-rule-soft); }
 
-.pp-toc a[aria-current='true'] {
+/* aria-current="location", not "true": the rail marks where you are WITHIN
+   this document, which is exactly what the `location` token means. "true" is
+   the generic fallback and tells a screen reader only that something about
+   this link is current. The weight change carries the state as well as the
+   colour, so it is never colour alone (WCAG 1.4.1). */
+.pp-toc a[aria-current='location'] {
   color: var(--pp-ink);
   font-weight: 600;
   background: var(--pp-rule-soft);
@@ -249,6 +381,20 @@
     overflow-wrap: anywhere;
   }
 }
+
+/* ---------- the flat documents ---------- */
+
+/* Terms, Community Guidelines and Delete account reuse this stylesheet but
+   have no .pp-shell and no .pp-doc: their <section>s are direct children of
+   .pp. Everything with a class here carries `max-width: var(--pp-measure)`
+   (.pp-header, .pp-summary, .pp-doc, .pp-footer) and those bare sections
+   carried nothing, so on a wide display the heading and the footer sat at 72ch
+   while the actual legal text between them ran the full width of the viewport.
+   At 2560px that is a ~2400px measure, roughly 240 characters a line, which is
+   where losing your place between lines stops being a nitpick. The child
+   combinator is deliberate: the Privacy Policy's own sections are nested
+   inside .pp-doc and are already held to the measure by it. */
+.pp > section { max-width: var(--pp-measure); }
 
 /* ---------- document body ---------- */
 
@@ -367,13 +513,30 @@
 
 /* ---------- entrance: one subtle, single-run settle ---------- */
 
+/* THE CONTENT IS VISIBLE WITH NO ANIMATION AT ALL, AND THAT IS THE POINT.
+   This block used to read `animation: pp-settle ... both` over a keyframe
+   whose `from` was `opacity: 0`. animation-fill-mode: both holds that start
+   frame BEFORE the animation runs, so anything that leaves the animation at
+   time zero leaves the page's <h1> and its plain-English summary painted at
+   zero opacity with nothing to reveal them: a "disable animations" extension
+   or user stylesheet setting animation-play-state: paused, a huge injected
+   animation-delay, a compositor that never advances a backgrounded tab's
+   animation before paint, a print stylesheet. A privacy policy that ships its
+   heading and its summary blank is a worse failure than a missing flourish.
+   This is the same class SLOP-AUDIT A10 bans scroll-triggered reveals for:
+   never gate the visibility of content on an animation firing.
+
+   The settle is therefore transform-only. At t=0, while paused, with the
+   keyframes deleted, or with this whole @media block dropped, the text is
+   fully opaque; the only thing at stake is 8px of vertical travel. Keep it
+   that way: do not put `opacity` back into pp-settle. */
 @media (prefers-reduced-motion: no-preference) {
   .pp-header,
-  .pp-summary { animation: pp-settle 0.5s cubic-bezier(0.22, 1, 0.36, 1) both; }
+  .pp-summary { animation: pp-settle 0.5s cubic-bezier(0.22, 1, 0.36, 1) backwards; }
   .pp-summary { animation-delay: 0.06s; }
 }
 
 @keyframes pp-settle {
-  from { opacity: 0; transform: translateY(8px); }
-  to   { opacity: 1; transform: none; }
+  from { transform: translateY(8px); }
+  to   { transform: none; }
 }
