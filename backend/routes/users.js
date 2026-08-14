@@ -562,6 +562,111 @@ function maybePurgeExpired(now = Date.now()) {
   return true;
 }
 
+// ---------------------------------------------------------------------------
+// Field bounds — every ceiling this file owns, and where each number came from
+// ---------------------------------------------------------------------------
+// AUDIT 2026-08-14. Six fields on these routes had no maximum OF THEIR OWN, so
+// the only thing deciding how large they could be was express.json()'s limit in
+// server.js. That limit was just moved from 1MB to 64KB as a security fix, which
+// means six unrelated fields silently got sixteen times smaller and nobody
+// reviewed the change to any of them. A field whose bound lives in another file
+// is a field whose bound moves when somebody tunes a number two files away, and
+// it is a field nobody can reason about from the route that accepts it.
+//
+// Column widths are read from migrations/000_bootstrap.sql. Over a VARCHAR width
+// is a Postgres 22001, which surfaces as a 500 for what is plainly a client
+// mistake, so each of these is also the difference between a 400 and a 500:
+//
+//   MAX_NAME          users.name VARCHAR(255)
+//   MAX_EMAIL         users.email VARCHAR(255). A BACKSTOP, not the active
+//                     gate, and it is worth being precise about that: the thing
+//                     refusing a 300-character address today is validator.js,
+//                     whose isEmail caps the WHOLE address at 254 characters
+//                     (measured, not assumed). So the column is safe right now
+//                     because of a number in node_modules. `ignore_max_length`
+//                     is an isEmail option, that default is a library's to
+//                     change, and this route would then write straight past its
+//                     own column. The bound says what THIS route will accept.
+//                     __tests__/fieldBounds.test.js measures the largest address
+//                     the route really takes and checks it against the column
+//                     rather than trusting either number.
+//   MAX_PHONE         users.phone VARCHAR(20)
+//   MAX_SEARCH_QUERY  users.name VARCHAR(255) again, and for a second reason
+//                     that is stronger than the first: GET /search matches
+//                     `%term%` against that column, so a term wider than the
+//                     column cannot match any row no matter how long it is.
+//                     Everything past the column width is pure ILIKE cost.
+//
+// The rest have no column width to borrow, so they come from the product:
+//
+//   MAX_AVATAR_URL    the only URL this route accepts is a DiceBear one (the
+//                     host allowlist below is a single entry), and the URL the
+//                     client builds is about 55 characters:
+//                     https://api.dicebear.com/7.x/<style>/svg?seed=<seed>.
+//                     255 is over four times that, leaves room for DiceBear's
+//                     option parameters, and matches the width of every other
+//                     identifier column this file writes. It matters because
+//                     profile_image_url is repeated on every message row,
+//                     roster entry and push payload the user appears in.
+//   MAX_PASSWORD      bcrypt ignores everything past 72 bytes, so no character
+//                     beyond that can change the outcome of a compare or a hash.
+//                     1024 is fourteen times the part that can matter and far
+//                     above what any password manager generates, so it cannot
+//                     lock out an account whose password predates this bound.
+//                     Deliberately generous for exactly that reason: routes/
+//                     auth.js has never had a maximum, so a longer password may
+//                     already exist and must still be typeable.
+//   MAX_INTERESTS     interests is TEXT[], which has no width at all, so both of
+//                     these come from the picker. The interests screen in
+//                     frontend/src/App.js offers 12 suggestions on top of 3
+//                     defaults, so 15 chips are reachable without typing a
+//                     single character. 30 is double that, which covers somebody
+//                     who types their own and never removes any.
+//   MAX_INTEREST_LEN  the longest interest the product itself defines is
+//                     "art & culture", 13 characters, in the interestToTM map in
+//                     routes/events.js. 40 is three times that.
+//                     __tests__/fieldBounds.test.js reads that map and fails if
+//                     either ceiling drops below what it needs, which is the
+//                     half of a bound that boundary tests cannot check: they are
+//                     driven from the constant, so they follow it downwards.
+const MAX_NAME = 255;
+const MAX_EMAIL = 255;
+const MAX_PHONE = 20;
+const MAX_SEARCH_QUERY = 255;
+const MAX_AVATAR_URL = 255;
+const MAX_PASSWORD = 1024;
+const MAX_INTERESTS = 30;
+const MAX_INTEREST_LEN = 40;
+
+// interests is TEXT[] and node-pg will serialize whatever it is handed into it,
+// so the contents have to be checked and not merely the fact that an array
+// arrived. Before this, the chain was `isArray()` and nothing else, and
+// sanitizeArray (utils/sanitize.js) bounds nothing either — it strips markup per
+// element and drops non-scalars, which is a content rule, not a size one. So the
+// array length AND each element's length were both decided by server.js.
+//
+// Strings only. sanitizeArray keeps numbers and booleans as they are, which
+// would store `true` as the text "true" in a column whose whole content is
+// human-typed tags. Nothing legitimate sends one, and the frontend picker only
+// ever produces strings.
+//
+// Measured BEFORE stripHtml runs, on purpose and in the direction that is safe:
+// stripping can only shorten, so a value inside this bound is inside it in the
+// column too, while a 300-character value made of tags is refused rather than
+// quietly becoming a short one. The blank-after-stripping case is caught in the
+// handler, where the stripped array exists.
+const interestsRule = body('interests').optional({ nullable: true }).custom((v) => {
+  if (!Array.isArray(v)) throw new Error('Interests must be a list');
+  if (v.length > MAX_INTERESTS) throw new Error(`Too many interests (max ${MAX_INTERESTS})`);
+  for (const item of v) {
+    if (typeof item !== 'string') throw new Error('Each interest must be text');
+    if (item.length > MAX_INTEREST_LEN) {
+      throw new Error(`Each interest must be under ${MAX_INTEREST_LEN} characters`);
+    }
+  }
+  return true;
+});
+
 // PUT /api/users/profile - Update current user's profile (requires current password)
 router.put('/profile',
   [
@@ -584,11 +689,34 @@ router.put('/profile',
     // the rename accepted a BLANK name into the column every roster, invite,
     // chat row and push renders. Sanitize, then trim, then measure.
     freeText(body('name').optional({ nullable: true }), 'name')
-      .isLength({ min: 1, max: 255 }).withMessage('Name must be 1-255 characters'),
+      .isLength({ min: 1, max: MAX_NAME }).withMessage(`Name must be 1-${MAX_NAME} characters`),
     // normalizeEmail() matches signup and login (routes/auth.js), so
     // `v.ictim@gmail.com` cannot be stored as a distinct row that shadows
     // `victim@gmail.com` in the LOWER(email) lookups those paths use.
-    body('email').optional({ nullable: true }).isEmail().normalizeEmail().withMessage('Valid email required'),
+    //
+    // MEASURED TWICE, AND THE SECOND ONE IS THE ONE THAT PROTECTS THE COLUMN.
+    //
+    // The first draft of this rule measured the raw address only, on the
+    // reasoning that "normalizeEmail can only shorten: it lowercases and strips
+    // Gmail dots and +subaddresses". That reasoning is wrong, and the
+    // counterexample is live rather than theoretical. isEmail allows a UTF-8
+    // local part by default, and lowercasing U+0130 (İ, dotted capital I) yields
+    // TWO code points. isEmail caps the local part at 64 BYTES, so a local part
+    // of 32 İ is legal, 32 code points wide, and 64 code points wide once it has
+    // been normalized. Put that in front of a long legal domain and a
+    // 254-code-point address that passes every check on this route becomes 286
+    // code points on its way to a VARCHAR(255): Postgres 22001, i.e. a 500, on
+    // the exact overflow this bound exists to stop. (Measured, not reasoned:
+    // __tests__/fieldBounds.test.js sends that address.)
+    //
+    // So the width is checked again AFTER the sanitizer, against the value that
+    // will actually be written. The first check is kept as well, because it is
+    // what keeps a 64KB string away from isEmail's regex work.
+    body('email').optional({ nullable: true })
+      .isLength({ max: MAX_EMAIL }).withMessage('Email address is too long')
+      .isEmail().withMessage('Valid email required')
+      .normalizeEmail()
+      .isLength({ max: MAX_EMAIL }).withMessage('Email address is too long'),
     // Round 16: this was `body('phone').optional()` with NO validation at all,
     // while signup runs isMobilePhone(). Two separate problems came out of that:
     // anything at all could be written into the column (a name, a URL, an
@@ -600,15 +728,23 @@ router.put('/profile',
     // must not start 400ing them.
     body('phone').optional({ nullable: true, checkFalsy: true }).trim()
       .isMobilePhone().withMessage('Invalid phone number')
-      .isLength({ max: 20 }).withMessage('Phone number is too long'),
-    body('interests').optional({ nullable: true }).isArray(),
+      .isLength({ max: MAX_PHONE }).withMessage('Phone number is too long'),
+    interestsRule,
     // Optional at the validator layer: OAuth accounts have no password, and a
     // notEmpty() here 400'd their profile edits before the OAuth-aware handler
     // below could run. Password accounts still fail closed — the bcrypt
     // compare against a missing value returns 401.
-    body('current_password').optional({ nullable: true }).isString(),
+    //
+    // Both password fields carry a ceiling of their own now (see MAX_PASSWORD).
+    // The cost of an unbounded one is not CPU — bcrypt reads 72 bytes and
+    // ignores the rest — it is that "how long may a password be" was answered by
+    // the JSON parser in server.js, on the two fields where the answer should be
+    // deliberate.
+    body('current_password').optional({ nullable: true }).isString()
+      .isLength({ max: MAX_PASSWORD }).withMessage('Password is too long'),
     body('new_password').optional({ nullable: true })
       .isLength({ min: 8 }).withMessage('New password must be at least 8 characters')
+      .isLength({ max: MAX_PASSWORD }).withMessage('New password is too long')
       .matches(/[A-Z]/).withMessage('Password must contain at least one uppercase letter')
       .matches(/[0-9]/).withMessage('Password must contain at least one number'),
   ],
@@ -638,10 +774,39 @@ router.put('/profile',
         }
       }
 
-      // UGC text filter on display name (Apple 1.2).
+      // UGC text filter on display name (Apple 1.2). `name` has already been
+      // through stripHtml by this point (freeText applies it as a sanitizer), so
+      // this screens the string that will actually be stored.
       if (name && rejectIfProfane(res, name)) return;
 
-      const safeInterests = interests ? sanitizeArray(interests) : null;
+      // interests is UGC that somebody other than its author reads: routes/
+      // admin.js renders it into the moderation queue's profile evidence
+      // (ARRAY_TO_STRING(u.interests, ', ')), which is the surface a moderator
+      // decides a ban on. sanitizeArray already stripped its markup; nothing
+      // screened it.
+      //
+      // The screen runs on what came OUT of sanitizeArray, not on what went in,
+      // and the ordering is load-bearing rather than tidy. A tag WRAPPING a word
+      // does not hide it (the wordlist tokenizes on the angle brackets, so
+      // "<b>shit</b>" is caught either way) — a tag INSIDE one does: "sh<b>it"
+      // is three harmless tokens before stripHtml and one slur after it. Screen
+      // first and that value is stored, screened, as the slur it becomes. This
+      // is the same reason freeText applies stripHtml before `name` is screened
+      // on the field above, measured rather than assumed:
+      // __tests__/fieldBounds.test.js asserts both halves of it.
+      let safeInterests = null;
+      if (interests) {
+        safeInterests = sanitizeArray(interests).map((v) => String(v).trim());
+        for (const interest of safeInterests) {
+          // Blank only AFTER stripping, i.e. an interest made entirely of
+          // markup. Storing it would put an empty chip in the array and an empty
+          // slot in the moderator's evidence line.
+          if (interest === '') {
+            return res.status(400).json({ error: 'An interest cannot be blank' });
+          }
+          if (rejectIfProfane(res, interest)) return;
+        }
+      }
 
       // Fetch current user with password
       const userResult = await pool.query('SELECT * FROM users WHERE id = $1', [req.user.id]);
@@ -1044,7 +1209,16 @@ router.get('/search',
   // `String(req.query.q)` below already flattened it to "a,b" so it never
   // reached pg structured — but a search term that silently means something
   // other than what was typed is worth refusing rather than guessing at.
-  scalarOnly(query('q'), 'search query').trim().isLength({ min: 1 }).withMessage('Search query is required'),
+  // The MAXIMUM is the half this was missing. `q` had a floor and no ceiling, so
+  // the largest search term the API accepted was whatever express.json() and the
+  // URL length allowed, and every character of it was paid for twice: once
+  // escaping it into the LIKE pattern and once by Postgres scanning `name ILIKE
+  // '%…%'` across the users table. MAX_SEARCH_QUERY is users.name's own width,
+  // which is also the point past which a substring match is arithmetically
+  // impossible.
+  scalarOnly(query('q'), 'search query').trim()
+    .isLength({ min: 1 }).withMessage('Search query is required')
+    .isLength({ max: MAX_SEARCH_QUERY }).withMessage('Search query is too long'),
   async (req, res) => {
     try {
       const errors = validationResult(req);
@@ -1200,7 +1374,16 @@ router.put('/profile-image',
     // array went to pg as a parameter for users.profile_image_url (TEXT). A 500
     // on the one route in this file that writes the avatar every roster, message
     // row and push renders.
-    scalarOnly(body('url'), 'URL').trim().isURL({ protocols: ['https'], require_protocol: true }).withMessage('Valid HTTPS URL required'),
+    // Width BEFORE isURL, and both halves of that order matter. profile_image_url
+    // is TEXT, so an over-long URL is not a 22001 — it is simply stored, and then
+    // repeated on every message row, roster entry and push payload this user
+    // appears in, which is the same amplification MAX_AVATAR_DATA_URL_BYTES
+    // exists to bound on the upload path. This route had no bound at all.
+    // Checking the length first also keeps a 64KB string away from isURL's
+    // regex work.
+    scalarOnly(body('url'), 'URL').trim()
+      .isLength({ max: MAX_AVATAR_URL }).withMessage('Avatar URL is too long')
+      .isURL({ protocols: ['https'], require_protocol: true }).withMessage('Valid HTTPS URL required'),
   ],
   async (req, res) => {
     try {
@@ -1286,8 +1469,16 @@ router.put('/payment-methods',
       .trim().isLength({ max: 50 })
       .withMessage('Cash App cashtag too long')
       .matches(/^[a-zA-Z0-9_]*$/).withMessage('Cashtag can only contain letters, numbers, and underscores'),
-    scalarOnly(body('zelle_identifier').optional({ nullable: true }), 'Zelle identifier')
-      .trim().isLength({ max: 255 })
+    // zelle_identifier is the only one of the three that is FREE TEXT — the other
+    // two are constrained to [a-zA-Z0-9_-] by the rules above, so neither can
+    // carry markup — and routes/billing.js hands it to OTHER flock members:
+    // `Open your banking app and send $X to ${payer.zelle_identifier} via Zelle`
+    // is rendered on their bill-split screen. So it is UGC on somebody else's
+    // screen, and it went through no strip and no screen. freeText strips the
+    // markup; the wordlist runs in the handler, on the stripped string.
+    // 255 is unchanged and is users.zelle_identifier VARCHAR(255).
+    freeText(body('zelle_identifier').optional({ nullable: true }), 'Zelle identifier')
+      .isLength({ max: 255 })
       .withMessage('Zelle identifier too long'),
   ],
   async (req, res) => {
@@ -1298,6 +1489,15 @@ router.put('/payment-methods',
       }
 
       const { venmo_username, cashapp_cashtag, zelle_identifier } = req.body;
+
+      // See the note on the zelle_identifier rule above: this string is rendered
+      // to other flock members by routes/billing.js. Screened AFTER freeText has
+      // stripped it, so the wordlist reads the string that will be stored rather
+      // than one with tags sitting between its letters. venmo_username and
+      // cashapp_cashtag are not screened: their character class already rules out
+      // markup, and they are handles a bank or Venmo assigned, which we cannot
+      // ask the user to change.
+      if (zelle_identifier && rejectIfProfane(res, zelle_identifier)) return;
 
       // Clean inputs — strip leading @ for venmo, $ for cashapp
       const cleanVenmo = venmo_username !== undefined
@@ -1439,6 +1639,13 @@ async function deleteAccount(req, res) {
     // re-run Sign in with Apple / Google and call this again with the fresh
     // token. `reauthRequired` tells the client which prompt to show.
     if (account.password) {
+      // The same ceiling PUT /profile puts on its two password fields, on the
+      // one this route reads by hand. Refused rather than treated as absent: an
+      // over-long value is a client bug, and answering it with the "enter your
+      // password" prompt would send the user round the loop for ever.
+      if (typeof req.body?.password === 'string' && req.body.password.length > MAX_PASSWORD) {
+        return res.status(400).json({ error: 'Password is too long', reauthRequired: 'password' });
+      }
       // Bounded (see proofFailures): without a ceiling this endpoint is an
       // offline-grade password guessing oracle for anyone holding a token, and
       // every guess costs a bcrypt round of server CPU.
