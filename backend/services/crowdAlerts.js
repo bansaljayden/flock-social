@@ -90,6 +90,52 @@ function hasEnoughData({ known, reviews }) {
 // an alert out can never disagree with the sentence it produces.
 const PEAK_SCORE = 75;
 
+// ---------------------------------------------------------------------------
+// The opt-out
+//
+// This is the app's only UNSOLICITED push: nobody asked for it, it arrives on a
+// lock screen, and until now there was no way to stop it short of revoking
+// notification permission for the whole app at the OS level. Every other push
+// in the codebase answers something the recipient or a friend just did.
+//
+// WHERE IT IS STORED. user_settings.settings, the JSONB blob that
+// GET/PATCH /api/users/settings already reads and merges and that
+// frontend/src/services/userSettings.js already syncs to every device. Key:
+// `crowdAlerts`. No migration, no new route, no second client path for one
+// boolean — the storage and the transport already exist and are already tested.
+//
+// DEFAULT ON, and the reason is what the alert actually is. It fires only for a
+// flock the recipient ACCEPTED, only inside the three hours before an event
+// they committed to, only once per flock (the crowd_alert_sends primary key),
+// and only when we hold a real venue record with real reviews behind the claim
+// (hasEnoughData above). It is about their own evening, not about ours. A
+// default of off would mean nobody who never opens settings ever receives it,
+// which is not a safer version of the feature, it is the feature deleted with
+// extra code. What Apple 4.5.4 and basic trust ask for is a switch that works,
+// and that is what this is.
+//
+// WHY IT TOLERATES A STRING. frontend/src/services/userSettings.js pullSettings
+// writes every synced value into localStorage with String(value), and
+// readLocalSettings pushes those raw strings back up on a first sync — so a
+// boolean false round-trips into this column as the JSON string "false". A
+// reader that only understood booleans would read a switched-off account as
+// switched on, which is exactly the failure this code exists to prevent.
+//
+// Anything we cannot read means UNSET, not off: junk in the blob must not
+// silently stop a notification the user never asked to stop.
+const CROWD_ALERT_KEY = 'crowdAlerts';
+const OFF_VALUES = new Set(['false', '0', 'off', 'no']);
+
+function wantsCrowdAlerts(settings) {
+  if (!settings || typeof settings !== 'object' || Array.isArray(settings)) return true;
+  const v = settings[CROWD_ALERT_KEY];
+  if (v === undefined || v === null) return true;
+  if (typeof v === 'boolean') return v;
+  if (typeof v === 'number') return v !== 0;
+  if (typeof v === 'string') return !OFF_VALUES.has(v.trim().toLowerCase());
+  return true;
+}
+
 // The forecast's first entry is the hour ALREADY IN PROGRESS. Announcing it as
 // "peak time is coming up" told people to hurry toward a peak they were
 // standing in. Only a later hour can be news.
@@ -296,15 +342,32 @@ async function processFlockAlert(flock) {
     // Get all accepted members of this flock. Proactive crowd alerts are a
     // Flock Pro perk once the paywall is live; with PAYWALL_ENABLED unset,
     // everyone still gets them (today's behavior).
+    //
+    // The LEFT JOIN carries each recipient's settings blob back with them so
+    // the opt-out is decided here, in wantsCrowdAlerts, rather than in a SQL
+    // predicate that no test can read. LEFT, not INNER: most accounts have never
+    // written a settings row at all, and those accounts are opted IN.
     const proOnly = process.env.PAYWALL_ENABLED === 'true';
-    const { rows: members } = await pool.query(
+    const { rows: candidates } = await pool.query(
       proOnly
-        ? `SELECT fm.user_id FROM flock_members fm
+        ? `SELECT fm.user_id, us.settings AS user_settings
+           FROM flock_members fm
            JOIN users u ON u.id = fm.user_id
+           LEFT JOIN user_settings us ON us.user_id = fm.user_id
            WHERE fm.flock_id = $1 AND fm.status = 'accepted' AND u.is_premium = true`
-        : `SELECT user_id FROM flock_members WHERE flock_id = $1 AND status = 'accepted'`,
+        : `SELECT fm.user_id, us.settings AS user_settings
+           FROM flock_members fm
+           LEFT JOIN user_settings us ON us.user_id = fm.user_id
+           WHERE fm.flock_id = $1 AND fm.status = 'accepted'`,
       [flock.id]
     );
+
+    // Filtered BEFORE the claim below, deliberately. A flock whose every member
+    // has switched these off must not burn its one crowd_alert_sends row on a
+    // notification that goes nowhere: the row is the permanent "already alerted"
+    // marker, and writing it here would silently disable the alert for anyone
+    // who joins the flock afterwards.
+    const members = candidates.filter((m) => wantsCrowdAlerts(m.user_settings));
 
     if (!members.length) return;
 
@@ -357,4 +420,8 @@ module.exports = { checkCrowdAlerts };
 // two gates in front of it directly: the sentences are what land on a lock
 // screen, and reaching them through the whole sweep would need a scripted
 // weather API and a scripted crowd model to say anything about them.
-module.exports.__testables = { offsetMinutesForZone, venueWallClock, buildAlertMessage, pickPeak, hasEnoughData };
+// backend/__tests__/alertPreferences.test.js drives wantsCrowdAlerts directly:
+// it is the whole opt-out, it has to survive a boolean, a string and a junk
+// value, and reaching every one of those through the sweep would be six
+// scripted databases to test one function.
+module.exports.__testables = { offsetMinutesForZone, venueWallClock, buildAlertMessage, pickPeak, hasEnoughData, wantsCrowdAlerts };
