@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { getToken, BASE_URL } from '../services/api';
 import Icons from '../components/ui/Icons';
 
@@ -18,6 +18,25 @@ const TYPE_LABEL = {
   flock_message: 'Flock message', dm: 'Direct message', story: 'Story',
   profile: 'Profile', venue_review: 'Venue review', venue_promotion: 'Venue promotion',
   guest_rsvp: 'Guest RSVP', venue_event: 'Venue event',
+};
+// Types that appear in the AUDIT LOG only, never in the queue. A separate map
+// on purpose: TYPE_LABEL is pinned to VALID_CONTENT_TYPES both ways (a queue
+// type it cannot label renders raw; a label with no full-text source behind it
+// would put a button on a card that can only 404), and venue_profile is
+// neither — it is what the verify and tier routes (migration 020) write on
+// their audit rows. Without this the log printed the raw column value.
+const AUDIT_TYPE_LABEL = { venue_profile: 'Venue profile' };
+// One entry per value migration 020 allows in moderation_actions.action. A
+// value missing here used to fall back to replace(/_/g, ' '), which turned
+// `tier_changed` into the shrugged "tier changed" on the permanent record.
+// The fallback stays for a value added server-side before this map hears of
+// it, but every value the server writes TODAY is named.
+const ACTION_LABEL = {
+  content_hidden: 'Content hidden', content_restored: 'Content restored',
+  user_banned: 'User banned', user_unbanned: 'User unbanned',
+  dismissed: 'Report dismissed', tier_changed: 'Venue tier changed',
+  venue_verified: 'Venue verified', venue_unverified: 'Venue verification removed',
+  evidence_viewed: 'Evidence viewed',
 };
 // Mirrors TAKEDOWN_TARGETS in backend/routes/admin.js: seven types have an
 // is_hidden row behind them, 'profile' does not (a profile report is answered
@@ -44,7 +63,8 @@ const UNHANDLED_STATUS = { open: true, under_review: true };
 // reason, and this file agrees with it rather than trusting a constraint it
 // cannot see.
 const own = (map, key) => (Object.prototype.hasOwnProperty.call(map, key) ? map[key] : undefined);
-const typeLabel = (t) => own(TYPE_LABEL, t) || t || 'content';
+const typeLabel = (t) => own(TYPE_LABEL, t) || own(AUDIT_TYPE_LABEL, t) || t || 'content';
+const actionLabel = (a) => own(ACTION_LABEL, a) || String(a || '').replace(/_/g, ' ');
 // Mid-sentence form. Only the first letter drops, so "Guest RSVP" reads as
 // "guest RSVP" in "Hide this guest RSVP?" instead of the shouted-down "guest rsvp".
 const lowerLabel = (t) => {
@@ -72,15 +92,21 @@ const fmt = (t) => {
   return Number.isNaN(d.getTime()) ? '—' : d.toLocaleString();
 };
 
-// Both admin list endpoints are `LIMIT 200` (backend/routes/admin.js). The
-// header counts are NOT: they come from a GROUP BY over the whole table. So a
-// deployment with 250 open reports shows "250" above 200 cards and says nothing
-// about the other fifty — and because the queue orders `(status = 'open') DESC,
-// created_at DESC`, the rows that fall off are the OLDEST open reports, i.e.
-// the ones that have been waiting longest. Silently hiding those is the exact
-// failure mode Guideline 1.2 is about, so the console says when it is looking
-// at a truncated list.
+// The queue is paginated (backend/routes/admin.js, round 24): the server takes
+// `limit` (default 200, max 1000) and orders unhandled work OLDEST-first, so
+// the report that has waited longest is always row one — the pre-round-24
+// ordering dropped exactly those rows once open reports outgrew 200, which is
+// the one failure Guideline 1.2's "act promptly" names. The console asks for a
+// growing window rather than appending pages: every load re-reads the whole
+// window in one request, so there is no append/dedupe state to go stale and a
+// refresh cannot lose a moderator's place. The audit log is still a plain
+// LIMIT 200 list, and its header counts come from a GROUP BY over the whole
+// table, so both lists say when they are showing less than everything.
 const LIST_LIMIT = 200;
+// Must not exceed QUEUE_LIMIT_MAX in backend/routes/admin.js — a larger ask is
+// a 400, which would read as "the console is broken" on a Load more click.
+// __tests__ pin the two against each other.
+const WINDOW_MAX = 1000;
 
 export default function ModerationDashboard() {
   // TWO READS, TWO VERDICTS, AND EACH VERDICT LIVES WITH ITS OWN DATA.
@@ -98,8 +124,26 @@ export default function ModerationDashboard() {
   // same object as the rows it is about is what makes the class of bug hard to
   // re-introduce: there is no `error` in scope that could be paired with the
   // wrong list.
-  const [queue, setQueue] = useState({ reports: [], counts: [], error: '' });
+  const [queue, setQueue] = useState({ reports: [], counts: [], hasMore: false, error: '' });
   const [log, setLog] = useState({ actions: [], error: '' });
+  // The window the console is asking the server for. A ref, not state: `load`
+  // must stay referentially stable (the mount effect keys on it) while still
+  // reading the CURRENT window on a background refresh, so a moderator who has
+  // loaded 600 rows keeps all 600 across the refresh an action triggers.
+  const windowRef = useRef(LIST_LIMIT);
+  // Loading MORE is neither loading nor refreshing: it must not blank the
+  // screen and its failure is about the next page, not about the rows already
+  // up. Its error lives here so it can never be printed over the queue.
+  const [more, setMore] = useState({ busy: false, error: '' });
+  // Whether the audit log includes 'evidence_viewed' access records. The
+  // server excludes them by default so access noise cannot drown decisions;
+  // the ref is what loadLog reads, so the mount-time load and a toggle-time
+  // reload go through one code path.
+  const [showEvidence, setShowEvidence] = useState(false);
+  const showEvidenceRef = useRef(false);
+  // reportId -> the optional reason typed for that card, sent with whichever
+  // action is clicked and stored verbatim in the audit log.
+  const [reasons, setReasons] = useState({});
   const [loading, setLoading] = useState(true);
   // Refreshing is NOT loading. `setLoading(true)` on every refresh replaced the
   // whole queue with the word "Loading…", so a moderator half way down a
@@ -118,6 +162,43 @@ export default function ModerationDashboard() {
   // Same keying, same reason, same shape as `images` above.
   const [texts, setTexts] = useState({});
 
+  // Drop the opened evidence for reports that are no longer in the queue.
+  // `images` holds base64 bodies up to 700KB of reported UGC, sometimes
+  // posted by a minor, which the server sets Cache-Control: no-store on
+  // precisely so that nothing holds on to it — and this map was keyed by
+  // report id and never pruned, so anything a moderator opened stayed in
+  // memory for the life of the tab even after the row rotated out of the
+  // window. Closing an image already frees it; this frees the ones that were
+  // never closed. Typed-but-unsent reasons go with them: a reason drafted for
+  // a report that has left the window would otherwise sit silently attached
+  // to nothing. Shared by load and loadMore, so both reads free the same way.
+  const pruneEvidence = useCallback((reports) => {
+    const live = new Set(reports.map((row) => String(row.id)));
+    const prune = (prev) => {
+      const keys = Object.keys(prev).filter((k) => !live.has(k));
+      if (keys.length === 0) return prev;
+      const next = { ...prev };
+      for (const k of keys) delete next[k];
+      return next;
+    };
+    setImages(prune);
+    setTexts(prune);
+    setReasons(prune);
+  }, []);
+
+  // The audit log, alone: the queue read must not decide whether this runs
+  // (two endpoints, one being down says nothing about the other), and the
+  // evidence toggle re-reads THIS list without re-reading the queue.
+  const loadLog = useCallback(async () => {
+    try {
+      const a = await adminFetch(`/api/admin/moderation-actions${showEvidenceRef.current ? '?include_evidence=true' : ''}`);
+      if (!Array.isArray(a.actions)) {
+        throw new Error('The audit log came back in a shape this console does not understand. Reload the page.');
+      }
+      setLog({ actions: a.actions, error: '' });
+    } catch (e) { setLog((p) => ({ ...p, error: e.message || 'The audit log could not be loaded.' })); }
+  }, []);
+
   const load = useCallback(async ({ background = false } = {}) => {
     if (background) setRefreshing(true); else setLoading(true);
     try {
@@ -128,29 +209,18 @@ export default function ModerationDashboard() {
       // accident. Same rule the strip view in routes/venueDashboard.js was
       // fixed for: an upstream failure is not an empty result set.
       try {
-        const r = await adminFetch('/api/admin/reports');
+        const limit = windowRef.current;
+        const r = await adminFetch(`/api/admin/reports?limit=${limit}`);
         if (!Array.isArray(r.reports) || !Array.isArray(r.counts)) {
           throw new Error('The queue came back in a shape this console does not understand. Reload the page.');
         }
-        setQueue({ reports: r.reports, counts: r.counts, error: '' });
-        // Drop the opened evidence for reports that are no longer in the queue.
-        // `images` holds base64 bodies up to 700KB of reported UGC, sometimes
-        // posted by a minor, which the server sets Cache-Control: no-store on
-        // precisely so that nothing holds on to it — and this map was keyed by
-        // report id and never pruned, so anything a moderator opened stayed in
-        // memory for the life of the tab even after the row rotated out of the
-        // 200-row window. Closing an image already frees it; this frees the ones
-        // that were never closed.
-        const live = new Set(r.reports.map((row) => String(row.id)));
-        const prune = (prev) => {
-          const keys = Object.keys(prev).filter((k) => !live.has(k));
-          if (keys.length === 0) return prev;
-          const next = { ...prev };
-          for (const k of keys) delete next[k];
-          return next;
-        };
-        setImages(prune);
-        setTexts(prune);
+        // A server from before pagination sends no hasMore. A full window is
+        // then the honest guess in the safe direction: offering Load more to a
+        // server that ignores `limit` just re-serves the same rows, and the
+        // window stops growing on its own.
+        const hasMore = typeof r.hasMore === 'boolean' ? r.hasMore : r.reports.length >= limit;
+        setQueue({ reports: r.reports, counts: r.counts, hasMore, error: '' });
+        pruneEvidence(r.reports);
         // The rows and counts are deliberately NOT cleared on a failure: a
         // moderator half way through a queue should not lose it to one dropped
         // request. They are labelled as stale in the header instead.
@@ -158,20 +228,50 @@ export default function ModerationDashboard() {
 
       // Deliberately not chained off the queue read: they are two endpoints and
       // one being down says nothing about the other.
-      try {
-        const a = await adminFetch('/api/admin/moderation-actions');
-        if (!Array.isArray(a.actions)) {
-          throw new Error('The audit log came back in a shape this console does not understand. Reload the page.');
-        }
-        setLog({ actions: a.actions, error: '' });
-      } catch (e) { setLog((p) => ({ ...p, error: e.message || 'The audit log could not be loaded.' })); }
+      await loadLog();
     } finally {
       setLoading(false);
       setRefreshing(false);
     }
-  }, []);
+  }, [loadLog, pruneEvidence]);
 
   useEffect(() => { load(); }, [load]);
+
+  // Load more = grow the window and re-read it whole. One request, one source
+  // of truth: appending a second fetch to state invites the offset-drift bugs
+  // (duplicates when a row moves up, skips when one moves down) that a
+  // replace-not-append read cannot have. The rows already on screen come back
+  // in the same order (unhandled work is oldest-first, which does not shuffle
+  // under load), so nobody loses their place.
+  const loadMore = async () => {
+    if (more.busy) return;
+    setMore({ busy: true, error: '' });
+    try {
+      const limit = Math.min(windowRef.current + LIST_LIMIT, WINDOW_MAX);
+      const r = await adminFetch(`/api/admin/reports?limit=${limit}`);
+      if (!Array.isArray(r.reports) || !Array.isArray(r.counts)) {
+        throw new Error('The queue came back in a shape this console does not understand. Reload the page.');
+      }
+      // The window only grows once the read it asked for has succeeded, so a
+      // failed Load more leaves the next refresh asking for what is on screen.
+      windowRef.current = limit;
+      const hasMore = typeof r.hasMore === 'boolean' ? r.hasMore : r.reports.length >= limit;
+      setQueue({ reports: r.reports, counts: r.counts, hasMore, error: '' });
+      pruneEvidence(r.reports);
+      setMore({ busy: false, error: '' });
+    } catch (e) {
+      // This failure is about the NEXT rows, not the ones on screen, so it
+      // renders beside the button and never as the queue banner.
+      setMore({ busy: false, error: e.message || 'More reports could not be loaded.' });
+    }
+  };
+
+  const toggleEvidence = async () => {
+    const next = !showEvidenceRef.current;
+    showEvidenceRef.current = next;
+    setShowEvidence(next);
+    await loadLog();
+  };
 
   // The picture, on demand and one report at a time.
   //
@@ -313,7 +413,23 @@ export default function ModerationDashboard() {
     if (!window.confirm(`${labels[action]}?`)) return;
     setBusyId(report.id);
     try {
-      await adminFetch(`/api/admin/reports/${report.id}`, { method: 'PUT', body: JSON.stringify({ action }) });
+      // The optional reason rides with WHICHEVER action is clicked. Trimmed,
+      // and omitted entirely when empty: the server stores what it is sent
+      // verbatim, and an audit row whose reason is '' reads as a moderator who
+      // wrote nothing on purpose.
+      const reason = (own(reasons, report.id) || '').trim();
+      await adminFetch(`/api/admin/reports/${report.id}`, {
+        method: 'PUT',
+        body: JSON.stringify(reason ? { action, reason } : { action }),
+      });
+      // Sent and recorded; a stale draft must not attach itself to the NEXT
+      // action on this card.
+      setReasons((p) => {
+        if (!Object.prototype.hasOwnProperty.call(p, String(report.id))) return p;
+        const next = { ...p };
+        delete next[report.id];
+        return next;
+      });
       await load({ background: true });
     } catch (e) {
       alert(e.message);
@@ -439,6 +555,23 @@ export default function ModerationDashboard() {
                     />
 
                     {showActions && (
+                      <>
+                        {/* One optional line, sent with whichever action is
+                            clicked, stored verbatim in the audit log by the
+                            route that already validated it (string, <=1000).
+                            maxLength matches that server cap so the console
+                            cannot compose a reason the server will refuse.
+                            16px font: below that, iOS zooms the viewport on
+                            focus (same rule as the report sheet's box). */}
+                        <input
+                          value={own(reasons, r.id) || ''}
+                          onChange={(e) => { const v = e.target.value; setReasons((p) => ({ ...p, [r.id]: v })); }}
+                          disabled={busyId === r.id}
+                          maxLength={1000}
+                          placeholder="Reason for the audit log (optional)"
+                          aria-label="Reason for actions on this report"
+                          style={S.reasonInput}
+                        />
                       <div style={S.actions}>
                         {canHide ? (
                           <button disabled={busyId === r.id} onClick={() => act(r, 'hide')} style={S.btnHide}>Hide content</button>
@@ -453,31 +586,72 @@ export default function ModerationDashboard() {
                         ) : null}
                         {unhandled ? <button disabled={busyId === r.id} onClick={() => act(r, 'dismiss')} style={S.btn}>Dismiss</button> : null}
                       </div>
+                      </>
                     )}
                   </div>
                   );
                 })}
               </div>
             )}
-            {queue.reports.length >= LIST_LIMIT ? (
-              <p style={{ ...S.dimSmall, marginTop: 10 }}>
-                {`This is the first ${LIST_LIMIT} reports the server will send, and the counts above are of the whole table. The queue is ordered open-first and newest-first, so anything beyond this is the OLDEST work — action what is here and refresh.`}
-              </p>
+            {queue.hasMore ? (
+              <div style={S.moreBlock}>
+                <p style={{ ...S.dimSmall, margin: 0 }}>
+                  {`Showing ${queue.reports.length} reports, oldest unhandled first, so the longest wait is already at the top. The counts above are of the whole table.`}
+                </p>
+                {more.error ? <div style={S.imgErr} role="alert">{more.error}</div> : null}
+                {queue.reports.length >= WINDOW_MAX ? (
+                  <p style={{ ...S.dimSmall, margin: 0 }}>
+                    {`This console shows at most ${WINDOW_MAX} reports at once. Act on these and refresh to pull the next oldest forward.`}
+                  </p>
+                ) : (
+                  <button onClick={loadMore} disabled={more.busy} style={S.imgBtn}>
+                    {more.busy ? 'Loading more…' : `Load ${LIST_LIMIT} more`}
+                  </button>
+                )}
+              </div>
             ) : null}
 
-            <h2 style={S.h2}>Audit log</h2>
+            <h2 style={S.h2}>
+              Audit log
+              {/* The server excludes evidence-access rows by default so they
+                  cannot drown the decisions; this asks for them by name
+                  (?include_evidence=true) and re-reads only the log. */}
+              <button onClick={toggleEvidence} style={S.evidenceToggle}>
+                {showEvidence ? 'Hide evidence access' : 'Show evidence access'}
+              </button>
+            </h2>
+            {showEvidence ? (
+              <p style={{ ...S.dimSmall, margin: '0 0 8px' }}>
+                Access rows record which reports a moderator opened. They are records of reading, not decisions.
+              </p>
+            ) : null}
             {log.actions.length === 0 ? (
               <p style={S.dim}>{log.error ? 'The audit log could not be loaded.' : 'No actions yet.'}</p>
             ) : (
               <>
                 <div style={S.log}>
-                  {log.actions.map((a) => (
-                    <div key={a.id} style={S.logRow}>
-                      <b>{String(a.action || '').replace(/_/g, ' ')}</b>{a.target_user_name ? ` → ${a.target_user_name}` : ''}
-                      {a.content_type ? `  (${typeLabel(a.content_type)}${a.content_id ? ` #${a.content_id}` : ''})` : ''}
-                      <span style={S.logMeta}>  by {a.moderator_name || '—'} · {fmt(a.created_at)}</span>
-                    </div>
-                  ))}
+                  {log.actions.map((a) => {
+                    // An access record is not a decision, and the two must not
+                    // read alike in the list that exists to answer "what did
+                    // we do". Dimmer row, its own tag, and the reason ('image'
+                    // or 'full text', written by the server) folded into a
+                    // sentence instead of rendered as if a moderator wrote it.
+                    const isAccess = a.action === 'evidence_viewed';
+                    return (
+                      <div key={a.id} style={isAccess ? { ...S.logRow, ...S.logRowAccess } : S.logRow}>
+                        <b>{actionLabel(a.action)}</b>
+                        {isAccess ? <span style={S.accessTag}>ACCESS</span> : null}
+                        {a.target_user_name ? ` → ${a.target_user_name}` : ''}
+                        {a.content_type ? `  (${typeLabel(a.content_type)}${a.content_id ? ` #${a.content_id}` : ''})` : ''}
+                        <span style={S.logMeta}>  by {a.moderator_name || '—'} · {fmt(a.created_at)}</span>
+                        {a.reason ? (
+                          <div style={S.logReason}>
+                            {isAccess ? `Opened the ${a.reason}.` : a.reason}
+                          </div>
+                        ) : null}
+                      </div>
+                    );
+                  })}
                 </div>
                 {log.actions.length >= LIST_LIMIT ? (
                   <p style={{ ...S.dimSmall, margin: '8px 0 0' }}>
@@ -711,4 +885,17 @@ const S = {
   log: { display: 'flex', flexDirection: 'column', gap: 6 },
   logRow: { fontSize: 13, color: '#c7c7cd', padding: '6px 10px', background: '#141417', borderRadius: 8 },
   logMeta: { color: '#7c7c87' },
+  // An access record must not read like a decision at a glance: dimmer text,
+  // a hairline in the takedown steel rather than a new colour.
+  logRowAccess: { color: '#8a8a93', background: '#101014', border: '1px solid #1d2b3a' },
+  accessTag: { color: '#a8cbe8', border: '1px solid #2d5a87', borderRadius: 5, padding: '1px 6px', fontSize: 10, letterSpacing: 0.5, marginLeft: 6 },
+  // The moderator's own words, quoted under the row they explain. pre-wrap +
+  // anywhere for the same reason the excerpt has them: this is stored text up
+  // to 1000 characters and an unbroken string must not widen the page.
+  logReason: { marginTop: 4, color: '#9a9aa3', fontStyle: 'italic', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' },
+  evidenceToggle: { marginLeft: 10, background: 'transparent', color: '#6cb8ff', border: 'none', cursor: 'pointer', fontSize: 13, padding: 0, fontFamily: 'inherit', verticalAlign: 1 },
+  // 16, not smaller: an input under 16px makes iOS zoom the whole viewport on
+  // focus — the same rule the report sheet's details box is held to.
+  reasonInput: { marginTop: 10, width: '100%', maxWidth: '100%', boxSizing: 'border-box', background: '#101014', color: '#e7e7ea', border: '1px solid #2a2a31', borderRadius: 8, padding: '7px 10px', fontSize: 16, fontFamily: 'inherit' },
+  moreBlock: { marginTop: 10, display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 8 },
 };

@@ -448,10 +448,15 @@ test('a malformed queue response is an error, never an empty queue', () => {
   const fn = regionBetween(consoleSrc, 'const load = useCallback(', 'useEffect(() => { load(); }', 'load');
   assert.ok(/Array\.isArray\(r\.reports\)/.test(fn),
     'the reports list is trusted to be a list again; a malformed 200 renders as "Queue is clear."');
-  assert.ok(/Array\.isArray\(a\.actions\)/.test(fn),
+  // Round 24 moved the audit-log read into its own loadLog (the evidence
+  // toggle re-reads that list without re-reading the queue), so the shape
+  // check is probed where it now lives. The guarded property is unchanged: a
+  // malformed 200 must never render as "No actions yet."
+  const logFn = regionBetween(consoleSrc, 'const loadLog = useCallback(', 'const load = useCallback(', 'loadLog');
+  assert.ok(/Array\.isArray\(a\.actions\)/.test(logFn),
     'the audit log is trusted to be a list again; a malformed 200 renders as "No actions yet."');
   assert.ok(!/setReports\(r\.reports \|\| \[\]\)/.test(fn), 'the `|| []` swallow is back on the reports list');
-  assert.ok(!/setActions\(a\.actions \|\| \[\]\)/.test(fn), 'the `|| []` swallow is back on the audit log');
+  assert.ok(!/setActions\(a\.actions \|\| \[\]\)/.test(logFn), 'the `|| []` swallow is back on the audit log');
 });
 
 test('neither empty state claims there is nothing to do when the load failed', () => {

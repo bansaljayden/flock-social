@@ -27,6 +27,30 @@ function serialId(raw) {
   return n >= 1 && n <= INT4_MAX ? n : null;
 }
 
+// Round 24: pagination bounds for the queue. Digits-only for the same reason
+// serialId is — anything else is refused rather than coerced, because these two
+// numbers are INTERPOLATED into LIMIT/OFFSET rather than bound. Interpolation
+// is deliberate, not an oversight: __tests__/adminEvidence.test.js pins a
+// literal `LIMIT <digits>` onto every admin list query precisely so a missing
+// ceiling is visible in the SQL text, and a bound $n would blind that pin. The
+// value that reaches the template is a Number produced by this parse and range
+// check, never the request string — same discipline as FULL_TEXT_MAX above.
+function pageParam(raw, { dflt, min, max }) {
+  if (raw === undefined) return dflt;
+  const s = String(raw);
+  if (!/^\d+$/.test(s)) return null;
+  const n = parseInt(s, 10);
+  return n >= min && n <= max ? n : null;
+}
+
+// The console asks for a growing window (limit) rather than pages (offset),
+// but both exist and both are bounded: 1000 rows of 280-char excerpts is still
+// a small response, and OFFSET past a million names work no moderation queue
+// holds.
+const QUEUE_LIMIT_DEFAULT = 200;
+const QUEUE_LIMIT_MAX = 1000;
+const QUEUE_OFFSET_MAX = 1000000;
+
 // Admin middleware.
 //
 // `!req.user` is not defensive decoration. This middleware reads a property off
@@ -208,10 +232,44 @@ router.get('/analytics', async (req, res) => {
 // Moderation queue (A6) — Apple 1.2 / Google UGC. Admin-only (requireAdmin above).
 // ---------------------------------------------------------------------------
 
-// GET /api/admin/reports?status=open — moderation queue
+// GET /api/admin/reports?status=open&limit=200&offset=0 — moderation queue
+//
+// ROUND 24 — THE LONGEST-WAITING REPORTS WERE THE ONES THAT FELL OFF.
+//
+// The queue ordered open-first then created_at DESC with a bare LIMIT 200, so
+// the moment open reports outgrew the window, the rows that vanished were the
+// OLDEST open ones — the people who had been waiting longest, which is the
+// exact population Guideline 1.2's "act promptly" is about. Two changes:
+//
+//   1. ORDER. Unhandled work (open + under_review, the same pair the console's
+//      UNHANDLED_STATUS names) sorts OLDEST-first, so the report that has
+//      waited longest is row one and can never fall off any window. Handled
+//      work still sorts newest-first below it — a closed report is read as
+//      "what did we decide recently", not as a queue. r.id breaks created_at
+//      ties so paging is deterministic.
+//   2. PAGINATION. limit/offset, validated by pageParam and interpolated as
+//      literals (see pageParam for why not $n). Offset pagination over keyset,
+//      argued: the sort key is two-tier and direction-mixed, so a keyset
+//      cursor is three columns of complexity — and it buys nothing here,
+//      because acting on a report MOVES it (open bucket -> handled bucket),
+//      so no cursor over this ordering is stable under the console's own use
+//      anyway. At admin-console row counts OFFSET is free. The console
+//      actually uses a growing `limit` window (offset 0), which re-reads the
+//      whole window on every refresh: no append/dedupe state, no stale rows.
+//
+// One extra row is fetched past the limit so `hasMore` is a fact rather than
+// the length==limit guess, and it is sliced off before the response.
 router.get('/reports', async (req, res) => {
   try {
     const { status } = req.query;
+    const limit = pageParam(req.query.limit, { dflt: QUEUE_LIMIT_DEFAULT, min: 1, max: QUEUE_LIMIT_MAX });
+    if (limit === null) {
+      return res.status(400).json({ error: `limit must be a whole number from 1 to ${QUEUE_LIMIT_MAX}` });
+    }
+    const offset = pageParam(req.query.offset, { dflt: 0, min: 0, max: QUEUE_OFFSET_MAX });
+    if (offset === null) {
+      return res.status(400).json({ error: `offset must be a whole number from 0 to ${QUEUE_OFFSET_MAX}` });
+    }
     const params = [];
     let where = '';
     if (status && ['open', 'under_review', 'resolved', 'dismissed'].includes(status)) {
@@ -310,15 +368,25 @@ router.get('/reports', async (req, res) => {
          LIMIT 1
        ) c ON true
        ${where}
-       ORDER BY (r.status = 'open') DESC, r.created_at DESC
-       LIMIT 200`,
+       -- Unhandled work oldest-first: the report that has waited longest can
+       -- never fall off a window again. The CASE is NULL for handled rows, so
+       -- they tie on it and fall through to newest-first, below all open work.
+       ORDER BY (r.status IN ('open', 'under_review')) DESC,
+                CASE WHEN r.status IN ('open', 'under_review') THEN r.created_at END ASC,
+                r.created_at DESC,
+                r.id ASC
+       LIMIT ${limit + 1} OFFSET ${offset}`,
       params
     );
+    // One row past the limit was fetched so hasMore is a fact, not a guess.
+    const reports = result.rows;
+    const hasMore = reports.length > limit;
+    if (hasMore) reports.length = limit;
     // Counts for the queue header
     const counts = await pool.query(
       `SELECT status, COUNT(*)::int AS count FROM content_reports GROUP BY status`
     );
-    res.json({ reports: result.rows, counts: counts.rows });
+    res.json({ reports, counts: counts.rows, limit, offset, hasMore });
   } catch (err) {
     console.error('Admin list reports error:', err);
     res.status(500).json({ error: 'Failed to fetch reports' });
@@ -1262,4 +1330,7 @@ module.exports.__test = {
   REPORT_IMAGE_SOURCES,
   TAKEDOWN_TARGETS,
   FULL_TEXT_MAX,
+  QUEUE_LIMIT_DEFAULT,
+  QUEUE_LIMIT_MAX,
+  QUEUE_OFFSET_MAX,
 };
