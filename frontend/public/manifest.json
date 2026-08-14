@@ -39,30 +39,30 @@
   ],
   "screenshots": [
     {
-      "src": "screenshots/app-nest.png",
+      "src": "screenshots/nest-dark@2x.png",
       "type": "image/png",
-      "sizes": "390x844",
+      "sizes": "780x1688",
       "form_factor": "narrow",
       "label": "Your flocks and who still owes a vote"
     },
     {
-      "src": "screenshots/app-create.png",
+      "src": "screenshots/create-light@2x.png",
       "type": "image/png",
-      "sizes": "390x844",
+      "sizes": "780x1688",
       "form_factor": "narrow",
       "label": "Starting a flock: name it, pick a night, invite people"
     },
     {
-      "src": "screenshots/app-crowd.png",
+      "src": "screenshots/crowd-dark@2x.png",
       "type": "image/png",
-      "sizes": "390x844",
+      "sizes": "780x1688",
       "form_factor": "narrow",
       "label": "How busy each place is before you leave"
     },
     {
-      "src": "screenshots/app-birdie.png",
+      "src": "screenshots/birdie-dark@2x.png",
       "type": "image/png",
-      "sizes": "390x844",
+      "sizes": "780x1688",
       "form_factor": "narrow",
       "label": "Asking Birdie where to go tonight"
     }
