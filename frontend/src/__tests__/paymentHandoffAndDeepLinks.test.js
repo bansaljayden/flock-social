@@ -30,6 +30,25 @@
  *      comment. It is absent exactly while nothing in the product builds a
  *      flock-scheme URL. The day something does, this fails and names the file
  *      that has to change with it.
+ *   6. The venue owner dashboard and the in-app admin dashboard. Same shapes,
+ *      different screen: a tier gate that matched a feature by its marketing
+ *      NAME and silently failed closed for the venues paying for it; a Live
+ *      Sensor panel wired to a place id that was only ever set for venues with
+ *      an incomplete profile; a Research tab printing zeros for a read nobody
+ *      had made; three notification switches for sends that do not exist; a
+ *      profit card whose background was hardcoded light under theme-token text;
+ *      and state living inside a component that remounts on every parent
+ *      render. The contrast one is computed from the tokens rather than
+ *      asserted as a string.
+ *
+ * A NOTE ON HOW THESE SCAN. Everything that reads App.js reads it RAW. An
+ * earlier version stripped comments first, which is the obvious way to stop a
+ * `not.toMatch` passing on prose, and it is not safe here: a whole-file
+ * stripper has to track string literals, and one apostrophe in ordinary JSX
+ * prose between tags looks exactly like the start of one. The desync is silent
+ * and it moves assertions in whichever direction it happens to land. So the
+ * comments in App.js describe the code they replaced instead of quoting it,
+ * and these scans need no stripper at all.
  *
  * HOW TO RUN
  *   cd frontend && CI=true npx react-scripts test --watchAll=false
@@ -179,40 +198,6 @@ function extractFunction(source, name) {
     i += 1;
   }
   throw new Error(`extractFunction: unterminated body for ${name}`);
-}
-
-/**
- * The same source with every comment removed and every string left intact.
- * The wiring assertions below are about CODE: this file's own explanation of
- * the bug quotes the old `window.open(m.deepLink)` call, and a scan that
- * counted that would pass on prose.
- */
-function codeOnly(source) {
-  let out = '';
-  let i = 0;
-  while (i < source.length) {
-    const ch = source[i];
-    const next = source[i + 1];
-    if (ch === '/' && next === '/') {
-      const end = source.indexOf('\n', i);
-      i = end === -1 ? source.length : end;
-      continue;
-    }
-    if (ch === '/' && next === '*') {
-      const end = source.indexOf('*/', i + 2);
-      i = end === -1 ? source.length : end + 2;
-      continue;
-    }
-    if (ch === "'" || ch === '"' || ch === '`') {
-      const end = skipInert(source, i);
-      out += source.slice(i, end);
-      i = end;
-      continue;
-    }
-    out += ch;
-    i += 1;
-  }
-  return out;
 }
 
 function evaluate(chunks, names) {
@@ -619,7 +604,14 @@ describe('every method backend/routes/billing.js builds is one the client can ac
 // 4. The wiring in App.js
 // ═══════════════════════════════════════════════════════════════════════════
 describe('both Pay entry points go through the one handoff', () => {
-  const appCode = codeOnly(appSource);
+  // Raw source, like the venue-dashboard block further down and for the same
+  // reason: a whole-file comment stripper cannot be trusted on JSX, because one
+  // apostrophe in ordinary prose between tags reads as the start of a string to
+  // any scanner that is not a real parser and silently desyncs everything after
+  // it. The App.js comments in this region were written to DESCRIBE the line
+  // they replaced rather than to quote it, which is what makes a raw scan the
+  // stronger check instead of the weaker one.
+  const appCode = appSource;
   const count = (re) => (appCode.match(re) || []).length;
 
   test('no call site opens a deep link straight out of a method again', () => {
@@ -938,5 +930,450 @@ describe('pushNavigation asks for the launch URL at all', () => {
   test('getLaunchUrl is wired, not just the live listener', () => {
     expect(pushNavSource).toMatch(/getLaunchUrl/);
     expect(pushNavSource).toMatch(/appUrlOpen/);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 7. The venue dashboard and the in-app admin dashboard
+//
+// Neither screen can be mounted here: both live deep inside a 17k-line
+// component that pulls maplibre and a QR scanner. So these are SOURCE
+// assertions, against the RAW source rather than a comment-stripped copy.
+//
+// That is deliberate, and it is the second thing this file learned the hard
+// way. A whole-file comment stripper cannot be trusted on JSX: a lone
+// apostrophe in ordinary prose between tags reads as the start of a string
+// literal to any scanner that is not a real parser, and everything up to the
+// next apostrophe is then treated as inert. That desync is silent, and it
+// pushes a `not.toMatch` in whichever direction the desync happens to land.
+// So nothing here depends on stripping, and the comments in App.js were
+// written to describe the code they replaced rather than to quote it, which
+// is what makes an assertion against raw source mean something.
+const appCount = (re) => (appSource.match(re) || []).length;
+
+// Where RevenueScreen is really declared. Anchored to the start of the line
+// rather than found with indexOf, because the comment that EXPLAINS the
+// remounting problem sits above the state it moved, and a substring search
+// finds the explanation before the declaration. Same trap as the comment
+// stripper above: prose that quotes code is the thing these scans trip on.
+const REVENUE_SCREEN_AT = appSource.search(/^ {2}const RevenueScreen = \(\) => \{/m);
+
+describe('the tier gate cannot be broken by rewording a feature', () => {
+  test('nothing looks a feature up by its marketing name any more', () => {
+    // The bug: four call sites passed 'Post deals'; the premium list spells it
+    // 'Post deals and specials'. .includes() missed, the helper fell through to
+    // its closing `return true`, and a venue PAYING for Premium found
+    // Post-a-Deal greyed out under a "Premium Feature" overlay. A typo in a
+    // gate could not throw, and the safe-looking default was "locked".
+    expect(appSource).not.toMatch(/isFeatureLocked/);
+    expect(appSource).not.toMatch(/features\.(free|premium|pro)\.includes/);
+  });
+
+  test('the lists are still only upgrade-sheet copy', () => {
+    // They may be reworded freely; that is the point of not branching on them.
+    expect(appSource).toMatch(/'Post deals and specials'/);
+    expect(appSource).toMatch(/features\.premium\.map/);
+  });
+
+  test('all four Post-a-Deal controls read the tier flag', () => {
+    // Named individually rather than counted. A count is satisfied by the
+    // wrong four: `!can.postDeals` also appears on the Promotions tab, so
+    // inverting one of these and leaving that one standing kept the total up
+    // while the overlay covered the card for exactly the venues allowed to use
+    // it.
+    expect(appSource).toMatch(/aria-label="Deal description"[\s\S]{0,600}disabled=\{!can\.postDeals\}/);
+    expect(appSource).toMatch(/setDealTimeSlot\(slot\)[\s\S]{0,900}disabled=\{!can\.postDeals\}/);
+    expect(appSource).toMatch(/disabled=\{!can\.postDeals \|\| !dealDescription\.trim\(\)\}/);
+  });
+
+  test('the locked overlay covers the card when the plan does NOT include it', () => {
+    // Inverted, this greys Post-a-Deal out for Premium and Pro and leaves it
+    // open on Free, which is the original bug with the sign flipped.
+    expect(appSource).toMatch(/\{!can\.postDeals && <div style=\{\{ position: 'absolute', inset: 0, backgroundColor: 'var\(--locked-overlay\)'/);
+    expect(appSource).not.toMatch(/\{can\.postDeals && <div style=\{\{ position: 'absolute', inset: 0, backgroundColor: 'var\(--locked-overlay\)'/);
+  });
+
+  test('the Promotions tab gates the same way round', () => {
+    expect(appSource).toMatch(/venueTab === 'promotions' && !can\.postDeals &&/);
+    expect(appSource).toMatch(/venueTab === 'promotions' && can\.postDeals &&/);
+  });
+
+  test('and that flag actually includes Premium, which was the whole complaint', () => {
+    expect(appSource).toMatch(/postDeals:\s*venueTier === 'premium' \|\| venueTier === 'pro'/);
+  });
+});
+
+describe('the Live Sensor panel is asked for on every venue, not just half of them', () => {
+  const hydration = appSource.slice(
+    appSource.indexOf('getVenueProfile().then'),
+    appSource.indexOf('const needsGoogleData')
+  );
+
+  test('the place id is resolved in the unconditional profile hydration', () => {
+    // It used to be set inside `if (needsGoogleData && p.business_name)`, where
+    // needsGoogleData is `!p.phone || !hoursValid`. A venue with a phone number
+    // and valid hours therefore never set it, never fetched sensor data, never
+    // joined the venue socket room, and the Live Sensor card silently did not
+    // render. The hardware worked; the dashboard never asked. It appeared only
+    // for venues with an INCOMPLETE profile, the inverse of the intent.
+    expect(hydration).toBeTruthy();
+    expect(hydration).toMatch(/const savedPlaceId = p\.google_place_id \|\| venueOnboardingData\.googlePlaceId;/);
+    expect(hydration).toMatch(/if \(savedPlaceId\) setOwnerVenuePlaceId\(savedPlaceId\);/);
+  });
+
+  test('a corrected place id repoints the panel', () => {
+    // The saved id can turn out to be a different venue; the resolved one is
+    // then the only id whose readings belong to this owner.
+    expect(appSource).toMatch(/if \(resolvedPlaceId && resolvedPlaceId !== savedPlaceId\) setOwnerVenuePlaceId\(resolvedPlaceId\);/);
+  });
+
+  test('the sensor effect still keys on it', () => {
+    expect(appSource).toMatch(/const pid = ownerVenuePlaceId;/);
+    expect(appSource).toMatch(/joinVenueRoom\(pid\)/);
+  });
+});
+
+describe('the admin Research tab never prints an unmeasured zero', () => {
+  test('the tab reads on entry instead of rendering whatever null degrades to', () => {
+    expect(appSource).toMatch(/adminTab !== 'research' \|\| researchAskedRef\.current/);
+    expect(appSource).toMatch(/fetchResearchLive\(true\)/);
+  });
+
+  test('the guard is a ref, so a failed read does not retry forever', () => {
+    // The obvious `if (!researchLiveData)` version loops: the failure leaves
+    // the data null and the loading flag flips back, so the effect re-runs.
+    expect(appSource).toMatch(/researchAskedRef\.current = true;/);
+    expect(appSource).not.toMatch(/if \(!researchLiveData\) fetchResearchLive/);
+  });
+
+  test('the zero fallbacks are gone, all of them', () => {
+    expect(appSource).not.toMatch(/researchLiveData \|\| \{\}/);
+    for (const field of [
+      'totalFlocks', 'completionRate', 'avgGroupSize',
+      'budgetAdoptionRate', 'avgTimeToConfirmation', 'totalUsers', 'newUsersThisWeek',
+    ]) {
+      expect(appSource).not.toMatch(new RegExp(`data\\.${field} \\|\\| 0`));
+    }
+  });
+
+  test('a failed read is its own state, distinct from a reading of zero', () => {
+    expect(appSource).toMatch(/const \[researchError, setResearchError\] = useState\(false\)/);
+    expect(appSource).toMatch(/setResearchError\(true\);/);
+    // And it clears the stale numbers rather than leaving them under a
+    // "Live data" label.
+    expect(appSource).toMatch(/setResearchError\(true\);[\s\S]{0,80}|setResearchLiveData\(null\);[\s\S]{0,80}setResearchError\(true\)/);
+  });
+
+  test('nothing renders the cards until something was actually read', () => {
+    expect(appSource).toMatch(/if \(!data\) \{/);
+  });
+
+  test('a field the response omitted says so rather than showing a zero', () => {
+    expect(appSource).toMatch(/const has = \(v\) => typeof v === 'number' && Number\.isFinite\(v\);/);
+    expect(appSource).toMatch(/'No data'/);
+  });
+
+  test('the mode toggle is one control, so the two directions cannot drift', () => {
+    expect(appCount(/const modeToggle = \(/g)).toBe(1);
+    expect(appCount(/\{modeToggle\}/g)).toBe(2); // the empty state and the loaded state
+  });
+
+  test('the research state survives the screen it is rendered on', () => {
+    // RevenueScreen is redeclared on every render of FlockAppInner and mounted
+    // as <RevenueScreen />, so React remounts the whole subtree whenever
+    // anything unrelated out here changes state. Anything the research panel
+    // needs to remember has to live OUTSIDE it or it is reset by a toast.
+    const inner = appSource.slice(appSource.indexOf('const FlockAppInner ='), REVENUE_SCREEN_AT);
+    for (const decl of [
+      'const [researchLiveData, setResearchLiveData] = useState(null)',
+      'const [researchLoading, setResearchLoading] = useState(false)',
+      'const [researchError, setResearchError] = useState(false)',
+      'const researchAskedRef = useRef(false)',
+    ]) {
+      expect(inner).toContain(decl);
+    }
+  });
+});
+
+describe('the revenue simulator does not reset itself mid-edit', () => {
+  // Same defect as above, on the six number fields next to it: they were
+  // useState INSIDE RevenueScreen, so a toast or a socket event out in
+  // FlockAppInner remounted the subtree and snapped every field back to its
+  // pitch-deck default. The adminTab line had already been moved for exactly
+  // this reason, with a comment saying so.
+  const SIM_FIELDS = ['numVenues', 'subscriptionPrice', 'eventsPerVenue', 'avgSpend', 'takeRate', 'operatingCosts'];
+
+  test('RevenueScreen is still the remounting kind, so this still matters', () => {
+    // If this ever stops being true the hoist is merely harmless, but until
+    // then it is load-bearing.
+    expect(appSource).toMatch(/^ {2}const RevenueScreen = \(\) => \{/m);
+    expect(appSource).toMatch(/<RevenueScreen \/>/);
+  });
+
+  test.each(SIM_FIELDS)('%s is declared outside the remounting subtree', (name) => {
+    const declAt = appSource.indexOf(`const [${name}, set`);
+    expect(declAt).toBeGreaterThan(-1);
+    expect(declAt).toBeLessThan(REVENUE_SCREEN_AT);
+  });
+
+  test.each(SIM_FIELDS)('%s is declared exactly once', (name) => {
+    expect(appCount(new RegExp(`const \\[${name}, set`, 'g'))).toBe(1);
+  });
+});
+
+describe('no switch is offered for an owner notification that cannot be sent', () => {
+  test('the venue notifications panel is gone, and so is its state', () => {
+    // backend/routes/venueProfile.js carries the audit: notification_prefs is
+    // written by this dashboard and read NOWHERE, because none of the three
+    // sends exists. Every push call in the backend addresses a flock member, a
+    // DM recipient, a flock creator or an admin, never a venue owner;
+    // venueDashboard.js inserts a review and notifies nobody; emailService.js
+    // has no digest, no template and no scheduler. That comment names this file
+    // as the place to fix it. Three controls for a feature that was never
+    // built, on a screen a venue pays $35/mo for.
+    expect(appSource).not.toMatch(/venueNotifications/);
+    expect(appSource).not.toMatch(/notificationPrefs/);
+    expect(appSource).not.toMatch(/toggleVenueNotification/);
+  });
+
+  test('and the promise itself is off the screen', () => {
+    expect(appSource).not.toMatch(/Get notified when a flock books/);
+    expect(appSource).not.toMatch(/Performance summary emails/);
+    expect(appSource).not.toMatch(/Alerts for customer reviews/);
+  });
+
+  test('the backend claim this rests on is still true', () => {
+    // If an owner-addressed send ever ships, this fails and the panel comes
+    // back with it. `pushIfOffline(io, share.userId, ...)` style calls all take
+    // a user id that is a flock participant; a venue owner notification would
+    // have to read venue_profiles.user_id next to a push call.
+    const venueDash = readSource('backend', 'routes', 'venueDashboard.js');
+    expect(venueDash).not.toMatch(/pushIfOffline|pushAlways|pushIfOfflineDebounced/);
+  });
+});
+
+describe('the two hoisted venue modals behave like dialogs', () => {
+  const componentBody = (name) => {
+    const start = appSource.indexOf(`const ${name} = React.memo(`);
+    expect(start).toBeGreaterThan(-1);
+    return appSource.slice(start, appSource.indexOf('\n});', start));
+  };
+
+  test.each(['PromoModal', 'EventModal'])(
+    '%s renders DialogBehavior, so Escape closes and Tab stays inside',
+    (name) => {
+      // The Upgrade sheet and the Hours modal on the same screen already do
+      // this; these two were the only dashboard modals that did not, so Tab
+      // walked straight out into the dashboard behind them.
+      expect(componentBody(name)).toMatch(/<DialogBehavior onClose=\{onCancel\}/);
+    }
+  );
+
+  test('neither hand-rolls the dialog attributes instead', () => {
+    // DialogBehavior writes role and aria-modal onto its parent, so a second
+    // hand-written pair would be two sources of truth.
+    for (const name of ['PromoModal', 'EventModal']) {
+      expect(componentBody(name)).not.toMatch(/role="dialog"/);
+    }
+  });
+
+  test('every field in them is a token-driven size, which the control floor reaches', () => {
+    // index.css re-scopes --t-body/--t-label/--t-meta/--t-micro to 16px ON
+    // input, textarea, select. A custom property resolves against the ELEMENT,
+    // so an inline `fontSize: 'var(--t-label)'` on an input reads the input's
+    // own 16px, not :root's 13px. A LITERAL inline px would beat that rule, so
+    // what matters is that these stay tokens.
+    for (const name of ['PromoModal', 'EventModal']) {
+      const body = componentBody(name);
+      expect(body).toMatch(/fontSize: 'var\(--t-label\)'/);
+      expect(body).not.toMatch(/fontSize: '\d+px'/);
+    }
+  });
+});
+
+describe('the profit card is readable in both themes', () => {
+  const css = readSource('frontend', 'src', 'index.css');
+
+  test('its background is the token the text colour is designed against', () => {
+    // It was a hardcoded light gradient (#d1fae5 to #a7f3d0, or the red pair)
+    // under text that uses the accent TOKENS, which flip to #34d399 and
+    // #fca5a5 in dark mode. Light mint on light mint, about 1.7:1, on the one
+    // card whose entire job is a single number.
+    expect(appSource).not.toMatch(/#d1fae5, #a7f3d0/);
+    expect(appSource).not.toMatch(/#fee2e2, #fecaca/);
+    expect(appSource).toMatch(
+      /isProfitable \? 'var\(--accent-green-bg\)' : 'var\(--accent-red-bg\)'/
+    );
+  });
+
+  // Real contrast, computed from the tokens, in both themes.
+  const hex = (h) => {
+    const s = h.replace('#', '');
+    const n = s.length === 3 ? s.split('').map((c) => c + c).join('') : s;
+    return [0, 2, 4].map((i) => parseInt(n.slice(i, i + 2), 16));
+  };
+  const parseColor = (v) => {
+    const m = String(v).trim().match(/^rgba?\(([^)]+)\)$/i);
+    if (m) {
+      const p = m[1].split(',').map((x) => parseFloat(x.trim()));
+      return { rgb: [p[0], p[1], p[2]], a: p.length > 3 ? p[3] : 1 };
+    }
+    return { rgb: hex(v), a: 1 };
+  };
+  const over = (fg, bg) => fg.rgb.map((c, i) => c * fg.a + bg.rgb[i] * (1 - fg.a));
+  const lum = (rgb) => {
+    const [r, g, b] = rgb.map((c) => {
+      const s = c / 255;
+      return s <= 0.03928 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4;
+    });
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+  };
+  const ratio = (a, b) => {
+    const [x, y] = [lum(a), lum(b)].sort((p, q) => q - p);
+    return (x + 0.05) / (y + 0.05);
+  };
+
+  /** A token's value inside the given selector block of index.css. */
+  /**
+   * A token's value under `selector`. index.css declares :root THREE times
+   * (safe-area vars, the light palette, and one more further down), so taking
+   * the first block that matches the selector finds a block with no colours in
+   * it at all and every lookup answers null. Every matching block is scanned,
+   * last declaration wins, which is what the cascade does.
+   */
+  const tokenIn = (selector, name) => {
+    let found = null;
+    let from = 0;
+    for (;;) {
+      const at = css.indexOf(selector, from);
+      if (at === -1) break;
+      const start = at + selector.length;
+      const end = css.indexOf('}', start);
+      const body = css.slice(start, end === -1 ? css.length : end);
+      const m = body.match(new RegExp(`${name}\\s*:\\s*([^;]+?)\\s*(?:;|/\\*)`));
+      if (m) found = m[1].trim();
+      from = at + selector.length;
+    }
+    return found;
+  };
+
+  test('the token lookup found real values, not nulls it then ignored', () => {
+    // Guard on the helper itself: a null would make every ratio below throw or,
+    // worse, quietly compare black against black.
+    for (const sel of [':root {', '[data-theme="dark"] {']) {
+      for (const t of ['--bg-card-solid', '--accent-green-bg', '--accent-green-text', '--accent-red-bg', '--accent-red-text']) {
+        expect(tokenIn(sel, t)).toBeTruthy();
+      }
+    }
+  });
+
+  test.each([
+    ['light', ':root {'],
+    ['dark', '[data-theme="dark"] {'],
+  ])('the green pair clears 4.5:1 in %s mode', (mode, selector) => {
+    const card = parseColor(tokenIn(selector, '--bg-card-solid'));
+    const bg = parseColor(tokenIn(selector, '--accent-green-bg'));
+    const text = parseColor(tokenIn(selector, '--accent-green-text'));
+    // The accent background can be translucent, so it is composited over the
+    // card the way the browser paints it.
+    expect(ratio(over(text, { rgb: over(bg, card), a: 1 }), over(bg, card))).toBeGreaterThanOrEqual(4.5);
+  });
+
+  test.each([
+    ['light', ':root {'],
+    ['dark', '[data-theme="dark"] {'],
+  ])('the red pair clears 4.5:1 in %s mode', (mode, selector) => {
+    const card = parseColor(tokenIn(selector, '--bg-card-solid'));
+    const bg = parseColor(tokenIn(selector, '--accent-red-bg'));
+    const text = parseColor(tokenIn(selector, '--accent-red-text'));
+    expect(ratio(over(text, { rgb: over(bg, card), a: 1 }), over(bg, card))).toBeGreaterThanOrEqual(4.5);
+  });
+
+  test('the old hardcoded pair really was the failure this replaces', () => {
+    // Guards the test itself: if #a7f3d0 under #34d399 were fine, the fix
+    // above would be cosmetic and this file would be asserting nothing.
+    const bad = ratio(hex('#34d399'), hex('#a7f3d0'));
+    expect(bad).toBeLessThan(2);
+  });
+});
+
+describe('list keys on the venue dashboard', () => {
+  test('the star rows carry one', () => {
+    // `[1,2,3,4,5].map(s => Icons.starFilled(...))` returns a bare span with no
+    // key, so every render of the Reviews tab warned.
+    expect(appSource).not.toMatch(/\[1, 2, 3, 4, 5\]\.map\(\w+ => \w+ <=[^\n]*\? Icons\./);
+    expect(appCount(/\[1, 2, 3, 4, 5\]\.map\(\w+ => <React\.Fragment key=\{\w+\}>/g)).toBe(3);
+  });
+
+  test('the operating-hours rows do not key on a value the editor can duplicate', () => {
+    // "+ Add Hours" appends { days: '', open: '', close: '' }, so two added
+    // rows both keyed on the empty string.
+    expect(appSource).not.toMatch(/key=\{slot\.days\}/);
+    expect(appSource).toMatch(/setOperatingHours\(\[\.\.\.operatingHours, \{ days: '', open: '', close: '' \}\]\)/);
+  });
+});
+
+describe('unreachable and hand-drawn leftovers', () => {
+  test('the Replied badge that could never render is gone', () => {
+    // `replied` and `reply` are both derived from r.venue_reply, so
+    // `replied && !reply` is false for every row that can exist.
+    expect(appSource).not.toMatch(/review\.replied && !review\.reply/);
+    expect(appSource).toMatch(/replied: !!r\.venue_reply/);
+    expect(appSource).toMatch(/reply: r\.venue_reply \|\| null/);
+  });
+
+  test('the locked-feature padlock comes from the icon set', () => {
+    expect(appSource).toMatch(/Icons\.lock\(requiredTier === 'pro' \? '#2d5a87' : 'var\(--accent-amber-text\)', 32\)/);
+    // The hand-drawn one used rounded caps and rx="2", a different drawing
+    // language from every other mark in the app.
+    expect(appSource).not.toMatch(/<rect x="3" y="11" width="18" height="11" rx="2"/);
+  });
+
+  test('both locked states on the Analytics tab use the same mark', () => {
+    expect(appSource).toMatch(/Icons\.lock\(colors\.textTertiary, 24\)/);
+    expect(appSource).not.toMatch(/Icons\.shield\(colors\.textTertiary, 24\)/);
+  });
+
+  test('Icons.lock is a real export, not a name this file hoped for', () => {
+    const icons = readSource('frontend', 'src', 'components', 'ui', 'Icons.js');
+    expect(icons).toMatch(/^\s{2}lock: make\(/m);
+  });
+});
+
+describe('the moderation console has a way in', () => {
+  test('the admin dashboard names it', () => {
+    expect(appSource).toMatch(/\/admin\/moderation/);
+  });
+
+  test('the web build gets a real link, opened away from the app', () => {
+    expect(appSource).toMatch(/href="\/admin\/moderation" target="_blank" rel="noopener noreferrer"/);
+  });
+
+  test('the native shell is told where it is instead of given a control that dies', () => {
+    // capacitor://localhost and https://www.flockcorp.com are different
+    // origins, and the console reads its bearer token from localStorage on
+    // whatever origin it loads on. Handing the https URL to Safari lands on a
+    // console with no token and no signed-out state, where every request 401s.
+    // Navigating the WebView in place does authenticate, but the console has
+    // no link back and index.js reads the URL once at boot, so the admin is
+    // stranded.
+    // The branch itself, not just the text inside it. Disabling the branch
+    // leaves the prose in the file and hands the native shell the link, which
+    // is the failure this split exists to prevent.
+    expect(appSource).toMatch(/const isNative = typeof window !== 'undefined' && window\.Capacitor\?\.isNativePlatform\?\.\(\) === true;/);
+    expect(appSource).toMatch(/if \(isNative\) \{[\s\S]{0,900}flockcorp\.com\/admin\/moderation/);
+    expect(appSource).not.toMatch(/if \(false\) \{[\s\S]{0,900}flockcorp\.com\/admin\/moderation/);
+  });
+
+  test('and that path is a route the bundle actually serves', () => {
+    const indexJs = readSource('frontend', 'src', 'index.js');
+    expect(indexJs).toMatch(/p === '\/admin\/moderation'/);
+  });
+
+  test('the console still reads its token from storage, which is why the split exists', () => {
+    const console_ = readSource('frontend', 'src', 'website', 'ModerationDashboard.js');
+    expect(console_).toMatch(/getToken\(\)/);
+    const api = readSource('frontend', 'src', 'services', 'api.js');
+    expect(api).toMatch(/localStorage\.getItem\('flockToken'\)/);
   });
 });
