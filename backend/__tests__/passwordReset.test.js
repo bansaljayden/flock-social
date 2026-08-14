@@ -102,6 +102,13 @@ const findByEmail = (email) => users.find((u) => String(u.email).toLowerCase() =
   || users.find((u) => canonicalEmail(u.email) === canonicalEmail(email))
   || null;
 
+// Round 19 (mutation audit). Handlers below used to re-implement the WHERE
+// guards of the statement they were answering, so a guard deleted from
+// routes/auth.js was still enforced here and the assertion about it tested
+// this file. `clause` makes every guard conditional on the statement carrying
+// it.
+const clause = (sql, re) => re.test(sql);
+
 const realQuery = pool.query;
 pool.query = async (text, params = []) => {
   const sql = String(text).replace(/\s+/g, ' ').trim();
@@ -119,12 +126,18 @@ pool.query = async (text, params = []) => {
     return { rows: users.filter((u) => u.id === params[0]) };
   }
   if (sql.startsWith('UPDATE users SET password = $1, token_version = token_version + 1')) {
+    // Round 19 (mutation audit): the three WHERE guards used to be
+    // re-implemented here, so deleting one from routes/auth.js left this file
+    // still enforcing it and the assertions about it passed against the fake.
+    // Each guard is now honoured only if the statement carries it.
     const row = users.find((u) => u.id === params[1]
-      && u.oauth_provider == null
-      && String(u.email).toLowerCase() === String(params[2]).toLowerCase());
+      && (!clause(sql, /AND oauth_provider IS NULL/) || u.oauth_provider == null)
+      && (!clause(sql, /AND is_banned IS NOT TRUE/) || u.is_banned !== true)
+      && (!clause(sql, /AND LOWER\(email\) = LOWER\(\$3\)/)
+        || String(u.email).toLowerCase() === String(params[2]).toLowerCase()));
     if (!row) return { rows: [], rowCount: 0 };
     row.password = params[0];
-    row.token_version += 1;
+    if (clause(sql, /token_version = token_version \+ 1/)) row.token_version += 1;
     return { rows: [{ id: row.id }], rowCount: 1 };
   }
 
@@ -166,15 +179,19 @@ pool.query = async (text, params = []) => {
     return { rows: [], rowCount: 1 };
   }
   if (sql.startsWith('UPDATE password_resets SET used_at')) {
+    // Single-use and the TTL are the DATABASE's guarantees, so both are read
+    // off the statement instead of being re-implemented beside it.
+    const unused = (r) => !clause(sql, /AND used_at IS NULL/) || !r.used_at;
+    const live = (r) => !clause(sql, /AND expires_at > NOW\(\)/) || Date.parse(r.expires_at) > now;
     if (sql.includes('WHERE id = $1')) {
       const r = resets.find((x) => x.id === params[0]);
-      const ok = r && !r.used_at && Date.parse(r.expires_at) > now;
+      const ok = Boolean(r) && unused(r) && live(r);
       if (ok) r.used_at = new Date(now).toISOString();
       return { rows: ok ? [{ id: r.id }] : [], rowCount: ok ? 1 : 0 };
     }
     let n = 0;
     for (const r of resets) {
-      if (r.user_id === params[0] && !r.used_at) { r.used_at = new Date(now).toISOString(); n += 1; }
+      if (r.user_id === params[0] && unused(r) && live(r)) { r.used_at = new Date(now).toISOString(); n += 1; }
     }
     return { rows: [], rowCount: n };
   }

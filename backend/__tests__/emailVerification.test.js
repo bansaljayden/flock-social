@@ -111,6 +111,17 @@ const findByEmail = (email) => users.find((u) => String(u.email).toLowerCase() =
   || users.find((u) => canonical(u.email) === canonical(email))
   || null;
 
+// Round 19 (mutation audit). The UPDATE handlers below used to apply their row
+// change unconditionally: they matched a PREFIX of the statement and then
+// re-implemented the effect in JavaScript. A clause deleted from
+// routes/auth.js was therefore still applied HERE, and every assertion about
+// that clause passed against this file rather than against the route.
+//
+// `clause` is the fix. Each column, and each WHERE guard, is honoured only if
+// the statement that arrived actually carries it — so deleting a clause from
+// the source deletes its effect here too.
+const clause = (sql, re) => re.test(sql);
+
 const realQuery = pool.query;
 pool.query = async (text, params = []) => {
   const sql = String(text).replace(/\s+/g, ' ').trim();
@@ -166,39 +177,50 @@ pool.query = async (text, params = []) => {
   if (sql.startsWith("UPDATE users SET oauth_provider = 'google'")) {
     const row = users.find((u) => u.id === params[2]);
     if (!row) return { rows: [], rowCount: 0 };
-    Object.assign(row, {
-      oauth_provider: 'google', oauth_id: params[0], password: null,
-      profile_image_url: row.profile_image_url ?? params[1],
-      email_verified: true, verified_email: row.email,
-      token_version: row.token_version + 1,
-    });
+    row.oauth_provider = 'google';
+    row.oauth_id = params[0];
+    if (clause(sql, /\bpassword = NULL\b/)) row.password = null;
+    if (clause(sql, /profile_image_url = COALESCE\(profile_image_url, \$2\)/)) {
+      row.profile_image_url = row.profile_image_url ?? params[1];
+    }
+    if (clause(sql, /\bemail_verified = TRUE\b/)) row.email_verified = true;
+    if (clause(sql, /\bverified_email = email\b/)) row.verified_email = row.email;
+    if (clause(sql, /token_version = token_version \+ 1/)) row.token_version += 1;
     return { rows: [row], rowCount: 1 };
   }
   if (sql.startsWith("UPDATE users SET oauth_provider = 'apple'")) {
     const row = users.find((u) => u.id === params[1]);
     if (!row) return { rows: [], rowCount: 0 };
-    Object.assign(row, {
-      oauth_provider: 'apple', oauth_id: params[0], password: null,
-      email_verified: true, verified_email: row.email,
-      token_version: row.token_version + 1,
-    });
+    row.oauth_provider = 'apple';
+    row.oauth_id = params[0];
+    if (clause(sql, /\bpassword = NULL\b/)) row.password = null;
+    if (clause(sql, /\bemail_verified = TRUE\b/)) row.email_verified = true;
+    if (clause(sql, /\bverified_email = email\b/)) row.verified_email = row.email;
+    if (clause(sql, /token_version = token_version \+ 1/)) row.token_version += 1;
     return { rows: [row], rowCount: 1 };
   }
   if (sql.startsWith('UPDATE users SET email = $1, email_verified = FALSE')) {
-    const row = users.find((u) => u.id === params[1] && u.email_verified === false);
+    // The WHERE guard is the only thing protecting a row that verified itself
+    // between the read and this write, so it is read out of the statement too.
+    const row = users.find((u) => u.id === params[1]
+      && (!clause(sql, /WHERE id = \$2 AND email_verified = FALSE/) || u.email_verified === false));
     if (!row) return { rows: [], rowCount: 0 };
-    Object.assign(row, {
-      email: params[0], email_verified: false, verified_email: null,
-      venmo_username: null, cashapp_cashtag: null, zelle_identifier: null,
-      token_version: row.token_version + 1,
-    });
+    row.email = params[0];
+    if (clause(sql, /\bemail_verified = FALSE,/)) row.email_verified = false;
+    if (clause(sql, /\bverified_email = NULL\b/)) row.verified_email = null;
+    if (clause(sql, /\bvenmo_username = NULL\b/)) row.venmo_username = null;
+    if (clause(sql, /\bcashapp_cashtag = NULL\b/)) row.cashapp_cashtag = null;
+    if (clause(sql, /\bzelle_identifier = NULL\b/)) row.zelle_identifier = null;
+    if (clause(sql, /token_version = token_version \+ 1/)) row.token_version += 1;
     return { rows: [row], rowCount: 1 };
   }
   if (sql.startsWith('UPDATE users SET email_verified = TRUE, verified_email = email')) {
     const row = users.find((u) => u.id === params[0]
-      && String(u.email).toLowerCase() === String(params[1]).toLowerCase());
+      && (!clause(sql, /LOWER\(email\) = LOWER\(\$2\)/)
+        || String(u.email).toLowerCase() === String(params[1]).toLowerCase()));
     if (!row) return { rows: [], rowCount: 0 };
-    Object.assign(row, { email_verified: true, verified_email: row.email });
+    if (clause(sql, /\bemail_verified = TRUE\b/)) row.email_verified = true;
+    if (clause(sql, /\bverified_email = email\b/)) row.verified_email = row.email;
     return { rows: [row], rowCount: 1 };
   }
   if (sql.startsWith('UPDATE users SET token_version = token_version + 1')) {
@@ -229,15 +251,19 @@ pool.query = async (text, params = []) => {
     return { rows: [], rowCount: 1 };
   }
   if (sql.startsWith('UPDATE email_verifications SET used_at')) {
+    // Single-use and the TTL are the DATABASE's guarantees, so both are read
+    // off the statement instead of being re-implemented beside it.
+    const unused = (v) => !clause(sql, /AND used_at IS NULL/) || !v.used_at;
+    const live = (v) => !clause(sql, /AND expires_at > NOW\(\)/) || Date.parse(v.expires_at) > now;
     if (sql.includes('WHERE id = $1')) {
       const v = verifications.find((x) => x.id === params[0]);
-      const ok = v && !v.used_at && Date.parse(v.expires_at) > now;
+      const ok = Boolean(v) && unused(v) && live(v);
       if (ok) v.used_at = new Date(now).toISOString();
       return { rows: ok ? [{ id: v.id }] : [], rowCount: ok ? 1 : 0 };
     }
     let n = 0;
     for (const v of verifications) {
-      if (v.user_id === params[0] && !v.used_at) { v.used_at = new Date(now).toISOString(); n += 1; }
+      if (v.user_id === params[0] && unused(v) && live(v)) { v.used_at = new Date(now).toISOString(); n += 1; }
     }
     return { rows: [], rowCount: n };
   }
