@@ -419,10 +419,10 @@ export default function LandingPage() {
                 See the `picture` rule in LandingPage.css for what the wrapper
                 does and, more usefully, what it does not do. */}
             <picture>
-              <source type="image/webp" srcSet="/screenshots/app-nest.webp" />
+              <source type="image/webp" srcSet="/screenshots/nest-dark@2x.webp" />
               <img
                 className="lp-shot lp-shot-hero"
-                src="/screenshots/app-nest.png"
+                src="/screenshots/nest-dark@2x.png"
                 width="390" height="844"
                 fetchPriority="high"
                 alt="The Flock home screen: tonight's status, your flocks, and a plan that needs votes."
@@ -662,10 +662,10 @@ export default function LandingPage() {
                 fallback, and the <img> is byte-for-byte the one that shipped
                 before, loading="lazy" included. 298.2 KB PNG, 53.7 KB WebP. */}
             <picture>
-              <source type="image/webp" srcSet="/screenshots/app-birdie.webp" />
+              <source type="image/webp" srcSet="/screenshots/birdie-dark@2x.webp" />
               <img
                 className="lp-shot"
-                src="/screenshots/app-birdie.png"
+                src="/screenshots/birdie-dark@2x.png"
                 width="390" height="844"
                 loading="lazy"
                 alt="Birdie answering 'Where's poppin in Philadelphia rn?' with a recommendation and venue cards."
