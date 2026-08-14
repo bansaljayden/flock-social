@@ -385,6 +385,13 @@ function scriptAttendance() {
   on(/UPDATE flock_members SET attendance/i, () => ({ rowCount: 1 }));
   on(/SELECT user_id FROM flock_members WHERE flock_id = \$1 AND status = 'accepted'$/i, () => ({ rows: [{ user_id: 2 }] }));
   on(/FROM flock_members fm\s+JOIN flocks f/i, () => ({ rows: [{ cnt: '2' }] }));
+  // The reliability tally used to run three queries PER MEMBER inside the open
+  // transaction; it is now one batched read over an id array. Same counts as
+  // the per-member branch above returned, so every score these tests assert is
+  // unchanged: this models the new statement, it does not relax anything.
+  on(/FROM UNNEST\(\$1::int\[\]\) AS t\(uid\)/i, (p) => ({
+    rows: (p[0] || []).map((uid) => ({ uid, joined: 2, attended: 2 })),
+  }));
   on(/UPDATE users SET reliability_score/i, () => ({ rowCount: 1 }));
   on(/FROM user_blocks/i, () => ({ rows: [] }));
   on(/SELECT user_id FROM flock_members WHERE flock_id = \$1 AND status = 'accepted' AND user_id != \$2/i, () => ({ rows: [{ user_id: 2 }] }));

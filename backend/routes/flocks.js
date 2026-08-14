@@ -48,6 +48,45 @@ const inviteBudget = createUserBudget({ name: 'flock-invite', hourly: 25, daily:
 // notification each one sends) across many callers or many days.
 const MAX_FLOCK_MEMBERSHIPS = 50;
 
+// The ROW count of a flock is NOT bounded by the ceiling above, and that is a
+// live finding rather than a decision (query-reliability round). MAX_FLOCK_
+// MEMBERSHIPS counts only `invited` and `accepted` rows, deliberately —
+// somebody who said no is not occupying the plan, so declining has to give the
+// seat back. But a DECLINED row is still a row, and the two roster reads in
+// this file (GET /:id's membersResult and GET /:id/members) return EVERY row
+// for the flock, with no status filter and no LIMIT, each joined to `users` for
+// a name and an avatar. So "invite 50, they all decline, invite 50 more" grows
+// the roster payload without ever touching the seat ceiling.
+//
+// The fix is a second ceiling on TOTAL rows, charged only when a brand new
+// membership row is created, so that re-inviting somebody who declined (which
+// re-uses their row) still works. It is not applied here because it requires
+// widening the roster-size query below, and that query's exact text is what
+// __tests__/spamBudgets.test.js dispatches the seat cap on. See the handoff.
+
+// ---------------------------------------------------------------------------
+// The home list needs a ceiling (query-reliability round)
+//
+// GET /api/flocks returns every flock the caller has ANY membership row in,
+// with no LIMIT, and each row carries a budget-threshold subquery, a host-block
+// EXISTS, two counts, and a member_previews subquery that runs its own
+// per-member NOT EXISTS against user_blocks. That is roughly five correlated
+// subqueries per flock, on the read the app issues every time it opens.
+//
+// Nothing bounded the row count. A user's own flocks grow slowly, but the list
+// also contains INVITES — rows somebody else created — and the flock list is
+// ordered by f.updated_at DESC, so a flood of fresh invites sorts to the top.
+// Between the per-inviter budget (25/hour, 60/day) and MAX_FLOCK_ROWS that
+// flood is already slow and expensive to produce, and 300 is far past any real
+// account: the alternative was an unbounded response with unbounded subquery
+// work behind it, which is the failure mode that actually costs a pool slot.
+//
+// BEHAVIOUR CHANGE, stated plainly: an account in more than 300 flocks sees the
+// 300 most recently updated. There is no cursor on this route, so the rest are
+// not reachable — which is the honest cost, and the reason the number is
+// generous rather than tight.
+const FLOCK_LIST_LIMIT = 300;
+
 // ---------------------------------------------------------------------------
 // Free text on a flock (audit 2026-08-14)
 //
@@ -175,6 +214,21 @@ router.get('/', async (req, res) => {
                    OR (b.blocker_id = f.creator_id AND b.blocked_id = $1)
               ) THEN NULL ELSE u.name END AS creator_name,
               fm.status AS member_status,
+              -- These five scalar subqueries are really two, spelled out twice
+              -- each plus once more (query-reliability round). going_count is
+              -- member_count + guest_count, a SELECT list cannot reference its
+              -- own output aliases, and Postgres does not deduplicate identical
+              -- scalar subqueries — it executes each one. So the roster count
+              -- runs twice and the guest count runs twice, per flock row, on
+              -- the read the app issues every time it opens.
+              --
+              -- Rewriting them as two LEFT JOIN LATERALs computes each once and
+              -- reads it three times, and is behaviour-identical. Not applied:
+              -- __tests__/rosterBlocks.test.js asserts this exact SQL TEXT to
+              -- pin the decision behind it ("counts are not block-filtered,
+              -- only member_previews is"), so the rewrite reds a test whose
+              -- subject it does not change. Out of scope for the rotation that
+              -- found it — see the handoff for the exact replacement.
               (SELECT COUNT(*) FROM flock_members WHERE flock_id = f.id AND status = 'accepted') AS member_count,
               -- Guests RSVP from the share link and have no membership row, so
               -- they were invisible in every count the host saw. member_count
@@ -211,8 +265,9 @@ router.get('/', async (req, res) => {
        FROM flocks f
        JOIN flock_members fm ON fm.flock_id = f.id AND fm.user_id = $1
        JOIN users u ON u.id = f.creator_id
-       ORDER BY f.updated_at DESC`,
-      [req.user.id]
+       ORDER BY f.updated_at DESC
+       LIMIT $2`,
+      [req.user.id, FLOCK_LIST_LIMIT]
     );
 
     // Non-accepted rows collapse to an invite card (round 3: the list was
@@ -1197,6 +1252,30 @@ router.post('/:id/invite',
         return res.status(400).json({ error: 'This flock already has as many people as it can hold' });
       }
 
+      // ── THIS LOOP IS AN N+1 AND IS KNOWN TO BE ONE ──────────────────────────
+      //
+      // Per submitted id it issues up to FOUR round trips: the membership
+      // lookup, the user lookup, isBlockedBetween (which talks to the POOL, so
+      // it borrows a SECOND connection while this request already holds one),
+      // and the write. user_ids is capped at 25, so a full invite is ~103
+      // queries — measured — against a pool of roughly twenty.
+      //
+      // POST / above hit this exact wall and batched these exact three reads
+      // into one set-based query each. The same rewrite here measured 103
+      // queries / 1631ms down to 7 queries / 124ms at a 4ms simulated round
+      // trip. It is NOT applied, and the reason is not technical: the batched
+      // shapes are unrecognised by the fixture dispatchers in
+      // __tests__/spamBudgets.test.js and __tests__/flockSanitize.test.js,
+      // which script `SELECT id, name FROM users WHERE id = $1` and
+      // `SELECT status FROM flock_members WHERE flock_id = $1 AND user_id = $2`
+      // and fall through to an EMPTY result for anything else — so twelve
+      // passing behaviour tests go red on a change that alters none of the
+      // behaviour they assert. Those files were out of scope for the rotation
+      // that found this. The batched version and the fixture branches it needs
+      // are written up in that rotation's report; land them together.
+      //
+      // Two defects WERE fixed in place, because neither moves a query shape
+      // the fixtures match — see the UPDATE and the INSERT below.
       const invited = [];
       let throttled = false; // ran out of personal allowance
       let full = false;      // ran out of seats in this flock
@@ -1204,7 +1283,7 @@ router.post('/:id/invite',
       const seen = new Set();
       for (const userId of user_ids) {
         const uid = parseInt(userId, 10);
-        if (!Number.isInteger(uid) || uid < 1 || uid > 2147483647 || uid === req.user.id) continue;
+        if (!Number.isInteger(uid) || uid < 1 || uid > INT4_MAX || uid === req.user.id) continue;
         if (seen.has(uid)) continue;
         seen.add(uid);
 
@@ -1243,17 +1322,37 @@ router.post('/:id/invite',
         seatsLeft -= 1;
 
         if (existing.rows.length > 0 && existing.rows[0].status === 'declined') {
-          // Re-invite
+          // Re-invite.
+          //
+          // `AND status = 'declined'` is new (query-reliability round). Without
+          // it this statement had no predicate on the status it was overwriting,
+          // so if the target ACCEPTED an invite between the read four lines up
+          // and this write, the re-invite DEMOTED an accepted member back to
+          // `invited` — silently removing them from the roster, the chat, the
+          // votes and every count, on a plan they had already joined. A narrow
+          // window, one clause to close, and the failure mode is a person
+          // vanishing from a night out.
           await pool.query(
-            `UPDATE flock_members SET status = 'invited' WHERE flock_id = $1 AND user_id = $2`,
+            `UPDATE flock_members SET status = 'invited'
+             WHERE flock_id = $1 AND user_id = $2 AND status = 'declined'`,
             [flockId, uid]
           );
           invited.push({ user_id: uid, user_name: userCheck.rows[0].name });
           console.log('[Invite] Re-invited declined user', uid);
         } else {
-          // New invite
+          // New invite.
+          //
+          // ON CONFLICT DO NOTHING is new, and matches what POST / already
+          // does. Without it, two invite calls naming the same person at the
+          // same moment raced UNIQUE(flock_id, user_id) into a 23505 — and
+          // because every statement in this loop is its own autocommit, that
+          // 500 landed AFTER earlier ids in the same request had already been
+          // written. A partially applied invite reported as a total failure is
+          // the worst of both, and the client's only sane response (retry)
+          // then re-notifies everyone it already reached.
           await pool.query(
-            `INSERT INTO flock_members (flock_id, user_id, status) VALUES ($1, $2, 'invited')`,
+            `INSERT INTO flock_members (flock_id, user_id, status) VALUES ($1, $2, 'invited')
+             ON CONFLICT (flock_id, user_id) DO NOTHING`,
             [flockId, uid]
           );
           invited.push({ user_id: uid, user_name: userCheck.rows[0].name });
@@ -1547,23 +1646,66 @@ router.post('/:id/attendance',
       try {
         await client.query('BEGIN');
 
-        for (const entry of attendance) {
-          // userId went into an INTEGER column unparsed. A guest roster entry
-          // ("guest:12", which is exactly what GET /:id hands the client) or
-          // any other non-numeric value aborted the whole transaction, so one
-          // bad element rolled back every other member's attendance and
-          // returned a 500. Non-integers are skipped instead.
-          const userId = parseInt(entry?.userId, 10);
-          // Upper bound as well as lower: an id past INT4 (still a positive
-          // integer) reaches the UPDATE below and aborts the whole attendance
-          // transaction with an out-of-range 500, exactly as the create/invite
-          // loops guard against. Out-of-range ids are skipped like guest ids.
-          if (!Number.isInteger(userId) || userId <= 0 || userId > INT4_MAX) continue;
-          const status = entry?.attended ? 'attended' : 'no_show';
+        // ── Why this is four statements and not 4N (query-reliability round) ──
+        //
+        // This block used to be one UPDATE per submitted entry, then THREE more
+        // queries per affected member, every one of them on a checked-out pool
+        // client with a transaction open. `attendance` is capped at 50, so the
+        // worst case was ~200 sequential round trips holding one of roughly
+        // twenty Railway pool slots for their entire duration — and holding row
+        // locks on `users` the whole time, since the score writes are inside the
+        // transaction. Two hosts marking two 50-person flocks at once occupied a
+        // tenth of the pool between them for as long as the slowest round trip
+        // chain took. That is not a slow endpoint, it is an availability risk.
+        //
+        // It is now a fixed four statements no matter how big the flock is. The
+        // ARITHMETIC is deliberately left in JavaScript rather than moved into
+        // SQL: `Math.round(x * 100) / 100` and Postgres ROUND() agree on these
+        // values today, but reliability_score is DECIMAL(5,2) on a column real
+        // users see, and a rounding difference introduced by a performance fix
+        // would be invisible until someone's score moved by 0.01 for no reason.
+        // One aggregate read, the same expression, one batched write.
 
+        // userId went into an INTEGER column unparsed. A guest roster entry
+        // ("guest:12", which is exactly what GET /:id hands the client) or any
+        // other non-numeric value aborted the whole transaction, so one bad
+        // element rolled back every other member's attendance and returned a
+        // 500. Non-integers are skipped instead. Upper bound as well as lower:
+        // an id past INT4 (still a positive integer) reaches the UPDATE below
+        // and aborts the transaction with an out-of-range 500.
+        //
+        // A Map, so a duplicate userId in one payload resolves to the LAST
+        // entry — which is exactly what the sequential UPDATEs did. A single
+        // set-based UPDATE joined against duplicate keys would instead pick an
+        // arbitrary one of them, so the dedupe has to happen here, not in SQL.
+        const attendanceByUid = new Map();
+        for (const entry of attendance) {
+          const userId = parseInt(entry?.userId, 10);
+          if (!Number.isInteger(userId) || userId <= 0 || userId > INT4_MAX) continue;
+          attendanceByUid.set(userId, entry?.attended ? 'attended' : 'no_show');
+        }
+
+        if (attendanceByUid.size > 0) {
           await client.query(
-            `UPDATE flock_members SET attendance = $1 WHERE flock_id = $2 AND user_id = $3 AND status = 'accepted'`,
-            [status, flockId, userId]
+            // Two spelling choices here, both deliberate:
+            //
+            // t(uid, mark), NOT t(user_id, attendance) — the SET target left of
+            // the `=` is always the target table's column and cannot be
+            // qualified, so an alias column of the same name reads as a shadow
+            // to whoever edits this next. Different names, no question to ask.
+            //
+            // No `fm` alias on flock_members — the target table is spelled out
+            // in the WHERE instead. That keeps the statement's opening literally
+            // `UPDATE flock_members SET attendance`, which is what the fixture
+            // dispatchers in __tests__/alertPreferences.test.js and
+            // __tests__/pushRestDelivery.test.js match on. Aliasing it would
+            // have red-tested four passing cases for a cosmetic reason.
+            `UPDATE flock_members SET attendance = t.mark
+             FROM UNNEST($1::int[], $2::text[]) AS t(uid, mark)
+             WHERE flock_members.flock_id = $3
+               AND flock_members.user_id = t.uid
+               AND flock_members.status = 'accepted'`,
+            [[...attendanceByUid.keys()], [...attendanceByUid.values()], flockId]
           );
         }
 
@@ -1575,32 +1717,75 @@ router.post('/:id/attendance',
           [flockId]
         );
         const memberSet = new Set(memberRows.rows.map(r => r.user_id));
-        const affectedUserIds = [...new Set(attendance.map(a => parseInt(a.userId)).filter(id => Number.isFinite(id) && memberSet.has(id)))];
-        for (const userId of affectedUserIds) {
-          const joined = await client.query(
-            `SELECT COUNT(*) AS cnt FROM flock_members fm
-             JOIN flocks f ON f.id = fm.flock_id
-             WHERE fm.user_id = $1 AND fm.status = 'accepted' AND f.status = 'completed' AND fm.attendance != 'unmarked'`,
-            [userId]
-          );
-          // Numerator scoped to COMPLETED flocks like the denominator —
-          // counting a live check-in on an active flock produced 200% scores
-          // (round 5).
-          const attended = await client.query(
-            `SELECT COUNT(*) AS cnt FROM flock_members fm
-             JOIN flocks f ON f.id = fm.flock_id
-             WHERE fm.user_id = $1 AND fm.attendance = 'attended' AND f.status = 'completed'`,
-            [userId]
-          );
-          const totalJoined = parseInt(joined.rows[0].cnt);
-          const totalAttended = parseInt(attended.rows[0].cnt);
-          const score = totalJoined > 0 ? Math.round((totalAttended / totalJoined) * 100 * 100) / 100 : null;
+        // `a?.userId`, not `a.userId`. `body('attendance').isArray()` says
+        // nothing about the ELEMENTS, so `{"attendance":[null]}` reached this
+        // line and threw a TypeError — inside the transaction, so it rolled
+        // back and answered 500 for a body the validator had accepted. The loop
+        // above has always read the same field defensively; this one did not.
+        const affectedUserIds = [...new Set(attendance.map(a => parseInt(a?.userId)).filter(id => Number.isFinite(id) && memberSet.has(id)))];
 
-          await client.query(
-            `UPDATE users SET reliability_score = $1, total_plans_joined = $2, total_plans_attended = $3 WHERE id = $4`,
-            [score, totalJoined, totalAttended, userId]
+        if (affectedUserIds.length > 0) {
+          // The two per-user COUNTs, asked once for the whole set.
+          //
+          // The predicates are NOT the same as each other and that is not an
+          // oversight to tidy up while batching: `joined` requires
+          // fm.status = 'accepted' AND an attendance that is not 'unmarked';
+          // `attended` requires only attendance = 'attended'. Both require a
+          // COMPLETED flock (numerator scoped like the denominator — counting a
+          // live check-in on an active flock produced 200% scores, round 5).
+          // Reproduced verbatim as FILTER clauses, because narrowing either one
+          // silently moves every reliability score in the database.
+          //
+          // LEFT JOINs so an affected user with no other rows still comes back
+          // as a row with zeroes rather than vanishing from the result — a
+          // missing row here would leave their old score in place instead of
+          // clearing it, which the per-user loop never did.
+          const tally = await client.query(
+            `SELECT t.uid,
+                    COUNT(*) FILTER (
+                      WHERE f.status = 'completed'
+                        AND fm.status = 'accepted'
+                        AND fm.attendance <> 'unmarked'
+                    )::int AS joined,
+                    COUNT(*) FILTER (
+                      WHERE f.status = 'completed'
+                        AND fm.attendance = 'attended'
+                    )::int AS attended
+             FROM UNNEST($1::int[]) AS t(uid)
+             LEFT JOIN flock_members fm ON fm.user_id = t.uid
+             LEFT JOIN flocks f ON f.id = fm.flock_id
+             GROUP BY t.uid`,
+            [affectedUserIds]
           );
-          results.push({ userId, reliabilityScore: score, totalPlansJoined: totalJoined, totalPlansAttended: totalAttended });
+          const tallyByUid = new Map(tally.rows.map((r) => [r.uid, r]));
+
+          const scores = [];
+          const joinedCounts = [];
+          const attendedCounts = [];
+          for (const userId of affectedUserIds) {
+            const row = tallyByUid.get(userId);
+            const totalJoined = parseInt(row?.joined ?? 0);
+            const totalAttended = parseInt(row?.attended ?? 0);
+            const score = totalJoined > 0 ? Math.round((totalAttended / totalJoined) * 100 * 100) / 100 : null;
+            scores.push(score);
+            joinedCounts.push(totalJoined);
+            attendedCounts.push(totalAttended);
+            results.push({ userId, reliabilityScore: score, totalPlansJoined: totalJoined, totalPlansAttended: totalAttended });
+          }
+
+          // numeric[], because reliability_score is DECIMAL(5,2) and `score` is
+          // null for a user with nothing completed — the per-user UPDATE wrote
+          // that null too, and it means "no score yet", not zero.
+          // Unaliased for the same reason as the UPDATE above: the opening stays
+          // literally `UPDATE users SET reliability_score`.
+          await client.query(
+            `UPDATE users SET reliability_score = t.score,
+                              total_plans_joined = t.joined,
+                              total_plans_attended = t.attended
+             FROM UNNEST($1::int[], $2::numeric[], $3::int[], $4::int[]) AS t(uid, score, joined, attended)
+             WHERE users.id = t.uid`,
+            [affectedUserIds, scores, joinedCounts, attendedCounts]
+          );
         }
 
         await client.query('COMMIT');

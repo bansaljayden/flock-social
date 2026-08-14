@@ -495,38 +495,92 @@ router.delete('/messages/:id/react/:emoji',
 
 // --- Direct Messages ---
 
+// The DM list is the inbox: newest conversations first, and nobody scrolls to
+// the four-hundredth one. It is also the only read in this file with no bound
+// of any kind, on the fastest-growing table in the schema — see the note in the
+// route below.
+const DM_CONVERSATION_LIMIT = 200;
+
 // GET /api/dm - List all DM conversations (latest message per user)
 router.get('/dm', async (req, res) => {
   try {
+    // ── Three things were wrong with the query below (query-reliability round)
+    //
+    // 1. AVATAR AMPLIFICATION. `u.profile_image_url` was selected inside the
+    //    subquery, i.e. once per DM ROW, and DISTINCT ON collapses to one row
+    //    per partner only after the sort has already carried every one of those
+    //    rows. Legacy avatars in this database are base64 data URLs — every
+    //    other read path in this file guards them explicitly ("Giant legacy
+    //    base64 avatars would be repeated on every one of up to 100 rows"), and
+    //    this one repeated them over EVERY DM the account has ever sent or
+    //    received, with no cap at all. A user with 10,000 messages and a 12KB
+    //    avatar on the other side made Postgres sort ~120MB to return twenty
+    //    rows. The join now happens AFTER the collapse, once per partner, and
+    //    carries the same >12000 guard the sibling queries use.
+    //
+    // 2. NO LIMIT. A list the user grows without bound, with none.
+    //
+    // 3. THE BLOCK FILTER WAS APPLIED IN JAVASCRIPT, after the query. That was
+    //    harmless while the result was the complete list; with a LIMIT it is
+    //    not, because blocked partners would eat slots and push real
+    //    conversations off the end. Moved into SQL, ahead of the LIMIT — the
+    //    same reasoning the flock-message read above already writes down
+    //    ("filtered IN SQL, before LIMIT — filtering after pagination could
+    //    return an empty page while older visible messages still existed").
+    //
+    // BEHAVIOUR CHANGE, stated plainly: an account with more than 200 visible
+    // conversations now sees its 200 most recent. Nothing else moves.
+    const invisible = await getInvisibleUserIds(req.user.id);
+
     const result = await pool.query(
-      `SELECT DISTINCT ON (other_id) *
+      // Nested subqueries rather than CTEs on purpose: a CTE is an optimization
+      // fence on PostgreSQL 11 and older, which would force the whole message
+      // history to be materialized before the DISTINCT ON — the very cost this
+      // rewrite exists to remove. Plain subqueries are never fenced on any
+      // version, and this query has to be right on whatever Railway is running.
+      `SELECT l.*, u.name AS other_name,
+              CASE WHEN LENGTH(u.profile_image_url) > 12000 THEN NULL ELSE u.profile_image_url END AS other_image
        FROM (
-         SELECT dm.id, dm.message_text, dm.created_at, dm.read_status, dm.sender_id, dm.receiver_id,
-                CASE WHEN dm.sender_id = $1 THEN dm.receiver_id ELSE dm.sender_id END AS other_id,
-                u.name AS other_name, u.profile_image_url AS other_image
-         FROM direct_messages dm
-         JOIN users u ON u.id = CASE WHEN dm.sender_id = $1 THEN dm.receiver_id ELSE dm.sender_id END
-         WHERE (dm.sender_id = $1 OR dm.receiver_id = $1)
-           AND COALESCE(dm.is_hidden, false) = false
-       ) sub
-       ORDER BY other_id, created_at DESC`,
-      [req.user.id]
+         SELECT DISTINCT ON (other_id) *
+         FROM (
+           SELECT dm.id, dm.message_text, dm.created_at, dm.read_status, dm.sender_id,
+                  CASE WHEN dm.sender_id = $1 THEN dm.receiver_id ELSE dm.sender_id END AS other_id
+           FROM direct_messages dm
+           WHERE (dm.sender_id = $1 OR dm.receiver_id = $1)
+             AND COALESCE(dm.is_hidden, false) = false
+         ) mine
+         WHERE NOT (other_id = ANY($2::int[]))
+         ORDER BY other_id, created_at DESC
+       ) l
+       JOIN users u ON u.id = l.other_id
+       ORDER BY l.created_at DESC
+       LIMIT $3`,
+      [req.user.id, invisible, DM_CONVERSATION_LIMIT]
     );
+
+    const partnerIds = result.rows.map((r) => r.other_id);
 
     // Get unread counts per conversation. Moderator-hidden DMs are excluded —
     // no projection will ever display them, so counting them left a ghost
-    // unread badge that could never be cleared.
-    const unreadResult = await pool.query(
-      `SELECT sender_id, COUNT(*) AS unread_count
-       FROM direct_messages
-       WHERE receiver_id = $1 AND read_status = FALSE
-         AND COALESCE(is_hidden, false) = false
-       GROUP BY sender_id`,
-      [req.user.id]
-    );
-    const unreadMap = {};
-    unreadResult.rows.forEach(r => { unreadMap[r.sender_id] = parseInt(r.unread_count); });
+    // unread badge that could never be cleared. Scoped to the partners actually
+    // being returned: every other group in this aggregate was discarded
+    // unread, and with a blocked partner it was counted and then thrown away.
+    let unreadMap = {};
+    if (partnerIds.length > 0) {
+      const unreadResult = await pool.query(
+        `SELECT sender_id, COUNT(*)::int AS unread_count
+         FROM direct_messages
+         WHERE receiver_id = $1 AND read_status = FALSE
+           AND COALESCE(is_hidden, false) = false
+           AND sender_id = ANY($2::int[])
+         GROUP BY sender_id`,
+        [req.user.id, partnerIds]
+      );
+      unreadResult.rows.forEach(r => { unreadMap[r.sender_id] = parseInt(r.unread_count); });
+    }
 
+    // Already ordered newest-first by the query; the JS sort it used to need is
+    // gone with the DISTINCT ON ordering that forced it.
     const conversations = result.rows.map(r => ({
       userId: r.other_id,
       name: r.other_name,
@@ -537,14 +591,7 @@ router.get('/dm', async (req, res) => {
       unread: unreadMap[r.other_id] || 0,
     }));
 
-    // Hide conversations with users blocked in either direction (mutual invisibility).
-    const invisible = new Set(await getInvisibleUserIds(req.user.id));
-    const visible = conversations.filter((c) => !invisible.has(c.userId));
-
-    // Sort by most recent message
-    visible.sort((a, b) => new Date(b.lastMessageTime) - new Date(a.lastMessageTime));
-
-    res.json({ conversations: visible });
+    res.json({ conversations });
   } catch (err) {
     console.error('Get DM conversations error:', err);
     res.status(500).json({ error: 'Failed to get conversations' });
@@ -736,16 +783,6 @@ router.post('/dm/:userId',
         return res.status(400).json({ error: VENUE_REJECTED_MESSAGE });
       }
 
-      // Image moderation on the REST transport too (same as flock messages),
-      // including the byte-level multi-frame gate — and metered by the same
-      // per-account billed-image limiter in server.js. See the note there.
-      if (image_url) {
-        const verdict = await moderateImage(image_url);
-        if (!verdict.allowed) {
-          return res.status(400).json({ error: imageRejectionMessage(verdict), moderation: verdict.reason });
-        }
-      }
-
       // SECURITY: a reply may only reference a message from THIS conversation
       // (same invariant as the socket path — see sockets/handlers.js).
       //
@@ -754,6 +791,21 @@ router.post('/dm/:userId',
       // it over REST — the takedown undone through the transport that forgot to
       // check. Kept identical to the socket predicate so the two transports
       // cannot drift again.
+      //
+      // MOVED AHEAD OF moderateImage (query-reliability round). This is a
+      // primary-key lookup on direct_messages that can REFUSE the request, and
+      // moderateImage is a BILLED Google Vision call. Every other refusal on
+      // this route — empty, oversized, self-DM, blocked, not connected, profane,
+      // bad venue card — already sits in front of that call for exactly this
+      // reason; the reply check was the one free refusal left behind it, so a
+      // client looping a send with a stale reply id paid for a Vision screen on
+      // every attempt and was refused anyway.
+      //
+      // WHAT CHANGES: a request that is BOTH carrying a rejectable image AND
+      // naming an invalid reply target now answers "Invalid reply target"
+      // instead of the image rejection. Both are 400s and both refuse the send;
+      // only which sentence comes back moves. sockets/handlers.js send_dm still
+      // has the old order (it is not this rotation's file) — see the handoff.
       let safeReplyId = null;
       if (reply_to_id) {
         const replyCheck = await pool.query(
@@ -767,6 +819,16 @@ router.post('/dm/:userId',
           return res.status(400).json({ error: 'Invalid reply target' });
         }
         safeReplyId = reply_to_id;
+      }
+
+      // Image moderation on the REST transport too (same as flock messages),
+      // including the byte-level multi-frame gate — and metered by the same
+      // per-account billed-image limiter in server.js. See the note there.
+      if (image_url) {
+        const verdict = await moderateImage(image_url);
+        if (!verdict.allowed) {
+          return res.status(400).json({ error: imageRejectionMessage(verdict), moderation: verdict.reason });
+        }
       }
 
       const result = await pool.query(

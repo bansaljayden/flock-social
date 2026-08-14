@@ -213,6 +213,12 @@ test('attendance_marked carries the marker as fromUserId, and fans out with allS
   on(/UPDATE flock_members SET attendance/, () => ({ rows: [], rowCount: 1 }));
   on(/SELECT user_id FROM flock_members WHERE flock_id = \$1 AND status = 'accepted'/, () => ({ rows: [{ user_id: 2 }, { user_id: 3 }] }));
   on(/SELECT COUNT\(\*\) AS cnt FROM flock_members fm/, () => ({ rows: [{ cnt: '1' }] }));
+  // Batched reliability tally, replacing three queries per member. Returns the
+  // same counts the per-member branch above did, so the scores asserted here
+  // are unchanged.
+  on(/FROM UNNEST\(\$1::int\[\]\) AS t\(uid\)/, (p) => ({
+    rows: (p[0] || []).map((uid) => ({ uid, joined: 1, attended: 1 })),
+  }));
   on(/UPDATE users SET reliability_score/, () => ({ rows: [] }));
 
   // One recipient's delivery fails; the other must still be attempted and the
