@@ -1,9 +1,19 @@
 <?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Every page the marketing site wants indexed, on the canonical www host.
+  Deliberately absent: /app (login wall), /admin/moderation (staff only), and
+  /i/<token> invite links (bearer tokens, noindex via vercel.json).
+  No <lastmod>, <changefreq> or <priority>: Google ignores the last two, and a
+  <lastmod> that is not maintained by the deploy is worse than none.
+  Keep this list in step with the route table in src/index.js and with the
+  canonical Link headers in vercel.json.
+-->
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
-  <url><loc>https://flockcorp.com/</loc></url>
-  <url><loc>https://flockcorp.com/about</loc></url>
-  <url><loc>https://flockcorp.com/support</loc></url>
-  <url><loc>https://flockcorp.com/privacy</loc></url>
-  <url><loc>https://flockcorp.com/terms</loc></url>
-  <url><loc>https://flockcorp.com/guidelines</loc></url>
+  <url><loc>https://www.flockcorp.com/</loc></url>
+  <url><loc>https://www.flockcorp.com/about</loc></url>
+  <url><loc>https://www.flockcorp.com/support</loc></url>
+  <url><loc>https://www.flockcorp.com/privacy</loc></url>
+  <url><loc>https://www.flockcorp.com/terms</loc></url>
+  <url><loc>https://www.flockcorp.com/guidelines</loc></url>
+  <url><loc>https://www.flockcorp.com/delete-account</loc></url>
 </urlset>
