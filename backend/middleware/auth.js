@@ -105,6 +105,28 @@ function revokeUserSessions(io, userId) {
 // whole point of the round-16 fix, so it must not depend on three other files
 // remembering it.
 //
+// STATUS (2026-08-14): routes/flocks.js now mounts `requireVerified` on all
+// four of its entries here — POST /, and /:id/join, /:id/invite, /:id/invite-link
+// — and the one statement that promotes anybody to accepted flock membership
+// carries the check in its own WHERE clause as well. That is deliberate
+// redundancy, not duplication: this table is a regex over a URL, so renaming a
+// route or mounting the router under a second prefix makes the pattern stop
+// matching while the route keeps working, and the gate would fail SILENTLY and
+// OPEN. Whichever layer is edited, the other still refuses.
+//
+// routes/users.js gates its one path (the email change in PUT /profile) with a
+// branch-level check rather than route-level middleware, by design — see the
+// comment there. routes/friends.js still relies on this table alone.
+//
+// A NOTE ON THE OTHER SIDE OF AN INVITE. This list gates the ACTOR. It does not,
+// and should not, refuse a verified user who invites an account that has not
+// confirmed its email yet: that writes `flock_members.status = 'invited'`, which
+// is not membership — every capability and count in the backend keys on
+// 'accepted' — and the target cannot promote it without passing this gate
+// themselves. A friend who signed up ten minutes ago is the normal case, and
+// refusing would leak their verification state to anyone who can guess a user
+// id. The long-form reasoning is above POST /:id/invite in routes/flocks.js.
+//
 // It is NOT the URL-regex carve-out that middleware/auth.js used to have for
 // bans, and it must never become one. That one matched an unanchored pattern
 // against req.originalUrl INCLUDING the query string, so
