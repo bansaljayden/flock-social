@@ -1,10 +1,18 @@
 const express = require('express');
 const bcrypt = require('bcryptjs');
+const crypto = require('crypto');
+const jwt = require('jsonwebtoken');
 const { body, query, validationResult } = require('express-validator');
 const multer = require('multer');
 const path = require('path');
 const pool = require('../config/database');
-const { authenticate, authenticateAllowBanned, signUserToken, revokeUserSessions } = require('../middleware/auth');
+const {
+  authenticate,
+  authenticateAllowBanned,
+  signUserToken,
+  revokeUserSessions,
+  TOKEN_ALGORITHMS,
+} = require('../middleware/auth');
 const { stripHtml, sanitizeArray } = require('../utils/sanitize');
 const { rejectIfProfane, moderateImage, IMAGE_REJECTED_MESSAGE } = require('../utils/moderation');
 const { revokeAppleToken, isConfigured: appleAuthConfigured } = require('../services/appleAuth');
@@ -118,6 +126,284 @@ function normalizedAddress(addr) {
   return `${local}@${domain}`;
 }
 
+// ---------------------------------------------------------------------------
+// Recent-possession proof ("sudo mode") — round 16
+// ---------------------------------------------------------------------------
+// A Flock JWT lives 24h and nothing about holding one proves the holder is the
+// account owner right now. Two actions in this file are irreversible or
+// identity-defining enough that a bearer token alone must not be sufficient:
+// deleting the account (which also revokes the Apple grant and cannot be
+// undone) and changing the phone number (which is the key friend discovery
+// resolves against, so claiming someone else's number redirects their
+// contact-sync lookups at you).
+//
+// Password accounts prove possession the obvious way: retype the password.
+// That locks nobody out, because typing the password is the ONLY way a
+// password account can sign in at all — anyone legitimately holding a live
+// session for one knows it.
+//
+// OAuth accounts have no password to retype, so the equivalent is a session
+// that was minted by an actual provider sign-in moments ago. `iat` is stamped
+// by jsonwebtoken on every token signUserToken issues, so a token that is more
+// than REAUTH_WINDOW_MS old fails the check and the client has to re-run Sign
+// in with Apple / Google to get a fresh one. A token lifted hours earlier (the
+// realistic theft) is stale by definition.
+//
+// Deletion stays genuinely reachable either way, which is the Apple 5.1.1(v)
+// requirement: banned accounts can still sign in (the ban is enforced by
+// middleware/auth.js on API calls, not by the sign-in routes), so a banned user
+// can always obtain the proof and finish deleting.
+const REAUTH_WINDOW_MS = 5 * 60 * 1000;
+
+function tokenIssuedAtMs(req) {
+  const header = req?.headers?.authorization;
+  if (typeof header !== 'string' || !header.startsWith('Bearer ')) return null;
+  // Split exactly the way middleware/auth.js does. Taking the rest of the
+  // header instead would read a DIFFERENT string out of `Bearer <token> junk`
+  // than the one that was just verified, and the only possible outcome of that
+  // divergence is refusing a request the middleware accepted.
+  const token = header.split(' ')[1];
+  if (!token) return null;
+  try {
+    // Re-verified, not just decoded: this must never accept an unsigned or
+    // tampered `iat`. The request already passed the same verification in
+    // middleware/auth.js, so this can only agree with it or fail closed.
+    // The `||` is not decoration: an undefined `algorithms` makes jsonwebtoken
+    // infer the accepted set from the key instead of pinning it, so if that
+    // export is ever renamed in middleware/auth.js this must not quietly widen.
+    const decoded = jwt.verify(token, process.env.JWT_SECRET, {
+      algorithms: TOKEN_ALGORITHMS || ['HS256'],
+    });
+    return Number.isFinite(decoded?.iat) ? decoded.iat * 1000 : null;
+  } catch {
+    return null;
+  }
+}
+
+function hasFreshSession(req, now = Date.now()) {
+  const issuedAt = tokenIssuedAtMs(req);
+  if (issuedAt === null) return false;
+  // A token minted "in the future" is clock skew between the signer and this
+  // process, not an attack (the signer is this same app), so it counts as fresh.
+  return now - issuedAt <= REAUTH_WINDOW_MS;
+}
+
+// ---------------------------------------------------------------------------
+// Per-account attempt ceilings
+// ---------------------------------------------------------------------------
+// Asking for a password creates a place to GUESS a password. Nothing else in
+// this file counted attempts, and the API limiter is 300 requests / 15 min PER
+// IP, which is not a limit at all for someone with a stolen token and a handful
+// of cloud addresses: they could sit on DELETE /api/users/me and brute force
+// the account password (8 characters, one uppercase, one digit), which is worth
+// far more than the account itself because people reuse it. Each guess also
+// costs the server a full bcrypt round, so an unbounded guesser is a CPU drain
+// on top. routes/auth.js does exactly this for /login (round 15); this is the
+// same primitive for the two proofs in this file.
+//
+// In memory and therefore per process: a real ceiling on the single-instance
+// Railway deployment, a partial one behind N instances. Same trade documented
+// on the login throttle, and the same bounded map so an attacker cycling ids
+// cannot grow it without limit.
+const ATTEMPT_MAX_KEYS = 20000;
+
+function attemptLimiter({ limit, windowMs }) {
+  const hits = new Map();
+  return {
+    lockedFor(key, now = Date.now()) {
+      const entry = hits.get(key);
+      if (!entry) return 0;
+      if (now >= entry.expiresAt) { hits.delete(key); return 0; }
+      return entry.count >= limit ? entry.expiresAt - now : 0;
+    },
+    record(key, now = Date.now()) {
+      if (hits.size > ATTEMPT_MAX_KEYS) {
+        for (const [k, v] of hits) if (now >= v.expiresAt) hits.delete(k);
+        if (hits.size > ATTEMPT_MAX_KEYS) hits.clear();
+      }
+      const entry = hits.get(key);
+      if (!entry || now >= entry.expiresAt) {
+        hits.set(key, { count: 1, expiresAt: now + windowMs });
+        return;
+      }
+      entry.count += 1;
+    },
+    clear(key) { hits.delete(key); },
+    clearAll() { hits.clear(); },
+  };
+}
+
+// Wrong current-password / deletion-password proofs. Cleared on success, so a
+// user who mistypes and then gets it right is never held back. Five attempts
+// then a cooling-off period still leaves deletion genuinely reachable, which is
+// the Apple 5.1.1(v) line this must not cross.
+const proofFailures = attemptLimiter({ limit: 5, windowMs: 15 * 60 * 1000 });
+const TOO_MANY_PROOFS_MESSAGE = 'Too many incorrect passwords. Try again in a few minutes.';
+
+// Phone-number CHANGE attempts, successful ones included. The uniqueness check
+// added below answers "is this number registered here?", which is an
+// enumeration oracle that would otherwise run at the API limiter's 300 per 15
+// minutes and bypass the contact-sync budget POST /api/friends/find-by-phone is
+// metered by. Nobody changes their number five times an hour.
+const phoneChangeAttempts = attemptLimiter({ limit: 5, windowMs: 60 * 60 * 1000 });
+
+// ---------------------------------------------------------------------------
+// Ban-evasion tombstones (round 16) — see migrations/012_banned_identities.sql
+// ---------------------------------------------------------------------------
+// A banned user is allowed to delete their own account (Apple 5.1.1(v)), and
+// before this nothing survived that deletion, so the ban was reversible by the
+// banned person: delete, sign up again on the same email, get a clean row.
+// Deleting a BANNED account now leaves keyed one-way digests of the identifiers
+// a returning user would reuse. The full privacy and retention rationale is in
+// the migration; the short version is that these users are frequently minors,
+// so we store no plaintext, nothing that is not needed to recognise a return,
+// and nothing that outlives the retention window.
+const BAN_TOMBSTONE_RETENTION_DAYS = 365;
+
+// The pepper is what makes these digests safe to hold: a 10-digit phone number
+// has almost no entropy, so an unkeyed SHA-256 of one is reversible by anyone
+// who reads the table. Dedicated env var if set, JWT_SECRET otherwise (always
+// present — the server cannot mint a token without it).
+function identityPepper() {
+  return process.env.BAN_TOMBSTONE_SECRET || process.env.JWT_SECRET || '';
+}
+
+// `kind` is inside the HMAC input so an email digest can never be compared
+// against, or collide with, a phone digest.
+function identityDigest(kind, value) {
+  const key = identityPepper();
+  if (!key || !value) return null;
+  return crypto.createHmac('sha256', key).update(`${kind}:${value}`).digest('hex');
+}
+
+// Match the comparison friend discovery actually uses: POST
+// /api/friends/find-by-phone strips non-digits and compares the last 10, so a
+// tombstone keyed on anything else would be defeated by retyping the number
+// with different punctuation or a country code.
+function canonicalPhone(phone) {
+  if (typeof phone !== 'string' && typeof phone !== 'number') return '';
+  const digits = String(phone).replace(/\D/g, '').slice(-10);
+  return digits.length >= 7 ? digits : '';
+}
+
+function identityDigests({ email, phone, oauthProvider, oauthId } = {}) {
+  const canonicalMail = typeof email === 'string' ? normalizedAddress(email.trim()) : '';
+  const canonicalNumber = canonicalPhone(phone);
+  const oauthKey = oauthProvider && oauthId
+    ? `${String(oauthProvider).toLowerCase()}:${String(oauthId)}`
+    : '';
+  return {
+    emailHash: canonicalMail ? identityDigest('email', canonicalMail) : null,
+    phoneHash: canonicalNumber ? identityDigest('phone', canonicalNumber) : null,
+    oauthHash: oauthKey ? identityDigest('oauth', oauthKey) : null,
+  };
+}
+
+// The signup-side lookup. Exported for routes/auth.js, which owns every account
+// creation path (password signup, Google, Apple).
+//
+// FAILS OPEN on a database error, deliberately. This sits in front of every
+// signup in the product: failing closed would turn one bad query into "nobody
+// can create an account", which is a far worse outcome than a banned user
+// getting back in during an outage. The failure is logged loudly instead.
+async function isIdentityBanned(identity) {
+  try {
+    const { emailHash, phoneHash, oauthHash } = identityDigests(identity || {});
+    if (!emailHash && !phoneHash && !oauthHash) return false;
+    const result = await pool.query(
+      `SELECT 1 FROM banned_identities
+        WHERE expires_at > NOW()
+          AND (($1::text IS NOT NULL AND email_hash = $1)
+            OR ($2::text IS NOT NULL AND phone_hash = $2)
+            OR ($3::text IS NOT NULL AND oauth_hash = $3))
+        LIMIT 1`,
+      [emailHash, phoneHash, oauthHash]
+    );
+    maybePurgeExpired();
+    return result.rows.length > 0;
+  } catch (err) {
+    console.error('[ban-tombstone] lookup failed, allowing signup:', err.message);
+    return false;
+  }
+}
+
+// Deliberately vague, and identical whatever matched: a precise message would
+// tell an attacker which of a victim's identifiers is on the list, turning this
+// into an oracle ("is this phone number banned?").
+// hello@flockcorp.com is the address the app actually sends from
+// (services/emailService.js). Inventing a support@ that nobody reads would be
+// worse than saying nothing, and this is the only route a false positive (a
+// recycled phone number) has back to a human.
+const BANNED_IDENTITY_MESSAGE =
+  'This account cannot be created. If you believe this is a mistake, contact hello@flockcorp.com.';
+
+// Mirrors rejectIfProfane(res, name) in utils/moderation.js: returns true when
+// it has already sent the response, so the caller writes one line.
+async function rejectIfBannedIdentity(res, identity) {
+  if (!(await isIdentityBanned(identity))) return false;
+  console.warn(`[ban-tombstone] blocked signup for a tombstoned identity at ${new Date().toISOString()}`);
+  res.status(403).json({ error: BANNED_IDENTITY_MESSAGE });
+  return true;
+}
+
+// Written inside the account-deletion transaction (see deleteAccount) so the
+// tombstone and the row's disappearance are the same atomic event. If this
+// throws, the whole deletion rolls back and the caller is told to retry, which
+// is the same trade the round-12 moderation-evidence de-attribution already
+// makes: never let the account vanish while the record of it fails to land.
+async function recordBannedIdentity(client, user) {
+  const { emailHash, phoneHash, oauthHash } = identityDigests({
+    email: user.email,
+    phone: user.phone,
+    oauthProvider: user.oauth_provider,
+    oauthId: user.oauth_id,
+  });
+  if (!emailHash && !phoneHash && !oauthHash) {
+    // No usable identifier (no pepper configured, or an Apple relay row with
+    // nothing but a placeholder address). Writing an empty row would violate
+    // the table's CHECK and would hold data about a minor for no purpose.
+    console.warn('[ban-tombstone] no usable identifier for the deleted banned account, nothing recorded');
+    return false;
+  }
+  await client.query(
+    `INSERT INTO banned_identities (email_hash, phone_hash, oauth_hash, banned_at, expires_at)
+     VALUES ($1, $2, $3, $4, NOW() + ($5::int * INTERVAL '1 day'))`,
+    [emailHash, phoneHash, oauthHash, user.banned_at || null, BAN_TOMBSTONE_RETENTION_DAYS]
+  );
+  return true;
+}
+
+// Retention is enforced by the read path (every lookup filters expires_at), so
+// an expired tombstone stops having any effect the moment it expires whether or
+// not this has run. But "it expires" has to mean the row is actually gone, not
+// just ignored, or the retention promise in the migration is a lie the first
+// time anyone reads the table. Best-effort and outside any transaction: it must
+// never be able to fail an account deletion.
+async function purgeExpiredBannedIdentities() {
+  try {
+    const result = await pool.query('DELETE FROM banned_identities WHERE expires_at <= NOW()');
+    return result.rowCount || 0;
+  } catch (err) {
+    console.error('[ban-tombstone] purge failed:', err.message);
+    return 0;
+  }
+}
+
+// There is no scheduler in this app, and hanging retention off "a banned
+// account happened to be deleted" would mean a quiet year leaves expired rows
+// on disk indefinitely. Signups are the one thing that reliably happens, so the
+// lookup triggers the purge — at most once an hour per process, fire and
+// forget, so it can never add latency to a signup or fail one.
+const PURGE_INTERVAL_MS = 60 * 60 * 1000;
+let lastPurgeAt = 0;
+
+function maybePurgeExpired(now = Date.now()) {
+  if (now - lastPurgeAt < PURGE_INTERVAL_MS) return false;
+  lastPurgeAt = now;
+  purgeExpiredBannedIdentities().catch(() => {});
+  return true;
+}
+
 // PUT /api/users/profile - Update current user's profile (requires current password)
 router.put('/profile',
   [
@@ -126,7 +412,18 @@ router.put('/profile',
     // `v.ictim@gmail.com` cannot be stored as a distinct row that shadows
     // `victim@gmail.com` in the LOWER(email) lookups those paths use.
     body('email').optional().isEmail().normalizeEmail().withMessage('Valid email required'),
-    body('phone').optional(),
+    // Round 16: this was `body('phone').optional()` with NO validation at all,
+    // while signup runs isMobilePhone(). Two separate problems came out of that:
+    // anything at all could be written into the column (a name, a URL, an
+    // address — the field is shown to friends), and a string longer than the
+    // VARCHAR(20) column 500'd at the database instead of returning a 400.
+    // checkFalsy keeps the existing behaviour for clients that submit the whole
+    // profile form with an empty phone field: '' becomes NULL in the parameter
+    // list and COALESCE leaves the stored value alone, exactly as before. It
+    // must not start 400ing them.
+    body('phone').optional({ nullable: true, checkFalsy: true }).trim()
+      .isMobilePhone().withMessage('Invalid phone number')
+      .isLength({ max: 20 }).withMessage('Phone number is too long'),
     body('interests').optional().isArray(),
     // Optional at the validator layer: OAuth accounts have no password, and a
     // notEmpty() here 400'd their profile edits before the OAuth-aware handler
@@ -147,6 +444,23 @@ router.put('/profile',
 
       const { name, email, phone, interests, current_password, new_password } = req.body;
 
+      // ARRAY-SHAPED FIELDS WALK PAST express-validator (round 16). Given
+      // `{"phone": ["+12025550122"]}` the chain runs per ELEMENT, every element
+      // passes isMobilePhone, and req.body.phone is STILL AN ARRAY afterwards —
+      // sanitizers write back element by element and never collapse it. It then
+      // goes to pg as an array parameter for a text column, which stores the
+      // literal `{"+12025550122"}`: a value that is not a phone number, is
+      // still matched digit-for-digit by find-by-phone, and can overflow
+      // VARCHAR(20) into a 500. The same shape hits name, email and the two
+      // password fields (bcrypt throws on a non-string, which is another 500).
+      // Validators check CONTENT; this checks TYPE, which is the half they
+      // structurally cannot do.
+      for (const [field, value] of Object.entries({ name, email, phone, current_password, new_password })) {
+        if (value !== undefined && value !== null && typeof value !== 'string') {
+          return res.status(400).json({ error: `Invalid ${field.replace('_', ' ')}` });
+        }
+      }
+
       // UGC text filter on display name (Apple 1.2).
       if (name && rejectIfProfane(res, name)) return;
 
@@ -166,10 +480,20 @@ router.put('/profile',
       // SET a password here either — that would bolt a second credential
       // onto an OAuth account without any email-ownership verification.
       if (user.password) {
-        const validPassword = await bcrypt.compare(current_password || '', user.password);
+        // Round 16: bounded. See proofFailures above — this is a password
+        // guessing surface for anyone holding a token, and it counted nothing.
+        if (proofFailures.lockedFor(user.id) > 0) {
+          return res.status(429).json({ error: TOO_MANY_PROOFS_MESSAGE });
+        }
+        const validPassword = await bcrypt.compare(
+          typeof current_password === 'string' ? current_password : '',
+          user.password
+        );
         if (!validPassword) {
+          proofFailures.record(user.id);
           return res.status(401).json({ error: 'Current password is incorrect' });
         }
+        proofFailures.clear(user.id);
       } else if (new_password) {
         return res.status(400).json({ error: 'This account signs in with Google or Apple and has no password.' });
       }
@@ -203,6 +527,63 @@ router.put('/profile',
         );
         if (emailCheck.rows.length > 0) {
           return res.status(400).json({ error: 'Email is already in use' });
+        }
+      }
+
+      // PHONE NUMBER CLAIMS (round 16). phone is not a cosmetic profile field:
+      // POST /api/friends/find-by-phone resolves contact-sync lookups against
+      // it, so whoever holds a number receives the friend requests meant for
+      // it. Nothing here verified ownership (no SMS verification exists yet)
+      // and nothing even checked the number was free, so an attacker could type
+      // a victim's number into their own profile and start collecting the
+      // victim's contact-sync hits. Two guards, in the order they matter:
+      //
+      //   1. Same proof as changing a password. Password accounts already
+      //      cleared that bar above (this handler refuses every edit without
+      //      the current password). OAuth accounts have no password, so a
+      //      stolen token could rewrite the number silently — they must show a
+      //      session minted by a provider sign-in in the last few minutes.
+      //   2. One account per number. Not ownership proof, but it stops the
+      //      claim from ever pointing two rows at one number, which is the
+      //      state the lookup cannot disambiguate.
+      //
+      // Comparison is on the last 10 digits, matching find-by-phone, so
+      // reformatting the same number is not treated as a change and costs the
+      // user nothing.
+      const changingPhone = Boolean(phone) && canonicalPhone(phone) !== canonicalPhone(user.phone);
+      if (changingPhone) {
+        // Proof first, THEN metering. Counting unproven attempts would let
+        // anyone holding a stale token burn the real owner's quota and lock
+        // them out of their own profile for an hour without ever getting past
+        // this line.
+        if (!user.password && !hasFreshSession(req)) {
+          return res.status(401).json({
+            error: 'For your security, sign in again before changing your phone number.',
+            reauthRequired: 'reauth',
+          });
+        }
+
+        // The 409 below is an existence oracle for "is this number registered
+        // with Flock", and it must not be a cheaper one than contact sync,
+        // which POST /api/friends/find-by-phone meters for exactly that reason.
+        // Attempts count whether they end in a 409 or a successful change.
+        if (phoneChangeAttempts.lockedFor(req.user.id) > 0) {
+          return res.status(429).json({ error: 'You have changed your phone number several times already. Try again later.' });
+        }
+        phoneChangeAttempts.record(req.user.id);
+
+        const digits = canonicalPhone(phone);
+        if (digits) {
+          const phoneCheck = await pool.query(
+            `SELECT id FROM users
+              WHERE id != $1 AND phone IS NOT NULL
+                AND RIGHT(REGEXP_REPLACE(phone, '\\D', '', 'g'), 10) = $2
+              LIMIT 1`,
+            [req.user.id, digits]
+          );
+          if (phoneCheck.rows.length > 0) {
+            return res.status(409).json({ error: 'That phone number is already linked to another Flock account.' });
+          }
         }
       }
 
@@ -663,12 +1044,61 @@ router.patch('/settings', async (req, res) => {
 // route rather than a string match every DELETE in the API could trip.
 async function deleteAccount(req, res) {
   try {
+    const u = await pool.query(
+      `SELECT id, email, phone, password, oauth_provider, oauth_id, apple_refresh_token, is_banned, banned_at
+         FROM users WHERE id = $1`,
+      [req.user.id]
+    );
+    if (u.rows.length === 0) return res.status(404).json({ error: 'Account not found' });
+    const account = u.rows[0];
+
+    // RE-AUTHENTICATION (round 16). Before this, a bearer token was the whole
+    // requirement, so a token lifted off a shared laptop or an unlocked phone —
+    // good for up to 24h, with no way for the owner to revoke it before
+    // /logout-all existed — could irreversibly destroy the account, cascade
+    // away every flock the user created, and permanently revoke their Apple
+    // grant. That is the most destructive call in the API and it was the
+    // cheapest one to make.
+    //
+    // This runs BEFORE the Apple revocation below on purpose: an unproven
+    // request must not be able to disconnect someone's Apple sign-in as a side
+    // effect of being rejected.
+    //
+    // Deletion stays reachable, which Apple 5.1.1(v) requires. Password
+    // accounts retype the password they already use to sign in; OAuth accounts
+    // re-run Sign in with Apple / Google and call this again with the fresh
+    // token. `reauthRequired` tells the client which prompt to show.
+    if (account.password) {
+      // Bounded (see proofFailures): without a ceiling this endpoint is an
+      // offline-grade password guessing oracle for anyone holding a token, and
+      // every guess costs a bcrypt round of server CPU.
+      if (proofFailures.lockedFor(account.id) > 0) {
+        return res.status(429).json({ error: TOO_MANY_PROOFS_MESSAGE, reauthRequired: 'password' });
+      }
+      const supplied = typeof req.body?.password === 'string' ? req.body.password : '';
+      const proven = supplied ? await bcrypt.compare(supplied, account.password) : false;
+      if (!proven) {
+        // An absent password is the shipped client's current behaviour, not a
+        // guess, so it must not burn an attempt and lock a user out of the
+        // deletion flow before their client has even prompted them.
+        if (supplied) proofFailures.record(account.id);
+        return res.status(401).json({
+          error: 'Enter your password to delete your account.',
+          reauthRequired: 'password',
+        });
+      }
+      proofFailures.clear(account.id);
+    } else if (!hasFreshSession(req)) {
+      return res.status(401).json({
+        error: 'For your security, sign in again and then delete your account.',
+        reauthRequired: 'reauth',
+      });
+    }
+
     // Apple 5.1.1(v): revoke Sign in with Apple tokens before deleting the row.
     // Round 5: when revocation is CONFIGURED and fails, abort — deleting the
     // row destroys the only stored refresh token, so a swallowed failure would
     // make revocation permanently impossible. Unconfigured env stays a no-op.
-    const u = await pool.query('SELECT oauth_provider, apple_refresh_token FROM users WHERE id = $1', [req.user.id]);
-    if (u.rows.length === 0) return res.status(404).json({ error: 'Account not found' });
     if (u.rows[0].oauth_provider === 'apple' && u.rows[0].apple_refresh_token && appleAuthConfigured()) {
       let revoked = false;
       try { revoked = await revokeAppleToken(u.rows[0].apple_refresh_token); } catch (_) { revoked = false; }
@@ -692,6 +1122,7 @@ async function deleteAccount(req, res) {
     // gone, or nothing happened and the caller gets a 503 to retry.
     const client = await pool.connect();
     let deleted;
+    let tombstoned = false;
     try {
       await client.query('BEGIN');
 
@@ -702,6 +1133,15 @@ async function deleteAccount(req, res) {
       // messages.sender_id is ON DELETE SET NULL (anonymize). Explicitly remove the
       // user's flock messages so no authored content is retained after deletion.
       await client.query('DELETE FROM messages WHERE sender_id = $1', [req.user.id]);
+
+      // Round 16: a BAN has to outlive the account it was imposed on, or
+      // deleting the account is a one-tap ban reset. Same transaction as the
+      // evidence de-attribution above and for the same reason — the account
+      // must never vanish while the record of why it was banned fails to land.
+      // Nothing is written for accounts that were not banned.
+      if (account.is_banned) {
+        tombstoned = await recordBannedIdentity(client, account);
+      }
 
       const result = await client.query('DELETE FROM users WHERE id = $1 RETURNING id', [req.user.id]);
       deleted = result.rows.length > 0;
@@ -721,7 +1161,16 @@ async function deleteAccount(req, res) {
       client.release();
     }
 
-    console.log(`Account deleted: user ${req.user.id} at ${new Date().toISOString()}`);
+    // Says what actually happened: recordBannedIdentity can decline to write
+    // (no usable identifier), and an audit line that claims a tombstone exists
+    // when none does is worse than no line at all.
+    console.log(`Account deleted: user ${req.user.id}${account.is_banned ? (tombstoned ? ' (banned, tombstoned)' : ' (banned, NOT tombstoned)') : ''} at ${new Date().toISOString()}`);
+
+    // Housekeeping. Outside the transaction, rate limited to once an hour per
+    // process, and fully swallowed: a failed purge is a tidiness problem and
+    // must never turn into a failed account deletion.
+    if (account.is_banned) maybePurgeExpired();
+
     res.json({ message: 'Account deleted' });
   } catch (err) {
     console.error('Delete account error:', err);
@@ -730,3 +1179,35 @@ async function deleteAccount(req, res) {
 }
 
 module.exports = router;
+
+// ---------------------------------------------------------------------------
+// Exports for other routers and for backend/__tests__/banEvasion.test.js.
+//
+// HANDOFF (routes/auth.js owner): every account-creation path needs the
+// tombstone lookup. One line per path, after validation and after the existing
+// duplicate-email check:
+//
+//   if (await rejectIfBannedIdentity(res, { email, phone })) return;                     // /signup
+//   if (await rejectIfBannedIdentity(res, { email, oauthProvider: 'google', oauthId: googleId })) return;  // /google, new-user branch
+//   if (await rejectIfBannedIdentity(res, { email, oauthProvider: 'apple', oauthId: appleId })) return;    // /apple, new-user branch
+//
+// with `const { rejectIfBannedIdentity } = require('./users');` at the top.
+// There is no require cycle: routes/users.js does not require routes/auth.js.
+// ---------------------------------------------------------------------------
+module.exports.isIdentityBanned = isIdentityBanned;
+module.exports.rejectIfBannedIdentity = rejectIfBannedIdentity;
+module.exports.purgeExpiredBannedIdentities = purgeExpiredBannedIdentities;
+module.exports.__testing = {
+  identityDigests,
+  canonicalPhone,
+  normalizedAddress,
+  hasFreshSession,
+  recordBannedIdentity,
+  maybePurgeExpired,
+  resetPurgeClock: () => { lastPurgeAt = 0; },
+  proofFailures,
+  phoneChangeAttempts,
+  REAUTH_WINDOW_MS,
+  BAN_TOMBSTONE_RETENTION_DAYS,
+  BANNED_IDENTITY_MESSAGE,
+};

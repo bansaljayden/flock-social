@@ -49,9 +49,16 @@ const BUDDY_PASSWORD = process.env.SEED_BUDDY_PASSWORD || 'BuddyPass123';
 async function upsertUser(email, name, password, dob) {
   const hash = await bcrypt.hash(password, 10);
   const r = await pool.query(
-    `INSERT INTO users (email, password, name, terms_accepted_at, date_of_birth)
-     VALUES ($1, $2, $3, NOW(), $4)
-     ON CONFLICT (email) DO UPDATE SET name = EXCLUDED.name, password = EXCLUDED.password
+    // email_verified TRUE (round 16, migration 011). Password signups are
+    // created unverified and an unverified account cannot hold payment
+    // handles, accept friendships or join a flock — which is exactly what the
+    // seeded reviewer account needs to do. Without this the App Review login
+    // would 403 on the friend and flock screens, because no one can click a
+    // confirmation link sent to review@flockcorp.com.
+    `INSERT INTO users (email, password, name, terms_accepted_at, date_of_birth, email_verified, verified_email)
+     VALUES ($1, $2, $3, NOW(), $4, TRUE, $1)
+     ON CONFLICT (email) DO UPDATE SET name = EXCLUDED.name, password = EXCLUDED.password,
+       email_verified = TRUE, verified_email = EXCLUDED.email
      RETURNING id`,
     [email, hash, name, dob]
   );

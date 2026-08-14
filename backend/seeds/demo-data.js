@@ -230,12 +230,17 @@ async function seed() {
     for (const u of demoUsers) {
       const hashed = await bcrypt.hash(u.password, SALT_ROUNDS);
       const result = await client.query(
-        `INSERT INTO users (email, password, name, interests)
-         VALUES ($1, $2, $3, $4)
+        // email_verified TRUE (round 16, migration 011): password signups start
+        // unverified and cannot accept friendships or join flocks, which is all
+        // the demo data is. Nobody can click a link sent to a demo address.
+        `INSERT INTO users (email, password, name, interests, email_verified, verified_email)
+         VALUES ($1, $2, $3, $4, TRUE, $1)
          ON CONFLICT (email) DO UPDATE SET
            password = EXCLUDED.password,
            name = EXCLUDED.name,
-           interests = EXCLUDED.interests
+           interests = EXCLUDED.interests,
+           email_verified = TRUE,
+           verified_email = EXCLUDED.email
          RETURNING id, name, email`,
         [u.email, hashed, u.name, u.interests]
       );

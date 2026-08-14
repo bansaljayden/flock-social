@@ -63,6 +63,7 @@ const { canonicalEmail, EMAIL_MATCH_SQL, LOGIN_FAIL_LIMIT } = authRouter.__testi
 // In-memory users table
 // ---------------------------------------------------------------------------
 let users = [];
+let verifications = [];
 let nextId = 1;
 
 const byCanonical = (email) => {
@@ -91,10 +92,13 @@ pool.query = async (text, params = []) => {
   if (sql === 'SELECT * FROM users WHERE LOWER(email) = LOWER($1)') {
     return { rows: users.filter((u) => String(u.email).toLowerCase() === String(params[0]).toLowerCase()) };
   }
-  if (sql.startsWith('SELECT id, email, name, role, is_banned, token_version FROM users WHERE id')) {
+  if (sql.startsWith('SELECT id, email, name, role, email_verified, is_banned, token_version FROM users WHERE id')) {
     return { rows: users.filter((u) => u.id === params[0]) };
   }
-  if (sql.startsWith('SELECT id, email, name, role, profile_image_url, is_banned, token_version FROM users WHERE id')) {
+  if (sql.startsWith('SELECT id, email, name, role, profile_image_url, email_verified, is_banned, token_version FROM users WHERE id')) {
+    return { rows: users.filter((u) => u.id === params[0]) };
+  }
+  if (sql.startsWith('SELECT id, email, name, email_verified FROM users WHERE id')) {
     return { rows: users.filter((u) => u.id === params[0]) };
   }
   if (sql.startsWith('SELECT is_banned, token_version FROM users WHERE id')) {
@@ -105,14 +109,24 @@ pool.query = async (text, params = []) => {
       id: nextId++, token_version: 0, is_banned: false, password: null,
       oauth_provider: null, oauth_id: null, date_of_birth: null,
     };
-    const cols = sql.slice(sql.indexOf('(') + 1, sql.indexOf(')')).split(',').map((c) => c.trim());
-    // Positional columns first, then the literal provider in the VALUES list.
-    let p = 0;
-    for (const col of cols) {
-      if (col === 'terms_accepted_at') { row[col] = new Date().toISOString(); continue; }
-      if (col === 'oauth_provider') { row[col] = sql.includes("'google'") ? 'google' : 'apple'; continue; }
-      row[col] = params[p++];
-    }
+    // Round 16: the VALUES list now carries literals (TRUE / FALSE) as well as
+    // placeholders, so columns and values are walked in parallel instead of
+    // assuming every column consumes the next parameter.
+    // NOW() is flattened first: its own ')' would otherwise terminate the
+    // VALUES scan early, silently dropping every column after it.
+    const flat = sql.replace(/NOW\(\)/gi, 'NOW');
+    const cols = flat.slice(flat.indexOf('(') + 1, flat.indexOf(')')).split(',').map((c) => c.trim());
+    const valsStart = flat.indexOf('(', flat.indexOf('VALUES'));
+    const vals = flat.slice(valsStart + 1, flat.indexOf(')', valsStart)).split(',').map((v) => v.trim());
+    cols.forEach((col, i) => {
+      const v = vals[i];
+      if (v === undefined) return;
+      if (/^\$\d+$/.test(v)) { row[col] = params[Number(v.slice(1)) - 1]; return; }
+      if (/^NOW$/i.test(v)) { row[col] = new Date().toISOString(); return; }
+      if (/^TRUE$/i.test(v)) { row[col] = true; return; }
+      if (/^FALSE$/i.test(v)) { row[col] = false; return; }
+      row[col] = v.replace(/^'|'$/g, '');
+    });
     users.push(row);
     return { rows: [row] };
   }
@@ -121,6 +135,7 @@ pool.query = async (text, params = []) => {
     Object.assign(row, {
       oauth_provider: 'google', oauth_id: params[0], password: null,
       profile_image_url: row.profile_image_url ?? params[1],
+      email_verified: true, verified_email: row.email,
       token_version: row.token_version + 1,
     });
     return { rows: [row] };
@@ -129,9 +144,60 @@ pool.query = async (text, params = []) => {
     const row = users.find((u) => u.id === params[1]);
     Object.assign(row, {
       oauth_provider: 'apple', oauth_id: params[0], password: null,
+      email_verified: true, verified_email: row.email,
       token_version: row.token_version + 1,
     });
     return { rows: [row] };
+  }
+  // ---- round 16: email verification ------------------------------------
+  if (sql.startsWith('UPDATE users SET email = $1, email_verified = FALSE')) {
+    const row = users.find((u) => u.id === params[1] && u.email_verified === false);
+    if (!row) return { rows: [], rowCount: 0 };
+    Object.assign(row, {
+      email: params[0], email_verified: false, verified_email: null,
+      venmo_username: null, cashapp_cashtag: null, zelle_identifier: null,
+      token_version: row.token_version + 1,
+    });
+    return { rows: [row], rowCount: 1 };
+  }
+  if (sql.startsWith('UPDATE users SET email_verified = TRUE, verified_email = email')) {
+    const row = users.find((u) => u.id === params[0]);
+    if (!row) return { rows: [], rowCount: 0 };
+    Object.assign(row, { email_verified: true, verified_email: row.email });
+    return { rows: [row], rowCount: 1 };
+  }
+  if (sql.startsWith('UPDATE email_verifications SET used_at')) {
+    let n = 0;
+    for (const v of verifications) {
+      const hit = sql.includes('WHERE id = $1') ? v.id === params[0] : v.user_id === params[0];
+      if (hit && !v.used_at) { v.used_at = new Date().toISOString(); n += 1; }
+    }
+    return { rows: n ? [{ id: params[0] }] : [], rowCount: n };
+  }
+  if (sql.startsWith('INSERT INTO email_verifications')) {
+    verifications.push({
+      id: verifications.length + 1, user_id: params[0], selector: params[1],
+      verifier_hash: params[2], email: params[3], request_ip: params[4],
+      expires_at: new Date(Date.now() + params[5] * 3600 * 1000).toISOString(),
+      used_at: null, created_at: new Date().toISOString(),
+    });
+    return { rows: [], rowCount: 1 };
+  }
+  if (sql.includes('FROM email_verifications') && sql.startsWith('SELECT COUNT(*)')) {
+    const mine = verifications.filter((v) => v.user_id === params[0]);
+    return {
+      rows: [{
+        account_hour: mine.length, account_day: mine.length,
+        account_last: mine.length ? mine[mine.length - 1].created_at : null,
+        ip_hour: verifications.filter((v) => v.request_ip === params[1]).length,
+      }],
+    };
+  }
+  if (sql.startsWith('SELECT v.id, v.user_id')) {
+    const v = verifications.find((x) => x.selector === params[0]);
+    if (!v) return { rows: [] };
+    const u = users.find((x) => x.id === v.user_id);
+    return { rows: [{ ...v, current_email: u?.email, email_verified: u?.email_verified }] };
   }
   if (sql.startsWith('UPDATE users SET token_version = token_version + 1')) {
     const row = users.find((u) => u.id === params[0]);
@@ -147,6 +213,8 @@ pool.query = async (text, params = []) => {
   if (sql.startsWith('UPDATE users SET apple_refresh_token')) {
     return { rows: [] };
   }
+  // Ban-evasion tombstone lookup (migration 012) — never tombstoned here.
+  if (sql.includes('banned_identities')) return { rows: [], rowCount: 0 };
   throw new Error(`unstubbed query: ${sql}`);
 };
 
@@ -183,7 +251,7 @@ const post = (path, body, token) => fetch(base + path, {
   body: JSON.stringify(body || {}),
 });
 
-const reset = () => { users = []; nextId = 1; disconnectedRooms = []; };
+const reset = () => { users = []; verifications = []; nextId = 1; disconnectedRooms = []; };
 
 // Google's tokeninfo + userinfo endpoints, stubbed for the duration of one
 // call. Only the googleapis.com hosts are intercepted — the test client's own
