@@ -1598,6 +1598,289 @@ router.patch('/settings', async (req, res) => {
   }
 });
 
+// ---------------------------------------------------------------------------
+// GET /api/users/export — data portability (GDPR Art. 20, CCPA 1798.100/.130)
+// ---------------------------------------------------------------------------
+// Both laws grant a user a copy of their data in a "structured, commonly used
+// and machine-readable format"; JSON is the canonical answer. Scope follows the
+// EDPB reading of Art. 20: data the user PROVIDED (profile, interests, calendar,
+// messages, budget amounts, trusted contacts, reports, settings) plus data
+// OBSERVED about their use (check-ins, availability pulses, membership
+// history). DERIVED data — reliability internals beyond what the app already
+// shows them, ML predictions, moderation state — is not required and is not
+// included.
+//
+// Art. 20(4): the export "shall not adversely affect the rights and freedoms of
+// others". Every query below is keyed on the caller's own user id, so:
+//   * flock messages: sender_id = caller. Other members' messages never appear.
+//   * DMs: the caller's SENT half only. The other party's messages are the
+//     other party's data; they can export their own half. read_status and
+//     reply_to_id are omitted too — one describes the other party's behaviour,
+//     the other points into their content.
+//   * budget_submissions: the caller's own row only. The group ceiling and
+//     everyone else's amounts stay behind the same >=3-submission privacy
+//     threshold routes/budget.js enforces; this route never reads them.
+//   * reports filed: the caller's own words (reason, details) and the report's
+//     status. reported_user_id, content_id and handled_by are omitted — they
+//     identify the reported person and the moderator.
+//   * flock rows: name/venue/time only — shared context the member already
+//     sees — never the roster, other RSVPs, or the flock's budget columns.
+//
+// STRIPPED AT SOURCE: every SELECT names its columns and every object below is
+// built from an explicit pick list, so password, apple_refresh_token,
+// token_version, oauth_id and verifier hashes can never enter the payload. The
+// stripSecretFields backstop in server.js also runs, but this route must be
+// clean without it.
+//
+// SYNC, NOT A JOB, and the bound that makes that safe: the app has no scheduler
+// and Railway's filesystem is ephemeral, so an async export would have to
+// invent both a queue and a durable artifact store. It doesn't need to: every
+// query is a single-user indexed lookup, rows are capped (EXPORT_MESSAGE_ROW_CAP
+// per message table, EXPORT_ROW_CAP elsewhere — at most ~24k rows total), and
+// inline data-URL images are replaced with a marker, so the worst-case response
+// is a few tens of MB of text and the typical one is well under 1 MB. If real
+// usage ever outgrows those caps, that is the moment to build the async job —
+// not before.
+//
+// PROOF AND METERING, same shape as deleteAccount: an export is the single most
+// valuable read in the API to someone holding a stolen 24h token, so a bearer
+// token alone is not enough. Password accounts retype their password (sent in
+// the X-Export-Password header — a GET cannot carry a body from a browser, and
+// a query parameter would land in access logs); OAuth accounts need a session
+// minted in the last REAUTH_WINDOW_MS. Wrong guesses land in the same
+// proofFailures budget the deletion and profile proofs share, so this route
+// adds no new password-guessing capacity. Proof runs BEFORE metering (a token
+// thief must not burn the owner's quota), then exportRequests caps proven
+// exports per account — nobody ports their data out five times an hour, and the
+// cap bounds both the DB cost and how fast a fresh account-takeover can drain
+// data before the owner notices.
+const EXPORT_MESSAGE_ROW_CAP = 5000; // messages, direct_messages
+const EXPORT_ROW_CAP = 2000;         // every other per-row section
+const exportRequests = attemptLimiter({ limit: 5, windowMs: 60 * 60 * 1000 });
+const TOO_MANY_EXPORTS_MESSAGE =
+  'You have exported your data several times already. Try again later.';
+const EXPORT_IMAGE_OMITTED_NOTE =
+  'Inline image data is not included in the export. The image is visible in the app.';
+
+// Fetches cap+1 and slices, so "exactly cap rows exist" and "the cap cut rows
+// off" are distinguishable and the payload can say so honestly.
+async function exportRows(text, params, cap) {
+  const result = await pool.query(text, [...params, cap + 1]);
+  const truncated = result.rows.length > cap;
+  return { rows: truncated ? result.rows.slice(0, cap) : result.rows, truncated };
+}
+
+// Message images are stored as base64 data URLs (up to 600KB each), so leaving
+// them inline would make the response size proportional to images sent, which
+// is the one term the sync bound above cannot afford. External URLs pass
+// through untouched.
+function exportImage(url) {
+  if (typeof url === 'string' && url.startsWith('data:')) {
+    return { image_url: null, image_omitted: true };
+  }
+  return { image_url: url || null };
+}
+
+router.get('/export', async (req, res) => {
+  try {
+    const userId = req.user.id;
+
+    const u = await pool.query(
+      `SELECT id, email, name, phone, interests, role, profile_image_url,
+              venmo_username, cashapp_cashtag, zelle_identifier, is_premium,
+              oauth_provider, email_verified, terms_accepted_at, date_of_birth,
+              reliability_score, total_plans_joined, total_plans_attended,
+              created_at, updated_at, password
+         FROM users WHERE id = $1`,
+      [userId]
+    );
+    if (u.rows.length === 0) return res.status(404).json({ error: 'Account not found' });
+    const account = u.rows[0];
+
+    // Recent-possession proof — see the header comment and deleteAccount.
+    if (account.password) {
+      const header = req.headers['x-export-password'];
+      const supplied = typeof header === 'string' ? header : '';
+      if (supplied.length > MAX_PASSWORD) {
+        return res.status(400).json({ error: 'Password is too long', reauthRequired: 'password' });
+      }
+      if (proofFailures.lockedFor(userId) > 0) {
+        return res.status(429).json({ error: TOO_MANY_PROOFS_MESSAGE, reauthRequired: 'password' });
+      }
+      const proven = supplied ? await bcrypt.compare(supplied, account.password) : false;
+      if (!proven) {
+        // An absent header is a client that has not prompted yet, not a guess.
+        if (supplied) proofFailures.record(userId);
+        return res.status(401).json({
+          error: 'Enter your password to export your data.',
+          reauthRequired: 'password',
+        });
+      }
+      proofFailures.clear(userId);
+    } else if (!hasFreshSession(req)) {
+      return res.status(401).json({
+        error: 'For your security, sign in again and then export your data.',
+        reauthRequired: 'reauth',
+      });
+    }
+
+    // Metered AFTER the proof, so an unproven token cannot burn the owner's
+    // quota — the same ordering the phone-change branch documents.
+    if (exportRequests.lockedFor(userId) > 0) {
+      return res.status(429).json({ error: TOO_MANY_EXPORTS_MESSAGE });
+    }
+    exportRequests.record(userId);
+
+    const flocks = await exportRows(
+      `SELECT f.id AS flock_id, f.name, f.status AS flock_status, f.venue_name,
+              f.venue_address, f.event_time, f.created_at,
+              fm.status AS membership_status, fm.attendance, fm.joined_at,
+              (f.creator_id = $1) AS is_creator
+         FROM flock_members fm
+         JOIN flocks f ON f.id = fm.flock_id
+        WHERE fm.user_id = $1
+        ORDER BY fm.joined_at ASC, f.id ASC
+        LIMIT $2`,
+      [userId], EXPORT_ROW_CAP
+    );
+
+    const flockMessages = await exportRows(
+      `SELECT id, flock_id, message_text, message_type, venue_data, image_url, created_at
+         FROM messages WHERE sender_id = $1
+        ORDER BY created_at ASC, id ASC LIMIT $2`,
+      [userId], EXPORT_MESSAGE_ROW_CAP
+    );
+
+    const dmsSent = await exportRows(
+      `SELECT id, receiver_id, message_text, message_type, venue_data, image_url, created_at
+         FROM direct_messages WHERE sender_id = $1
+        ORDER BY created_at ASC, id ASC LIMIT $2`,
+      [userId], EXPORT_MESSAGE_ROW_CAP
+    );
+
+    const budgets = await exportRows(
+      `SELECT flock_id, amount, skipped, submitted_at, updated_at
+         FROM budget_submissions WHERE user_id = $1
+        ORDER BY submitted_at ASC LIMIT $2`,
+      [userId], EXPORT_ROW_CAP
+    );
+
+    const checkins = await exportRows(
+      `SELECT venue_place_id, checkin_source, created_at
+         FROM venue_checkins WHERE user_id = $1
+        ORDER BY created_at ASC LIMIT $2`,
+      [userId], EXPORT_ROW_CAP
+    );
+
+    const reports = await exportRows(
+      `SELECT content_type, reason, details, status, created_at, resolved_at
+         FROM content_reports WHERE reporter_id = $1
+        ORDER BY created_at ASC LIMIT $2`,
+      [userId], EXPORT_ROW_CAP
+    );
+
+    const contacts = await exportRows(
+      `SELECT contact_name, contact_phone, contact_email, relationship, created_at
+         FROM trusted_contacts WHERE user_id = $1
+        ORDER BY created_at ASC LIMIT $2`,
+      [userId], EXPORT_ROW_CAP
+    );
+
+    const calendar = await exportRows(
+      `SELECT id, title, venue, event_date, time_label, color, created_at, updated_at
+         FROM calendar_events WHERE user_id = $1
+        ORDER BY event_date ASC, id ASC LIMIT $2`,
+      [userId], EXPORT_ROW_CAP
+    );
+
+    const settingsRow = await pool.query(
+      'SELECT settings, updated_at FROM user_settings WHERE user_id = $1',
+      [userId]
+    );
+
+    const availabilityRow = await pool.query(
+      'SELECT status, note, set_at, expires_at FROM availability_pulses WHERE user_id = $1',
+      [userId]
+    );
+
+    const truncatedSections = [];
+    const section = (name, r) => { if (r.truncated) truncatedSections.push(name); return r.rows; };
+
+    const payload = {
+      export_format: {
+        version: 1,
+        product: 'Flock',
+        generated_at: new Date().toISOString(),
+        // Honest about scope: what is absent and why, in the file itself, so
+        // the copy the user keeps explains itself without our help.
+        notes: [
+          'This export contains the data you provided to Flock and activity recorded about your account.',
+          'Messages other people sent (including their half of your DMs), other members\' budget amounts, and group budget results are their data and are not included.',
+          EXPORT_IMAGE_OMITTED_NOTE,
+        ],
+      },
+      profile: {
+        id: account.id,
+        email: account.email,
+        name: account.name,
+        phone: account.phone,
+        interests: account.interests || [],
+        role: account.role,
+        profile_image_url: account.profile_image_url,
+        venmo_username: account.venmo_username,
+        cashapp_cashtag: account.cashapp_cashtag,
+        zelle_identifier: account.zelle_identifier,
+        is_premium: account.is_premium,
+        sign_in_method: account.oauth_provider || 'password',
+        email_verified: account.email_verified,
+        terms_accepted_at: account.terms_accepted_at,
+        date_of_birth: account.date_of_birth,
+        reliability_score: account.reliability_score,
+        total_plans_joined: account.total_plans_joined,
+        total_plans_attended: account.total_plans_attended,
+        created_at: account.created_at,
+        updated_at: account.updated_at,
+      },
+      settings: settingsRow.rows[0]?.settings || {},
+      availability: availabilityRow.rows[0] || null,
+      calendar_events: section('calendar_events', calendar),
+      flocks: section('flocks', flocks),
+      flock_messages: section('flock_messages', flockMessages).map((m) => ({
+        id: m.id,
+        flock_id: m.flock_id,
+        message_text: m.message_text,
+        message_type: m.message_type,
+        venue_data: m.venue_data,
+        created_at: m.created_at,
+        ...exportImage(m.image_url),
+      })),
+      direct_messages_sent: section('direct_messages_sent', dmsSent).map((m) => ({
+        id: m.id,
+        receiver_id: m.receiver_id,
+        message_text: m.message_text,
+        message_type: m.message_type,
+        venue_data: m.venue_data,
+        created_at: m.created_at,
+        ...exportImage(m.image_url),
+      })),
+      budget_submissions: section('budget_submissions', budgets),
+      venue_checkins: section('venue_checkins', checkins),
+      reports_filed: section('reports_filed', reports),
+      trusted_contacts: section('trusted_contacts', contacts),
+      truncated_sections: truncatedSections,
+    };
+
+    // A file download, and a sensitive one: name it, and keep it out of every
+    // cache on the path.
+    res.setHeader('Content-Disposition', 'attachment; filename="flock-data-export.json"');
+    res.setHeader('Cache-Control', 'no-store');
+    res.json(payload);
+  } catch (err) {
+    console.error('Export data error:', err);
+    res.status(500).json({ error: 'Failed to export your data' });
+  }
+});
+
 // DELETE /api/users/me - Permanently delete the authenticated user's account.
 // Hard-deletes the user row; ON DELETE CASCADE removes their flocks, memberships,
 // messages, DMs, friendships, budgets, trusted contacts, device tokens, settings,
@@ -1697,6 +1980,21 @@ async function deleteAccount(req, res) {
     // statements plus the DELETE now share ONE transaction with no swallowed
     // errors: either the evidence is safely de-attributed and the account is
     // gone, or nothing happened and the caller gets a 503 to retry.
+    //
+    // PRESERVATION LIMIT (18 U.S.C. § 2258A(h) — see MODERATION-LEGAL.md).
+    // What survives this transaction is the content_reports and
+    // moderation_actions ROWS, de-attributed. The CONTENT does not: the DELETE
+    // below removes every flock message the user authored, reported or not,
+    // and the users CASCADE takes their stories and DMs with the row. So if
+    // any of it is evidence behind a CyberTipline report, the one-year
+    // preservation duty can NOT be met from these tables — the offender can
+    // walk it all through this route with one authenticated request. That is
+    // why MODERATION-LEGAL.md step 2 says export the evidence OUT of the
+    // database the moment a child-safety report is judged real, before any
+    // other action. Blocking deletion for flagged accounts would be the
+    // stronger control, but it trades against the 5.1.1(v) deletion
+    // requirement this route exists for and needs a product/legal decision,
+    // not a drive-by edit here.
     const client = await pool.connect();
     let deleted;
     let tombstoned = false;
@@ -1830,6 +2128,9 @@ module.exports.__testing = {
   proofFailures,
   phoneChangeAttempts,
   emailChangeAttempts,
+  exportRequests,
+  EXPORT_ROW_CAP,
+  EXPORT_MESSAGE_ROW_CAP,
   REAUTH_WINDOW_MS,
   BAN_TOMBSTONE_RETENTION_DAYS,
   BANNED_IDENTITY_MESSAGE,
