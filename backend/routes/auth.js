@@ -88,13 +88,20 @@ function canonicalEmail(addr) {
 // the address as given, $2 is canonicalEmail($1). The exact match is kept as
 // the first branch (and ordered first) so an address that exists verbatim
 // always wins over a canonical twin.
-const EMAIL_MATCH_SQL = `
-      LOWER(email) = LOWER($1)
-      OR (CASE
+// The canonical form of the STORED column, as one SQL expression. Factored out
+// (round 18) because routes/users.js needs the same expression for the email
+// uniqueness check on PUT /profile and was using a plain LOWER() match, which is
+// the exact gap this alphabet exists to close — two copies of it would drift,
+// and the drift would silently reopen the shadow-account hole above.
+const EMAIL_CANONICAL_SQL = `(CASE
             WHEN split_part(LOWER(email), '@', 2) IN ('gmail.com', 'googlemail.com')
               THEN regexp_replace(split_part(split_part(LOWER(email), '@', 1), '+', 1), '\\.', '', 'g') || '@gmail.com'
             ELSE LOWER(email)
-          END) = $2`;
+          END)`;
+
+const EMAIL_MATCH_SQL = `
+      LOWER(email) = LOWER($1)
+      OR ${EMAIL_CANONICAL_SQL} = $2`;
 
 // Find the account that owns a mailbox, dot/subaddress variants included.
 async function findUserByEmail(email) {
@@ -618,9 +625,16 @@ async function consumeReset(rawToken, newPassword) {
   // address's real owner used the recovery flow, and inherit whatever the squat
   // had accumulated. The row stays unverified and stays unable to accumulate
   // until a genuine verification link is clicked.
+  //
+  // `is_banned IS NOT TRUE` closes the last gap between the read and the write:
+  // inspectReset refuses a banned row, this did not, so a ban landing in the
+  // milliseconds between them still completed the reset. `IS NOT TRUE` rather
+  // than `= FALSE` because migration 001 added the column nullable, and a NULL
+  // compared with `=` is NULL, which would refuse every legitimate reset on a
+  // row that predates a backfill.
   const updated = await pool.query(
     `UPDATE users SET password = $1, token_version = token_version + 1, updated_at = NOW()
-      WHERE id = $2 AND oauth_provider IS NULL AND LOWER(email) = LOWER($3)
+      WHERE id = $2 AND oauth_provider IS NULL AND is_banned IS NOT TRUE AND LOWER(email) = LOWER($3)
       RETURNING id`,
     [hashed, row.user_id, row.current_email]
   );
@@ -877,12 +891,26 @@ const UNDERAGE_MSG = 'You must be at least 13 to use Flock.';
 // Shape-check before persisting: YYYY-MM-DD, or a full ISO timestamp.
 const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}([T ].*)?$/;
 
+// The ONE place a client-supplied date of birth is turned into something safe
+// to store. Round 18 re-audit: the shape check above lived only inside
+// enforceDobOnLogin, so the Google and Apple ACCOUNT-CREATION branches took
+// `req.body.date_of_birth` straight off the body, ran it through ageFromDob —
+// which is `new Date(x)`, and `new Date(946684800000)` and
+// `new Date(['2000-01-01'])` both parse — and then handed the SAME raw value to
+// pg as a parameter for a DATE column. That is the exact round-15 bug, still
+// live on the two paths that were not audited with it: a 500 on sign-in from a
+// body shape an attacker picks. Returns the trimmed string, or null meaning
+// "no usable date of birth was supplied".
+function suppliedDob(raw) {
+  if (typeof raw !== 'string') return null;
+  const trimmed = raw.trim();
+  return ISO_DATE_RE.test(trimmed) ? trimmed : null;
+}
+
 async function enforceDobOnLogin(user, req, res) {
   if (user.date_of_birth) return true;
-  const supplied = req.body.date_of_birth;
-  const age = typeof supplied === 'string' && ISO_DATE_RE.test(supplied.trim())
-    ? ageFromDob(supplied.trim())
-    : null;
+  const supplied = suppliedDob(req.body.date_of_birth);
+  const age = supplied ? ageFromDob(supplied) : null;
   if (age === null) {
     res.status(403).json({ error: 'Add your date of birth to continue.', needsDob: true });
     return false;
@@ -930,6 +958,27 @@ function safeOAuthDisplayName(rawName, email, provider) {
   return placeholder;
 }
 
+// ARRAY-SHAPED FIELDS WALK PAST express-validator. Given
+// `{"email": ["a@b.com"], "password": ["Password1"]}` every chain below runs
+// PER ELEMENT, every element passes, sanitizers write back element by element
+// and never collapse the array — so `req.body.email` is STILL an array when the
+// handler reads it. routes/users.js PUT /profile, /forgot-password and
+// /reset-password all carry this guard; /signup, /login, /google and /apple did
+// not, and they are the routes that hand those values to bcrypt (which throws on
+// a non-string) and to pg as parameters for text and DATE columns (which is a
+// 500, not a 400, from a body shape the caller picks). Validators check
+// CONTENT; this checks TYPE, which is the half they structurally cannot do.
+function rejectNonStringFields(req, res, fields, message) {
+  for (const field of fields) {
+    const value = req.body?.[field];
+    if (value !== undefined && value !== null && typeof value !== 'string') {
+      res.status(400).json({ error: message });
+      return true;
+    }
+  }
+  return false;
+}
+
 // Validation rules
 const signupValidation = [
   body('email').isEmail().normalizeEmail().withMessage('Valid email required')
@@ -958,6 +1007,13 @@ const loginValidation = [
 // POST /api/auth/signup
 router.post('/signup', signupValidation, async (req, res) => {
   try {
+    // TYPE before CONTENT — see rejectNonStringFields. date_of_birth is on the
+    // list because it is the one that reaches a DATE column: isISO8601 passes
+    // per element for `["2000-01-01"]` and the array itself is what gets
+    // inserted.
+    if (rejectNonStringFields(req, res, ['email', 'password', 'name', 'date_of_birth'],
+      'Check the details you entered and try again.')) return;
+
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
       return res.status(400).json({ error: errors.array()[0].msg });
@@ -1263,6 +1319,12 @@ router.post('/reset-password', [
 // POST /api/auth/login
 router.post('/login', loginValidation, async (req, res) => {
   try {
+    // TYPE before CONTENT — see rejectNonStringFields. An array email would
+    // reach canonicalEmail (which answers '' for a non-string, bucketing every
+    // such request into ONE throttle key) and then pg as a parameter for a text
+    // column; an array password reaches bcrypt.compare. Both are 500s.
+    if (rejectNonStringFields(req, res, ['email', 'password'], 'Invalid email or password')) return;
+
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
       return res.status(400).json({ error: errors.array()[0].msg });
@@ -1387,6 +1449,10 @@ router.post('/google', [
   body('access_token').optional().isString(),
 ], async (req, res) => {
   try {
+    // TYPE before CONTENT — see rejectNonStringFields.
+    if (rejectNonStringFields(req, res, ['credential', 'access_token', 'date_of_birth'],
+      'Google sign-in failed')) return;
+
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
       return res.status(400).json({ error: errors.array()[0].msg });
@@ -1538,7 +1604,8 @@ router.post('/google', [
         // DOB is REQUIRED for account creation on every path; a Google
         // sign-in without one means "sign up first" (needsDob tells the
         // client to route the user to the signup screen's DOB field).
-        const dobAge = ageFromDob(req.body.date_of_birth);
+        const googleDob = suppliedDob(req.body.date_of_birth);
+        const dobAge = googleDob ? ageFromDob(googleDob) : null;
         if (dobAge === null) {
           return res.status(403).json({ error: 'No Flock account yet. Sign up with your date of birth first.', needsDob: true });
         }
@@ -1551,6 +1618,19 @@ router.post('/google', [
         // a domain that was added to the list later must not be locked out.
         if (isDisposableEmail(email)) {
           return res.status(400).json({ error: 'Temporary email addresses cannot be used. Use an address you keep.' });
+        }
+        // Round 18 re-audit: `emailVerified` was consulted ONLY when an existing
+        // row was found. Nothing checked it here, and the INSERT below writes
+        // `email_verified TRUE, verified_email = email` unconditionally — so an
+        // address Google did NOT vouch for got a row wearing a verified badge it
+        // never earned. That row walks straight past the round-16 gate, and
+        // because it carries an oauth_provider the address's real owner can
+        // never claim OR evict it (the check above 409s on oauth_provider before
+        // claimDecision ever runs), so the squat is permanent. Same fail-closed
+        // rule the two token branches already apply: absent is not verified.
+        if (!emailVerified) {
+          console.warn(`[auth] refused Google account creation for an address Google did not vouch for (${req.ip})`);
+          return res.status(401).json({ error: 'Google account email is not verified' });
         }
         // Ban-evasion tombstone (migration 012), on the OAuth identity as well
         // as the address: a banned user who deletes their account must not be
@@ -1571,7 +1651,7 @@ router.post('/google', [
           `INSERT INTO users (email, name, oauth_provider, oauth_id, profile_image_url, terms_accepted_at, date_of_birth, email_verified, verified_email)
            VALUES ($1, $2, 'google', $3, $4, NOW(), $5, TRUE, $6)
            RETURNING *`,
-          [email, googleName, googleId, picture, req.body.date_of_birth || null, email]
+          [email, googleName, googleId, picture, googleDob, email]
         );
         user = result.rows[0];
       }
@@ -1618,6 +1698,12 @@ router.post('/apple', [
   body('nonce').optional().isString().isLength({ max: 200 }),
 ], async (req, res) => {
   try {
+    // TYPE before CONTENT — see rejectNonStringFields. `fullName` is checked by
+    // isObject() and is read defensively below; the three string fields are the
+    // ones that reach jwt.verify, the replay cache and a DATE column.
+    if (rejectNonStringFields(req, res, ['identityToken', 'nonce', 'authorizationCode', 'date_of_birth'],
+      "Apple sign-in didn't complete. Try again in a moment.")) return;
+
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
       return res.status(400).json({ error: errors.array()[0].msg });
@@ -1657,6 +1743,10 @@ router.post('/apple', [
 
     const appleId = payload.sub;
     const email = payload.email || null;
+    // Hoisted out of the claim branch (round 18 re-audit): the CREATE path
+    // below needs it too, and read it nowhere. FAIL CLOSED — an absent claim is
+    // not a vouched address, exactly as on the Google side.
+    const appleEmailVerified = payload.email_verified === true || payload.email_verified === 'true';
 
     if (!appleId) {
       return res.status(400).json({ error: 'Apple token missing user id' });
@@ -1721,7 +1811,6 @@ router.post('/apple', [
       // clearing the password) unseats an address squatter instead of letting
       // the squat permanently block the real owner. Rows linked to another
       // provider are never absorbed.
-      const appleEmailVerified = payload.email_verified === true || payload.email_verified === 'true';
       // Canonical lookup (round 15) — same reason as the Google branch.
       existingByEmail = await findUserByEmail(email);
       if (existingByEmail) {
@@ -1785,7 +1874,8 @@ router.post('/apple', [
 
       // DOB required for creation, same as email + Google paths. Apple never
       // supplies it, so the client must send it (signup screen's DOB field).
-      const appleDobAge = ageFromDob(req.body.date_of_birth);
+      const appleDob = suppliedDob(req.body.date_of_birth);
+      const appleDobAge = appleDob ? ageFromDob(appleDob) : null;
       if (appleDobAge === null) {
         return res.status(403).json({ error: 'No Flock account yet. Sign up with your date of birth first.', needsDob: true });
       }
@@ -1797,6 +1887,17 @@ router.post('/apple', [
       // addition to the list. Apple's private relay domain is not on it.
       if (email && isDisposableEmail(email)) {
         return res.status(400).json({ error: 'Temporary email addresses cannot be used. Use an address you keep.' });
+      }
+      // Round 18 re-audit: same hole as the Google branch. The INSERT below
+      // stores `email_verified TRUE, verified_email = storedEmail`
+      // unconditionally, so an address Apple did not vouch for got a permanent,
+      // un-evictable, ungated row. Only checked when Apple actually gave us an
+      // address: when it omits one (every sign-in after the first) the stored
+      // value is the .invalid placeholder, which cannot be mailed or squatted
+      // and is verified for itself by construction.
+      if (email && !appleEmailVerified) {
+        console.warn(`[auth] refused Apple account creation for an address Apple did not vouch for (${req.ip})`);
+        return res.status(401).json({ error: 'Apple account email is not verified' });
       }
       // Ban-evasion tombstone (migration 012). The Apple sub is the durable
       // half here: Apple's private relay means the address may be absent or
@@ -1824,7 +1925,7 @@ router.post('/apple', [
         `INSERT INTO users (email, name, oauth_provider, oauth_id, terms_accepted_at, date_of_birth, email_verified, verified_email)
          VALUES ($1, $2, 'apple', $3, NOW(), $4, TRUE, $5)
          RETURNING *`,
-        [storedEmail, fallbackName, appleId, req.body.date_of_birth || null, storedEmail]
+        [storedEmail, fallbackName, appleId, appleDob, storedEmail]
       );
       user = result.rows[0];
     }
@@ -1874,6 +1975,12 @@ router.post('/apple', [
 
 module.exports = router;
 
+// The one canonical-email alphabet, shared with routes/users.js so its email
+// uniqueness check compares in the same one this file's lookups do. Named
+// exports rather than __testing: routes/users.js is a caller, not a test.
+module.exports.canonicalEmail = canonicalEmail;
+module.exports.EMAIL_CANONICAL_SQL = EMAIL_CANONICAL_SQL;
+
 // Exported for backend/__tests__/authSurface.test.js. The SQL half of the
 // canonical match (EMAIL_MATCH_SQL) is verified by inspection against
 // canonicalEmail's unit tests, the same way routes' SQL is covered elsewhere
@@ -1891,6 +1998,7 @@ module.exports.__testing = {
   verifierMatches,
   claimDecision,
   isMailableAddress,
+  suppliedDob,
   constantTimeEquals,
   appleNonceClaimMatches,
   issueAppleNonce,
@@ -1920,13 +2028,16 @@ module.exports.__testing = {
 // ---------------------------------------------------------------------------
 // CROSS-AREA NOTES (round 16) — things this file cannot fix on its own
 // ---------------------------------------------------------------------------
-// 1. routes/users.js, PUT /profile lets an account change `email` and does NOT
-//    reset email_verified / verified_email. Verification is per-ADDRESS, so a
-//    change has to un-verify the row and issue a new link. Until it does, a
-//    verified account can move onto someone else's address; claimDecision()
-//    above already refuses to hand anything over in that state (it compares
-//    verified_email, not email), so the attack is contained, but the row is
-//    left wearing a verified flag it did not earn for its current address.
+// 1. FIXED in round 18. routes/users.js, PUT /profile used to change `email`
+//    without resetting email_verified / verified_email. "Contained" was too
+//    generous a word for it: claimDecision() refused to hand the row over, and
+//    that refusal is a 409 the address's real owner can never get past, so
+//    verifying your own mailbox and then moving onto victim@gmail was a
+//    PERMANENT squat on that address across all three sign-in paths. PUT
+//    /profile now clears both columns whenever the address changes, which turns
+//    that state back into 'evict'. The route does not mail the new link itself
+//    (it would tie this router into the mail stack for one call); it returns
+//    emailVerificationRequired so the client calls /resend-verification.
 // 2. routes/users.js, routes/friends.js and routes/flocks.js should each mount
 //    `requireVerified` from middleware/auth.js on the routes listed in
 //    UNVERIFIED_DENY there. The middleware backstop covers them today; the
@@ -1950,10 +2061,10 @@ module.exports.__testing = {
 //    so the scrub in index.js should be widened to strip `#token=` and
 //    `?token=` as well. The reset screen replaces the URL on mount, which wins
 //    the race in practice but is not a guarantee.
-// 6. routes/users.js PUT /profile changes a password and bumps token_version
-//    but never calls revokeUserSessions, so a live socket survives a password
-//    change for up to the socket recheck interval. This route does call it.
-//    Same one-line fix belongs there (already noted in middleware/auth.js).
+// 6. RESOLVED. routes/users.js PUT /profile does call revokeUserSessions after
+//    a password change, so no live socket survives one. Every bump of
+//    token_version in the app now drops the sockets with it; pinned by
+//    backend/__tests__/authReaudit.test.js.
 // 7. A completed reset does NOT set email_verified. An account that signed up,
 //    never confirmed its address and then reset its password stays unverified
 //    and stays inside the round-16 gate, which is deliberate: treating a reset
