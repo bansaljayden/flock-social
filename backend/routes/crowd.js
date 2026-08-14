@@ -100,7 +100,7 @@ async function fetchVenueFromGoogle(placeId, clientDay) {
   const response = await fetch(`https://places.googleapis.com/v1/places/${placeId}`, {
     headers: {
       'X-Goog-Api-Key': API_KEY,
-      'X-Goog-FieldMask': 'id,displayName,formattedAddress,rating,userRatingCount,priceLevel,types,location,currentOpeningHours',
+      'X-Goog-FieldMask': 'id,displayName,formattedAddress,rating,userRatingCount,priceLevel,types,location,currentOpeningHours,utcOffsetMinutes',
     },
     // Round 12: no deadline meant a hung Google socket parked this request (and
     // its pg pool slot) for ~5 minutes. See utils/upstream.js.
@@ -189,7 +189,24 @@ router.get('/:placeId',
       const lon = venue.location?.longitude;
       const weather = (lat && lon) ? await getWeather(lat, lon) : null;
 
-      // Build a timestamp with the client's local hour/day for accurate scoring
+      // WHOSE CLOCK: the venue's, not the phone's.
+      //
+      // "How busy is this place" is a fact about that place's night. At 11 PM
+      // in Bethlehem, a bar in Los Angeles is at 8 PM and is only starting to
+      // fill; scoring it against the viewer's 11 PM answers a question nobody
+      // asked. The marketing demo already scores on the venue clock, so this
+      // also stops the two surfaces disagreeing about the same venue.
+      //
+      // The client's own hour stays the fallback for the overwhelmingly common
+      // case where Google gives us no offset, and for the far more common case
+      // where the venue is local anyway and the two are identical.
+      const venueClock = crowdEngine.venueLocalNow(venue.utcOffsetMinutes, now);
+      if (venueClock) {
+        localHour = venueClock.hour;
+        localDay = venueClock.day;
+      }
+
+      // Build a timestamp with the venue's local hour/day for accurate scoring
       const clientTime = new Date(now);
       // Adjust to match client's day of week and hour. Round 14: this used to
       // be `localDay - serverDay`, a signed weekday difference used as a day
@@ -299,6 +316,18 @@ router.get('/:placeId',
         weather: weather ? { temp: weather.temp, conditions: weather.conditions } : null,
         eventAlert: crowdResult.eventAlert || null,
         lastUpdated: now.toISOString(),
+        // The clock this card was scored on, so the client labels its bars
+        // with the venue's hours rather than the phone's. Sending it makes the
+        // two halves of this change independent: a client that ignores the
+        // field keeps its old behaviour, and one that reads it is correct
+        // whichever order the two deploys land in. `local` is false when
+        // Google gave us no offset and we fell back to the caller's clock.
+        venueClock: {
+          hour: localHour,
+          day: localDay,
+          utcOffsetMinutes: venueClock ? Number(venue.utcOffsetMinutes) : null,
+          local: !!venueClock,
+        },
       };
 
       setCache(cacheKey, result);
@@ -462,7 +491,7 @@ router.get('/:placeId/alternatives',
         headers: {
           'Content-Type': 'application/json',
           'X-Goog-Api-Key': API_KEY,
-          'X-Goog-FieldMask': 'places.id,places.displayName,places.rating,places.userRatingCount,places.priceLevel,places.types,places.location,places.currentOpeningHours',
+          'X-Goog-FieldMask': 'places.id,places.displayName,places.rating,places.userRatingCount,places.priceLevel,places.types,places.location,places.currentOpeningHours,places.utcOffsetMinutes',
         },
         body: JSON.stringify({
           textQuery: primaryType,
