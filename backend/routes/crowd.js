@@ -22,51 +22,95 @@ const { FREE_MONTHLY_FORECASTS, getUsedThisMonth, recordView } = require('../ser
 
 const router = express.Router();
 
-// Flock Pro gate for the single-venue AI forecast. The live "how busy now" score
-// stays free; best-time / hourly / peak are free for the first N venue views a
-// month, then Pro. Returns a per-request copy so the shared cache stays ungated.
+// ---------------------------------------------------------------------------
+// THE FLOCK PRO FORECAST GATE
+//
+// Split deliberately into two halves, because the leak this file has already
+// suffered once was a FIELD-LIST problem and the leak the rest of the app
+// suffered was a ROUTE-COVERAGE problem, and they need different fixes:
+//
+//   forecastAccess()  — the POLICY. Who is locked, and does this request spend
+//                       one of the free monthly views. Identical everywhere, so
+//                       it is written once and exported.
+//   gateForecast()    — the FIELDS, for THIS route's payload shape. Every
+//                       surface names the same three answers differently
+//                       (`bestTime` here, `best_time` in routes/publicCrowd.js
+//                       and routes/ai.js), so the stripping cannot be shared;
+//                       what is shared is the rule that all three go.
+//
+// Round 20: routes/crowd.js was the ONLY metered door. routes/publicCrowd.js
+// (unauthenticated) and routes/ai.js (Birdie) both served the same best time,
+// peak and hourly curve with no gate at all, so the moment PAYWALL_ENABLED went
+// true the meter would have been decorative: a locked user asks Birdie, or the
+// public demo, and gets the thing they just hit a wall for. Both now apply this
+// same policy to their own shapes. See __tests__/forecastGateParity.test.js.
+// ---------------------------------------------------------------------------
+
+// The free-tier answer, used when the paywall is off and for a Pro subscriber:
+// unlimited, unmetered, and (with the paywall off) not even announced.
+// Frozen: it is handed out by reference to every caller, including
+// routes/ai.js, and a shared policy object that one route can mutate is a
+// paywall one route can turn off for the process.
+const UNMETERED_ACCESS = Object.freeze({ locked: false, remaining: null, limit: null });
+
 // `count` = true means this request should consume one of the free allowance
-// (only the single-venue detail view counts, not batch/list previews).
-async function gateForecast(result, userId, { count } = {}) {
+// (only a single-venue detail view counts, not batch/list previews).
+// `premium` lets a caller that has ALREADY resolved the tier pass it in rather
+// than pay for a second `SELECT is_premium` on the same request.
+async function forecastAccess(userId, { count, premium } = {}) {
   // Paywall off (or unset) → today's behavior, unlimited, no meter.
-  if (!paywallEnabled()) return result;
-  if (await isPremium(userId)) {
-    return { ...result, forecastAccess: { locked: false, remaining: null, limit: null } };
-  }
+  if (!paywallEnabled()) return UNMETERED_ACCESS;
+  const pro = premium != null ? premium : await isPremium(userId);
+  if (pro) return UNMETERED_ACCESS;
   const usedBefore = getUsedThisMonth(userId);
   if (usedBefore >= FREE_MONTHLY_FORECASTS) {
-    // Allowance spent — strip the premium prediction, keep the free live score.
-    //
-    // EVERY FIELD THAT CARRIES THE BEST-TIME ANSWER GOES, not just the sentence.
-    // bestHour / bestIndex / bestIsNow were added later, in the same rewrite
-    // that made the chart mark the recommended bar, and this gate was not
-    // updated with them: `bestTime: null` blanked the sentence while
-    // `bestHour: "9 PM"` sat two lines below it, so a locked response still
-    // named the hour the paywall exists to sell, and `bestIsNow` still answered
-    // "is now a good time" outright. Frontend gating is cosmetic (SLOP-AUDIT
-    // rule 7), so anything left in this payload is shipped.
-    //
-    // What deliberately STAYS is the free half: score, label, capacity,
-    // waitEstimate and the live calibration all describe "how busy is it right
-    // now", plus hoursToday/isOpen, which are Google's posted hours and were
-    // never ours to sell. __tests__/presenceParity.test.js pins both halves —
-    // add a field to the premium set and it must be added here too.
-    return {
-      ...result,
-      bestTime: null,
-      hourly: [],
-      peak: null,
-      bestHour: null,
-      bestIndex: null,
-      bestIsNow: null,
-      forecastAccess: { locked: true, remaining: 0, limit: FREE_MONTHLY_FORECASTS },
-    };
+    return { locked: true, remaining: 0, limit: FREE_MONTHLY_FORECASTS };
   }
   const usedNow = count ? recordView(userId) : usedBefore;
   return {
-    ...result,
-    forecastAccess: { locked: false, remaining: Math.max(0, FREE_MONTHLY_FORECASTS - usedNow), limit: FREE_MONTHLY_FORECASTS },
+    locked: false,
+    remaining: Math.max(0, FREE_MONTHLY_FORECASTS - usedNow),
+    limit: FREE_MONTHLY_FORECASTS,
   };
+}
+
+// EVERY FIELD THAT CARRIES THE BEST-TIME ANSWER GOES, not just the sentence.
+// bestHour / bestIndex / bestIsNow were added later, in the same rewrite that
+// made the chart mark the recommended bar, and this gate was not updated with
+// them: `bestTime: null` blanked the sentence while `bestHour: "9 PM"` sat two
+// lines below it, so a locked response still named the hour the paywall exists
+// to sell, and `bestIsNow` still answered "is now a good time" outright.
+// Frontend gating is cosmetic (SLOP-AUDIT rule 7), so anything left in this
+// payload is shipped.
+//
+// What deliberately STAYS is the free half: score, label, capacity,
+// waitEstimate and the live calibration all describe "how busy is it right
+// now", plus hoursToday/isOpen, which are Google's posted hours and were never
+// ours to sell. __tests__/presenceParity.test.js pins both halves — add a field
+// to the premium set and it must be added here too.
+// Frozen, and the empty array with it. This used to be written inline at the
+// one call site, so every locked response got its own `[]`; hoisting it into a
+// constant means every locked response now shares ONE array by reference, and
+// a frozen one cannot be quietly filled in by something downstream.
+const LOCKED_FORECAST_FIELDS = Object.freeze({
+  bestTime: null,
+  hourly: Object.freeze([]),
+  peak: null,
+  bestHour: null,
+  bestIndex: null,
+  bestIsNow: null,
+});
+
+// Returns a per-request copy so the shared cache stays ungated.
+async function gateForecast(result, userId, { count } = {}) {
+  if (!paywallEnabled()) return result;
+  const access = await forecastAccess(userId, { count });
+  // Rebuilt field by field rather than spread: `access` is a policy object and
+  // this one is a frontend contract, so a field added to the former must never
+  // ride out to clients by accident.
+  const forecastAccessField = { locked: access.locked, remaining: access.remaining, limit: access.limit };
+  if (!access.locked) return { ...result, forecastAccess: forecastAccessField };
+  return { ...result, ...LOCKED_FORECAST_FIELDS, forecastAccess: forecastAccessField };
 }
 const API_KEY = process.env.GOOGLE_PLACES_API_KEY;
 
@@ -453,7 +497,39 @@ router.get('/:placeId',
         dataSourcesUsed: dataSources,
         modelVersion: crowdResult.modelVersion || null,
         weather: weather ? { temp: weather.temp, conditions: weather.conditions } : null,
-        eventAlert: crowdResult.eventAlert || null,
+        // `estimatedAttendance` IS NOT PUBLISHED, and that is the whole point
+        // of reshaping this instead of forwarding it.
+        //
+        // services/mlPredictor.js estimateTmAttendance returns a Ticketmaster
+        // capacity when the payload happens to carry one, and otherwise a
+        // number picked by looking for "arena" / "stadium" / "garden" / "field"
+        // / "theatre" in the venue's NAME: 25000, 20000, 5000, 3000, 1500,
+        // 1000, or a 500 default. Those are fine as MODEL FEATURES, which is
+        // what they were built for, and they are trained against — a systematic
+        // guess feeding a fitted weight is a legitimate feature. They are not a
+        // headcount, and "20,000 people expected" on a card is a number a user
+        // would read as one. This project has a hard rule against showing
+        // people figures that are not real.
+        //
+        // Dropped rather than relabelled because THIS LAYER CANNOT LABEL IT
+        // HONESTLY: the two cases arrive indistinguishable here, so the only
+        // truthful caption would be "somewhere between a box-office capacity
+        // and a guess from the venue's name", which is not a caption. Nothing
+        // in the frontend reads the field today (grep: it has no consumer), so
+        // this costs no UI. If a real figure is ever wanted, mlPredictor has to
+        // say which branch produced it and the card can print only the sourced
+        // one.
+        //
+        // The rest of the alert is real: the name and the distance come
+        // straight off the Ticketmaster event, and the >5,000 threshold that
+        // fires it stays a model-side judgement about whether to warn at all.
+        eventAlert: crowdResult.eventAlert
+          ? {
+            hasEvent: crowdResult.eventAlert.hasEvent,
+            eventName: crowdResult.eventAlert.eventName,
+            distance: crowdResult.eventAlert.distance,
+          }
+          : null,
         lastUpdated: now.toISOString(),
         // The clock this card was scored on, so the client labels its bars
         // with the venue's hours rather than the phone's. Sending it makes the
@@ -480,6 +556,42 @@ router.get('/:placeId',
 
 // ---------------------------------------------------------------------------
 // POST /api/crowd/batch — Batch predictions (uses frontend venue data)
+//
+// KNOWN, MEASURED, AND DELIBERATELY NOT CLOSED: this endpoint is an oracle for
+// the curve the gate above sells. Written down here rather than in a report,
+// because the person most likely to need it is whoever next edits gateForecast.
+//
+// This route scores each venue on a clock the CLIENT asserts, via that item's
+// `utcOffsetMinutes` (and `localHour`/`localDay` for items without one). The
+// score it returns is the free "how busy right now" number, which is correct
+// and by design. But the caller chooses the "now". Verified by experiment on
+// 2026-08-14: ONE POST carrying twenty copies of the same venue at twenty
+// different offsets came back with twenty distinct hours and twenty scores,
+// i.e. most of a day's curve, for a user whose monthly allowance was spent —
+// no Google call, no Places charge, nothing metered.
+//
+// WHY IT IS STILL OPEN. Every fix trades against something rounds 13 to 15
+// deliberately bought:
+//   * "one clock per request" reverts the multi-timezone fix directly. A vote
+//     list can hold venues in three zones and each has to answer on its own.
+//   * "the offset must be plausible for the longitude" (the sun does not move
+//     for one caller) is the good version and would bound the oracle to about
+//     +/-3.5 hours instead of 24. It is a HEURISTIC on the hottest crowd path,
+//     and its failure mode is silent: a real venue whose offset it mis-rejects
+//     falls back to the caller's clock and is scored at the wrong hour, which
+//     is the exact bug those rounds were fixing. Wrong scores on the vote list
+//     cost more than a rough curve does.
+//   * deduping by place_id closes only the tidiest shape. The same request
+//     works with the ids removed.
+// The residual is the same one the card and the public demo carry for venues
+// Google gives no offset for: a client-asserted wall clock is unverifiable, so
+// the FREE live score is inherently a one-hour-at-a-time probe of the paid
+// curve, everywhere. What the gate stops is the PRODUCT — the labelled 12-hour
+// strip, the named best hour, the peak window, the chart the app draws. It does
+// not stop somebody willing to rebuild an unlabelled curve by hand.
+//
+// If the paywall is ever switched on and this matters commercially, the
+// longitude check is the change to make, with the fallback tested.
 // ---------------------------------------------------------------------------
 router.post('/batch',
   body('venues').isArray({ min: 1, max: 20 }).withMessage('venues must be an array (1-20 items)'),
@@ -971,6 +1083,15 @@ router.get('/:placeId/alternatives',
 );
 
 module.exports = router;
+// THE forecast paywall policy, for every route that serves the forecast.
+// routes/ai.js imports this rather than re-deriving "is this user locked" from
+// entitlements + forecastUsage, because a second copy of that derivation is
+// exactly how routes/publicCrowd.js and routes/ai.js came to have no gate at
+// all while this file had one. A route module importing another route module is
+// unusual; the alternative was a third private copy of the rule that decides
+// who has paid, and that is worse. (No cycle: routes/ai.js is never required
+// from here.)
+module.exports.forecastAccess = forecastAccess;
 // Exposed for backend/__tests__/crowdReaudit.test.js — the venue-clock path
 // depends on utcOffsetMinutes surviving the Google->venue shaping, and that
 // drop was invisible to every existing test because the shaping is internal.

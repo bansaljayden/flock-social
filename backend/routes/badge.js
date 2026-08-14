@@ -5,6 +5,7 @@ const { getWeather } = require('../services/weatherService');
 const mlPredictor = require('../services/mlPredictor');
 const { upstreamSignal } = require('../utils/upstream');
 const { allowGlobalPlacesCall } = require('../utils/placesBudget');
+const { weekdayOffset } = require('../services/crowdEngine');
 
 const router = express.Router();
 
@@ -19,6 +20,40 @@ const router = express.Router();
 // venue_profiles (claimed venues). Unknown placeIds cost us nothing — no
 // Google fetch, just a 404 — so the public endpoint can't be used to burn
 // Places API quota. Results cache for 15 minutes.
+//
+// ---------------------------------------------------------------------------
+// THIS ROUTE IS DELIBERATELY NOT BEHIND THE FLOCK PRO FORECAST GATE.
+//
+// Round 20 gated the forecast on every other surface that serves it
+// (routes/crowd.js, routes/publicCrowd.js, routes/ai.js). This one was audited
+// in the same pass and left open, on purpose, for three reasons:
+//
+//   1. THERE IS NOTHING HERE TO GATE. The gate sells three things: the best
+//      time to go, the peak window, and the 24-hour curve. This endpoint
+//      computes none of them. It calls predictBusyness once, for right now, and
+//      renders the resulting LABEL as five words on a pill. "How busy is it
+//      right now" is the free half on every other surface too, and gating it
+//      here would gate the free tier.
+//   2. THE AUDIENCE IS THE VENUE'S OWN CUSTOMERS. A person reading this is on a
+//      bar's website deciding whether to walk over. They are not a Flock user
+//      routing around a wall; most of them have never heard of Flock, which is
+//      the entire point of the wordmark in the corner. This is distribution.
+//   3. IT IS ALREADY EARNED. Only a CLAIMED and VERIFIED venue gets a badge,
+//      which is a venue-side entitlement check (see the query below), not an
+//      absence of one.
+//
+// The reconstruction question, asked and answered: polling this URL hourly for
+// a day yields 24 OBSERVED labels for one venue, which is a log of what
+// happened, not a forecast of what will. It also takes 24 hours per venue and
+// only works on venues that already chose to publish the number. The 15-minute
+// cache means you cannot go faster.
+//
+// WHAT WOULD CHANGE THIS: any badge variant that prints a time. "Best time to
+// go tonight", "quiet after 10", a sparkline, an hourly strip. The moment this
+// file calls predictHourlyForecast, findPeakTime or recommendBestTime it is
+// serving the paid product to an unauthenticated caller with no meter, and it
+// needs the gate that routes/publicCrowd.js now has.
+// __tests__/forecastGateParity.test.js fails if any of those three appear here.
 // ---------------------------------------------------------------------------
 
 const GOOGLE_KEY = process.env.GOOGLE_PLACES_API_KEY;
@@ -79,8 +114,20 @@ function venueLocalTime(lat, lng, now = new Date()) {
 
   // Same construction as routes/crowd.js: shift the server-local Date so its
   // getDay()/getHours() report the venue's wall clock.
+  //
+  // Round 20: this said "same construction as routes/crowd.js" while doing the
+  // thing round 14 removed from routes/crowd.js. `localDay - getDay()` is a
+  // SIGNED WEEKDAY DIFFERENCE being used as a number of days: on a UTC Sunday a
+  // venue west of the date line is still on Saturday, so it computed 6 - 0 = +6
+  // and built a timestamp SIX DAYS IN THE FUTURE. The weekday and the hour come
+  // out right, which is exactly why it hid for six rounds, but the DATE feeds
+  // is_holiday, is_school_break, the v2.5 special-night features and the
+  // Ticketmaster event window, so the badge on a venue's own website was scored
+  // against next week's calendar. crowdEngine.weekdayOffset is the nearest
+  // matching weekday (-3..+3), which is the only reading that means "this
+  // venue, now", and it is what every other caller in the repo already uses.
   const scoreTime = new Date(now);
-  scoreTime.setDate(scoreTime.getDate() + (localDay - scoreTime.getDay()));
+  scoreTime.setDate(scoreTime.getDate() + weekdayOffset(scoreTime.getDay(), localDay));
   scoreTime.setHours(localHour, 0, 0, 0);
   return { localHour, localDay, offsetHours, scoreTime };
 }
@@ -182,3 +229,8 @@ router.get('/:placeId.svg',
 );
 
 module.exports = router;
+// Exposed for backend/__tests__/forecastGateParity.test.js. The date this badge
+// is scored on is invisible from the SVG it returns (the pill prints a label,
+// never a date), which is exactly why the six-days-in-the-future bug above
+// survived so long: no black-box test of this route could have seen it.
+module.exports.__testables = { venueLocalTime };
