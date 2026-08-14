@@ -131,14 +131,15 @@ async function getPremiumState(userId) {
 // account have the paid thing".
 //
 // CALLERS THAT SHOW SOMETHING TO A USER SHOULD USE getPremiumState INSTEAD.
-// routes/ai.js (`const freeTier = paywallEnabled() && !(await isPremium(userId))`)
-// and routes/crowd.js (forecastAccess) both derive a free-tier decision from
-// this boolean, so once the paywall is on, one failed query drops a paying
-// subscriber to 10 Birdie messages a day and meters their forecasts, and the
-// 429 they get pitches them the plan they already bought. That is safe for the
-// money and wrong for the customer. The fix is to branch on `known` at those two
-// call sites and answer 503 instead of metering; both files are owned elsewhere,
-// which is why the tri-state is exported rather than applied here.
+// The two route consumers that used to derive a free-tier decision from this
+// boolean — routes/ai.js (Birdie's daily meter) and routes/crowd.js
+// (forecastAccess) — both branch on `known` now and answer a retryable 503 on
+// an unknown state instead of metering, so a failed query no longer drops a
+// paying subscriber to the free tier or pitches them the plan they already
+// bought (__tests__/premiumKnownState.test.js pins both, and pins that the
+// dormant paywall never runs the lookup at all). This function stays exported
+// for boundaries where a fail-closed boolean is the whole question; anything
+// user-facing wants the tri-state.
 async function isPremium(userId) {
   return (await getPremiumState(userId)).premium;
 }

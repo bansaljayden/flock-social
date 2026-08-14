@@ -17,7 +17,7 @@ const {
   getLabel,
 } = mlPredictor;
 const pool = require('../config/database');
-const { isPremium, paywallEnabled } = require('../services/entitlements');
+const { getPremiumState, paywallEnabled, EntitlementUnavailableError } = require('../services/entitlements');
 const { FREE_MONTHLY_FORECASTS, getUsedThisMonth, recordView } = require('../services/forecastUsage');
 
 const router = express.Router();
@@ -58,9 +58,28 @@ const UNMETERED_ACCESS = Object.freeze({ locked: false, remaining: null, limit: 
 // `premium` lets a caller that has ALREADY resolved the tier pass it in rather
 // than pay for a second `SELECT is_premium` on the same request.
 async function forecastAccess(userId, { count, premium } = {}) {
-  // Paywall off (or unset) → today's behavior, unlimited, no meter.
+  // Paywall off (or unset) → today's behavior, unlimited, no meter — and no
+  // tier lookup at all, so an entitlement outage cannot surface from here
+  // while the paywall is dormant.
   if (!paywallEnabled()) return UNMETERED_ACCESS;
-  const pro = premium != null ? premium : await isPremium(userId);
+  let pro;
+  if (premium != null) {
+    pro = premium;
+  } else {
+    // Branch on `known`, not just the boolean (services/entitlements.js): a
+    // lookup that FAILED is not "this user has not paid". Reading it as free
+    // tier metered a paying subscriber during a database blip and then showed
+    // them the lock for the plan they already bought. A THROW rather than a
+    // policy field, deliberately: the policy object's key set is pinned to
+    // exactly {locked, remaining, limit} (it is spread toward clients in
+    // gateForecast), and an "unavailable" flag a caller forgets to check
+    // degrades straight back into the bug this exists to fix. The throw lands
+    // before the meter is read or spent, so an unknown state never charges a
+    // view; routes answer it as a retryable 503.
+    const state = await getPremiumState(userId);
+    if (!state.known) throw new EntitlementUnavailableError(state.reason);
+    pro = state.premium;
+  }
   if (pro) return UNMETERED_ACCESS;
   const usedBefore = getUsedThisMonth(userId);
   if (usedBefore >= FREE_MONTHLY_FORECASTS) {
@@ -548,6 +567,22 @@ router.get('/:placeId',
       setCache(cacheKey, result);
       res.json(await gateForecast(result, req.user.id, { count: true }));
     } catch (err) {
+      // The gate could not find out who is looking (forecastAccess threw:
+      // paywall on, entitlement lookup failed). Not a refusal and not this
+      // server erring — a retryable 503, with NOTHING else in the body: no
+      // free half, no forecastAccess field, no meter numbers. Anything served
+      // here would be served to a caller whose tier we do not know, and this
+      // gate has already once leaked the paid answer through secondary fields.
+      // The meter was never read or spent (the throw precedes it), so the
+      // sentence can honestly say so. The root cause is already logged by
+      // services/entitlements.js getPremiumState.
+      if (err?.entitlementUnavailable) {
+        return res.status(503).json({
+          error: 'Could not check your plan just now. Nothing was counted. Try again in a moment.',
+          code: 'ENTITLEMENT_UNAVAILABLE',
+          retryable: true,
+        });
+      }
       console.error('[Crowd] Prediction error:', err);
       res.status(500).json({ error: 'Failed to generate crowd prediction' });
     }

@@ -17,7 +17,7 @@ const {
   weekdayOffset,
 } = require('../services/crowdEngine');
 const mlPredictor = require('../services/mlPredictor');
-const { isPremium, paywallEnabled } = require('../services/entitlements');
+const { getPremiumState, paywallEnabled, EntitlementUnavailableError } = require('../services/entitlements');
 // THE forecast paywall policy, defined once in routes/crowd.js. Imported rather
 // than re-derived: a second private copy of "has this user paid, and has their
 // monthly allowance run out" is precisely how this route ended up serving the
@@ -707,9 +707,27 @@ router.post('/chat',
         return res.status(400).json({ error: 'type something first' });
       }
 
-      // Resolve tier ONCE per request (isPremium is a DB query). When the
-      // paywall is off (default), no DB hit — behavior is identical to before.
-      const freeTier = paywallEnabled() && !(await isPremium(userId));
+      // Resolve tier ONCE per request (the premium lookup is a DB query). When
+      // the paywall is off (default), no DB hit — the lookup does not even run,
+      // so an entitlement outage cannot surface here while the paywall is
+      // dormant. Behavior with the flag unset is identical to before.
+      //
+      // Branch on `known`, not just the boolean (services/entitlements.js): a
+      // lookup that FAILED is not "this user has not paid". Collapsing the two
+      // put a paying subscriber on the 10/day free meter for the length of a
+      // database blip, and the 429 below then pitched them the plan they had
+      // already bought. Unknown THROWS the tagged error, which the catch at the
+      // bottom answers as a retryable 503 — one answering site, so a future
+      // path that lets the same error escape gets the same answer. The throw
+      // lands BEFORE checkUserRateLimit and before any Gemini spend, so the
+      // failed request costs the user nothing and the sentence can honestly
+      // say so; it says "could not check", never "upgrade".
+      let freeTier = false;
+      if (paywallEnabled()) {
+        const premiumState = await getPremiumState(userId);
+        if (!premiumState.known) throw new EntitlementUnavailableError(premiumState.reason);
+        freeTier = !premiumState.premium;
+      }
       const dailyLimit = freeTier ? FREE_DAILY_LIMIT : PREMIUM_DAILY_LIMIT;
 
       // Per-user rate limit (daily by tier + 15/min for everyone)
@@ -885,11 +903,14 @@ router.post('/chat',
       // about four bars in one reply, nor see the tenth lookup in one reply
       // refuse what the ninth just answered.
       //
-      // `premium: !freeTier` is exact rather than an approximation: freeTier is
-      // `paywallEnabled() && !isPremium`, so whenever the paywall is on,
-      // !freeTier IS the premium answer, already paid for above. With the
-      // paywall off forecastAccess returns unmetered before reading it at all.
-      // Either way this saves a duplicate `SELECT is_premium`.
+      // `premium: !freeTier` is exact rather than an approximation: whenever
+      // the paywall is on, freeTier came from a KNOWN getPremiumState answer
+      // above (an unknown one 503'd this request before the meters), so
+      // !freeTier IS the premium answer, already paid for. With the paywall off
+      // forecastAccess returns unmetered before reading it at all. Either way
+      // this saves a duplicate `SELECT is_premium` — and it is also what keeps
+      // forecastAccess's own unknown-state throw unreachable from this route:
+      // a pre-resolved tier never triggers its lookup.
       let forecastPeek = null;
       let forecastCharged = false;
       async function peekForecastAccess() {
@@ -1011,6 +1032,22 @@ router.post('/chat',
       if (navigationAction) result.navigate = navigationAction;
       res.json(result);
     } catch (err) {
+      // The tier check up top could not find out who is asking (paywall on,
+      // entitlement lookup failed) and threw before either meter or any Gemini
+      // spend. Not a refusal and not this server erring — a retryable 503, and
+      // never the upgrade pitch: an unknown tier is exactly the case where the
+      // pitch might be aimed at somebody who already pays. The body carries
+      // nothing else; the root cause is already logged by getPremiumState.
+      // (This branch precedes the console.error below on purpose: an outage in
+      // a dependency is warned about once by the service, not stack-traced per
+      // request.)
+      if (err?.entitlementUnavailable) {
+        return res.status(503).json({
+          error: "can't check your plan right now. that message didn't count. try again in a minute",
+          code: 'ENTITLEMENT_UNAVAILABLE',
+          retryable: true,
+        });
+      }
       console.error('[AI] Chat error:', err);
       if (err.status === 429 || err.message?.includes('quota')) {
         return res.status(429).json({ error: 'one sec, lots of people chatting rn. try that again' });
