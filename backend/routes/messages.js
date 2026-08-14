@@ -10,6 +10,8 @@ const { isBlockedBetween, getInvisibleUserIds } = require('../utils/blocks');
 const { hasDmRelationship, NOT_CONNECTED_MESSAGE } = require('../utils/relationships');
 const { emitToFlockExcludingBlocked } = require('../sockets/handlers');
 const { pushIfOfflineDebounced } = require('../services/pushHelper');
+// Shape before content — see validators/shape.js.
+const { scalarOnly, freeText } = require('../validators/shape');
 
 const router = express.Router();
 
@@ -26,6 +28,36 @@ const INT4_MAX = 2147483647;
 // reached Postgres as NaN and came back a 500, and an unvalidated `emoji`
 // (VARCHAR(10) in the schema) turned any long string into a 500 as well. This
 // is the single gate they all call now.
+// ---------------------------------------------------------------------------
+// A message must CARRY something — text or an image. Not text unconditionally.
+//
+// Both send routes required `message_text` with isLength({ min: 1 }), so an
+// image-only message was a 400 over REST while the socket transport accepted it
+// (sockets/handlers.js send_message: `!message_text && message_type !== 'image'`
+// is its whole test). These REST routes are the FALLBACK the socket client uses
+// when its connection is down — so sending a photo failed exactly when the
+// network was already struggling and the user was most likely to retry, and the
+// same photo went through the moment the socket reconnected. A transport
+// fallback that refuses what the primary accepts is not a fallback.
+//
+// The rule is spelled as "text or an image" rather than copied from the socket's
+// `message_type !== 'image'` on purpose. The socket's version accepts a bare
+// `{ message_type: 'image' }` with no image and no text and stores an empty row
+// — a blank bubble in the thread. Every real client sends `image_url` with it,
+// so nothing that works today is refused here; the socket should adopt THIS
+// rule rather than this file adopting that one (reported, not edited — it is
+// not my file).
+//
+// message_text is NOT NULL on both tables, so an absent or null value has to
+// become '' rather than travelling to Postgres as NULL (23502, a 500). Same
+// normalisation the socket path does with `typeof ... === 'string' ? ... : ''`.
+function messageBody(req) {
+  const text = typeof req.body.message_text === 'string' ? req.body.message_text : '';
+  const image = typeof req.body.image_url === 'string' ? req.body.image_url : null;
+  return { text, image, empty: !text && !image };
+}
+const EMPTY_MESSAGE = 'Message is required';
+
 function rejectInvalid(req, res) {
   const errors = validationResult(req);
   if (errors.isEmpty()) return false;
@@ -143,10 +175,23 @@ router.get('/flocks/:id/messages',
 router.post('/flocks/:id/messages',
   [
     param('id').isInt({ min: 1, max: INT4_MAX }),
-    body('message_text').trim().customSanitizer(stripHtml).isLength({ min: 1, max: 5000 }).withMessage('Message is required'),
-    body('message_type').optional().isIn(['text', 'venue_card', 'image']),
-    body('venue_data').optional().isObject(),
-    body('image_url').optional().matches(/^data:image\/(png|jpe?g|gif|webp);base64,/),
+    // Round 19 (shape sweep). `message_text: ["<b>hi</b>"]` was the worst case
+    // in this file: stripHtml returns a non-string untouched, rejectIfProfane
+    // does the same (utils/moderation.js moderateText answers allowed:true for
+    // anything that is not a string), and isLength passes on the coerced
+    // "<b>hi</b>" — so the ONE text field in flock chat reached the messages
+    // table having been screened by nothing at all. Shape first.
+    // Optional here, and "must carry something" is enforced in the handler —
+    // see messageBody above. A `min: 1` on this field alone cannot express
+    // "text OR an image", and an .optional() chain is skipped entirely for an
+    // absent field, so a cross-field rule cannot live on it either.
+    freeText(body('message_text').optional({ values: 'null' }), 'message')
+      .isLength({ max: 5000 }).withMessage('Message is too long (max 5000 characters)'),
+    scalarOnly(body('message_type').optional({ values: 'null' }), 'message type').isIn(['text', 'venue_card', 'image']),
+    // venue_data is LEGITIMATELY an object, so it gets isObject() (which already
+    // rejects an array) plus sanitizeVenueData, never a scalar guard.
+    body('venue_data').optional({ values: 'null' }).isObject(),
+    scalarOnly(body('image_url').optional({ values: 'null' }), 'image').matches(/^data:image\/(png|jpe?g|gif|webp);base64,/),
   ],
   async (req, res) => {
     try {
@@ -155,13 +200,19 @@ router.post('/flocks/:id/messages',
         return res.status(400).json({ error: errors.array()[0].msg });
       }
 
+      // Read and settle the content BEFORE the membership query: it is the last
+      // piece of validation, it costs nothing, and the validator chain it used
+      // to live in ran ahead of every query too. See messageBody.
+      const { text: message_text, image: image_url, empty } = messageBody(req);
+      if (empty) return res.status(400).json({ error: EMPTY_MESSAGE });
+
       const flockId = req.params.id;
 
       if (!(await verifyFlockMember(flockId, req.user.id))) {
         return res.status(403).json({ error: 'Not a member of this flock' });
       }
 
-      const { message_text, message_type, venue_data, image_url } = req.body;
+      const { message_type, venue_data } = req.body;
 
       // UGC text filter (Apple 1.2) — reject objectionable content before storing.
       if (rejectIfProfane(res, message_text)) return;
@@ -252,7 +303,10 @@ router.post('/flocks/:id/messages',
 router.post('/messages/:id/react',
   [
     param('id').isInt({ min: 1, max: INT4_MAX }),
-    body('emoji').trim().isLength({ min: 1, max: 10 }).withMessage('Emoji is required'),
+    // emoji_reactions.emoji is VARCHAR(10). `["👍"]` measures 2 through
+    // isLength but reaches pg as the 5-character literal '{"👍"}', so a long
+    // enough one-element array was a 22001 turned into a 500.
+    scalarOnly(body('emoji'), 'emoji').trim().isLength({ min: 1, max: 10 }).withMessage('Emoji is required'),
   ],
   async (req, res) => {
     try {
@@ -548,13 +602,22 @@ router.get('/dm/:userId',
 router.post('/dm/:userId',
   [
     param('userId').isInt({ min: 1, max: INT4_MAX }),
-    body('message_text').trim().customSanitizer(stripHtml).isLength({ min: 1, max: 5000 }).withMessage('Message is required'),
-    body('message_type').optional().isIn(['text', 'venue_card', 'image']),
-    body('venue_data').optional().isObject(),
+    // Same shape rules as the flock-message twin above, for the same reasons.
+    // Optional here, and "must carry something" is enforced in the handler —
+    // see messageBody above. A `min: 1` on this field alone cannot express
+    // "text OR an image", and an .optional() chain is skipped entirely for an
+    // absent field, so a cross-field rule cannot live on it either.
+    freeText(body('message_text').optional({ values: 'null' }), 'message')
+      .isLength({ max: 5000 }).withMessage('Message is too long (max 5000 characters)'),
+    scalarOnly(body('message_type').optional({ values: 'null' }), 'message type').isIn(['text', 'venue_card', 'image']),
+    body('venue_data').optional({ values: 'null' }).isObject(),
     // data: URLs only — a sender-controlled https image is a tracking pixel
     // aimed at every recipient (round 7); the socket path already refuses them.
-    body('image_url').optional().matches(/^data:image\/(png|jpe?g|gif|webp);base64,/),
-    body('reply_to_id').optional().isInt({ min: 1, max: INT4_MAX }),
+    scalarOnly(body('image_url').optional({ values: 'null' }), 'image').matches(/^data:image\/(png|jpe?g|gif|webp);base64,/),
+    // direct_messages.reply_to_id is int4: `[5]` passed isInt and then reached
+    // the reply-scope lookup as '{5}', which is 22P02 — a 500 rather than the
+    // 400 an unusable reply target deserves.
+    scalarOnly(body('reply_to_id').optional({ values: 'null' }), 'reply target').isInt({ min: 1, max: INT4_MAX }),
   ],
   async (req, res) => {
     try {
@@ -562,6 +625,13 @@ router.post('/dm/:userId',
       if (!errors.isEmpty()) {
         return res.status(400).json({ error: errors.array()[0].msg });
       }
+
+      // Same "text or an image" rule as the flock-message twin, and in the same
+      // place — before any query. The DM client only gets away with the old
+      // text-is-mandatory rule because App.js sends the literal word "Photo" as
+      // the text of every image DM.
+      const { text: message_text, image: image_url, empty } = messageBody(req);
+      if (empty) return res.status(400).json({ error: EMPTY_MESSAGE });
 
       const receiverId = parseInt(req.params.userId);
       if (receiverId === req.user.id) {
@@ -584,7 +654,7 @@ router.post('/dm/:userId',
         return res.status(403).json({ error: NOT_CONNECTED_MESSAGE });
       }
 
-      const { message_text, message_type, venue_data, image_url, reply_to_id } = req.body;
+      const { message_type, venue_data, reply_to_id } = req.body;
 
       // UGC text filter (Apple 1.2) — reject objectionable content before storing.
       if (rejectIfProfane(res, message_text)) return;
@@ -767,7 +837,17 @@ router.get('/dm/:userId/venue-votes', [param('userId').isInt({ min: 1, max: INT4
 
 // POST /api/dm/:userId/venue-votes - Vote for a venue in a DM conversation
 router.post('/dm/:userId/venue-votes',
-  [param('userId').isInt({ min: 1, max: INT4_MAX }), body('venue_name').trim().isLength({ min: 1, max: 255 }), body('venue_id').optional().isString()],
+  [
+    param('userId').isInt({ min: 1, max: INT4_MAX }),
+    // Shape first: the handler runs stripHtml + rejectIfProfane on this value
+    // and BOTH pass a non-string straight through, so an array was a screened
+    // field that had never been screened — and it then reached the VARCHAR(255)
+    // column and the vote lookup as an array literal. (venue_id below is safe
+    // already: isString() is itself a shape check, and the handler re-tests
+    // `typeof === 'string'` before slicing.)
+    scalarOnly(body('venue_name'), 'venue name').trim().isLength({ min: 1, max: 255 }),
+    body('venue_id').optional({ values: 'null' }).isString(),
+  ],
   async (req, res) => {
     try {
       // The validator chain above was decorative: without validationResult the

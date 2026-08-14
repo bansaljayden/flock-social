@@ -13,7 +13,7 @@ router.post('/register',
     // was unbounded, so an authenticated client could park megabytes in it.
     body('token').isString().trim().isLength({ min: 8, max: 1024 })
       .withMessage('Token is required'),
-    body('deviceType').optional().isIn(['web', 'ios', 'android'])
+    body('deviceType').optional({ values: 'null' }).isIn(['web', 'ios', 'android'])
       .withMessage('Unknown device type'),
   ],
   async (req, res) => {

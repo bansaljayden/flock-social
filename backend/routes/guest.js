@@ -2,10 +2,17 @@ const express = require('express');
 const crypto = require('crypto');
 const { body, param, validationResult } = require('express-validator');
 const pool = require('../config/database');
-const { stripHtml } = require('../utils/sanitize');
 const { rejectIfProfane } = require('../utils/moderation');
 const { guestEntryId } = require('../utils/guestRsvp');
+// Shape before content — see validators/shape.js. This router is the only
+// UNAUTHENTICATED write surface in the app and every value it takes is
+// re-broadcast to the flock, so it is the one that could least afford the hole.
+const { scalarOnly, freeText } = require('../validators/shape');
 const { broadcastGuestRsvp } = require('../sockets/handlers');
+// The member-facing venue tally has one implementation and it lives with the
+// member vote routes — see broadcastGuestVote there for why a guest vote is
+// announced through it rather than emitted from here.
+const { broadcastGuestVote } = require('./venues');
 const { pushIfOffline } = require('../services/pushHelper');
 
 const router = express.Router();
@@ -232,9 +239,22 @@ router.post('/:token/rsvp',
     // skipped stripHtml, and it is written WITHOUT authentication then
     // broadcast to every member over the `guest_rsvp` socket event. Sanitize
     // before the length check so markup can't smuggle past the 60-char cap.
-    body('name').trim().customSanitizer(stripHtml).isLength({ min: 1, max: 60 }).withMessage('Tell them who you are'),
-    body('status').isIn(['in', 'out']).withMessage('RSVP must be in or out'),
-    body('guestToken').optional().isUUID(),
+    // Round 19 (shape sweep): `name: ["<b>x</b>"]` satisfied isLength, was left
+    // untouched by stripHtml AND by rejectIfProfane (both return a non-string
+    // unchanged), and then went into a VARCHAR(60) column, out over the
+    // `guest_rsvp` socket event to every member, and into the host's push
+    // notification title — with its markup and anything the profanity filter
+    // exists to stop. It also slipped the takedown replay guard, because
+    // normalizeGuestName(["Bob",""]) is "bob," and no longer matches the hidden
+    // "bob". Unauthenticated, so this was the cheapest hole in the app.
+    freeText(body('name'), 'name').isLength({ min: 1, max: 60 }).withMessage('Tell them who you are'),
+    // guest_rsvps.status is VARCHAR(10) with CHECK (status IN ('in','out')).
+    // `["in"]` passed isIn by coercion and reached the INSERT as '{in}', which
+    // Postgres refused with 23514 — a 500 on an unauthenticated route.
+    scalarOnly(body('status'), 'RSVP').isIn(['in', 'out']).withMessage('RSVP must be in or out'),
+    // isUUID() accepts a one-element array too, and guest_rsvps.guest_token is
+    // a UUID column: '{9d3f...}' is 22P02, i.e. another unauthenticated 500.
+    scalarOnly(body('guestToken').optional({ values: 'null' }), 'guest token').isUUID(),
   ],
   async (req, res) => {
     try {
@@ -372,8 +392,10 @@ router.post('/:token/rsvp',
 router.post('/:token/vote',
   [
     param('token').trim().isLength({ min: 8, max: 20 }),
-    body('guestToken').isUUID().withMessage('RSVP first, then vote'),
-    body('venueName').trim().isLength({ min: 1, max: 255 }).withMessage('Pick a venue'),
+    scalarOnly(body('guestToken'), 'guest token').isUUID().withMessage('RSVP first, then vote'),
+    // venueName is compared against three tables and then written to a
+    // VARCHAR(255); as an array it reached all four as a Postgres array literal.
+    scalarOnly(body('venueName'), 'venue').trim().isLength({ min: 1, max: 255 }).withMessage('Pick a venue'),
   ],
   async (req, res) => {
     try {
@@ -433,14 +455,14 @@ router.post('/:token/vote',
 
       const venues = await guestTallies(link.flock_id);
 
-      const io = req.app.get('io');
-      if (io) {
-        io.to(`flock:${link.flock_id}`).emit('new_vote', {
-          flockId: link.flock_id,
-          voter: { guest: true },
-          venue_name: venueName,
-        });
-      }
+      // The GUEST gets counts only (guestTallies) — no voter identities ever
+      // cross onto the public link surface. The MEMBERS get the same `new_vote`
+      // payload a member vote produces, fanned out to their personal rooms, so
+      // a guest answering the link reaches them wherever they are in the app
+      // and their tally arrives complete rather than needing a refetch. One
+      // implementation of that tally, in the file that owns it — see
+      // broadcastGuestVote in routes/venues.js.
+      await broadcastGuestVote(req.app.get('io'), link.flock_id, venueName);
 
       res.status(201).json({ venues });
     } catch (err) {

@@ -9,11 +9,18 @@ const express = require('express');
 const { body, param, validationResult } = require('express-validator');
 const pool = require('../config/database');
 const { authenticate } = require('../middleware/auth');
-const { stripHtml } = require('../utils/sanitize');
 const { invalidateBlockCache } = require('../utils/blocks');
+// Shape before content — see validators/shape.js.
+const { scalarOnly, freeText } = require('../validators/shape');
 
 const router = express.Router();
 router.use(authenticate);
+
+// users.id is int4. `param('userId').isInt()` with no ceiling accepted
+// 99999999999, which Postgres answers with 22003 and this file's catch turns
+// into a 500 — on the two routes that ARE the Guideline 1.2 safety control.
+// Same bound the rest of the backend uses.
+const INT4_MAX = 2147483647;
 
 // venue_review added round 6: public UGC with no report path is an
 // App Review 1.2 blocker.
@@ -67,8 +74,16 @@ function allowReport(userId) {
 // POST /api/reports — file a report against content or a user.
 router.post('/reports',
   [
-    body('content_type').isIn(VALID_CONTENT_TYPES).withMessage('Invalid content type'),
-    body('reason').isIn(VALID_REASONS).withMessage('Invalid reason'),
+    // Round 19 (shape sweep). `content_type: ["dm"]` satisfied isIn() by
+    // coercion, then matched none of the `content_type === '...'` branches
+    // below (an array is never === a string), so the visibility check was
+    // skipped entirely and the array reached the INSERT — where the
+    // content_reports CHECK refused '{dm}' with 23514. That landed in the catch
+    // as a 500 AND printed the "VALID_CONTENT_TYPES has drifted ahead of the
+    // constraint" alarm, which would have sent the next maintainer hunting for
+    // a missing migration that does not exist. `reason` has the same CHECK.
+    scalarOnly(body('content_type'), 'content type').isIn(VALID_CONTENT_TYPES).withMessage('Invalid content type'),
+    scalarOnly(body('reason'), 'reason').isIn(VALID_REASONS).withMessage('Invalid reason'),
     // Round 17: these were validated but never CONVERTED. isInt() accepts the
     // string "5" as happily as the number 5, so a client that sent ids as
     // strings (any form-encoded post, or a JS client that read them out of a
@@ -76,9 +91,15 @@ router.post('/reports',
     // told "Reported user does not match the content author" — a legitimate
     // report refused with an accusation. .toInt() makes the comparison mean
     // what it reads as.
-    body('content_id').optional().isInt({ min: 1 }).withMessage('Invalid content id').toInt(),
-    body('reported_user_id').optional().isInt({ min: 1 }).withMessage('Invalid user id').toInt(),
-    body('details').optional().trim().customSanitizer(stripHtml).isLength({ max: 1000 }),
+    //
+    // .toInt() does NOT rescue the array case: it writes back `[5]`, still an
+    // array, which then reached `WHERE m.id = $1` on an int4 column as '{5}'
+    // (22P02, another 500). The shape has to be settled before the conversion.
+    scalarOnly(body('content_id').optional({ values: 'null' }), 'content id').isInt({ min: 1 }).withMessage('Invalid content id').toInt(),
+    scalarOnly(body('reported_user_id').optional({ values: 'null' }), 'user id').isInt({ min: 1 }).withMessage('Invalid user id').toInt(),
+    // `details` is free text a reporter types and a moderator reads in the
+    // console; as an array it kept its markup past stripHtml and was stored.
+    freeText(body('details').optional(), 'details').isLength({ max: 1000 }),
   ],
   async (req, res) => {
     try {
@@ -295,7 +316,7 @@ function badId(req, res) {
   return false;
 }
 
-router.post('/blocks/:userId', [param('userId').isInt()], async (req, res) => {
+router.post('/blocks/:userId', [param('userId').isInt({ min: 1, max: INT4_MAX })], async (req, res) => {
   try {
     if (badId(req, res)) return;
     const blockedId = parseInt(req.params.userId, 10);
@@ -335,7 +356,7 @@ router.post('/blocks/:userId', [param('userId').isInt()], async (req, res) => {
 });
 
 // DELETE /api/blocks/:userId — unblock.
-router.delete('/blocks/:userId', [param('userId').isInt()], async (req, res) => {
+router.delete('/blocks/:userId', [param('userId').isInt({ min: 1, max: INT4_MAX })], async (req, res) => {
   try {
     if (badId(req, res)) return;
     const blockedId = parseInt(req.params.userId, 10);

@@ -41,6 +41,8 @@ const INT4_MAX = 2147483647;
 // ---------------------------------------------------------------------------
 const { emitToFlockMembers, emitToFlockExcludingBlocked } = require('../sockets/handlers');
 const { getInvisibleUserIds, isBlockedBetween } = require('../utils/blocks');
+// Shape before content — see validators/shape.js.
+const { scalarOnly } = require('../validators/shape');
 
 // Refuses a settle-up flow whose whole payload is one blocked person's identity
 // (name + Venmo / Cash App / Zelle handle — a stronger identifier than anything
@@ -154,14 +156,23 @@ router.post('/:flockId/create',
   [
     param('flockId').isInt({ min: 1, max: INT4_MAX }).withMessage('Invalid flock ID'),
     body('totalAmount').isFloat({ min: 0.01, max: 100000 }).withMessage('Total must be between $0.01 and $100,000'),
-    body('tipPercent').optional().isFloat({ min: 0, max: 100 }).withMessage('Tip must be 0-100%'),
-    body('splitType').optional().isIn(['equal', 'custom']).withMessage('Split type must be equal or custom'),
-    body('paidBy').optional().isInt({ min: 1, max: INT4_MAX }).withMessage('Invalid payer ID'),
+    body('tipPercent').optional({ values: 'null' }).isFloat({ min: 0, max: 100 }).withMessage('Tip must be 0-100%'),
+    // Round 19 (shape sweep). This is the one field in the body that reaches a
+    // column WITHOUT being re-derived first: totalAmount, tipPercent and paidBy
+    // are all rebuilt through Number()/parseInt() below, which flattens a
+    // one-element array back to the right number, but splitType is written
+    // straight into bill_splits.split_type. `["custom"]` satisfied isIn() by
+    // coercion, then failed `splitType === 'custom'` (an array is never === a
+    // string) so the bill silently split EQUALLY, and stored '{custom}' — which
+    // GET /:flockId hands back as the split type the client renders. Not a 500;
+    // a bill that says one thing and did another.
+    scalarOnly(body('splitType').optional({ values: 'null' }), 'split type').isIn(['equal', 'custom']).withMessage('Split type must be equal or custom'),
+    body('paidBy').optional({ values: 'null' }).isInt({ min: 1, max: INT4_MAX }).withMessage('Invalid payer ID'),
     // Round 16: no maximum. Every element is reduced over, mapped, and pushed
     // into a Set before the "must be a member" check can reject it, so a
     // million-element array was a million-element CPU burn per request. 100 is
     // far above any real flock (max_members is a fraction of it).
-    body('customShares').optional().isArray({ max: 100 }).withMessage('Too many custom shares'),
+    body('customShares').optional({ values: 'null' }).isArray({ max: 100 }).withMessage('Too many custom shares'),
   ],
   async (req, res) => {
     try {
@@ -172,7 +183,17 @@ router.post('/:flockId/create',
 
       const flockId = parseInt(req.params.flockId);
       const userId = req.user.id;
-      const { totalAmount, tipPercent = 0, splitType = 'equal', paidBy, customShares } = req.body;
+      // `??`, not a destructuring default: a default only fires for `undefined`,
+      // and the validators above now let an explicit `null` through as "absent"
+      // (round 19 — `.optional()` skipping only undefined is what made the
+      // feedback route refuse every honest submission). A null splitType would
+      // otherwise have been written to bill_splits.split_type as SQL NULL and
+      // handed back by GET /:flockId as the split type the client renders.
+      // tipPercent is safe either way — Number(null) is 0 — but is spelled the
+      // same way so the two cannot drift.
+      const { totalAmount, paidBy, customShares } = req.body;
+      const tipPercent = req.body.tipPercent ?? 0;
+      const splitType = req.body.splitType ?? 'equal';
       const payerId = paidBy ? parseInt(paidBy) : userId;
 
       // Verify membership

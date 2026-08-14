@@ -23,7 +23,8 @@ const express = require('express');
 const { body, param, query, validationResult } = require('express-validator');
 const { authenticate } = require('../middleware/auth');
 const pool = require('../config/database');
-const { stripHtml } = require('../utils/sanitize');
+// Shape before content — see validators/shape.js.
+const { freeText } = require('../validators/shape');
 // Called through the module object rather than destructured on purpose. The
 // fail-closed image screen is the single most important line in this file and a
 // destructured binding is frozen at require time, which leaves no way for
@@ -264,10 +265,13 @@ router.post('/',
       .isString().withMessage('A photo is required')
       .bail()
       .matches(IMAGE_DATA_URL).withMessage('That photo could not be posted. Stories take JPEG, PNG or WebP images.'),
-    body('caption')
-      .optional({ checkFalsy: true })
-      .trim()
-      .customSanitizer(stripHtml)
+    // Round 19 (shape sweep): `caption: ["<b>x</b>"]` was left alone by both
+    // stripHtml and moderation.rejectIfProfane (each returns a non-string
+    // unchanged), satisfied the length rule by coercion, and was written through
+    // the explicit `$3::text` cast as the array literal — so an unscreened
+    // caption went onto every friend's feed. image_url above is safe already:
+    // .isString() is itself a shape check and rejects an array outright.
+    freeText(body('caption').optional({ checkFalsy: true }), 'caption')
       .isLength({ max: MAX_CAPTION_LENGTH })
       .withMessage(`Captions are limited to ${MAX_CAPTION_LENGTH} characters`),
   ],
