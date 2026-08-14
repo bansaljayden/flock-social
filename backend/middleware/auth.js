@@ -69,6 +69,120 @@ function revokeUserSessions(io, userId) {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Unverified accounts (round 16) — what a squatter is allowed to do
+// ---------------------------------------------------------------------------
+// A password signup no longer proves anything by existing; it proves something
+// by clicking the link. Until then the rule is:
+//
+//   READ AND BE REACHED, BUT DO NOT ACCUMULATE.
+//
+// An unverified account can sign in, hold a token, read its own profile, look
+// around the app, change its own name, resend its verification mail and delete
+// itself. It cannot do the three things that made squatting an address
+// profitable in the first place:
+//
+//   1. store a payment handle   (Venmo / Cash App / Zelle)
+//   2. gain an accepted friendship
+//   3. create or join a flock
+//
+// Those three are exactly the assets the OAuth account-claim used to hand to
+// the victim: the payment handles that redirect their bill splits, the
+// friendship that makes the attacker a trusted contact, and the flock
+// membership that puts the attacker in the room. Strip those and a squat is
+// worth nothing even if it is never detected. Locking unverified users out of
+// the app entirely was the alternative and it is worse: it turns a mistyped
+// address into a dead end, and it teaches people that Flock is broken.
+//
+// WHY THE LIST IS HERE AND NOT ONLY IN THE ROUTES. `requireVerified` below is
+// the intended, explicit way for a route to opt in, and routes/users.js,
+// routes/friends.js and routes/flocks.js should each mount it. This table is
+// the BACKSTOP that holds until they do, and afterwards holds if one of them is
+// ever refactored and drops the middleware. Belt and braces: the gate is the
+// whole point of the round-16 fix, so it must not depend on three other files
+// remembering it.
+//
+// It is NOT the URL-regex carve-out that middleware/auth.js used to have for
+// bans, and it must never become one. That one matched an unanchored pattern
+// against req.originalUrl INCLUDING the query string, so
+// `DELETE /api/flocks/42?x=/users/me` satisfied it. This matches anchored
+// patterns against `req.baseUrl + req.path`, which are the values Express
+// itself resolved while routing — no query string can reach them, and the
+// string Express matched the route on is the string we match here. Both the
+// raw and percent-decoded forms are tested, and the check is a DENY list on
+// state-changing verbs, so an unrecognised shape fails toward "allowed" the
+// same way it does today rather than toward a mass 403.
+const UNVERIFIED_DENY = [
+  // 1. Payment handles — routes/users.js
+  { method: 'PUT', pattern: /^\/api\/users\/venmo-username$/ },
+  { method: 'PUT', pattern: /^\/api\/users\/payment-methods$/ },
+  // 2. Friendships — routes/friends.js. `request` is included as well as
+  //    `accept`: a squatter's outgoing request is half of an accepted edge, and
+  //    the victim accepting it is the attack working.
+  { method: 'POST', pattern: /^\/api\/friends\/(request|accept|add-by-code)$/ },
+  // 3. Flock membership — routes/flocks.js. Creating a flock makes you its
+  //    first member, so it belongs on the list next to join and invite.
+  { method: 'POST', pattern: /^\/api\/flocks$/ },
+  { method: 'POST', pattern: /^\/api\/flocks\/[^/]+\/(join|invite|invite-link)$/ },
+];
+
+const UNVERIFIED_MESSAGE =
+  'Confirm your email to do this. Check your inbox for the link we sent, or ask for a new one.';
+
+// Normalise one path the way Express's default router settings do: case
+// insensitive, trailing slash optional. Duplicate slashes are collapsed too, so
+// a path cannot be dressed up to miss a pattern it would otherwise hit.
+function normalizeGatePath(value) {
+  let p = String(value || '').toLowerCase().replace(/\/{2,}/g, '/');
+  while (p.length > 1 && p.endsWith('/')) p = p.slice(0, -1);
+  return p || '/';
+}
+
+// The routed path, in both the raw and percent-decoded spellings. Express
+// matched the route on the raw one, so that is the authoritative form; the
+// decoded one is checked as well because over-blocking a strangely encoded URL
+// is a far cheaper mistake than under-blocking one.
+function gateCandidates(req) {
+  const raw = `${req.baseUrl || ''}${req.path || ''}`;
+  const out = new Set([normalizeGatePath(raw)]);
+  try {
+    out.add(normalizeGatePath(decodeURIComponent(raw)));
+  } catch {
+    // Malformed percent-escape. The raw form is what Express routed on, and it
+    // is already in the set.
+  }
+  return out;
+}
+
+// users.email_verified is NOT NULL, so in any database this code can actually
+// query it is exactly true or false. Only a literal `false` gates: a row read
+// by a test harness (or by some future SELECT that omits the column) must not
+// silently lock every user out of friends, flocks and payments.
+function isUnverified(row) {
+  return row?.email_verified === false;
+}
+
+function unverifiedBlocked(req) {
+  const paths = [...gateCandidates(req)];
+  return UNVERIFIED_DENY.some(
+    (rule) => rule.method === req.method && paths.some((p) => rule.pattern.test(p))
+  );
+}
+
+// Explicit opt-in for a route that must not run for an unverified account.
+// Mount it AFTER authenticate: it reads req.user.
+//
+// A missing req.user means this was mounted BEFORE authenticate, which is a
+// wiring mistake rather than a request to allow. Refuse rather than wave it
+// through, so the mistake shows up on the first request instead of silently
+// disabling the gate on whatever route it was mounted on.
+function requireVerified(req, res, next) {
+  if (!req.user || isUnverified(req.user)) {
+    return res.status(403).json({ error: UNVERIFIED_MESSAGE, emailVerificationRequired: true });
+  }
+  next();
+}
+
 // Express middleware factory: verify JWT from Authorization header.
 //
 // `allowBanned` exists for exactly one route — DELETE /api/users/me — because a
@@ -93,9 +207,12 @@ function makeAuthenticate({ allowBanned = false } = {}) {
       const token = header.split(' ')[1];
       const decoded = jwt.verify(token, process.env.JWT_SECRET, { algorithms: TOKEN_ALGORITHMS });
 
-      // Confirm user still exists in DB
+      // Confirm user still exists in DB.
+      // `email_verified` is selected BEFORE is_banned deliberately: it keeps
+      // the `is_banned, token_version FROM users WHERE id = $1` substring that
+      // the existing test harnesses dispatch on intact.
       const result = await pool.query(
-        'SELECT id, email, name, role, is_banned, token_version FROM users WHERE id = $1',
+        'SELECT id, email, name, role, email_verified, is_banned, token_version FROM users WHERE id = $1',
         [decoded.userId]
       );
 
@@ -114,6 +231,12 @@ function makeAuthenticate({ allowBanned = false } = {}) {
       // request, everywhere except the opted-in account-deletion route.
       if (result.rows[0].is_banned && !allowBanned) {
         return res.status(403).json({ error: 'This account has been suspended for violating our community guidelines.' });
+      }
+
+      // Unverified-account backstop (round 16). See UNVERIFIED_DENY above for
+      // the rule and why it lives here as well as in the routes.
+      if (isUnverified(result.rows[0]) && unverifiedBlocked(req)) {
+        return res.status(403).json({ error: UNVERIFIED_MESSAGE, emailVerificationRequired: true });
       }
 
       req.user = result.rows[0];
@@ -147,7 +270,7 @@ const authenticateSocket = async (socket, next) => {
     const decoded = jwt.verify(token, process.env.JWT_SECRET, { algorithms: TOKEN_ALGORITHMS });
 
     const result = await pool.query(
-      'SELECT id, email, name, role, profile_image_url, is_banned, token_version FROM users WHERE id = $1',
+      'SELECT id, email, name, role, profile_image_url, email_verified, is_banned, token_version FROM users WHERE id = $1',
       [decoded.userId]
     );
 
@@ -178,6 +301,17 @@ module.exports = {
   authenticateSocket,
   signUserToken,
   revokeUserSessions,
+  requireVerified,
+  isUnverified,
   TOKEN_EXPIRY,
   TOKEN_ALGORITHMS,
+  UNVERIFIED_MESSAGE,
+};
+
+// Exported for backend/__tests__/emailVerification.test.js.
+module.exports.__testing = {
+  UNVERIFIED_DENY,
+  normalizeGatePath,
+  gateCandidates,
+  unverifiedBlocked,
 };

@@ -137,9 +137,44 @@ const signup = (name, email, dob) =>
   const tD = r.data?.token;
   check('Dave signup', r.status === 201, r);
 
-  const meta = await pool.query('SELECT date_of_birth, terms_accepted_at FROM users WHERE id = $1', [idA]);
+  const meta = await pool.query('SELECT date_of_birth, terms_accepted_at, email_verified FROM users WHERE id = $1', [idA]);
   check('DOB persisted on row', !!meta.rows[0]?.date_of_birth, meta.rows[0]);
   check('terms_accepted_at recorded on signup', !!meta.rows[0]?.terms_accepted_at, meta.rows[0]);
+
+  // --- Email verification (round 16, migration 011) ---
+  // A password signup starts UNVERIFIED and cannot accumulate the things that
+  // make squatting a victim's address profitable: payment handles, accepted
+  // friendships, flock membership. This is the one place that runs against a
+  // real Postgres, so it is also the check that migration 011 actually applied.
+  check('signup account starts unverified', meta.rows[0]?.email_verified === false, meta.rows[0]);
+  const evTable = await pool.query("SELECT to_regclass('public.email_verifications') t");
+  check('email_verifications table created', !!evTable.rows[0].t, evTable.rows[0]);
+  const evRow = await pool.query(
+    'SELECT selector, verifier_hash, email, expires_at, used_at FROM email_verifications WHERE user_id = $1',
+    [idA]
+  );
+  check('a verification link was issued at signup', evRow.rows.length === 1, evRow.rows[0]);
+  check('the link expires', evRow.rows[0] && new Date(evRow.rows[0].expires_at) > new Date(), evRow.rows[0]);
+  check('the token secret is not stored in the clear', /^[0-9a-f]{64}$/.test(evRow.rows[0]?.verifier_hash || ''), evRow.rows[0]);
+
+  r = await req('POST', '/api/flocks', { token: tA, body: { name: 'Blocked Flock' } });
+  check('unverified account cannot create a flock (403)', r.status === 403, r);
+  r = await req('PUT', '/api/users/payment-methods', { token: tA, body: { venmo_username: 'attacker' } });
+  check('unverified account cannot set a payment handle (403)', r.status === 403, r);
+  r = await req('POST', '/api/friends/request', { token: tA, body: { user_id: idB } });
+  check('unverified account cannot send a friend request (403)', r.status === 403, r);
+  r = await req('GET', '/api/auth/me', { token: tA });
+  check('unverified account is not locked out of the app (200)', r.status === 200, r);
+  check('/me reports the verification state', r.data?.user?.email_verified === false, r.data?.user);
+
+  // The link itself only exists inside the email, which is not sent here (no
+  // RESEND_API_KEY), so the rest of the run verifies these accounts directly.
+  // The single-use/expiry/constant-time behaviour of the link is covered in
+  // backend/__tests__/emailVerification.test.js.
+  await pool.query("UPDATE users SET email_verified = TRUE, verified_email = email WHERE email LIKE '%@e2e.test'");
+
+  r = await req('POST', '/api/friends/request', { token: tA, body: { user_id: idB } });
+  check('verifying lifts the gate (friend request now allowed)', r.status < 400, r);
 
   // --- Flock + members ---
   r = await req('POST', '/api/flocks', { token: tA, body: { name: 'Test Flock' } });
