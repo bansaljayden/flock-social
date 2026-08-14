@@ -35,11 +35,29 @@ async function gateForecast(result, userId, { count } = {}) {
   const usedBefore = getUsedThisMonth(userId);
   if (usedBefore >= FREE_MONTHLY_FORECASTS) {
     // Allowance spent — strip the premium prediction, keep the free live score.
+    //
+    // EVERY FIELD THAT CARRIES THE BEST-TIME ANSWER GOES, not just the sentence.
+    // bestHour / bestIndex / bestIsNow were added later, in the same rewrite
+    // that made the chart mark the recommended bar, and this gate was not
+    // updated with them: `bestTime: null` blanked the sentence while
+    // `bestHour: "9 PM"` sat two lines below it, so a locked response still
+    // named the hour the paywall exists to sell, and `bestIsNow` still answered
+    // "is now a good time" outright. Frontend gating is cosmetic (SLOP-AUDIT
+    // rule 7), so anything left in this payload is shipped.
+    //
+    // What deliberately STAYS is the free half: score, label, capacity,
+    // waitEstimate and the live calibration all describe "how busy is it right
+    // now", plus hoursToday/isOpen, which are Google's posted hours and were
+    // never ours to sell. __tests__/presenceParity.test.js pins both halves —
+    // add a field to the premium set and it must be added here too.
     return {
       ...result,
       bestTime: null,
       hourly: [],
       peak: null,
+      bestHour: null,
+      bestIndex: null,
+      bestIsNow: null,
       forecastAccess: { locked: true, remaining: 0, limit: FREE_MONTHLY_FORECASTS },
     };
   }
@@ -117,18 +135,43 @@ function priceLevelToNum(priceLevel) {
 async function fetchVenueFromGoogle(placeId, clientDay) {
   if (!API_KEY) return null;
 
-  const response = await fetch(`https://places.googleapis.com/v1/places/${placeId}`, {
-    headers: {
-      'X-Goog-Api-Key': API_KEY,
-      'X-Goog-FieldMask': 'id,displayName,formattedAddress,rating,userRatingCount,priceLevel,types,location,currentOpeningHours,utcOffsetMinutes',
-    },
-    // Round 12: no deadline meant a hung Google socket parked this request (and
-    // its pg pool slot) for ~5 minutes. See utils/upstream.js.
-    signal: upstreamSignal('places'),
-  });
-
-  const p = await response.json();
-  if (p.error) return null;
+  // ENCODED. `placeId` is a raw path segment off the request — Express has
+  // already percent-DECODED it, so `/api/crowd/x%2F..%2Fadmin` arrives here as
+  // `x/../admin` and interpolating it raw builds a URL that the WHATWG parser
+  // then normalises into a DIFFERENT Google endpoint, called with our API key
+  // attached. A `?` or `#` in the id does the same to the query string. Nothing
+  // else on the way in stops it: the validator below bounds the length but
+  // allows any characters, and this file accepts ids that were never checked
+  // against utils/places.isPlaceIdShaped (routes/checkin.js and feedback.js do
+  // check, and routes/publicCrowd.js has encoded this call since it was
+  // written). One segment, always. A bogus id is then Google's 404, which
+  // fetchVenueFromGoogle already turns into a 502.
+  // The deadline from round 12 is what makes the try/catch below load-bearing
+  // rather than paranoia: an upstreamSignal abort REJECTS this fetch, and a
+  // rejection here escaped to each route's outer catch as a 500 "Prediction
+  // error". Google timing out is Google failing, and both callers already have
+  // the right answer for that — a null return is a 502 in GET /:placeId and in
+  // /alternatives, which is the code the round-19 note picked for exactly this
+  // case ("both are Google failing rather than this server"). A non-JSON body
+  // from a proxy takes the same route out. Only a genuinely bad place id should
+  // ever have produced the same null, and it still does.
+  let p;
+  try {
+    const response = await fetch(`https://places.googleapis.com/v1/places/${encodeURIComponent(placeId)}`, {
+      headers: {
+        'X-Goog-Api-Key': API_KEY,
+        'X-Goog-FieldMask': 'id,displayName,formattedAddress,rating,userRatingCount,priceLevel,types,location,currentOpeningHours,utcOffsetMinutes',
+      },
+      // Round 12: no deadline meant a hung Google socket parked this request (and
+      // its pg pool slot) for ~5 minutes. See utils/upstream.js.
+      signal: upstreamSignal('places'),
+    });
+    p = await response.json();
+  } catch (err) {
+    console.error('[Crowd] Place details unreachable:', err.message);
+    return null;
+  }
+  if (!p || p.error) return null;
 
   // Extract opening hours. Round 14: one window for "today" could not express
   // a 24-hour venue (Google sends no `close` at all), split lunch/dinner
@@ -183,7 +226,9 @@ router.use(authenticate);
 // GET /api/crowd/:placeId — Full crowd prediction for one venue
 // ---------------------------------------------------------------------------
 router.get('/:placeId',
-  param('placeId').trim().isLength({ min: 1 }).withMessage('placeId is required'),
+  // max 200 to match routes/publicCrowd.js and routes/feedback.js: the id is a
+  // cache-key component, so an unbounded one is unbounded memory per request.
+  param('placeId').trim().isLength({ min: 1, max: 200 }).withMessage('placeId is required'),
   async (req, res) => {
     try {
       const errors = validationResult(req);
@@ -477,6 +522,34 @@ router.post('/batch',
       const placeIds = venues.map(v => v.place_id).filter(Boolean);
       const batchHour = localHour != null ? localHour : clientTime.getHours();
       const batchDay = localDay != null ? localDay : clientTime.getDay();
+
+      // KNOWN GAP, left whole rather than half-fixed (audit round 6).
+      //
+      // Rounds 13-15 moved the card, the alternatives list, the marketing demo
+      // and the owner dashboard onto the venue's own wall clock. THIS LIST WAS
+      // NOT MOVED, and it is the list the card sits under: for a venue outside
+      // the viewer's zone its detail page scores 8 PM at the door while the
+      // vote-list row beside it scores 11 PM in the viewer's living room. Both
+      // halves of the /alternatives note below apply word for word — the score
+      // printed here is a different hour's answer, and the feedback lookup is
+      // keyed on (day_of_week, hour), so it reads a different weekly bucket
+      // than the card's: verified reporters can move one surface and leave the
+      // other untouched.
+      //
+      // Why it is not fixed here. The venues arrive in the REQUEST BODY rather
+      // than from Google, so each carries its own utcOffsetMinutes and the
+      // window below stops being one (day, hour) pair set shared by every venue
+      // — the statement has to become a (venue_place_id, day_of_week, hour)
+      // tuple list, which changes its parameter layout.
+      // __tests__/paidCallBudgets.test.js pins these parameters POSITIONALLY
+      // ($1 = the place id array, $2..$7 = the three pairs), and that file
+      // belongs to another area of this audit. Doing only the scoring half
+      // without the lookup half would be WORSE than leaving it: the score and
+      // the reports calibrating it would then disagree inside one response.
+      //
+      // Impact is bounded. Venues in a vote list come from a Places search near
+      // the user, so the two clocks are the same in almost every real request;
+      // it bites when a group plans somewhere in another time zone.
       let feedbackByVenue = {};
       try {
         const fbResult = await pool.query(
@@ -485,9 +558,33 @@ router.post('/batch',
           // dedupe and the 28-day window inside buildCalibrationAdjustment have
           // nothing to act on and every row votes. This list drives the score
           // printed beside each venue in the vote list, so it is the surface a
-          // Sybil would actually aim at. There is no LIMIT here, so the age
-          // bound is the only thing keeping an unbounded history out of a
-          // 20-venue request. Window must match crowdEngine.CALIBRATION_MAX_AGE_MS.
+          // Sybil would actually aim at. Window must match
+          // crowdEngine.CALIBRATION_MAX_AGE_MS.
+          //
+          // NO `DISTINCT ON (user_id)` HERE, AND THAT IS A DECISION — one that
+          // holds only because of the line below it. Re-checked this round:
+          //   * buildCalibrationAdjustment collapses repeat rows per account in
+          //     JavaScript, so duplicates cost bytes, never votes. Verified: the
+          //     one account / four rows case is pinned in
+          //     __tests__/calibrationQueries.test.js.
+          //   * a NULL user_id is the one row shape that JS counts individually,
+          //     and no such row can exist: routes/feedback.js is the only writer
+          //     and always binds the authenticated caller, and the column is
+          //     `REFERENCES users(id) ON DELETE CASCADE` (migration 001), so a
+          //     deleted account takes its reports with it rather than orphaning
+          //     them as NULLs. Change that FK to SET NULL and this query starts
+          //     counting one dead account as many reporters.
+          //   * THERE IS NO `LIMIT`. That is what makes the dedupe optional here
+          //     and mandatory on the single-venue read: a row budget spent on
+          //     duplicates is a genuine reporter pushed out of the sample,
+          //     whereas an unbudgeted read simply fetches the duplicates and
+          //     discards them.
+          // So the invariant is: **a LIMIT on a calibration read requires
+          // DISTINCT ON (user_id)**. Adding a row cap to bound this query — a
+          // reasonable thing to want, since only the 28-day window bounds it
+          // today — silently re-introduces the exact bug DISTINCT ON was added
+          // to fix. __tests__/presenceParity.test.js fails if a LIMIT ever
+          // appears here without one, and if the FK stops being CASCADE.
           `SELECT venue_place_id, crowd_level, predicted_score, user_id, created_at FROM venue_feedback
            WHERE venue_place_id = ANY($1::text[])
              AND (day_of_week, hour) IN (($2::int, $3::int), ($4::int, $5::int), ($6::int, $7::int))
@@ -504,6 +601,7 @@ router.post('/batch',
       }
 
       const predictions = await Promise.all(venues.map(async v => {
+        // One clock for the whole list — see the KNOWN GAP note above.
         const result = await mlPredictor.predictBusyness(v, weather, clientTime);
         const cal = buildCalibrationAdjustment(feedbackByVenue[v.place_id] || [], result.score);
         const boost = cal.feedbackUsed ? Math.min(15, cal.reportCount * 3) : 0;
@@ -538,7 +636,7 @@ router.post('/batch',
 // GET /api/crowd/:placeId/alternatives — Quieter nearby venues
 // ---------------------------------------------------------------------------
 router.get('/:placeId/alternatives',
-  param('placeId').trim().isLength({ min: 1 }).withMessage('placeId is required'),
+  param('placeId').trim().isLength({ min: 1, max: 200 }).withMessage('placeId is required'),
   async (req, res) => {
     try {
       const errors = validationResult(req);
@@ -609,24 +707,35 @@ router.get('/:placeId/alternatives',
 
       // Search nearby venues of similar type
       const primaryType = target.types[0] || 'restaurant';
-      const searchResponse = await fetch('https://places.googleapis.com/v1/places:searchText', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-Goog-Api-Key': API_KEY,
-          'X-Goog-FieldMask': 'places.id,places.displayName,places.rating,places.userRatingCount,places.priceLevel,places.types,places.location,places.currentOpeningHours,places.utcOffsetMinutes',
-        },
-        body: JSON.stringify({
-          textQuery: primaryType,
-          locationBias: {
-            circle: { center: { latitude: lat, longitude: lon }, radius: 2000.0 },
+      // Wrapped for the same reason as the target fetch above: the round-12
+      // deadline makes a rejection here a normal upstream outcome, and it used
+      // to leave as a 500 while the identical failure one status check later
+      // left as a 502. One answer for "we could not ask", whichever way the
+      // asking failed.
+      let searchResponse;
+      let searchData;
+      try {
+        searchResponse = await fetch('https://places.googleapis.com/v1/places:searchText', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Goog-Api-Key': API_KEY,
+            'X-Goog-FieldMask': 'places.id,places.displayName,places.rating,places.userRatingCount,places.priceLevel,places.types,places.location,places.currentOpeningHours,places.utcOffsetMinutes',
           },
-          maxResultCount: 10,
-        }),
-        signal: upstreamSignal('places'), // round 12
-      });
-
-      const searchData = await searchResponse.json();
+          body: JSON.stringify({
+            textQuery: primaryType,
+            locationBias: {
+              circle: { center: { latitude: lat, longitude: lon }, radius: 2000.0 },
+            },
+            maxResultCount: 10,
+          }),
+          signal: upstreamSignal('places'), // round 12
+        });
+        searchData = await searchResponse.json();
+      } catch (netErr) {
+        console.error('[Crowd] Alternatives search unreachable:', netErr.message);
+        return res.status(502).json({ error: 'Could not load nearby venues right now', unavailable: true });
+      }
       // Round 19: `(searchData.places || [])` turned every upstream failure into
       // an empty neighbour list, and an empty list is this endpoint's way of
       // saying "we looked, and nothing near you is quieter". A quota, auth or
@@ -675,6 +784,11 @@ router.get('/:placeId/alternatives',
           // calibrated under different rules and a venue could be listed as
           // quieter than a card it is in fact busier than. Window must match
           // crowdEngine.CALIBRATION_MAX_AGE_MS.
+          //
+          // Un-deduped in SQL for the same reason as the batch read above, and
+          // under the same invariant: no LIMIT, so duplicate rows cost bytes
+          // rather than crowding a genuine reporter out of a budget. Put a
+          // LIMIT on this and it needs DISTINCT ON (user_id) in the same edit.
           `SELECT venue_place_id, crowd_level, predicted_score, user_id, created_at FROM venue_feedback
            WHERE venue_place_id = ANY($1::text[])
              AND (day_of_week, hour) IN (($2::int, $3::int), ($4::int, $5::int), ($6::int, $7::int))

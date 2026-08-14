@@ -5,9 +5,20 @@ const { authenticate } = require('../middleware/auth');
 const { requireVenueTier, venueBillingEnabled } = require('../services/venueEntitlements');
 const { rejectIfProfane } = require('../utils/moderation');
 const { upstreamSignal } = require('../utils/upstream');
+// Shape before content — see validators/shape.js. Nothing this router accepts
+// is ever legitimately an array or an object, so every body field below is
+// either scalarOnly (identifiers, numbers) or freeText (anything a person types
+// that another person reads back).
+const { scalarOnly, freeText } = require('../validators/shape');
 
 const router = express.Router();
 router.use(authenticate);
+
+// Every :id here is a SERIAL, i.e. int4. `isInt()` with no ceiling let
+// /promotions/99999999999999999999 satisfy the chain and reach Postgres, which
+// answers 22003 "value out of range for type integer" — a 500 for what is
+// plainly a 404. Same bound the other routers use (routes/messages.js et al).
+const INT4_MAX = 2147483647;
 
 // Paid-tier boundaries (VENUE-BILLING.md): promotions, events, the full
 // incoming-flocks feed, the demand curve (/intelligence) and the competitive
@@ -80,11 +91,20 @@ router.get('/promotions', async (req, res) => {
 });
 
 // POST /api/venue-dashboard/promotions
+// Round 20 (shape sweep): all four fields are PUBLIC UGC — /public-promotions
+// serves title, description, time_slot and days to every user looking at the
+// venue card — and not one of them was passed through stripHtml. The array form
+// made that worse rather than merely equal: `title: ["<b>x</b>"]` satisfies
+// isLength by coercion, skips .trim() (a sanitizer returns a non-string
+// untouched), and is answered allowed:true by rejectIfProfane, so the one screen
+// this route did run was skipped as well. It then reached VARCHAR(255) as the
+// Postgres literal `{"<b>x</b>"}`. freeText settles the shape first, strips the
+// markup, and measures the length AFTER stripping.
 router.post('/promotions', requirePremium, [
-  body('title').trim().isLength({ min: 1, max: 80 }).withMessage('Title is required (max 80 characters)'),
-  body('description').optional().trim().isLength({ max: 300 }),
-  body('timeSlot').optional().trim().isLength({ max: 60 }),
-  body('days').optional().trim().isLength({ max: 60 }),
+  freeText(body('title'), 'title').isLength({ min: 1, max: 80 }).withMessage('Title is required (max 80 characters)'),
+  freeText(body('description').optional({ nullable: true }), 'description').isLength({ max: 300 }).withMessage('Description is too long (max 300 characters)'),
+  freeText(body('timeSlot').optional({ nullable: true }), 'time slot').isLength({ max: 60 }).withMessage('Time slot is too long (max 60 characters)'),
+  freeText(body('days').optional({ nullable: true }), 'days').isLength({ max: 60 }).withMessage('Days is too long (max 60 characters)'),
 ], async (req, res) => {
   try {
     const errors = validationResult(req);
@@ -110,12 +130,18 @@ router.post('/promotions', requirePremium, [
 });
 
 // PUT /api/venue-dashboard/promotions/:id
+// Same four public fields, same guard. `optional({ nullable: true })` rather
+// than `optional()` throughout: express-validator 7 skips only `undefined`, and
+// the handler below already reads a null as "leave this one alone" (`title ||
+// null` feeding a COALESCE), so a client that spells "no change" as an explicit
+// null was being answered 400 by the chain for a request the route knows how to
+// serve.
 router.put('/promotions/:id', requirePremium, [
-  param('id').isInt(),
-  body('title').optional().trim().isLength({ min: 1, max: 80 }).withMessage('Title too long (max 80 characters)'),
-  body('description').optional().trim().isLength({ max: 300 }),
-  body('timeSlot').optional().trim().isLength({ max: 60 }),
-  body('days').optional().trim().isLength({ max: 60 }),
+  param('id').isInt({ min: 1, max: INT4_MAX }),
+  freeText(body('title').optional({ nullable: true }), 'title').isLength({ min: 1, max: 80 }).withMessage('Title too long (max 80 characters)'),
+  freeText(body('description').optional({ nullable: true }), 'description').isLength({ max: 300 }).withMessage('Description is too long (max 300 characters)'),
+  freeText(body('timeSlot').optional({ nullable: true }), 'time slot').isLength({ max: 60 }).withMessage('Time slot is too long (max 60 characters)'),
+  freeText(body('days').optional({ nullable: true }), 'days').isLength({ max: 60 }).withMessage('Days is too long (max 60 characters)'),
 ], async (req, res) => {
   try {
     const errors = validationResult(req);
@@ -186,7 +212,7 @@ router.put('/promotions/:id', requirePremium, [
 });
 
 // DELETE /api/venue-dashboard/promotions/:id
-router.delete('/promotions/:id', requirePremium, param('id').isInt(), async (req, res) => {
+router.delete('/promotions/:id', requirePremium, param('id').isInt({ min: 1, max: INT4_MAX }), async (req, res) => {
   try {
     // param('id').isInt() was declared but its result was never read, so a
     // non-numeric id (e.g. /promotions/abc) reached Postgres as a string and came
@@ -226,11 +252,19 @@ router.get('/events', async (req, res) => {
 });
 
 // POST /api/venue-dashboard/events
+// Event titles are the same story as promotion titles: owner-typed, read back
+// on the dashboard and (via venue_events) intended for the venue card, screened
+// by rejectIfProfane and by nothing else. An array skipped even that.
+//
+// `capacity` had a second problem of its own. `isInt({ min: 1 })` has no
+// ceiling, and the column is INTEGER — so `capacity: 3000000000` was a 22003
+// from Postgres, a 500 for a plainly bad request. Bound it to int4 the same way
+// the :id params are.
 router.post('/events', requirePremium, [
-  body('title').trim().isLength({ min: 1, max: 120 }).withMessage('Title is required (max 120 characters)'),
-  body('eventDate').optional().trim().isLength({ max: 40 }),
-  body('eventTime').optional().trim().isLength({ max: 40 }),
-  body('capacity').optional().isInt({ min: 1 }),
+  freeText(body('title'), 'title').isLength({ min: 1, max: 120 }).withMessage('Title is required (max 120 characters)'),
+  freeText(body('eventDate').optional({ nullable: true }), 'event date').isLength({ max: 40 }).withMessage('Event date is too long (max 40 characters)'),
+  freeText(body('eventTime').optional({ nullable: true }), 'event time').isLength({ max: 40 }).withMessage('Event time is too long (max 40 characters)'),
+  scalarOnly(body('capacity').optional({ nullable: true }), 'capacity').isInt({ min: 1, max: INT4_MAX }).withMessage('Capacity must be a whole number of people'),
 ], async (req, res) => {
   try {
     const errors = validationResult(req);
@@ -255,11 +289,11 @@ router.post('/events', requirePremium, [
 
 // PUT /api/venue-dashboard/events/:id
 router.put('/events/:id', requirePremium, [
-  param('id').isInt(),
-  body('title').optional().trim().isLength({ min: 1, max: 120 }).withMessage('Title too long (max 120 characters)'),
-  body('eventDate').optional().trim().isLength({ max: 40 }),
-  body('eventTime').optional().trim().isLength({ max: 40 }),
-  body('capacity').optional().isInt({ min: 1 }),
+  param('id').isInt({ min: 1, max: INT4_MAX }),
+  freeText(body('title').optional({ nullable: true }), 'title').isLength({ min: 1, max: 120 }).withMessage('Title too long (max 120 characters)'),
+  freeText(body('eventDate').optional({ nullable: true }), 'event date').isLength({ max: 40 }).withMessage('Event date is too long (max 40 characters)'),
+  freeText(body('eventTime').optional({ nullable: true }), 'event time').isLength({ max: 40 }).withMessage('Event time is too long (max 40 characters)'),
+  scalarOnly(body('capacity').optional({ nullable: true }), 'capacity').isInt({ min: 1, max: INT4_MAX }).withMessage('Capacity must be a whole number of people'),
 ], async (req, res) => {
   try {
     const errors = validationResult(req);
@@ -286,7 +320,7 @@ router.put('/events/:id', requirePremium, [
 });
 
 // DELETE /api/venue-dashboard/events/:id
-router.delete('/events/:id', requirePremium, param('id').isInt(), async (req, res) => {
+router.delete('/events/:id', requirePremium, param('id').isInt({ min: 1, max: INT4_MAX }), async (req, res) => {
   try {
     // Same unenforced validator as the promotions DELETE: read it so a
     // non-numeric id is a 404 rather than a Postgres 500.
@@ -423,9 +457,14 @@ router.get('/reviews', async (req, res) => {
 });
 
 // POST /api/venue-dashboard/reviews/:id/reply — venue owner replies to a review
+// `reply` is the single most publicly-visible string this router writes: it
+// rides the verified badge on the venue card in /public-reviews, addressed to
+// every user who reads that venue's reviews. It had no stripHtml, and
+// `reply: ["<img src=x onerror=…>"]` also walked past the rejectIfProfane call
+// two lines below — the only screen it had.
 router.post('/reviews/:id/reply', [
-  param('id').isInt(),
-  body('reply').trim().isLength({ min: 1, max: 1000 }).withMessage('Reply is required (max 1000 characters)'),
+  param('id').isInt({ min: 1, max: INT4_MAX }),
+  freeText(body('reply'), 'reply').isLength({ min: 1, max: 1000 }).withMessage('Reply is required (max 1000 characters)'),
 ], async (req, res) => {
   try {
     const errors = validationResult(req);
@@ -475,9 +514,18 @@ router.post('/reviews/:id/reply', [
 router.post('/submit-review', [
   // Round 12: venue_reviews.google_place_id is VARCHAR(255) — an unbounded id
   // overflowed it and surfaced as a 500 instead of a 400.
-  body('googlePlaceId').trim().isLength({ min: 1, max: 200 }).withMessage('Place ID is required'),
-  body('rating').isInt({ min: 1, max: 5 }).withMessage('Rating 1-5 required'),
-  body('text').optional().trim().isLength({ max: 1000 }).withMessage('Review is too long (max 1000 characters)'),
+  // Round 20 (shape sweep). All three fields were reachable as arrays:
+  //   * googlePlaceId fed the presence query AND a VARCHAR(255) column;
+  //   * rating fed an INTEGER column behind CHECK (rating BETWEEN 1 AND 5), so
+  //     `rating: [3]` satisfied isInt by coercion and came back 22P02 — a 500;
+  //   * `text` is the review body itself. It is PUBLIC UGC about someone else's
+  //     business, shown on the venue card and on the owner's dashboard, and it
+  //     had no stripHtml on any path. `text: ["<b>x</b>"]` cleared isLength by
+  //     coercion and was answered allowed:true by rejectIfProfane, so the
+  //     profanity screen five lines down never saw it either.
+  scalarOnly(body('googlePlaceId'), 'place id').trim().isLength({ min: 1, max: 200 }).withMessage('Place ID is required'),
+  scalarOnly(body('rating'), 'rating').isInt({ min: 1, max: 5 }).withMessage('Rating 1-5 required'),
+  freeText(body('text').optional({ nullable: true }), 'review').isLength({ max: 1000 }).withMessage('Review is too long (max 1000 characters)'),
 ], async (req, res) => {
   try {
     const errors = validationResult(req);
@@ -495,27 +543,47 @@ router.post('/submit-review', [
     // card is derived from these rows.
     //
     // This is the same trust rule venue_feedback.verified uses (routes/
-    // feedback.js): an HMAC-signed NFC tap ('nfc'; unsigned URL visits are
-    // stored as 'nfc_unverified' by migration 004 and prove nothing), OR
-    // accepted membership in a flock that met at this venue. Both halves are
-    // required to keep the real flow working — almost no venue has an NFC tag
-    // yet, so check-ins alone would refuse nearly every honest review, and the
-    // flock signal is what the product's own loop produces.
+    // feedback.js VERIFIED_PRESENCE_SQL): an HMAC-signed NFC tap ('nfc';
+    // unsigned URL visits are stored as 'nfc_unverified' by migration 004 and
+    // prove nothing), OR accepted membership in a flock that met at this venue.
+    // Both halves are required to keep the real flow working — almost no venue
+    // has an NFC tag yet, so check-ins alone would refuse nearly every honest
+    // review, and the flock signal is what the product's own loop produces.
     //
-    // The windows are the one deliberate difference from feedback.js. Feedback
-    // is a live crowd report, so it trusts a 3-hour tap and a ±12-hour event.
-    // A review is written after the fact, often the next morning, so presence
-    // counts for 30 days. Reviewing while you are still there also works: the
-    // event window keeps feedback's 12-hour lead. A cancelled flock is an
-    // explicit "we did not go", so it proves nothing; a flock with no
+    // THE CONDITIONS ARE NOW IDENTICAL TO feedback.js; ONLY THE WINDOWS DIFFER.
+    // That was not true until this round. The flock branch was missing the
+    // "at least two accepted members" clause while the comment above it claimed
+    // parity, and the missing clause is the load-bearing one: creating a flock
+    // is a single POST with a client-supplied venue_id, so a solo flock is
+    // self-certification. One account could mint a five-star review — or a
+    // one-star review of a competitor — for any Google place id on earth, at
+    // will, and the public star rating on the venue card is derived from these
+    // rows. Requiring a second account to ACCEPT does not make forgery
+    // impossible; it changes the cost from one request to a second real account
+    // that also has to accept, per fabricated venue. Flock is a group product,
+    // and a hangout of one is not what a venue review is supposed to describe.
+    // Keep this clause in step with feedback.js — __tests__/presenceParity
+    // .test.js compares the two statements clause by clause.
+    //
+    // DELIBERATE DIFFERENCES, kept on purpose (the test above asserts these too,
+    // so they cannot be "fixed" into a false equivalence):
+    //   * Windows. Feedback is a LIVE crowd report, so it trusts a 3-hour tap
+    //     and a ±12-hour event. A review is written after the fact, often the
+    //     next morning, so presence counts for 30 days on both signals.
+    //     Reviewing while you are still there also works: the event window
+    //     keeps feedback's 12-hour lead.
+    //   * The third EXISTS below has no counterpart in feedback.js, because
+    //     feedback INSERTs and this route UPSERTs. See the note on it.
+    // Shared with feedback.js and NOT a difference: a cancelled flock is an
+    // explicit "we did not go" and proves nothing, and a flock with no
     // event_time cannot be dated and is not counted either.
     //
     // Honest about what this is: it raises the cost of a fabricated review from
-    // one POST to a fabricated flock, and it is the strongest presence signal
-    // this codebase has. It is not proof against a determined script — a user
-    // can still create a flock naming any place id and confirm it. Closing that
-    // needs the NFC/geo signal, which almost no venue has hardware for yet.
-    // The same limit applies to venue_feedback.verified today.
+    // one POST to a fabricated flock with a second consenting account, and it is
+    // the strongest presence signal this codebase has. It is not proof against a
+    // determined script with two accounts. Closing that needs the NFC/geo
+    // signal, which almost no venue has hardware for yet. The same limit applies
+    // to venue_feedback.verified today.
     const presence = await pool.query(
       `SELECT
          EXISTS (
@@ -535,6 +603,10 @@ router.post('/submit-review', [
              AND f.status IS DISTINCT FROM 'cancelled'
              AND f.event_time BETWEEN NOW() - INTERVAL '30 days'
                                   AND NOW() + INTERVAL '12 hours'
+             AND (
+               SELECT COUNT(*) FROM flock_members m
+               WHERE m.flock_id = f.id AND m.status = 'accepted'
+             ) >= 2
          )
          -- This route is an upsert: the same POST edits an existing review.
          -- Presence is proved when the review is FIRST written, and it would be
@@ -731,7 +803,13 @@ async function fetchVenueBasics(placeId, userId) {
   if (!GOOGLE_KEY) return null;
   // Round 9: charge the shared budget before every paid upstream call.
   if (!allowPlacesSearch(userId)) return BUDGET_EXCEEDED;
-  const r = await fetch(`https://places.googleapis.com/v1/places/${placeId}`, {
+  // ENCODED, same reason as routes/crowd.js fetchVenueFromGoogle. This id is
+  // less obviously attacker-shaped — it is venue_profiles.google_place_id, not
+  // a path segment — but it is still a string the venue owner typed into Edit
+  // Profile, and nothing on that write path constrains it to
+  // utils/places.isPlaceIdShaped. A `/../` or a `?` in it re-points this call
+  // at a different Google endpoint carrying our API key.
+  const r = await fetch(`https://places.googleapis.com/v1/places/${encodeURIComponent(placeId)}`, {
     headers: {
       'X-Goog-Api-Key': GOOGLE_KEY,
       // Round 15: utcOffsetMinutes drives the venue-clock scoring below and the
@@ -864,7 +942,7 @@ router.get('/strip', requirePremium, async (req, res) => {
     const wanted = ['bar', 'night_club', 'restaurant'].filter((t) => me.types.includes(t));
     // Round 9: searchNearby is a second paid call — charge it separately.
     if (!allowPlacesSearch(req.user.id)) return res.status(429).json({ error: BUDGET_MESSAGE });
-    const nearby = await fetch('https://places.googleapis.com/v1/places:searchNearby', {
+    const nearbyRes = await fetch('https://places.googleapis.com/v1/places:searchNearby', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -881,7 +959,18 @@ router.get('/strip', requirePremium, async (req, res) => {
         },
       }),
       signal: upstreamSignal('places'), // round 12
-    }).then((r) => r.json());
+    });
+    // The verdict is read from the RESPONSE as well as from the body. Round 19
+    // checked `nearby.error` alone, which is Google's own error envelope and
+    // covers Google's own failures — but not the two that arrive without one: a
+    // gateway or proxy in front of Places answering a non-2xx with a body that
+    // is not that envelope, and a body that is not JSON at all (which used to
+    // throw out of the old `.then(r => r.json())` and land in the outer catch as
+    // a 500). Both previously left `places` undefined, which `(nearby.places ||
+    // [])` below reads as a successful search that found nobody — the exact
+    // false answer round 19 removed, through a different door.
+    let nearby = null;
+    try { nearby = await nearbyRes.json(); } catch { /* not JSON: handled below */ }
 
     // Round 19: `(nearby.places || [])` swallowed an upstream failure. A quota,
     // auth or Places outage comes back as `{ error: ... }` with no `places` key,
@@ -893,8 +982,9 @@ router.get('/strip', requirePremium, async (req, res) => {
     // dashboard can explain, and nothing cached, so the next request retries.
     // (Same rule routes/publicCrowd.js already follows for its two searches, and
     // the same one fetchVenueBasics above follows for the owner's own listing.)
-    if (nearby.error) {
-      console.error('[VenueStrip] Places searchNearby failed:', nearby.error.message || nearby.error.status);
+    if (!nearby || nearby.error || nearbyRes.status >= 400) {
+      console.error('[VenueStrip] Places searchNearby failed:',
+        nearby?.error?.message || nearby?.error?.status || `HTTP ${nearbyRes.status}`);
       return res.json({
         available: false,
         reason: 'Could not load the venues around you right now. Try again in a few minutes.',
