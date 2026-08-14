@@ -603,10 +603,26 @@ export async function getMessages(flockId) {
   return request(`/api/flocks/${flockId}/messages`);
 }
 
+// A message carries text, an image, or both. `image_url` was missing here, so
+// the REST transport — the fallback the socket client uses while its connection
+// is down — could not send a photo at all: it posted a message_type of 'image'
+// with no image and the server stored an empty row. Photos in a flock chat
+// therefore worked only while the socket was up, which is exactly when the
+// fallback is not being used. The field name matches what the flock-message and
+// DM routes read (`image_url`, a data: URL).
 export async function sendMessage(flockId, text, opts = {}) {
   return request(`/api/flocks/${flockId}/messages`, {
     method: 'POST',
-    body: JSON.stringify({ message_text: text, message_type: opts.message_type || 'text', venue_data: opts.venue_data || undefined }),
+    // A message carrying a photo IS an upload: the image travels in the body as
+    // a data: URL. On the 15s default it timed out on exactly the weak signal
+    // that put the send on this transport in the first place.
+    timeout: opts.image_url ? UPLOAD_TIMEOUT_MS : undefined,
+    body: JSON.stringify({
+      message_text: text || '',
+      message_type: opts.message_type || 'text',
+      venue_data: opts.venue_data || undefined,
+      image_url: opts.image_url || undefined,
+    }),
   });
 }
 
@@ -626,10 +642,21 @@ export async function getDMs(userId) {
   return request(`/api/dm/${userId}`);
 }
 
+// The DM twin already forwarded `image_url`; the rest of the body is normalised
+// to match sendMessage above so the two transports and the two surfaces cannot
+// drift. `message_text` is NOT NULL server-side, so an image-only DM sends '',
+// never null.
 export async function sendDM(userId, text, opts = {}) {
   return request(`/api/dm/${userId}`, {
     method: 'POST',
-    body: JSON.stringify({ message_text: text, message_type: opts.message_type, venue_data: opts.venue_data, image_url: opts.image_url, reply_to_id: opts.reply_to_id }),
+    timeout: opts.image_url ? UPLOAD_TIMEOUT_MS : undefined,
+    body: JSON.stringify({
+      message_text: text || '',
+      message_type: opts.message_type || 'text',
+      venue_data: opts.venue_data || undefined,
+      image_url: opts.image_url || undefined,
+      reply_to_id: opts.reply_to_id || undefined,
+    }),
   });
 }
 
