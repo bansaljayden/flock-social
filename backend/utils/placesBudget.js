@@ -66,16 +66,53 @@
 //   ever helps a user who was already being throttled, and the global ceiling
 //   is what actually bounds the bill.
 //
-// UNCHARGED PAID SURFACES (as of this audit — these bypass GLOBAL_DAILY):
-//   routes/badge.js            Place Details, unauthenticated, gated only by
-//                              "venue is claimed AND verified" + a 15 min cache.
-//   routes/publicCrowd.js      Text Search and Place Details on the marketing
-//                              demo, gated only by allowDemo() (per IP).
-//   routes/venueSearch.js      the photo proxy's two legs, gated only by
-//                              allowPhotoFetch() (per IP).
-//   Those gates are reasonable rate limits, but because they never touch this
-//   module the "global" daily ceiling is not global. Each should call
-//   allowGlobalPlacesCall() in addition to its own gate. See that function.
+// EVERY PAID PLACES SURFACE NOW CHARGES THIS LEDGER. Re-verified call site by
+// call site (grep `places.googleapis.com` under backend/, excluding scripts/ and
+// tests) — the three surfaces this block used to list as UNCHARGED were all
+// wired up and the note went stale, which is worse than no note: it invited the
+// next reader to "fix" work that was already done and to trust a $/day figure
+// that was already wrong.
+//
+//   allowPlacesSearch(userId, cost)  — authenticated, charges BOTH ceilings:
+//     routes/crowd.js         1 for the card (GET /:placeId), 2 for
+//                             /:placeId/alternatives (Place Details + Text
+//                             Search). Both behind a 10-minute response cache.
+//     routes/venueSearch.js   1 for the text search, 1 for place details.
+//     routes/ai.js            1 per Birdie search_venues / get_crowd_prediction
+//                             tool call, charged to the user steering the model.
+//     routes/venueDashboard.js 1 per owner-dashboard Place Details and 1 per
+//                             competitor searchNearby.
+//
+//   allowGlobalPlacesCall(cost)      — no user to charge, so GLOBAL_DAILY only.
+//     Each keeps its own per-IP or per-venue gate; this module is what makes
+//     the daily ceiling cover them too.
+//     routes/badge.js         1 per cache miss, behind "claimed AND verified"
+//                             plus a 15-minute cache.
+//     routes/publicCrowd.js   1 per cache miss on each marketing-demo endpoint
+//                             (Text Search, Place Details), behind allowDemo()
+//                             per IP — and charged AFTER that gate, so a demo
+//                             request that is refused never charges for a call
+//                             it was never going to make.
+//     routes/venueSearch.js   1 per photo-proxy cache miss, behind
+//                             allowPhotoFetch() per IP. Cost 1 and not 2
+//                             because only the /media metadata leg is believed
+//                             billed; the second leg pulls bytes from Google's
+//                             CDN. If an invoice ever shows otherwise, that is
+//                             the one number here that should become a 2.
+//
+//   THE REMAINING HOLE is not a surface, it is a dimension: those three charge
+//   no per-user ceiling because they have no user. An unauthenticated caller is
+//   therefore bounded by GLOBAL_DAILY and their own per-IP gate alone, and
+//   GLOBAL_DAILY resets on every deploy (see IN-MEMORY STATE above).
+//
+//   backend/scripts/ml/* calls Places directly and charges nothing. That is
+//   correct — they are operator-run batch jobs, not request paths — but their
+//   spend does not appear in these counters either, so the invoice can exceed
+//   what this module thinks was spent on any day a training run happened.
+//
+//   __tests__/paidCallBudgets.test.js drives the real routers against the real
+//   ledger and fails if any of the above stops charging. Keep this list current
+//   the same way: check the call site, not the comment.
 // ---------------------------------------------------------------------------
 
 const HOUR_MS = 60 * 60 * 1000;
