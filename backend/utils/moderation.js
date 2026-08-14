@@ -50,7 +50,21 @@ function rejectIfProfane(res, text) {
 // ---------------------------------------------------------------------------
 // Image moderation — fail-closed
 // ---------------------------------------------------------------------------
-const IMAGE_MODERATION_REQUIRED = process.env.IMAGE_MODERATION_REQUIRED === 'true';
+// Round 17: this was `=== 'true'` and nothing else, so "fail-closed" was opt-IN
+// via an environment variable that lives only in the Railway dashboard. Forget
+// to set it on the production service — or lose it in a service re-create, an
+// env import, a new environment for a staging build — and every image upload
+// path in the app silently reverts to allow-with-a-console-warning. That is a
+// teen social app shipping unscreened photo UGC, and the only evidence would be
+// one line in a log nobody reads.
+//
+// A safety default has to be the DEFAULT. In production the answer is now
+// "required" unless someone explicitly writes IMAGE_MODERATION_REQUIRED=false,
+// which is a deliberate, greppable act rather than an omission. Dev and test
+// are unchanged: no variable, no requirement.
+const IMAGE_MODERATION_REQUIRED =
+  process.env.IMAGE_MODERATION_REQUIRED === 'true' ||
+  (process.env.NODE_ENV === 'production' && process.env.IMAGE_MODERATION_REQUIRED !== 'false');
 
 // Provider: Google Cloud Vision SafeSearch.
 //
@@ -62,6 +76,18 @@ const IMAGE_MODERATION_REQUIRED = process.env.IMAGE_MODERATION_REQUIRED === 'tru
 // Maps key is never reused server-side.
 const VISION_API_KEY = process.env.VISION_API_KEY || process.env.GOOGLE_VISION_API_KEY;
 const IMAGE_PROVIDER_CONFIGURED = !!VISION_API_KEY;
+
+// Say it once, at boot, where a deploy log will show it. Previously the only
+// signal that image moderation was misconfigured arrived one line at a time,
+// per upload, buried in request logs — after the fact.
+if (process.env.NODE_ENV === 'production' && !IMAGE_PROVIDER_CONFIGURED) {
+  console.error(
+    '🛡️ STARTUP: no image moderation provider is configured (VISION_API_KEY unset). ' +
+    (IMAGE_MODERATION_REQUIRED
+      ? 'Every image upload in the app will be REJECTED until it is set.'
+      : 'IMAGE_MODERATION_REQUIRED=false is set, so images are being stored UNSCREENED. Do not ship this to the App Store.')
+  );
+}
 
 // SafeSearch returns a likelihood enum per category rather than a score.
 // LIKELY and VERY_LIKELY are refused. POSSIBLE is refused for the two
@@ -155,19 +181,38 @@ const MAX_MODERATED_IMAGE_BYTES = 8 * 1024 * 1024;
 const dns = require('dns').promises;
 const net = require('net');
 
-function isPrivateAddress(addr) {
-  if (net.isIPv6(addr)) {
-    const a = addr.toLowerCase();
-    return a === '::1' || a.startsWith('fe80') || a.startsWith('fc') || a.startsWith('fd') || a.startsWith('::ffff:127.') || a.startsWith('::ffff:10.') || a.startsWith('::ffff:192.168.');
-  }
+function isPrivateIPv4(addr) {
   const parts = addr.split('.').map(Number);
-  if (parts.length !== 4) return true;
+  if (parts.length !== 4 || parts.some((n) => !Number.isInteger(n) || n < 0 || n > 255)) return true;
   const [a, b] = parts;
   return a === 127 || a === 10 || a === 0
     || (a === 172 && b >= 16 && b <= 31)
     || (a === 192 && b === 168)
-    || (a === 169 && b === 254)
+    || (a === 169 && b === 254)   // link-local: cloud metadata lives at 169.254.169.254
+    || (a === 100 && b >= 64 && b <= 127) // carrier-grade NAT
     || a >= 224;
+}
+
+// Round 17: the IPv6 branch spot-checked THREE ::ffff: prefixes by string —
+// 127., 10. and 192.168. — and every other private IPv4 range slipped through
+// in mapped form. `::ffff:169.254.169.254` is the cloud metadata endpoint, and
+// it was allowed; so were `::ffff:172.16.x.x` and `::ffff:100.64.x.x`. The fix
+// is to stop pattern-matching prefixes and instead UNWRAP a mapped address back
+// to its IPv4 form, then run the one IPv4 rule set over it. `::` (unspecified,
+// which routes to localhost on several stacks) was missing too.
+function isPrivateAddress(addr) {
+  if (net.isIPv6(addr)) {
+    const a = addr.toLowerCase();
+    // IPv4-mapped and IPv4-compatible forms, e.g. ::ffff:169.254.169.254
+    const mapped = a.match(/^::(?:ffff:)?(\d{1,3}(?:\.\d{1,3}){3})$/);
+    if (mapped) return isPrivateIPv4(mapped[1]);
+    if (a === '::1' || a === '::') return true;
+    if (a.startsWith('fe80')) return true;              // link-local
+    if (/^f[cd]/.test(a)) return true;                  // unique-local fc00::/7
+    if (a.startsWith('ff')) return true;                // multicast
+    return false;
+  }
+  return isPrivateIPv4(addr);
 }
 
 async function assertPublicHttpsUrl(rawUrl) {
@@ -242,3 +287,5 @@ module.exports = {
   TEXT_REJECTED_MESSAGE,
   IMAGE_REJECTED_MESSAGE,
 };
+// Exposed for __tests__/safetyFlow.test.js.
+module.exports.__test = { isPrivateAddress, IMAGE_MODERATION_REQUIRED, IMAGE_PROVIDER_CONFIGURED };
