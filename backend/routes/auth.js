@@ -48,6 +48,87 @@ const SALT_ROUNDS = 10;
 const DUMMY_PASSWORD_HASH = bcrypt.hashSync('flock-login-timing-equalizer', SALT_ROUNDS);
 
 // ---------------------------------------------------------------------------
+// EVERY FIELD HAS A MAXIMUM OF ITS OWN (round 21)
+// ---------------------------------------------------------------------------
+// Not one field on this router carried a width. The JSON parser in server.js was
+// the only ceiling on all of them, which is a bound living in another file that
+// moves whenever somebody tunes an unrelated number there — and this is the
+// UNAUTHENTICATED router, so every one of those fields is reachable by anyone.
+// routes/users.js was audited for exactly this and its numbers are re-derived
+// (not re-invented) below; __tests__/authFieldBounds.test.js fails if the two
+// files ever disagree.
+//
+// Where each number comes from:
+//
+//   MAX_EMAIL      users.email VARCHAR(255), migrations/000_bootstrap.sql. It is
+//                  a real gate here and not only a backstop — see the
+//                  normalizeEmail note on signupValidation below, which is a
+//                  live 22001 rather than a theoretical one.
+//   MAX_NAME       users.name VARCHAR(255), same file. Enforced on the signup
+//                  chain AND inside safeOAuthDisplayName, because the OAuth
+//                  paths reach that column without passing a chain.
+//   MAX_PASSWORD   the same 1024 routes/users.js chose, for the same reason:
+//                  bcrypt ignores everything past 72 BYTES, so no character
+//                  beyond that can change a hash or a compare, and 1024 is
+//                  fourteen times the part that can matter. Deliberately
+//                  generous because this router has never had a maximum, so a
+//                  longer password may already exist and must still be typeable
+//                  at /login. (Two long passwords sharing a 72-byte prefix are
+//                  interchangeable and a bound cannot change that; see the note
+//                  on the /login password rule.)
+//   MAX_INTERESTS / MAX_INTEREST_LEN
+//                  interests is TEXT[] and has no width to borrow, so both come
+//                  from the product, exactly as in routes/users.js: the
+//                  interests screen in frontend/src/App.js offers 12 suggestions
+//                  on top of 3 defaults, so 15 chips are reachable without
+//                  typing, and 30 is double that; the longest interest the
+//                  product itself defines is "art & culture" (13 characters, the
+//                  interestToTM map in routes/events.js) and 40 is three times
+//                  that.
+//   MAX_DOB_LENGTH the longest ISO 8601 instant is 29 characters
+//                  (2000-01-01T00:00:00.000+05:30). 40 leaves room for a longer
+//                  offset spelling and is still nowhere near a value pg would
+//                  accept for a DATE. It matters because ISO_DATE_RE below ends
+//                  in `.*`, which bounds nothing at all.
+//   MAX_LINK_TOKEN the token grammar this file mints: a 32-character hex
+//                  selector, a dot, and a base64url verifier that
+//                  parseVerificationToken caps at 128 — 161 characters at the
+//                  widest. 200 is the number parseVerificationToken has always
+//                  refused past; it is named here so the validator chains and
+//                  the parser cannot drift apart.
+//   MAX_OAUTH_TOKEN
+//                  an RS256 JWT from either provider: a fixed 344-character
+//                  signature, a ~50-character header, and a claim set of a dozen
+//                  short fields — a Google ID token carrying name and picture
+//                  measures well under 1,500 characters. 4096 is comfortably
+//                  past that and still an eighth of the parser's 64KB. Also used
+//                  for Apple's authorizationCode, which is an opaque ~50
+//                  characters and only ever needs a ceiling.
+//   MAX_OAUTH_ACCESS_TOKEN
+//                  the one field on this router that is interpolated into an
+//                  outbound URL (`tokeninfo?access_token=…`). Google's opaque
+//                  access tokens run 100-250 characters; the bound is set by
+//                  what the request LINE can carry, since encodeURIComponent can
+//                  triple a byte: 3 x 2048 + the 62-character prefix = 6,206,
+//                  inside the 8,192-byte request line nginx and Apache both
+//                  default to.
+//   MAX_OAUTH_ID   users.oauth_id VARCHAR(255) (migration 001). Provider data
+//                  rather than caller data — a Google `sub` is 21 digits and an
+//                  Apple one about 44 — so this is a backstop on the one
+//                  remaining value this file writes to a bounded column without
+//                  measuring it, not a gate anybody can reach.
+const MAX_EMAIL = 255;
+const MAX_OAUTH_ID = 255;
+const MAX_NAME = 255;
+const MAX_PASSWORD = 1024;
+const MAX_INTERESTS = 30;
+const MAX_INTEREST_LEN = 40;
+const MAX_DOB_LENGTH = 40;
+const MAX_LINK_TOKEN = 200;
+const MAX_OAUTH_TOKEN = 4096;
+const MAX_OAUTH_ACCESS_TOKEN = 2048;
+
+// ---------------------------------------------------------------------------
 // Email identity (round 15)
 // ---------------------------------------------------------------------------
 // Signup and login run express-validator's normalizeEmail(), which for Gmail
@@ -191,7 +272,7 @@ function mintVerificationToken() {
 function parseVerificationToken(raw) {
   if (typeof raw !== 'string') return null;
   const t = raw.trim();
-  if (t.length < 40 || t.length > 200) return null;
+  if (t.length < 40 || t.length > MAX_LINK_TOKEN) return null;
   if (t[32] !== '.') return null;
   const selector = t.slice(0, 32);
   const verifier = t.slice(33);
@@ -904,9 +985,18 @@ const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}([T ].*)?$/;
 // live on the two paths that were not audited with it: a 500 on sign-in from a
 // body shape an attacker picks. Returns the trimmed string, or null meaning
 // "no usable date of birth was supplied".
+//
+// Round 21: the regex above ends in `.*`, so it bounds the SHAPE of the first
+// ten characters and nothing else — `"2000-01-01T" + "x".repeat(60000)` matched
+// it, and the only thing that then refused the value was `new Date()` failing to
+// parse it. That is a content check standing in for a width check on the three
+// paths (login, Google, Apple) where date_of_birth carries no validator chain at
+// all. Measure the width here, where the value is turned into something safe to
+// store, rather than relying on a Date parse to be the ceiling.
 function suppliedDob(raw) {
   if (typeof raw !== 'string') return null;
   const trimmed = raw.trim();
+  if (trimmed.length > MAX_DOB_LENGTH) return null;
   return ISO_DATE_RE.test(trimmed) ? trimmed : null;
 }
 
@@ -949,8 +1039,28 @@ function banTombstones() {
 // failed screen must NOT 400 the sign-in and lock someone out of their account:
 // fall back to a generated placeholder derived from the email local part, then
 // "Friend". The user can rename in onboarding.
+//
+// ROUND 21 — THE WIDTH HALF. This is the ONLY thing standing between a
+// caller-supplied display name and users.name VARCHAR(255) on the Apple path:
+// `fullName.givenName` comes off the request body, is stripped, composed, and
+// arrives here, and nothing measured it. A 60,000-character givenName was a
+// Postgres 22001 on the INSERT — a 500, from a body shape the caller picks, on
+// an UNAUTHENTICATED route. The Apple chain now refuses one outright, and this
+// clamp is the backstop for the value that does NOT come through a chain: the
+// Google branch takes `name` out of a provider token, which no validator here
+// ever sees.
+//
+// CLAMPED, not refused, and by CODE POINT. Refusing would fail a sign-in over a
+// name, which is the thing this whole function exists not to do — every other
+// failure here falls back to a placeholder. Postgres counts VARCHAR in
+// characters, and a naive slice can cut a surrogate pair in half and leave a
+// lone surrogate in the column, so the slice runs over the code points.
+function clampName(value) {
+  return [...value].length > MAX_NAME ? [...value].slice(0, MAX_NAME).join('') : value;
+}
+
 function safeOAuthDisplayName(rawName, email, provider) {
-  const candidate = typeof rawName === 'string' ? stripHtml(rawName.trim()).trim() : '';
+  const candidate = typeof rawName === 'string' ? clampName(stripHtml(rawName.trim()).trim()) : '';
   if (candidate && moderateText(candidate).allowed) return candidate;
 
   const local = typeof email === 'string'
@@ -1010,12 +1120,83 @@ function rejectNonStringFields(req, res, fields, message) {
   return false;
 }
 
+// interests is TEXT[] and node-pg serialises whatever it is handed into it, so
+// the CONTENTS have to be checked and not merely the fact that an array arrived.
+// `isArray()` and nothing else was the whole rule here, and sanitizeArray()
+// bounds nothing either — it strips markup per element and drops non-scalars,
+// which is a content rule, not a size one. So the array length AND each
+// element's length were both decided by the JSON parser in server.js, on the
+// UNAUTHENTICATED route, for a column routes/admin.js renders into the
+// moderation queue as evidence about a profile
+// (ARRAY_TO_STRING(u.interests, ', ')).
+//
+// This is routes/users.js's interestsRule, deliberately spelled the same way
+// rather than re-derived: the two routes write the same column and a second set
+// of numbers would be a second answer to one question. It cannot be IMPORTED —
+// requiring routes/users.js at load time here would tie two large route modules
+// together at boot (see banTombstones below for the same reasoning) — so
+// __tests__/authFieldBounds.test.js asserts the two rules agree, number for
+// number, and fails when either side moves.
+//
+// Strings only: sanitizeArray keeps numbers and booleans as they are, which
+// would store `true` as the text "true" in a column whose whole content is
+// human-typed tags.
+//
+// Measured BEFORE stripHtml runs, on purpose and in the direction that is safe:
+// stripping can only shorten, so a value inside this bound is inside it in the
+// column too, while a 300-character value made of tags is refused rather than
+// quietly becoming a short one. The blank-after-stripping case is caught in the
+// handler, where the stripped array exists.
+const interestsRule = body('interests').optional({ nullable: true }).custom((v) => {
+  if (!Array.isArray(v)) throw new Error('Interests must be a list');
+  if (v.length > MAX_INTERESTS) throw new Error(`Too many interests (max ${MAX_INTERESTS})`);
+  for (const item of v) {
+    if (typeof item !== 'string') throw new Error('Each interest must be text');
+    if (item.length > MAX_INTEREST_LEN) {
+      throw new Error(`Each interest must be under ${MAX_INTEREST_LEN} characters`);
+    }
+  }
+  return true;
+});
+
 // Validation rules
 const signupValidation = [
-  body('email').isEmail().normalizeEmail().withMessage('Valid email required')
+  // MEASURED TWICE, AND THE SECOND ONE IS THE ONE THAT PROTECTS THE COLUMN.
+  //
+  // This rule had no width at all, and "normalizeEmail can only shorten — it
+  // lowercases and strips Gmail dots and +subaddresses" is the reasoning that
+  // left it that way. That reasoning is wrong, and routes/users.js proved it on
+  // its own copy of this field: isEmail allows a UTF-8 local part by default and
+  // caps it at 64 BYTES, and lowercasing U+0130 (İ, dotted capital I) yields TWO
+  // code points. A local part of 32 İ is legal, 32 code points wide, and 64 code
+  // points wide once normalized. Put that in front of a long legal domain and a
+  // 254-code-point address that passes every check on this route becomes 286 on
+  // its way to users.email VARCHAR(255): Postgres 22001, i.e. a 500 on the
+  // INSERT, on an unauthenticated route, from an address anybody can type.
+  //
+  // So the width is checked again AFTER the sanitizer, against the value that is
+  // actually written. The first check is kept as well, because it is what keeps a
+  // 64KB string away from isEmail's regex work. (Measured, not reasoned:
+  // __tests__/authFieldBounds.test.js sends that address.)
+  body('email')
+    .isLength({ max: MAX_EMAIL }).withMessage('Email address is too long')
+    .isEmail().withMessage('Valid email required')
+    .normalizeEmail()
+    .isLength({ max: MAX_EMAIL }).withMessage('Email address is too long')
     .custom((v) => !isDisposableEmail(v)).withMessage('Temporary email addresses cannot be used. Use an address you keep.'),
+  // BCRYPT TRUNCATES AT 72 BYTES, and a maximum does not change that: two
+  // different passwords that share a 72-byte prefix are interchangeable here and
+  // would be at any ceiling above 72. Making them distinct means pre-hashing
+  // (SHA-256 then bcrypt), which changes the stored hash format for every
+  // existing row and needs a dual-verify migration this router cannot write on
+  // its own. It is also worth very little: the first 72 bytes are already far
+  // more entropy than anything brute-forceable, so the property lost is "a
+  // 200-character password is stronger than its first 72 bytes", which was never
+  // true of bcrypt anywhere. What the bound fixes is the different problem:
+  // "how long may a password be" was answered by the JSON parser in server.js.
   body('password')
     .isLength({ min: 8 }).withMessage('Password must be at least 8 characters')
+    .isLength({ max: MAX_PASSWORD }).withMessage('Password is too long')
     .matches(/[A-Z]/).withMessage('Password must contain at least one uppercase letter')
     .matches(/[0-9]/).withMessage('Password must contain at least one number'),
   // freeText = shape -> trim -> stripHtml -> trim, the whole rule in one link.
@@ -1024,7 +1205,7 @@ const signupValidation = [
   // rejectIfProfane, so "a name is required" accepted a BLANK name — on the
   // unauthenticated route, into the column rendered on every invite, roster,
   // chat row and push. Sanitize, then trim, then measure.
-  freeText(body('name'), 'name').isLength({ min: 1, max: 255 }).withMessage('Name is required'),
+  freeText(body('name'), 'name').isLength({ min: 1, max: MAX_NAME }).withMessage('Name is required'),
   // ROUND 20. `interests` had NO validator on the one account-creation path
   // that accepts it, while PUT /api/users/profile has carried isArray() all
   // along. sanitizeArray() returns a non-array untouched by design (it is a
@@ -1033,7 +1214,9 @@ const signupValidation = [
   // TEXT[] column and came back a 500 — on an UNAUTHENTICATED route, from a
   // body shape the caller picks. `nullable` because `sanitizeArray(null || [])`
   // already reads a null as "none given".
-  body('interests').optional({ nullable: true }).isArray().withMessage('Invalid interests'),
+  // ROUND 21: isArray() answered the shape question and left the SIZE one open.
+  // See interestsRule above.
+  interestsRule,
   // Phone is deliberately NOT accepted at signup. It has no UNIQUE constraint
   // and drives contact-sync friend discovery, so accepting it here let an
   // attacker claim a victim's number from a fresh account that only ever proved
@@ -1041,13 +1224,42 @@ const signupValidation = [
   // phone instead. Phone is set only via PUT /users/profile, which requires
   // one-account-per-number and a fresh-auth proof.
   // Required: the age gate is meaningless if DOB is optional (audit 2026-08-12)
+  // The width goes AHEAD of isISO8601 rather than instead of it. isISO8601 does
+  // refuse a long string (nothing that wide matches the grammar), so the ceiling
+  // was a content rule standing in for a size rule — and this is the one field on
+  // this chain that reaches a DATE column as a parameter. See MAX_DOB_LENGTH.
   body('date_of_birth').exists().withMessage('Add your date of birth to create an account.')
+    .isLength({ max: MAX_DOB_LENGTH }).withMessage('Invalid date of birth')
     .isISO8601().withMessage('Invalid date of birth'),
 ];
 
 const loginValidation = [
-  body('email').isEmail().normalizeEmail().withMessage('Valid email required'),
-  body('password').notEmpty().withMessage('Password is required'),
+  // Bounded the same way and in the same order as signup, so the two paths
+  // cannot disagree about which addresses exist. The message stays the generic
+  // one on this route: /login answers every bad input with one sentence.
+  body('email')
+    .isLength({ max: MAX_EMAIL }).withMessage('Valid email required')
+    .isEmail().withMessage('Valid email required')
+    .normalizeEmail()
+    .isLength({ max: MAX_EMAIL }).withMessage('Valid email required'),
+  // The address maximum on the CHECKING side cannot lock anyone out: users.email
+  // is VARCHAR(255), so no stored address is wider than the bound, and
+  // normalizing what the owner types produces the value that was stored. It also
+  // bounds something that is not a column at all — canonicalEmail(email) is the
+  // KEY of the in-memory login throttle, which holds up to LOGIN_FAIL_MAX_KEYS
+  // (20,000) of them. Unbounded keys made that map's real ceiling "20,000 times
+  // whatever the JSON parser allows" rather than 20,000 addresses.
+  //
+  // The password ceiling is a smaller claim, and worth stating exactly. It is a
+  // credential this route only ever COMPARES, and the compare reads at most 72
+  // bytes, so refusing at 1024 changes the outcome for nobody except an account
+  // that SET a password wider than 1024 — which signup could accept until this
+  // round, so such an account is possible in principle. It is the same trade
+  // routes/users.js made on `current_password`, at a number chosen to be far past
+  // anything a password manager generates, and against ~0 live accounts. What it
+  // buys is that an unauthenticated caller cannot hand bcrypt a 64KB string.
+  body('password').notEmpty().withMessage('Password is required')
+    .isLength({ max: MAX_PASSWORD }).withMessage('Invalid email or password'),
 ];
 
 // POST /api/auth/signup
@@ -1066,11 +1278,35 @@ router.post('/signup', signupValidation, async (req, res) => {
     }
 
     const { email, password, name, interests, date_of_birth } = req.body;
-    const safeInterests = sanitizeArray(interests || []);
+    const safeInterests = sanitizeArray(interests || []).map((v) => String(v).trim());
 
     // Display names are UGC shown in invites, messages, and search — the same
     // screen profile edits already run (round 8: signup skipped it).
     if (rejectIfProfane(res, name)) return;
+
+    // ROUND 21: interests is UGC that somebody other than its author reads.
+    // routes/admin.js renders it into the moderation queue's profile evidence
+    // (ARRAY_TO_STRING(u.interests, ', ')), which is the surface a moderator
+    // decides a ban on, and PUT /api/users/profile has screened it since round
+    // 20 — this route, the one that CREATES the row, did not. sanitizeArray
+    // above stripped its markup; nothing screened it.
+    //
+    // The screen runs on what came OUT of sanitizeArray, not on what went in,
+    // and the ordering is load-bearing rather than tidy. A tag WRAPPING a word
+    // does not hide it (the wordlist tokenizes on the angle brackets, so
+    // "<b>shit</b>" is caught either way) — a tag INSIDE one does: "sh<b>it" is
+    // three harmless tokens before stripHtml and one slur after it. Screen first
+    // and that value is stored, screened, as the slur it becomes. Same reason
+    // freeText applies stripHtml before `name` is screened above.
+    for (const interest of safeInterests) {
+      // Blank only AFTER stripping, i.e. an interest made entirely of markup.
+      // Storing it would put an empty chip in the array and an empty slot in the
+      // moderator's evidence line.
+      if (interest === '') {
+        return res.status(400).json({ error: 'An interest cannot be blank' });
+      }
+      if (rejectIfProfane(res, interest)) return;
+    }
 
     // Server-side age gate (C4): DOB is required, and under-13 is rejected
     // regardless of the client gate.
@@ -1145,7 +1381,14 @@ router.post('/signup', signupValidation, async (req, res) => {
 //
 // Every failure is reported as one generic outcome. There is no "no such token"
 // vs "wrong token" distinction to read off the response.
-router.post('/verify-email', [body('token').isString()], async (req, res) => {
+// `isLength` (round 21): parseVerificationToken refuses anything past
+// MAX_LINK_TOKEN, so the SHAPE was bounded — but it was bounded after the body
+// had been read and handed to the handler, and "the parser downstream will
+// refuse it" is the same argument that left every other field on this router
+// sized by server.js. The token this route mints is 161 characters at the widest.
+router.post('/verify-email', [
+  body('token').isString().isLength({ max: MAX_LINK_TOKEN }),
+], async (req, res) => {
   try {
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
@@ -1233,7 +1476,15 @@ router.post('/resend-verification', authenticate, async (req, res) => {
 // difference between "there is an account" and "there is not" is what arrives
 // in a mailbox the requester may not be able to open.
 router.post('/forgot-password', [
-  body('email').isEmail().normalizeEmail().withMessage('Enter the email you sign in with'),
+  // Bounded on both sides of the sanitizer, exactly as signup and login are:
+  // the address is canonicalised, HMAC'd into a rate-limit bucket key and
+  // matched against the column, and none of those wants a 64KB string. The
+  // message never varies on this route.
+  body('email')
+    .isLength({ max: MAX_EMAIL }).withMessage('Enter the email you sign in with')
+    .isEmail().withMessage('Enter the email you sign in with')
+    .normalizeEmail()
+    .isLength({ max: MAX_EMAIL }).withMessage('Enter the email you sign in with'),
 ], async (req, res) => {
   try {
     // TYPE check before the validators' CONTENT check. Given
@@ -1296,9 +1547,19 @@ router.post('/forgot-password', [
 // rather than after. It is not a new attack surface: the caller already has to
 // hold a token, guessing the 256-bit verifier is not a thing that happens, and
 // the per-IP limiter on /api/auth applies here like everywhere else.
-router.post('/reset-password/check', [body('token').isString()], async (req, res) => {
+router.post('/reset-password/check', [
+  body('token').isString().isLength({ max: MAX_LINK_TOKEN }),
+], async (req, res) => {
   try {
-    if (typeof req.body.token !== 'string') {
+    // The chain's verdict is READ (round 21). It was declared and then ignored:
+    // the handler made its own typeof check and nothing consulted
+    // validationResult, so the width added above would have been decoration. The
+    // answer is deliberately the same one an unparseable token already got —
+    // this endpoint reports three states and must not grow a fourth that says
+    // "your token was the wrong size", and inspectReset never ran a query for a
+    // token this wide anyway.
+    const errors = validationResult(req);
+    if (!errors.isEmpty() || typeof req.body.token !== 'string') {
       return res.json({ valid: false, reason: 'invalid' });
     }
     const result = await inspectReset(req.body.token);
@@ -1315,9 +1576,16 @@ router.post('/reset-password/check', [body('token').isString()], async (req, res
 // recovery flow that accepts a weaker password than signup does is just signup
 // with the rules switched off.
 router.post('/reset-password', [
-  body('token').isString().withMessage('This link is not valid. Ask for a new one.'),
+  body('token').isString().withMessage('This link is not valid. Ask for a new one.')
+    .isLength({ max: MAX_LINK_TOKEN }).withMessage('This link is not valid. Ask for a new one.'),
+  // The same ceiling signup carries, for the same reason it carries a floor: a
+  // recovery flow that accepts a password signup would refuse is signup with the
+  // rules switched off, in either direction. See the bcrypt note on
+  // signupValidation — the bound is about who decides the width, not about the
+  // 72 bytes bcrypt reads.
   body('password')
     .isLength({ min: 8 }).withMessage('Password must be at least 8 characters')
+    .isLength({ max: MAX_PASSWORD }).withMessage('Password is too long')
     .matches(/[A-Z]/).withMessage('Password must contain at least one uppercase letter')
     .matches(/[0-9]/).withMessage('Password must contain at least one number'),
 ], async (req, res) => {
@@ -1496,8 +1764,16 @@ router.post('/google', [
   // absent — `if (!req.body.credential && !req.body.access_token)` is what
   // decides. A client that spells the unused half of this pair as an explicit
   // null was answered "Invalid value" by the chain instead.
-  body('credential').optional({ nullable: true }).isString(),
-  body('access_token').optional({ nullable: true }).isString(),
+  // Widths (round 21). `credential` is fed to a JWT parse and `access_token` is
+  // INTERPOLATED INTO AN OUTBOUND URL — `tokeninfo?access_token=…` — so an
+  // unbounded one meant an unauthenticated caller could make this server send
+  // Google a request line of tens of kilobytes and wait on it. Neither field had
+  // a ceiling of its own; see MAX_OAUTH_TOKEN and MAX_OAUTH_ACCESS_TOKEN for
+  // where the two numbers come from.
+  body('credential').optional({ nullable: true }).isString()
+    .isLength({ max: MAX_OAUTH_TOKEN }).withMessage('Google sign-in failed'),
+  body('access_token').optional({ nullable: true }).isString()
+    .isLength({ max: MAX_OAUTH_ACCESS_TOKEN }).withMessage('Google sign-in failed'),
 ], async (req, res) => {
   try {
     // TYPE before CONTENT — see rejectNonStringFields.
@@ -1577,6 +1853,15 @@ router.post('/google', [
 
     if (!email) {
       return res.status(400).json({ error: 'Google account has no email' });
+    }
+    // Round 21. NOT attacker-reachable — the address came out of a token this
+    // handler verified Google's signature on — but it is the value written to
+    // users.email VARCHAR(255), and nothing between here and the INSERT measures
+    // it. An address wider than the column is a Postgres 22001, i.e. a 500 on a
+    // sign-in, rather than a refusal this route chose to make.
+    if (email.length > MAX_EMAIL || String(googleId).length > MAX_OAUTH_ID) {
+      console.warn(`[auth] refused Google sign-in: provider identity is wider than the column that holds it`);
+      return res.status(400).json({ error: 'Google account email is not usable' });
     }
 
     // Check if user exists by oauth_id or email
@@ -1758,16 +2043,44 @@ router.post('/apple/nonce', (req, res) => {
 });
 
 router.post('/apple', [
-  body('identityToken').notEmpty().withMessage('Apple identityToken is required'),
+  body('identityToken').notEmpty().withMessage('Apple identityToken is required')
+    .isLength({ max: MAX_OAUTH_TOKEN }).withMessage("Apple sign-in didn't complete. Try again in a moment."),
   // `fullName` is LEGITIMATELY structured — Apple's SDK hands over
   // `{ givenName, familyName }` — so it keeps isObject() rather than a scalar
   // guard, and the handler re-derives both halves through String() + stripHtml
   // before they can reach a column. `nullable` on all three for the same reason
   // as the Google branch: the handler already treats absent as absent
   // (`fullName?.givenName`, `typeof req.body.nonce === 'string' ? … : ''`).
-  body('fullName').optional({ nullable: true }).isObject(),
-  body('authorizationCode').optional({ nullable: true }),
-  body('nonce').optional({ nullable: true }).isString().isLength({ max: 200 }),
+  //
+  // ROUND 21 — THE HALVES ARE BOUNDED TOO, and this was the sharpest gap on the
+  // router. `isObject()` says the container is an object and says nothing about
+  // what is in it, and the handler's `String(fullName.givenName)` is a
+  // TYPE defence, not a WIDTH one: a 60,000-character givenName was composed
+  // into a display name and written to users.name VARCHAR(255), which is a
+  // Postgres 22001 — an unauthenticated 500 from a body the caller writes. The
+  // String() coercion also has the "[object Object]" failure the round-20 note
+  // describes for `name`: `{"givenName": {}}` is not a name, it is the shape
+  // probe, and it would have been stored as one. Apple's SDK sends strings or
+  // sends nothing.
+  body('fullName').optional({ nullable: true }).isObject()
+    .custom((v) => {
+      for (const half of ['givenName', 'familyName']) {
+        const part = v[half];
+        if (part === undefined || part === null) continue;
+        if (typeof part !== 'string') throw new Error("Apple sign-in didn't complete. Try again in a moment.");
+        if (part.length > MAX_NAME) throw new Error("Apple sign-in didn't complete. Try again in a moment.");
+      }
+      return true;
+    }),
+  // `authorizationCode` carried no rule of ANY kind: rejectNonStringFields below
+  // refused a non-string and nothing refused a wide one, and this is the value
+  // posted to Apple's token endpoint. Apple's code is an opaque ~50 characters.
+  body('authorizationCode').optional({ nullable: true }).isString()
+    .isLength({ max: MAX_OAUTH_TOKEN }).withMessage("Apple sign-in didn't complete. Try again in a moment."),
+  // The nonce ceiling was already here and is the one this file issues: 24 random
+  // bytes as base64url (32 characters), or its SHA-256 hex digest (64). Named now
+  // so it reads as the same kind of number as the ones above.
+  body('nonce').optional({ nullable: true }).isString().isLength({ max: MAX_LINK_TOKEN }),
 ], async (req, res) => {
   try {
     // TYPE before CONTENT — see rejectNonStringFields. `fullName` is checked by
@@ -1822,6 +2135,15 @@ router.post('/apple', [
 
     if (!appleId) {
       return res.status(400).json({ error: 'Apple token missing user id' });
+    }
+    // Round 21, the Google twin: users.oauth_id is VARCHAR(255) and the `sub` is
+    // written to it on BOTH the claim and the create path, so the check goes
+    // ahead of both. Provider data on a signature-verified token, so this is a
+    // backstop rather than a gate anybody can reach — an Apple sub is about 44
+    // characters.
+    if (String(appleId).length > MAX_OAUTH_ID) {
+      console.warn('[auth] refused Apple sign-in: provider identity is wider than users.oauth_id');
+      return res.status(400).json({ error: "Apple sign-in didn't complete. Try again in a moment." });
     }
 
     // Nonce binding (round 16). Three cases, in order of how much we know:
@@ -1988,6 +2310,17 @@ router.post('/apple', [
       // linkage stays on oauth_id, and outbound mail paths skip .invalid.
       const storedEmail = email
         || `apple_${String(appleId).replace(/[^a-zA-Z0-9]/g, '')}@apple-signin.invalid`;
+      // Round 21, the Google twin. Both halves of this value are provider-issued
+      // and signature-verified, so neither is attacker-reachable — but both are
+      // unbounded as far as this file knows, and users.email is VARCHAR(255).
+      // Checked on the CONSTRUCTED value so the placeholder is covered too, and
+      // refused rather than truncated: a truncated placeholder could collide with
+      // another Apple user's, and this is the column that decides who an account
+      // is.
+      if (storedEmail.length > MAX_EMAIL) {
+        console.warn(`[auth] refused Apple account creation: address is ${storedEmail.length} characters, wider than users.email`);
+        return res.status(400).json({ error: "Apple sign-in didn't complete. Try again in a moment." });
+      }
       // email_verified TRUE only when Apple actually gave us an address it
       // vouched for. The .invalid placeholder proves nothing about a mailbox,
       // but it also cannot be squatted or mailed, and the account has no way to
@@ -2091,6 +2424,19 @@ module.exports.__testing = {
   RESET_MAX_PER_DAY_EMAIL,
   RESET_MAX_PER_HOUR_IP,
   RESET_NEUTRAL_MESSAGE,
+  // Round 21 (field bounds). Exported so __tests__/authFieldBounds.test.js
+  // drives each field from the route's own number instead of retyping it.
+  MAX_EMAIL,
+  MAX_OAUTH_ID,
+  MAX_NAME,
+  MAX_PASSWORD,
+  MAX_INTERESTS,
+  MAX_INTEREST_LEN,
+  MAX_DOB_LENGTH,
+  MAX_LINK_TOKEN,
+  MAX_OAUTH_TOKEN,
+  MAX_OAUTH_ACCESS_TOKEN,
+  clampName,
   // The reset mail is dispatched without being awaited, so the response cannot
   // carry Resend's latency (that latency only exists on the branch where the
   // account does, which makes it an enumeration oracle). Tests await this.

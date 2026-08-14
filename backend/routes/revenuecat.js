@@ -44,6 +44,42 @@ function userIdFrom(value) {
   return n >= 1 && n <= MAX_INT4 ? n : null;
 }
 
+// The one app_user_id that is NOT a client error.
+//
+// RevenueCat gives every install an anonymous subscriber the moment the SDK
+// starts, under an id of the form `$RCAnonymousID:<opaque>`. It stays anonymous
+// until the client calls Purchases.logIn(userId), and a purchase made before
+// that call — the app is open, the user is signed out, they buy, and logIn
+// happens on the next sign-in, or never — is delivered here under that id.
+//
+// userIdFrom() answers null for it, correctly: there is no Flock account behind
+// an anonymous id and there is nothing this webhook could write. But the answer
+// was `400 Missing app_user_id`, and RevenueCat's webhook documentation is
+// explicit that it retries on ANY status other than 200 — five times, at 5, 10,
+// 20, 40 and 80 minutes. The comment above about 5xx is half the story. So a
+// payload RevenueCat is RIGHT to send, and that cannot succeed on any of those
+// five attempts, is redelivered for two and a half hours, and every attempt
+// lands in our logs as a client error we did not make.
+//
+// The shape below is matched strictly, and it fails in the safe direction: an id
+// RevenueCat spells differently one day stops matching and gets the old 400 back,
+// which is noisy rather than wrong.
+//
+// Harmless today because the paywall is dormant (PAYWALL_ENABLED is unset and
+// REVENUECAT_WEBHOOK_SECRET with it, so the 503 above answers first). It has to
+// be right BEFORE the paywall is switched on, because that is the moment these
+// events start arriving.
+//
+// Answered 200 with a reason, the same shape isForeignEntitlement uses: this is
+// an event we understood and deliberately did nothing with, not one we failed.
+// The distinction from the other refusals is kept deliberately: an id that is
+// neither digits nor an anonymous id is a payload our client cannot produce, and
+// a 400 is what puts that in RevenueCat's dashboard where somebody will see it.
+const ANONYMOUS_ID_RE = /^\$RCAnonymousID:[A-Za-z0-9-]{1,64}$/;
+function isAnonymousSubscriber(value) {
+  return typeof value === 'string' && ANONYMOUS_ID_RE.test(value.trim());
+}
+
 // How many app_user_ids one TRANSFER may move.
 //
 // This is the only field on this route that reaches a query as a SET rather than
@@ -157,6 +193,16 @@ router.post('/webhook', async (req, res) => {
       }
       console.log(`[RevenueCat] TRANSFER from [${from}] to [${to}]`);
       return res.json({ ok: true });
+    }
+
+    // Checked before userIdFrom, because an anonymous id is a shape we RECOGNISE
+    // rather than one we failed to parse. See isAnonymousSubscriber.
+    if (isAnonymousSubscriber(event.app_user_id)) {
+      // The type is sliced before it is logged: it is a caller-supplied string on
+      // a route with no per-field bounds (the webhook body is not ours to shape),
+      // and a log line is not the place to find that out.
+      console.warn(`[RevenueCat] ${String(type || 'event').slice(0, 40)} for an anonymous subscriber — no Flock account to apply it to, ignoring`);
+      return res.json({ ok: true, ignored: 'anonymous' });
     }
 
     const appUserId = userIdFrom(event.app_user_id);
