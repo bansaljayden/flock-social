@@ -16,7 +16,7 @@ import { connectSocket, disconnectSocket, getSocket, joinFlock, leaveFlock, send
 import { requestNotificationPermission, onForegroundMessage, getNotificationStatus, onPushNavigate, unregisterPushToken } from './services/firebase';
 import { resendVerificationEmail } from './services/api';
 import { setAvailability, clearAvailability, getMyAvailability, getFriendsAvailability, getSensorCurrent, getSensorHistory, checkInManual, getNfcCheckin, getCalendarEvents, createCalendarEvent, deleteCalendarEvent } from './services/api';
-import { joinVenueRoom, leaveVenueRoom, onVenueSensorUpdate, onVenueCheckin, onSessionRevoked, onSocketError, onAvailabilityUpdated, onBlockedBy, onContentRemoved, onContentRestored } from './services/socket';
+import { joinVenueRoom, leaveVenueRoom, joinVenueContentRoom, leaveVenueContentRoom, onVenueSensorUpdate, onVenueCheckin, onSessionRevoked, onSocketError, onAvailabilityUpdated, onBlockedBy, onContentRemoved, onContentRestored } from './services/socket';
 import { pullSettings, queueSync } from './services/userSettings';
 import { QRCodeSVG } from 'qrcode.react';
 import { Html5Qrcode } from 'html5-qrcode';
@@ -1000,6 +1000,60 @@ const crowdColorFor = (score, c) => {
   if (score > 40) return (c && c.amber) || '#F59E0B';
   return '#22C55E';
 };
+
+// ═══════════════════════════════════════════════════════════════════════════
+// BIRDIE'S CONTEXT WINDOW
+//
+// backend/routes/ai.js accepts at most AI_CHAT_MAX_MESSAGES messages and at
+// most AI_CHAT_MAX_MESSAGE_CHARS characters in each of them, and answers 400
+// (`CONVERSATION_TOO_LONG`, and "Message too long") past either. This client
+// used to send the whole conversation untruncated, so the 25th turn of every
+// Birdie chat was refused: the chat simply stopped answering at the point it
+// had got interesting.
+//
+// NEITHER NUMBER MAY BE RAISED HERE. backend/server.js sizes that route's
+// scoped JSON body parser directly from them (24 * 4000 * 4, ~449KB), so a
+// client that sends more converts an honest, actionable 400 into a 413 that
+// body-parser generates before any route code runs, and a 413 can carry no
+// code, no message and nothing to act on. The server owning the cap is the
+// point; this half only has to stay inside it.
+const AI_CHAT_MAX_MESSAGES = 24;
+const AI_CHAT_MAX_MESSAGE_CHARS = 4000;
+
+// The last `max` turns. The SAME array comes back when nothing had to go, so
+// the ordinary short conversation allocates nothing.
+const trimAiHistory = (messages, max = AI_CHAT_MAX_MESSAGES) => {
+  if (!Array.isArray(messages)) return [];
+  const limit = Number.isInteger(max) && max > 0 ? max : AI_CHAT_MAX_MESSAGES;
+  return messages.length > limit ? messages.slice(-limit) : messages;
+};
+
+// Where Birdie's memory starts, as an index into the transcript on screen: the
+// oldest message that will still be in the window after the visitor sends one
+// more. 0 means the whole conversation fits and nothing is marked, which is
+// every conversation until the 24th message.
+const aiMemoryCutIndex = (count, max = AI_CHAT_MAX_MESSAGES) => {
+  const limit = Number.isInteger(max) && max > 0 ? max : AI_CHAT_MAX_MESSAGES;
+  if (!Number.isInteger(count) || count < limit) return 0;
+  return count - (limit - 1);
+};
+
+// What actually goes on the wire: {role, text}. The venue names Birdie showed
+// are folded into its own turns so it remembers what it recommended.
+//
+// The per-message clamp is not tidiness. `messages.*.text` is capped on EVERY
+// element, history included, so one over-long message in a thread used to 400
+// every later send in that same thread, permanently, with no way out of it.
+const toAiWireMessages = (messages) => (Array.isArray(messages) ? messages : []).map((m) => {
+  let text = typeof m?.text === 'string' ? m.text : '';
+  if (m?.role === 'assistant' && Array.isArray(m.venues) && m.venues.length > 0) {
+    text += '\n[Venues shown: ' + m.venues.map(v => `${v.name} (${v.crowd_label || 'crowd unknown'}, ${v.is_open ? 'open' : 'closed'})`).join(', ') + ']';
+  }
+  return {
+    role: m?.role,
+    text: text.length > AI_CHAT_MAX_MESSAGE_CHARS ? text.slice(0, AI_CHAT_MAX_MESSAGE_CHARS) : text,
+  };
+});
 
 // Contact sync runs on the Contacts Picker API, which does not exist in
 // WKWebView. Inside the iOS app the answer is therefore always "no", and a
@@ -2675,12 +2729,17 @@ const setModerationHidden = (rows, contentId, hidden) => {
   return touched ? next : rows;
 };
 
-// A venue_review, out of whichever review list this client is holding. The
-// server tells the AUTHOR only, so in practice this is someone looking at the
-// venue card their own review is on. The owner dashboard's list is deliberately
-// not touched: nothing addresses this event to the owner, and its header stats
-// (average, total) come from the server, so dropping a row there would leave
-// "12 reviews" over eleven of them.
+// A venue_review or a venue_promotion, out of whichever public list this client
+// is holding. The server no longer tells the author alone: routes/admin.js also
+// emits into `venue_content:{placeId}`, the room this client joins for as long
+// as a venue card is showing that venue's reviews and promotions, so the
+// recipient is usually a stranger who simply has the card open.
+//
+// The owner dashboard's own lists are deliberately not dropped from. Nothing
+// addresses this room emit to the dashboard, the owner's read deliberately
+// keeps hidden rows and flags them, and the review header stats (average,
+// total) come from the server, so dropping a row there would leave "12 reviews"
+// over eleven of them. Marking is that surface's answer; dropping is this one's.
 const dropContentById = (rows, contentId) => {
   if (!Array.isArray(rows) || contentId == null) return rows;
   const kept = rows.filter((r) => !sameContentId(r.id, contentId));
@@ -3836,6 +3895,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   const aiInputHasTextRef = useRef(false);
   const aiInputValueRef = useRef('');
   const [aiTyping, setAiTyping] = useState(false);
+  // One turn in flight at a time. Enter, the send button, the prompt chips and
+  // the action row all reach sendAiMessage, and a second send while the first
+  // is still running spends another of the free tier's ten daily chirps to
+  // race the first answer into the transcript out of order.
+  const aiSendingRef = useRef(false);
   const [aiRemaining, setAiRemaining] = useState(null); // free-tier daily chirps left, from the last reply
   const [aiChatMode, setAiChatMode] = useState('bubble'); // 'bubble' | 'panel' | 'fullscreen'
   const [aiShareVenue, setAiShareVenue] = useState(null); // venue to share to flock/DM
@@ -4225,11 +4289,22 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
     return () => clearInterval(interval);
   }, [venueDetailPlaceId]);
 
-  // Load Flock reviews + promotions when venue detail modal opens
+  // Load Flock reviews + promotions when venue detail modal opens, and join the
+  // room a moderator takedown of one of them is addressed to.
+  //
+  // `venue_content:{placeId}` is joined and left with EXACTLY this effect on
+  // purpose: its whole job is to retract the two lists below, so the room's
+  // lifetime is the lifetime of the state it can retract. It is not the crowd
+  // room (`venue:{placeId}`, joined off the map bottom sheet a few effects up)
+  // — see the note in services/socket.js for why those two sets of people are
+  // different in both directions. Both rooms on one venue at once is normal and
+  // the server keeps them in separate Sets so they cannot evict each other.
   useEffect(() => {
-    if (!venueDetailPlaceId) { setVenueDetailReviews([]); setVenueDetailPromos([]); setShowReviewForm(false); return; }
+    if (!venueDetailPlaceId) { setVenueDetailReviews([]); setVenueDetailPromos([]); setShowReviewForm(false); return undefined; }
     getPublicReviews(venueDetailPlaceId).then(d => setVenueDetailReviews(d.reviews || [])).catch(() => {});
     getPublicPromotions(venueDetailPlaceId).then(d => setVenueDetailPromos(d.promotions || [])).catch(() => {});
+    joinVenueContentRoom(venueDetailPlaceId);
+    return () => leaveVenueContentRoom(venueDetailPlaceId);
   }, [venueDetailPlaceId]);
 
   const [showConnectPanel, setShowConnectPanel] = useState(false);
@@ -4996,12 +5071,21 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
 
   // AI Response - powered by Gemini via backend
   const sendAiMessage = useCallback(async () => {
+    if (aiSendingRef.current) return;
     const currentAiInput = aiInputValueRef.current;
     if (!currentAiInput.trim()) return;
+    aiSendingRef.current = true;
     const userMessage = currentAiInput.trim();
     const newMessages = [...aiMessages, { role: 'user', text: userMessage }];
     setAiMessages(newMessages);
     aiInputValueRef.current = '';
+    // The ref has to come down with the state. It did not, and the two are
+    // compared in the input's onInput to decide whether a re-render is needed:
+    // with the ref stuck on `true` after the first send, typing the second
+    // message never flipped `aiInputHasText` back on, so the send button sat
+    // greyed out and dead over a box with words in it for the whole rest of
+    // the conversation. Enter still worked, which is exactly why it hid.
+    aiInputHasTextRef.current = false;
     setAiInputHasText(false);
     if (aiInputRef.current) aiInputRef.current.value = '';
     setAiTyping(true);
@@ -5032,17 +5116,37 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
         };
       }
 
-      // Send the whole conversation (no canned greeting to skip anymore)
-      const messagesToSend = newMessages.map(m => {
-        let text = m.text;
-        // Include venue names in assistant messages so Birdie remembers what it recommended
-        if (m.role === 'assistant' && m.venues && m.venues.length > 0) {
-          text += '\n[Venues shown: ' + m.venues.map(v => `${v.name} (${v.crowd_label || 'crowd unknown'}, ${v.is_open ? 'open' : 'closed'})`).join(', ') + ']';
-        }
-        return { role: m.role, text };
-      });
+      // Send the last AI_CHAT_MAX_MESSAGES turns, which is everything the
+      // server will take. It used to be the whole conversation, so the 25th
+      // message of every chat came back 400 and Birdie went quiet for good.
+      // The transcript on screen keeps all of it either way; what is out of the
+      // window is marked in the thread rather than dropped behind the user's
+      // back (see aiMemoryCutIndex).
+      let outgoing = trimAiHistory(newMessages);
 
-      const response = await sendAiChat(messagesToSend, location, currentContext);
+      let response;
+      try {
+        response = await sendAiChat(toAiWireMessages(outgoing), location, currentContext);
+      } catch (err) {
+        // The server can still refuse for length if the two halves ever
+        // disagree about the cap: a lowered server limit, or an older bundle
+        // cached in the iOS shell. It sends its own number back precisely so
+        // this side never has to guess, and this is a trim-and-retry rather
+        // than a "start a new chat" prompt because the message the user just
+        // typed is already on screen and their conversation is still theirs;
+        // throwing both away to satisfy an off-by-some cap would be the client
+        // making the user pay for a disagreement it can settle itself.
+        //
+        // Exactly once, and only when the retry would actually send FEWER
+        // messages than the attempt that just failed. A retry that resends the
+        // same payload is a request that cannot succeed, and looping on it
+        // would spend the daily meter on nothing.
+        const serverMax = Number(err?.data?.maxMessages);
+        if (err?.code !== 'CONVERSATION_TOO_LONG'
+          || !Number.isInteger(serverMax) || serverMax < 1 || serverMax >= outgoing.length) throw err;
+        outgoing = trimAiHistory(outgoing, serverMax);
+        response = await sendAiChat(toAiWireMessages(outgoing), location, currentContext);
+      }
       if (typeof response.remaining === 'number') setAiRemaining(response.remaining);
       setAiMessages(prev => [...prev, { role: 'assistant', text: response.text, venues: response.venues || [], navigate: response.navigate || null }]);
     } catch (err) {
@@ -5053,6 +5157,12 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
         setAiMessages(prev => [...prev, { role: 'assistant', text: "that's my 10 free chirps for today. Flock Pro bumps me to 150 a day, or catch me tomorrow." }]);
         setAiRemaining(0);
         setPaywallTrigger('birdie');
+      } else if (err?.code === 'CONVERSATION_TOO_LONG') {
+        // Reaching here means the retry above could not make the payload any
+        // smaller, so trimming is not the answer and saying "try again" would
+        // be a suggestion that cannot work. New chat is a real button in the
+        // header, two inches from this sentence.
+        setAiMessages(prev => [...prev, { role: 'assistant', text: "this thread got long for me. tap New chat up top and ask me that again." }]);
       } else {
         // Surface the server's friendly text when present (rate-limit, busy, etc.).
         // Never show "I'm broken" / "trouble connecting" — Birdie stays in character.
@@ -5061,10 +5171,50 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
         setAiMessages(prev => [...prev, { role: 'assistant', text: fallback }]);
       }
     } finally {
+      aiSendingRef.current = false;
       setAiTyping(false);
       if (aiInputRef.current) aiInputRef.current.focus();
     }
   }, [aiMessages]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Every control that puts words in Birdie's box goes through here. The value
+  // lives in three places at once — the ref sendAiMessage reads, the boolean
+  // the send button is lit from, and the uncontrolled input itself — and the
+  // action row below used to write two of the three. The box then looked
+  // empty, the send button stayed lit, and pressing it did nothing at all,
+  // because sendAiMessage reads the ref and the ref was the one it skipped.
+  const fillAiInput = useCallback((text, { send = false } = {}) => {
+    const value = typeof text === 'string' ? text : '';
+    aiInputValueRef.current = value;
+    aiInputHasTextRef.current = !!value;
+    setAiInputHasText(!!value);
+    if (aiInputRef.current) aiInputRef.current.value = value;
+    // A send while Birdie is still answering is dropped by the guard at the
+    // top of sendAiMessage, so a chip tapped in that window hands the words
+    // over and focuses the box instead of appearing to do nothing.
+    if (send && !aiSendingRef.current) {
+      setTimeout(() => sendAiMessage(), 50);
+      return;
+    }
+    aiInputRef.current?.focus();
+  }, [sendAiMessage]);
+
+  // Clear the thread and start over. This is the escape hatch the length
+  // refusal points at, and the only way out of a conversation the server will
+  // not accept. Disabled while a turn is in flight: clearing the transcript
+  // under an outstanding request would drop that reply into an empty thread as
+  // an answer to nothing.
+  const startNewAiChat = useCallback(() => {
+    if (aiSendingRef.current) return;
+    setAiMessages([]);
+    aiInputValueRef.current = '';
+    aiInputHasTextRef.current = false;
+    setAiInputHasText(false);
+    if (aiInputRef.current) {
+      aiInputRef.current.value = '';
+      aiInputRef.current.focus();
+    }
+  }, []);
 
   // Keep Birdie's context ref fresh — sendAiMessage's useCallback closure
   // would otherwise capture stale screen/flock/venue values.
@@ -8328,6 +8478,12 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   // AI Assistant — Expandable Chat (panel / fullscreen)
   const isAiPanel = aiChatMode === 'panel';
   const isAiFullscreen = aiChatMode === 'fullscreen';
+  // Where Birdie's memory starts in the transcript on screen, and whether the
+  // send button can actually do anything. Both read once, here, so the marker
+  // in the thread and the payload sendAiMessage builds come off the same
+  // number, and so the button's look and its `disabled` cannot disagree.
+  const aiMemoryCut = aiMemoryCutIndex(aiMessages.length);
+  const canSendAi = aiInputHasText && !aiTyping;
   const closeAiChat = () => setAiChatMode('bubble');
   const toggleAiFullscreen = () => setAiChatMode(prev => prev === 'fullscreen' ? 'panel' : 'fullscreen');
 
@@ -8373,19 +8529,40 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           <DialogBehavior modal={isAiFullscreen} onClose={closeAiChat} label="Birdie" />
           {/* Header */}
           <div style={{ padding: isAiPanel ? '10px 12px' : '12px', borderBottom: '1px solid var(--divider)', background: colors.navyMidBg, borderRadius: isAiFullscreen ? '24px 24px 0 0' : '20px 20px 0 0', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-              <div style={{ position: 'relative' }}>
+            {/* minWidth 0 and a one-line subtitle. The header gained a third
+                button, and without these the title block refuses to shrink: at
+                320px the tagline wrapped to three lines and pushed the header
+                down into a panel that is only 55% of the screen tall. */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', minWidth: 0, flex: 1 }}>
+              <div style={{ position: 'relative', flexShrink: 0 }}>
                 <div style={{ width: isAiPanel ? '34px' : '40px', height: isAiPanel ? '34px' : '40px', borderRadius: '50%', background: isDark ? '#162046' : '#e8eaf0', overflow: 'hidden', boxShadow: '0 4px 12px rgba(30,58,92,0.35)', border: '2px solid rgba(45,90,135,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                   <img src={isDark ? "/birdie-avatar.png" : "/birdie-avatar-light.png"} alt="Birdie" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
                 </div>
                 <div style={{ position: 'absolute', bottom: '-2px', right: '-2px', width: '12px', height: '12px', borderRadius: '6px', backgroundColor: '#22C55E', border: '2px solid var(--bg-card-solid)' }} />
               </div>
-              <div>
+              <div style={{ minWidth: 0 }}>
                 <h2 style={{ fontFamily: 'var(--font-display)', letterSpacing: '-0.005em', fontSize: 'var(--t-title)', fontWeight: '600', color: 'white', margin: 0 }}>Birdie</h2>
-                <p style={{ fontSize: 'var(--t-meta)', color: 'rgba(255,255,255,0.7)', margin: 0 }}>knows what's good tonight</p>
+                <p style={{ fontSize: 'var(--t-meta)', color: 'rgba(255,255,255,0.7)', margin: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>knows what's good tonight</p>
               </div>
             </div>
-            <div style={{ display: 'flex', gap: '6px' }}>
+            <div style={{ display: 'flex', gap: '6px', flexShrink: 0 }}>
+              {/* New chat. The way out of a thread the server will not take,
+                  and the only reset there was ever a way to ask for. Shown
+                  once there is something to clear, and held closed while a
+                  turn is in flight so an outstanding answer cannot land in a
+                  thread that no longer has its question. */}
+              {aiMessages.length > 0 && (
+                <button
+                  className="hit44"
+                  aria-label="Start a new chat"
+                  title="New chat"
+                  onClick={startNewAiChat}
+                  disabled={aiTyping}
+                  style={{ width: '28px', height: '28px', borderRadius: '14px', backgroundColor: 'rgba(255,255,255,0.15)', border: 'none', color: 'white', cursor: aiTyping ? 'default' : 'pointer', opacity: aiTyping ? 0.45 : 1, display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'background-color 0.2s ease, opacity 0.2s ease' }}
+                >
+                  {Icons.plus('white', 14)}
+                </button>
+              )}
               {/* Expand/Collapse toggle */}
               <button className="hit44" onClick={toggleAiFullscreen} style={{ width: '28px', height: '28px', borderRadius: '14px', backgroundColor: 'rgba(255,255,255,0.15)', border: 'none', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'background-color 0.2s ease' }}
                 onMouseEnter={e => e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.25)'}
@@ -8424,7 +8601,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 <p style={{ fontSize: isAiPanel ? 'var(--t-micro)' : 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0, textAlign: 'center', maxWidth: '260px', lineHeight: 1.5 }}>where's good tonight, how packed it is, what your flock is up to. ask away.</p>
                 <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', justifyContent: 'center', pointerEvents: 'auto' }}>
                   {aiSuggestedQuestions.slice(0, isAiPanel ? 2 : 4).map((q, i) => (
-                    <button className="hit44" key={i} onClick={() => { aiInputValueRef.current = q.text; setAiInputHasText(true); aiInputHasTextRef.current = true; if (aiInputRef.current) aiInputRef.current.value = q.text; setTimeout(() => sendAiMessage(), 50); }} style={{ padding: '7px 12px', borderRadius: '16px', border: '1px solid var(--border-subtle)', backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer', fontSize: 'var(--t-meta)', color: colors.navy, fontWeight: '600', display: 'flex', alignItems: 'center', gap: '5px' }}>
+                    <button className="hit44" key={i} onClick={() => fillAiInput(q.text, { send: true })} style={{ padding: '7px 12px', borderRadius: '16px', border: '1px solid var(--border-subtle)', backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer', fontSize: 'var(--t-meta)', color: colors.navy, fontWeight: '600', display: 'flex', alignItems: 'center', gap: '5px' }}>
                       {q.icon(colors.navy, 12)}
                       {q.text}
                     </button>
@@ -8434,7 +8611,29 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
             )}
 
             {aiMessages.map((msg, i) => (
-              <div key={i} style={{ display: 'flex', gap: '8px', marginBottom: '12px', flexDirection: msg.role === 'user' ? 'row-reverse' : 'row', position: 'relative', zIndex: 2 }}>
+              <React.Fragment key={i}>
+              {/* Where Birdie's memory starts. The server takes the last 24
+                  messages and this client sends exactly that, so past 24 the
+                  oldest of the thread stop being read. Losing the start of a
+                  long conversation without a word is the kind of quiet
+                  dishonesty that makes an assistant feel broken instead of
+                  bounded, so the boundary is drawn where it actually falls and
+                  the transcript above it is still there to scroll. */}
+              {/* FUTURE TENSE, DELIBERATELY. aiMemoryCutIndex marks the oldest
+                  message that survives the NEXT send, so at exactly 24 messages
+                  the line appears while all 24 are still being read. "is out of
+                  view" would be false at that moment and true one message
+                  later; "drops out on your next question" is true at every
+                  length, and it warns before the loss instead of reporting it
+                  afterwards. */}
+              {aiMemoryCut > 0 && i === aiMemoryCut && (
+                <div style={{ position: 'relative', zIndex: 2, margin: '2px 0 12px', paddingTop: '8px', borderTop: '1px solid var(--divider)' }}>
+                  <p style={{ margin: 0, fontSize: 'var(--t-micro)', color: 'var(--text-tertiary)', textAlign: 'center', lineHeight: 1.45 }}>
+                    Birdie reads the last {AI_CHAT_MAX_MESSAGES} messages. Everything above this line drops out of view on your next question.
+                  </p>
+                </div>
+              )}
+              <div style={{ display: 'flex', gap: '8px', marginBottom: '12px', flexDirection: msg.role === 'user' ? 'row-reverse' : 'row', position: 'relative', zIndex: 2 }}>
                 <div style={{ width: '30px', height: '30px', borderRadius: '15px', background: msg.role === 'user' ? colors.navyBg : isDark ? '#162046' : '#e8eaf0', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, boxShadow: '0 2px 8px rgba(0,0,0,0.1)', overflow: 'hidden', border: msg.role === 'user' ? 'none' : '1.5px solid rgba(45,90,135,0.4)' }}>
                   {msg.role === 'user' ? Icons.user('white', 14) : <img src={isDark ? "/birdie-avatar.png" : "/birdie-avatar-light.png"} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />}
                 </div>
@@ -8530,6 +8729,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                   )}
                 </div>
               </div>
+              </React.Fragment>
             ))}
 
             {aiTyping && (
@@ -8565,7 +8765,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
               {isAiFullscreen && <p style={{ fontSize: 'var(--t-micro)', fontWeight: '700', color: 'var(--text-secondary)', marginBottom: '6px', textTransform: 'uppercase' }}>Try asking</p>}
               <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
                 {(isAiPanel ? aiSuggestedQuestions.slice(0, 2) : aiSuggestedQuestions).map((q, i) => (
-                  <button className="hit44" key={i} onClick={() => { aiInputValueRef.current = q.text; setAiInputHasText(true); aiInputHasTextRef.current = true; if (aiInputRef.current) aiInputRef.current.value = q.text; setTimeout(() => sendAiMessage(), 50); }} style={{ padding: isAiPanel ? '5px 8px' : '6px 10px', borderRadius: '16px', border: '1px solid var(--border-subtle)', backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer', fontSize: isAiPanel ? 'var(--t-micro)' : 'var(--t-micro)', color: colors.navy, fontWeight: '500', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                  <button className="hit44" key={i} onClick={() => fillAiInput(q.text, { send: true })} style={{ padding: isAiPanel ? '5px 8px' : '6px 10px', borderRadius: '16px', border: '1px solid var(--border-subtle)', backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer', fontSize: isAiPanel ? 'var(--t-micro)' : 'var(--t-micro)', color: colors.navy, fontWeight: '500', display: 'flex', alignItems: 'center', gap: '4px' }}>
                     {q.icon(colors.navy, isAiPanel ? 10 : 12)}
                     {q.text}
                   </button>
@@ -8579,9 +8779,18 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
             <div style={{ borderRadius: '20px', backgroundColor: 'var(--bg-hover)', border: '1.5px solid var(--border-subtle)', padding: '6px', transition: 'border-color 0.3s ease, box-shadow 0.3s ease', boxShadow: aiInputHasText ? '0 0 0 1px rgba(45,90,135,0.15), 0 4px 16px rgba(0,0,0,0.08)' : '0 2px 8px rgba(0,0,0,0.04)', borderColor: aiInputHasText ? 'rgba(30,58,92,0.25)' : 'var(--border-subtle)' }}>
               {/* Text input row */}
               <div style={{ display: 'flex', alignItems: 'flex-end', gap: '0', padding: '0 2px 0 10px' }}>
-                <input aria-label="Ask me anything" ref={aiInputRef} type="text" defaultValue="" onInput={(e) => { aiInputValueRef.current = e.target.value; const has = !!e.target.value; if (has !== aiInputHasTextRef.current) { aiInputHasTextRef.current = has; setAiInputHasText(has); } }} onKeyDown={(e) => e.key === 'Enter' && sendAiMessage()} placeholder="Ask me anything..." style={{ flex: 1, padding: '11px 0', backgroundColor: 'transparent', color: 'var(--text-primary)', border: 'none', fontSize: 'var(--t-body)', outline: 'none', fontWeight: '500', lineHeight: '1.4' }} autoComplete="off" />
-                <button className="hit44 fab-press" onClick={sendAiMessage} disabled={!aiInputHasText && !aiTyping} style={{ width: '34px', height: '34px', minWidth: '34px', borderRadius: '17px', border: 'none', background: aiInputHasText ? '#1e293b' : 'transparent', color: 'white', cursor: aiInputHasText ? 'pointer' : 'default', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1)', transform: aiInputHasText ? 'scale(1)' : 'scale(0.85)', opacity: aiInputHasText ? 1 : 0.4, boxShadow: aiInputHasText ? '0 4px 12px rgba(30,58,92,0.30)' : 'none' }}>
-                  <svg aria-hidden="true" focusable="false" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ transition: 'transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1)', transform: aiInputHasText ? 'translateY(-1px)' : 'translateY(0)' }}>
+                {/* maxLength is the server's own per-message ceiling. Without
+                    it a pasted essay 400'd as "Message too long", stayed in the
+                    transcript, and then failed EVERY later send in the thread,
+                    because the cap applies to the history too. */}
+                <input aria-label="Ask me anything" ref={aiInputRef} type="text" defaultValue="" maxLength={AI_CHAT_MAX_MESSAGE_CHARS} onInput={(e) => { aiInputValueRef.current = e.target.value; const has = !!e.target.value; if (has !== aiInputHasTextRef.current) { aiInputHasTextRef.current = has; setAiInputHasText(has); } }} onKeyDown={(e) => e.key === 'Enter' && sendAiMessage()} placeholder="Ask me anything..." style={{ flex: 1, padding: '11px 0', backgroundColor: 'transparent', color: 'var(--text-primary)', border: 'none', fontSize: 'var(--t-body)', outline: 'none', fontWeight: '500', lineHeight: '1.4' }} autoComplete="off" />
+                {/* `!aiInputHasText && !aiTyping` left this ENABLED for the
+                    whole time Birdie was answering, including over an empty
+                    box, where pressing it did nothing; and it was drawn at 0.4
+                    opacity the entire time, so it looked disabled and was not.
+                    One value now drives both the look and the behaviour. */}
+                <button className="hit44 fab-press" onClick={sendAiMessage} disabled={!canSendAi} style={{ width: '34px', height: '34px', minWidth: '34px', borderRadius: '17px', border: 'none', background: canSendAi ? '#1e293b' : 'transparent', color: 'white', cursor: canSendAi ? 'pointer' : 'default', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1)', transform: canSendAi ? 'scale(1)' : 'scale(0.85)', opacity: canSendAi ? 1 : 0.4, boxShadow: canSendAi ? '0 4px 12px rgba(30,58,92,0.30)' : 'none' }}>
+                  <svg aria-hidden="true" focusable="false" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ transition: 'transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1)', transform: canSendAi ? 'translateY(-1px)' : 'translateY(0)' }}>
                     <line x1="12" y1="19" x2="12" y2="5" /><polyline points="5 12 12 5 19 12" />
                   </svg>
                 </button>
@@ -8593,18 +8802,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                   { icon: Icons.mapPin, label: 'Crowds', prefix: 'How busy is ', color: 'var(--accent-steel, #2d5a87)' },
                   { icon: Icons.users, label: 'My Flocks', prefix: 'What are my upcoming plans?', color: 'var(--accent-steel, #2d5a87)' },
                 ].map((action, i) => (
-                  <button key={i} className="hit44 fab-press" onClick={() => {
-                    if (action.prefix.endsWith('?')) {
-                      aiInputValueRef.current = action.prefix;
-                      setAiInputHasText(true);
-                      if (aiInputRef.current) aiInputRef.current.value = action.prefix;
-                      setTimeout(() => sendAiMessage(), 50);
-                    } else {
-                      aiInputValueRef.current = action.prefix;
-                      setAiInputHasText(true);
-                      if (aiInputRef.current) { aiInputRef.current.value = action.prefix; aiInputRef.current.focus(); }
-                    }
-                  }} style={{ display: 'flex', alignItems: 'center', gap: '4px', padding: '4px 10px', borderRadius: '12px', border: 'none', backgroundColor: 'transparent', cursor: 'pointer', transition: 'all 0.25s ease', fontSize: 'var(--t-meta)', fontWeight: '600', color: 'var(--text-tertiary)' }}
+                  <button key={i} className="hit44 fab-press" onClick={() => fillAiInput(action.prefix, { send: action.prefix.endsWith('?') })} style={{ display: 'flex', alignItems: 'center', gap: '4px', padding: '4px 10px', borderRadius: '12px', border: 'none', backgroundColor: 'transparent', cursor: 'pointer', transition: 'all 0.25s ease', fontSize: 'var(--t-meta)', fontWeight: '600', color: 'var(--text-tertiary)' }}
                   onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = 'rgba(45,90,135,0.08)'; e.currentTarget.style.color = action.color; }}
                   onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = 'transparent'; e.currentTarget.style.color = 'var(--text-tertiary)'; }}
                   >
@@ -10115,7 +10313,21 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                       {Icons.trendingUp(colors.red, 10)}
                       <span style={{ fontSize: 'var(--t-micro)', color: 'var(--text-secondary)', textTransform: 'uppercase' }}>Busiest Hours</span>
                     </div>
-                    <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: closedAllDay ? colors.red : colors.navy }}>{closedAllDay ? 'Closed Today' : peakText}</span>
+                    {/* `peak` is one of the fields the forecast gate withholds
+                        (routes/crowd.js LOCKED_FORECAST_FIELDS), so under the
+                        paywall this tile printed the words BUSIEST HOURS over
+                        nothing at all: an empty box that reads as a broken
+                        card, not as a boundary. Same blurred stand-in and same
+                        tap target as the best-time line above it. */}
+                    {closedAllDay ? (
+                      <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: colors.red }}>Closed Today</span>
+                    ) : cd?.forecastAccess?.locked ? (
+                      <span onClick={(e) => { e.stopPropagation(); setPaywallTrigger('forecast'); }} style={{ fontSize: 'var(--t-meta)', fontWeight: '600', color: colors.steel, cursor: 'pointer' }}>
+                        <span aria-hidden style={{ filter: 'blur(4px)', userSelect: 'none' }}>9 PM</span> <span style={{ fontWeight: '500', letterSpacing: '0.5px' }}>PRO</span>
+                      </span>
+                    ) : (
+                      <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: colors.navy }}>{peakText}</span>
+                    )}
                   </div>
                   <div style={{ flex: 1, backgroundColor: 'var(--bg-card-solid)', borderRadius: '8px', padding: '4px 8px', border: '1px solid var(--border-subtle)' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '4px', marginBottom: '2px' }}>
@@ -14050,8 +14262,21 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           setDmReplyingTo(prev => (prev && sameContentId(prev.id, ev.contentId) ? null : prev));
           break;
         case 'venue_promotion':
-          // Marked, not dropped, so this one IS reversible in place.
+          // TWO lists, and they hold different rows, so both calls are
+          // unconditional rather than a branch on who this client is.
+          //
+          // The owner's dashboard list is MARKED, not dropped, because
+          // routes/venueDashboard.js keeps a hidden promotion in the owner's own
+          // read and flags it: silently vanishing from your own dashboard
+          // explains nothing, and a mark is reversible in place when the
+          // restore arrives.
           setPromotions(prev => setModerationHidden(prev, ev.contentId, hidden));
+          // A VIEWER's open card is a public read that filters is_hidden, so
+          // there is nothing to mark there and the row simply has to go. Not
+          // restorable in place for the same reason the flock and DM branches
+          // are not: the payload carries no content to rebuild the row from, and
+          // re-opening the card refetches it.
+          if (hidden) setVenueDetailPromos(prev => dropContentById(prev, ev.contentId));
           // Same rule the 409 CONTENT_HIDDEN path already follows: a composer
           // left open on a row that has just been taken down has a Save button
           // that can only ever answer 409, and the row behind it now carries
@@ -17389,7 +17614,22 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 <h4 style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: 'var(--text-primary)', margin: '0 0 8px', display: 'flex', alignItems: 'center', gap: '6px' }}>{Icons.gift(colors.steel, 14)} Deals & Promotions</h4>
                 {venueDetailPromos.map(p => (
                   <div key={p.id} style={{ padding: '10px', backgroundColor: 'var(--bg-tertiary)', borderRadius: '10px', marginBottom: '6px', border: `1px solid ${colors.steel}33` }}>
-                    <p style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: 'var(--text-primary)', margin: 0 }}>{p.title}</p>
+                    <div style={{ display: 'flex', alignItems: 'flex-start', gap: '6px' }}>
+                      <p style={{ flex: 1, minWidth: 0, fontSize: 'var(--t-meta)', fontWeight: '500', color: 'var(--text-primary)', margin: 0 }}>{p.title}</p>
+                      {/* A promotion is owner-typed UGC served to every user who
+                          opens this card, it is a reportable content type the
+                          queue can already action (routes/moderation.js
+                          VALID_CONTENT_TYPES, routes/admin.js TAKEDOWN_TARGETS),
+                          and ModerationSheet has carried the noun for it all
+                          along. The only missing piece was the control, so the
+                          one public surface that shows a promotion had no way
+                          to report one. No userId: /public-promotions does not
+                          serve the owner's id and does not need to, because the
+                          report route reads venue_user_id off the row itself.
+                          The sheet then offers report without block, exactly as
+                          it already does for a guest RSVP. */}
+                      <button aria-label="Report promotion" className="hit44" onClick={() => setModerationTarget({ userName: 'this venue', contentType: 'venue_promotion', contentId: p.id })} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '2px 4px', flexShrink: 0, fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)' }} title="Report promotion">{Icons.flag('currentColor', 13)}</button>
+                    </div>
                     {p.description && <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '2px 0 0' }}>{p.description}</p>}
                     <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: '2px 0 0' }}>{p.time_slot}{p.days ? ` · ${p.days}` : ''}</p>
                   </div>
