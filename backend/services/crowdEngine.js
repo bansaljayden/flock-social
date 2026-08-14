@@ -114,16 +114,6 @@ function formatHour(h) {
   return `${hour24 - 12} PM`;
 }
 
-// Simple deterministic hash from place_id to add per-venue variance
-function venueHash(placeId) {
-  if (!placeId) return 0;
-  let hash = 0;
-  for (let i = 0; i < placeId.length; i++) {
-    hash = ((hash << 5) - hash + placeId.charCodeAt(i)) | 0;
-  }
-  return Math.abs(hash);
-}
-
 // ---------------------------------------------------------------------------
 // Popularity tiers — defines how strongly review count amplifies everything
 // ---------------------------------------------------------------------------
@@ -582,16 +572,16 @@ function calculateCrowdScore(venue, weather, timestamp) {
   const pricePopBonus = getPricePopularityBonus(priceLevel, reviews, dayOfWeek, hour, types);
   const weatherMod = getWeatherFactor(weather, types);
 
-  // Per-venue variance: ±5 points from place_id hash so no two venues are identical
-  const hash = venueHash(venue.place_id);
-  const venueVariance = (hash % 11) - 5; // range: -5 to +5
-
   // Combine: base is lower, but factors are more differentiated
   // Popularity multiplier amplifies the time-sensitive factors for popular venues
   const timeSensitiveFactors = venueContext + pricePopBonus;
   const amplifiedFactors = Math.round(timeSensitiveFactors * pop.multiplier);
 
-  const rawScore = 8 + time + pop.base + rating + amplifiedFactors + weatherMod + venueVariance;
+  // No place_id-hash "variance" term here: a ±5 nudge derived from a hash is a
+  // fabricated number shown on the dial, the map and owner analytics with no
+  // basis in any real signal. Differentiation comes from the real inputs
+  // (time, reviews/popularity, rating, venue-type context, weather).
+  const rawScore = 8 + time + pop.base + rating + amplifiedFactors + weatherMod;
   const score = Math.max(0, Math.min(100, Math.round(rawScore)));
 
   // Confidence based on data quality
@@ -633,7 +623,7 @@ function calculateCrowdScore(venue, weather, timestamp) {
     score,
     label: getLabel(score),
     confidence,
-    factors: { time, popularity: pop.base, rating, venueContext: amplifiedFactors, weather: weatherMod, variance: venueVariance },
+    factors: { time, popularity: pop.base, rating, venueContext: amplifiedFactors, weather: weatherMod },
     dataSourcesUsed,
   };
 }
