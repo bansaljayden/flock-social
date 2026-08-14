@@ -71,14 +71,33 @@ async function canNotify(userId, data = {}) {
       if (await isBlockedBetween(userId, actorId)) return false;
     }
 
-    // One lookup answers all three questions: does the recipient still exist,
-    // are they allowed to be here at all, and can they still see the thing.
+    // One lookup answers all four questions: does the recipient still exist,
+    // are they allowed to be here at all, can they still see the thing, and is
+    // the person this push NAMES still an account in good standing.
     // Creator OR a member who has not walked away; 'invited' counts, since an
     // invite notification is the whole reason that row exists.
+    //
+    // Round 18: the actor half was missing. Every push that names somebody
+    // ("{name} invited you to a flock", "You owe {name} $12", "{name} in
+    // {flock}") was gated on the RECIPIENT's ban state and never the sender's,
+    // so a banned or deleted account's display name still landed on a lock
+    // screen, where it stays until it is dismissed — the same reach the block
+    // gate two lines up exists to deny. A missing actor row is treated as
+    // banned: an id that no longer resolves to a user is not somebody we can
+    // vouch for naming.
+    // The actor branch is spliced in only when there IS an actor, so a push
+    // that names nobody (an admin moderation alert) still asks the database
+    // exactly the questions it has rather than binding a third parameter that
+    // means nothing. Nothing user-supplied reaches the SQL text: the only two
+    // possible values below are a literal `false` and the bind marker itself.
     const flockId = flockFrom(data);
+    const actorClause = actorId
+      ? 'COALESCE((SELECT COALESCE(a.is_banned, false) FROM users a WHERE a.id = $3), true)'
+      : 'false';
     const r = await pool.query(
       `SELECT
          COALESCE(u.is_banned, false) AS is_banned,
+         ${actorClause} AS actor_banned,
          CASE WHEN $2::int IS NULL THEN true ELSE EXISTS (
            SELECT 1 FROM flocks f
            LEFT JOIN flock_members m ON m.flock_id = f.id AND m.user_id = u.id
@@ -87,12 +106,13 @@ async function canNotify(userId, data = {}) {
          ) END AS can_see
        FROM users u
        WHERE u.id = $1`,
-      [userId, flockId]
+      actorId ? [userId, flockId, actorId] : [userId, flockId]
     );
 
     const row = r.rows[0];
     if (!row) return false;        // the account was deleted
     if (row.is_banned) return false; // no pulling a banned user back into an app that rejects them
+    if (row.actor_banned) return false; // a removed account does not get to keep announcing itself
     return row.can_see !== false;
   } catch (err) {
     // FAIL CLOSED. This was the one block-enforcement point in the codebase
@@ -183,6 +203,11 @@ module.exports = {
   pushAlways,
   canNotify,
   debounceKey,
+  // Background producers (services/crowdAlerts.js) ask this BEFORE they do the
+  // scoring and the paid weather call that build a notification nothing can
+  // deliver — and, just as importantly, before they write a marker row saying
+  // the notification was already sent.
+  isPushConfigured: () => !disabled(),
   // Test seam: the debounce window is process-global state.
   _resetDebounce: () => lastPushSent.clear(),
 };

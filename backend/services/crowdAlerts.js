@@ -7,7 +7,7 @@
 const pool = require('../config/database');
 const { calculateCrowdScore, generateHourlyForecast, venueLocalNow, weekdayOffset } = require('./crowdEngine');
 const { getWeather } = require('./weatherService');
-const { pushAlways } = require('./pushHelper');
+const { pushAlways, isPushConfigured } = require('./pushHelper');
 
 const ALERT_TYPE = 'crowd';
 
@@ -72,7 +72,87 @@ async function releaseAlert(flockId) {
     .catch(() => {});
 }
 
+// ---------------------------------------------------------------------------
+// Is there anything real behind the claim?
+//
+// When the venue is not in ml_venues, the stub built below carries types [],
+// rating 0, review_count 0 — so calculateCrowdScore is scoring the CLOCK, not
+// the venue, and "The Pearl will be packed" is a sentence about nothing. This
+// app has a standing rule against putting fabricated numbers in front of a
+// user, and an unsolicited push to a lock screen is the least recoverable
+// place to break it. No venue record, no busyness claim.
+// ---------------------------------------------------------------------------
+function hasEnoughData({ known, reviews }) {
+  return Boolean(known) && Number(reviews) > 0;
+}
+
+// One constant, read by both the decision and the copy, so the gate that lets
+// an alert out can never disagree with the sentence it produces.
+const PEAK_SCORE = 75;
+
+// The forecast's first entry is the hour ALREADY IN PROGRESS. Announcing it as
+// "peak time is coming up" told people to hurry toward a peak they were
+// standing in. Only a later hour can be news.
+function pickPeak(forecast) {
+  const upcoming = (forecast || []).slice(1);
+  if (!upcoming.length) return null;
+  return upcoming.reduce((max, h) => (h.score > max.score ? h : max), upcoming[0]);
+}
+
+// ---------------------------------------------------------------------------
+// Copy
+//
+// Pure so the sentences can be tested without a database. Two things it exists
+// to prevent, both of which shipped:
+//   * an em dash in user-visible text (SLOP-AUDIT rule 1);
+//   * "It's moderate now but expected to get moderate soon." The rule engine's
+//     label bands are 20/40/60/80, so a 41 -> 57 climb clears the +15 "getting
+//     busier" trigger without changing the word, and the sentence contradicted
+//     itself. The alert is still worth sending; it just has to say what it
+//     actually knows.
+// ---------------------------------------------------------------------------
+function buildAlertMessage({ venueName, currentScore, eventScore, peak }) {
+  const name = venueName || 'Your venue';
+  const soon = String(eventScore.label || '').toLowerCase();
+  const now = String(currentScore.label || '').toLowerCase();
+  const gettingBusier = eventScore.score > currentScore.score + 15;
+  const peakSoon = Boolean(peak) && peak.score >= PEAK_SCORE;
+
+  if (eventScore.score >= 85) {
+    return {
+      title: `${name} will be packed`,
+      body: `Expected to be ${soon} around your flock time. Worth heading out early.`,
+    };
+  }
+  if (gettingBusier) {
+    return {
+      title: `${name} is filling up`,
+      body: soon === now
+        ? `It's ${now} right now and still filling up before your flock time. Going early beats the rush.`
+        : `It's ${now} right now and expected to be ${soon} by your flock time. Going early beats the rush.`,
+    };
+  }
+  if (peakSoon) {
+    return {
+      title: `${name} is about to peak`,
+      body: `The busiest stretch starts around ${peak.hour}. Head out now for a better spot.`,
+    };
+  }
+  return {
+    title: `Heads up about ${name}`,
+    body: `Expected to be ${soon} at your flock time.`,
+  };
+}
+
 async function checkCrowdAlerts() {
+  // Nothing below can be delivered without Firebase, and the sweep is not
+  // free: a marker sweep, a flock scan, an ml_venues read and a QUOTA-BEARING
+  // weather fetch per flock. Worse, it claimed each flock in crowd_alert_sends
+  // before pushing, so on a deployment with push unconfigured every upcoming
+  // flock was permanently marked "already alerted" and would never be alerted
+  // once Firebase was configured.
+  if (!isPushConfigured()) return;
+
   try {
     // Keep the marker table proportional to live flocks. Markers only need to
     // outlive the 3-hour pre-event window they guard.
@@ -101,16 +181,21 @@ async function checkCrowdAlerts() {
 }
 
 async function processFlockAlert(flock) {
-  // Cheap pre-check so a flock that was already alerted costs one indexed read
-  // instead of a weather call plus a scoring pass. The authoritative claim
-  // happens below, right before the pushes go out.
-  const already = await pool.query(
-    'SELECT 1 FROM crowd_alert_sends WHERE flock_id = $1 AND alert_type = $2',
-    [flock.id, ALERT_TYPE]
-  );
-  if (already.rowCount > 0) return;
-
   try {
+    // Cheap pre-check so a flock that was already alerted costs one indexed
+    // read instead of a weather call plus a scoring pass. The authoritative
+    // claim happens below, right before the pushes go out.
+    //
+    // Inside the try: this read used to sit outside it, so a single failure
+    // here rejected out of processFlockAlert, and the caller's `for` loop is
+    // wrapped in one try for the whole sweep — one unlucky flock cancelled the
+    // alerts for every flock behind it in the list.
+    const already = await pool.query(
+      'SELECT 1 FROM crowd_alert_sends WHERE flock_id = $1 AND alert_type = $2',
+      [flock.id, ALERT_TYPE]
+    );
+    if (already.rowCount > 0) return;
+
     // Build venue object for crowd engine
     const venue = {
       place_id: flock.venue_id,
@@ -133,11 +218,20 @@ async function processFlockAlert(flock) {
     let venueTimezone = null;
     if (venueRows.length) {
       venue.types = venueRows[0].google_types || [];
-      venue.user_ratings_total = venueRows[0].review_count || 0;
-      venue.rating = venueRows[0].rating || 0;
-      venue.price_level = venueRows[0].price_level || 0;
+      // Number(): ml_venues.rating is NUMERIC(2,1), and node-postgres hands
+      // NUMERIC back as a STRING. The rule engine only ever subtracts from it
+      // so the coercion happens implicitly today, but a single `+` anywhere
+      // downstream would concatenate instead of add, and routes/crowd.js feeds
+      // the same field a real number from Google. Same shape in, same shape out.
+      venue.user_ratings_total = Number(venueRows[0].review_count) || 0;
+      venue.rating = Number(venueRows[0].rating) || 0;
+      venue.price_level = Number(venueRows[0].price_level) || 0;
       venueTimezone = venueRows[0].timezone || null;
     }
+
+    // Bail BEFORE the paid weather call: a venue we hold no record of cannot
+    // support a busyness claim, so there is nothing to spend a weather unit on.
+    if (!hasEnoughData({ known: venueRows.length > 0, reviews: venue.user_ratings_total })) return;
 
     // Get weather data
     let weather = null;
@@ -156,10 +250,11 @@ async function processFlockAlert(flock) {
     // and special-night features. We derive the offset from ml_venues.timezone
     // and score on the venue's wall clock, matching routes/crowd.js.
     //
-    // Fallback: when the venue isn't in ml_venues (no ML row) or its timezone is
-    // blank/invalid, we have no offset here — the sweep does no Google fetch, so
-    // the server clock stands in, exactly the pre-existing behaviour. That only
-    // degrades venues we don't yet model; the ones the model knows score right.
+    // Fallback: when the venue's ml_venues row carries a blank or invalid
+    // timezone we have no offset here — the sweep does no Google fetch, so the
+    // server clock stands in, exactly the pre-existing behaviour. (A venue with
+    // no ml_venues row at all no longer reaches this point: hasEnoughData above
+    // refuses to make a busyness claim about a venue we hold no record of.)
     const now = new Date();
     const utcOffsetMinutes = offsetMinutesForZone(venueTimezone, now);
     // The rule engine (calculateCrowdScore) scores off the timestamp's own
@@ -178,34 +273,25 @@ async function processFlockAlert(flock) {
     const eventClock = venueWallClock(new Date(flock.event_time), utcOffsetMinutes);
     const eventScore = calculateCrowdScore(venue, weather, eventClock.time);
 
-    // Generate hourly forecast for next 3 hours, starting on the venue's hour
+    // Generate hourly forecast for next 3 hours, starting on the venue's hour.
+    // The peak is taken from the hours still AHEAD — index 0 is the hour the
+    // venue is already in, and "about to peak" about right now is not news.
     const forecast = generateHourlyForecast(venue, weather, nowClock.hour, 3, nowClock.time);
-    const peakHour = forecast.reduce((max, h) => h.score > max.score ? h : max, forecast[0]);
+    const peak = pickPeak(forecast);
 
     // Decision: alert if venue will be busy (score >= 70) or getting busier
     const willBeBusy = eventScore.score >= 70;
     const gettingBusier = eventScore.score > currentScore.score + 15;
-    const peakSoon = peakHour.score >= 75;
+    const peakSoon = Boolean(peak) && peak.score >= PEAK_SCORE;
 
     if (!willBeBusy && !gettingBusier && !peakSoon) return;
 
-    // Build notification message
-    let title, body;
-    const venueName = flock.venue_name || 'Your venue';
-
-    if (eventScore.score >= 85) {
-      title = `${venueName} will be packed`;
-      body = `Expected to be ${eventScore.label.toLowerCase()} around your flock time. Consider heading out early!`;
-    } else if (gettingBusier) {
-      title = `${venueName} is filling up`;
-      body = `It's ${currentScore.label.toLowerCase()} now but expected to get ${eventScore.label.toLowerCase()} soon. Go now to beat the rush!`;
-    } else if (peakSoon) {
-      title = `${venueName} is about to peak`;
-      body = `Peak time is coming up (${peakHour.hour}). Head out now for a better spot!`;
-    } else {
-      title = `${venueName} — heads up`;
-      body = `Expected to be ${eventScore.label.toLowerCase()} at your flock time.`;
-    }
+    const { title, body } = buildAlertMessage({
+      venueName: flock.venue_name,
+      currentScore,
+      eventScore,
+      peak,
+    });
 
     // Get all accepted members of this flock. Proactive crowd alerts are a
     // Flock Pro perk once the paywall is live; with PAYWALL_ENABLED unset,
@@ -226,26 +312,37 @@ async function processFlockAlert(flock) {
     // pushing this flock, so stop here rather than double-notifying.
     if (!(await claimAlert(flock.id))) return;
 
-    // Send push to all members
-    let delivered = 0;
-    try {
-      for (const member of members) {
-        await pushAlways(member.user_id, title, body, {
-          type: 'crowd_alert',
-          flockId: String(flock.id),
-          score: String(eventScore.score),
-          label: eventScore.label,
-        });
-        delivered += 1;
-      }
-    } catch (pushErr) {
-      // Nothing went out — drop the claim so the next sweep can retry rather
-      // than the flock being permanently marked as alerted.
-      if (delivered === 0) await releaseAlert(flock.id);
-      throw pushErr;
+    // Send push to all members. Concurrent and allSettled: this is a background
+    // sweep, but it was N sequential round trips to Google inside a loop that
+    // holds the claim, so a restart part-way through left the flock marked as
+    // alerted with most members never told.
+    const outcomes = await Promise.allSettled(
+      members.map((member) => pushAlways(member.user_id, title, body, {
+        type: 'crowd_alert',
+        flockId: String(flock.id),
+        score: String(eventScore.score),
+        label: eventScore.label,
+      }))
+    );
+
+    // "Delivered" means a notification actually reached a device, not that a
+    // call returned. pushAlways answers `{ skipped }` for a recipient the
+    // visibility gate suppressed and `{ sent: 0 }` for one with no registered
+    // device; counting those as delivery left the flock permanently marked as
+    // alerted on the strength of nothing having been sent.
+    const delivered = outcomes.reduce((n, o) => {
+      const r = o.status === 'fulfilled' ? o.value : null;
+      return n + (r && !r.skipped && r.sent > 0 ? 1 : 0);
+    }, 0);
+
+    if (delivered === 0) {
+      // Drop the claim so a later sweep can retry rather than the flock being
+      // permanently marked as alerted.
+      await releaseAlert(flock.id);
+      return;
     }
 
-    console.log(`[CrowdAlerts] Sent alert for flock ${flock.id} (${flock.venue_name}): score=${eventScore.score}`);
+    console.log(`[CrowdAlerts] Sent alert for flock ${flock.id} (${flock.venue_name}): score=${eventScore.score}, delivered=${delivered}`);
   } catch (err) {
     console.error(`[CrowdAlerts] Error processing flock ${flock.id}:`, err.message);
   }
@@ -256,4 +353,8 @@ module.exports = { checkCrowdAlerts };
 // derivation (IANA zone -> offset -> wall clock) is internal, so its edge cases
 // (missing zone -> server-clock fallback, fractional +330 offsets, date roll
 // near UTC midnight) are invisible to the route-level tests otherwise.
-module.exports.__testables = { offsetMinutesForZone, venueWallClock };
+// backend/__tests__/pushDeliveryHardening.test.js drives the alert copy and the
+// two gates in front of it directly: the sentences are what land on a lock
+// screen, and reaching them through the whole sweep would need a scripted
+// weather API and a scripted crowd model to say anything about them.
+module.exports.__testables = { offsetMinutesForZone, venueWallClock, buildAlertMessage, pickPeak, hasEnoughData };
