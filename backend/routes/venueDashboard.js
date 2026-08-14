@@ -2,17 +2,37 @@ const express = require('express');
 const { body, param, validationResult } = require('express-validator');
 const pool = require('../config/database');
 const { authenticate } = require('../middleware/auth');
-const { requireVenueTier } = require('../services/venueEntitlements');
+const { requireVenueTier, venueBillingEnabled } = require('../services/venueEntitlements');
 const { rejectIfProfane } = require('../utils/moderation');
 const { upstreamSignal } = require('../utils/upstream');
 
 const router = express.Router();
 router.use(authenticate);
 
-// Paid-tier boundaries (VENUE-BILLING.md): promotions, events, and the full
-// incoming-flocks feed are Insights ('premium') features. Server-enforced —
-// the locked dashboard tabs are cosmetic. No-op until VENUE_BILLING_ENABLED.
+// Paid-tier boundaries (VENUE-BILLING.md): promotions, events, the full
+// incoming-flocks feed, the demand curve (/intelligence) and the competitive
+// strip (/strip) are Insights ('premium') features. Server-enforced — the
+// locked dashboard tabs are cosmetic. No-op until VENUE_BILLING_ENABLED.
+//
+// Tier assignment, from the VENUE-BILLING.md pricing table:
+//   Free      = "Claimed profile, hours, logo, reviews + reply, 30-day
+//                'groups considered you' count" — nothing model-powered.
+//   Insights  = "Full incoming-flocks feed + history, demand curve,
+//                promotions to nearby groups, events" — /intelligence IS the
+//                demand curve, so it is premium by name.
+//   Boost     = "Everything + promoted placement + slow-night push offers" —
+//                advertising surfaces, not analytics.
+// The competitive strip is named in NO row of that table (ambiguity flagged in
+// the audit report). The conservative reading is to gate it rather than leave a
+// headline paid analytic free; it is the same crowd model as the demand curve
+// applied to the neighbours, so it sits with Insights, not with Boost's ad
+// surfaces. Move it to 'pro' if the pricing table is ever made explicit.
 const requirePremium = requireVenueTier('premium');
+
+// The tiers that may have a paid benefit SERVED to end users on their behalf.
+// Read at request time, never at claim/creation time: a venue that upgrades,
+// creates promotions and then downgrades must stop being promoted.
+const SERVING_TIERS = ['premium', 'pro'];
 
 // Helper: get venue profile for current user
 async function getVenueCtx(userId) {
@@ -237,11 +257,9 @@ router.get('/incoming-flocks', requirePremium, async (req, res) => {
     if (!venue || !venue.google_place_id) return res.json({ flocks: [] });
     // Verified claims only (round 3): an unverified claim on an arbitrary
     // place id must not expose which groups are privately considering it.
-    const ver = await pool.query(
-      'SELECT verified FROM venue_profiles WHERE user_id = $1',
-      [req.user.id]
-    );
-    if (!ver.rows[0]?.verified) return res.json({ flocks: [], unverified: true });
+    // getVenueCtx already selected `verified` — the second SELECT this used to
+    // run against the same row was a duplicate read, not a second opinion.
+    if (!venue.verified) return res.json({ flocks: [], unverified: true });
 
     // Find flocks where venue_votes reference this venue's place_id (venue_id column)
     const { rows } = await pool.query(
@@ -381,6 +399,74 @@ router.post('/submit-review', [
     const { googlePlaceId, rating, text } = req.body;
     // Reviews are UGC — same text screen as every other user-writable field.
     if (text && rejectIfProfane(res, text)) return;
+
+    // Round 16: you may only review a venue you can be shown to have visited.
+    // ON CONFLICT (google_place_id, user_id) already stopped ONE account from
+    // stuffing repeats, but nothing stopped an account from rating a place it
+    // had never been to — including a competitor's, one star at a time, from as
+    // many accounts as someone cares to make. The public rating on the venue
+    // card is derived from these rows.
+    //
+    // This is the same trust rule venue_feedback.verified uses (routes/
+    // feedback.js): an HMAC-signed NFC tap ('nfc'; unsigned URL visits are
+    // stored as 'nfc_unverified' by migration 004 and prove nothing), OR
+    // accepted membership in a flock that met at this venue. Both halves are
+    // required to keep the real flow working — almost no venue has an NFC tag
+    // yet, so check-ins alone would refuse nearly every honest review, and the
+    // flock signal is what the product's own loop produces.
+    //
+    // The windows are the one deliberate difference from feedback.js. Feedback
+    // is a live crowd report, so it trusts a 3-hour tap and a ±12-hour event.
+    // A review is written after the fact, often the next morning, so presence
+    // counts for 30 days. Reviewing while you are still there also works: the
+    // event window keeps feedback's 12-hour lead. A cancelled flock is an
+    // explicit "we did not go", so it proves nothing; a flock with no
+    // event_time cannot be dated and is not counted either.
+    //
+    // Honest about what this is: it raises the cost of a fabricated review from
+    // one POST to a fabricated flock, and it is the strongest presence signal
+    // this codebase has. It is not proof against a determined script — a user
+    // can still create a flock naming any place id and confirm it. Closing that
+    // needs the NFC/geo signal, which almost no venue has hardware for yet.
+    // The same limit applies to venue_feedback.verified today.
+    const presence = await pool.query(
+      `SELECT
+         EXISTS (
+           SELECT 1 FROM venue_checkins
+           WHERE user_id = $1
+             AND venue_place_id = $2
+             AND checkin_source = 'nfc'
+             AND created_at > NOW() - INTERVAL '30 days'
+         )
+         OR EXISTS (
+           SELECT 1
+           FROM flock_members fm
+           JOIN flocks f ON f.id = fm.flock_id
+           WHERE fm.user_id = $1
+             AND fm.status = 'accepted'
+             AND f.venue_id = $2
+             AND f.status IS DISTINCT FROM 'cancelled'
+             AND f.event_time BETWEEN NOW() - INTERVAL '30 days'
+                                  AND NOW() + INTERVAL '12 hours'
+         )
+         -- This route is an upsert: the same POST edits an existing review.
+         -- Presence is proved when the review is FIRST written, and it would be
+         -- absurd to lock someone out of correcting their own words two months
+         -- later. Rows that predate this rule keep their author's edit rights
+         -- for the same reason nothing backfills them away.
+         OR EXISTS (
+           SELECT 1 FROM venue_reviews
+           WHERE user_id = $1 AND google_place_id = $2
+         ) AS visited`,
+      [req.user.id, googlePlaceId]
+    );
+    if (presence.rows[0]?.visited !== true) {
+      return res.status(403).json({
+        error: 'You can review a venue after you have been there with a flock.',
+        code: 'VISIT_REQUIRED',
+      });
+    }
+
     const { rows } = await pool.query(
       `INSERT INTO venue_reviews (google_place_id, user_id, rating, text)
        VALUES ($1, $2, $3, $4)
@@ -471,15 +557,27 @@ router.get('/public-promotions/:placeId', async (req, res) => {
     // Round 4: the join is on the promotion AUTHOR's own profile, not the place
     // id alone — matching by place id let an unverified claimant's promotion
     // ride on someone else's verified claim for the same place.
+    //
+    // Round 16: `verified` is a permanent property of the claim, so gating on it
+    // alone meant upgrade -> create promotions -> downgrade kept the benefit
+    // forever. "Promotions to nearby groups" is an Insights line item in the
+    // VENUE-BILLING.md pricing table, so the SERVING of one is gated on the tier
+    // the author holds right now, exactly as creating one is (requirePremium).
+    // The kill switch is a bound PARAMETER, not string-built SQL: one query
+    // shape, no request data anywhere near the text, and "flag off => every
+    // venue owner acts Pro" holds for this public route the same way
+    // requireVenueTier makes it hold for the owner-facing ones. A NULL tier
+    // fails the ANY test, so an unrecognised tier is not served either.
     const { rows } = await pool.query(
       `SELECT p.id, p.title, p.description, p.time_slot, p.days FROM venue_promotions p
        JOIN venue_profiles vp ON vp.user_id = p.venue_user_id
          AND vp.google_place_id = p.google_place_id
          AND vp.verified = true
+         AND ($2::boolean = false OR vp.tier = ANY($3::text[]))
        WHERE p.google_place_id = $1 AND p.active = true AND COALESCE(p.is_hidden, false) = false
        ORDER BY p.created_at DESC
        LIMIT 100`,
-      [req.params.placeId]
+      [req.params.placeId, venueBillingEnabled(), SERVING_TIERS]
     );
     // Increment view count (bounded by the LIMIT above, so the ANY($1) set never
     // grows without limit either).
@@ -572,13 +670,31 @@ async function fetchVenueBasics(placeId, userId) {
   };
 }
 
+// Both routes below are gated the same way, and BOTH checks run before the
+// cache read: the cache is keyed by place id, so an unverified claimant on the
+// same place id would otherwise be handed the verified owner's cached forecast
+// without a single Google call to notice.
+//
+//   requirePremium — the demand curve is an Insights line item in the
+//   VENUE-BILLING.md pricing table (see the tier note at the top of this file).
+//   403 UPGRADE_REQUIRED, the contract the frontend already forwards.
+//
+//   verified — an unverified claim is an unproven one. Serving these two costs
+//   real money (each spends the shared Places budget) and the strip hands out
+//   competitive data about the neighbours, so a mere claim on an arbitrary
+//   Google place id must not buy either. Answered as `available: false` with a
+//   reason rather than a 403 so the dashboard can say what to do about it —
+//   same shape incoming-flocks already uses for the same condition.
+const UNVERIFIED_REASON = 'Verify your venue to unlock this. We check ownership before turning on forecasts.';
+
 // GET /api/venue-dashboard/intelligence — the owner's own forecast
-router.get('/intelligence', async (req, res) => {
+router.get('/intelligence', requirePremium, async (req, res) => {
   try {
     const ctx = await getVenueCtx(req.user.id);
     if (!ctx?.google_place_id) {
       return res.json({ available: false, reason: 'Link your Google listing in Edit Profile to unlock forecasts' });
     }
+    if (!ctx.verified) return res.json({ available: false, unverified: true, reason: UNVERIFIED_REASON });
     const cached = cacheGet(`intel:${ctx.google_place_id}`);
     if (cached) return res.json(cached);
 
@@ -642,12 +758,13 @@ router.get('/intelligence', async (req, res) => {
 
 // GET /api/venue-dashboard/strip — you vs the venues around you, tonight.
 // Google Popular Times cannot do this: it is per-venue, read-only, no API.
-router.get('/strip', async (req, res) => {
+router.get('/strip', requirePremium, async (req, res) => {
   try {
     const ctx = await getVenueCtx(req.user.id);
     if (!ctx?.google_place_id) {
       return res.json({ available: false, reason: 'Link your Google listing in Edit Profile to unlock the strip view' });
     }
+    if (!ctx.verified) return res.json({ available: false, unverified: true, reason: UNVERIFIED_REASON });
     const cached = cacheGet(`strip:${ctx.google_place_id}`);
     if (cached) return res.json(cached);
     if (!GOOGLE_KEY) return res.json({ available: false, reason: 'Search unavailable right now' });
