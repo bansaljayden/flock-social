@@ -255,6 +255,7 @@ export default function LandingPage() {
               className="lp-shot lp-shot-hero"
               src="/screenshots/app-nest.png"
               width="390" height="844"
+              fetchPriority="high"
               alt="The Flock home screen: tonight's status, your flocks, and a plan that needs votes."
             />
             <figcaption className="lp-plate-cap">
@@ -298,8 +299,13 @@ export default function LandingPage() {
                 mark. It used to sit on the navy Safety section, where it was
                 the wrong subject and needed a CSS invert to be visible at all.
                 This is the section it actually describes. */}
+            {/* The -400 assets alone. They are 864-1024px wide against slots
+                that never render past 520 CSS px, so they already carry 2x
+                density everywhere. The old "2x" srcSet entries were the 2-8MB
+                master files, and every retina phone downloaded all three of
+                them (~15MB) for images this size. Do not re-add them. */}
             <figure className="lp-flock lp-flock-steps">
-              <img src="/marks/mark-steps-400.png" srcSet="/marks/mark-steps-400.png 1x, /marks/mark-steps.png 2x" alt="" width="865" height="290" loading="lazy" />
+              <img src="/marks/mark-steps-400.png" alt="" width="864" height="290" loading="lazy" decoding="async" />
             </figure>
             <p className="lp-kicker">How it works</p>
             <h2>Four steps, then you’re out the door.</h2>
@@ -343,7 +349,7 @@ export default function LandingPage() {
           <div className="lp-demo-head">
             <div>
               <figure className="lp-flock lp-flock-crowd">
-              <img src="/marks/mark-crowd-400.png" srcSet="/marks/mark-crowd-400.png 1x, /marks/mark-crowd.png 2x" alt="" width="1024" height="498" loading="lazy" />
+              <img src="/marks/mark-crowd-400.png" alt="" width="1024" height="498" loading="lazy" decoding="async" />
             </figure>
               <p className="lp-kicker">Crowd levels</p>
               <h2>Know how busy it is before you leave.</h2>
@@ -420,7 +426,7 @@ export default function LandingPage() {
         <div className="lp-wrap lp-row lp-row-flip">
           <div>
             <figure className="lp-flock lp-flock-money">
-              <img src="/marks/mark-money-400.png" srcSet="/marks/mark-money-400.png 1x, /marks/mark-money.png 2x" alt="" width="1024" height="1024" loading="lazy" />
+              <img src="/marks/mark-money-400.png" alt="" width="1024" height="1024" loading="lazy" decoding="async" />
             </figure>
             <h2>Nobody wants to say “that’s too expensive” out loud.</h2>
             <p className="lp-lead">
@@ -596,8 +602,10 @@ export default function LandingPage() {
                 The app that turns “we should hang out” into an actual night out.
               </p>
             </div>
+            {/* h3, not h4: the last heading before the footer is the CTA's h2,
+                so h4 here skipped a level (axe: heading-order). */}
             <div>
-              <h4>Product</h4>
+              <h3>Product</h3>
               <ul>
                 <li><a href="/signup">Create an account</a></li>
                 <li><a href="/app">Log in</a></li>
@@ -607,7 +615,7 @@ export default function LandingPage() {
               </ul>
             </div>
             <div>
-              <h4>Company</h4>
+              <h3>Company</h3>
               <ul>
                 <li><a href="/about">About</a></li>
                 <li><a href="/support">Support</a></li>
