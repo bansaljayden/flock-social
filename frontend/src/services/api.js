@@ -889,6 +889,13 @@ export async function findFriendsByPhone(phones) {
 }
 
 // Stories
+// Product decision 2026-08-14: stories will never get a UI. The backend route
+// stays (it works and is tested), but no story surface ships, so this wrapper
+// is intentionally uncalled. It is kept rather than deleted because the
+// ROUND 22 takedown comment in backend/routes/admin.js and the purpose-string
+// comment in frontend/ios/App/App/Info.plist both cite "getStories has zero
+// callers" as their checkable evidence, and tests in both suites pin that
+// App.js never references it. Do not wire this into App.js.
 export async function getStories() {
   return request('/api/stories');
 }
