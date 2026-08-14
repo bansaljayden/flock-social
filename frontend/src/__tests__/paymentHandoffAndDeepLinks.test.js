@@ -1302,7 +1302,10 @@ describe('list keys on the venue dashboard', () => {
     // `[1,2,3,4,5].map(s => Icons.starFilled(...))` returns a bare span with no
     // key, so every render of the Reviews tab warned.
     expect(appSource).not.toMatch(/\[1, 2, 3, 4, 5\]\.map\(\w+ => \w+ <=[^\n]*\? Icons\./);
-    expect(appCount(/\[1, 2, 3, 4, 5\]\.map\(\w+ => <React\.Fragment key=\{\w+\}>/g)).toBe(3);
+    // 3 became 4 on 2026-08-14: the create-screen StarRating joined the icon
+    // system (it was a hand-rolled inline SVG before, invisible to both
+    // patterns here) and uses the same keyed-Fragment row as the other three.
+    expect(appCount(/\[1, 2, 3, 4, 5\]\.map\(\w+ => <React\.Fragment key=\{\w+\}>/g)).toBe(4);
   });
 
   test('the operating-hours rows do not key on a value the editor can duplicate', () => {
