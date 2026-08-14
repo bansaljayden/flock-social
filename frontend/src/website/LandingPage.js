@@ -72,6 +72,14 @@ const Mark = ({ size = 32, lazy = false }) => (
 /* The App Store badge is always on the page. Before Apple approves the app it
    points at the waitlist and says so, rather than sending people to a 404;
    after approval (APP_STORE_LIVE = true) it becomes the real download link. */
+/* WCAG 2.5.3 (Label in Name): the accessible name has to CONTAIN the visible
+   one, in order, or speech input cannot address the control. This badge reads
+   "Coming soon to the App Store" / "Download on the App Store" on screen, and
+   the labels were "Flock is coming to the App Store. Join the waitlist." and
+   "Download Flock on the App Store". Neither contained its own visible string:
+   one drops "soon", the other inserts "Flock" mid-phrase. So "click download
+   on the App Store" matched nothing at all. The visible text leads now, and
+   the extra context follows it. */
 const AppStoreBadge = () => {
   const live = APP_STORE_LIVE;
   return (
@@ -79,13 +87,19 @@ const AppStoreBadge = () => {
       className={`lp-appstore ${live ? '' : 'is-soon'}`}
       href={live ? APP_STORE_URL : '#get'}
       {...(live ? { target: '_blank', rel: 'noreferrer' } : {})}
-      aria-label={live ? 'Download Flock on the App Store' : 'Flock is coming to the App Store. Join the waitlist.'}
+      aria-label={live
+        ? 'Download on the App Store'
+        : 'Coming soon to the App Store. Join the waitlist.'}
     >
       <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
         <path d="M17.05 12.54c-.02-2.2 1.8-3.26 1.88-3.31-1.02-1.5-2.62-1.7-3.19-1.72-1.36-.14-2.65.8-3.34.8-.69 0-1.75-.78-2.87-.76-1.48.02-2.84.86-3.6 2.18-1.53 2.66-.39 6.6 1.1 8.76.73 1.06 1.6 2.24 2.74 2.2 1.1-.05 1.52-.71 2.85-.71 1.33 0 1.7.71 2.87.69 1.18-.02 1.93-1.07 2.65-2.13.84-1.22 1.18-2.4 1.2-2.46-.03-.01-2.28-.88-2.3-3.48zM14.9 5.6c.6-.74 1.01-1.76.9-2.78-.87.04-1.93.58-2.56 1.31-.56.65-1.05 1.69-.92 2.68.97.08 1.97-.49 2.58-1.21z" />
       </svg>
+      {/* The explicit space matters: the <span> is display:grid, so these are
+          two rows on screen and read as "Coming soon to the App Store", but
+          without it textContent concatenates to "...to theApp Store". That is
+          what an accessible-name comparison and any text-extraction tool sees. */}
       <span>
-        <small>{live ? 'Download on the' : 'Coming soon to the'}</small>
+        <small>{live ? 'Download on the' : 'Coming soon to the'}</small>{' '}
         App Store
       </span>
     </a>
@@ -152,7 +166,14 @@ function WhenNear({ margin = '700px', className, hold, children }) {
 export default function LandingPage() {
   const [email, setEmail] = useState('');
   const [msg, setMsg] = useState('');
+  // Both outcomes used to land in one role="status" paragraph, so a failure
+  // was announced politely (queued behind whatever was being read) and looked
+  // identical to a success: same 14px, same --cream-2, no marker on the field.
+  // Kind splits them into a polite region and an assertive one, and drives
+  // aria-invalid on the input.
+  const [msgBad, setMsgBad] = useState(false);
   const [busy, setBusy] = useState(false);
+  const emailRef = useRef(null);
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef(null);
   const menuBtnRef = useRef(null);
@@ -225,9 +246,15 @@ export default function LandingPage() {
     e.preventDefault();
     if (busy) return;
     const value = email.trim();
-    if (!value) { setMsg('Enter your email first.'); return; }
+    if (!value) {
+      setMsg('Enter your email first.');
+      setMsgBad(true);
+      if (emailRef.current) emailRef.current.focus();
+      return;
+    }
     setBusy(true);
     setMsg('');
+    setMsgBad(false);
     try {
       const res = await fetch(`${API}/api/waitlist`, {
         method: 'POST',
@@ -237,16 +264,38 @@ export default function LandingPage() {
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.error || 'Something went wrong.');
       setMsg("You’re on the list. We’ll email you when it opens up.");
+      setMsgBad(false);
       setEmail('');
     } catch (err) {
       setMsg(err.message || 'Could not sign you up. Try again in a moment.');
+      setMsgBad(true);
     } finally {
       setBusy(false);
     }
   };
 
+  /* While the panel is open the rest of the document is inert. The visual
+     modal was already right — scroll locked, Escape closes, Tab cycles inside
+     the panel — but none of that reaches a screen reader's virtual cursor,
+     which walks the DOM and does not care where the browser thinks focus is.
+     Measured with the panel open in NVDA: down-arrow read straight past the
+     six menu links into "Plans die in the group chat", the whole hero, and the
+     footer, none of which was on screen. aria-modal is not the tool here (the
+     close control is the corner block, which lives OUTSIDE the panel, and
+     aria-modal would hide it); marking the page behind it inert is.
+
+     `inert: true` and not `inert: ''` — React 19 treats an empty string on a
+     boolean attribute as FALSE and warns, so the spread is conditional and the
+     value is a real boolean. */
+  const pageInert = menuOpen ? { inert: true } : {};
+
   return (
     <div className="lp">
+      {/* First focusable thing in the document. The page is ~7 screens of
+          content behind a sticky bar, and without this the only way past the
+          header on a keyboard was to Tab through it every time. */}
+      <a className="lp-skip" href="#lp-main">Skip to the main content</a>
+
       {/* ---------------- nav ---------------- */}
       <header className={`lp-nav${menuOpen ? ' is-menu-open' : ''}`}>
         <div className="lp-wrap lp-nav-in">
@@ -303,18 +352,24 @@ export default function LandingPage() {
         </nav>
       </div>
 
+      {/* The page had NO main landmark: <header>, a pile of unnamed <section>s
+          and <footer>. An unnamed <section> is exposed as a generic container,
+          not a region, so "jump to main content" had nothing to jump to and
+          the landmark rotor listed two entries for an entire marketing site. */}
+      <main id="lp-main" tabIndex={-1} {...pageInert}>
+
       {/* ---------------- hero ----------------
           The headline spans the full measure and the rest of the fold hangs
           under it: two sentences at 72px need ~900px to sit on two lines, and
           in a half-width column they broke into four ragged ones. The phone is
           a plate in the right margin with a caption, which is the field guide's
           own device and the honest way to say the screenshot is real. */}
-      <section className="lp-hero lp-on-navy">
+      <section className="lp-hero lp-on-navy" aria-labelledby="lp-h-hero">
         <div className="lp-wrap lp-hero-in">
           {/* "they happen." is held together: text-wrap balance, pretty and
               auto all break this sentence 4+1 at phone widths and leave
               "happen." alone on line four. */}
-          <h1>Plans die in the group chat.<br />Flock is where <span className="lp-keep">they happen.</span></h1>
+          <h1 id="lp-h-hero">Plans die in the group chat.<br />Flock is where <span className="lp-keep">they happen.</span></h1>
           <hr className="lp-hero-rule" aria-hidden="true" />
 
           <div className="lp-hero-copy">
@@ -381,10 +436,10 @@ export default function LandingPage() {
       {/* ---------------- the turn ----------------
           No kicker here: "The problem" above a headline that states the problem
           is a label narrating its own sentence. */}
-      <section className="lp-sec lp-sec-paper">
+      <section className="lp-sec lp-sec-paper" aria-labelledby="lp-h-turn">
         <div className="lp-wrap lp-turn-grid">
           <div>
-            <h2 className="lp-turn">Six people say yes. Then the chat goes quiet.</h2>
+            <h2 className="lp-turn" id="lp-h-turn">Six people say yes. Then the chat goes quiet.</h2>
             <p className="lp-lead" style={{ marginTop: 18 }}>
               The plan doesn’t fall apart because people don’t want to go. It falls
               apart because deciding is annoying, and one person always ends up
@@ -404,7 +459,7 @@ export default function LandingPage() {
       </section>
 
       {/* ---------------- how it works ---------------- */}
-      <section className="lp-sec lp-sec-paper lp-sec-ruled" id="how">
+      <section className="lp-sec lp-sec-paper lp-sec-ruled" id="how" aria-labelledby="lp-h-how">
         <div className="lp-wrap">
           <div>
             {/* Two birds already on the wire and a third flying in: the plans
@@ -436,7 +491,7 @@ export default function LandingPage() {
               </picture>
             </figure>
             <p className="lp-kicker">How it works</p>
-            <h2>Four steps, then you’re out the door.</h2>
+            <h2 id="lp-h-how">Four steps, then you’re out the door.</h2>
           </div>
           <div className="lp-steps">
             {[
@@ -472,7 +527,7 @@ export default function LandingPage() {
 
           Both old anchors survive — #crowds on the section, #try on the demo —
           so the footer link and the menu link each land somewhere sensible. */}
-      <section className="lp-sec lp-sec-navy lp-on-navy" id="crowds">
+      <section className="lp-sec lp-sec-navy lp-on-navy" id="crowds" aria-labelledby="lp-h-crowds">
         <div className="lp-wrap">
           <div className="lp-demo-head">
             <div>
@@ -487,7 +542,7 @@ export default function LandingPage() {
                 </picture>
               </figure>
               <p className="lp-kicker">Crowd levels</p>
-              <h2>Know how busy it is before you leave.</h2>
+              <h2 id="lp-h-crowds">Know how busy it is before you leave.</h2>
               <p className="lp-lead">
                 Flock reads the hour, the weather, and how busy a place usually
                 runs, then estimates how packed it will be tonight. You stop
@@ -516,7 +571,7 @@ export default function LandingPage() {
       </section>
 
       {/* ---------------- birdie ---------------- */}
-      <section className="lp-sec lp-sec-paper" id="birdie">
+      <section className="lp-sec lp-sec-paper" id="birdie" aria-labelledby="lp-h-birdie">
         <div className="lp-wrap lp-row">
           <div className="lp-row-media">
             {/* Real capture of the shipping app, not a mockup. WebP first, PNG
@@ -549,7 +604,7 @@ export default function LandingPage() {
             >
               <BirdieBird size={150} style={{ width: '100%', height: '100%' }} />
             </WhenNear>
-            <h2>“Idk, you pick.” Birdie picks.</h2>
+            <h2 id="lp-h-birdie">“Idk, you pick.” Birdie picks.</h2>
             {/* Was "The argument is always the same one: where." — which is the
                 FOURTH time this page says deciding where is hard, after the
                 hero lead, the whole chat-goes-quiet section, and step 02. The
@@ -590,7 +645,7 @@ export default function LandingPage() {
           The old headline was "Money kills more plans than distance", the third
           plans-die construction on one page after the hero and Birdie. The
           section's best line was buried in the lead; it is the headline now. */}
-      <section className="lp-sec lp-sec-paper lp-sec-ruled" id="money">
+      <section className="lp-sec lp-sec-paper lp-sec-ruled" id="money" aria-labelledby="lp-h-money">
         <div className="lp-wrap lp-row lp-row-flip">
           <div>
             {/* The one mark whose WebP is a plain "VP8 " chunk with no ALPH,
@@ -607,7 +662,7 @@ export default function LandingPage() {
                 <img src="/marks/mark-money-400.png" alt="" width="1024" height="1024" loading="lazy" decoding="async" fetchPriority="low" />
               </picture>
             </figure>
-            <h2>Nobody wants to say “that’s too expensive” out loud.</h2>
+            <h2 id="lp-h-money">Nobody wants to say “that’s too expensive” out loud.</h2>
             <p className="lp-lead">
               In Flock nobody has to. Everyone types a number privately, and the
               group only ever sees a ceiling that works for all of them.
@@ -649,14 +704,14 @@ export default function LandingPage() {
           times is not thorough, it is unsure. */}
 
       {/* ---------------- safety ---------------- */}
-      <section className="lp-sec lp-sec-navy lp-on-navy" id="safety">
+      <section className="lp-sec lp-sec-navy lp-on-navy" id="safety" aria-labelledby="lp-h-safety">
         <div className="lp-wrap lp-row">
           <div>
             {/* No plate here on purpose. The marks are navy ink with no dark
                 variant, and the SOS email beside this column is already the
                 section's visual. */}
             <p className="lp-kicker">Safety</p>
-            <h2>Getting home matters as much as getting out.</h2>
+            <h2 id="lp-h-safety">Getting home matters as much as getting out.</h2>
             <p className="lp-lead">
               Share your live location with your group while the night is on, and
               only while it’s on. If something goes wrong, one button tells the
@@ -688,7 +743,7 @@ export default function LandingPage() {
       </section>
 
       {/* ---------------- pricing ---------------- */}
-      <section className="lp-sec lp-sec-paper" id="pricing">
+      <section className="lp-sec lp-sec-paper" id="pricing" aria-labelledby="lp-h-pricing">
         <div className="lp-wrap">
           <div>
             {/* The only place on the page where both birds appear together,
@@ -700,7 +755,7 @@ export default function LandingPage() {
               <BirdieBird size={128} style={{ width: 'clamp(92px, 10vw, 128px)', height: 'auto', aspectRatio: '316 / 400' }} />
             </WhenNear>
             <p className="lp-kicker">Pricing</p>
-            <h2>Free for your friend group.</h2>
+            <h2 id="lp-h-pricing">Free for your friend group.</h2>
             <p className="lp-lead" style={{ marginTop: 16 }}>
               You and your friends don’t pay. Venues pay to show up in front of
               groups that are picking a place right now.
@@ -747,10 +802,10 @@ export default function LandingPage() {
       </section>
 
       {/* ---------------- cta ---------------- */}
-      <section className="lp-cta lp-on-navy" id="get">
+      <section className="lp-cta lp-on-navy" id="get" aria-labelledby="lp-h-get">
         <div className="lp-wrap lp-cta-in">
           <div>
-            <h2>Give the next plan a fighting chance.</h2>
+            <h2 id="lp-h-get">Give the next plan a fighting chance.</h2>
             <p className="lp-lead" style={{ marginTop: 16 }}>
               Open Flock in your browser, or leave your email and we’ll tell you the
               moment the iPhone app is out.
@@ -760,26 +815,51 @@ export default function LandingPage() {
               <a className="lp-btn lp-btn-ghost lp-btn-lg" href="/app">Log in</a>
             </div>
             <form className="lp-form" onSubmit={join}>
+              {/* A real <label>, not an aria-label. Same accessible name, but
+                  it also makes the field's own text a click target and it is
+                  the one form of naming that voice control ("click email
+                  address") and machine translation both handle. Visually
+                  hidden because the field is a single-purpose one in a CTA
+                  band, where a printed label would be noise. */}
+              <label className="lp-sr" htmlFor="lp-waitlist-email">Email address</label>
               <input
+                id="lp-waitlist-email"
+                ref={emailRef}
                 type="email"
                 inputMode="email"
                 autoComplete="email"
                 placeholder="you@email.com"
-                aria-label="Email address"
                 value={email}
-                onChange={(e) => setEmail(e.target.value)}
+                onChange={(e) => { setEmail(e.target.value); if (msgBad) setMsgBad(false); }}
+                aria-invalid={msgBad ? 'true' : undefined}
+                aria-describedby="lp-form-problem"
               />
-              <button type="submit" className="lp-btn lp-btn-cream lp-btn-lg" disabled={busy}>
+              {/* aria-disabled, not disabled. `disabled` on the button you just
+                  pressed hands focus to <body>, so a keyboard user loses their
+                  place on every submit. `join` already returns early while
+                  busy, so the double submit is guarded in the handler. */}
+              <button
+                type="submit"
+                className="lp-btn lp-btn-cream lp-btn-lg"
+                aria-disabled={busy || undefined}
+              >
                 {busy ? 'Adding you…' : 'Join the waitlist'}
               </button>
             </form>
-            <p className="lp-form-msg" role="status">{msg}</p>
+            {/* Both stay mounted with empty text: a live region has to exist
+                before its content changes or the first announcement is missed.
+                Same pattern as the guest invite page. */}
+            <p className="lp-form-msg" role="status">{msgBad ? '' : msg}</p>
+            <p className="lp-form-msg lp-form-msg-bad" id="lp-form-problem" role="alert">
+              {msgBad ? msg : ''}
+            </p>
           </div>
         </div>
       </section>
+      </main>
 
       {/* ---------------- footer ---------------- */}
-      <footer className="lp-footer">
+      <footer className="lp-footer" {...pageInert}>
         <div className="lp-wrap">
           <div className="lp-footer-grid">
             <div>
