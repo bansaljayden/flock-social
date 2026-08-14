@@ -16,9 +16,14 @@ const { hasDmRelationship, NOT_CONNECTED_MESSAGE } = require('../utils/relations
 // same place for the same reason — the user is shown these strings verbatim, and
 // two transports refusing the same photo with two different sentences reads as
 // two different products.
+// restampImageMime rides in the same import: the MIME a stored data: URL
+// declares is re-typed from the sniffed bytes before the INSERT, so the column
+// never repeats a sender's claim the payload contradicts. One byte-typer for
+// both transports, defined next to the socket twin that shares it.
 const {
   emitToFlockExcludingBlocked,
   CHAT_IMAGE_MAX_BYTES,
+  restampImageMime,
   IMAGE_TOO_LARGE_MESSAGE,
   IMAGE_FORMAT_MESSAGE,
 } = require('../sockets/handlers');
@@ -305,7 +310,10 @@ router.post('/flocks/:id/messages',
           message_text,
           message_type || 'text',
           venueCheck.data,
-          image_url || null,
+          // Stored with its MIME re-typed from the sniffed bytes (see
+          // restampImageMime in sockets/handlers.js) — the declared prefix is a
+          // client claim, and the avatar path already refuses to store one.
+          image_url ? restampImageMime(image_url) : null,
         ]
       );
 
@@ -835,7 +843,10 @@ router.post('/dm/:userId',
         `INSERT INTO direct_messages (sender_id, receiver_id, message_text, message_type, venue_data, image_url, reply_to_id)
          VALUES ($1, $2, $3, $4, $5, $6, $7)
          RETURNING *`,
-        [req.user.id, receiverId, message_text, message_type || 'text', venueCheck.data, image_url || null, safeReplyId]
+        [req.user.id, receiverId, message_text, message_type || 'text', venueCheck.data,
+          // Same re-typing as the flock twin above and both socket paths.
+          image_url ? restampImageMime(image_url) : null,
+          safeReplyId]
       );
 
       const message = result.rows[0];

@@ -772,7 +772,7 @@ test('the largest honest PUT /api/venue-profile body goes through on the default
     location: wide(b.venueLocation),
     description: wide(b.venueDescription),
     googlePlaceId: 'P'.repeat(b.venuePlaceId),
-    photoUrl: 'https://example.com/' + 'p'.repeat(b.venuePhotoUrl - 20),
+    photoUrl: '/api/venues/photo?ref=' + 'p'.repeat(b.venuePhotoUrl - 22),
     phone: '+1 (202) 555-0122',
     goals: Array.from({ length: b.venueGoals }, () => wide(b.venueGoalLen)),
     operatingHours: Array.from({ length: b.venueHoursRows }, () => ({

@@ -475,7 +475,7 @@ test('well-shaped payloads still reach the database on every guarded route', asy
     ['POST', '/api/budget/10/submit', { amount: 40, skipped: false }, true],
     ['POST', '/api/billing/10/create', { totalAmount: 40, splitType: 'equal', tipPercent: 10, paidBy: 1 }, true],
     ['POST', '/api/venue-profile', { businessName: 'Bar', category: 'bar', googlePlaceId: 'ChIJrTLr' }, true],
-    ['PUT', '/api/venue-profile', { businessName: 'Bar', phone: '555', photoUrl: '/uploads/a.png' }, true],
+    ['PUT', '/api/venue-profile', { businessName: 'Bar', phone: '555', photoUrl: '/api/venues/photo?ref=a123' }, true],
     ['POST', '/api/notifications/register', { token: 'a'.repeat(64), deviceType: 'ios' }, true],
     ['POST', '/api/guest/abcd1234efgh/rsvp', { name: 'Sam', status: 'in' }, false],
     ['POST', '/api/guest/abcd1234efgh/vote', { guestToken: '9d3f1b2e-1111-4111-8111-111111111111', venueName: 'The Bar' }, false],

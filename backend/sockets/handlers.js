@@ -90,6 +90,84 @@ function checkInboundImage(image_url) {
   return { ok: true };
 }
 
+// ---------------------------------------------------------------------------
+// The stored MIME comes from the bytes, not from the sender
+// ---------------------------------------------------------------------------
+// checkInboundImage's allowlist reads the DECLARED type off the front of the
+// data: URL, and until now that declaration was stored verbatim in
+// messages.image_url / direct_messages.image_url (and in stories.image_url via
+// the REST route), even when the bytes behind it are a different format
+// entirely. Nothing about SAFETY hangs on the declaration — browsers pick a
+// decoder by sniffing the payload, which is exactly why the byte-level frame
+// gate in utils/moderation.js is the real control and says so ("The declared
+// type gates nothing; only the bytes do") — but a stored type the stored bytes
+// contradict is a lie in the database: any future consumer that trusts it (an
+// export, a Content-Type header on some future download path, a human reading
+// a row) inherits the sender's claim instead of the file's. The avatar path
+// already refuses to store the client's word for it (routes/users.js types the
+// file from full magic numbers and builds the data URL from that answer);
+// these are the SAME full signatures, deliberately, so the two byte-typers in
+// this repo cannot reach different conclusions about the same bytes — the
+// truncated-signature seam routes/users.js round 19 closed must not reopen
+// here. Signatures are spelled as bytes, not strings, for the same reason
+// routes/users.js spells them that way.
+//
+// Bytes that match NO signature keep the declared prefix ON PURPOSE. This is a
+// re-typer, not a second gate: whether such a payload is stored at all is
+// moderateImage's decision (fail-closed wherever it matters), and a refusal
+// added here would invent a new rejection on paths whose accept/reject
+// behaviour __tests__/chatTransportParity.test.js and
+// __tests__/imageRouteParity.test.js pin exactly. Frame counting stays in
+// utils/moderation.js; this types the container and nothing else.
+const IMAGE_BYTE_SIGNATURES = {
+  jpeg: [Buffer.from([0xff, 0xd8, 0xff])],
+  png:  [Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])],
+  gif:  [
+    Buffer.from([0x47, 0x49, 0x46, 0x38, 0x37, 0x61]),  // GIF, version 87a
+    Buffer.from([0x47, 0x49, 0x46, 0x38, 0x39, 0x61]),  // GIF, version 89a
+  ],
+  // 'RIFF' alone is a container header, not an image one: WAV and AVI open the
+  // same four bytes. The 'WEBP' form type at offset 8 is what makes it an image.
+  webp: [Buffer.from([0x52, 0x49, 0x46, 0x46])],
+};
+
+const SNIFFED_MIME = {
+  jpeg: 'image/jpeg',
+  png: 'image/png',
+  gif: 'image/gif',
+  webp: 'image/webp',
+};
+
+function sniffImageFormat(bytes) {
+  for (const [format, sigs] of Object.entries(IMAGE_BYTE_SIGNATURES)) {
+    for (const sig of sigs) {
+      if (bytes.length < sig.length || !bytes.subarray(0, sig.length).equals(sig)) continue;
+      if (format === 'webp' && bytes.toString('latin1', 8, 12) !== 'WEBP') continue;
+      return format;
+    }
+  }
+  return null;
+}
+
+// Rewrites a data: URL's declared MIME to the sniffed one. The base64 payload
+// is untouched — only the prefix moves — so the bytes that were screened are
+// exactly the bytes that are stored. Anything that is not a data: URL string
+// comes back unchanged: every caller runs its format gate first, so this only
+// ever re-types values that gate already admitted.
+function restampImageMime(imageUrl) {
+  if (typeof imageUrl !== 'string') return imageUrl;
+  const comma = imageUrl.indexOf(',');
+  if (comma < 0) return imageUrl;
+  // 64 base64 characters decode to 48 bytes; the longest signature test above
+  // needs 12. Buffer.from ignores the ASCII whitespace a line-wrapped payload
+  // may carry, the same way moderateImage's canonical-base64 check does.
+  const head = Buffer.from(imageUrl.slice(comma + 1, comma + 65), 'base64');
+  const format = sniffImageFormat(head);
+  const mime = format && SNIFFED_MIME[format];
+  if (!mime) return imageUrl;
+  return `data:${mime};base64,${imageUrl.slice(comma + 1)}`;
+}
+
 // Drop one socket's presence from one flock, cleaning up the empty room entry.
 function forgetPresence(flockKey, socketId) {
   const key = String(flockKey);
@@ -1009,7 +1087,10 @@ function registerHandlers(io, socket) {
           message_text,
           safeType,
           venueCheck.data ? JSON.stringify(venueCheck.data) : null,
-          image_url || null,
+          // imageCheck is non-null exactly when a (validated, moderated) image
+          // is present. Stored with its MIME re-typed from the sniffed bytes —
+          // see restampImageMime above; the REST twin does the same.
+          imageCheck ? restampImageMime(image_url) : null,
         ]
       );
 
@@ -1672,7 +1753,10 @@ function registerHandlers(io, socket) {
       const result = await pool.query(
         `INSERT INTO direct_messages (sender_id, receiver_id, message_text, message_type, venue_data, image_url, reply_to_id)
          VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
-        [user.id, receiverId, text, safeType, dmVenueCheck.data ? JSON.stringify(dmVenueCheck.data) : null, image_url || null, replyRow ? replyToId : null]
+        [user.id, receiverId, text, safeType, dmVenueCheck.data ? JSON.stringify(dmVenueCheck.data) : null,
+          // Same re-typing as send_message: the stored MIME is the sniffed one.
+          dmImageCheck ? restampImageMime(image_url) : null,
+          replyRow ? replyToId : null]
       );
 
       const msg = result.rows[0];
@@ -2196,6 +2280,10 @@ module.exports = {
   // drift apart again without someone editing the number they share.
   CHAT_IMAGE_MAX_BYTES,
   checkInboundImage,
+  // One byte-typer for every chat/story image write path — routes/messages.js
+  // and routes/stories.js import it (never re-implement it), the same way they
+  // import the constants above.
+  restampImageMime,
   IMAGE_TOO_LARGE_MESSAGE,
   IMAGE_FORMAT_MESSAGE,
   EMPTY_MESSAGE,
