@@ -5,11 +5,50 @@
 // ---------------------------------------------------------------------------
 
 const pool = require('../config/database');
-const { calculateCrowdScore, generateHourlyForecast } = require('./crowdEngine');
+const { calculateCrowdScore, generateHourlyForecast, venueLocalNow, weekdayOffset } = require('./crowdEngine');
 const { getWeather } = require('./weatherService');
 const { pushAlways } = require('./pushHelper');
 
 const ALERT_TYPE = 'crowd';
+
+// Minutes to ADD to UTC to reach local time in an IANA zone at instant `at`
+// (e.g. -420 for America/Los_Angeles in summer) — the same sign convention
+// Google's utcOffsetMinutes uses, so venueLocalNow consumes it unchanged. This
+// is how the sweep gets a venue offset: unlike routes/crowd.js it has no Google
+// place fetch, but ml_venues stores each venue's IANA timezone (000_bootstrap).
+// Returns null for an unknown/blank zone so the caller falls back cleanly.
+function offsetMinutesForZone(timeZone, at) {
+  if (!timeZone || typeof timeZone !== 'string') return null;
+  try {
+    const dtf = new Intl.DateTimeFormat('en-US', {
+      timeZone,
+      hourCycle: 'h23',
+      year: 'numeric', month: '2-digit', day: '2-digit',
+      hour: '2-digit', minute: '2-digit', second: '2-digit',
+    });
+    const parts = dtf.formatToParts(at);
+    const f = {};
+    for (const p of parts) f[p.type] = p.value;
+    const asUTC = Date.UTC(+f.year, +f.month - 1, +f.day, +f.hour, +f.minute, +f.second);
+    if (Number.isNaN(asUTC)) return null;
+    return Math.round((asUTC - at.getTime()) / 60000);
+  } catch {
+    return null; // invalid IANA name
+  }
+}
+
+// Build a Date whose server-local getDay()/getHours() equal the venue's wall
+// clock at `instant`, using the venue offset. Mirrors the routes/crowd.js
+// pattern (venueLocalNow + weekdayOffset). Returns `instant` unchanged when we
+// have no offset — i.e. the documented server-clock fallback.
+function venueWallClock(instant, utcOffsetMinutes) {
+  const clock = venueLocalNow(utcOffsetMinutes, instant);
+  if (!clock) return { time: instant, hour: instant.getHours(), local: false };
+  const t = new Date(instant);
+  t.setDate(t.getDate() + weekdayOffset(t.getDay(), clock.day));
+  t.setHours(clock.hour, 0, 0, 0);
+  return { time: t, hour: clock.hour, local: true };
+}
 
 // Round 12: dedupe used to be a per-process Map. server.js runs this sweep in
 // the WEB process, so a second Railway instance (or an overlapping deploy)
@@ -87,15 +126,17 @@ async function processFlockAlert(flock) {
     // database/ml-schema.sql). Every call threw, the catch below swallowed it,
     // and NO confirmed flock has ever received a pre-event crowd push.
     const { rows: venueRows } = await pool.query(
-      `SELECT google_types, review_count, rating, price_level
+      `SELECT google_types, review_count, rating, price_level, timezone
        FROM ml_venues WHERE google_place_id = $1 LIMIT 1`,
       [flock.venue_id]
     );
+    let venueTimezone = null;
     if (venueRows.length) {
       venue.types = venueRows[0].google_types || [];
       venue.user_ratings_total = venueRows[0].review_count || 0;
       venue.rating = venueRows[0].rating || 0;
       venue.price_level = venueRows[0].price_level || 0;
+      venueTimezone = venueRows[0].timezone || null;
     }
 
     // Get weather data
@@ -108,15 +149,37 @@ async function processFlockAlert(flock) {
       }
     }
 
-    // Calculate current crowd score
+    // WHOSE CLOCK: the VENUE's, not the WEB process's UTC. calculateCrowdScore
+    // and generateHourlyForecast read .getHours()/.getDay() off the timestamp,
+    // which run in the server's zone — so a bar in Los Angeles was scored on a
+    // London hour and (near midnight) the wrong DATE, which drives the holiday
+    // and special-night features. We derive the offset from ml_venues.timezone
+    // and score on the venue's wall clock, matching routes/crowd.js.
+    //
+    // Fallback: when the venue isn't in ml_venues (no ML row) or its timezone is
+    // blank/invalid, we have no offset here — the sweep does no Google fetch, so
+    // the server clock stands in, exactly the pre-existing behaviour. That only
+    // degrades venues we don't yet model; the ones the model knows score right.
     const now = new Date();
-    const currentScore = calculateCrowdScore(venue, weather, now);
+    const utcOffsetMinutes = offsetMinutesForZone(venueTimezone, now);
+    // The rule engine (calculateCrowdScore) scores off the timestamp's own
+    // getHours()/getDay(), so the venue-local timestamps below are what fix the
+    // clock — it never reads this field. Set it anyway so a future swap to the
+    // ML predictor (which needs it for the event window) stays correct.
+    venue.utcOffsetMinutes = utcOffsetMinutes;
 
-    // Calculate score at event time
-    const eventScore = calculateCrowdScore(venue, weather, new Date(flock.event_time));
+    // Calculate current crowd score on the venue's clock
+    const nowClock = venueWallClock(now, utcOffsetMinutes);
+    const currentScore = calculateCrowdScore(venue, weather, nowClock.time);
 
-    // Generate hourly forecast for next 3 hours
-    const forecast = generateHourlyForecast(venue, weather, now.getHours(), 3, now);
+    // Calculate score at event time on the venue's clock. The offset can drift
+    // across a DST boundary between now and the event, but the event is <3h out,
+    // so re-deriving at the event instant is not worth the second Intl call.
+    const eventClock = venueWallClock(new Date(flock.event_time), utcOffsetMinutes);
+    const eventScore = calculateCrowdScore(venue, weather, eventClock.time);
+
+    // Generate hourly forecast for next 3 hours, starting on the venue's hour
+    const forecast = generateHourlyForecast(venue, weather, nowClock.hour, 3, nowClock.time);
     const peakHour = forecast.reduce((max, h) => h.score > max.score ? h : max, forecast[0]);
 
     // Decision: alert if venue will be busy (score >= 70) or getting busier
@@ -189,3 +252,8 @@ async function processFlockAlert(flock) {
 }
 
 module.exports = { checkCrowdAlerts };
+// Exposed for backend/__tests__/venueClockConsistency.test.js: the venue-clock
+// derivation (IANA zone -> offset -> wall clock) is internal, so its edge cases
+// (missing zone -> server-clock fallback, fractional +330 offsets, date roll
+// near UTC midnight) are invisible to the route-level tests otherwise.
+module.exports.__testables = { offsetMinutesForZone, venueWallClock };

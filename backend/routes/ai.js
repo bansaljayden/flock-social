@@ -8,6 +8,9 @@ const {
   findBestTime,
   findPeakTime,
   getLabel,
+  // Round 15: venue-clock scoring, same as routes/crowd.js.
+  venueLocalNow,
+  weekdayOffset,
 } = require('../services/crowdEngine');
 const mlPredictor = require('../services/mlPredictor');
 const { isPremium, paywallEnabled } = require('../services/entitlements');
@@ -203,18 +206,31 @@ async function executeTool(toolName, toolInput, userId, opts = {}) {
         signal: upstreamSignal('places'),
         headers: {
           'X-Goog-Api-Key': PLACES_API_KEY,
-          'X-Goog-FieldMask': 'id,displayName,formattedAddress,rating,userRatingCount,priceLevel,types,location,currentOpeningHours',
+          // Round 15: utcOffsetMinutes so Birdie scores on the venue's clock
+          // (see below), same field mask intent as routes/crowd.js.
+          'X-Goog-FieldMask': 'id,displayName,formattedAddress,rating,userRatingCount,priceLevel,types,location,currentOpeningHours,utcOffsetMinutes',
         },
       });
       const p = await resp.json();
       if (p.error) return { error: 'Venue not found' };
 
-      // The visitor's clock, not Railway's UTC — same contract as /api/crowd.
+      // WHOSE CLOCK: the VENUE's, not Railway's UTC and not the caller's phone.
+      // Same contract as /api/crowd. The caller's localHour/localDay start as
+      // the fallback, but when Google gives us the venue's offset we score on
+      // the venue's wall clock. Round 15: this used the caller's localHour with
+      // no offset and a raw `localDay - getDay()` day shift (the signed-diff bug
+      // weekdayOffset fixes), so the holiday/event features could land on the
+      // wrong date.
       const now = new Date();
-      const localHour = Number.isInteger(opts.localHour) ? opts.localHour : now.getHours();
-      const localDay = Number.isInteger(opts.localDay) ? opts.localDay : now.getDay();
+      let localHour = Number.isInteger(opts.localHour) ? opts.localHour : now.getHours();
+      let localDay = Number.isInteger(opts.localDay) ? opts.localDay : now.getDay();
+      const venueClock = venueLocalNow(p.utcOffsetMinutes, now);
+      if (venueClock) {
+        localHour = venueClock.hour;
+        localDay = venueClock.day;
+      }
       const scoreTime = new Date(now);
-      scoreTime.setDate(scoreTime.getDate() + (localDay - scoreTime.getDay()));
+      scoreTime.setDate(scoreTime.getDate() + weekdayOffset(scoreTime.getDay(), localDay));
       scoreTime.setHours(localHour, 0, 0, 0);
 
       let openHour = null, closeHour = null;
@@ -239,6 +255,9 @@ async function executeTool(toolName, toolInput, userId, opts = {}) {
         isOpen: p.currentOpeningHours?.openNow ?? null,
         openHour,
         closeHour,
+        // predictBusyness reads this for the Ticketmaster event window
+        // (trueEventInstant); null -> the old caller-clock fallback.
+        utcOffsetMinutes: p.utcOffsetMinutes != null ? p.utcOffsetMinutes : null,
       };
 
       const lat = venue.location?.latitude;
