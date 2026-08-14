@@ -1203,7 +1203,13 @@ async function boot() {
   try {
     await migrate(pool);
   } catch (e) {
+    // The generic sentence used to be the ONLY output, which cost a real
+    // production outage its diagnosis: the deploy crash-looped printing this
+    // line while the actual failure (a TLS handshake refused before any SQL
+    // ran) was invisible. The cause now prints with it, always.
     console.error('FATAL: migration failed — refusing to serve on a half-applied schema.');
+    console.error('CAUSE:', e && e.message ? e.message : e);
+    if (e && e.stack) console.error(String(e.stack).split('\n').slice(0, 3).join('\n'));
     process.exit(1);
   }
   await postBootTasks();
