@@ -2,8 +2,29 @@ const express = require('express');
 const { body, param, query, validationResult } = require('express-validator');
 const pool = require('../config/database');
 const { authenticate } = require('../middleware/auth');
+// Shape before content — see validators/shape.js.
+const { scalarOnly } = require('../validators/shape');
 
 const router = express.Router();
+
+// ---------------------------------------------------------------------------
+// SHAPE BEFORE CONTENT (round 20)
+// ---------------------------------------------------------------------------
+// Every column this router writes is narrow and typed — title VARCHAR(120) NOT
+// NULL, venue VARCHAR(200), time_label VARCHAR(20), color VARCHAR(30),
+// event_date DATE — and every validator below coerces its value before testing
+// it. So `{"title": ["<b>x</b>"]}` satisfied isLength({ max: 120 }), stayed an
+// array in req.body, and reached node-postgres as a text[] parameter for a
+// VARCHAR column: a 500 for a body shape the caller picks. `{"date": ["..."]}`
+// was worse in kind, because `date.slice(0, 10)` is Array.prototype.slice on an
+// array, which returns the array unchanged and hands it to a DATE column.
+//
+// The ids get the same treatment for the same reason: `param('id').isInt()`
+// with no ceiling accepted 99999999999, which is out of range for the int4
+// SERIAL it is compared against — 22003, another 500 where a 400 belongs. This
+// is the id-range guard validators/shape.js calls the shape guard's twin.
+const MAX_EVENT_ID = 2147483647;
+const eventId = () => param('id').isInt({ min: 1, max: MAX_EVENT_ID }).withMessage('Invalid event id');
 router.use(authenticate);
 
 // calendar_events table lives in migrations/003 — route-owned DDL raced the
@@ -22,8 +43,11 @@ const rowToEvent = (r) => ({
 
 // GET /api/calendar?start=YYYY-MM-DD&end=YYYY-MM-DD — the signed-in user's events
 router.get('/', [
-  query('start').optional().isISO8601(),
-  query('end').optional().isISO8601(),
+  // `?start[]=2026-01-01` is parsed by express as an array and satisfies
+  // isISO8601 by coercion, then goes to `event_date BETWEEN $2 AND $3` as a
+  // text[] parameter against a DATE column.
+  scalarOnly(query('start').optional({ nullable: true }), 'start date').isISO8601(),
+  scalarOnly(query('end').optional({ nullable: true }), 'end date').isISO8601(),
 ], async (req, res) => {
   try {
     const errors = validationResult(req);
@@ -52,11 +76,18 @@ router.get('/', [
 
 // POST /api/calendar — create an event
 router.post('/', [
-  body('title').trim().notEmpty().withMessage('Title is required').isLength({ max: 120 }),
-  body('date').notEmpty().isISO8601().withMessage('Valid date is required'),
-  body('venue').optional({ nullable: true }).trim().isLength({ max: 200 }),
-  body('time').optional({ nullable: true }).trim().isLength({ max: 20 }),
-  body('color').optional({ nullable: true }).trim().isLength({ max: 30 }),
+  scalarOnly(body('title'), 'title').trim().notEmpty().withMessage('Title is required').isLength({ max: 120 }),
+  // `.trim()` is not cosmetic here, it is the coercion that makes `date` a
+  // STRING. Round 20 re-audit: every other field on this route already carried
+  // a sanitizer, `date` carried none, and isISO8601 accepts the basic form — so
+  // `{"date": 20260901}` passed the whole chain as a NUMBER and reached
+  // `date.slice(0, 10)` below, which is a TypeError on a number and a 500 on
+  // the response. A scalar guard alone does not close that: a number IS a
+  // scalar. Settling the shape means settling the type too.
+  scalarOnly(body('date'), 'date').trim().notEmpty().isISO8601().withMessage('Valid date is required'),
+  scalarOnly(body('venue').optional({ nullable: true }), 'venue').trim().isLength({ max: 200 }),
+  scalarOnly(body('time').optional({ nullable: true }), 'time').trim().isLength({ max: 20 }),
+  scalarOnly(body('color').optional({ nullable: true }), 'color').trim().isLength({ max: 30 }),
 ], async (req, res) => {
   try {
     const errors = validationResult(req);
@@ -78,12 +109,17 @@ router.post('/', [
 
 // PUT /api/calendar/:id — update own event
 router.put('/:id', [
-  param('id').isInt(),
-  body('title').optional().trim().notEmpty().isLength({ max: 120 }),
-  body('date').optional().isISO8601(),
-  body('venue').optional({ nullable: true }).trim().isLength({ max: 200 }),
-  body('time').optional({ nullable: true }).trim().isLength({ max: 20 }),
-  body('color').optional({ nullable: true }).trim().isLength({ max: 30 }),
+  eventId(),
+  // `optional({ nullable: true })` on title and date, because the handler below
+  // already reads a null as "leave this column alone" (`title || null`,
+  // `date ? … : null`) while `optional()` skips only `undefined` — so a partial
+  // update that spelled an untouched field as null was refused by the chain
+  // rather than served.
+  scalarOnly(body('title').optional({ nullable: true }), 'title').trim().notEmpty().isLength({ max: 120 }),
+  scalarOnly(body('date').optional({ nullable: true }), 'date').trim().isISO8601(),
+  scalarOnly(body('venue').optional({ nullable: true }), 'venue').trim().isLength({ max: 200 }),
+  scalarOnly(body('time').optional({ nullable: true }), 'time').trim().isLength({ max: 20 }),
+  scalarOnly(body('color').optional({ nullable: true }), 'color').trim().isLength({ max: 30 }),
 ], async (req, res) => {
   try {
     const errors = validationResult(req);
@@ -113,7 +149,7 @@ router.put('/:id', [
 });
 
 // DELETE /api/calendar/:id — delete own event
-router.delete('/:id', [param('id').isInt()], async (req, res) => {
+router.delete('/:id', [eventId()], async (req, res) => {
   try {
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
