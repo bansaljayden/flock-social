@@ -210,6 +210,12 @@ router.post('/',
         const invitedUids = [];
         const seenInvitees = new Set();
         if (invited_user_ids && invited_user_ids.length > 0) {
+          // Candidate pass — pure bookkeeping, no I/O. The budget is still
+          // charged one unit per distinct id in the order they were submitted,
+          // and exhaustion still stops the whole list rather than answering
+          // per-id, so an exhausted caller cannot read "4193 exists, 4194 does
+          // not" off the response.
+          const candidates = [];
           for (const userId of invited_user_ids) {
             const uid = parseInt(userId, 10);
             // Round-2 audit: `Number.isFinite` alone let an id past Postgres's
@@ -221,15 +227,50 @@ router.post('/',
             if (seenInvitees.has(uid)) continue;
             seenInvitees.add(uid);
             if (!inviteBudget.allow(req.user.id)) break;
-            const invitee = await client.query('SELECT 1 FROM users WHERE id = $1', [uid]);
-            if (invitee.rows.length === 0) continue;
-            if (await isBlockedBetween(req.user.id, uid)) continue;
-            await client.query(
-              `INSERT INTO flock_members (flock_id, user_id, status) VALUES ($1, $2, 'invited')
-               ON CONFLICT (flock_id, user_id) DO NOTHING`,
-              [flock.id, uid]
+            candidates.push(uid);
+          }
+
+          // The three checks below used to run PER INVITEE inside this
+          // transaction — existence, block, insert — so a full 25-id create was
+          // ~75 round trips held open across the flock's own INSERT, and the
+          // block check borrowed a SECOND pool connection (isBlockedBetween
+          // talks to the pool, not this client) while this one was busy. Both
+          // are now one set-based query each against the same client.
+          if (candidates.length > 0) {
+            const realUsers = await client.query(
+              'SELECT id FROM users WHERE id = ANY($1::int[])',
+              [candidates]
             );
-            invitedUids.push(uid);
+            const exists = new Set(realUsers.rows.map((r) => r.id));
+
+            // Same bidirectional rule as utils/blocks.js, asked once.
+            const blockRows = await client.query(
+              `SELECT blocker_id, blocked_id FROM user_blocks
+               WHERE (blocker_id = $1 AND blocked_id = ANY($2::int[]))
+                  OR (blocked_id = $1 AND blocker_id = ANY($2::int[]))`,
+              [req.user.id, candidates]
+            );
+            const blocked = new Set(
+              blockRows.rows.map((r) => (r.blocker_id === req.user.id ? r.blocked_id : r.blocker_id))
+            );
+
+            for (const uid of candidates) {
+              if (!exists.has(uid) || blocked.has(uid)) continue;
+              invitedUids.push(uid);
+            }
+
+            if (invitedUids.length > 0) {
+              await client.query(
+                // $1::int is explicit on purpose: in INSERT ... SELECT (unlike
+                // INSERT ... VALUES) Postgres does NOT infer a parameter's type
+                // from the target column, so an uncast $1 resolves to text and
+                // the insert fails on the integer column at runtime.
+                `INSERT INTO flock_members (flock_id, user_id, status)
+                 SELECT $1::int, t.uid, 'invited' FROM UNNEST($2::int[]) AS t(uid)
+                 ON CONFLICT (flock_id, user_id) DO NOTHING`,
+                [flock.id, invitedUids]
+              );
+            }
           }
           console.log('[Flock Create] Invited', invitedUids.length, 'users');
         }
@@ -257,7 +298,11 @@ router.post('/',
         // assumes "everyone I listed" would show a member count nobody has.
         res.status(201).json({ flock, invited_user_ids: invitedUids });
       } catch (err) {
-        await client.query('ROLLBACK');
+        // .catch: on a dead or reset connection ROLLBACK throws too, and an
+        // unguarded await here would replace the REAL failure with a generic
+        // connection error — the outer handler would log "Connection
+        // terminated" instead of the constraint that actually broke.
+        await client.query('ROLLBACK').catch(() => {});
         throw err;
       } finally {
         client.release();
@@ -1237,7 +1282,9 @@ router.post('/:id/attendance',
 
         await client.query('COMMIT');
       } catch (txErr) {
-        await client.query('ROLLBACK');
+        // Guarded for the same reason as the create path: a throwing ROLLBACK
+        // must not swallow the error that caused it.
+        await client.query('ROLLBACK').catch(() => {});
         throw txErr;
       } finally {
         client.release();

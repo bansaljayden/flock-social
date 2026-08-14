@@ -413,7 +413,10 @@ test('join_flock presence does not double-count a client that sends 5 and "5"', 
     assert.strictEqual(roster.members.length, 2, 'one entry per user, not per id spelling');
 
     // Disconnecting announces each departure once, not once per spelling.
-    a.handlers.get('disconnect')();
+    // (awaited: the handler became async in round 16, when the departure
+    // broadcast started excluding the leaver's blocked users — the presence
+    // bookkeeping it asserts on is still decided synchronously.)
+    await a.handlers.get('disconnect')();
     const offline = io.emitted.filter((e) => e.event === 'member_offline');
     assert.strictEqual(offline.length, 1);
     assert.strictEqual(offline[0].room, 'flock:4103');

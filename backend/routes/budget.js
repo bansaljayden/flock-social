@@ -8,8 +8,35 @@ const { pushIfOffline, pushAlways } = require('../services/pushHelper');
 const router = express.Router();
 router.use(authenticate);
 
-// Rate limit reminders: 1 per flock per 5 minutes
+// Rate limit reminders: 1 per flock per 5 minutes.
+//
+// This map gained one entry per flock that ever sent a reminder and never lost
+// one — the only unswept in-memory map left in the codebase (crowd.js,
+// venueDashboard.js, utils/probeBudget.js and the socket connection tracker all
+// prune). Entries are worthless the moment the cooldown expires, so the sweep
+// below is pure garbage collection, not a budget reset: nothing an attacker can
+// recover by triggering it.
 const reminderCooldowns = new Map();
+const REMINDER_COOLDOWN_MS = 5 * 60 * 1000;
+const REMINDER_SWEEP_INTERVAL_MS = 60 * 1000;
+// Only reached if more than this many DISTINCT flocks are inside their 5-minute
+// window at once, which the 300/15min limiter makes implausible. Kept as a hard
+// ceiling so a pathological case cannot grow the map without bound either.
+const REMINDER_MAX_ENTRIES = 10000;
+let lastReminderSweep = 0;
+
+function sweepReminderCooldowns(now) {
+  if (now - lastReminderSweep < REMINDER_SWEEP_INTERVAL_MS && reminderCooldowns.size <= REMINDER_MAX_ENTRIES) return;
+  lastReminderSweep = now;
+  for (const [key, ts] of reminderCooldowns) {
+    if (now - ts >= REMINDER_COOLDOWN_MS) reminderCooldowns.delete(key);
+  }
+  // Insertion order is close enough to expiry order (every entry has the same
+  // fixed lifetime), so oldest-first drops whatever is nearest to expiring.
+  while (reminderCooldowns.size > REMINDER_MAX_ENTRIES) {
+    reminderCooldowns.delete(reminderCooldowns.keys().next().value);
+  }
+}
 
 // POST /api/budget/:flockId/submit — Submit or update a budget amount
 router.post('/:flockId/submit',
@@ -392,12 +419,24 @@ router.post('/:flockId/remind',
         return res.status(400).json({ error: 'Budget matching is not enabled for this flock' });
       }
 
-      // Rate limit: 1 reminder per flock per 5 minutes
+      // Rate limit: 1 reminder per flock per 5 minutes.
+      //
+      // The read and the write used to sit on either side of the member lookup
+      // and the whole push fan-out, so two requests in flight both saw an
+      // expired cooldown and both notified everyone — the limit was one
+      // reminder per five minutes PER REQUEST THAT FINISHED FIRST. The slot is
+      // claimed here, synchronously, in the same tick as the check: there is no
+      // await between them, so a second request cannot interleave. Claiming
+      // before the work means a later failure still burns the window, which is
+      // the correct direction for a spam control to fail.
       const cooldownKey = `remind:${flockId}`;
+      const now = Date.now();
       const lastReminder = reminderCooldowns.get(cooldownKey);
-      if (lastReminder && Date.now() - lastReminder < 5 * 60 * 1000) {
+      if (lastReminder && now - lastReminder < REMINDER_COOLDOWN_MS) {
         return res.status(429).json({ error: 'Please wait before sending another reminder' });
       }
+      reminderCooldowns.set(cooldownKey, now);
+      sweepReminderCooldowns(now);
 
       // Find members who haven't submitted
       const missingResult = await pool.query(
@@ -429,8 +468,6 @@ router.post('/:flockId/remind',
         );
       }
 
-      reminderCooldowns.set(cooldownKey, Date.now());
-
       res.json({ reminded: missingResult.rows.length });
     } catch (err) {
       console.error('Budget remind error:', err);
@@ -440,3 +477,13 @@ router.post('/:flockId/remind',
 );
 
 module.exports = router;
+
+// Test hook only — the reminder cooldown is process-wide in-memory state, so a
+// test suite needs a way to start each case from a clean window.
+module.exports.__resetReminderCooldowns = () => {
+  reminderCooldowns.clear();
+  lastReminderSweep = 0;
+};
+// Test hook only — lets a test assert the map actually shrinks, which is the
+// whole point of the sweep and is otherwise invisible from outside.
+module.exports.__reminderCooldownCount = () => reminderCooldowns.size;
