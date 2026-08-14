@@ -267,10 +267,42 @@ router.get('/:placeId',
       let calibration = { adjustedScore: crowdResult.score, feedbackUsed: false, reportCount: 0 };
       try {
         const fbResult = await pool.query(
-          `SELECT crowd_level, predicted_score FROM venue_feedback
-           WHERE venue_place_id = $1
-             AND (day_of_week, hour) IN (($2::int, $3::int), ($4::int, $5::int), ($6::int, $7::int))
-             AND verified = true -- only presence-verified reports: Sybil accounts could steer public predictions (REVIEW-ROUND5)
+          // Round 16: this SELECT is what decides whether the calibration guard
+          // rails in crowdEngine.buildCalibrationAdjustment do anything at all.
+          // It used to ask for `crowd_level, predicted_score` and nothing else,
+          // so every row arrived with no account on it and no age on it, and
+          // both of that function's protections degraded to "keep every row":
+          // one account's six reports counted as six reporters, and a report
+          // from last spring voted on tonight's number. user_id and created_at
+          // are in the projection now so the dedupe and the recency window act
+          // on real values.
+          //
+          // The 28 days is also enforced HERE rather than only in JavaScript,
+          // for a reason beyond belt-and-braces: `ORDER BY created_at DESC
+          // LIMIT 50` spends its row budget before the JS filter ever runs, so
+          // a venue whose recent reports are outnumbered by old ones could
+          // return 50 rows and zero usable ones. Bounding the age in SQL means
+          // all 50 are rows that can vote. Keep this window equal to
+          // crowdEngine.CALIBRATION_MAX_AGE_MS — __tests__/calibrationQueries
+          // .test.js fails if the two ever drift.
+          //
+          // DISTINCT ON is the same argument one level down. The function keeps
+          // exactly one report per account, so without it a handful of accounts
+          // holding several in-window rows each could fill all 50 slots and
+          // push genuine reporters out of a budget spent on rows that were
+          // going to be discarded. Deduping here makes LIMIT 50 mean "50
+          // reporters" instead of "50 rows". (A NULL user_id collapses to a
+          // single row, which is the safe direction: an unattributable report
+          // loses influence, it never gains any.)
+          `SELECT crowd_level, predicted_score, user_id, created_at FROM (
+             SELECT DISTINCT ON (user_id) crowd_level, predicted_score, user_id, created_at
+               FROM venue_feedback
+              WHERE venue_place_id = $1
+                AND (day_of_week, hour) IN (($2::int, $3::int), ($4::int, $5::int), ($6::int, $7::int))
+                AND verified = true -- only presence-verified reports: Sybil accounts could steer public predictions (REVIEW-ROUND5)
+                AND created_at > NOW() - INTERVAL '28 days'
+              ORDER BY user_id, created_at DESC
+           ) newest_per_reporter
            ORDER BY created_at DESC LIMIT 50`,
           [placeId, ...feedbackWindow(localDay, localHour).flat()]
         );
@@ -448,10 +480,19 @@ router.post('/batch',
       let feedbackByVenue = {};
       try {
         const fbResult = await pool.query(
-          `SELECT venue_place_id, crowd_level, predicted_score FROM venue_feedback
+          // Same projection as the single-venue read above, and for the same
+          // reason: without user_id and created_at on the row, the per-account
+          // dedupe and the 28-day window inside buildCalibrationAdjustment have
+          // nothing to act on and every row votes. This list drives the score
+          // printed beside each venue in the vote list, so it is the surface a
+          // Sybil would actually aim at. There is no LIMIT here, so the age
+          // bound is the only thing keeping an unbounded history out of a
+          // 20-venue request. Window must match crowdEngine.CALIBRATION_MAX_AGE_MS.
+          `SELECT venue_place_id, crowd_level, predicted_score, user_id, created_at FROM venue_feedback
            WHERE venue_place_id = ANY($1::text[])
              AND (day_of_week, hour) IN (($2::int, $3::int), ($4::int, $5::int), ($6::int, $7::int))
-             AND verified = true -- only presence-verified reports: Sybil accounts could steer public predictions (REVIEW-ROUND5)`,
+             AND verified = true -- only presence-verified reports: Sybil accounts could steer public predictions (REVIEW-ROUND5)
+             AND created_at > NOW() - INTERVAL '28 days'`,
           [placeIds, ...feedbackWindow(batchDay, batchHour).flat()]
         );
         for (const row of fbResult.rows) {
@@ -534,6 +575,29 @@ router.get('/:placeId/alternatives',
         return res.status(400).json({ error: 'Venue has no location data' });
       }
 
+      // WHOSE CLOCK — the last surface still answering on the viewer's.
+      //
+      // Round 14 moved this endpoint onto the same predictor and the same
+      // calibration as GET /api/crowd/:placeId, so the two could not disagree
+      // about the same venue. It left the CLOCK behind: the card re-derives the
+      // hour from Google's utcOffsetMinutes and this route never did, so for any
+      // venue outside the viewer's zone the card scored 8 PM at the door while
+      // this scored 11 PM in the viewer's living room. Two consequences, and the
+      // second is the one that makes the calibration work above pointless here:
+      //   * `currentVenue.score` is the number this endpoint claims the card is
+      //     showing, and it was a different hour's answer;
+      //   * the feedback lookup below is keyed on (day_of_week, hour), so it was
+      //     reading a DIFFERENT weekly bucket than the card's. Three verified
+      //     reporters could move the card and leave this list untouched.
+      // Same three lines as the card, so there is one rule about which clock a
+      // venue is scored on. Google omits the offset for some places; those fall
+      // back to the caller's clock exactly as before.
+      const venueClock = crowdEngine.venueLocalNow(target.utcOffsetMinutes, now);
+      if (venueClock) {
+        localHour = venueClock.hour;
+        localDay = venueClock.day;
+      }
+
       // Get weather
       const weather = await getWeather(lat, lon);
       const clientTime = new Date(now);
@@ -563,6 +627,19 @@ router.get('/:placeId/alternatives',
       });
 
       const searchData = await searchResponse.json();
+      // Round 19: `(searchData.places || [])` turned every upstream failure into
+      // an empty neighbour list, and an empty list is this endpoint's way of
+      // saying "we looked, and nothing near you is quieter". A quota, auth or
+      // Places outage is not that answer — it is "we could not ask". Same rule
+      // routes/publicCrowd.js adopted in round 11 for its two searches: only a
+      // genuine zero-result search returns 200 with an empty list. 502, matching
+      // the target-fetch failure a few lines up, since both are Google failing
+      // rather than this server.
+      if (!searchResponse.ok || searchData.error) {
+        console.error('[Crowd] Alternatives search failed:',
+          searchData.error?.message || searchData.error?.status || `HTTP ${searchResponse.status}`);
+        return res.status(502).json({ error: 'Could not load nearby venues right now', unavailable: true });
+      }
       const nearby = (searchData.places || [])
         .filter(p => p.id !== placeId)
         .filter(p => p.currentOpeningHours?.openNow !== false) // exclude closed venues
@@ -591,10 +668,18 @@ router.get('/:placeId/alternatives',
       let feedbackByVenue = {};
       try {
         const fbResult = await pool.query(
-          `SELECT venue_place_id, crowd_level, predicted_score FROM venue_feedback
+          // Third copy of the same projection, and the one it would be easiest
+          // to leave behind: "Less crowded nearby" compares the target's
+          // calibrated score against each neighbour's, so if only this query
+          // stayed un-deduped the two sides of that comparison would be
+          // calibrated under different rules and a venue could be listed as
+          // quieter than a card it is in fact busier than. Window must match
+          // crowdEngine.CALIBRATION_MAX_AGE_MS.
+          `SELECT venue_place_id, crowd_level, predicted_score, user_id, created_at FROM venue_feedback
            WHERE venue_place_id = ANY($1::text[])
              AND (day_of_week, hour) IN (($2::int, $3::int), ($4::int, $5::int), ($6::int, $7::int))
-             AND verified = true`,
+             AND verified = true
+             AND created_at > NOW() - INTERVAL '28 days'`,
           [[placeId, ...altIds], ...feedbackWindow(localDay, localHour).flat()]
         );
         for (const row of fbResult.rows) {

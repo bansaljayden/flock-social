@@ -883,6 +883,24 @@ router.get('/strip', requirePremium, async (req, res) => {
       signal: upstreamSignal('places'), // round 12
     }).then((r) => r.json());
 
+    // Round 19: `(nearby.places || [])` swallowed an upstream failure. A quota,
+    // auth or Places outage comes back as `{ error: ... }` with no `places` key,
+    // which read as a successful search that found nothing — so the strip view
+    // answered `available: true` with an empty competitor list and told a venue
+    // owner there is nobody around them tonight. Worse, that answer was written
+    // into the 60-minute cache, so one blip froze the false reading for an hour
+    // while the owner's own dial kept updating beside it. An honest refusal the
+    // dashboard can explain, and nothing cached, so the next request retries.
+    // (Same rule routes/publicCrowd.js already follows for its two searches, and
+    // the same one fetchVenueBasics above follows for the owner's own listing.)
+    if (nearby.error) {
+      console.error('[VenueStrip] Places searchNearby failed:', nearby.error.message || nearby.error.status);
+      return res.json({
+        available: false,
+        reason: 'Could not load the venues around you right now. Try again in a few minutes.',
+      });
+    }
+
     const weather = await getWeather(me.location.latitude, me.location.longitude).catch(() => null);
     const now = new Date();
 
