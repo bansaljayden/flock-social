@@ -299,10 +299,16 @@ const textSource = (table, body = 'the whole message', over = {}) => [
   new RegExp(`AS total_length[\\s\\S]*FROM ${table} t WHERE`),
   () => ({ rows: [{ body, clipped: false, total_length: body ? body.length : 0, ...over }], rowCount: 1 }),
 ];
+// Round 23: every successful serve writes an 'evidence_viewed' access record
+// BEFORE responding (routes/admin.js; behaviour pinned in
+// adminAuditTrail.test.js). The happy paths here script it so the serve can
+// complete; the refusal paths deliberately do not, which doubles as proof
+// that a refusal writes no row.
+const evidenceAudit = () => [/INSERT INTO moderation_actions/, () => ({ rows: [{ id: 1 }], rowCount: 1 })];
 
 test('GET /reports/:id/content serves the text the 280-character excerpt cut off', async () => {
   const long = 'A'.repeat(300) + 'THE-ACTUAL-THREAT';
-  handlers = [reportMeta({ id: 7, content_type: 'flock_message', content_id: 55, reported_user_id: 3 }), textSource('messages', long)];
+  handlers = [reportMeta({ id: 7, content_type: 'flock_message', content_id: 55, reported_user_id: 3 }), textSource('messages', long), evidenceAudit()];
   const res = await call('GET', '/api/admin/reports/7/content');
   assert.strictEqual(res.status, 200);
   assert.match(res.body.text, /THE-ACTUAL-THREAT/, 'the part of the message past 280 characters is the part being reported');
@@ -313,7 +319,7 @@ test('GET /reports/:id/content serves the text the 280-character excerpt cut off
 });
 
 test('the reported text is never cached by a proxy or a browser', async () => {
-  handlers = [reportMeta({ id: 7, content_type: 'dm', content_id: 55, reported_user_id: 3 }), textSource('direct_messages')];
+  handlers = [reportMeta({ id: 7, content_type: 'dm', content_id: 55, reported_user_id: 3 }), textSource('direct_messages'), evidenceAudit()];
   const res = await call('GET', '/api/admin/reports/7/content');
   assert.strictEqual(res.status, 200);
   assert.match(res.headers.get('cache-control') || '', /no-store/,
@@ -333,6 +339,7 @@ test('every reportable type can be opened in full, and each reads its own table'
     handlers = [
       reportMeta({ id: 7, content_type: type, content_id: keyed ? null : 55, reported_user_id: 3 }),
       textSource(src.table, `full ${type} text`),
+      evidenceAudit(),
     ];
     log = [];
     const res = await call('GET', '/api/admin/reports/7/content');
@@ -353,6 +360,7 @@ test('the served text is bounded — one row is still an attacker-sized column',
   handlers = [
     reportMeta({ id: 7, content_type: 'venue_review', content_id: 55, reported_user_id: 3 }),
     textSource('venue_reviews', 'x'.repeat(FULL_TEXT_MAX), { clipped: true, total_length: 999999 }),
+    evidenceAudit(),
   ];
   const res = await call('GET', '/api/admin/reports/7/content');
   assert.strictEqual(res.body.clipped, true);

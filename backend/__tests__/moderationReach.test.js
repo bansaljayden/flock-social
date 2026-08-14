@@ -332,6 +332,12 @@ test('a venue event can be hidden and restored, and the owner is told', async ()
 
 const STORY_DATA_URL = `data:image/png;base64,${'A'.repeat(4000)}`;
 
+// Round 23: a successful image serve writes an 'evidence_viewed' access record
+// before responding (routes/admin.js; pinned in adminAuditTrail.test.js). The
+// happy paths script it; the refusal paths deliberately do not, which doubles
+// as proof that a refusal writes no row.
+const evidenceAudit = () => [/INSERT INTO moderation_actions/, () => ({ rows: [{ id: 1 }], rowCount: 1 })];
+
 test('the queue still withholds inline images, and now says one is waiting', () => {
   // Both halves matter. Inlining 200 story photos is a hundred-megabyte
   // response; withholding them SILENTLY is a blank card.
@@ -354,6 +360,7 @@ test('a reported story photo is retrievable in full, one report at a time', asyn
       rows: [reportRow('story')], rowCount: 1,
     })],
     [/SELECT image_url AS image_url FROM stories/, () => ({ rows: [{ image_url: STORY_DATA_URL }], rowCount: 1 })],
+    evidenceAudit(),
   ];
   const res = await call('GET', '/api/admin/reports/7/image');
   assert.strictEqual(res.status, 200, res.text);
@@ -366,6 +373,7 @@ test('the image lookup does NOT filter takedowns, so an un-hide can be judged', 
   handlers = [
     [/FROM content_reports/, () => ({ rows: [reportRow('flock_message')], rowCount: 1 })],
     [/FROM messages/, () => ({ rows: [{ image_url: STORY_DATA_URL }], rowCount: 1 })],
+    evidenceAudit(),
   ];
   await call('GET', '/api/admin/reports/7/image');
   const lookup = ran(/FROM messages/)[0];
@@ -377,6 +385,7 @@ test('reported UGC is never handed to a cache', async () => {
   handlers = [
     [/FROM content_reports/, () => ({ rows: [reportRow('story')], rowCount: 1 })],
     [/FROM stories/, () => ({ rows: [{ image_url: STORY_DATA_URL }], rowCount: 1 })],
+    evidenceAudit(),
   ];
   const res = await call('GET', '/api/admin/reports/7/image');
   assert.match(String(res.headers.get('cache-control')), /no-store/);
@@ -388,6 +397,7 @@ test('a profile report serves the avatar, keyed on the reported USER not a conte
   handlers = [
     [/FROM content_reports/, () => ({ rows: [reportRow('profile', { content_id: null, reported_user_id: 42 })], rowCount: 1 })],
     [/FROM users WHERE id = \$1/, () => ({ rows: [{ image_url: 'data:image/jpeg;base64,ZZZZ' }], rowCount: 1 })],
+    evidenceAudit(),
   ];
   const res = await call('GET', '/api/admin/reports/7/image');
   assert.strictEqual(res.status, 200, res.text);

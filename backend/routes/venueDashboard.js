@@ -82,8 +82,14 @@ router.get('/promotions', async (req, res) => {
     // to serve it to a single user. `hidden_by_moderation` is stated explicitly
     // rather than leaving the frontend to infer it from a raw `is_hidden`
     // column that a future SELECT list could quietly drop.
+    // Round 23: `owner_deleted_at IS NULL` — a row the owner deleted while a
+    // report against it was open is retained as evidence (see the DELETE route
+    // below), and to its owner it must answer like a deleted row everywhere,
+    // starting with this list. The asymmetry with is_hidden is deliberate: a
+    // hidden row stays HERE, marked, because the owner is owed the fact of a
+    // takedown; a retired row was deleted by the owner themselves.
     const { rows } = await pool.query(
-      'SELECT * FROM venue_promotions WHERE venue_user_id = $1 ORDER BY created_at DESC LIMIT 200',
+      'SELECT * FROM venue_promotions WHERE venue_user_id = $1 AND owner_deleted_at IS NULL ORDER BY created_at DESC LIMIT 200',
       [req.user.id]
     );
     const promotions = rows.map((p) => ({ ...p, hidden_by_moderation: p.is_hidden === true }));
@@ -184,7 +190,7 @@ router.put('/promotions/:id', requirePremium, [
     const { rows } = await pool.query(
       `WITH target AS (
          SELECT id, COALESCE(is_hidden, false) AS is_hidden
-         FROM venue_promotions WHERE id = $5 AND venue_user_id = $6
+         FROM venue_promotions WHERE id = $5 AND venue_user_id = $6 AND owner_deleted_at IS NULL
        ),
        upd AS (
          UPDATE venue_promotions SET
@@ -225,6 +231,38 @@ router.put('/promotions/:id', requirePremium, [
 });
 
 // DELETE /api/venue-dashboard/promotions/:id
+//
+// Round 23: THE DELETE CAN NO LONGER DESTROY EVIDENCE. While a report against
+// this promotion is open or under review, the row is the thing a moderator has
+// been asked to judge — and its owner is the person with the strongest reason
+// to make it vanish. Hide preserved the evidence; this route erased it.
+// routes/stories.js solved the identical problem for story deletion and these
+// semantics are its, matched clause for clause (adminAuditTrail.test.js pins
+// the two status lists together):
+//
+//   * The report check is a predicate INSIDE the delete, never a SELECT before
+//     it — read first, delete second and there is a window, exactly the window
+//     a reported owner is racing for, in which the report lands after the
+//     check and the evidence is destroyed anyway.
+//   * When the guard holds, the row is RETIRED (owner_deleted_at, migration
+//     020) with the same 200 and the same body as a real delete. The silence
+//     is load-bearing, and it is why this is not a 409 like the hidden-row
+//     edit refusal above: a hidden row is a takedown the owner already knows
+//     about, but an OPEN report is one they must not be told about, because
+//     the edit route would let them sanitize the words before a moderator
+//     reads them. To the owner a retired row answers exactly like a deleted
+//     one everywhere: gone from their list (GET above filters it), a 404 from
+//     the edit CTE, off the public card (active = false, which is what
+//     /public-promotions serves by).
+//   * Deleting hidden-but-UNREPORTED content still works — no is_hidden here,
+//     on purpose. After a resolved takedown, cleanup is legitimately the
+//     owner's to do, and the 409 CONTENT_HIDDEN copy above promises exactly
+//     that. (venueTakedownVisibility.test.js holds this route to it.)
+//   * The `owner_deleted_at IS NOT NULL` arm is the retention window closing:
+//     stories has a purge that removes retired evidence once its report is
+//     resolved; venues have no purge loop, so the owner's NEXT delete sweeps
+//     any of their retired rows whose reports have since closed. Until then
+//     the row is readable only by the moderation queue.
 router.delete('/promotions/:id', requirePremium, param('id').isInt({ min: 1, max: INT4_MAX }), async (req, res) => {
   try {
     // param('id').isInt() was declared but its result was never read, so a
@@ -232,11 +270,35 @@ router.delete('/promotions/:id', requirePremium, param('id').isInt({ min: 1, max
     // back a 500 instead of a 404 (same class as the PUT routes above already guard).
     const errors = validationResult(req);
     if (!errors.isEmpty()) return res.status(404).json({ error: 'Promotion not found' });
-    const { rowCount } = await pool.query(
-      'DELETE FROM venue_promotions WHERE id = $1 AND venue_user_id = $2',
-      [req.params.id, req.user.id]
+    const promotionId = parseInt(req.params.id, 10);
+    const del = await pool.query(
+      `DELETE FROM venue_promotions
+        WHERE venue_user_id = $2
+          AND (id = $1 OR owner_deleted_at IS NOT NULL)
+          AND NOT EXISTS (
+            SELECT 1 FROM content_reports r
+             WHERE r.content_type = 'venue_promotion'
+               AND r.content_id = venue_promotions.id
+               AND r.status IN ('open', 'under_review')
+          )
+        RETURNING id`,
+      [promotionId, req.user.id]
     );
-    if (rowCount === 0) return res.status(404).json({ error: 'Promotion not found' });
+    if (del.rows.some((row) => row.id === promotionId)) return res.json({ success: true });
+
+    // The delete did not take the target: no such promotion, not this owner's,
+    // or the evidence guard held. Only the last is still actionable, and for
+    // the owner it must look exactly like a delete (see the note above).
+    // `owner_deleted_at IS NULL` keeps a second delete of a retired row a 404,
+    // which is what a genuinely deleted row would answer.
+    const retired = await pool.query(
+      `UPDATE venue_promotions
+          SET owner_deleted_at = NOW(), active = false
+        WHERE id = $1 AND venue_user_id = $2 AND owner_deleted_at IS NULL
+        RETURNING id`,
+      [promotionId, req.user.id]
+    );
+    if (retired.rows.length === 0) return res.status(404).json({ error: 'Promotion not found' });
     res.json({ success: true });
   } catch (err) {
     console.error('Delete promotion error:', err);
@@ -263,8 +325,10 @@ router.get('/events', async (req, res) => {
     // could tell an owner a moderator had acted said nothing at all.
     // venue_events only grew is_hidden in migration 019; this is the read side
     // catching up with it.
+    // Round 23: same owner_deleted_at filter as the promotions list, for the
+    // same reason — a retired evidence row must look deleted to its owner.
     const { rows } = await pool.query(
-      'SELECT * FROM venue_events WHERE venue_user_id = $1 ORDER BY created_at DESC LIMIT 200',
+      'SELECT * FROM venue_events WHERE venue_user_id = $1 AND owner_deleted_at IS NULL ORDER BY created_at DESC LIMIT 200',
       [req.user.id]
     );
     // Stated explicitly rather than leaving the dashboard to infer it from a raw
@@ -368,7 +432,7 @@ router.put('/events/:id', requirePremium, [
     const { rows } = await pool.query(
       `WITH target AS (
          SELECT id, COALESCE(is_hidden, false) AS is_hidden
-         FROM venue_events WHERE id = $5 AND venue_user_id = $6
+         FROM venue_events WHERE id = $5 AND venue_user_id = $6 AND owner_deleted_at IS NULL
        ),
        upd AS (
          UPDATE venue_events SET
@@ -407,17 +471,41 @@ router.put('/events/:id', requirePremium, [
 });
 
 // DELETE /api/venue-dashboard/events/:id
+//
+// Round 23: same evidence guard, same retirement, same silence as the
+// promotions DELETE above — the full reasoning lives there. The only
+// difference is that venue_events has no `active` column and no public route,
+// so retirement touches nothing but owner_deleted_at.
 router.delete('/events/:id', requirePremium, param('id').isInt({ min: 1, max: INT4_MAX }), async (req, res) => {
   try {
     // Same unenforced validator as the promotions DELETE: read it so a
     // non-numeric id is a 404 rather than a Postgres 500.
     const errors = validationResult(req);
     if (!errors.isEmpty()) return res.status(404).json({ error: 'Event not found' });
-    const { rowCount } = await pool.query(
-      'DELETE FROM venue_events WHERE id = $1 AND venue_user_id = $2',
-      [req.params.id, req.user.id]
+    const eventId = parseInt(req.params.id, 10);
+    const del = await pool.query(
+      `DELETE FROM venue_events
+        WHERE venue_user_id = $2
+          AND (id = $1 OR owner_deleted_at IS NOT NULL)
+          AND NOT EXISTS (
+            SELECT 1 FROM content_reports r
+             WHERE r.content_type = 'venue_event'
+               AND r.content_id = venue_events.id
+               AND r.status IN ('open', 'under_review')
+          )
+        RETURNING id`,
+      [eventId, req.user.id]
     );
-    if (rowCount === 0) return res.status(404).json({ error: 'Event not found' });
+    if (del.rows.some((row) => row.id === eventId)) return res.json({ success: true });
+
+    const retired = await pool.query(
+      `UPDATE venue_events
+          SET owner_deleted_at = NOW()
+        WHERE id = $1 AND venue_user_id = $2 AND owner_deleted_at IS NULL
+        RETURNING id`,
+      [eventId, req.user.id]
+    );
+    if (retired.rows.length === 0) return res.status(404).json({ error: 'Event not found' });
     res.json({ success: true });
   } catch (err) {
     console.error('Delete event error:', err);

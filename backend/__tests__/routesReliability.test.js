@@ -75,13 +75,26 @@ pool.query = async (text, params = []) => {
     if (!Number.isInteger(params[1])) throw invalidIntError();
     return { rows: mutationRows ? [{ id: 9, business_name: 'V', tier: params[0] }] : [], rowCount: mutationRows };
   }
+  // Round 23: the DELETEs are evidence-guarded and RETURN the ids they took
+  // (routes/venueDashboard.js), and a guarded miss falls through to the
+  // owner_deleted_at retirement. Modelled faithfully: the delete returns the
+  // target id on the happy path, and the retirement matches nothing here so a
+  // missing row still answers 404.
   if (has('DELETE FROM venue_promotions')) {
     if (!/^\d+$/.test(String(params[0]))) throw invalidIntError();
-    return { rows: [], rowCount: mutationRows };
+    return { rows: mutationRows ? [{ id: Number(params[0]) }] : [], rowCount: mutationRows };
+  }
+  if (has('UPDATE venue_promotions SET owner_deleted_at')) {
+    if (!/^\d+$/.test(String(params[0]))) throw invalidIntError();
+    return { rows: [], rowCount: 0 };
   }
   if (has('DELETE FROM venue_events')) {
     if (!/^\d+$/.test(String(params[0]))) throw invalidIntError();
-    return { rows: [], rowCount: mutationRows };
+    return { rows: mutationRows ? [{ id: Number(params[0]) }] : [], rowCount: mutationRows };
+  }
+  if (has('UPDATE venue_events SET owner_deleted_at')) {
+    if (!/^\d+$/.test(String(params[0]))) throw invalidIntError();
+    return { rows: [], rowCount: 0 };
   }
 
   throw new Error(`Unmodelled query: ${sql}`);
