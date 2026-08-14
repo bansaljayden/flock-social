@@ -10,16 +10,26 @@ const SUPPORT_EMAIL = 'social@flockcorp.com';
 // Split it out again only after the dedicated mailbox exists and is watched.
 const CHILD_SAFETY_EMAIL = SUPPORT_EMAIL;
 
+// PER-ROUTE <meta name="description">. CRA has no server rendering, so
+// public/index.html is the response for every route and its one static
+// description was the description this page shipped with. There is no head
+// manager in this app and adding one is a dependency, so the mechanism is the
+// one LandingPage.js already uses: rewrite the tag index.html ships, from this
+// route's own effect. Googlebot renders JS and reads the rewritten value.
+const DESCRIPTION = 'What you may not post on Flock, the zero-tolerance child safety policy, how to report or block, and what happens after a report.';
+
 export default function CommunityGuidelines() {
   useEffect(() => {
-    document.title = 'Community Guidelines · Flock';
+    document.title = 'Community Guidelines | Flock';
+    const meta = document.querySelector('meta[name="description"]');
+    if (meta) meta.setAttribute('content', DESCRIPTION);
   }, []);
 
   return (
     <main className="pp">
       {/* The arrow is decoration and must stay out of the link's accessible
           name, or it is announced as "left arrow flockcorp.com". */}
-      <a href="/landing" className="pp-back">
+      <a href="/" className="pp-back">
         <span aria-hidden="true">&larr;</span> flockcorp.com
       </a>
 
@@ -109,10 +119,16 @@ export default function CommunityGuidelines() {
         </p>
       </section>
 
+      {/* "Our team reviews reports" was the one sentence on these pages that
+          named people who do not exist: Flock is built by one person and
+          /about says so. It is also a moderation commitment App Review reads
+          for Guideline 1.2, so it could not just be deleted. What it promises
+          (every report is read, and acted on promptly) is unchanged; only the
+          invented headcount is gone. */}
       <section>
         <h2>What happens after a report</h2>
         <p>
-          Our team reviews reports and acts promptly, typically by removing the violating
+          Every report is reviewed and acted on promptly, typically by removing the violating
           content and ejecting the responsible user. Serious or repeated violations result in a permanent
           ban. Deleting a banned account does not lift the ban. Illegal content may be reported
           to the authorities.

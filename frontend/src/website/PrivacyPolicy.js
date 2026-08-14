@@ -11,6 +11,15 @@ const CONTACT_EMAIL = 'social@flockcorp.com';
 // to the files they came from, so a feature that lands or leaves fails a test
 // rather than quietly making this page a lie.
 
+// PER-ROUTE <meta name="description">. CRA has no server rendering, so
+// public/index.html is the response for every route, and until this was added
+// /privacy described itself to searchers as "Vote on where to go, see how busy
+// it is before you leave, and split the bill after." There is no head manager
+// in this app and adding one is a dependency, so the mechanism is the one
+// LandingPage.js already uses: rewrite the tag index.html ships, from this
+// route's own effect. Googlebot renders JS and reads the rewritten value.
+const DESCRIPTION = 'What Flock collects, how location and anonymous budget data are handled, what venue sensors do and do not send, and how to get your data deleted.';
+
 // Section order drives both the document and the contents rail.
 const SECTIONS = [
   { id: 'who-we-are', title: 'Who we are' },
@@ -32,7 +41,9 @@ export default function PrivacyPolicy() {
   const pinnedRef = useRef(null);
 
   useEffect(() => {
-    document.title = 'Privacy Policy · Flock';
+    document.title = 'Privacy Policy | Flock';
+    const meta = document.querySelector('meta[name="description"]');
+    if (meta) meta.setAttribute('content', DESCRIPTION);
   }, []);
 
   // Highlight the section you're reading in the contents rail. Scroll-based
@@ -104,7 +115,7 @@ export default function PrivacyPolicy() {
           on every visit. */}
       <a className="pp-skip" href="#pp-body">Skip to the policy</a>
 
-      <a href="/landing" className="pp-back">
+      <a href="/" className="pp-back">
         {/* The glyph is decoration. Left in the link's text it becomes part of
             the accessible name, which speech engines render as "left arrow
             flockcorp.com" or, worse, drop entirely and leave the name looking
