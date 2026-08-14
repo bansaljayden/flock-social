@@ -8,6 +8,11 @@ const { pushIfOffline } = require('../services/pushHelper');
 const router = express.Router();
 router.use(authenticate);
 
+// SERIAL ids are INT4; an id/payer past this 500s on the query rather than 400ing
+// (same class as routesReliability.test.js; friends.js bounds user ids the same
+// way). Every :flockId param and the paidBy body id below is bounded to it.
+const INT4_MAX = 2147483647;
+
 // ---------------------------------------------------------------------------
 // Round 16 — how bill events are delivered.
 //
@@ -39,11 +44,11 @@ const { emitToFlockMembers } = require('../sockets/handlers');
 // POST /api/billing/:flockId/create — Create a bill split
 router.post('/:flockId/create',
   [
-    param('flockId').isInt().withMessage('Invalid flock ID'),
+    param('flockId').isInt({ min: 1, max: INT4_MAX }).withMessage('Invalid flock ID'),
     body('totalAmount').isFloat({ min: 0.01, max: 100000 }).withMessage('Total must be between $0.01 and $100,000'),
     body('tipPercent').optional().isFloat({ min: 0, max: 100 }).withMessage('Tip must be 0-100%'),
     body('splitType').optional().isIn(['equal', 'custom']).withMessage('Split type must be equal or custom'),
-    body('paidBy').optional().isInt().withMessage('Invalid payer ID'),
+    body('paidBy').optional().isInt({ min: 1, max: INT4_MAX }).withMessage('Invalid payer ID'),
     // Round 16: no maximum. Every element is reduced over, mapped, and pushed
     // into a Set before the "must be a member" check can reject it, so a
     // million-element array was a million-element CPU burn per request. 100 is
@@ -381,7 +386,7 @@ router.post('/:flockId/create',
 
 // GET /api/billing/:flockId — Get bill split for a flock
 router.get('/:flockId',
-  [param('flockId').isInt().withMessage('Invalid flock ID')],
+  [param('flockId').isInt({ min: 1, max: INT4_MAX }).withMessage('Invalid flock ID')],
   async (req, res) => {
     try {
       const errors = validationResult(req);
@@ -452,7 +457,7 @@ router.get('/:flockId',
 
 // POST /api/billing/:flockId/settle — Mark current user's share as settled
 router.post('/:flockId/settle',
-  [param('flockId').isInt().withMessage('Invalid flock ID')],
+  [param('flockId').isInt({ min: 1, max: INT4_MAX }).withMessage('Invalid flock ID')],
   async (req, res) => {
     try {
       const errors = validationResult(req);
@@ -537,7 +542,7 @@ router.post('/:flockId/settle',
 
 // POST /api/billing/:flockId/ghost-commit — Pre-commit estimated share (ghost mode)
 router.post('/:flockId/ghost-commit',
-  [param('flockId').isInt().withMessage('Invalid flock ID')],
+  [param('flockId').isInt({ min: 1, max: INT4_MAX }).withMessage('Invalid flock ID')],
   async (req, res) => {
     try {
       const errors = validationResult(req);
@@ -676,7 +681,7 @@ router.post('/:flockId/ghost-commit',
 
 // GET /api/billing/:flockId/venmo-link — Generate Venmo deep-link
 router.get('/:flockId/venmo-link',
-  [param('flockId').isInt().withMessage('Invalid flock ID')],
+  [param('flockId').isInt({ min: 1, max: INT4_MAX }).withMessage('Invalid flock ID')],
   async (req, res) => {
     try {
       const errors = validationResult(req);
@@ -771,7 +776,7 @@ router.get('/:flockId/venmo-link',
 
 // GET /api/billing/:flockId/payment-links — Generate all payment options for settle-up
 router.get('/:flockId/payment-links',
-  [param('flockId').isInt().withMessage('Invalid flock ID')],
+  [param('flockId').isInt({ min: 1, max: INT4_MAX }).withMessage('Invalid flock ID')],
   async (req, res) => {
     try {
       const errors = validationResult(req);

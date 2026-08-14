@@ -15,6 +15,12 @@ const router = express.Router();
 
 router.use(authenticate);
 
+// SERIAL message/user ids are INT4; an id past this 500s on the query instead of
+// 400ing (same class as routesReliability.test.js; friends.js bounds user ids the
+// same way). Every :id/:userId/:messageId param and the int cursors below are
+// bounded to it so a too-large id is rejected before any query runs.
+const INT4_MAX = 2147483647;
+
 // Several routes below declared param()/body() chains and then never read the
 // result, which made those chains decorative: `/api/dm/messages/abc/react`
 // reached Postgres as NaN and came back a 500, and an unvalidated `emoji`
@@ -39,9 +45,9 @@ async function verifyFlockMember(flockId, userId) {
 // GET /api/flocks/:id/messages - Get messages for a flock (paginated)
 router.get('/flocks/:id/messages',
   [
-    param('id').isInt(),
+    param('id').isInt({ min: 1, max: INT4_MAX }),
     query('limit').optional().isInt({ min: 1, max: 100 }),
-    query('before').optional().isInt(), // message ID cursor for pagination
+    query('before').optional().isInt({ min: 1, max: INT4_MAX }), // message ID cursor for pagination
   ],
   async (req, res) => {
     try {
@@ -136,7 +142,7 @@ router.get('/flocks/:id/messages',
 // POST /api/flocks/:id/messages - Send a message to a flock
 router.post('/flocks/:id/messages',
   [
-    param('id').isInt(),
+    param('id').isInt({ min: 1, max: INT4_MAX }),
     body('message_text').trim().customSanitizer(stripHtml).isLength({ min: 1, max: 5000 }).withMessage('Message is required'),
     body('message_type').optional().isIn(['text', 'venue_card', 'image']),
     body('venue_data').optional().isObject(),
@@ -239,7 +245,7 @@ router.post('/flocks/:id/messages',
 // POST /api/messages/:id/react - Add emoji reaction to a message
 router.post('/messages/:id/react',
   [
-    param('id').isInt(),
+    param('id').isInt({ min: 1, max: INT4_MAX }),
     body('emoji').trim().isLength({ min: 1, max: 10 }).withMessage('Emoji is required'),
   ],
   async (req, res) => {
@@ -307,7 +313,7 @@ router.post('/messages/:id/react',
 
 // DELETE /api/messages/:id/react/:emoji - Remove emoji reaction
 router.delete('/messages/:id/react/:emoji',
-  [param('id').isInt().withMessage('Invalid message ID')],
+  [param('id').isInt({ min: 1, max: INT4_MAX }).withMessage('Invalid message ID')],
   async (req, res) => {
     try {
       if (rejectInvalid(req, res)) return;
@@ -414,9 +420,9 @@ router.get('/dm', async (req, res) => {
 // GET /api/dm/:userId - Get DM conversation with a user (paginated)
 router.get('/dm/:userId',
   [
-    param('userId').isInt(),
+    param('userId').isInt({ min: 1, max: INT4_MAX }),
     query('limit').optional().isInt({ min: 1, max: 100 }),
-    query('before').optional().isInt(),
+    query('before').optional().isInt({ min: 1, max: INT4_MAX }),
   ],
   async (req, res) => {
     try {
@@ -527,14 +533,14 @@ router.get('/dm/:userId',
 // POST /api/dm/:userId - Send a DM (supports text, venue_card, image)
 router.post('/dm/:userId',
   [
-    param('userId').isInt(),
+    param('userId').isInt({ min: 1, max: INT4_MAX }),
     body('message_text').trim().customSanitizer(stripHtml).isLength({ min: 1, max: 5000 }).withMessage('Message is required'),
     body('message_type').optional().isIn(['text', 'venue_card', 'image']),
     body('venue_data').optional().isObject(),
     // data: URLs only — a sender-controlled https image is a tracking pixel
     // aimed at every recipient (round 7); the socket path already refuses them.
     body('image_url').optional().matches(/^data:image\/(png|jpe?g|gif|webp);base64,/),
-    body('reply_to_id').optional().isInt(),
+    body('reply_to_id').optional().isInt({ min: 1, max: INT4_MAX }),
   ],
   async (req, res) => {
     try {
@@ -647,7 +653,7 @@ function dmPairKey(a, b) {
 // POST /api/dm/messages/:id/react - Add reaction to a DM
 router.post('/dm/messages/:id/react',
   [
-    param('id').isInt().withMessage('Invalid message ID'),
+    param('id').isInt({ min: 1, max: INT4_MAX }).withMessage('Invalid message ID'),
     body('emoji').isString().withMessage('Emoji is required')
       .trim().isLength({ min: 1, max: 10 }).withMessage('Emoji is required'),
   ],
@@ -682,7 +688,7 @@ router.post('/dm/messages/:id/react',
 );
 
 // DELETE /api/dm/messages/:id/react/:emoji - Remove DM reaction
-router.delete('/dm/messages/:id/react/:emoji', [param('id').isInt().withMessage('Invalid message ID')], async (req, res) => {
+router.delete('/dm/messages/:id/react/:emoji', [param('id').isInt({ min: 1, max: INT4_MAX }).withMessage('Invalid message ID')], async (req, res) => {
   try {
     if (rejectInvalid(req, res)) return;
     const dmId = parseInt(req.params.id);
@@ -708,7 +714,7 @@ router.delete('/dm/messages/:id/react/:emoji', [param('id').isInt().withMessage(
 });
 
 // GET /api/dm/:userId/venue-votes - Get venue votes for a DM conversation
-router.get('/dm/:userId/venue-votes', [param('userId').isInt().withMessage('Invalid user ID')], async (req, res) => {
+router.get('/dm/:userId/venue-votes', [param('userId').isInt({ min: 1, max: INT4_MAX }).withMessage('Invalid user ID')], async (req, res) => {
   try {
     if (rejectInvalid(req, res)) return;
     // Mutual invisibility covers shared DM metadata reads, not just messages.
@@ -732,7 +738,7 @@ router.get('/dm/:userId/venue-votes', [param('userId').isInt().withMessage('Inva
 
 // POST /api/dm/:userId/venue-votes - Vote for a venue in a DM conversation
 router.post('/dm/:userId/venue-votes',
-  [param('userId').isInt(), body('venue_name').trim().isLength({ min: 1, max: 255 }), body('venue_id').optional().isString()],
+  [param('userId').isInt({ min: 1, max: INT4_MAX }), body('venue_name').trim().isLength({ min: 1, max: 255 }), body('venue_id').optional().isString()],
   async (req, res) => {
     try {
       // The validator chain above was decorative: without validationResult the
@@ -828,7 +834,7 @@ router.post('/dm/:userId/venue-votes',
 );
 
 // PUT /api/dm/:messageId/read - Mark a DM as read
-router.put('/dm/:messageId/read', param('messageId').isInt().withMessage('Invalid message ID'), async (req, res) => {
+router.put('/dm/:messageId/read', param('messageId').isInt({ min: 1, max: INT4_MAX }).withMessage('Invalid message ID'), async (req, res) => {
   try {
     if (rejectInvalid(req, res)) return;
     const messageId = parseInt(req.params.messageId);
@@ -852,7 +858,7 @@ router.put('/dm/:messageId/read', param('messageId').isInt().withMessage('Invali
 });
 
 // GET /api/dm/:userId/pinned-venue - Get pinned venue for a DM conversation
-router.get('/dm/:userId/pinned-venue', [param('userId').isInt().withMessage('Invalid user ID')], async (req, res) => {
+router.get('/dm/:userId/pinned-venue', [param('userId').isInt({ min: 1, max: INT4_MAX }).withMessage('Invalid user ID')], async (req, res) => {
   try {
     if (rejectInvalid(req, res)) return;
     // Mutual invisibility covers shared DM metadata reads, not just messages.
@@ -876,7 +882,7 @@ router.get('/dm/:userId/pinned-venue', [param('userId').isInt().withMessage('Inv
 // PUT /api/dm/:userId/pinned-venue - Pin or update a venue for a DM conversation
 router.put('/dm/:userId/pinned-venue',
   [
-    param('userId').isInt().withMessage('Invalid user ID'),
+    param('userId').isInt({ min: 1, max: INT4_MAX }).withMessage('Invalid user ID'),
     body('venue_name').isString().withMessage('Venue name is required')
       .trim().isLength({ min: 1, max: 255 }).withMessage('Venue name is required'),
   ],
