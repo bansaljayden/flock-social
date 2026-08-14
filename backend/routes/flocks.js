@@ -1140,7 +1140,11 @@ router.post('/:id/leave', param('id').isInt({ min: 1, max: INT4_MAX }).withMessa
     // roster read reaches the same set the room held. Guarded so a fan-out
     // failure cannot 500 a leave that is about to succeed.
     if (io && wasAccepted) {
-      await emitToFlockMembers(io, flockId, 'flock_member_left', {
+      // Block-aware, because this payload carries the leaver's NAME. Per-member
+      // fan-out reaches a blocker wherever they are in the app, where the old
+      // room broadcast only reached one who happened to have the flock screen
+      // open, so delivering it unfiltered would widen what a block leaks.
+      await emitToFlockExcludingBlocked(io, flockId, req.user.id, 'flock_member_left', {
         flockId: parseInt(flockId), userId: req.user.id, userName: req.user.name,
       }).catch((e) => console.error('flock_member_left fan-out failed:', e.message));
     }
@@ -1321,7 +1325,10 @@ router.post('/:id/attendance',
       if (io) {
         // Per-member fan-out so a member not on the flock screen still learns
         // attendance was recorded. Guarded (post-commit work must not 500 it).
-        await emitToFlockMembers(io, flockId, 'attendance_marked', {
+        // Block-aware for the same reason as flock_member_left: this names
+        // members and their scores, and per-member delivery would otherwise
+        // carry it to someone who blocked the marker.
+        await emitToFlockExcludingBlocked(io, flockId, req.user.id, 'attendance_marked', {
           flockId: parseInt(flockId), attendance: results,
         }).catch((e) => console.error('attendance_marked fan-out failed:', e.message));
         for (const r of results) {
