@@ -6,6 +6,8 @@ const { authenticate } = require('../middleware/auth');
 const { pushIfOffline } = require('../services/pushHelper');
 const { isBlockedBetween, getInvisibleUserIds } = require('../utils/blocks');
 const { createUserBudget } = require('../utils/probeBudget');
+// Shape before content — see validators/shape.js.
+const { scalarOnly } = require('../validators/shape');
 
 const router = express.Router();
 router.use(authenticate);
@@ -44,9 +46,20 @@ const friendProbeBudget = createUserBudget({ name: 'friend-probe', hourly: 20, d
 // so it is rejected as one.
 const MAX_USER_ID = 2147483647;
 
+// SHAPE BEFORE CONTENT (round 20). `{"user_id": [5]}` satisfies
+// isInt({ min, max }) — express-validator stringifies a one-element array
+// before testing it — and the value STAYS an array in req.body. On this route
+// parseInt() below flattened it back to a number, so it was merely untidy; on
+// /accept and /decline, which read `user_id` straight off the body, the array
+// reached pg as a parameter for the INTEGER columns friendships.requester_id /
+// addressee_id and came back a 500 rather than a 400. Same guard on all three
+// so the three siblings cannot drift apart again. See validators/shape.js.
+const scalarUserId = () =>
+  scalarOnly(body('user_id'), 'user_id').isInt({ min: 1, max: MAX_USER_ID }).withMessage('user_id is required');
+
 // POST /api/friends/request - Send a friend request
 router.post('/request',
-  body('user_id').isInt({ min: 1, max: MAX_USER_ID }).withMessage('user_id is required'),
+  scalarUserId(),
   async (req, res) => {
     try {
       const errors = validationResult(req);
@@ -149,7 +162,7 @@ router.post('/request',
 
 // POST /api/friends/accept - Accept a friend request
 router.post('/accept',
-  body('user_id').isInt({ min: 1, max: MAX_USER_ID }).withMessage('user_id is required'),
+  scalarUserId(),
   async (req, res) => {
     try {
       const errors = validationResult(req);
@@ -241,7 +254,7 @@ router.get('/pending', async (req, res) => {
 
 // POST /api/friends/decline - Decline a friend request
 router.post('/decline',
-  body('user_id').isInt({ min: 1, max: MAX_USER_ID }).withMessage('user_id is required'),
+  scalarUserId(),
   async (req, res) => {
     try {
       const errors = validationResult(req);
@@ -392,7 +405,13 @@ router.get('/my-code', async (req, res) => {
 router.post('/add-by-code',
   // Bounded: a code is 'FLOCK-' plus a base36 id, so anything long is not a
   // typo, it is someone feeding a megabyte to a regex and a toUpperCase().
-  body('code').trim().isLength({ min: 1, max: 64 }).withMessage('Friend code is required'),
+  //
+  // Shape first (round 20): `{"code": ["FLOCK-1"]}` satisfies isLength — the
+  // array is stringified before the rule sees it — and stays an array, so
+  // `code.toUpperCase()` below threw a TypeError and the route answered 500 for
+  // a body the caller picked. An empty array satisfied isLength({ min: 1 })
+  // vacuously for the same reason, which is a "required" field that was not.
+  scalarOnly(body('code'), 'friend code').trim().isLength({ min: 1, max: 64 }).withMessage('Friend code is required'),
   async (req, res) => {
     try {
       const errors = validationResult(req);
