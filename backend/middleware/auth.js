@@ -3,6 +3,11 @@ const pool = require('../config/database');
 
 const TOKEN_EXPIRY = '24h';
 
+// Only HMAC. jsonwebtoken infers this from the secret today, but pinning it
+// means a future change to how JWT_SECRET is loaded (a PEM, a KeyObject) can
+// never silently widen the accepted algorithm set to the asymmetric family.
+const TOKEN_ALGORITHMS = ['HS256'];
+
 // Every Flock JWT carries the issuing user's token_version as `tv` (migration
 // 009). Bumping users.token_version invalidates every token outstanding for
 // that id — the OAuth account-claim in routes/auth.js and any password change
@@ -33,6 +38,37 @@ function signUserToken(user) {
   );
 }
 
+// Round 15: bumping token_version only bites at the NEXT authentication.
+// Express requests re-authenticate on every call, so they die immediately —
+// but a Socket.io connection authenticates ONCE, at the handshake, and then
+// lives for as long as the TCP connection does. So the round-13 OAuth
+// account-claim (and any password change) revoked the REST session and left
+// the intruder's live socket subscribed to `user:{id}`, which is the room
+// every DM, flock message, venue vote, flock invite and location_update is
+// delivered to. routes/admin.js already knew this for bans
+// (`io.in(...).disconnectSockets(true)` after a ban commits); nothing did it
+// for a token_version bump.
+//
+// Callers pass the io instance (`req.app.get('io')` in a route). A missing io
+// is a no-op, not a throw: revocation must never 500 the sign-in that
+// triggered it.
+//
+// This is the IMMEDIATE half. sockets/handlers.js separately revalidates every
+// live connection on a timer (SESSION_RECHECK_MS), which catches bumps made by
+// code that never calls this — but only after up to a minute, during which the
+// intruder is still reading. Anything that bumps token_version should call this
+// as well; routes/users.js's password change currently does not.
+function revokeUserSessions(io, userId) {
+  if (!io || userId === undefined || userId === null) return false;
+  try {
+    io.in(`user:${userId}`).disconnectSockets(true);
+    return true;
+  } catch (err) {
+    console.error(`[auth] socket revocation failed for user ${userId}:`, err.message);
+    return false;
+  }
+}
+
 // Express middleware factory: verify JWT from Authorization header.
 //
 // `allowBanned` exists for exactly one route — DELETE /api/users/me — because a
@@ -55,7 +91,7 @@ function makeAuthenticate({ allowBanned = false } = {}) {
       }
 
       const token = header.split(' ')[1];
-      const decoded = jwt.verify(token, process.env.JWT_SECRET);
+      const decoded = jwt.verify(token, process.env.JWT_SECRET, { algorithms: TOKEN_ALGORITHMS });
 
       // Confirm user still exists in DB
       const result = await pool.query(
@@ -108,7 +144,7 @@ const authenticateSocket = async (socket, next) => {
       return next(new Error('No token provided'));
     }
 
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    const decoded = jwt.verify(token, process.env.JWT_SECRET, { algorithms: TOKEN_ALGORITHMS });
 
     const result = await pool.query(
       'SELECT id, email, name, role, profile_image_url, is_banned, token_version FROM users WHERE id = $1',
@@ -126,6 +162,10 @@ const authenticateSocket = async (socket, next) => {
     }
 
     socket.user = result.rows[0];
+    // NOTE: this handshake is the only authentication this connection gets.
+    // sockets/handlers.js re-runs these same checks on a timer for the life of
+    // the socket, and revokeUserSessions above cuts it immediately when we
+    // already know the session is dead. Neither can be dropped for the other.
     next();
   } catch (err) {
     next(new Error('Authentication failed'));
@@ -137,5 +177,7 @@ module.exports = {
   authenticateAllowBanned,
   authenticateSocket,
   signUserToken,
+  revokeUserSessions,
   TOKEN_EXPIRY,
+  TOKEN_ALGORITHMS,
 };

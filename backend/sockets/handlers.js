@@ -1,3 +1,4 @@
+const jwt = require('jsonwebtoken');
 const pool = require('../config/database');
 const { stripHtml } = require('../utils/sanitize');
 const { moderateText, TEXT_REJECTED_MESSAGE, moderateImage, IMAGE_REJECTED_MESSAGE } = require('../utils/moderation');
@@ -6,23 +7,273 @@ const VENUE_REJECTED_MESSAGE = "That venue card couldn't be shared.";
 const { isBlockedBetween, isBlockedBetweenCached, getInvisibleUserIds } = require('../utils/blocks');
 const { pushIfOfflineDebounced } = require('../services/pushHelper');
 
-// Track which users are in which rooms for presence
-const roomUsers = new Map(); // flockId -> Set of { socketId, userId, name }
+// Track which users are in which rooms for presence.
+// Keyed by the CANONICAL room id (String(flockId)), because the client picks
+// the type: emitting join_flock with 5 and again with "5" joins one Socket.io
+// room (`flock:5`) but used to create two presence entries, so leaving/
+// disconnecting announced the same person twice and one entry could outlive
+// the other. The raw id the client sent is kept per entry, because it is what
+// goes back out in the payload and App.js compares it with ===.
+const roomUsers = new Map(); // String(flockId) -> Map(socketId -> { socketId, userId, name, flockId })
 
-// Per-socket token buckets for mutating events (audit 2026-08-12): Express
-// rate limits stop at the handshake — after that a single connection could
-// flood the database and push infrastructure without any ceiling.
+// Drop one socket's presence from one flock, cleaning up the empty room entry.
+function forgetPresence(flockKey, socketId) {
+  const key = String(flockKey);
+  const users = roomUsers.get(key);
+  if (!users) return;
+  users.delete(socketId);
+  if (users.size === 0) roomUsers.delete(key);
+}
+
+// Tell the client why it is being cut off, then cut it off. `disconnect(true)`
+// closes the underlying connection so the client must re-handshake — which is
+// what re-runs authenticateSocket.
+function revokeSession(socket, reason) {
+  try { socket.emit('session_revoked', { reason }); } catch (_) { /* already gone */ }
+  try { socket.disconnect(true); } catch (_) { /* already gone */ }
+}
+
+// Per-socket AND per-user token buckets for mutating events.
+//
+// (audit 2026-08-12): Express rate limits stop at the handshake — after that a
+// single connection could flood the database and push infrastructure without
+// any ceiling.
+//
+// (audit 2026-08-14): the per-socket bucket was the ONLY ceiling, and a socket
+// id is free. Nothing caps how many sockets one account holds at once (the
+// handshake limiter in server.js counts new connections per IP, not concurrent
+// ones per user), and every new socket id starts an empty bucket — so N
+// parallel sockets bought N times the write rate, and a deliberate
+// disconnect/reconnect reset the counters early. Both ceilings now apply: a
+// burst is capped per connection, and the ACCOUNT is capped across every
+// connection it holds, from any number of IPs.
 const socketBuckets = new Map(); // socket.id -> Map(event -> {count, resetAt})
-function allowEvent(socket, event, limit, windowMs) {
-  let events = socketBuckets.get(socket.id);
-  if (!events) { events = new Map(); socketBuckets.set(socket.id, events); }
+const userBuckets = new Map();   // userId    -> Map(event -> {count, resetAt})
+
+// A user's aggregate allowance is deliberately wider than one socket's, so a
+// phone plus an open laptop tab both behave normally — but twenty do not.
+const USER_LIMIT_MULTIPLIER = 2;
+
+function takeToken(store, key, event, limit, windowMs) {
+  let events = store.get(key);
+  if (!events) { events = new Map(); store.set(key, events); }
   const now = Date.now();
   let b = events.get(event);
   if (!b || now >= b.resetAt) { b = { count: 0, resetAt: now + windowMs }; events.set(event, b); }
   b.count++;
   return b.count <= limit;
 }
-function clearBuckets(socketId) { socketBuckets.delete(socketId); }
+
+function allowEvent(socket, event, limit, windowMs) {
+  // Both counters must be charged, so `&&` short-circuiting is not allowed.
+  const perSocket = takeToken(socketBuckets, socket.id, event, limit, windowMs);
+  const userId = socket.user?.id;
+  const perUser = userId == null
+    ? true
+    : takeToken(userBuckets, userId, event, limit * USER_LIMIT_MULTIPLIER, windowMs);
+  return perSocket && perUser;
+}
+
+// Concurrent connections per account. Without this a single account could hold
+// hundreds of live sockets: every `io.to('user:X').emit(...)` then fans out
+// hundreds of copies (server-side amplification of every message, vote and
+// location update aimed at that user) and each socket carries its own rate
+// bucket. Oldest sockets are evicted rather than refusing the new one, so a
+// user's current device always wins over stale tabs.
+const MAX_SOCKETS_PER_USER = 8;
+const userSockets = new Map(); // userId -> Set<socketId> (insertion ordered)
+
+function trackUserSocket(io, socket) {
+  const userId = socket.user?.id;
+  if (userId == null) return [];
+  let set = userSockets.get(userId);
+  if (!set) { set = new Set(); userSockets.set(userId, set); }
+  set.add(socket.id);
+  const evicted = [];
+  while (set.size > MAX_SOCKETS_PER_USER) {
+    const oldest = set.values().next().value;
+    set.delete(oldest);
+    evicted.push(oldest);
+    try { io?.sockets?.sockets?.get?.(oldest)?.disconnect?.(true); } catch (_) { /* already gone */ }
+  }
+  return evicted;
+}
+
+function clearBuckets(socket) {
+  const socketId = typeof socket === 'string' ? socket : socket?.id;
+  socketBuckets.delete(socketId);
+  const userId = typeof socket === 'string' ? null : socket?.user?.id;
+  if (userId == null) return;
+  const set = userSockets.get(userId);
+  if (set) {
+    set.delete(socketId);
+    if (set.size === 0) userSockets.delete(userId);
+  }
+  // The per-user bucket deliberately OUTLIVES the account's last connection.
+  // Dropping it here would restore the exact bypass this exists to close:
+  // disconnect everything, reconnect, spend the allowance again. It expires on
+  // its own when its window rolls over (takeToken), and the sweep below keeps
+  // the map from growing with every user the process has ever seen.
+  if (userBuckets.size > 5000) {
+    const now = Date.now();
+    for (const [key, events] of userBuckets) {
+      let live = false;
+      for (const b of events.values()) { if (now < b.resetAt) { live = true; break; } }
+      if (!live) userBuckets.delete(key);
+    }
+  }
+}
+
+// Test seam: rate limiting is process-global state, so tests need a way back
+// to a known-empty starting point.
+function __resetRateLimiters() {
+  socketBuckets.clear();
+  userBuckets.clear();
+  userSockets.clear();
+}
+
+// --- Live session revalidation -------------------------------------------
+//
+// authenticateSocket (middleware/auth.js) runs ONCE, at the handshake. After
+// that the connection is trusted for as long as it stays open, and a socket
+// stays open indefinitely (pingInterval keeps it alive; there is no maximum
+// lifetime). That made every server-side revocation a no-op against an already
+// connected client:
+//   - a password change bumps users.token_version, which is precisely how a
+//     victim is meant to evict someone holding a stolen JWT — the thief's live
+//     socket kept receiving every message, DM, budget ceiling and live location
+//     and kept posting as the victim;
+//   - the OAuth account-claim in routes/auth.js bumps it for the same reason,
+//     with the same hole;
+//   - DELETE /api/users/me removes the row but leaves the socket in `user:{id}`
+//     and every `flock:{id}` room it had joined;
+//   - the 24h token expiry never arrived for a connection that predated it.
+// (A moderator ban is the one case already handled — routes/admin.js calls
+// disconnectSockets — and it stays handled here too, for ban paths that don't.)
+const SESSION_RECHECK_MS = 60_000;
+
+function tokenVersionOf(value) {
+  return Number.isInteger(value) ? value : 0;
+}
+
+// Pure: given the token's claims and the CURRENT user row, why (if at all) must
+// this connection die? Mirrors middleware/auth.js's rules exactly.
+function evaluateSession(decoded, row) {
+  if (!row) return 'account_deleted';
+  if (row.is_banned) return 'account_suspended';
+  if (tokenVersionOf(decoded?.tv) !== tokenVersionOf(row.token_version)) return 'session_revoked';
+  return null;
+}
+
+// One revalidation pass over a live connection. Returns the reason the socket
+// was cut (or null), which is what the tests assert on.
+async function revalidateSession(socket) {
+  try {
+    let decoded;
+    try {
+      decoded = jwt.verify(socket.handshake?.auth?.token, process.env.JWT_SECRET);
+    } catch (_) {
+      // Expired or tampered — the same verdict the handshake would give it.
+      revokeSession(socket, 'session_expired');
+      return 'session_expired';
+    }
+
+    const result = await pool.query(
+      'SELECT id, email, name, role, profile_image_url, is_banned, token_version FROM users WHERE id = $1',
+      [socket.user.id]
+    );
+    const row = result.rows[0];
+    const reason = evaluateSession(decoded, row);
+    if (reason) {
+      revokeSession(socket, reason);
+      return reason;
+    }
+
+    // Refresh the snapshot every handler broadcasts from, so a renamed or
+    // demoted account stops speaking under its old name and role. Mutated IN
+    // PLACE on purpose: registerHandlers closes over `socket.user` once, so
+    // replacing the object would leave every handler holding the stale one.
+    if (socket.user) Object.assign(socket.user, row);
+
+    // Flock room membership is checked at join_flock and then trusted for the
+    // life of the connection, while `flock:{id}` carries the budget ceiling
+    // (routes/budget.js) and per-person bill shares (routes/billing.js).
+    // Re-check it, so a membership that ended cannot leave a listener behind.
+    const joined = [...socket.rooms].filter((r) => typeof r === 'string' && r.startsWith('flock:'));
+    if (joined.length > 0) {
+      const numericIds = joined
+        .map((r) => r.slice('flock:'.length))
+        .filter((id) => /^\d+$/.test(id))
+        .map(Number);
+      const allowed = numericIds.length
+        ? await pool.query(
+            "SELECT flock_id FROM flock_members WHERE user_id = $1 AND status = 'accepted' AND flock_id = ANY($2::int[])",
+            [socket.user.id, numericIds]
+          )
+        : { rows: [] };
+      for (const room of staleFlockRooms(joined, allowed.rows.map((r) => r.flock_id))) {
+        socket.leave(room);
+        forgetPresence(room.slice('flock:'.length), socket.id);
+      }
+    }
+    return null;
+  } catch (_) {
+    // A database blip must never disconnect anyone — try again next tick.
+    return null;
+  }
+}
+
+// Pure: which `flock:*` rooms is this socket in that its membership no longer
+// justifies? Anything that is not a plain integer id backed by an accepted
+// membership is stale — unparseable room names fail closed.
+function staleFlockRooms(rooms, allowedFlockIds) {
+  const allowed = new Set([...(allowedFlockIds || [])].map((id) => String(id)));
+  return [...(rooms || [])]
+    .filter((r) => typeof r === 'string' && r.startsWith('flock:'))
+    .filter((r) => !allowed.has(r.slice('flock:'.length)));
+}
+
+// --- Venue subscription gate ----------------------------------------------
+//
+// Same rule routes/checkin.js applies to an NFC tap, applied to a live
+// subscription: the id must be shaped like a Google place id, and it must name
+// a venue we already know (a claimed profile, a deployed sensor, a curated ML
+// venue, or somewhere a flock has planned to meet). Deliberately does NOT
+// consult venue_checkins, so a forged check-in row cannot bootstrap a room.
+// (The rule is duplicated rather than imported because it currently lives
+// private inside routes/checkin.js — a shared utils/places.js would be better.)
+const PLACE_ID_RE = /^[A-Za-z0-9_-]{6,128}$/;
+const MAX_VENUE_ROOMS_PER_SOCKET = 10;
+const KNOWN_VENUE_TTL_MS = 5 * 60 * 1000;
+const knownVenueCache = new Map(); // placeId -> { known, ts }
+
+function isPlaceIdShaped(placeId) {
+  return typeof placeId === 'string' && PLACE_ID_RE.test(placeId);
+}
+
+async function isKnownVenue(placeId) {
+  const hit = knownVenueCache.get(placeId);
+  if (hit && Date.now() - hit.ts < KNOWN_VENUE_TTL_MS) return hit.known;
+  let known = false;
+  try {
+    const { rows } = await pool.query(
+      `SELECT (
+         EXISTS (SELECT 1 FROM venue_profiles WHERE google_place_id = $1)
+         OR EXISTS (SELECT 1 FROM sensor_devices WHERE venue_place_id = $1)
+         OR EXISTS (SELECT 1 FROM ml_venues WHERE google_place_id = $1)
+         OR EXISTS (SELECT 1 FROM flocks WHERE venue_id = $1)
+       ) AS known`,
+      [placeId]
+    );
+    known = rows[0]?.known === true;
+  } catch (_) {
+    // Fail closed: an unverifiable venue is not subscribed to.
+    return false;
+  }
+  if (knownVenueCache.size > 5000) knownVenueCache.clear();
+  knownVenueCache.set(placeId, { known, ts: Date.now() });
+  return known;
+}
 
 // Reusable membership check for socket handlers
 async function verifyMembership(flockId, userId) {
@@ -111,6 +362,18 @@ function registerHandlers(io, socket) {
       }
     });
 
+  // Cap concurrent connections for this account (see MAX_SOCKETS_PER_USER).
+  trackUserSocket(io, socket);
+
+  // Re-verify this connection's session on a timer (see SESSION_RECHECK_MS).
+  // Skipped when there is no JWT_SECRET — the handshake could not have
+  // succeeded with one missing, so this only affects stubbed/test sockets.
+  if (process.env.JWT_SECRET && socket.handshake) {
+    const sessionTimer = setInterval(() => { revalidateSession(socket); }, SESSION_RECHECK_MS);
+    if (typeof sessionTimer.unref === 'function') sessionTimer.unref();
+    socket.on('disconnect', () => clearInterval(sessionTimer));
+  }
+
   // --- Flock room management ---
 
   socket.on('join_flock', async (flockId) => {
@@ -127,23 +390,44 @@ function registerHandlers(io, socket) {
         return;
       }
 
-      const room = `flock:${flockId}`;
+      const key = String(flockId);
+      const room = `flock:${key}`;
+
+      // Bound the number of flock rooms one connection can hold. Real usage
+      // joins the room that is on screen; memberships are finite but presence
+      // bookkeeping should not be able to grow with them without limit.
+      const alreadyIn = [...socket.rooms].some((r) => r === room);
+      if (!alreadyIn) {
+        const held = [...socket.rooms].filter((r) => typeof r === 'string' && r.startsWith('flock:')).length;
+        if (held >= 50) return;
+      }
       socket.join(room);
 
       // Track user presence in the room. Keyed by socket id — the old
       // Set-of-objects never deduplicated, so repeated join_flock emits grew
       // presence, memory, and room_members payloads without bound (round 5).
-      if (!roomUsers.has(flockId)) {
-        roomUsers.set(flockId, new Map());
+      if (!roomUsers.has(key)) {
+        roomUsers.set(key, new Map());
       }
-      roomUsers.get(flockId).set(socket.id, {
+      roomUsers.get(key).set(socket.id, {
         socketId: socket.id,
         userId: user.id,
         name: user.name,
+        flockId,
       });
 
+      // Presence is identity, so it obeys blocks like every other live signal
+      // (typing, votes, location already do). Without this, blocking someone
+      // still told them the moment you opened the flock, under your name.
+      let invisible = new Set();
+      try { invisible = new Set(await getInvisibleUserIds(user.id)); } catch (_) { invisible = new Set(); }
+
       // Notify other members
-      socket.to(room).emit('member_joined', {
+      let announce = socket.to(room);
+      if (invisible.size && typeof announce.except === 'function') {
+        announce = announce.except([...invisible].map((id) => `user:${id}`));
+      }
+      announce.emit('member_joined', {
         userId: user.id,
         name: user.name,
         flockId,
@@ -153,8 +437,9 @@ function registerHandlers(io, socket) {
       // since one person can hold several sockets (phone + tab, reconnects).
       const seen = new Set();
       const onlineMembers = [];
-      for (const u of (roomUsers.get(flockId) || new Map()).values()) {
+      for (const u of (roomUsers.get(key) || new Map()).values()) {
         if (seen.has(u.userId)) continue;
+        if (invisible.has(u.userId)) continue;
         seen.add(u.userId);
         onlineMembers.push({ userId: u.userId, name: u.name });
       }
@@ -166,7 +451,8 @@ function registerHandlers(io, socket) {
   });
 
   socket.on('leave_flock', async (flockId) => {
-    const room = `flock:${flockId}`;
+    const key = String(flockId);
+    const room = `flock:${key}`;
     socket.leave(room);
 
     // Remove from presence tracking. Like disconnect, only announce offline
@@ -174,11 +460,11 @@ function registerHandlers(io, socket) {
     // BEFORE the membership lookup so a bad flockId (which makes the query
     // throw) can never leak a roomUsers entry.
     let announce = true;
-    if (roomUsers.has(flockId)) {
-      const users = roomUsers.get(flockId);
+    if (roomUsers.has(key)) {
+      const users = roomUsers.get(key);
       users.delete(socket.id);
       announce = ![...users.values()].some((u) => u.userId === user.id);
-      if (users.size === 0) roomUsers.delete(flockId);
+      if (users.size === 0) roomUsers.delete(key);
     }
 
     // Round 13: this emitted `member_offline` into any room id the caller
@@ -199,16 +485,39 @@ function registerHandlers(io, socket) {
   });
 
   // --- Venue rooms (live sensor + checkin updates) ---
-  // Public-by-design: any authenticated user can subscribe to a venue's live stream.
+  //
+  // A venue room is a PUBLIC feed by design — busyness at a bar is not private
+  // information, and the same numbers are served unauthenticated by
+  // /api/public and the embeddable badge. That is only defensible while the
+  // feed stays anonymous, and it did not: `venue_checkin` carried `user_id` and
+  // `crowd_update` carried `updated_by`, so subscribing to a handful of venues
+  // gave any account a live "who just walked in where" feed, ignoring blocks,
+  // on an app whose users are 15-22 (audit 2026-08-14, with the public-surface
+  // pass). Both identifiers are gone; see the emit sites.
+  //
+  // The subscription itself is now gated too, because "no authorization at all"
+  // is the wrong default even for public data:
+  //   - the id must LOOK like a Google place id, and
+  //   - it must name a venue this system actually knows about, so a socket
+  //     cannot mint arbitrary room names (Socket.io keeps a map entry per
+  //     room) or silently prepare to receive whatever a future event adds.
   // No presence tracking — these are read-only feeds, not group chats.
-  // Bounded: unlimited unique ids grew Socket.io's room maps without limit
-  // (round 6). 25 venue rooms per socket is far more than any real session.
-  const venueRooms = new Set();
-  socket.on('join_venue', (data) => {
+  const venueRooms = new Set(); // insertion ordered — oldest is evicted first
+  socket.on('join_venue', async (data) => {
     if (!allowEvent(socket, 'join_venue', 30, 10_000)) return;
     const placeId = typeof data === 'string' ? data : data?.placeId;
-    if (!placeId || typeof placeId !== 'string' || placeId.length > 200) return;
-    if (!venueRooms.has(placeId) && venueRooms.size >= 25) return;
+    if (!isPlaceIdShaped(placeId)) return;
+    if (!venueRooms.has(placeId)) {
+      if (!(await isKnownVenue(placeId))) return;
+      // Evict rather than refuse: a real client watches one venue at a time and
+      // leaves on unmount, so hitting this cap means stale rooms, and silently
+      // refusing the room the user is actually looking at would be a bug.
+      while (venueRooms.size >= MAX_VENUE_ROOMS_PER_SOCKET) {
+        const oldest = venueRooms.values().next().value;
+        venueRooms.delete(oldest);
+        socket.leave(`venue:${oldest}`);
+      }
+    }
     venueRooms.add(placeId);
     socket.join(`venue:${placeId}`);
   });
@@ -324,11 +633,14 @@ function registerHandlers(io, socket) {
         for (const m of members.rows) {
           if (invisible.has(m.user_id)) continue;
           io.to(`user:${m.user_id}`).emit('new_message', message);
+          // Floating promise: a rejection here is an UNHANDLED rejection, which
+          // Node 18+ turns into a process exit — the enclosing try only catches
+          // what it awaits. The DM path already guards this way.
           pushIfOfflineDebounced(io, m.user_id,
             `${user.name} in ${flockName}`,
             preview,
             { type: 'flock_message', flockId: String(flockId) }
-          );
+          ).catch(() => {});
         }
       } catch (fanoutErr) {
         // FAIL CLOSED (round 3): broadcasting to the room here would deliver
@@ -584,7 +896,7 @@ function registerHandlers(io, socket) {
       // invite toasts to arbitrary user ids.
       const invitedRows = await pool.query(
         `SELECT user_id FROM flock_members WHERE flock_id = $1 AND status = 'invited' AND user_id = ANY($2::int[])`,
-        [flockId, invitedUserIds.map(Number).filter(Number.isFinite)]
+        [flockId, invitedUserIds.map(Number).filter(Number.isInteger)]
       );
       for (const row of invitedRows.rows) {
         const uid = row.user_id;
@@ -597,10 +909,14 @@ function registerHandlers(io, socket) {
         });
       }
 
+      // Echo the ids the DATABASE confirmed, never the array off the wire. The
+      // raw list was relayed verbatim into every other client's state: 25
+      // arbitrary attacker-chosen values (objects, huge strings, ids of people
+      // who were never invited) amplified to the whole room.
       socket.to(`flock:${flockId}`).emit('flock_members_invited', {
         flockId,
         invitedBy: { userId: user.id, name: user.name },
-        invitedUserIds,
+        invitedUserIds: invitedRows.rows.map((r) => r.user_id),
       });
     } catch (err) {
       console.error('flock_invite error:', err);
@@ -1005,11 +1321,18 @@ function registerHandlers(io, socket) {
         return;
       }
 
-      // Broadcast to clients watching this venue (its room, not the world)
+      // Broadcast to clients watching this venue (its room, not the world).
+      //
+      // NEVER put a user identifier in this payload. `venue:{id}` is a public
+      // feed — any authenticated account may subscribe to any known venue, and
+      // that subscription is not filtered by blocks — so `updated_by: user.id`
+      // published "this person is at this venue, right now" to anyone who
+      // asked, including people they had blocked (audit 2026-08-14). Nothing
+      // consumed it. Who set the level is available to the venue's own
+      // dashboard through an authenticated REST route; it does not belong here.
       io.to(`venue:${venue_id}`).emit('crowd_update', {
         venue_id,
         level,
-        updated_by: user.id,
         timestamp: Date.now(),
       });
     } catch (err) {
@@ -1020,28 +1343,46 @@ function registerHandlers(io, socket) {
   // --- Cleanup on disconnect ---
 
   socket.on('disconnect', () => {
-    clearBuckets(socket.id);
+    clearBuckets(socket);
     // Remove user from all tracked rooms (Map keyed by socket id — no
     // duplicate entries to leak)
-    for (const [flockId, users] of roomUsers.entries()) {
+    for (const [key, users] of roomUsers.entries()) {
       const wasPresent = users.get(socket.id);
       if (users.delete(socket.id)) {
         // Only report offline when the user has NO other socket in this room.
         const stillHere = [...users.values()].some((u) => u.userId === wasPresent.userId);
-        if (stillHere) { if (users.size === 0) roomUsers.delete(flockId); continue; }
-        io.to(`flock:${flockId}`).emit('member_offline', {
+        if (stillHere) { if (users.size === 0) roomUsers.delete(key); continue; }
+        // `flockId` goes back out as the client originally sent it (number vs
+        // string), because App.js compares it with ===.
+        const flockId = wasPresent.flockId !== undefined ? wasPresent.flockId : key;
+        io.to(`flock:${key}`).emit('member_offline', {
           userId: user.id,
           name: user.name,
           flockId,
         });
         // Also notify that location sharing stopped
-        io.to(`flock:${flockId}`).emit('member_stopped_sharing', {
+        io.to(`flock:${key}`).emit('member_stopped_sharing', {
           userId: user.id,
         });
       }
-      if (users.size === 0) roomUsers.delete(flockId);
+      if (users.size === 0) roomUsers.delete(key);
     }
   });
 }
 
-module.exports = { registerHandlers, emitToFlockExcludingBlocked, broadcastGuestRsvp };
+module.exports = {
+  registerHandlers,
+  emitToFlockExcludingBlocked,
+  broadcastGuestRsvp,
+  // Exported for tests: the security-relevant decisions, isolated from timers
+  // and from Socket.io.
+  allowEvent,
+  clearBuckets,
+  trackUserSocket,
+  evaluateSession,
+  revalidateSession,
+  staleFlockRooms,
+  __resetRateLimiters,
+  MAX_SOCKETS_PER_USER,
+  USER_LIMIT_MULTIPLIER,
+};
