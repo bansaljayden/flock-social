@@ -95,6 +95,12 @@ function isFatalAuthError(message) {
 }
 
 function createSocket(token) {
+  // A fresh instance starts with a clean slate. Without this, strikes left
+  // over from a previous credential could kill a brand-new sign-in's socket
+  // after a single transient 'Authentication failed' (db blip). The cap still
+  // holds per instance: a dead credential accrues its three strikes on this
+  // socket's own retry loop and stops.
+  fatalAuthStrikes = 0;
   const instance = io(BASE_URL, {
     auth: { token },
     transports: ['websocket', 'polling'],
@@ -177,6 +183,13 @@ export function reconnectSocket() {
   const token = getToken();
   if (!token) return null;
   if (token !== socketToken) return connectSocket(); // rebuilds with new auth
+  // A pending retry can be up to reconnectionDelayMax (30s) out, and calling
+  // connect() while the manager is still "active" is a no-op — so a phone
+  // waking from sleep would sit out the rest of a backoff timer it started
+  // before it slept. Tear the stalled attempt down first, then dial now.
+  if (socket.active) {
+    try { socket.disconnect(); } catch { /* mid-teardown */ }
+  }
   socket.connect();
   return socket;
 }
@@ -211,6 +224,14 @@ if (typeof window !== 'undefined') {
   window.addEventListener('online', nudge);
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible') nudge();
+  });
+  // api.js fires this after a 401 proves the token dead and clears it. The
+  // socket is authenticated with that same token and would keep re-presenting
+  // it on its retry schedule until the strike counter gave up; cut it loose
+  // now instead. The registry survives, so the next sign-in's connectSocket()
+  // comes back with every subscription intact.
+  window.addEventListener('flock-session-expired', () => {
+    disconnectSocket();
   });
 }
 

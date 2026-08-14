@@ -103,16 +103,37 @@ class ErrorBoundary extends React.Component {
 
     const canReset = typeof this.props.onReset === 'function';
 
+    // A failed lazy chunk is a network event, not a bug: the download died on
+    // weak signal, or a deploy replaced the file mid-session. Say that, and
+    // if the device knows it is offline right now, say reloading can wait.
+    const isChunkError = !!error && (
+      error.name === 'ChunkLoadError' ||
+      /Loading (CSS )?chunk/i.test(error.message || '')
+    );
+    const offlineNow = typeof navigator !== 'undefined' && navigator.onLine === false;
+
     return (
       <div style={styles.screen} role="alert">
         <div style={styles.card}>
-          <h1 style={styles.title}>The app hit an error</h1>
+          <h1 style={styles.title}>{isChunkError ? "Part of the app didn't load" : 'The app hit an error'}</h1>
+          {isChunkError ? (
+            <p style={styles.body}>
+              A piece of the app didn't finish downloading. That happens on a
+              weak connection, or right after we ship an update. Nothing of
+              yours is lost.
+            </p>
+          ) : (
+            <p style={styles.body}>
+              This screen stopped working and had to close. Your account, your flocks
+              and your messages are saved on the server. Anything you were typing here
+              is gone.
+            </p>
+          )}
           <p style={styles.body}>
-            This screen stopped working and had to close. Your account, your flocks
-            and your messages are saved on the server. Anything you were typing here
-            is gone.
+            {offlineNow
+              ? "You're offline right now. Reload once you're back on signal."
+              : 'Reloading gets you back in.'}
           </p>
-          <p style={styles.body}>Reloading gets you back in.</p>
 
           <div style={styles.actions}>
             <button

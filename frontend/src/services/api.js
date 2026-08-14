@@ -35,52 +35,198 @@ function getToken() {
 
 function setToken(token) {
   localStorage.setItem('flockToken', token);
+  sessionExpiryAnnounced = false; // fresh session, the expiry notice may fire again someday
 }
 
 function clearToken() {
   localStorage.removeItem('flockToken');
 }
 
+/**
+ * NETWORK RELIABILITY — read before changing request().
+ *
+ * Flock's users are teenagers on phone data: subway platforms, venue
+ * basements, the walk between wifi and cellular. Three rules hold here:
+ *
+ *  1. Nothing hangs forever. Every request runs under an abort timeout, so a
+ *     connection that silently dies settles in seconds instead of whenever
+ *     the OS gives up. Callers' finally blocks and spinners always run.
+ *  2. Reads retry, writes never do. GETs get two automatic retries with
+ *     backoff on network failures and 502/503/504, because a blip while
+ *     loading a feed should be invisible. Anything non-GET is sent exactly
+ *     once: re-POSTing through a flaky connection is how duplicate flocks,
+ *     duplicate messages and duplicate bills happen. If a write fails, the
+ *     user sees an honest error and decides whether to try again.
+ *  3. Errors speak human and carry flags. navigator.onLine false is "you're
+ *     offline" (the OfflineGate in App.js is already up for that); a fetch
+ *     that dies while online is "couldn't reach Flock"; an abort is a
+ *     timeout. Machine-readable: err.status, err.code, err.data plus
+ *     err.isOffline / err.isNetworkError / err.isTimeout / err.sessionExpired.
+ */
+const DEFAULT_TIMEOUT_MS = 15000;
+const UPLOAD_TIMEOUT_MS = 90000; // uploads on weak signal are slow, not stuck
+const AI_TIMEOUT_MS = 60000; // Birdie can legitimately think for a while
+const RETRYABLE_STATUSES = [502, 503, 504];
+const RETRY_DELAYS_MS = [800, 2000];
+
+function isOffline() {
+  // Per spec, false means definitely offline; true just means "maybe".
+  return typeof navigator !== 'undefined' && navigator.onLine === false;
+}
+
+function connectionError() {
+  if (isOffline()) {
+    const err = new Error("You're offline. This will work again once you're back on signal.");
+    err.isOffline = true;
+    err.isNetworkError = true;
+    return err;
+  }
+  const err = new Error("Couldn't reach Flock. Give it a second and try again.");
+  err.isNetworkError = true;
+  return err;
+}
+
+function timeoutError() {
+  const err = new Error('That took too long. Check your signal and try again.');
+  err.isTimeout = true;
+  err.isNetworkError = true;
+  return err;
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function fetchWithTimeout(url, options, timeoutMs) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } catch (e) {
+    // Both failure modes become errors with copy a person can act on. The
+    // raw TypeError ("Failed to fetch") used to surface verbatim in every
+    // catch block that renders err.message.
+    if (e && e.name === 'AbortError') throw timeoutError();
+    throw connectionError();
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function parseBody(res) {
+  if (res.status === 204) return null;
+  const contentType = res.headers.get('content-type') || '';
+  if (contentType.includes('application/json')) {
+    // A body that dies mid-download, or a proxy error page mislabeled as
+    // JSON, must not surface as a SyntaxError. The status code is the signal.
+    return res.json().catch(() => null);
+  }
+  return res.text().catch(() => null);
+}
+
+// Mid-session token death (24h JWT expiry, password change, account claim).
+// Without this, every request fails 401 forever while the UI looks merely
+// flaky. We clear the token so isLoggedIn() goes false and the next boot
+// lands on sign-in, and we announce it once: App.js already listens for
+// 'flock-toast'; 'flock-session-expired' is there for App.js to route on
+// (see cross-area note in the audit report — not yet wired).
+//
+// Exclusions: the auth flows themselves (a wrong password is 401 and is not
+// an expired session), requests that carried no token, and account deletion
+// answering { reauthRequired } (that 401 is a re-prompt, not a dead session).
+const AUTH_FLOW_PREFIXES = ['/api/auth/login', '/api/auth/signup', '/api/auth/google', '/api/auth/apple'];
+let sessionExpiryAnnounced = false;
+const SESSION_EXPIRED_COPY = 'Your session expired. Sign in again to pick up where you left off.';
+
+function handleSessionExpiry(endpoint, hadToken, data) {
+  if (!hadToken) return false;
+  if (AUTH_FLOW_PREFIXES.some((p) => endpoint.startsWith(p))) return false;
+  if (data && typeof data === 'object' && data.reauthRequired) return false;
+  clearToken();
+  if (typeof window !== 'undefined' && !sessionExpiryAnnounced) {
+    sessionExpiryAnnounced = true;
+    window.dispatchEvent(new CustomEvent('flock-session-expired'));
+    window.dispatchEvent(new CustomEvent('flock-toast', {
+      detail: { message: SESSION_EXPIRED_COPY, type: 'info' },
+    }));
+  }
+  return true;
+}
+
+function buildHttpError(res, data, endpoint, hadToken) {
+  let message = data && typeof data === 'object'
+    ? (data.error || data.errors?.[0]?.msg)
+    : data;
+  // A gateway 502/503/504 body is an HTML error page, not display copy.
+  if (typeof message === 'string' && message.trim().startsWith('<')) message = null;
+  const expired = res.status === 401 && handleSessionExpiry(endpoint, hadToken, data);
+  if (expired) {
+    message = SESSION_EXPIRED_COPY;
+  } else if (RETRYABLE_STATUSES.includes(res.status)) {
+    message = "Flock's servers are having a moment. Try again in a minute.";
+  }
+  // Carry the machine-readable bits: callers key off err.code (e.g.
+  // 'UPGRADE_REQUIRED' from the Birdie free-tier meter) and err.status. The
+  // message alone is display copy and not a stable contract.
+  const err = new Error(message || 'Something went wrong on our end. Try again.');
+  err.status = res.status;
+  if (expired) err.sessionExpired = true;
+  if (data && typeof data === 'object') {
+    err.code = data.code;
+    err.data = data;
+  }
+  return err;
+}
+
 async function request(endpoint, options = {}) {
   const token = getToken();
+  const { timeout, retry, ...fetchOptions } = options;
   const headers = {
     'Content-Type': 'application/json',
-    ...options.headers,
+    ...fetchOptions.headers,
   };
 
   if (token) {
     headers['Authorization'] = `Bearer ${token}`;
   }
 
-  const res = await fetch(`${BASE_URL}${endpoint}`, {
-    ...options,
-    headers,
-  });
+  const method = (fetchOptions.method || 'GET').toUpperCase();
+  // Reads only (see the reliability note above), and even a GET can opt out
+  // with retry: false when it has server-side effects (the NFC check-in tap).
+  const canRetry = method === 'GET' && retry !== false;
+  const timeoutMs = timeout || DEFAULT_TIMEOUT_MS;
 
-  const contentType = res.headers.get('content-type') || '';
-  const data = res.status === 204
-    ? null
-    : contentType.includes('application/json')
-      ? await res.json()
-      : await res.text();
+  let attempt = 0;
+  for (;;) {
+    // Fail fast when the device knows it has no network. The alternative is
+    // a spinner that runs the full timeout for a request that cannot succeed.
+    if (isOffline()) throw connectionError();
 
-  if (!res.ok) {
-    const message = data && typeof data === 'object'
-      ? (data.error || data.errors?.[0]?.msg)
-      : data;
-    // Carry the machine-readable bits: callers key off err.code (e.g.
-    // 'UPGRADE_REQUIRED' from the Birdie free-tier meter) — the message
-    // alone is display copy and not a stable contract.
-    const err = new Error(message || 'Something went wrong');
-    err.status = res.status;
-    if (data && typeof data === 'object') {
-      err.code = data.code;
-      err.data = data;
+    let res;
+    try {
+      res = await fetchWithTimeout(`${BASE_URL}${endpoint}`, { ...fetchOptions, headers }, timeoutMs);
+    } catch (err) {
+      // Timeouts are excluded on purpose: one already cost the full 15s, and
+      // a stalled connection is not a blip. Retrying it would stack up to
+      // ~48s of spinner. Fast connection failures are the ones worth re-running.
+      if (canRetry && !err.isOffline && !err.isTimeout && attempt < RETRY_DELAYS_MS.length) {
+        await sleep(RETRY_DELAYS_MS[attempt] * (0.75 + Math.random() * 0.5));
+        attempt += 1;
+        continue;
+      }
+      throw err;
     }
-    throw err;
-  }
 
-  return data;
+    if (canRetry && RETRYABLE_STATUSES.includes(res.status) && attempt < RETRY_DELAYS_MS.length) {
+      await sleep(RETRY_DELAYS_MS[attempt] * (0.75 + Math.random() * 0.5));
+      attempt += 1;
+      continue;
+    }
+
+    const data = await parseBody(res);
+    if (!res.ok) throw buildHttpError(res, data, endpoint, !!token);
+    return data;
+  }
 }
 
 // Auth
@@ -532,26 +678,23 @@ export async function getVenueDetails(placeId) {
   return data;
 }
 
-// Profile Image
+// Profile Image. Multipart, so it cannot ride request() (which would set a
+// JSON Content-Type and break the browser's boundary header), but it shares
+// the same rails: offline fail-fast, a long upload leash instead of the 15s
+// default, honest errors with err.status attached. Never retried — the server
+// may have stored the image even when the response got lost.
 export async function uploadProfileImage(file) {
+  if (isOffline()) throw connectionError();
   const token = getToken();
   const formData = new FormData();
   formData.append('image', file);
-  const res = await fetch(`${BASE_URL}/api/users/upload-image`, {
+  const res = await fetchWithTimeout(`${BASE_URL}/api/users/upload-image`, {
     method: 'POST',
     headers: { Authorization: `Bearer ${token}` },
     body: formData,
-  });
-  const contentType = res.headers.get('content-type') || '';
-  const data = res.status === 204
-    ? null
-    : contentType.includes('application/json')
-      ? await res.json()
-      : await res.text();
-  if (!res.ok) {
-    const message = data && typeof data === 'object' ? data.error : data;
-    throw new Error(message || 'Upload failed');
-  }
+  }, UPLOAD_TIMEOUT_MS);
+  const data = await parseBody(res);
+  if (!res.ok) throw buildHttpError(res, data, '/api/users/upload-image', !!token);
   return data;
 }
 
@@ -674,10 +817,14 @@ export async function deleteTrustedContact(id) {
   return request(`/api/safety/contacts/${id}`, { method: 'DELETE' });
 }
 
+// Safety endpoints get double the default leash. The server fans the alert
+// out to trusted contacts before answering, and an SOS is the one request
+// that must not give up early on a weak connection.
 export async function sendEmergencyAlert({ latitude, longitude, includeLocation }) {
   const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
   return request('/api/safety/alert', {
     method: 'POST',
+    timeout: 30000,
     body: JSON.stringify({ latitude, longitude, includeLocation, timezone }),
   });
 }
@@ -686,6 +833,7 @@ export async function shareLocationWithContacts({ latitude, longitude }) {
   const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
   return request('/api/safety/share-location', {
     method: 'POST',
+    timeout: 30000,
     body: JSON.stringify({ latitude, longitude, timezone }),
   });
 }
@@ -819,10 +967,12 @@ export async function getActivityFeed() {
   return request('/api/flocks/activity');
 }
 
-// AI Assistant (Birdie)
+// AI Assistant (Birdie). Model responses can honestly take 20s+; the default
+// 15s abort would cut Birdie off mid-thought, so this one gets a longer leash.
 export async function sendAiChat(messages, location, currentContext) {
   return request('/api/ai/chat', {
     method: 'POST',
+    timeout: AI_TIMEOUT_MS,
     body: JSON.stringify({ messages, location, currentContext, localHour: new Date().getHours(), localDay: new Date().getDay() }),
   });
 }
@@ -862,8 +1012,10 @@ export async function checkInManual(placeId) {
 export async function getNfcCheckin(placeId, sig) {
   // The tag's HMAC rides along as ?sig — the backend records the tap as
   // presence-verified only when it matches (round 9).
+  // retry: false — this GET WRITES a check-in row. An automatic replay on a
+  // gateway blip would record the same tap twice.
   const qs = sig ? `?sig=${encodeURIComponent(sig)}` : '';
-  return request(`/api/checkin/${encodeURIComponent(placeId)}${qs}`);
+  return request(`/api/checkin/${encodeURIComponent(placeId)}${qs}`, { retry: false });
 }
 
 // Personal calendar events — persisted per-user (CRUD, /api/calendar)
