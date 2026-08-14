@@ -1,6 +1,18 @@
 import { initializeApp } from 'firebase/app';
 import { getMessaging, getToken, onMessage, deleteToken } from 'firebase/messaging';
-import { registerDeviceToken, unregisterDeviceToken, unregisterAllTokens } from './api';
+// getToken, not a localStorage read of our own: api.js owns where the auth
+// token lives and what it is called. This file used to restate the key as
+// `const AUTH_TOKEN_KEY = 'flockToken'`, a THIRD copy of that contract after
+// userSettings.js was consolidated onto api.js — so renaming the key or moving
+// it off localStorage would have left the push session watcher reading a slot
+// nobody writes and silently registering nobody for notifications.
+//
+// getToken rather than isLoggedIn: the watcher below needs the token's VALUE,
+// not a boolean. It compares the current token with the last one it handled to
+// tell "already registered this session" from "a different account is signed in
+// now", and an account switch that happens in another tab never passes through
+// a logged-out state for a boolean to notice.
+import { registerDeviceToken, unregisterDeviceToken, unregisterAllTokens, getToken as getAuthToken } from './api';
 import { startPushNavigation, handleNotificationData } from './pushNavigation';
 
 const firebaseConfig = {
@@ -11,7 +23,6 @@ const firebaseConfig = {
   appId: process.env.REACT_APP_FIREBASE_APP_ID,
 };
 
-const AUTH_TOKEN_KEY = 'flockToken';
 // Persisted so a logout in a page load that never re-registered still knows
 // which token belongs to THIS device. Without it, logout has to fall back to
 // deleting every token on the account.
@@ -208,8 +219,11 @@ let attempts = 0;
 let syncInFlight = false;
 const MAX_ATTEMPTS = 5;
 
+// The try/catch stays: api.js reads localStorage directly and Safari's private
+// mode can throw on the read, and this runs on a 2s interval where an
+// exception would kill the watcher for the rest of the page load.
 function readAuthToken() {
-  try { return localStorage.getItem(AUTH_TOKEN_KEY); } catch (err) { return null; }
+  try { return getAuthToken() || null; } catch (err) { return null; }
 }
 
 // Any successful registration settles this session, wherever it came from —
