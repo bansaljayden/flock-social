@@ -26,10 +26,10 @@ function check(name, cond, extra) {
   else { failed++; console.log('  FAIL  ' + name + (extra ? '  -> ' + JSON.stringify(extra) : '')); }
 }
 
-async function req(method, p, { token, body } = {}) {
+async function req(method, p, { token, body, headers } = {}) {
   const res = await fetch(BASE + p, {
     method,
-    headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: 'Bearer ' + token } : {}) },
+    headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: 'Bearer ' + token } : {}), ...(headers || {}) },
     body: body ? JSON.stringify(body) : undefined,
   });
   let data = null;
@@ -46,8 +46,8 @@ async function waitFor(fn, ms) {
   return false;
 }
 
-const signup = (name, email, dob) =>
-  req('POST', '/api/auth/signup', { body: { name, email, password: 'Passw0rd', date_of_birth: dob } });
+const signup = (name, email, dob, headers) =>
+  req('POST', '/api/auth/signup', { body: { name, email, password: 'Passw0rd', date_of_birth: dob }, headers });
 
 (async () => {
   const pg = new EmbeddedPostgres({
@@ -61,6 +61,19 @@ const signup = (name, email, dob) =>
   await pg.createDatabase('flock_e2e');
 
   process.env.DATABASE_URL = 'postgresql://postgres:postgres@localhost:59595/flock_e2e';
+  // backend/.env carries PGHOST pointing at the PRODUCTION Railway proxy, and
+  // server.js's dotenv loads it into any process that has not set it already.
+  // The pool never uses it here (DATABASE_URL wins), but the production-
+  // database quarantine guard in server.js checks PGHOST FIRST and refuses to
+  // boot on a Railway host. Pre-setting it empty keeps dotenv from filling it
+  // in (dotenv never overrides an existing value), so the guard sees the
+  // embedded localhost database this harness actually uses.
+  process.env.PGHOST = '';
+  // Same dotenv leak, different variable: .env sets PGSSLMODE=require for the
+  // Railway proxy, and config/database.js honors an explicit PGSSLMODE above
+  // everything else — but the embedded Postgres speaks no TLS, so the pool
+  // died at the handshake ("The server does not support SSL connections").
+  process.env.PGSSLMODE = 'disable';
   process.env.NODE_ENV = 'development';
   process.env.PORT = String(PORT);
   process.env.JWT_SECRET = 'e2e-test-secret';
@@ -121,8 +134,17 @@ const signup = (name, email, dob) =>
   check('every migration recorded as applied', mig.rows[0].n === migFiles, { recorded: mig.rows[0].n, files: migFiles });
 
   // --- Age gate (server-side) ---
-  let r = await signup('Kid', 'kid@e2e.test', '2015-01-01');
+  // The under-13 refusal now RECORDS the attempt (routes/auth.js underage
+  // retry lockout): the same IP cannot sign up again for 15 minutes, so every
+  // adult signup below from 127.0.0.1 would be refused with the same neutral
+  // sentence. The server trusts one proxy hop (`app.set('trust proxy', 1)`),
+  // so giving the kid signup its own X-Forwarded-For source address keeps the
+  // lockout scoped to it — which also exercises that the lockout keys on
+  // req.ip rather than the raw socket.
+  let r = await signup('Kid', 'kid@e2e.test', '2015-01-01', { 'X-Forwarded-For': '203.0.113.66' });
   check('under-13 signup rejected (403)', r.status === 403, r);
+  r = await signup('Kid Retry', 'kid@e2e.test', '2000-01-01', { 'X-Forwarded-For': '203.0.113.66' });
+  check('same mailbox retrying with a passing birthday still refused (403)', r.status === 403, r);
 
   r = await signup('Alice', 'alice@e2e.test', '2000-01-01');
   check('Alice signup (201 + token)', r.status === 201 && !!r.data?.token, r);
