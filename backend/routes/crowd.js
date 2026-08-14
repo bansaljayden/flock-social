@@ -6,6 +6,7 @@ const crowdEngine = require('../services/crowdEngine');
 const { buildHoursByDay } = crowdEngine;
 const mlPredictor = require('../services/mlPredictor');
 const { upstreamSignal } = require('../utils/upstream');
+const { isPlaceIdShaped } = require('../utils/places');
 
 // Use ML predictor when available, fall back to rule engine
 const {
@@ -139,13 +140,14 @@ async function fetchVenueFromGoogle(placeId, clientDay) {
   // already percent-DECODED it, so `/api/crowd/x%2F..%2Fadmin` arrives here as
   // `x/../admin` and interpolating it raw builds a URL that the WHATWG parser
   // then normalises into a DIFFERENT Google endpoint, called with our API key
-  // attached. A `?` or `#` in the id does the same to the query string. Nothing
-  // else on the way in stops it: the validator below bounds the length but
-  // allows any characters, and this file accepts ids that were never checked
-  // against utils/places.isPlaceIdShaped (routes/checkin.js and feedback.js do
-  // check, and routes/publicCrowd.js has encoded this call since it was
-  // written). One segment, always. A bogus id is then Google's 404, which
-  // fetchVenueFromGoogle already turns into a 502.
+  // attached. A `?` or `#` in the id does the same to the query string.
+  //
+  // The encoding stays even though `placeIdParam` below now refuses anything
+  // that is not [A-Za-z0-9_-]{6,128}, so no traversal can reach this line any
+  // more: this function is not a route handler and nothing in its signature says
+  // its argument was validated, so it defends itself. One segment, always. A
+  // bogus id is then Google's 404, which fetchVenueFromGoogle already turns into
+  // a 502. (routes/publicCrowd.js has encoded its copy since it was written.)
   // The deadline from round 12 is what makes the try/catch below load-bearing
   // rather than paranoia: an upstreamSignal abort REJECTS this fetch, and a
   // rejection here escaped to each route's outer catch as a 500 "Prediction
@@ -222,13 +224,38 @@ async function fetchVenueFromGoogle(placeId, clientDay) {
 // All routes require auth
 router.use(authenticate);
 
+// SHAPED, not merely bounded — the last consumer in the repo to adopt the rule
+// routes/checkin.js, flocks.js, feedback.js, venueProfile.js, venueDashboard.js
+// and sockets/handlers.js all already enforce. Length alone was never the point:
+//   * MONEY. Both routes below spend a PAID Google Place Details call (and
+//     /alternatives spends two) on whatever string arrives. An id that cannot be
+//     a Google place id is an invoice line that can only ever return a 404, and
+//     rotating them is how you spend somebody's whole hourly budget on nothing.
+//   * ML DATA. The same unvalidated string is the key
+//     services/mlPredictor.js storeGoogleBaselines writes ml_venue_baselines
+//     rows under, and the key its baseline/feedback caches are keyed by, so junk
+//     ids become junk rows in the corpus the crowd model retrains from.
+// max 200 before the shape check so an oversized id is refused by length rather
+// than by regex, matching routes/publicCrowd.js and routes/feedback.js; the
+// shape check then bounds it to 128 in practice.
+//
+// GRANDFATHERING: nothing legitimate is refused. Every id these routes are
+// reached with came from Google (routes/venueSearch.js results, or a flock's
+// venue_id, which routes/flocks.js has already validated against this same
+// predicate). Ids already stored under venue_feedback.venue_place_id and
+// ml_venue_baselines.google_place_id are read by these routes but never written
+// by them, so no cleanup is required — an unshaped row there was unreachable
+// junk before this change and is unreachable junk after it.
+const placeIdParam = param('placeId').trim()
+  .isLength({ min: 1, max: 200 }).withMessage('placeId is required')
+  .bail()
+  .custom((v) => isPlaceIdShaped(v)).withMessage('placeId is not a valid place id');
+
 // ---------------------------------------------------------------------------
 // GET /api/crowd/:placeId — Full crowd prediction for one venue
 // ---------------------------------------------------------------------------
 router.get('/:placeId',
-  // max 200 to match routes/publicCrowd.js and routes/feedback.js: the id is a
-  // cache-key component, so an unbounded one is unbounded memory per request.
-  param('placeId').trim().isLength({ min: 1, max: 200 }).withMessage('placeId is required'),
+  placeIdParam,
   async (req, res) => {
     try {
       const errors = validationResult(req);
@@ -478,6 +505,25 @@ router.post('/batch',
       // Round 8: items were passed to the predictor as arbitrary objects,
       // pushing attacker-shaped keys into its caches. Keep only known fields
       // with the right types; malformed items score as low-signal venues.
+      //
+      // `place_id` here is NOT run through utils/places.isPlaceIdShaped, unlike
+      // the two GET routes in this file, and that is a decision rather than an
+      // oversight. It holds on two legs:
+      //   * this endpoint makes NO paid Google call, so a junk id costs nothing;
+      //   * it never WRITES a place id anywhere. It reads venue_feedback
+      //     (parameterised) and the predictor's caches, which are bounded
+      //     (services/mlPredictor.js boundedSet, round 8).
+      // Refusing instead would drop a row's crowd badge on the floor, which is a
+      // worse answer for a body the client assembled from its own search results.
+      //
+      // THE LEG THAT COULD BREAK: add `popular_times` to this whitelist and
+      // services/mlPredictor.js predictBusyness starts calling
+      // storeGoogleBaselines with this id, which INSERTs into
+      // ml_venue_baselines — the corpus the crowd model retrains from. No route
+      // supplies popular_times today, so that write is currently unreachable
+      // from every request path. If one ever does, this whitelist needs the
+      // shape check in the same edit.
+
       const venues = rawVenues.slice(0, 20).map((v) => ({
         place_id: typeof v?.place_id === 'string' ? v.place_id.slice(0, 256) : null,
         name: typeof v?.name === 'string' ? v.name.slice(0, 256) : '',
@@ -696,7 +742,7 @@ router.post('/batch',
 // GET /api/crowd/:placeId/alternatives — Quieter nearby venues
 // ---------------------------------------------------------------------------
 router.get('/:placeId/alternatives',
-  param('placeId').trim().isLength({ min: 1, max: 200 }).withMessage('placeId is required'),
+  placeIdParam,
   async (req, res) => {
     try {
       const errors = validationResult(req);
