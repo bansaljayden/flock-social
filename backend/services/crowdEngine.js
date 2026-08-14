@@ -1201,38 +1201,184 @@ function findPeakTime(hourlyForecast, venue, options = {}) {
 
 const CROWD_LEVEL_TO_SCORE = { 1: 20, 2: 50, 3: 80 };
 
-function buildCalibrationAdjustment(feedbackRows, engineScore) {
-  if (!feedbackRows || feedbackRows.length === 0) {
-    return { adjustedScore: engineScore, feedbackUsed: false, reportCount: 0 };
-  }
+// The widest two reports can disagree: level 1 (20) against level 3 (80). Every
+// leverage number below is derived from this span, so changing the mapping
+// changes the guard rails with it instead of leaving them stale.
+const FEEDBACK_SCORE_SPAN = 80 - 20;
 
-  // Convert crowd_level (1-3) to approximate 0-100 score and average
-  let sum = 0;
+// ---------------------------------------------------------------------------
+// How many DISTINCT reporters it takes before user feedback may move the
+// public number at all, and why it is 3.
+//
+// Until this existed there was no floor: one report was enough, and because
+// the weight at n=1 was 0.15 across a 0-100 range, a single person tapping
+// "packed" could move a venue's public score by up to 12 points — enough to
+// cross a label boundary and turn "Not Busy" into "Moderate" on every phone
+// looking at that venue. That is a number the product asks people to trust,
+// published on the strength of one tap.
+//
+// 3, specifically:
+//   - The scale is coarse. crowd_level has three settings, so one report is a
+//     60-point-wide opinion. Three is the first count at which one outlier is
+//     outvoted by the other two rather than being the whole signal.
+//   - It is the threshold this product already uses for "enough people said
+//     something to publish it": the budget ceiling is withheld below 3
+//     non-skipped submissions and ghost commit refuses to open below 3
+//     (routes/budget.js, routes/billing.js). One rule, one number.
+//   - It is what the anti-gaming story needs. Reports only reach this path
+//     when venue_feedback.verified is true — an HMAC-signed NFC tap at the
+//     venue or accepted membership in a flock that met there — and combined
+//     with the per-reporter dedupe below, moving a venue's public score now
+//     costs three verified identities that were physically at that venue in
+//     the same weekly hour bucket, not one account tapping three times.
+//   - The cost of the floor is small and safe: below it the model's own answer
+//     stands, which is the number every other surface already ships.
+const MIN_CALIBRATION_REPORTERS = 3;
+
+// The most any ONE report may move the published score, in points.
+//
+// Deliberately equal to TIE_MARGIN above, which this file already justifies as
+// the width of a coin flip at this model's accuracy: a single stranger's tap
+// must never move the public number by more than the noise the same file
+// refuses to act on. Enforced by construction — the blended weight is capped so
+// that weight * (FEEDBACK_SCORE_SPAN / n) can never exceed it — so the bound
+// survives someone retuning the ladder without re-deriving the arithmetic.
+// (Kept as its own constant rather than referencing TIE_MARGIN, so tuning the
+// best-time margin cannot silently retune what strangers can do to a score.)
+const MAX_SINGLE_REPORT_LEVERAGE = 5;
+
+// A report is evidence about how busy a place is, and that evidence goes stale.
+// Four weeks is four observations of any given weekly (day, hour) slot: enough
+// for a real venue to reach the floor, short enough that a bar that changed
+// hands, changed its DJ night or lost its patio is not still being scored on
+// last spring. It also puts a clock on influence — an account that reported
+// once cannot keep steering that venue's slot forever.
+//
+// This is a backstop, not the primary control: the SQL should not be reading
+// year-old rows in the first place. See the note on the query below.
+const CALIBRATION_MAX_AGE_MS = 28 * 24 * 60 * 60 * 1000;
+
+function calibrationRowTime(row) {
+  const t = row.created_at;
+  if (t == null) return null;
+  const ms = t instanceof Date ? t.getTime() : Date.parse(t);
+  return Number.isFinite(ms) ? ms : null;
+}
+
+// ---------------------------------------------------------------------------
+// From raw feedback rows to the set of reports that may vote: recent, and one
+// per account.
+//
+// ONE VOTE PER ACCOUNT. The calibration query selects every matching row, so a
+// single account that filed six reports for the same venue and hour used to
+// arrive as six independent voices — which both cleared any sample floor by
+// itself and pushed the blend weight up the ladder. Newest report per user_id
+// wins; an account revising its own opinion is one opinion.
+//
+// THE ROW MUST CARRY user_id FOR THAT TO WORK. routes/crowd.js currently
+// selects `crowd_level, predicted_score` and nothing else, so in production
+// these rows arrive anonymous and each one still counts as its own reporter.
+// Rows without a user_id are therefore counted individually — degrading to the
+// old behaviour rather than silently switching calibration off for the whole
+// product — and the fix belongs in that file's three SELECTs. Reported, not
+// edited; it is not my file.
+//
+// RECENCY. Same story: the age filter here can only act on rows that carry
+// created_at, and the SELECTs do not ask for it either. The real fix is a
+// `created_at > NOW() - INTERVAL '28 days'` predicate in the query, which is
+// also the cheaper place to do it — idx_venue_feedback_user_created
+// (migration 013) already indexes (user_id, created_at DESC), and bounding it
+// in SQL means the LIMIT 50 stops discarding recent rows in favour of old ones.
+function usableCalibrationReports(feedbackRows, nowMs) {
+  const cutoff = nowMs - CALIBRATION_MAX_AGE_MS;
+  const byReporter = new Map();
+  const unattributed = [];
+
   for (const row of feedbackRows) {
-    sum += CROWD_LEVEL_TO_SCORE[row.crowd_level] || 50;
-  }
-  const feedbackScore = sum / feedbackRows.length;
+    if (!row || typeof row !== 'object') continue;
+    // An unrecognized crowd_level used to be scored as 50 — a "Moderate"
+    // opinion nobody expressed, manufactured out of a bad row and then given a
+    // vote. A row we cannot read is not evidence.
+    const score = CROWD_LEVEL_TO_SCORE[row.crowd_level];
+    if (score === undefined) continue;
 
-  // Weight feedback more as reports accumulate
-  const n = feedbackRows.length;
-  let weight;
-  if (n <= 2) weight = 0.15;
-  else if (n <= 5) weight = 0.30;
-  else if (n <= 10) weight = 0.50;
-  else if (n <= 20) weight = 0.65;
-  else weight = 0.75;
+    const at = calibrationRowTime(row);
+    if (at != null && at < cutoff) continue;
+
+    if (row.user_id == null) {
+      unattributed.push({ score, at });
+      continue;
+    }
+    const key = String(row.user_id);
+    const prev = byReporter.get(key);
+    // Newest wins. With no timestamps to compare, first seen wins, which is
+    // the newest row on the single-venue path (ORDER BY created_at DESC).
+    if (!prev || (at != null && (prev.at == null || at > prev.at))) {
+      byReporter.set(key, { score, at });
+    }
+  }
+
+  return [...byReporter.values(), ...unattributed];
+}
+
+function buildCalibrationAdjustment(feedbackRows, engineScore, options = {}) {
+  const unchanged = (reportCount) => ({
+    adjustedScore: engineScore,
+    feedbackUsed: false,
+    reportCount,
+    minReports: MIN_CALIBRATION_REPORTERS,
+  });
+
+  if (!Array.isArray(feedbackRows) || feedbackRows.length === 0) return unchanged(0);
+  // Numeric strings blend (a caller handing back a DECIMAL as text should not
+  // silently disable calibration), but anything that is not a number at all is
+  // handed straight back. Note what a bare Number() would do here: null and ''
+  // both become 0, so a missing score would be blended as though the model had
+  // said "empty", and NaN would be published as the number on the card.
+  const engine = (typeof engineScore === 'number'
+    || (typeof engineScore === 'string' && engineScore.trim() !== ''))
+    ? Number(engineScore)
+    : NaN;
+  if (!Number.isFinite(engine)) return unchanged(0);
+
+  const reports = usableCalibrationReports(
+    feedbackRows,
+    Number.isFinite(options.now) ? options.now : Date.now()
+  );
+  const n = reports.length;
+  if (n < MIN_CALIBRATION_REPORTERS) return unchanged(n);
+
+  let sum = 0;
+  for (const r of reports) sum += r.score;
+  const feedbackScore = sum / n;
+
+  // Weight feedback more as reports accumulate...
+  let ladderWeight;
+  if (n <= 5) ladderWeight = 0.30;
+  else if (n <= 10) ladderWeight = 0.50;
+  else if (n <= 20) ladderWeight = 0.65;
+  else ladderWeight = 0.75;
+
+  // ...but never so much that one of those reporters is worth more than
+  // MAX_SINGLE_REPORT_LEVERAGE points on their own. One reporter can move the
+  // mean by at most FEEDBACK_SCORE_SPAN / n, and the blend passes weight * that
+  // through to the published score, so this cap is the whole bound. It binds at
+  // the floor (n = 3, where the ladder alone would allow 6 points) and goes
+  // slack as real reports accumulate.
+  const weight = Math.min(ladderWeight, (MAX_SINGLE_REPORT_LEVERAGE * n) / FEEDBACK_SCORE_SPAN);
 
   const adjustedScore = Math.max(0, Math.min(100, Math.round(
-    engineScore * (1 - weight) + feedbackScore * weight
+    engine * (1 - weight) + feedbackScore * weight
   )));
 
   return {
     adjustedScore,
     feedbackUsed: true,
     reportCount: n,
+    minReports: MIN_CALIBRATION_REPORTERS,
     feedbackWeight: weight,
     avgFeedbackScore: Math.round(feedbackScore),
-    predictionDrift: Math.round(feedbackScore - engineScore),
+    predictionDrift: Math.round(feedbackScore - engine),
   };
 }
 
@@ -1270,6 +1416,12 @@ module.exports = {
   findPeakTime,
   findQuieterAlternatives,
   buildCalibrationAdjustment,
+  // The calibration guard rails, exported so a route, a client string or a test
+  // states the same numbers this file enforces instead of a second copy of them.
+  MIN_CALIBRATION_REPORTERS,
+  MAX_SINGLE_REPORT_LEVERAGE,
+  CALIBRATION_MAX_AGE_MS,
+  CROWD_LEVEL_TO_SCORE,
   getLabel,
   // Round 14: colour bands derived from the label bands, so "Busy" is never
   // amber on one card and red on the next.
