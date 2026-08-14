@@ -6,6 +6,10 @@ const { authenticate } = require('../middleware/auth');
 // the two ids below get the guard: goals / operatingHours / notificationPrefs
 // are LEGITIMATELY structured and have their own custom() shape rules.
 const { scalarOnly } = require('../validators/shape');
+// ONE definition of "is that a place id", shared with routes/checkin.js,
+// routes/flocks.js, routes/feedback.js and sockets/handlers.js. See the note on
+// placeIdRule below for why this router is the one that had to adopt it.
+const { isPlaceIdShaped } = require('../utils/places');
 
 const router = express.Router();
 router.use(authenticate);
@@ -101,8 +105,40 @@ const photoRule = scalarOnly(body('photoUrl').optional({ nullable: true }), 'pho
 // googlePlaceId is the claim key: it is compared against other owners' rows in
 // claimedByAnother() and then written to venue_profiles.google_place_id, so an
 // array reached both the ownership query and a VARCHAR column as a literal.
+//
+// SHAPE, not just width (audit 2026-08-14). This was THE write path for
+// venue_profiles.google_place_id and it constrained the length and nothing
+// else, so any string at all could be stored as a venue's Google listing. Two
+// consequences, and the first is why a sibling route carries a defensive
+// workaround instead of being safe by construction:
+//
+//   * routes/venueDashboard.js fetchVenueBasics interpolates this exact column
+//     into `https://places.googleapis.com/v1/places/${id}` with our
+//     server-restricted API key attached. It has to encodeURIComponent() it —
+//     and its own comment says why: "nothing on that write path constrains it
+//     to utils/places.isPlaceIdShaped". This is that write path. The encoding
+//     stays (defence in depth, and it also covers the rows written before
+//     today), but the value is now sound before it is stored rather than only
+//     at the one call site that remembered.
+//
+//   * A stored id that fails this predicate is a SILENTLY BROKEN PROFILE, not
+//     merely an ugly one. utils/places.isKnownVenue shape-checks before it
+//     queries, so such a venue can never accept an NFC tap or a join_venue
+//     subscription; routes/flocks.js validates flocks.venue_id with the same
+//     predicate, so no flock can ever name it and /incoming-flocks is
+//     permanently empty. The owner sees a saved profile that does nothing.
+//
+// '' is still accepted and still means "leave it alone" — the handlers below
+// spell that `googlePlaceId || null` into a COALESCE, and refusing the empty
+// string would 400 a client that round-trips a blank field.
+//
+// GRANDFATHERING: this guards the WRITE only. Rows stored before today keep
+// whatever they hold, and a PUT that does not mention googlePlaceId never
+// touches them, so nothing that saves today stops saving. See the report note
+// on the cleanup query for finding those rows.
 const placeIdRule = scalarOnly(body('googlePlaceId').optional({ nullable: true }), 'Google place id').trim()
-  .isLength({ max: MAX_PLACE_ID }).withMessage('Google place id is too long');
+  .isLength({ max: MAX_PLACE_ID }).withMessage('Google place id is too long').bail()
+  .custom((v) => v === '' || isPlaceIdShaped(v)).withMessage('That is not a valid Google place id');
 
 // ─── Claim integrity ─────────────────────────────────────────────────────────
 // One venue, one owner. The hard invariant lives in the database — the partial

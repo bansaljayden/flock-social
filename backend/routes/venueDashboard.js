@@ -10,6 +10,10 @@ const { upstreamSignal } = require('../utils/upstream');
 // either scalarOnly (identifiers, numbers) or freeText (anything a person types
 // that another person reads back).
 const { scalarOnly, freeText } = require('../validators/shape');
+// ONE definition of "is that a place id" — routes/checkin.js, routes/flocks.js,
+// routes/feedback.js and sockets/handlers.js all validate against this, and so
+// does routes/venueProfile.js as of the 2026-08-14 audit.
+const { isPlaceIdShaped } = require('../utils/places');
 
 const router = express.Router();
 router.use(authenticate);
@@ -532,7 +536,15 @@ router.post('/submit-review', [
   //     had no stripHtml on any path. `text: ["<b>x</b>"]` cleared isLength by
   //     coercion and was answered allowed:true by rejectIfProfane, so the
   //     profanity screen five lines down never saw it either.
-  scalarOnly(body('googlePlaceId'), 'place id').trim().isLength({ min: 1, max: 200 }).withMessage('Place ID is required'),
+  // Round 21: shape, not only width. This id is STORED (venue_reviews
+  // .google_place_id) and it is the key the public venue card aggregates on, so
+  // an unshaped one mints a review row for a "venue" that no flock can name
+  // (routes/flocks.js validates flocks.venue_id with this same predicate) and
+  // that utils/places.isKnownVenue will never recognise. Same rule
+  // routes/feedback.js already enforces on venue_place_id, which is the file
+  // this route's presence check is kept in step with.
+  scalarOnly(body('googlePlaceId'), 'place id').trim().isLength({ min: 1, max: 200 }).withMessage('Place ID is required').bail()
+    .custom(isPlaceIdShaped).withMessage('Place ID is not a valid place id'),
   scalarOnly(body('rating'), 'rating').isInt({ min: 1, max: 5 }).withMessage('Rating 1-5 required'),
   freeText(body('text').optional({ nullable: true }), 'review').isLength({ max: 1000 }).withMessage('Review is too long (max 1000 characters)'),
 ], async (req, res) => {
@@ -685,8 +697,16 @@ router.post('/submit-review', [
 // segment can never match a row — it is only an index scan we pay for. Bound it
 // at the column width and READ the result: a declared-but-unread chain is the
 // decorative-validator bug this file has already been fixed for twice.
+//
+// Round 21: shaped, not merely bounded — the same predicate routes/feedback.js
+// puts on its own public per-venue read (GET /api/feedback/venue/:placeId), so
+// the two user-facing venue-card reads no longer disagree about what a place id
+// is. Nothing legitimate is refused: every venue a user can actually be at
+// reached them through a flock, and routes/flocks.js already validates
+// flocks.venue_id against this predicate.
 const placeIdParam = param('placeId').isString().isLength({ min: 1, max: 255 })
-  .withMessage('placeId required');
+  .withMessage('placeId required').bail()
+  .custom(isPlaceIdShaped).withMessage('placeId is not a valid place id');
 
 // GET /api/venue-dashboard/public-reviews/:placeId — get reviews for any venue (for user-facing venue cards)
 router.get('/public-reviews/:placeId', placeIdParam, async (req, res) => {
@@ -756,6 +776,88 @@ router.get('/public-reviews/:placeId', placeIdParam, async (req, res) => {
   }
 });
 
+// ─── PROMOTION VIEW COUNTING ─────────────────────────────────────────────────
+//
+// `views` is not decoration. It is the one usage number the dashboard shows a
+// venue owner about their own paid content, and VENUE-BILLING.md prices the
+// venue product on exactly this class of figure — so a counter an owner can
+// move by refreshing is a number we would be charging them to read back to
+// themselves. Before this it was `views = views + 1` on EVERY authenticated
+// GET of the venue card, with no idea who was asking.
+//
+// Two rules, closing two different holes:
+//
+//   1. THE OWNER'S OWN VIEWS DO NOT COUNT. The owner opening their own venue
+//      card in the consumer app is the cheapest self-inflation there is, and it
+//      also happens by accident — an owner checking that a promotion looks
+//      right inflates the metric they are checking. Enforced in the UPDATE
+//      (`venue_user_id <> $2`) rather than by an early return, so it holds per
+//      ROW for every promotion in the batch and cannot be lost to a later edit
+//      that reorders the JavaScript above it. `<>` and not IS DISTINCT FROM on
+//      purpose: a NULL venue_user_id would then be counted, and such a row can
+//      never be served at all (the public SELECT INNER JOINs venue_profiles on
+//      that column), so the only difference the two spellings could ever make
+//      is on a row nobody can see.
+//
+//   2. ONE ACCOUNT COUNTS ONCE PER PROMOTION PER WINDOW. Pull-to-refresh, a
+//      re-render, or a script in a loop were each a view. A "view" is a person
+//      seeing the promotion, so repeats inside a short window are the same
+//      view.
+//
+// WHAT THIS IS NOT. Rule 2 is an IN-PROCESS window, because the honest fix
+// needs storage this change is not allowed to add. Its limits, stated so they
+// are not mistaken for a solved problem:
+//   * it is per Node process, so N Railway instances allow up to N counts per
+//     window, and a deploy or a restart clears it;
+//   * it is bounded (VIEW_DEDUPE_MAX), and an evicted key can be counted again
+//     — eviction degrades toward the OLD behaviour, never below it;
+//   * it does nothing about a second account. Nothing without identity can;
+//   * evicting a key costs an attacker one fetch per OTHER live promotion in
+//     the map before their own entry is the oldest again, so the eviction path
+//     is a bad trade for them and a cheap safety valve for us. It is also the
+//     least-harmful policy available: the oldest entries are the ones closest
+//     to expiring anyway.
+// The durable version is a `venue_promotion_views (promotion_id, user_id,
+// viewed_at)` table with UNIQUE (promotion_id, user_id, day) and `views` read
+// as a COUNT rather than kept as a running total — see the report note.
+//
+// A view is marked BEFORE the UPDATE and is NOT un-marked if that UPDATE fails,
+// so a database error loses at most one view per account per promotion per
+// window. That direction is deliberate: under-counting an analytic somebody
+// will be billed on is a smaller wrong than a retry loop that counts.
+const VIEW_DEDUPE_MS = 30 * 60 * 1000;
+const VIEW_DEDUPE_MAX = 20000;
+// `${userId}:${promotionId}` -> last counted at. Both halves are integers we
+// generated (users.id from the JWT, venue_promotions.id straight off the row),
+// so the key cannot be forged into a collision with another user's.
+const recentPromotionViews = new Map();
+
+// A Map iterates in insertion order and `set` on an EXISTING key keeps that
+// key's original position, so a refresh has to delete before it sets —
+// otherwise a promotion viewed constantly looks permanently old to the
+// age-ordered pass below. Same reasoning as utils/places.rememberKnownVenue.
+function claimPromotionViews(userId, ids) {
+  const now = Date.now();
+  const countable = [];
+  for (const id of ids) {
+    const key = `${userId}:${id}`;
+    const seen = recentPromotionViews.get(key);
+    if (seen !== undefined && now - seen < VIEW_DEDUPE_MS) continue;
+    recentPromotionViews.delete(key);
+    recentPromotionViews.set(key, now);
+    countable.push(id);
+  }
+  if (recentPromotionViews.size > VIEW_DEDUPE_MAX) {
+    for (const [k, ts] of recentPromotionViews) {
+      if (now - ts >= VIEW_DEDUPE_MS) recentPromotionViews.delete(k);
+    }
+    while (recentPromotionViews.size > VIEW_DEDUPE_MAX) {
+      recentPromotionViews.delete(recentPromotionViews.keys().next().value);
+    }
+  }
+  return countable;
+}
+
 // GET /api/venue-dashboard/public-promotions/:placeId — get active promotions for a venue (user-facing)
 router.get('/public-promotions/:placeId', placeIdParam, async (req, res) => {
   try {
@@ -789,14 +891,29 @@ router.get('/public-promotions/:placeId', placeIdParam, async (req, res) => {
        LIMIT 100`,
       [req.params.placeId, venueBillingEnabled(), SERVING_TIERS]
     );
-    // Increment view count (bounded by the LIMIT above, so the ANY($1) set never
-    // grows without limit either).
+    // Count the view — see the two rules above claimPromotionViews. Bounded by
+    // the LIMIT above, so the ANY($1) set never grows without limit either.
+    //
+    // A failure here must NOT cost the reader their promotions: the analytic is
+    // worth less than the content it is counting, and the old code let an
+    // UPDATE error fall into the outer catch and answer 500 with a perfectly
+    // good result set already in hand.
     if (rows.length > 0) {
-      const ids = rows.map(r => r.id);
-      await pool.query(
-        'UPDATE venue_promotions SET views = views + 1 WHERE id = ANY($1)',
-        [ids]
-      );
+      const countable = claimPromotionViews(req.user.id, rows.map((r) => r.id));
+      if (countable.length > 0) {
+        try {
+          await pool.query(
+            // The owner is excluded per ROW, not per request: one owner's
+            // promotion sitting in a batch cannot make the whole batch
+            // uncountable, and one stranger's request cannot count a row for
+            // the owner who is asking.
+            'UPDATE venue_promotions SET views = views + 1 WHERE id = ANY($1) AND venue_user_id <> $2',
+            [countable, req.user.id]
+          );
+        } catch (viewErr) {
+          console.error('Promotion view count failed:', viewErr.message);
+        }
+      }
     }
     res.json({ promotions: rows });
   } catch (err) {
@@ -854,12 +971,24 @@ async function fetchVenueBasics(placeId, userId) {
   if (!GOOGLE_KEY) return null;
   // Round 9: charge the shared budget before every paid upstream call.
   if (!allowPlacesSearch(userId)) return BUDGET_EXCEEDED;
-  // ENCODED, same reason as routes/crowd.js fetchVenueFromGoogle. This id is
-  // less obviously attacker-shaped — it is venue_profiles.google_place_id, not
-  // a path segment — but it is still a string the venue owner typed into Edit
-  // Profile, and nothing on that write path constrains it to
-  // utils/places.isPlaceIdShaped. A `/../` or a `?` in it re-points this call
-  // at a different Google endpoint carrying our API key.
+  // ENCODED, same reason as routes/crowd.js fetchVenueFromGoogle: a `/../` or a
+  // `?` in this id re-points the call at a different Google endpoint carrying
+  // our API key.
+  //
+  // Round 21 UPDATE — the sentence that used to be here ("nothing on that write
+  // path constrains it to utils/places.isPlaceIdShaped") is no longer true, and
+  // it is why routes/venueProfile.js was fixed rather than this line hardened
+  // further: the encoding was covering for a missing validation instead of
+  // being belt and braces. Both venue-profile routes now validate against the
+  // shared predicate, so a value written today cannot contain any of these
+  // characters at all.
+  //
+  // THE ENCODING STAYS ANYWAY, for two reasons that outlive that fix. Rows
+  // written BEFORE the validation landed are grandfathered and can still hold
+  // anything (see the cleanup query in the audit report), and this function is
+  // one `require` away from being called with an id that came from somewhere
+  // else. A call that spends money and carries a server-restricted key does not
+  // get to rely on a guarantee made in another file.
   const r = await fetch(`https://places.googleapis.com/v1/places/${encodeURIComponent(placeId)}`, {
     headers: {
       'X-Goog-Api-Key': GOOGLE_KEY,
@@ -1096,3 +1225,13 @@ router.get('/strip', requirePremium, async (req, res) => {
 });
 
 module.exports = router;
+
+// Exposed for backend/__tests__/venueIntegrity.test.js only. The view window is
+// process-wide state, so a test that cannot reset it or see its bound is a test
+// that can only assert the happy path.
+module.exports.__test = {
+  recentPromotionViews,
+  claimPromotionViews,
+  VIEW_DEDUPE_MS,
+  VIEW_DEDUPE_MAX,
+};
