@@ -1,4 +1,9 @@
-import { getUserSettings, updateUserSettings } from './api';
+// isLoggedIn() rather than a localStorage read of our own: api.js owns where the
+// token lives and what counts as signed in (it also clears the key on a fatal
+// auth failure). Reading the raw key here meant this file had a second, silent
+// copy of that contract, so moving or renaming the token would have left these
+// two guards answering "signed in" for an account api.js had already given up on.
+import { getUserSettings, updateUserSettings, isLoggedIn } from './api';
 
 // Map of synced setting keys → localStorage keys
 // Keep this list in sync with the state initializers that read from localStorage.
@@ -27,7 +32,7 @@ export function queueSync(partial) {
     const payload = pending;
     pending = {};
     timer = null;
-    if (!localStorage.getItem('flockToken')) return;
+    if (!isLoggedIn()) return;
     updateUserSettings(payload).catch(err => console.warn('[settings] sync failed:', err.message));
   }, 600);
 }
@@ -47,7 +52,7 @@ function readLocalSettings() {
 }
 
 export async function pullSettings() {
-  if (!localStorage.getItem('flockToken')) return null;
+  if (!isLoggedIn()) return null;
   try {
     const { settings } = await getUserSettings();
     const serverHasSettings = settings && typeof settings === 'object' && Object.keys(settings).length > 0;

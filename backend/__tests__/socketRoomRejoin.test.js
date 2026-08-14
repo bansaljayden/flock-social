@@ -269,7 +269,7 @@ test('App.js binds nothing directly to a raw socket instance', () => {
 });
 
 // ===========================================================================
-// PART 3 — one message, one emit, caption included
+// PART 3 — one message, one emit: text, caption and venue card alike
 // ===========================================================================
 
 test('sendMessage carries text and image together, and reports whether it sent', () => {
@@ -305,13 +305,160 @@ test('sendImageMessage is the same code path and keeps a caption', () => {
   }]);
 });
 
-test('App.js sends a flock message with one emit, not a photo/text branch', () => {
+// Comment lines are dropped before anything below counts a call site or scans
+// for a field that should be gone. Every one of these fixes explains itself in
+// a comment that NAMES the thing it no longer does, so prose that mentions
+// `apiSendMessage()` or a removed column would otherwise fail the test that the
+// fix was written to pass. Same exclusion, and same reason, as the raw-socket
+// listener test above.
+function codeOnly(src) {
+  return src.split('\n').filter((line) => !/^\s*(\/\/|\*|\/\*)/.test(line)).join('\n');
+}
+
+// Slice one top-level `const NAME = useCallback(` out of App.js, up to the
+// declaration that follows it. Assertions below are scoped to a single function
+// so they cannot be satisfied by some unrelated corner of a 16,000-line file.
+function appFn(name, endsBefore) {
+  const start = APP_SRC.indexOf(`const ${name} = useCallback(`);
+  assert.ok(start > 0, `${name} not found in App.js`);
+  const end = APP_SRC.indexOf(`const ${endsBefore} = `, start);
+  assert.ok(end > start,
+    `${endsBefore} no longer follows ${name} — this slice needs updating, it is not a real failure`);
+  return codeOnly(APP_SRC.slice(start, end));
+}
+
+// Every call to `name(...)`, with its argument text, paren-balanced. A regex
+// cannot do this: the arguments contain braces, nested calls and ternaries.
+function callArgs(src, name) {
+  const needle = `${name}(`;
+  const out = [];
+  for (let i = src.indexOf(needle); i !== -1; i = src.indexOf(needle, i + 1)) {
+    let depth = 0;
+    let j = i + needle.length - 1;
+    for (; j < src.length; j++) {
+      if (src[j] === '(') depth += 1;
+      else if (src[j] === ')') { depth -= 1; if (depth === 0) break; }
+    }
+    out.push(src.slice(i + needle.length, j));
+  }
+  return out;
+}
+
+// The leading positional arguments of a call, as written. Splitting on commas
+// is safe only down to the first object/array/call argument, so it stops there —
+// which is all these tests read.
+function positional(args) {
+  const out = [];
+  let depth = 0;
+  let cur = '';
+  for (const c of args) {
+    if ('([{'.includes(c)) depth += 1;
+    else if (')]}'.includes(c)) depth -= 1;
+    if (c === ',' && depth === 0) { out.push(cur.trim()); cur = ''; continue; }
+    cur += c;
+  }
+  out.push(cur.trim());
+  return out;
+}
+
+// The value expression a call's options object gives one key, as written.
+function objField(args, key) {
+  const m = args.match(new RegExp(`\\b${key}:\\s*([^,}]+)`));
+  return m ? m[1].trim() : null;
+}
+
+// The payload fields transmitFlockMessage accepts, read off the function itself
+// rather than listed here. A message is a body plus attachments; `message_type`
+// is the label, checked separately. Deriving the list is the point: a FOURTH
+// kind of attachment is covered by these tests the day it is added, instead of
+// shipping wired to one transport and not the other — which is exactly how both
+// bugs below happened.
+function attachmentFields(fnSrc) {
+  return [...new Set([...fnSrc.matchAll(/\bopts\.(\w+)/g)].map((m) => m[1]))]
+    .filter((f) => f !== 'message_type');
+}
+
+// This test used to pin the literal source text of the two send calls, which
+// made it fail on any edit to them — including the correct one that added venue
+// cards to this path. What it is actually guarding is a PROPERTY, and the
+// property is what is asserted now: one message is one send on each transport,
+// carrying everything the message has, described identically on both.
+//
+// The property is real. A photo/text branch here once meant a captioned photo
+// could not be sent at all: the socket emitter had no text field and the REST
+// one did, so the same photo arrived with different content depending on which
+// transport the network chose. A venue card kept its own private copy of this
+// whole function for the same reason, and inherited none of its fixes.
+test('App.js sends a flock message with one send per transport, whatever it carries', () => {
   assert.ok(!/sendImageMessage as socketSendImage/.test(APP_SRC),
     'the second emitter is gone; a caption must not depend on which helper the caller picks');
-  assert.ok(/socketSendMessage\(flockId, text, \{ message_type: msgType, image_url: image \}\)/.test(APP_SRC),
-    'transmitFlockMessage must pass text and image in a single send');
-  // The REST fallback and the socket send must describe the same message.
-  assert.ok(/apiSendMessage\(flockId, text, \{ message_type: msgType, image_url: image \|\| undefined \}\)/.test(APP_SRC));
+
+  const fn = appFn('transmitFlockMessage', 'retryFailedMessage');
+  const socketSends = callArgs(fn, 'socketSendMessage');
+  const restSends = callArgs(fn, 'apiSendMessage');
+
+  assert.strictEqual(socketSends.length, 1,
+    `transmitFlockMessage makes ${socketSends.length} socket sends; a second one is a branch, and a branch is where the two drift`);
+  assert.strictEqual(restSends.length, 1,
+    `transmitFlockMessage makes ${restSends.length} REST sends; the fallback must describe the same message, once`);
+
+  // Same room, same body, same label — compared to EACH OTHER rather than to a
+  // spelling written down here, so renaming a local variable does not fail a
+  // test about transports. A caption was lost precisely because one of the two
+  // was handed a hardcoded '' while the other was handed the text.
+  const [socketRoom, socketBody] = positional(socketSends[0]);
+  const [restRoom, restBody] = positional(restSends[0]);
+  assert.strictEqual(socketRoom, restRoom, 'the two transports must address the same flock');
+  assert.strictEqual(socketBody, restBody, 'the two transports must send the same message body');
+  assert.doesNotMatch(socketBody, /^['"`]/,
+    'the body must be what the caller handed in, not a literal baked into the send');
+  assert.strictEqual(objField(socketSends[0], 'message_type'), objField(restSends[0], 'message_type'),
+    'the two transports must label the message identically');
+  assert.ok(objField(socketSends[0], 'message_type'), 'neither send may go out untyped');
+
+  // Every attachment the function accepts must reach BOTH transports, carrying
+  // the same value. The REST helper omits absent keys rather than nulling them,
+  // so its expression is allowed to extend the socket's with a nullish fallback
+  // (`image` / `image || undefined`) and nothing else.
+  const attachments = attachmentFields(fn);
+  assert.ok(attachments.includes('image_url') && attachments.includes('venue_data'),
+    'a photo and a venue card are both attachments on the one send path, not separate send paths');
+  for (const field of attachments) {
+    const onSocket = objField(socketSends[0], field);
+    const onRest = objField(restSends[0], field);
+    assert.ok(onSocket, `the socket send drops ${field}`);
+    assert.ok(onRest, `the REST fallback drops ${field}`);
+    assert.ok(onRest === onSocket || onRest.startsWith(`${onSocket} ||`),
+      `the two transports disagree about ${field}: socket sends \`${onSocket}\`, REST sends \`${onRest}\``);
+  }
+});
+
+test('a shared venue card goes out on the reconciled path, not a copy of it', () => {
+  const fn = appFn('shareVenueToChat', 'shareImageToChat');
+
+  assert.ok(/transmitFlockMessage\(/.test(fn) && /venue_data:/.test(fn),
+    'the card must be handed to transmitFlockMessage with its venue_data');
+
+  // Every one of these is a piece of the send path this function used to own a
+  // private copy of. The copy registered nothing in pendingEchoRef, so the
+  // bubble kept its Date.now() id forever and a reaction or a report on the card
+  // you had just shared addressed a row the server never issued; and a socket
+  // send the server dropped left the card on screen looking sent.
+  for (const owned of ['socketSendMessage(', 'apiSendMessage(', 'addMessageToFlock(', 'pendingEchoRef']) {
+    assert.ok(!fn.includes(owned),
+      `shareVenueToChat hand-rolls ${owned} again — a second send path is how the card lost id reconciliation and tap-to-retry`);
+  }
+});
+
+test('tap-to-retry re-sends everything the failed bubble was carrying', () => {
+  const retry = appFn('retryFailedMessage', 'sendChatMessage');
+  const attachments = attachmentFields(appFn('transmitFlockMessage', 'retryFailedMessage'));
+
+  assert.ok(/transmitFlockMessage\(/.test(retry), 'a retry must go back through the one send path');
+  for (const field of attachments) {
+    assert.match(retry, new RegExp(`\\b${field}:`),
+      `a retry drops ${field}, so retrying downgrades the message into something the user never sent`);
+  }
 });
 
 test('the photo composer sends whatever caption is typed', () => {
@@ -393,6 +540,25 @@ test('the dashboard renders no counter that nothing in the repo ever increments'
   assert.ok(/SET views = views \+ 1/.test(backend), 'views must still be counted server-side');
   assert.ok(!/\bclaims\s*=\s*claims\s*\+/.test(backend), 'if claims is now counted, put the display back');
   assert.ok(!/\brsvps\s*=\s*rsvps\s*\+/.test(backend), 'if venue-event RSVPs are now counted, put the display back');
+});
+
+test('no flock field is read from a column that does not exist', () => {
+  // App.js mapped `venuePriceLevel: f.venue_price_level` off GET /api/flocks.
+  // `flocks` has no such column — the route selects f.*, so the field was
+  // absent and the read was null on every flock, every time. The nearest thing
+  // in the schema is research_analytics.venue_price_level_selected, which
+  // routes/flocks.js inserts as a literal null. Price level is real Google
+  // Places data and it is still shown where this session actually looked it
+  // up; it is just no longer sourced from a column nobody ever created.
+  assert.ok(!/f\.venue_price_level\b/.test(codeOnly(APP_SRC)),
+    'flocks.venue_price_level does not exist; reading it back is a value the user can never actually keep');
+
+  const schema = ['database/schema.sql']
+    .concat(fs.readdirSync(path.join(__dirname, '..', 'migrations')).map((f) => `migrations/${f}`))
+    .map((rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8'))
+    .join('\n');
+  assert.ok(!/\bvenue_price_level\b(?!_selected)/.test(schema),
+    'the column now exists — put the mapping back, and persist it on the venue save route too');
 });
 
 test('the hardcoded "This Week" calendar is gone', () => {
