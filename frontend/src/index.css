@@ -150,9 +150,16 @@
        --t-micro    11 / 700 UPPERCASE eyebrows — max twice per screen
 
      Weights: the size does the work now, so nothing goes above 700 and
-     900 is gone entirely. Text inputs are the one documented exception to
-     the size list: a handful stay at a literal 16px because iOS zooms the
-     viewport on focus for anything smaller.
+     900 is gone entirely.
+
+     TEXT CONTROLS ARE THE ONE EXCEPTION, and it is no longer per-field.
+     Four of these roles are under 16px, which is the size below which iOS
+     zooms the viewport when a field takes focus. Rather than ask every
+     author to remember a literal 16px, the four sub-16 roles are redefined
+     to 16px ON input/textarea/select only — see the 16px FLOOR block lower
+     in this file. So `fontSize: 'var(--t-meta)'` is 12px on a <span> and
+     16px on an <input>, by design. Do not "fix" that by hardcoding a
+     smaller literal on a field.
      ═════════════════════════════════════════════════════════════════ */
   --t-display: 26px;
   --t-title: 19px;
@@ -373,6 +380,79 @@ body::after {
   }
   .scroll-fade { opacity: 1 !important; transform: none !important; }
   .birdie-orb, .birdie-bg::before { animation: none !important; }
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   16px FLOOR ON FOCUSABLE TEXT CONTROLS — the fix for the app-wide
+   "focusing a field zooms the whole screen" bug, confirmed on device on
+   the Birdie composer and on the venue and admin dashboards.
+
+   WHAT iOS ACTUALLY DOES. WKWebView zooms the viewport when a focused
+   input/select/textarea has a COMPUTED font-size under 16px. It is not a
+   design choice and no screen benefits from it. It is also not fixable
+   from the viewport tag: `user-scalable=no` / `maximum-scale=1` have been
+   ignored for focus zoom since iOS 10, so adding them would kill the
+   user's pinch zoom (WCAG 1.4.4) and still not stop this. public/index.html
+   carries a comment saying so. Do not re-add them. The only real fix is a
+   computed size of at least 16px on the control itself, which is this.
+
+   TWO RULES, because the app declares control sizes in two different ways
+   and one selector cannot reach both.
+
+   1. THE TOKEN RE-SCOPE below. App.js writes almost every field as an
+      INLINE style — `style={{ fontSize: 'var(--t-body)' }}` and friends,
+      via styles.input, the venue-dashboard `input` object, the revenue
+      simulator's inputStyle, and ~40 one-off SearchInputLocal calls. An
+      inline declaration outranks any normal stylesheet rule, so no base
+      rule here can beat them. But a custom property is resolved against
+      the ELEMENT'S OWN computed value, so redefining the four sub-16px
+      roles on the control itself makes that same inline declaration
+      compute to 16px, with no !important and without editing App.js.
+      This is what fixes the Birdie composer (it is `var(--t-body)`).
+      --t-display (26) and --t-title (19) are deliberately NOT redefined:
+      they already clear 16 and a control that asked for 19px should get 19.
+
+   2. THE font-size FLOOR further down, for controls that declare no size
+      of their own. Tailwind preflight gives those `font-size: 100%`, i.e.
+      the parent's size, which inside the app's cards is 12-15px. This rule
+      is later in the file than `@tailwind base`, so it wins at equal
+      specificity.
+
+   THE :not() CHAIN IS LOAD-BEARING TWICE, not stylistic.
+   - It excludes the control types that never trigger focus zoom and would
+     be visually damaged by a forced 16px: the range sliders (photo crop
+     zoom, camera zoom), the hidden file pickers, checkboxes and radios.
+   - Its specificity is (0,7,1), because each :not([type=...]) contributes
+     an attribute selector. That is what lets it beat the single-class
+     rules elsewhere in the build without !important — specifically
+     `.lpd-input` in website/LandingPage.css, which is 15px. Simplifying
+     this back to a bare `input` selector drops to (0,0,1), loses to that
+     class, and the LiveDemo field starts zooming again.
+
+   WHAT THIS STILL DOES NOT REACH: an inline style with a LITERAL px value
+   under 16, because a normal stylesheet declaration loses to the style
+   attribute and the token re-scope only helps fields written as var(--t-*).
+   As of 2026-08-14 there are none left — ModerationSheet.js's report
+   textarea was the last one and its owner took it 13px -> 16px. So if you
+   add a field, write it as a --t-* token or give it no size at all and this
+   floor covers you; hardcode a literal under 16 and nothing here can save
+   it. src/__tests__/iosFocusZoomFontFloor.test.js fails on a new one.
+   ═══════════════════════════════════════════════════════════════════ */
+input,
+textarea,
+select,
+[contenteditable]:not([contenteditable="false"]) {
+  --t-body: 16px;
+  --t-label: 16px;
+  --t-meta: 16px;
+  --t-micro: 16px;
+}
+
+input:not([type="checkbox"]):not([type="radio"]):not([type="file"]):not([type="color"]):not([type="range"]):not([type="submit"]):not([type="button"]),
+textarea,
+select,
+[contenteditable]:not([contenteditable="false"]) {
+  font-size: 16px;
 }
 
 /* Default readable colors for all text inputs — individual overrides still win via inline styles */
