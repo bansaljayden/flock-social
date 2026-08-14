@@ -9,11 +9,19 @@ const { isBlockedBetween } = require('../utils/blocks');
 const { GUEST_RSVP_SELECT, toGuestEntry, combineRsvpCounts } = require('../utils/guestRsvp');
 const { createUserBudget } = require('../utils/probeBudget');
 const { isPlaceIdShaped } = require('../utils/places');
-const { emitToFlockExcludingBlocked } = require('../sockets/handlers');
+const { emitToFlockExcludingBlocked, emitToFlockMembers } = require('../sockets/handlers');
 
 const { pushIfOffline } = require('../services/pushHelper');
 
 const router = express.Router();
+
+// SERIAL primary/foreign keys are INT4 (migrations 000/001). express-validator
+// `isInt()` with no bound accepts "9999999999", which then reaches the query and
+// comes back a 500 ("integer out of range") instead of a clean 400 — the same
+// class routesReliability.test.js pins for admin.js/venueDashboard.js, and the
+// reason friends.js bounds user ids with MAX_USER_ID. Every :id/:flockId param
+// below is bounded to this ceiling so a too-large id is a 400 before any query.
+const INT4_MAX = 2147483647;
 
 // ---------------------------------------------------------------------------
 // Invite budget (audit 2026-08-14)
@@ -353,7 +361,7 @@ router.get('/activity', async (req, res) => {
 });
 
 // GET /api/flocks/:id - Get a specific flock with members
-router.get('/:id', param('id').isInt(), async (req, res) => {
+router.get('/:id', param('id').isInt({ min: 1, max: INT4_MAX }), async (req, res) => {
   try {
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
@@ -544,7 +552,7 @@ router.get('/:id', param('id').isInt(), async (req, res) => {
 // PUT /api/flocks/:id - Update a flock (creator only)
 router.put('/:id',
   [
-    param('id').isInt(),
+    param('id').isInt({ min: 1, max: INT4_MAX }),
     body('name').optional().trim().isLength({ min: 1, max: 255 }),
     body('venue_name').optional().trim(),
     body('venue_address').optional().trim(),
@@ -718,7 +726,7 @@ router.put('/:id',
 );
 
 // DELETE /api/flocks/:id - Delete a flock (creator only)
-router.delete('/:id', param('id').isInt().withMessage('Invalid flock ID'), async (req, res) => {
+router.delete('/:id', param('id').isInt({ min: 1, max: INT4_MAX }).withMessage('Invalid flock ID'), async (req, res) => {
   try {
     if (rejectInvalid(req, res)) return;
     const flockId = req.params.id;
@@ -754,7 +762,7 @@ router.delete('/:id', param('id').isInt().withMessage('Invalid flock ID'), async
 // guest link. Any accepted member can share it; guests RSVP + vote from the
 // link with no account (routes/guest.js). One active link per flock; calling
 // with { regenerate: true } revokes the old one (kills a leaked link).
-router.post('/:id/invite-link', param('id').isInt().withMessage('Invalid flock ID'), async (req, res) => {
+router.post('/:id/invite-link', param('id').isInt({ min: 1, max: INT4_MAX }).withMessage('Invalid flock ID'), async (req, res) => {
   try {
     if (rejectInvalid(req, res)) return;
     const flockId = req.params.id;
@@ -793,7 +801,7 @@ router.post('/:id/invite-link', param('id').isInt().withMessage('Invalid flock I
 });
 
 // POST /api/flocks/:id/join - Accept a flock invite
-router.post('/:id/join', param('id').isInt().withMessage('Invalid flock ID'), async (req, res) => {
+router.post('/:id/join', param('id').isInt({ min: 1, max: INT4_MAX }).withMessage('Invalid flock ID'), async (req, res) => {
   try {
     if (rejectInvalid(req, res)) return;
     const flockId = req.params.id;
@@ -881,7 +889,7 @@ router.post('/:id/join', param('id').isInt().withMessage('Invalid flock ID'), as
 // POST /api/flocks/:id/invite - Invite users to an existing flock
 router.post('/:id/invite',
   [
-    param('id').isInt(),
+    param('id').isInt({ min: 1, max: INT4_MAX }),
     body('user_ids').isArray({ min: 1, max: 25 }).withMessage('user_ids must be a non-empty array'),
   ],
   async (req, res) => {
@@ -1041,7 +1049,7 @@ router.post('/:id/invite',
 );
 
 // POST /api/flocks/:id/decline - Decline a flock invite
-router.post('/:id/decline', param('id').isInt().withMessage('Invalid flock ID'), async (req, res) => {
+router.post('/:id/decline', param('id').isInt({ min: 1, max: INT4_MAX }).withMessage('Invalid flock ID'), async (req, res) => {
   try {
     if (rejectInvalid(req, res)) return;
     console.log('[Decline] Route hit — flock:', req.params.id, '| user:', req.user.id);
@@ -1078,7 +1086,7 @@ router.post('/:id/decline', param('id').isInt().withMessage('Invalid flock ID'),
 });
 
 // POST /api/flocks/:id/leave - Leave a flock
-router.post('/:id/leave', param('id').isInt().withMessage('Invalid flock ID'), async (req, res) => {
+router.post('/:id/leave', param('id').isInt({ min: 1, max: INT4_MAX }).withMessage('Invalid flock ID'), async (req, res) => {
   try {
     if (rejectInvalid(req, res)) return;
     const flockId = req.params.id;
@@ -1125,9 +1133,16 @@ router.post('/:id/leave', param('id').isInt().withMessage('Invalid flock ID'), a
       return res.json({ message: 'Left flock', flock_name: flockName, deleted: true });
     }
 
-    // Notify flock that member left (accepted members only — see above)
+    // Notify flock that member left (accepted members only — see above).
+    // Per-member fan-out, not the `flock:{id}` room: a member sitting anywhere
+    // else in the app was never in that room and missed the count change. The
+    // DELETE is below, so the leaver still holds their accepted row and the
+    // roster read reaches the same set the room held. Guarded so a fan-out
+    // failure cannot 500 a leave that is about to succeed.
     if (io && wasAccepted) {
-      io.to(`flock:${flockId}`).emit('flock_member_left', { flockId: parseInt(flockId), userId: req.user.id, userName: req.user.name });
+      await emitToFlockMembers(io, flockId, 'flock_member_left', {
+        flockId: parseInt(flockId), userId: req.user.id, userName: req.user.name,
+      }).catch((e) => console.error('flock_member_left fan-out failed:', e.message));
     }
 
     // Remove member
@@ -1160,7 +1175,7 @@ router.post('/:id/leave', param('id').isInt().withMessage('Invalid flock ID'), a
 });
 
 // GET /api/flocks/:id/members - Get members of a flock
-router.get('/:id/members', param('id').isInt().withMessage('Invalid flock ID'), async (req, res) => {
+router.get('/:id/members', param('id').isInt({ min: 1, max: INT4_MAX }).withMessage('Invalid flock ID'), async (req, res) => {
   try {
     if (rejectInvalid(req, res)) return;
     const flockId = req.params.id;
@@ -1205,7 +1220,7 @@ router.get('/:id/members', param('id').isInt().withMessage('Invalid flock ID'), 
 // POST /api/flocks/:id/attendance - Mark who attended (creator only, completed flocks)
 router.post('/:id/attendance',
   [
-    param('id').isInt(),
+    param('id').isInt({ min: 1, max: INT4_MAX }),
     body('attendance').isArray({ min: 1, max: 50 }).withMessage('Attendance array required'),
   ],
   async (req, res) => {
@@ -1242,7 +1257,11 @@ router.post('/:id/attendance',
           // bad element rolled back every other member's attendance and
           // returned a 500. Non-integers are skipped instead.
           const userId = parseInt(entry?.userId, 10);
-          if (!Number.isInteger(userId) || userId <= 0) continue;
+          // Upper bound as well as lower: an id past INT4 (still a positive
+          // integer) reaches the UPDATE below and aborts the whole attendance
+          // transaction with an out-of-range 500, exactly as the create/invite
+          // loops guard against. Out-of-range ids are skipped like guest ids.
+          if (!Number.isInteger(userId) || userId <= 0 || userId > INT4_MAX) continue;
           const status = entry?.attended ? 'attended' : 'no_show';
 
           await client.query(
@@ -1300,7 +1319,11 @@ router.post('/:id/attendance',
       // Socket notifications
       const io = req.app.get('io');
       if (io) {
-        io.to(`flock:${flockId}`).emit('attendance_marked', { flockId: parseInt(flockId), attendance: results });
+        // Per-member fan-out so a member not on the flock screen still learns
+        // attendance was recorded. Guarded (post-commit work must not 500 it).
+        await emitToFlockMembers(io, flockId, 'attendance_marked', {
+          flockId: parseInt(flockId), attendance: results,
+        }).catch((e) => console.error('attendance_marked fan-out failed:', e.message));
         for (const r of results) {
           io.to(`user:${r.userId}`).emit('reliability_updated', {
             reliabilityScore: r.reliabilityScore,

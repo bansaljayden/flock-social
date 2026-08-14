@@ -149,7 +149,7 @@ router.post('/request',
 
 // POST /api/friends/accept - Accept a friend request
 router.post('/accept',
-  body('user_id').isInt().withMessage('user_id is required'),
+  body('user_id').isInt({ min: 1, max: MAX_USER_ID }).withMessage('user_id is required'),
   async (req, res) => {
     try {
       const errors = validationResult(req);
@@ -241,7 +241,7 @@ router.get('/pending', async (req, res) => {
 
 // POST /api/friends/decline - Decline a friend request
 router.post('/decline',
-  body('user_id').isInt().withMessage('user_id is required'),
+  body('user_id').isInt({ min: 1, max: MAX_USER_ID }).withMessage('user_id is required'),
   async (req, res) => {
     try {
       const errors = validationResult(req);
@@ -273,8 +273,12 @@ router.post('/decline',
 // DELETE /api/friends/:userId - Remove a friend or cancel outgoing request
 router.delete('/:userId', async (req, res) => {
   try {
-    const userId = parseInt(req.params.userId);
-    if (isNaN(userId)) return res.status(400).json({ error: 'Invalid user ID' });
+    const userId = parseInt(req.params.userId, 10);
+    // Bounded to INT4: an id past MAX_USER_ID reaches the DELETE as an
+    // out-of-range value and 500s instead of returning a clean 400.
+    if (!Number.isInteger(userId) || userId < 1 || userId > MAX_USER_ID) {
+      return res.status(400).json({ error: 'Invalid user ID' });
+    }
 
     const result = await pool.query(
       `DELETE FROM friendships
@@ -572,7 +576,7 @@ router.get('/status/:userId', async (req, res) => {
     // comparison and come back as a 500 (see DELETE /:userId, which already
     // guarded this).
     const userId = parseInt(req.params.userId, 10);
-    if (!Number.isInteger(userId) || userId <= 0) {
+    if (!Number.isInteger(userId) || userId <= 0 || userId > MAX_USER_ID) {
       return res.status(400).json({ error: 'Invalid user ID' });
     }
     const result = await pool.query(
