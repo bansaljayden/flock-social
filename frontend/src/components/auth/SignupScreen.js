@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { signup, googleLoginWithToken } from '../../services/api';
+import { signup, googleLoginWithToken, resendVerificationEmail } from '../../services/api';
 import { useGoogleLogin } from '@react-oauth/google';
 import AppleSignInButton from './AppleSignInButton';
 import AuthShell, { AUTH, AuthError, AuthRule, GoogleG, PasswordEye } from './AuthShell';
@@ -17,6 +17,33 @@ const SignupScreen = ({ onSignupSuccess, onSwitchToLogin }) => {
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  // Signup now sends a confirmation link, and the account cannot do much until
+  // it is clicked. Landing straight in the app and meeting a bare 403 on the
+  // first real action is a bad first five minutes, so the screen says what
+  // happened and offers to send the link again.
+  const [awaitingVerification, setAwaitingVerification] = useState(false);
+  const [resendCooldown, setResendCooldown] = useState(0);
+  const [resendNote, setResendNote] = useState('');
+
+  React.useEffect(() => {
+    if (resendCooldown <= 0) return undefined;
+    const t = setTimeout(() => setResendCooldown((n) => n - 1), 1000);
+    return () => clearTimeout(t);
+  }, [resendCooldown]);
+
+  const handleResend = async () => {
+    if (resendCooldown > 0) return;
+    setResendNote('');
+    // Start the cooldown before the request, so a double tap cannot get through.
+    setResendCooldown(60);
+    try {
+      await resendVerificationEmail();
+      setResendNote('Sent. Check your inbox, and your spam folder.');
+    } catch (err) {
+      if (err?.status === 429) setResendNote('That is a lot of emails. Try again in a few minutes.');
+      else setResendNote(err?.message || 'Could not send it just now. Try again shortly.');
+    }
+  };
 
   // Custom-styled Google button; DOB is validated in onClick BEFORE this
   // launches (the server re-checks age on account creation regardless).
@@ -88,6 +115,10 @@ const SignupScreen = ({ onSignupSuccess, onSwitchToLogin }) => {
 
     try {
       const data = await signup(name, email, password, dob);
+      if (data?.emailVerificationRequired) {
+        setAwaitingVerification(true);
+        return;
+      }
       onSignupSuccess(data.user);
     } catch (err) {
       setError(err.message);
@@ -103,6 +134,36 @@ const SignupScreen = ({ onSignupSuccess, onSwitchToLogin }) => {
       <p className="auth-sub">Four fields and you're in.</p>
     </>
   );
+
+  if (awaitingVerification) {
+    return (
+      <AuthShell hero={(
+        <>
+          <img className="auth-mark" src="/logo192.png" alt="" aria-hidden="true" />
+          <h1 className="auth-h1">Confirm your email</h1>
+          <p className="auth-sub">We sent a link to {email}. Open it and you are in.</p>
+        </>
+      )}>
+        <p className="auth-sub" style={{ margin: '0 0 18px' }}>
+          Your account exists. Clicking the link is what lets you start a flock, add friends and save a payment handle. If it has not landed in a minute, check your spam folder.
+        </p>
+        {resendNote && <p role="status" className="auth-hint" style={{ margin: '0 0 12px' }}>{resendNote}</p>}
+        <button
+          type="button"
+          onClick={handleResend}
+          disabled={resendCooldown > 0}
+          className="auth-primary"
+          style={{ opacity: resendCooldown > 0 ? 0.5 : 1, cursor: resendCooldown > 0 ? 'not-allowed' : 'pointer' }}
+        >
+          {resendCooldown > 0 ? `Send it again in ${resendCooldown}s` : 'Send the link again'}
+        </button>
+        <p className="auth-foot">
+          Already confirmed?
+          <button type="button" className="auth-textbtn" onClick={onSwitchToLogin}>Sign in</button>
+        </p>
+      </AuthShell>
+    );
+  }
 
   return (
     <AuthShell hero={hero}>

@@ -141,6 +141,15 @@ const LoginScreen = ({ onLoginSuccess, onSwitchToSignup, onSwitchToVenueLogin })
           iOS app must offer Sign in with Apple too. Renders null on web. */}
       <AppleSignInButton onSuccess={onLoginSuccess} onError={(m) => setError(m)} />
 
+      {/* The server will not say which addresses belong to Google or Apple
+          accounts, because answering that turns login into an account
+          enumeration oracle. So the hint lives here instead, standing, for
+          everyone: a returning OAuth user who types their email and password
+          gets a password failure they cannot otherwise explain. */}
+      <p className="auth-hint" style={{ textAlign: 'center', marginTop: '12px' }}>
+        Signed up with Google or Apple? Use that button.
+      </p>
+
       <p className="auth-foot">
         New here?
         <button type="button" className="auth-textbtn" onClick={onSwitchToSignup}>Create an account</button>
