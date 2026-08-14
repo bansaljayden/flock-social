@@ -3,6 +3,7 @@ const { param, body, validationResult } = require('express-validator');
 const { authenticate } = require('../middleware/auth');
 const { getWeather } = require('../services/weatherService');
 const crowdEngine = require('../services/crowdEngine');
+const { buildHoursByDay } = crowdEngine;
 const mlPredictor = require('../services/mlPredictor');
 const { upstreamSignal } = require('../utils/upstream');
 
@@ -10,9 +11,7 @@ const { upstreamSignal } = require('../utils/upstream');
 const {
   estimateCapacity,
   estimateWait,
-  findBestTime,
   findPeakTime,
-  findQuieterAlternatives,
   buildCalibrationAdjustment,
   getLabel,
 } = mlPredictor;
@@ -111,22 +110,24 @@ async function fetchVenueFromGoogle(placeId, clientDay) {
   const p = await response.json();
   if (p.error) return null;
 
-  // Extract today's opening hours if available
-  let openHour = null;
-  let closeHour = null;
+  // Extract opening hours. Round 14: one window for "today" could not express
+  // a 24-hour venue (Google sends no `close` at all), split lunch/dinner
+  // service, or a day the venue is dark, and all three drew a wrong card. The
+  // per-day map is what the engine reads now; the scalars below stay for
+  // clients still reading a single window.
   const periods = p.currentOpeningHours?.periods;
-  if (periods && periods.length) {
-    const today = clientDay != null ? clientDay : new Date().getDay(); // 0=Sun
-    const todayPeriod = periods.find(pd => pd.open?.day === today);
-    if (todayPeriod) {
-      openHour = todayPeriod.open?.hour ?? null;
-      closeHour = todayPeriod.close?.hour ?? null;
-      // If close is 0, it means midnight
-      if (closeHour === 0) closeHour = 24;
-    }
-  }
+  const hoursByDay = buildHoursByDay(periods);
+  const today = clientDay != null ? clientDay : new Date().getDay(); // 0=Sun
+  const hoursToday = hoursByDay ? (hoursByDay[today] || []) : [];
+  const todayWindow = hoursToday[0] || null;
+  const openHour = todayWindow ? todayWindow.open : null;
+  const closeHour = todayWindow ? todayWindow.close : null;
+  const closeMinute = todayWindow ? todayWindow.closeMinute : 0;
 
   return {
+    hoursByDay,
+    hoursToday,
+    closeMinute,
     place_id: p.id,
     name: p.displayName?.text || '',
     formatted_address: p.formattedAddress || '',
@@ -190,19 +191,26 @@ router.get('/:placeId',
 
       // Build a timestamp with the client's local hour/day for accurate scoring
       const clientTime = new Date(now);
-      // Adjust to match client's day of week and hour
-      const serverDay = clientTime.getDay();
-      const dayDiff = localDay - serverDay;
-      clientTime.setDate(clientTime.getDate() + dayDiff);
+      // Adjust to match client's day of week and hour. Round 14: this used to
+      // be `localDay - serverDay`, a signed weekday difference used as a day
+      // count, which lands up to six days from today when the client and the
+      // UTC server are on different sides of midnight. Nearest matching
+      // weekday is the only reading that means "this venue, now".
+      clientTime.setDate(clientTime.getDate() + crowdEngine.weekdayOffset(clientTime.getDay(), localDay));
       clientTime.setHours(localHour, 0, 0, 0);
 
       const crowdResult = await mlPredictor.predictBusyness(venue, weather, clientTime);
-      const hourly = await mlPredictor.predictHourlyForecast(venue, weather, localHour, 12, clientTime);
 
-      // Full-day forecast (6 AM - 5 AM) for accurate peak/best detection
-      const fullDay = await mlPredictor.predictHourlyForecast(venue, weather, 6, 24, clientTime);
-      const peakResult = findPeakTime(fullDay, venue);
-      const bestTime = findBestTime(fullDay, venue, peakResult.startIdx, peakResult.endIdx, venue.isOpen);
+      // Round 13: this 24-hour forecast used to start at 6 AM, so "best time"
+      // could name an hour that already happened and "now" was read off the
+      // 6 AM entry instead of the score on screen. It starts at the current
+      // hour and runs forward now, and the hourly strip is its first 12 entries
+      // so the chart and the recommendation can never disagree.
+      const fullDay = await mlPredictor.predictHourlyForecast(venue, weather, localHour, 24, clientTime);
+      const hourly = fullDay.slice(0, 12);
+      // Peak comes off the same 12 hours the forecast meter draws, so it names
+      // a rush the user can see rather than tomorrow evening.
+      const peakResult = findPeakTime(hourly, venue, { startDay: localDay });
 
       // Query user feedback for calibration (non-blocking — fallback to raw score on failure)
       let calibration = { adjustedScore: crowdResult.score, feedbackUsed: false, reportCount: 0 };
@@ -220,6 +228,16 @@ router.get('/:placeId',
       }
 
       const finalScore = calibration.adjustedScore;
+      // Best time is decided against the score the client actually renders, so
+      // a venue reported busy by real users can't also be told "now is good".
+      const best = crowdEngine.recommendBestTime(fullDay, venue, peakResult.startIdx, peakResult.endIdx, venue.isOpen, {
+        currentHour: localHour,
+        // Round 14: without the day, a venue closed on Mondays was told to come
+        // at 7 PM tonight, and split-service hours read as closed all evening.
+        currentDay: localDay,
+        currentScore: finalScore,
+      });
+      const bestTime = best.text;
       const capacity = estimateCapacity(venue, finalScore);
       const waitEstimateTyped = estimateWait(finalScore, venue.types, venue.price_level);
 
@@ -244,7 +262,32 @@ router.get('/:placeId',
         isOpen: venue.isOpen,
         openHour: venue.openHour,
         closeHour: venue.closeHour,
-        hourly,
+        // Round 14: openHour/closeHour cannot express 24-hour venues, split
+        // service or a dark day, and every client that re-derived open/closed
+        // from those two numbers got one of the three wrong. This is today's
+        // real window list, and each hour below carries the server's own
+        // open/closed answer so no client has to guess.
+        hoursToday: venue.hoursToday || [],
+        hourly: hourly.map((h, i) => {
+          const abs = localHour + i;
+          return {
+            ...h,
+            // Google's openNow wins for the "Now" bar: posted hours and reality
+            // disagree often enough that the bar under a "Closed" header must
+            // not be drawn as a live crowd.
+            open: (i === 0 && venue.isOpen != null)
+              ? venue.isOpen
+              : crowdEngine.isOpenAt(venue, abs % 24, localDay + Math.floor(abs / 24)),
+          };
+        }),
+        // Which hourly entry the best-time sentence names (null when it says
+        // "now", or when the named hour sits past the 12 drawn bars), so a
+        // chart can mark the same hour the sentence names instead of guessing.
+        bestHour: best.dayOffset === 0 ? best.hourLabel : null,
+        bestIndex: (best.dayOffset === 0 && best.index >= 0 && best.index < hourly.length && best.hourLabel)
+          ? best.index
+          : null,
+        bestIsNow: best.hourLabel == null,
         factors: crowdResult.factors,
         calibration: {
           feedbackUsed: calibration.feedbackUsed,
@@ -302,8 +345,7 @@ router.post('/batch',
       // Use client's local time if provided
       const clientTime = new Date(now);
       if (localHour != null && localDay != null) {
-        const dayDiff = localDay - clientTime.getDay();
-        clientTime.setDate(clientTime.getDate() + dayDiff);
+        clientTime.setDate(clientTime.getDate() + crowdEngine.weekdayOffset(clientTime.getDay(), localDay));
         clientTime.setHours(localHour, 0, 0, 0);
       }
 
@@ -407,9 +449,7 @@ router.get('/:placeId/alternatives',
       // Get weather
       const weather = await getWeather(lat, lon);
       const clientTime = new Date(now);
-      const serverDay = clientTime.getDay();
-      const dayDiff = localDay - serverDay;
-      clientTime.setDate(clientTime.getDate() + dayDiff);
+      clientTime.setDate(clientTime.getDate() + crowdEngine.weekdayOffset(clientTime.getDay(), localDay));
       clientTime.setHours(localHour, 0, 0, 0);
 
       // Score the target venue
@@ -448,10 +488,46 @@ router.get('/:placeId/alternatives',
           location: p.location || null,
         }));
 
-      const alternatives = findQuieterAlternatives(nearby, targetResult.score, weather, clientTime, 3);
+      // Round 14: "Less crowded nearby" was scored by a different engine than
+      // the card it sits under. findQuieterAlternatives calls the RULE ENGINE
+      // while the card's number comes from the ML model, and the target it
+      // compared against was the UNCALIBRATED score while the card shows the
+      // calibrated one. Both gaps could list a venue as quieter than a card it
+      // was in fact busier than. Everything here now goes through the same
+      // predictor and the same calibration as GET /api/crowd/:placeId.
+      const altIds = nearby.map(v => v.place_id).filter(Boolean);
+      let feedbackByVenue = {};
+      try {
+        const fbResult = await pool.query(
+          `SELECT venue_place_id, crowd_level, predicted_score FROM venue_feedback
+           WHERE venue_place_id = ANY($1::text[])
+             AND day_of_week = $2 AND hour BETWEEN $3 AND $4
+             AND verified = true`,
+          [[placeId, ...altIds], localDay, Math.max(0, localHour - 1), Math.min(23, localHour + 1)]
+        );
+        for (const row of fbResult.rows) {
+          (feedbackByVenue[row.venue_place_id] ||= []).push(row);
+        }
+      } catch (fbErr) {
+        console.error('[Crowd] Alternatives feedback query failed, using raw scores:', fbErr.message);
+      }
+
+      const targetScore = buildCalibrationAdjustment(feedbackByVenue[placeId] || [], targetResult.score).adjustedScore;
+      const scoredNearby = await Promise.all(nearby.map(async (v) => {
+        try {
+          const r = await mlPredictor.predictBusyness(v, weather, clientTime);
+          const score = buildCalibrationAdjustment(feedbackByVenue[v.place_id] || [], r.score).adjustedScore;
+          return { placeId: v.place_id, name: v.name, score, label: getLabel(score) };
+        } catch { return null; }
+      }));
+
+      const alternatives = scoredNearby
+        .filter(v => v && v.score < targetScore)
+        .sort((a, b) => a.score - b.score)
+        .slice(0, 3);
 
       res.json({
-        currentVenue: { name: target.name, score: targetResult.score },
+        currentVenue: { name: target.name, score: targetScore },
         alternatives,
       });
     } catch (err) {

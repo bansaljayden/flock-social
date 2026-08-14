@@ -14,7 +14,7 @@ const { query, param, validationResult } = require('express-validator');
 const { getWeather } = require('../services/weatherService');
 const mlPredictor = require('../services/mlPredictor');
 const { upstreamSignal } = require('../utils/upstream');
-const { findBestTime, findPeakTime, getLabel } = require('../services/crowdEngine');
+const { recommendBestTime, findPeakTime, getLabel, venueLocalNow, isOpenAt, buildHoursByDay, weekdayOffset } = require('../services/crowdEngine');
 
 const router = express.Router();
 const API_KEY = process.env.GOOGLE_PLACES_API_KEY;
@@ -68,22 +68,26 @@ function priceLevelToNum(priceLevel) {
 }
 
 function toVenueShape(p, localDay) {
-  let openHour = null, closeHour = null;
+  let openHour = null, closeHour = null, closeMinute = 0;
   const periods = p.currentOpeningHours?.periods;
-  if (periods && periods.length) {
-    const today = localDay != null ? localDay : new Date().getDay();
-    const todayPeriod = periods.find(pd => pd.open?.day === today);
-    if (todayPeriod) {
-      openHour = todayPeriod.open?.hour ?? null;
-      closeHour = todayPeriod.close?.hour ?? null;
-      // Midnight close is 24, not 0, so a 10 AM - 12 AM day stays a normal
-      // window. An overnight venue still lands here as open 22 / close 3 —
-      // that wrap is handled by crowdEngine.hourInWindow (round 11), which is
-      // the single place open/closed is decided.
-      if (closeHour === 0) closeHour = 24;
+  const hoursByDay = buildHoursByDay(periods);
+  if (hoursByDay) {
+    // The venue's own day beats the visitor's: a place in LA is still on
+    // Friday's hours while a visitor in London has rolled over to Saturday.
+    const venueDay = venueLocalNow(p.utcOffsetMinutes)?.day;
+    const today = venueDay != null ? venueDay : (localDay != null ? localDay : new Date().getDay());
+    // Scalars stay for anything still reading a single window; hoursByDay is
+    // what actually decides open/closed now.
+    const todayWindow = (hoursByDay[today] || [])[0];
+    if (todayWindow) {
+      openHour = todayWindow.open;
+      closeHour = todayWindow.close;
+      closeMinute = todayWindow.closeMinute;
     }
   }
   return {
+    hoursByDay,
+    closeMinute,
     place_id: p.id,
     name: p.displayName?.text || '',
     formatted_address: p.formattedAddress || '',
@@ -98,17 +102,41 @@ function toVenueShape(p, localDay) {
   };
 }
 
-const PLACE_FIELDS = 'places.id,places.displayName,places.formattedAddress,places.rating,places.userRatingCount,places.priceLevel,places.types,places.currentOpeningHours,places.location,places.photos';
+const PLACE_FIELDS = 'places.id,places.displayName,places.formattedAddress,places.rating,places.userRatingCount,places.priceLevel,places.types,places.currentOpeningHours,places.utcOffsetMinutes,places.location,places.photos';
 
 // The full venue card: current score + best time + peak + 12h forecast.
-async function buildCard(v, weather, scoreTime, localHour) {
-  const scored = await mlPredictor.predictBusyness(v, weather, scoreTime);
-  const [hourly, fullDay] = await Promise.all([
-    mlPredictor.predictHourlyForecast(v, weather, localHour, 12, scoreTime),
-    mlPredictor.predictHourlyForecast(v, weather, 6, 24, scoreTime),
-  ]);
-  const peakResult = findPeakTime(fullDay, v);
-  const bestTime = findBestTime(fullDay, v, peakResult.startIdx, peakResult.endIdx, v.isOpen);
+//
+// Round 13: the 24-hour forecast used to start at 6 AM no matter what time it
+// was, which is how a card at 8:49 PM recommended 4 PM. It now starts at the
+// venue's current hour and runs forward, so:
+//   - every hour in it is still to come,
+//   - entry 0 is scored at the exact timestamp the dial uses, so the chart's
+//     first bar, the headline number and the recommendation cannot disagree,
+//   - the chart is the first 12 entries of that same array instead of a second
+//     set of predictions that could drift from it (and 12 fewer model calls).
+async function buildCard(v, weather, clock, preScored) {
+  // Round 14: the list pin and the card dial are the same venue at the same
+  // instant, so they must be the same prediction, not two calls that could
+  // straddle an event-cache refill and print 78% on the pin and 76% in the
+  // ring. The caller hands its score in when it already has one.
+  const scored = preScored || await mlPredictor.predictBusyness(v, weather, clock.time);
+  const fullDay = await mlPredictor.predictHourlyForecast(v, weather, clock.localHour, 24, clock.time);
+  const hourly = fullDay.slice(0, 12);
+  // Peak is read off the 12 hours the chart draws, so the rush it names is a
+  // bar you can see. Scanning all 24 made a Wednesday card report Thursday
+  // evening as the peak. Indexes still line up with fullDay for the best-time
+  // exclusion below.
+  const peakResult = findPeakTime(hourly, v, { startDay: clock.localDay });
+  const best = recommendBestTime(fullDay, v, peakResult.startIdx, peakResult.endIdx, v.isOpen, {
+    currentHour: clock.localHour,
+    currentDay: clock.localDay, // so a Monday-closed venue isn't sent tonight
+    currentScore: scored.score, // the number on the dial, not a different hour's
+  });
+  // Entry 0 is scored at the same instant as the dial, so this must hold. If it
+  // ever stops holding, the card is lying about one of the two numbers.
+  if (hourly.length && hourly[0].score !== scored.score) {
+    console.error(`[PublicDemo] dial/chart mismatch for ${v.place_id}: ${scored.score} vs ${hourly[0].score}`);
+  }
   return {
     place_id: v.place_id,
     name: v.name,
@@ -120,11 +148,46 @@ async function buildCard(v, weather, scoreTime, localHour) {
     score: scored.score,
     label: getLabel(scored.score),
     confidence: scored.confidence,
-    best_time: bestTime,
+    best_time: best.text,
+    // Which bar the chart should mark. Matched by index, not by label: the
+    // recommendation is chosen over 24 hours and the chart only draws 12, so a
+    // named hour can sit past the last bar and must not ring a bar at all.
+    best_hour: best.dayOffset === 0 ? best.hourLabel : null,
+    best_index: (best.dayOffset === 0 && best.index >= 0 && best.index < hourly.length && best.hourLabel)
+      ? best.index
+      : null,
+    // True when the answer is "now" rather than a named hour, so the card can
+    // stop printing "Best time to go: Packed now, and it stays that way".
+    best_is_now: best.hourLabel == null,
     peak_hours: peakResult.text,
-    hourly: hourly.map(h => ({ hour: h.hour, label: h.label, score: h.score })),
+    // `open` per hour so closed hours can't be drawn as a crowd. A shut venue
+    // has no crowd, whatever the model thinks the hour looks like.
+    hourly: hourly.map((h, i) => {
+      const abs = clock.localHour + i; // the forecast runs forward from now
+      return {
+        hour: h.hour,
+        label: h.label,
+        score: h.score,
+        // Google's openNow wins for the "Now" bar. Published hours and reality
+        // disagree often enough (holidays, private events, a late open) that
+        // the bar under a "Closed right now" headline must not be drawn as a
+        // live crowd just because the posted window says it should be.
+        open: (i === 0 && v.isOpen != null)
+          ? v.isOpen
+          : isOpenAt(v, abs % 24, clock.localDay + Math.floor(abs / 24)),
+      };
+    }),
     as_of: Date.now(),
   };
+}
+
+// The freshness line is drawn from this, not from the client's own clock: a
+// phone whose clock is four minutes fast would otherwise read a fresh card as
+// "4m ago". The card object itself is shared cache, so age is stamped per
+// response and never written back into it.
+function withAge(card) {
+  if (!card || typeof card.as_of !== 'number') return card;
+  return { ...card, age_ms: Math.max(0, Date.now() - card.as_of) };
 }
 
 // ---------------------------------------------------------------------------
@@ -134,14 +197,37 @@ async function buildCard(v, weather, scoreTime, localHour) {
 // Visitors' clocks, not Railway's: the server runs UTC, so scoring "now" with
 // server time shifts every prediction by the visitor's UTC offset. Same
 // localHour/localDay contract as GET /api/crowd.
+// Everything downstream reads day/hour off a Date with getDay()/getHours(), so
+// a "local" clock is expressed as a server-tz Date carrying the right wall
+// values.
+// Round 14: `localDay - t.getDay()` is a signed weekday difference, not a
+// number of days. On a UTC Sunday a Los Angeles venue is still on Saturday, so
+// it computed 6 - 0 = +6 and built a timestamp SIX DAYS IN THE FUTURE — every
+// Saturday night, for every venue west of the date line. The weekday and hour
+// came out right, which is why it hid, but the DATE feeds the holiday /
+// school-break / special-night features and the Ticketmaster query window, so
+// the card was scored against next week's events. Nearest matching weekday
+// (-3..+3) is the only reading that means "this venue, now".
+function clockFor(localHour, localDay, now) {
+  const t = now ? new Date(now) : new Date();
+  t.setDate(t.getDate() + weekdayOffset(t.getDay(), localDay));
+  t.setHours(localHour, 0, 0, 0);
+  return { time: t, localHour, localDay };
+}
+
 function clientNow(req) {
   const now = new Date();
   const localHour = req.query.localHour != null ? parseInt(req.query.localHour, 10) : now.getHours();
   const localDay = req.query.localDay != null ? parseInt(req.query.localDay, 10) : now.getDay();
-  const t = new Date(now);
-  t.setDate(t.getDate() + (localDay - t.getDay()));
-  t.setHours(localHour, 0, 0, 0);
-  return { time: t, localHour, localDay };
+  return clockFor(localHour, localDay);
+}
+
+// Round 13: the visitor's clock is a decent guess and the server's is a bad
+// one. When Google tells us the venue's UTC offset we use the venue's own
+// clock, so "a time in the future" is true at the door.
+function venueClock(place, fallback) {
+  const local = venueLocalNow(place?.utcOffsetMinutes);
+  return local ? clockFor(local.hour, local.day) : fallback;
 }
 
 router.get('/demo/venues',
@@ -167,7 +253,9 @@ router.get('/demo/venues',
       // weekend request could poison the weekday cache (round 6).
       const cacheKey = `area:${lat}:${lng}:${q}:${localDay}:${localHour}`;
       const cached = getCache(cacheKey);
-      if (cached) return res.json(cached);
+      // A cache hit is minutes old and says so. Stamping age at build time
+      // would let a 19-minute-old card claim "updated just now".
+      if (cached) return res.json(cached.card ? { ...cached, card: withAge(cached.card) } : cached);
 
       if (!allowDemo(req)) return res.status(429).json({ error: DEMO_BUSY_MSG });
 
@@ -215,12 +303,18 @@ router.get('/demo/venues',
       // serial scoring made the first paint feel like dial-up.
       const weather = await getWeather(lat, lng).catch(() => null);
       const localDayParam = req.query.localDay != null ? parseInt(req.query.localDay, 10) : null;
+      const visitorClock = { time: scoreTime, localHour, localDay };
 
       const venues = (await Promise.all(places.map(async (p) => {
         const v = toVenueShape(p, localDayParam);
         try {
-          const scored = await mlPredictor.predictBusyness(v, weather, scoreTime);
+          const clock = venueClock(p, visitorClock);
+          const scored = await mlPredictor.predictBusyness(v, weather, clock.time);
           return {
+            _place: p,
+            _shape: v,
+            _clock: clock,
+            _scored: scored,
             place_id: v.place_id,
             name: v.name,
             address: v.formatted_address,
@@ -237,21 +331,29 @@ router.get('/demo/venues',
         } catch { return null; } // skip venues the model can't score
       }))).filter(Boolean);
 
-      const result = { venues };
-
       // Embed the busiest venue's full card so the section renders in ONE
       // round trip instead of venues -> card chaining.
+      //
+      // Round 14: "busiest" alone put a SHUT venue on the hero card — a 74%
+      // red dial over the word "Closed", which is the worst card the demo can
+      // draw. An open venue always wins the slot; a closed one only gets it
+      // when the whole area is shut.
+      let card = null;
       if (venues.length > 0) {
         try {
-          const busiest = [...venues].sort((a, b) => b.score - a.score)[0];
-          const bp = places.find(p => p.id === busiest.place_id);
-          const bv = toVenueShape(bp, localDayParam);
-          result.card = await buildCard(bv, weather, scoreTime, localHour);
+          const rank = (a, b) => (Number(b.is_open !== false) - Number(a.is_open !== false)) || (b.score - a.score);
+          const feature = [...venues].sort(rank)[0];
+          card = await buildCard(feature._shape, weather, feature._clock, feature._scored);
         } catch { /* card arrives via the venue endpoint instead */ }
       }
 
+      const result = {
+        venues: venues.map(({ _place, _shape, _clock, _scored, ...v }) => v),
+        ...(card ? { card } : {}),
+      };
+
       setCache(cacheKey, result, 20 * 60_000);
-      res.json(result);
+      res.json(card ? { ...result, card: withAge(card) } : result);
     } catch (err) {
       console.error('[PublicDemo] venues error:', err.message);
       res.status(500).json({ error: DEMO_BUSY_MSG });
@@ -278,7 +380,7 @@ router.get('/demo/venue/:placeId',
       const { time: scoreTime, localHour, localDay } = clientNow(req);
       const cacheKey = `venue:${placeId}:${localDay}:${localHour}`;
       const cached = getCache(cacheKey);
-      if (cached) return res.json(cached);
+      if (cached) return res.json(withAge(cached));
 
       if (!allowDemo(req)) return res.status(429).json({ error: DEMO_BUSY_MSG });
 
@@ -311,9 +413,9 @@ router.get('/demo/venue/:placeId',
       const lng = v.location?.longitude;
       const weather = (lat && lng) ? await getWeather(lat, lng).catch(() => null) : null;
 
-      const result = await buildCard(v, weather, scoreTime, localHour);
+      const result = await buildCard(v, weather, venueClock(p, { time: scoreTime, localHour, localDay }));
       setCache(cacheKey, result, 10 * 60_000);
-      res.json(result);
+      res.json(withAge(result));
     } catch (err) {
       console.error('[PublicDemo] venue error:', err.message);
       res.status(500).json({ error: DEMO_BUSY_MSG });
@@ -322,3 +424,7 @@ router.get('/demo/venue/:placeId',
 );
 
 module.exports = router;
+// Two of the subtlest card bugs live in these two helpers (a weekday
+// difference read as a day count, and a cached card claiming to be fresh), so
+// they are reachable from the tests rather than only from a live Google key.
+module.exports.__testables = { clockFor, withAge, buildCard };
