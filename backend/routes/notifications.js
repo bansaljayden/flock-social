@@ -8,7 +8,14 @@ router.use(authenticate);
 
 // POST /api/notifications/register — Register a device token for push notifications
 router.post('/register',
-  [body('token').isString().isLength({ min: 1 }).withMessage('Token is required')],
+  [
+    // An FCM registration token is ~160-350 characters. The column is TEXT and
+    // was unbounded, so an authenticated client could park megabytes in it.
+    body('token').isString().trim().isLength({ min: 8, max: 1024 })
+      .withMessage('Token is required'),
+    body('deviceType').optional().isIn(['web', 'ios', 'android'])
+      .withMessage('Unknown device type'),
+  ],
   async (req, res) => {
     try {
       const errors = validationResult(req);
@@ -16,7 +23,8 @@ router.post('/register',
         return res.status(400).json({ error: errors.array()[0].msg });
       }
 
-      const { token, deviceType } = req.body;
+      const token = String(req.body.token).trim();
+      const { deviceType } = req.body;
       const safeDeviceType = ['web', 'ios', 'android'].includes(deviceType) ? deviceType : 'web';
 
       // A device token belongs to exactly ONE account. Round 4: the old
@@ -41,8 +49,11 @@ router.post('/register',
 );
 
 // DELETE /api/notifications/unregister — Remove a specific device token
+// This is the logout path. It deletes THIS device's token and leaves the
+// user's other devices alone; /unregister-all is the "sign me out everywhere"
+// hammer and signing out of a laptop should not kill push on a phone.
 router.delete('/unregister',
-  [body('token').isString().isLength({ min: 1 }).withMessage('Token is required')],
+  [body('token').isString().trim().isLength({ min: 1, max: 1024 }).withMessage('Token is required')],
   async (req, res) => {
     try {
       const errors = validationResult(req);
@@ -52,7 +63,7 @@ router.delete('/unregister',
 
       await pool.query(
         'DELETE FROM device_tokens WHERE user_id = $1 AND token = $2',
-        [req.user.id, req.body.token]
+        [req.user.id, String(req.body.token).trim()]
       );
 
       res.json({ unregistered: true });
