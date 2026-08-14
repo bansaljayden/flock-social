@@ -4,11 +4,23 @@ import './index.css';
 import reportWebVitals from './reportWebVitals';
 import ErrorBoundary from './components/ErrorBoundary';
 
-// Guest invite URLs carry a bearer token in the path (/i/<token>): anyone
-// holding one can RSVP and vote as that guest. Keep them out of every
-// analytics and error payload that leaves the device.
-const scrubGuestToken = (v) =>
-  (typeof v === 'string' ? v.replace(/\/i\/[A-Za-z0-9_-]+/g, '/i/:token') : v);
+// Bearer tokens ride in URLs in two places. Guest invites carry one in the
+// path (/i/<token>): anyone holding it can RSVP and vote as that guest. The
+// password reset email lands with one in the fragment (#token=...) or, after
+// a mail scanner rewrites the link, in the query (?token=...) --
+// components/auth/PasswordReset.js accepts both, and it strips the token from
+// the address bar only AFTER mount, which is after the $pageview has already
+// been built from window.location.href. Anyone holding a reset token can take
+// the account. Both patterns are scrubbed from every analytics and error
+// payload that leaves the device.
+//
+// Exported for src/__tests__/analyticsPrivacy.test.js only.
+export const scrubUrlTokens = (v) =>
+  (typeof v === 'string'
+    ? v
+      .replace(/\/i\/[A-Za-z0-9_-]+/g, '/i/:token')
+      .replace(/([?#&]token=)[^&#\s"']*/gi, '$1redacted')
+    : v);
 
 // Sentry (B3) — no-op until REACT_APP_SENTRY_DSN is set (Vercel env). Never commit the DSN.
 //
@@ -32,51 +44,123 @@ if (process.env.REACT_APP_SENTRY_DSN) {
       // URL. Same scrub on every field that can carry one.
       beforeSend(event) {
         if (!event) return event;
-        if (event.request?.url) event.request.url = scrubGuestToken(event.request.url);
-        if (event.request?.headers?.Referer) event.request.headers.Referer = scrubGuestToken(event.request.headers.Referer);
+        if (event.request?.url) event.request.url = scrubUrlTokens(event.request.url);
+        if (event.request?.headers?.Referer) event.request.headers.Referer = scrubUrlTokens(event.request.headers.Referer);
         if (Array.isArray(event.breadcrumbs)) {
           for (const b of event.breadcrumbs) {
-            if (b?.data?.url) b.data.url = scrubGuestToken(b.data.url);
-            if (typeof b?.message === 'string') b.message = scrubGuestToken(b.message);
+            if (b?.data?.url) b.data.url = scrubUrlTokens(b.data.url);
+            if (typeof b?.message === 'string') b.message = scrubUrlTokens(b.message);
           }
         }
         return event;
       },
       beforeSendTransaction(event) {
         if (!event) return event;
-        if (event.request?.url) event.request.url = scrubGuestToken(event.request.url);
-        if (typeof event.transaction === 'string') event.transaction = scrubGuestToken(event.transaction);
+        if (event.request?.url) event.request.url = scrubUrlTokens(event.request.url);
+        if (typeof event.transaction === 'string') event.transaction = scrubUrlTokens(event.transaction);
         return event;
       },
     });
   }).catch(() => { /* monitoring is never load-bearing */ });
 }
 
+// Walks an event's property bags and scrubs every string in them, so a token
+// can never ride out inside a property the fixed-key list of an earlier
+// version did not know about ($session_entry_current_url and friends arrive
+// with SDK upgrades, not with our code). Depth-capped because the input is
+// attacker-influencable via the URL and this must never be the thing that
+// recurses forever. Mutates in place: before_send hands us the event to edit.
+const scrubEventStrings = (val, depth = 0) => {
+  if (typeof val === 'string') return scrubUrlTokens(val);
+  if (depth >= 4 || !val || typeof val !== 'object') return val;
+  if (Array.isArray(val)) {
+    for (let i = 0; i < val.length; i++) val[i] = scrubEventStrings(val[i], depth + 1);
+    return val;
+  }
+  for (const k of Object.keys(val)) val[k] = scrubEventStrings(val[k], depth + 1);
+  return val;
+};
+
 // PostHog — no-op until REACT_APP_POSTHOG_KEY is set (Vercel env + local .env).
 // The phc_ key is public by design but stays in env vars per repo policy.
-// defaults '2025-05-24' = SPA pageviews on history changes + sane privacy defaults.
+//
+// PRIVACY POSTURE (2026-08-14). The youngest permitted user is 13
+// (backend/utils/age.js), so this config is minimize-by-default: pageviews
+// plus the hand-written events in services/api.js, and nothing that could
+// carry message text, coordinates, a recording, or a URL-borne token. Every
+// capture surface whose default is "let the PostHog project settings decide"
+// is pinned OFF here, so a dashboard toggle can never widen collection on
+// minors without a code change (posthog.com/docs/libraries/js/config:
+// capture_heatmaps / capture_dead_clicks / capture_exceptions all default to
+// undefined = remote-controlled; disable_session_recording defaults to false
+// = remote-controlled).
+//
+// What this deliberately does NOT fix: the request that delivers an event
+// carries the device IP, and no client option can prevent that (the `ip`
+// config is a documented no-op; posthog.com/tutorials/web-redact-properties
+// says $ip cannot be redacted client-side). The fix is the project-level
+// "Discard client IP data" toggle in the PostHog dashboard, which is a
+// human-hands step. $geoip_disable below asks ingestion not to derive
+// city/region from that IP in the meantime (the property server SDKs set via
+// their disableGeoip option).
+//
+// The privacy policy (website/PrivacyPolicy.js) currently discloses a PostHog
+// cookie; persistence 'localStorage' below means that stopped being true in
+// the good direction. Do not switch persistence back to a cookie mode without
+// re-reading that page.
+//
+// Exported for src/__tests__/analyticsPrivacy.test.js, which locks every
+// value here and fails on the commit that loosens one.
+export const POSTHOG_PRIVACY_CONFIG = {
+  api_host: process.env.REACT_APP_POSTHOG_HOST || 'https://us.i.posthog.com',
+  // '2025-05-24' = SPA pageviews on history changes. Later dated defaults only
+  // tune replay/rageclick/storage timing, none of which run here.
+  defaults: '2025-05-24',
+  // Privacy boundary (round 3): autocapture could vacuum up interacted DOM
+  // text (messages, budget amounts). We track pageviews + the explicit
+  // events in api.js — nothing else.
+  autocapture: false,
+  // Session replay of a teenager's screen is off in code, not in a dashboard.
+  // Before this line the SDK default (false = "follow project settings") left
+  // recording one PostHog toggle away with no commit to review.
+  disable_session_recording: true,
+  capture_heatmaps: false,
+  capture_dead_clicks: false,
+  // Exception autocapture can embed thrown-error text, which can quote user
+  // content. Sentry owns errors, with the same scrub applied above.
+  capture_exceptions: false,
+  disable_surveys: true,
+  // The SDK default since v1.167, made explicit because we rely on it:
+  // marketing-site visitors never get a person profile, only signed-in users
+  // do (api.js identifies by numeric account id, never name or email).
+  person_profiles: 'identified_only',
+  // Device-local storage only: no analytics cookie rides on every request,
+  // nothing is shared across subdomains, and clearing site data removes it.
+  // The distinct_id still survives a reload, which identified analytics needs.
+  persistence: 'localStorage',
+  // A browser asking not to be tracked is honored, 13+ audience or not.
+  respect_dnt: true,
+  // Masks ad-click ids (gclid, fbclid, ...) in captured URLs, plus any
+  // ?token= query value as a second net under scrubUrlTokens.
+  mask_personal_data_properties: true,
+  custom_personal_data_properties: ['token'],
+  before_send: (event) => {
+    if (!event) return event;
+    if (event.properties) {
+      scrubEventStrings(event.properties);
+      // Ask ingestion to skip GeoIP enrichment: no city/region derived from
+      // a minor's IP. Belt to the dashboard's "Discard client IP" suspenders.
+      event.properties.$geoip_disable = true;
+    }
+    if (event.$set) scrubEventStrings(event.$set);
+    if (event.$set_once) scrubEventStrings(event.$set_once);
+    return event;
+  },
+};
+
 if (process.env.REACT_APP_POSTHOG_KEY) {
   import('posthog-js').then(({ default: posthog }) => {
-    posthog.init(process.env.REACT_APP_POSTHOG_KEY, {
-      api_host: process.env.REACT_APP_POSTHOG_HOST || 'https://us.i.posthog.com',
-      defaults: '2025-05-24',
-      // Privacy boundary (round 3): autocapture could vacuum up interacted DOM
-      // text (messages, budget amounts). We track pageviews + the explicit
-      // events in api.js — nothing else.
-      autocapture: false,
-      // Guest invite URLs carry bearer tokens (/i/<token>); scrub them from
-      // every event before it leaves the device.
-      before_send: (event) => {
-        if (!event) return event;
-        const scrub = scrubGuestToken;
-        if (event.properties) {
-          for (const k of ['$current_url', '$pathname', '$referrer', '$initial_current_url', '$initial_referrer']) {
-            if (event.properties[k]) event.properties[k] = scrub(event.properties[k]);
-          }
-        }
-        return event;
-      },
-    });
+    posthog.init(process.env.REACT_APP_POSTHOG_KEY, POSTHOG_PRIVACY_CONFIG);
   }).catch(() => { /* analytics is never load-bearing */ });
 }
 
@@ -493,7 +577,7 @@ function NotFound() {
             is: a guest invite token must not end up quoted on screen, in a
             screenshot, or in a support email. /i/ never reaches this page
             today, but the scrub costs nothing and outlives the assumption. */}
-        <p className="page-error-detail">Asked for {scrubGuestToken(rawPath)}</p>
+        <p className="page-error-detail">Asked for {scrubUrlTokens(rawPath)}</p>
       </div>
     </main>
   );
