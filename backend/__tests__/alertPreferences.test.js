@@ -454,8 +454,15 @@ function scriptInvite() {
   on(/SELECT id FROM flock_members WHERE flock_id = \$1 AND user_id = \$2 AND status = 'accepted'/i, () => ({ rows: [{ id: 1 }] }));
   on(/SELECT id, name FROM flocks WHERE id/i, () => ({ rows: [{ id: 42, name: 'Taco Night' }] }));
   on(/COUNT\(\*\)::int AS n FROM flock_members/i, () => ({ rows: [{ n: 2 }] }));
-  on(/SELECT status FROM flock_members WHERE flock_id = \$1 AND user_id = \$2/i, () => ({ rows: [] }));
-  on(/SELECT id, name FROM users WHERE id = \$1/i, () => ({ rows: [{ id: 5, name: 'Bo' }] }));
+  // The invite path reads the roster, the directory and the block set one SET at
+  // a time (2026-08-14), not one row at a time. These two branches answer what
+  // the per-row branches they replace answered — nobody has a row yet, and every
+  // id asked for is a real user called Bo — so the push ordering this section
+  // tests sees exactly the same invite it always did.
+  on(/SELECT user_id, status FROM flock_members WHERE flock_id = \$1 AND user_id = ANY\(\$2::int\[\]\)/i, () => ({ rows: [] }));
+  on(/SELECT id, name FROM users WHERE id = ANY\(\$1::int\[\]\)/i, (p) => ({
+    rows: (p[0] || []).map((id) => ({ id: Number(id), name: 'Bo' })),
+  }));
   on(/FROM user_blocks/i, () => ({ rows: [] }));
   on(/INSERT INTO flock_members/i, () => ({ rows: [{ flock_id: 42, user_id: 5, status: 'invited' }], rowCount: 1 }));
   on(/SELECT user_id FROM flock_members WHERE flock_id = \$1 AND status = 'accepted' AND user_id != \$2/i, () => ({ rows: [] }));

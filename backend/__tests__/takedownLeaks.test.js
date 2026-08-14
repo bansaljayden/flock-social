@@ -301,8 +301,16 @@ test('flock_members_invited does not hand the inviter name to someone who blocke
   on(/SELECT id FROM flock_members WHERE flock_id = \$1 AND user_id = \$2 AND status/, () => ({ rows: [{ id: 1 }] }));
   on(/SELECT id, name FROM flocks WHERE id/, () => ({ rows: [{ id: 9, name: 'Dinner' }] }));
   on(/COUNT\(\*\)::int AS n FROM flock_members/, () => ({ rows: [{ n: 2 }] }));
-  on(/SELECT status FROM flock_members WHERE flock_id = \$1 AND user_id = \$2/, () => ({ rows: [] }));
-  on(/SELECT id, name FROM users WHERE id = \$1/, () => ({ rows: [{ id: 5, name: 'Zed' }] }));
+  // The invite path's three reads are set-based now (2026-08-14). Same answers
+  // as the per-row branches they replace: 5 has no row here, 5 is a real user
+  // called Zed, and nobody has blocked the INVITER — the block this test is
+  // about is member 3 blocking Ava, which is a separate lookup
+  // (getInvisibleUserIds) driving the fan-out below.
+  on(/SELECT user_id, status FROM flock_members WHERE flock_id = \$1 AND user_id = ANY\(\$2::int\[\]\)/, () => ({ rows: [] }));
+  on(/SELECT id, name FROM users WHERE id = ANY\(\$1::int\[\]\)/, (p) => ({
+    rows: (p[0] || []).map((id) => ({ id: Number(id), name: 'Zed' })),
+  }));
+  on(BLOCK_PAIRS, () => ({ rows: [] }));
   on(BLOCKED_BETWEEN, () => ({ rows: [] }));
   on(/INSERT INTO flock_members/, () => ({ rows: [{ id: 77 }] }));
   on(/SELECT user_id FROM flock_members WHERE flock_id = \$1 AND status = 'accepted' AND user_id != \$2/, () => ({ rows: [{ user_id: 2 }, { user_id: 3 }] }));
@@ -315,6 +323,40 @@ test('flock_members_invited does not hand the inviter name to someone who blocke
   assert.deepStrictEqual(announced.map((e) => e.room), ['user:2']);
   assert.strictEqual(announced[0].payload.invitedBy.name, 'Ava');
   assert.ok(!emits.some((e) => /^flock:/.test(e.room)));
+});
+
+test('flock_members_invited names only the people who really got a row', async () => {
+  // The payload is a list of user ids that every non-blocked member's client
+  // renders. Built from the SUBMITTED list rather than the written one, it
+  // announces to the whole flock which ids the inviter tried and failed on —
+  // people who blocked them, ids with no account behind them, ids the budget or
+  // the ceilings refused. None of that is the flock's business, and two of those
+  // three are facts about somebody else's account.
+  on(/SELECT id FROM flock_members WHERE flock_id = \$1 AND user_id = \$2 AND status/, () => ({ rows: [{ id: 1 }] }));
+  on(/SELECT id, name FROM flocks WHERE id/, () => ({ rows: [{ id: 9, name: 'Dinner' }] }));
+  on(/COUNT\(\*\)::int AS n FROM flock_members/, () => ({ rows: [{ n: 2 }] }));
+  on(/SELECT user_id, status FROM flock_members WHERE flock_id = \$1 AND user_id = ANY\(\$2::int\[\]\)/, () => ({ rows: [] }));
+  // 5 is a real account; 6 has none.
+  on(/SELECT id, name FROM users WHERE id = ANY\(\$1::int\[\]\)/, (p) => ({
+    rows: (p[0] || []).map(Number).filter((id) => id !== 6).map((id) => ({ id, name: 'Zed' })),
+  }));
+  // 7 blocked the inviter. One row, one direction — that is all a block ever is.
+  on(BLOCK_PAIRS, () => ({ rows: [{ blocker_id: 7, blocked_id: 1 }] }));
+  on(/INSERT INTO flock_members/, () => ({ rows: [{ id: 77 }] }));
+  on(/SELECT user_id FROM flock_members WHERE flock_id = \$1 AND status = 'accepted' AND user_id != \$2/, () => ({ rows: [{ user_id: 2 }] }));
+  on(INVISIBLE_IDS, () => ({ rows: [] }));
+
+  const res = await call('POST', '/api/flocks/9/invite', { user_ids: [5, 6, 7] });
+  assert.strictEqual(res.status, 200, res.text);
+  assert.deepStrictEqual(res.body.invited.map((i) => i.user_id), [5]);
+
+  const announced = emits.filter((e) => e.event === 'flock_members_invited');
+  assert.deepStrictEqual(announced[0].payload.invitedUserIds, [5],
+    'the fan-out must carry the ids that got a row, not the ids that were asked for');
+  assert.deepStrictEqual(
+    emits.filter((e) => e.event === 'flock_invite_received').map((e) => e.room), ['user:5'],
+    'and the invite itself reaches only that person — never the blocker, never the ghost'
+  );
 });
 
 test('no route in the audited files broadcasts to the flock room any more', () => {
