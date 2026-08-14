@@ -8,6 +8,22 @@ const { emitToFlockMembers } = require('../sockets/handlers');
 const router = express.Router();
 router.use(authenticate);
 
+// Every id this router takes names a SERIAL (int4) primary key. `/^\d+$/` alone
+// was already stopping `abc` from reaching Postgres as NaN, but it happily let
+// `99999999999` through, which comes back as 22003 "out of range for type
+// integer" and lands in each route's catch as a 500. On the moderation queue a
+// 500 is indistinguishable from "the takedown failed", which is the one thing a
+// moderator must never be unsure about. An id no column can hold names no row:
+// that is a 404.
+const INT4_MAX = 2147483647;
+
+function serialId(raw) {
+  const s = String(raw);
+  if (!/^\d+$/.test(s)) return null;
+  const n = parseInt(s, 10);
+  return n >= 1 && n <= INT4_MAX ? n : null;
+}
+
 // Admin middleware
 function requireAdmin(req, res, next) {
   if (req.user.role !== 'admin') {
@@ -131,10 +147,29 @@ router.get('/reports', async (req, res) => {
               LEFT(c.body, 280) AS content_excerpt,
               (COALESCE(LENGTH(c.body), 0) > 280) AS content_excerpt_clipped,
               (c.image_url IS NOT NULL) AS content_has_image,
-              -- Hosted URLs only: message/story images can be base64 data URLs
-              -- megabytes long, and 200 of those is not a queue response.
+              -- Hosted URLs are small enough to inline in a 200-row queue.
+              -- Inline base64 is not: a story photo is up to 700KB on its own
+              -- (routes/stories.js caps it there) and 200 of those is a
+              -- response no console should ask for.
+              --
+              -- Round 11 answered that by nulling the column, which made the
+              -- queue unable to show the single most reported thing in a photo
+              -- app: a moderator opening an image report saw an empty body and
+              -- no picture, and was asked to hide or ban on the strength of the
+              -- reporter's word. content_image_deferred says "there IS an
+              -- image and it is not in this payload"; GET /reports/:id/image
+              -- fetches it, one report at a time, at the moment somebody
+              -- actually looks. Size is bounded by what the console opens
+              -- rather than by the length of the queue.
+              --
+              -- A thumbnail would be better on the wire and is not available:
+              -- there is no image library in backend/package.json, so resizing
+              -- would mean a native dependency on the deploy path for a queue
+              -- one person reads.
               CASE WHEN c.image_url LIKE 'data:%' OR LENGTH(c.image_url) > 500
                    THEN NULL ELSE c.image_url END AS content_image_url,
+              (c.image_url IS NOT NULL
+                 AND (c.image_url LIKE 'data:%' OR LENGTH(c.image_url) > 500)) AS content_image_deferred,
               c.author_id AS content_author_id,
               c.created_at AS content_created_at,
               c.is_hidden AS content_is_hidden,
@@ -165,6 +200,24 @@ router.get('/reports', async (req, res) => {
          SELECT NULLIF(CONCAT_WS(': ', vp.title, vp.description), ''), NULL, vp.venue_user_id,
                 vp.created_at, COALESCE(vp.is_hidden, false)
          FROM venue_promotions vp WHERE r.content_type = 'venue_promotion' AND vp.id = r.content_id
+         UNION ALL
+         -- venue_event: owner-typed copy, takedown flag added by migration 019.
+         -- Listed here for the same reason it is in TAKEDOWN_TARGETS below: a
+         -- type the queue cannot render is a type a moderator cannot judge, and
+         -- the report already reaches this table.
+         SELECT ve.title, NULL, ve.venue_user_id, ve.created_at, COALESCE(ve.is_hidden, false)
+         FROM venue_events ve WHERE r.content_type = 'venue_event' AND ve.id = r.content_id
+         UNION ALL
+         -- A profile report has no row to hide, which is why it is absent from
+         -- TAKEDOWN_TARGETS. It is NOT absent from the queue: the profile IS
+         -- the reported content. Until now the card showed the account's name
+         -- and nothing else, so "sexual content" filed against an avatar
+         -- reached a moderator with the avatar missing and the only available
+         -- action being a permanent ban. The keyed column is reported_user_id,
+         -- not content_id — a profile report carries no content_id at all.
+         SELECT NULLIF(CONCAT_WS(' / ', pu.name, NULLIF(ARRAY_TO_STRING(pu.interests, ', '), '')), ''),
+                pu.profile_image_url, pu.id, pu.created_at::timestamptz, false
+         FROM users pu WHERE r.content_type = 'profile' AND pu.id = r.reported_user_id
          LIMIT 1
        ) c ON true
        ${where}
@@ -183,18 +236,142 @@ router.get('/reports', async (req, res) => {
   }
 });
 
+// ---------------------------------------------------------------------------
+// GET /api/admin/reports/:id/image — the picture the queue could not carry
+// ---------------------------------------------------------------------------
+//
+// The report LIST above deliberately withholds inline base64 images, because a
+// 200-row queue carrying 200 story photos is a hundred-megabyte response. Round
+// 11 stopped there, and the result was that the most important category of
+// report in a photo-sharing app arrived at the moderator blank: an image
+// message has no message_text, so the card showed an empty body, no picture,
+// and two buttons that permanently hide content or ban a 15-year-old.
+//
+// This is the other half. One report, one image, fetched when a human opens it.
+//
+// Column names come from THIS map and never from the request — same rule as
+// TAKEDOWN_TARGETS below, and the reason the interpolation on the query is out
+// of reach of user input. Types absent from the map have no image column at
+// all (venue reviews, promotions, events and guest RSVPs are text), and are
+// answered as "no image" rather than as an error.
+//
+// Deliberately NOT filtered on is_hidden: a moderator reviewing an un-hide
+// request has to be able to see what was taken down. Everything on this router
+// is behind requireAdmin.
+const REPORT_IMAGE_SOURCES = {
+  flock_message: { table: 'messages', column: 'image_url' },
+  dm: { table: 'direct_messages', column: 'image_url' },
+  story: { table: 'stories', column: 'image_url' },
+  // A profile report carries no content_id; the reported content is the
+  // account, and the part of it that gets reported is the avatar.
+  profile: { table: 'users', column: 'profile_image_url', keyedOn: 'reported_user_id' },
+};
+
+const NO_IMAGE = 'That report has no image attached.';
+
+router.get('/reports/:id/image', async (req, res) => {
+  try {
+    // Same id rule as PUT /reports/:id: a non-numeric id names no row, and a
+    // 500 here reads as "the console is broken" on the one screen a moderator
+    // needs to trust.
+    const reportId = serialId(req.params.id);
+    if (reportId === null) return res.status(404).json({ error: 'Report not found' });
+
+    const rep = await pool.query(
+      'SELECT id, content_type, content_id, reported_user_id FROM content_reports WHERE id = $1',
+      [reportId]
+    );
+    if (rep.rows.length === 0) return res.status(404).json({ error: 'Report not found' });
+    const report = rep.rows[0];
+
+    // hasOwnProperty, not a bare lookup: `content_type = 'constructor'` walks
+    // the prototype chain and comes back TRUTHY, which would carry a
+    // `{ table: undefined, column: undefined }` into the interpolation below.
+    // The CHECK constraint on content_reports makes that unreachable today —
+    // this is the guard for the day somebody widens the constraint and not this
+    // map, which is the exact direction 003, 016 and 017 all drifted.
+    const source = Object.prototype.hasOwnProperty.call(REPORT_IMAGE_SOURCES, report.content_type)
+      ? REPORT_IMAGE_SOURCES[report.content_type]
+      : null;
+    if (!source) return res.status(404).json({ error: NO_IMAGE });
+
+    const rowId = source.keyedOn === 'reported_user_id' ? report.reported_user_id : report.content_id;
+    if (!rowId) return res.status(404).json({ error: NO_IMAGE });
+
+    const found = await pool.query(
+      `SELECT ${source.column} AS image_url FROM ${source.table} WHERE id = $1`,
+      [rowId]
+    );
+    if (found.rows.length === 0) {
+      // Distinct from "no image": the row is gone, which is also the answer to
+      // why the queue card looked empty, and it points at the action that is
+      // still available.
+      return res.status(404).json({ error: 'That content no longer exists. Dismiss the report instead.' });
+    }
+    const imageUrl = found.rows[0].image_url;
+    if (!imageUrl) return res.status(404).json({ error: NO_IMAGE });
+
+    // Reported UGC, served to a moderator, sometimes from a minor's camera
+    // roll. It must not sit in a proxy or a browser cache.
+    res.set('Cache-Control', 'no-store, private');
+    res.json({
+      reportId,
+      contentType: report.content_type,
+      contentId: report.content_id,
+      imageUrl,
+    });
+  } catch (err) {
+    console.error('Admin report image error:', err);
+    res.status(500).json({ error: 'Failed to load the reported image' });
+  }
+});
+
 // The takedown target for each reportable content type. Hoisted out of the
 // 'hide' branch (round 18) because un-hide needs exactly the same map — a
 // second copy inline is how the guest_rsvp entry went missing from one of two
 // places last time. Table names come from THIS map and never from the request
 // body, which is what keeps the interpolation below out of reach of user input.
 //
-// `audience` is the SQL the takedown UPDATE returns so the people who can
-// currently see the content are captured inside the transaction, before it can
-// change underneath us. Every entry returns the same two column names so the
-// caller does not branch: `flock_id` (fan out to accepted members) and
-// `notify_*` user ids (personal rooms). 'profile' is deliberately absent — a
-// profile report has no row to hide.
+// `audience` is the SQL the takedown UPDATE returns, captured inside the
+// transaction before it can change underneath us. Every entry returns the same
+// two column names so the caller does not branch: `flock_id` (fan out to
+// accepted members) and `notify_*` user ids (personal rooms). 'profile' is
+// deliberately absent — a profile report has no row to hide.
+//
+// ROUND 20, HONEST SCOPE. This block used to claim the emit reaches "the people
+// who can currently see the content". That is true for exactly two of the six
+// entries and the comment was doing real harm, because it reads as a guarantee
+// that the takedown retracts content from live screens everywhere:
+//
+//   flock_message  TRUE  — every accepted member, re-read at emit time.
+//   guest_rsvp     TRUE  — same, and a guest has no account to tell.
+//   dm             TRUE  — a DM has exactly two viewers and both are told.
+//   story          NO    — the AUTHOR only. Its viewers are the author's
+//                          friends and flock mates, computed per viewer by the
+//                          feed query; there is no room that holds them.
+//   venue_review   NO    — the author only.
+//   venue_promotion NO   — the venue owner only.
+//   venue_event    NO    — the venue owner only.
+//
+// The comment is corrected rather than the audience widened, deliberately:
+//
+//   * There is no venue viewer room to emit into. `venue:{placeId}` exists in
+//     sockets/handlers.js for crowd updates, and its members are whoever asked
+//     for live crowd levels, which is neither the set looking at the reviews
+//     nor a set anyone maintains for this purpose.
+//   * A story's audience is a per-viewer SQL predicate (see
+//     utils/relationships.js), so widening means running a fan-out query per
+//     takedown and emitting into hundreds of personal rooms for content that
+//     expires in 24 hours anyway.
+//   * Nothing on the client listens. `content_removed` has no handler in
+//     frontend/src for ANY type, so today the widening would be fan-out with no
+//     receiver. The three narrow emits are already ahead of the client.
+//
+// What actually protects a reader in the meantime is that every read path
+// filters is_hidden, so the content is gone the moment anything refetches. The
+// live retraction is the optimisation, not the takedown. If the client ever
+// grows a handler, widen story first: it is the type where the gap between "the
+// author knows" and "the viewers stop seeing it" lasts longest.
 const TAKEDOWN_TARGETS = {
   // Flock chat: the audience is the flock, not the author.
   flock_message: { table: 'messages', audience: 'flock_id, NULL::int AS notify_a, NULL::int AS notify_b' },
@@ -204,6 +381,12 @@ const TAKEDOWN_TARGETS = {
   story: { table: 'stories', audience: 'NULL::int AS flock_id, user_id AS notify_a, NULL::int AS notify_b' },
   venue_review: { table: 'venue_reviews', audience: 'NULL::int AS flock_id, user_id AS notify_a, NULL::int AS notify_b' },
   venue_promotion: { table: 'venue_promotions', audience: 'NULL::int AS flock_id, venue_user_id AS notify_a, NULL::int AS notify_b' },
+  // venue_event: is_hidden added by migration 019. Nothing serves venue events
+  // publicly yet, so no report can be filed against one from a real screen
+  // today — but routes/moderation.js accepts the type, which means one CAN
+  // arrive, and a report the queue cannot action is the failure this map exists
+  // to prevent (round 13's guest_rsvp hole, which sat open for two rounds).
+  venue_event: { table: 'venue_events', audience: 'NULL::int AS flock_id, venue_user_id AS notify_a, NULL::int AS notify_b' },
   // A guest RSVP has no account behind it, so there is nobody personal to tell;
   // the flock members watching the roster are the whole audience.
   guest_rsvp: { table: 'guest_rsvps', audience: 'flock_id, NULL::int AS notify_a, NULL::int AS notify_b' },
@@ -217,7 +400,7 @@ router.put('/reports/:id', async (req, res) => {
     // A non-numeric :id used to reach Postgres as NaN and surface as a 500,
     // which in the moderation queue is indistinguishable from "the takedown
     // failed" — the one thing a moderator must never be unsure about.
-    const reportId = /^\d+$/.test(String(req.params.id)) ? parseInt(req.params.id, 10) : null;
+    const reportId = serialId(req.params.id);
     if (reportId === null) return res.status(404).json({ error: 'Report not found' });
 
     const { action, reason } = req.body;
@@ -269,7 +452,14 @@ router.put('/reports/:id', async (req, res) => {
         // guest_rsvps added round 13 — migration 005 built the takedown and
         // nothing was ever wired to it, so an abusive guest RSVP name could not
         // be removed by anyone.
-        const target = TAKEDOWN_TARGETS[report.content_type];
+        // hasOwnProperty for the same reason the image route uses it: a bare
+        // lookup answers 'constructor' and '__proto__' from the prototype chain
+        // with a truthy object, and `UPDATE undefined SET is_hidden` is a 500
+        // the moderator reads as "the takedown failed" instead of the honest
+        // refusal below. The content_reports CHECK makes it unreachable today.
+        const target = Object.prototype.hasOwnProperty.call(TAKEDOWN_TARGETS, report.content_type)
+          ? TAKEDOWN_TARGETS[report.content_type]
+          : null;
 
         // FAIL LOUDLY (round 13). A 'profile' report has no row in this map, so
         // the UPDATE never ran — and the route still answered "Action applied",
@@ -382,6 +572,11 @@ router.put('/reports/:id', async (req, res) => {
     // placement: after COMMIT, so a rolled-back takedown never tells anyone
     // their content is gone when it is still live.
     //
+    // How far this reaches depends entirely on the TAKEDOWN_TARGETS entry, and
+    // for four of the seven types it reaches the author and nobody else. The
+    // table up there lists which is which and why the narrow ones stay narrow;
+    // do not read the paragraph above as a promise that every viewer is told.
+    //
     // Deliberate deviation worth naming: the un-hide emits 'content_restored',
     // not 'content_removed' with an inverted flag. A client that has already
     // dropped the row needs a different instruction than one that still has it,
@@ -461,7 +656,7 @@ router.put('/venues/:profileId/verify', async (req, res) => {
     // A non-numeric :profileId used to reach Postgres as NaN and surface as a
     // 500 ("invalid input syntax for type integer"); it is a 404. venue_profiles.id
     // is a SERIAL integer, so anything that is not all digits names no row.
-    const profileId = /^\d+$/.test(String(req.params.profileId)) ? parseInt(req.params.profileId, 10) : null;
+    const profileId = serialId(req.params.profileId);
     if (profileId === null) return res.status(404).json({ error: 'Venue profile not found' });
     // `verified` defaults to true (the button that just says "Verify" sends no
     // body), but anything that is not a real boolean is refused rather than
@@ -557,7 +752,7 @@ router.post('/venues/:userId/tier', async (req, res) => {
     }
     // A non-numeric :userId reached Postgres as NaN and came back a 500; users.id
     // is an integer key, so a non-digit id names no venue owner — 404, not 500.
-    const targetUserId = /^\d+$/.test(String(req.params.userId)) ? parseInt(req.params.userId, 10) : null;
+    const targetUserId = serialId(req.params.userId);
     if (targetUserId === null) return res.status(404).json({ error: 'Venue profile not found' });
     const result = await pool.query(
       'UPDATE venue_profiles SET tier = $1, updated_at = NOW() WHERE user_id = $2 RETURNING id, business_name, tier',

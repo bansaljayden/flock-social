@@ -12,6 +12,10 @@ const { authenticate } = require('../middleware/auth');
 const { invalidateBlockCache } = require('../utils/blocks');
 // Shape before content — see validators/shape.js.
 const { scalarOnly, freeText } = require('../validators/shape');
+// The story feed's visibility rule, defined once. The report gate below used to
+// carry its own copy, which had already drifted from routes/stories.js — see
+// the long note on storyVisibilitySql for which differences are deliberate.
+const { storyVisibilitySql } = require('../utils/relationships');
 
 const router = express.Router();
 router.use(authenticate);
@@ -36,11 +40,26 @@ const INT4_MAX = 2147483647;
 // content_reports.content_type CHECK constraint still listed only six types
 // (last set in migration 003), so every guest RSVP report passed validation,
 // passed the visibility gate, and then died on the INSERT as a 23514 — served
-// to the reporter as `500 Failed to submit report`. Migration 015 widens the
-// constraint; __tests__/safetyFlow.test.js now diffs this array against the
+// to the reporter as `500 Failed to submit report`. Migration 016 widens the
+// constraint (this line said 015 for a while; 015 is the password reset, and
+// pointing a maintainer at the wrong file is how the next drift gets missed);
+// __tests__/safetyFlow.test.js now diffs this array against the
 // migration text so the two can never drift apart again. If you add a type
 // here, add a migration in the same commit.
-const VALID_CONTENT_TYPES = ['flock_message', 'dm', 'profile', 'story', 'venue_review', 'venue_promotion', 'guest_rsvp'];
+//
+// venue_event added round 20, ahead of the surface that will serve it. Nothing
+// renders a venue event publicly today, so this is the one entry here that is
+// not yet reachable from a real screen, and that is the point. venue_events is
+// owner-typed UGC that sits next to venue_promotions in the same dashboard,
+// screened by the same rejectIfProfane on write, and it was the ONLY venue
+// table with no is_hidden column and no report type. Migration 005 built
+// exactly that pipeline for guest_rsvps and nothing was wired to it for two
+// rounds; 016 and 017 are both post-mortems of route code widening ahead of the
+// schema. Closing it now costs one column and one CHECK value. Discovering it
+// on the day somebody adds `GET /api/venues/:placeId/events` costs a Guideline
+// 1.2 rejection, because that release ships user-generated content with no
+// takedown path at all. Migration 019 is the schema half.
+const VALID_CONTENT_TYPES = ['flock_message', 'dm', 'profile', 'story', 'venue_review', 'venue_promotion', 'guest_rsvp', 'venue_event'];
 const VALID_REASONS = ['spam', 'harassment', 'hate', 'sexual', 'violence', 'self_harm', 'other'];
 
 // Every report is answered with this exact string, whether it created a row,
@@ -114,6 +133,25 @@ router.post('/reports',
         return res.status(429).json({ error: 'You have filed a lot of reports recently. Try again in a little while.' });
       }
 
+      // KNOWN GAP, left open deliberately, round 20. A report naming NEITHER
+      // content nor a user — `{"content_type":"profile","reason":"spam"}` — is
+      // accepted and filed. Both ids are optional for good reasons (a profile
+      // report has no content_id, a guest RSVP report has no account behind
+      // it), and with neither present every check below is skipped, because
+      // each one is conditional on one of the two. The row that lands is
+      // unactionable in every direction: 'hide' refuses (no content), 'ban'
+      // refuses (nobody named), and dismiss is the only move. Ten an hour per
+      // account in a LIMIT 200 queue is a cheap way to push real reports off
+      // the bottom of it.
+      //
+      // It is NOT fixed here because the behaviour is pinned by a test in
+      // another owner's file: __tests__/arrayShapeSweep.test.js, the case
+      // `['POST', '/api/reports', { content_type: 'profile', reason: 'spam',
+      // content_id: null, reported_user_id: null, details: null }, true]`,
+      // which asserts this payload is NOT a 400 and DOES reach the database.
+      // That test is making a different and also correct point (an explicit
+      // null must read as absent, not as a validation error), so the two rules
+      // have to be reconciled by whoever owns that file, not routed around.
       const { content_type, content_id, reported_user_id, reason, details } = req.body;
 
       // Round 3: a report must reference REAL content the reporter can see,
@@ -163,6 +201,20 @@ router.post('/reports',
             [content_id]
           );
           row = r.rows[0] || null;
+        } else if (content_type === 'venue_event') {
+          // Same shape as venue_promotion, and deliberately so: both are
+          // business-authored copy attached to a public place id, and both are
+          // read by a bare id because whoever can see the venue card can see
+          // them. The id-existence oracle that implies is the same one the two
+          // branches above already accept — a venue event is not private, and
+          // the alternative (answering "found" for ids that do not exist) makes
+          // the queue a dumping ground for reports naming nothing.
+          const r = await pool.query(
+            `SELECT venue_user_id AS sender_id, COALESCE(is_hidden, false) AS is_hidden FROM venue_events
+             WHERE id = $1`,
+            [content_id]
+          );
+          row = r.rows[0] || null;
         } else if (content_type === 'guest_rsvp') {
           // A guest RSVP is only visible to accepted members of its flock, so
           // only they may report it. sender_id stays NULL: there is no Flock
@@ -176,28 +228,37 @@ router.post('/reports',
           );
           row = r.rows[0] || null;
         } else if (content_type === 'story') {
-          // Same visibility predicates as the story feed — a bare id lookup
-          // let any user probe/report stories they could never see.
+          // Same visibility predicate as the story feed — a bare id lookup let
+          // any user probe/report stories they could never see.
+          //
+          // Round 20: it is now literally the same predicate rather than a
+          // second copy of it. utils/relationships.js owns the definition and
+          // the three differences from the feed are arguments with reasons
+          // attached, not silently divergent SQL:
+          //
+          //   excludeHidden:false       already-taken-down content is answered
+          //                             as a success below, not as "could not
+          //                             be found" (round 17's fix, which a
+          //                             shared `is_hidden = false` would undo).
+          //   excludeBannedAuthor:false the feed retracts a banned account's
+          //                             stories; a report about one is still a
+          //                             real report about content that was on
+          //                             real screens.
+          //   includeOwn:true           you can see your own story, so the
+          //                             honest answer to a report against it is
+          //                             not "that content could not be found".
+          //                             The old copy left it out, which is the
+          //                             kind of difference two blocks of
+          //                             duplicated SQL hide.
           const r = await pool.query(
             `SELECT s.user_id AS sender_id, COALESCE(s.is_hidden, false) AS is_hidden FROM stories s
              WHERE s.id = $1
-               AND s.expires_at > NOW()
-               AND NOT EXISTS (
-                 SELECT 1 FROM user_blocks b
-                 WHERE (b.blocker_id = $2 AND b.blocked_id = s.user_id)
-                    OR (b.blocker_id = s.user_id AND b.blocked_id = $2)
-               )
-               AND (
-                 s.user_id IN (
-                   SELECT CASE WHEN requester_id = $2 THEN addressee_id ELSE requester_id END
-                   FROM friendships WHERE (requester_id = $2 OR addressee_id = $2) AND status = 'accepted'
-                 )
-                 OR s.user_id IN (
-                   SELECT fm2.user_id FROM flock_members fm1
-                   JOIN flock_members fm2 ON fm2.flock_id = fm1.flock_id AND fm2.user_id != $2 AND fm2.status = 'accepted'
-                   WHERE fm1.user_id = $2 AND fm1.status = 'accepted'
-                 )
-               )`,
+               AND ${storyVisibilitySql({
+                 viewer: '$2',
+                 includeOwn: true,
+                 excludeHidden: false,
+                 excludeBannedAuthor: false,
+               })}`,
             [content_id, req.user.id]
           );
           row = r.rows[0] || null;
