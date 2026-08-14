@@ -438,9 +438,16 @@ router.put('/reports/:id', async (req, res) => {
 router.get('/venues/unverified', async (req, res) => {
   try {
     const result = await pool.query(
+      // LIMIT, like every other list on this router. Unverified claims are the
+      // one venue_profiles subset an outsider can grow: signing up as a venue
+      // and claiming a place id creates a row here, and nothing prunes them, so
+      // this was the only admin query whose response size was set by how many
+      // junk claims exist. The queue and the audit log have carried LIMIT 200
+      // since they were written.
       `SELECT vp.id, vp.user_id, vp.business_name, vp.location, vp.google_place_id, vp.created_at, u.email
        FROM venue_profiles vp JOIN users u ON u.id = vp.user_id
-       WHERE vp.verified = false ORDER BY vp.created_at DESC`
+       WHERE vp.verified = false ORDER BY vp.created_at DESC
+       LIMIT 200`
     );
     res.json({ venues: result.rows });
   } catch (err) {

@@ -311,7 +311,20 @@ router.get('/demo/venues',
         return res.status(503).json({ error: DEMO_BUSY_MSG, unavailable: true });
       }
       const places = (data.places || []).filter(p => p.location);
-      if (places.length === 0) return res.json({ venues: [] });
+      // Cached like any other answer. This was the one response shape that
+      // skipped the cache, and it is the cheapest one to ask for repeatedly:
+      // lat/lng are rounded to ~1km buckets, so an empty bucket is trivial to
+      // find (any stretch of water) and every request for it was a fresh paid
+      // Text Search. The header of this file promises area searches are cached
+      // for 20 minutes; "we looked here and found nothing" is an area search
+      // result like any other. It is a real result, not a swallowed failure —
+      // the three checks above already turned every upstream failure into a
+      // 503, and none of those are cached.
+      if (places.length === 0) {
+        const empty = { venues: [] };
+        setCache(cacheKey, empty, 20 * 60_000);
+        return res.json(empty);
+      }
 
       // One weather lookup for the whole area; venues scored in parallel —
       // serial scoring made the first paint feel like dial-up.
