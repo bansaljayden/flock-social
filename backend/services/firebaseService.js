@@ -68,6 +68,11 @@ function isEnabled() {
 // data payload so the native (Capacitor) tap handler and our own service
 // worker click handler resolve the same destination the web SDK would.
 // ---------------------------------------------------------------------------
+// Every type below is part of the transactional push inventory documented in
+// services/pushHelper.js (the App Review 4.5.4 block). A new type must be
+// classified there before it ships: promotional or marketing pushes need
+// explicit opt-in consent UI and their own opt-out, which no type here has or
+// needs.
 const FLOCK_SCOPED_TYPES = new Set([
   'flock_invite',
   'flock_message',
