@@ -1,7 +1,7 @@
 {
   "short_name": "Flock",
-  "name": "Flock — Social Coordination",
-  "description": "Plan nights out 9x faster. AI crowd forecasting, group coordination, and integrated payments.",
+  "name": "Flock",
+  "description": "Plan nights out with friends. Vote on where to go, see how busy it is, and split the bill.",
   "icons": [
     {
       "src": "favicon.ico",

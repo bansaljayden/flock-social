@@ -18,6 +18,11 @@
 #      REACT_APP_API_URL               (optional; defaults to the Railway prod URL)
 #      REACT_APP_FIREBASE_* / REACT_APP_GOOGLE_* / REACT_APP_GOOGLE_MAPS_API_KEY
 #    CRA inlines these at `npm run build`, so they must exist in the build env.
+#    Non-REACT_APP vars the scripts below also read from this group:
+#      CM_CERTIFICATE_PRIVATE_KEY   (PEM private key; pins ONE distribution cert
+#                                    across builds — signing step fails without it)
+#      GOOGLE_SERVICE_INFO_PLIST    (base64 of GoogleService-Info.plist; optional —
+#                                    absent = push stays off via placeholder plist)
 #
 # 3. Create the app record in App Store Connect (My Apps → +) with bundle id
 #    com.flockcorp.flock so TestFlight submission has somewhere to land.
