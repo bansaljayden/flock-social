@@ -344,16 +344,33 @@ router.post('/reports',
 );
 
 // GET /api/blocks — users the current user has blocked.
+//
+// Round 21: this was the last list in the moderation/admin surface with no
+// ceiling. Nothing caps how many accounts one user may block — POST
+// /blocks/:userId has no per-user quota (unlike POST /reports, which has one),
+// so the row count here is chosen by the caller, and the response size with it.
+// Every block also had to be joined against users and serialised on every load
+// of the Blocked-accounts screen.
+//
+// LIMIT + 1 rather than LIMIT, so "there are exactly 500" and "there are more
+// than 500" stay distinguishable without a second COUNT. `truncated` is an
+// additive field: the shipping client reads `blocked` and ignores it, and a
+// screen that silently shows 500 of 900 without saying so is the failure mode
+// this flag exists to prevent when somebody does read it.
+const BLOCK_LIST_LIMIT = 500;
+
 router.get('/blocks', async (req, res) => {
   try {
     const result = await pool.query(
       `SELECT b.blocked_id AS user_id, u.name, u.profile_image_url, b.created_at
        FROM user_blocks b JOIN users u ON u.id = b.blocked_id
        WHERE b.blocker_id = $1
-       ORDER BY b.created_at DESC`,
-      [req.user.id]
+       ORDER BY b.created_at DESC
+       LIMIT $2`,
+      [req.user.id, BLOCK_LIST_LIMIT + 1]
     );
-    res.json({ blocked: result.rows });
+    const truncated = result.rows.length > BLOCK_LIST_LIMIT;
+    res.json({ blocked: result.rows.slice(0, BLOCK_LIST_LIMIT), truncated });
   } catch (err) {
     console.error('List blocks error:', err);
     res.status(500).json({ error: 'Failed to list blocked users' });
