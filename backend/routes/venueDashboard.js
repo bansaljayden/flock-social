@@ -1041,6 +1041,23 @@ const cacheSet = (k, data) => {
 // route can answer 429 rather than pretend Google was unreachable.
 const BUDGET_EXCEEDED = Symbol('places_budget_exceeded');
 
+// Google Places v1 returns price as an enum; the crowd model and the rule
+// engine both want the legacy 0-4 number. Same map as routes/crowd.js,
+// routes/publicCrowd.js, routes/badge.js and routes/ai.js.
+//
+// Round 20: this file had no such converter AT ALL, which is how both venue
+// shapes below came to omit `price_level` — see the note on fetchVenueBasics.
+function priceLevelToNum(priceLevel) {
+  const map = {
+    'PRICE_LEVEL_FREE': 0,
+    'PRICE_LEVEL_INEXPENSIVE': 1,
+    'PRICE_LEVEL_MODERATE': 2,
+    'PRICE_LEVEL_EXPENSIVE': 3,
+    'PRICE_LEVEL_VERY_EXPENSIVE': 4,
+  };
+  return map[priceLevel] ?? null;
+}
+
 async function fetchVenueBasics(placeId, userId) {
   if (!GOOGLE_KEY) return null;
   // Round 9: charge the shared budget before every paid upstream call.
@@ -1080,6 +1097,18 @@ async function fetchVenueBasics(placeId, userId) {
     name: p.displayName?.text || '',
     rating: p.rating || null,
     user_ratings_total: p.userRatingCount || 0,
+    // Round 20: THE FIELD MASK ABOVE HAS ALWAYS ASKED GOOGLE FOR `priceLevel`
+    // AND THIS SHAPE HAS NEVER CARRIED IT. services/mlPredictor.js
+    // buildFeatureMap reads `venue.price_level != null ? venue.price_level :
+    // (metadata.median_price_level || 2)`, so the owner's own venue was scored
+    // at the corpus MEDIAN price level on every dashboard load: a dive bar and
+    // a steakhouse were handed to the model as the same price tier, and
+    // `price_level` is a trained feature, so the number that came back was
+    // real-looking and systematically wrong. Same class as the coordinate bug
+    // round 15 found one layer down (a field read at inference that no live
+    // caller populated the way training did). We paid for this field on every
+    // call and then threw it away.
+    price_level: priceLevelToNum(p.priceLevel),
     types: p.types || [],
     location: p.location || null,
     isOpen: p.currentOpeningHours?.openNow ?? null,
@@ -1203,7 +1232,9 @@ router.get('/strip', requirePremium, async (req, res) => {
         'X-Goog-Api-Key': GOOGLE_KEY,
         // Round 15: utcOffsetMinutes so each competitor is scored on its own
         // wall clock (see scoreOne) instead of the server's.
-        'X-Goog-FieldMask': 'places.id,places.displayName,places.types,places.location,places.priceLevel,places.rating,places.currentOpeningHours,places.utcOffsetMinutes',
+        // Round 20: userRatingCount, because the model's `review_count` feature
+        // was reading 0 for every competitor. See the shaping below.
+        'X-Goog-FieldMask': 'places.id,places.displayName,places.types,places.location,places.priceLevel,places.rating,places.userRatingCount,places.currentOpeningHours,places.utcOffsetMinutes',
       },
       body: JSON.stringify({
         includedTypes: wanted.length ? wanted : ['bar'],
@@ -1279,6 +1310,29 @@ router.get('/strip', requirePremium, async (req, res) => {
         types: p.types || [],
         location: p.location || null,
         rating: p.rating || null,
+        // Round 20: BOTH OF THESE WERE MISSING, and both are trained features
+        // the model reads at inference (services/mlPredictor.js
+        // buildFeatureMap). The shape decides what the model sees, and what it
+        // saw was:
+        //   * `review_count` = 0 for every competitor, because
+        //     `venue.user_ratings_total || venue.review_count || 0` fell all
+        //     the way through. Every bar on the strip was scored as a venue
+        //     nobody has ever reviewed.
+        //   * `price_level` = the corpus median (2), because the fallback is
+        //     `venue.price_level != null ? ... : (metadata.median_price_level
+        //     || 2)`. The dive and the cocktail bar next door were the same
+        //     price tier as far as the model was concerned.
+        // Neither showed up as an error anywhere. The strip returned a
+        // plausible-looking score per competitor and the owner compared their
+        // own dial against it, which is the whole product of this view. Same
+        // failure class as the coordinate bug in round 15: a field read at
+        // inference that no live caller populated the way training did.
+        //
+        // The field mask above now requests userRatingCount for this. Both were
+        // already fetched-or-fetchable and thrown away, so this costs no extra
+        // Google call.
+        user_ratings_total: p.userRatingCount || 0,
+        price_level: priceLevelToNum(p.priceLevel),
         isOpen: p.currentOpeningHours?.openNow ?? null,
         // Scored on the competitor's own clock in scoreOne; null -> server clock.
         utcOffsetMinutes: p.utcOffsetMinutes != null ? p.utcOffsetMinutes : null,
