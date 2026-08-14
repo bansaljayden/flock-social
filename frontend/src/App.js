@@ -3707,7 +3707,27 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           venueLng: f.venue_longitude || null,
           venuePhoto: resolveVenuePhoto(f.venue_photo_url),
           venueRating: f.venue_rating || null,
-          venuePriceLevel: f.venue_price_level || null,
+          // There is deliberately no venuePriceLevel here. This line used to
+          // read `f.venue_price_level`, and `flocks` HAS NO SUCH COLUMN — the
+          // route selects `f.*`, so the field is simply absent and the read
+          // evaluated to null on every flock, every time. The only
+          // price-level column anywhere near this is
+          // research_analytics.venue_price_level_selected, which
+          // routes/flocks.js inserts as a literal null.
+          //
+          // Price level is real data — it comes off Google Places with the
+          // venue — but it is SESSION-LOCAL: it is set when this client looks a
+          // venue up (createFlock, updateFlockVenue) and it is never sent to
+          // the server, because saveFlockVenue has no field for it and the
+          // flocks table has nowhere to put it. So it is shown where it is
+          // genuinely known and absent everywhere else, rather than being
+          // sourced from a column that does not exist. See the "Share This"
+          // button on the confirmed venue, which omits the price rather than
+          // inventing one when this session never did the lookup.
+          //
+          // Restoring the price after a reload needs a `flocks.venue_price_level`
+          // column, which needs a migration this pass does not own. It is
+          // written up in the handoff rather than half-built here.
           cashPool: null,
           budgetEnabled: f.budget_enabled || false,
           budgetContext: f.budget_context || null,
@@ -4600,8 +4620,13 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
       .catch(() => {}); // offline: keep the optimistic local copy for this session
   }, [colors.navy]);
 
+  // `f.messages || []`, not `f.messages`: every writer of a flock object today
+  // seeds it with an empty array, but this is now reachable for a flock the user
+  // has never opened (Birdie's share sheet posts a venue card into any flock),
+  // and spreading an absent list is a TypeError that would take the whole tree
+  // down inside a state updater. Every reader in this file already guards.
   const addMessageToFlock = useCallback((flockId, message) => {
-    setFlocks(prev => prev.map(f => f.id === flockId ? { ...f, messages: [...f.messages, message] } : f));
+    setFlocks(prev => prev.map(f => f.id === flockId ? { ...f, messages: [...(f.messages || []), message] } : f));
   }, []);
 
   // Pull the persisted tallies (members + guest-link votes) for one flock.
@@ -4654,6 +4679,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
     const vLng = venue.lng || venue.location?.longitude || null;
     const vPhoto = venue.photo_url || null;
     const vRating = venue.stars || venue.rating || null;
+    // Session-local, and knowingly so: saveFlockVenue has no price_level field
+    // and `flocks` has no column to store it in, so this survives until the next
+    // reload and then goes quiet. It is the venue's real Google Places price
+    // level while it lasts, never a stand-in for one. See the flock mapper.
     const vPriceLevel = venue.price_level || null;
     // What is on screen right now, so a refusal can put it back rather than
     // leaving the user looking at a venue the flock is not actually at.
@@ -5632,13 +5661,21 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   }, [selectedFlockId]);
 
   // Transmit one flock message: optimistic bubble + socket (echo-reconciled) or
-  // HTTP fallback. Used by fresh sends AND tap-to-retry, for text and photos
-  // alike — a photo used to go straight out on the socket with no fallback, no
-  // pending state and no way to retry, so sending one with the connection down
-  // put a picture on screen that was never stored anywhere.
+  // HTTP fallback. Used by fresh sends AND tap-to-retry, for text, photos and
+  // venue cards alike — a photo used to go straight out on the socket with no
+  // fallback, no pending state and no way to retry, so sending one with the
+  // connection down put a picture on screen that was never stored anywhere, and
+  // a shared venue card had all three of the same holes until it was folded in
+  // here too (see shareVenueToChat).
+  //
+  // The three payload kinds are ONE shape, not three branches: `text` is always
+  // the body, and `image_url` / `venue_data` are the optional attachments both
+  // transports already carry field for field. Adding a fourth kind means adding
+  // a field here, not a second send path.
   const transmitFlockMessage = useCallback(async (flockId, text, opts = {}) => {
     const image = opts.image_url || null;
-    const msgType = opts.message_type || (image ? 'image' : 'text');
+    const venueData = opts.venue_data || null;
+    const msgType = opts.message_type || (venueData ? 'venue_card' : image ? 'image' : 'text');
     // Optimistic local update
     const tempId = Date.now();
     addMessageToFlock(flockId, {
@@ -5651,6 +5688,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
       reactions: [],
       message_type: msgType,
       ...(image ? { image } : {}),
+      ...(venueData ? { venue_data: venueData } : {}),
       pending: true,
     });
 
@@ -5673,7 +5711,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
     // below cannot double-post. That window used to lose the message entirely.
     const sock = getSocket();
     const sentOverSocket = !!sock?.connected
-      && socketSendMessage(flockId, text, { message_type: msgType, image_url: image });
+      && socketSendMessage(flockId, text, { message_type: msgType, image_url: image, venue_data: venueData });
     if (sentOverSocket) {
       // A connected socket doesn't prove persistence — rate limits,
       // moderation, or a DB failure drop the message with no echo. If no
@@ -5689,18 +5727,25 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           return { ...f, messages: (f.messages || []).map(m => (m.id === tempId ? { ...m, pending: false, failed: true } : m)) };
         }));
       }, 8000);
-      pendingEchoRef.current.set(tempId, { flockId, text, message_type: msgType, image, timer });
+      pendingEchoRef.current.set(tempId, { flockId, text, message_type: msgType, image, venue_data: venueData, timer });
     } else {
       try {
-        const data = await apiSendMessage(flockId, text, { message_type: msgType, image_url: image || undefined });
+        const data = await apiSendMessage(flockId, text, { message_type: msgType, image_url: image || undefined, venue_data: venueData || undefined });
         // The REST route returns the stored row and emits no echo, so this is
         // where the bubble stops being a temp id — without it, reacting to or
         // reporting the photo you just sent addressed a row number the server
         // has never seen.
+        //
+        // isServerId, not a bare truthiness test: tempId is Date.now(), which is
+        // above int4, and mergeHistory decides what to carry across a history
+        // read by comparing ids numerically. Adopting anything that is not a
+        // real serial row id (a string id, a 0, a malformed body) would put a
+        // settled bubble into that comparison with a number the server never
+        // issued, and it would survive every reload as a duplicate.
         const savedId = data?.message?.id;
         setFlocks(prev => prev.map(f => {
           if (f.id !== flockId) return f;
-          return { ...f, messages: (f.messages || []).map(m => (m.id === tempId ? { ...m, ...(savedId ? { id: savedId } : {}), pending: false } : m)) };
+          return { ...f, messages: (f.messages || []).map(m => (m.id === tempId ? { ...m, ...(isServerId(savedId) ? { id: savedId } : {}), pending: false } : m)) };
         }));
       } catch (err) {
         // The server words a moderation refusal ("that image can't be sent")
@@ -5716,7 +5761,13 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   }, [addMessageToFlock, authUser, showToast]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Tap-to-retry: drop the failed bubble, send the same message fresh. The
-  // photo rides along in the bubble, so a retry never re-opens the picker.
+  // photo — and the venue card — ride along in the bubble, so a retry never
+  // re-opens the picker and never downgrades a card to bare text.
+  //
+  // Every attachment the bubble is carrying has to be forwarded here. While
+  // venue_data was missing from this list, retrying a card would have re-sent
+  // `Check out X!` as a plain sentence with no card under it, which is why the
+  // HTTP path used to DELETE a refused card instead of offering a retry.
   const retryFailedMessage = useCallback((flockId, failedMsg) => {
     setFlocks(prev => prev.map(f => {
       if (f.id !== flockId) return f;
@@ -5725,6 +5776,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
     transmitFlockMessage(flockId, failedMsg.text || '', {
       message_type: failedMsg.message_type,
       image_url: failedMsg.image || null,
+      venue_data: failedMsg.venue_data || null,
     });
   }, [transmitFlockMessage]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -5800,8 +5852,27 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   // Typing indicators now driven by real WebSocket events
   const simulateTyping = useCallback(() => {}, []);
 
-  // Share venue to chat
-  const shareVenueToChat = useCallback(async (flockId, venue) => {
+  // Share venue to chat.
+  //
+  // This used to hand-roll everything transmitFlockMessage owns — its own
+  // optimistic bubble, its own socket/HTTP choice, its own error copy — and it
+  // drifted from the reconciled path in all the ways a copy does. It registered
+  // nothing in pendingEchoRef, so the bubble kept its Date.now() id forever and
+  // a reaction or a report on the card you had just shared addressed a row
+  // number the server has never issued; a socket send the server then dropped
+  // (rate limit, moderation, a DB failure) left the card on screen looking sent,
+  // with no failed state and no tap-to-retry; and the HTTP branch had to DELETE
+  // a refused card rather than offer a retry, because retrying went through
+  // transmitFlockMessage and would have re-sent the card as a bare sentence.
+  //
+  // All three are gone by construction now: a venue card is just a message with
+  // an attachment, and it takes the one send path text and photos take. The
+  // refused-card case is a normal `failed` bubble with tap-to-retry again,
+  // because retryFailedMessage forwards venue_data.
+  //
+  // Not async any more, and no caller awaited it. The modal closes on the same
+  // tick as the optimistic bubble instead of after a round trip.
+  const shareVenueToChat = useCallback((flockId, venue) => {
     const venueData = {
       place_id: venue.place_id || null,
       name: venue.name,
@@ -5817,65 +5888,12 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
       lat: venue.location?.latitude || null,
       lng: venue.location?.longitude || null,
     };
-    const msgText = `Check out ${venue.name}!`;
-
-    // Optimistic local update.
-    //
-    // NOTE (audit round 5): this hand-rolls what transmitFlockMessage already
-    // owns, and it should be folded into it. Doing that requires passing
-    // `venue_data` through transmitFlockMessage, and the exact source text of
-    // its two send calls is pinned by regexes in
-    // backend/__tests__/socketRoomRejoin.test.js ("transmitFlockMessage must
-    // pass text and image in a single send"), which is not a file this pass
-    // owns. The consequences of leaving it split are real and recorded here so
-    // the next person can fix both together: the socket path below registers
-    // nothing in pendingEchoRef, so this bubble keeps its Date.now() id
-    // forever and a reaction or a report on the card you just shared addresses
-    // a row number the server has never seen; and a socket send the server
-    // drops (rate limit, moderation) leaves the card on screen looking sent,
-    // with no failed state and no tap-to-retry.
-    const localId = Date.now();
-    addMessageToFlock(flockId, {
-      id: localId,
-      sender: 'You',
-      senderId: authUser?.id,
-      senderImage: profilePic,
-      time: new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }),
-      text: msgText,
-      reactions: [],
+    transmitFlockMessage(flockId, `Check out ${venue.name}!`, {
       message_type: 'venue_card',
       venue_data: venueData,
     });
-
-    // ONE transport only — both paths persist server-side, so firing both
-    // stored every shared venue twice (same fix text messages got in round 3).
-    // Same as transmitFlockMessage: the emit itself reports whether it went
-    // out, so a socket that dropped between the check and the send falls
-    // through to HTTP instead of silently posting nothing.
-    const sock = getSocket();
-    const cardSentOverSocket = !!sock?.connected
-      && socketSendMessage(flockId, msgText, { message_type: 'venue_card', venue_data: venueData });
-    if (!cardSentOverSocket) {
-      try {
-        await apiSendMessage(flockId, msgText, { message_type: 'venue_card', venue_data: venueData });
-      } catch (err) {
-        // api.js already words the offline, unreachable and timeout cases; the
-        // fallback only covers an error with no message at all.
-        showToast(err?.message || "That venue card didn't send. Try again.", 'error');
-        // Round 5: the toast was the whole response, so a card the server
-        // refused sat on screen looking sent until the next history read
-        // quietly removed it. Take it back now. It is dropped rather than
-        // flagged `failed` on purpose: tap-to-retry routes through
-        // transmitFlockMessage, which cannot carry venue_data (see the note
-        // above), so a retry would re-send the card as a bare text message.
-        setFlocks(prev => prev.map(f => f.id === flockId
-          ? { ...f, messages: (f.messages || []).filter(m => m.id !== localId) }
-          : f));
-      }
-    }
-
     setShowVenueShareModal(false);
-  }, [addMessageToFlock, authUser, profilePic, showToast]);
+  }, [transmitFlockMessage]);
 
   // Share image to chat. This used to build its own optimistic bubble and fire
   // the socket unconditionally: no HTTP fallback (so a photo sent while
@@ -8418,12 +8436,19 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                        'planning' to 'voting'), so the sheet was always empty. */
                     (() => {
                       const shareable = flocks.filter(f => f.status !== 'completed' && f.status !== 'cancelled');
+                      // Birdie's venue-card sender, the third one in the file.
+                      // It used to post straight to apiSendMessage inside
+                      // `try { } catch {}`, so a refusal (rate limit,
+                      // moderation, no signal) was swallowed whole and the user
+                      // was walked into a chat with no card in it and nothing
+                      // said. It takes the same reconciled path the in-chat
+                      // share does now, which gives it the optimistic bubble,
+                      // the socket transport, and a failed state with
+                      // tap-to-retry.
                       return shareable.length > 0 ? shareable.map(f => (
-                      <button className="hit44" key={f.id} onClick={async () => {
+                      <button className="hit44" key={f.id} onClick={() => {
                         const venueData = { name: aiShareVenue.name, addr: aiShareVenue.address, stars: aiShareVenue.rating, rating: aiShareVenue.rating, price_level: aiShareVenue.price_level, place_id: aiShareVenue.place_id };
-                        try {
-                          await apiSendMessage(f.id, `Check out ${aiShareVenue.name}!`, { message_type: 'venue_card', venue_data: venueData });
-                        } catch {}
+                        transmitFlockMessage(f.id, `Check out ${aiShareVenue.name}!`, { message_type: 'venue_card', venue_data: venueData });
                         setAiShareVenue(null);
                         closeAiChat();
                         setSelectedFlockId(f.id);
