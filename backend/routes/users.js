@@ -12,6 +12,7 @@ const {
   signUserToken,
   revokeUserSessions,
   TOKEN_ALGORITHMS,
+  UNVERIFIED_MESSAGE,
 } = require('../middleware/auth');
 const { stripHtml, sanitizeArray } = require('../utils/sanitize');
 const { rejectIfProfane, moderateImage, IMAGE_REJECTED_MESSAGE } = require('../utils/moderation');
@@ -352,8 +353,33 @@ async function rejectIfBannedIdentity(res, identity) {
 // is the same trade the round-12 moderation-evidence de-attribution already
 // makes: never let the account vanish while the record of it fails to land.
 async function recordBannedIdentity(client, user) {
+  // HIGH 1 (re-audit): a password account's email is UNVERIFIED — proving
+  // ownership is the entire reason email verification exists. Hashing
+  // user.email unconditionally turned this into a poison pill: register a
+  // password squat on a victim's address (unverified squats are allowed), get
+  // it banned (unverified accounts can still send DMs, so an abuse-report ban
+  // is reachable), then delete the squat, and this wrote HMAC(victim's address)
+  // with a 365-day expiry. The real owner could then never sign up on any path
+  // (password, Google, Apple all 403 on the tombstone), and the reclaim-via-
+  // verified-OAuth-claim path never runs because the squat row is gone. So only
+  // tombstone an address this account actually PROVED: email_verified is true
+  // AND the proven address still matches the current one. The oauth digest
+  // stays unconditional — a provider-verified identity genuinely belongs to the
+  // banned person. An unverified banned account then leaves only an oauth
+  // tombstone or none, never a block on a stranger's mailbox.
+  // A grandfathered row (verified before migration 011) carries email_verified
+  // TRUE with a NULL verified_email; claimDecision() in routes/auth.js trusts
+  // exactly that state, so this mirrors it — a null recorded address on a
+  // verified row means "trust the address it holds". The attack this closes is
+  // an UNVERIFIED squat, which has email_verified === false and never reaches
+  // here. When verified_email IS recorded, it must still match the current
+  // address, so an account that proved one mailbox and then edited onto a
+  // victim's cannot tombstone the victim's.
+  const emailProven = user.email_verified === true
+    && (user.verified_email == null
+      || normalizedAddress(user.verified_email) === normalizedAddress(user.email));
   const { emailHash, phoneHash, oauthHash } = identityDigests({
-    email: user.email,
+    email: emailProven ? user.email : undefined,
     phone: user.phone,
     oauthProvider: user.oauth_provider,
     oauthId: user.oauth_id,
@@ -552,6 +578,25 @@ router.put('/profile',
       // user nothing.
       const changingPhone = Boolean(phone) && canonicalPhone(phone) !== canonicalPhone(user.phone);
       if (changingPhone) {
+        // HIGH 2 (re-audit): "unverified accounts cannot accumulate" is the
+        // whole point of email verification, but the UNVERIFIED_DENY backstop in
+        // middleware/auth.js lists the payment, friends and flock routes and NOT
+        // PUT /api/users/profile, and nothing mounts requireVerified here (the
+        // deny list fails open for unlisted routes). Signup deliberately no
+        // longer accepts a phone precisely to stop a squatter claiming a
+        // victim's number, but this route reopened that hole: an unverified
+        // account could PUT { phone: "<victim's number>" }, the uniqueness check
+        // only blocks already-registered numbers, so an unregistered victim
+        // number succeeds and contact-sync discovery then resolves it to the
+        // attacker. Gate the phone change (only) on verification; the name edits
+        // on this route stay open to unverified accounts, which is why this is a
+        // branch-level check and not a coarse requireVerified on the route.
+        // (current_password is NOT proof of phone ownership; a real fix needs
+        // SMS possession, which is out of scope here.)
+        if (req.user.email_verified === false) {
+          return res.status(403).json({ error: UNVERIFIED_MESSAGE, emailVerificationRequired: true });
+        }
+
         // Proof first, THEN metering. Counting unproven attempts would let
         // anyone holding a stale token burn the real owner's quota and lock
         // them out of their own profile for an hour without ever getting past
@@ -571,6 +616,19 @@ router.put('/profile',
           return res.status(429).json({ error: 'You have changed your phone number several times already. Try again later.' });
         }
         phoneChangeAttempts.record(req.user.id);
+
+        // MEDIUM 3 (re-audit): banned_identities.phone_hash is WRITTEN on the
+        // deletion of a banned account but was never READ anywhere — every
+        // rejectIfBannedIdentity call in routes/auth.js passes only email and
+        // oauth identifiers, and the phone-set path never consulted the
+        // tombstone. So a banned user could re-attach the same number under a
+        // fresh email and regain contact-sync discovery. Consult it here, where
+        // a phone is actually set, after the verification and re-auth gates so
+        // the check runs against a number this account can genuinely hold, and
+        // after metering so it is not a cheaper "is this number banned?" oracle.
+        // The refusal message is the generic banned-identity one, which leaks
+        // nothing about which identifier matched.
+        if (await rejectIfBannedIdentity(res, { phone })) return;
 
         const digits = canonicalPhone(phone);
         if (digits) {
@@ -1045,7 +1103,11 @@ router.patch('/settings', async (req, res) => {
 async function deleteAccount(req, res) {
   try {
     const u = await pool.query(
-      `SELECT id, email, phone, password, oauth_provider, oauth_id, apple_refresh_token, is_banned, banned_at
+      // email_verified + verified_email are selected so recordBannedIdentity can
+      // tell a PROVEN address from an unverified squat (HIGH 1 re-audit). They
+      // trail the columns the test harness matches this SELECT on, so the
+      // `apple_refresh_token, is_banned, banned_at` substring stays intact.
+      `SELECT id, email, phone, password, oauth_provider, oauth_id, apple_refresh_token, is_banned, banned_at, email_verified, verified_email
          FROM users WHERE id = $1`,
       [req.user.id]
     );
