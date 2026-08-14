@@ -127,10 +127,39 @@
   --accent-pink-text: #be185d;
 
   /* Font tokens — theme-independent, so they live here on :root only.
-     Body serves the whole app; display is site headlines only. */
+     Body serves the whole app; display carries the name of the thing you
+     are looking at (screen titles, flock names, venue names). */
   --font-body: 'Hanken Grotesk', -apple-system, BlinkMacSystemFont, 'Segoe UI',
     'Roboto', 'Helvetica Neue', sans-serif;
   --font-display: 'Fraunces', 'Iowan Old Style', Georgia, 'Times New Roman', serif;
+
+  /* ═════════════════════════════════════════════════════════════════
+     TYPE SCALE — six roles, and nothing else.
+
+     Before this existed App.js held 1,122 literal font sizes, 731 of them
+     12px, and leaned on weight (74 uses of 900) to fake a hierarchy that
+     the sizes never provided. Every screen read as a form. These six roles
+     replace every literal. If a new piece of text does not fit one of
+     them, the answer is to pick the closest role, NOT to add a seventh.
+
+       --t-display  26 / Fraunces 600  the name of the thing you are on
+       --t-title    19 / 700           card and section headings
+       --t-body     15 / 400           running text
+       --t-label    13 / 600           form labels, section labels
+       --t-meta     12 / 500           secondary/supporting text
+       --t-micro    11 / 700 UPPERCASE eyebrows — max twice per screen
+
+     Weights: the size does the work now, so nothing goes above 700 and
+     900 is gone entirely. Text inputs are the one documented exception to
+     the size list: a handful stay at a literal 16px because iOS zooms the
+     viewport on focus for anything smaller.
+     ═════════════════════════════════════════════════════════════════ */
+  --t-display: 26px;
+  --t-title: 19px;
+  --t-body: 15px;
+  --t-label: 13px;
+  --t-meta: 12px;
+  --t-micro: 11px;
 }
 
 [data-theme="dark"] {
@@ -334,8 +363,7 @@ body::after {
 
 /* Respect the OS "reduce motion" setting (a11y requirement both impeccable and
    the Web Interface Guidelines mandate). Kills the infinite orb/shimmer/pulse
-   loops and collapses transitions to crossfades, while forcing any
-   scroll-reveal content to its visible state so nothing ships blank. */
+   loops and collapses transitions to crossfades. */
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {
     animation-duration: 0.001ms !important;
@@ -456,27 +484,12 @@ code {
   cursor: not-allowed;
 }
 
-/* Scroll fade-in animations */
-.scroll-fade {
-  opacity: 0;
-  transform: translateY(16px);
-  transition: opacity 0.45s ease, transform 0.45s ease;
-  will-change: opacity, transform;
-}
-
-.scroll-fade.visible {
-  opacity: 1;
-  transform: translateY(0);
-}
-
-.scroll-fade-delay-1 { transition-delay: 0.05s; }
-.scroll-fade-delay-2 { transition-delay: 0.1s; }
-.scroll-fade-delay-3 { transition-delay: 0.15s; }
-.scroll-fade-delay-4 { transition-delay: 0.2s; }
-.scroll-fade-delay-5 { transition-delay: 0.25s; }
-.scroll-fade-delay-6 { transition-delay: 0.3s; }
-.scroll-fade-delay-7 { transition-delay: 0.35s; }
-
+/* The .scroll-fade reveal system was deleted 2026-08-13. It wrapped the Nest
+   feed with a staggered delay, so every return to the Nest tab replayed a
+   fade and the flock list was briefly empty. Scroll-triggered fade/slide-in
+   reveals are on the absolute-ban list (SLOP-AUDIT A10 / H6). Content just
+   is. If a screen needs motion on first paint, animate the header once —
+   never the list. */
 
 /* Birdie AI background - flat since the 2026-07 redesign.
    Orb/grid decoration removed; classes kept harmless because App.js
