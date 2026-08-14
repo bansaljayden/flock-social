@@ -162,12 +162,36 @@ pool.query = async (text, params = []) => {
 
   // flock creation (runs on a pooled client, same dispatcher)
   if (/^(BEGIN|COMMIT|ROLLBACK)$/i.test(sql)) return { rows: [], rowCount: 0 };
+  // Serialization taken inside those transactions. Round 16 added one to the
+  // DM venue-vote toggle ('dmvote:...'), which read-then-wrote across three
+  // separate pool checkouts and could leave one voter holding two votes; the
+  // flock vote ('flockvote:...') has had one since round 11. Neither returns
+  // anything the routes read.
+  if (has('pg_advisory_xact_lock')) return { rows: [], rowCount: 0 };
   if (has('INSERT INTO flocks')) {
     return { rows: [{ id: FLOCK_ID, name: params[0], creator_id: Number(params[1]) }], rowCount: 1 };
   }
   if (has('SELECT 1 FROM users WHERE id = $1')) {
     const u = userRow(params[0]);
     return { rows: u ? [{ '?column?': 1 }] : [], rowCount: u ? 1 : 0 };
+  }
+  // Reliability round: the create path's existence and block checks used to run
+  // once PER INVITEE inside the create transaction (~75 queries at the 25-id
+  // cap, with the block check borrowing a second pool connection). They are one
+  // set-based query each now. The assertions in this file are unchanged — only
+  // the query shape the fixture has to recognise moved.
+  if (has('SELECT id FROM users WHERE id = ANY($1::int[])')) {
+    const rows = (params[0] || []).map((id) => userRow(id)).filter(Boolean).map((u) => ({ id: u.id }));
+    return { rows, rowCount: rows.length };
+  }
+  if (has('SELECT blocker_id, blocked_id FROM user_blocks')) {
+    const me = Number(params[0]);
+    const ids = (params[1] || []).map(Number);
+    const rows = blocks
+      .filter(([a, b]) =>
+        (Number(a) === me && ids.includes(Number(b))) || (Number(b) === me && ids.includes(Number(a))))
+      .map(([a, b]) => ({ blocker_id: Number(a), blocked_id: Number(b) }));
+    return { rows, rowCount: rows.length };
   }
   if (has("SELECT id FROM flock_members WHERE flock_id = $1 AND user_id = $2 AND status = 'accepted'")) {
     const m = Number(params[0]) === FLOCK_ID ? memberOf(params[1]) : null;
@@ -185,8 +209,11 @@ pool.query = async (text, params = []) => {
     return { rows: m ? [{ status: m.status }] : [], rowCount: m ? 1 : 0 };
   }
   if (has('INSERT INTO flock_members')) {
-    members.push({ user_id: Number(params[1]), status: 'invited' });
-    return { rows: [], rowCount: 1 };
+    // Two shapes now: one row per call (POST /:id/invite) and the batched
+    // UNNEST insert the create path uses.
+    const ids = Array.isArray(params[1]) ? params[1].map(Number) : [Number(params[1])];
+    for (const id of ids) members.push({ user_id: id, status: 'invited' });
+    return { rows: [], rowCount: ids.length };
   }
   if (has("UPDATE flock_members SET status = 'accepted', joined_at = NOW()")) {
     const m = memberOf(params[1]);

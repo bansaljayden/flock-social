@@ -55,6 +55,30 @@ const moderationRoutes = require('./routes/moderation');
 const revenuecatRoutes = require('./routes/revenuecat');
 const entitlementsRoutes = require('./routes/entitlements');
 
+// ---------------------------------------------------------------------------
+// Process-level safety net
+//
+// Node's default for an unhandled promise rejection is to print the reason and
+// KILL THE PROCESS. On Railway that drops every open WebSocket and 502s every
+// in-flight request until the container restarts — one stray floating promise
+// anywhere in the codebase takes the whole service down for everyone.
+//
+// Sentry does not cover this: instrument.js only calls Sentry.init() when
+// SENTRY_DSN is set, and it is not set in production, so today the failure is
+// silent as well as fatal.
+//
+// Every floating promise in the tree is currently caught (the `.catch(() => {})`
+// tails on the socket fan-outs, the migration unlock, the demo-story refresh),
+// so this is insurance against a future regression, not a live bug. It is
+// deliberately NOT paired with an uncaughtException handler: a rejected promise
+// leaves the process in a known state, a thrown-past-the-top exception does not,
+// and swallowing the latter is how you serve corrupted state instead of
+// restarting.
+process.on('unhandledRejection', (reason) => {
+  console.error('Unhandled promise rejection (kept alive):', reason);
+  Sentry.captureException(reason instanceof Error ? reason : new Error(String(reason)));
+});
+
 const app = express();
 app.set('trust proxy', 1);
 const server = http.createServer(app);
@@ -331,11 +355,20 @@ async function postBootTasks() {
       await pool.query(`UPDATE users SET role = 'admin' WHERE id = ANY($1) AND role != 'admin'`, [ids]).catch(() => {});
     }
   }
-  // Keep demo stories alive — refresh expiration for seeded picsum stories
-  await pool.query(
-    `UPDATE stories SET expires_at = NOW() + INTERVAL '24 hours'
-     WHERE image_url LIKE 'https://picsum.photos/seed/flock%' AND expires_at < NOW()`
-  ).catch((e) => console.warn('Demo story refresh failed:', e.message));
+  // Demo stories are stock picsum placeholders belonging to the seeded demo
+  // accounts. This refresh ran UNCONDITIONALLY on every boot, which made a
+  // 24-hour story permanent: anyone friended with a demo account — App Review
+  // included — saw stock photos presented as a real friend's story, forever.
+  // That is the exact "no stock photos / no seed data in production" rule the
+  // review checklist exists to enforce, so a populated demo feed now has to be
+  // asked for out loud, the same shape of guard as scripts/seed-review-account.js.
+  // Unset (production default): the rows expire on their own like any story.
+  if (process.env.KEEP_DEMO_STORIES === '1') {
+    await pool.query(
+      `UPDATE stories SET expires_at = NOW() + INTERVAL '24 hours'
+       WHERE image_url LIKE 'https://picsum.photos/seed/flock%' AND expires_at < NOW()`
+    ).catch((e) => console.warn('Demo story refresh failed:', e.message));
+  }
 }
 
 // ---------------------------------------------------------------------------

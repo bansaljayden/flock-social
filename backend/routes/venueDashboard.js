@@ -251,30 +251,69 @@ router.get('/incoming-flocks', requirePremium, async (req, res) => {
 
 // ─── REVIEWS ─────────────────────────────────────────────────────────────────
 
+// Reviews are unbounded user-generated rows. Both review routes below used to
+// SELECT the whole set (or a 50-row window) and reduce it in JavaScript, so the
+// response grew without limit and the numbers drifted from the truth. The stats
+// are computed by Postgres over EVERY row now, and the row list is a page.
+const REVIEW_PAGE_DEFAULT = 50;
+const REVIEW_PAGE_MAX = 100;
+function reviewPageSize(raw) {
+  const n = parseInt(raw, 10);
+  if (!Number.isInteger(n) || n < 1) return REVIEW_PAGE_DEFAULT;
+  return Math.min(n, REVIEW_PAGE_MAX);
+}
+
 // GET /api/venue-dashboard/reviews — get Flock reviews for this venue
 router.get('/reviews', async (req, res) => {
   try {
     const venue = await getVenueCtx(req.user.id);
     if (!venue || !venue.google_place_id) return res.json({ reviews: [], stats: null });
 
+    const limit = reviewPageSize(req.query.limit);
+
+    // Aggregates in SQL over the full set. Loading every review ever written
+    // just to average five integers meant the dashboard's memory and payload
+    // grew with the venue's popularity, and one busy venue could return tens of
+    // thousands of rows including full review text.
+    const statsResult = await pool.query(
+      // Same JOIN as the list below, so the two can never disagree about which
+      // rows count (venue_reviews.user_id is nullable; the join is the rule).
+      `SELECT COUNT(*)::int AS total,
+              AVG(vr.rating)::float AS average,
+              COUNT(*) FILTER (WHERE vr.rating = 1)::int AS r1,
+              COUNT(*) FILTER (WHERE vr.rating = 2)::int AS r2,
+              COUNT(*) FILTER (WHERE vr.rating = 3)::int AS r3,
+              COUNT(*) FILTER (WHERE vr.rating = 4)::int AS r4,
+              COUNT(*) FILTER (WHERE vr.rating = 5)::int AS r5
+       FROM venue_reviews vr
+       JOIN users u ON u.id = vr.user_id
+       WHERE vr.google_place_id = $1`,
+      [venue.google_place_id]
+    );
+    const s = statsResult.rows[0] || {};
+    const total = s.total || 0;
+
     const { rows } = await pool.query(
       `SELECT vr.*, u.name, u.profile_image_url
        FROM venue_reviews vr
        JOIN users u ON u.id = vr.user_id
        WHERE vr.google_place_id = $1
-       ORDER BY vr.created_at DESC`,
-      [venue.google_place_id]
+       ORDER BY vr.created_at DESC
+       LIMIT $2`,
+      [venue.google_place_id, limit]
     );
-
-    // Calculate stats
-    const total = rows.length;
-    const avg = total > 0 ? (rows.reduce((s, r) => s + r.rating, 0) / total).toFixed(1) : 0;
-    const dist = [0, 0, 0, 0, 0];
-    rows.forEach(r => dist[r.rating - 1]++);
 
     res.json({
       reviews: rows,
-      stats: { average: parseFloat(avg), total, distribution: dist }
+      stats: {
+        // Rounded the same way the old .toFixed(1) rounded, so the displayed
+        // number does not move for venues that already had fewer than 50.
+        average: total > 0 ? parseFloat(Number(s.average).toFixed(1)) : 0,
+        total,
+        distribution: [s.r1 || 0, s.r2 || 0, s.r3 || 0, s.r4 || 0, s.r5 || 0],
+      },
+      // The list is a page now; `total` above is the real count.
+      hasMore: total > rows.length,
     });
   } catch (err) {
     console.error('Get reviews error:', err);
@@ -349,16 +388,49 @@ router.post('/submit-review', [
 // GET /api/venue-dashboard/public-reviews/:placeId — get reviews for any venue (for user-facing venue cards)
 router.get('/public-reviews/:placeId', async (req, res) => {
   try {
+    const limit = reviewPageSize(req.query.limit);
+
+    // `average` and `total` were derived from the 50-row page, so past 50
+    // reviews a venue's public rating silently became "average of the newest
+    // 50" and the count froze at 50 — the number users compare venues on was
+    // wrong precisely for the venues with the most reviews. Aggregate over
+    // every visible row, with the SAME visibility rules as the list below so
+    // the two cannot disagree.
+    const statsResult = await pool.query(
+      `SELECT COUNT(*)::int AS total, AVG(vr.rating)::float AS average
+       FROM venue_reviews vr
+       JOIN users u ON u.id = vr.user_id
+       WHERE vr.google_place_id = $1
+         AND COALESCE(vr.is_hidden, false) = false
+         AND NOT EXISTS (
+           SELECT 1 FROM user_blocks b
+           WHERE (b.blocker_id = $2 AND b.blocked_id = vr.user_id)
+              OR (b.blocker_id = vr.user_id AND b.blocked_id = $2)
+         )`,
+      [req.params.placeId, req.user.id]
+    );
+    const total = statsResult.rows[0]?.total || 0;
+    const average = total > 0 ? parseFloat(Number(statsResult.rows[0].average).toFixed(1)) : 0;
+
     // venue_reply comes from whoever claimed the place — expose it publicly
     // only when that claim is verified. User reviews themselves always show.
+    // EXISTS rather than the previous LEFT JOIN on venue_profiles: nothing
+    // makes google_place_id unique in that table, so two verified claims on one
+    // place duplicated every review row in this response (and would have
+    // double-weighted them in the average).
     const { rows } = await pool.query(
       `SELECT vr.id, vr.rating, vr.text,
-              CASE WHEN vp.verified THEN vr.venue_reply ELSE NULL END AS venue_reply,
-              CASE WHEN vp.verified THEN vr.venue_replied_at ELSE NULL END AS venue_replied_at,
+              CASE WHEN EXISTS (
+                SELECT 1 FROM venue_profiles vp
+                WHERE vp.google_place_id = vr.google_place_id AND vp.verified = true
+              ) THEN vr.venue_reply ELSE NULL END AS venue_reply,
+              CASE WHEN EXISTS (
+                SELECT 1 FROM venue_profiles vp
+                WHERE vp.google_place_id = vr.google_place_id AND vp.verified = true
+              ) THEN vr.venue_replied_at ELSE NULL END AS venue_replied_at,
               vr.created_at, u.name, u.profile_image_url
        FROM venue_reviews vr
        JOIN users u ON u.id = vr.user_id
-       LEFT JOIN venue_profiles vp ON vp.google_place_id = vr.google_place_id AND vp.verified = true
        WHERE vr.google_place_id = $1
          AND COALESCE(vr.is_hidden, false) = false
          AND NOT EXISTS (
@@ -367,14 +439,11 @@ router.get('/public-reviews/:placeId', async (req, res) => {
               OR (b.blocker_id = vr.user_id AND b.blocked_id = $2)
          )
        ORDER BY vr.created_at DESC
-       LIMIT 50`,
-      [req.params.placeId, req.user.id]
+       LIMIT $3`,
+      [req.params.placeId, req.user.id, limit]
     );
 
-    const total = rows.length;
-    const avg = total > 0 ? (rows.reduce((s, r) => s + r.rating, 0) / total).toFixed(1) : 0;
-
-    res.json({ reviews: rows, average: parseFloat(avg), total });
+    res.json({ reviews: rows, average, total, hasMore: total > rows.length });
   } catch (err) {
     console.error('Get public reviews error:', err);
     res.status(500).json({ error: 'Failed to get reviews' });

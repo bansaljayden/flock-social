@@ -3,6 +3,7 @@ const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
 const pool = require('../config/database');
 const { authenticate } = require('../middleware/auth');
+const { validPlaceId, isKnownVenue } = require('../utils/places');
 
 const router = express.Router();
 
@@ -14,31 +15,21 @@ const router = express.Router();
 //     defeated it entirely — one IP could write ~288,000 rows/day (the general
 //     limiter's ceiling) straight into the table the ML pipeline reads and the
 //     live occupancy count sums.
-// Taps must now look like a Google place id AND name a venue we actually know.
+// Taps must look like a Google place id AND name a venue we actually know.
+//
+// Round 16: both rules moved to utils/places.js, which sockets/handlers.js also
+// imports — the shape check and the known-venue query used to be copied in both
+// files. Two deliberate deltas come with the shared version:
+//   - it fails CLOSED, so a database error during the lookup answers 404
+//     ("Unknown venue") instead of bubbling out as a 500. For a route whose
+//     whole job is deciding whether to trust a tap, refusing is the right
+//     answer to "cannot tell";
+//   - it caches for five minutes in both directions, so a venue onboarded
+//     seconds ago can take up to five minutes to accept taps. That is
+//     acceptable here because NFC tags are programmed as part of onboarding,
+//     not before it; utils/places.js exports clearKnownVenueCache() if the
+//     onboarding path ever wants it immediate.
 // ---------------------------------------------------------------------------
-const PLACE_ID_RE = /^[A-Za-z0-9_-]{6,128}$/; // Google place ids; well under VARCHAR(255)
-
-function validPlaceId(placeId) {
-  return typeof placeId === 'string' && PLACE_ID_RE.test(placeId);
-}
-
-// "Known" = a venue that exists in our world already: a claimed venue profile,
-// a deployed sensor/NFC site, a curated ML venue, or somewhere a flock has
-// actually planned to meet. NFC tags are only ever programmed for venues we
-// onboarded, so this costs a real tap nothing. Deliberately does NOT consult
-// venue_checkins — that would let the first forged row bootstrap the rest.
-async function isKnownPlace(placeId) {
-  const { rows } = await pool.query(
-    `SELECT (
-       EXISTS (SELECT 1 FROM venue_profiles WHERE google_place_id = $1)
-       OR EXISTS (SELECT 1 FROM sensor_devices WHERE venue_place_id = $1)
-       OR EXISTS (SELECT 1 FROM ml_venues WHERE google_place_id = $1)
-       OR EXISTS (SELECT 1 FROM flocks WHERE venue_id = $1)
-     ) AS known`,
-    [placeId]
-  );
-  return rows[0]?.known === true;
-}
 
 // Round 8: the bare GET accepted ANY place id and stored it as source 'nfc',
 // which feedback verification trusts as physical presence — so visiting the
@@ -76,6 +67,16 @@ function nfcSigValid(placeId, sig) {
 // A failing token is treated as an ANONYMOUS tap (which then takes the
 // anonymous dedupe path), never as a hard 401 — a real NFC tap from a logged-out
 // phone must still work.
+//
+// Round 16 (checked, deliberately unchanged): middleware/auth.js now exports
+// `revokeUserSessions`, but it does NOT export `issuedTokenVersion` /
+// `currentTokenVersion` — its module.exports is
+// { authenticate, authenticateAllowBanned, authenticateSocket, signUserToken,
+//   revokeUserSessions, TOKEN_EXPIRY, TOKEN_ALGORITHMS }. The version helpers
+// stay private there, so the local comparison below stays. It is a COPY, and
+// the rule it copies ("a missing tv claim reads as 0") lives in two files: if
+// middleware/auth.js ever changes how a missing claim is interpreted, this must
+// change with it. Exporting the two helpers would remove the duplication.
 async function tryAuth(req) {
   try {
     const header = req.headers.authorization;
@@ -193,13 +194,47 @@ function emitVenueCheckin(io, placeId, createdAt) {
 // True when this identity already checked in at this venue inside the window.
 // Identity is the user id when we have one, so rotating IPs (or sitting behind
 // the same proxy as everyone else) changes nothing for a logged-in caller.
+function tapKey(userId, placeId, ip) {
+  return userId ? `u:${userId}|${placeId}` : `ip:${ip}|${placeId}`;
+}
+
+const TAP_CACHE_MAX = 10000;
+
 function tapIsDuplicate(userId, placeId, ip) {
-  const key = userId ? `u:${userId}|${placeId}` : `ip:${ip}|${placeId}`;
+  const key = tapKey(userId, placeId, ip);
+  const now = Date.now();
   const last = tapCache.get(key);
-  if (last && Date.now() - last < TAP_DEDUPE_MS) return true;
-  if (tapCache.size > 10000) tapCache.clear();
-  tapCache.set(key, Date.now());
+  if (last && now - last < TAP_DEDUPE_MS) return true;
+
+  // Round 16 (reliability audit): this was `tapCache.clear()`, which dropped
+  // all ten thousand entries at once — so crossing the bound re-opened the
+  // duplicate window for EVERY user simultaneously, and someone spraying
+  // fabricated place ids could force that moment at will. Expire what is
+  // actually stale, then evict oldest-first, matching crowd.js's crowdCache.
+  // A Map iterates in insertion order, and `set` on an EXISTING key keeps its
+  // original position — which would make a regular's entry look permanently
+  // old and evict it first. Delete then set, so the first key really is the
+  // least recently written one.
+  tapCache.delete(key);
+  tapCache.set(key, now);
+  if (tapCache.size > TAP_CACHE_MAX) {
+    for (const [k, ts] of tapCache) {
+      if (now - ts >= TAP_DEDUPE_MS) tapCache.delete(k);
+    }
+    while (tapCache.size > TAP_CACHE_MAX) {
+      tapCache.delete(tapCache.keys().next().value);
+    }
+  }
   return false;
+}
+
+// Round 16: the window is claimed BEFORE the INSERT (it has to be — that is
+// what makes it a lock rather than a race). But nothing released it when the
+// insert then failed, so a single database error locked that person out of
+// checking in at that venue for the next 30 minutes and left no row behind to
+// show for it. On the failure path the claim is given back.
+function forgetTap(userId, placeId, ip) {
+  tapCache.delete(tapKey(userId, placeId, ip));
 }
 
 // ---------------------------------------------------------------------------
@@ -210,7 +245,7 @@ router.get('/:placeId', async (req, res) => {
   try {
     const { placeId } = req.params;
     if (!validPlaceId(placeId)) return res.status(400).json({ error: 'Invalid venue id' });
-    if (!(await isKnownPlace(placeId))) return res.status(404).json({ error: 'Unknown venue' });
+    if (!(await isKnownVenue(placeId))) return res.status(404).json({ error: 'Unknown venue' });
 
     const userId = await tryAuth(req);
 
@@ -232,12 +267,18 @@ router.get('/:placeId', async (req, res) => {
     }
 
     const source = nfcSigValid(placeId, req.query.sig) ? 'nfc' : 'nfc_unverified';
-    const insert = await pool.query(
-      `INSERT INTO venue_checkins (venue_place_id, user_id, checkin_source)
-       VALUES ($1, $2, $3)
-       RETURNING created_at`,
-      [placeId, userId, source]
-    );
+    let insert;
+    try {
+      insert = await pool.query(
+        `INSERT INTO venue_checkins (venue_place_id, user_id, checkin_source)
+         VALUES ($1, $2, $3)
+         RETURNING created_at`,
+        [placeId, userId, source]
+      );
+    } catch (insertErr) {
+      forgetTap(userId, placeId, req.ip); // see forgetTap — do not burn the window on a failure
+      throw insertErr;
+    }
     const checked_in_at = insert.rows[0].created_at;
 
     const io = req.app.get('io');
@@ -287,12 +328,18 @@ router.post('/:placeId', authenticate, async (req, res) => {
       return res.json({ success: true, venue_place_id: placeId, deduped: true });
     }
 
-    const insert = await pool.query(
-      `INSERT INTO venue_checkins (venue_place_id, user_id, checkin_source)
-       VALUES ($1, $2, 'manual')
-       RETURNING created_at`,
-      [placeId, req.user.id]
-    );
+    let insert;
+    try {
+      insert = await pool.query(
+        `INSERT INTO venue_checkins (venue_place_id, user_id, checkin_source)
+         VALUES ($1, $2, 'manual')
+         RETURNING created_at`,
+        [placeId, req.user.id]
+      );
+    } catch (insertErr) {
+      forgetTap(req.user.id, placeId, req.ip); // see forgetTap
+      throw insertErr;
+    }
     const checked_in_at = insert.rows[0].created_at;
 
     const io = req.app.get('io');
@@ -317,4 +364,4 @@ module.exports = router;
 // keep server.js's `app.use('/api/checkin', checkinRoutes)` mount unchanged —
 // an express Router is a function object, so this adds nothing to the request
 // path.
-module.exports.__test = { tryAuth, tapIsDuplicate, emitVenueCheckin, tapCache, validPlaceId };
+module.exports.__test = { tryAuth, tapIsDuplicate, forgetTap, emitVenueCheckin, tapCache, validPlaceId };

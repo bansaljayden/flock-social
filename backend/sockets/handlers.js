@@ -5,6 +5,8 @@ const { moderateText, TEXT_REJECTED_MESSAGE, moderateImage, IMAGE_REJECTED_MESSA
 const { sanitizeVenueData, safeVenuePhotoUrl } = require('../utils/venuePayload');
 const VENUE_REJECTED_MESSAGE = "That venue card couldn't be shared.";
 const { isBlockedBetween, isBlockedBetweenCached, getInvisibleUserIds } = require('../utils/blocks');
+const { isPlaceIdShaped, isKnownVenue } = require('../utils/places');
+const { hasDmRelationship } = require('../utils/relationships');
 const { pushIfOfflineDebounced } = require('../services/pushHelper');
 
 // Track which users are in which rooms for presence.
@@ -124,12 +126,43 @@ function clearBuckets(socket) {
   }
 }
 
+// --- One-shot relay ceiling ------------------------------------------------
+//
+// For events that announce a state TRANSITION rather than carry new content
+// (friend request sent / answered). Re-emitting one of these is pure noise in
+// the recipient's client, and it is free to do, so "the row exists" was not a
+// sufficient gate — see the note above the friend handlers.
+//
+// Process-global and keyed by the pair, not by socket: a socket id costs
+// nothing, so a per-connection map would be reset by a reconnect.
+const NOTIFY_ONCE_MS = 10 * 60 * 1000;
+const RELAY_MAX_ENTRIES = 20000;
+const relayedNotifications = new Map(); // "kind|from|to" -> last delivery ms
+
+function alreadyRelayed(key) {
+  const now = Date.now();
+  const last = relayedNotifications.get(key);
+  if (last && now - last < NOTIFY_ONCE_MS) return true;
+  if (relayedNotifications.size > RELAY_MAX_ENTRIES) {
+    for (const [k, ts] of relayedNotifications) {
+      if (now - ts >= NOTIFY_ONCE_MS) relayedNotifications.delete(k);
+    }
+    // Every entry still live means the map is full of genuine recent pairs.
+    // Refusing is the safe direction: a missed toast beats unbounded growth,
+    // and the REST notification row is the durable record either way.
+    if (relayedNotifications.size > RELAY_MAX_ENTRIES) return true;
+  }
+  relayedNotifications.set(key, now);
+  return false;
+}
+
 // Test seam: rate limiting is process-global state, so tests need a way back
 // to a known-empty starting point.
 function __resetRateLimiters() {
   socketBuckets.clear();
   userBuckets.clear();
   userSockets.clear();
+  relayedNotifications.clear();
 }
 
 // --- Live session revalidation -------------------------------------------
@@ -237,42 +270,76 @@ function staleFlockRooms(rooms, allowedFlockIds) {
 //
 // Same rule routes/checkin.js applies to an NFC tap, applied to a live
 // subscription: the id must be shaped like a Google place id, and it must name
-// a venue we already know (a claimed profile, a deployed sensor, a curated ML
-// venue, or somewhere a flock has planned to meet). Deliberately does NOT
-// consult venue_checkins, so a forged check-in row cannot bootstrap a room.
-// (The rule is duplicated rather than imported because it currently lives
-// private inside routes/checkin.js — a shared utils/places.js would be better.)
-const PLACE_ID_RE = /^[A-Za-z0-9_-]{6,128}$/;
+// a venue we already know. Round 16: the rule used to be copied here and in
+// routes/checkin.js, and the comment that stood in this spot asked for a shared
+// module. utils/places.js is that module, and both call sites now import it, so
+// the security rule has one definition instead of two that can drift.
+//
+// OPEN DECISION recorded for utils/places.js (not this file's to change):
+// isKnownVenue counts `EXISTS (SELECT 1 FROM flocks WHERE venue_id = $1)`, and
+// that clause is SELF-SERVE — anyone can create a flock naming any place id and
+// thereby promote a string of their choosing to "known". The other three
+// clauses cannot be reached that way: venue_profiles needs a claim,
+// sensor_devices needs hardware provisioned by us, ml_venues is curated.
+//
+// As the owner of both consumers, the verdict is DROP THE FLOCKS CLAUSE:
+//   - the NFC tap in routes/checkin.js gains nothing from it. Tags are
+//     programmed as part of onboarding, so a real tag's venue always has a
+//     profile or a sensor row. The clause is never why a genuine tap succeeds,
+//     but it is exactly how a fabricated one lands in venue_checkins — the
+//     table routes/sensors.js sums for public occupancy and the ML pipeline
+//     exports as training data.
+//   - join_venue gains nothing either. Both client subscriptions (App.js venue
+//     screen and the venue-owner dashboard) are sensor-backed views, so they
+//     name venues that already match sensor_devices/venue_profiles. A room for
+//     a venue with neither can never carry a crowd_update — that emit requires
+//     a VERIFIED venue_profiles claim — so the only thing a bootstrapped room
+//     could ever receive is a check-in the attacker fabricated themselves.
+// Requiring a CONFIRMED flock instead would keep a weaker version of the same
+// hole (confirming your own flock is free), which is why the verdict is drop
+// rather than narrow.
 const MAX_VENUE_ROOMS_PER_SOCKET = 10;
-const KNOWN_VENUE_TTL_MS = 5 * 60 * 1000;
-const knownVenueCache = new Map(); // placeId -> { known, ts }
 
-function isPlaceIdShaped(placeId) {
-  return typeof placeId === 'string' && PLACE_ID_RE.test(placeId);
+// --- Wire-value normalizers ------------------------------------------------
+//
+// Socket payloads get none of express-validator's coercion, so every handler
+// used to interpret ids and short strings its own way. These two are the
+// socket equivalents of `param('id').isInt()` and
+// `body('emoji').isLength({min:1,max:10})`, so the socket and REST twins of the
+// same feature agree on what they accept.
+//
+// STRICT on purpose: parseInt('5abc') is 5 and Number.isInteger says yes, and
+// Postgres silently trims ' 5 ' when casting to int — both produced ids that
+// resolved in SQL but did not match the `user:5` room name built by string
+// interpolation, so writes landed and deliveries did not.
+// Bounded to the SERIAL (int4) range these columns actually use. Round 16
+// second pass: without the ceiling, '99999999999999999999' passed the digit
+// test, became 1e20, and reached Postgres as an out-of-range int — a swallowed
+// error instead of a rejection, one query later than it needed to be.
+const MAX_SERIAL_ID = 2147483647;
+function asId(value) {
+  const n = Number.isInteger(value)
+    ? value
+    : (typeof value === 'string' && /^\d+$/.test(value.trim()) ? parseInt(value.trim(), 10) : NaN);
+  if (!Number.isInteger(n) || n < 1 || n > MAX_SERIAL_ID) return null;
+  return n;
 }
 
-async function isKnownVenue(placeId) {
-  const hit = knownVenueCache.get(placeId);
-  if (hit && Date.now() - hit.ts < KNOWN_VENUE_TTL_MS) return hit.known;
-  let known = false;
-  try {
-    const { rows } = await pool.query(
-      `SELECT (
-         EXISTS (SELECT 1 FROM venue_profiles WHERE google_place_id = $1)
-         OR EXISTS (SELECT 1 FROM sensor_devices WHERE venue_place_id = $1)
-         OR EXISTS (SELECT 1 FROM ml_venues WHERE google_place_id = $1)
-         OR EXISTS (SELECT 1 FROM flocks WHERE venue_id = $1)
-       ) AS known`,
-      [placeId]
-    );
-    known = rows[0]?.known === true;
-  } catch (_) {
-    // Fail closed: an unverifiable venue is not subscribed to.
-    return false;
-  }
-  if (knownVenueCache.size > 5000) knownVenueCache.clear();
-  knownVenueCache.set(placeId, { known, ts: Date.now() });
-  return known;
+// Round 16: `typeof lat !== 'number'` was the only check on a coordinate, and
+// `typeof NaN === 'number'` is true — so NaN and Infinity passed straight
+// through to every peer's map, where JSON.stringify turns them into `null`.
+// Coordinates that are not real coordinates are refused.
+function isLatLng(lat, lng) {
+  return Number.isFinite(lat) && Number.isFinite(lng)
+    && lat >= -90 && lat <= 90 && lng >= -180 && lng <= 180;
+}
+
+// dm_emoji_reactions.emoji is VARCHAR(10); the REST twin enforces 1-10 chars.
+function normalizeEmoji(value) {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  if (trimmed.length < 1 || trimmed.length > 10) return null;
+  return trimmed;
 }
 
 // Reusable membership check for socket handlers
@@ -288,22 +355,45 @@ async function verifyMembership(flockId, userId) {
 // had not been blocked by, so a stranger could write rows into a conversation
 // they are not part of. dm_pinned_venues is keyed on the (user1, user2) PAIR
 // and upserts, so a single event from an outsider OVERWRITES whatever those two
-// people had pinned. Persisting DM handlers now require a real relationship:
-// an accepted friendship, or a DM that already exists between the two accounts.
+// people had pinned. Persisting DM handlers require a real relationship: an
+// accepted friendship, or a DM that already exists between the two accounts.
 // (Ephemeral handlers — typing, location — keep the cheaper block-only check.)
-async function hasDmRelationship(userId, otherId) {
-  const r = await pool.query(
-    `SELECT 1 WHERE EXISTS (
-       SELECT 1 FROM friendships
-       WHERE status = 'accepted'
-         AND ((requester_id = $1 AND addressee_id = $2) OR (requester_id = $2 AND addressee_id = $1))
-     ) OR EXISTS (
-       SELECT 1 FROM direct_messages
-       WHERE (sender_id = $1 AND receiver_id = $2) OR (sender_id = $2 AND receiver_id = $1)
-     )`,
-    [userId, otherId]
-  );
-  return r.rows.length > 0;
+//
+// Round 16: the definition moved to utils/relationships.js so the REST twins in
+// routes/messages.js can hold the same rule. `send_dm` deliberately does NOT
+// use it — see the long note in that handler.
+
+// Room broadcast with the actor's blocked users excluded, for the presence
+// events that are cheap and frequent enough that a per-member fan-out would be
+// the wrong trade. `except()` takes room names, and every socket is in its own
+// `user:{id}` room (joined on connect), so excluding those rooms excludes those
+// people wherever they are connected from.
+//
+// `emitter` is either `socket.to(room)` (everyone but me) or `io.to(room)`
+// (everyone). Falls back to an unfiltered emit only on a broadcaster that has
+// no `except` — i.e. a stub — never on a block lookup failure, which fails
+// CLOSED by throwing out to the caller's guard.
+function broadcastExcluding(emitter, invisibleIds, event, payload) {
+  let target = emitter;
+  const ids = [...(invisibleIds || [])];
+  if (ids.length && typeof target.except === 'function') {
+    target = target.except(ids.map((id) => `user:${id}`));
+  }
+  target.emit(event, payload);
+}
+
+// The presence variant: looks the block list up, and stays silent rather than
+// broadcasting unfiltered if it cannot.
+async function announceToRoomExcludingBlocked(socket, room, event, payload) {
+  let invisible = [];
+  try {
+    invisible = await getInvisibleUserIds(payload.userId);
+  } catch (_) {
+    // Fail closed. A presence ping is worth far less than the guarantee that a
+    // blocked user never sees it.
+    return;
+  }
+  broadcastExcluding(socket.to(room), invisible, event, payload);
 }
 
 // Block-aware alternative to a flock-room broadcast: emits to each accepted
@@ -321,28 +411,51 @@ async function emitToFlockExcludingBlocked(io, flockId, actorId, event, payload)
   }
 }
 
-// Guest RSVPs come in over an UNAUTHENTICATED share link (routes/guest.js), so
-// there is no connected socket to broadcast from — the REST route calls this.
+// --- Per-member fan-out ----------------------------------------------------
 //
-// It fans out to each accepted member's PERSONAL room, not to `flock:{id}`.
-// A socket only joins the flock room while that flock's screen is open
-// (join_flock above), so the host sitting anywhere else in the app — the normal
-// case right after a share link goes out — was never in the room the old
-// `guest_rsvp` emit targeted. `user:{id}` is joined on connect and is a
-// superset of the flock room, so this reaches the host wherever they are and
-// still delivers exactly once.
+// `flock:{id}` is NOT a membership list. A socket joins it when the client
+// opens that flock's screen (join_flock) and stays in it for the life of the
+// connection, so a room emit is wrong in both directions at once:
+//
+//   - it UNDER-delivers, because a member sitting anywhere else in the app —
+//     the normal case for anything that happens while they are not staring at
+//     the flock — is not in the room at all;
+//   - it OVER-delivers, because membership is verified once at join time.
+//     revalidateSession sweeps stale rooms, but only on a 60s timer, only when
+//     JWT_SECRET is set, and it swallows database errors by design, so the
+//     sweep is best-effort and the exposure window is open-ended.
+//
+// `user:{id}` is joined on connect and is a superset of the flock room, so
+// fanning out to each accepted member reaches everyone exactly once and cannot
+// reach anyone whose membership has ended. Membership is re-read at emit time,
+// which is the property that makes it safe.
+//
+// `recipients` is for the one case the query cannot serve: an event about a
+// flock whose rows are already gone (a delete CASCADEs flock_members away, so
+// the members must be captured BEFORE the delete and passed in here).
 //
 // Returns the ids it delivered to (handy for tests and logging).
-async function broadcastGuestRsvp(io, flockId, payload) {
+async function emitToFlockMembers(io, flockId, event, payload, recipients) {
   if (!io) return [];
-  const members = await pool.query(
-    "SELECT user_id FROM flock_members WHERE flock_id = $1 AND status = 'accepted'",
-    [flockId]
-  );
-  for (const m of members.rows) {
-    io.to(`user:${m.user_id}`).emit('guest_rsvp', payload);
+  let ids = recipients;
+  if (!Array.isArray(ids)) {
+    const members = await pool.query(
+      "SELECT user_id FROM flock_members WHERE flock_id = $1 AND status = 'accepted'",
+      [flockId]
+    );
+    ids = members.rows.map((r) => r.user_id);
   }
-  return members.rows.map((r) => r.user_id);
+  for (const id of ids) {
+    io.to(`user:${id}`).emit(event, payload);
+  }
+  return ids;
+}
+
+// Guest RSVPs come in over an UNAUTHENTICATED share link (routes/guest.js), so
+// there is no connected socket to broadcast from — the REST route calls this.
+// Kept as its own name because routes/guest.js already imports it.
+async function broadcastGuestRsvp(io, flockId, payload) {
+  return emitToFlockMembers(io, flockId, 'guest_rsvp', payload);
 }
 
 function registerHandlers(io, socket) {
@@ -472,11 +585,29 @@ function registerHandlers(io, socket) {
     // events into any flock whose id they guessed. Leaving the room and the
     // presence bookkeeping stay unconditional (a removed member must still be
     // able to detach); only the BROADCAST is gated. join_flock already verifies.
+    //
+    // Round 16: this was the only handler running a database query per event
+    // with no ceiling of any kind, and `leave_flock` is the cheapest event on
+    // the wire (a bare id), so a tight loop was unbounded database load.
+    //
+    // Round 16, second pass: the meter deliberately guards ONLY the query and
+    // the broadcast, and is checked here rather than at the top of the handler.
+    // Rate-limiting the whole handler would mean a refused `leave_flock` left
+    // the socket subscribed to `flock:{id}` — which carries the budget ceiling
+    // and per-person bill shares. Failing to detach is a worse outcome than
+    // the load it would have prevented, so detaching is always free.
+    if (!allowEvent(socket, 'leave_flock', 30, 10_000)) return;
     let isMember = false;
     try { isMember = await verifyMembership(flockId, user.id); } catch (_) { isMember = false; }
 
     if (announce && isMember) {
-      socket.to(room).emit('member_offline', {
+      // Round 16: `member_joined` above hides itself from blocked users
+      // (rounds 4/5 — "presence is identity, so it obeys blocks like every
+      // other live signal"), but its counterpart did not. The result was a
+      // one-sided leak in the direction that matters least to the leaker and
+      // most to the person who blocked: they never appeared to come online, and
+      // then announced, by name, the moment they left.
+      await announceToRoomExcludingBlocked(socket, room, 'member_offline', {
         userId: user.id,
         name: user.name,
         flockId,
@@ -564,6 +695,19 @@ function registerHandlers(io, socket) {
       if (image_url) {
         if (!/^data:image\/(png|jpe?g|gif|webp);base64,/.test(image_url)) {
           socket.emit('error', { message: 'Unsupported image format' });
+          return;
+        }
+        // Round 16: an image send was charged the same single token as a
+        // one-word text message, and an image is not the same thing. Each one
+        // costs a PAID Google Vision call (utils/moderation.js), a row holding
+        // up to Socket.IO's 8MB frame ceiling, and that payload again for every
+        // recipient. The REST twin is capped at a 1MB body by
+        // `express.json({ limit: '1mb' })` and 300 requests per 15 minutes; the
+        // socket path allowed 2 per second of an 8x larger payload with no
+        // separate ceiling at all. Its own bucket, so photos are metered as
+        // photos and normal chat is unaffected.
+        if (!allowEvent(socket, 'send_image', 10, 60_000)) {
+          socket.emit('error', { message: 'Slow down a moment.' });
           return;
         }
         const verdict = await moderateImage(image_url);
@@ -682,7 +826,14 @@ function registerHandlers(io, socket) {
   socket.on('vote_venue', async (data) => {
     try {
       if (!allowEvent(socket, 'vote_venue', 30, 10_000)) return;
-      const { flockId } = data;
+      // Round 16: `new_vote` has two producers — this handler and
+      // routes/venues.js — and they disagreed on the shape of `flockId`. The
+      // REST route sends `parseInt(flockId, 10)`; this one echoed whatever came
+      // off the wire. App.js matches with `f.id !== data.flockId`, a strict
+      // comparison against the integer id the API gave it, so a socket vote
+      // carrying "42" produced an event every client silently discarded. Same
+      // reasoning applies to select_venue and flock_invite_response below.
+      const flockId = asId(data?.flockId);
       const venue_name = stripHtml(typeof data.venue_name === 'string' ? data.venue_name.trim() : '');
       // Round 9: the vote name is persisted and broadcast to the whole flock,
       // so it needs the same screen every other user-writable field gets.
@@ -730,10 +881,15 @@ function registerHandlers(io, socket) {
           [flockId, user.id, venue_name]
         );
         await voteClient.query(
+          // Round 16: COALESCE, matching the REST route. Plain
+          // `venue_id = EXCLUDED.venue_id` let a re-vote that arrived without a
+          // place id (the client re-sends its current pick whenever the tally
+          // changes) NULL out an id the row already had — which is how rows for
+          // one venue ended up with mixed ids in the first place.
           `INSERT INTO venue_votes (flock_id, user_id, venue_name, venue_id)
            VALUES ($1, $2, $3, $4)
            ON CONFLICT (flock_id, user_id, venue_name)
-           DO UPDATE SET venue_id = EXCLUDED.venue_id`,
+           DO UPDATE SET venue_id = COALESCE(EXCLUDED.venue_id, venue_votes.venue_id)`,
           [flockId, user.id, venue_name, venue_id]
         );
         await voteClient.query('COMMIT');
@@ -746,13 +902,24 @@ function registerHandlers(io, socket) {
 
       // Fetch updated vote tallies (ids kept internally so each recipient's
       // blocked users can be stripped from the names list — round 5)
+      // Round 16: this grouped by (venue_name, venue_id). The unique key on
+      // venue_votes is (flock_id, user_id, venue_name) — venue_id is NOT part
+      // of it, and it is nullable — so two members voting for the same place
+      // from different entry points (one row carries the Google place id, one
+      // carries NULL) produced TWO groups with the same name. The flock then
+      // saw "Joe's Bar 1" twice instead of "Joe's Bar 2", and the winner of a
+      // vote could be a venue with fewer real supporters. Group by the name
+      // alone (the thing the unique key is actually on) and keep one non-null
+      // id as the group's representative.
       const votes = await pool.query(
-        `SELECT venue_name, venue_id, COUNT(*) AS vote_count,
+        `SELECT venue_name,
+                MIN(venue_id) FILTER (WHERE venue_id IS NOT NULL) AS venue_id,
+                COUNT(*) AS vote_count,
                 ARRAY_AGG(json_build_object('id', u.id, 'name', u.name)) AS voter_rows
          FROM venue_votes vv
          JOIN users u ON u.id = vv.user_id
          WHERE vv.flock_id = $1
-         GROUP BY venue_name, venue_id
+         GROUP BY venue_name
          ORDER BY vote_count DESC`,
         [flockId]
       );
@@ -803,7 +970,9 @@ function registerHandlers(io, socket) {
       if (!allowEvent(socket, 'update_location', 30, 10_000)) return;
       const { flockId, lat, lng } = data;
 
-      if (!flockId || typeof lat !== 'number' || typeof lng !== 'number') return;
+      // Round 16: see isLatLng — `typeof NaN === 'number'`, so NaN/Infinity
+      // used to reach every member's map as a JSON `null`.
+      if (!flockId || !isLatLng(lat, lng)) return;
       if (!(await verifyMembership(flockId, user.id))) return;
 
       // Exact coordinates never reach blocked users (round 3). Per-member
@@ -824,6 +993,16 @@ function registerHandlers(io, socket) {
   });
 
   socket.on('stop_sharing_location', async (data) => {
+    // Round 16: update_location right above is metered at 30/10s; its
+    // counterpart had no limit while doing the same verifyMembership query, so
+    // it was the unmetered way to make the server run a query per packet.
+    //
+    // Round 16, second pass: its OWN bucket, not update_location's. Sharing one
+    // meant a client streaming location at the allowed rate had already spent
+    // the budget by the time it wanted to stop, so the "stop" was dropped and
+    // every peer kept a stale pin on the map — a privacy regression introduced
+    // by a rate limit meant to prevent load.
+    if (!allowEvent(socket, 'stop_sharing_location', 30, 10_000)) return;
     const flockId = data?.flockId;
     if (!flockId) return;
     // Round 13: no membership check — update_location right above has one, but
@@ -840,10 +1019,28 @@ function registerHandlers(io, socket) {
   // These events only RELAY state that the REST endpoints already persisted —
   // the DB row is verified first, so a bare socket emit can't fabricate a
   // friend request or response that never happened (round 4).
+  //
+  // Round 16: verifying the row was not enough. A friendship row stays
+  // 'pending' until the recipient answers, and re-emitting is free — so one
+  // attacker with ONE legitimately pending request could re-fire this at the
+  // event budget (20 per 10s per socket, more per account) and ring the
+  // victim's client indefinitely. The victim's only escape was to accept or
+  // decline, i.e. to interact with their harasser. Nothing is written, so the
+  // write budgets never covered it.
+  //
+  // The fix is a per-PAIR delivery ceiling rather than a tighter rate limit:
+  // the event carries no new information the second time, because it announces
+  // a state transition that has already happened. One delivery per pair per
+  // transition is exactly right. See alreadyRelayed at module scope — it is
+  // deliberately NOT per-socket, because a socket id is free and reconnecting
+  // would otherwise reset the ceiling, which is the exact bypass the rate
+  // buckets at the top of this file were rewritten to close.
   socket.on('friend_request_sent', async (data) => {
     if (!allowEvent(socket, 'friend_event', 20, 10_000)) return;
-    const { toUserId } = data;
-    if (!toUserId) return;
+    const toUserId = asId(data?.toUserId);
+    if (toUserId === null || toUserId === user.id) return;
+    // Checked BEFORE the two queries, so a flood costs nothing downstream.
+    if (alreadyRelayed(`req|${user.id}|${toUserId}`)) return;
     if (await isBlockedBetween(user.id, toUserId)) return;
     const row = await pool.query(
       `SELECT 1 FROM friendships WHERE requester_id = $1 AND addressee_id = $2 AND status = 'pending'`,
@@ -858,8 +1055,12 @@ function registerHandlers(io, socket) {
 
   socket.on('friend_request_response', async (data) => {
     if (!allowEvent(socket, 'friend_event', 20, 10_000)) return;
-    const { toUserId, action } = data; // action: 'accepted' | 'declined'
-    if (!toUserId || !['accepted', 'declined'].includes(action)) return;
+    const { action } = data || {}; // action: 'accepted' | 'declined'
+    const toUserId = asId(data?.toUserId);
+    if (toUserId === null || toUserId === user.id || !['accepted', 'declined'].includes(action)) return;
+    // An answered request is just as re-emittable as a pending one: 'accepted'
+    // is a terminal state, so this would relay forever otherwise.
+    if (alreadyRelayed(`res|${user.id}|${toUserId}|${action}`)) return;
     if (await isBlockedBetween(user.id, toUserId)) return;
     // The claimed outcome must match the persisted friendship state.
     const row = await pool.query(
@@ -926,8 +1127,9 @@ function registerHandlers(io, socket) {
   socket.on('flock_invite_response', async (data) => {
     try {
       if (!allowEvent(socket, 'invite_response', 10, 10_000)) return;
-      const { flockId, action } = data;
-      if (!flockId || !['accepted', 'declined'].includes(action)) return;
+      const { action } = data;
+      const flockId = asId(data?.flockId); // round 16 — see vote_venue
+      if (flockId === null || !['accepted', 'declined'].includes(action)) return;
       // Round 3: any socket could broadcast fake RSVP activity into a guessed
       // flock id. Round 4: holding a row isn't enough — the persisted status
       // must MATCH the claimed action, so the event only relays what the REST
@@ -963,9 +1165,32 @@ function registerHandlers(io, socket) {
         socket.emit('error', { message: 'Slow down a moment.' });
         return;
       }
-      const { receiverId, message_type, venue_data, image_url, reply_to_id } = data;
+      const { message_type, venue_data, image_url, reply_to_id } = data;
       const text = stripHtml(typeof data.message_text === 'string' ? data.message_text.trim() : '');
-      if (!receiverId || (!text && message_type !== 'image')) return;
+
+      // Round 16: `receiverId` went to the database, to `isBlockedBetween`, to
+      // `user:${receiverId}` and to the push helper exactly as it arrived off
+      // the wire. Two concrete problems, both closed by normalizing once:
+      //
+      //   - a NON-INTEGER id ("5 ", "5abc", an object) either threw inside a
+      //     query or — worse for "5 " — inserted fine (Postgres trims when
+      //     casting to int) while `user: 5 ` matched no room, so the DM was
+      //     stored and never delivered to anyone but the sender;
+      //   - the id was never compared with the sender's own. POST /api/dm/:userId
+      //     refuses a self-DM with a 400; the socket path happily persisted one
+      //     and echoed it into the sender's other tabs.
+      //
+      // The REST path is the product's statement of intent for who may DM whom
+      // (routes/messages.js POST /dm/:userId): ANY existing user, gated only by
+      // a mutual block — there is no friendship or prior-conversation
+      // requirement, and no per-user "who can message me" setting exists in the
+      // schema. So this handler deliberately does NOT adopt hasDmRelationship
+      // (which dm_vote_venue / dm_pin_venue need for a different reason: those
+      // write into a shared PAIR-keyed row that an outsider could overwrite).
+      // Matching REST means closing the divergences above, not narrowing DMs.
+      const receiverId = asId(data?.receiverId);
+      if (receiverId === null || receiverId === user.id) return;
+      if (!text && message_type !== 'image') return;
       if (text.length > 5000) return;
 
       // Mutual block — no DMs in either direction.
@@ -991,6 +1216,19 @@ function registerHandlers(io, socket) {
           socket.emit('error', { message: 'Unsupported image format' });
           return;
         }
+        // Round 16: an image send was charged the same single token as a
+        // one-word text message, and an image is not the same thing. Each one
+        // costs a PAID Google Vision call (utils/moderation.js), a row holding
+        // up to Socket.IO's 8MB frame ceiling, and that payload again for every
+        // recipient. The REST twin is capped at a 1MB body by
+        // `express.json({ limit: '1mb' })` and 300 requests per 15 minutes; the
+        // socket path allowed 2 per second of an 8x larger payload with no
+        // separate ceiling at all. Its own bucket, so photos are metered as
+        // photos and normal chat is unaffected.
+        if (!allowEvent(socket, 'send_image', 10, 60_000)) {
+          socket.emit('error', { message: 'Slow down a moment.' });
+          return;
+        }
         const verdict = await moderateImage(image_url);
         if (!verdict.allowed) {
           socket.emit('error', { message: IMAGE_REJECTED_MESSAGE });
@@ -1005,15 +1243,21 @@ function registerHandlers(io, socket) {
       // SECURITY: a reply may only reference a message from THIS conversation.
       // Without this check, any authenticated user could DM themselves an
       // arbitrary message ID and read someone else's private message text.
+      // Round 16: normalized like every other id on this handler. The REST
+      // twin runs `body('reply_to_id').optional().isInt()`; here a non-numeric
+      // value threw inside the query and dropped the whole message with no
+      // explanation to the sender.
+      const replyToId = reply_to_id === undefined || reply_to_id === null ? null : asId(reply_to_id);
       let replyRow = null;
-      if (reply_to_id) {
+      if (reply_to_id !== undefined && reply_to_id !== null && replyToId === null) return;
+      if (replyToId) {
         const replyResult = await pool.query(
           `SELECT dm.id, dm.message_text, u.name AS sender_name
            FROM direct_messages dm JOIN users u ON u.id = dm.sender_id
            WHERE dm.id = $1
              AND COALESCE(dm.is_hidden, false) = false
              AND ((dm.sender_id = $2 AND dm.receiver_id = $3) OR (dm.sender_id = $3 AND dm.receiver_id = $2))`,
-          [reply_to_id, user.id, receiverId]
+          [replyToId, user.id, receiverId]
         );
         replyRow = replyResult.rows[0] || null;
         if (!replyRow) return; // foreign, hidden, or nonexistent reply target — drop the message
@@ -1030,7 +1274,7 @@ function registerHandlers(io, socket) {
       const result = await pool.query(
         `INSERT INTO direct_messages (sender_id, receiver_id, message_text, message_type, venue_data, image_url, reply_to_id)
          VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
-        [user.id, receiverId, text, safeType, dmVenueCheck.data ? JSON.stringify(dmVenueCheck.data) : null, image_url || null, replyRow ? reply_to_id : null]
+        [user.id, receiverId, text, safeType, dmVenueCheck.data ? JSON.stringify(dmVenueCheck.data) : null, image_url || null, replyRow ? replyToId : null]
       );
 
       const msg = result.rows[0];
@@ -1063,11 +1307,17 @@ function registerHandlers(io, socket) {
   // DM reactions (real-time)
   // DM reactions: the counterpart is DERIVED from the message row, never
   // trusted from the client, and mutual blocks apply (audit 2026-08-12).
+  // Round 16: `emoji` was taken raw here. Anything longer than VARCHAR(10) was
+  // a Postgres error swallowed by the catch — but the same value is echoed
+  // straight back out in `dm_reaction_added`, so a non-string (object, array)
+  // reached the counterpart's client verbatim before the insert ever failed.
+  // normalizeEmoji is the socket copy of the REST validator; see module scope.
   socket.on('dm_react', async (data) => {
     try {
       if (!allowEvent(socket, 'dm_react', 30, 10_000)) return;
-      const { dmId, emoji } = data;
-      if (!dmId || !emoji) return;
+      const dmId = asId(data?.dmId);
+      const emoji = normalizeEmoji(data?.emoji);
+      if (dmId === null || !emoji) return;
 
       const dm = await pool.query('SELECT sender_id, receiver_id FROM direct_messages WHERE id = $1', [dmId]);
       if (dm.rows.length === 0) return;
@@ -1091,8 +1341,9 @@ function registerHandlers(io, socket) {
   socket.on('dm_remove_react', async (data) => {
     try {
       if (!allowEvent(socket, 'dm_react', 30, 10_000)) return;
-      const { dmId, emoji } = data;
-      if (!dmId || !emoji) return;
+      const dmId = asId(data?.dmId);
+      const emoji = normalizeEmoji(data?.emoji);
+      if (dmId === null || !emoji) return;
 
       const dm = await pool.query('SELECT sender_id, receiver_id FROM direct_messages WHERE id = $1', [dmId]);
       if (dm.rows.length === 0) return;
@@ -1118,10 +1369,21 @@ function registerHandlers(io, socket) {
   socket.on('dm_vote_venue', async (data) => {
     try {
       if (!allowEvent(socket, 'dm_vote_venue', 30, 10_000)) return;
-      const { venue_id } = data;
-      const receiverId = parseInt(data.receiverId, 10);
-      const venue_name = stripHtml(typeof data.venue_name === 'string' ? data.venue_name.trim() : '');
-      if (!Number.isInteger(receiverId) || receiverId === user.id || !venue_name) return;
+      const receiverId = asId(data?.receiverId);
+      // Round 16: this was `parseInt(data.receiverId, 10)`, so "7abc" became 7.
+      // Round 16: venue_name and venue_id went to the database and out to the
+      // counterpart with no length clamp and no UGC screen, while the flock
+      // twin (vote_venue, above) and dm_pin_venue both clamp AND screen. Both
+      // columns are VARCHAR(255): an over-long name was a swallowed Postgres
+      // error rather than a rejection, and a slur was simply accepted, which is
+      // the exact Apple 1.2 gap the other two handlers were fixed for.
+      const venue_name = stripHtml(typeof data?.venue_name === 'string' ? data.venue_name.trim() : '').slice(0, 255);
+      const venue_id = typeof data?.venue_id === 'string' ? data.venue_id.slice(0, 255) : null;
+      if (receiverId === null || receiverId === user.id || !venue_name) return;
+      if (!moderateText(venue_name).allowed) {
+        socket.emit('error', { message: TEXT_REJECTED_MESSAGE });
+        return;
+      }
       if (await isBlockedBetween(user.id, receiverId)) return;
       // Round 13: this wrote dm_venue_votes rows into any pair the caller named.
       if (!(await hasDmRelationship(user.id, receiverId))) return;
@@ -1129,21 +1391,43 @@ function registerHandlers(io, socket) {
       const u1 = Math.min(user.id, receiverId);
       const u2 = Math.max(user.id, receiverId);
 
-      // Check if user already voted for this exact venue (toggle off)
-      const existing = await pool.query(
-        `SELECT id FROM dm_venue_votes WHERE user1_id = $1 AND user2_id = $2 AND user_id = $3 AND venue_name = $4`,
-        [u1, u2, user.id, venue_name]
-      );
-      if (existing.rows.length > 0) {
-        // Unvote — remove this vote
-        await pool.query(`DELETE FROM dm_venue_votes WHERE user1_id = $1 AND user2_id = $2 AND user_id = $3 AND venue_name = $4`, [u1, u2, user.id, venue_name]);
-      } else {
-        // Switch vote — remove any existing vote by this user, then insert new one
-        await pool.query(`DELETE FROM dm_venue_votes WHERE user1_id = $1 AND user2_id = $2 AND user_id = $3`, [u1, u2, user.id]);
-        await pool.query(
-          `INSERT INTO dm_venue_votes (user1_id, user2_id, user_id, venue_name, venue_id) VALUES ($1, $2, $3, $4, $5)`,
-          [u1, u2, user.id, venue_name, venue_id || null]
+      // Round 16: read-then-write across three separate pool checkouts, so the
+      // toggle raced exactly the way the flock vote did before round 11 — two
+      // taps in flight could both see "no existing vote", both DELETE, and both
+      // INSERT. UNIQUE is (pair, user, venue_name), so two DIFFERENT venue names
+      // survive and one person holds two votes in a two-person conversation.
+      // Same fix as vote_venue: one transaction, serialized on the pair+voter
+      // with an advisory lock.
+      const dmVoteClient = await pool.connect();
+      try {
+        await dmVoteClient.query('BEGIN');
+        await dmVoteClient.query(
+          "SELECT pg_advisory_xact_lock(hashtext('dmvote:' || $1::text || ':' || $2::text || ':' || $3::text))",
+          [String(u1), String(u2), String(user.id)]
         );
+        const existing = await dmVoteClient.query(
+          `SELECT id FROM dm_venue_votes WHERE user1_id = $1 AND user2_id = $2 AND user_id = $3 AND venue_name = $4`,
+          [u1, u2, user.id, venue_name]
+        );
+        // Either way the voter ends up with AT MOST one row in this pair: the
+        // unconditional delete makes the toggle-off and the switch the same
+        // statement, so no path can leave two behind.
+        await dmVoteClient.query(
+          `DELETE FROM dm_venue_votes WHERE user1_id = $1 AND user2_id = $2 AND user_id = $3`,
+          [u1, u2, user.id]
+        );
+        if (existing.rows.length === 0) {
+          await dmVoteClient.query(
+            `INSERT INTO dm_venue_votes (user1_id, user2_id, user_id, venue_name, venue_id) VALUES ($1, $2, $3, $4, $5)`,
+            [u1, u2, user.id, venue_name, venue_id]
+          );
+        }
+        await dmVoteClient.query('COMMIT');
+      } catch (txErr) {
+        await dmVoteClient.query('ROLLBACK').catch(() => {});
+        throw txErr;
+      } finally {
+        dmVoteClient.release();
       }
 
       const votes = await pool.query(
@@ -1167,8 +1451,8 @@ function registerHandlers(io, socket) {
     try {
       if (!allowEvent(socket, 'dm_pin_venue', 20, 10_000)) return;
       const { venue_name, venue_address, venue_id, venue_rating, venue_photo_url } = data;
-      const receiverId = parseInt(data.receiverId, 10);
-      if (!Number.isInteger(receiverId) || receiverId === user.id || !venue_name) return;
+      const receiverId = asId(data?.receiverId); // round 16: was parseInt, so "7abc" resolved to 7
+      if (receiverId === null || receiverId === user.id || !venue_name) return;
       if (await isBlockedBetween(user.id, receiverId)) return;
       // Round 13: dm_pinned_venues upserts on the (user1, user2) pair, so
       // without this a stranger could overwrite two other people's pinned venue.
@@ -1207,10 +1491,20 @@ function registerHandlers(io, socket) {
   // previously trusted any receiverId, letting a blocked user ping typing/
   // location events into their blocker's client. Cached check keeps the
   // per-keystroke cost off the database.
+  // Round 16: all four of these took `receiverId` raw. Two consequences, and
+  // the id is normalized here for both:
+  //   - the value became part of isBlockedBetweenCached's cache key, so junk
+  //     ids churned a fixed-size cache that real block decisions live in
+  //     (utils/blocks.js clears the whole map at 5000 entries), costing extra
+  //     database lookups for everybody else;
+  //   - anything that was not exactly the id's canonical spelling produced a
+  //     `user:{junk}` room name that matched nobody, so the event was silently
+  //     lost rather than refused.
   socket.on('dm_share_location', async (data) => {
     if (!allowEvent(socket, 'dm_location', 30, 10_000)) return;
-    const { receiverId, lat, lng } = data;
-    if (!receiverId || typeof lat !== 'number' || typeof lng !== 'number') return;
+    const receiverId = asId(data?.receiverId);
+    const { lat, lng } = data || {};
+    if (receiverId === null || !isLatLng(lat, lng)) return;
     if (await isBlockedBetweenCached(user.id, receiverId)) return;
     socket.to(`user:${receiverId}`).emit('dm_location_update', {
       userId: user.id, name: user.name, lat, lng, timestamp: Date.now(),
@@ -1219,8 +1513,8 @@ function registerHandlers(io, socket) {
 
   socket.on('dm_stop_sharing_location', async (data) => {
     if (!allowEvent(socket, 'dm_location', 30, 10_000)) return;
-    const { receiverId } = data;
-    if (!receiverId) return;
+    const receiverId = asId(data?.receiverId);
+    if (receiverId === null) return;
     if (await isBlockedBetweenCached(user.id, receiverId)) return;
     socket.to(`user:${receiverId}`).emit('dm_member_stopped_sharing', { userId: user.id });
   });
@@ -1228,8 +1522,8 @@ function registerHandlers(io, socket) {
   // DM typing indicators
   socket.on('dm_typing', async (data) => {
     if (!allowEvent(socket, 'dm_typing', 60, 10_000)) return;
-    const { receiverId } = data;
-    if (!receiverId) return;
+    const receiverId = asId(data?.receiverId);
+    if (receiverId === null) return;
     if (await isBlockedBetweenCached(user.id, receiverId)) return;
     socket.to(`user:${receiverId}`).emit('dm_user_typing', {
       userId: user.id,
@@ -1239,8 +1533,8 @@ function registerHandlers(io, socket) {
 
   socket.on('dm_stop_typing', async (data) => {
     if (!allowEvent(socket, 'dm_typing', 60, 10_000)) return;
-    const { receiverId } = data;
-    if (!receiverId) return;
+    const receiverId = asId(data?.receiverId);
+    if (receiverId === null) return;
     if (await isBlockedBetweenCached(user.id, receiverId)) return;
     socket.to(`user:${receiverId}`).emit('dm_user_stopped_typing', {
       userId: user.id,
@@ -1252,7 +1546,8 @@ function registerHandlers(io, socket) {
   socket.on('select_venue', async (data) => {
     try {
       if (!allowEvent(socket, 'select_venue', 10, 10_000)) return;
-      const { flockId } = data;
+      const flockId = asId(data?.flockId); // round 16 — see vote_venue
+      if (flockId === null) return;
       // Round 9: these went straight from the wire into the flock row and the
       // broadcast. Clamp and screen them like every other venue text field.
       const venue_name = stripHtml(typeof data.venue_name === 'string' ? data.venue_name.trim() : '').slice(0, 255);
@@ -1342,30 +1637,50 @@ function registerHandlers(io, socket) {
 
   // --- Cleanup on disconnect ---
 
-  socket.on('disconnect', () => {
+  socket.on('disconnect', async () => {
     clearBuckets(socket);
-    // Remove user from all tracked rooms (Map keyed by socket id — no
-    // duplicate entries to leak)
+
+    // The presence bookkeeping is decided FIRST and synchronously, so nothing
+    // about it depends on the block lookup below succeeding.
+    const departures = [];
     for (const [key, users] of roomUsers.entries()) {
       const wasPresent = users.get(socket.id);
       if (users.delete(socket.id)) {
         // Only report offline when the user has NO other socket in this room.
         const stillHere = [...users.values()].some((u) => u.userId === wasPresent.userId);
-        if (stillHere) { if (users.size === 0) roomUsers.delete(key); continue; }
-        // `flockId` goes back out as the client originally sent it (number vs
-        // string), because App.js compares it with ===.
-        const flockId = wasPresent.flockId !== undefined ? wasPresent.flockId : key;
-        io.to(`flock:${key}`).emit('member_offline', {
-          userId: user.id,
-          name: user.name,
-          flockId,
-        });
-        // Also notify that location sharing stopped
-        io.to(`flock:${key}`).emit('member_stopped_sharing', {
-          userId: user.id,
-        });
+        if (!stillHere) {
+          // `flockId` goes back out as the client originally sent it (number vs
+          // string), because App.js compares it with ===.
+          departures.push({ key, flockId: wasPresent.flockId !== undefined ? wasPresent.flockId : key });
+        }
       }
       if (users.size === 0) roomUsers.delete(key);
+    }
+    if (departures.length === 0) return;
+
+    // Round 16: these two were the last identity-bearing broadcasts that did
+    // not obey blocks. `member_joined` (join_flock) has excluded blocked users
+    // since round 4/5 on the grounds that "presence is identity"; leaving did
+    // not, so a blocked person never saw you arrive and then got told, by name,
+    // the moment you went offline. ONE lookup for the whole disconnect, not one
+    // per room — a disconnect is rare compared with a message, but a client
+    // holding several flocks open should not cost several queries.
+    let invisible;
+    try {
+      invisible = await getInvisibleUserIds(user.id);
+    } catch (_) {
+      return; // fail closed: no presence event beats a leaked one
+    }
+    for (const { key, flockId } of departures) {
+      broadcastExcluding(io.to(`flock:${key}`), invisible, 'member_offline', {
+        userId: user.id,
+        name: user.name,
+        flockId,
+      });
+      // Also notify that location sharing stopped
+      broadcastExcluding(io.to(`flock:${key}`), invisible, 'member_stopped_sharing', {
+        userId: user.id,
+      });
     }
   });
 }
@@ -1373,6 +1688,13 @@ function registerHandlers(io, socket) {
 module.exports = {
   registerHandlers,
   emitToFlockExcludingBlocked,
+  // Round 16: exported so routes/ stops reaching for `io.to('flock:'+id)`.
+  // routes/flocks.js still emits flock_updated, flock_deleted,
+  // flock_member_left and attendance_marked into the flock room; each of those
+  // should become an emitToFlockMembers call. flock_deleted is the one that
+  // needs the `recipients` argument — deleting the flock CASCADEs
+  // flock_members, so the recipient list has to be read before the delete.
+  emitToFlockMembers,
   broadcastGuestRsvp,
   // Exported for tests: the security-relevant decisions, isolated from timers
   // and from Socket.io.
