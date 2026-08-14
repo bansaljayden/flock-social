@@ -630,6 +630,39 @@ export function onGuestRsvp(callback) {
   return register('guest_rsvp', callback);
 }
 
+// --- Moderation takedowns ---
+
+/**
+ * A moderator took a piece of content down, or put it back.
+ *
+ * backend/routes/admin.js emits these AFTER the takedown transaction commits,
+ * carrying { contentType, contentId, flockId } and nothing else — no moderator,
+ * no reason, no reporter. contentType is one of the keys of TAKEDOWN_TARGETS
+ * there: flock_message, dm, story, venue_review, venue_promotion, venue_event,
+ * guest_rsvp. How far each one reaches differs by type (the flock room for a
+ * flock_message and a guest_rsvp, both parties for a dm, the author or the
+ * venue owner alone for the rest), so a handler must not assume the person
+ * receiving it is the person who wrote it.
+ *
+ * Both go through the registry rather than getSocket().on(...), for the reason
+ * the top of this file exists. A takedown is rare: a listener welded to one
+ * instance would work in every test and then be silently dead in production the
+ * first time a token swap, a fatal-auth teardown or a session expiry replaced
+ * the socket underneath it — and nobody would notice, because the symptom is
+ * content that quietly fails to disappear.
+ */
+export function onContentRemoved(callback) {
+  return register('content_removed', callback);
+}
+
+// The un-hide is a SEPARATE event on the server on purpose: a client that has
+// already dropped the row needs a different instruction from one that still has
+// it, and "removed" meaning "put it back" is the kind of name that gets handled
+// wrong once and stays wrong. So it is a separate subscription here too.
+export function onContentRestored(callback) {
+  return register('content_restored', callback);
+}
+
 // The server cuts a live connection loose when the session behind it stops
 // being valid mid-flight (password change, account claim, ban, deletion,
 // expiry) and says why first. Subscribe to send the user back to sign-in
