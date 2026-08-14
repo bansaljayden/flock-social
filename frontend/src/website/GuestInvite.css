@@ -24,6 +24,17 @@
   --gi-rule: rgba(22, 40, 61, 0.16);
   --gi-rule-soft: rgba(22, 40, 61, 0.08);
   --gi-field: #fbf9f3;
+  /* The name field's edge, and ONLY the name field's edge. A text input has no
+     text of its own, so its border is the whole of the "there is a control
+     here" signal, which puts it under WCAG 1.4.11 (non-text contrast, 3:1) —
+     unlike the buttons on this page, whose labels identify them on their own.
+     --gi-rule measures 1.36:1 against the field fill (#fbf9f3) and 1.36:1
+     against the paper behind it, so on a phone in daylight the field was a
+     rectangle you had to already know was there. #78838f measures 3.67:1
+     against the fill, 3.29:1 against the paper and 3.01:1 against the panel.
+     Kept as its own token so nudging --gi-rule (a decorative hairline
+     everywhere else) can never quietly drop the field back under 3:1. */
+  --gi-field-edge: #78838f;
 
   font-family: 'Hanken Grotesk', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   background: var(--gi-paper);
@@ -51,6 +62,9 @@
     --gi-rule: rgba(244, 239, 227, 0.18);
     --gi-rule-soft: rgba(244, 239, 227, 0.09);
     --gi-field: #1d293d;
+    /* 3.27:1 on the dark field fill, 3.99:1 on the dark paper. Same reasoning
+       as the light value above; the alpha rule measured 1.70:1 here. */
+    --gi-field-edge: #697891;
   }
   /* Tells the browser to render form controls and scrollbars dark, so the
      name field is not a white slab on a navy page. */
@@ -206,7 +220,7 @@
   font-size: 16px;
   color: var(--gi-ink);
   background: var(--gi-field);
-  border: 1px solid var(--gi-rule);
+  border: 1px solid var(--gi-field-edge);
   border-radius: 10px;
   padding: 12px 14px;
   min-height: 48px;

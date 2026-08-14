@@ -99,6 +99,15 @@
   --cream-3: #98937f;
   --steel: #2d5a87;      /* accent on paper */
   --steel-lift: #6d9ac3; /* accent on navy */
+  /* The edge of a TEXT FIELD on a navy ground, and nothing else. Buttons on
+     this page are identified by their own labels, so their hairlines are
+     decoration; an input has no text of its own, so its border is the only
+     thing saying a control is there, which is WCAG 1.4.11 at 3:1. Measured:
+     3.50:1 against the fill inside the CTA-band field, 3.99:1 against the fill
+     in the demo's field, 4.72:1 against bare --navy. --rule-cream, which both
+     used to carry, measures 1.56:1. Separate token so tuning the decorative
+     hairline can never silently drop a field under 3:1 again. */
+  --field-edge: #77849a;
   --rule: rgba(22, 40, 61, 0.12);
   --rule-cream: rgba(244, 239, 227, 0.16);
 
@@ -118,6 +127,58 @@
 
 .lp *, .lp *::before, .lp *::after { box-sizing: border-box; }
 .lp img { max-width: 100%; display: block; }
+
+/* Available to the accessibility tree, absent from the page. Local to .lp
+   rather than reusing index.css's .sr-only, because index.css is the app's
+   stylesheet and this page must not start depending on it. */
+.lp-sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* Skip link. Off-screen until it takes focus, then a real block in the top-left
+   corner. z-index has to clear the sticky bar (70) and the menu panel (60), or
+   the first thing a keyboard user focuses is painted underneath the navbar. */
+.lp-skip {
+  position: fixed;
+  top: 8px;
+  left: 8px;
+  z-index: 100;
+  transform: translateY(-200%);
+  padding: 12px 18px;
+  border-radius: 10px;
+  background: var(--cream);
+  color: var(--navy);
+  font-size: 15px;
+  font-weight: 700;
+  text-decoration: none;
+}
+.lp-skip:focus-visible,
+.lp-skip:focus { transform: none; }
+/* The generic `.lp a:focus-visible` ring is --steel at +3px, i.e. drawn on the
+   navy the skip block floats over, where it measures 2.49:1 (2.00:1 against
+   the hero gradient's top stop). This is the FIRST thing a keyboard user ever
+   focuses on the site, so it is the one ring that must not be marginal. Drawn
+   inside the cream block instead, in --navy, where it measures 15.56:1.
+   `.lp a.lp-skip:focus-visible` is (0,3,1) and beats the (0,2,1) generic. */
+.lp a.lp-skip:focus-visible,
+.lp a.lp-skip:focus {
+  outline: 3px solid var(--navy);
+  outline-offset: -6px;
+}
+/* The target is a <main>, which is not focusable by default, so the browser
+   would move the SCROLL but leave focus on the link and the next Tab would go
+   straight back into the header. scroll-margin keeps the landing point clear
+   of the sticky bar; tabindex="-1" is set in the markup. */
+#lp-main { scroll-margin-top: 72px; }
+#lp-main:focus { outline: none; }
 
 /* Five images on this page are wrapped in <picture> so a WebP source can be
    offered ahead of the PNG (see LandingPage.js). <picture> computes to
@@ -390,11 +451,26 @@
 .lp-menu-link:hover { color: var(--steel-lift); }
 .lp-menu-cta { margin-top: clamp(24px, 4vw, 36px); }
 
+/* Every transform and transition on this page's chrome, in one place. The
+   panel and the burger were already here; the buttons and the App Store badge
+   were not, so with "reduce motion" on, the page still slid the badge up 1px
+   on hover and pushed every button down 1px on press. Small, but the setting
+   is a request for none of it, not for less of it. Colour and border
+   transitions stay: they are not motion, and losing them makes hover states
+   snap for no benefit. */
 @media (prefers-reduced-motion: reduce) {
   .lp-menu,
   .lp-menu.is-open { transition: none; transform: none; }
   .lp-menu-bar { transition: none; }
   .lp-menu-btn { transition: none; }
+  /* NOTE: the burger's rotate-into-an-X is deliberately NOT nulled here. It is
+     the open/closed state of the control, not decoration, and reduced motion
+     asks for no ANIMATION, not for state to stop being shown. Killing the
+     transition above already makes it snap. */
+  .lp-btn { transition: background-color 0.18s linear, border-color 0.18s linear; }
+  .lp-btn:active { transform: none; }
+  .lp-appstore { transition: none; }
+  .lp-appstore:hover { transform: none; }
 }
 
 /* ============ buttons ============ */
@@ -465,8 +541,32 @@
 .lpd-stage button:focus-visible {
   outline-color: var(--steel);
 }
+/* The corner block is pinned to top:0 right:0 bottom:0 of the header, so a
+   3px OUTSIDE ring is drawn at y = -3 (above the viewport) and x = viewport+3
+   (clipped by .lp's overflow-x: clip). Two of its four sides were simply not
+   on screen. Drawn inside instead, where all four sides are, and in --cream:
+   the ring sits on the button's own --steel fill, where --steel-lift measures
+   2.41:1 and cream measures 6.26:1. Three classes deep so it outranks the
+   `.lp-nav button:focus-visible` rule above, which is (0,2,1). */
+.lp-nav .lp-menu-btn:focus-visible {
+  outline-color: var(--cream);
+  outline-offset: -5px;
+}
 
 /* ============ sections ============ */
+
+/* The sticky bar is 64px of opaque navy pinned to the top, and scroll-margin
+   on the sections only covers the scrolls the page asks for by anchor. Every
+   OTHER way the browser scrolls something into view — Tab moving focus down
+   the page, find-in-page, a screen reader jumping to a heading — aimed at the
+   viewport's own top edge, so whatever it landed on was painted under the bar.
+   That is WCAG 2.4.11 (Focus Not Obscured) for the keyboard case in
+   particular: the pricing CTA and the venue mailto link both land at y≈20 when
+   tabbed to from below, i.e. two thirds hidden. scroll-padding on the scroll
+   container fixes all of those at once, because it is what "scroll into view"
+   measures against. PrivacyPolicy.css already reaches for html:has() the same
+   way, so the support floor is unchanged. */
+html:has(.lp) { scroll-padding-top: 76px; }
 
 /* Anchor jumps from the menu land below the sticky bar, not under it. */
 .lp-sec { padding: clamp(56px, 8vw, 96px) 0; scroll-margin-top: 72px; }
@@ -813,14 +913,31 @@
   height: 52px;
   padding: 0 16px;
   border-radius: 12px;
-  border: 1px solid var(--rule-cream);
+  /* --field-edge, not --rule-cream. A text field has no label text of its own,
+     so its border is the entire "there is a control here" signal and falls
+     under WCAG 1.4.11 at 3:1. --rule-cream (cream at 0.16) measures 1.56:1
+     against the CTA gradient and 1.59:1 against the fill inside it — a box you
+     had to already know was there. See the token for the numbers. */
+  border: 1px solid var(--field-edge);
   background: rgba(244, 239, 227, 0.07);
   color: var(--cream);
   font-family: inherit;
   font-size: 16px; /* 16px — no zoom-on-focus in the iOS shell */
 }
-.lp-form input::placeholder { color: var(--cream-3); }
-.lp-form-msg { margin-top: 12px; font-size: 14px; color: var(--cream-2); min-height: 20px; }
+/* Was --cream-3: 4.30:1 over this field on the lightest stop of the CTA
+   gradient (#142238), i.e. a failing body-size string, and placeholder text is
+   body text for contrast purposes. --cream-2 measures 7.51:1 there and is
+   still 1.54:1 away from --cream, which the entered value is set in, so the
+   two never read as the same thing. */
+.lp-form input::placeholder { color: var(--cream-2); }
+.lp-form-msg { margin-top: 12px; font-size: 14px; color: var(--cream-2); }
+/* 7.96:1 on the lightest stop of the CTA gradient. Bold as well as coloured:
+   the failure must not be carried by hue alone. */
+.lp-form-msg-bad { color: #f0a3a3; font-weight: 600; }
+/* Exactly one of the pair is ever non-empty. Collapsing the other keeps the
+   pair one line tall while leaving BOTH live regions mounted, which is the
+   whole point of rendering them empty rather than conditionally. */
+.lp-form-msg:empty { margin: 0; height: 0; overflow: hidden; }
 
 /* ============ footer ============ */
 
@@ -1008,7 +1125,10 @@
 .lp-cta-in { max-width: 720px; }
 .lp-cta-row { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 26px; }
 /* .lp-cta-divider deleted: unused. */
-.lp-form button:disabled { opacity: 0.65; cursor: default; }
+/* aria-disabled as well as :disabled — the markup uses the former so the
+   button you just pressed does not drop focus to <body> mid-submit. */
+.lp-form button:disabled,
+.lp-form button[aria-disabled='true'] { opacity: 0.65; cursor: progress; }
 
 /* ============ motion ============ */
 
@@ -1195,9 +1315,13 @@
 }
 .lp-sec-navy .lpd-input {
   background: rgba(244, 239, 227, 0.07);
-  border-color: var(--rule-cream);
+  /* Same 1.4.11 reasoning as the waitlist field: --rule-cream was 1.59:1
+     against this fill. --field-edge is 3.99:1. */
+  border-color: var(--field-edge);
   color: var(--cream);
 }
+/* 4.90:1 on this fill, so it already passed; left on --cream-3 because this
+   field sits on flat --navy rather than the CTA gradient's lighter stop. */
 .lp-sec-navy .lpd-input::placeholder { color: var(--cream-3); }
 .lp-sec-navy .lpd-input:focus {
   border-color: var(--steel-lift);

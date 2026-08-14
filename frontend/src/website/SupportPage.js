@@ -3,6 +3,12 @@ import './PrivacyPolicy.css';
 
 const SUPPORT_EMAIL = 'social@flockcorp.com';
 
+// See the same constant in AboutPage.js for the measurement. Short version:
+// PrivacyPolicy.css's --pp-ink-3 (#6b7a8c) measures 3.75:1 on the cream paper,
+// not the 4.6:1 its comment claims, and it carries the back link, the standfirst
+// and the footer links here. --pp-ink-2 is 8.14:1 light and 10.12:1 dark.
+const READABLE = { color: 'var(--pp-ink-2)' };
+
 export default function SupportPage() {
   useEffect(() => {
     document.title = 'Support · Flock';
@@ -10,11 +16,13 @@ export default function SupportPage() {
 
   return (
     <main className="pp">
-      <a href="/landing" className="pp-back">&larr; flockcorp.com</a>
+      <a href="/landing" className="pp-back" style={READABLE}>
+        <span aria-hidden="true">&larr;</span> flockcorp.com
+      </a>
 
       <header className="pp-header">
         <h1>Support</h1>
-        <p className="pp-meta">We're a small team. We read every message.</p>
+        <p className="pp-meta" style={READABLE}>We're a small team. We read every message.</p>
       </header>
 
       <section>
@@ -93,8 +101,8 @@ export default function SupportPage() {
 
       <footer className="pp-footer">
         <p>
-          Flock &middot; <a href="/landing">flockcorp.com</a> &middot;{' '}
-          <a href={`mailto:${SUPPORT_EMAIL}`}>{SUPPORT_EMAIL}</a>
+          Flock &middot; <a href="/landing" style={READABLE}>flockcorp.com</a> &middot;{' '}
+          <a href={`mailto:${SUPPORT_EMAIL}`} style={READABLE}>{SUPPORT_EMAIL}</a>
         </p>
       </footer>
     </main>
