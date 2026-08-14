@@ -5683,9 +5683,13 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   const SafetyButton = () => safetyOn && currentScreen === 'main' && currentTab !== 'profile' && !showSOS && (
     <div
       className="fab-corner"
+      role="button"
+      tabIndex={0}
+      aria-label="Safety and emergency SOS"
       onPointerDown={(e) => handleFabPointerDown(e, 'sos')}
       onPointerMove={handleFabPointerMove}
       onPointerUp={(e) => { const wasDrag = handleFabPointerUp(e); if (!wasDrag) setShowSOS(true); }}
+      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setShowSOS(true); } }}
       style={{
         position: 'absolute',
         ...cornerStyle(sosCorner),
@@ -5722,9 +5726,13 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   const AIBubble = () => currentScreen === 'main' && currentTab === 'home' && aiChatMode === 'bubble' && (
     <div
       className="fab-corner"
+      role="button"
+      tabIndex={0}
+      aria-label="Open Birdie assistant"
       onPointerDown={(e) => handleFabPointerDown(e, 'birdie')}
       onPointerMove={handleFabPointerMove}
       onPointerUp={(e) => { const wasDrag = handleFabPointerUp(e); if (!wasDrag) setAiChatMode('panel'); }}
+      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setAiChatMode('panel'); } }}
       style={{
         position: 'absolute',
         ...cornerStyle(birdieCorner),
@@ -6493,7 +6501,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
               <button
                 className="hit44 glass-btn glass-navy"
                 onClick={() => {
-                  setVenueDetailReturnTo({ tab: 'chats', screen: 'dmDetail', dmId: selectedDmId });
+                  setVenueDetailReturnTo({ tab: 'chat', screen: 'dmDetail', dmId: selectedDmId });
                   setCurrentTab('explore');
                   setCurrentScreen('main');
                   if (dmPinnedVenue.place_id) {
@@ -6865,7 +6873,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                       const vd = m.venue_data;
                       const pid = vd.place_id;
                       if (pid) {
-                        setVenueDetailReturnTo({ tab: 'chats', screen: 'dmDetail', dmId: selectedDmId });
+                        setVenueDetailReturnTo({ tab: 'chat', screen: 'dmDetail', dmId: selectedDmId });
                         setCurrentTab('explore');
                         setCurrentScreen('main');
                         setTimeout(() => {
@@ -8035,7 +8043,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
       {pickingVenueForCreate && (
         <div style={{ padding: '10px 14px', background: colors.navyMidBg, display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0, boxShadow: '0 2px 8px rgba(13,40,71,0.10)' }}>
           <span style={{ color: 'white', fontSize: 'var(--t-meta)', fontWeight: '500', display: 'flex', alignItems: 'center', gap: '6px' }}>{Icons.mapPin('white', 14)} Tap venue to select</span>
-          <button className="hit44 glass-btn glass-secondary" onClick={() => { setPickingVenueForCreate(false); if (pickingVenueForDm) { setPickingVenueForDm(false); setCurrentTab('chats'); setCurrentScreen('dmDetail'); } else if (pickingVenueForFlockId) { setSelectedFlockId(pickingVenueForFlockId); setPickingVenueForFlockId(null); setCurrentTab('chats'); setCurrentScreen('chatDetail'); } else { setCurrentScreen('create'); } }} style={{ backgroundColor: 'rgba(255,255,255,0.2)', border: 'none', borderRadius: '12px', padding: '4px 12px', color: 'white', fontSize: 'var(--t-meta)', cursor: 'pointer', fontWeight: '500', transition: 'opacity 0.2s ease' }}>Cancel</button>
+          <button className="hit44 glass-btn glass-secondary" onClick={() => { setPickingVenueForCreate(false); if (pickingVenueForDm) { setPickingVenueForDm(false); setCurrentTab('chat'); setCurrentScreen('dmDetail'); } else if (pickingVenueForFlockId) { setSelectedFlockId(pickingVenueForFlockId); setPickingVenueForFlockId(null); setCurrentTab('chat'); setCurrentScreen('chatDetail'); } else { setCurrentScreen('create'); } }} style={{ backgroundColor: 'rgba(255,255,255,0.2)', border: 'none', borderRadius: '12px', padding: '4px 12px', color: 'white', fontSize: 'var(--t-meta)', cursor: 'pointer', fontWeight: '500', transition: 'opacity 0.2s ease' }}>Cancel</button>
         </div>
       )}
 
@@ -8923,7 +8931,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                       setActiveVenue(null);
                       setPickingVenueForCreate(false);
                       setPickingVenueForDm(false);
-                      setCurrentTab('chats');
+                      setCurrentTab('chat');
                       setCurrentScreen('dmDetail');
                     } else if (pickingVenueForFlockId) {
                       updateFlockVenue(pickingVenueForFlockId, venueData);
@@ -8931,7 +8939,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                       setPickingVenueForCreate(false);
                       setSelectedFlockId(pickingVenueForFlockId);
                       setPickingVenueForFlockId(null);
-                      setCurrentTab('chats');
+                      setCurrentTab('chat');
                       setCurrentScreen('chatDetail');
                     } else {
                       setSelectedVenueForCreate(venueData);
@@ -9859,7 +9867,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
               <div style={{ display: 'flex', gap: '4px', flexShrink: 0 }}>
                 <button
                   onClick={() => {
-                    setVenueDetailReturnTo({ tab: 'chats', screen: 'chatDetail', flockId: selectedFlockId });
+                    setVenueDetailReturnTo({ tab: 'chat', screen: 'chatDetail', flockId: selectedFlockId });
                     setCurrentTab('explore');
                     setCurrentScreen('main');
                     if (flock.venueId || flock.venueLat) {
@@ -9929,7 +9937,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
 
         {/* Budget status bar */}
         {flock.budgetEnabled && budgetStatus && (
-          <div onClick={() => setShowChatPool(true)} style={{ padding: '8px 14px', background: `linear-gradient(135deg, ${colors.steel}08, ${colors.steel}15)`, borderBottom: `1px solid ${colors.steel}25`, flexShrink: 0, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <div role="button" tabIndex={0} aria-label="Open group cash pool" onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setShowChatPool(true); } }} onClick={() => setShowChatPool(true)} style={{ padding: '8px 14px', background: `linear-gradient(135deg, ${colors.steel}08, ${colors.steel}15)`, borderBottom: `1px solid ${colors.steel}25`, flexShrink: 0, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
               {Icons.dollar(colors.steel, 13)}
               {budgetStatus.isReady && budgetStatus.ceiling ? (
@@ -9970,7 +9978,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
 
         {/* Bill summary bar — shows when bill exists */}
         {billSplit && (
-          <div onClick={() => setShowChatPool(true)} style={{ padding: '8px 14px', background: billSplit.shares?.every(s => s.settled) ? 'linear-gradient(135deg, #ecfdf5, #d1fae5)' : `linear-gradient(135deg, ${colors.navy}06, ${colors.navy}12)`, borderBottom: '1px solid var(--divider)', flexShrink: 0, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <div role="button" tabIndex={0} aria-label="Open bill split details" onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setShowChatPool(true); } }} onClick={() => setShowChatPool(true)} style={{ padding: '8px 14px', background: billSplit.shares?.every(s => s.settled) ? 'linear-gradient(135deg, #ecfdf5, #d1fae5)' : `linear-gradient(135deg, ${colors.navy}06, ${colors.navy}12)`, borderBottom: '1px solid var(--divider)', flexShrink: 0, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
               {Icons.dollar(billSplit.shares?.every(s => s.settled) ? '#22C55E' : colors.navy, 13)}
               <p style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: colors.navy, margin: 0 }}>
@@ -10091,7 +10099,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                       const vc = m.venue_data;
                       const pid = vc.place_id;
                       if (pid) {
-                        setVenueDetailReturnTo({ tab: 'chats', screen: 'chatDetail', flockId: selectedFlockId });
+                        setVenueDetailReturnTo({ tab: 'chat', screen: 'chatDetail', flockId: selectedFlockId });
                         setCurrentTab('explore');
                         setCurrentScreen('main');
                         setTimeout(() => {
@@ -13163,7 +13171,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                     <p style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: colors.navy, margin: 0 }}>New bookings</p>
                     <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: 0 }}>Get notified when a flock books</p>
                   </div>
-                  <div onClick={() => { const next = {...notifications, bookings: !notifications.bookings}; setNotifications(next); updateVenueProfile({ notificationPrefs: next }).catch(() => {}); }} style={{ width: '36px', height: '20px', borderRadius: '10px', backgroundColor: notifications.bookings ? colors.steel : 'var(--toggle-off)', cursor: 'pointer', position: 'relative' }}>
+                  <div role="switch" tabIndex={0} aria-checked={!!notifications.bookings} aria-label="New bookings notifications" onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); const next = {...notifications, bookings: !notifications.bookings}; setNotifications(next); updateVenueProfile({ notificationPrefs: next }).catch(() => {}); } }} onClick={() => { const next = {...notifications, bookings: !notifications.bookings}; setNotifications(next); updateVenueProfile({ notificationPrefs: next }).catch(() => {}); }} style={{ width: '36px', height: '20px', borderRadius: '10px', backgroundColor: notifications.bookings ? colors.steel : 'var(--toggle-off)', cursor: 'pointer', position: 'relative' }}>
                     <div style={{ position: 'absolute', top: '2px', left: notifications.bookings ? '18px' : '2px', width: '16px', height: '16px', borderRadius: '8px', backgroundColor: 'var(--bg-card-solid)', transition: 'left 0.2s' }} />
                   </div>
                 </div>
@@ -13172,7 +13180,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                     <p style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: colors.navy, margin: 0 }}>New reviews</p>
                     <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: 0 }}>Alerts for customer reviews</p>
                   </div>
-                  <div onClick={() => { const next = {...notifications, reviews: !notifications.reviews}; setNotifications(next); updateVenueProfile({ notificationPrefs: next }).catch(() => {}); }} style={{ width: '36px', height: '20px', borderRadius: '10px', backgroundColor: notifications.reviews ? colors.steel : 'var(--toggle-off)', cursor: 'pointer', position: 'relative' }}>
+                  <div role="switch" tabIndex={0} aria-checked={!!notifications.reviews} aria-label="New reviews notifications" onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); const next = {...notifications, reviews: !notifications.reviews}; setNotifications(next); updateVenueProfile({ notificationPrefs: next }).catch(() => {}); } }} onClick={() => { const next = {...notifications, reviews: !notifications.reviews}; setNotifications(next); updateVenueProfile({ notificationPrefs: next }).catch(() => {}); }} style={{ width: '36px', height: '20px', borderRadius: '10px', backgroundColor: notifications.reviews ? colors.steel : 'var(--toggle-off)', cursor: 'pointer', position: 'relative' }}>
                     <div style={{ position: 'absolute', top: '2px', left: notifications.reviews ? '18px' : '2px', width: '16px', height: '16px', borderRadius: '8px', backgroundColor: 'var(--bg-card-solid)', transition: 'left 0.2s' }} />
                   </div>
                 </div>
@@ -13181,7 +13189,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                     <p style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: colors.navy, margin: 0 }}>Weekly reports</p>
                     <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: 0 }}>Performance summary emails</p>
                   </div>
-                  <div onClick={() => { const next = {...notifications, weekly: !notifications.weekly}; setNotifications(next); updateVenueProfile({ notificationPrefs: next }).catch(() => {}); }} style={{ width: '36px', height: '20px', borderRadius: '10px', backgroundColor: notifications.weekly ? colors.steel : 'var(--toggle-off)', cursor: 'pointer', position: 'relative' }}>
+                  <div role="switch" tabIndex={0} aria-checked={!!notifications.weekly} aria-label="Weekly reports notifications" onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); const next = {...notifications, weekly: !notifications.weekly}; setNotifications(next); updateVenueProfile({ notificationPrefs: next }).catch(() => {}); } }} onClick={() => { const next = {...notifications, weekly: !notifications.weekly}; setNotifications(next); updateVenueProfile({ notificationPrefs: next }).catch(() => {}); }} style={{ width: '36px', height: '20px', borderRadius: '10px', backgroundColor: notifications.weekly ? colors.steel : 'var(--toggle-off)', cursor: 'pointer', position: 'relative' }}>
                     <div style={{ position: 'absolute', top: '2px', left: notifications.weekly ? '18px' : '2px', width: '16px', height: '16px', borderRadius: '8px', backgroundColor: 'var(--bg-card-solid)', transition: 'left 0.2s' }} />
                   </div>
                 </div>
@@ -14903,8 +14911,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
 
 
             {/* Distance */}
-            {eventDetail.distance_miles && (
-              <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', fontWeight: '500', marginBottom: '16px' }}>{Icons.mapPin(colors.steel, 11)} {eventDetail.distance_miles.toFixed(1)} miles away</p>
+            {eventDetail.distance_miles != null && Number.isFinite(Number(eventDetail.distance_miles)) && (
+              <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', fontWeight: '500', marginBottom: '16px' }}>{Icons.mapPin(colors.steel, 11)} {Number(eventDetail.distance_miles).toFixed(1)} miles away</p>
             )}
           </div>
 
@@ -15303,7 +15311,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                   setVenueDetailModal(null);
                   setPickingVenueForCreate(false);
                   setPickingVenueForDm(false);
-                  setCurrentTab('chats');
+                  setCurrentTab('chat');
                   setCurrentScreen('dmDetail');
                 } else if (pickingVenueForFlockId) {
                   updateFlockVenue(pickingVenueForFlockId, { name: venueDetailModal.name, addr: venueDetailModal.formatted_address, place_id: venueDetailModal.place_id, rating: venueDetailModal.rating, photo_url: photoUrl, lat: venueDetailModal.location?.latitude, lng: venueDetailModal.location?.longitude });
@@ -15311,7 +15319,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                   setPickingVenueForCreate(false);
                   setSelectedFlockId(pickingVenueForFlockId);
                   setPickingVenueForFlockId(null);
-                  setCurrentTab('chats');
+                  setCurrentTab('chat');
                   setCurrentScreen('chatDetail');
                 } else if (venueDetailReturnTo) {
                   returnToChat();
