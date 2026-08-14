@@ -37,8 +37,10 @@ export default function DeleteAccount() {
         <h2>In the app (fastest)</h2>
         <p>
           Open Flock &rarr; <strong>Profile</strong> &rarr; <strong>Delete account</strong>, then
-          confirm. Your account and data are deleted immediately. If you signed in with Apple,
-          we also revoke your Sign in with Apple tokens.
+          type DELETE to confirm. If your account has a password, you'll enter it to prove it's
+          you. If you sign in with Apple or Google, you may be asked to sign in again first.
+          Your account and data are then deleted immediately. If you signed in with Apple, we
+          also revoke Flock's Sign in with Apple access.
         </p>
       </section>
 
@@ -63,8 +65,15 @@ export default function DeleteAccount() {
           Deleting your account removes your profile, messages, direct messages, flocks you
           created, friendships, budgets, trusted contacts, and notification tokens. Some records
           may persist briefly in encrypted backups (typically up to 30 days) before they roll
-          off, and we may retain the minimum required for legal or security obligations. See our{' '}
-          <a href="/privacy">Privacy Policy</a> for details.
+          off, and we may retain the minimum required for legal or security obligations.
+        </p>
+        <p>
+          Two things survive a deletion, both explained in our{' '}
+          <a href="/privacy">Privacy Policy</a>: reports and moderation records are kept with
+          your account unlinked from them, and if your account was banned when you deleted it,
+          a one-way hashed code of its email, phone number, and sign-in ID is kept for 12
+          months to stop the ban from being dodged. That code can't be turned back into your
+          info and expires on its own.
         </p>
       </section>
 

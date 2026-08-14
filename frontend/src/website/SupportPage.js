@@ -43,8 +43,8 @@ export default function SupportPage() {
         <h3>I'm not getting notifications.</h3>
         <p>
           Open Settings → Notifications → Flock and confirm Allow Notifications is on. On iOS,
-          also check that Focus modes aren't silencing them. Inside the app, go to Profile →
-          Notifications to confirm each notification type is enabled.
+          also check that Focus modes aren't silencing them. Inside the app, go to Profile and
+          check that Push Notifications shows as enabled.
         </p>
 
         <h3>The map isn't showing my location.</h3>
@@ -55,10 +55,12 @@ export default function SupportPage() {
 
         <h3>How do I delete my account?</h3>
         <p>
-          Open Flock and go to Profile → Delete account, then type DELETE to confirm. This
-          immediately and permanently removes your account, messages, flocks you created,
-          friend connections, and personal info. If you can't sign in to delete it yourself,
-          email us from the address on the account and we'll do it.
+          Open Flock and go to Profile → Delete account, then type DELETE to confirm. You'll
+          also enter your password (or sign in again if you use Apple or Google) so nobody else
+          can delete your account from a borrowed phone. This immediately and permanently
+          removes your account, messages, flocks you created, friend connections, and personal
+          info. If you can't sign in to delete it yourself, email us from the address on the
+          account and we'll do it.
         </p>
 
         <h3>How does the budget feature stay anonymous?</h3>

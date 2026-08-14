@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import './PrivacyPolicy.css';
 
-const EFFECTIVE_DATE = 'August 11, 2026';
+const EFFECTIVE_DATE = 'August 14, 2026';
 const CONTACT_EMAIL = 'social@flockcorp.com';
 
 // Section order drives both the document and the contents rail.
@@ -63,7 +63,7 @@ export default function PrivacyPolicy() {
     update();
     window.addEventListener('scroll', onScroll, { passive: true });
     window.addEventListener('resize', onScroll);
-    // Only a deliberate scroll gesture releases the pin — not the smooth-scroll
+    // Only a deliberate scroll gesture releases the pin, not the smooth-scroll
     // the click itself triggers.
     window.addEventListener('wheel', releasePin, { passive: true });
     window.addEventListener('touchmove', releasePin, { passive: true });
@@ -118,8 +118,8 @@ export default function PrivacyPolicy() {
               <li>We collect what Flock needs to work: your account, your plans, your messages.</li>
               <li>Location is used only while you're using the app. Never in the background.</li>
               <li>We don't sell your information, and we don't run ads.</li>
-              <li>Budget amounts are never shown to other people. Only the group total.</li>
-              <li>You can delete your account, and everything in it, from inside the app.</li>
+              <li>Budget amounts are never shown to other people. The group only sees a shared ceiling.</li>
+              <li>You can delete your account from inside the app. It's a real delete, not a deactivation.</li>
             </ul>
             <p>
               The full detail is below. It's written in plain language on purpose. If
@@ -143,20 +143,22 @@ export default function PrivacyPolicy() {
 
               <h3>You provide directly</h3>
               <ul>
-                <li><strong>Account info:</strong> email, password (stored as a one-way hash, we never see your password), display name, optional avatar, optional phone number, friend code.</li>
+                <li><strong>Account info:</strong> email, password (stored as a one-way hash, we never see your password), display name, optional avatar, friend code. We send a link to your email at sign-up to confirm it's really yours.</li>
+                <li><strong>Phone number (optional):</strong> sign-up never asks for one. You can add a phone number later from your profile so friends who already have your number can find you. Adding one requires confirming your password or a recent sign-in.</li>
+                <li><strong>Contacts you choose to match (optional):</strong> if you use "Add friends" from your phone contacts, the numbers you pick are sent to our server once to check for existing Flock accounts. We run the lookup and don't store those numbers.</li>
                 <li><strong>Date of birth:</strong> collected at sign-up so we can confirm you're 13 or older.</li>
                 <li><strong>Trusted contacts:</strong> if you add emergency contacts, we store the name, phone, and email you give us so we can notify them when you trigger an SOS.</li>
-                <li><strong>Messages and content:</strong> flock chat messages, direct messages, emoji reactions, stories (auto-deleted after 24 hours), images you upload.</li>
+                <li><strong>Messages and content:</strong> flock chat messages, direct messages, emoji reactions, stories (visible for 24 hours), images you upload.</li>
                 <li><strong>Plans and votes:</strong> flocks you create or join, RSVPs, venue votes, budget submissions, check-ins.</li>
                 <li><strong>Payment handles (optional):</strong> if you add them for bill-splitting, we store your Venmo username, Cash App cashtag, or Zelle identifier so flockmates can pay you back. These are usernames/handles only. Flock never collects or processes card, bank-account, or payment-card numbers.</li>
-                <li><strong>Sign-in tokens:</strong> if you sign in with Apple or Google, we receive an identity token from the provider, verify it, and issue our own session token. We do not store the provider token after verification.</li>
+                <li><strong>Sign-in tokens:</strong> if you sign in with Apple or Google, we receive an identity token from the provider, verify it, and issue our own session token. For Apple accounts we also keep the refresh token Apple gives us for one purpose: revoking Flock's access to your Apple ID when you delete your account, which Apple requires.</li>
               </ul>
 
               <h3>We collect automatically</h3>
               <ul>
                 <li><strong>Product analytics:</strong> we use PostHog to understand how Flock is used: pages viewed, features used, and events like creating a flock or sharing an invite link. Events are tied to your account ID, not your name or email. Your messages, votes, budgets, and location are never sent to PostHog.</li>
                 <li><strong>Push notification tokens:</strong> if you enable notifications, we store the device token issued by Apple Push Notification service or Firebase Cloud Messaging.</li>
-                <li><strong>Connection metadata:</strong> IP address and user agent for security, abuse prevention, and rate limiting. Stored short-term in server logs.</li>
+                <li><strong>Connection metadata:</strong> IP address and user agent for security, abuse prevention, and rate limiting. Stored short-term in server logs and security records.</li>
               </ul>
 
               <h3>Location</h3>
@@ -179,7 +181,7 @@ export default function PrivacyPolicy() {
               <h2>{num(3)} How we use your information</h2>
               <ul>
                 <li>Operate the core product (auth, flocks, chat, voting, notifications).</li>
-                <li>Send transactional email (sign-up confirmation, password reset, SOS alerts) via Resend.</li>
+                <li>Send transactional email (email verification at sign-up, SOS alerts) via Resend.</li>
                 <li>Send push notifications you opted into.</li>
                 <li>Monitor reliability and diagnose errors to keep the app working.</li>
                 <li>Detect abuse, spam, and security incidents.</li>
@@ -201,14 +203,16 @@ export default function PrivacyPolicy() {
                 <li><strong>Vercel</strong> (web hosting), <strong>Railway</strong> (server + PostgreSQL hosting).</li>
                 <li><strong>Resend</strong> (transactional email).</li>
                 <li><strong>Apple Push Notification service</strong> and <strong>Firebase Cloud Messaging</strong> (push delivery).</li>
-                <li><strong>Google Places</strong> (venue search results; we send the query, not your account).</li>
+                <li><strong>Google Places</strong> (venue search results; we send the search text and map area, not your account).</li>
+                <li><strong>MapTiler</strong> (the maps in the app; your device loads map tiles directly from MapTiler, which sees your IP address and the area of the map you're viewing, not your account).</li>
+                <li><strong>Google Cloud Vision</strong> (checks images you upload against our content rules before anyone can see them; the image is sent for that check only).</li>
                 <li><strong>OpenWeatherMap</strong> (weather context for crowd predictions; no personal info sent).</li>
-                <li><strong>Ticketmaster</strong> (event listings; no personal info sent).</li>
+                <li><strong>Ticketmaster</strong> (event listings near you; we send the search area, not your account).</li>
                 <li><strong>BestTime</strong> (aggregate venue popularity data; no personal info sent).</li>
                 <li><strong>Apple</strong> and <strong>Google</strong> (sign-in identity verification, only when you choose those options).</li>
                 <li><strong>RevenueCat</strong> (subscription receipt verification, if you subscribe).</li>
                 <li><strong>PostHog</strong> (product analytics; usage events tied to account ID only).</li>
-                <li><strong>Google Gemini</strong> (powers Birdie, the in-app assistant). When you chat with Birdie, your messages in that conversation, your first name, and your approximate location (rounded to about a kilometer, only if you've allowed location) are sent to Google to generate the reply. Birdie conversations are not used by us for advertising, and we don't send your email, exact coordinates, or messages from your flocks or DMs.</li>
+                <li><strong>Google Gemini</strong> (powers Birdie, the in-app assistant). When you chat with Birdie, your messages in that conversation, your first name, your age bracket (under 18, under 21, or adult, never your birthday), and your approximate location (rounded to about a kilometer, only if you've allowed location) are sent to Google to generate the reply. If you ask Birdie about your plans or friends, the names, venues, and times of your flocks and your friends' display names are included so it can answer. Birdie conversations are not used by us for advertising, and we don't send your email, exact coordinates, or messages from your flocks or DMs.</li>
               </ul>
               <p>
                 Other flock members see content you share inside that flock (messages, RSVP
@@ -226,8 +230,11 @@ export default function PrivacyPolicy() {
               <h2>{num(5)} How long we keep it</h2>
               <ul>
                 <li><strong>Account data:</strong> until you delete your account.</li>
-                <li><strong>Stories:</strong> auto-deleted 24 hours after posting.</li>
+                <li><strong>Stories:</strong> visible for 24 hours after posting, then hidden from everyone; the underlying data is deleted with your account.</li>
                 <li><strong>Messages and flocks:</strong> retained while your account exists; deleted with your account.</li>
+                <li><strong>Push notification tokens:</strong> deleted when you sign out on that device or delete your account.</li>
+                <li><strong>Reports and moderation records:</strong> kept after an account is deleted so our moderation history stays intact, but with the deleted account unlinked from them.</li>
+                <li><strong>Banned accounts:</strong> if an account is banned and its owner then deletes it, we keep a one-way hashed code of its email, phone number, and Apple or Google sign-in ID for 12 months. This stops a banned person from signing straight back up. The code can't be turned back into the original email or number, contains no name or content, and expires on its own after 12 months. Nothing like this is kept for accounts that weren't banned.</li>
                 <li><strong>Server logs:</strong> short-term (typically 30 days) for security and debugging.</li>
                 <li><strong>Backups:</strong> rolling backups may retain data for up to 30 days after deletion before they roll off.</li>
               </ul>
@@ -236,7 +243,7 @@ export default function PrivacyPolicy() {
             <section id="your-choices">
               <h2>{num(6)} Your choices and rights</h2>
               <ul>
-                <li><strong>Access, correction, export, deletion:</strong> you can request any of these by emailing {mail}. You can delete your account in the app (Profile &rarr; Delete account) or from our <a href="/delete-account">account deletion page</a>.</li>
+                <li><strong>Access, correction, export, deletion:</strong> you can request any of these by emailing {mail}. You can delete your account in the app (Profile &rarr; Delete account) or from our <a href="/delete-account">account deletion page</a>. To protect your account, deleting it asks you to confirm your password, or to sign in again if you use Apple or Google.</li>
                 <li><strong>Push notifications:</strong> turn off in your device settings or inside Flock.</li>
                 <li><strong>Live location:</strong> stop sharing at any time from within the flock.</li>
                 <li><strong>Marketing email:</strong> we don't send marketing email. Transactional email (security, SOS) cannot be turned off while your account is active.</li>
