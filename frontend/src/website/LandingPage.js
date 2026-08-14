@@ -1,6 +1,7 @@
 import React, { Suspense, useEffect, useRef, useState } from 'react';
 import './LandingPage.css';
 import BirdieBird, { WARM_BIRD } from '../components/ui/BirdieBird';
+import SiteFooter from './SiteFooter';
 import frauncesUrl from '../fonts/Fraunces-var.woff2';
 
 /* The live demo is code-split, and this is load-bearing rather than tidiness.
@@ -972,45 +973,21 @@ export default function LandingPage() {
       </main>
 
       {/* ---------------- footer ---------------- */}
-      <footer className="lp-footer" {...pageInert}>
-        <div className="lp-wrap">
-          <div className="lp-footer-grid">
-            <div>
-              <a className="lp-brand" href="/"><Mark size={24} lazy /> Flock</a>
-              <p className="lp-footer-blurb">
-                The app that turns “we should hang out” into an actual night out.
-              </p>
-            </div>
-            {/* h3, not h4: the last heading before the footer is the CTA's h2,
-                so h4 here skipped a level (axe: heading-order). */}
-            <div>
-              <h3>Product</h3>
-              <ul>
-                <li><a href="/signup">Create an account</a></li>
-                <li><a href="/app">Log in</a></li>
-                <li><a href="#how">How it works</a></li>
-                <li><a href="#crowds">Crowd levels</a></li>
-                <li><a href="#safety">Safety</a></li>
-              </ul>
-            </div>
-            <div>
-              <h3>Company</h3>
-              <ul>
-                <li><a href="/about">About</a></li>
-                <li><a href="/support">Support</a></li>
-                <li><a href="/privacy">Privacy Policy</a></li>
-                <li><a href="/terms">Terms of Service</a></li>
-                <li><a href="/guidelines">Community Guidelines</a></li>
-                <li><a href="/delete-account">Delete your account</a></li>
-              </ul>
-            </div>
-          </div>
-          <div className="lp-footer-base">
-            <span>© {new Date().getFullYear()} Flock Corp.</span>
-            <span>Made by Jayden Bansal</span>
-          </div>
-        </div>
-      </footer>
+      {/* The shared SiteFooter, landing variant: same grid, blurb and base
+          line as the hand-rolled footer it replaced, with the Company column
+          now built from the same LEGAL_LINKS array the legal pages render
+          (plus the one real mailbox, which this footer previously lacked).
+          The brand cell is passed in because Mark is this file's local
+          component; pageInert is spread through so the whole footer still
+          goes inert behind the open menu. The class stays lp-footer: the
+          crawler-surface extraction excludes `footer.lp-footer` by that exact
+          selector, and the a11y contrast pins name its tokens. */}
+      <SiteFooter
+        variant="landing"
+        className="lp-footer"
+        brand={<a className="lp-brand" href="/"><Mark size={24} lazy /> Flock</a>}
+        {...pageInert}
+      />
     </div>
   );
 }
