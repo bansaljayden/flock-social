@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { reportContent, blockUser } from '../services/api';
+import Icons from './ui/Icons';
 
 // UGC moderation sheet (Apple Guideline 1.2). Opened from a message action, a
 // user/profile menu, or a guest's card in a flock roster. Lets a user REPORT
@@ -10,8 +11,9 @@ import { reportContent, blockUser } from '../services/api';
 // `target` shape (null = closed):
 //   { userId, userName, contentType, contentId }
 //     contentType ∈ 'flock_message' | 'dm' | 'profile' | 'story' | 'venue_review'
-//                 | 'venue_promotion' | 'guest_rsvp'   (backend contract:
-//                   VALID_CONTENT_TYPES in backend/routes/moderation.js)
+//                 | 'venue_promotion' | 'guest_rsvp' | 'venue_event'
+//                   (backend contract: VALID_CONTENT_TYPES in
+//                   backend/routes/moderation.js)
 //     contentId   — the row id when reporting one piece of content, else undefined
 //     userId      — omit for a guest RSVP: there is no Flock account behind a
 //                   guest, so the Block control correctly does not render.
@@ -31,12 +33,18 @@ const REASONS = [
 // message" over a venue review or a guest's name. The old label was a single
 // `contentId ? 'this message' : 'user'` ternary, which was wrong for four of the
 // seven types the backend accepts.
+//
+// One entry per value in VALID_CONTENT_TYPES. venue_event was added to the
+// backend list and missed here, so a reported venue event said "Report this
+// content" — the same route-widened-and-the-thing-behind-it-did-not bug that
+// migrations 003, 016 and 017 each exist to undo, in its mildest form.
 const NOUNS = {
   flock_message: 'this message',
   dm: 'this message',
   story: 'this story',
   venue_review: 'this review',
   venue_promotion: 'this promotion',
+  venue_event: 'this event',
   guest_rsvp: 'this guest name',
   profile: 'this user',
 };
@@ -46,17 +54,22 @@ const FONT = "'Hanken Grotesk', -apple-system, BlinkMacSystemFont, sans-serif";
 // Emoji are not UI icons in this app (SLOP-AUDIT H14). Both glyphs here used to
 // be characters — a U+2691 flag and a 🚫 — and the flag had already been
 // silently double-encoded once, rendering as garbage in the exact screen a
-// reviewer opens to verify Guideline 1.2. Stroke SVG cannot rot in transit.
-const Icon = ({ children, color }) => (
-  <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" style={{ flexShrink: 0 }}>
-    {children}
-  </svg>
-);
-const FlagIcon = ({ color }) => (
-  <Icon color={color}><path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z" /><line x1="4" y1="22" x2="4" y2="15" /></Icon>
-);
-const BlockIcon = ({ color }) => (
-  <Icon color={color}><circle cx="12" cy="12" r="10" /><line x1="4.9" y1="4.9" x2="19.1" y2="19.1" /></Icon>
+// reviewer opens to verify Guideline 1.2.
+//
+// They then spent a while as hand-rolled SVG in this file: round caps, cubic
+// curves, a 20-unit-diameter circle. Every rule in components/ui/Icons.js says
+// butt caps, miter joins, 0/45/90 only, so beside any other glyph in the app
+// they read as a different product. Both are now the system's own:
+// Icons.flag (drawn expressly to retire the U+2691) and Icons.ban (added with
+// this change — the set had no honest block mark, and shield/lock/x/minus each
+// say something the control does not).
+//
+// Decorative, no accessible label: each sits beside its own text. The wrapper
+// keeps the flexShrink: 0 the old hand-rolled <svg> carried, so a long display
+// name in a right-to-left or heavily translated string cannot squash the glyph.
+const ROW_ICON = 17;
+const RowIcon = ({ glyph, color }) => (
+  <span aria-hidden="true" style={{ display: 'inline-flex', flexShrink: 0 }}>{glyph(color, ROW_ICON)}</span>
 );
 
 const ModerationSheet = ({ target, onClose, showToast, onBlocked }) => {
@@ -188,11 +201,11 @@ const ModerationSheet = ({ target, onClose, showToast, onBlocked }) => {
           <div>
             <p style={{ fontSize: '13px', fontWeight: '600', color: 'var(--text-secondary)', textAlign: 'center', margin: '8px 0 12px' }}>{who}</p>
             <button style={sheetBtn} onClick={() => setMode('report')}>
-              <FlagIcon color="var(--text-primary)" /> Report {reportingContent ? noun : who}
+              <RowIcon glyph={Icons.flag} color="var(--text-primary)" /> Report {reportingContent ? noun : who}
             </button>
             {userId && (
               <button style={{ ...sheetBtn, color: '#EF4444' }} onClick={() => setMode('block')}>
-                <BlockIcon color="#EF4444" /> Block {who}
+                <RowIcon glyph={Icons.ban} color="#EF4444" /> Block {who}
               </button>
             )}
             <button style={{ ...sheetBtn, borderBottom: 'none', justifyContent: 'center', color: 'var(--text-secondary)' }} onClick={onClose}>Cancel</button>
@@ -212,7 +225,21 @@ const ModerationSheet = ({ target, onClose, showToast, onBlocked }) => {
                 <button key={r.value} aria-pressed={reason === r.value} onClick={() => setReason(r.value)} style={{ width: '100%', padding: '12px 14px', textAlign: 'left', borderRadius: '12px', border: reason === r.value ? '2px solid var(--text-primary)' : '1px solid var(--border-default)', backgroundColor: reason === r.value ? 'var(--bg-hover)' : 'transparent', color: 'var(--text-primary)', fontSize: '14px', fontWeight: '600', cursor: 'pointer', fontFamily: FONT }}>{r.label}</button>
               ))}
             </div>
-            <textarea value={details} onChange={(e) => setDetails(e.target.value)} maxLength={1000} aria-label="Add details (optional)" placeholder="Add details (optional)" rows={3} style={{ width: '100%', boxSizing: 'border-box', padding: '12px', borderRadius: '12px', border: '1px solid var(--border-default)', backgroundColor: 'var(--bg-hover)', color: 'var(--text-primary)', fontSize: '13px', resize: 'none', outline: 'none', marginBottom: '14px', fontFamily: 'inherit' }} />
+            {/* fontSize 16px, and it is not a style preference.
+                iOS Safari and every iOS WebView (this app ships as a Capacitor
+                shell, so that is the launch target) zoom the whole viewport in
+                when the user focuses an input, select or textarea whose
+                computed font-size is under 16px. It was 13px here, so tapping
+                "Add details" on an iPhone scaled the page up and left the sheet
+                cropped and horizontally scrollable, mid-report, on the screen
+                Guideline 1.2 is judged on. The fix has to be on the focusable
+                control itself: a transform does not count, and the viewport
+                answer (maximum-scale / user-scalable=no) is ignored by modern
+                iOS and fails WCAG 1.4.4 on the browsers that still honour it.
+                See public/index.html, which is deliberately free of both.
+                maxLength matches the server's own cap on `details`
+                (backend/routes/moderation.js: isLength({ max: 1000 })). */}
+            <textarea value={details} onChange={(e) => setDetails(e.target.value)} maxLength={1000} aria-label="Add details (optional)" placeholder="Add details (optional)" rows={3} style={{ width: '100%', boxSizing: 'border-box', padding: '12px', borderRadius: '12px', border: '1px solid var(--border-default)', backgroundColor: 'var(--bg-hover)', color: 'var(--text-primary)', fontSize: '16px', resize: 'none', outline: 'none', marginBottom: '14px', fontFamily: 'inherit' }} />
             <div style={{ display: 'flex', gap: '10px' }}>
               <button onClick={() => setMode('menu')} disabled={busy} style={ghostBtn}>Back</button>
               <button onClick={submitReport} disabled={busy || !reason} style={dangerBtn(busy || !reason)}>{busy ? 'Submitting…' : 'Submit report'}</button>
