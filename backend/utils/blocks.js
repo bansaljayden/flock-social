@@ -43,14 +43,48 @@ async function getInvisibleUserIds(userId) {
  */
 const blockCache = new Map();
 const BLOCK_CACHE_TTL = 30 * 1000;
+const BLOCK_CACHE_MAX = 5000;
+
+// One key builder for BOTH the cache write and the invalidation. They each had
+// their own copy of `a < b ? \`${a}_${b}\` : \`${b}_${a}\``, which is a
+// relational comparison over values that arrive as numbers from REST and as
+// strings from socket payloads: '10' < '9' is true, 10 < 9 is false. So a pair
+// cached from a socket event could be stored under a key the REST block route's
+// invalidation never looked at, and the "block must bite immediately" guarantee
+// silently degraded back to waiting out the 30-second TTL — on live location
+// and typing, the two events a fresh block most urgently needs to stop.
+function pairKey(a, b) {
+  const [x, y] = [Number(a), Number(b)].sort((m, n) => m - n);
+  return `${x}_${y}`;
+}
 async function isBlockedBetweenCached(a, b) {
   if (!a || !b || Number(a) === Number(b)) return false;
-  const key = a < b ? `${a}_${b}` : `${b}_${a}`;
+  // Round 17: the key was built with `a < b`, a RELATIONAL comparison on values
+  // that arrive as numbers from REST and as strings from socket payloads.
+  // '10' < '9' is true while 10 < 9 is false, so the same pair could produce
+  // two different keys depending on which transport asked — one of them a cache
+  // entry that the other's invalidation never touches. Normalize to numbers,
+  // which is also what isBlockedBetween's self-check already assumes.
+  const key = pairKey(a, b);
+  const now = Date.now();
   const hit = blockCache.get(key);
-  if (hit && Date.now() - hit.ts < BLOCK_CACHE_TTL) return hit.blocked;
+  if (hit && now - hit.ts < BLOCK_CACHE_TTL) return hit.blocked;
   const blocked = await isBlockedBetween(a, b);
-  if (blockCache.size > 5000) blockCache.clear();
-  blockCache.set(key, { ts: Date.now(), blocked });
+  // Was `blockCache.clear()`, which dropped every entry at once and sent every
+  // in-flight typing/location event back to the database simultaneously — and
+  // anyone could force that moment by touching enough pairs. Expire what is
+  // stale, then evict oldest-first (same shape as checkin.js's tapCache).
+  // Delete-then-set so insertion order really is least-recently-written.
+  blockCache.delete(key);
+  blockCache.set(key, { ts: now, blocked });
+  if (blockCache.size > BLOCK_CACHE_MAX) {
+    for (const [k, v] of blockCache) {
+      if (now - v.ts >= BLOCK_CACHE_TTL) blockCache.delete(k);
+    }
+    while (blockCache.size > BLOCK_CACHE_MAX) {
+      blockCache.delete(blockCache.keys().next().value);
+    }
+  }
   return blocked;
 }
 
@@ -61,8 +95,9 @@ async function isBlockedBetweenCached(a, b) {
  */
 function invalidateBlockCache(a, b) {
   if (!a || !b) return;
-  const key = a < b ? `${a}_${b}` : `${b}_${a}`;
-  blockCache.delete(key);
+  blockCache.delete(pairKey(a, b));
 }
 
 module.exports = { isBlockedBetween, isBlockedBetweenCached, getInvisibleUserIds, invalidateBlockCache };
+// Exposed for __tests__/safetyFlow.test.js.
+module.exports.__test = { pairKey, blockCache, BLOCK_CACHE_TTL };

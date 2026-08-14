@@ -24,8 +24,23 @@ router.use(authenticate);
 // guest name — broadcast live to every member of the flock — had no takedown
 // path at all. Reporting it is gated below on the reporter being an accepted
 // member of that RSVP's flock.
+//
+// Round 17: 'guest_rsvp' was accepted here and mapped in admin.js, but the
+// content_reports.content_type CHECK constraint still listed only six types
+// (last set in migration 003), so every guest RSVP report passed validation,
+// passed the visibility gate, and then died on the INSERT as a 23514 — served
+// to the reporter as `500 Failed to submit report`. Migration 015 widens the
+// constraint; __tests__/safetyFlow.test.js now diffs this array against the
+// migration text so the two can never drift apart again. If you add a type
+// here, add a migration in the same commit.
 const VALID_CONTENT_TYPES = ['flock_message', 'dm', 'profile', 'story', 'venue_review', 'venue_promotion', 'guest_rsvp'];
 const VALID_REASONS = ['spam', 'harassment', 'hate', 'sexual', 'violence', 'self_harm', 'other'];
+
+// Every report is answered with this exact string, whether it created a row,
+// matched an open report the same user already filed, or named content a
+// moderator has already taken down. A reporter must not be able to infer the
+// state of the queue from the wording.
+const REPORT_ACCEPTED = 'Report received. Our team will review it promptly.';
 
 // Round 9: every report inserted a row and paged a moderator with no ceiling,
 // so one account could bury real reports below the dashboard's LIMIT 200 view
@@ -54,8 +69,15 @@ router.post('/reports',
   [
     body('content_type').isIn(VALID_CONTENT_TYPES).withMessage('Invalid content type'),
     body('reason').isIn(VALID_REASONS).withMessage('Invalid reason'),
-    body('content_id').optional().isInt(),
-    body('reported_user_id').optional().isInt(),
+    // Round 17: these were validated but never CONVERTED. isInt() accepts the
+    // string "5" as happily as the number 5, so a client that sent ids as
+    // strings (any form-encoded post, or a JS client that read them out of a
+    // DOM attribute) reached the author check below as `5 !== "5"` and was
+    // told "Reported user does not match the content author" — a legitimate
+    // report refused with an accusation. .toInt() makes the comparison mean
+    // what it reads as.
+    body('content_id').optional().isInt({ min: 1 }).withMessage('Invalid content id').toInt(),
+    body('reported_user_id').optional().isInt({ min: 1 }).withMessage('Invalid user id').toInt(),
     body('details').optional().trim().customSanitizer(stripHtml).isLength({ max: 1000 }),
   ],
   async (req, res) => {
@@ -76,13 +98,23 @@ router.post('/reports',
       // Round 3: a report must reference REAL content the reporter can see,
       // authored by the person being reported — otherwise users can frame
       // accounts or probe private message ids via the report pipeline.
+      // Round 17: the four public-surface branches carried
+      // `AND is_hidden = false` INSIDE the visibility query, so content a
+      // moderator had already taken down was indistinguishable from content
+      // that never existed — both produced `400 That content could not be
+      // found`. Two people reporting the same abusive venue review seconds
+      // apart meant the second one got an error message accusing them of
+      // making it up. Visibility and takedown-state are now separate: the
+      // reporter still has to be able to see the row, but "already handled" is
+      // answered with the same success string as a fresh report (and files
+      // nothing, because there is nothing left to do).
       if (content_id) {
         let row = null;
         // 'flock_message' is the validated type name — checking 'message' here
         // made every legitimate group-chat report 400 as "not found"
         if (content_type === 'flock_message') {
           const r = await pool.query(
-            `SELECT m.sender_id FROM messages m
+            `SELECT m.sender_id, COALESCE(m.is_hidden, false) AS is_hidden FROM messages m
              JOIN flock_members fm ON fm.flock_id = m.flock_id AND fm.user_id = $2 AND fm.status = 'accepted'
              WHERE m.id = $1`,
             [content_id, req.user.id]
@@ -90,7 +122,7 @@ router.post('/reports',
           row = r.rows[0] || null;
         } else if (content_type === 'dm') {
           const r = await pool.query(
-            `SELECT sender_id FROM direct_messages
+            `SELECT sender_id, COALESCE(is_hidden, false) AS is_hidden FROM direct_messages
              WHERE id = $1 AND (sender_id = $2 OR receiver_id = $2)`,
             [content_id, req.user.id]
           );
@@ -98,15 +130,15 @@ router.post('/reports',
         } else if (content_type === 'venue_review') {
           // Public surface: anyone who can see the review can report it.
           const r = await pool.query(
-            `SELECT user_id AS sender_id FROM venue_reviews
-             WHERE id = $1 AND COALESCE(is_hidden, false) = false`,
+            `SELECT user_id AS sender_id, COALESCE(is_hidden, false) AS is_hidden FROM venue_reviews
+             WHERE id = $1`,
             [content_id]
           );
           row = r.rows[0] || null;
         } else if (content_type === 'venue_promotion') {
           const r = await pool.query(
-            `SELECT venue_user_id AS sender_id FROM venue_promotions
-             WHERE id = $1 AND COALESCE(is_hidden, false) = false`,
+            `SELECT venue_user_id AS sender_id, COALESCE(is_hidden, false) AS is_hidden FROM venue_promotions
+             WHERE id = $1`,
             [content_id]
           );
           row = r.rows[0] || null;
@@ -116,9 +148,9 @@ router.post('/reports',
           // account behind a guest, which also means a reported_user_id sent
           // alongside this type correctly fails the author check below.
           const r = await pool.query(
-            `SELECT NULL::int AS sender_id FROM guest_rsvps gr
+            `SELECT NULL::int AS sender_id, COALESCE(gr.is_hidden, false) AS is_hidden FROM guest_rsvps gr
              JOIN flock_members fm ON fm.flock_id = gr.flock_id AND fm.user_id = $2 AND fm.status = 'accepted'
-             WHERE gr.id = $1 AND COALESCE(gr.is_hidden, false) = false`,
+             WHERE gr.id = $1`,
             [content_id, req.user.id]
           );
           row = r.rows[0] || null;
@@ -126,10 +158,9 @@ router.post('/reports',
           // Same visibility predicates as the story feed — a bare id lookup
           // let any user probe/report stories they could never see.
           const r = await pool.query(
-            `SELECT s.user_id AS sender_id FROM stories s
+            `SELECT s.user_id AS sender_id, COALESCE(s.is_hidden, false) AS is_hidden FROM stories s
              WHERE s.id = $1
                AND s.expires_at > NOW()
-               AND s.is_hidden IS NOT TRUE
                AND NOT EXISTS (
                  SELECT 1 FROM user_blocks b
                  WHERE (b.blocker_id = $2 AND b.blocked_id = s.user_id)
@@ -153,8 +184,25 @@ router.post('/reports',
         if (!row) {
           return res.status(400).json({ error: 'That content could not be found' });
         }
+        if (row.is_hidden) {
+          // Already taken down. Nothing to queue, nothing to alert on, and the
+          // reporter did the right thing — so this is a success, worded
+          // identically to every other success.
+          return res.status(201).json({ message: REPORT_ACCEPTED, report: null });
+        }
         if (reported_user_id && row.sender_id !== reported_user_id) {
           return res.status(400).json({ error: 'Reported user does not match the content author' });
+        }
+      } else if (reported_user_id) {
+        // Round 17: a report naming a user but no content skipped every check,
+        // so `{"content_type":"profile","reported_user_id":999999,"reason":"spam"}`
+        // filed a real row against an account that does not exist. Those land
+        // in the same LIMIT 200 queue as real reports and a moderator cannot
+        // action them (admin.js refuses to hide a profile, and there is nobody
+        // to ban). The block route already 404s an unknown id; so does this.
+        const target = await pool.query('SELECT id FROM users WHERE id = $1', [reported_user_id]);
+        if (target.rows.length === 0) {
+          return res.status(404).json({ error: 'User not found' });
         }
       }
 
@@ -174,10 +222,7 @@ router.post('/reports',
         [req.user.id, content_type, content_id || null, reported_user_id || null]
       );
       if (dupe.rows.length > 0) {
-        return res.status(201).json({
-          message: 'Report received. Our team will review it promptly.',
-          report: dupe.rows[0],
-        });
+        return res.status(201).json({ message: REPORT_ACCEPTED, report: dupe.rows[0] });
       }
 
       const result = await pool.query(
@@ -195,12 +240,22 @@ router.post('/reports',
         }).catch(() => {});
       } catch (_) { /* alerts service optional until A6 lands */ }
 
-      res.status(201).json({
-        message: 'Report received. Our team will review it promptly.',
-        report: result.rows[0],
-      });
+      res.status(201).json({ message: REPORT_ACCEPTED, report: result.rows[0] });
     } catch (err) {
-      console.error('Create report error:', err);
+      // 23514 is a CHECK violation, which on this table means exactly one
+      // thing: VALID_CONTENT_TYPES above has drifted ahead of the constraint
+      // and a whole report surface is silently down. That has now happened
+      // twice (rounds 7 and 17), both times invisible because the log line
+      // said nothing about which report was refused or why.
+      if (err.code === '23514') {
+        console.error(
+          `[MODERATION] REPORT REJECTED BY THE DATABASE — content_type "${req.body?.content_type}" is not in the content_reports CHECK constraint. ` +
+          'A reportable surface is unreachable; add a migration widening content_reports_content_type_check.',
+          err.constraint || ''
+        );
+      } else {
+        console.error('Create report error:', err);
+      }
       res.status(500).json({ error: 'Failed to submit report' });
     }
   }
@@ -298,3 +353,6 @@ router.delete('/blocks/:userId', [param('userId').isInt()], async (req, res) => 
 });
 
 module.exports = router;
+// Exposed for __tests__/safetyFlow.test.js. A property on the router changes
+// nothing about the mount in server.js (same pattern as checkin.js/safety.js).
+module.exports.__test = { VALID_CONTENT_TYPES, VALID_REASONS, REPORTS_PER_HOUR, REPORT_ACCEPTED };
