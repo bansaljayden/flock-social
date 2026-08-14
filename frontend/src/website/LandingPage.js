@@ -2,7 +2,6 @@ import React, { useEffect, useRef, useState } from 'react';
 import './LandingPage.css';
 import LiveDemo from './LiveDemo';
 import BirdieBird, { WARM_BIRD } from '../components/ui/BirdieBird';
-import { Icons } from '../components/ui/Icons';
 
 const API = process.env.REACT_APP_API_URL || 'https://flock-app-production.up.railway.app';
 
@@ -299,7 +298,9 @@ export default function LandingPage() {
                 mark. It used to sit on the navy Safety section, where it was
                 the wrong subject and needed a CSS invert to be visible at all.
                 This is the section it actually describes. */}
-            <span className="lp-mark" aria-hidden="true">{Icons.calendar('currentColor', 64)}</span>
+            <figure className="lp-flock lp-flock-steps">
+              <img src="/marks/mark-steps-400.png" srcSet="/marks/mark-steps-400.png 1x, /marks/mark-steps.png 2x" alt="" width="865" height="290" loading="lazy" />
+            </figure>
             <p className="lp-kicker">How it works</p>
             <h2>Four steps, then you’re out the door.</h2>
           </div>
@@ -341,6 +342,9 @@ export default function LandingPage() {
         <div className="lp-wrap">
           <div className="lp-demo-head">
             <div>
+              <figure className="lp-flock lp-flock-crowd">
+              <img src="/marks/mark-crowd-400.png" srcSet="/marks/mark-crowd-400.png 1x, /marks/mark-crowd.png 2x" alt="" width="1024" height="498" loading="lazy" />
+            </figure>
               <p className="lp-kicker">Crowd levels</p>
               <h2>Know how busy it is before you leave.</h2>
               <p className="lp-lead">
@@ -415,7 +419,9 @@ export default function LandingPage() {
       <section className="lp-sec lp-sec-paper lp-sec-ruled" id="money">
         <div className="lp-wrap lp-row lp-row-flip">
           <div>
-            <span className="lp-mark" aria-hidden="true">{Icons.dollar('currentColor', 64)}</span>
+            <figure className="lp-flock lp-flock-money">
+              <img src="/marks/mark-money-400.png" srcSet="/marks/mark-money-400.png 1x, /marks/mark-money.png 2x" alt="" width="549" height="527" loading="lazy" />
+            </figure>
             <h2>Nobody wants to say “that’s too expensive” out loud.</h2>
             <p className="lp-lead">
               In Flock nobody has to. Everyone types a number privately, and the
