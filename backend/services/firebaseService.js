@@ -289,10 +289,13 @@ function isStaleError(err) {
 // Deadline
 //
 // firebase-admin's own timeout is 15s PER ATTEMPT and it retries connection
-// resets and timeouts up to four times. routes/flocks.js awaits its entire push
-// fan-out BEFORE res.json, so an unreachable FCM held a flock-status response
-// open for the better part of a minute — a notification failing must never be
-// something the user experiences as the app hanging. Resolving as a plain
+// resets and timeouts up to four times. routes/flocks.js USED TO await its
+// entire push fan-out before res.json, so an unreachable FCM held a flock-status
+// response open for the better part of a minute. All four of its call sites now
+// push after responding, so that particular hang is gone — but the deadline
+// stays, because it is what makes "a notification failing must never be
+// something the user experiences as the app hanging" a property of this file
+// rather than a habit every caller has to remember. Resolving as a plain
 // failure is safe: the timeout carries no provider code, so isStaleError reads
 // it as transient and the token survives.
 // ---------------------------------------------------------------------------
