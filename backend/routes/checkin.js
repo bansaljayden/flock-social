@@ -2,7 +2,7 @@ const express = require('express');
 const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
 const pool = require('../config/database');
-const { authenticate } = require('../middleware/auth');
+const { authenticate, TOKEN_ALGORITHMS } = require('../middleware/auth');
 const { validPlaceId, isKnownVenue } = require('../utils/places');
 const { createUserBudget } = require('../utils/probeBudget');
 
@@ -114,18 +114,37 @@ function nfcSigValid(placeId, sig) {
 // `revokeUserSessions`, but it does NOT export `issuedTokenVersion` /
 // `currentTokenVersion` — its module.exports is
 // { authenticate, authenticateAllowBanned, authenticateSocket, signUserToken,
-//   revokeUserSessions, requireVerified, isUnverified, ... }. The version
-// helpers stay private there, so the local comparison below stays. It is a
-// COPY, and the rule it copies ("a missing tv claim reads as 0") lives in two
-// files: if middleware/auth.js ever changes how a missing claim is interpreted,
-// this must change with it. Exporting the two helpers would remove the
-// duplication.
+//   revokeUserSessions, requireVerified, isUnverified, TOKEN_EXPIRY,
+//   TOKEN_ALGORITHMS, UNVERIFIED_MESSAGE }. The version helpers stay private
+// there, so the local comparison below stays. It is a COPY, and the rule it
+// copies ("a missing tv claim reads as 0") lives in two files: if
+// middleware/auth.js ever changes how a missing claim is interpreted, this must
+// change with it. Exporting the two helpers would remove the duplication.
+//
+// ---------------------------------------------------------------------------
+// Round 23 — the THIRD control this copy had quietly dropped.
+//
+// Rounds 15 brought token_version and is_banned across. The algorithm pin did
+// not come with them: middleware/auth.js verifies with `{ algorithms: ['HS256'] }`
+// and records in its own comment why — "a future change to how JWT_SECRET is
+// loaded (a PEM, a KeyObject) can never silently widen the accepted algorithm
+// set to the asymmetric family". This called jwt.verify with NO options, so it
+// accepted the whole HMAC family (verified: an HS512 token is 401 on every
+// other route in the app and resolved to a user id here).
+//
+// That is not exploitable against jsonwebtoken 9 with a string secret today.
+// It is still the wrong shape, and it is worse here than anywhere else: this is
+// the only place in the app where a token is read on a route that must also
+// serve anonymous callers, and an accepted identity mints a venue_checkins row,
+// an occupancy event and flock attendance. TOKEN_ALGORITHMS is imported rather
+// than re-spelled, so the pin cannot drift from the middleware's.
+// ---------------------------------------------------------------------------
 async function tryAuth(req) {
   try {
     const header = req.headers.authorization;
     if (!header || !header.startsWith('Bearer ')) return null;
     const token = header.split(' ')[1];
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    const decoded = jwt.verify(token, process.env.JWT_SECRET, { algorithms: TOKEN_ALGORITHMS });
     const result = await pool.query(
       'SELECT id, is_banned, token_version FROM users WHERE id = $1',
       [decoded.userId]
@@ -477,8 +496,17 @@ async function recordTap({ userId, placeId, ip, source, io }) {
     // past it and leaving the dedupe window claimed for nothing.
     if (!row) throw new Error('venue_checkins insert returned no row');
   } catch (insertErr) {
-    // see forgetTap and refundAnonTap — a failure must cost the caller neither
-    // their 30-minute window nor a unit of their hourly allowance
+    // A failure must not cost the caller their 30-minute window: forgetTap gives
+    // it back on both paths.
+    //
+    // The HOURLY allowance is given back on the ANONYMOUS path only, and the
+    // asymmetry is a limitation rather than a decision: utils/probeBudget.js
+    // exposes allow() / remaining() / reset() and has no per-caller refund, so
+    // an authenticated tap that meets a database error still spends one of its
+    // 15/hour. Costing an honest caller 1/15th of an hour's allowance on a blip
+    // is a small, self-healing loss and the conservative direction, so this is
+    // not worth a second budget implementation — but do not read the line below
+    // as covering both paths, because it does not.
     forgetTap(userId, placeId, ip);
     if (!userId) refundAnonTap(ip);
     throw insertErr;
