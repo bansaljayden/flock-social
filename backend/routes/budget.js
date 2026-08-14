@@ -33,6 +33,18 @@ const REMINDER_SWEEP_INTERVAL_MS = 60 * 1000;
 const REMINDER_MAX_ENTRIES = 10000;
 let lastReminderSweep = 0;
 
+// Currency is not an integer, and floor is not a formatter (round 21).
+//
+// The "Budget set!" push ran the ceiling through Math.floor(), so a group
+// budget of $12.50 was announced as "up to $12" while the screen inside the app
+// said $12.50 — the API and the notification disagreeing about the same money.
+// Below a dollar it was worse: a $0.75 ceiling was announced as "up to $0".
+//
+// The column is NUMERIC(8,2), so the value never has more than two decimal
+// places to begin with; the only question is whether to show them. Whole
+// dollars stay whole ("$25", not "$25.00"), anything else keeps its cents.
+const formatMoney = (n) => (Number.isInteger(n) ? String(n) : n.toFixed(2));
+
 function sweepReminderCooldowns(now) {
   if (now - lastReminderSweep < REMINDER_SWEEP_INTERVAL_MS && reminderCooldowns.size <= REMINDER_MAX_ENTRIES) return;
   lastReminderSweep = now;
@@ -75,7 +87,18 @@ router.post('/:flockId/submit',
     // values:'null' for the same reason — an explicit `skipped: null` means "not
     // skipped", which is what `!!skipped` already computes, so refusing it was
     // pure friction.
-    scalarOnly(body('skipped').optional({ values: 'null' }), 'skip flag').isBoolean(),
+    //
+    // Round 21: `.toBoolean()` is the other half of the round 19 finding, and
+    // it was left open. isBoolean() ACCEPTS THE STRINGS 'true', 'false', '0'
+    // and '1' — and `!!'false'` is true, and `!!'0'` is true. So the exact bug
+    // the note above describes for `skipped: ["false"]` was still live for
+    // `skipped: "false"`: the validator called it a valid boolean, `!!skipped`
+    // read it as a skip, the person's amount was written as NULL, and someone
+    // who said "no, here is my $50" stopped counting toward the ceiling. That
+    // also moves the 3-submission privacy threshold that gates the whole
+    // feature. Recognising a boolean is not enough; it has to be COERCED, so
+    // the handler and the column see the same answer the caller gave.
+    scalarOnly(body('skipped').optional({ values: 'null' }), 'skip flag').isBoolean().toBoolean(),
   ],
   async (req, res) => {
     try {
@@ -234,7 +257,7 @@ router.post('/:flockId/submit',
         for (const m of membersResult.rows) {
           await pushIfOffline(io, m.user_id,
             'Budget set!',
-            `Group budget: up to $${Math.floor(visibleCeiling)} for ${flockName}`,
+            `Group budget: up to $${formatMoney(visibleCeiling)} for ${flockName}`,
             { type: 'budget_ready', flockId: String(flockId) }
           );
         }
@@ -387,7 +410,17 @@ router.post('/:flockId/lock',
         );
         if ((countResult.rows[0]?.n || 0) < 3) {
           await client.query('ROLLBACK');
-          return res.status(400).json({ error: 'Budget locks after at least 3 people have submitted' });
+          // The threshold is three NON-SKIPPED submissions, because the ceiling
+          // is a MIN and revealing it over fewer than three amounts exposes one
+          // person's budget. The old wording said "at least 3 people have
+          // submitted" while the screen directly above the button said
+          // "4 of 4 submitted" — submissionCount counts skips and this does
+          // not. In a four-person flock where two skip, the creator was told
+          // everyone had answered AND that not enough people had answered, with
+          // nothing to explain the gap. State the actual rule.
+          return res.status(400).json({
+            error: 'Budget locks once 3 people have shared an amount. Skips do not count.',
+          });
         }
 
         // Recompute inside the transaction — the cached column could be stale
