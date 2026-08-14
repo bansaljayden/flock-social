@@ -13,9 +13,9 @@ import {
 } from './lib/finance';
 import { getCurrentUser, logout, isLoggedIn, getFlocks, getFlock, createFlock as apiCreateFlock, getMessages, sendMessage as apiSendMessage, updateProfile, searchVenues, searchUsers, getSuggestedUsers, sendFriendRequest, getVenueDetails, leaveFlock as apiLeaveFlock, getDMConversations, getDMs, sendDM as apiSendDM, getDmVenueVotes, getDmPinnedVenue, BASE_URL, inviteToFlock, acceptFlockInvite, declineFlockInvite, getFriends, acceptFriendRequest, declineFriendRequest, getPendingRequests, getOutgoingRequests, getFriendSuggestions, addFriendByCode, findFriendsByPhone, removeFriend, getTrustedContacts, addTrustedContact, updateTrustedContact, deleteTrustedContact, sendEmergencyAlert, shareLocationWithContacts, getUserStats, getCrowdPrediction, getCrowdBatch, getCrowdAlternatives, getWeather, submitVenueFeedback, uploadProfileImage, saveProfileImageUrl, submitBudget, getBudgetStatus, lockBudget, sendBudgetReminder, createBillSplit, getBillSplit, settleShare, ghostCommit, updatePaymentMethods, getPaymentLinks, getFeaturedEvents, searchEvents, getEventDetails, sendAiChat, getWeatherForecast, submitAttendance, getAdminAnalytics, createVenueProfile, getVenueProfile, updateVenueProfile, getVenuePromotions, createVenuePromotion, updateVenuePromotion, deleteVenuePromotion, getVenueEvents, createVenueEvent, updateVenueEvent, deleteVenueEvent, getIncomingFlocks, getVenueReviews, replyToReview, submitVenueReview, getPublicReviews, getPublicPromotions, deleteAccount } from './services/api';
 import { connectSocket, disconnectSocket, getSocket, joinFlock, leaveFlock, sendMessage as socketSendMessage, sendImageMessage as socketSendImage, startTyping, stopTyping, onNewMessage, onUserTyping, onUserStoppedTyping, emitLocation, stopSharingLocation as socketStopSharing, onLocationUpdate, onMemberStoppedSharing, socketSendDm, onNewDm, dmStartTyping, dmStopTyping, onDmUserTyping, onDmUserStoppedTyping, dmReact, dmRemoveReact, onDmReactionAdded, onDmReactionRemoved, dmVoteVenue, onDmNewVote, dmShareLocation, dmStopSharingLocation, onDmLocationUpdate, onDmMemberStoppedSharing, dmPinVenue, onDmVenuePinned, onFlockInviteReceived, onFlockInviteResponded, onFriendRequestReceived, onFriendRequestResponded, onBudgetUpdated, onBudgetLocked, onBudgetReminder, onBillCreated, onShareSettled, onBillFullySettled, onGhostCommitted, onNewVote, onVenueSelected, onFlockReactionAdded, onFlockReactionRemoved, onFlockDeleted, onFlockUpdated, onFlockMemberLeft, onGuestRsvp } from './services/socket';
-import { requestNotificationPermission, onForegroundMessage, getNotificationStatus } from './services/firebase';
+import { requestNotificationPermission, onForegroundMessage, getNotificationStatus, onPushNavigate, unregisterPushToken } from './services/firebase';
 import { resendVerificationEmail } from './services/api';
-import { unregisterAllTokens, setAvailability, clearAvailability, getMyAvailability, getFriendsAvailability, getSensorCurrent, getSensorHistory, checkInManual, getNfcCheckin, getCalendarEvents, createCalendarEvent, deleteCalendarEvent } from './services/api';
+import { setAvailability, clearAvailability, getMyAvailability, getFriendsAvailability, getSensorCurrent, getSensorHistory, checkInManual, getNfcCheckin, getCalendarEvents, createCalendarEvent, deleteCalendarEvent } from './services/api';
 import { joinVenueRoom, leaveVenueRoom, onVenueSensorUpdate, onVenueCheckin } from './services/socket';
 import { pullSettings, queueSync } from './services/userSettings';
 import { QRCodeSVG } from 'qrcode.react';
@@ -1174,20 +1174,35 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
       if (cancelled) return;
       const savedMapType = localStorage.getItem('flock_map_type') || 'roadmap';
 
-      const map = new maplibregl.Map({
-        container: mapRef.current,
-        style: savedMapType === 'roadmap' ? ROADMAP_STYLE() : SATELLITE_STYLE,
-        center: [userLoc.lng, userLoc.lat],
-        zoom: DEFAULT_ZOOM,
-        minZoom: 3,
-        maxZoom: 18,
-        // Attribution added manually below at bottom-left (compact) so it
-        // never collides with the View-All pill anchored bottom-right.
-        attributionControl: false,
-        // Snap-style smoothness
-        fadeDuration: 200,
-        antialias: true,
-      });
+      // A remote basemap style (bad/missing MapTiler key, network, 403) must
+      // NOT take the whole app down. A synchronous failure constructing the map
+      // is caught here; the async style/tile fetch failures are swallowed by the
+      // 'error' listener below. Either way Discover degrades to an empty map
+      // instead of throwing up to the root error boundary.
+      let map;
+      try {
+        map = new maplibregl.Map({
+          container: mapRef.current,
+          style: savedMapType === 'roadmap' ? ROADMAP_STYLE() : SATELLITE_STYLE,
+          center: [userLoc.lng, userLoc.lat],
+          zoom: DEFAULT_ZOOM,
+          minZoom: 3,
+          maxZoom: 18,
+          // Attribution added manually below at bottom-left (compact) so it
+          // never collides with the View-All pill anchored bottom-right.
+          attributionControl: false,
+          // Snap-style smoothness
+          fadeDuration: 200,
+          antialias: true,
+        });
+      } catch (err) {
+        console.warn('[Map] Failed to initialize basemap:', err?.message || err);
+        return;
+      }
+      // Without a listener, MapLibre surfaces style/tile load errors (bad key,
+      // network) rather than failing quietly. Swallow them so a broken basemap
+      // leaves Discover usable.
+      map.on('error', (e) => { console.warn('[Map]', e?.error?.message || e?.error || e); });
       map.addControl(new maplibregl.AttributionControl({ compact: true }), 'bottom-left');
 
       // KEYBOARD ORDER. MapLibre injects its control containers as the FIRST
@@ -3305,7 +3320,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
     if (!isLoggedIn()) { setCalendarLoading(false); return; }
     setCalendarLoading(true);
     getCalendarEvents()
-      .then(rows => setCalendarEvents(rows))
+      .then(rows => setCalendarEvents(Array.isArray(rows) ? rows : []))
       .catch(() => {}) // offline/first-boot: keep whatever is local
       .finally(() => setCalendarLoading(false));
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -3732,6 +3747,31 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   const [dmsLoading, setDmsLoading] = useState(true);
   const [selectedDmId, setSelectedDmId] = useState(null);
   const [showNewDmModal, setShowNewDmModal] = useState(false);
+
+  // A push-notification tap resolves (in services/pushNavigation) into a
+  // navigation intent. Consume it here and set the SAME state the in-app
+  // navigation uses, so a tap opens the exact thing the notification is about
+  // instead of leaving the app on whatever screen it was already on.
+  //   - flock  -> the flock's chat  (ChatListScreen row: selectedFlockId + 'chatDetail')
+  //   - dm     -> the DM thread     (Messages DM row:    selectedDmId + 'dmDetail')
+  //   - friends-> the You/profile tab where friend requests live
+  // Tab 'chat' (not 'chats') is the real Messages tab id — see the tab list and
+  // the renderScreen switch — so back from the thread lands on Messages.
+  useEffect(() => onPushNavigate((intent) => {
+    if (!intent || !intent.screen) return;
+    if (intent.screen === 'flock' && intent.flockId) {
+      setSelectedFlockId(intent.flockId);
+      setCurrentTab('chat');
+      setCurrentScreen('chatDetail');
+    } else if (intent.screen === 'dm' && intent.userId) {
+      setSelectedDmId(intent.userId);
+      setCurrentTab('chat');
+      setCurrentScreen('dmDetail');
+    } else if (intent.screen === 'friends') {
+      setCurrentTab('profile');
+      setCurrentScreen('main');
+    }
+  }), []);
   // UGC moderation (Apple 1.2): null = closed, else { userId, userName, contentType, contentId }
   const [moderationTarget, setModerationTarget] = useState(null);
   // In-app account deletion (Apple 5.1.1(v))
@@ -15832,7 +15872,7 @@ const FlockApp = () => {
     );
   }
 
-  return <FlockAppInner authUser={authUser} venueLoginFlag={venueLoginFlag} onLogout={() => { unregisterAllTokens().catch(() => {}); disconnectSocket(); logout(); setAuthUser(null); setAuthScreen('login'); setVenueLoginFlag(false); localStorage.removeItem('flockUserMode'); localStorage.removeItem('flockVenueOnboardingComplete'); }} />;
+  return <FlockAppInner authUser={authUser} venueLoginFlag={venueLoginFlag} onLogout={() => { unregisterPushToken().catch(() => {}); disconnectSocket(); logout(); setAuthUser(null); setAuthScreen('login'); setVenueLoginFlag(false); localStorage.removeItem('flockUserMode'); localStorage.removeItem('flockVenueOnboardingComplete'); }} />;
 };
 
 // Wrap with Google OAuth provider
