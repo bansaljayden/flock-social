@@ -1002,3 +1002,17 @@
   margin: 0 0 20px;
 }
 .lp-pair > :first-child { margin-bottom: 6px; }
+
+/* Section marks are photographs of the birds now, not ink plates. They are
+   transparent PNGs, so unlike the old navy-ink plates they work on the navy
+   sections too, which is why Crowd levels can finally have one. Both real
+   mascots are scattered through the flocks at varied size and facing, so the
+   repeats read as a group rather than a stamped motif. */
+.lp-flock {
+  margin: 0 0 20px;
+  line-height: 0;
+}
+.lp-flock img { height: auto; }
+.lp-flock-crowd img { width: min(100%, clamp(280px, 46vw, 520px)); }
+.lp-flock-steps img { width: min(100%, clamp(240px, 38vw, 420px)); }
+.lp-flock-money img { width: min(100%, clamp(150px, 20vw, 230px)); }
