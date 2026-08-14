@@ -420,7 +420,7 @@ export default function LandingPage() {
         <div className="lp-wrap lp-row lp-row-flip">
           <div>
             <figure className="lp-flock lp-flock-money">
-              <img src="/marks/mark-money-400.png" srcSet="/marks/mark-money-400.png 1x, /marks/mark-money.png 2x" alt="" width="549" height="527" loading="lazy" />
+              <img src="/marks/mark-money-400.png" srcSet="/marks/mark-money-400.png 1x, /marks/mark-money.png 2x" alt="" width="1024" height="1024" loading="lazy" />
             </figure>
             <h2>Nobody wants to say “that’s too expensive” out loud.</h2>
             <p className="lp-lead">
