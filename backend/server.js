@@ -20,12 +20,21 @@ const { Server } = require('socket.io');
 const cors = require('cors');
 const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
+// Used by the billed-image limiter below to name the ACCOUNT behind a request
+// before any router's authenticate middleware has run. TOKEN_ALGORITHMS comes
+// from middleware/auth.js rather than being written out again, for the same
+// reason the socket's session revalidator imports it: two places that verify
+// the same token must not be able to accept different algorithms.
+const jwt = require('jsonwebtoken');
 
-const { authenticateSocket } = require('./middleware/auth');
+const { authenticateSocket, TOKEN_ALGORITHMS } = require('./middleware/auth');
 // CHAT_IMAGE_MAX_BYTES is the ceiling the socket handler enforces on a chat
 // photo's data: URL. The REST body limit below is derived from it so the two
 // transports accept exactly the same image. See the JSON body limits block.
-const { registerHandlers, CHAT_IMAGE_MAX_BYTES } = require('./sockets/handlers');
+// checkInboundImage is the socket's own "is there an image here, and is it one
+// we would accept for free?" test — the billed-image limiter below asks it the
+// same question so the two transports charge for the same payloads.
+const { registerHandlers, CHAT_IMAGE_MAX_BYTES, checkInboundImage } = require('./sockets/handlers');
 
 // Route imports
 const authRoutes = require('./routes/auth');
@@ -180,14 +189,36 @@ const defaultJsonParser = express.json({ limit: '1mb' });
 // POSTs whose body legitimately carries a base64 image. Anchored and
 // case-insensitive: Express routes case-insensitively by default, so a
 // `/api/DM/5` that reaches the DM handler must reach the same parser.
+//
+// The id segments are `[^/]+`, NOT `\d+`, and that is the fix to a real miss
+// rather than looseness. This list has to match what EXPRESS routes, and
+// `:userId` is any one segment: `POST /api/dm/+7` reaches the DM send handler
+// (express-validator's isInt() accepts a leading plus, and parseInt turns it
+// into 7), while `\d+` did not match it. The consequence was not academic — the
+// same list decides the JSON body limit AND, further down, whether a request is
+// charged the billed-image meter, so `+7` was an unmetered door to a paid Cloud
+// Vision call. Over-matching is the safe direction here: a URL like
+// `/api/dm/abc` is metered and then 400s, which costs an abuser a token and a
+// real user nothing. Every path that must NOT be on this list — /api/dm itself,
+// /api/dm/:id/read, the react routes, /api/stories/:id — differs by a segment,
+// not by the shape of one, and __tests__/chatTransportParity.test.js pins that.
 const IMAGE_BODY_ROUTES = [
-  /^\/api\/flocks\/\d+\/messages\/?$/i,  // flock chat photo — REST twin of send_message
-  /^\/api\/dm\/\d+\/?$/i,                // DM photo — REST twin of send_dm
-  /^\/api\/stories\/?$/i,                // story photo (route caps the data URL at 700KB itself)
+  /^\/api\/flocks\/[^/]+\/messages\/?$/i,  // flock chat photo — REST twin of send_message
+  /^\/api\/dm\/[^/]+\/?$/i,                // DM photo — REST twin of send_dm
+  /^\/api\/stories\/?$/i,                  // story photo (route caps the data URL at 700KB itself)
 ];
 
+// Express collapses nothing: `POST /api//dm/7` and `POST /api/users//upload-image`
+// both reach their handlers, and neither matched the anchored patterns above.
+// That made a doubled slash a way to sidestep both this parser and the
+// billed-image meter below — the same request, the same handler, a different
+// spelling of the URL. Match on a path with runs of slashes collapsed so the
+// spelling cannot decide the ceiling. (req.path carries no query string, so
+// there is nothing else to strip.)
+const imageRoutePath = (req) => req.path.replace(/\/{2,}/g, '/');
+
 app.use((req, res, next) => {
-  const parser = req.method === 'POST' && IMAGE_BODY_ROUTES.some((re) => re.test(req.path))
+  const parser = req.method === 'POST' && IMAGE_BODY_ROUTES.some((re) => re.test(imageRoutePath(req)))
     ? imageJsonParser
     : defaultJsonParser;
   return parser(req, res, next);
@@ -243,6 +274,143 @@ const venueSearchLimiter = isDev ? (_req, _res, next) => next() : rateLimit({
   legacyHeaders: false,
   message: { error: 'Too many venue searches, please try again later' },
 });
+
+// ---------------------------------------------------------------------------
+// Billed image screening — the REST twin of the socket's send_image meter
+// ---------------------------------------------------------------------------
+// Every image this app accepts is screened by Google Cloud Vision, and every
+// screen is a PAID call (utils/moderation.js). sockets/handlers.js meters them:
+// both send paths charge a 'send_image' bucket of 10 per 60 seconds per
+// connection, and allowEvent charges the ACCOUNT USER_LIMIT_MULTIPLIER times
+// that across every connection it holds — so one account can buy at most 20
+// billed screens a minute over the socket, however many sockets it opens and
+// from however many addresses.
+//
+// The REST twins of those same sends had no per-image bucket at all. Their only
+// ceiling was apiLimiter, at 3000 per 15 minutes: 200 requests a minute, and
+// therefore up to 200 billed calls a minute, per address, with a fresh 200 for
+// every address the caller can reach us from. The FALLBACK transport was an
+// order of magnitude cheaper to abuse than the primary one it exists to back
+// up, and no test said a word about it until __tests__/imageSpendLimits.test.js.
+//
+// WHAT THIS SAVES, AND WHAT IT CANNOT SAVE. express.json() is mounted above,
+// ahead of every route AND ahead of every limiter, so by the time this runs the
+// body has already been read into memory — up to CHAT_IMAGE_MAX_BYTES plus the
+// envelope on the three image routes. A refusal here therefore does NOT save
+// the buffer; it saves the billed Vision call, the row, and the fan-out to
+// every recipient. That is the expensive part by a wide margin (a megabyte of
+// transient heap costs nothing; a Vision call is money and a stored data URL is
+// re-sent on every history read), but the buffer is genuinely not recovered and
+// no comment here should pretend otherwise. Moving this ahead of the parser
+// would recover it — and would also meter plain text messages, which arrive on
+// the same three URLs and carry no image, because nothing can tell a text
+// message from a photo before the body is parsed. Metering ordinary chat to
+// save a megabyte of heap is the wrong trade.
+//
+// The ONE exception is the avatar upload, which is multipart: its bytes are
+// buffered by multer INSIDE routes/users.js, so a refusal here does stop that
+// read, and every POST to it carries an image by definition.
+const AVATAR_UPLOAD_ROUTE = /^\/api\/users\/upload-image\/?$/i;
+
+// Same numbers as `allowEvent(socket, 'send_image', 10, 60_000)` in
+// sockets/handlers.js — an account gets the same photo allowance over REST that
+// it gets on one socket connection, and strictly less than the 20 a minute the
+// socket transport grants the account overall. They are literals at those call
+// sites rather than exported constants, so the pairing is pinned by
+// __tests__/imageSpendLimits.test.js, which reads both files and fails if one
+// number moves without the other.
+const IMAGE_SCREENS_PER_WINDOW = 10;
+const IMAGE_SCREEN_WINDOW_MS = 60 * 1000;
+// Verbatim the sentence the socket sends for the same refusal. The client
+// toasts both, and one condition described two ways reads as two products.
+const IMAGE_RATE_LIMIT_MESSAGE = 'Slow down a moment.';
+
+// Identity is the ACCOUNT, not the address, and that is the whole point. Every
+// other limiter in this file keys on the IP, which the socket's meter
+// deliberately does not: a per-address ceiling here would leave REST beatable
+// by rotating addresses (the socket path is not) while also handing one school
+// or one household's shared address a single allowance to fight over. This runs
+// before any router's `authenticate`, so it verifies the bearer token itself
+// and falls back to the address only for a request that is about to be 401'd
+// anyway. The token is VERIFIED rather than merely decoded: reading `userId`
+// out of an unchecked payload would let a caller mint a fresh bucket per
+// request out of forged tokens, which is worse than having no meter at all.
+//
+// The token is pulled out of the header EXACTLY the way makeAuthenticate in
+// middleware/auth.js pulls it out — `startsWith('Bearer ')` then
+// `split(' ')[1]` — and that is not stylistic. Reading it as `slice(7)`
+// instead, which looks equivalent, disagrees on `Bearer <valid token> junk`:
+// the router authenticates that request (split stops at the first space) while
+// slice hands jwt.verify a string with trailing junk, which throws. The
+// difference is a caller who appends a space and a character to their own
+// header, is authenticated normally, and drops out of their account's bucket
+// into the shared per-address one — i.e. straight back to a meter that IP
+// rotation defeats. Two readings of one header is the bug; keep them identical.
+function billedImageKey(req) {
+  const header = req.headers.authorization || '';
+  if (header.startsWith('Bearer ') && process.env.JWT_SECRET) {
+    try {
+      const decoded = jwt.verify(header.split(' ')[1], process.env.JWT_SECRET, { algorithms: TOKEN_ALGORITHMS });
+      if (Number.isInteger(decoded?.userId)) return `user:${decoded.userId}`;
+    } catch (_) { /* expired, forged or malformed — the router will answer it */ }
+  }
+  return `addr:${req.ip}`;
+}
+
+// Charge a token only for a request that is actually going to reach
+// moderateImage. checkInboundImage is the socket's own gate, imported rather
+// than restated, so all three of its answers carry across: no image at all
+// (a text message, or the empty string both transports read as "no image") is
+// free, and a malformed or oversized payload is free too — the routes refuse
+// those from the bytes alone, and the socket path deliberately runs the same
+// checks AHEAD of its bucket so a photo that could never work does not spend
+// the allowance the user needs for one that would.
+//
+// The route list is IMAGE_BODY_ROUTES itself: exactly the JSON endpoints whose
+// bodies may carry a base64 image, so the two lists cannot drift into
+// disagreeing about which those are. The story route caps its data URL lower
+// (700KB) and takes a narrower set of formats than the chat ceiling here, so a
+// story image between the two limits spends a token and is then refused for
+// free. That is the conservative direction and it costs a legitimate poster
+// nothing.
+function carriesBilledImage(req) {
+  if (req.method !== 'POST') return false;
+  // imageRoutePath, not req.path — see its definition. `/api//dm/7` and
+  // `/api/users//upload-image` reach the same handlers as their single-slash
+  // spellings and must reach the same meter.
+  const routePath = imageRoutePath(req);
+  if (AVATAR_UPLOAD_ROUTE.test(routePath)) return true;
+  if (!IMAGE_BODY_ROUTES.some((re) => re.test(routePath))) return false;
+  const inbound = checkInboundImage(req.body?.image_url);
+  return inbound !== null && inbound.ok === true;
+}
+
+// Two things this does NOT claim, so nobody reads more into it later:
+//   * The counters are in this process's heap, so they reset on every deploy
+//     and they divide by the instance count — the same caveat utils/probeBudget
+//     and utils/placesBudget carry. One Railway instance today; if that ever
+//     changes, this and they move to Postgres together.
+//   * The socket keeps its own bucket, so an account holding a live connection
+//     AND using the fallback at the same time can reach the sum of the two
+//     rather than the larger. No client does that (REST is what the socket
+//     client falls back to when its connection is DOWN), and the sum is still
+//     bounded per account instead of unbounded per address, which is the hole
+//     this closes. Making it exact would mean one shared bucket, which means
+//     reaching into sockets/handlers.js's private counters from here.
+const imageSpendLimiter = isDev ? (_req, _res, next) => next() : rateLimit({
+  windowMs: IMAGE_SCREEN_WINDOW_MS,
+  max: IMAGE_SCREENS_PER_WINDOW,
+  keyGenerator: billedImageKey,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: IMAGE_RATE_LIMIT_MESSAGE },
+});
+
+// Mounted here, ahead of every router, so it covers all four billed paths at
+// once — flock photo, DM photo, story, avatar. Per-route mounting would have
+// given each its own bucket, and a caller alternating between them would have
+// bought the sum.
+app.use((req, res, next) => (carriesBilledImage(req) ? imageSpendLimiter(req, res, next) : next()));
 
 // ---------------------------------------------------------------------------
 // Routes

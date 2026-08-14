@@ -120,6 +120,40 @@ const upload = multer({
   },
 });
 
+// ---------------------------------------------------------------------------
+// The avatar ceiling, and the number the user is told
+// ---------------------------------------------------------------------------
+// Cap the STORED data URL, not just the raw upload. Avatars are stored inline
+// in users.profile_image_url and repeated on every message-history row and
+// socket send, so a multi-MB base64 avatar amplifies into hundreds of MB of
+// transfer (REVIEW-ROUND5). 600KB keeps that bounded.
+const MAX_AVATAR_DATA_URL_BYTES = 600 * 1024;
+
+// The two numbers in this pair are in DIFFERENT UNITS, and that is correct, not
+// a bug: the ceiling above is on the base64 data URL, while the sentence below
+// is about the photo the person picked off their camera roll. Quote them the
+// enforced figure and someone with a 600 KB photo does exactly what they were
+// told, encodes to ~800 KB, and is refused a second time by the same message.
+// routes/stories.js runs the identical convention.
+//
+// What was wrong is that the conversion lived in someone's head: two literals,
+// no arithmetic between them, so neither could be moved safely and neither a
+// reader nor a test could tell whether they still agreed. It is written down
+// now, and it is written down INCLUDING THE PREFIX, which is the part that
+// bites here. Base64 is 4 bytes out for every 3 in, so the naive inverse of
+// 600 KB is exactly 450 KB — and a 450 KB photo encodes to exactly 614,400
+// bytes, which is the ceiling to the byte, so `data:image/jpeg;base64,` on the
+// front pushes it over and the advertised number would be one a user cannot
+// actually use. Taking the prefix off first, then rounding the photo size DOWN
+// to a round number, leaves the slack the sentence promises.
+const DATA_URL_PREFIX_BYTES = 'data:image/jpeg;base64,'.length; // the longest of the four
+const advertisedPhotoKb = (ceilingBytes) =>
+  Math.floor(Math.floor((ceilingBytes - DATA_URL_PREFIX_BYTES) / 4) * 3 / 1024 / 50) * 50;
+
+const ADVERTISED_AVATAR_KB = advertisedPhotoKb(MAX_AVATAR_DATA_URL_BYTES);
+const AVATAR_TOO_LARGE_MESSAGE =
+  `That photo is too large to use as a profile picture. Please pick a smaller photo (under about ${ADVERTISED_AVATAR_KB} KB).`;
+
 // GET /api/users/profile - Get current user's full profile
 router.get('/profile', async (req, res) => {
   try {
@@ -1118,15 +1152,12 @@ router.post('/upload-image', (req, res) => {
       }
       const dataUrl = `data:${detectedMime};base64,${req.file.buffer.toString('base64')}`;
 
-      // Cap the STORED data URL, not just the raw upload. Avatars are stored
-      // inline in users.profile_image_url and repeated on every message-history
-      // row and socket send, so a multi-MB base64 avatar amplifies into
-      // hundreds of MB of transfer (REVIEW-ROUND5). 600KB keeps that bounded.
-      const MAX_AVATAR_DATA_URL_BYTES = 600 * 1024;
+      // See MAX_AVATAR_DATA_URL_BYTES above for the ceiling and for how the
+      // number this refusal quotes is derived from it. Ahead of moderateImage,
+      // which is a BILLED Cloud Vision call: a refusal we can make for free
+      // from a byte count must never be made after paying for one.
       if (Buffer.byteLength(dataUrl) > MAX_AVATAR_DATA_URL_BYTES) {
-        return res.status(400).json({
-          error: 'That photo is too large to use as a profile picture. Please pick a smaller photo (under about 400 KB).',
-        });
+        return res.status(400).json({ error: AVATAR_TOO_LARGE_MESSAGE });
       }
 
       // Image moderation (A2b) — synchronous + FAIL-CLOSED. This is the only
@@ -1578,6 +1609,10 @@ module.exports.purgeExpiredBannedIdentities = purgeExpiredBannedIdentities;
 module.exports.__testing = {
   detectImageFormat,
   DETECTED_MIME,
+  MAX_AVATAR_DATA_URL_BYTES,
+  ADVERTISED_AVATAR_KB,
+  AVATAR_TOO_LARGE_MESSAGE,
+  advertisedPhotoKb,
   identityDigests,
   canonicalPhone,
   normalizedAddress,
