@@ -179,6 +179,13 @@ async function collectWeekly() {
       consecutiveErrors = 0;
       await sleep(100);
     } catch (err) {
+      // Key-level failures (401 bad key / 402 out of credits / 403) are not
+      // venue problems — nothing further in this run can succeed, and before
+      // this check every remaining venue would have burned an attempt. Stop now.
+      if (err.fatal) {
+        console.error(`  [FATAL] ${err.message} — aborting run immediately`);
+        break;
+      }
       // Per-venue errors must NOT kill the run. Log, count, sleep, continue.
       consecutiveErrors++;
       console.error(`  [PER-VENUE ERROR ${consecutiveErrors}] ${err.message}`);

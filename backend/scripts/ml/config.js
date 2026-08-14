@@ -175,9 +175,11 @@ function bestTimeDayToJsDay(btDay) {
   return btDay === 6 ? 0 : btDay + 1;
 }
 
-// Get local time components for a venue's timezone
-function getLocalTime(timezone) {
-  const now = new Date();
+// Get local time components for a venue's timezone.
+// `at` (optional) pins the instant — collection callers omit it; tests pass it
+// so assertions cannot straddle a midnight boundary.
+function getLocalTime(timezone, at) {
+  const now = at ? new Date(at) : new Date();
   const parts = new Intl.DateTimeFormat('en-US', {
     timeZone: timezone,
     year: 'numeric', month: '2-digit', day: '2-digit',

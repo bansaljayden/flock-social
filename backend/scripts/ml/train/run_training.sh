@@ -72,6 +72,7 @@ g = m.get('ship_gate')
 if g:
     print(f'  SHIP GATE: {\"PASS\" if g.get(\"overall_pass\") else \"FAIL\"} ({g.get(\"gate_basis\", \"?\")}) — the backend refuses to load a FAIL artifact')
 else:
-    print('  SHIP GATE: not computed — the backend will promote this artifact unverified')
+    print('  SHIP GATE: not computed — mlPredictor.init() FAILS CLOSED on a missing gate and will serve the rule engine')
+print(f'  Version: {m.get(\"model_version\", \"?\")} (set MODEL_VERSION before export_model.py for a release tag)')
 "
 echo ""

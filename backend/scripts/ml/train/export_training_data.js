@@ -63,10 +63,24 @@ function cityQuery(city) {
         t.event_nearby, t.event_distance_km, t.event_size, t.event_type, t.event_hours_until,
         t.has_nearby_event, t.nearest_event_distance_km, t.nearest_event_attendance,
         t.total_nearby_events, t.total_nearby_attendance, t.nearest_event_type,
-        -- baseline_busyness pulled from ml_venue_baselines (the SAME source production serves at inference time).
-        -- This makes training-time baseline match production-time baseline — fixes the systematic-overprediction bug
-        -- where collectWeekly.js never populated t.baseline_busyness for 91% of training rows.
-        COALESCE(b.baseline, 0) AS baseline_busyness,
+        -- baseline_busyness: same DEFINITION production serves at inference
+        -- time (per-venue/dow/hour average of collected busyness — what
+        -- collectRealtime's refresh writes into ml_venue_baselines), but
+        -- computed LEAVE-ONE-OUT (round 13). The table's stored average
+        -- includes every row's own busyness_pct, so joining it directly meant
+        -- each row's delta label (busyness - baseline) was computed against a
+        -- baseline that partially CONTAINED that label: deltas systematically
+        -- shrunk toward zero in training, and holdout rows' baselines carried
+        -- their own answers — the self-inclusion flavor of the popular_times
+        -- leak the overfitting doctrine bans. Production can never include
+        -- the moment being predicted in its baseline; training now can't
+        -- either. Slots with a single observation get baseline 0 (honest "no
+        -- prior"), which the baseline>0 training filter then excludes.
+        COALESCE(
+          CASE WHEN b.bl_n > 1
+               THEN ROUND((b.bl_sum - t.busyness_pct) / (b.bl_n - 1))
+               ELSE 0 END,
+        0) AS baseline_busyness,
         t.collection_mode,
         -- Round 10: collection_mode='realtime' only says WHEN the row was
         -- taken, not whether the number is an observation. collectRealtime.js
@@ -84,7 +98,20 @@ function cityQuery(city) {
         COALESCE(fb.avg_prediction_error, 0) AS avg_prediction_error
       FROM ml_training_data t
       JOIN ml_venues v ON t.venue_id = v.id
-      LEFT JOIN ml_venue_baselines b
+      LEFT JOIN (
+        -- Recomputed from ml_training_data rather than read from
+        -- ml_venue_baselines: identical definition to the refresh in
+        -- collectRealtime.run() (AVG of collected busyness per place/dow/hour)
+        -- but carrying SUM and COUNT so the outer query can subtract each
+        -- row's own contribution. Also immune to a stale table when export
+        -- runs before the post-collection refresh.
+        SELECT v2.google_place_id, t2.day_of_week, t2.hour,
+               SUM(t2.busyness_pct)::float AS bl_sum, COUNT(*)::int AS bl_n
+        FROM ml_training_data t2
+        JOIN ml_venues v2 ON t2.venue_id = v2.id
+        WHERE t2.busyness_pct IS NOT NULL AND v2.city = $1
+        GROUP BY v2.google_place_id, t2.day_of_week, t2.hour
+      ) b
         ON b.google_place_id = v.google_place_id
        AND b.day_of_week = t.day_of_week
        AND b.hour = t.hour
@@ -254,7 +281,14 @@ async function main() {
   await pool.end();
 }
 
-main().catch(err => {
-  console.error('[Export] Error:', err);
-  process.exit(1);
-});
+if (require.main === module) {
+  main().catch(err => {
+    console.error('[Export] Error:', err);
+    process.exit(1);
+  });
+}
+
+// cityQuery exported so the leave-one-out baseline SQL can be exercised
+// against a real Postgres (scripts/e2e or ad-hoc verification) without
+// running a full export.
+module.exports = { cityQuery, rowToCsv, HEADER, labelProvenance, observedDate };

@@ -45,7 +45,10 @@ async function fetchTicketmasterEvents(lat, lon, radiusKm = 5) {
       sort: 'date,asc',
     });
 
-    const response = await fetch(`https://app.ticketmaster.com/discovery/v2/events.json?${params}`);
+    // Timeout: this sits inside the paid BestTime collection loop — a hung
+    // event API must not stall the whole run (round 13).
+    const response = await fetch(`https://app.ticketmaster.com/discovery/v2/events.json?${params}`,
+      { signal: AbortSignal.timeout(15000) });
     if (!response.ok) return [];
 
     const data = await response.json();
@@ -83,7 +86,8 @@ async function fetchSeatGeekEvents(lat, lon, radiusKm = 5) {
       sort: 'datetime_local.asc',
     });
 
-    const response = await fetch(`https://api.seatgeek.com/2/events?${params}`);
+    const response = await fetch(`https://api.seatgeek.com/2/events?${params}`,
+      { signal: AbortSignal.timeout(15000) });
     if (!response.ok) return [];
 
     const data = await response.json();
