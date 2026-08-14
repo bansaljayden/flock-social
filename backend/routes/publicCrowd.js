@@ -22,9 +22,45 @@ const router = express.Router();
 const API_KEY = process.env.GOOGLE_PLACES_API_KEY;
 
 // --- limits ---------------------------------------------------------------
-const ipHits = new Map(); // ip -> [timestamps]
+// Round 15: the memory guard here was `if (ipHits.size > 5000) ipHits.clear()`.
+// A wholesale clear hands every tracked address a fresh allowance, so an
+// attacker cycling 5000 addresses could reset their own counter — and every
+// legitimate visitor's — at will: the defence got weaker the harder it was
+// pushed. Same bounded eviction as routes/guest.js's guest counter and
+// utils/probeBudget.js: expire first, then evict LEAST CONSUMED first, never
+// clear(). Consumption order matters for the reason those two files spell out:
+// a flooder spends their 20 and only then sprays fresh addresses, so their own
+// entry is the oldest AND the fullest — an age-ordered drop (or a clear)
+// deletes precisely the counter they wanted gone, while consumption order
+// makes recovering it cost thousands of addresses that each already spent.
+const IP_LIMIT = 20;          // requests per address per rolling hour
+const IP_WINDOW_MS = 3600_000;
+const IP_MAX_ENTRIES = 5000;  // ceiling on tracked addresses
+// Evict down to 90%, not to the ceiling: stopping exactly at the ceiling makes
+// a map held at the ceiling sort itself on every request (probeBudget's
+// comment owns this reasoning; the CPU DoS is the same here).
+const IP_LOW_WATER = Math.floor(IP_MAX_ENTRIES * 0.9);
+const ipHits = new Map(); // ip -> [timestamps], each list capped at IP_LIMIT
 let dayKey = new Date().toISOString().slice(0, 10);
 let dayCount = 0;
+
+function evictIpHits(now) {
+  // Expire pass first: an address with nothing live in the window is free to
+  // forget. Order-independent, so no delete-before-set dance is needed for
+  // this map anywhere in the file — the fallback below sorts by consumption,
+  // not insertion age (routes/guest.js records the same non-rule).
+  for (const [k, v] of ipHits) {
+    const live = v.filter((t) => now - t < IP_WINDOW_MS);
+    if (live.length === 0) ipHits.delete(k);
+    else if (live.length !== v.length) ipHits.set(k, live);
+  }
+  if (ipHits.size <= IP_MAX_ENTRIES) return;
+  const byConsumption = [...ipHits.entries()].sort((a, b) => a[1].length - b[1].length);
+  for (const [k] of byConsumption) {
+    if (ipHits.size <= IP_LOW_WATER) break;
+    ipHits.delete(k);
+  }
+}
 
 function allowDemo(req) {
   const today = new Date().toISOString().slice(0, 10);
@@ -33,11 +69,11 @@ function allowDemo(req) {
 
   const now = Date.now();
   const ip = req.ip || 'unknown';
-  const hits = (ipHits.get(ip) || []).filter(t => now - t < 3600_000);
-  if (hits.length >= 20) return false;
+  const hits = (ipHits.get(ip) || []).filter(t => now - t < IP_WINDOW_MS);
+  if (hits.length >= IP_LIMIT) return false; // a refusal consumes nothing
   hits.push(now);
   ipHits.set(ip, hits);
-  if (ipHits.size > 5000) ipHits.clear(); // memory guard, resets everyone hourly-ish
+  if (ipHits.size > IP_MAX_ENTRIES) evictIpHits(now);
   dayCount++;
   return true;
 }
@@ -45,6 +81,19 @@ function allowDemo(req) {
 const DEMO_BUSY_MSG = 'The live demo is taking a breather. The full thing is in the app.';
 
 // --- cache ----------------------------------------------------------------
+// Round 15: `if (cache.size > 500) cache.clear()` — the same wholesale-clear
+// shape as the old ipHits guard, on a map whose keys are caller-shaped
+// (rounded coordinates + free-text query, or a caller-supplied place id).
+// Every write is already behind allowDemo AND the global Places ledger, so
+// junk keys only trickle in at demo pace — but the one entry past the ceiling
+// wiped all 500 at once, and every wiped entry is a fresh PAID Google call the
+// next legitimate visitor makes, at a moment the attacker chooses. Bounded
+// eviction instead: expired entries first, then soonest-to-expire, down to a
+// low-water mark. A new junk entry always carries the latest expiry in the
+// map, so each budgeted request can only push out the entries closest to
+// lapsing anyway — never the whole cache.
+const CACHE_MAX_ENTRIES = 500;
+const CACHE_LOW_WATER = Math.floor(CACHE_MAX_ENTRIES * 0.9);
 const cache = new Map(); // key -> { data, expires }
 function getCache(key) {
   const hit = cache.get(key);
@@ -53,8 +102,16 @@ function getCache(key) {
   return null;
 }
 function setCache(key, data, ttlMs) {
-  if (cache.size > 500) cache.clear();
   cache.set(key, { data, expires: Date.now() + ttlMs });
+  if (cache.size <= CACHE_MAX_ENTRIES) return;
+  const now = Date.now();
+  for (const [k, v] of cache) { if (v.expires <= now) cache.delete(k); }
+  if (cache.size <= CACHE_MAX_ENTRIES) return;
+  const byExpiry = [...cache.entries()].sort((a, b) => a[1].expires - b[1].expires);
+  for (const [k] of byExpiry) {
+    if (cache.size <= CACHE_LOW_WATER) break;
+    cache.delete(k);
+  }
 }
 
 // --- helpers --------------------------------------------------------------
@@ -513,8 +570,29 @@ router.get('/demo/venue/:placeId',
   }
 );
 
+// Test-only: puts the module back to a cold start so one test's spent
+// addresses and day count don't leak into the next. clear() is correct HERE
+// precisely because it is not reachable from a request.
+function resetDemoLimitsForTest() {
+  ipHits.clear();
+  cache.clear();
+  dayKey = new Date().toISOString().slice(0, 10);
+  dayCount = 0;
+}
+
 module.exports = router;
 // Two of the subtlest card bugs live in these two helpers (a weekday
 // difference read as a day count, and a cached card claiming to be fresh), so
 // they are reachable from the tests rather than only from a live Google key.
-module.exports.__testables = { clockFor, withAge, buildCard, toVenueShape, gateDemoCard, presentCard };
+module.exports.__testables = {
+  clockFor, withAge, buildCard, toVenueShape, gateDemoCard, presentCard,
+  // Round 15 — the abuse-limit internals, so __tests__/publicDemoAbuse.test.js
+  // can pin the eviction ORDER and the ceilings on a seeded map instead of
+  // trusting the comments above (documented-but-untested is how the clear()
+  // guard shipped in the first place).
+  allowDemo, evictIpHits, ipHits, setCache, getCache, cache,
+  resetDemoLimitsForTest,
+  demoState: () => ({ dayKey, dayCount, trackedIps: ipHits.size }),
+  IP_LIMIT, IP_WINDOW_MS, IP_MAX_ENTRIES, IP_LOW_WATER,
+  CACHE_MAX_ENTRIES, CACHE_LOW_WATER,
+};
