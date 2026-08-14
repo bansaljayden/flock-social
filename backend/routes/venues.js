@@ -45,13 +45,25 @@ async function verifyFlockMember(flockId, userId) {
 // internally so each recipient's blocked users can be stripped), guest-link
 // votes are counts only.
 async function collectVoteRows(flockId) {
+  // Round 16: grouping by (venue_name, venue_id) split one venue into several
+  // rows. venue_votes' unique key is (flock_id, user_id, venue_name) and
+  // venue_id is nullable, so two members picking the same place through
+  // different paths (search result with a place id vs. a typed/legacy row with
+  // NULL) landed in different groups. Consequences, all real:
+  //   - the same name appeared twice in the list, each with a fraction of the
+  //     real count, so the leading venue could lose to a split rival;
+  //   - guestByVenue below is keyed by NAME, so every duplicate group got the
+  //     FULL guest count added to it — guest votes were double counted.
+  // Grouping by the name alone (what the unique key is on) fixes both.
   const raw = await pool.query(
-    `SELECT venue_name, venue_id, COUNT(*)::int AS member_count,
+    `SELECT venue_name,
+            MIN(venue_id) FILTER (WHERE venue_id IS NOT NULL) AS venue_id,
+            COUNT(*)::int AS member_count,
             ARRAY_AGG(json_build_object('id', u.id, 'name', u.name)) AS voter_rows
      FROM venue_votes vv
      JOIN users u ON u.id = vv.user_id
      WHERE vv.flock_id = $1
-     GROUP BY venue_name, venue_id
+     GROUP BY venue_name
      ORDER BY member_count DESC`,
     [flockId]
   );

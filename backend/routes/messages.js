@@ -704,19 +704,56 @@ router.post('/dm/:userId/venue-votes',
       const venue_name = stripHtml(req.body.venue_name);
       // Venue names ride into the other person's UI (round 9 follow-up).
       if (rejectIfProfane(res, venue_name)) return;
-      // Toggle: if already voted for this venue, unvote; otherwise switch vote
-      const existing = await pool.query(
-        `SELECT id FROM dm_venue_votes WHERE user1_id = $1 AND user2_id = $2 AND user_id = $3 AND venue_name = $4`,
-        [user1, user2, req.user.id, venue_name]
-      );
-      if (existing.rows.length > 0) {
-        await pool.query(`DELETE FROM dm_venue_votes WHERE user1_id = $1 AND user2_id = $2 AND user_id = $3 AND venue_name = $4`, [user1, user2, req.user.id, venue_name]);
-      } else {
-        await pool.query(`DELETE FROM dm_venue_votes WHERE user1_id = $1 AND user2_id = $2 AND user_id = $3`, [user1, user2, req.user.id]);
-        await pool.query(
-          `INSERT INTO dm_venue_votes (user1_id, user2_id, user_id, venue_name, venue_id) VALUES ($1, $2, $3, $4, $5)`,
-          [user1, user2, req.user.id, venue_name, req.body.venue_id || null]
+      // dm_venue_votes.venue_id is VARCHAR(255) and the validator only checks
+      // that it is a string, so an over-long id used to reach the INSERT and
+      // come back as a swallowed 500 — and now would do it with a transaction
+      // and an advisory lock held. Clamped, exactly as the socket twin does.
+      const venue_id = typeof req.body.venue_id === 'string' ? req.body.venue_id.slice(0, 255) : null;
+      // Toggle: if already voted for this venue, unvote; otherwise switch vote.
+      //
+      // This was read, DELETE, INSERT as three separate autocommit statements —
+      // the exact race sockets/handlers.js fixed in dm_vote_venue. Two taps in
+      // flight both saw "no existing vote", both deleted, and both inserted:
+      // the UNIQUE key is (pair, user, venue_name), so two DIFFERENT venue names
+      // both survive and one person holds two live votes in a two-person
+      // conversation, while two taps on the SAME venue race the unique
+      // constraint into a swallowed 500.
+      //
+      // Same implementation as the socket twin, and deliberately the SAME LOCK
+      // KEY EXPRESSION ('dmvote:' || u1 || ':' || u2 || ':' || voter) so the REST
+      // and socket transports serialize against EACH OTHER, not just against
+      // themselves — a tap in the app and a tap on the web client are the same
+      // toggle and must queue behind one another.
+      const voteClient = await pool.connect();
+      try {
+        await voteClient.query('BEGIN');
+        await voteClient.query(
+          "SELECT pg_advisory_xact_lock(hashtext('dmvote:' || $1::text || ':' || $2::text || ':' || $3::text))",
+          [String(user1), String(user2), String(req.user.id)]
         );
+        const existing = await voteClient.query(
+          `SELECT id FROM dm_venue_votes WHERE user1_id = $1 AND user2_id = $2 AND user_id = $3 AND venue_name = $4`,
+          [user1, user2, req.user.id, venue_name]
+        );
+        // Either way the voter ends up with AT MOST one row in this pair: the
+        // unconditional delete makes toggle-off and switch-vote the same
+        // statement, so no path can leave two behind.
+        await voteClient.query(
+          `DELETE FROM dm_venue_votes WHERE user1_id = $1 AND user2_id = $2 AND user_id = $3`,
+          [user1, user2, req.user.id]
+        );
+        if (existing.rows.length === 0) {
+          await voteClient.query(
+            `INSERT INTO dm_venue_votes (user1_id, user2_id, user_id, venue_name, venue_id) VALUES ($1, $2, $3, $4, $5)`,
+            [user1, user2, req.user.id, venue_name, venue_id]
+          );
+        }
+        await voteClient.query('COMMIT');
+      } catch (txErr) {
+        await voteClient.query('ROLLBACK').catch(() => {});
+        throw txErr;
+      } finally {
+        voteClient.release();
       }
       // Return updated tallies
       const result = await pool.query(

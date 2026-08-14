@@ -8,6 +8,34 @@ const { pushIfOffline } = require('../services/pushHelper');
 const router = express.Router();
 router.use(authenticate);
 
+// ---------------------------------------------------------------------------
+// Round 16 — how bill events are delivered.
+//
+// Every event in this file used to go to `io.to('flock:'+flockId)`. That room
+// is NOT a membership list: sockets/handlers.js `join_flock` checks membership
+// ONCE, when the client opens the flock screen, and then the socket stays in
+// the room for the life of the connection. Two things follow, and `bill_created`
+// carries the single most sensitive payload on any room surface — every
+// member's name paired with the exact dollar amount they owe:
+//
+//   1. Someone removed from the flock (or who left) keeps receiving bill
+//      events until the session watchdog notices. revalidateSession runs on a
+//      60s timer, is skipped entirely when JWT_SECRET is unset, and swallows
+//      database errors by design ("a blip must never disconnect anyone") — so
+//      the eviction is best-effort and the exposure window is open-ended, not
+//      bounded at 60s.
+//   2. It is also under-delivery in the other direction: a member sitting
+//      anywhere else in the app is not in the flock room at all and simply
+//      missed the event.
+//
+// So bill events fan out to each accepted member's PERSONAL room, with the
+// membership re-read from the database at emit time. The helper lives in
+// sockets/handlers.js next to the room bookkeeping it compensates for, so that
+// this rule has ONE definition — routes/guest.js and routes/flocks.js reach for
+// the same module for the same reason.
+// ---------------------------------------------------------------------------
+const { emitToFlockMembers } = require('../sockets/handlers');
+
 // POST /api/billing/:flockId/create — Create a bill split
 router.post('/:flockId/create',
   [
@@ -16,7 +44,11 @@ router.post('/:flockId/create',
     body('tipPercent').optional().isFloat({ min: 0, max: 100 }).withMessage('Tip must be 0-100%'),
     body('splitType').optional().isIn(['equal', 'custom']).withMessage('Split type must be equal or custom'),
     body('paidBy').optional().isInt().withMessage('Invalid payer ID'),
-    body('customShares').optional().isArray(),
+    // Round 16: no maximum. Every element is reduced over, mapped, and pushed
+    // into a Set before the "must be a member" check can reject it, so a
+    // million-element array was a million-element CPU burn per request. 100 is
+    // far above any real flock (max_members is a fraction of it).
+    body('customShares').optional().isArray({ max: 100 }).withMessage('Too many custom shares'),
   ],
   async (req, res) => {
     try {
@@ -78,32 +110,66 @@ router.post('/:flockId/create',
       // Calculate shares
       let shares;
       if (splitType === 'custom' && customShares && customShares.length > 0) {
-        // Validate custom shares add up
-        const customTotal = customShares.reduce((sum, s) => sum + parseFloat(s.amount || 0), 0);
-        const diff = Math.abs(customTotal - totalWithTip);
-        if (diff > 0.02) {
-          return res.status(400).json({ error: `Custom shares must add up to $${totalWithTip.toFixed(2)}` });
+        // Round 16: `s.amount` was read straight off each element, so a single
+        // `null` or a bare string in the array threw a TypeError that surfaced
+        // as a 500 from the outer catch. Malformed input is a 400.
+        if (customShares.some(s => s === null || typeof s !== 'object' || Array.isArray(s))) {
+          return res.status(400).json({ error: 'Each custom share must be an object with userId and amount' });
         }
-        shares = customShares.map(s => ({
+        // Round 16 (reliability audit): the tolerance used to be checked
+        // against the RAW sum, and each share was rounded to cents only
+        // afterwards. Three shares of 33.333333 on a $100.00 bill therefore
+        // passed the check (raw sum 99.999999, within two cents) and then
+        // stored as 33.33 three times — $99.99. The payer quietly ate the
+        // difference, and the app showed a bill that did not add up.
+        //
+        // Everything below works in INTEGER CENTS, which is the only
+        // representation in which "these shares equal that total" is a question
+        // with an exact answer. Floating point never decides anything here.
+        const parsed = customShares.map(s => ({
           userId: parseInt(s.userId),
-          amount: Math.round(parseFloat(s.amount) * 100) / 100,
+          cents: Math.round(parseFloat(s.amount) * 100),
         }));
+
         // Round 3: every amount finite and non-negative, no duplicate users —
         // negative shares could offset an oversized one and NaN skipped the
-        // total check entirely.
-        if (shares.some(s => !Number.isFinite(s.amount) || s.amount < 0)) {
+        // total check entirely. Checked BEFORE the sum, so NaN cannot poison it.
+        if (parsed.some(s => !Number.isFinite(s.cents) || s.cents < 0)) {
           return res.status(400).json({ error: 'Every share must be a valid non-negative amount' });
         }
-        if (new Set(shares.map(s => s.userId)).size !== shares.length) {
+        if (new Set(parsed.map(s => s.userId)).size !== parsed.length) {
           return res.status(400).json({ error: 'Each member can appear only once in custom shares' });
         }
         // Access control: every share must belong to an accepted flock member —
         // otherwise arbitrary user ids could be assigned debt + pushed notifications.
         const memberIds = new Set(members.map(m => m.id));
-        const invalidShare = shares.find(s => !Number.isFinite(s.userId) || !memberIds.has(s.userId));
+        const invalidShare = parsed.find(s => !Number.isFinite(s.userId) || !memberIds.has(s.userId));
         if (invalidShare) {
           return res.status(400).json({ error: 'All custom shares must be for members of this flock' });
         }
+
+        const totalCents = Math.round(totalWithTip * 100);
+        const sumCents = parsed.reduce((sum, s) => sum + s.cents, 0);
+        const remainder = totalCents - sumCents;
+        if (Math.abs(remainder) > 2) {
+          return res.status(400).json({ error: `Custom shares must add up to $${totalWithTip.toFixed(2)}` });
+        }
+        // Within tolerance: absorb the last one or two cents rather than
+        // leaving them unassigned. The largest share takes it, because that is
+        // the one where a cent is least visible and it cannot be pushed
+        // negative by a rounding remainder of at most two.
+        if (remainder !== 0) {
+          let biggest = 0;
+          for (let i = 1; i < parsed.length; i++) {
+            if (parsed[i].cents > parsed[biggest].cents) biggest = i;
+          }
+          parsed[biggest].cents += remainder;
+          if (parsed[biggest].cents < 0) {
+            return res.status(400).json({ error: `Custom shares must add up to $${totalWithTip.toFixed(2)}` });
+          }
+        }
+
+        shares = parsed.map(s => ({ userId: s.userId, amount: s.cents / 100 }));
       } else {
         // Equal split with penny rounding
         const memberCount = members.length;
@@ -118,6 +184,7 @@ router.post('/:flockId/create',
 
       // Use transaction
       const client = await pool.connect();
+      let billId;
       try {
         await client.query('BEGIN');
 
@@ -176,7 +243,7 @@ router.post('/:flockId/create',
            RETURNING id`,
           [flockId, totalAmount, splitType, payerId, tipPercent]
         );
-        const billId = billResult.rows[0].id;
+        billId = billResult.rows[0].id;
 
         // Delete existing shares (for re-creation). A blanket DELETE here
         // erased SETTLED rows for anyone the rewrite dropped from the split,
@@ -214,62 +281,93 @@ router.post('/:flockId/create',
         }
 
         await client.query('COMMIT');
+      } catch (err) {
+        // Round 16: a throw from ROLLBACK (dead connection, already-aborted
+        // transaction) replaced the real error with a useless one.
+        await client.query('ROLLBACK').catch(() => {});
+        throw err;
+      } finally {
+        client.release();
+      }
 
-        // Build response with names
-        // Round 4: mirror the DB truth computed above — recomputing settled as
-        // payer-only told every client that previously paid members owed again.
-        const shareDetails = shares.map(s => {
-          const member = members.find(m => m.id === s.userId);
-          return {
-            userId: s.userId,
-            name: member?.name || 'Unknown',
-            amount: s.amount,
-            settled: !!s.settled,
-            committed: !!s.committed,
-          };
-        });
+      // -------- Everything below happens AFTER the commit. --------
+      //
+      // Round 16: this all used to sit INSIDE the transaction's try block, so a
+      // failure in the notification loop (pushIfOffline reaches Firebase, which
+      // can throw) ran `ROLLBACK` on an already-committed connection and then
+      // answered 500. The bill was created and the client was told it was not —
+      // and the client's retry takes the REPLACEMENT path, which rewrites the
+      // split it thinks does not exist. Post-commit work cannot be allowed to
+      // undo a successful write.
 
-        const payer = members.find(m => m.id === payerId);
-        const bill = {
-          id: billId,
-          flockId,
-          totalAmount,
-          tipPercent,
-          totalWithTip,
-          splitType,
-          paidBy: { id: payerId, name: payer?.name || 'Unknown' },
-          shares: shareDetails,
-          createdAt: new Date().toISOString(),
+      // Build response with names
+      // Round 4: mirror the DB truth computed above — recomputing settled as
+      // payer-only told every client that previously paid members owed again.
+      const shareDetails = shares.map(s => {
+        const member = members.find(m => m.id === s.userId);
+        return {
+          userId: s.userId,
+          name: member?.name || 'Unknown',
+          amount: s.amount,
+          settled: !!s.settled,
+          committed: !!s.committed,
         };
+      });
 
-        // Emit socket event
-        const io = req.app.get('io');
-        if (io) {
-          io.to(`flock:${flockId}`).emit('bill_created', { flockId, bill });
-        }
+      const payer = members.find(m => m.id === payerId);
+      const bill = {
+        id: billId,
+        flockId,
+        // Round 16: echoed straight back off the request body. isFloat() accepts
+        // the STRING "90", so this endpoint could answer with a string where
+        // GET /api/billing/:flockId (parseFloat) always answers with a number —
+        // two endpoints returning the same object in two shapes. The client
+        // reaches for `?.toFixed(2)` on these fields, which a string does not
+        // have.
+        totalAmount: Number(totalAmount),
+        tipPercent: Number(tipPercent),
+        totalWithTip,
+        splitType,
+        paidBy: { id: payerId, name: payer?.name || 'Unknown' },
+        shares: shareDetails,
+        createdAt: new Date().toISOString(),
+      };
 
-        // Push notifications for bill split
-        const payerName = payer?.name || 'Someone';
-        for (const share of shares) {
-          if (share.userId === payerId) continue; // Don't notify the payer
-          if (share.settled) continue; // Already paid — "you owe" would be false
+      // Answer FIRST, then notify. The response is the part the caller is
+      // waiting on and the part that must not depend on Firebase being up.
+      res.status(201).json({ bill });
+
+      const io = req.app.get('io');
+      // Per-member fan-out, membership re-read at emit time — see
+      // emitToFlockMembers. This payload names every member and what they owe.
+      try {
+        await emitToFlockMembers(io, flockId, 'bill_created', { flockId, bill });
+      } catch (emitErr) {
+        console.error('bill_created fan-out failed:', emitErr.message);
+      }
+
+      // Push notifications for bill split. try/catch rather than `.catch()` on
+      // the return value: pushIfOffline is not guaranteed to hand back a
+      // promise, and a TypeError here would land in the outer catch — which is
+      // exactly the "committed bill reported as a 500" failure this block was
+      // moved out of the transaction to prevent.
+      const payerName = payer?.name || 'Someone';
+      for (const share of shares) {
+        if (share.userId === payerId) continue; // Don't notify the payer
+        if (share.settled) continue; // Already paid — "you owe" would be false
+        try {
           await pushIfOffline(io, share.userId,
             'Bill split created',
             `You owe ${payerName} $${share.amount.toFixed(2)} for ${flockName}`,
             { type: 'bill_created', flockId: String(flockId) }
           );
+        } catch (pushErr) {
+          console.error('Bill push failed:', pushErr.message);
         }
-
-        res.status(201).json({ bill });
-      } catch (err) {
-        await client.query('ROLLBACK');
-        throw err;
-      } finally {
-        client.release();
       }
     } catch (err) {
       console.error('Bill create error:', err);
-      res.status(500).json({ error: 'Failed to create bill split' });
+      if (!res.headersSent) res.status(500).json({ error: 'Failed to create bill split' });
     }
   }
 );
@@ -390,22 +488,35 @@ router.post('/:flockId/settle',
         return res.status(404).json({ error: 'No share found for you on this bill' });
       }
 
-      // Emit settled event
+      // Emit settled event (per-member fan-out — see emitToFlockMembers).
+      //
+      // Round 16, second pass: notification is POST-COMMIT work here too. The
+      // UPDATE above has already landed, so letting a fan-out failure reach the
+      // outer catch would answer 500 for a debt that IS settled — the same
+      // shape of bug as the /create push loop, and worse in consequence,
+      // because the user then pays a second time to clear it.
       const io = req.app.get('io');
       if (io) {
-        io.to(`flock:${flockId}`).emit('share_settled', {
-          flockId,
-          userId,
-          userName: req.user.name,
-        });
+        try {
+          await emitToFlockMembers(io, flockId, 'share_settled', {
+            flockId,
+            userId,
+            userName: req.user.name,
+          });
 
-        // Check if all settled
-        const unsettled = await pool.query(
-          'SELECT COUNT(*) AS count FROM bill_split_shares WHERE bill_id = $1 AND settled = false',
-          [billId]
-        );
-        if (parseInt(unsettled.rows[0].count) === 0) {
-          io.to(`flock:${flockId}`).emit('bill_fully_settled', { flockId });
+          // Round 16: `settled = false` silently ignores NULL, and the column
+          // has no NOT NULL constraint — a row written by anything that omits
+          // it would make the bill look fully settled while someone still owed.
+          // `IS NOT TRUE` counts both.
+          const unsettled = await pool.query(
+            'SELECT COUNT(*) AS count FROM bill_split_shares WHERE bill_id = $1 AND settled IS NOT TRUE',
+            [billId]
+          );
+          if (parseInt(unsettled.rows[0].count) === 0) {
+            await emitToFlockMembers(io, flockId, 'bill_fully_settled', { flockId });
+          }
+        } catch (emitErr) {
+          console.error('Settle fan-out failed:', emitErr.message);
         }
       }
 
@@ -526,21 +637,26 @@ router.post('/:flockId/ghost-commit',
 
         await client.query('COMMIT');
       } catch (err) {
-        await client.query('ROLLBACK');
+        await client.query('ROLLBACK').catch(() => {});
         throw err;
       } finally {
         client.release();
       }
 
-      // Emit socket event
+      // Emit socket event (per-member fan-out — see emitToFlockMembers).
+      // Post-commit, so a fan-out failure must not 500 a committed commitment.
       const io = req.app.get('io');
       if (io) {
-        io.to(`flock:${flockId}`).emit('ghost_committed', {
-          flockId,
-          userId,
-          userName: req.user.name,
-          estimatedShare,
-        });
+        try {
+          await emitToFlockMembers(io, flockId, 'ghost_committed', {
+            flockId,
+            userId,
+            userName: req.user.name,
+            estimatedShare,
+          });
+        } catch (emitErr) {
+          console.error('Ghost commit fan-out failed:', emitErr.message);
+        }
       }
 
       res.json({ committed: true, estimatedShare });
@@ -621,7 +737,16 @@ router.get('/:flockId/venmo-link',
       }
 
       const note = encodeURIComponent(`Flock - ${bill.flock_name}`);
-      const venmoUser = payer.venmo_username;
+      // Round 16: the handle was interpolated RAW into both links. Payment
+      // handles are free text — routes/users.js validates only `max 50 chars`
+      // and strips a leading '@' — so a payer could store
+      // `me&amount=500` and every member who tapped "Pay" got a link carrying
+      // a SECOND amount parameter after the real one. Whichever the wallet app
+      // reads last wins, and the member sees Flock's own UI quoting the honest
+      // figure. Encoding the handle makes the query string un-splittable.
+      // (Cross-area: users.js should also constrain these to the character sets
+      // the wallets actually allow — reported, not edited, it is not my file.)
+      const venmoUser = encodeURIComponent(payer.venmo_username);
 
       res.json({
         deepLink: `venmo://paycharge?txn=pay&recipients=${venmoUser}&amount=${amount}&note=${note}`,
@@ -697,25 +822,30 @@ router.get('/:flockId/payment-links',
       const encodedNote = encodeURIComponent(note);
       const methods = [];
 
+      // Round 16: same raw-interpolation problem as /venmo-link, on all three
+      // methods — see the comment there. `handle` stays human-readable (it is
+      // rendered as text, not parsed as a URL); only the URLs are encoded.
       if (payer.venmo_username) {
         const u = payer.venmo_username;
+        const uEnc = encodeURIComponent(u);
         methods.push({
           method: 'venmo',
           label: 'Venmo',
           handle: `@${u}`,
-          deepLink: `venmo://paycharge?txn=pay&recipients=${u}&amount=${amount}&note=${encodedNote}`,
-          webLink: `https://venmo.com/${u}?txn=pay&amount=${amount}&note=${encodedNote}`,
+          deepLink: `venmo://paycharge?txn=pay&recipients=${uEnc}&amount=${amount}&note=${encodedNote}`,
+          webLink: `https://venmo.com/${uEnc}?txn=pay&amount=${amount}&note=${encodedNote}`,
         });
       }
 
       if (payer.cashapp_cashtag) {
         const tag = payer.cashapp_cashtag;
+        const tagEnc = encodeURIComponent(tag);
         methods.push({
           method: 'cashapp',
           label: 'Cash App',
           handle: `$${tag}`,
-          deepLink: `cashapp://cash.app/pay/$${tag}?amount=${amount}&note=${encodedNote}`,
-          webLink: `https://cash.app/$${tag}/${amount}`,
+          deepLink: `cashapp://cash.app/pay/$${tagEnc}?amount=${amount}&note=${encodedNote}`,
+          webLink: `https://cash.app/$${tagEnc}/${amount}`,
         });
       }
 
