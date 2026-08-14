@@ -9,9 +9,13 @@ Flock runs in a web browser at https://www.flockcorp.com and an iPhone app is in
 development. Users never pay. Venues pay to appear in front of groups that are
 choosing a place.
 
-This file exists because www.flockcorp.com is a client-rendered React application.
-A crawler that does not execute JavaScript receives an empty page body, so the
-summaries below are the readable version of what the site says.
+www.flockcorp.com is a client-rendered React application, but a crawler that does
+not execute JavaScript is not stuck with an empty page body: the main pages listed
+below serve a full static HTML rendering of their content to AI and answer-engine
+user agents, generated from the same copy human visitors see. This file is the
+summary and the index.
+
+Updated: August 14, 2026.
 
 ## What Flock does
 
@@ -37,6 +41,24 @@ summaries below are the readable version of what the site says.
   message or profile.
 - Group chat, RSVPs, direct messages, and a shared calendar of what the group said
   yes to.
+
+## Key facts about the crowd model
+
+Each of these is taken from the metadata of the model that ships in the product,
+as of the August 12, 2026 training run (version 2.5.0 "Starling").
+
+- Flock trains and serves its own crowd-prediction model (gradient-boosted trees,
+  XGBoost, exported to ONNX). It is not a wrapper around another provider's
+  busyness chart.
+- The model predicts hourly venue busyness from 106 input signals: time patterns,
+  weather, nearby events, venue category, and how that specific venue usually runs.
+- It was trained on 2,070,239 venue-hour observations across 31 cities.
+- It was evaluated on 419,320 held-out venue-hour observations from three cities
+  the model never trained on: Barcelona, Miami, and Tokyo.
+- On the realtime slice of that holdout (68,459 observations), it reduces mean
+  absolute error by 2.29 points against the popular-times baseline it started from.
+- When a venue is too new or too small for the model to know it, a rule-based
+  engine answers instead of guessing.
 
 ## Who it is for
 
@@ -70,7 +92,8 @@ picking a place.
 
 ## Company
 
-Flock Corp. Made by Jayden Bansal. Flock took 1st place at PA DECA States.
+Flock Corp. Made by Jayden Bansal, a student founder in Bethlehem, Pennsylvania.
+Flock took 1st place at PA DECA States.
 
 Contact: social@flockcorp.com
 

@@ -223,6 +223,12 @@
         { "key": "Referrer-Policy", "value": "no-referrer" },
         { "key": "Cache-Control", "value": "private, no-store" }
       ]
+    },
+    {
+      "source": "/api/marketing-page",
+      "headers": [
+        { "key": "X-Robots-Tag", "value": "noindex" }
+      ]
     }
   ],
 
@@ -242,6 +248,28 @@
         }
       ],
       "destination": "/api/invite-preview?token=:token"
+    },
+    {
+      "source": "/",
+      "has": [
+        {
+          "type": "header",
+          "key": "user-agent",
+          "value": ".*(GPTBot|OAI-SearchBot|ChatGPT-User|ClaudeBot|Claude-User|Claude-SearchBot|anthropic-ai|PerplexityBot|Perplexity-User|DuckAssistBot|Amazonbot|Meta-ExternalAgent|meta-externalagent|Meta-ExternalFetcher|meta-externalfetcher|Bytespider|CCBot|cohere-ai|cohere-training-data-crawler|MistralAI-User).*"
+        }
+      ],
+      "destination": "/api/marketing-page?page=home"
+    },
+    {
+      "source": "/:page(about|support|privacy|terms)",
+      "has": [
+        {
+          "type": "header",
+          "key": "user-agent",
+          "value": ".*(GPTBot|OAI-SearchBot|ChatGPT-User|ClaudeBot|Claude-User|Claude-SearchBot|anthropic-ai|PerplexityBot|Perplexity-User|DuckAssistBot|Amazonbot|Meta-ExternalAgent|meta-externalagent|Meta-ExternalFetcher|meta-externalfetcher|Bytespider|CCBot|cohere-ai|cohere-training-data-crawler|MistralAI-User).*"
+        }
+      ],
+      "destination": "/api/marketing-page?page=:page"
     },
     { "source": "/(.*)", "destination": "/index.html" }
   ]
