@@ -25,6 +25,9 @@ const { authenticate } = require('../middleware/auth');
 const pool = require('../config/database');
 // Shape before content — see validators/shape.js.
 const { freeText } = require('../validators/shape');
+// The story visibility predicate. See the GET handler for why it is not written
+// out here, and utils/relationships.js for what each argument decides.
+const { storyVisibilitySql } = require('../utils/relationships');
 // Called through the module object rather than destructured on purpose. The
 // fail-closed image screen is the single most important line in this file and a
 // destructured binding is frozen at require time, which leaves no way for
@@ -55,6 +58,29 @@ const MAX_CAPTION_LENGTH = 300;
 // body at 1mb, so this also keeps a legitimate post from dying as a bare 413.
 const MAX_IMAGE_DATA_URL_BYTES = 700 * 1024;
 
+// The refusal is DERIVED from the ceiling, and the conversion between them is
+// written down rather than done in someone's head.
+//
+// This sentence was reported as a straight contradiction — it said "under about
+// 500 KB" while the line below enforced 700 KB — and it is worth recording that
+// it was NOT one, because the obvious fix is actively harmful. The two numbers
+// are in different units. The ceiling is on the base64 DATA URL, and base64
+// inflates by 4/3; the user picks a PHOTO. Quote 700 to them and a person with
+// a 700 KB photo does exactly what they were told, encodes to ~933 KB, and is
+// refused a second time by the same message. routes/users.js runs the identical
+// convention for avatars (600 KB enforced, "about 400 KB" advertised).
+//
+// What WAS wrong is that the conversion lived nowhere: two literals, no
+// arithmetic between them, so neither a reader nor the next person to move the
+// ceiling could tell whether they agreed. Now the advertised number is computed
+// from the enforced one and rounded DOWN to a round number, so the conversion
+// keeps slack, and __tests__/imageRouteParity.test.js pins the property that
+// actually matters — a photo of exactly the advertised size encodes to a data
+// URL that fits under the enforced ceiling.
+const ADVERTISED_PHOTO_KB = Math.floor(MAX_IMAGE_DATA_URL_BYTES * 3 / 4 / 1024 / 50) * 50;
+const IMAGE_TOO_LARGE_MESSAGE =
+  `That photo is too large to post. Please pick a smaller one (under about ${ADVERTISED_PHOTO_KB} KB).`;
+
 // Flood control. Five posts an hour and ten live at once is far above what a
 // real person does with a 24-hour format and far below what it takes to push
 // everyone else out of a friend's feed. Enforced in SQL, not in a Map: an
@@ -67,13 +93,32 @@ const MAX_ACTIVE_STORIES = 10;
 // accepts arbitrary trailing junk after the payload, which is a place to park
 // markup that some future consumer renders.
 //
-// GIF is NOT on this list, unlike routes/messages.js. Cloud Vision SafeSearch
-// screens an animated image by its FIRST FRAME, so an animated GIF is a way to
-// show a moderator a photo of a sandwich and everyone else something else. That
-// is not a complete fix — APNG ships as image/png and WebP animates too, and
-// the real answer is re-encoding an upload to one static frame before screening
-// it — but GIF is the format anyone reaching for this would actually use, and
-// nobody posts a story from their camera roll as a GIF.
+// THIS IS A FORMAT ALLOWLIST. IT IS NOT THE ANIMATION GATE, and it must not be
+// read as one — a client-declared MIME type cannot see frames. An APNG is
+// served as `image/png` and an animated WebP as `image/webp`, so both satisfy
+// this regex; leaving GIF off it stops the one format people reach for on
+// purpose and closes nothing else. This comment used to claim the omission WAS
+// the anti-animation defence, which is the dangerous kind of wrong: it reads
+// like a control is in place here, so the next person to widen the list has no
+// reason to look for the real one.
+//
+// The real gate is byte-level and lives in utils/moderation.js
+// (inspectImageFrames, called by moderateImage before the provider is ever
+// contacted). It reads magic numbers and walks the length-prefixed chunk
+// structures of the PNG, RIFF, GIF, ISO base media, ICO and TIFF families, and
+// refuses anything it can PROVE holds more than one frame — on every upload
+// path in the app at once. Do not restate its rules here or anywhere else:
+// __tests__/animatedImageModeration.test.js fails any caller that starts
+// deciding animation for itself, because two copies of that logic would drift
+// and only one of them would be the one actually protecting users. POST below
+// goes through the shared screen: moderateImage() runs on every story,
+// fail-closed, before the INSERT.
+//
+// GIF stays off this list anyway, as a product decision rather than a safety
+// one: a still GIF is not a photo anybody posts from a camera roll, refusing it
+// here is free, and __tests__/storiesFlow.test.js pins that a GIF story costs
+// zero moderation calls. Removing it would be a behaviour change to argue on
+// its own merits, not a by-product of fixing this comment.
 const IMAGE_DATA_URL = /^data:image\/(png|jpe?g|webp);base64,[A-Za-z0-9+/]+={0,2}$/;
 
 // ---------------------------------------------------------------------------
@@ -172,41 +217,35 @@ router.get('/',
       const limit = parseInt(req.query.limit, 10) || DEFAULT_FEED_LIMIT;
       const offset = parseInt(req.query.offset, 10) || 0;
 
-      // Only return stories from: the user themselves, accepted friends, or accepted flock mates
+      // "Can this account see that story?" — ONE definition, in
+      // utils/relationships.js, shared with the report gate in
+      // routes/moderation.js. This route used to carry its own copy, and the
+      // copies had already drifted: the report gate had lost the see-your-own-
+      // post clause, so reporting your OWN story answered "content could not be
+      // found". With two blocks of literal SQL there was no way to tell which
+      // differences were deliberate, which is why the differences are named
+      // arguments now.
+      //
+      // The feed's settings, and why they are the feed's:
+      //   * excludeHidden (default) — a takedown has to hold here.
+      //   * excludeBannedAuthor (default) — a ban must retract what the account
+      //     already posted; middleware/auth.js only locks the USER out, which
+      //     left their stories on friends' feeds for up to 24 more hours.
+      //   * authorAlias: 'u' — this SELECT already joins users for the name and
+      //     avatar, so the ban check is a column read rather than a second
+      //     EXISTS. Passing an alias this query does not declare would be a
+      //     syntax error, which is why the helper validates it as a bare
+      //     identifier and refuses anything else.
+      // Blocks (both directions) and the own/friend/flock-mate grants come with
+      // it. Nothing is interpolated from the request: `$1` is a bind
+      // placeholder the helper checks the shape of, and the viewer's id travels
+      // as a parameter exactly as before.
       const result = await pool.query(
         `SELECT s.id, s.user_id, s.image_url, s.caption, s.created_at, s.expires_at,
                 u.name AS user_name, u.profile_image_url
          FROM stories s
          JOIN users u ON u.id = s.user_id
-         WHERE s.expires_at > NOW()
-           -- Admin takedowns (is_hidden) and blocks must hold here, not just
-           -- in messaging: shared-flock membership survives a block, so the
-           -- friendship/flock grants below would otherwise keep leaking
-           -- stories across a block in both directions.
-           AND s.is_hidden IS NOT TRUE
-           -- A ban is the strongest action a moderator has, and it left the
-           -- banned account's stories on their friends' feeds for up to 24
-           -- more hours: middleware/auth.js locks the banned USER out, nothing
-           -- retracted what they had already posted. Suspending someone has to
-           -- take their content down with them.
-           AND u.is_banned IS NOT TRUE
-           AND NOT EXISTS (
-             SELECT 1 FROM user_blocks b
-             WHERE (b.blocker_id = $1 AND b.blocked_id = s.user_id)
-                OR (b.blocker_id = s.user_id AND b.blocked_id = $1)
-           )
-           AND (
-             s.user_id = $1
-             OR s.user_id IN (
-               SELECT CASE WHEN requester_id = $1 THEN addressee_id ELSE requester_id END
-               FROM friendships WHERE (requester_id = $1 OR addressee_id = $1) AND status = 'accepted'
-             )
-             OR s.user_id IN (
-               SELECT fm2.user_id FROM flock_members fm1
-               JOIN flock_members fm2 ON fm2.flock_id = fm1.flock_id AND fm2.user_id != $1 AND fm2.status = 'accepted'
-               WHERE fm1.user_id = $1 AND fm1.status = 'accepted'
-             )
-           )
+         WHERE ${storyVisibilitySql({ viewer: '$1', authorAlias: 'u' })}
          ORDER BY s.created_at DESC
          LIMIT $2 OFFSET $3`,
         [req.user.id, limit, offset]
@@ -288,9 +327,7 @@ router.post('/',
       // Length is checked against the ENCODED string because that is what gets
       // stored and re-sent on every feed read.
       if (Buffer.byteLength(image_url, 'utf8') > MAX_IMAGE_DATA_URL_BYTES) {
-        return res.status(400).json({
-          error: 'That photo is too large to post. Please pick a smaller one (under about 500 KB).',
-        });
+        return res.status(400).json({ error: IMAGE_TOO_LARGE_MESSAGE });
       }
 
       // Text screen (Apple 1.2) before anything is stored.
@@ -325,8 +362,18 @@ router.post('/',
         verdict = { allowed: false, reason: 'moderation_error' };
       }
       if (!verdict || !verdict.allowed) {
+        // imageRejectionMessage(), never IMAGE_REJECTED_MESSAGE directly. The
+        // two refusals this screen can produce are not the same event: an
+        // ANIMATED image is refused by policy (SafeSearch only ever sees frame
+        // 1), and telling that user their photo "couldn't be verified as safe"
+        // is both wrong and unactionable — there is nothing they can do to a
+        // sunset GIF to make it verify. They need "try a still photo instead".
+        // The messages.js call sites and both socket send paths already route
+        // through this helper; this was the last one that did not, which also
+        // means a reason added to moderateImage() in future arrives here with a
+        // message that fits it rather than one that misdescribes it.
         return res.status(400).json({
-          error: moderation.IMAGE_REJECTED_MESSAGE,
+          error: moderation.imageRejectionMessage(verdict),
           moderation: verdict ? verdict.reason : 'moderation_error',
         });
       }
@@ -450,5 +497,7 @@ module.exports.__test = {
   DEFAULT_FEED_LIMIT,
   MAX_CAPTION_LENGTH,
   MAX_IMAGE_DATA_URL_BYTES,
+  ADVERTISED_PHOTO_KB,
+  IMAGE_TOO_LARGE_MESSAGE,
   IMAGE_DATA_URL,
 };
