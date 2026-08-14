@@ -2,6 +2,64 @@ require('./instrument'); // Sentry — must load before everything else (B3)
 require('dotenv').config();
 console.log('DATABASE_URL:', process.env.DATABASE_URL ? '[configured]' : '[missing]');
 
+// ---------------------------------------------------------------------------
+// Production-database quarantine — added after the 2026-08-13 outage
+// ---------------------------------------------------------------------------
+// backend/.env points DATABASE_URL at the PRODUCTION Railway proxy, so a plain
+// local `node server.js` (or `npm run dev`) booted straight into running
+// migrations against the live database. During the outage that nearly
+// compounded the incident twice. The rule: a non-production NODE_ENV combined
+// with a Railway database host is an accident until the operator says
+// otherwise, out loud, with I_UNDERSTAND_THIS_IS_PRODUCTION=1.
+//
+// What this deliberately does NOT touch:
+//   * Railway deploys — they run with NODE_ENV=production and never enter this.
+//   * scripts/dump-db.js — the backup runbook's dump path does not boot this
+//     file at all, so taking a production backup needs no flag.
+//   * scripts/verify-backup.js — never reads DATABASE_URL by design.
+//   * scripts/e2e-local.js — sets NODE_ENV=development with a localhost
+//     embedded Postgres before requiring this file, so no Railway host matches.
+//   * The quarterly restore drill's "point a local backend at the scratch
+//     Railway database" step — that is the deliberate case the override exists
+//     for (BACKUP-AND-VERIFICATION.md names the flag in that step).
+//
+// This must stay ABOVE every require that can reach config/database.js: the
+// pool opens a real connection at require time when server.js is the entry
+// point, so a guard any lower has already lost.
+const RAILWAY_DB_HOST_RE = /\.(rlwy\.net|railway\.app|railway\.internal)$/i;
+
+function railwayDatabaseHost() {
+  if (process.env.PGHOST && RAILWAY_DB_HOST_RE.test(process.env.PGHOST.trim())) {
+    return process.env.PGHOST.trim();
+  }
+  const url = process.env.DATABASE_URL;
+  if (!url) return null;
+  try {
+    const host = new URL(url).hostname;
+    return host && RAILWAY_DB_HOST_RE.test(host) ? host : null;
+  } catch (_) {
+    // Unparseable URL (a password with reserved characters, say): fall back to
+    // matching the raw string. Over-refusing costs one re-run with the
+    // override; under-refusing is the outage.
+    return /\.(rlwy\.net|railway\.app|railway\.internal)/i.test(url) ? '(unparseable URL with a Railway host)' : null;
+  }
+}
+
+if (process.env.NODE_ENV !== 'production'
+    && process.env.I_UNDERSTAND_THIS_IS_PRODUCTION !== '1') {
+  const railwayHost = railwayDatabaseHost();
+  if (railwayHost) {
+    console.error(
+      `REFUSING TO START: NODE_ENV is "${process.env.NODE_ENV || '(unset)'}" but the database host is "${railwayHost}" — a Railway host, almost certainly the production database.\n` +
+      'Booting server.js runs migrations against whatever DATABASE_URL points at.\n\n' +
+      'To develop locally: edit backend/.env so DATABASE_URL (and PGHOST) point at a local Postgres.\n' +
+      'To run against Railway on purpose (restore drill, staging boot): re-run with I_UNDERSTAND_THIS_IS_PRODUCTION=1.\n' +
+      'Taking a backup does not need the flag: `node scripts/dump-db.js` never boots the server.'
+    );
+    process.exit(1);
+  }
+}
+
 // Fail fast if JWT_SECRET is missing — without it every jwt.sign/verify throws
 // at request time (opaque 500s). Hard-exit in production; warn elsewhere so
 // local tooling that stubs auth still runs.
