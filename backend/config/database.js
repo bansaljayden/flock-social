@@ -1,10 +1,29 @@
 const { Pool } = require('pg');
 
+// TLS decision, in priority order — and the history of why it is written out:
+//
+// When DATABASE_URL vanished from the Railway service, the pool fell back to
+// the PG* variables (pg reads them natively when connectionString is
+// undefined). Those point at Railway's INTERNAL Postgres host, and this config
+// force-enabled TLS whenever NODE_ENV was production — so every connection
+// died at the handshake before a single query, the migration runner reported
+// a generic fatal, and production crash-looped with nothing in the logs naming
+// the cause.
+//
+// The rule now: an explicit PGSSLMODE always wins, because whoever set it knew
+// the endpoint. Without one, DATABASE_URL deployments keep the old production
+// default (TLS, self-signed tolerated — Railway's public proxy). A PG*-only
+// deployment with no PGSSLMODE tries TLS but no longer insists a missing
+// handshake is fatal at config time; pg will surface the endpoint's truth.
+const SSLMODE = String(process.env.PGSSLMODE || '').toLowerCase();
+const sslConfig = SSLMODE
+  ? (SSLMODE === 'disable' ? false : { rejectUnauthorized: false })
+  : (process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false);
+
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
-  // Railway uses internal TLS with self-signed certs — rejectUnauthorized: false is required.
   // For non-Railway production (AWS RDS, etc.), set rejectUnauthorized: true + provide CA cert.
-  ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false,
+  ssl: sslConfig,
   max: 20,
   idleTimeoutMillis: 30000,
   // Waiting for a free pooled connection. 2s was too aggressive: under a burst
