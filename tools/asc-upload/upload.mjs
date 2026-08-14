@@ -204,12 +204,14 @@ async function discoverRemote(client, { bundleId, versionString, locale }) {
   }) ?? infos?.data?.[0];
   if (editable) {
     remote.appInfoId = editable.id;
-    const included = infos?.included ?? [];
-    const loc = included.find(
-      (inc) => inc.type === 'appInfoLocalizations'
-        && inc.attributes?.locale === locale
-        && editable.relationships?.appInfoLocalizations?.data?.some((d) => d.id === inc.id)
-    );
+    // Ask for the localizations directly instead of trusting the include
+    // payload's relationship linkage: ASC omits the linkage array unless the
+    // relationship itself is requested, which made an existing en-US record
+    // invisible here and sent executePlan down the POST path into a 409
+    // (ENTITY_ERROR.ATTRIBUTE.INVALID.DUPLICATE, seen live 2026-08-14 after
+    // the name was set by hand in the UI).
+    const locs = await client.request('GET', `/v1/appInfos/${editable.id}/appInfoLocalizations`);
+    const loc = locs?.data?.find((l) => l.attributes?.locale === locale);
     if (loc) remote.appInfoLocalizationId = loc.id;
   }
   return remote;
@@ -262,8 +264,23 @@ async function executePlan(client, steps, { remote, locale, files, screenshotsDi
         break;
       }
       case 'update-version-localization':
-        await client.request('PATCH', step.path, { data: { ...step.body, id: versionLocalizationId } });
-        console.log(`  ~ updated ${locale} appStoreVersionLocalization ${versionLocalizationId}`);
+        try {
+          await client.request('PATCH', step.path, { data: { ...step.body, id: versionLocalizationId } });
+          console.log(`  ~ updated ${locale} appStoreVersionLocalization ${versionLocalizationId}`);
+        } catch (e) {
+          // Apple refuses whatsNew on a version of an app that has never
+          // shipped (What's New only exists for updates). That exact refusal
+          // is retried once without the attribute; anything else re-throws.
+          // This is a different request body, not a blind retry.
+          const whatsNewRefused = e.status === 409
+            && (e.ascErrors ?? []).some((x) => /whatsNew/.test(x.detail ?? ''))
+            && step.body.attributes?.whatsNew !== undefined;
+          if (!whatsNewRefused) throw e;
+          const attributes = { ...step.body.attributes };
+          delete attributes.whatsNew;
+          await client.request('PATCH', step.path, { data: { ...step.body, attributes, id: versionLocalizationId } });
+          console.log(`  ~ updated ${locale} appStoreVersionLocalization ${versionLocalizationId} (whatsNew skipped: not editable on a first version)`);
+        }
         break;
 
       case 'create-appinfo-localization': {
