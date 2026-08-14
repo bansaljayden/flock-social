@@ -69,8 +69,17 @@ async function collectRealtime() {
   let skipped = 0;
   let liveRows = 0;
   let forecastRows = 0;
+  // Round 13: fetchLiveBusyness now throws on outage/rate-limit (transient)
+  // and key/credit failures (fatal) instead of returning null. Before, a dead
+  // key or a BestTime outage looked identical to "no live data for this
+  // venue": the loop kept firing one doomed request per venue (thousands of
+  // them, 250ms apart) and the summary line cheerfully reported them as
+  // "skipped". Transient errors bail after 10 in a row; fatal bails instantly.
+  let consecutiveErrors = 0;
+  let aborted = false;
 
   for (const [cityKey, cityVenues] of Object.entries(byCity)) {
+    if (aborted) break;
     const cityConfig = CITIES[cityKey];
     if (!cityConfig) continue;
 
@@ -84,7 +93,26 @@ async function collectRealtime() {
       + (special ? ` [${special.name}: ${special.effect}]` : '') + (holidayEve ? ' [holiday eve]' : ''));
 
     for (const venue of cityVenues) {
-      const live = await fetchLiveBusyness(venue.besttime_venue_id);
+      let live;
+      try {
+        live = await fetchLiveBusyness(venue.besttime_venue_id);
+        consecutiveErrors = 0;
+      } catch (err) {
+        if (err.fatal) {
+          console.error(`[ML:Realtime] FATAL: ${err.message} — aborting run`);
+          aborted = true;
+          break;
+        }
+        consecutiveErrors++;
+        console.error(`[ML:Realtime] Transient error ${consecutiveErrors}/10 for ${venue.name}: ${err.message}`);
+        if (consecutiveErrors >= 10) {
+          console.error('[ML:Realtime] 10 consecutive errors — BestTime looks down, aborting run');
+          aborted = true;
+          break;
+        }
+        await sleep(2000);
+        continue;
+      }
       if (!live) {
         skipped++;
         continue;
@@ -175,7 +203,7 @@ async function collectRealtime() {
     }
   }
 
-  console.log(`\n[ML:Realtime] Done. ${totalRows} rows inserted `
+  console.log(`\n[ML:Realtime] ${aborted ? 'ABORTED EARLY' : 'Done'}. ${totalRows} rows inserted `
     + `(${liveRows} live-observed, ${forecastRows} vendor-forecast). ${skipped} venues skipped.`);
 }
 

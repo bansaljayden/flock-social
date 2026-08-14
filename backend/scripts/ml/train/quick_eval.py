@@ -118,6 +118,36 @@ def main():
         rt_baseline_metrics = None
         rt_mae_delta = None
         rt_r2_delta = None
+
+    # LIVE-OBSERVED-only diagnostic (round 13). The realtime gate slice mixes
+    # label provenances: 'live' rows are real observed foot traffic, but
+    # 'forecast' rows carry BestTime's OWN forecast as the label — beating the
+    # popular_times baseline there measures agreement with a vendor's model,
+    # not with reality. This slice is the strictest honest read we have. It is
+    # reported and persisted but does NOT change the gate basis (yet): rows
+    # collected before label_source existed are 'unknown' and can't be
+    # separated retroactively, so gating on live-only would judge new models
+    # on a much thinner slice than the incumbent was judged on.
+    live_slice = None
+    hold_prov = hold_data.get('label_provenance')
+    if hold_prov is not None and rt_count >= 100:
+        hold_prov = np.asarray(hold_prov)
+        live_mask = rt_mask & (hold_prov == 'live')
+        live_count = int(live_mask.sum())
+        if live_count >= 100:
+            lv_model = metrics(hold_y_actual[live_mask], hold_pred_absolute[live_mask])
+            lv_base = metrics(hold_y_actual[live_mask], hold_baseline_pred[live_mask])
+            live_slice = {
+                'rows': live_count,
+                'model_mae': lv_model['mae'], 'baseline_mae': lv_base['mae'],
+                'mae_improvement': round(lv_base['mae'] - lv_model['mae'], 4),
+                'r2_improvement': round(lv_model['r2'] - lv_base['r2'], 4),
+            }
+            logger.info(f'LIVE-OBSERVED-only (diagnostic, {live_count:,} rows):')
+            logger.info(f'  Model MAE: {lv_model["mae"]}  Baseline MAE: {lv_base["mae"]}  '
+                        f'Δ MAE: {live_slice["mae_improvement"]:+.4f}  Δ R²: {live_slice["r2_improvement"]:+.4f}')
+        else:
+            logger.info(f'LIVE-OBSERVED-only: only {live_count} rows — skipping diagnostic')
     if weekly_count >= 100:
         wk_model_metrics = metrics(hold_y_actual[~rt_mask], hold_pred_absolute[~rt_mask])
         wk_baseline_metrics = metrics(hold_y_actual[~rt_mask], hold_baseline_pred[~rt_mask])
@@ -191,6 +221,10 @@ def main():
         'realtime_mae_improvement': round(rt_mae_delta, 4) if rt_mae_delta is not None else None,
         'realtime_r2_improvement': round(rt_r2_delta, 4) if rt_r2_delta is not None else None,
         'realtime_pass': bool(rt_pass) if rt_pass is not None else None,
+        # Diagnostic: realtime slice restricted to live-observed labels
+        # (excludes vendor-forecast rows). None when provenance is absent
+        # from the pickle or the slice is too thin.
+        'live_slice': live_slice,
         # Diagnostics only — dominated by weekly rows where baseline == label.
         'training_mae_improvement': round(train_mae_delta, 4),
         'training_r2_improvement': round(train_r2_delta, 4),

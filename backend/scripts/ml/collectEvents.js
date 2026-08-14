@@ -76,7 +76,7 @@ function estimateEndHour(startHour, type) {
 }
 
 // Fetch one page of events from Ticketmaster
-async function fetchPage(lat, lon, startDt, endDt, page) {
+async function fetchPage(lat, lon, startDt, endDt, page, retries = 0) {
   const params = new URLSearchParams({
     apikey: API_KEY,
     latlong: `${lat},${lon}`,
@@ -90,12 +90,19 @@ async function fetchPage(lat, lon, startDt, endDt, page) {
   });
 
   const url = `${TM_BASE}?${params}`;
-  const response = await fetch(url);
+  // Round 13: timeout so a hung Ticketmaster cannot stall the run, and a cap
+  // on 429 retries — the old unconditional self-retry looped forever if the
+  // daily quota was exhausted rather than momentarily rate-limited.
+  const response = await fetch(url, { signal: AbortSignal.timeout(15000) });
 
   if (response.status === 429) {
+    if (retries >= 5) {
+      console.error('  Rate limited 5 times in a row — quota likely exhausted, giving up on this page');
+      return { events: [], totalPages: 0 };
+    }
     console.log('  Rate limited, waiting 2s...');
     await sleep(2000);
-    return fetchPage(lat, lon, startDt, endDt, page);
+    return fetchPage(lat, lon, startDt, endDt, page, retries + 1);
   }
 
   if (!response.ok) {

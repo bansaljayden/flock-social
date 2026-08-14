@@ -620,7 +620,14 @@ def main():
         for col in feature_cols:
             if col not in holdout_df.columns:
                 holdout_df[col] = 0
-        holdout_df = holdout_df[feature_cols + ['busyness_pct', 'delta_label', 'baseline_busyness', 'city']]
+        # label_provenance rides along (NOT a feature — see get_feature_columns)
+        # so quick_eval can report the live-observed-only slice: vendor-forecast
+        # labels in the realtime gate slice measure agreement with BestTime's
+        # model, not with reality.
+        keep_extra = ['busyness_pct', 'delta_label', 'baseline_busyness', 'city']
+        if 'label_provenance' in holdout_df.columns:
+            keep_extra.append('label_provenance')
+        holdout_df = holdout_df[feature_cols + keep_extra]
 
     logger.info(f'Feature count: {len(feature_cols)}')
     logger.info(f'Features: {feature_cols}')
@@ -675,6 +682,8 @@ def main():
             'feature_cols': feature_cols,
             'cities': holdout_df['city'].values,
             'label_type': 'delta',
+            'label_provenance': (holdout_df['label_provenance'].fillna('unknown').astype(str).values
+                                 if 'label_provenance' in holdout_df.columns else None),
         }
         with open(SCRIPT_DIR / 'features_holdout.pkl', 'wb') as f:
             pickle.dump(holdout_data, f)

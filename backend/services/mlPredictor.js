@@ -127,6 +127,22 @@ async function init() {
     }
 
     metadata = candidate;
+
+    // Round 13: feature-coverage parity check. Any trained feature that this
+    // file cannot compute would be silently zero-filled on EVERY prediction —
+    // confidently wrong numbers with no error anywhere. That is strictly worse
+    // than the rule engine, so it fails closed (same override hatch as the
+    // ship gate, for local debugging of a half-migrated feature set).
+    const missing = missingFeatureNames(candidate);
+    if (missing.length > 0 && process.env.ML_SHIP_GATE_OVERRIDE !== 'true') {
+      console.error(`[MLPredictor] REFUSING to promote model v${version}: ${missing.length} trained feature(s) have no inference-side implementation and would be silently zero-filled: ${missing.join(', ')}. Serving rule engine instead.`);
+      metadata = null;
+      return false;
+    }
+    if (missing.length > 0) {
+      console.warn(`[MLPredictor] ML_SHIP_GATE_OVERRIDE=true — promoting despite ${missing.length} missing feature(s): ${missing.join(', ')}`);
+    }
+
     session = await ort.InferenceSession.create(ONNX_PATH);
     useML = true;
     console.log(`[MLPredictor] Loaded ONNX model v${version} (${metadata.best_model || '?'}, ${metadata.feature_count || '?'} features) — ${overridden ? 'gate overridden' : gate.reason}`);
@@ -348,6 +364,27 @@ function estimateTmAttendance(event) {
   return 500;
 }
 
+// Round 13 (timezone): callers pass a "venue wall clock encoded in server
+// time" Date (crowd.js builds clientTime with weekdayOffset + setHours so
+// .getHours()/.getDay() read venue-local — that is the feature contract).
+// But the Ticketmaster query window is built with .toISOString(), which
+// treats that fake Date as a real instant: on a UTC server, "8 PM in Tokyo"
+// was queried as 20:00Z — 5 AM Tokyo, up to a half-day off. Same
+// wall-clock-vs-instant confusion family as the crowd card's six-day bug.
+// When the venue carries Google's utcOffsetMinutes we can recover the true
+// instant: wallFields = fake read in server tz, so
+//   trueEpoch = fakeEpoch − (serverOffsetWestMin + venueOffsetEastMin) · 60s
+// (getTimezoneOffset is west-positive, utcOffsetMinutes east-positive).
+// Without an offset we keep the old behavior — wrong-window events are still
+// better than none, and most callers with real venues do have the offset.
+function trueEventInstant(timestamp, utcOffsetMinutes) {
+  const ts = timestamp ? new Date(timestamp) : new Date();
+  if (Number.isNaN(ts.getTime())) return ts;
+  const off = Number(utcOffsetMinutes);
+  if (utcOffsetMinutes == null || Number.isNaN(off)) return ts;
+  return new Date(ts.getTime() - (ts.getTimezoneOffset() + off) * 60 * 1000);
+}
+
 async function getNearbyEvents(lat, lng, timestamp) {
   const apiKey = process.env.TICKETMASTER_API_KEY;
   const noEvents = {
@@ -515,7 +552,14 @@ async function getNeighborActivity(placeId, lat, lng, dayOfWeek, hour) {
   return entry.byDowHour.get(`${dayOfWeek}_${hour}`) || none;
 }
 
-function buildFeatureVector(venue, weather, timestamp, eventData, feedback, baseline, neighbors) {
+// Round 13: split from buildFeatureVector so init() can verify that every
+// name in metadata.feature_names is actually produced. The vector builder
+// zero-fills any name it doesn't recognize (`features[name] || 0`), which is
+// right for genuinely-zero features but silently feeds the model garbage when
+// a trained feature is missing from this map (renamed, dropped, or a new
+// training feature that never got its inference-side twin). That failure mode
+// is confident wrong numbers — the worst one a prediction can have.
+function buildFeatureMap(venue, weather, timestamp, eventData, feedback, baseline, neighbors) {
   const ts = timestamp ? new Date(timestamp) : new Date();
   const dayOfWeek = ts.getDay(); // 0=Sun
   const hour = ts.getHours();
@@ -675,14 +719,38 @@ function buildFeatureVector(venue, weather, timestamp, eventData, feedback, base
     features[`gtype_${t}`] = types.includes(t) ? 1 : 0;
   }
 
-  // Build ordered array matching feature_names
+  return features;
+}
+
+function buildFeatureVector(venue, weather, timestamp, eventData, feedback, baseline, neighbors) {
+  const features = buildFeatureMap(venue, weather, timestamp, eventData, feedback, baseline, neighbors);
+  // Build ordered array matching feature_names — the model consumes POSITIONS,
+  // so this ordering is the entire train/inference contract.
   const featureNames = metadata.feature_names || [];
   const vector = new Float32Array(featureNames.length);
   for (let i = 0; i < featureNames.length; i++) {
     vector[i] = features[featureNames[i]] || 0;
   }
-
   return vector;
+}
+
+// Every feature the model was trained on must be computable at inference, or
+// the vector silently zero-fills it. Returns the list of metadata
+// feature_names that buildFeatureMap does NOT produce (empty list = healthy).
+function missingFeatureNames(meta) {
+  const probeVenue = {
+    place_id: 'probe', types: ['restaurant'], rating: 4.0, price_level: 2,
+    user_ratings_total: 10, latitude: 40.7, longitude: -74.0,
+  };
+  const probeWeather = { temp: 20, humidity: 50, windSpeed: 2, isRaining: false, conditionId: 800 };
+  const probeEvents = {
+    hasEvent: true, nearestAttendance: 100, totalEvents: 1, totalAttendance: 100,
+    nearestType: 'music', nearestDistance: 1, nearestName: 'probe',
+  };
+  const probeFeedback = { avgCrowd: 2, count: 1, avgErrorMapped: 0, avgErrorLegacy: 0 };
+  const map = buildFeatureMap(probeVenue, probeWeather, new Date(), probeEvents,
+    probeFeedback, 50, { count: 1, mean: 50 });
+  return (meta.feature_names || []).filter(name => !(name in map));
 }
 
 function guessCategory(types) {
@@ -720,8 +788,13 @@ async function predictBusyness(venue, weather, timestamp) {
     const placeId = venue.place_id || venue.google_place_id || null;
     const ts = timestamp ? new Date(timestamp) : new Date();
 
+    // Event lookup needs a REAL instant (UTC query window), not the venue
+    // wall clock the feature builder consumes — see trueEventInstant.
+    const eventInstant = trueEventInstant(ts,
+      venue.utcOffsetMinutes ?? venue.utc_offset_minutes ?? venue.utc_offset ?? null);
+
     const [eventData, feedback, storedBaseline, neighbors] = await Promise.all([
-      getNearbyEvents(lat, lng, timestamp),
+      getNearbyEvents(lat, lng, eventInstant),
       getUserFeedback(placeId),
       getBaseline(placeId, ts.getDay(), ts.getHours()),
       getNeighborActivity(placeId, lat, lng, ts.getDay(), ts.getHours()),
@@ -867,4 +940,17 @@ module.exports = {
   storeGoogleBaselines,
   getLabel,
   init,
+  // Internals exported for backend/__tests__/mlPipeline.test.js — the
+  // train/inference parity surface. Not part of the serving API.
+  _internals: {
+    buildFeatureMap,
+    buildFeatureVector,
+    missingFeatureNames,
+    evaluateShipGate,
+    astronomyFeatures,
+    groupWeatherCode,
+    baselineFromPopularTimes,
+    trueEventInstant,
+    getMetadata: () => metadata,
+  },
 };
