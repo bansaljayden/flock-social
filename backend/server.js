@@ -259,13 +259,9 @@ const authLimiter = isDev ? (_req, _res, next) => next() : rateLimit({
   message: { error: 'Too many login attempts, please try again later' },
 });
 
-const aiLimiter = isDev ? (_req, _res, next) => next() : rateLimit({
-  windowMs: 60 * 1000,
-  max: 30,
-  standardHeaders: true,
-  legacyHeaders: false,
-  message: { error: 'Too many AI requests, please slow down' },
-});
+// aiLimiter is declared further down, immediately after billedImageKey, because
+// it keys on the ACCOUNT and therefore has to reuse that function rather than
+// grow a second copy of it. See the Birdie block below.
 
 const venueSearchLimiter = isDev ? (_req, _res, next) => next() : rateLimit({
   windowMs: 60 * 1000,
@@ -411,6 +407,39 @@ const imageSpendLimiter = isDev ? (_req, _res, next) => next() : rateLimit({
 // given each its own bucket, and a caller alternating between them would have
 // bought the sum.
 app.use((req, res, next) => (carriesBilledImage(req) ? imageSpendLimiter(req, res, next) : next()));
+
+// ---------------------------------------------------------------------------
+// Birdie (Gemini) — the same identity question, answered the same way
+// ---------------------------------------------------------------------------
+// This limiter used to key on the IP, like every other limiter in this file
+// except the billed-image one above. That is the weakness the image meter was
+// rewritten to remove: a per-address ceiling is bought around by rotating
+// addresses, and it simultaneously puts one school or one household into a
+// single shared bucket. Gemini is a PAID upstream (billed per token,
+// utils/upstream.js), so the same reasoning applies with the same force.
+//
+// It reuses billedImageKey rather than restating it. Two derivations of "which
+// account is this" in one file is exactly the bug that function's own comment
+// warns about — one of them reads the Authorization header a hair differently
+// from middleware/auth.js, and a caller who can pick which bucket they land in
+// by adding a space to their own header is not metered by account at all. One
+// function, one answer, one place to get it wrong.
+const billedAccountKey = billedImageKey;
+
+// WHAT THIS DOES AND DOES NOT BOUND. It bounds REQUESTS, not tokens, and Gemini
+// is not billed per request. It runs ahead of `authenticate`, so its job is to
+// stop a flood before it reaches the router at all; the ceiling that actually
+// bounds the invoice is the token ledger in services/birdieUsage.js, which
+// routes/ai.js charges for every single chat.sendMessage. Neither replaces the
+// other: this one is cheap and early, that one is denominated in money.
+const aiLimiter = isDev ? (_req, _res, next) => next() : rateLimit({
+  windowMs: 60 * 1000,
+  max: 30,
+  keyGenerator: billedAccountKey,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many AI requests, please slow down' },
+});
 
 // ---------------------------------------------------------------------------
 // Routes
