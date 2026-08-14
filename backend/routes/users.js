@@ -15,7 +15,7 @@ const {
   UNVERIFIED_MESSAGE,
 } = require('../middleware/auth');
 const { stripHtml, sanitizeArray } = require('../utils/sanitize');
-const { rejectIfProfane, moderateImage, IMAGE_REJECTED_MESSAGE } = require('../utils/moderation');
+const { rejectIfProfane, moderateImage, imageRejectionMessage } = require('../utils/moderation');
 const { revokeAppleToken, isConfigured: appleAuthConfigured } = require('../services/appleAuth');
 
 const router = express.Router();
@@ -38,21 +38,35 @@ const IMAGE_SIGNATURES = {
   jpeg: [Buffer.from([0xFF, 0xD8, 0xFF])],
   png:  [Buffer.from([0x89, 0x50, 0x4E, 0x47])],
   gif:  [Buffer.from([0x47, 0x49, 0x46, 0x38])],
+  // 'RIFF' alone is a container header, not an image one: WAV and AVI open the
+  // same four bytes. The 'WEBP' form type at offset 8 is what makes it an image.
   webp: [Buffer.from([0x52, 0x49, 0x46, 0x46])], // RIFF header
 };
 
-function isValidImage(buf) {
+// Returns the format the BYTES say this is, or null. The name is the answer:
+// callers must not re-derive a type from the filename or the upload's declared
+// MIME, both of which the client writes.
+function detectImageFormat(buf) {
   try {
-    for (const sigs of Object.values(IMAGE_SIGNATURES)) {
+    for (const [format, sigs] of Object.entries(IMAGE_SIGNATURES)) {
       for (const sig of sigs) {
-        if (buf.subarray(0, sig.length).equals(sig)) return true;
+        if (!buf.subarray(0, sig.length).equals(sig)) continue;
+        if (format === 'webp' && buf.toString('latin1', 8, 12) !== 'WEBP') continue;
+        return format;
       }
     }
-    return false;
+    return null;
   } catch {
-    return false;
+    return null;
   }
 }
+
+const DETECTED_MIME = {
+  jpeg: 'image/jpeg',
+  png: 'image/png',
+  gif: 'image/gif',
+  webp: 'image/webp',
+};
 
 // Configure multer for profile image uploads.
 //
@@ -863,14 +877,34 @@ router.post('/upload-image', (req, res) => {
     }
 
     // Verify file content matches an actual image (magic bytes)
-    if (!isValidImage(req.file.buffer)) {
+    const format = detectImageFormat(req.file.buffer);
+    if (!format) {
       return res.status(400).json({ error: 'File is not a valid image' });
     }
 
     try {
-      // Convert to base64 data URL and store in DB (survives Railway redeploys)
-      const mimeType = req.file.mimetype || 'image/jpeg';
-      const dataUrl = `data:${mimeType};base64,${req.file.buffer.toString('base64')}`;
+      // Convert to base64 data URL and store in DB (survives Railway redeploys).
+      //
+      // Re-audit: the MIME in this data URL used to be `req.file.mimetype`,
+      // which is a header the CLIENT writes, copied verbatim into a string that
+      // is then stored forever and rendered as an <img src> on every message
+      // row, roster and profile in the app. Two problems, one fix: the declared
+      // type could disagree with the bytes we just verified (a GIF announced as
+      // image/png), and the fileFilter above tests it with a SUBSTRING regex, so
+      // values like `image/svg+xml;png` passed it and produced a malformed data
+      // URL. The magic bytes already told us what this file is; use that answer
+      // and nothing else.
+      //
+      // Belt: a format added to IMAGE_SIGNATURES without a matching entry here
+      // would otherwise ship `data:undefined;base64,...` into every avatar slot
+      // in the app, which renders as a broken image and is unfixable for the
+      // user. The two tables must not be able to drift apart silently.
+      const detectedMime = DETECTED_MIME[format];
+      if (!detectedMime) {
+        console.error(`[Upload] no MIME mapped for detected format "${format}"`);
+        return res.status(400).json({ error: 'That image format is not supported.' });
+      }
+      const dataUrl = `data:${detectedMime};base64,${req.file.buffer.toString('base64')}`;
 
       // Cap the STORED data URL, not just the raw upload. Avatars are stored
       // inline in users.profile_image_url and repeated on every message-history
@@ -887,9 +921,18 @@ router.post('/upload-image', (req, res) => {
       // upload endpoint, so screening here gates every user image before its
       // URL is returned or stored. Dev (no provider) allows with a warning;
       // prod requires a provider via IMAGE_MODERATION_REQUIRED=true.
+      //
+      // Round 18: this also covers ANIMATED avatars. Cloud Vision screens only
+      // frame 1, so an animated GIF/APNG/WebP avatar could carry anything past
+      // it — and an avatar is the one image that follows a user onto every
+      // message row, every roster and every push. The fileFilter above still
+      // accepts image/gif on purpose: a STILL GIF is fine, and a filter on
+      // extension or MIME could not tell the two apart anyway (an APNG is
+      // `image/png`). The frame count is decided from the bytes inside
+      // moderateImage.
       const verdict = await moderateImage(dataUrl);
       if (!verdict.allowed) {
-        return res.status(400).json({ error: IMAGE_REJECTED_MESSAGE, moderation: verdict.reason });
+        return res.status(400).json({ error: imageRejectionMessage(verdict), moderation: verdict.reason });
       }
 
       await pool.query(
@@ -1260,6 +1303,8 @@ module.exports.isIdentityBanned = isIdentityBanned;
 module.exports.rejectIfBannedIdentity = rejectIfBannedIdentity;
 module.exports.purgeExpiredBannedIdentities = purgeExpiredBannedIdentities;
 module.exports.__testing = {
+  detectImageFormat,
+  DETECTED_MIME,
   identityDigests,
   canonicalPhone,
   normalizedAddress,
