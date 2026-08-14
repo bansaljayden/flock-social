@@ -597,6 +597,124 @@ const EmptyMark = ({ name, height = 160, style }) => (
 // Resolve to the API origin whenever a stored value is rendered.
 const resolveVenuePhoto = (u) => (u && u.startsWith('/api/') ? `${BASE_URL}${u}` : u || null);
 
+// Chat photos travel INSIDE the message body as a data: URL, on whichever
+// transport is up. Socket.IO was raised to 8MB for exactly that; express.json()
+// is still 1mb, so a photo over roughly 750KB sends fine on the socket and 413s
+// the instant the REST fallback is used — the transport that only comes out
+// when the network is already bad, which is the case the fallback exists for.
+// Sizing the payload to fit BOTH is the client's half of that; the body limit
+// wants raising too (reported, backend file).
+//
+// It also keeps the send honest about time: a 6MB base64 string is a slow
+// upload with no progress bar behind it.
+const CHAT_IMAGE_MAX_EDGE = 1600;
+const CHAT_IMAGE_MAX_CHARS = 700 * 1024;
+const CHAT_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
+const dataUrlMime = (u) => (typeof u === 'string' ? ((/^data:([^;,]+)[;,]/.exec(u) || [])[1] || '') : '');
+
+const prepareChatImage = (dataUrl) => new Promise((resolve) => {
+  if (typeof dataUrl !== 'string' || !dataUrl.startsWith('data:image/')) {
+    resolve({ error: "That photo couldn't be read. Try another one." });
+    return;
+  }
+  const mime = dataUrlMime(dataUrl);
+  // Already small enough and already a format the server accepts: leave it
+  // alone. Re-encoding a photo that does not need it only costs quality.
+  if (dataUrl.length <= CHAT_IMAGE_MAX_CHARS && CHAT_IMAGE_TYPES.includes(mime)) {
+    resolve({ dataUrl });
+    return;
+  }
+  // An animated GIF is refused server-side on purpose. Re-encoding one would
+  // smuggle a still frame past that rule, so an oversized GIF is simply too
+  // big to send.
+  if (mime === 'image/gif') {
+    resolve({ error: 'That GIF is too big to send. Try one under 1 MB.' });
+    return;
+  }
+  const img = new Image();
+  img.onload = () => {
+    const longest = Math.max(img.naturalWidth, img.naturalHeight);
+    if (!longest) {
+      resolve({ error: "That photo couldn't be read. Try another one." });
+      return;
+    }
+    const scale = Math.min(1, CHAT_IMAGE_MAX_EDGE / longest);
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.max(1, Math.round(img.naturalWidth * scale));
+    canvas.height = Math.max(1, Math.round(img.naturalHeight * scale));
+    const ctx = canvas.getContext('2d');
+    if (!ctx) {
+      resolve({ error: "That photo couldn't be prepared. Try another one." });
+      return;
+    }
+    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+    let out = canvas.toDataURL('image/jpeg', 0.82);
+    for (let q = 0.65; out.length > CHAT_IMAGE_MAX_CHARS && q >= 0.4; q -= 0.15) {
+      out = canvas.toDataURL('image/jpeg', q);
+    }
+    if (out.length > CHAT_IMAGE_MAX_CHARS) {
+      resolve({ error: 'That photo is too big to send. Try a smaller one.' });
+      return;
+    }
+    resolve({ dataUrl: out });
+  };
+  img.onerror = () => resolve({ error: "That photo couldn't be read. Try another one." });
+  img.src = dataUrl;
+});
+
+// Does this optimistic bubble (or pending send) describe the row the server
+// just echoed back? Text alone is not enough once a message can be an image
+// with no text: every photo would match every other photo's empty body, and the
+// wrong bubble would be reconciled while the right one hung there pending.
+// `local` is either a rendered message (image on `image_url` in DMs, `image` in
+// flock chat) or a stored send payload; `server` is the socket row.
+//
+// The server trims the text it stores, so the comparison trims both sides:
+// sending "hi " matched nothing on the way back, and the bubble sat pending
+// until it declared itself failed on a message that had saved fine.
+const sameSend = (local, server) => {
+  if (!local || !server) return false;
+  const localImage = local.image_url || local.image || null;
+  const trim = (v) => (typeof v === 'string' ? v.trim() : '');
+  return trim(local.text) === trim(server.message_text)
+    && (local.message_type || 'text') === (server.message_type || 'text')
+    && localImage === (server.image_url || null);
+};
+
+// A history fetch replaces the whole message list, and it cannot know about a
+// send the server never confirmed. Carry those bubbles forward — otherwise
+// stepping out of a chat and back in silently deletes a failed photo and the
+// retry attached to it — minus any the history now contains, which is the case
+// where the send actually landed while the client was giving up on it.
+const keepUnsettled = (local, history) => (local || []).filter((m) => (m.pending || m.failed)
+  && !(history || []).some((h) => sameSend(m, {
+    message_text: h.text,
+    message_type: h.message_type,
+    image_url: h.image_url || h.image || null,
+  })));
+
+// One-line summary of a message for the places that can only show one line: the
+// conversation list, the reply bar, a quoted reply.
+//
+// A photo message has NO text. It used to be sent with the literal word "Photo"
+// as its body, which made every preview work by accident and put a word nobody
+// typed into the database, into push notification bodies and into chat search
+// results. The body is empty now and the WORD lives here, in the one layer that
+// actually needs a label. Do not push it back down into the message.
+//
+// `hadContent` covers the conversation list loaded from GET /api/dm, which
+// returns the stored body and nothing else: an empty body on a conversation that
+// demonstrably has messages can only be an image-only message, so it reads as a
+// photo rather than as "no messages".
+const messagePreview = (m) => {
+  if (!m) return '';
+  const text = typeof m.text === 'string' ? m.text.trim() : '';
+  if (text) return text;
+  if (m.message_type === 'venue_card' || m.venue_data) return 'Venue';
+  if (m.message_type === 'image' || m.image_url || m.image || m.hadContent) return 'Photo';
+  return '';
+};
+
 // A guest's identity arrives in two forms and the roster used to keep only the
 // wrong one. `id` is the namespaced string the roster is keyed on ("guest:12",
 // deliberately non-numeric so it can never be mistaken for a user id); the REST
@@ -4734,7 +4852,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
               reactions: (m.reactions || []).map(r => r.emoji),
               ...(m.image_url ? { image: m.image_url } : {}),
             }));
-            setFlocks(prev => prev.map(f => f.id === selectedFlockId ? { ...f, messages: msgs } : f));
+            setFlocks(prev => prev.map(f => f.id === selectedFlockId
+              ? { ...f, messages: [...msgs, ...keepUnsettled(f.messages, msgs)] }
+              : f));
           })
           .catch(() => {})
           .finally(() => setMessagesLoading(false));
@@ -4792,8 +4912,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
       // timestamp) instead of ignoring it — ignoring left temp ids forever
       // and gave no signal when a send was dropped (round 4).
       if (String(msg.sender_id) === String(authUser?.id)) {
+        // Matching on text alone was fine while every message had text. A photo
+        // carries none, so two photos in a row both matched the first pending
+        // entry: the type and the image itself are part of the identity now.
         const entry = [...pendingEchoRef.current.entries()]
-          .find(([, p]) => p.flockId === msg.flock_id && p.text === (msg.message_text || ''));
+          .find(([, p]) => p.flockId === msg.flock_id && sameSend(p, msg));
         if (entry) {
           const [tempId, p] = entry;
           clearTimeout(p.timer);
@@ -4802,10 +4925,31 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
             if (f.id !== msg.flock_id) return f;
             return {
               ...f,
-              messages: (f.messages || []).map(m => (m.id === tempId ? { ...m, id: msg.id, pending: false } : m)),
+              messages: (f.messages || []).map(m => (m.id === tempId ? { ...m, id: msg.id, pending: false, failed: false } : m)),
             };
           }));
+          return;
         }
+        // No pending entry: an echo that arrived after the 8s timer gave up.
+        // (The server sends an own-echo only to the socket that sent it, so
+        // there is no other-device case to consider here.) Reclaim the
+        // abandoned bubble rather than leaving a photo on screen under a line
+        // saying it never sent.
+        setFlocks(prev => {
+          const fi = prev.findIndex(f => f.id === msg.flock_id);
+          if (fi === -1) return prev;
+          const msgs = prev[fi].messages || [];
+          if (msgs.some(m => m.id === msg.id)) return prev;
+          const staleIdx = msgs.findIndex(m => (m.pending || m.failed) && sameSend(m, msg));
+          // Nothing to reconcile: return the SAME array so React bails out
+          // instead of re-rendering the whole tree on every echo.
+          if (staleIdx === -1) return prev;
+          const updated = [...msgs];
+          updated[staleIdx] = { ...updated[staleIdx], id: msg.id, pending: false, failed: false };
+          const next = [...prev];
+          next[fi] = { ...prev[fi], messages: updated };
+          return next;
+        });
         return;
       }
       const mapped = {
@@ -5194,19 +5338,42 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
     }
   }, [selectedFlockId]);
 
-  // Transmit one flock text message: optimistic bubble + socket (echo-
-  // reconciled) or HTTP fallback. Used by fresh sends AND tap-to-retry.
-  const transmitFlockMessage = useCallback(async (flockId, text) => {
+  // Transmit one flock message: optimistic bubble + socket (echo-reconciled) or
+  // HTTP fallback. Used by fresh sends AND tap-to-retry, for text and photos
+  // alike — a photo used to go straight out on the socket with no fallback, no
+  // pending state and no way to retry, so sending one with the connection down
+  // put a picture on screen that was never stored anywhere.
+  const transmitFlockMessage = useCallback(async (flockId, text, opts = {}) => {
+    const image = opts.image_url || null;
+    const msgType = opts.message_type || (image ? 'image' : 'text');
     // Optimistic local update
     const tempId = Date.now();
-    addMessageToFlock(flockId, { id: tempId, sender: 'You', senderId: authUser?.id, senderImage: profilePic, time: 'Now', text, reactions: [], pending: true });
+    addMessageToFlock(flockId, {
+      id: tempId,
+      sender: 'You',
+      senderId: authUser?.id,
+      senderImage: profilePic,
+      time: 'Now',
+      text,
+      reactions: [],
+      message_type: msgType,
+      ...(image ? { image } : {}),
+      pending: true,
+    });
 
     // Send via WebSocket when connected, HTTP only as the fallback —
     // both paths persist server-side, so firing both stored every
     // message twice (round 3: duplicates appeared on history reload).
     const sock = getSocket();
     if (sock?.connected) {
-      socketSendMessage(flockId, text);
+      // Photo and text are separate emitters here because services/socket.js
+      // sendMessage() has no image_url field at all — the same omission this
+      // change just fixed in api.js, on the other transport (reported; not my
+      // file). So a CAPTIONED photo cannot go out over the socket today: pass
+      // text and an image together only once that helper carries both, or the
+      // caption is dropped on the primary path and kept on the fallback.
+      if (image) socketSendImage(flockId, image);
+      else socketSendMessage(flockId, text);
       // A connected socket doesn't prove persistence — rate limits,
       // moderation, or a DB failure drop the message with no echo. If no
       // echo arrives, the message shows as failed with tap-to-retry. An
@@ -5221,26 +5388,43 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           return { ...f, messages: (f.messages || []).map(m => (m.id === tempId ? { ...m, pending: false, failed: true } : m)) };
         }));
       }, 8000);
-      pendingEchoRef.current.set(tempId, { flockId, text, timer });
+      pendingEchoRef.current.set(tempId, { flockId, text, message_type: msgType, image, timer });
     } else {
       try {
-        await apiSendMessage(flockId, text);
-      } catch {
+        const data = await apiSendMessage(flockId, text, { message_type: msgType, image_url: image || undefined });
+        // The REST route returns the stored row and emits no echo, so this is
+        // where the bubble stops being a temp id — without it, reacting to or
+        // reporting the photo you just sent addressed a row number the server
+        // has never seen.
+        const savedId = data?.message?.id;
+        setFlocks(prev => prev.map(f => {
+          if (f.id !== flockId) return f;
+          return { ...f, messages: (f.messages || []).map(m => (m.id === tempId ? { ...m, ...(savedId ? { id: savedId } : {}), pending: false } : m)) };
+        }));
+      } catch (err) {
+        // The server words a moderation refusal ("that image can't be sent")
+        // and api.js words the network cases. Silence here is what made a
+        // rejected photo look like it had gone through.
+        showToast(err?.message || "That didn't send. Tap it to retry.", 'error');
         setFlocks(prev => prev.map(f => {
           if (f.id !== flockId) return f;
           return { ...f, messages: (f.messages || []).map(m => (m.id === tempId ? { ...m, pending: false, failed: true } : m)) };
         }));
       }
     }
-  }, [addMessageToFlock, authUser]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [addMessageToFlock, authUser, showToast]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Tap-to-retry: drop the failed bubble, send the same text fresh.
+  // Tap-to-retry: drop the failed bubble, send the same message fresh. The
+  // photo rides along in the bubble, so a retry never re-opens the picker.
   const retryFailedMessage = useCallback((flockId, failedMsg) => {
     setFlocks(prev => prev.map(f => {
       if (f.id !== flockId) return f;
       return { ...f, messages: (f.messages || []).filter(m => m.id !== failedMsg.id) };
     }));
-    transmitFlockMessage(flockId, failedMsg.text);
+    transmitFlockMessage(flockId, failedMsg.text || '', {
+      message_type: failedMsg.message_type,
+      image_url: failedMsg.image || null,
+    });
   }, [transmitFlockMessage]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Send chat message — emit via WebSocket, fall back to HTTP
@@ -5358,33 +5542,38 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
     setShowVenueShareModal(false);
   }, [addMessageToFlock, authUser, profilePic, showToast]);
 
-  // Share image to chat
+  // Share image to chat. This used to build its own optimistic bubble and fire
+  // the socket unconditionally: no HTTP fallback (so a photo sent while
+  // disconnected was never stored), no echo reconciliation (so the bubble kept
+  // a temp id that reactions and reports could not address), and no failure
+  // state (so a photo the server refused on moderation stayed on screen looking
+  // sent). It goes through the one transmit path now, like text does.
+  //
+  // The pending image is cleared FIRST so a second tap on Send cannot queue the
+  // same photo twice while the first is still in flight.
   const shareImageToChat = useCallback((flockId) => {
     if (!pendingImage) return;
-    const imageMessage = {
-      id: Date.now(),
-      sender: 'You',
-      time: new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }),
-      text: '',
-      reactions: [],
-      image: pendingImage
-    };
-    addMessageToFlock(flockId, imageMessage);
-
-    // Broadcast via WebSocket so other users see it in real-time
-    socketSendImage(flockId, pendingImage);
-
+    const image = pendingImage;
     setPendingImage(null);
     setShowImagePreview(false);
-  }, [pendingImage, addMessageToFlock]);
+    transmitFlockMessage(flockId, '', { message_type: 'image', image_url: image });
+  }, [pendingImage, transmitFlockMessage]);
 
-  // Handle image selection
+  // Handle image selection. The picked file is sized for sending BEFORE it
+  // becomes the preview, so what is on screen is what goes out.
   const handleChatImageSelect = useCallback((e) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    if (file.size > 5 * 1024 * 1024) { showToast('Image too large (max 5MB)', 'error'); return; }
+    if (file.size > 5 * 1024 * 1024) { showToast('That photo is too big. Pick one under 5 MB.', 'error'); return; }
     const reader = new FileReader();
-    reader.onload = () => { setPendingImage(reader.result); setShowImagePreview(true); };
+    reader.onload = () => {
+      prepareChatImage(reader.result).then(({ dataUrl, error }) => {
+        if (error) { showToast(error, 'error'); return; }
+        setPendingImage(dataUrl);
+        setShowImagePreview(true);
+      });
+    };
+    reader.onerror = () => showToast("That photo couldn't be read. Try another one.", 'error');
     reader.readAsDataURL(file);
     e.target.value = '';
   }, [showToast]);
@@ -5550,14 +5739,20 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
     setCameraShutter(true);
     setTimeout(() => setCameraShutter(false), 160);
     closeCameraViewfinder();
-    if (source === 'flock') {
-      setPendingImage(dataUrl);
-      setShowImagePreview(true);
-    } else if (source === 'dm') {
-      setDmPendingImage(dataUrl);
-      setShowDmImagePreview(true);
-    }
-  }, [showCameraViewfinder, closeCameraViewfinder, cameraFacing]);
+    // A full-resolution frame off a modern phone camera is several megabytes of
+    // base64. Size it for the wire before it becomes the preview — same step
+    // the library picker takes, so both routes send the same shape of file.
+    prepareChatImage(dataUrl).then(({ dataUrl: sized, error }) => {
+      if (error) { showToast(error, 'error'); return; }
+      if (source === 'flock') {
+        setPendingImage(sized);
+        setShowImagePreview(true);
+      } else if (source === 'dm') {
+        setDmPendingImage(sized);
+        setShowDmImagePreview(true);
+      }
+    });
+  }, [showCameraViewfinder, closeCameraViewfinder, cameraFacing, showToast]);
 
   // Crop flow state
   const [cropImageSrc, setCropImageSrc] = useState(null); // raw image data URL for cropping
@@ -6553,7 +6748,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
             reactions: m.reactions || [],
             reply_to: m.reply_to ? { id: m.reply_to.id, text: m.reply_to.message_text, sender: m.reply_to.sender_name } : null,
           }));
-          setDirectMessages(prev => prev.map(d => d.userId === selectedDmId ? { ...d, messages: msgs, unread: 0 } : d));
+          setDirectMessages(prev => prev.map(d => d.userId === selectedDmId
+            ? { ...d, messages: [...msgs, ...keepUnsettled(d.messages, msgs)], unread: 0 }
+            : d));
         })
         .catch(() => {});
       // Load venue votes for this conversation
@@ -6566,12 +6763,90 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
     }
   }, [currentScreen, selectedDmId, authUser]);
 
+  // Socket-sent DMs waiting for their own echo back from the server, keyed by
+  // the optimistic bubble's temp id. Same job as pendingEchoRef in flock chat:
+  // a connected socket is not proof of persistence, and a DM the server refused
+  // (moderation, rate limit, a dropped connection mid-send) used to sit on
+  // screen looking sent until the next reload quietly removed it.
+  const dmEchoRef = useRef(new Map());
+
+  // One DM transmission: optimistic bubble, then socket when connected (echo
+  // reconciled) or REST when not. Both persist server-side, so exactly one of
+  // them runs — sending on both stores the message twice.
+  const transmitDm = useCallback((userId, payload) => {
+    const tempId = `temp-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+    const optimistic = {
+      id: tempId,
+      sender: 'You',
+      senderId: authUser?.id,
+      text: payload.text,
+      time: new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }),
+      message_type: payload.message_type,
+      venue_data: payload.venue_data || null,
+      image_url: payload.image_url || null,
+      reactions: [],
+      reply_to: payload.reply_to || null,
+      pending: true,
+    };
+    setDirectMessages(prev => prev.map(d => d.userId === userId
+      ? { ...d, messages: [...d.messages, optimistic], lastMessage: messagePreview(optimistic), lastMessageIsYou: true }
+      : d));
+
+    const settle = (patch) => setDirectMessages(prev => prev.map(d => d.userId === userId
+      ? { ...d, messages: d.messages.map(m => (m.id === tempId ? { ...m, ...patch } : m)) }
+      : d));
+
+    const dmSock = getSocket();
+    if (dmSock?.connected) {
+      socketSendDm(userId, payload.text, {
+        message_type: payload.message_type,
+        venue_data: payload.venue_data,
+        image_url: payload.image_url,
+        reply_to_id: payload.reply_to_id || null,
+      });
+      // No automatic REST retry here: if the insert succeeded and only its echo
+      // was lost, a silent retry would post the photo twice. Only the user can
+      // decide that, so the bubble offers a retry instead of taking one.
+      const timer = setTimeout(() => {
+        if (!dmEchoRef.current.has(tempId)) return;
+        dmEchoRef.current.delete(tempId);
+        settle({ pending: false, failed: true });
+      }, 8000);
+      dmEchoRef.current.set(tempId, { userId, payload, timer });
+    } else {
+      apiSendDM(userId, payload.text, {
+        message_type: payload.message_type,
+        venue_data: payload.venue_data,
+        image_url: payload.image_url,
+        reply_to_id: payload.reply_to_id || null,
+      }).then((data) => {
+        // The REST route returns the stored row and emits nothing, so this is
+        // the only reconciliation the bubble gets. Without the real id its
+        // reactions and reports would address a temp id the server never had.
+        const saved = data?.message;
+        settle(saved?.id ? { id: saved.id, pending: false } : { pending: false });
+      }).catch((err) => {
+        // api.js words the offline, unreachable and timeout cases; the server
+        // words a moderation refusal. Keep the bubble (the photo is IN it) so
+        // retry is one tap and nobody has to pick the picture again.
+        showToast(err?.message || "That message didn't send. Tap it to retry.", 'error');
+        settle({ pending: false, failed: true });
+      });
+    }
+  }, [authUser, showToast]);
+
   const sendDmMessage = useCallback((opts = {}) => {
-    const text = (opts.text || chatInputRef.current).trim();
+    // An explicit opts.text of '' means "this send carries no text" (a photo).
+    // Falling back to the composer on a falsy value would have quietly attached
+    // whatever was half-typed in the input as a caption and then cleared it.
+    const fromComposer = typeof opts.text !== 'string';
+    const text = (fromComposer ? chatInputRef.current : opts.text).trim();
     const msgType = opts.message_type || 'text';
-    if (!text && msgType !== 'image') return;
+    // Must carry something — the same rule the server enforces. A bare
+    // message_type of 'image' with no image stores a blank bubble.
+    if (!text && !opts.image_url && !opts.venue_data) return;
     if (!selectedDm) return;
-    if (!opts.text) {
+    if (fromComposer) {
       chatInputRef.current = '';
       setChatInputHasText(false);
       const inputEl = document.querySelector('[data-dm-input]');
@@ -6583,48 +6858,53 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
       dmStopTyping(selectedDmId);
     }
     // Clear reply
-    const replyTo = opts.reply_to_id ? dmReplyingTo : dmReplyingTo;
+    const replyTo = dmReplyingTo;
     if (!opts.noReply) setDmReplyingTo(null);
-    // Optimistic update — show message instantly
-    const tempId = `temp-${Date.now()}`;
-    const optimistic = {
-      id: tempId,
-      sender: 'You',
-      senderId: authUser?.id,
-      text: text || (msgType === 'image' ? 'Photo' : ''),
-      time: new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }),
+    transmitDm(selectedDmId, {
+      text,
       message_type: msgType,
       venue_data: opts.venue_data || null,
       image_url: opts.image_url || null,
-      reactions: [],
-      reply_to: replyTo && !opts.noReply ? { id: replyTo.id, text: replyTo.text, sender: replyTo.sender } : null,
+      reply_to_id: replyTo && !opts.noReply ? replyTo.id : null,
+      reply_to: replyTo && !opts.noReply ? { id: replyTo.id, text: replyTo.text, sender: replyTo.sender, message_type: replyTo.message_type, image_url: replyTo.image_url } : null,
+    });
+  }, [selectedDm, selectedDmId, dmReplyingTo, transmitDm]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Tap-to-retry: drop the failed bubble, send the same payload fresh. The
+  // photo travels in the bubble, so a retry never asks for the file again.
+  const retryFailedDm = useCallback((userId, failedMsg) => {
+    setDirectMessages(prev => prev.map(d => d.userId === userId
+      ? { ...d, messages: d.messages.filter(m => m.id !== failedMsg.id) }
+      : d));
+    transmitDm(userId, {
+      text: failedMsg.text || '',
+      message_type: failedMsg.message_type || 'text',
+      venue_data: failedMsg.venue_data || null,
+      image_url: failedMsg.image_url || null,
+      reply_to_id: failedMsg.reply_to?.id || null,
+      reply_to: failedMsg.reply_to || null,
+    });
+  }, [transmitDm]);
+
+  // A refused socket send comes back on the server's generic 'error' channel:
+  // moderation rejections, rate limits, "you can no longer message this user".
+  // services/socket.js only console.warns it, so over the socket a photo the
+  // server threw out failed in total silence — the same rejection that gets a
+  // worded toast on the REST path. There is no correlation id on that channel,
+  // so this only speaks up while one of our own sends is actually in flight;
+  // the per-message pending timers still decide which bubble failed.
+  useEffect(() => {
+    const sock = getSocket();
+    if (!sock) return undefined;
+    const onServerError = (data) => {
+      const message = typeof data?.message === 'string' ? data.message.trim() : '';
+      if (!message) return;
+      if (pendingEchoRef.current.size === 0 && dmEchoRef.current.size === 0) return;
+      showToast(message, 'error');
     };
-    setDirectMessages(prev => prev.map(d => d.userId === selectedDmId ? { ...d, messages: [...d.messages, optimistic], lastMessage: text || 'Photo', lastMessageIsYou: true } : d));
-    // Socket when connected, REST when not — the socket helper silently does
-    // nothing while disconnected, which used to drop the message entirely
-    // while the sender kept seeing it (round 5).
-    const dmSock = getSocket();
-    if (dmSock?.connected) {
-      socketSendDm(selectedDmId, text || '', {
-        message_type: msgType,
-        venue_data: opts.venue_data,
-        image_url: opts.image_url,
-        reply_to_id: replyTo && !opts.noReply ? replyTo.id : null,
-      });
-    } else {
-      apiSendDM(selectedDmId, text || '', {
-        message_type: msgType,
-        venue_data: opts.venue_data,
-        image_url: opts.image_url,
-        reply_to_id: replyTo && !opts.noReply ? replyTo.id : null,
-      }).catch((err) => {
-        showToast(err?.message || "That message didn't send. Try again.", 'error');
-        setDirectMessages(prev => prev.map(d => d.userId === selectedDmId
-          ? { ...d, messages: d.messages.filter(m => m.id !== tempId) }
-          : d));
-      });
-    }
-  }, [selectedDm, selectedDmId, dmReplyingTo, authUser]); // eslint-disable-line react-hooks/exhaustive-deps
+    sock.on('error', onServerError);
+    return () => { sock.off('error', onServerError); };
+  }, [authUser?.id, showToast]);
 
   // Listen for real-time DMs
   useEffect(() => {
@@ -6641,22 +6921,52 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
         venue_data: msg.venue_data,
         image_url: msg.image_url,
         reactions: msg.reactions || [],
-        reply_to: msg.reply_to || null,
+        // The server's reply row is { id, message_text, sender_name }; the
+        // bubble reads .text and .sender. Stored raw, a reply delivered live
+        // quoted a blank line under a blank name until the next reload
+        // remapped it from history. Normalised to the shape the UI reads, and
+        // an empty text here now honestly means the quoted message was a photo.
+        reply_to: msg.reply_to
+          ? {
+              id: msg.reply_to.id,
+              text: msg.reply_to.text || msg.reply_to.message_text || '',
+              sender: msg.reply_to.sender || msg.reply_to.sender_name || '',
+            }
+          : null,
       };
-      const previewText = msg.message_type === 'image' ? 'Photo' : msg.message_type === 'venue_card' ? 'Venue' : msg.message_text;
+      const previewText = messagePreview(mapped);
+      // Own echo = the server's acknowledgement that the socket send was
+      // persisted. Cancel its failure timer here, outside the state updater,
+      // so a re-run of the updater can never double-clear it.
+      let matchedTempId = null;
+      if (isYou) {
+        const entry = [...dmEchoRef.current.entries()].find(([, p]) => p.userId === otherUserId && sameSend(p.payload, msg));
+        if (entry) {
+          clearTimeout(entry[1].timer);
+          dmEchoRef.current.delete(entry[0]);
+          matchedTempId = entry[0];
+        }
+      }
       setDirectMessages(prev => {
         const existing = prev.find(d => d.userId === otherUserId);
         if (existing) {
           return prev.map(d => {
             if (d.userId !== otherUserId) return d;
             if (d.messages.some(m => m.id === msg.id)) return d;
-            // If own message, replace the optimistic temp message
+            // If own message, replace the optimistic temp message. Matching on
+            // message_text alone put an image-only echo (empty body) against
+            // the first empty-bodied bubble it found; it now has to match the
+            // type and the image too. The content fallback catches an echo that
+            // arrives AFTER the 8s timer gave up, which would otherwise leave a
+            // duplicate next to a bubble claiming it never sent.
             if (isYou) {
-              const tempIdx = d.messages.findIndex(m => typeof m.id === 'string' && m.id.startsWith('temp-') && m.text === msg.message_text);
+              const tempIdx = matchedTempId !== null
+                ? d.messages.findIndex(m => m.id === matchedTempId)
+                : d.messages.findIndex(m => typeof m.id === 'string' && m.id.startsWith('temp-') && sameSend(m, msg));
               if (tempIdx !== -1) {
                 const updated = [...d.messages];
                 updated[tempIdx] = mapped;
-                return { ...d, messages: updated, lastMessageTime: msg.created_at };
+                return { ...d, messages: updated, lastMessage: previewText, lastMessageIsYou: true, lastMessageTime: msg.created_at };
               }
             }
             return { ...d, messages: [...d.messages, mapped], lastMessage: previewText, lastMessageIsYou: isYou, lastMessageTime: msg.created_at, unread: isYou ? d.unread : d.unread + 1 };
@@ -6804,9 +7114,16 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   const handleDmImageSelect = useCallback((e) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    if (file.size > 5 * 1024 * 1024) { showToast('Image too large (max 5MB)', 'error'); return; }
+    if (file.size > 5 * 1024 * 1024) { showToast('That photo is too big. Pick one under 5 MB.', 'error'); return; }
     const reader = new FileReader();
-    reader.onload = () => { setDmPendingImage(reader.result); setShowDmImagePreview(true); };
+    reader.onload = () => {
+      prepareChatImage(reader.result).then(({ dataUrl, error }) => {
+        if (error) { showToast(error, 'error'); return; }
+        setDmPendingImage(dataUrl);
+        setShowDmImagePreview(true);
+      });
+    };
+    reader.onerror = () => showToast("That photo couldn't be read. Try another one.", 'error');
     reader.readAsDataURL(file);
     e.target.value = '';
   }, [showToast]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -7220,7 +7537,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           <img src={dmPendingImage} alt="Preview" style={{ maxWidth: '100%', maxHeight: '60%', borderRadius: '12px', objectFit: 'contain' }} />
           <div style={{ display: 'flex', gap: '12px', marginTop: '20px' }}>
             <button className="hit44 glass-btn glass-secondary" onClick={() => { setShowDmImagePreview(false); setDmPendingImage(null); }} style={{ padding: '12px 24px', borderRadius: '24px', border: '2px solid var(--bg-card-solid)', backgroundColor: 'transparent', color: 'white', fontSize: 'var(--t-body)', fontWeight: '600', cursor: 'pointer' }}>Cancel</button>
-            <button className="hit44 glass-btn glass-navy" onClick={() => { sendDmMessage({ text: 'Photo', message_type: 'image', image_url: dmPendingImage, noReply: true }); setShowDmImagePreview(false); setDmPendingImage(null); }} style={{ padding: '12px 24px', borderRadius: '24px', border: 'none', background: colors.navyBg, color: 'white', fontSize: 'var(--t-body)', fontWeight: '600', cursor: 'pointer' }}>Send</button>
+            {/* An image-only message: text is '', not the word "Photo". The
+                explicit '' also stops the composer's half-typed draft from
+                being swept in as a caption. */}
+            <button className="hit44 glass-btn glass-navy" onClick={() => { const img = dmPendingImage; setShowDmImagePreview(false); setDmPendingImage(null); sendDmMessage({ text: '', message_type: 'image', image_url: img, noReply: true }); }} style={{ padding: '12px 24px', borderRadius: '24px', border: 'none', background: colors.navyBg, color: 'white', fontSize: 'var(--t-body)', fontWeight: '600', cursor: 'pointer' }}>Send</button>
           </div>
         </div>
       )}
@@ -7258,12 +7578,21 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 }
               </div>
               <div style={{ maxWidth: '75%', position: 'relative' }}>
-                {/* Reply reference */}
+                {/* Reply reference. A quoted photo has no text of its own, so
+                    the quote says what it is instead of sitting empty. */}
                 {m.reply_to && (
                   <div style={{ padding: '4px 10px', marginBottom: '2px', borderRadius: '8px', backgroundColor: 'var(--bg-tertiary)', border: '1px solid var(--border-default)' }}>
                     <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: colors.navy }}>{m.reply_to.sender}</span>
-                    <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '1px 0 0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{m.reply_to.text}</p>
+                    <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '1px 0 0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{messagePreview({ ...m.reply_to, hadContent: true })}</p>
                   </div>
+                )}
+                {/* A send the server never acknowledged. The photo is still in
+                    this bubble, so retrying costs one tap and never asks for
+                    the picture again (upload contract, SLOP-AUDIT J3). */}
+                {m.failed && (
+                  <button className="hit44" onClick={() => retryFailedDm(selectedDmId, m)} style={{ background: 'none', border: 'none', padding: '0 4px 4px', cursor: 'pointer', fontSize: 'var(--t-meta)', fontWeight: '600', color: 'var(--accent-red-text, #b91c1c)', display: 'block', marginLeft: 'auto' }}>
+                    Didn't send. Tap to retry
+                  </button>
                 )}
                 {/* Venue card message. Same VenueCard as flocks, and wrapped in
                     the same tap target as text and photo bubbles so it can be
@@ -7374,7 +7703,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
         <div style={{ padding: '8px 12px', borderTop: '1px solid var(--divider)', backgroundColor: 'var(--bg-tertiary)', display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0 }}>
           <div style={{ flex: 1, paddingLeft: '10px', borderRadius: '8px', backgroundColor: 'var(--bg-tertiary)', padding: '6px 10px' }}>
             <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: colors.navy }}>Replying to {dmReplyingTo.sender}</span>
-            <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '1px 0 0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{dmReplyingTo.text}</p>
+            <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '1px 0 0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{messagePreview(dmReplyingTo)}</p>
           </div>
           <button aria-label="Close" className="hit44" onClick={() => setDmReplyingTo(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '4px' }}>{Icons.x(colors.textSecondary, 14)}</button>
         </div>
@@ -9990,7 +10319,16 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 <div style={{ flex: 1, height: '1px', backgroundColor: 'var(--pill-bg)' }} />
               </div>
               {filteredDms.map((dm) => {
-                const lastMsg = dm.messages?.length > 0 ? dm.messages[dm.messages.length - 1] : (dm.lastMessage ? { text: dm.lastMessage, sender: dm.lastMessageIsYou ? 'You' : dm.name } : null);
+                // GET /api/dm returns the stored body and no message_type, so a
+                // conversation whose last message was a photo arrives with an
+                // empty string. `hadContent` is what tells the preview that an
+                // empty body here is a real message, not an empty inbox.
+                const lastMsg = dm.messages?.length > 0
+                  ? dm.messages[dm.messages.length - 1]
+                  : (dm.lastMessage || dm.lastMessageTime
+                      ? { text: dm.lastMessage || '', sender: dm.lastMessageIsYou ? 'You' : dm.name, hadContent: true }
+                      : null);
+                const lastMsgPreview = messagePreview(lastMsg);
                 return (
                   <button className="hit44" key={`dm-${dm.userId}`} onClick={() => { setSelectedDmId(dm.userId); setCurrentScreen('dmDetail'); setDirectMessages(prev => prev.map(d => d.userId === dm.userId ? { ...d, unread: 0 } : d)); }} style={{ width: '100%', textAlign: 'left', backgroundColor: 'var(--bg-card-solid)', borderRadius: '16px', padding: '12px 14px', marginBottom: '6px', border: dm.unread ? `1.5px solid ${colors.navy}15` : `1px solid var(--border-default)`, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '12px', transition: 'opacity 0.2s', boxShadow: dm.unread ? '0 2px 12px rgba(13,40,71,0.08)' : '0 1px 4px rgba(0,0,0,0.03)' }}>
                     <div style={{ position: 'relative', flexShrink: 0 }}>
@@ -10004,7 +10342,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                         {dm.lastMessageTime && <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', fontWeight: '500' }}>{new Date(dm.lastMessageTime).toLocaleDateString([], { month: 'short', day: 'numeric' })}</span>}
                       </div>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                                                <p style={{ fontSize: 'var(--t-meta)', color: dm.unread ? colors.navy : 'var(--text-tertiary)', fontWeight: dm.unread ? '500' : '400', margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{lastMsg?.sender === 'You' ? 'You: ' : ''}{lastMsg?.text || 'Start a conversation'}</p>
+                                                <p style={{ fontSize: 'var(--t-meta)', color: dm.unread ? colors.navy : 'var(--text-tertiary)', fontWeight: dm.unread ? '500' : '400', margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{lastMsgPreview && lastMsg?.sender === 'You' ? 'You: ' : ''}{lastMsgPreview || 'Start a conversation'}</p>
                       </div>
                     </div>
                     {dm.unread > 0 && (
@@ -10074,6 +10412,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
               {filteredFlocks.map((f, idx) => {
                 const isPinned = pinnedFlockIds.includes(f.id);
                 const lastMsg = f.messages[f.messages.length - 1];
+                // A photo posted to a flock has no text, so the row said
+                // "You: " and stopped. One line gets one label.
+                const lastMsgPreview = messagePreview(lastMsg);
                 const hasUnread = f.messages.some(m => m.sender !== 'You' && !m.read);
                 const statusColor = f.status === 'completed' ? '#4a7ba7' : f.status === 'confirmed' ? '#22C55E' : f.status === 'voting' ? '#F59E0B' : colors.steel;
                 // statusColor is the DOT (decorative, keeps the vivid hue). The chip
@@ -10141,7 +10482,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
 
                         {/* Last message */}
                         <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                                                    <p style={{ fontSize: 'var(--t-meta)', color: hasUnread ? colors.navy : 'var(--text-tertiary)', fontWeight: hasUnread ? '500' : '400', margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{lastMsg ? `${lastMsg.sender === 'You' ? 'You' : lastMsg.sender}: ${lastMsg.text}` : 'No messages yet'}</p>
+                                                    <p style={{ fontSize: 'var(--t-meta)', color: hasUnread ? colors.navy : 'var(--text-tertiary)', fontWeight: hasUnread ? '500' : '400', margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{lastMsg ? `${lastMsg.sender === 'You' ? 'You' : lastMsg.sender}: ${lastMsgPreview}` : 'No messages yet'}</p>
                         </div>
                       </div>
 
@@ -10704,7 +11045,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
             <div style={{ width: '3px', height: '36px', backgroundColor: colors.navyBg, borderRadius: '2px' }} />
             <div style={{ flex: 1 }}>
               <p style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: colors.navy, margin: 0 }}>Replying to {replyingTo.sender}</p>
-              <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '2px 0 0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{replyingTo.text}</p>
+              <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '2px 0 0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{messagePreview(replyingTo)}</p>
             </div>
             <button className="hit44" onClick={() => setReplyingTo(null)} style={{ width: '28px', height: '28px', borderRadius: '14px', backgroundColor: 'var(--bg-hover)', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'background-color 0.2s ease' }}>{Icons.x(colors.textSecondary, 16)}</button>
           </div>
