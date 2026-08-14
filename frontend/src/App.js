@@ -16,7 +16,7 @@ import { connectSocket, disconnectSocket, getSocket, joinFlock, leaveFlock, send
 import { requestNotificationPermission, onForegroundMessage, getNotificationStatus, onPushNavigate, unregisterPushToken } from './services/firebase';
 import { resendVerificationEmail } from './services/api';
 import { setAvailability, clearAvailability, getMyAvailability, getFriendsAvailability, getSensorCurrent, getSensorHistory, checkInManual, getNfcCheckin, getCalendarEvents, createCalendarEvent, deleteCalendarEvent } from './services/api';
-import { joinVenueRoom, leaveVenueRoom, onVenueSensorUpdate, onVenueCheckin } from './services/socket';
+import { joinVenueRoom, leaveVenueRoom, onVenueSensorUpdate, onVenueCheckin, onSessionRevoked } from './services/socket';
 import { pullSettings, queueSync } from './services/userSettings';
 import { QRCodeSVG } from 'qrcode.react';
 import { Html5Qrcode } from 'html5-qrcode';
@@ -2513,6 +2513,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   const [showVenueOnboarding, setShowVenueOnboarding] = useState(false);
   const [venueOnboardingStep, setVenueOnboardingStep] = useState(0);
   const [venueOnboardingData, setVenueOnboardingData] = useState({ businessName: '', category: '', location: '', description: '', goals: [] });
+  // Set when the profile save is rejected, so the last step can say so instead
+  // of walking the owner into a dashboard with nothing saved behind it.
+  const [venueOnboardingError, setVenueOnboardingError] = useState('');
   const [venueSearchQuery, setVenueSearchQuery] = useState('');
   const [venueSearchResults, setVenueSearchResults] = useState([]);
   const venueSearchTimer = React.useRef(null);
@@ -3595,7 +3598,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
     ]).then(([current, history]) => {
       if (cancelled) return;
       setSensorData(current && current.sensor_data ? current : null);
-      setSensorHistory(history?.readings || []);
+      // Array.isArray, not `|| []`: the chart calls .find on this every render,
+      // and a readings field that came back as an object (or a string) would
+      // take the whole venue sheet down with it.
+      setSensorHistory(Array.isArray(history?.readings) ? history.readings : []);
     });
 
     joinVenueRoom(pid);
@@ -4042,7 +4048,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
       setCurrentScreen('adminRevenue');
     }
     if (urlParams.get('venue') === 'true' && (authUser?.role === 'venue_owner' || authUser?.role === 'admin')) {
-      setVenueTier(urlParams.get('tier') || 'free');
+      // The tier used to come off the query string, so `?venue=true&tier=pro`
+      // dressed the dashboard up as Pro for anyone who typed it. The server is
+      // the only thing that decides a tier; the profile load below supplies it.
       setCurrentScreen('venueDashboard');
     }
   }, [authUser]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -4924,7 +4932,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
     const unsub = onFlockDeleted((data) => {
       setFlocks(prev => prev.filter(f => f.id !== data.flockId));
       if (selectedFlockId === data.flockId) {
-        setCurrentScreen('home');
+        // 'home' is not a screen this app has ever had. It fell through the
+        // renderScreen switch to whatever tab happened to be selected, so
+        // being kicked out of a deleted flock could land you on the chat list
+        // or on nothing at all. 'main' is the name every other caller uses.
+        setCurrentScreen('main');
         setSelectedFlockId(null);
       }
       showToast(`${data.flockName || 'A flock'} was deleted by ${data.deletedBy}`);
@@ -5145,8 +5157,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
     } else {
       try {
         await apiSendMessage(flockId, msgText, { message_type: 'venue_card', venue_data: venueData });
-      } catch {
-        showToast('Venue failed to send', 'error');
+      } catch (err) {
+        // api.js already words the offline, unreachable and timeout cases; the
+        // fallback only covers an error with no message at all.
+        showToast(err?.message || "That venue card didn't send. Try again.", 'error');
       }
     }
 
@@ -5439,7 +5453,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
         showToast('Profile picture updated!', 'success');
       } catch (err) {
         console.error('Profile pic upload failed:', err);
-        showToast('Upload failed', 'error');
+        showToast(err?.message || "That photo didn't upload. Try again.", 'error');
       }
     }, 'image/jpeg', 0.9);
   }, [cropImageSrc, cropZoom, cropOffset, showToast]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -5666,10 +5680,16 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
       showToast(data.message || 'Location shared');
       setShowSOS(false);
     } catch (err) {
-      if (err.code) {
-        showToast('Could not get location. Check permissions', 'error');
+      // GeolocationPositionError codes are numbers (1 denied, 2 unavailable,
+      // 3 timeout). api.js errors now carry a STRING err.code as well, so the
+      // old truthiness check blamed the phone's location permission for
+      // server-side failures and hid what actually went wrong.
+      if (typeof err?.code === 'number') {
+        showToast(err.code === 1
+          ? 'Flock needs location permission to share where you are.'
+          : "Couldn't get a location fix. Try again in a moment.", 'error');
       } else {
-        showToast(err.message || 'Failed to share location', 'error');
+        showToast(err?.message || "That didn't send. Try again.", 'error');
       }
     } finally {
       setSosAlertSending(false);
@@ -5818,6 +5838,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
       onClick={() => setVerifyPrompt(null)}
       style={{ position: 'fixed', inset: 0, zIndex: 300, backgroundColor: 'var(--modal-backdrop)', display: 'flex', alignItems: 'flex-end', justifyContent: 'center' }}
     >
+      {/* The one sheet in the file that was missing this: no Escape, no focus
+          trap, and Tab walked straight out into the screen behind it. */}
+      <DialogBehavior onClose={() => setVerifyPrompt(null)} label="Confirm your email" />
       <div onClick={(e) => e.stopPropagation()} style={{ width: '100%', maxWidth: '440px', backgroundColor: 'var(--bg-card-solid)', borderRadius: '20px 20px 0 0', padding: '22px 20px calc(22px + var(--safe-bottom))' }}>
         <h3 style={{ fontFamily: 'var(--font-display)', letterSpacing: '-0.005em', fontSize: 'var(--t-title)', fontWeight: '600', color: 'var(--text-primary)', margin: '0 0 8px' }}>Confirm your email first</h3>
         <p style={{ fontSize: 'var(--t-body)', color: 'var(--text-secondary)', margin: '0 0 16px', lineHeight: 1.5 }}>
@@ -6225,8 +6248,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
         venue_data: opts.venue_data,
         image_url: opts.image_url,
         reply_to_id: replyTo && !opts.noReply ? replyTo.id : null,
-      }).catch(() => {
-        showToast('Message failed to send', 'error');
+      }).catch((err) => {
+        showToast(err?.message || "That message didn't send. Try again.", 'error');
         setDirectMessages(prev => prev.map(d => d.userId === selectedDmId
           ? { ...d, messages: d.messages.filter(m => m.id !== tempId) }
           : d));
@@ -7811,7 +7834,18 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
         setCurrentScreen('chatDetail');
         setIsLoading(false);
       } catch (err) {
-        if (!needsEmailVerification(err, 'start a flock')) showToast(err.message || 'Failed to create flock', 'error');
+        if (!needsEmailVerification(err, 'start a flock')) showToast(err.message || "That plan didn't get created. Try again.", 'error');
+        // The form is wiped before the request goes out so the screen feels
+        // instant. That is fine when it works, and cruel when it does not: a
+        // failed create used to leave the user staring at an empty form with
+        // the name, the friends, the venue and the budget setting all gone.
+        // Put every captured value back so the retry is one tap.
+        setFlockName(capturedName);
+        setFlockFriends(capturedFriends);
+        setSelectedVenueForCreate(capturedVenue);
+        setFlockCashPool(capturedBudget);
+        setFlockBudgetContext(capturedBudgetCtx);
+        setFlockGhostMode(capturedGhostMode);
         setIsLoading(false);
       }
     };
@@ -8835,10 +8869,15 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
               {/* Live Occupancy card — only renders when a Pi sensor exists for this venue */}
               {sensorData?.sensor_data && (() => {
                 const sd = sensorData.sensor_data;
-                const noiseLabel = sd.noise_db == null ? null
-                  : sd.noise_db < 50 ? { text: 'Quiet', color: colors.steel }
-                  : sd.noise_db < 70 ? { text: 'Moderate', color: colors.amber }
-                  : sd.noise_db < 85 ? { text: 'Lively', color: colors.food }
+                // Number first. A `== null` check alone let a non-numeric
+                // reading through, and every comparison below is false against
+                // NaN, so a garbage value was labelled "Loud" and printed
+                // "NaN dB" beside it.
+                const noiseDb = Number(sd.noise_db);
+                const noiseLabel = !Number.isFinite(noiseDb) ? null
+                  : noiseDb < 50 ? { text: 'Quiet', color: colors.steel }
+                  : noiseDb < 70 ? { text: 'Moderate', color: colors.amber }
+                  : noiseDb < 85 ? { text: 'Lively', color: colors.food }
                   : { text: 'Loud', color: colors.red };
                 const ageMin = sd.recorded_at
                   ? Math.max(0, Math.round((Date.now() - new Date(sd.recorded_at).getTime()) / 60000))
@@ -8888,7 +8927,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                       <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '12px' }}>
                         <div style={{ width: '6px', height: '6px', borderRadius: '50%', backgroundColor: noiseLabel.color }} />
                         <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: noiseLabel.color }}>{noiseLabel.text}</span>
-                        <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)' }}>· {Number(sd.noise_db).toFixed(0)} dB</span>
+                        <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)' }}>· {noiseDb.toFixed(0)} dB</span>
                       </div>
                     )}
 
@@ -9741,6 +9780,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   // CHAT DETAIL SCREEN - Enhanced with location cards, timestamps, typing indicators, and image sharing
   const ChatDetailScreen = () => {
     const flock = getSelectedFlock();
+    // Every line below reads off `flock` unguarded, starting with flock.name in
+    // the header. An empty flock list here is a TypeError during render, which
+    // React answers by unmounting the entire app.
+    if (!flock) return <MissingFlockPanel />;
     const reactions = ['❤️', '👍', '😂', '🔥'];
 
     return (
@@ -10860,8 +10903,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                   let url;
                   try {
                     ({ url } = await createFlockInviteLink(selectedFlockId));
-                  } catch {
-                    showToast('Could not create invite link', 'error');
+                  } catch (err) {
+                    showToast(err?.message || "Couldn't make an invite link. Try again.", 'error');
                     return;
                   }
                   if (navigator.share && window.Capacitor?.isNativePlatform?.()) {
@@ -11029,7 +11072,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
               </div>
               <div style={{ display: 'flex', gap: '8px' }}>
                 <button className="hit44 glass-btn glass-secondary" onClick={() => setShowLeaveConfirm(false)} style={{ flex: 1, padding: '12px', borderRadius: '12px', border: `2px solid ${colors.creamDark}`, backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontWeight: '600', fontSize: 'var(--t-body)', cursor: 'pointer' }}>Cancel</button>
-                <button onClick={async () => {
+                <button disabled={isLoading} onClick={async () => {
                   try {
                     setIsLoading(true);
                     const flockId = flock.id;
@@ -11061,9 +11104,30 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   };
 
   // FLOCK DETAIL SCREEN — Modern Dashboard
+  // Both flock screens can be on screen when the plan behind them stops
+  // existing: the host deletes it, a moderator removes it, or a refresh comes
+  // back without it. The detail screen used to render nothing at all, and the
+  // chat screen read flock.name straight off undefined and white-screened the
+  // whole app. Neither is allowed to be a dead end.
+  const MissingFlockPanel = () => (
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', alignItems: 'center', justifyContent: 'center', gap: '14px', padding: '32px 24px', backgroundColor: 'var(--bg-primary)', textAlign: 'center' }}>
+      <h2 style={{ fontFamily: 'var(--font-display)', fontSize: 'var(--t-title)', fontWeight: '600', color: 'var(--text-primary)', margin: 0, letterSpacing: '-0.005em' }}>This plan isn't open anymore</h2>
+      <p style={{ fontSize: 'var(--t-label)', color: 'var(--text-secondary)', margin: 0, maxWidth: '26em', lineHeight: 1.5 }}>
+        It was either deleted or you are no longer in it. Your other plans are all still here.
+      </p>
+      <button
+        className="hit44"
+        onClick={() => { setCurrentScreen('main'); setSelectedFlockId(null); }}
+        style={{ marginTop: '4px', padding: '12px 24px', borderRadius: '12px', border: 'none', backgroundColor: colors.navy, color: 'white', fontSize: 'var(--t-label)', fontWeight: '600', cursor: 'pointer' }}
+      >
+        Back to your plans
+      </button>
+    </div>
+  );
+
   const FlockDetailScreen = () => {
     const flock = getSelectedFlock();
-    if (!flock) return null;
+    if (!flock) return <MissingFlockPanel />;
     const acceptedMembers = (flock.members || []).filter(m => typeof m === 'object' ? (m.status === 'accepted' || !m.status) : true);
     // Guests are merged for DISPLAY only. flock.guests stays its own array
     // because flock.members feeds the bill-split payer picker and the
@@ -11318,7 +11382,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                       showToast('Thanks! This helps Flock get smarter');
                     } catch (err) {
                       console.error('[Feedback] Submit error:', err);
-                      showToast('Failed to submit feedback', 'error');
+                      showToast(err?.message || "That didn't send. Try again.", 'error');
                     } finally {
                       setFeedbackSubmitting(false);
                     }
@@ -12266,8 +12330,13 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
 
   // Handler for uploading a venue logo
   const handleVenueLogoUpload = async (e) => {
-    const file = e.target.files?.[0];
+    const input = e.target;
+    const file = input.files?.[0];
     if (!file) return;
+    // What to fall back to if this does not land. The optimistic preview below
+    // used to survive a failed upload, so the dashboard showed a logo that was
+    // never saved and came back blank on the next load.
+    const previousLogo = venueLogoUrl;
     // Show preview immediately
     const reader = new FileReader();
     reader.onload = (ev) => setVenueLogoUrl(ev.target.result);
@@ -12279,8 +12348,13 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
       await updateVenueProfile({ photoUrl: url });
     } catch (err) {
       console.error('Logo upload failed:', err);
+      setVenueLogoUrl(previousLogo);
+      showToast(err?.message || "That logo didn't upload. Try again.", 'error');
     } finally {
       setVenueLogoUploading(false);
+      // Clearing the file input is what makes a retry possible: picking the
+      // same file twice fires no change event while the old value is still set.
+      try { input.value = ''; } catch { /* detached */ }
     }
   };
 
@@ -12558,6 +12632,28 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
       pro: { label: 'Pro', color: 'var(--accent-purple-text)', bg: 'var(--accent-purple-bg)' },
     };
 
+    // Tiers are set by us, on the server. The two buttons that used to sit at
+    // the bottom of the plan cards called updateVenueProfile({ tier }) and then
+    // flipped venueTier locally: the server stopped accepting a client-supplied
+    // tier when the self-serve hole was closed, so the request did nothing, the
+    // dashboard showed a plan nobody was on, and nothing had been paid. A
+    // control inside the iOS binary that offers a paid plan and does not
+    // deliver it is an App Review 3.1.1 question and a dead button besides.
+    // There is no venue purchase flow yet, so the honest action is to reach us.
+    const VENUE_SALES_EMAIL = 'support@flockcorp.com';
+    const requestTierUpgrade = (target) => {
+      const subject = encodeURIComponent(`Flock venue upgrade request: ${target}`);
+      const body = encodeURIComponent(
+        `Business: ${venueProfile?.business_name || ''}\nPlan I want: ${target}\n`
+      );
+      try {
+        window.location.href = `mailto:${VENUE_SALES_EMAIL}?subject=${subject}&body=${body}`;
+      } catch {
+        // The address is printed in the sheet as well, so a device with no
+        // mail app still has something to act on.
+      }
+    };
+
     const features = {
       free: [
         'Basic listing on the map',
@@ -12772,10 +12868,13 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
             const todaysIr = ownerSensorHistory
               .filter(r => new Date(r.recorded_at) >= todayStart)
               .reduce((sum, r) => sum + (r.ir_beam_count || 0), 0);
-            const noiseLabel = sd.noise_db == null ? null
-              : sd.noise_db < 50 ? { text: 'Quiet', color: colors.steel }
-              : sd.noise_db < 70 ? { text: 'Moderate', color: colors.amber }
-              : sd.noise_db < 85 ? { text: 'Lively', color: colors.food }
+            // See the venue sheet's copy of this: a non-numeric reading used to
+            // fall through every comparison and get labelled "Loud".
+            const noiseDb = Number(sd.noise_db);
+            const noiseLabel = !Number.isFinite(noiseDb) ? null
+              : noiseDb < 50 ? { text: 'Quiet', color: colors.steel }
+              : noiseDb < 70 ? { text: 'Moderate', color: colors.amber }
+              : noiseDb < 85 ? { text: 'Lively', color: colors.food }
               : { text: 'Loud', color: colors.red };
             const lastSeenMin = sd.recorded_at ? Math.round((Date.now() - new Date(sd.recorded_at).getTime()) / 60000) : Infinity;
             const online = lastSeenMin < 5;
@@ -12802,9 +12901,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                     <p style={{ fontSize: 'var(--t-micro)', color: 'var(--text-secondary)', margin: 0, textTransform: 'uppercase' }}>Noise Level</p>
                     {noiseLabel ? (
                       <p style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: noiseLabel.color, margin: '4px 0 0', lineHeight: 1 }}>
-                        {noiseLabel.text} <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', fontWeight: '500' }}>{Number(sd.noise_db).toFixed(0)} dB</span>
+                        {noiseLabel.text} <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', fontWeight: '500' }}>{noiseDb.toFixed(0)} dB</span>
                       </p>
-                    ) : <p style={{ fontSize: 'var(--t-title)', color: 'var(--text-tertiary)', margin: '4px 0 0' }}>—</p>}
+                    ) : <p style={{ fontSize: 'var(--t-label)', color: 'var(--text-tertiary)', margin: '4px 0 0' }}>No reading yet</p>}
                   </div>
                   <div>
                     <p style={{ fontSize: 'var(--t-micro)', color: 'var(--text-secondary)', margin: 0, textTransform: 'uppercase' }}>Today's Door Count</p>
@@ -12880,7 +12979,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 setVenueTab('promotions');
               } catch (e) {
                 console.error('Post deal failed:', e);
-                showToast('Failed to post deal', 'error');
+                showToast(e?.message || "That deal didn't post. Try again.", 'error');
               }
             }} style={{ width: '100%', padding: '10px', borderRadius: '8px', border: 'none', background: colors.navyMidBg, color: 'white', fontWeight: '600', fontSize: 'var(--t-meta)', cursor: 'pointer' }} disabled={isFeatureLocked('Post deals') || !dealDescription.trim()}>
               Post Deal
@@ -13214,9 +13313,22 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
               {/* Danger Zone */}
               <div style={{ backgroundColor: 'var(--accent-red-bg)', borderRadius: '12px', padding: '12px', border: `1px solid var(--accent-red-text)22` }}>
                 <h3 style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: colors.red, margin: '0 0 10px', display: 'flex', alignItems: 'center', gap: '6px' }}>{Icons.alertCircle(colors.red, 14)} Danger Zone</h3>
-                <button className="hit44 glass-btn glass-danger" onClick={() => { if (window.confirm('Are you sure you want to deactivate your venue listing?')) showToast('Venue deactivated', 'success'); }} style={{ width: '100%', padding: '8px', borderRadius: '6px', border: `1px solid ${colors.red}`, backgroundColor: 'var(--bg-card-solid)', color: colors.red, fontSize: 'var(--t-meta)', fontWeight: '500', cursor: 'pointer' }}>
-                  Deactivate Venue Listing
+                {/* This button used to answer a window.confirm with a green
+                    "Venue deactivated" toast and change nothing at all: no
+                    endpoint for it exists. A control that reports success for
+                    work it never did is worse than no control, and a dead
+                    button is its own App Review rejection. Until deactivation
+                    is built, it asks us, the same way the plan buttons do. */}
+                <button className="hit44 glass-btn glass-danger" onClick={() => {
+                  const subject = encodeURIComponent('Flock venue listing: please deactivate');
+                  const body = encodeURIComponent(`Business: ${venueProfile?.business_name || ''}\n`);
+                  try { window.location.href = `mailto:${VENUE_SALES_EMAIL}?subject=${subject}&body=${body}`; } catch { /* address is in the line below */ }
+                }} style={{ width: '100%', padding: '8px', borderRadius: '6px', border: `1px solid ${colors.red}`, backgroundColor: 'var(--bg-card-solid)', color: colors.red, fontSize: 'var(--t-meta)', fontWeight: '500', cursor: 'pointer' }}>
+                  Ask us to deactivate this listing
                 </button>
+                <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '8px 0 0', lineHeight: 1.5 }}>
+                  Write to {VENUE_SALES_EMAIL} and we will take the listing down. Your account stays yours.
+                </p>
               </div>
             </div>
           )}
@@ -13226,7 +13338,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
             <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.8)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 50, padding: '16px' }}>
             <DialogBehavior onClose={() => setShowUpgradeModal(false)} label="Upgrade" />
               <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '24px', padding: '20px', width: '100%', maxWidth: '320px', maxHeight: '80%', overflowY: 'auto' }}>
-                <h2 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy, margin: '0 0 16px', textAlign: 'center' }}>Choose Your Plan</h2>
+                <h2 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy, margin: '0 0 16px', textAlign: 'center' }}>Venue plans</h2>
 
                 {/* Free Tier */}
                 <div style={{ border: `2px solid ${venueTier === 'free' ? colors.navy : colors.creamDark}`, borderRadius: '12px', padding: '12px', marginBottom: '10px' }}>
@@ -13249,7 +13361,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                   <ul style={{ margin: 0, paddingLeft: '16px', fontSize: 'var(--t-meta)', color: 'var(--text-secondary)' }}>
                     {features.premium.map(f => <li key={f} style={{ marginBottom: '2px' }}>{f}</li>)}
                   </ul>
-                  {venueTier === 'premium' ? <span style={{ display: 'block', textAlign: 'center', fontSize: 'var(--t-meta)', color: 'var(--accent-amber-text)', fontWeight: '500', marginTop: '8px' }}>Current Plan</span> : venueTier === 'free' && <button className="hit44" onClick={() => { setVenueTier('premium'); updateVenueProfile({ tier: 'premium' }).catch(() => {}); setShowUpgradeModal(false); }} style={{ width: '100%', padding: '8px', borderRadius: '8px', border: 'none', backgroundColor: 'var(--accent-amber-text)', color: 'white', fontWeight: '600', fontSize: 'var(--t-meta)', cursor: 'pointer', marginTop: '8px' }}>Upgrade</button>}
+                  {venueTier === 'premium' ? <span style={{ display: 'block', textAlign: 'center', fontSize: 'var(--t-meta)', color: 'var(--accent-amber-text)', fontWeight: '500', marginTop: '8px' }}>Current Plan</span> : venueTier === 'free' && <button className="hit44" onClick={() => requestTierUpgrade('Premium')} style={{ width: '100%', padding: '8px', borderRadius: '8px', border: 'none', backgroundColor: 'var(--accent-amber-text)', color: 'white', fontWeight: '600', fontSize: 'var(--t-meta)', cursor: 'pointer', marginTop: '8px' }}>Email us about Premium</button>}
                 </div>
 
                 {/* Pro Tier */}
@@ -13261,10 +13373,16 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                   <ul style={{ margin: 0, paddingLeft: '16px', fontSize: 'var(--t-meta)', color: 'var(--text-secondary)' }}>
                     {features.pro.map(f => <li key={f} style={{ marginBottom: '2px' }}>{f}</li>)}
                   </ul>
-                  {venueTier === 'pro' ? <span style={{ display: 'block', textAlign: 'center', fontSize: 'var(--t-meta)', color: 'var(--accent-purple-text)', fontWeight: '500', marginTop: '8px' }}>Current Plan</span> : <button className="hit44" onClick={() => { setVenueTier('pro'); updateVenueProfile({ tier: 'pro' }).catch(() => {}); setShowUpgradeModal(false); }} style={{ width: '100%', padding: '8px', borderRadius: '8px', border: 'none', background: '#2d5a87', color: 'white', fontWeight: '600', fontSize: 'var(--t-meta)', cursor: 'pointer', marginTop: '8px' }}>Upgrade to Pro</button>}
+                  {venueTier === 'pro' ? <span style={{ display: 'block', textAlign: 'center', fontSize: 'var(--t-meta)', color: 'var(--accent-purple-text)', fontWeight: '500', marginTop: '8px' }}>Current Plan</span> : <button className="hit44" onClick={() => requestTierUpgrade('Pro')} style={{ width: '100%', padding: '8px', borderRadius: '8px', border: 'none', background: '#2d5a87', color: 'white', fontWeight: '600', fontSize: 'var(--t-meta)', cursor: 'pointer', marginTop: '8px' }}>Email us about Pro</button>}
                 </div>
 
-                <button className="hit44" onClick={() => setShowUpgradeModal(false)} style={{ width: '100%', padding: '10px', borderRadius: '8px', border: '1px solid var(--border-mid)', backgroundColor: 'var(--bg-card-solid)', color: 'var(--text-secondary)', fontWeight: '500', cursor: 'pointer' }}>Cancel</button>
+                {/* Printed as text too, so a device with no mail app still has
+                    something it can act on. */}
+                <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '0 0 12px', textAlign: 'center', lineHeight: 1.5 }}>
+                  Plans are set up by hand right now. Write to {VENUE_SALES_EMAIL} and we will get you moved over.
+                </p>
+
+                <button className="hit44" onClick={() => setShowUpgradeModal(false)} style={{ width: '100%', padding: '10px', borderRadius: '8px', border: '1px solid var(--border-mid)', backgroundColor: 'var(--bg-card-solid)', color: 'var(--text-secondary)', fontWeight: '500', cursor: 'pointer' }}>Close</button>
               </div>
             </div>
           )}
@@ -13902,7 +14020,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
         <h2 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: '#f0ead8', margin: '0 0 6px' }}>What's your venue called?</h2>
         <p style={{ fontSize: 'var(--t-label)', color: 'rgba(148,163,184,0.6)', margin: '0 0 24px' }}>Search for your venue or type the name.</p>
         <div style={{ position: 'relative' }}>
-          <input aria-label="Venue name" value={query} onChange={(e) => handleChange(e.target.value)}
+          <input aria-label="Venue name" maxLength={255} value={query} onChange={(e) => handleChange(e.target.value)}
             onFocus={() => suggestions.length > 0 && setShowSuggestions(true)}
             placeholder="e.g. The Blue Heron Bar"
             autoComplete="off" data-lpignore="true" data-form-type="other"
@@ -13942,7 +14060,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           <h2 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: '#f0ead8', margin: '0 0 6px' }}>What's your venue called?</h2>
           <p style={{ fontSize: 'var(--t-label)', color: 'rgba(148,163,184,0.6)', margin: '0 0 24px' }}>Search for your venue or type the name.</p>
           <div style={{ position: 'relative' }}>
-            <input aria-label="Venue name" value={venueSearchQuery} onChange={(e) => {
+            <input aria-label="Venue name" maxLength={255} value={venueSearchQuery} onChange={(e) => {
               const val = e.target.value;
               setVenueSearchQuery(val);
               setVenueOnboardingData(d => ({ ...d, businessName: val }));
@@ -14020,7 +14138,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center', padding: '24px' }}>
           <h2 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: '#f0ead8', margin: '0 0 6px' }}>Where are you located?</h2>
           <p style={{ fontSize: 'var(--t-label)', color: 'rgba(148,163,184,0.6)', margin: '0 0 24px' }}>City or full address, so nearby customers can find you.</p>
-          <input aria-label="Venue address" value={venueOnboardingData.location} onChange={(e) => setVenueOnboardingData(d => ({ ...d, location: e.target.value }))} placeholder="e.g. Austin, TX or 123 Main St" autoComplete="off" data-lpignore="true" data-form-type="other" style={{ width: '100%', padding: '14px 16px', borderRadius: '12px', border: '1.5px solid rgba(148,163,184,0.15)', fontSize: '16px', fontWeight: '500', outline: 'none', boxSizing: 'border-box', backgroundColor: 'rgba(255,255,255,0.06)', color: 'white' }} autoFocus />
+          {/* maxLength mirrors the server's bounds (venueProfile.js: location
+              255, description 2000). Without them the form let someone type
+              past the limit and only found out at the very last step. */}
+          <input aria-label="Venue address" maxLength={255} value={venueOnboardingData.location} onChange={(e) => setVenueOnboardingData(d => ({ ...d, location: e.target.value }))} placeholder="e.g. Austin, TX or 123 Main St" autoComplete="off" data-lpignore="true" data-form-type="other" style={{ width: '100%', padding: '14px 16px', borderRadius: '12px', border: '1.5px solid rgba(148,163,184,0.15)', fontSize: '16px', fontWeight: '500', outline: 'none', boxSizing: 'border-box', backgroundColor: 'rgba(255,255,255,0.06)', color: 'white' }} autoFocus />
         </div>
       ),
       // Step 4: Goals
@@ -14048,7 +14169,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center', padding: '24px' }}>
           <h2 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: '#f0ead8', margin: '0 0 6px' }}>Describe your venue in a line</h2>
           <p style={{ fontSize: 'var(--t-label)', color: 'rgba(148,163,184,0.6)', margin: '0 0 24px' }}>What makes your place special? This shows on your Flock listing.</p>
-          <textarea aria-label="Venue description" value={venueOnboardingData.description} onChange={(e) => setVenueOnboardingData(d => ({ ...d, description: e.target.value }))} placeholder="e.g. Craft cocktail bar with live jazz on weekends" rows={3} autoComplete="off" data-lpignore="true" data-form-type="other" style={{ width: '100%', padding: '14px 16px', borderRadius: '12px', border: '1.5px solid rgba(148,163,184,0.15)', fontSize: 'var(--t-body)', fontWeight: '500', outline: 'none', boxSizing: 'border-box', backgroundColor: 'rgba(255,255,255,0.06)', color: 'white', resize: 'none', fontFamily: 'inherit' }} autoFocus />
+          <textarea aria-label="Venue description" maxLength={2000} value={venueOnboardingData.description} onChange={(e) => setVenueOnboardingData(d => ({ ...d, description: e.target.value }))} placeholder="e.g. Craft cocktail bar with live jazz on weekends" rows={3} autoComplete="off" data-lpignore="true" data-form-type="other" style={{ width: '100%', padding: '14px 16px', borderRadius: '12px', border: '1.5px solid rgba(148,163,184,0.15)', fontSize: 'var(--t-body)', fontWeight: '500', outline: 'none', boxSizing: 'border-box', backgroundColor: 'rgba(255,255,255,0.06)', color: 'white', resize: 'none', fontFamily: 'inherit' }} autoFocus />
         </div>
       ),
     ];
@@ -14064,15 +14185,24 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
     };
 
     const handleNext = async () => {
+      // A stale rejection must not follow the owner around the flow.
+      if (venueOnboardingError) setVenueOnboardingError('');
       if (venueOnboardingStep < steps.length - 1) {
         setVenueOnboardingStep(s => s + 1);
       } else {
-        // Complete onboarding — save to backend
+        // Complete onboarding — save to backend.
+        // The failure used to go to console.error and nowhere else: the flow
+        // marched on to the dashboard, wrote the "onboarding complete" flag,
+        // and the owner never learned their profile had not saved. The server
+        // validates and bounds these fields, so a rejection is a real outcome.
         try {
           await createVenueProfile(venueOnboardingData);
         } catch (err) {
           console.error('Failed to save venue profile:', err);
+          setVenueOnboardingError(err?.message || "That didn't save. Check your details and try again.");
+          return; // stay on the last step with every answer still filled in
         }
+        setVenueOnboardingError('');
         localStorage.setItem('flockVenueOnboardingComplete', 'true');
         setShowVenueOnboarding(false);
         setCurrentScreen('venueDashboard');
@@ -14098,6 +14228,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
 
         {/* Next button */}
         <div style={{ padding: '16px 24px 24px', flexShrink: 0 }}>
+          {venueOnboardingError && (
+            <p role="alert" style={{ fontSize: 'var(--t-label)', fontWeight: '500', color: '#fca5a5', margin: '0 0 10px', lineHeight: 1.5 }}>{venueOnboardingError}</p>
+          )}
           <button className="hit44" onClick={handleNext} disabled={!canAdvance()} style={{
             width: '100%', padding: '14px', borderRadius: '14px', border: 'none',
             background: canAdvance() ? 'linear-gradient(135deg, #f0ead8 0%, #d4c9a8 100%)' : 'rgba(148,163,184,0.1)',
@@ -15367,8 +15500,12 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                   await submitAttendance(attendanceFlockId, attendanceMembers.map(m => ({ userId: m.id, attended: !!attendanceChecks[m.id] })));
                   showToast('Attendance recorded');
                   getUserStats().then(d => setReliabilityScore(d.reliabilityScore || null)).catch(() => {});
-                } catch (err) { showToast('Failed to record', 'error'); }
-                finally { setAttendanceSubmitting(false); setShowAttendanceModal(false); }
+                  // Only a saved list closes the sheet. The close used to sit
+                  // in `finally`, so a failed save threw away every checkbox
+                  // the host had just ticked and left them nothing to retry.
+                  setShowAttendanceModal(false);
+                } catch (err) { showToast(err?.message || "That didn't save. Try again.", 'error'); }
+                finally { setAttendanceSubmitting(false); }
               }} className="hit44 glass-btn glass-primary" style={{ flex: 1, padding: '13px', borderRadius: '14px', border: 'none', background: `linear-gradient(135deg, ${colors.steel}, ${colors.navy})`, color: '#fff', fontSize: 'var(--t-body)', fontWeight: '600', cursor: 'pointer', opacity: attendanceSubmitting ? 0.6 : 1 }}>
                 {attendanceSubmitting ? 'Saving...' : 'Confirm'}
               </button>
@@ -15777,6 +15914,32 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   );
 };
 
+// Why a live session ended, in words. The server sends a machine reason with
+// session_revoked; none of these are alarming on purpose, because almost every
+// one of them is something the user did themselves a minute ago on another
+// device. The suspension line is the only one that has to break that pattern,
+// and it still says what to do next.
+const SESSION_END_COPY = {
+  session_expired: 'Your session expired. Sign in again to pick up where you left off.',
+  session_revoked: 'Your sign-in details changed, so Flock signed you out everywhere. Sign in again.',
+  account_deleted: 'This account was deleted. Sign in with another one, or make a new account.',
+  account_suspended: 'This account is suspended. Email support@flockcorp.com if that looks wrong.',
+};
+
+function sessionEndCopy(reason) {
+  return SESSION_END_COPY[reason] || SESSION_END_COPY.session_expired;
+}
+
+// A boot-time auth rejection, translated. The only 403 GET /api/auth/me can
+// return is the ban; the emailVerificationRequired flag is checked anyway so a
+// future gate on that route cannot turn into a false accusation.
+function bootSessionCopy(err) {
+  if (err?.status === 403 && !err?.data?.emailVerificationRequired) {
+    return sessionEndCopy('account_suspended');
+  }
+  return sessionEndCopy('session_expired');
+}
+
 const FlockApp = () => {
   const [authUser, setAuthUser] = useState(null);
   // /signup deep-links straight to account creation (the marketing site's
@@ -15786,15 +15949,90 @@ const FlockApp = () => {
   );
   const [authChecking, setAuthChecking] = useState(true);
   const [venueLoginFlag, setVenueLoginFlag] = useState(false);
+  // The line shown on the sign-in screen when the session ended without the
+  // user pressing Log out. Empty for a normal logout.
+  const [sessionNote, setSessionNote] = useState('');
+  // Latched for the life of one session so the teardown runs exactly once.
+  const sessionEndedRef = useRef(false);
+  // Whether the teardown that latched it was a revoke rather than the user
+  // pressing Log out. A stray revoke arriving after a deliberate sign-out must
+  // not put a message on a screen the user walked to on purpose.
+  const sessionEndedByRevokeRef = useRef(false);
+
+  // One teardown, three callers: the Log out button, the socket's
+  // session_revoked event, and api.js's flock-session-expired window event.
+  // A revoke almost always arrives on two of those channels at once (the
+  // server emits the event and kills the socket, then the next request 401s),
+  // so this has to be idempotent, and pressing Log out must not leave a
+  // straggling 401 tearing down a second time or stamping a note on a sign-out
+  // the user asked for.
+  const endSession = useCallback((note, opts) => {
+    const specific = !!(opts && opts.specific);
+    if (sessionEndedRef.current) {
+      // Already down. A named reason arriving second (suspended, deleted)
+      // still replaces the generic expiry line, since it is the truer one —
+      // but only if a revoke is what tore the session down in the first place.
+      if (specific && note && sessionEndedByRevokeRef.current) setSessionNote(note);
+      return;
+    }
+    sessionEndedRef.current = true;
+    sessionEndedByRevokeRef.current = !!note;
+    unregisterPushToken().catch(() => {});
+    disconnectSocket();
+    logout();
+    setAuthUser(null);
+    setAuthScreen('login');
+    setVenueLoginFlag(false);
+    localStorage.removeItem('flockUserMode');
+    localStorage.removeItem('flockVenueOnboardingComplete');
+    setSessionNote(note || '');
+  }, []);
+
+  // Every way a session starts, so the latch above is armed again and a stale
+  // note never survives into the new session.
+  const beginSession = useCallback((user) => {
+    sessionEndedRef.current = false;
+    sessionEndedByRevokeRef.current = false;
+    setSessionNote('');
+    setAuthUser(user);
+  }, []);
+
+  // The server can cut a live session mid-flight: a ban, an account deletion,
+  // a password change, an OAuth account claim. Without these two listeners the
+  // app stayed on screen, quietly read-only, failing every action.
+  useEffect(() => {
+    const unsubscribe = onSessionRevoked((payload) => {
+      const reason = payload && payload.reason;
+      endSession(sessionEndCopy(reason), { specific: !!reason && reason !== 'session_expired' });
+    });
+    const onExpired = () => endSession(sessionEndCopy('session_expired'));
+    window.addEventListener('flock-session-expired', onExpired);
+    return () => {
+      unsubscribe();
+      window.removeEventListener('flock-session-expired', onExpired);
+    };
+  }, [endSession]);
 
   useEffect(() => {
     if (!isLoggedIn()) {
       setAuthChecking(false);
-      return;
+      return undefined;
     }
+    // Both are declared out here so the effect's cleanup can reach them; the
+    // retry loop used to be started inside .catch() with nothing able to stop
+    // it, which left a 15s interval and an 'online' listener running forever.
+    let retryTimer = null;
+    let retryHandler = null;
+    const stopRetrying = () => {
+      if (retryHandler) window.removeEventListener('online', retryHandler);
+      if (retryTimer) clearInterval(retryTimer);
+      retryHandler = null;
+      retryTimer = null;
+    };
+
     Promise.all([getCurrentUser(), pullSettings()])
       .then(([data]) => {
-        setAuthUser(data.user || data);
+        beginSession(data.user || data);
         // Request push notification permission after login
         if (localStorage.getItem('flock_notif_denied') !== 'true') {
           requestNotificationPermission().catch(() => {});
@@ -15806,32 +16044,31 @@ const FlockApp = () => {
         // tunnel deleted your login (round 4). Keep the token and retry when
         // connectivity returns; OfflineGate covers the UI meanwhile.
         if (err?.status === 401 || err?.status === 403) {
-          logout();
-          setAuthUser(null);
+          // api.js has already fired flock-session-expired for the 401 case,
+          // so this is usually a no-op that only matters for a 403.
+          endSession(bootSessionCopy(err));
           return;
         }
-        let retryTimer = null;
-        const retry = () => {
+        retryHandler = () => {
           getCurrentUser()
             .then((d) => {
-              setAuthUser(d.user || d);
-              window.removeEventListener('online', retry);
-              if (retryTimer) clearInterval(retryTimer);
+              beginSession(d.user || d);
+              stopRetrying();
             })
             .catch((e) => {
               if (e?.status === 401 || e?.status === 403) {
-                logout();
-                setAuthUser(null);
-                window.removeEventListener('online', retry);
-                if (retryTimer) clearInterval(retryTimer);
+                endSession(bootSessionCopy(e));
+                stopRetrying();
               }
             });
         };
-        window.addEventListener('online', retry);
-        retryTimer = setInterval(retry, 15000);
+        window.addEventListener('online', retryHandler);
+        retryTimer = setInterval(retryHandler, 15000);
       })
       .finally(() => setAuthChecking(false));
-  }, []);
+
+    return stopRetrying;
+  }, [beginSession, endSession]);
 
   if (authChecking) {
     return (
@@ -15852,35 +16089,74 @@ const FlockApp = () => {
   }
 
   if (!authUser) {
+    // Why they are looking at a sign-in screen they did not ask for. It sits
+    // above the auth column rather than inside it, because the three auth
+    // screens are owned elsewhere and none of them takes a notice prop.
+    const notice = sessionNote ? (
+      <div
+        role="status"
+        style={{
+          position: 'fixed', top: 0, left: 0, right: 0, zIndex: 9000,
+          padding: 'calc(var(--safe-top, 0px) + 10px) 14px 12px',
+          backgroundColor: 'rgba(11,18,32,0.97)',
+          borderBottom: '1px solid rgba(244,239,227,0.18)',
+          fontFamily: "'Hanken Grotesk', -apple-system, BlinkMacSystemFont, sans-serif",
+        }}
+      >
+        <div style={{ maxWidth: '440px', margin: '0 auto', display: 'flex', alignItems: 'flex-start', gap: '12px' }}>
+          <span style={{ flex: 1, minWidth: 0, fontSize: '14px', lineHeight: 1.45, color: '#f1ede0' }}>{sessionNote}</span>
+          <button
+            type="button"
+            className="hit44"
+            onClick={() => setSessionNote('')}
+            style={{ flexShrink: 0, background: 'none', border: 'none', padding: '0 2px', color: 'rgba(241,237,224,0.6)', fontSize: '13px', fontWeight: 600, fontFamily: 'inherit', cursor: 'pointer' }}
+          >
+            Dismiss
+          </button>
+        </div>
+      </div>
+    ) : null;
+
     if (authScreen === 'signup') {
       return (
-        <SignupScreen
-          onSignupSuccess={(user) => setAuthUser(user)}
-          onSwitchToLogin={() => setAuthScreen('login')}
-        />
+        <>
+          {notice}
+          <SignupScreen
+            onSignupSuccess={beginSession}
+            onSwitchToLogin={() => setAuthScreen('login')}
+          />
+        </>
       );
     }
     if (authScreen === 'venue-login') {
       return (
-        <VenueLoginScreen
-          onLoginSuccess={(user) => {
-            setAuthUser(user);
-            setVenueLoginFlag(true);
-          }}
-          onSwitchToUserLogin={() => setAuthScreen('login')}
-        />
+        <>
+          {notice}
+          <VenueLoginScreen
+            onLoginSuccess={(user) => {
+              beginSession(user);
+              setVenueLoginFlag(true);
+            }}
+            onSwitchToUserLogin={() => setAuthScreen('login')}
+          />
+        </>
       );
     }
     return (
-      <LoginScreen
-        onLoginSuccess={(user) => setAuthUser(user)}
-        onSwitchToSignup={() => setAuthScreen('signup')}
-        onSwitchToVenueLogin={() => setAuthScreen('venue-login')}
-      />
+      <>
+        {notice}
+        <LoginScreen
+          onLoginSuccess={beginSession}
+          onSwitchToSignup={() => setAuthScreen('signup')}
+          onSwitchToVenueLogin={() => setAuthScreen('venue-login')}
+        />
+      </>
     );
   }
 
-  return <FlockAppInner authUser={authUser} venueLoginFlag={venueLoginFlag} onLogout={() => { unregisterPushToken().catch(() => {}); disconnectSocket(); logout(); setAuthUser(null); setAuthScreen('login'); setVenueLoginFlag(false); localStorage.removeItem('flockUserMode'); localStorage.removeItem('flockVenueOnboardingComplete'); }} />;
+  // The Log out button routes through the same teardown as a revoke, with no
+  // note: this sign-out is the one the user asked for.
+  return <FlockAppInner authUser={authUser} venueLoginFlag={venueLoginFlag} onLogout={() => endSession('')} />;
 };
 
 // Wrap with Google OAuth provider
