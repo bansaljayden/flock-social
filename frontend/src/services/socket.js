@@ -273,26 +273,47 @@ export function onVenueCheckin(callback) {
 // every send. On a phone that console is captured by the OS and by any crash/
 // analytics SDK linked into the shell, which turns private chat and a user's
 // exact location into log data nobody consented to. Nothing here logs content.
+
+// A message carries text, an image, or both. `image_url` was missing from this
+// emitter entirely — the same omission just fixed in api.js, on the other
+// transport — and the gap was papered over by sendImageMessage() below, which
+// hardcoded `message_text: ''`. Between them, a CAPTIONED photo could not be
+// sent over the socket at all: callers had to pick one emitter, so the caption
+// was dropped on the primary transport and kept on the REST fallback, and the
+// same photo arrived with different content depending on the network.
+//
+// The body is shaped to match api.js's sendMessage() field for field
+// (`message_text` defaulted to '', `message_type` defaulted to 'text',
+// venue_data and image_url nulled when absent) so the two transports cannot
+// drift apart again.
+//
+// Returns whether the emit actually happened. Every helper in this file
+// silently no-ops while the socket is down, which is correct for a typing
+// indicator and not correct for a message: callers gate on getSocket()
+// ?.connected today, and this closes the window between that check and the
+// emit.
 export function sendMessage(flockId, messageText, opts = {}) {
-  if (socket?.connected) {
-    socket.emit('send_message', {
-      flockId,
-      message_text: messageText,
-      message_type: opts.message_type || 'text',
-      venue_data: opts.venue_data || null,
-    });
-  }
+  if (!socket?.connected) return false;
+  socket.emit('send_message', {
+    flockId,
+    message_text: messageText || '',
+    message_type: opts.message_type || 'text',
+    venue_data: opts.venue_data || null,
+    image_url: opts.image_url || null,
+  });
+  return true;
 }
 
-export function sendImageMessage(flockId, imageUrl) {
-  if (socket?.connected) {
-    socket.emit('send_message', {
-      flockId,
-      message_text: '',
-      message_type: 'image',
-      image_url: imageUrl,
-    });
-  }
+// Kept as a named export because callers import it, but it is now a thin
+// spelling of sendMessage rather than a second, subtly different code path —
+// which is what let the two drift in the first place. A caption passed here is
+// carried instead of discarded.
+export function sendImageMessage(flockId, imageUrl, opts = {}) {
+  return sendMessage(flockId, opts.message_text || '', {
+    ...opts,
+    message_type: 'image',
+    image_url: imageUrl,
+  });
 }
 
 export function startTyping(flockId) {
@@ -319,19 +340,38 @@ export function onUserStoppedTyping(callback) {
   return register('user_stopped_typing', callback);
 }
 
+/**
+ * The server's generic refusal channel: moderation rejections, rate limits,
+ * "that photo is too large", "you can no longer message this user". Every one
+ * of those is a sentence written for a person, and the REST twin of the same
+ * refusal already becomes a toast — over the socket they only ever reached
+ * console.warn, so a send the server threw out failed in silence.
+ *
+ * It goes through the registry rather than being bound to whatever instance
+ * getSocket() happens to return, which is the whole point of the registry: a
+ * listener attached directly to one socket object is lost the moment that
+ * object is replaced (token swap, fatal-auth teardown, session expiry), and a
+ * listener attached before connectSocket() has run is never attached at all.
+ */
+export function onSocketError(callback) {
+  return register('error', callback);
+}
+
 // --- Direct messages ---
 
 export function socketSendDm(receiverId, messageText, opts = {}) {
-  if (socket?.connected) {
-    socket.emit('send_dm', {
-      receiverId,
-      message_text: messageText,
-      message_type: opts.message_type || 'text',
-      venue_data: opts.venue_data || null,
-      image_url: opts.image_url || null,
-      reply_to_id: opts.reply_to_id || null,
-    });
-  }
+  if (!socket?.connected) return false;
+  socket.emit('send_dm', {
+    receiverId,
+    // `|| ''` for the same reason as sendMessage above: message_text is NOT
+    // NULL on both tables, and api.js's sendDM already normalises it this way.
+    message_text: messageText || '',
+    message_type: opts.message_type || 'text',
+    venue_data: opts.venue_data || null,
+    image_url: opts.image_url || null,
+    reply_to_id: opts.reply_to_id || null,
+  });
+  return true;
 }
 
 export function onNewDm(callback) {
