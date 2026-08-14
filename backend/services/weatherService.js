@@ -20,11 +20,12 @@
 //   is a lower priority than the Places counter because OpenWeatherMap is the
 //   cheaper vendor and the 30-minute cache absorbs most of the traffic.
 //
-//   HUMAN DECISION NEEDED: WX_DAILY below is 3000/day, which is ABOVE
-//   OpenWeatherMap's free allowance (1,000 calls/day on the free plan). As
-//   written, this module is willing to spend past free into billed usage.
-//   Either lower WX_DAILY to sit under the plan we are actually on, or confirm
-//   the paid plan and leave it. WX_PER_MINUTE is set under the free plan's
+//   DECIDED 2026-08-14 (Jayden: "do everything on my list"): WX_DAILY sits at
+//   950, UNDER OpenWeatherMap's free allowance of 1,000/day, with 50 calls of
+//   headroom for clock skew between our day window and theirs. The old value
+//   was 3000, which was willing to spend past free into billed usage on a plan
+//   nobody had confirmed paying for. Raise it only after confirming a paid
+//   plan on a real invoice. WX_PER_MINUTE stays under the free plan's
 //   60 calls/minute so we get refusals we control instead of 429s we don't.
 //
 // CACHING CONTRACT: a stale reading is NEVER returned as current. A cached
@@ -138,7 +139,7 @@ function setCache(key, data, failed = false) {
 // null out weather columns in training data collected against a limited
 // BestTime quota, which is exactly the silent degradation this audit is about.
 // Refusals are counted and logged (see wxRefused) so it can never be silent.
-const WX_DAILY = 3000;
+const WX_DAILY = 950;
 const WX_PER_MINUTE = 55;
 const WX_PER_USER_HOURLY = 40; // only applied when a userId is supplied
 

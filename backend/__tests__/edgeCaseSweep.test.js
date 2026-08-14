@@ -361,13 +361,13 @@ test('weather / NOTHING: an upstream that returns nothing at all is a 502, never
 });
 
 test('weather / the paid ceiling is enforced and fails CLOSED', async () => {
-  // WX_DAILY = 3000 sits above OpenWeatherMap's free 1,000/day. That number is
-  // a recorded human decision (services/weatherService.js) and is NOT changed
-  // here — what is checked is that the ceiling below it is real: once the
+  // WX_DAILY = 950 sits UNDER OpenWeatherMap's free 1,000/day — decided
+  // 2026-08-14, replacing the old 3000 that spent past free. What is checked
+  // here is that the ceiling is real: once the
   // caller's allowance is gone the route stops paying and answers 502, rather
   // than degrading to a silent default or letting the spend run.
   const status = weatherService.weatherBudgetStatus();
-  assert.strictEqual(status.limits.daily, 3000,
+  assert.strictEqual(status.limits.daily, 950,
     'WX_DAILY changed — that number is a recorded decision, see services/weatherService.js');
   const perUser = status.limits.perUserHourly;
 
