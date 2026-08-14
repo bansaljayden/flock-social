@@ -50,7 +50,19 @@ async function migrate(pool) {
       await client.query('SELECT pg_advisory_unlock($1)', [MIGRATION_LOCK_KEY]).catch(() => {});
     }
   } finally {
-    client.release();
+    // DESTROY, never release (round 17 audit). The two SETs above are
+    // SESSION-level, and `client.release()` hands that same backend straight
+    // back to the pool with them still applied — measured, not theorised: after
+    // a boot, `SHOW statement_timeout` on the first pooled connection returned
+    // `5min` instead of the pool's 15s, and `lock_timeout` was 10s instead of 0.
+    // config/database.js caps statements at 15s precisely so one query blocked
+    // on a lock cannot park a pool slot forever; leaking the migration's 300s
+    // made one of the twenty slots 20x looser for the whole life of the
+    // process, and it was the slot at the head of the idle list, so it was the
+    // one the first requests after boot actually got. Passing `true` closes the
+    // backend instead; the pool opens a clean one on demand, which at boot
+    // costs a single connection handshake.
+    client.release(true);
   }
 }
 

@@ -15,9 +15,17 @@ if (!process.env.DATABASE_URL && process.env.PGHOST) {
   console.log(`Built DATABASE_URL from PG* vars → [configured]`);
 }
 
+// SSL only where there is any chance of TLS. This was unconditional
+// `{ rejectUnauthorized: false }`, which makes pg demand an SSL handshake — and
+// a local Postgres (including the embedded one the E2E harness runs) is
+// typically built without SSL, so the connection failed outright. The "safe"
+// target was the one target this script could not reach, which is a good way to
+// make sure it only ever gets pointed at a remote one.
+const usingLocalDb = /^(|localhost|127\.0\.0\.1|::1|\[::1\])$/.test(dbHostname());
+
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
-  ssl: { rejectUnauthorized: false },
+  ssl: usingLocalDb ? false : { rejectUnauthorized: false },
 });
 
 const SALT_ROUNDS = 10;
@@ -25,16 +33,61 @@ const SALT_ROUNDS = 10;
 // ---------------------------------------------------------------------------
 // SAFETY: Production guard
 // ---------------------------------------------------------------------------
+// Round 17. What this used to be: "refuse only if DATABASE_PROTECTION=enabled
+// AND NODE_ENV=production". Both variables default to unset, so the default
+// behaviour of this script against the live Railway database was to run, in
+// full, with no prompt — and what it runs includes a DELETE of every flock
+// named any of 'Friday Night Out', 'Weekend Hangout Plans', 'Study Session',
+// 'Sunday Brunch Crew', 'Downtown Tonight' or 'DECA Nationals Prep', together
+// with all of their messages, votes and memberships, regardless of who created
+// them. Those are names real users pick. (The name-scoped delete is also fixed
+// below to only touch the seed account's own flocks; this guard is the other
+// half.)
+//
+// The rule is now the same one scripts/seed-review-account.js uses: a local
+// database runs with no ceremony, anything else has to be asked for out loud.
+function dbHostname() {
+  const url = process.env.DATABASE_URL;
+  if (!url) return (process.env.PGHOST || '').trim().toLowerCase();
+  try { return new URL(url).hostname.toLowerCase(); } catch (_) { return '<unparseable>'; }
+}
+
 async function confirmIfProtected() {
+  if (!usingLocalDb && process.env.SEED_DEMO_CONFIRM !== '1') {
+    console.error('\nREFUSED: this seed would run against a non-local database.');
+    console.error(`   target: ${dbHostname() || '(none resolved)'}`);
+    console.error('   It deletes demo flocks and every message in them, and it writes accounts');
+    console.error('   whose passwords are committed to this repo.');
+    console.error('   If you really mean it: SEED_DEMO_CONFIRM=1 node seeds/demo-data.js\n');
+    process.exit(1);
+  }
+
   if (process.env.DATABASE_PROTECTION === 'enabled' && process.env.NODE_ENV === 'production') {
-    console.error('\n❌ REFUSED: Seed script cannot run in production with DATABASE_PROTECTION=enabled.');
+    console.error('\nREFUSED: Seed script cannot run in production with DATABASE_PROTECTION=enabled.');
     console.error('   Set NODE_ENV=development or DATABASE_PROTECTION=disabled to proceed.\n');
     process.exit(1);
   }
 
-  if (process.env.DATABASE_PROTECTION === 'enabled') {
+  if (process.env.DATABASE_PROTECTION === 'enabled' || !usingLocalDb) {
+    const why = usingLocalDb
+      ? 'DATABASE_PROTECTION is enabled.'
+      : `This is a NON-LOCAL database (${dbHostname()}).`;
+
+    // Round 17: askConfirmation used to AUTO-CONFIRM whenever stdin was not a
+    // TTY, so piping the output anywhere, or running this from any script or CI
+    // job, answered "yes" on the operator's behalf. A destructive prompt that
+    // approves itself whenever nobody is watching is not a prompt. Handled here
+    // rather than as a silent "no" inside askConfirmation so the operator is
+    // told how to proceed, and so the process exits NON-ZERO: a CI job must not
+    // read "I declined on your behalf" as "seeded successfully".
+    if (!process.stdin.isTTY && process.env.SEED_DEMO_CONFIRM !== '1') {
+      console.error(`\nREFUSED: ${why} Nothing is reading stdin, so there is nobody to confirm.`);
+      console.error('   Re-run with SEED_DEMO_CONFIRM=1 if this is really what you want.\n');
+      process.exit(1);
+    }
+
     const answer = await askConfirmation(
-      '⚠️  DATABASE_PROTECTION is enabled. This will reset DEMO data only (real data is safe).\n   Continue? (yes/no): '
+      `${why} This resets DEMO data (real data is left alone).\n   Continue? (yes/no): `
     );
     if (answer.toLowerCase() !== 'yes') {
       console.log('Aborted.');
@@ -44,7 +97,8 @@ async function confirmIfProtected() {
 }
 
 function askConfirmation(prompt) {
-  // Auto-confirm if running non-interactively (CI, scripts, piped input)
+  // Non-interactive runs are decided by the caller above (which refuses unless
+  // SEED_DEMO_CONFIRM=1); reaching here without a TTY means the flag was set.
   if (!process.stdin.isTTY) return Promise.resolve('yes');
 
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
@@ -192,16 +246,33 @@ async function seed() {
       'Friday Night Out', 'Sunday Brunch Crew', 'Downtown Tonight',
     ];
 
-    for (const flockName of demoFlockNames) {
-      const f = await client.query(`SELECT id FROM flocks WHERE name = $1`, [flockName]);
-      for (const row of f.rows) {
-        await client.query(`DELETE FROM messages WHERE flock_id = $1`, [row.id]);
-        await client.query(`DELETE FROM venue_votes WHERE flock_id = $1`, [row.id]);
-        await client.query(`DELETE FROM flock_members WHERE flock_id = $1`, [row.id]);
-        await client.query(`DELETE FROM flocks WHERE id = $1`, [row.id]);
+    // Round 17: the query above this comment used to be
+    // `SELECT id FROM flocks WHERE name = $1` — no creator filter at all. The
+    // comment says "that the real user created"; the code deleted EVERY flock
+    // with one of those names, and all of its messages, from every account in
+    // the database. 'Friday Night Out', 'Study Session' and 'Weekend Hangout
+    // Plans' are names real users pick, so on any database with real users this
+    // silently destroyed their chat history. The flocks created by DEMO users
+    // are already gone by this point (deleted by id, just above), so the only
+    // ones this block ever needed to reach are the seed account's own — which
+    // is what it now says.
+    if (realUserIdBefore) {
+      for (const flockName of demoFlockNames) {
+        const f = await client.query(
+          `SELECT id FROM flocks WHERE name = $1 AND creator_id = $2`,
+          [flockName, realUserIdBefore]
+        );
+        for (const row of f.rows) {
+          await client.query(`DELETE FROM messages WHERE flock_id = $1`, [row.id]);
+          await client.query(`DELETE FROM venue_votes WHERE flock_id = $1`, [row.id]);
+          await client.query(`DELETE FROM flock_members WHERE flock_id = $1`, [row.id]);
+          await client.query(`DELETE FROM flocks WHERE id = $1`, [row.id]);
+        }
       }
+      console.log('  Cleaned demo flocks created by the seed account.');
+    } else {
+      console.log('  No seed account yet, so there are no demo flocks to clean.');
     }
-    console.log('  Cleaned demo flocks by name.');
 
     // Clean only demo stories for real user (keep any real stories)
     if (realUserIdBefore) {
@@ -274,8 +345,12 @@ async function seed() {
       }
       const hashed = await bcrypt.hash(seedPassword, SALT_ROUNDS);
       const result = await client.query(
-        `INSERT INTO users (email, password, name, interests)
-         VALUES ($1, $2, 'Jayden Bansal', $3)
+        // email_verified TRUE for the same reason the demo users get it (round
+        // 16): this is the account you are meant to log in as to look at the
+        // demo, and an unverified account is refused at flock creation, friend
+        // requests and payment handles. Nobody can click a link sent here.
+        `INSERT INTO users (email, password, name, interests, email_verified, verified_email)
+         VALUES ($1, $2, 'Jayden Bansal', $3, TRUE, $1)
          RETURNING id`,
         [REAL_EMAIL, hashed, ['entrepreneurship', 'technology', 'business', 'innovation']]
       );
@@ -614,12 +689,17 @@ async function seed() {
     console.log(`  Flocks:     ${flockDefs.length}`);
     console.log(`  Messages:   ${messageCount}`);
     console.log(`  Stories:    ${storyCount}`);
-    console.log(`  Real account: Bansal.jayden@gmail.com → id ${realJayden}`);
+    console.log(`  Real account: ${REAL_EMAIL} -> id ${realJayden}`);
     console.log('\n  Login with your configured credentials.');
     console.log('========================================\n');
   } catch (err) {
-    await client.query('ROLLBACK');
-    console.error('\n❌ Seed failed, ALL CHANGES ROLLED BACK (your data is safe).');
+    // Guarded: if the failure was the BEGIN itself (or the connection dropped),
+    // ROLLBACK throws too, and seed() is called without a .catch — so the real
+    // error was being replaced by an unhandled rejection about the rollback.
+    await client.query('ROLLBACK').catch((rollbackErr) => {
+      console.error('Rollback also failed:', rollbackErr.message);
+    });
+    console.error('\nSeed failed, ALL CHANGES ROLLED BACK (your data is safe).');
     console.error(err);
     process.exit(1);
   } finally {

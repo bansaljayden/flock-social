@@ -88,7 +88,7 @@ const signup = (name, email, dob) =>
   // Readiness: /api/health now sits before the auth catch-all; a 200 means up.
   const up = await waitFor(async () => { try { return (await fetch(BASE + '/api/health')).ok; } catch { return false; } }, 30000);
   check('server boots + /api/health 200', up);
-  if (!up) { await pg.stop(); process.exit(1); }
+  if (!up) { await stopQuietly(pg); process.exit(1); }
   await new Promise(r => setTimeout(r, 1500));
 
   const t = await pool.query("SELECT to_regclass('public.content_reports') a, to_regclass('public.user_blocks') b, to_regclass('public.moderation_actions') c");
@@ -134,7 +134,7 @@ const signup = (name, email, dob) =>
   const tC = r.data?.token, idC = r.data?.user?.id;
   check('Carol signup', r.status === 201, r);
   r = await signup('Dave', 'dave@e2e.test', '1997-04-04');
-  const tD = r.data?.token;
+  const tD = r.data?.token, idD = r.data?.user?.id;
   check('Dave signup', r.status === 201, r);
 
   const meta = await pool.query('SELECT date_of_birth, terms_accepted_at, email_verified FROM users WHERE id = $1', [idA]);
@@ -215,11 +215,52 @@ const signup = (name, email, dob) =>
   const report1 = r.data?.report?.id;
   check('report accepted (201)', r.status === 201 && !!report1, r);
 
+  // --- Guest RSVP report (round 17, migration 016) ---
+  // guest_rsvps.name is unauthenticated UGC broadcast to every member of a
+  // flock, and reporting one was a 500 for two rounds: routes/moderation.js
+  // accepted the type, routes/admin.js could take it down, and the CHECK
+  // constraint on content_reports.content_type had never been widened, so the
+  // INSERT died with 23514 and the route's catch turned it into "Failed to
+  // submit report". A unit test cannot catch that — the constraint only exists
+  // in the database. This is the check that migration 016 actually applied.
+  {
+    const g = await pool.query(
+      "INSERT INTO guest_rsvps (flock_id, name) VALUES ($1, 'Rude Guest Name') RETURNING id",
+      [flockId]
+    );
+    const gr = await req('POST', '/api/reports', {
+      token: tB, body: { content_type: 'guest_rsvp', content_id: g.rows[0].id, reason: 'harassment' },
+    });
+    check('guest RSVP report reaches the queue (was a CHECK-violation 500)', gr.status === 201, gr);
+  }
+
   // --- Mutual block + UNBLOCK ---
+  // Round 17: Bob and Carol are made friends FIRST, and their DM is proven to
+  // work BEFORE anyone blocks anyone. Without that this whole section was a
+  // FALSE PASS: routes/messages.js grew a relationship gate
+  // (utils/relationships.js) that refuses a DM between two accounts with no
+  // friendship and no DM history, so "blocked user DM rejected (403)" passed
+  // for a reason that has nothing to do with blocking — it would have kept
+  // passing on a build where blocking did not work at all. Only the unblock
+  // check noticed, by failing. The reason is asserted too, so a future reorder
+  // of those two gates cannot quietly hollow this out again.
+  await pool.query(
+    `INSERT INTO friendships (requester_id, addressee_id, status) VALUES ($1,$2,'accepted')
+     ON CONFLICT (requester_id, addressee_id) DO UPDATE SET status = 'accepted'`,
+    [idB, idC]
+  );
+  r = await req('POST', `/api/dm/${idB}`, { token: tC, body: { message_text: 'hey' } });
+  check('connected users can DM before any block (201)', r.status === 201, r);
+
   r = await req('POST', `/api/blocks/${idC}`, { token: tB });
   check('Bob blocks Carol (201)', r.status === 201, r);
   r = await req('POST', `/api/dm/${idB}`, { token: tC, body: { message_text: 'hi' } });
   check('blocked user DM rejected (403)', r.status === 403, r);
+  check(
+    'the DM was refused BY THE BLOCK, not by the not-connected gate',
+    r.status === 403 && !/connected with/i.test(r.data?.error || ''),
+    r.data
+  );
   r = await req('GET', `/api/flocks/${flockId}/messages`, { token: tB });
   const carolVisibleWhileBlocked = (r.data?.messages || []).some(m => m.id === msgC);
   check('blocked user message hidden in shared flock', r.status === 200 && !carolVisibleWhileBlocked, { carolVisibleWhileBlocked });
@@ -259,21 +300,111 @@ const signup = (name, email, dob) =>
     const rows0 = await pool.query('SELECT COUNT(*)::int n FROM venue_checkins');
     check('no venue_checkins rows written by rejected taps', rows0.rows[0].n === 0, rows0.rows[0]);
 
-    // A venue a flock actually planned at IS known — real taps still work.
-    await pool.query('UPDATE flocks SET venue_id = $1 WHERE id = $2', ['ChIJe2eKnownVenue0001', flockId]);
+    // Round 17: naming a place id on a flock no longer makes it "known".
+    // utils/places.js dropped that clause because creating a flock is free and
+    // its venue_id is a client-supplied string, so any account could promote an
+    // arbitrary place id and start writing venue_checkins rows — the table the
+    // public occupancy figure sums and the ML pipeline exports. Pin the closed
+    // hole here, because the harness's own fixture used to depend on it.
+    await pool.query('UPDATE flocks SET venue_id = $1 WHERE id = $2', ['ChIJe2eFlockOnly00001', flockId]);
+    cr = await req('GET', '/api/checkin/ChIJe2eFlockOnly00001');
+    check('a flock naming a venue does NOT make it known (404)', cr.status === 404, cr);
+
+    // "Known" now means evidence WE created: a claimed profile, provisioned
+    // hardware, or a curated ML venue. Real taps still work.
+    await pool.query(
+      `INSERT INTO ml_venues (google_place_id, name, city, latitude, longitude, venue_category, timezone)
+       VALUES ($1, 'E2E Known Venue', 'Bethlehem', 40.6, -75.37, 'bar', 'America/New_York')
+       ON CONFLICT (google_place_id) DO NOTHING`,
+      ['ChIJe2eKnownVenue0001']
+    );
     cr = await req('GET', '/api/checkin/ChIJe2eKnownVenue0001');
     check('known venue tap accepted (200)', cr.status === 200, cr);
     const rows1 = await pool.query('SELECT COUNT(*)::int n FROM venue_checkins WHERE venue_place_id = $1', ['ChIJe2eKnownVenue0001']);
     check('known venue tap recorded', rows1.rows[0].n === 1, rows1.rows[0]);
   }
 
+  // --- Venue tier gate (round 17, services/venueEntitlements.js) ---
+  // A PAID boundary whose dashboard-side lock is explicitly cosmetic, so the
+  // server side is the only real one. It ships behind a kill switch, which
+  // means "correctly a no-op until billing launches" and "silently broken"
+  // look identical from the outside — both states are exercised here, over
+  // HTTP, against a real venue_profiles row. venueBillingEnabled() reads
+  // process.env per request and the server runs in this process, so the switch
+  // can be flipped mid-run.
+  {
+    await pool.query(
+      `INSERT INTO venue_profiles (user_id, business_name, google_place_id, tier, verified)
+       VALUES ($1, 'E2E Bar', 'ChIJe2eVenueOwner0001', 'free', true)
+       ON CONFLICT (user_id) DO UPDATE SET tier = 'free'`,
+      [idD]
+    );
+    const promo = { title: 'Half price wings' };
+
+    let vr = await req('POST', '/api/venue-dashboard/promotions', { token: tD, body: promo });
+    check('free tier is unaffected while the billing kill switch is off (201)', vr.status === 201, vr);
+
+    process.env.VENUE_BILLING_ENABLED = 'true';
+    vr = await req('POST', '/api/venue-dashboard/promotions', { token: tD, body: promo });
+    check('free tier refused once billing is on (403 UPGRADE_REQUIRED)',
+      vr.status === 403 && vr.data?.code === 'UPGRADE_REQUIRED', vr);
+
+    await pool.query("UPDATE venue_profiles SET tier = 'premium' WHERE user_id = $1", [idD]);
+    vr = await req('POST', '/api/venue-dashboard/promotions', { token: tD, body: promo });
+    check('the Insights tier is served (201)', vr.status === 201, vr);
+
+    // A tier string nobody recognises must fail closed. 'constructor' is the
+    // specific one: TIER_ORDER is a null-prototype object precisely so this
+    // cannot resolve to a truthy rank and walk through the gate.
+    await pool.query("UPDATE venue_profiles SET tier = 'constructor' WHERE user_id = $1", [idD]);
+    vr = await req('POST', '/api/venue-dashboard/promotions', { token: tD, body: promo });
+    check('an unrecognised tier is refused, never treated as paid (403)', vr.status === 403, vr);
+
+    delete process.env.VENUE_BILLING_ENABLED;
+    const promos = await pool.query('SELECT COUNT(*)::int n FROM venue_promotions WHERE venue_user_id = $1', [idD]);
+    check('exactly the two allowed promotions were written', promos.rows[0].n === 2, promos.rows[0]);
+  }
+
   // --- Banned user must STILL be able to delete their account (deletion right) ---
+  // Round 16 put re-authentication in front of this route: a bearer token
+  // lifted off an unlocked phone can no longer irreversibly destroy an account.
+  // Both halves are asserted, because a harness that only checked the happy
+  // path would pass just as well if the proof were never demanded. The
+  // no-password probe is free by construction — routes/users.js only spends a
+  // rate-limit attempt on a password that was supplied and wrong — so this
+  // cannot lock the account out of its own deletion.
   r = await req('DELETE', '/api/users/me', { token: tC });
+  check('deletion demands re-authentication (401 + reauthRequired)',
+    r.status === 401 && r.data?.reauthRequired === 'password', r);
+  r = await req('DELETE', '/api/users/me', { token: tC, body: { password: 'wrong-password' } });
+  check('a wrong password does not delete the account (401)', r.status === 401, r);
+  r = await req('GET', '/api/auth/me', { token: tC });
+  check('the account still exists after the refused deletions (403 banned, not 401)', r.status === 403, r);
+  r = await req('DELETE', '/api/users/me', { token: tC, body: { password: 'Passw0rd' } });
   check('banned user can still delete account (200)', r.status === 200, r);
 
+  // --- Ban tombstone (round 16, migration 012) ---
+  // Deleting a banned account used to be a one-tap ban reset. The tombstone is
+  // written inside the deletion transaction, so this also proves the deletion
+  // above did not silently skip it.
+  const tomb = await pool.query('SELECT email_hash, phone_hash, oauth_hash, expires_at FROM banned_identities');
+  check('deleting a BANNED account leaves a tombstone', tomb.rows.length === 1, tomb.rows);
+  check('the tombstone holds a keyed digest, never the address',
+    /^[0-9a-f]{64}$/.test(tomb.rows[0]?.email_hash || '')
+      && !JSON.stringify(tomb.rows[0] || {}).includes('carol@e2e.test'), tomb.rows[0]);
+  check('the tombstone expires', !!tomb.rows[0] && new Date(tomb.rows[0].expires_at) > new Date(), tomb.rows[0]);
+  r = await signup('Carol Again', 'carol@e2e.test', '1998-03-03');
+  check('the banned identity cannot sign up again (403)', r.status === 403, r);
+  check('...and the refusal does not say which identifier matched',
+    !/email|phone|address/i.test(r.data?.error || ''), r.data);
+  r = await signup('Erin', 'erin@e2e.test', '1996-06-06');
+  check('an unrelated address still signs up normally (201)', r.status === 201, r);
+
   // --- Deletion cascade (Bob) ---
-  r = await req('DELETE', '/api/users/me', { token: tB });
+  r = await req('DELETE', '/api/users/me', { token: tB, body: { password: 'Passw0rd' } });
   check('account deletion (200)', r.status === 200, r);
+  const tombAfterBob = await pool.query('SELECT COUNT(*)::int n FROM banned_identities');
+  check('deleting an UNBANNED account leaves no tombstone', tombAfterBob.rows[0].n === 1, tombAfterBob.rows[0]);
   r = await req('GET', '/api/auth/me', { token: tB });
   check('token invalid after deletion', r.status === 401 || r.status === 404, r);
   const bobMsgs = await pool.query('SELECT COUNT(*)::int n FROM direct_messages WHERE sender_id = $1', [idB]);
@@ -296,14 +427,51 @@ const signup = (name, email, dob) =>
     require('child_process').execSync('node scripts/seed-review-account.js', { cwd: path.join(__dirname, '..'), env: process.env, stdio: 'ignore' });
     const seeded = await pool.query("SELECT COUNT(*)::int n FROM users WHERE email IN ('review@flockcorp.com','buddy@flockcorp.com')");
     check('reviewer seed script runs + creates accounts', seeded.rows[0].n === 2, seeded.rows[0]);
+
+    // "The rows exist" was the whole assertion, and rows existing is not what
+    // App Review needs — it needs to LOG IN and use the app. Since round 16 an
+    // account can exist and still be refused at every screen that matters, so
+    // the seeded state is exercised over HTTP the way a reviewer would.
+    let sr = await req('POST', '/api/auth/login', { body: { email: 'review@flockcorp.com', password: 'ReviewPass123' } });
+    const tR = sr.data?.token;
+    check('the seeded reviewer account can log in', sr.status === 200 && !!tR, sr);
+    check('the seeded account is verified, so the gates are open',
+      sr.data?.user?.email_verified === true, sr.data?.user);
+    sr = await req('POST', '/api/flocks', { token: tR, body: { name: 'Reviewer Smoke Flock' } });
+    check('the seeded reviewer can create a flock (not 403 unverified)', sr.status === 201, sr);
+
+    // Re-seeding must recover a reviewer account that got BANNED while
+    // demonstrating the moderation flow, which is exactly what the seeded
+    // reportable content invites a reviewer to do.
+    await pool.query("UPDATE users SET is_banned = TRUE, banned_at = NOW() WHERE email = 'review@flockcorp.com'");
+    require('child_process').execSync('node scripts/seed-review-account.js', { cwd: path.join(__dirname, '..'), env: process.env, stdio: 'ignore' });
+    sr = await req('POST', '/api/auth/login', { body: { email: 'review@flockcorp.com', password: 'ReviewPass123' } });
+    sr = await req('GET', '/api/auth/me', { token: sr.data?.token });
+    check('re-seeding un-bans the reviewer account', sr.status === 200, sr);
   } catch (e) {
     check('reviewer seed script runs + creates accounts', false, { err: String(e.message).slice(0, 140) });
   }
 
   console.log(`\nE2E: ${passed} passed, ${failed} failed`);
-  await pg.stop();
+
+  // Teardown must never decide the exit code. On Windows, pg.stop() removes the
+  // temp data directory and intermittently throws EBUSY because the postgres
+  // process has not finished releasing its files yet — which threw out of here,
+  // hit the catch below, and turned a run that printed "79 passed, 0 failed"
+  // into exit 1. A harness that reports red on a green run gets ignored, which
+  // is the same failure as not having one.
+  await stopQuietly(pg);
   process.exit(failed === 0 ? 0 : 1);
 })().catch(async (e) => {
   console.error('E2E harness error:', e);
   process.exit(1);
 });
+
+async function stopQuietly(pg) {
+  try {
+    await pg.stop();
+  } catch (e) {
+    console.warn(`(cleanup) could not stop/remove the embedded Postgres: ${e.message}`);
+    console.warn('(cleanup) the throwaway data directory can be deleted by hand; results above stand.');
+  }
+}

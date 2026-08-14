@@ -25,14 +25,47 @@ const pool = require('../config/database');
 // scripts/e2e-local.js points DATABASE_URL at its embedded Postgres). Anything
 // else has to be asked for out loud.
 // ---------------------------------------------------------------------------
-const DB_URL = process.env.DATABASE_URL || '';
-const isLocal = /@(localhost|127\.0\.0\.1|\[::1\])[:/]/.test(DB_URL) || DB_URL === '';
+const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1', '::1', '[::1]', '']);
+
+// Round 17: this was a regex over the raw connection string, which was wrong in
+// both directions.
+//
+//  - `DATABASE_URL === ''` counted as LOCAL. But an unset DATABASE_URL does not
+//    mean "no database": config/database.js hands `undefined` to pg, and pg
+//    then falls back to the libpq PG* environment variables. Those are a live
+//    pattern in this very repo — seeds/demo-data.js builds a connection string
+//    out of PGHOST/PGPASSWORD/... — so an operator with PGHOST exported for
+//    psql against Railway had a completely unguarded run straight at
+//    production. The PG* fallback is resolved here and judged by the same rule.
+//
+//  - the regex `/@(localhost|...)[:/]/` matched ANYWHERE in the string, and a
+//    URL has more than one `@`. `postgresql://user@localhost:x@prod.example.com/db`
+//    matched, while pg splits on the LAST `@` and connects to prod.example.com.
+//    Parse the URL and read `hostname`, which is the same field pg uses.
+//
+// Failing to parse is treated as NOT local: an unrecognisable target is exactly
+// the case that should be asked about out loud.
+function resolveTargetHost() {
+  const url = process.env.DATABASE_URL;
+  if (url) {
+    try {
+      return { host: new URL(url).hostname.toLowerCase(), shown: url.replace(/\/\/[^@]*@/, '//***@') };
+    } catch (_) {
+      return { host: null, shown: '<unparseable DATABASE_URL>' };
+    }
+  }
+  // No DATABASE_URL: pg reads PGHOST (default: the local socket / localhost).
+  const pgHost = (process.env.PGHOST || '').trim().toLowerCase();
+  return { host: pgHost, shown: pgHost ? `PGHOST=${pgHost}` : 'the local default (no DATABASE_URL, no PGHOST)' };
+}
+
+const target = resolveTargetHost();
+const isLocal = target.host !== null && LOCAL_HOSTS.has(target.host);
 
 if (!isLocal && process.env.SEED_REVIEW_CONFIRM !== '1') {
-  const host = DB_URL.replace(/\/\/[^@]*@/, '//***@');
   console.error(
-    '\nRefusing to seed: DATABASE_URL does not point at a local database.\n' +
-    `  target: ${host}\n\n` +
+    '\nRefusing to seed: the database this would write to is not local.\n' +
+    `  target: ${target.shown}\n\n` +
     'This script writes accounts whose passwords are committed to this repo, and\n' +
     'deletes the seed flock. If this really is the staging/reviewer database, re-run as:\n\n' +
     '  SEED_REVIEW_CONFIRM=1 node scripts/seed-review-account.js\n'
@@ -55,10 +88,25 @@ async function upsertUser(email, name, password, dob) {
     // seeded reviewer account needs to do. Without this the App Review login
     // would 403 on the friend and flock screens, because no one can click a
     // confirmation link sent to review@flockcorp.com.
+    // The UPDATE branch mirrors the INSERT branch on every column that decides
+    // whether the app will let this account do anything. It used to set only
+    // name/password/verification, which left three ways for a re-seed to hand
+    // App Review an account it could log into and then not use:
+    //   - is_banned / banned_at: the reviewer account gets BANNED as a normal
+    //     consequence of demonstrating the moderation flow (that is what the
+    //     seeded reportable content is for), and a ban outlives the re-seed.
+    //     middleware/auth.js then 403s every request after login.
+    //   - date_of_birth: null on a legacy row, and the age gate reads it.
+    //   - terms_accepted_at: null on a legacy row.
+    // Re-seeding is the one lever anyone has before a submission, so it has to
+    // put the account fully back into a usable state.
     `INSERT INTO users (email, password, name, terms_accepted_at, date_of_birth, email_verified, verified_email)
      VALUES ($1, $2, $3, NOW(), $4, TRUE, $1)
      ON CONFLICT (email) DO UPDATE SET name = EXCLUDED.name, password = EXCLUDED.password,
-       email_verified = TRUE, verified_email = EXCLUDED.email
+       email_verified = TRUE, verified_email = EXCLUDED.email,
+       date_of_birth = EXCLUDED.date_of_birth,
+       terms_accepted_at = COALESCE(users.terms_accepted_at, EXCLUDED.terms_accepted_at),
+       is_banned = FALSE, banned_at = NULL
      RETURNING id`,
     [email, hash, name, dob]
   );
