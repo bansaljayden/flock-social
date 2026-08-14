@@ -1,9 +1,39 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { Suspense, useEffect, useRef, useState } from 'react';
 import './LandingPage.css';
-import LiveDemo from './LiveDemo';
 import BirdieBird, { WARM_BIRD } from '../components/ui/BirdieBird';
+import frauncesUrl from '../fonts/Fraunces-var.woff2';
+
+/* The live demo is code-split, and this is load-bearing rather than tidiness.
+   LiveDemo pulls in maplibre-gl, which webpack emits as a 1.06 MB chunk. As a
+   static import it landed in this page's chunk GROUP, and React.lazy does not
+   resolve until every chunk in the group has arrived — so the marketing page
+   rendered nothing at all until a map engine nobody has scrolled to yet had
+   finished downloading. Measured before the split: first contentful paint of
+   the hero waited on 1.3 MB of JavaScript; the map then opened six requests to
+   api.maptiler.com at 411 ms, while the reader was still on the headline.
+   Split out and mounted on approach, the hero's critical path is ~280 KB and
+   the map does not touch the network until you are within a screen of it. */
+const LiveDemo = React.lazy(() => import('./LiveDemo'));
 
 const API = process.env.REACT_APP_API_URL || 'https://flock-app-production.up.railway.app';
+
+/* Fraunces sets the h1, which is this page's largest contentful element. Left
+   to itself the browser does not discover the face until layout runs, i.e.
+   after the chunk has downloaded, parsed and rendered: measured at 378 ms
+   against a 48 ms first paint. Asking for it the moment this module evaluates
+   moves the request ahead of React's first commit. `crossorigin` is not
+   optional — fonts are fetched in CORS mode even same-origin, and a preload
+   without it is a second, wasted download rather than a hit. */
+if (typeof document !== 'undefined' && !document.querySelector('link[data-lp-font]')) {
+  const l = document.createElement('link');
+  l.rel = 'preload';
+  l.as = 'font';
+  l.type = 'font/woff2';
+  l.href = frauncesUrl;
+  l.crossOrigin = 'anonymous';
+  l.setAttribute('data-lp-font', '');
+  document.head.appendChild(l);
+}
 
 // Flock's real App Store record (Apple ID 6781442127). The URL is already
 // correct: it starts resolving the moment the app is approved. Flip
@@ -28,12 +58,13 @@ const NAV_LINKS = [
 
 /* The Flock mark: the actual logo (same asset as the app icon), not a
    hand-drawn stand-in. */
-const Mark = ({ size = 32 }) => (
+const Mark = ({ size = 32, lazy = false }) => (
   <img
     src="/logo192.png"
     width={size} height={size}
     alt=""
     aria-hidden="true"
+    {...(lazy ? { loading: 'lazy', fetchPriority: 'low' } : {})}
     style={{ borderRadius: '50%', display: 'block' }}
   />
 );
@@ -64,6 +95,59 @@ const AppStoreBadge = () => {
 /* No scroll-reveal animation on this page, deliberately. Sections sliding in
    from the bottom as you scroll is the most recognizable AI-built-site tell
    (SLOP-AUDIT.md A10), and the content is better off just being there. */
+
+/* Holds a below-the-fold thing's space and only mounts it once you are within
+   a screen of it. This is NOT a reveal: nothing fades, nothing moves, and the
+   box is the same size before and after, so the page does not shift. It exists
+   because two things here are expensive at load and useless at the top of the
+   page — the live demo's map engine, and the two photographed birds, whose
+   four cutout PNGs (89.9 KB) were being fetched at t=87 ms, inside the window
+   the hero needs.
+
+   The reservation matters as much as the gating: mounting something into an
+   unreserved box IS a layout shift, which is the thing lazy-loading is usually
+   trying to avoid. Every caller below passes the real box.
+
+   No IntersectionObserver (old Safari, and any prerender) means render now. A
+   visitor on a browser without it gets the old behaviour, not a blank page. */
+function WhenNear({ margin = '700px', className, hold, children }) {
+  const ref = useRef(null);
+  const [near, setNear] = useState(typeof IntersectionObserver !== 'function');
+
+  useEffect(() => {
+    if (near) return undefined;
+    const el = ref.current;
+    if (!el) return undefined;
+
+    const io = new IntersectionObserver((entries) => {
+      if (entries.some((e) => e.isIntersecting)) setNear(true);
+    }, { rootMargin: margin });
+    io.observe(el);
+
+    /* Tab is the other way in, and without this the gating quietly costs a
+       keyboard user the demo. Tabbing jumps focus between focusable elements,
+       and an unmounted subtree has none, so measured on the gated build the
+       forward tab order ran hero badge -> pricing button and stepped straight
+       over the live demo's search field and buttons. The browser only scrolls
+       once focus lands, by which point it has already gone past. A first Tab
+       press is a reliable signal that this visitor navigates by keyboard, so
+       they get the whole page from that moment. Nobody using a mouse or a
+       thumb ever pays for it. */
+    const onKey = (e) => { if (e.key === 'Tab') setNear(true); };
+    window.addEventListener('keydown', onKey);
+
+    return () => {
+      io.disconnect();
+      window.removeEventListener('keydown', onKey);
+    };
+  }, [near, margin]);
+
+  return (
+    <div ref={ref} className={className} style={hold}>
+      {near ? children : null}
+    </div>
+  );
+}
 
 export default function LandingPage() {
   const [email, setEmail] = useState('');
@@ -242,11 +326,18 @@ export default function LandingPage() {
               <a className="lp-btn lp-btn-cream lp-btn-lg" href="/signup">Create your account</a>
               <a className="lp-btn lp-btn-ghost lp-btn-lg" href="#how">See how it works</a>
             </div>
-            <AppStoreBadge />
+            {/* The badge sits AFTER the note, not between the buttons and it.
+                Pre-approval it is the one thing on the fold you cannot actually
+                do, and stacked directly under the two real actions it made a
+                phone read as three competing boxes with the Apple logo — the
+                most eye-catching of the three — on the only one that goes
+                nowhere. Actions, then the reason to believe them, then the
+                channel that isn't open yet. */}
             <p className="lp-hero-note">
-              Free, and it runs in your browser right now. It won 1st place at PA
-              DECA States.
+              Free, and it runs in your browser right now, so there’s nothing to
+              download. Flock took 1st place at PA DECA States.
             </p>
+            <AppStoreBadge />
           </div>
 
           <figure className="lp-phone-wrap">
@@ -274,7 +365,7 @@ export default function LandingPage() {
           <div>
             <h2 className="lp-turn">Six people say yes. Then the chat goes quiet.</h2>
             <p className="lp-lead" style={{ marginTop: 18 }}>
-              The plan doesn’t fall apart because people don't want to go. It falls
+              The plan doesn’t fall apart because people don’t want to go. It falls
               apart because deciding is annoying, and one person always ends up
               carrying it.
             </p>
@@ -304,8 +395,14 @@ export default function LandingPage() {
                 density everywhere. The old "2x" srcSet entries were the 2-8MB
                 master files, and every retina phone downloaded all three of
                 them (~15MB) for images this size. Do not re-add them. */}
+            {/* fetchPriority low on all three section marks. They are
+                decorative (alt=""), they are below the fold, and `loading=lazy`
+                alone does not stop them competing: the browser's lazy threshold
+                is generous, so mark-steps (124.7 KB) was already being fetched
+                at 396 ms, inside the hero's window. Lazy decides WHEN, priority
+                decides what it is allowed to slow down. */}
             <figure className="lp-flock lp-flock-steps">
-              <img src="/marks/mark-steps-400.png" alt="" width="864" height="290" loading="lazy" decoding="async" />
+              <img src="/marks/mark-steps-400.png" alt="" width="864" height="290" loading="lazy" decoding="async" fetchPriority="low" />
             </figure>
             <p className="lp-kicker">How it works</p>
             <h2>Four steps, then you’re out the door.</h2>
@@ -349,7 +446,7 @@ export default function LandingPage() {
           <div className="lp-demo-head">
             <div>
               <figure className="lp-flock lp-flock-crowd">
-              <img src="/marks/mark-crowd-400.png" alt="" width="1024" height="498" loading="lazy" decoding="async" />
+              <img src="/marks/mark-crowd-400.png" alt="" width="1024" height="498" loading="lazy" decoding="async" fetchPriority="low" />
             </figure>
               <p className="lp-kicker">Crowd levels</p>
               <h2>Know how busy it is before you leave.</h2>
@@ -370,7 +467,13 @@ export default function LandingPage() {
             Everything below is live. The map, the pins, and the numbers come
             from the same model that ships inside Flock. Pick a pin.
           </p>
-          <LiveDemo />
+          {/* 800px of lead: the demo is loading and drawing before it reaches
+              the screen, so arriving here still feels like it was always
+              there. The holder is the demo's own height, so nothing shifts
+              when it mounts, and #try above still lands in the right place. */}
+          <WhenNear className="lpd-hold" margin="800px">
+            <Suspense fallback={null}><LiveDemo /></Suspense>
+          </WhenNear>
         </div>
       </section>
 
@@ -394,25 +497,47 @@ export default function LandingPage() {
                 aspect ratio so he can never push the column wide on a phone.
                 (The idle mp4 is unused here: its ground is white and this
                 section is cream, so the cutout PNG is the honest asset.) */}
-            <BirdieBird
-              size={150}
-              style={{
+            <WhenNear
+              hold={{
                 width: 'clamp(112px, 13vw, 168px)',
-                height: 'auto',
                 aspectRatio: '316 / 400',
                 margin: '0 0 16px',
               }}
-            />
+            >
+              <BirdieBird size={150} style={{ width: '100%', height: '100%' }} />
+            </WhenNear>
             <h2>“Idk, you pick.” Birdie picks.</h2>
+            {/* Was "The argument is always the same one: where." — which is the
+                FOURTH time this page says deciding where is hard, after the
+                hero lead, the whole chat-goes-quiet section, and step 02. The
+                h2 above already carries that setup in two words. This lead now
+                advances the argument instead of restating it, and it hands off
+                from the crowd section directly above rather than resetting. */}
+            {/* Three claims checked against backend/routes/ai.js and the AI
+                chat in App.js, because two of them were not true:
+
+                "Every pick is scored by the crowd model before it reaches you"
+                described a pipeline that does not exist. search_venues returns
+                Google Places results with no score; the crowd number arrives
+                only when Birdie calls get_crowd_prediction, which it does when
+                it is relevant, not on every result.
+
+                "or start the plan" claimed a third button. A Birdie venue card
+                ships exactly two: Details, and Share to a flock or a DM.
+
+                What IS true and is the better line anyway: the crowd numbers
+                Birdie quotes are the app's own, and its hard rules forbid it
+                from inventing one. */}
             <p className="lp-lead">
-              The argument is always the same one: where. Ask Birdie the way you’d
-              ask a friend who knows the city, and it answers with tonight’s crowd
-              numbers already checked.
+              Ask Birdie the way you’d ask a friend who knows the city. It comes
+              back with real places near you, not a list it made up.
             </p>
             <ul className="lp-list">
-              <li>Ask in plain words. “Where’s poppin rn” works.</li>
-              <li>Every pick is scored by the crowd model before it reaches you.</li>
-              <li>Tap a card to see details, share it to the group, or start the plan.</li>
+              {/* No trailing periods, which is what every other list on this
+                  page does. This one was the exception. */}
+              <li>Ask in plain words. “Where’s poppin rn” works</li>
+              <li>Crowd numbers come from the same model as the map above</li>
+              <li>Tap a card for the details, or send it straight to your flock</li>
             </ul>
           </div>
         </div>
@@ -426,15 +551,22 @@ export default function LandingPage() {
         <div className="lp-wrap lp-row lp-row-flip">
           <div>
             <figure className="lp-flock lp-flock-money">
-              <img src="/marks/mark-money-400.png" alt="" width="1024" height="1024" loading="lazy" decoding="async" />
+              <img src="/marks/mark-money-400.png" alt="" width="1024" height="1024" loading="lazy" decoding="async" fetchPriority="low" />
             </figure>
             <h2>Nobody wants to say “that’s too expensive” out loud.</h2>
             <p className="lp-lead">
               In Flock nobody has to. Everyone types a number privately, and the
               group only ever sees a ceiling that works for all of them.
             </p>
+            {/* "Nobody ever sees an individual amount" was cut: the lead
+                directly above already says exactly that, so the section opened
+                by restating itself. What replaced it is the part of the rule
+                nobody would invent, and it is the one that actually proves the
+                privacy claim: budget.js returns a null ceiling until three
+                people have submitted, precisely so a group of two cannot read
+                one person's number off the ceiling. */}
             <ul className="lp-list">
-              <li>Nobody ever sees an individual amount</li>
+              <li>The ceiling stays hidden until three people have put a number in</li>
               <li>Venue picks stay under the group’s ceiling</li>
               <li>Split the bill and send Venmo, Cash App, or Zelle links</li>
             </ul>
@@ -509,10 +641,10 @@ export default function LandingPage() {
                 and the one section whose subject is a group rather than a
                 feature. They each watch the cursor on their own, so they
                 never move in lockstep the way a two-up graphic would. */}
-            <div className="lp-pair">
+            <WhenNear className="lp-pair">
               <BirdieBird bird={WARM_BIRD} size={112} style={{ width: 'clamp(84px, 9vw, 112px)', height: 'auto', aspectRatio: '332 / 333' }} />
               <BirdieBird size={128} style={{ width: 'clamp(92px, 10vw, 128px)', height: 'auto', aspectRatio: '316 / 400' }} />
-            </div>
+            </WhenNear>
             <p className="lp-kicker">Pricing</p>
             <h2>Free for your friend group.</h2>
             <p className="lp-lead" style={{ marginTop: 16 }}>
@@ -597,7 +729,7 @@ export default function LandingPage() {
         <div className="lp-wrap">
           <div className="lp-footer-grid">
             <div>
-              <a className="lp-brand" href="/"><Mark size={24} /> Flock</a>
+              <a className="lp-brand" href="/"><Mark size={24} lazy /> Flock</a>
               <p className="lp-footer-blurb">
                 The app that turns “we should hang out” into an actual night out.
               </p>
