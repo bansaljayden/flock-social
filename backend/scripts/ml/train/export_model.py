@@ -77,7 +77,20 @@ def main():
 
     # The crowd model's name is Starling (Flock / Birdie / Flux / Starling).
     metadata['model_name'] = 'Starling'
-    metadata['model_version'] = '2.5.0-starling'
+    # Version: MODEL_VERSION env var, else a dated dev tag. This used to be a
+    # hardcoded '2.5.0-starling', which meant every future retrain silently
+    # shipped under the OLD version string — logs, ship-gate messages, and the
+    # API's modelVersion field could no longer tell two models apart.
+    import os
+    env_version = os.environ.get('MODEL_VERSION')
+    if env_version:
+        metadata['model_version'] = env_version
+    else:
+        metadata['model_version'] = f'2.5-dev.{datetime.now(timezone.utc):%Y%m%d}'
+        logger.warning(
+            f'MODEL_VERSION not set — tagging artifact as {metadata["model_version"]}. '
+            'Set MODEL_VERSION (e.g. 2.6.0-<name>) for a release export.'
+        )
     metadata['label_type'] = metadata.get('label_type', 'delta')
     metadata['delta_clamp_range'] = metadata.get('delta_clamp_range', [-30, 30])
     metadata['model_type'] = model_name
