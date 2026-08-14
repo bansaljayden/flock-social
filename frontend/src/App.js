@@ -26,7 +26,7 @@ import VenueLoginScreen from './components/auth/VenueLoginScreen';
 import ModerationSheet from './components/ModerationSheet';
 import PaywallSheet from './components/PaywallSheet';
 import { initPurchases } from './services/purchases';
-import { getEntitlements, createFlockInviteLink, getVenueIntelligence, getVenueStrip, getFlockVotes, voteForVenue, clearVenueVote } from './services/api';
+import { getEntitlements, createFlockInviteLink, getVenueIntelligence, getVenueStrip, getFlockVotes, voteForVenue, clearVenueVote, getBlockedUsers, unblockUser } from './services/api';
 import { motion, AnimatePresence } from 'framer-motion';
 import BirdieBird from './components/ui/BirdieBird';
 import Icons from './components/ui/Icons';
@@ -2433,6 +2433,69 @@ const DialogBehavior = ({ onClose, label, modal = true }) => {
   return <span ref={markerRef} hidden />;
 };
 
+/* ── SOS LOCATION TIMING ─────────────────────────────────────────────────
+   How long the emergency alert is allowed to wait on GPS before it goes out
+   regardless. Four seconds is roughly what a warm fix costs; anything past
+   that is the device grinding away indoors while nobody has been told
+   anything. maximumAge of a minute is deliberate: an SOS would rather send a
+   position from 40 seconds ago than no position at all.
+
+   The follow-up chases a fix for a while longer and sends it as a second
+   alert. POST /api/safety/alert treats "the last alert had no location, this
+   one does" as an escalation and lets it through the five minute cooldown,
+   but it still enforces a sixty second floor between sends, so the follow-up
+   has to wait that floor out rather than be refused at the door. */
+const SOS_FIRST_FIX_MS = 4000;
+const SOS_FOLLOW_UP_FIX_MS = 45000;
+const SOS_FOLLOW_UP_GAP_MS = 65000;
+
+// Resolves { coords, denied } and never rejects: an emergency path has no use
+// for an exception. `denied` means the user refused location permission, which
+// is the one failure no amount of waiting fixes, so the follow-up is skipped.
+// The outer timer is not redundant with the option: some WebViews ignore the
+// `timeout` option entirely, and an SOS must not hang on a vendor's mood.
+function getSosPosition(timeoutMs, maximumAge) {
+  return new Promise((resolve) => {
+    if (!navigator.geolocation) { resolve({ coords: null, denied: false }); return; }
+    let settled = false;
+    const finish = (value) => { if (!settled) { settled = true; resolve(value); } };
+    const guard = setTimeout(() => finish({ coords: null, denied: false }), timeoutMs + 500);
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        clearTimeout(guard);
+        finish({ coords: { latitude: pos.coords.latitude, longitude: pos.coords.longitude }, denied: false });
+      },
+      (err) => {
+        clearTimeout(guard);
+        console.warn('[Emergency] Location error:', err.message);
+        finish({ coords: null, denied: err.code === 1 });
+      },
+      { enableHighAccuracy: true, timeout: timeoutMs, maximumAge }
+    );
+  });
+}
+
+// Titles for the You tab's sub-screens. A ternary chain with a bare 'Payment'
+// fallback quietly mislabels every screen added after it, which is how a new
+// one arrives already broken.
+const PROFILE_SUBSCREEN_TITLES = {
+  edit: 'Edit Profile',
+  interests: 'Interests',
+  safety: 'Safety',
+  blocked: 'Blocked accounts',
+  payment: 'Payment',
+};
+
+// Same circle-and-slash the report/block sheet uses, in the (color, size)
+// shape the settings rows call their icons with. Emoji are not UI icons here
+// (SLOP-AUDIT H14) and there is no ban glyph in the icon set.
+const blockGlyph = (color, size) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <circle cx="12" cy="12" r="10" />
+    <line x1="4.9" y1="4.9" x2="19.1" y2="19.1" />
+  </svg>
+);
+
 const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   // Theme — shadows the outer static colors/styles with reactive versions
   const { toggleTheme, isDark, themeMode, isNightModeActive, setAutoMode } = useTheme();
@@ -3780,6 +3843,19 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   }), []);
   // UGC moderation (Apple 1.2): null = closed, else { userId, userName, contentType, contentId }
   const [moderationTarget, setModerationTarget] = useState(null);
+  // Blocked accounts. Apple 1.2 wants the block, and a block nobody can lift is
+  // a punishment the product hands out once and never takes back — getBlockedUsers
+  // and unblockUser have existed in services/api.js the whole time with no caller.
+  // The ref is the client's copy of who is blocked, and every roster refresh runs
+  // through it: GET /api/flocks/:id still returns blocked members (a block does
+  // not end a shared plan), so without it the person you just blocked walks back
+  // onto the screen on the very next fetch.
+  const blockedIdsRef = useRef(new Set());
+  const [blockedUsers, setBlockedUsers] = useState([]);
+  const [blockedLoading, setBlockedLoading] = useState(false);
+  const [blockedError, setBlockedError] = useState('');
+  const [unblockingId, setUnblockingId] = useState(null);
+  const [unblockTarget, setUnblockTarget] = useState(null);
   // In-app account deletion (Apple 5.1.1(v))
   const [showDeleteAccount, setShowDeleteAccount] = useState(false);
   const [deleteConfirmText, setDeleteConfirmText] = useState('');
@@ -4503,6 +4579,44 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   const newlyCreatedFlockRef = useRef(null);
   const sharingLocationRef = useRef(sharingLocationForFlock);
   sharingLocationRef.current = sharingLocationForFlock;
+  // One flock's roster, guests and momentum, refetched. Pulled out of the effect
+  // below so blocking someone can ask for the same refresh without waiting for a
+  // navigation. Failures leave whatever is on screen alone: a roster that is a
+  // few seconds stale beats a roster that empties itself because a fetch missed.
+  const refreshFlockRoster = useCallback(async (flockId) => {
+    if (!flockId) return;
+    try {
+      const data = await getFlock(flockId);
+      const accepted = (data.members || []).filter(m => m.status === 'accepted');
+      const members = accepted
+        .filter(m => !blockedIdsRef.current.has(String(m.id)))
+        .map(m => ({ id: m.id, name: m.name, image: m.profile_image_url || null }));
+      // The server's accepted count still counts the people we just hid, so the
+      // headcount has to come down with them. "3 going" over two faces is the
+      // kind of mismatch that makes someone go looking for the third.
+      const hidden = accepted.length - members.length;
+      // Guests RSVP from the public share link and have no account. They
+      // belong in the roster and in "going", but deliberately NOT in
+      // flock.members: that array feeds the bill-split payer picker and the
+      // location-share guard, both of which take real user ids. Their ids
+      // are namespaced strings ("guest:12") so a stray one is loud.
+      const guests = (data.guests || []).map(g => ({ id: g.id, name: g.name, status: g.status, isGuest: true }));
+      const eventTime = data.flock?.event_time || null;
+      setFlocks(prev => prev.map(f => f.id === flockId
+        ? {
+            ...f,
+            members,
+            guests,
+            memberCount: Math.max(0, (data.momentum?.accepted ?? accepted.length) - hidden),
+            // momentum is left as the server sent it on purpose: it drives a
+            // progress stage ("has two or more people"), not a headcount, and
+            // a blocked member is still coming to the thing.
+            momentum: data.momentum || null,
+            eventTime: eventTime || f.eventTime || null,
+          }
+        : f));
+    } catch { /* keep the roster already on screen */ }
+  }, []);
   useEffect(() => {
     if (currentScreen === 'chatDetail' && selectedFlockId) {
       // Leave previous room
@@ -4515,19 +4629,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
       joinFlock(selectedFlockId);
 
       // Fetch flock members + momentum
-      getFlock(selectedFlockId)
-        .then((data) => {
-          const members = (data.members || []).filter(m => m.status === 'accepted').map(m => ({ id: m.id, name: m.name, image: m.profile_image_url || null }));
-          // Guests RSVP from the public share link and have no account. They
-          // belong in the roster and in "going", but deliberately NOT in
-          // flock.members: that array feeds the bill-split payer picker and the
-          // location-share guard, both of which take real user ids. Their ids
-          // are namespaced strings ("guest:12") so a stray one is loud.
-          const guests = (data.guests || []).map(g => ({ id: g.id, name: g.name, status: g.status, isGuest: true }));
-          const eventTime = data.flock?.event_time || null;
-          setFlocks(prev => prev.map(f => f.id === selectedFlockId ? { ...f, members, guests, memberCount: (data.momentum?.accepted ?? members.length), momentum: data.momentum || null, eventTime: eventTime || f.eventTime || null } : f));
-        })
-        .catch(() => {});
+      refreshFlockRoster(selectedFlockId);
 
       // Votes already cast (members + guests), so the panel isn't blank
       loadFlockVotes(selectedFlockId);
@@ -4584,14 +4686,16 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
       setBudgetStatus(null);
       setBillSplit(null);
     }
-  }, [currentScreen, selectedFlockId, authUser?.id, loadFlockVotes]);
+  }, [currentScreen, selectedFlockId, authUser?.id, loadFlockVotes, refreshFlockRoster]);
 
   // Fetch flock members + momentum when opening flock detail overview
   useEffect(() => {
     if (currentScreen === 'detail' && selectedFlockId) {
       getFlock(selectedFlockId)
         .then((data) => {
-          const members = (data.members || []).map(m => ({ id: m.id, name: m.name, image: m.profile_image_url || null, status: m.status }));
+          // Same block filter as refreshFlockRoster, and for the same reason:
+          // the server still lists a blocked member here.
+          const members = (data.members || []).filter(m => !blockedIdsRef.current.has(String(m.id))).map(m => ({ id: m.id, name: m.name, image: m.profile_image_url || null, status: m.status }));
           const eventTime = data.flock?.event_time || null;
           setFlocks(prev => prev.map(f => f.id === selectedFlockId ? { ...f, members, memberCount: members.filter(m => m.status === 'accepted').length, momentum: data.momentum || null, eventTime: eventTime || f.eventTime || null } : f));
         })
@@ -5572,6 +5676,61 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
     );
   };
 
+  // --- Blocked accounts ---
+  const loadBlockedUsers = useCallback(async () => {
+    setBlockedLoading(true);
+    setBlockedError('');
+    try {
+      const data = await getBlockedUsers();
+      const list = data.blocked || [];
+      setBlockedUsers(list);
+      // Re-seed rather than merge. This response is the server's whole answer,
+      // so an id missing from it is an id that is no longer blocked.
+      blockedIdsRef.current = new Set(list.map(b => String(b.user_id)));
+    } catch (err) {
+      // A failed load must never render as "you have not blocked anyone".
+      // That is a claim about the user's data and it would be the wrong one.
+      setBlockedError(err.message || 'Could not load your blocked accounts.');
+    } finally {
+      setBlockedLoading(false);
+    }
+  }, []);
+
+  // Seed the block set once at start. Every roster refresh filters through it,
+  // and a set that is only populated by blocks made in this session would let
+  // someone blocked last week walk back into the roster after a relaunch.
+  useEffect(() => { loadBlockedUsers(); }, [loadBlockedUsers]);
+
+  const handleUnblock = useCallback(async (user) => {
+    const id = String(user.user_id);
+    // Null, not a pronoun: "They was already unblocked" is what a fallback of
+    // 'They' produces in the second branch.
+    const who = user.name || null;
+    setUnblockingId(id);
+    try {
+      await unblockUser(user.user_id);
+      setBlockedUsers(prev => prev.filter(b => String(b.user_id) !== id));
+      blockedIdsRef.current.delete(id);
+      setUnblockTarget(null);
+      showToast(who ? `${who} can contact you again` : 'Unblocked');
+    } catch (err) {
+      if (err?.status === 404) {
+        // Already unblocked somewhere else. Leaving the row would be the one
+        // wrong state here: it would claim a block that no longer exists.
+        setBlockedUsers(prev => prev.filter(b => String(b.user_id) !== id));
+        blockedIdsRef.current.delete(id);
+        setUnblockTarget(null);
+        showToast(who ? `${who} was already unblocked` : 'Already unblocked');
+      } else {
+        // The block is still in force, so the row stays exactly as it was and
+        // goes back to offering Unblock. Nothing is removed on a guess.
+        showToast(err.message || 'Could not unblock. Try again.', 'error');
+      }
+    } finally {
+      setUnblockingId(null);
+    }
+  }, [showToast]);
+
   // --- Safety handlers ---
   const loadTrustedContacts = useCallback(async () => {
     try {
@@ -5630,34 +5789,80 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
     }
   }, [showToast]);
 
+  // The alert has already gone out with no location. Keep trying for a fix and,
+  // when one lands, send it as a second alert so contacts get the map link they
+  // were missing. Only one of these is ever in flight; a second SOS press starts
+  // over rather than stacking timers. `gen` is what makes that true: clearing
+  // the timer alone is not enough, because a run can be sitting inside a 45
+  // second GPS wait with no timer to clear yet, and bumping the generation
+  // makes that run land on a number that is no longer current and drop itself.
+  const sosFollowUpRef = useRef({ timer: null, gen: 0 });
+  const cancelSosLocationFollowUp = useCallback(() => {
+    const s = sosFollowUpRef.current;
+    if (s.timer) { clearTimeout(s.timer); s.timer = null; }
+    s.gen += 1;
+  }, []);
+  useEffect(() => () => cancelSosLocationFollowUp(), [cancelSosLocationFollowUp]);
+
+  const startSosLocationFollowUp = useCallback(() => {
+    const s = sosFollowUpRef.current;
+    if (s.timer) { clearTimeout(s.timer); s.timer = null; }
+    s.gen += 1;
+    const gen = s.gen;
+    const sentAt = Date.now();
+    getSosPosition(SOS_FOLLOW_UP_FIX_MS, 0).then(({ coords }) => {
+      if (!coords || sosFollowUpRef.current.gen !== gen) return;
+      const wait = Math.max(0, SOS_FOLLOW_UP_GAP_MS - (Date.now() - sentAt));
+      sosFollowUpRef.current.timer = setTimeout(async () => {
+        sosFollowUpRef.current.timer = null;
+        if (sosFollowUpRef.current.gen !== gen) return;
+        try {
+          await sendEmergencyAlert({ latitude: coords.latitude, longitude: coords.longitude, includeLocation: true });
+          showToast('Your location has been sent to your contacts');
+        } catch (err) {
+          // The alert itself was delivered, so this is a smaller failure than
+          // it sounds and the copy has to say which half worked.
+          showToast('Could not send your location. Your alert already went out.', 'error');
+        }
+      }, wait);
+    });
+  }, [showToast]);
+
   const handleEmergencyAlert = useCallback(async () => {
     if (trustedContacts.length === 0) {
       showToast('Add trusted contacts in Safety settings first', 'error');
       return;
     }
+    // A fresh press supersedes any location follow-up still chasing the last one.
+    cancelSosLocationFollowUp();
     setSosAlertSending(true);
     try {
-      const getPos = () => new Promise((resolve) => {
-        navigator.geolocation.getCurrentPosition(
-          pos => resolve({ latitude: pos.coords.latitude, longitude: pos.coords.longitude }),
-          (err) => { console.warn('[Emergency] Location error:', err.message); resolve(null); },
-          { enableHighAccuracy: true, timeout: 15000, maximumAge: 30000 }
-        );
-      });
-      const loc = navigator.geolocation ? await getPos() : null;
+      // The alert used to sit behind a 15 second GPS timeout, so pressing SOS
+      // indoors meant a quarter of a minute in which nobody had been told
+      // anything at all. Nothing is worth that in an emergency. Wait a few
+      // seconds for a fix, send either way, and chase the location afterwards.
+      const first = navigator.geolocation ? await getSosPosition(SOS_FIRST_FIX_MS, 60000) : { coords: null, denied: false };
+      const loc = first.coords;
       const data = await sendEmergencyAlert({
         latitude: loc?.latitude,
         longitude: loc?.longitude,
         includeLocation: !!loc,
       });
-      showToast(data.message || 'Emergency alert sent');
+      const sent = data.message || 'Emergency alert sent';
+      // Say plainly what went out. No promise about the follow-up here: it may
+      // never arrive, and a safety screen is the last place to write a cheque
+      // the next sixty seconds might not cash.
+      showToast(loc ? sent : `${sent}. Your location was not available.`);
       setShowSOS(false);
+      // Skip the chase when there is nothing to chase: no geolocation at all,
+      // or a permission the user has already refused.
+      if (!loc && !first.denied && navigator.geolocation) startSosLocationFollowUp();
     } catch (err) {
       showToast(err.message || 'Failed to send alert', 'error');
     } finally {
       setSosAlertSending(false);
     }
-  }, [trustedContacts, showToast]);
+  }, [trustedContacts, showToast, startSosLocationFollowUp, cancelSosLocationFollowUp]);
 
   const handleShareLocationWithContacts = useCallback(async () => {
     if (trustedContacts.length === 0) {
@@ -11593,7 +11798,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
         <div key={`profile-${profileScreen}-container`} style={{ display: 'flex', flexDirection: 'column', height: '100%', backgroundColor: 'var(--bg-primary)' }}>
           <div style={{ padding: '12px', display: 'flex', alignItems: 'center', gap: '8px', borderBottom: '1px solid var(--divider)', backgroundColor: 'var(--bg-card-solid)', flexShrink: 0 }}>
             <button className="hit44" onClick={() => setProfileScreen('main')} style={{ background: 'none', border: 'none', color: colors.navy, fontSize: 'var(--t-title)', cursor: 'pointer' }}>←</button>
-            <h1 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy, margin: 0 }}>{profileScreen === 'edit' ? 'Edit Profile' : profileScreen === 'safety' ? 'Safety' : profileScreen === 'interests' ? 'Interests' : 'Payment'}</h1>
+            <h1 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy, margin: 0 }}>{PROFILE_SUBSCREEN_TITLES[profileScreen] || 'Payment'}</h1>
           </div>
           <div style={{ flex: 1, padding: '16px', overflowY: 'auto' }}>
             {profileScreen === 'edit' && (() => {
@@ -11834,6 +12039,98 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 )}
               </div>
             )}
+            {profileScreen === 'blocked' && (
+              <div>
+                <div style={{ ...styles.card, display: 'flex', gap: '10px', alignItems: 'flex-start' }}>
+                  <div style={{ width: '36px', height: '36px', borderRadius: '10px', background: 'var(--accent-red-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{blockGlyph(colors.red, 18)}</div>
+                  <div>
+                    <p style={{ fontWeight: '600', fontSize: 'var(--t-label)', color: colors.navy, margin: '0 0 4px' }}>What blocking does</p>
+                    {/* Every clause here is something the server actually
+                        enforces: mutual invisibility across DMs, messages,
+                        invites and friend requests, and the friendship row is
+                        deleted outright when the block is created. Unblocking
+                        does not put it back, so this must not imply it does. */}
+                    <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0, lineHeight: '1.4' }}>Blocked accounts cannot message you or see your activity, and you will not see theirs. Blocking also removes the friendship. Unblocking lets you contact each other again, but it does not add them back as a friend.</p>
+                  </div>
+                </div>
+
+                {blockedLoading && blockedUsers.length === 0 && (
+                  <ListSkeleton count={2} thumb={40} thumbRadius={20} label="Loading blocked accounts" />
+                )}
+
+                {!blockedLoading && blockedError && (
+                  <div style={styles.card}>
+                    <p style={{ fontSize: 'var(--t-label)', color: colors.red, fontWeight: '600', margin: '0 0 10px' }}>{blockedError}</p>
+                    <button className="hit44 glass-btn glass-navy" onClick={loadBlockedUsers} style={{ padding: '10px 16px', borderRadius: '10px', border: 'none', background: colors.navyMidBg, color: 'white', fontWeight: '600', fontSize: 'var(--t-label)', cursor: 'pointer' }}>Try again</button>
+                  </div>
+                )}
+
+                {!blockedLoading && !blockedError && blockedUsers.length === 0 && (
+                  <div style={{ ...styles.card, textAlign: 'center', padding: '28px 20px' }}>
+                    <div style={{ marginBottom: '10px', display: 'flex', justifyContent: 'center' }}>{blockGlyph('var(--text-tertiary)', 34)}</div>
+                    <p style={{ fontSize: 'var(--t-body)', fontWeight: '600', color: colors.navy, margin: '0 0 4px' }}>You have not blocked anyone</p>
+                    {/* Both routes verified against the code they describe: a
+                        tap on a message bubble opens the actions row with the
+                        report flag in it, and the direct message header menu
+                        reads "Report or block". Neither is a long press. */}
+                    <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0, lineHeight: '1.4' }}>To block someone, tap one of their messages in a chat and pick the flag, or open the menu at the top of a direct message.</p>
+                  </div>
+                )}
+
+                {/* Deliberately not gated on blockedError: a failed refresh
+                    should not delete the list the user is looking at. The error
+                    card sits above it and says the refresh did not land. */}
+                {blockedUsers.length > 0 && (
+                  <div style={styles.card}>
+                    <h2 style={{ fontWeight: '700', fontSize: 'var(--t-title)', color: colors.navy, margin: '0 0 4px' }}>Blocked ({blockedUsers.length})</h2>
+                    {blockedUsers.map((b, i) => {
+                      const id = String(b.user_id);
+                      const busy = unblockingId === id;
+                      return (
+                        <div key={id} style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '10px 0', borderBottom: i === blockedUsers.length - 1 ? 'none' : '1px solid var(--border-light)' }}>
+                          <div style={{ width: '40px', height: '40px', borderRadius: '20px', backgroundColor: 'var(--icon-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', flexShrink: 0 }}>
+                            {b.profile_image_url
+                              ? <img src={b.profile_image_url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                              : <span style={{ fontWeight: '600', fontSize: 'var(--t-body)', color: colors.navy }}>{b.name?.[0]?.toUpperCase() || '?'}</span>}
+                          </div>
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <p style={{ fontWeight: '600', fontSize: 'var(--t-body)', color: colors.navy, margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{b.name || 'Deleted account'}</p>
+                            {b.created_at && <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: '2px 0 0' }}>Blocked {new Date(b.created_at).toLocaleDateString()}</p>}
+                          </div>
+                          {/* The row is only ever removed by a confirmed
+                              unblock. A failure leaves it here, still saying
+                              Unblock, because the block is still real and a
+                              row that vanished would claim otherwise. */}
+                          <button
+                            className="hit44"
+                            // Every row's button reads "Unblock", so on its own
+                            // it tells a screen reader nothing about which one.
+                            aria-label={`Unblock ${b.name || 'this account'}`}
+                            disabled={busy}
+                            onClick={() => setUnblockTarget(b)}
+                            style={{ padding: '8px 14px', borderRadius: '10px', border: `1px solid ${colors.navy}`, backgroundColor: 'transparent', color: colors.navy, fontSize: 'var(--t-meta)', fontWeight: '600', cursor: busy ? 'wait' : 'pointer', opacity: busy ? 0.6 : 1, flexShrink: 0 }}
+                          >{busy ? 'Unblocking…' : 'Unblock'}</button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+
+                {unblockTarget && (
+                  <div onClick={() => { if (!unblockingId) setUnblockTarget(null); }} style={{ position: 'absolute', inset: 0, zIndex: 210, backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '24px' }}>
+                    <DialogBehavior onClose={() => setUnblockTarget(null)} label={`Unblock ${unblockTarget.name || 'this account'}`} />
+                    <div onClick={(e) => e.stopPropagation()} style={{ width: '100%', maxWidth: '360px', backgroundColor: 'var(--bg-card-solid)', borderRadius: '18px', padding: '22px', boxShadow: '0 8px 24px rgba(0,0,0,0.15)' }}>
+                      <h3 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: 'var(--text-primary)', margin: '0 0 8px' }}>Unblock {unblockTarget.name || 'this account'}?</h3>
+                      <p style={{ fontSize: 'var(--t-label)', color: 'var(--text-secondary)', margin: '0 0 18px', lineHeight: 1.5 }}>They will be able to message you and see your activity again. You can block them again at any time.</p>
+                      <div style={{ display: 'flex', gap: '10px' }}>
+                        <button className="hit44" disabled={!!unblockingId} onClick={() => setUnblockTarget(null)} style={{ flex: 1, padding: '13px', borderRadius: '12px', border: '1px solid var(--border-default)', backgroundColor: 'transparent', color: 'var(--text-secondary)', fontSize: 'var(--t-label)', fontWeight: '600', cursor: 'pointer' }}>Cancel</button>
+                        <button className="hit44" disabled={!!unblockingId} onClick={() => handleUnblock(unblockTarget)} style={{ flex: 2, padding: '13px', borderRadius: '12px', border: 'none', background: colors.navyMidBg, color: 'white', fontSize: 'var(--t-label)', fontWeight: '700', cursor: unblockingId ? 'wait' : 'pointer', opacity: unblockingId ? 0.6 : 1 }}>{unblockingId ? 'Unblocking…' : 'Unblock'}</button>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
             {profileScreen === 'interests' && (
               <div>
                 <div style={styles.card}>
@@ -11955,9 +12252,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
               { l: 'Edit Profile', s: 'edit', icon: Icons.edit },
               { l: 'Interests', s: 'interests', icon: Icons.target },
               { l: 'Safety', s: 'safety', icon: Icons.shield },
+              { l: 'Blocked accounts', s: 'blocked', icon: blockGlyph },
               { l: 'Payment', s: 'payment', icon: Icons.creditCard },
             ].map(m => (
-              <button key={m.s} className="hit44 glass-btn glass-secondary" onClick={() => { setProfileScreen(m.s); if (m.s === 'safety') loadTrustedContacts(); if (m.s === 'payment') { setVenmoUsername(authUser?.venmo_username || ''); setCashappCashtag(authUser?.cashapp_cashtag || ''); setZelleIdentifier(authUser?.zelle_identifier || ''); } }} style={{ width: '100%', padding: '12px', textAlign: 'left', borderBottom: '1px solid var(--border-light)', display: 'flex', alignItems: 'center', gap: '12px', backgroundColor: 'var(--bg-card-solid)', border: 'none', cursor: 'pointer' }}>
+              <button key={m.s} className="hit44 glass-btn glass-secondary" onClick={() => { setProfileScreen(m.s); if (m.s === 'safety') loadTrustedContacts(); if (m.s === 'blocked') { setUnblockTarget(null); loadBlockedUsers(); } if (m.s === 'payment') { setVenmoUsername(authUser?.venmo_username || ''); setCashappCashtag(authUser?.cashapp_cashtag || ''); setZelleIdentifier(authUser?.zelle_identifier || ''); } }} style={{ width: '100%', padding: '12px', textAlign: 'left', borderBottom: '1px solid var(--border-light)', display: 'flex', alignItems: 'center', gap: '12px', backgroundColor: 'var(--bg-card-solid)', border: 'none', cursor: 'pointer' }}>
                 <div style={{ width: '32px', height: '32px', borderRadius: '8px', backgroundColor: 'var(--icon-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{m.icon(colors.navy, 18)}</div>
                 <span style={{ flex: 1, fontWeight: '600', fontSize: 'var(--t-body)', color: colors.navy }}>{m.l}</span>
                 <span style={{ color: 'var(--text-tertiary)' }}>›</span>
@@ -14748,12 +15046,34 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
             onClose={() => setModerationTarget(null)}
             showToast={showToast}
             onBlocked={(blockedId) => {
+              const id = String(blockedId);
+              blockedIdsRef.current.add(id);
               // Drop the blocked user's DM thread and leave their conversation.
-              setDirectMessages(prev => prev.filter(d => String(d.userId) !== String(blockedId)));
-              if (String(selectedDmId) === String(blockedId)) {
+              setDirectMessages(prev => prev.filter(d => String(d.userId) !== id));
+              if (String(selectedDmId) === id) {
                 setSelectedDmId(null);
                 setCurrentScreen('main');
               }
+              // The DM was the only thing this used to clean up, so someone
+              // blocked from a flock chat stayed right there on screen, messages
+              // and all, until you navigated away and back. The server hides
+              // their messages from the next fetch; this is the copy already
+              // rendered, and their seat in the roster.
+              setFlocks(prev => prev.map(f => {
+                const messages = Array.isArray(f.messages) ? f.messages.filter(m => String(m.senderId) !== id) : null;
+                const members = Array.isArray(f.members) ? f.members.filter(m => String(m.id) !== id) : null;
+                const msgChanged = messages && messages.length !== f.messages.length;
+                const memChanged = members && members.length !== f.members.length;
+                if (!msgChanged && !memChanged) return f;
+                return { ...f, ...(msgChanged ? { messages } : {}), ...(memChanged ? { members } : {}) };
+              }));
+              // Availability pulses are the other place a name and face sit in
+              // client state between refreshes: the "Available tonight" list in
+              // the invite sheet reads straight off this array.
+              setFriendsPulses(prev => prev.filter(p => String(p.id) !== id));
+              // Then ask the server, so the counts under the roster are its
+              // numbers rather than our subtraction.
+              if (selectedFlockId) refreshFlockRoster(selectedFlockId);
             }}
           />
 
