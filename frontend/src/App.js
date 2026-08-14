@@ -28,7 +28,12 @@ import PaywallSheet from './components/PaywallSheet';
 import { initPurchases } from './services/purchases';
 import { getEntitlements, createFlockInviteLink, getVenueIntelligence, getVenueStrip, getFlockVotes, voteForVenue, clearVenueVote, getBlockedUsers, unblockUser, blockUser, saveFlockVenue, setFlockStatus, setFlockEventTime } from './services/api';
 import { motion, AnimatePresence } from 'framer-motion';
-import BirdieBird from './components/ui/BirdieBird';
+// BirdieStill is the same photographed mascot with the animation machinery
+// left out — the dashboards get the mark, never the rAF loop. WARM_BIRD is
+// the cream bird; the default is cobalt Birdie. Both are used deliberately:
+// cobalt where the subject is Flock users, warm where it is the owner's own
+// space. Neither is ever a functional glyph — Icons.birdie stays the glyph.
+import BirdieBird, { BirdieStill, WARM_BIRD } from './components/ui/BirdieBird';
 import Icons from './components/ui/Icons';
 import 'maplibre-gl/dist/maplibre-gl.css';
 
@@ -11905,10 +11910,13 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
               which is the first thing anyone sees after creating one. Say what
               this room is for and give the two openers. */}
           {!messagesLoading && flock.messages.length === 0 && !(showChatSearch && chatSearch.trim()) && (
-            <div style={{ textAlign: 'center', padding: '48px 24px' }}>
-              <div style={{ width: '52px', height: '52px', borderRadius: '16px', background: 'var(--icon-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 12px' }}>
-                {Icons.chat(colors.navy, 24)}
-              </div>
+            <div style={{ textAlign: 'center', padding: '40px 24px 48px' }}>
+              {/* The warm bird, not cobalt: in this app cobalt Birdie IS the
+                  AI, and his photo on a human chat's first screen would read
+                  as "the assistant lives here". The cream bird is the brand
+                  without that promise. Still image — this is a screen people
+                  live in, and it also replaced an icon-in-rounded-square. */}
+              <BirdieStill bird={WARM_BIRD} size={96} style={{ margin: '0 auto 10px' }} />
               <p style={{ fontSize: 'var(--t-body)', fontWeight: '600', color: colors.navy, margin: '0 0 4px' }}>Nothing here yet</p>
               <p style={{ fontSize: 'var(--t-label)', color: 'var(--text-secondary)', margin: '0 0 16px', lineHeight: '1.5' }}>
                 This is where {flock.name} gets sorted out. Say hi, or put a place on the table for everyone to vote on.
@@ -15090,8 +15098,15 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                   {(venueData.name || 'V').charAt(0).toUpperCase()}
                 </span>
               )}
+              {/* A real spinner, not the bare "…" this overlay used to show —
+                  three dots over a darkened logo read as broken, not busy.
+                  Small inline action, so a small inline spinner (SLOP-AUDIT
+                  §10), not a bird: mascots do not sit on wait states inside a
+                  work tool. role="status" so the wait is announced. */}
               {venueLogoUploading && (
-                <div style={{ position: 'absolute', inset: 0, backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 'var(--t-meta)', color: 'white' }}>…</div>
+                <div role="status" aria-label="Uploading logo" style={{ position: 'absolute', inset: 0, backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  <div style={{ width: '16px', height: '16px', border: '2px solid rgba(255,255,255,0.3)', borderTopColor: 'white', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
+                </div>
               )}
               {/* 10px was two bands below anything this set is drawn for: the
                   camera's lens is an r=5 circle inside an 18-unit box, which at
@@ -15416,7 +15431,15 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 )}
                 {promotions.length === 0 ? (
                   venueListErrors.promotions ? null : (
-                    <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', textAlign: 'center', padding: '20px' }}>No promotions yet. Create your first one!</p>
+                    // The warm bird, because promotions are the owner's own
+                    // space (cobalt Birdie marks the states about Flock users,
+                    // like the incoming-flocks card). Genuine-empty only: the
+                    // failed-read branch above stays bird-free — a mascot on
+                    // an error would dress the failure up as an empty list.
+                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', padding: '14px 0 4px' }}>
+                      <BirdieStill bird={WARM_BIRD} size={84} />
+                      <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', textAlign: 'center', margin: 0, padding: '10px 0 12px' }}>No promotions yet. Create your first one!</p>
+                    </div>
                   )
                 ) : promotions.map(promo => {
                   const hidden = isModerationHidden(promo);
@@ -15529,8 +15552,15 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 )) : (
                   // Only the empty-state SENTENCE is suppressed, because it is
                   // the part that is not true when nothing was ever read.
+                  // Cobalt Birdie on the genuine-empty: this card is about
+                  // Flock users, and he is their bird. The "Your Events" card
+                  // below shares this screen and stays bird-free on purpose —
+                  // one mark per screen, and this is the card about people.
                   (venueListErrors.incomingFlocks || venueListErrors.incomingFlocksLocked) ? null : (
-                    <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', textAlign: 'center', padding: '20px' }}>No incoming flocks yet</p>
+                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', padding: '14px 0 4px' }}>
+                      <BirdieStill size={84} />
+                      <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', textAlign: 'center', margin: 0, padding: '10px 0 12px' }}>No incoming flocks yet</p>
+                    </div>
                   )
                 )}
               </div>
@@ -15646,7 +15676,13 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                   venueListErrors.reviews ? (
                     <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: 0, textAlign: 'center', padding: '12px 0' }}>Ratings unavailable right now.</p>
                   ) : (
-                    <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0, textAlign: 'center', padding: '12px 0' }}>No reviews yet. Reviews from Flock users will appear here.</p>
+                    // Warm bird on the true-empty only. The failed-read branch
+                    // above stays plain text: "unavailable" is an error, and
+                    // the mascot must not make it read like an empty inbox.
+                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', padding: '10px 0 2px' }}>
+                      <BirdieStill bird={WARM_BIRD} size={84} />
+                      <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0, textAlign: 'center', padding: '10px 0 10px' }}>No reviews yet. Reviews from Flock users will appear here.</p>
+                    </div>
                   )
                 )}
               </div>
@@ -16100,7 +16136,12 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
             <button aria-label="Back" className="hit44" onClick={switchMode} style={{ width: '32px', height: '32px', borderRadius: '16px', border: 'none', backgroundColor: 'rgba(255,255,255,0.2)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
               {Icons.arrowLeft('white', 16)}
             </button>
-            {Icons.briefcase('white', 24)}
+            {/* Cobalt Birdie, still. This slot held a generic briefcase glyph,
+                which said "office software" on the one screen that is purely
+                ours. 44px is a brand mark, not an icon; the photo carries its
+                own light against the navy. Eager because the header is the
+                first paint of this screen — a lazy image here pops in. */}
+            <BirdieStill size={44} eager style={{ flexShrink: 0 }} />
             <div>
               <h1 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: 'white', margin: 0 }}>Admin Dashboard</h1>
               <p style={{ fontSize: 'var(--t-meta)', color: 'rgba(255,255,255,0.7)', margin: 0 }}>Manage your Flock platform</p>
@@ -18567,6 +18608,17 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
         }
         /* Smooth icon rotation */
         @keyframes iconSpin {
+          from { transform: rotate(0deg); }
+          to { transform: rotate(360deg); }
+        }
+        /* 'spin' was referenced by every ring spinner in this file (map
+           loading, venue list loading, the create button, the logo uploader)
+           and DEFINED nowhere — grep the repo before deleting this "duplicate"
+           of iconSpin. Without it those rings sat frozen, which is exactly the
+           broken look a spinner exists to prevent. index.css's global
+           prefers-reduced-motion rule already collapses it to one instant
+           iteration. */
+        @keyframes spin {
           from { transform: rotate(0deg); }
           to { transform: rotate(360deg); }
         }
