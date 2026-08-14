@@ -340,14 +340,84 @@ router.put('/venues/:profileId/verify', async (req, res) => {
     // is a SERIAL integer, so anything that is not all digits names no row.
     const profileId = /^\d+$/.test(String(req.params.profileId)) ? parseInt(req.params.profileId, 10) : null;
     if (profileId === null) return res.status(404).json({ error: 'Venue profile not found' });
-    const verified = req.body.verified !== false;
+    // `verified` defaults to true (the button that just says "Verify" sends no
+    // body), but anything that is not a real boolean is refused rather than
+    // coerced: `{"verified":"false"}` used to VERIFY a claim, which is the
+    // dangerous direction to get wrong on the route that decides who is allowed
+    // to speak as a business.
+    const payload = req.body || {};
+    if ('verified' in payload && typeof payload.verified !== 'boolean') {
+      return res.status(400).json({ error: 'verified must be true or false' });
+    }
+    const verified = payload.verified !== false;
+    // Migration 002 puts a unique partial index on venue_profiles
+    // (google_place_id) WHERE verified = true, so verifying a SECOND claimant on
+    // a place someone else already holds raised 23505 and came back a 500 — the
+    // admin was told the system broke when in fact it correctly refused, and the
+    // real reason (another account already owns this place) was never named.
+    //
+    // The conflict is detected inside the same statement rather than by a
+    // separate SELECT, so there is no window between the check and the write:
+    // `target` names the row being verified, `blocked` is the OTHER verified
+    // claim on its place id, and the UPDATE simply does not fire when one
+    // exists. The outer SELECT still returns a row whenever the profile exists,
+    // so "no such profile" (0 rows) stays distinguishable from "refused" (a row
+    // whose UPDATE half is missing) without a second query.
+    //
+    // Un-verifying is never blocked, and a NULL google_place_id cannot conflict
+    // (the partial index treats NULLs as distinct), so both skip the check.
     const result = await pool.query(
-      'UPDATE venue_profiles SET verified = $1, updated_at = NOW() WHERE id = $2 RETURNING id, business_name, verified',
+      `WITH target AS (
+         SELECT id, google_place_id FROM venue_profiles WHERE id = $2
+       ),
+       blocked AS (
+         SELECT other.user_id
+         FROM venue_profiles other
+         JOIN target t ON other.google_place_id = t.google_place_id
+         WHERE $1::boolean = true
+           AND t.google_place_id IS NOT NULL
+           AND other.verified = true
+           AND other.id <> t.id
+         LIMIT 1
+       ),
+       upd AS (
+         UPDATE venue_profiles SET verified = $1, updated_at = NOW()
+         WHERE id = $2 AND NOT EXISTS (SELECT 1 FROM blocked)
+         RETURNING id, business_name, verified
+       )
+       SELECT u.id, u.business_name, u.verified,
+              t.google_place_id,
+              (SELECT user_id FROM blocked) AS conflict_user_id
+       FROM target t LEFT JOIN upd u ON true`,
       [verified, profileId]
     );
     if (result.rows.length === 0) return res.status(404).json({ error: 'Venue profile not found' });
-    res.json(result.rows[0]);
+    const row = result.rows[0];
+    // The refusal is read off the UPDATE, not off the conflicting owner's id:
+    // venue_profiles.user_id is nullable, so a conflicting row with a NULL
+    // user_id would otherwise have looked like success and answered 200 with a
+    // row of nulls. `blocked` is the only thing that can stop the UPDATE, so a
+    // target that exists with no updated row IS the conflict.
+    if (row.id == null) {
+      const who = row.conflict_user_id != null ? `Another account (user ${row.conflict_user_id})` : 'Another account';
+      return res.status(409).json({
+        error: `${who} is already the verified owner of Google place ${row.google_place_id}. Un-verify that claim first.`,
+        code: 'PLACE_ALREADY_VERIFIED',
+        conflictUserId: row.conflict_user_id ?? null,
+        googlePlaceId: row.google_place_id,
+      });
+    }
+    res.json({ id: row.id, business_name: row.business_name, verified: row.verified });
   } catch (err) {
+    // Two admins verifying rival claims on the same place at the same instant
+    // both see an empty `blocked`, and the unique index decides. That is the
+    // same refusal, so it gets the same answer instead of a 500.
+    if (err && err.code === '23505') {
+      return res.status(409).json({
+        error: 'Another account is already the verified owner of that Google place. Un-verify that claim first.',
+        code: 'PLACE_ALREADY_VERIFIED',
+      });
+    }
     console.error('Admin verify venue error:', err);
     res.status(500).json({ error: 'Failed to update verification' });
   }
