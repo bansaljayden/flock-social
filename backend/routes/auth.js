@@ -962,8 +962,86 @@ function appleNonceClaimMatches(tokenNonce, suppliedNonce) {
 // Age gate (C4) — SERVER-SIDE enforcement. The mobile neutral age screen collects
 // a DOB and sends it at account creation; we compute age here so the under-13
 // block survives local-storage clears / reinstalls and is recorded on the user row.
+//
+// THE LAW THIS IMPLEMENTS (minors-compliance audit 2026-08-14). Flock is a
+// 13+ service, so under COPPA (16 CFR Part 312) it is not "directed to
+// children" — the Rule attaches only if we have ACTUAL KNOWLEDGE that a
+// particular user is under 13 (§312.2, "operator"; §312.3). The amended Rule
+// (90 FR, compliance date 2026-04-22) codifies the mixed-audience age screen,
+// and the FTC's COPPA FAQ sets three requirements this block answers for:
+//   1. the screen must be NEUTRAL — ask for a birth date, and do not word the
+//      refusal so it teaches the child which date passes. UNDERAGE_MSG below
+//      therefore names no age; the "13+" fact lives in the Terms, not in the
+//      refusal a 12-year-old is staring at with the form still filled in;
+//   2. the operator must take steps against the refused child simply
+//      re-entering an older date (the FAQ's example is a cookie against
+//      back-buttoning) — that is the underageAttempts lockout below;
+//   3. once we KNOW a user is under 13, the knowledge cannot be un-known:
+//      enforceDobOnLogin persists an under-13 date before refusing, so the
+//      account freezes on every later sign-in instead of accepting a
+//      corrected date. Disposition of the frozen account (deletion, per
+//      §312.10's retention limits) is a human/moderation step, not a login
+//      handler's.
 const { ageFromDob, MIN_AGE } = require('../utils/age');
-const UNDERAGE_MSG = 'You must be at least 13 to use Flock.';
+const UNDERAGE_MSG = "We can't create a Flock account for you.";
+
+// ---------------------------------------------------------------------------
+// Under-13 retry lockout (the FAQ's "cookie", server-side)
+// ---------------------------------------------------------------------------
+// An under-13 refusal is remembered, and while it is remembered the SAME
+// mailbox (24h) or SAME IP (15 min) cannot create an account even with a
+// passing date — the same neutral sentence answers, so the refusal still
+// teaches nothing. The IP window is deliberately short for the reason the mail
+// budgets above are loose per-IP: signups come off shared school and campus
+// NATs, and a long IP block would refuse real 13+ users because a younger
+// sibling tried first from the same address. The mailbox key carries the
+// strong signal — the same email retrying with a new birthday IS the
+// back-button case the FTC FAQ describes.
+//
+// Keys are keyed HMAC digests, never plaintext, for the same reason
+// resetBucketKey digests its addresses — and more so here, because this map is
+// by construction a list of addresses children typed. The FAQ's safe harbor
+// for age-screen data is exactly "use it only to determine age, keep it no
+// longer than necessary": a digest can answer "is this a retry?" and nothing
+// else, and it expires. In-memory and bounded like the login throttle: per
+// process, reset on deploy, a real ceiling on the single-instance deployment.
+const UNDERAGE_EMAIL_TTL_MS = 24 * 60 * 60 * 1000;
+const UNDERAGE_IP_TTL_MS = 15 * 60 * 1000;
+const UNDERAGE_MAX_KEYS = 20000;
+const underageAttempts = new Map();
+
+function underageKey(kind, value) {
+  const pepper = process.env.BAN_TOMBSTONE_SECRET || process.env.JWT_SECRET || '';
+  const canonical = kind === 'email' ? canonicalEmail(value) : String(value);
+  return pepper
+    ? crypto.createHmac('sha256', pepper).update(`underage:${kind}:${canonical}`).digest('hex')
+    : crypto.createHash('sha256').update(`underage:${kind}:${canonical}`).digest('hex');
+}
+
+function recordUnderageAttempt(email, ip, now = Date.now()) {
+  // Bounded: a spray of refused signups must not grow this without limit.
+  if (underageAttempts.size > UNDERAGE_MAX_KEYS) {
+    for (const [k, v] of underageAttempts) if (now >= v) underageAttempts.delete(k);
+    if (underageAttempts.size > UNDERAGE_MAX_KEYS) underageAttempts.clear();
+  }
+  if (typeof email === 'string' && email.includes('@')) {
+    underageAttempts.set(underageKey('email', email), now + UNDERAGE_EMAIL_TTL_MS);
+  }
+  if (ip) underageAttempts.set(underageKey('ip', ip), now + UNDERAGE_IP_TTL_MS);
+}
+
+function underageBlocked(email, ip, now = Date.now()) {
+  const keys = [];
+  if (typeof email === 'string' && email.includes('@')) keys.push(underageKey('email', email));
+  if (ip) keys.push(underageKey('ip', ip));
+  for (const key of keys) {
+    const expiresAt = underageAttempts.get(key);
+    if (expiresAt === undefined) continue;
+    if (now >= expiresAt) { underageAttempts.delete(key); continue; }
+    return true;
+  }
+  return false;
+}
 
 // Legacy accounts predate the DOB requirement (round 3): they must not stay
 // permanently outside the age gate. On sign-in, a null-DOB account either
@@ -1001,6 +1079,19 @@ function suppliedDob(raw) {
 }
 
 async function enforceDobOnLogin(user, req, res) {
+  // ACTUAL-KNOWLEDGE FREEZE. If the row's stored date of birth computes to
+  // under 13, we KNOW this account belongs to a child (16 CFR 312.2), and a
+  // sign-in must not proceed no matter what today's request says. Before this
+  // check, an account with a recorded under-13 date sailed through — the gate
+  // below only ran when date_of_birth was NULL, so the one state that is
+  // certain knowledge was the one state never re-examined. The refusal is the
+  // same neutral sentence as everywhere else and carries no needsDob, so it
+  // cannot be told apart from the signup refusal or used to fish for the rule.
+  const storedAge = ageFromDob(user.date_of_birth);
+  if (storedAge !== null && storedAge < MIN_AGE) {
+    res.status(403).json({ error: UNDERAGE_MSG });
+    return false;
+  }
   if (user.date_of_birth) return true;
   const supplied = suppliedDob(req.body.date_of_birth);
   const age = supplied ? ageFromDob(supplied) : null;
@@ -1009,6 +1100,16 @@ async function enforceDobOnLogin(user, req, res) {
     return false;
   }
   if (age < MIN_AGE) {
+    // The account holder just told us they are under 13. That sentence is the
+    // actual knowledge COPPA turns on, and it cannot be answered with a
+    // refusal that leaves the row exactly as retryable as before — the old
+    // code did, so the same login could be replayed seconds later with an
+    // older date and walk in. Persist the date FIRST, so the freeze above
+    // holds on every later sign-in; the write also records what we knew and
+    // when we knew it for the human deletion step. Then remember the attempt,
+    // so the same mailbox/IP cannot immediately open a fresh account either.
+    await pool.query('UPDATE users SET date_of_birth = $1 WHERE id = $2', [supplied, user.id]);
+    recordUnderageAttempt(user.email, req.ip);
     res.status(403).json({ error: UNDERAGE_MSG });
     return false;
   }
@@ -1309,12 +1410,19 @@ router.post('/signup', signupValidation, async (req, res) => {
     }
 
     // Server-side age gate (C4): DOB is required, and under-13 is rejected
-    // regardless of the client gate.
+    // regardless of the client gate. The refusal is remembered (see the
+    // under-13 retry lockout above) and the lockout is consulted even for a
+    // passing date, so "back-button, type an older year" gets the same
+    // neutral sentence the first refusal did.
     const age = ageFromDob(date_of_birth);
     if (age === null) {
       return res.status(400).json({ error: 'Add your date of birth to create an account.', needsDob: true });
     }
     if (age < MIN_AGE) {
+      recordUnderageAttempt(email, req.ip);
+      return res.status(403).json({ error: UNDERAGE_MSG });
+    }
+    if (underageBlocked(email, req.ip)) {
       return res.status(403).json({ error: UNDERAGE_MSG });
     }
 
@@ -1960,7 +2068,14 @@ router.post('/google', [
         if (dobAge === null) {
           return res.status(403).json({ error: 'No Flock account yet. Sign up with your date of birth first.', needsDob: true });
         }
+        // Same under-13 refusal + retry lockout as password signup: an age
+        // screen that only guards one of the three account-creation doors is
+        // not the neutral screen the COPPA FAQ describes, it is a suggestion.
         if (dobAge < MIN_AGE) {
+          recordUnderageAttempt(email, req.ip);
+          return res.status(403).json({ error: UNDERAGE_MSG });
+        }
+        if (underageBlocked(email, req.ip)) {
           return res.status(403).json({ error: UNDERAGE_MSG });
         }
         // Round 16: password signup rejects disposable domains and the OAuth
@@ -2273,7 +2388,14 @@ router.post('/apple', [
       if (appleDobAge === null) {
         return res.status(403).json({ error: 'No Flock account yet. Sign up with your date of birth first.', needsDob: true });
       }
+      // Same under-13 refusal + retry lockout as the other two creation
+      // paths. Apple may omit the email; recordUnderageAttempt then keys on
+      // the IP alone, which still covers the immediate-retry case.
       if (appleDobAge < MIN_AGE) {
+        recordUnderageAttempt(email, req.ip);
+        return res.status(403).json({ error: UNDERAGE_MSG });
+      }
+      if (underageBlocked(email, req.ip)) {
         return res.status(403).json({ error: UNDERAGE_MSG });
       }
       // Round 16: parity with password signup and the Google path. Only on
@@ -2437,6 +2559,18 @@ module.exports.__testing = {
   MAX_OAUTH_TOKEN,
   MAX_OAUTH_ACCESS_TOKEN,
   clampName,
+  // Minors-compliance audit 2026-08-14 (COPPA neutral age screen). The message
+  // is exported so the test can assert it TEACHES NOTHING (no age, no
+  // threshold), and the lockout pieces so its TTLs and bounds are testable
+  // with an injected clock.
+  UNDERAGE_MSG,
+  recordUnderageAttempt,
+  underageBlocked,
+  UNDERAGE_EMAIL_TTL_MS,
+  UNDERAGE_IP_TTL_MS,
+  UNDERAGE_MAX_KEYS,
+  clearUnderageAttempts: () => underageAttempts.clear(),
+  underageAttemptCount: () => underageAttempts.size,
   // The reset mail is dispatched without being awaited, so the response cannot
   // carry Resend's latency (that latency only exists on the branch where the
   // account does, which makes it an enumeration oracle). Tests await this.

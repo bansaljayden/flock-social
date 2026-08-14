@@ -508,6 +508,10 @@ function reset() {
   disconnectedRooms = [];
   proofFailures.clearAll();
   phoneChangeAttempts.clearAll();
+  // The under-13 retry lockout (minors-compliance audit 2026-08-14) keys on
+  // the client IP, and every test here shares 127.0.0.1 — one under-13 test
+  // would otherwise block every later account creation in the file.
+  authRouter.__testing.clearUnderageAttempts();
 }
 
 async function withGoogle(profile, fn) {
@@ -1192,7 +1196,10 @@ test('an under-13 date of birth is still refused after the shape check', async (
     () => post('/api/auth/google', { access_token: 'opaque', date_of_birth: tooYoung.toISOString().slice(0, 10) })
   );
   assert.strictEqual(res.status, 403);
-  assert.match((await res.json()).error, /at least 13/);
+  // The refusal is the NEUTRAL sentence (minors-compliance audit 2026-08-14):
+  // it must not name the threshold, or the age screen teaches the child what
+  // to type. minorsCompliance.test.js owns the full neutrality assertions.
+  assert.strictEqual((await res.json()).error, authRouter.__testing.UNDERAGE_MSG);
   assert.deepStrictEqual(db.users, []);
 });
 
