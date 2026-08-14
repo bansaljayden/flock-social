@@ -144,6 +144,23 @@ app.use(helmet({
       fontSrc: ["'self'", "https://fonts.gstatic.com", "https://cdn.fontshare.com"],
       frameSrc: ["'none'"],
       objectSrc: ["'none'"],
+      // WITHOUT THIS LINE THE ANTI-FRAMING INTENT BELOW DID NOT SURVIVE.
+      // `frameguard: { action: 'deny' }` emits `X-Frame-Options: DENY`, and
+      // that is the header this app was relying on. But helmet's CSP merges the
+      // directives given here over its own defaults (useDefaults is on unless
+      // it is turned off), and one of those defaults is
+      // `frame-ancestors 'self'` — which PERMITS same-origin framing.
+      //
+      // Where the two disagree, the CSP wins: every current browser ignores
+      // X-Frame-Options entirely when frame-ancestors is present. So the
+      // emitted pair said "deny" in the legacy header and "allow same-origin"
+      // in the one that is actually consulted, and the second is the answer.
+      // Measured, not assumed — the test dumps the real response headers.
+      //
+      // `frameSrc` above is the other direction (what WE may embed) and does
+      // not substitute for this one (who may embed US). They are different
+      // questions and both are 'none'.
+      frameAncestors: ["'none'"],
     },
   },
   frameguard: { action: 'deny' },
@@ -151,6 +168,194 @@ app.use(helmet({
   crossOriginResourcePolicy: { policy: 'cross-origin' },
   hsts: { maxAge: 31536000, includeSubDomains: true, preload: true },
 }));
+
+// ---------------------------------------------------------------------------
+// Force HTTPS
+// ---------------------------------------------------------------------------
+// HSTS above is NOT this. HSTS is an instruction to a browser that has already
+// completed one successful HTTPS request to this host, and it is only ever
+// honoured over TLS — a browser is required to ignore the header when it
+// arrives over plaintext. So it does nothing at all for: the FIRST request from
+// a client that has never reached us securely, the Capacitor shell and every
+// other non-browser caller (none of which implement HSTS), and any request that
+// arrives at Railway's edge over http://. Until this block existed, all three
+// were served normally, with the bearer token in the Authorization header
+// readable by anything on the path. "The host does TLS" is a statement about
+// what the host OFFERS, not about what it REFUSES, and nothing here refused.
+//
+// HOW THE PROTOCOL IS READ, AND WHY NOT `req.protocol`. Express's req.protocol
+// takes the FIRST comma-separated entry of X-Forwarded-Proto. A client may send
+// its own X-Forwarded-Proto, and a proxy that APPENDS rather than replaces then
+// leaves the client's value in front — so `X-Forwarded-Proto: https, http`
+// reads as "https" through req.protocol while the real last hop was plaintext.
+// The last entry is the one OUR proxy appended and is the only one a client
+// cannot write, which is exactly the reasoning socketClientIp further down
+// already applies to X-Forwarded-For. Same header family, same rule, so they
+// are read the same way.
+//
+// A MISSING HEADER MEANS "NOT THROUGH THE PROXY", AND IS ALLOWED. Railway's own
+// container healthcheck reaches this process directly over plaintext HTTP with
+// no forwarding headers at all; so does anything else inside the private
+// network, and so does `node server.js` on a laptop. Refusing a request with no
+// X-Forwarded-Proto would fail the healthcheck and roll back every deploy. The
+// rule is therefore narrow and states exactly what it knows: refuse only when a
+// proxy has positively told us this request arrived over plaintext.
+//
+// Production only. In development there is no TLS terminator in front of this
+// process, so enforcing here would refuse every local request.
+//
+// GET and HEAD are redirected rather than refused because they are safe and
+// replayable, and 308 preserves the method. Everything else is refused outright:
+// a 3xx on a POST asks the client to send the body a SECOND time, and the copy
+// that already crossed the network in plaintext — credentials included — is not
+// recoverable by redirecting. Refusing says so instead of pretending otherwise.
+const HTTPS_EXEMPT_PATHS = new Set(['/api/health']);
+
+function forwardedProtocol(req) {
+  const header = req.headers['x-forwarded-proto'];
+  if (!header) return null;
+  const hops = String(header).split(',').map((s) => s.trim().toLowerCase()).filter(Boolean);
+  return hops.length ? hops[hops.length - 1] : null;
+}
+
+const isProduction = process.env.NODE_ENV === 'production';
+
+app.use((req, res, next) => {
+  if (!isProduction) return next();
+  if (HTTPS_EXEMPT_PATHS.has(req.path)) return next();
+
+  const proto = forwardedProtocol(req);
+  // null = no proxy in front of this request (healthcheck, private network).
+  // Anything already https, or some other scheme we did not put there, is not
+  // ours to refuse.
+  if (proto === null || proto !== 'http') return next();
+
+  if (req.method === 'GET' || req.method === 'HEAD') {
+    // req.headers.host is client-controlled, so it is not interpolated into the
+    // Location blindly: only a host that is already on the CORS allowlist is
+    // echoed back. Anything else is refused rather than turned into an
+    // open redirect that this server signs its name to.
+    const host = String(req.headers.host || '');
+    if (allowedOrigins.includes(`https://${host}`)) {
+      return res.redirect(308, `https://${host}${req.originalUrl}`);
+    }
+  }
+
+  return res.status(403).json({
+    error: 'This API is only available over HTTPS.',
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Response trimming — the secret half
+// ---------------------------------------------------------------------------
+// "Return only what the screen needs" has two halves. The payload half (a list
+// endpoint shipping forty columns for a card that renders three) is a per-route
+// job and belongs in the routers. This is the other half, and it is the half
+// that leaks credentials rather than bytes.
+//
+// THE SHAPE OF THE NEAR-MISS. `SELECT * FROM users` appears five times —
+// routes/auth.js findUserByEmail, and the three OAuth lookups, and
+// routes/users.js's password check — because each of those genuinely needs the
+// bcrypt hash. The row those queries produce carries `password` and
+// `apple_refresh_token`: one is a password-equivalent, the other is a LIVE
+// Apple credential that can be exchanged for tokens on the user's account.
+// Three handlers hand-strip them on the way out, all three spelling it the same
+// way:
+//
+//     const { password: _, apple_refresh_token: _art, token_version: _tv, ...safeUser } = user;
+//
+// Three copies of a deny-list is a deny-list waiting to be written a fourth
+// time and forgotten. Nothing today gets it wrong; the point is that a new
+// handler that does `res.json({ user })` off any of those five queries is one
+// line of ordinary-looking code, and it ships a bcrypt hash and an Apple
+// refresh token to the client with nothing in the diff to catch the eye.
+//
+// This is a BACKSTOP, not the control. The routers should still select the
+// columns they need. What this guarantees is that the failure mode of forgetting
+// is a missing field, not a disclosed credential.
+//
+// TWO THINGS IT DOES NOT COVER, so nobody reads more into it than it does:
+//   * SOCKET PAYLOADS. io.emit() does not go through res.json, so nothing here
+//     sees it. That is survivable only because authenticateSocket and every
+//     emit in sockets/handlers.js name their columns explicitly — checked, not
+//     assumed — and none of them selects a users row with `*`. A future socket
+//     handler that does is outside this guard entirely.
+//   * THE PAYLOAD HALF of the checklist item. Returning forty columns for a
+//     card that renders three is a per-route job, and the routers still have
+//     `SELECT *` in a dozen places. Those are a payload and bandwidth problem
+//     rather than a disclosure one (the tables involved hold no credentials),
+//     and they belong to whoever owns those files.
+//
+// Mutating the object in place rather than cloning is deliberate: cloning every
+// response would make the guard the expensive part of a large message history.
+// It is safe because no handler in the app reuses a payload object after
+// res.json() — swept for, not assumed.
+//
+// WHAT IS ON THE LIST AND WHY IT IS SHORT. Every name here is a column of a
+// table that stores a credential, and none of them is returned deliberately by
+// any route today (checked, route by route, before this was written). Names
+// that merely look sensitive are NOT on the list: a guard that removes fields
+// the product legitimately serves gets deleted the first time it breaks a
+// screen, and then it is protecting nothing.
+const SECRET_RESPONSE_FIELDS = new Set([
+  'password',            // users.password — bcrypt hash
+  'password_hash',
+  'apple_refresh_token', // users.apple_refresh_token — a live Apple credential
+  'verifier_hash',       // email_verifications / password_resets
+  'api_key',             // sensor_devices.api_key
+]);
+
+// Depth and node budgets, so this can never become the expensive part of a
+// response. Message history is the widest thing this app returns and it is a
+// flat array of flat rows; 4 levels covers { flocks: [ { member_previews: [ {} ] } ] },
+// the deepest shape in the codebase. A response that exceeds either budget is
+// left ALONE rather than half-walked: a partial sweep would be a guard that
+// reports success while having skipped the tail.
+const RESPONSE_SCAN_MAX_DEPTH = 6;
+const RESPONSE_SCAN_MAX_NODES = 20000;
+
+// Strings and numbers are never walked, only containers, so a 700KB base64
+// data: URL costs one property read. Returns true if the budget held.
+function stripSecretFields(node, depth, budget) {
+  if (depth > RESPONSE_SCAN_MAX_DEPTH) return false;
+  if (node === null || typeof node !== 'object') return true;
+  if (budget.n++ > RESPONSE_SCAN_MAX_NODES) return false;
+
+  if (Array.isArray(node)) {
+    for (const item of node) {
+      if (!stripSecretFields(item, depth + 1, budget)) return false;
+    }
+    return true;
+  }
+
+  for (const key of Object.keys(node)) {
+    if (SECRET_RESPONSE_FIELDS.has(key)) {
+      delete node[key];
+      console.warn(`[security] stripped '${key}' from a response body — the handler should not have selected it`);
+      continue;
+    }
+    if (!stripSecretFields(node[key], depth + 1, budget)) return false;
+  }
+  return true;
+}
+
+app.use((req, res, next) => {
+  const json = res.json.bind(res);
+  res.json = (body) => {
+    // A pg row is a plain object, so mutating in place is safe here — it has
+    // already served its purpose by the time it reaches res.json. Wrapped in a
+    // try so a guard can never be the reason a response fails to send.
+    try {
+      stripSecretFields(body, 0, { n: 0 });
+    } catch (err) {
+      console.error('[security] response scan failed:', err.message);
+    }
+    return json(body);
+  };
+  next();
+});
+
 // ---------------------------------------------------------------------------
 // JSON body limits
 // ---------------------------------------------------------------------------
@@ -748,6 +953,27 @@ function socketClientIp(socket) {
   return socket.handshake.address;
 }
 
+// The HTTPS gate again, for the transport Express never sees.
+//
+// The middleware near the top of this file runs on the Express app. Socket.IO
+// attaches to the raw http.Server and its engine intercepts /socket.io/
+// requests BEFORE Express is reached, so the handshake — which carries the JWT
+// in its auth payload, exactly like an Authorization header — was not covered
+// by it. Enforcing on one transport and not the other is not enforcing.
+//
+// Identical rule to the REST gate, deliberately reusing forwardedProtocol
+// rather than re-deriving it: production only, the LAST forwarded hop decides,
+// and a handshake with no forwarding header at all is allowed through because
+// that is what an internal or local connection looks like.
+io.use((socket, next) => {
+  if (!isProduction) return next();
+  const proto = forwardedProtocol({ headers: socket.handshake.headers || {} });
+  if (proto !== null && proto === 'http') {
+    return next(new Error('This API is only available over HTTPS.'));
+  }
+  next();
+});
+
 io.use((socket, next) => {
   const ip = socketClientIp(socket);
   const now = Date.now();
@@ -802,10 +1028,44 @@ const { migrate } = require('./db/migrate');
 // Post-boot data tasks — not schema, so not migrations.
 async function postBootTasks() {
   // Admin provisioning — by IMMUTABLE user id via env, never by email.
+  //
+  // RECORD ACCESS. This is the only path in the app that grants `role='admin'`,
+  // and admin is the role that can read reported images — "sometimes from a
+  // minor's camera roll", in routes/admin.js's own words — hide content and ban
+  // accounts. It used to run under a bare `.catch(() => {})`, which meant the
+  // grant was invisible on both outcomes at once: a success wrote nothing
+  // anywhere, and a FAILURE was swallowed silently, so a boot where the promotion
+  // did not happen looked exactly like a boot where it did. The first time that
+  // matters is an incident review asking who held admin on a given day, and the
+  // answer was "no idea".
+  //
+  // This does not write to moderation_actions, and deliberately so: that table's
+  // `action` column is CHECK-constrained to a fixed set (migration 017) which
+  // has no value for a role grant, and adding one is a migration. This is the
+  // half that needs no schema change — say what was granted, to whom, and say
+  // it loudly when it fails. The durable audit row is a handoff, recorded in the
+  // report this change came with.
   if (process.env.ADMIN_USER_IDS) {
     const ids = process.env.ADMIN_USER_IDS.split(',').map(s => parseInt(s.trim(), 10)).filter(Number.isInteger);
     if (ids.length > 0) {
-      await pool.query(`UPDATE users SET role = 'admin' WHERE id = ANY($1) AND role != 'admin'`, [ids]).catch(() => {});
+      try {
+        const granted = await pool.query(
+          `UPDATE users SET role = 'admin' WHERE id = ANY($1) AND role != 'admin' RETURNING id`,
+          [ids]
+        );
+        // Both facts are worth a line. The ids that CHANGED say who was promoted
+        // on this boot; the configured set says who is expected to hold admin at
+        // all, which is the question an audit actually asks.
+        console.log(`[admin-provisioning] configured admin ids: ${ids.join(', ')}`);
+        if (granted.rows.length > 0) {
+          console.warn(`[admin-provisioning] GRANTED admin to user ids: ${granted.rows.map(r => r.id).join(', ')}`);
+        }
+      } catch (err) {
+        // Not fatal — the app serves fine without a moderation console — but it
+        // must never again be silent. Guideline 1.2 wants a reachable moderator,
+        // and this failing quietly is how there stops being one.
+        console.error('[admin-provisioning] FAILED to apply ADMIN_USER_IDS:', err.message);
+      }
     }
   }
   // Demo stories are stock picsum placeholders belonging to the seeded demo
