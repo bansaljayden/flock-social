@@ -2,6 +2,11 @@ const express = require('express');
 const { query, validationResult } = require('express-validator');
 const { authenticate } = require('../middleware/auth');
 const { upstreamSignal } = require('../utils/upstream');
+// The one shape rule for a Google place id. routes/checkin.js, flocks.js,
+// feedback.js, venueProfile.js, venueDashboard.js, sockets/handlers.js and
+// routes/crowd.js all gate on this; /details was the last paid Places surface
+// that did not (see the block above it).
+const { isPlaceIdShaped } = require('../utils/places');
 // Per-user Places budget: 30/hour fresh calls, 3000/day globally. Shared with
 // crowd.js and ai.js so every paid Places fetch draws from the SAME pool
 // (round 8). allowGlobalPlacesCall is the door for surfaces with no
@@ -39,14 +44,46 @@ const photoCache = new Map();
 const PHOTO_CACHE_TTL = 60 * 60 * 1000; // 1 hour
 const MAX_PHOTO_CACHE = 500;
 
+// A Google photo resource name is exactly `places/{place}/photos/{photo}` and
+// nothing else. `ref` was bounded only by "at least one character" and was then
+// interpolated raw into the /media URL this proxy builds around our API key, so
+// a ref carrying `?` or `#` rewrote that URL's query string (dropping the key
+// and the size, and turning a paid metadata call into a guaranteed error), extra
+// `/` segments reached a different Google path entirely, and an unbounded ref
+// became an unbounded photoCache key.
+//
+// Structural rather than a charset guess, deliberately: the two segments may
+// hold whatever alphabet Google mints a photo name from, but they may not add
+// path segments, open a query string or fragment, or walk with `..`. Same
+// principle as isPlaceIdShaped one route below — a paid Google call must not be
+// spent on a string that cannot be a real name.
+//
+// The photo token is generously bounded (Google mints long ones and a false 400
+// here is a missing image on every card); the length only keeps the photoCache
+// key finite. The STRUCTURE is what does the work. Every ref this proxy is ever
+// asked for was minted by us from `place.photos[].name` — photoUrl() below,
+// routes/ai.js and routes/publicCrowd.js all build the same URL — and the repo
+// has never called the legacy Places API, so there is no older `photoreference`
+// shape to grandfather.
+const PHOTO_REF_RE = /^places\/[^/?#]{1,128}\/photos\/[^/?#]{1,2048}$/;
+function isPhotoRefShaped(ref) {
+  if (typeof ref !== 'string' || !PHOTO_REF_RE.test(ref)) return false;
+  const segments = ref.split('/');
+  return !segments.includes('..') && !segments.includes('.');
+}
+
 // Photo proxy — streams image bytes through our server so the browser
 // never has to follow a cross-origin redirect (avoids CORP / 401 blocks).
 router.get('/photo',
-  query('ref').trim().isLength({ min: 1 }).withMessage('Photo ref is required'),
+  query('ref').trim().isLength({ min: 1 }).withMessage('Photo ref is required')
+    .bail()
+    .custom(isPhotoRefShaped).withMessage('Photo ref is not a valid photo name'),
   async (req, res) => {
     try {
       const errors = validationResult(req);
-      if (!errors.isEmpty()) return res.status(400).json({ error: 'Missing photo ref' });
+      // The validator's own message, so "missing" and "not a photo name" are
+      // distinguishable in a log instead of both reading as "Missing photo ref".
+      if (!errors.isEmpty()) return res.status(400).json({ error: errors.array()[0].msg });
       if (!API_KEY) return res.status(500).json({ error: 'API key not configured' });
 
       const photoRef = req.query.ref;
@@ -164,6 +201,50 @@ function photoUrl(photoName, maxWidth = 400) {
   return `/api/venues/photo?ref=${encodeURIComponent(photoName)}&maxwidth=${maxWidth}`;
 }
 
+// ---------------------------------------------------------------------------
+// FIELD MASKS. Hoisted out of the two fetch calls on purpose: they are the most
+// expensive one-line decisions in this file (a mask decides the Google SKU the
+// request is billed at) and they belong somewhere a reader looks before
+// extending them, not buried in a header object. Same shape as
+// routes/publicCrowd.js PLACE_FIELDS.
+//
+// WHY utcOffsetMinutes IS HERE. It is the venue's own UTC offset, and it is what
+// makes POST /api/crowd/batch score each row on the VENUE's wall clock instead
+// of the viewer's. That endpoint already reads the field off every item in its
+// body — but nothing put it there. These results are where the app's vote list
+// comes from, so a venue discovered by search arrived with no offset and
+// silently fell back to the caller's hour: an LA bar scored at the viewer's
+// 11 PM instead of its own 8 PM, while that same bar's detail card (which
+// fetches the offset itself — routes/crowd.js fetchVenueFromGoogle) showed the
+// right one. The marketing demo has requested it since it was written.
+//
+// BILLING: NO CHANGE. Places API (New) prices per FIELD and bills a request at
+// the HIGHEST SKU any requested field belongs to. utcOffsetMinutes is a **Pro**
+// field in both Text Search and Place Details, and both masks below already ask
+// for currentOpeningHours / rating / userRatingCount / priceLevel (plus
+// nationalPhoneNumber and websiteUri on details) — all **Enterprise**. Both
+// requests were already billed at Enterprise, so the marginal cost of this
+// field is zero.
+//
+// THE RULE FOR THE NEXT EDIT: adding a field only ever costs nothing while the
+// mask already contains something from an equal or higher tier. Adding an
+// Enterprise field to a Pro-only mask, or a Pro field to an Essentials-only
+// mask, RAISES what every call on that surface is billed at. Check the tier of
+// what you are adding against what is already there before you add it.
+// __tests__/venueSearchOffset.test.js pins that both masks still carry an
+// Enterprise field, so this note cannot quietly become false.
+const SEARCH_FIELD_MASK = [
+  'places.id', 'places.displayName', 'places.formattedAddress', 'places.rating',
+  'places.userRatingCount', 'places.priceLevel', 'places.photos', 'places.types',
+  'places.currentOpeningHours', 'places.location', 'places.utcOffsetMinutes',
+].join(',');
+
+const DETAILS_FIELD_MASK = [
+  'id', 'displayName', 'formattedAddress', 'nationalPhoneNumber', 'websiteUri',
+  'rating', 'userRatingCount', 'priceLevel', 'photos', 'currentOpeningHours',
+  'types', 'location', 'googleMapsUri', 'utcOffsetMinutes',
+].join(',');
+
 // Map price level enum to numeric
 function priceLevelToNum(priceLevel) {
   const map = {
@@ -228,7 +309,7 @@ router.get('/search',
         headers: {
           'Content-Type': 'application/json',
           'X-Goog-Api-Key': API_KEY,
-          'X-Goog-FieldMask': 'places.id,places.displayName,places.formattedAddress,places.rating,places.userRatingCount,places.priceLevel,places.photos,places.types,places.currentOpeningHours,places.location',
+          'X-Goog-FieldMask': SEARCH_FIELD_MASK,
         },
         body: JSON.stringify(body),
         signal: upstreamSignal('places'), // round 12
@@ -259,6 +340,12 @@ router.get('/search',
           types: place.types || [],
           opening_hours: place.currentOpeningHours || null,
           location: place.location || null,
+          // camelCase on purpose: this is the exact key POST /api/crowd/batch
+          // whitelists off each body item, so the client forwards it untouched.
+          // Nullable — Google omits it for some places, and a null here is what
+          // makes the batch answer `venueClock.local: false` rather than pretend
+          // the caller's clock was the venue's.
+          utcOffsetMinutes: place.utcOffsetMinutes != null ? place.utcOffsetMinutes : null,
         };
       });
 
@@ -274,7 +361,22 @@ router.get('/search',
 
 // GET /api/venues/details?place_id=xxx - Get full details for a venue
 router.get('/details',
-  query('place_id').trim().isLength({ min: 1 }).withMessage('place_id is required'),
+  // SHAPED, not merely non-empty. Three things were riding on "at least one
+  // character":
+  //   * a PAID Place Details call was spent on any string at all, including ids
+  //     that cannot be real;
+  //   * `place_id` was interpolated raw into the Google URL below, so a `/`,
+  //     `?` or `#` in it rewrote the path or the query string of a request
+  //     carrying our server-restricted API key — the same escape routes/crowd.js
+  //     closed with encodeURIComponent and routes/publicCrowd.js never had;
+  //   * there was no max length, so the `detail:` cache key was unbounded.
+  // isPlaceIdShaped answers all three (bounded 6-128, [A-Za-z0-9_-] only), and
+  // it is the same predicate checkin.js, flocks.js, feedback.js, venueProfile.js,
+  // venueDashboard.js, sockets/handlers.js and crowd.js gate on.
+  query('place_id').trim()
+    .isLength({ min: 1, max: 200 }).withMessage('place_id is required')
+    .bail()
+    .custom((v) => isPlaceIdShaped(v)).withMessage('place_id is not a valid place id'),
   async (req, res) => {
     try {
       const errors = validationResult(req);
@@ -298,10 +400,13 @@ router.get('/details',
         return res.status(429).json({ error: 'Loading venues too fast. Give it a few seconds.' });
       }
 
-      const response = await fetch(`https://places.googleapis.com/v1/places/${placeId}`, {
+      // ENCODED, belt and braces behind the shape check above: one path segment,
+      // always. Matches routes/crowd.js fetchVenueFromGoogle and
+      // routes/publicCrowd.js.
+      const response = await fetch(`https://places.googleapis.com/v1/places/${encodeURIComponent(placeId)}`, {
         headers: {
           'X-Goog-Api-Key': API_KEY,
-          'X-Goog-FieldMask': 'id,displayName,formattedAddress,nationalPhoneNumber,websiteUri,rating,userRatingCount,priceLevel,photos,currentOpeningHours,types,location,googleMapsUri',
+          'X-Goog-FieldMask': DETAILS_FIELD_MASK,
         },
         signal: upstreamSignal('places'), // round 12
       });
@@ -330,6 +435,9 @@ router.get('/details',
           location: p.location || null,
           google_maps_url: p.googleMapsUri || null,
           menu_url: null,
+          // Same key the batch endpoint whitelists, same nullability. See the
+          // field mask note above.
+          utcOffsetMinutes: p.utcOffsetMinutes != null ? p.utcOffsetMinutes : null,
         },
       };
       setCache(detailCacheKey, result);
