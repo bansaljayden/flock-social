@@ -54,11 +54,13 @@
 	          opened from the flock chat composer and the DM composer),
 	       2. the friend-code scanner (App.js `startQrScanner`, html5-qrcode,
 	          which decodes to `addFriendByCode`), and
-	       3. "Take Photo" on any of the four <input type="file" accept="image/*">
-	          pickers, which is the path that also reaches the profile picture
-	          and the venue logo. That third one is easy to miss when reading the
-	          code, because no line in the client mentions the camera: iOS puts
-	          the option in the file-input action sheet on its own.
+	       3. "Take Photo" on any of the three <input type="file" accept="image/*">
+	          pickers, which is the path that also reaches the profile picture.
+	          That third one is easy to miss when reading the code, because no
+	          line in the client mentions the camera: iOS puts the option in the
+	          file-input action sheet on its own. (The venue logo is no longer a
+	          picker: it is chosen from the linked Google listing's own photos,
+	          so neither the camera nor the library ever reaches it.)
 	     Every getUserMedia call passes { audio: false }, so no microphone string
 	     belongs here.
 
@@ -69,15 +71,16 @@
 	     in f8dad66, and the permission prompt was the last place it survived.
 	     If a story UI ever ships, these strings change with it. -->
 	<key>NSCameraUsageDescription</key>
-	<string>Flock uses the camera when you take a photo to send in a flock chat or a direct message or to set as your profile or venue picture, and when you scan a friend's Flock code to add them.</string>
-	<!-- Photo library, read only. Four "choose a photo" file inputs, all
+	<string>Flock uses the camera when you take a photo to send in a flock chat or a direct message or to set as your profile picture, and when you scan a friend's Flock code to add them.</string>
+	<!-- Photo library, read only. Three "choose a photo" file inputs, all
 	     <input type="file" accept="image/*"> handled in the web view:
 	     profile picture (`handlePhotoUpload`), flock chat (`handleChatImageSelect`),
-	     DM (`handleDmImageSelect`), venue logo (`handleVenueLogoUpload`).
+	     DM (`handleDmImageSelect`). The venue logo is NOT one of them: it is
+	     picked from the venue's own Google listing photos, never the library.
 	     Nothing in the app ever writes an image back to the library, so there is
 	     deliberately no NSPhotoLibraryAddUsageDescription. -->
 	<key>NSPhotoLibraryUsageDescription</key>
-	<string>Flock uses your photo library when you pick a photo to send in a flock chat or a direct message or to set as your profile or venue picture.</string>
+	<string>Flock uses your photo library when you pick a photo to send in a flock chat or a direct message or to set as your profile picture.</string>
 	<!-- Exactly the custom schemes the app can be asked to open, and no more.
 
 	     The bill-split screen is the only place that opens one. The authority is

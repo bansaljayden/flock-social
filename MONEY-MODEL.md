@@ -15,10 +15,15 @@ Apps, Apple, Google, Snapchat+, BeReal, Gas). This is the honest version, not th
 >   still a blocker on the Stripe/venue side, where no account exists yet. What
 >   remains true is the *product* point: teen purchases route through a parent's
 >   card and Ask to Buy, so a $24.99 annual charge is an "ask a parent" conversation.
-> - **`VENUE-BILLING.md` is authoritative for venue prices: $49 (Insights) and
->   $149 (Boost).** The "~$99/month" and "~10 venues at ~$99/mo" figures below
->   were an illustrative average written before those tiers were set. Read them
->   as "roughly ten paying venues covers the goal", not as a price.
+> - **Venue prices are decided and FINAL as of 2026-08-14: $35/mo Premium and
+>   $75/mo Pro.** `VENUE-BILLING.md` carries the decision; these are the numbers
+>   the app has always displayed, and the decision resolved the old conflict in
+>   the app's favor (an earlier draft of this banner pointed the other way).
+>   The venue-count math below is recomputed at the real prices: clearing
+>   $1,000/month takes 14 venues all on Pro ($75 x 14 = $1,050), 29 all on
+>   Premium ($35 x 29 = $1,015), or about 19 at an even mix ($55 x 19 = $1,045).
+>   The old "roughly ten venues" framing came from the superseded higher-price
+>   proposal and understates the count at the decided prices.
 
 ---
 
@@ -46,10 +51,10 @@ users**, for three honest reasons:
 
 **So what do we do?** Keep the paywall built and **dark** — it is the right *plumbing*, and
 "ship it" here means ship the code, not flip `PAYWALL_ENABLED`. **The money you can actually
-make right now is on the venue side** — you already built the venue-owner dashboard. Roughly
-ten bars paying between the $49 Insights and $149 Boost tiers clears your $1k/month goal, with
-*zero* consumer users required, and it makes the app *better* for users (deals) instead of
-worse (paywalls).
+make right now is on the venue side** — you already built the venue-owner dashboard. Fourteen
+bars on the $75 Pro tier clears your $1k/month goal (about 19 at an even $35 Premium / $75 Pro
+mix — see the banner above for the arithmetic), with *zero* consumer users required, and it
+makes the app *better* for users (deals) instead of worse (paywalls).
 
 ---
 
@@ -130,8 +135,9 @@ years (RevenueCat, 2024–2026).
    do not exist in the code, and there is **no Stripe integration at all** — `VENUE-BILLING.md`
    is a design document, not a deployed system. Do not sell the Boost tier on features that
    are not there.
-   Roughly ten paying venues covers the ~$1k/mo goal with *zero* consumer scale needed
-   (see `VENUE-BILLING.md` for the actual $49 / $149 tiers). This is the BeReal lesson:
+   Fourteen Pro venues, or about 19 at an even Premium/Pro mix, covers the ~$1k/mo goal
+   with *zero* consumer scale needed (see `VENUE-BILLING.md` for the $35 / $75 tiers,
+   FINAL as of 2026-08-14, and the banner above for the arithmetic). This is the BeReal lesson:
    Gen-Z social apps monetize the *business* side, not user subscriptions. The honest caveat
    from `PAYWALL-DECISION.md` §5: venue value depends on groups considering venues, so B2B
    does not escape the no-users problem either — it just needs users in one city.
