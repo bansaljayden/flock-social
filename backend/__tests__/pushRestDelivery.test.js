@@ -238,6 +238,9 @@ test('bill_created names the PAYER as fromUserId and fans out with allSettled', 
   on(/SELECT user_id FROM flock_members WHERE flock_id = \$1 AND status/, () => ({ rows: members.map((m) => ({ user_id: m.id })) }));
   on(/SELECT id FROM flock_members WHERE flock_id = \$1 AND user_id = \$2/, () => ({ rows: [{ id: 1 }] }));
   on(/SELECT u\.id, u\.name FROM flock_members/, () => ({ rows: members }));
+  // The bill is block-filtered per reader now (2026-08-14); nobody blocks
+  // anybody here.
+  on(/FROM user_blocks/, () => ({ rows: [] }));
   on(/SELECT name, creator_id FROM flocks/, () => ({ rows: [{ name: 'Dinner', creator_id: 1 }] }));
   on(/SELECT id FROM flocks WHERE id = \$1 FOR UPDATE/, () => ({ rows: [{ id: 42 }] }));
   on(/SELECT id, paid_by FROM bill_splits/, () => ({ rows: [] }));
