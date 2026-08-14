@@ -69,4 +69,7 @@ frontend/public/birdie/birdie-idle.mp4
 
 # python bytecode
 flock-sensor/__pycache__/
+# Python bytecode from the ML training scripts (and anywhere else)
+__pycache__/
+*.pyc
 frontend/public/birdie/flap-src.png
