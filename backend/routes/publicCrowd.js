@@ -15,6 +15,7 @@ const { getWeather } = require('../services/weatherService');
 const mlPredictor = require('../services/mlPredictor');
 const { upstreamSignal } = require('../utils/upstream');
 const { allowGlobalPlacesCall } = require('../utils/placesBudget');
+const { paywallEnabled } = require('../services/entitlements');
 const { recommendBestTime, findPeakTime, getLabel, venueLocalNow, isOpenAt, buildHoursByDay, weekdayOffset } = require('../services/crowdEngine');
 
 const router = express.Router();
@@ -198,6 +199,65 @@ function withAge(card) {
 }
 
 // ---------------------------------------------------------------------------
+// THE DEMO IS THE FREE TIER, NOT THE PAID ONE.
+//
+// This file had NO gate. When PAYWALL_ENABLED goes true, an account that has
+// spent its ten monthly forecasts gets `bestTime: null, hourly: []` from
+// GET /api/crowd/:placeId (see the gate in routes/crowd.js) while THIS
+// endpoint — no auth, no account, no meter, a URL anyone can curl — kept
+// handing out the same venue's best time, peak window and 12-hour curve. That
+// is not a leak around the edge of the paywall, it is a cheaper door than the
+// paid one, and it would have made PAYWALL-DECISION.md an argument about a
+// meter nobody had to touch.
+//
+// WHAT THE HONEST DEMO IS. "Try it live" exists to show people without accounts
+// what the product does. What it must show is what they will actually get when
+// they sign up, and a signed-out visitor is strictly LESS entitled than a free
+// account: the free account has ten forecasts a month, the visitor has none.
+// So the demo shows the free half in full — real venues near them, real live
+// busyness scores on every pin, the dial, the label, the confidence, open or
+// closed — and stops where the paid product starts. That is a better demo
+// argument than the old one, because it shows what you are buying instead of
+// giving it away, and it is the only version that is honest about the price.
+//
+// WHAT IS NOT GATED, deliberately: `score`, `label`, `confidence`, `is_open`
+// and the per-venue scores in the pin list. "How busy is it right now" is the
+// commodity Google gives away and this product promises to keep free forever.
+// Gating it would leave a demo of nothing.
+//
+// `forecast_locked` is published so the marketing page can say what is behind
+// the wall instead of just rendering less. NOTE for whoever flips the switch:
+// frontend/src/website/LiveDemo.js degrades correctly today (it renders no
+// chart for an empty `hourly` and no line for an absent `best_time`) but it has
+// NO copy for this state, so the section would silently lose its chart. That is
+// a one-line frontend change and it is not in this file.
+// ---------------------------------------------------------------------------
+// Frozen, array included: this object is spread into every locked response, so
+// the one empty array is shared by all of them.
+const DEMO_LOCKED_FORECAST = Object.freeze({
+  best_time: null,
+  best_hour: null,
+  best_index: null,
+  best_is_now: null,
+  peak_hours: null,
+  hourly: Object.freeze([]),
+});
+
+function gateDemoCard(card) {
+  if (!card || !paywallEnabled()) return card;
+  return { ...card, ...DEMO_LOCKED_FORECAST, forecast_locked: true };
+}
+
+// Everything that leaves this file as a card goes through here: age stamped per
+// response, forecast gated per response. Both are per-response for the same
+// reason — the card object itself is SHARED CACHE, so writing either into it
+// would hand the next caller a stale age and would bake whatever the paywall
+// happened to be at build time into a 20-minute entry.
+function presentCard(card) {
+  return gateDemoCard(withAge(card));
+}
+
+// ---------------------------------------------------------------------------
 // GET /api/public/demo/venues?lat=..&lng=..&q=..
 // Area search -> up to 8 venues, each scored by the live model.
 // ---------------------------------------------------------------------------
@@ -262,7 +322,7 @@ router.get('/demo/venues',
       const cached = getCache(cacheKey);
       // A cache hit is minutes old and says so. Stamping age at build time
       // would let a 19-minute-old card claim "updated just now".
-      if (cached) return res.json(cached.card ? { ...cached, card: withAge(cached.card) } : cached);
+      if (cached) return res.json(cached.card ? { ...cached, card: presentCard(cached.card) } : cached);
 
       if (!allowDemo(req)) return res.status(429).json({ error: DEMO_BUSY_MSG });
       // allowDemo caps REQUESTS per IP and per day; it never touched the shared
@@ -380,7 +440,7 @@ router.get('/demo/venues',
       };
 
       setCache(cacheKey, result, 20 * 60_000);
-      res.json(card ? { ...result, card: withAge(card) } : result);
+      res.json(card ? { ...result, card: presentCard(card) } : result);
     } catch (err) {
       console.error('[PublicDemo] venues error:', err.message);
       res.status(500).json({ error: DEMO_BUSY_MSG });
@@ -407,7 +467,7 @@ router.get('/demo/venue/:placeId',
       const { time: scoreTime, localHour, localDay } = clientNow(req);
       const cacheKey = `venue:${placeId}:${localDay}:${localHour}`;
       const cached = getCache(cacheKey);
-      if (cached) return res.json(withAge(cached));
+      if (cached) return res.json(presentCard(cached));
 
       if (!allowDemo(req)) return res.status(429).json({ error: DEMO_BUSY_MSG });
       // One paid Place Details call per cache miss. Same reasoning as the area
@@ -445,7 +505,7 @@ router.get('/demo/venue/:placeId',
 
       const result = await buildCard(v, weather, venueClock(p, { time: scoreTime, localHour, localDay }));
       setCache(cacheKey, result, 10 * 60_000);
-      res.json(withAge(result));
+      res.json(presentCard(result));
     } catch (err) {
       console.error('[PublicDemo] venue error:', err.message);
       res.status(500).json({ error: DEMO_BUSY_MSG });
@@ -457,4 +517,4 @@ module.exports = router;
 // Two of the subtlest card bugs live in these two helpers (a weekday
 // difference read as a day count, and a cached card claiming to be fresh), so
 // they are reachable from the tests rather than only from a live Google key.
-module.exports.__testables = { clockFor, withAge, buildCard, toVenueShape };
+module.exports.__testables = { clockFor, withAge, buildCard, toVenueShape, gateDemoCard, presentCard };
