@@ -8,6 +8,12 @@ const { isBlockedBetween, isBlockedBetweenCached, getInvisibleUserIds } = requir
 const { isPlaceIdShaped, isKnownVenue } = require('../utils/places');
 const { hasDmRelationship } = require('../utils/relationships');
 const { pushIfOfflineDebounced } = require('../services/pushHelper');
+// Round 17: the session revalidator re-verifies the handshake token, so it must
+// accept the same (and only the same) algorithms the handshake did. Without the
+// pin, a future change to how JWT_SECRET is loaded (a PEM/KeyObject) could
+// silently widen the accepted set to the asymmetric family here while the
+// handshake still refused it. Single source of truth in middleware/auth.js.
+const { TOKEN_ALGORITHMS } = require('../middleware/auth');
 
 // Track which users are in which rooms for presence.
 // Keyed by the CANONICAL room id (String(flockId)), because the client picks
@@ -204,7 +210,7 @@ async function revalidateSession(socket) {
   try {
     let decoded;
     try {
-      decoded = jwt.verify(socket.handshake?.auth?.token, process.env.JWT_SECRET);
+      decoded = jwt.verify(socket.handshake?.auth?.token, process.env.JWT_SECRET, { algorithms: TOKEN_ALGORITHMS });
     } catch (_) {
       // Expired or tampered — the same verdict the handshake would give it.
       revokeSession(socket, 'session_expired');
@@ -1009,7 +1015,13 @@ function registerHandlers(io, socket) {
     // its counterpart let any authenticated user fire `member_stopped_sharing`
     // into any flock room they could guess the id of.
     if (!(await verifyMembership(flockId, user.id))) return;
-    socket.to(`flock:${flockId}`).emit('member_stopped_sharing', {
+    // Round 17: this was an identity-bearing whole-room broadcast, while its two
+    // siblings both exclude blocked users — update_location fans out per member
+    // skipping blocks, and the disconnect handler's own member_stopped_sharing
+    // is block-filtered. A blocked peer therefore never received the location
+    // pin but was still told, by user id, the instant sharing stopped. Same
+    // block-excluded broadcast as leave_flock's member_offline; fails closed.
+    await announceToRoomExcludingBlocked(socket, `flock:${flockId}`, 'member_stopped_sharing', {
       userId: user.id,
     });
   });
@@ -1143,7 +1155,21 @@ function registerHandlers(io, socket) {
       const flockResult = await pool.query('SELECT id, name FROM flocks WHERE id = $1', [flockId]);
       if (flockResult.rows.length === 0) return;
 
-      io.to(`flock:${flockId}`).emit('flock_invite_responded', {
+      // Round 17: this was the last identity-bearing flock-room broadcast that
+      // did not obey blocks. `member_joined`/`member_offline` exclude blocked
+      // users, and this event's REST twin (routes/flocks.js flock_invite_responded)
+      // already fans out block-filtered — but a member who blocked the responder
+      // still saw "<name> accepted" live, by name, over the socket path. Filter
+      // the room broadcast the same way the disconnect handler does, keeping the
+      // delivery scope (room only) unchanged. Fails closed: no toast beats a
+      // leaked one, and REST + chat history still deliver it.
+      let invisible;
+      try {
+        invisible = await getInvisibleUserIds(user.id);
+      } catch (_) {
+        return;
+      }
+      broadcastExcluding(io.to(`flock:${flockId}`), invisible, 'flock_invite_responded', {
         flockId,
         userId: user.id,
         userName: user.name,
