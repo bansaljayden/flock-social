@@ -1,0 +1,16 @@
+# The filled-in device config. It holds FLOCK_API_KEY — a live credential that
+# lets its holder post occupancy readings for a real venue. The repo-root
+# .gitignore only matches a file named exactly `.env`, so this file, sitting
+# right next to the example it was copied from, would otherwise be staged
+# happily by `git add .`.
+flock_sensor.env
+*.env
+# (flock_sensor.env.example does not end in .env, so it stays tracked.)
+
+# Device runtime state, if anyone runs the sensor from inside the checkout.
+flock_buffer.json
+buffer.json
+*.log
+
+__pycache__/
+*.pyc
