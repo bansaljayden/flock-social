@@ -779,6 +779,17 @@ const crowdColorFor = (score, c) => {
   return '#22C55E';
 };
 
+// Contact sync runs on the Contacts Picker API, which does not exist in
+// WKWebView. Inside the iOS app the answer is therefore always "no", and a
+// Contacts tab there could only ever apologise and name the platform it does
+// work on, which is both a dead end and guideline 2.3.10. Checking for native
+// alongside the API keeps the tab out of the iOS build entirely.
+function contactSyncAvailable() {
+  if (typeof navigator === 'undefined' || typeof window === 'undefined') return false;
+  if (window.Capacitor?.isNativePlatform?.()) return false;
+  return 'contacts' in navigator && 'ContactsManager' in window;
+}
+
 // Memoized VenueCard — unified design for both DMs and Flocks
 const VenueCard = React.memo(({ venue, onViewDetails, onVote, colors: c, Icons: I, getCategoryColor: gcc }) => {
   const rating = venue.stars || venue.rating || null;
@@ -849,11 +860,14 @@ const VenueCard = React.memo(({ venue, onViewDetails, onVote, colors: c, Icons: 
 
         <div style={{ display: 'flex', gap: '8px' }}>
           {(venue.place_id || venue.id) && (
-            <button className="hit44 glass-btn glass-secondary" onClick={onViewDetails} style={{ flex: 1, padding: '10px', borderRadius: '10px', border: `2px solid ${c.navy}`, backgroundColor: 'var(--bg-card-solid)', color: c.navy, fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px', transition: 'opacity 0.2s ease' }}>
+            /* stopPropagation on both buttons: a venue card posted into a chat
+               is wrapped in a tap target that opens the reaction and report
+               row, so a tap on View Details or Vote must not also toggle it. */
+            <button className="hit44 glass-btn glass-secondary" onClick={(e) => { e.stopPropagation(); onViewDetails(); }} style={{ flex: 1, padding: '10px', borderRadius: '10px', border: `2px solid ${c.navy}`, backgroundColor: 'var(--bg-card-solid)', color: c.navy, fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px', transition: 'opacity 0.2s ease' }}>
               {I.eye(c.navy, 14)} View Details
             </button>
           )}
-          <button className="hit44 glass-btn glass-navy" onClick={(e) => { const btn = e.currentTarget; if (!btn.classList.contains('btn-confirmed')) { btn.classList.add('btn-confirmed'); setTimeout(() => btn.classList.remove('btn-confirmed'), 1100); } onVote(); }} style={{ flex: 1, padding: '10px', borderRadius: '10px', border: 'none', background: `linear-gradient(135deg, ${c.navy}, ${c.navyMid})`, color: 'white', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px', boxShadow: '0 2px 8px rgba(13,40,71,0.10)', transition: 'opacity 0.2s ease', position: 'relative', overflow: 'hidden' }}>
+          <button className="hit44 glass-btn glass-navy" onClick={(e) => { e.stopPropagation(); const btn = e.currentTarget; if (!btn.classList.contains('btn-confirmed')) { btn.classList.add('btn-confirmed'); setTimeout(() => btn.classList.remove('btn-confirmed'), 1100); } onVote(); }} style={{ flex: 1, padding: '10px', borderRadius: '10px', border: 'none', background: `linear-gradient(135deg, ${c.navy}, ${c.navyMid})`, color: 'white', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px', boxShadow: '0 2px 8px rgba(13,40,71,0.10)', transition: 'opacity 0.2s ease', position: 'relative', overflow: 'hidden' }}>
               {I.vote('white', 14)} Vote for This
             </button>
         </div>
@@ -3017,7 +3031,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   const [friendCodeLoading, setFriendCodeLoading] = useState(false);
   const [contactsUsers, setContactsUsers] = useState([]);
   const [contactsLoading, setContactsLoading] = useState(false);
-  const [contactsSupported, setContactsSupported] = useState(false);
+  // Computed eagerly (not defaulted to false) so the Contacts tab does not
+  // flash into existence for one render before the check runs.
+  const [contactsSupported, setContactsSupported] = useState(contactSyncAvailable);
   const [showQrScanner, setShowQrScanner] = useState(false);
   const [qrScanError, setQrScanError] = useState('');
   const qrScannerRef = useRef(null);
@@ -3050,7 +3066,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   }, []);
 
   const loadAddFriendsData = useCallback(async () => {
-    setContactsSupported('contacts' in navigator && 'ContactsManager' in window);
+    setContactsSupported(contactSyncAvailable());
     // Generate friend code client-side (deterministic from user ID)
     if (authUser?.id) {
       setMyFriendCode('FLOCK-' + authUser.id.toString(36).toUpperCase().padStart(4, '0'));
@@ -7090,8 +7106,18 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                     <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '1px 0 0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{m.reply_to.text}</p>
                   </div>
                 )}
-                {/* Venue card message — uses same VenueCard component as flocks */}
+                {/* Venue card message. Same VenueCard as flocks, and wrapped in
+                    the same tap target as text and photo bubbles so it can be
+                    reported. The card's own buttons stop propagation. */}
                 {m.message_type === 'venue_card' && m.venue_data ? (
+                  <div
+                    onClick={() => setShowDmReactionPicker(showDmReactionPicker === m.id ? null : m.id)}
+                    /* The DM picker is absolutely positioned against the bottom
+                       of the row. On a venue card that is exactly where View
+                       Details and Vote sit, so open the space rather than cover
+                       the buttons with the row that reports them. */
+                    style={{ cursor: 'pointer', paddingBottom: showDmReactionPicker === m.id ? '40px' : 0 }}
+                  >
                   <VenueCard
                     venue={m.venue_data}
                     colors={colors}
@@ -7121,8 +7147,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                         setDmVenueVotes(prev => [...prev.map(v => ({ ...v, voters: (v.voters || []).filter(x => x !== mn), vote_count: (v.voters || []).includes(mn) ? parseInt(v.vote_count || 0) - 1 : parseInt(v.vote_count || 0) })).filter(v => parseInt(v.vote_count || 0) > 0), { venue_name: vName, venue_id: vId, vote_count: 1, voters: [mn] }]);
                       }
                       dmVoteVenue(selectedDmId, vName, vId);
-                                         }}
+                    }}
                   />
+                  </div>
                 ) : m.message_type === 'image' && m.image_url ? (
                   /* Image message */
                   <div onClick={() => setShowDmReactionPicker(showDmReactionPicker === m.id ? null : m.id)} style={{ borderRadius: '18px', overflow: 'hidden', boxShadow: '0 2px 10px rgba(0,0,0,0.1)', borderTopRightRadius: m.sender === 'You' ? '4px' : '18px', borderTopLeftRadius: m.sender === 'You' ? '18px' : '4px', cursor: 'pointer', lineHeight: 0 }}>
@@ -10336,8 +10363,14 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                   </div>
                 )}
 
-                {/* Venue Card message */}
+                {/* Venue Card message. Wrapped in the same tap target the text
+                    bubbles and photos use, so a venue card posted into a chat
+                    can be reported too. Its own buttons stop propagation. */}
                 {m.message_type === 'venue_card' && m.venue_data && (
+                  <div
+                    onClick={() => setShowReactionPicker(showReactionPicker === m.id ? null : m.id)}
+                    style={{ cursor: 'pointer' }}
+                  >
                   <VenueCard
                     venue={m.venue_data}
                     colors={colors}
@@ -10376,6 +10409,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                       }
                     }}
                   />
+                  </div>
                 )}
 
                 {/* Regular text message */}
@@ -12241,7 +12275,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
             <div style={{ width: '36px', height: '36px', borderRadius: '12px', backgroundColor: 'rgba(255,255,255,0.2)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.userPlus('white', 18)}</div>
             <div style={{ flex: 1, textAlign: 'left' }}>
               <span className="shimmer-text" style={{ fontWeight: '600', fontSize: 'var(--t-body)', display: 'block' }}>Add Friends</span>
-              <span style={{ fontSize: 'var(--t-meta)', opacity: 0.7 }}>Find people, scan QR, sync contacts</span>
+              {/* Contact sync is not one of the ways in inside the iOS app, so
+                  this row must not offer it there. */}
+              <span style={{ fontSize: 'var(--t-meta)', opacity: 0.7 }}>{contactsSupported ? 'Find people, scan a QR code, sync contacts' : 'Find people, scan a QR code'}</span>
             </div>
             {pendingRequests.length > 0 && <span style={{ padding: '4px 10px', borderRadius: '12px', backgroundColor: colors.amber, fontSize: 'var(--t-meta)', fontWeight: '500' }}>{pendingRequests.length}</span>}
             <span style={{ opacity: 0.6 }}>›</span>
@@ -13186,7 +13222,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                   </div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                     <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', padding: '2px 8px', borderRadius: '8px', backgroundColor: online ? 'var(--accent-green-bg)' : 'var(--accent-red-bg)', color: online ? 'var(--accent-green-text)' : 'var(--accent-red-text)' }}>{online ? 'Online' : 'Offline'}</span>
-                    <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)' }}>last seen {lastSeenMin === 0 ? 'just now' : `${lastSeenMin} min ago`}</span>
+                    {/* A sensor that has never reported has no timestamp, which
+                        made lastSeenMin Infinity and printed "last seen Infinity
+                        min ago". Same guard as the break-even figure. */}
+                    <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)' }}>{!Number.isFinite(lastSeenMin) ? 'never reported' : lastSeenMin === 0 ? 'last seen just now' : `last seen ${lastSeenMin} min ago`}</span>
                   </div>
                 </div>
 
@@ -13354,15 +13393,14 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 ))}
               </div>
 
-              {/* Promotion Tips */}
-              <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', border: `1px dashed ${colors.creamDark}` }}>
-                <h4 style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: colors.navy, margin: '0 0 6px', display: 'flex', alignItems: 'center', gap: '4px' }}>{Icons.sparkles(colors.amber, 12)} Pro Tips</h4>
-                <ul style={{ margin: 0, paddingLeft: '16px', fontSize: 'var(--t-meta)', color: 'var(--text-secondary)' }}>
-                  <li>Happy Hour promos get 3x more engagement</li>
-                  <li>Add specific discounts for better conversion</li>
-                  <li>Weekend promos should be posted by Thursday</li>
-                </ul>
-              </div>
+              {/* The "Pro Tips" box was deleted 2026-08-14. It advised that
+                  "Happy Hour promos get 3x more engagement" and that weekend
+                  promos should be posted by Thursday. Nothing in Flock measures
+                  either claim, and the venue owner reading it is the person
+                  being asked to pay. Same rule as the fake venue analytics tab
+                  (SLOP-AUDIT §H13): invented numbers get cut, not softened.
+                  The views and claims counts above are real, and once there are
+                  enough of them the tips can come back as measurements. */}
             </div>
           )}
 
@@ -13790,7 +13828,16 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
     const breakEvenVenues = calculateBreakEven(operatingCosts, subscriptionPrice, eventsPerVenue, avgSpend, takeRate);
     const profitMargin = calculateProfitMargin(monthlyProfit, totalMonthlyRevenue);
     const isProfitable = monthlyProfit >= 0;
-    const isAboveBreakEven = numVenues >= breakEvenVenues;
+    // calculateBreakEven returns Infinity when a venue generates no revenue,
+    // which you reach just by zeroing the subscription price. Rendering it raw
+    // put "Infinity venues" and "Need Infinity more venues" on screen.
+    const breakEvenReachable = Number.isFinite(breakEvenVenues);
+    const isAboveBreakEven = breakEvenReachable && numVenues >= breakEvenVenues;
+    // Margin is undefined with no revenue, and revenue per venue is undefined
+    // with no venues. Both return 0 from lib/finance.js to keep the type finite,
+    // so the screen has to say "n/a" rather than print the placeholder.
+    const marginDefined = totalMonthlyRevenue > 0;
+    const revenuePerVenueDefined = numVenues > 0;
 
     // Input field style
     const inputStyle = {
@@ -13959,11 +14006,14 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
 
             {/* RIGHT COLUMN - OUTPUTS */}
             <div>
-              <h3 style={{ fontSize: 'var(--t-micro)', fontWeight: '700', color: colors.navy, margin: '0 0 10px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Results</h3>
+              <h3 style={{ fontSize: 'var(--t-micro)', fontWeight: '700', color: colors.navy, margin: '0 0 4px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Projections</h3>
+              <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: '0 0 10px', lineHeight: '1.4' }}>
+                Arithmetic on the numbers you typed, not measurements. Flock has no venue partners and has never charged anyone.
+              </p>
 
               {/* Revenue Breakdown */}
               <div style={cardStyle}>
-                <h4 style={{ fontSize: 'var(--t-micro)', fontWeight: '700', color: 'var(--text-secondary)', margin: '0 0 8px', textTransform: 'uppercase' }}>Revenue Breakdown</h4>
+                <h4 style={{ fontSize: 'var(--t-micro)', fontWeight: '700', color: 'var(--text-secondary)', margin: '0 0 8px', textTransform: 'uppercase' }}>Projected Revenue</h4>
                 <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
                   <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)' }}>Subscriptions</span>
                   <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: colors.navy }}>{formatCurrency(subscriptionRevenue)}</span>
@@ -13978,9 +14028,15 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                     <span style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy }}>{formatCurrency(totalMonthlyRevenue)}</span>
                   </div>
                   <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '4px' }}>
-                    <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)' }}>Annual (ARR)</span>
+                    <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)' }}>Annualised run rate</span>
                     <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: colors.navyMid }}>{formatCurrency(annualRevenue)}</span>
                   </div>
+                  {/* Not ARR. ARR may only count the recurring stream; this is
+                      the monthly total times twelve, so it folds in transaction
+                      revenue and assumes no venue ever cancels. */}
+                  <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: '4px 0 0', lineHeight: '1.4' }}>
+                    This month times twelve. It includes transaction fees, which are not recurring, and assumes no venue cancels.
+                  </p>
                 </div>
               </div>
 
@@ -13998,7 +14054,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '4px' }}>
                   <span style={{ fontSize: 'var(--t-meta)', color: isProfitable ? 'var(--accent-green-text)' : 'var(--accent-red-text)' }}>Profit Margin</span>
                   <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: isProfitable ? 'var(--accent-green-text)' : 'var(--accent-red-text)' }}>
-                    {profitMargin.toFixed(1)}%
+                    {marginDefined ? `${profitMargin.toFixed(1)}%` : 'n/a'}
                   </span>
                 </div>
               </div>
@@ -14008,28 +14064,31 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 <h4 style={{ fontSize: 'var(--t-micro)', fontWeight: '700', color: 'var(--text-secondary)', margin: '0 0 8px', textTransform: 'uppercase' }}>Unit Economics</h4>
                 <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
                   <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)' }}>Revenue/Venue</span>
-                  <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: colors.navy }}>{formatCurrency(revenuePerVenue)}/mo</span>
+                  <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: colors.navy }}>{revenuePerVenueDefined ? `${formatCurrency(revenuePerVenue)}/mo` : 'n/a'}</span>
                 </div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px' }}>
                   <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)' }}>Break-Even Point</span>
-                  <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: colors.navy }}>{breakEvenVenues} venues</span>
+                  <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: colors.navy }}>{breakEvenReachable ? `${breakEvenVenues} venues` : 'Not reachable'}</span>
                 </div>
                 <div style={{ padding: '8px', borderRadius: '8px', backgroundColor: isAboveBreakEven ? 'var(--accent-green-bg)' : 'var(--accent-amber-bg)', textAlign: 'center' }}>
                   <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: isAboveBreakEven ? 'var(--accent-green-text)' : 'var(--accent-amber-text)' }}>
-                    {isAboveBreakEven
-                      ? `${numVenues - breakEvenVenues} venues above break-even`
-                      : `Need ${breakEvenVenues - numVenues} more venues`}
+                    {!breakEvenReachable
+                      ? 'A venue brings in nothing at these inputs, so there is no break-even point.'
+                      : isAboveBreakEven
+                        ? `${numVenues - breakEvenVenues} venues above break-even`
+                        : `Need ${breakEvenVenues - numVenues} more venues`}
                   </span>
                 </div>
               </div>
 
               {/* Business Model Info */}
               <div style={{ ...cardStyle, backgroundColor: 'var(--bg-card-solid)', border: `1px solid ${colors.creamDark}` }}>
-                <h4 style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: colors.navy, margin: '0 0 6px' }}>Business Model</h4>
+                <h4 style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: colors.navy, margin: '0 0 6px' }}>The plan behind these numbers</h4>
                 <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0, lineHeight: '1.4' }}>
-                  Flock generates revenue through <strong>venue subscriptions</strong> (recurring, predictable)
-                  and <strong>transaction fees</strong> (scales with activity). This dual-revenue model provides
-                  stability while capturing upside from platform growth.
+                  Two intended streams: a monthly <strong>venue subscription</strong>, which would recur, and a
+                  cut of <strong>group transactions</strong>, which would not. Neither is live. There is no
+                  billing code in the app and no venue has ever been charged, so every figure above is what the
+                  arithmetic would say if the inputs on the left were real.
                 </p>
               </div>
             </div>
@@ -14644,12 +14703,18 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
 
   // ADD FRIENDS SCREEN (Snapchat-style)
   const AddFriendsScreen = () => {
+    // Contacts only appears where contact sync can actually run. See
+    // contactSyncAvailable(): never inside the iOS app.
     const tabs = [
       { id: 'username', label: 'Search', icon: Icons.search },
       { id: 'suggestions', label: 'Quick Add', icon: Icons.users },
       { id: 'qr', label: 'QR', icon: Icons.layers },
-      { id: 'contacts', label: 'Contacts', icon: Icons.phone },
+      ...(contactsSupported ? [{ id: 'contacts', label: 'Contacts', icon: Icons.phone }] : []),
     ];
+    // A tab that is not on screen must not be the one rendering. Nothing sets
+    // addFriendsTab to 'contacts' except pressing the tab, but this keeps a
+    // future deep link from landing on an empty pane.
+    const activeTab = addFriendsTab === 'contacts' && !contactsSupported ? 'username' : addFriendsTab;
 
     return (
       <div key="add-friends-container" style={{ display: 'flex', flexDirection: 'column', height: '100%', backgroundColor: 'var(--bg-primary)' }}>
@@ -14668,10 +14733,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
             {tabs.map(tab => (
               <button className="hit44" key={tab.id} onClick={() => setAddFriendsTab(tab.id)} style={{
                 flex: 1, padding: '8px 4px', borderRadius: '16px', border: 'none', cursor: 'pointer', fontSize: 'var(--t-meta)', fontWeight: '600', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '3px', transition: 'opacity 0.2s ease',
-                backgroundColor: addFriendsTab === tab.id ? 'white' : 'rgba(255,255,255,0.15)',
-                color: addFriendsTab === tab.id ? colors.navy : 'rgba(255,255,255,0.8)',
+                backgroundColor: activeTab === tab.id ? 'white' : 'rgba(255,255,255,0.15)',
+                color: activeTab === tab.id ? colors.navy : 'rgba(255,255,255,0.8)',
               }}>
-                {tab.icon(addFriendsTab === tab.id ? colors.navy : 'rgba(255,255,255,0.8)', 16)}
+                {tab.icon(activeTab === tab.id ? colors.navy : 'rgba(255,255,255,0.8)', 16)}
                 {tab.label}
               </button>
             ))}
@@ -14710,7 +14775,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           )}
 
           {/* Outgoing Requests */}
-          {outgoingRequests.length > 0 && addFriendsTab === 'username' && (
+          {outgoingRequests.length > 0 && activeTab === 'username' && (
             <div style={{ marginBottom: '16px' }}>
               <h4 style={{ fontSize: 'var(--t-micro)', fontWeight: '700', color: 'var(--text-tertiary)', margin: '0 0 8px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Sent Requests</h4>
               {outgoingRequests.map(req => (
@@ -14729,7 +14794,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           )}
 
           {/* TAB: Add by Name */}
-          {addFriendsTab === 'username' && (
+          {activeTab === 'username' && (
             <div>
               <div style={{ position: 'relative', marginBottom: '12px' }}>
                 <SearchInputLocal aria-label="Search by name" type="text" initialValue={addFriendsSearch} onCommit={handleAddFriendsSearch} placeholder="Search by name..." autoComplete="off"
@@ -14785,7 +14850,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           )}
 
           {/* TAB: Quick Add / Suggestions */}
-          {addFriendsTab === 'suggestions' && (
+          {activeTab === 'suggestions' && (
             <div>
               {friendSuggestions.length === 0 ? (
                 <div style={{ textAlign: 'center', padding: '40px 16px' }}>
@@ -14823,7 +14888,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           )}
 
           {/* TAB: QR Code */}
-          {addFriendsTab === 'qr' && (
+          {activeTab === 'qr' && (
             <div>
               {/* My QR Code */}
               <div style={{ textAlign: 'center', padding: '20px', backgroundColor: 'var(--bg-card-solid)', borderRadius: '20px', marginBottom: '16px', boxShadow: '0 2px 12px rgba(0,0,0,0.08)' }}>
@@ -14891,7 +14956,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           )}
 
           {/* TAB: Contacts */}
-          {addFriendsTab === 'contacts' && (
+          {activeTab === 'contacts' && (
             <div>
               {contactsUsers.length > 0 ? (
                 <>
@@ -14920,26 +14985,19 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                   <button className="hit44 glass-btn glass-secondary" onClick={handleSyncContacts} style={{ width: '100%', padding: '12px', borderRadius: '12px', border: `1.5px solid ${colors.creamDark}`, backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontSize: 'var(--t-label)', fontWeight: '600', cursor: 'pointer', marginTop: '8px' }}>Refresh Contacts</button>
                 </>
               ) : (
+                /* This tab is only rendered where contact sync works, so the
+                   old "not supported here" state and the apology it carried
+                   are gone with it. */
                 <div style={{ textAlign: 'center', padding: '40px 16px' }}>
                   <div style={{ width: '64px', height: '64px', borderRadius: '32px', backgroundColor: 'var(--bg-card-solid)', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 14px', boxShadow: '0 2px 12px rgba(0,0,0,0.08)' }}>{Icons.phone(colors.navy, 28)}</div>
                   <p style={{ fontSize: 'var(--t-body)', fontWeight: '600', color: colors.navy, margin: '0 0 6px' }}>Find Friends in Contacts</p>
                   <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: '0 0 20px', lineHeight: '1.5' }}>
-                    {contactsSupported
-                      ? 'See which of your contacts are already on Flock'
-                      : 'Contact sync is only available on mobile browsers (Chrome Android)'}
+                    See which of your contacts are already on Flock
                   </p>
-                  {contactsSupported && (
-                    <button className="hit44 glass-btn glass-navy" onClick={(e) => { confirmClick(e); handleSyncContacts(); }} disabled={contactsLoading}
-                      style={{ padding: '14px 28px', borderRadius: '14px', border: 'none', background: colors.navyBg, color: 'white', fontSize: 'var(--t-body)', fontWeight: '600', cursor: 'pointer', position: 'relative', overflow: 'hidden', opacity: contactsLoading ? 0.7 : 1 }}>
-                      {contactsLoading ? 'Searching...' : 'Sync Contacts'}
-                    </button>
-                  )}
-                  {!contactsSupported && (
-                    <div style={{ padding: '12px', borderRadius: '12px', backgroundColor: 'var(--accent-amber-bg)', border: '1px solid #fde68a' }}>
-                      <p style={{ fontSize: 'var(--t-meta)', color: '#92400e', margin: 0, fontWeight: '500' }}>Share your Flock Code with friends instead!</p>
-                      <button className="hit44 glass-btn glass-navy" onClick={() => setAddFriendsTab('qr')} style={{ marginTop: '8px', padding: '8px 16px', borderRadius: '10px', border: 'none', backgroundColor: colors.navyBg, color: 'white', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer' }}>Go to QR Code</button>
-                    </div>
-                  )}
+                  <button className="hit44 glass-btn glass-navy" onClick={(e) => { confirmClick(e); handleSyncContacts(); }} disabled={contactsLoading}
+                    style={{ padding: '14px 28px', borderRadius: '14px', border: 'none', background: colors.navyBg, color: 'white', fontSize: 'var(--t-body)', fontWeight: '600', cursor: 'pointer', position: 'relative', overflow: 'hidden', opacity: contactsLoading ? 0.7 : 1 }}>
+                    {contactsLoading ? 'Searching...' : 'Sync Contacts'}
+                  </button>
                 </div>
               )}
             </div>
