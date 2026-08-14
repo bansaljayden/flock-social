@@ -1,7 +1,7 @@
 const express = require('express');
 const { body, param, validationResult } = require('express-validator');
 const pool = require('../config/database');
-const { authenticate } = require('../middleware/auth');
+const { authenticate, requireVerified, UNVERIFIED_MESSAGE } = require('../middleware/auth');
 const { stripHtml } = require('../utils/sanitize');
 const { rejectIfProfane } = require('../utils/moderation');
 const { safeVenuePhotoUrl } = require('../utils/venuePayload');
@@ -47,6 +47,81 @@ const inviteBudget = createUserBudget({ name: 'flock-invite', hourly: 25, daily:
 // same abuse: one flock accumulating thousands of `invited` rows (and the push
 // notification each one sends) across many callers or many days.
 const MAX_FLOCK_MEMBERSHIPS = 50;
+
+// ---------------------------------------------------------------------------
+// Free text on a flock (audit 2026-08-14)
+//
+// Four fields on this router are free text a person types: `name`,
+// `venue_name`, `venue_address` and `budget_context`. Every one of them is read
+// back on surfaces this file does not own — the flock card, the roster header,
+// the guest invite page, push notification bodies, the link preview, the venue
+// dashboard's incoming-flocks list. Escaping at each of those is a promise that
+// has to be kept N times and only has to be broken once, so the markup is
+// stripped HERE, at the single point of entry, and the column holds text.
+//
+// The create route had `stripHtml` on the first three; PUT /:id had it on NONE,
+// so a flock created clean could be renamed into stored markup one request
+// later, and `budget_context` skipped it on both. This helper is the one
+// spelling of the rule, applied identically on create and on update, so the two
+// cannot drift apart again.
+//
+// The trailing trim matters: stripping `<b> </b>` leaves a single space, which
+// satisfies isLength({ min: 1 }) while being a blank name. Sanitize, then trim,
+// then measure — measuring the pre-sanitized string is how a 300-character
+// value made of tags gets rejected while a real 300-character name that would
+// overflow the column gets through.
+//
+// LENGTHS: flocks.name and flocks.venue_name are VARCHAR(255) (migration 000).
+// Neither route bounded venue_name at all, so a 256-character venue name came
+// back as a 500 (Postgres 22001) rather than a 400. venue_address is TEXT and
+// so has no column ceiling of its own — 512 is not the column, it is the number
+// the OTHER writer of these two columns already uses: sockets/handlers.js
+// `select_venue` clamps venue_name to 255 and venue_address to 512 before the
+// same UPDATE. Two writers, one pair of ceilings. (It clamps where these routes
+// refuse, which is right for a transport with no response to refuse into.)
+const NAME_MAX = 255;
+const VENUE_NAME_MAX = 255;
+const VENUE_ADDRESS_MAX = 512;
+const BUDGET_CONTEXT_MAX = 100;
+
+// SHAPE BEFORE CONTENT. express-validator's validators coerce before they test,
+// and coercion hides shape: `{"venue_latitude": ["1.5"]}` passes isFloat()
+// because validator.js stringifies a one-element array to "1.5", and
+// `{"status": ["planning"]}` passes isIn() the same way. The value then stays an
+// ARRAY in req.body — sanitizers leave non-strings alone — and node-postgres
+// sends it as a Postgres array against a scalar column, so the request comes
+// back a 500 ("column is of type character varying but expression is of type
+// text[]") instead of a 400. Same trick walks straight past stripHtml, which
+// returns non-strings untouched by design, so a non-scalar was ALSO a sanitizer
+// bypass. This is the id-range guard's twin: settle the shape before anything
+// else looks at the value, and let a bad shape be a 400 before any query.
+//
+// Arrays and objects only. null and undefined pass through to `.optional()` and
+// the existing coercions, which already handle them.
+const isScalar = (v) => v === undefined || v === null || typeof v !== 'object';
+const scalarOnly = (chain, label) => chain.custom(isScalar).withMessage(`Invalid ${label}`);
+
+// `shape → trim → strip markup → trim again`, as a reusable chain fragment.
+const freeText = (chain, label) => scalarOnly(chain, label).trim().customSanitizer(stripHtml).trim();
+
+// ---------------------------------------------------------------------------
+// Unverified accounts and flock membership (audit 2026-08-14)
+//
+// middleware/auth.js states the rule: an unverified account may READ AND BE
+// REACHED, BUT MUST NOT ACCUMULATE, and names flock membership as one of the
+// three assets that make squatting somebody's email address worth doing. It
+// enforces that with a deny list of method+path patterns — a backstop whose own
+// comment says the routes "should each mount `requireVerified`" and that this
+// table holds until they do. This file is one of the three; it now does.
+//
+// WHY BOTH. The deny list matches `POST /api/flocks/:id/join`. Rename that
+// route to `/accept`, mount this router under a second prefix, or add a new way
+// to become a member, and the pattern quietly stops matching while the routes
+// keep working — the gate would fail silently and open. `requireVerified` on
+// the route itself travels with the route.
+//
+// WHAT ABOUT THE TARGET OF AN INVITE — see the note above POST /:id/invite.
+// ---------------------------------------------------------------------------
 
 // All flock routes require authentication
 router.use(authenticate);
@@ -167,23 +242,30 @@ router.get('/', async (req, res) => {
 
 // POST /api/flocks - Create a new flock
 router.post('/',
+  // Creating a flock makes you its first accepted member — the exact asset the
+  // unverified-account gate exists to withhold. Explicit here as well as in the
+  // middleware deny list (see the note above `router.use(authenticate)`).
+  requireVerified,
   [
-    body('name').trim().customSanitizer(stripHtml).isLength({ min: 1, max: 255 }).withMessage('Flock name is required'),
-    body('venue_name').optional().trim().customSanitizer(stripHtml),
-    body('venue_address').optional().trim().customSanitizer(stripHtml),
+    freeText(body('name'), 'flock name').isLength({ min: 1, max: NAME_MAX }).withMessage('Flock name is required'),
+    freeText(body('venue_name').optional(), 'venue name').isLength({ max: VENUE_NAME_MAX }).withMessage('Venue name is too long'),
+    freeText(body('venue_address').optional(), 'venue address').isLength({ max: VENUE_ADDRESS_MAX }).withMessage('Venue address is too long'),
     // Google place id shape (utils/places.js). flocks.venue_id is one of the
     // sources the known-venue check reads, and it used to accept any string of
     // any length, including one long enough to overflow the column.
-    body('venue_id').optional({ checkFalsy: true }).trim().custom(isPlaceIdShaped).withMessage('Invalid venue id'),
-    body('venue_latitude').optional().isFloat(),
-    body('venue_longitude').optional().isFloat(),
-    body('venue_rating').optional().isFloat(),
-    body('venue_photo_url').optional().trim(),
-    body('event_time').optional().isISO8601().withMessage('Invalid event time'),
+    scalarOnly(body('venue_id').optional({ checkFalsy: true }), 'venue id').trim().custom(isPlaceIdShaped).withMessage('Invalid venue id'),
+    scalarOnly(body('venue_latitude').optional(), 'latitude').isFloat(),
+    scalarOnly(body('venue_longitude').optional(), 'longitude').isFloat(),
+    scalarOnly(body('venue_rating').optional(), 'rating').isFloat(),
+    scalarOnly(body('venue_photo_url').optional(), 'photo url').trim(),
+    scalarOnly(body('event_time').optional(), 'event time').isISO8601().withMessage('Invalid event time'),
     body('invited_user_ids').optional().isArray({ max: 25 }).withMessage('invited_user_ids must be an array'),
-    body('budget_enabled').optional().isBoolean(),
-    body('budget_context').optional().trim().isLength({ max: 100 }),
-    body('ghost_mode_enabled').optional().isBoolean(),
+    scalarOnly(body('budget_enabled').optional(), 'budget flag').isBoolean(),
+    // Free text: it is shown to every member above the budget prompt, so it
+    // gets the same treatment as the name (it was the one create-route text
+    // field that skipped the sanitizer).
+    freeText(body('budget_context').optional(), 'budget note').isLength({ max: BUDGET_CONTEXT_MAX }).withMessage('Budget note is too long'),
+    scalarOnly(body('ghost_mode_enabled').optional(), 'ghost mode flag').isBoolean(),
   ],
   async (req, res) => {
     try {
@@ -609,19 +691,25 @@ router.get('/:id', param('id').isInt({ min: 1, max: INT4_MAX }), async (req, res
 router.put('/:id',
   [
     param('id').isInt({ min: 1, max: INT4_MAX }),
-    body('name').optional().trim().isLength({ min: 1, max: 255 }),
-    body('venue_name').optional().trim(),
-    body('venue_address').optional().trim(),
+    // Same sanitizer, same lengths, same order as POST / above. These three
+    // used to be a bare `.trim()`: a flock created clean could be renamed into
+    // stored markup one request later, and the column kept it. Rename is not a
+    // weaker action than create, so it does not get a weaker filter.
+    freeText(body('name').optional(), 'flock name').isLength({ min: 1, max: NAME_MAX }).withMessage('Flock name is required'),
+    freeText(body('venue_name').optional(), 'venue name').isLength({ max: VENUE_NAME_MAX }).withMessage('Venue name is too long'),
+    freeText(body('venue_address').optional(), 'venue address').isLength({ max: VENUE_ADDRESS_MAX }).withMessage('Venue address is too long'),
     // Google place id shape (utils/places.js). flocks.venue_id is one of the
     // sources the known-venue check reads, and it used to accept any string of
     // any length, including one long enough to overflow the column.
-    body('venue_id').optional({ checkFalsy: true }).trim().custom(isPlaceIdShaped).withMessage('Invalid venue id'),
-    body('venue_latitude').optional().isFloat(),
-    body('venue_longitude').optional().isFloat(),
-    body('venue_rating').optional().isFloat(),
-    body('venue_photo_url').optional().trim(),
-    body('event_time').optional().isISO8601(),
-    body('status').optional().isIn(['planning', 'confirmed', 'completed', 'cancelled']),
+    scalarOnly(body('venue_id').optional({ checkFalsy: true }), 'venue id').trim().custom(isPlaceIdShaped).withMessage('Invalid venue id'),
+    scalarOnly(body('venue_latitude').optional(), 'latitude').isFloat(),
+    scalarOnly(body('venue_longitude').optional(), 'longitude').isFloat(),
+    scalarOnly(body('venue_rating').optional(), 'rating').isFloat(),
+    scalarOnly(body('venue_photo_url').optional(), 'photo url').trim(),
+    scalarOnly(body('event_time').optional(), 'event time').isISO8601(),
+    // isIn() coerces too — `{"status": ["planning"]}` passed it and then went
+    // into the column as an array. scalarOnly settles that before isIn looks.
+    scalarOnly(body('status').optional(), 'status').isIn(['planning', 'confirmed', 'completed', 'cancelled']),
   ],
   async (req, res) => {
     try {
@@ -830,7 +918,7 @@ router.delete('/:id', param('id').isInt({ min: 1, max: INT4_MAX }).withMessage('
 // guest link. Any accepted member can share it; guests RSVP + vote from the
 // link with no account (routes/guest.js). One active link per flock; calling
 // with { regenerate: true } revokes the old one (kills a leaked link).
-router.post('/:id/invite-link', param('id').isInt({ min: 1, max: INT4_MAX }).withMessage('Invalid flock ID'), async (req, res) => {
+router.post('/:id/invite-link', requireVerified, param('id').isInt({ min: 1, max: INT4_MAX }).withMessage('Invalid flock ID'), async (req, res) => {
   try {
     if (rejectInvalid(req, res)) return;
     const flockId = req.params.id;
@@ -869,7 +957,7 @@ router.post('/:id/invite-link', param('id').isInt({ min: 1, max: INT4_MAX }).wit
 });
 
 // POST /api/flocks/:id/join - Accept a flock invite
-router.post('/:id/join', param('id').isInt({ min: 1, max: INT4_MAX }).withMessage('Invalid flock ID'), async (req, res) => {
+router.post('/:id/join', requireVerified, param('id').isInt({ min: 1, max: INT4_MAX }).withMessage('Invalid flock ID'), async (req, res) => {
   try {
     if (rejectInvalid(req, res)) return;
     const flockId = req.params.id;
@@ -898,9 +986,27 @@ router.post('/:id/join', param('id').isInt({ min: 1, max: INT4_MAX }).withMessag
     // liked and every call re-broadcast the join and re-pushed a notification to
     // the creator. `AND status <> 'accepted'` makes rowCount the record of a REAL
     // transition; a repeat is still a 200, it just stays silent.
+    //
+    // The EXISTS clause is the LAST line of the unverified-account gate, and
+    // the only one written where the asset is actually minted. `requireVerified`
+    // above and the middleware deny list both already refuse this request, so in
+    // normal operation this predicate never decides anything. It is here because
+    // "an unverified account is never an accepted member" should be a property
+    // of the write, not a property of two middlewares both continuing to be
+    // mounted: this is the one statement in the codebase that promotes anybody
+    // to accepted membership (the only other 'accepted' write is the creator's
+    // own row, on a route that is gated the same way), so guarding it makes the
+    // invariant true no matter what happens upstream of it.
+    //
+    // IS NOT FALSE, not `= TRUE`: users.email_verified is NOT NULL in any real
+    // database, and a hypothetical NULL must read as "not gated" for the same
+    // reason isUnverified() in middleware/auth.js only trips on a literal false
+    // — a fail-closed reading here would lock the whole user base out of joining
+    // flocks the moment a fixture or a future SELECT omitted the column.
     const result = await pool.query(
       `UPDATE flock_members SET status = 'accepted', joined_at = NOW()
        WHERE flock_id = $1 AND user_id = $2 AND status <> 'accepted'
+         AND EXISTS (SELECT 1 FROM users u WHERE u.id = $2 AND u.email_verified IS NOT FALSE)
        RETURNING *`,
       [flockId, req.user.id]
     );
@@ -913,6 +1019,18 @@ router.post('/:id/join', param('id').isInt({ min: 1, max: INT4_MAX }).withMessag
         [flockId, req.user.id]
       );
       member = current.rows[0];
+      // Before the guard above existed there was exactly one way to reach this
+      // branch — the row was already 'accepted' — so returning it as a 200 was
+      // right. Now a still-unaccepted row means the promotion was REFUSED, and
+      // answering 200 with `{ member: { status: 'invited' } }` would tell the
+      // client it had joined when it had not. A vanished row (they left between
+      // the two queries) is the 404 every other route gives a non-member.
+      if (!member) {
+        return res.status(404).json({ error: 'Flock not found' });
+      }
+      if (member.status !== 'accepted') {
+        return res.status(403).json({ error: UNVERIFIED_MESSAGE, emailVerificationRequired: true });
+      }
     }
 
     if (transitioned) {
@@ -955,7 +1073,54 @@ router.post('/:id/join', param('id').isInt({ min: 1, max: INT4_MAX }).withMessag
 });
 
 // POST /api/flocks/:id/invite - Invite users to an existing flock
+//
+// ---------------------------------------------------------------------------
+// The TARGET of an invite, and why it is not checked (audit 2026-08-14)
+// ---------------------------------------------------------------------------
+// The unverified-account gate is written against the ACTOR: `requireVerified`
+// below stops an unverified account from inviting anyone. It says nothing about
+// who is being invited, and that was raised as a hole — a verified user can
+// invite an unverified account, so the invite path appears to hand out the
+// membership the gate would have refused.
+//
+// It does not, and the distinction is worth writing down because it is the
+// whole reason this route can stay friendly.
+//
+// An invite writes `status = 'invited'`. That is not membership. Every
+// capability and every count in this backend keys on `status = 'accepted'`:
+// flock chat (routes/messages.js), venue voting (routes/venues.js), budget
+// submission and the anonymous ceiling (routes/budget.js), bill splits
+// (routes/billing.js), the roster and member_count/going_count (this file), the
+// live socket rooms and every fan-out (sockets/handlers.js), reliability
+// scoring, mutual-flock friend suggestions, crowd alerts, stories audience. An
+// `invited` row buys none of them. What it buys is the invite card — the flock
+// name, venue, time and host name — plus a notification, which is precisely the
+// "READ AND BE REACHED" half the gate deliberately allows.
+//
+// The only way an `invited` row becomes an `accepted` one is POST /:id/join,
+// which the target must call themselves and which refuses them while they are
+// unverified — in the middleware deny list, in `requireVerified` on that route,
+// and in the UPDATE's own WHERE clause. So the row exists and does not count
+// until they verify, which is exactly the shape we want.
+//
+// REFUSING the invite outright was the alternative and it is worse. A friend
+// who signed up ten minutes ago and has not opened their mail yet is the normal
+// case, not an attack; refusing would make them invisible to the person trying
+// to plan with them, and the error would land on the inviter, who has done
+// nothing wrong and cannot fix it. It would also leak the target's verification
+// state to anyone who can guess an id — a fact about someone else's account
+// that no caller is entitled to. Accepting the invite and letting it sit inert
+// costs one row, tells the inviter nothing, and resolves itself the moment the
+// target clicks the link they already have.
+//
+// This is the same shape routes/friends.js already has: a verified user may
+// send a friend request TO an unverified account (a `pending` row), and the
+// squatter can never accept it. Pending is not friendship; invited is not
+// membership.
 router.post('/:id/invite',
+  // Inviting is a state-changing action on a flock the caller is a member of,
+  // so it needs a verified actor for the same reason join and create do.
+  requireVerified,
   [
     param('id').isInt({ min: 1, max: INT4_MAX }),
     body('user_ids').isArray({ min: 1, max: 25 }).withMessage('user_ids must be a non-empty array'),
