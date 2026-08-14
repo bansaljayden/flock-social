@@ -29,6 +29,13 @@ const rateLimit = require('express-rate-limit');
 const jwt = require('jsonwebtoken');
 
 const { authenticateSocket, TOKEN_ALGORITHMS } = require('./middleware/auth');
+// The pool. This require was deleted in a refactor while four call sites kept
+// using `pool` (the health probe, admin promotion, seed gate, and the
+// migration runner in boot), and no test caught it because tests lift blocks
+// out of this file and supply their own pool. Production crash-looped on a
+// ReferenceError the moment boot() ran. If you remove this line, nothing in
+// the suite goes red; the deploy does.
+const pool = require('./config/database');
 // CHAT_IMAGE_MAX_BYTES is the ceiling the socket handler enforces on a chat
 // photo's data: URL. The REST body limit below is derived from it so the two
 // transports accept exactly the same image. See the JSON body limits block.
