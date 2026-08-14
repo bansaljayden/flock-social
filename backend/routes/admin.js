@@ -184,7 +184,12 @@ router.get('/reports', async (req, res) => {
 //   action ∈ 'hide' (take content down) | 'ban' | 'unban' | 'dismiss'
 router.put('/reports/:id', async (req, res) => {
   try {
-    const reportId = parseInt(req.params.id);
+    // A non-numeric :id used to reach Postgres as NaN and surface as a 500,
+    // which in the moderation queue is indistinguishable from "the takedown
+    // failed" — the one thing a moderator must never be unsure about.
+    const reportId = /^\d+$/.test(String(req.params.id)) ? parseInt(req.params.id, 10) : null;
+    if (reportId === null) return res.status(404).json({ error: 'Report not found' });
+
     const { action, reason } = req.body;
     if (!['hide', 'ban', 'unban', 'dismiss'].includes(action)) {
       return res.status(400).json({ error: 'Invalid action' });

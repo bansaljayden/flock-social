@@ -22,8 +22,24 @@ router.post('/', [
 
     const { businessName, category, location, description, goals, googlePlaceId } = req.body;
 
-    // Set user role to venue_owner
-    await pool.query('UPDATE users SET role = $1 WHERE id = $2', ['venue_owner', req.user.id]);
+    // Set user role to venue_owner.
+    //
+    // This is still self-serve (VENUE-BILLING.md finding 2 — gating it needs an
+    // approval flow that does not exist yet). It is survivable because the role
+    // grants nothing on its own: every venue capability that reaches real users
+    // is gated on venue_profiles.verified, which only an admin can set
+    // (routes/admin.js), and sockets/handlers.js:997 already treats the role as
+    // forgeable.
+    //
+    // What it must NOT do is DOWNGRADE a role (audit 2026-08-13). The old
+    // unconditional write let an admin who opened venue onboarding once demote
+    // themselves to venue_owner permanently — nothing in the codebase grants
+    // 'admin' back, so it locks the moderation dashboard, /api/admin/* and the
+    // tier-comp endpoint out of the only account that has them.
+    await pool.query(
+      "UPDATE users SET role = $1 WHERE id = $2 AND role NOT IN ('admin', 'venue_owner')",
+      ['venue_owner', req.user.id]
+    );
 
     // Upsert venue profile
     const result = await pool.query(

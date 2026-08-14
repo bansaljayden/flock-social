@@ -109,6 +109,23 @@ router.post('/accept',
 
       const { user_id } = req.body;
 
+      // Blocks were checked when SENDING a request but not when accepting one,
+      // and blocking never cleared requests already in flight. So a request
+      // sent before the block stayed sitting in the addressee's list, and
+      // accepting it minted an 'accepted' friendship across the block plus a
+      // `friend_request_responded` socket event carrying the accepter's name
+      // straight into the blocked party's client. A block ends the pending
+      // request instead of leaving it as a live path back in.
+      if (await isBlockedBetween(req.user.id, user_id)) {
+        await pool.query(
+          `DELETE FROM friendships
+           WHERE status = 'pending'
+             AND ((requester_id = $1 AND addressee_id = $2) OR (requester_id = $2 AND addressee_id = $1))`,
+          [req.user.id, user_id]
+        );
+        return res.status(404).json({ error: 'No pending request from this user' });
+      }
+
       const result = await pool.query(
         `UPDATE friendships SET status = 'accepted'
          WHERE requester_id = $1 AND addressee_id = $2 AND status = 'pending'
@@ -498,7 +515,13 @@ router.post('/find-by-phone',
 // GET /api/friends/status/:userId - Check friendship status with a specific user
 router.get('/status/:userId', async (req, res) => {
   try {
-    const userId = parseInt(req.params.userId);
+    // parseInt('abc') is NaN, which used to go straight into an INTEGER
+    // comparison and come back as a 500 (see DELETE /:userId, which already
+    // guarded this).
+    const userId = parseInt(req.params.userId, 10);
+    if (!Number.isInteger(userId) || userId <= 0) {
+      return res.status(400).json({ error: 'Invalid user ID' });
+    }
     const result = await pool.query(
       `SELECT status, requester_id FROM friendships
        WHERE (requester_id = $1 AND addressee_id = $2) OR (requester_id = $2 AND addressee_id = $1)`,
