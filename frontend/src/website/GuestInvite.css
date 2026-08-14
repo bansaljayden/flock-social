@@ -1,0 +1,476 @@
+/* Guest invite (/i/:token). The cold-start growth surface.
+   Someone who has never heard of Flock opens this link on a phone, in Safari,
+   with no account, and has to understand it and answer in seconds.
+
+   Self-contained on purpose. This page used to borrow PrivacyPolicy.css, which
+   meant a legal-page restyle could silently break the one surface the product
+   spreads through. Same cream/navy language, own file.
+
+   Hanken Grotesk is self-hosted globally via src/index.css @font-face. */
+
+.gi {
+  --gi-paper: #f1ede0;
+  --gi-panel: #e9e3d3;
+  --gi-ink: #16283d;          /* headings, 13.5:1 on paper */
+  --gi-ink-2: #33475e;        /* body, 7.9:1 */
+  /* 5.2:1 on paper, 4.8:1 on the panel fill. The site's older --pp-ink-3
+     (#6b7a8c) is documented as 4.6:1 but actually measures 3.7:1, which fails
+     AA for the 13-15px meta text it is used on. Darkened here rather than
+     inherited. */
+  --gi-ink-3: #55637a;
+  --gi-accent: #2d5a87;       /* steel navy, 6.4:1 */
+  --gi-accent-ink: #f4efe3;   /* text on accent fills */
+  --gi-bad: #9b2c2c;          /* errors, 6.9:1 on paper */
+  --gi-rule: rgba(22, 40, 61, 0.16);
+  --gi-rule-soft: rgba(22, 40, 61, 0.08);
+  --gi-field: #fbf9f3;
+
+  font-family: 'Hanken Grotesk', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  background: var(--gi-paper);
+  color: var(--gi-ink-2);
+  -webkit-font-smoothing: antialiased;
+  line-height: 1.6;
+  min-height: 100vh;
+  padding: clamp(20px, 5vw, 48px) clamp(16px, 5vw, 40px) 72px;
+}
+
+@supports (min-height: 100dvh) {
+  .gi { min-height: 100dvh; }
+}
+
+@media (prefers-color-scheme: dark) {
+  .gi {
+    --gi-paper: #0f172a;
+    --gi-panel: #172236;
+    --gi-ink: #f4efe3;
+    --gi-ink-2: #c8c3b2;
+    --gi-ink-3: #9aa4b2;      /* 5.9:1 on the dark paper */
+    --gi-accent: #8fb4d6;     /* 8.1:1 on the dark paper */
+    --gi-accent-ink: #0f172a;
+    --gi-bad: #f0a3a3;
+    --gi-rule: rgba(244, 239, 227, 0.18);
+    --gi-rule-soft: rgba(244, 239, 227, 0.09);
+    --gi-field: #1d293d;
+  }
+  /* Tells the browser to render form controls and scrollbars dark, so the
+     name field is not a white slab on a navy page. */
+  .gi { color-scheme: dark; }
+}
+
+.gi *,
+.gi *::before,
+.gi *::after { box-sizing: border-box; }
+
+/* Every direct child of a grid/flex defaults to min-width:auto, which is how a
+   long venue name or an unbroken flock title pushes the page wider than the
+   phone. Nothing in here is allowed to do that. */
+.gi-wrap > *,
+.gi-row > *,
+.gi-venue > *,
+.gi-venue-top > * { min-width: 0; }
+
+.gi-wrap {
+  max-width: 34rem;
+  margin: 0 auto;
+}
+
+/* ---------- masthead ---------- */
+
+.gi-brand {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  margin-bottom: clamp(24px, 6vw, 40px);
+}
+
+/* Qualified with `a` so it outranks the generic `.gi a` link styling further
+   down. As a bare `.gi-mark` it lost the cascade and the wordmark rendered as
+   an underlined accent-blue link. */
+.gi a.gi-mark {
+  font-size: 15px;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  color: var(--gi-ink);
+  text-decoration: none;
+  border: 0;
+}
+
+.gi-brand-line {
+  margin: 0;
+  font-size: 13.5px;
+  color: var(--gi-ink-3);
+}
+
+/* ---------- header ---------- */
+
+.gi-header { margin-bottom: clamp(22px, 5vw, 32px); }
+
+.gi h1 {
+  font-size: clamp(30px, 8vw, 46px);
+  line-height: 1.06;
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  color: var(--gi-ink);
+  margin: 0 0 10px;
+  text-wrap: balance;
+  /* A flock named "aaaaaaaaaaaaaaaaaaaaaaaaaaa" is a user-supplied string on a
+     320px screen. It wraps, it does not scroll the page sideways. */
+  overflow-wrap: anywhere;
+}
+
+.gi-meta {
+  margin: 0;
+  font-size: 15px;
+  color: var(--gi-ink-3);
+  overflow-wrap: anywhere;
+}
+
+.gi-meta strong { color: var(--gi-ink-2); font-weight: 600; }
+
+/* ---------- notice strip (called off, already happened, link dead) ---------- */
+
+.gi-notice {
+  border: 1px solid var(--gi-rule);
+  border-left-width: 3px;
+  border-radius: 10px;
+  background: var(--gi-panel);
+  padding: 14px 16px;
+  margin: 0 0 clamp(22px, 5vw, 30px);
+}
+
+.gi-notice p { margin: 0; font-size: 15px; color: var(--gi-ink-2); }
+.gi-notice p + p { margin-top: 6px; color: var(--gi-ink-3); font-size: 14px; }
+.gi-notice strong { color: var(--gi-ink); font-weight: 700; }
+
+/* ---------- sections ---------- */
+
+.gi-sec {
+  padding-top: clamp(22px, 5vw, 30px);
+  margin-top: clamp(22px, 5vw, 30px);
+  border-top: 1px solid var(--gi-rule-soft);
+}
+
+.gi-sec:first-of-type { border-top: 0; margin-top: 0; padding-top: 0; }
+
+.gi h2 {
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--gi-ink);
+  margin: 0 0 12px;
+}
+
+/* Guest names, flock titles and venue names all land inside these paragraphs,
+   and any of them can be 60 unbroken characters on a 320px screen. */
+.gi p {
+  font-size: 16px;
+  margin: 0 0 14px;
+  text-wrap: pretty;
+  overflow-wrap: break-word;
+}
+.gi p:last-child { margin-bottom: 0; }
+
+.gi-sub {
+  font-size: 14.5px;
+  color: var(--gi-ink-3);
+  margin: 0 0 14px;
+}
+
+.gi a {
+  color: var(--gi-accent);
+  text-decoration: none;
+  border-bottom: 1px solid color-mix(in srgb, var(--gi-accent) 40%, transparent);
+}
+.gi a:hover { border-bottom-color: var(--gi-accent); }
+
+/* ---------- name field ---------- */
+
+.gi-field { display: block; margin: 0 0 14px; }
+
+.gi-label {
+  display: block;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--gi-ink-2);
+  margin-bottom: 6px;
+}
+
+.gi-input {
+  display: block;
+  width: 100%;
+  max-width: 22rem;
+  /* 16px minimum or iOS Safari zooms the page on focus and the layout is
+     suddenly wider than the screen. */
+  font: inherit;
+  font-size: 16px;
+  color: var(--gi-ink);
+  background: var(--gi-field);
+  border: 1px solid var(--gi-rule);
+  border-radius: 10px;
+  padding: 12px 14px;
+  min-height: 48px;
+}
+
+.gi-input::placeholder { color: var(--gi-ink-3); opacity: 1; }
+
+.gi-input[aria-invalid='true'] { border-color: var(--gi-bad); }
+
+/* ---------- buttons ---------- */
+
+.gi-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin: 0 0 12px;
+}
+
+.gi-btn {
+  /* 48px tall and 44px wide at minimum: a thumb, not a mouse. */
+  min-height: 48px;
+  min-width: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 12px 22px;
+  border-radius: 12px;
+  border: 1px solid var(--gi-rule);
+  background: transparent;
+  color: var(--gi-ink);
+  font: inherit;
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+  text-decoration: none;
+}
+
+.gi-btn-primary {
+  background: var(--gi-ink);
+  border-color: var(--gi-ink);
+  color: var(--gi-paper);
+  font-weight: 700;
+}
+
+.gi-btn[aria-pressed='true'] {
+  background: var(--gi-accent);
+  border-color: var(--gi-accent);
+  color: var(--gi-accent-ink);
+  font-weight: 700;
+}
+
+/* Hover is decoration, never information: it is gated behind a real pointer so
+   a phone tap does not leave a button stuck in a hover state, and nothing is
+   communicated here that is not already visible. Touch gets :active instead,
+   which is the only press feedback a phone can give. */
+@media (hover: hover) and (pointer: fine) {
+  .gi-btn:hover { border-color: var(--gi-ink); }
+  .gi-btn-primary:hover { opacity: 0.92; }
+  .gi-venue-btn:hover { border-color: var(--gi-accent); }
+}
+
+.gi-btn:active,
+.gi-venue-btn:active { opacity: 0.85; }
+
+/* aria-disabled, not :disabled. A focused button that becomes `disabled`
+   mid-save drops the browser's focus to <body>, so a keyboard or switch user
+   loses their place every time they answer. The handlers guard against the
+   double submit instead. */
+.gi-btn[aria-disabled='true'] { opacity: 0.55; cursor: progress; }
+
+/* Standalone, so it needs its own font: it does not carry .gi-btn, and a bare
+   <button> otherwise falls back to the UA control font. */
+.gi-btn-quiet {
+  min-height: 44px;
+  padding: 8px 0;
+  border: 0;
+  background: none;
+  color: var(--gi-accent);
+  font-family: inherit;
+  font-size: 14.5px;
+  font-weight: 600;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+/* Focus is drawn against the ink, not the browser default, so it survives on
+   both the cream and the navy fills. Keyboard and switch-control users get the
+   same ring; nothing here depends on hover. */
+.gi a:focus-visible,
+.gi-btn:focus-visible,
+.gi-btn-quiet:focus-visible,
+.gi-venue-btn:focus-visible,
+.gi-input:focus-visible {
+  outline: 3px solid var(--gi-accent);
+  outline-offset: 2px;
+  border-radius: 10px;
+}
+.gi-input:focus-visible { border-color: var(--gi-accent); }
+
+/* ---------- live messages ---------- */
+
+.gi-msg {
+  margin: 0 0 4px;
+  font-size: 14.5px;
+  font-weight: 600;
+  color: var(--gi-accent);
+}
+
+.gi-msg-bad { color: var(--gi-bad); }
+
+/* Collapsed, not display:none. A live region that is display:none when the
+   page loads is unreliable in VoiceOver and NVDA: some combinations never
+   announce the first message because the region was not rendered when it
+   changed. Zero height keeps it rendered and keeps the layout tight. */
+.gi-msg:empty {
+  height: 0;
+  margin: 0;
+  overflow: hidden;
+}
+
+/* ---------- venues ---------- */
+
+.gi-venues {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+
+.gi-venues li { margin: 0; }
+
+.gi-venue {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 12px 14px;
+  border-radius: 12px;
+  border: 1px solid var(--gi-rule-soft);
+  background: var(--gi-panel);
+  color: var(--gi-ink-2);
+  font: inherit;
+}
+
+.gi-venue-btn {
+  min-height: 48px;
+  cursor: pointer;
+  border-color: var(--gi-rule);
+}
+
+.gi-venue[aria-pressed='true'] {
+  border-color: var(--gi-accent);
+  border-width: 2px;
+  padding: 11px 13px;
+}
+
+.gi-venue-btn[aria-disabled='true'] { opacity: 0.6; cursor: progress; }
+
+.gi-venue-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+  font-size: 15.5px;
+  font-weight: 600;
+  color: var(--gi-ink);
+}
+
+.gi-venue-name { overflow-wrap: anywhere; }
+
+.gi-venue-count {
+  flex-shrink: 0;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--gi-ink-3);
+  font-variant-numeric: tabular-nums;
+}
+
+.gi-bar {
+  display: block;
+  height: 5px;
+  border-radius: 3px;
+  background: var(--gi-rule-soft);
+  margin-top: 9px;
+  overflow: hidden;
+}
+
+.gi-bar > span {
+  display: block;
+  height: 100%;
+  width: var(--gi-fill, 0%);
+  background: var(--gi-accent);
+  border-radius: 3px;
+}
+
+.gi-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  margin-top: 8px;
+}
+
+.gi-tag {
+  font-size: 12.5px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--gi-accent);
+}
+
+.gi-empty {
+  border: 1px dashed var(--gi-rule);
+  border-radius: 12px;
+  padding: 16px;
+  color: var(--gi-ink-3);
+  font-size: 15px;
+}
+.gi-empty p { font-size: 15px; }
+
+/* ---------- footer ---------- */
+
+.gi-footer {
+  margin-top: clamp(32px, 7vw, 48px);
+  padding-top: 20px;
+  border-top: 1px solid var(--gi-rule);
+  font-size: 13px;
+  color: var(--gi-ink-3);
+}
+
+.gi-footer p { font-size: 13px; margin: 0; }
+.gi-footer a { color: var(--gi-ink-3); border-bottom-color: var(--gi-rule); }
+
+/* ---------- skeleton ---------- */
+
+.gi-skel {
+  display: block;
+  border-radius: 8px;
+  background: var(--gi-rule-soft);
+}
+
+.gi-skel-h1 { height: clamp(34px, 8vw, 48px); max-width: 16rem; margin-bottom: 14px; }
+.gi-skel-meta { height: 15px; max-width: 12rem; margin-bottom: 32px; }
+.gi-skel-block { height: 120px; margin-bottom: 12px; border-radius: 12px; }
+.gi-skel-row { height: 56px; margin-bottom: 8px; border-radius: 12px; }
+
+@media (prefers-reduced-motion: no-preference) {
+  .gi-skel { animation: gi-pulse 1.4s ease-in-out infinite; }
+}
+
+@keyframes gi-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.55; }
+}
+
+.gi-sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
