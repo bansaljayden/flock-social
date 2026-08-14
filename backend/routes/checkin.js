@@ -2,7 +2,7 @@ const express = require('express');
 const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
 const pool = require('../config/database');
-const { authenticate, TOKEN_ALGORITHMS } = require('../middleware/auth');
+const { authenticate, TOKEN_ALGORITHMS, issuedTokenVersion, currentTokenVersion } = require('../middleware/auth');
 const { validPlaceId, isKnownVenue } = require('../utils/places');
 const { createUserBudget } = require('../utils/probeBudget');
 
@@ -110,16 +110,11 @@ function nfcSigValid(placeId, sig) {
 // anonymous dedupe path), never as a hard 401 — a real NFC tap from a logged-out
 // phone must still work.
 //
-// Round 16 (checked, deliberately unchanged): middleware/auth.js now exports
-// `revokeUserSessions`, but it does NOT export `issuedTokenVersion` /
-// `currentTokenVersion` — its module.exports is
-// { authenticate, authenticateAllowBanned, authenticateSocket, signUserToken,
-//   revokeUserSessions, requireVerified, isUnverified, TOKEN_EXPIRY,
-//   TOKEN_ALGORITHMS, UNVERIFIED_MESSAGE }. The version helpers stay private
-// there, so the local comparison below stays. It is a COPY, and the rule it
-// copies ("a missing tv claim reads as 0") lives in two files: if
-// middleware/auth.js ever changes how a missing claim is interpreted, this must
-// change with it. Exporting the two helpers would remove the duplication.
+// The round-16 note here used to record that middleware/auth.js kept
+// `issuedTokenVersion` / `currentTokenVersion` private, forcing this file to
+// carry a COPY of the "a missing tv claim reads as 0" rule. The helpers are
+// exported now (B3 follow-up) and imported at the top, so the comparison below
+// is the middleware's own rule, not a copy that must be kept in step by hand.
 //
 // ---------------------------------------------------------------------------
 // Round 23 — the THIRD control this copy had quietly dropped.
@@ -152,11 +147,10 @@ async function tryAuth(req) {
     const row = result.rows[0];
     if (!row) return null;
 
-    // Same "missing claim reads as 0" rule as middleware/auth.js, so tokens
-    // minted before migration 009 keep working until something bumps the row.
-    const issued = Number.isInteger(decoded?.tv) ? decoded.tv : 0;
-    const current = Number.isInteger(row.token_version) ? row.token_version : 0;
-    if (issued !== current) return null;
+    // The middleware's own version rule ("missing claim reads as 0"), so
+    // tokens minted before migration 009 keep working until something bumps
+    // the row — and a change to that rule cannot skip this route.
+    if (issuedTokenVersion(decoded) !== currentTokenVersion(row)) return null;
     if (row.is_banned) return null;
 
     return row.id;
