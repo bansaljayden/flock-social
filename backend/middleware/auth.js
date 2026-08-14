@@ -19,12 +19,23 @@ const TOKEN_ALGORITHMS = ['HS256'];
 // keep working — and are cleanly rejected the moment anything bumps the row.
 // That is the deliberate choice: no forced logout of the whole user base on
 // deploy, while the security property (a bump kills old tokens) still holds.
+// The one normalisation rule, exported (B3): "anything that is not an integer
+// reads as version 0". Two other files compare token versions on paths this
+// middleware never runs — sockets/handlers.js revalidates live connections and
+// routes/checkin.js tryAuth reads a token on a route that must also serve
+// anonymous taps — and each carried its own copy of this predicate. A copy is
+// how the missing-claim rule drifts: change it here and the socket keeps (or
+// drops) sessions under the old rule. Both now import this function.
+function tokenVersionOf(value) {
+  return Number.isInteger(value) ? value : 0;
+}
+
 function issuedTokenVersion(decoded) {
-  return Number.isInteger(decoded?.tv) ? decoded.tv : 0;
+  return tokenVersionOf(decoded?.tv);
 }
 
 function currentTokenVersion(row) {
-  return Number.isInteger(row?.token_version) ? row.token_version : 0;
+  return tokenVersionOf(row?.token_version);
 }
 
 // Mint a Flock JWT for a user row. Single place so no call site can forget the
@@ -137,6 +148,31 @@ function revokeUserSessions(io, userId) {
 // raw and percent-decoded forms are tested, and the check is a DENY list on
 // state-changing verbs, so an unrecognised shape fails toward "allowed" the
 // same way it does today rather than toward a mass 403.
+// POST /api/feedback IS DELIBERATELY NOT ON THIS LIST (decision 2026-08-14,
+// closing the B3 "consider adding it" item). The worry was an unverified
+// account feeding the training corpus and moving public crowd numbers. Checked
+// against the code, the worry is already contained twice over, and denying
+// would cost real reports:
+//   * Row-level containment. Every reader of venue_feedback that moves a number
+//     anyone else sees — routes/crowd.js calibration, services/mlPredictor.js,
+//     the training export, GET /api/feedback/venue/:placeId — filters
+//     `verified = true`, and a row only gets that flag from
+//     VERIFIED_PRESENCE_SQL (routes/feedback.js): an HMAC-signed NFC tap, or
+//     accepted membership in a non-cancelled flock with >= 2 accepted members.
+//   * This list already closes the flock leg for unverified accounts: they
+//     cannot create, join, or invite (the entries below), so the only way an
+//     email-unverified account mints a verified row is a signed NFC tap —
+//     which is genuine physical presence, exactly the evidence the corpus
+//     wants, regardless of whether the email link was clicked. On top of that,
+//     calibration needs 3 distinct reporters before feedback moves a score.
+//   * The cost side is the same one this route has hit twice before (the UUID
+//     validator, the `.optional()` null): the post-hangout sheet fires right
+//     after signup for exactly the users least likely to have confirmed email
+//     yet, and a 403 here is a silently lost honest report. "Read and be
+//     reached, but do not accumulate" — a feedback row is data about a venue,
+//     not an asset on the account, so it is not what this list exists to strip.
+// Pinned by __tests__/b3Leftovers.test.js: the decision holds only while the
+// flock entries below stay on this list.
 const UNVERIFIED_DENY = [
   // 1. Payment handles — routes/users.js
   { method: 'PUT', pattern: /^\/api\/users\/venmo-username$/ },
@@ -148,8 +184,7 @@ const UNVERIFIED_DENY = [
   // 3. Flock membership — routes/flocks.js. Creating a flock makes you its
   //    first member, so it belongs on the list next to join and invite.
   { method: 'POST', pattern: /^\/api\/flocks$/ },
-  { method: 'POST', pattern: /^\/api\/flocks\/[^/]+\/(join|invite|invite-link)$/ },
-];
+  { method: 'POST', pattern: /^\/api\/flocks\/[^/]+\/(join|invite|invite-link)$/ },];
 
 const UNVERIFIED_MESSAGE =
   'Confirm your email to do this. Check your inbox for the link we sent, or ask for a new one.';
@@ -331,6 +366,11 @@ module.exports = {
   TOKEN_EXPIRY,
   TOKEN_ALGORITHMS,
   UNVERIFIED_MESSAGE,
+  // Token-version helpers, exported so sockets/handlers.js and
+  // routes/checkin.js compare versions with THIS file's rule instead of a copy.
+  tokenVersionOf,
+  issuedTokenVersion,
+  currentTokenVersion,
 };
 
 // Exported for backend/__tests__/emailVerification.test.js.
