@@ -137,9 +137,19 @@
       "source": "/i/(.*)",
       "headers": [
         { "key": "X-Robots-Tag", "value": "noindex, noarchive" },
-        { "key": "Referrer-Policy", "value": "no-referrer" },
-        { "key": "Cache-Control", "value": "private, no-store" }
+        { "key": "Referrer-Policy", "value": "no-referrer" }
       ]
+    },
+    {
+      "source": "/i/(.*)",
+      "missing": [
+        {
+          "type": "header",
+          "key": "user-agent",
+          "value": ".*(facebookexternalhit|Facebot|Twitterbot|Slackbot|Slack-ImgProxy|Discordbot|WhatsApp|TelegramBot|LinkedInBot|Applebot|redditbot|Pinterest|SkypeUriPreview|Iframely|Embedly|vkShare|Bluesky|bskylink|Mastodon|Snapchat|nuzzel).*"
+        }
+      ],
+      "headers": [{ "key": "Cache-Control", "value": "private, no-store" }]
     },
     {
       "source": "/app",
@@ -207,5 +217,25 @@
         { "key": "Cache-Control", "value": "private, no-store" }
       ]
     }
+  ],
+
+  "rewrites": [
+    {
+      "source": "/i/:token",
+      "has": [{ "type": "query", "key": "open" }],
+      "destination": "/index.html"
+    },
+    {
+      "source": "/i/:token",
+      "has": [
+        {
+          "type": "header",
+          "key": "user-agent",
+          "value": ".*(facebookexternalhit|Facebot|Twitterbot|Slackbot|Slack-ImgProxy|Discordbot|WhatsApp|TelegramBot|LinkedInBot|Applebot|redditbot|Pinterest|SkypeUriPreview|Iframely|Embedly|vkShare|Bluesky|bskylink|Mastodon|Snapchat|nuzzel).*"
+        }
+      ],
+      "destination": "/api/invite-preview?token=:token"
+    },
+    { "source": "/(.*)", "destination": "/index.html" }
   ]
 }
