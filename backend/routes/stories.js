@@ -34,6 +34,11 @@ const { storyVisibilitySql } = require('../utils/relationships');
 // __tests__/storiesFlow.test.js to prove BOTH that a refusal blocks the INSERT
 // and that an approval lets it through. Keep the `moderation.` prefix.
 const moderation = require('../utils/moderation');
+// The stored data: URL's MIME is re-typed from the sniffed bytes before the
+// INSERT — the declared prefix is a client claim, and the format regex below
+// only ever reads that claim. One byte-typer, defined in sockets/handlers.js
+// and shared with both chat transports; never re-implement it here.
+const { restampImageMime } = require('../sockets/handlers');
 
 const router = express.Router();
 
@@ -473,7 +478,11 @@ router.post('/',
             AND (SELECT COUNT(*) FROM stories
                   WHERE user_id = $1 AND expires_at > NOW()) < $5::int
          RETURNING id, user_id, caption, created_at, expires_at`,
-        [req.user.id, image_url, caption, STORIES_PER_HOUR, MAX_ACTIVE_STORIES]
+        [req.user.id,
+          // Re-typed from the sniffed bytes (restampImageMime): the payload is
+          // stored byte-for-byte as screened; only the declared MIME can move.
+          restampImageMime(image_url),
+          caption, STORIES_PER_HOUR, MAX_ACTIVE_STORIES]
       );
 
       if (result.rows.length === 0) {

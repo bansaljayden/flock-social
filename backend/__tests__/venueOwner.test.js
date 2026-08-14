@@ -324,6 +324,11 @@ test('goals, operating hours and notification prefs are all bounded', async () =
     { photoUrl: 'javascript:alert(1)' },
     { photoUrl: '//evil.example.com/logo.png' },
     { photoUrl: `data:image/png;base64,${'A'.repeat(50)}` },
+    // Image-trust audit: /uploads/ died with the disk store (routes/users.js
+    // round 12) and an arbitrary https host was never something this app
+    // minted. Only our own photo proxy path is vouched for now.
+    { photoUrl: 'https://evil.example.com/logo.png' },
+    { photoUrl: '/uploads/logo.png' },
   ];
   for (const body of cases) {
     const res = await call('PUT', '/api/venue-profile', body);
@@ -354,7 +359,7 @@ test('a legitimate profile save still goes through untouched', async () => {
     phone: '555-0100',
     operatingHours: [{ days: 'Mon-Fri', open: '17:00', close: '02:00' }],
     notificationPrefs: { bookings: true, reviews: true, weekly: false },
-    photoUrl: '/uploads/logo.png',
+    photoUrl: '/api/venues/photo?ref=logo123&maxwidth=400',
   });
   assert.strictEqual(res.status, 200);
   assert.strictEqual(ran(/UPDATE venue_profiles SET/).length, 1);

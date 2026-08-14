@@ -826,7 +826,7 @@ test('every statement these routes issue binds exactly the parameters it names',
   // The general property that catches it, checked over everything these routes
   // actually issue rather than over one statement somebody remembered.
   const drive = [
-    ['PUT', '/api/venue-profile', { businessName: 'Bar', notificationPrefs: { bookings: true }, photoUrl: '/uploads/a.png' }],
+    ['PUT', '/api/venue-profile', { businessName: 'Bar', notificationPrefs: { bookings: true }, photoUrl: '/api/venues/photo?ref=a123' }],
     ['POST', '/api/venue-profile', { businessName: 'Bar', goals: ['more weeknights'] }],
     ['PUT', '/api/users/profile', { name: 'Ava', interests: ['Cocktails'], current_password: PASSWORD }],
     ['PUT', '/api/users/payment-methods', { venmo_username: 'ava', cashapp_cashtag: 'ava', zelle_identifier: 'ava@example.com' }],

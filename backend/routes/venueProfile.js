@@ -21,6 +21,10 @@ const { scalarOnly, freeText } = require('../validators/shape');
 // routes/flocks.js, routes/feedback.js and sockets/handlers.js. See the note on
 // placeIdRule below for why this router is the one that had to adopt it.
 const { isPlaceIdShaped } = require('../utils/places');
+// ONE definition of "which photo URLs does this app vouch for" — the same
+// helper that clamps venue-card and DM-pin photos to our own Places photo
+// proxy. See photoRule below.
+const { safeVenuePhotoUrl } = require('../utils/venuePayload');
 
 const router = express.Router();
 router.use(authenticate);
@@ -179,22 +183,40 @@ function sanitizePrefs(prefs) {
   return out;
 }
 
-// photo_url is rendered as an <img src> in the dashboard. The only writer is
-// our own upload endpoint, which returns a relative /uploads/... path, so
-// accept that and https and nothing else (no javascript:, no data:, and no
-// protocol-relative //host that would silently point at a third party).
-// Round 19 (shape sweep): the custom() below tests `v` with a REGEX, and a
-// regex stringifies its argument — so `photoUrl: ["https://evil.example/x"]`
-// satisfied the https branch, skipped the trim, and went to the column as an
-// array. The scheme allowlist is the whole point of this rule, so it has to be
-// reading a string.
+// photo_url is rendered as an <img src> in the dashboard. The rule that stood
+// here accepted "an https link or an uploaded file" on the claim that "the
+// only writer is our own upload endpoint, which returns a relative
+// /uploads/... path" — and that stopped being true when the /uploads disk
+// store and static mount were removed (routes/users.js round 12: Railway's
+// filesystem is ephemeral; the uploader now stores moderated data: URLs in the
+// database instead). With that writer gone, the https branch was the only live
+// one, i.e. this route accepted ANY https host on the open internet for a
+// value the dashboard renders as an image — a stored URL the app cannot vouch
+// for, on the one venue field that claims to be "an uploaded file".
+//
+// The honest contract: only what this app still MINTS may be stored, and today
+// that is exactly one thing — our own Places photo proxy path
+// (/api/venues/photo?...), the same and only photo source venue cards and DM
+// pins are clamped to. The SAME helper (utils/venuePayload.safeVenuePhotoUrl)
+// decides here, so "which photo URLs do we vouch for" keeps one definition;
+// absolute spellings that contain the proxy path are re-anchored to the
+// relative form at the write below, exactly as the DM-pin path stores them.
+// data: URLs stay refused even though the avatar uploader emits them: this PUT
+// cannot tell OUR moderated data URL from a raw unscreened one, so accepting
+// the shape would open the only unmoderated image write path in the app.
+// '' still means "leave it alone", same as every COALESCE field on this route.
+//
+// GRANDFATHERING: this guards the WRITE only. Rows already holding an https or
+// /uploads/ value keep it and nothing breaks on READ; they simply cannot be
+// re-stored. (The /uploads/ ones have pointed at deleted files since round 12
+// — see the cleanup query in the audit handoff.)
+const PHOTO_URL_MESSAGE = 'Photo URL must be a venue photo served by this app (/api/venues/photo?...)';
 const photoRule = scalarOnly(body('photoUrl').optional({ nullable: true }), 'photo URL').trim()
   .isLength({ max: MAX_PHOTO_URL }).withMessage('Photo URL is too long')
   .custom((v) => {
     if (v === '') return true;
-    if (/^\/[^/\\]/.test(v)) return true;
-    if (/^https:\/\/[^/\\]/i.test(v)) return true;
-    throw new Error('Photo URL must be an https link or an uploaded file');
+    if (safeVenuePhotoUrl(v)) return true;
+    throw new Error(PHOTO_URL_MESSAGE);
   });
 
 // googlePlaceId is the claim key: it is compared against other owners' rows in
@@ -419,7 +441,13 @@ router.put('/', [
       RETURNING *`,
       [businessName || null, category || null, location || null, description || null, goals || null,
        phone || null, operatingHours ? JSON.stringify(operatingHours) : null,
-       notificationPrefs ? JSON.stringify(sanitizePrefs(notificationPrefs)) : null, googlePlaceId || null, photoUrl || null, req.user.id]
+       notificationPrefs ? JSON.stringify(sanitizePrefs(notificationPrefs)) : null, googlePlaceId || null,
+       // Stored NORMALIZED: safeVenuePhotoUrl re-anchors an absolute spelling of
+       // our proxy path to the relative form, the same value the DM-pin and
+       // venue-card paths store. The validator above guarantees this is non-null
+       // for any non-empty photoUrl that got this far.
+       photoUrl ? safeVenuePhotoUrl(photoUrl) : null,
+       req.user.id]
     );
 
     if (result.rows.length === 0) {
