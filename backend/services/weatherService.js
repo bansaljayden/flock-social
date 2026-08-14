@@ -266,6 +266,13 @@ function coalesce(key, work) {
  *   the coordinates. Enables the per-user hourly ceiling.
  */
 async function getWeather(lat, lon, opts = {}) {
+// `opts` is defaulted, and a DEFAULT ONLY APPLIES TO `undefined`. An explicit
+// null — `getWeather(lat, lon, isUser ? { userId } : null)`, an entirely
+// natural thing for a caller to write — reached `opts.userId` and threw, and
+// the outer catch turned that into `return null`: weather silently off for
+// that call, indistinguishable from an OpenWeatherMap outage, on the critical
+// path of every crowd score. Normalise instead of trusting the default.
+  const o = opts || {};
   try {
     const apiKey = process.env.WEATHER_API_KEY;
     if (!apiKey) {
@@ -290,7 +297,7 @@ async function getWeather(lat, lon, opts = {}) {
 
       // Charged BEFORE the call, because an aborted request still bills at the
       // vendor. See utils/upstream.js.
-      if (!allowWeatherFetch(opts.userId)) return null; // weather is an enhancer, fail soft
+      if (!allowWeatherFetch(o.userId)) return null; // weather is an enhancer, fail soft
 
       const url = `https://api.openweathermap.org/data/2.5/weather?lat=${Number(lat).toFixed(2)}&lon=${Number(lon).toFixed(2)}&appid=${apiKey}&units=imperial`;
       // Round 12: weather is an enhancer on the critical path of crowd scoring —
@@ -366,6 +373,7 @@ async function getWeather(lat, lon, opts = {}) {
  * unavailable. Shares the daily/minute budget with getWeather (round 8).
  */
 async function getForecast(lat, lon, opts = {}) {
+  const o = opts || {}; // see getWeather: an explicit null is not the default
   try {
     const apiKey = process.env.WEATHER_API_KEY;
     if (!apiKey) {
@@ -386,7 +394,7 @@ async function getForecast(lat, lon, opts = {}) {
       const fresh = getEntry(cacheKey);
       if (fresh) return fresh.failed ? null : fresh.data;
 
-      if (!allowWeatherFetch(opts.userId)) return null; // same budget as getWeather (round 8)
+      if (!allowWeatherFetch(o.userId)) return null; // same budget as getWeather (round 8)
 
       const url = `https://api.openweathermap.org/data/2.5/forecast?lat=${Number(lat).toFixed(2)}&lon=${Number(lon).toFixed(2)}&appid=${apiKey}&units=imperial`;
       let response;
