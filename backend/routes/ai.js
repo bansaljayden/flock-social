@@ -1,5 +1,9 @@
 const express = require('express');
 const { body, validationResult } = require('express-validator');
+// SHAPE BEFORE CONTENT. express-validator coerces before it tests, so
+// `{ lat: ["40.7"] }` satisfies isFloat and stays an array in req.body. One
+// definition of that rule for the whole codebase; see validators/shape.js.
+const { scalarOnly } = require('../validators/shape');
 const { authenticate } = require('../middleware/auth');
 const { GoogleGenAI } = require('@google/genai');
 const pool = require('../config/database');
@@ -14,6 +18,11 @@ const {
 } = require('../services/crowdEngine');
 const mlPredictor = require('../services/mlPredictor');
 const { isPremium, paywallEnabled } = require('../services/entitlements');
+// THE forecast paywall policy, defined once in routes/crowd.js. Imported rather
+// than re-derived: a second private copy of "has this user paid, and has their
+// monthly allowance run out" is precisely how this route ended up serving the
+// gated forecast for free while routes/crowd.js metered it.
+const { forecastAccess } = require('./crowd');
 const { allowPlacesSearch } = require('../utils/placesBudget');
 const { upstreamSignal } = require('../utils/upstream');
 const {
@@ -31,6 +40,15 @@ const {
 
 const router = express.Router();
 const PLACES_API_KEY = process.env.GOOGLE_PLACES_API_KEY;
+
+// The message cap, as a name, so the handler that explains the refusal and the
+// validator that enforces it cannot drift. The validator below still spells the
+// literal inline: server.js derives this route's scoped JSON body limit from
+// these two numbers and __tests__/bodyLimitAudit.test.js reads the literals
+// straight out of the `body('messages').isArray({ min: 1, max: N })` chain, so
+// that call has to keep the number on its face. __tests__/forecastGateParity
+// .test.js fails if this constant and that literal ever disagree.
+const AI_CHAT_MAX_MESSAGES = 24;
 
 // ---------------------------------------------------------------------------
 // Gemini client (unified @google/genai SDK — the old @google/generative-ai
@@ -353,36 +371,72 @@ async function executeTool(toolName, toolInput, userId, opts = {}) {
       const weather = (lat && lon) ? await getWeather(lat, lon) : null;
 
       const crowdResult = await mlPredictor.predictBusyness(venue, weather, scoreTime);
-      // Round 13: forward-looking window (see crowdEngine.recommendBestTime).
-      // Birdie must never suggest an hour that already passed, and its answer
-      // has to agree with the score it quotes in the same sentence.
-      const fullDay = await mlPredictor.predictHourlyForecast(venue, weather, localHour, 24, scoreTime);
-      const next12 = fullDay.slice(0, 12);
-      // Peak off the next 12 hours: the rush that is coming, not tomorrow's.
-      // Indexes still line up with fullDay for the best-time exclusion.
-      const peakResult = findPeakTime(next12, venue);
-      const bestTime = findBestTime(fullDay, venue, peakResult.startIdx, peakResult.endIdx, venue.isOpen, {
-        currentHour: localHour,
-        currentScore: crowdResult.score,
-      });
 
+      // The free half: how busy is it RIGHT NOW. Same commodity the card, the
+      // pin list and the public demo all give away, and the same one this
+      // product promised to keep free forever.
       const result = {
         venue_name: venue.name,
         crowd_score: crowdResult.score,
         crowd_label: getLabel(crowdResult.score),
         confidence: crowdResult.confidence,
         is_open: venue.isOpen,
-        best_time: bestTime,
-        peak_hours: peakResult.text,
         weather: weather ? { temp: weather.temp, conditions: weather.conditions } : null,
       };
-      // Hour-by-hour forecasts are a Pro surface (forecast meter). Free-tier
-      // users get now + best time + peak through Birdie, same as the app.
+
+      // THE PAID HALF, AND WHY BIRDIE IS METERED THE SAME WAY THE CARD IS.
+      //
+      // Round 20: only `hourly_forecast` was gated here, and it was gated on
+      // the wrong thing (`!freeTier`, i.e. all-or-nothing by tier). `best_time`
+      // and `peak_hours` — two thirds of what the forecast meter actually sells
+      // — went out unconditionally. So a user who had just been told "you have
+      // used your 10 forecasts this month" on the venue card could type "when
+      // should I go to X" and be told, by us, for free. Birdie's own meter is
+      // 10 MESSAGES A DAY, so that door was worth roughly 300 best-times a
+      // month against an allowance of 10, and PAYWALL-DECISION.md's test for
+      // whether the wall is even visible ("if nobody hits the 10
+      // forecasts/month cap, the wall is invisible and pointless") would have
+      // been measured against a meter almost nobody could reach.
+      //
+      // The answer is NOT "Birdie never forecasts". This is a logged-in,
+      // identified user spending one of their own metered turns on a venue they
+      // named, which is a different act from scraping — so it is not gated to
+      // zero. It draws on the SAME allowance as the card, because it is the
+      // same answer about the same venue. Ten forecasts a month means ten,
+      // wherever you ask from.
+      //
+      // Charged ONCE PER TURN, not once per venue, by the caller (see the tool
+      // loop below). The model decides how many venues to look at, and a user
+      // must not lose four months of allowance because it got curious about
+      // four bars in one reply.
+      //
+      // Nothing that survives into the locked result reconstructs the curve:
+      // `crowd_score` is one number for right now, which is the free product,
+      // and the tool takes no hour argument, so there is no way to ask it for
+      // 8 PM. The 24-hour walk is skipped entirely when locked rather than
+      // computed and thrown away.
       if (opts.includeForecast) {
+        // Round 13: forward-looking window (see crowdEngine.recommendBestTime).
+        // Birdie must never suggest an hour that already passed, and its answer
+        // has to agree with the score it quotes in the same sentence.
+        const fullDay = await mlPredictor.predictHourlyForecast(venue, weather, localHour, 24, scoreTime);
+        const next12 = fullDay.slice(0, 12);
+        // Peak off the next 12 hours: the rush that is coming, not tomorrow's.
+        // Indexes still line up with fullDay for the best-time exclusion.
+        const peakResult = findPeakTime(next12, venue);
+        result.best_time = findBestTime(fullDay, venue, peakResult.startIdx, peakResult.endIdx, venue.isOpen, {
+          currentHour: localHour,
+          currentScore: crowdResult.score,
+        });
+        result.peak_hours = peakResult.text;
         // Same array the recommendation came from, so the two can't disagree.
         result.hourly_forecast = next12.map(h => ({ hour: h.hour, label: h.label, score: h.score }));
       } else {
-        result.hourly_forecast_note = 'Hour-by-hour forecast is a Flock Pro feature; do not invent one.';
+        result.forecast_locked = true;
+        // Addressed to the model, not the user. "Do not invent" is load-bearing:
+        // the system prompt's hard rules already forbid making up crowd data,
+        // and this repeats it at the exact moment the data is missing.
+        result.forecast_note = 'Best time to go, peak hours and the hour-by-hour forecast are Flock Pro, and this user has used their free forecasts for this month. Do not guess, estimate or infer any of them. Say it is a Pro feature if they ask.';
       }
       return result;
     }
@@ -469,8 +523,14 @@ function buildSystemPrompt(userName, ctx, { ageBracket, freeTier } = {}) {
     : ageBracket === 'under21'
       ? `\n- The user is under 21 (US drinking age). Skip bars and clubs unless they explicitly ask; favor restaurants, cafes, and activities.`
       : '';
+  // Kept true to what the gate actually does. It used to say hour-by-hour was
+  // Pro outright, which stopped being accurate the moment Birdie started
+  // drawing on the same 10-a-month allowance the venue card does: a free user
+  // gets the full forecast for their first ten venues, then hits the wall.
+  // Telling the model otherwise makes it refuse something the user has paid
+  // nothing for and is entitled to, which is its own kind of dishonesty.
   const tierLine = freeTier
-    ? `\n- The user is on the free tier: 10 Birdie messages a day, and hour-by-hour crowd forecasts are a Flock Pro feature. If they want the full night hour by hour, you can mention Pro exists (150 Birdie messages a day + unlimited hour-by-hour forecasts + a heads-up push before a spot gets packed). Mention it at most once per conversation, never unprompted, and never promise anything beyond those three things.`
+    ? `\n- The user is on the free tier: 10 Birdie messages a day, and the AI forecast (best time to go, peak hours, hour by hour) is free for the first 10 venues they ask about each month, then it is Flock Pro. If a crowd lookup comes back without those, their month is spent. You can mention Pro exists (150 Birdie messages a day + unlimited forecasts + a heads-up push before a spot gets packed). Mention it at most once per conversation, never unprompted, and never promise anything beyond those three things.`
     : '';
   return `You are Birdie, the assistant inside Flock, a social coordination app for Gen Z. You help people figure out where to go, how busy it is, and get their group out the door.
 
@@ -528,22 +588,92 @@ router.post('/chat',
     // ceiling, and each accepted request can fan out into 6 Gemini calls.
     body('messages').isArray({ min: 1, max: 24 }).withMessage('messages array is required'),
     body('messages.*.text').optional().isString().isLength({ max: 4000 }).withMessage('Message too long'),
-    body('location').optional(),
+    // `location` was `.optional()` and NOTHING ELSE — the one field on this
+    // route with no bound of its own, on a route whose scoped body parser is
+    // ~449KB (server.js AI_CHAT_JSON_BODY_BYTES). Every other field is capped,
+    // so a caller who wanted to fill that parser had exactly one door, and this
+    // was it: `location` could be an arbitrarily deep object and the parser
+    // limit was its only ceiling.
+    //
+    // Three checks, not one, because isObject alone bounds the TYPE and not the
+    // SIZE. The key whitelist is what actually bounds it: the shipping client
+    // sends `{ lat, lng }` and nothing else (frontend/src/App.js builds it as
+    // `loc ? { lat: loc.lat, lng: loc.lng } : null`), and this route reads
+    // exactly those two, so anything else in there was never going to be used
+    // for anything.
+    //
+    // `{ values: 'null' }` IS LOAD-BEARING, not tidiness. In express-validator
+    // 7 a bare `.optional()` skips ONLY `undefined`: a JSON `null` falls
+    // through to the validator and is REFUSED. The shipping client sends
+    // `location: null` on every message from a user who has not granted
+    // location, which is most of them, so adding `.isObject()` behind a bare
+    // `.optional()` would have 400'd the common path. This is the exact failure
+    // validators/shape.js documents as having broken routes/feedback.js.
+    body('location').optional({ values: 'null' }).isObject().withMessage('location must be a lat/lng object')
+      .bail()
+      .custom((v) => Object.keys(v).every((k) => k === 'lat' || k === 'lng'))
+      .withMessage('location takes only lat and lng'),
+    scalarOnly(body('location.lat').optional({ values: 'null' }), 'location.lat').isFloat({ min: -90, max: 90 }),
+    scalarOnly(body('location.lng').optional({ values: 'null' }), 'location.lng').isFloat({ min: -180, max: 180 }),
     // Bounded: this is interpolated into the system prompt, so unbounded
     // strings were a 1MB context bypass around the message caps (round 6).
-    body('currentContext').optional().isObject(),
-    body('currentContext.screen').optional().isString().isLength({ max: 40 }),
-    body('currentContext.tab').optional().isString().isLength({ max: 40 }),
-    body('currentContext.flock.name').optional().isString().isLength({ max: 120 }),
-    body('currentContext.flock.venue').optional().isString().isLength({ max: 120 }),
-    body('currentContext.flock.status').optional().isString().isLength({ max: 40 }),
-    body('currentContext.venue.name').optional().isString().isLength({ max: 120 }),
-    body('currentContext.venue.place_id').optional().isString().isLength({ max: 200 }),
+    //
+    // EVERY ONE OF THESE IS NULLABLE, and until now none of them were. Same
+    // express-validator 7 rule as `location` above, and here it was not a
+    // hypothetical: frontend/src/App.js builds this context as
+    // `venue: ctx.flock.venue || null`, `status: ctx.flock.status || null` and
+    // `place_id: ctx.activeVenue.place_id || null`, so a user who opened Birdie
+    // while looking at a flock with no venue picked got a 400 "Invalid value"
+    // on every message they sent. The 400 named a field the user had never
+    // heard of and the client had no handler for it, so Birdie simply appeared
+    // broken in one specific place in the app.
+    body('currentContext').optional({ values: 'null' }).isObject(),
+    scalarOnly(body('currentContext.screen').optional({ values: 'null' }), 'screen').isString().isLength({ max: 40 }),
+    scalarOnly(body('currentContext.tab').optional({ values: 'null' }), 'tab').isString().isLength({ max: 40 }),
+    scalarOnly(body('currentContext.flock.name').optional({ values: 'null' }), 'flock name').isString().isLength({ max: 120 }),
+    scalarOnly(body('currentContext.flock.venue').optional({ values: 'null' }), 'flock venue').isString().isLength({ max: 120 }),
+    scalarOnly(body('currentContext.flock.status').optional({ values: 'null' }), 'flock status').isString().isLength({ max: 40 }),
+    scalarOnly(body('currentContext.venue.name').optional({ values: 'null' }), 'venue name').isString().isLength({ max: 120 }),
+    scalarOnly(body('currentContext.venue.place_id').optional({ values: 'null' }), 'venue place id').isString().isLength({ max: 200 }),
     body('localHour').optional().isInt({ min: 0, max: 23 }),
     body('localDay').optional().isInt({ min: 0, max: 6 }),
   ],
   async (req, res) => {
     try {
+      // A CONVERSATION THAT OUTGREW THE CAP IS NOT A MISSING ARRAY.
+      //
+      // `messages` is capped at AI_CHAT_MAX_MESSAGES and the client sends the
+      // WHOLE history untruncated (frontend/src/App.js: "Send the whole
+      // conversation"), so the 25th turn of any chat, and every turn after it,
+      // failed the isArray cap and came back as "messages array is required".
+      // That sentence is false — the array was there, it was too long — and it
+      // is unactionable: nothing in it tells the client what to do, so a chat
+      // that got interesting simply stopped working with an error message about
+      // a field the user never filled in.
+      //
+      // Answered ahead of validationResult so the specific diagnosis wins over
+      // the generic one. `code` is the machine-readable half: the client
+      // truncates and retries on it, the same way it already acts on
+      // UPGRADE_REQUIRED. `maxMessages` is sent so the client never has to
+      // hard-code this number a second time.
+      //
+      // THE CAP ITSELF IS DELIBERATELY NOT RAISED. It is load-bearing:
+      // server.js sizes this route's scoped JSON parser as
+      // AI_CHAT_MAX_MESSAGES * AI_CHAT_MAX_MESSAGE_CHARS * 4 (~449KB), and
+      // __tests__/bodyLimitAudit.test.js reads both literals back out of this
+      // file. Raising the count here without moving that parser converts this
+      // honest 400 into a 413, which is strictly worse: a 413 is generated by
+      // body-parser before any of this code runs, so it cannot carry a code, a
+      // message, or anything the client can act on.
+      const messageCount = Array.isArray(req.body?.messages) ? req.body.messages.length : 0;
+      if (messageCount > AI_CHAT_MAX_MESSAGES) {
+        return res.status(400).json({
+          error: 'this chat got long. start a fresh one and I will keep up',
+          code: 'CONVERSATION_TOO_LONG',
+          maxMessages: AI_CHAT_MAX_MESSAGES,
+        });
+      }
+
       const errors = validationResult(req);
       if (!errors.isEmpty()) {
         return res.status(400).json({ error: errors.array()[0].msg });
@@ -739,6 +869,38 @@ router.post('/chat',
       let iterations = 0;
       const collectedVenues = []; // Track venues for card display
       let navigationAction = null; // Track navigation commands
+      // THE FORECAST ALLOWANCE, READ AND SPENT AS TWO SEPARATE ACTS.
+      //
+      // Read first, because the answer decides what the tool computes; spent
+      // afterwards, and only once the tool has actually DELIVERED a forecast.
+      // Doing both in one call (the obvious version) charged a view for a
+      // lookup that came back "Venue not found" or refused by the Places
+      // budget: the user would have paid, out of ten a month, for an error
+      // message. GET /api/crowd/:placeId has always had this right by accident
+      // of structure, since it returns 502 before it ever reaches its gate.
+      //
+      // Both halves are memoised per TURN, which is what makes the whole turn
+      // answer consistently. The model decides how many venues to look at, and
+      // a user must not lose four months of allowance because it got curious
+      // about four bars in one reply, nor see the tenth lookup in one reply
+      // refuse what the ninth just answered.
+      //
+      // `premium: !freeTier` is exact rather than an approximation: freeTier is
+      // `paywallEnabled() && !isPremium`, so whenever the paywall is on,
+      // !freeTier IS the premium answer, already paid for above. With the
+      // paywall off forecastAccess returns unmetered before reading it at all.
+      // Either way this saves a duplicate `SELECT is_premium`.
+      let forecastPeek = null;
+      let forecastCharged = false;
+      async function peekForecastAccess() {
+        if (!forecastPeek) forecastPeek = await forecastAccess(userId, { count: false, premium: !freeTier });
+        return forecastPeek;
+      }
+      async function chargeForecastView() {
+        if (forecastCharged) return;
+        forecastCharged = true;
+        await forecastAccess(userId, { count: true, premium: !freeTier });
+      }
 
       while (iterations < 5) {
         if (Date.now() > turnDeadline) {
@@ -760,7 +922,18 @@ router.post('/chat',
           // tool-backed turns come back empty (round 6).
           const { name, args, id } = part.functionCall;
           try {
-            const result = await executeTool(name, args || {}, userId, { includeForecast: !freeTier, localHour: req.body.localHour, localDay: req.body.localDay });
+            const toolOpts = { localHour: req.body.localHour, localDay: req.body.localDay };
+            if (name === 'get_crowd_prediction') {
+              toolOpts.includeForecast = !(await peekForecastAccess()).locked;
+            }
+            const result = await executeTool(name, args || {}, userId, toolOpts);
+            // Charged on DELIVERY, not on intent. `hourly_forecast` is the
+            // paid payload itself, so its presence is the only honest trigger:
+            // an upstream 404, a spent Places budget or a thrown tool all leave
+            // without it and all leave the meter alone.
+            if (name === 'get_crowd_prediction' && Array.isArray(result?.hourly_forecast)) {
+              await chargeForecastView();
+            }
 
             // Collect venue data for cards
             if (name === 'search_venues' && result.venues) {
