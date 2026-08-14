@@ -15,6 +15,22 @@ function getLabel(score) {
   return 'Very Busy';
 }
 
+// Round 14: the word and the colour were computed from different cut points —
+// getLabel breaks at 20/40/60/80, every UI recomputed its colour at 40/70. A
+// venue at 65 printed "Busy" in amber and one at 75 printed "Busy" in red: same
+// word, two colours, from the same card component. The colour bands are derived
+// from the label bands here so a band can never be edited in one place only.
+//   green  = Quiet / Not Busy   (0-40)
+//   amber  = Moderate           (41-60)
+//   red    = Busy / Very Busy   (61-100)
+// Any surface that shows a crowd colour should use these boundaries.
+function getLevel(score) {
+  const s = Number.isFinite(score) ? score : 0;
+  if (s <= 40) return 'calm';
+  if (s <= 60) return 'moderate';
+  return 'busy';
+}
+
 function isWeekend(day) {
   return day === 5 || day === 6; // Fri or Sat
 }
@@ -813,18 +829,112 @@ function estimateWait(score, types, priceLevel) {
 // authenticated crowd cards. One helper does the wrap so no caller repeats it.
 // closeHour 24 is midnight (the callers already map close.hour 0 to 24), which
 // keeps a 10 AM - 12 AM day a normal, non-wrapping window.
-function hourInWindow(h, openHour, closeHour) {
+// Round 14: the close side was inclusive, so a restaurant with close.hour 23
+// counted 11 PM as open and "Best time to go: 11 PM" was printed for a place
+// that locks the door at 11:00. The hour bucket labelled "11 PM" is 11:00-11:59,
+// which is closed time. Close is exclusive now, EXCEPT when Google reports a
+// closing minute past the hour (close 22:30 means the 10 PM bucket really is
+// open), which is what closeMinute carries.
+function beforeClose(hour, close, closeMinute) {
+  if (close == null) return true;
+  if (hour < close) return true;
+  return hour === close && (closeMinute || 0) > 0;
+}
+
+function hourInWindow(h, openHour, closeHour, closeMinute) {
   const hour = ((h % 24) + 24) % 24;
   const open = ((openHour % 24) + 24) % 24;
   const close = closeHour === 24 ? 24 : ((closeHour % 24) + 24) % 24;
-  if (close > open) return hour >= open && hour <= close;   // same-day window
+  if (close > open) return hour >= open && beforeClose(hour, close, closeMinute); // same-day window
   if (close === open) return true;                          // treat as open round the clock
-  return hour >= open || hour <= close;                     // wraps past midnight
+  return hour >= open || beforeClose(hour, close, closeMinute); // wraps past midnight
 }
 
-function isOpenHour(h, types, openHour, closeHour) {
+// Round 14: hours are per weekday, and treating one day's window as every day's
+// produced two visibly wrong cards:
+//   - A place closed on Mondays showed "Closed" next to "Best time to go: 7 PM"
+//     tonight, because the fallback used Tuesday's window (or a type default)
+//     for a day the venue never opens.
+//   - A place with split service (11-2, 5-10) had its whole dinner service
+//     treated as closed, because only the FIRST period of the day was read.
+// hoursByDay is { 0..6: [{ open, close, closeMinute }] } — an empty array means
+// closed that whole day, and a missing map means "no hours data", which falls
+// back to the old single-window / type-default behavior.
+function windowsForDay(venue, day) {
+  const map = venue && venue.hoursByDay;
+  if (!map || day == null) return undefined;
+  const key = ((Math.trunc(day) % 7) + 7) % 7;
+  const list = map[key];
+  return Array.isArray(list) ? list : undefined;
+}
+
+// Is this venue open at (day, hour) on its own wall clock? A window that wraps
+// past midnight belongs to the day it OPENED on, so 1 AM Saturday is covered by
+// Friday's 8 PM - 2 AM period, not by Saturday's.
+function isOpenAt(venue, h, day) {
+  const hour = ((Math.trunc(h) % 24) + 24) % 24;
+  const today = windowsForDay(venue, day);
+  if (today === undefined) {
+    return isOpenHour(hour, venue?.types, venue?.openHour, venue?.closeHour, venue?.closeMinute);
+  }
+  for (const w of today) {
+    const open = ((w.open % 24) + 24) % 24;
+    const close = w.close === 24 ? 24 : ((w.close % 24) + 24) % 24;
+    if (close === open) return true;                                  // round the clock
+    if (close < open) { if (hour >= open) return true; continue; }     // pre-midnight half
+    if (hour >= open && beforeClose(hour, close, w.closeMinute)) return true;
+  }
+  // Yesterday's overnight window spilling into this morning.
+  const prev = windowsForDay(venue, (Math.trunc(day) - 1)) || [];
+  for (const w of prev) {
+    const open = ((w.open % 24) + 24) % 24;
+    const close = w.close === 24 ? 24 : ((w.close % 24) + 24) % 24;
+    if (close < open && beforeClose(hour, close, w.closeMinute)) return true;
+  }
+  return false;
+}
+
+// Google's `periods`, turned into one window list per weekday. Round 14 — three
+// shapes that all used to read as "closed":
+//   - Always-open places arrive as ONE period with an `open` and no `close`.
+//     `close?.hour ?? null` left closeHour null, the engine fell through to a
+//     type default, and a 24-hour diner was "closed" at 2 AM.
+//   - Split service (11-2, then 5-10) arrives as two periods for one day, and
+//     `periods.find()` took only the first, so the entire dinner service read
+//     as closed and the card sent people to tomorrow's lunch.
+//   - A day the venue never opens has no period at all, which fell back to a
+//     type default: "Closed" printed next to "Best time to go: 7 PM".
+// An empty array for a day means closed all day, which is a real answer and is
+// why this returns a full 0-6 map rather than only the days Google listed.
+function buildHoursByDay(periods) {
+  if (!Array.isArray(periods) || !periods.length) return null;
+  const byDay = { 0: [], 1: [], 2: [], 3: [], 4: [], 5: [], 6: [] };
+  let alwaysOpen = false;
+
+  for (const pd of periods) {
+    const day = pd?.open?.day;
+    const open = pd?.open?.hour;
+    if (!Number.isInteger(day) || day < 0 || day > 6) continue;
+    if (!Number.isInteger(open)) continue;
+    if (!pd.close) { alwaysOpen = true; continue; } // Google's "open 24 hours"
+    let close = pd.close.hour;
+    if (!Number.isInteger(close)) continue;
+    const closeMinute = Number.isInteger(pd.close.minute) ? pd.close.minute : 0;
+    // Midnight close is 24, not 0, so a 10 AM - 12 AM day stays a normal
+    // window instead of looking like an overnight wrap.
+    if (close === 0 && closeMinute === 0) close = 24;
+    byDay[day].push({ open, close, closeMinute });
+  }
+
+  if (alwaysOpen) {
+    for (let d = 0; d < 7; d++) byDay[d] = [{ open: 0, close: 24, closeMinute: 0 }];
+  }
+  return byDay;
+}
+
+function isOpenHour(h, types, openHour, closeHour, closeMinute) {
   // Use real hours from Google if available
-  if (openHour != null && closeHour != null) return hourInWindow(h, openHour, closeHour);
+  if (openHour != null && closeHour != null) return hourInWindow(h, openHour, closeHour, closeMinute);
   if (hasType(types, 'bar', 'night_club') || isBarLike(types)) return (h >= 16 || h <= 2);
   if (isDinerLike(types)) return (h >= 6 && h <= 21);
   if (isFastFoodLike(types)) return (h >= 6 && h <= 23);
@@ -838,37 +948,185 @@ function isOpenHour(h, types, openHour, closeHour) {
   return (h >= 8 && h <= 23);
 }
 
-function findBestTime(hourlyForecast, venue, peakStartIdx, peakEndIdx, isOpen) {
-  if (!hourlyForecast || !hourlyForecast.length) return 'Now is good';
+// Round 13 — two bugs the live demo made obvious at 8:49 PM:
+//
+//   1. The recommendation could point BACKWARDS. Callers hand this function a
+//      24-hour forecast that starts at 6 AM, and it scanned all 24 entries with
+//      no idea what time it was, so at 8:49 PM the quietest hour of the whole
+//      day (4 PM) won. Telling someone to go five hours ago is worse than
+//      saying nothing. Every candidate now has to sit AFTER the venue's current
+//      hour.
+//
+//   2. The recommendation contradicted the number beside it. "Now" used to mean
+//      `hourlyForecast[0].score`, which on a 6 AM array is 6 AM, while the card's
+//      dial came from a separate prediction at the real hour. A venue at 86% and
+//      "Very Busy" got "Now is good" because 6 AM was quiet. The caller now
+//      passes the same score it renders, so the headline, the label and the
+//      recommendation are one decision.
+//
+// "Now" is always the VENUE's hour, supplied by the caller. Reading the process
+// clock here would score a Philadelphia bar on Railway's UTC afternoon.
 
-  const currentScore = hourlyForecast[0].score;
-  const types = venue?.types || [];
+// Inside 5 points is a coin flip at this model's accuracy (metadata reports
+// ~58% of predictions within 15), so "quieter" has to clear that margin before
+// we send anyone to a different hour.
+const TIE_MARGIN = 5;
+const NO_WINDOW_LEFT = 'No good window left today';
 
-  const candidates = [];
-  for (let i = 0; i < hourlyForecast.length; i++) {
-    if (peakStartIdx != null && i >= peakStartIdx && i <= peakEndIdx) continue;
+function dayOffsetForIndex(startHour, i) {
+  return Math.floor((startHour + i) / 24);
+}
 
-    const h = parseHourLabel(hourlyForecast[i].hour);
-    if (!isOpenHour(h, types, venue?.openHour, venue?.closeHour)) continue;
+// 1 AM after a 9 PM start is the same night out, not tomorrow. Bars and clubs
+// are the core case here, and calling their quiet stretch "Tomorrow 2 AM" reads
+// as a different evening. Same convention the model's astronomy features use:
+// the hours before 5 AM belong to the night before. Round 14: shared, because
+// the peak line and the best-time line have to agree about what "tomorrow"
+// means when they sit on the same card.
+function sameNightOffset(nowHour, hour, calendarOffset) {
+  const evening = (((nowHour % 24) + 24) % 24) >= 18;
+  const small = (((hour % 24) + 24) % 24) <= 5;
+  return (calendarOffset === 1 && evening && small) ? 0 : calendarOffset;
+}
 
-    candidates.push({ entry: hourlyForecast[i], idx: i });
-  }
+function withDayPrefix(label, dayOffset) {
+  if (dayOffset === 1) return `Tomorrow ${label}`;
+  if (dayOffset > 1) return `In ${dayOffset} days, ${label}`;
+  return label;
+}
 
-  if (!candidates.length) return 'Now is good';
+// The single place "go now" becomes words. It reads the same score the card
+// puts on the dial, so a packed venue can never be sold as a good time to show
+// up. No claim here reaches past the end of today.
+function nowCopy(currentScore, rushAhead) {
+  if (currentScore > 80) return 'Packed now, and it stays that way';
+  if (currentScore > 60) return "Now, but it's busy";
+  if (rushAhead) return 'Now, before the rush';
+  return 'Now is good';
+}
 
-  let best = candidates[0];
-  for (let i = 1; i < candidates.length; i++) {
-    if (candidates[i].entry.score < best.entry.score) {
-      best = candidates[i];
+// Structured answer: the copy plus which forecast entry it points at, so a
+// chart can highlight the same hour the sentence names.
+function recommendBestTime(hourlyForecast, venue, peakStartIdx, peakEndIdx, isOpen, options = {}) {
+  const nothing = { text: NO_WINDOW_LEFT, hourLabel: null, index: -1, dayOffset: 0 };
+  if (!hourlyForecast || !hourlyForecast.length) return nothing;
+
+  const startHour = parseHourLabel(hourlyForecast[0].hour);
+  // The venue's weekday, when the caller knows it. Without it every hour is
+  // tested against one generic window, which is how a Monday-closed venue got
+  // told to come at 7 PM tonight.
+  const currentDay = options.currentDay != null
+    ? ((Math.trunc(options.currentDay) % 7) + 7) % 7
+    : null;
+  const openAt = (h, calendarOffset) =>
+    isOpenAt(venue, h, currentDay != null ? currentDay + calendarOffset : null);
+
+  // Where the venue's current hour sits in this forecast.
+  let nowIdx = 0;
+  let nowHour = startHour;
+  if (options.currentHour != null) {
+    nowHour = ((Math.trunc(options.currentHour) % 24) + 24) % 24;
+    nowIdx = -1;
+    for (let i = 0; i < hourlyForecast.length; i++) {
+      if ((startHour + i) % 24 === nowHour) { nowIdx = i; break; }
     }
   }
 
-  // If venue is currently closed, never say "Now is good"
-  if (isOpen === false) return hourlyForecast[best.idx].hour;
+  // The score the card is showing. Falling back to the forecast entry keeps
+  // older callers working, but it is the caller's job to keep these equal.
+  const currentScore = options.currentScore != null
+    ? options.currentScore
+    : hourlyForecast[Math.max(0, nowIdx)].score;
 
-  if (currentScore <= best.entry.score + 5) return 'Now is good';
+  const nowDay = dayOffsetForIndex(startHour, Math.max(0, nowIdx));
+  const openNow = isOpen != null ? isOpen : openAt(nowHour, 0);
 
-  return hourlyForecast[best.idx].hour;
+  const ahead = [];
+  for (let i = nowIdx + 1; i < hourlyForecast.length; i++) {
+    const h = parseHourLabel(hourlyForecast[i].hour);
+    const calendarOffset = dayOffsetForIndex(startHour, i) - nowDay;
+    if (!openAt(h, calendarOffset)) continue;
+    ahead.push({
+      index: i,
+      score: hourlyForecast[i].score,
+      label: hourlyForecast[i].hour,
+      dayOffset: sameNightOffset(nowHour, h, calendarOffset),
+      inPeak: peakStartIdx != null && i >= peakStartIdx && i <= peakEndIdx,
+    });
+  }
+
+  const quietest = (list) => list.reduce((a, b) => (b.score < a.score ? b : a), list[0]);
+  const openToday = ahead.filter(e => e.dayOffset === 0);
+  const todayPicks = openToday.filter(e => !e.inPeak);
+  const laterPicks = ahead.filter(e => e.dayOffset > 0 && !e.inPeak);
+  const pick = (e) => ({
+    text: withDayPrefix(e.label, e.dayOffset),
+    hourLabel: e.label,
+    index: e.index,
+    dayOffset: e.dayOffset,
+  });
+  const stayPut = (rushAhead) => ({
+    text: nowCopy(currentScore, rushAhead),
+    hourLabel: null,
+    index: Math.max(0, nowIdx),
+    dayOffset: 0,
+  });
+
+  // Shut right now: "now" can never be the answer.
+  if (openNow === false) {
+    const pool = todayPicks.length ? todayPicks : laterPicks;
+    return pool.length ? pick(quietest(pool)) : nothing;
+  }
+
+  if (todayPicks.length) {
+    const best = quietest(todayPicks);
+    if (best.score < currentScore - TIE_MARGIN) return pick(best);
+    return stayPut(false);
+  }
+
+  // Open hours are left today, but all of them are the peak. Going now beats
+  // waiting for the rush, and the copy says which it is.
+  if (openToday.length) return stayPut(true);
+
+  // Open now and nothing open after this hour: it is this hour or another day.
+  if (currentScore <= 60) {
+    return { text: 'Now, they close soon', hourLabel: null, index: Math.max(0, nowIdx), dayOffset: 0 };
+  }
+  return laterPicks.length ? pick(quietest(laterPicks)) : nothing;
+}
+
+function findBestTime(hourlyForecast, venue, peakStartIdx, peakEndIdx, isOpen, options) {
+  return recommendBestTime(hourlyForecast, venue, peakStartIdx, peakEndIdx, isOpen, options).text;
+}
+
+// Google Places returns utcOffsetMinutes per place. Turn it into the venue's
+// own wall clock, which is the only clock that makes "a time in the future"
+// mean anything: Railway runs UTC, and a visitor in New York can be looking at
+// a bar in Los Angeles. Returns null when the offset is missing so callers can
+// fall back to whatever clock they do have.
+function venueLocalNow(utcOffsetMinutes, now) {
+  if (utcOffsetMinutes == null) return null;
+  const offset = Number(utcOffsetMinutes);
+  if (!Number.isFinite(offset)) return null;
+  const base = now ? new Date(now) : new Date();
+  if (Number.isNaN(base.getTime())) return null;
+  const shifted = new Date(base.getTime() + offset * 60000);
+  return { hour: shifted.getUTCHours(), day: shifted.getUTCDay() };
+}
+
+// Days to add to a date on weekday `fromDay` to reach the NEAREST date whose
+// weekday is `toDay`. Round 14: three call sites wrote `toDay - fromDay` and
+// treated a signed weekday difference as a number of days, so on a UTC Sunday a
+// Saturday-evening venue in Los Angeles was scored SIX DAYS IN THE FUTURE
+// (6 - 0 = +6) instead of yesterday. The weekday and the hour came out right,
+// which is why nobody saw it, but the DATE drives the holiday, school-break and
+// special-night features and the Ticketmaster query window, so every Saturday
+// night the card west of UTC was scored against next week's events.
+function weekdayOffset(fromDay, toDay) {
+  const from = ((Math.trunc(fromDay) % 7) + 7) % 7;
+  const to = ((Math.trunc(toDay) % 7) + 7) % 7;
+  const diff = (to - from + 7) % 7;
+  return diff > 3 ? diff - 7 : diff;
 }
 
 function parseHourLabel(label) {
@@ -887,16 +1145,25 @@ function parseHourLabel(label) {
 // Returns { text, startIdx, endIdx } so bestTime can avoid peak
 // ---------------------------------------------------------------------------
 
-function findPeakTime(hourlyForecast, venue) {
+function findPeakTime(hourlyForecast, venue, options = {}) {
   if (!hourlyForecast || !hourlyForecast.length) return { text: '', startIdx: 0, endIdx: 0 };
 
   const types = venue?.types || [];
+  const startHour = parseHourLabel(hourlyForecast[0].hour);
+  const startDay = options.startDay != null
+    ? ((Math.trunc(options.startDay) % 7) + 7) % 7
+    : null;
+  const openAt = (h, i) => isOpenAt(
+    venue,
+    h,
+    startDay != null ? startDay + dayOffsetForIndex(startHour, i) : null
+  );
   let maxScore = -1;
   let maxIndex = 0;
 
   for (let i = 0; i < hourlyForecast.length; i++) {
     const h = parseHourLabel(hourlyForecast[i].hour);
-    if (types.length && !isOpenHour(h, types, venue?.openHour, venue?.closeHour)) continue;
+    if (types.length && !openAt(h, i)) continue;
 
     if (hourlyForecast[i].score > maxScore) {
       maxScore = hourlyForecast[i].score;
@@ -907,7 +1174,7 @@ function findPeakTime(hourlyForecast, venue) {
   let endIndex = maxIndex;
   for (let i = maxIndex + 1; i < hourlyForecast.length; i++) {
     const h = parseHourLabel(hourlyForecast[i].hour);
-    if (types.length && !isOpenHour(h, types, venue?.openHour, venue?.closeHour)) break;
+    if (types.length && !openAt(h, i)) break;
     if (Math.abs(hourlyForecast[i].score - maxScore) <= 3) {
       endIndex = i;
     } else {
@@ -915,7 +1182,18 @@ function findPeakTime(hourlyForecast, venue) {
     }
   }
 
-  const startLabel = hourlyForecast[maxIndex].hour;
+  // Round 13: callers now hand this a forecast that starts at the venue's
+  // current hour, so a peak can legitimately land after midnight. Say which day
+  // rather than printing a bare "1 PM" that reads as one that already passed.
+  //
+  // Round 14: it has to say it the SAME way the best-time line does. The two
+  // sit inches apart on the card, and the peak line called 1 AM "Tomorrow 1 AM"
+  // while the best-time line called the same hour "2 AM", so one card carried
+  // two conventions for the same night.
+  const startLabel = withDayPrefix(
+    hourlyForecast[maxIndex].hour,
+    sameNightOffset(startHour, parseHourLabel(hourlyForecast[maxIndex].hour), dayOffsetForIndex(startHour, maxIndex))
+  );
   let text;
   if (endIndex > maxIndex) {
     const endLabel = hourlyForecast[endIndex].hour;
@@ -996,12 +1274,27 @@ module.exports = {
   estimateCapacity,
   estimateWait,
   findBestTime,
+  // Round 13: same decision as findBestTime, but it also hands back WHICH
+  // forecast entry it named so a chart can highlight that exact bar.
+  recommendBestTime,
   findPeakTime,
   findQuieterAlternatives,
   buildCalibrationAdjustment,
   getLabel,
+  // Round 14: colour bands derived from the label bands, so "Busy" is never
+  // amber on one card and red on the next.
+  getLevel,
+  // Round 13: venue-local wall clock from Google's utcOffsetMinutes. The
+  // server runs UTC and the visitor may be three time zones from the venue;
+  // neither clock is the one the doors run on.
+  venueLocalNow,
   // Round 11: exported so anything else that needs an open/closed check uses
   // the wrap-aware helper instead of re-deriving `h >= open && h <= close`.
   hourInWindow,
   isOpenHour,
+  // Round 14: day-aware openness. hoursByDay knows Mondays are dark and that
+  // 11 AM - 2 PM plus 5 - 10 PM is two windows, not one 11 AM - 2 PM day.
+  isOpenAt,
+  buildHoursByDay,
+  weekdayOffset,
 };
