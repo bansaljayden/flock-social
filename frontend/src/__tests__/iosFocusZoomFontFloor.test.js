@@ -258,15 +258,9 @@ function allStyleRules() {
    and a correct fix should never break a test. Prune by hand when fixed.
    ═══════════════════════════════════════════════════════════════════════ */
 const KNOWN_OUTSTANDING = [
-  {
-    file: 'src/website/LandingPage.css',
-    what: '.lpd-input (the LiveDemo field), font-size: 15px',
-    fix: '15px -> 16px at source.',
-    // Already harmless in the browser: the index.css floor is (0,7,1) and
-    // this class is (0,1,0), so the floor wins. Listed so it gets corrected
-    // at source rather than depending on a specificity race.
-    reachedByFloor: true,
-  },
+  // .lpd-input (the LiveDemo field) was listed here at 15px; its owner fixed
+  // it to 16px at source on 2026-08-14 and the entry was pruned, per the rule
+  // above.
   {
     file: 'src/components/ui/placeholders-and-vanish-input.js',
     what: 'Tailwind `text-sm` (14px) on the shadcn vanish input',
