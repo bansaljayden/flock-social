@@ -1,7 +1,14 @@
-RPi.GPIO
-adafruit-circuitpython-mlx90640
-adafruit-blinka
-spidev
-requests
-numpy
-pygame
+# Python deps for the venue sensor.
+#
+# NOT PINNED YET. Nothing here is version-locked, so a Pi flashed in two years
+# gets whatever pip resolves that day. Once a unit is verified on real hardware,
+# run `pip3 freeze > requirements.lock.txt` on that unit, commit it, and have
+# setup.sh install from the lock file instead. See README.md, "Pinning".
+
+RPi.GPIO                             # IR break-beam on GPIO 17
+adafruit-circuitpython-mlx90640      # thermal headcount over I2C
+adafruit-blinka                      # CircuitPython shim the MLX90640 driver needs
+spidev                               # MCP3008 ADC (noise) over SPI
+requests                             # HTTPS push to the backend
+pygame                               # demo-unit display ONLY; imported lazily, so a
+                                     # headless venue unit still runs without it
