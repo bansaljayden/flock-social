@@ -156,6 +156,10 @@ export default function GuestInvite() {
   const [feedback, setFeedback] = useState({ where: 'rsvp', kind: '', text: '' });
   const [nameProblem, setNameProblem] = useState(false);
   const nameRef = useRef(null);
+  const deadEndRef = useRef(null);
+  // Which phase the last committed render used, so a phase CHANGE can be told
+  // apart from the phase this page happened to open on.
+  const lastPhase = useRef(null);
 
   // `quiet` is for the refresh that runs AFTER a successful write. Without it a
   // rate-limited or flaky refetch would replace a just-saved RSVP with a
@@ -203,6 +207,29 @@ export default function GuestInvite() {
     const who = host ? `${host} invited you` : "You're invited";
     document.title = flockName ? `${who}: ${flockName} | Flock` : `${who} | Flock`;
   }, [phase, host, flockName]);
+
+  // Two ways this page replaces itself under someone without them asking:
+  //
+  //   1. The host revokes the link while the tab is open, so an RSVP or a vote
+  //      comes back 404 and the whole plan is swapped for "This invite has
+  //      closed". Nothing announced that. A screen reader user heard silence
+  //      after tapping "I'm in", and a sighted keyboard user's focus was on a
+  //      button that no longer exists, which drops focus to <body>.
+  //   2. "Try again" unmounts itself while it refetches. If the retry fails the
+  //      button comes back as a NEW element, so the keyboard user who pressed
+  //      it is back at the top of the document with no way to know.
+  //
+  // Moving focus to the heading covers both: it is announced, and Tab resumes
+  // from the message rather than from nowhere. Deliberately NOT done on the
+  // first render — stealing focus from someone who just opened a link is the
+  // bug this is meant to avoid, not a fix for it.
+  useEffect(() => {
+    const changed = lastPhase.current !== null && lastPhase.current !== phase;
+    lastPhase.current = phase;
+    if (!changed) return;
+    if (phase === 'ready' || phase === 'loading') return;
+    if (deadEndRef.current) deadEndRef.current.focus();
+  }, [phase]);
 
   // The three ways a plan can be closed to new answers. `status` comes straight
   // from flocks.status, which the guest preview returns.
@@ -254,6 +281,13 @@ export default function GuestInvite() {
     setEditingName(true);
     setName('');
     setPendingRsvp(null);
+    // The name field is the only step that unsticks them, and it did not exist
+    // a moment ago. Without this, a 403 on a VOTE left focus on a venue button
+    // near the bottom of the page while the thing to fix appeared above the
+    // fold, so a keyboard or switch user had to go looking for it. The field
+    // carries aria-describedby="gi-problem-rsvp", so landing on it reads the
+    // complaint out as the field's description rather than racing the alert.
+    setTimeout(() => nameRef.current && nameRef.current.focus(), 0);
   };
 
   const submitRsvp = async (status) => {
@@ -434,7 +468,9 @@ export default function GuestInvite() {
     return (
       <Shell>
         <header className="gi-header">
-          <h1>{copy.title}</h1>
+          {/* tabIndex -1 so the effect above can put focus here when the page
+              swaps itself out. It is not in the Tab order. */}
+          <h1 ref={deadEndRef} tabIndex={-1}>{copy.title}</h1>
           <p className="gi-meta">{copy.lead}</p>
         </header>
         <section className="gi-sec">
