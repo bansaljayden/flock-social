@@ -145,8 +145,10 @@ const LIKELIHOODS = new Set([
 // If animated media is ever actually a product requirement, the correct move is
 // to add the decoder and re-encode — NOT to relax this gate.
 //
-// Detection is positive-only: we reject what we can PROVE is multi-frame (and,
-// for GIF alone, what we cannot prove is single-frame). An unrecognised
+// Detection is positive-only: we reject what we can PROVE is multi-frame (plus
+// the two cases where we cannot prove single-frame either — a GIF that stops
+// parsing as a GIF, and a container nested deeper than we will follow). An
+// unrecognised
 // container is left to the provider, which refuses formats it cannot decode and
 // therefore already fails closed through the catch below.
 // ---------------------------------------------------------------------------
@@ -256,6 +258,90 @@ function webpIsAnimated(buf) {
   return false;
 }
 
+// ICO/CUR is a DIRECTORY of images, and each entry may embed a whole PNG —
+// which may be an APNG. Round 19: counting the directory entries answered only
+// half the question, so a one-entry ICO wrapping an animated PNG read as a
+// still image and sailed through the gate.
+//
+// This is reachable. Every call site's allowlist checks the CLIENT-DECLARED
+// prefix of a data: URL (`data:image/png;base64,`), while Blink and WebKit pick
+// an image decoder by SNIFFING the bytes, so `data:image/png` carrying ICO
+// bytes is decoded as an ICO by the very browsers this app ships in. The
+// declared type gates nothing; only the bytes do.
+//
+// Recursion is depth-limited and each step moves strictly forward into a
+// strictly shorter slice, so an ICO nested in an ICO terminates.
+function icoIsMultiFrame(buf, depth) {
+  const count = buf.readUInt16LE(4);
+  if (count > 1) return true;               // more than one image, by declaration
+  if (count === 0) return false;            // nothing to render
+  if (buf.length < 22) return false;        // header + one 16-byte directory entry
+  const size = buf.readUInt32LE(14);
+  const offset = buf.readUInt32LE(18);
+  // Must point strictly past the directory and lie wholly inside the file, or
+  // no decoder can reach it either.
+  if (offset < 22 || size < 8 || offset + size > buf.length) return false;
+  return inspectImageFramesUnguarded(buf.subarray(offset, offset + size), depth + 1).animated;
+}
+
+// ISO base media containers (`....ftyp....`): animated AVIF and HEIF image
+// SEQUENCES both live here, and both are multi-frame images a browser plays in
+// a plain <img>. Round 19: these landed in the `unknown` bucket and passed the
+// gate. Nothing bad reached users, because Cloud Vision cannot decode either
+// format and therefore threw into the fail-closed catch — but that is an
+// ACCIDENT of provider coverage, not a control. The day Vision learns to decode
+// AVIF, animated AVIF starts passing with only frame 1 screened, silently.
+//
+// It matters more than it looks on this app specifically: the iOS build is a
+// Capacitor WKWebView, and WebKit on Apple platforms decodes HEIF natively.
+//
+// Proven-positive only, same as everywhere else here: a STILL AVIF or HEIC is
+// left alone and handed to the provider. Two independent signals of a sequence:
+// a sequence brand in the ftyp box, or a top-level `moov` (a movie box only
+// exists for timed, multi-sample content).
+const ISOBMFF_SEQUENCE_BRANDS = new Set([
+  'avis',                                                     // animated AVIF
+  'msf1', 'hevc', 'hevx', 'heim', 'heis', 'hevm', 'hevs',     // HEIF image sequences
+]);
+
+function isobmffIsAnimated(buf) {
+  // Brands: major_brand at 8, minor_version at 12 (skipped — it is a number,
+  // not a brand), compatible_brands from 16 to the end of the ftyp box.
+  // Brands live in the FIRST box and nowhere else. When its declared size is
+  // not usable, cap the scan at a window big enough for ~60 brands instead of
+  // sweeping the whole file: a four-byte scan over megabytes of attacker-chosen
+  // sample data would eventually hit 'hevc' by luck and refuse a valid image.
+  const ftypSize = buf.readUInt32BE(0);
+  const brandEnd = (ftypSize >= 16 && ftypSize <= buf.length)
+    ? ftypSize
+    : Math.min(buf.length, 256);
+  for (let p = 8; p + 4 <= brandEnd; p += 4) {
+    if (p === 12) continue;
+    if (ISOBMFF_SEQUENCE_BRANDS.has(buf.toString('latin1', p, p + 4))) return true;
+  }
+  // Top-level box walk. Sizes are followed properly rather than scanned for,
+  // for the same reason as the PNG and RIFF walks: 'moov' as four raw bytes
+  // inside attacker-controlled sample data would otherwise be a false positive.
+  let p = 0;
+  for (let step = 0; step < 4096; step++) {
+    if (p + 8 > buf.length) return false;
+    let size = buf.readUInt32BE(p);
+    if (buf.toString('latin1', p + 4, p + 8) === 'moov') return true;
+    if (size === 1) {                       // 64-bit largesize follows the type
+      if (p + 16 > buf.length) return false;
+      if (buf.readUInt32BE(p + 8) !== 0) return false;  // larger than anything we hold
+      size = buf.readUInt32BE(p + 12);
+      if (size < 16) return false;
+    } else if (size === 0) {
+      return false;                         // runs to EOF; no box follows it
+    } else if (size < 8) {
+      return false;                         // malformed
+    }
+    p += size;
+  }
+  return false;
+}
+
 // TIFF pages are a linked list of IFDs; Vision screens the first one. Not
 // reachable through any current upload path (every call site's allowlist stops
 // well short of TIFF), but the check is four lines and the alternative is
@@ -285,7 +371,7 @@ function tiffIsMultiPage(buf) {
  */
 function inspectImageFrames(buf) {
   try {
-    return inspectImageFramesUnguarded(buf);
+    return inspectImageFramesUnguarded(buf, 0);
   } catch (err) {
     // Re-audit: the parsers below index and readUInt* their way through
     // attacker-supplied bytes, and this is called OUTSIDE the provider try/catch
@@ -298,9 +384,18 @@ function inspectImageFrames(buf) {
   }
 }
 
-function inspectImageFramesUnguarded(buf) {
+// `depth` exists only for containers that embed a whole image inside themselves
+// (ICO today). A container nested past MAX_CONTAINER_DEPTH is a file nobody
+// sends by accident and one we can no longer prove anything about, so it takes
+// the same answer as an unparseable GIF: not provably single-frame.
+const MAX_CONTAINER_DEPTH = 4;
+
+function inspectImageFramesUnguarded(buf, depth = 0) {
   if (!Buffer.isBuffer(buf) || buf.length < 4) {
     return { format: 'unknown', animated: false };
+  }
+  if (depth > MAX_CONTAINER_DEPTH) {
+    return { format: 'nested', animated: true };
   }
   if (magicIs(buf, 0, 'GIF87a') || magicIs(buf, 0, 'GIF89a')) {
     const animated = gifIsAnimated(buf);
@@ -318,10 +413,21 @@ function inspectImageFramesUnguarded(buf) {
   if (buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) {
     return { format: 'jpeg', animated: false }; // JPEG holds exactly one image
   }
-  // ICO/CUR states its image count in the header; Vision screens one of them.
+  // MNG is the PNG family's animation container and is animation by definition.
+  // It opens with its own signature, so it is not caught by the PNG branch.
+  if (magicIs(buf, 0, '\x8aMNG\r\n\x1a\n')) {
+    return { format: 'mng', animated: true };
+  }
+  // ISO base media: animated AVIF, HEIF image sequences, and the video
+  // containers that share the box format. Tested BEFORE the ICO branch, whose
+  // signature is four loose bytes that a box-size field can imitate.
+  if (buf.length >= 12 && magicIs(buf, 4, 'ftyp')) {
+    return { format: 'isobmff', animated: isobmffIsAnimated(buf) };
+  }
+  // ICO/CUR is a directory of images; a single entry can itself be an APNG.
   if (buf.length >= 6 && buf[0] === 0x00 && buf[1] === 0x00
       && (buf[2] === 0x01 || buf[2] === 0x02) && buf[3] === 0x00) {
-    return { format: 'ico', animated: buf.readUInt16LE(4) > 1 };
+    return { format: 'ico', animated: icoIsMultiFrame(buf, depth) };
   }
   if (magicIs(buf, 0, 'II\x2a\x00') || magicIs(buf, 0, 'MM\x00\x2a')) {
     return { format: 'tiff', animated: tiffIsMultiPage(buf) };
@@ -330,6 +436,16 @@ function inspectImageFramesUnguarded(buf) {
   // refuses formats it cannot decode, which lands in the catch below and fails
   // closed anyway, and a byte-level allowlist in this function would silently
   // start refusing images the call sites already vetted.
+  //
+  // KNOWN RESIDUAL: JPEG XL (`FF 0A`, or an ISOBMFF file whose second box type
+  // is `JXL `) can be animated, and proving it would mean bit-parsing the
+  // codestream header rather than reading a magic number. It lands here. Today
+  // that is safe for the same reason animated AVIF was until round 19 — Cloud
+  // Vision cannot decode JXL, so the call throws into the fail-closed catch —
+  // and that is provider coverage, not a control. It is left alone rather than
+  // banned by format because refusing a STILL JXL would have to be explained to
+  // the user as "animated images can't be posted", which would be a lie. If
+  // Vision ever learns JXL, this needs a real frame check before that ships.
   return { format: 'unknown', animated: false };
 }
 
@@ -600,7 +716,8 @@ module.exports = {
   ANIMATED_IMAGE_REJECTED_MESSAGE,
   imageRejectionMessage,
 };
-// Exposed for __tests__/safetyFlow.test.js and __tests__/animatedImageModeration.test.js.
+// Exposed for __tests__/safetyFlow.test.js, __tests__/animatedImageModeration.test.js
+// and __tests__/animatedImageScreening.test.js.
 module.exports.__test = {
   isPrivateAddress,
   inspectImageFrames,
