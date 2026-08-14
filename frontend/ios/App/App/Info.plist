@@ -2,12 +2,12 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-    <key>CAPACITOR_DEBUG</key>
+	<key>CAPACITOR_DEBUG</key>
 	<string>$(CAPACITOR_DEBUG)</string>
 	<key>CFBundleDevelopmentRegion</key>
 	<string>en</string>
 	<key>CFBundleDisplayName</key>
-        <string>Flock</string>
+	<string>Flock</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>
@@ -49,27 +49,103 @@
 	     and no location background mode is declared. -->
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>Flock uses your location to show nearby venues and crowd levels, share live location with your group while a flock is active, and send your location to trusted contacts when you tap SOS.</string>
-	<!-- Camera: the in-app viewfinder uses getUserMedia inside the web view.
-	     Photo library read: the "choose from gallery" file input. There is no
-	     save-to-library flow anywhere in the app, so no NSPhotoLibraryAdd. -->
+	<!-- Camera. Three ways in, all started by an explicit tap:
+	       1. the in-app viewfinder (App.js `openCameraViewfinder`, getUserMedia,
+	          opened from the flock chat composer and the DM composer),
+	       2. the friend-code scanner (App.js `startQrScanner`, html5-qrcode,
+	          which decodes to `addFriendByCode`), and
+	       3. "Take Photo" on any of the four <input type="file" accept="image/*">
+	          pickers, which is the path that also reaches the profile picture
+	          and the venue logo. That third one is easy to miss when reading the
+	          code, because no line in the client mentions the camera: iOS puts
+	          the option in the file-input action sheet on its own.
+	     Every getUserMedia call passes { audio: false }, so no microphone string
+	     belongs here.
+
+	     These strings used to promise "stories". No client code renders, posts
+	     or reads a story: App.js states it outright at the `story: 'none'`
+	     takedown entry, and services/api.js `getStories` has zero callers. The
+	     claim was removed from the privacy policy and the community guidelines
+	     in f8dad66, and the permission prompt was the last place it survived.
+	     If a story UI ever ships, these strings change with it. -->
 	<key>NSCameraUsageDescription</key>
-	<string>Flock uses the camera to take photos for your stories and chat messages.</string>
+	<string>Flock uses the camera when you take a photo to send in a flock chat or a direct message or to set as your profile or venue picture, and when you scan a friend's Flock code to add them.</string>
+	<!-- Photo library, read only. Four "choose a photo" file inputs, all
+	     <input type="file" accept="image/*"> handled in the web view:
+	     profile picture (`handlePhotoUpload`), flock chat (`handleChatImageSelect`),
+	     DM (`handleDmImageSelect`), venue logo (`handleVenueLogoUpload`).
+	     Nothing in the app ever writes an image back to the library, so there is
+	     deliberately no NSPhotoLibraryAddUsageDescription. -->
 	<key>NSPhotoLibraryUsageDescription</key>
-	<string>Flock accesses your photos so you can share them in stories and chat messages.</string>
-	<!-- Payment apps only. The bill-split screen opens Venmo, Cash App, and
-	     Zelle handles, so it needs to query whether those apps are installed.
-	     tel/sms/mailto are handled by the system without being declared. -->
+	<string>Flock uses your photo library when you pick a photo to send in a flock chat or a direct message or to set as your profile or venue picture.</string>
+	<!-- Exactly the custom schemes the app can be asked to open, and no more.
+
+	     The bill-split screen is the only place that opens one. The authority is
+	     backend/routes/billing.js, which builds `deepLink` for exactly two
+	     methods: venmo://paycharge (also used by /venmo-link) and
+	     cashapp://cash.app/pay. Its third method, Zelle, is built with
+	     `deepLink: null` and shows written instructions instead, because Zelle
+	     lives inside each bank's own app and has no shared scheme. `zelle` and
+	     `cash-app` were both listed here and neither is ever constructed, so
+	     they are gone. tel/sms/mailto are system schemes and need no entry.
+
+	     Be precise about what this key does and does not do here, because it is
+	     easy to assume it is load-bearing and it currently is not. Opening the
+	     link does NOT depend on it: window.open() on a non-http URL reaches
+	     Capacitor's WebViewDelegationHandler, which calls
+	     UIApplication.open(url) directly, and -open: needs no declaration. Only
+	     -canOpenURL: consults this list, and nothing in the app calls it.
+
+	     It is kept, accurate and trimmed, because the check that SHOULD exist
+	     needs it. Today, if the payer has no Venmo app installed, -open: fails
+	     silently and the Pay button does nothing: App.js falls back to `webLink`
+	     only when `deepLink` is null, never when opening fails. Fixing that
+	     means asking whether the app is installed, which is exactly the query
+	     this list authorises. Keep these two entries in step with billing.js. -->
 	<key>LSApplicationQueriesSchemes</key>
 	<array>
 		<string>venmo</string>
 		<string>cashapp</string>
-		<string>cash-app</string>
-		<string>zelle</string>
 	</array>
-	<key>UIBackgroundModes</key>
-	<array>
-		<string>remote-notification</string>
-	</array>
+	<!-- No UIBackgroundModes. `remote-notification` used to be declared, and
+	     nothing earns it: backend/services/firebaseService.js sends every push
+	     with 'apns-push-type': 'alert' and an aps payload of sound + thread-id
+	     only. There is no content-available anywhere, so iOS never wakes the app
+	     in the background and the mode was a capability the app does not use.
+	     Alert push is unaffected by removing it; what push needs is the
+	     aps-environment entitlement, which App.entitlements still declares.
+	     If a silent/data push is ever added, add `content-available` there and
+	     this array back here in the same change. -->
+	<!-- No NSAppTransportSecurity key, i.e. no ATS exception of any kind, and
+	     that is correct rather than an oversight. The web layer is served from
+	     the bundle over capacitor://localhost and every origin it then talks to
+	     is https: the Railway API, MapTiler, Google Places, Firebase, PostHog.
+	     Nothing in frontend/ loads an http:// URL. If an exception is ever
+	     needed, scope it to the one domain with NSExceptionDomains rather than
+	     reaching for NSAllowsArbitraryLoads. -->
+
+	<!-- No CFBundleURLTypes and no com.apple.developer.associated-domains, so
+	     iOS currently delivers NO deep link to this app. Both halves of
+	     services/pushNavigation.js `intentFromUrl` are therefore unreachable on
+	     device today: the custom-scheme branch (flock://flock/123) and the
+	     universal-link paths (/f/123, /dm/45). Push taps still route correctly,
+	     because those come through the FCM notification payload rather than a
+	     URL.
+
+	     Neither is added here on purpose. A custom scheme would be a declaration
+	     nothing produces: the backend's own deepLinkPath builds relative paths
+	     like /?flock=12, never a flock:// URL. Associated domains cannot be
+	     fixed from this repo at all: the entitlement only signs once the
+	     Associated Domains capability is enabled on App ID com.flockcorp.flock
+	     AND an apple-app-site-association file is served from flockcorp.com.
+	     Adding the entitlement before those two exist fails the archive.
+	     Until then an invite link (https://www.flockcorp.com/i/<token>, shared
+	     via navigator.share) opens the web invite page in Safari, which works
+	     but does not hand an installed app the invite. -->
+
+	<!-- The app's only cryptography is HTTPS/TLS to the API, which is exempt.
+	     Declaring it here is what skips the export-compliance question on every
+	     single TestFlight upload. -->
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
 </dict>
