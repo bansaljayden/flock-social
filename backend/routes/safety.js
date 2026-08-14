@@ -1,58 +1,52 @@
 const express = require('express');
 const router = express.Router();
-const { Resend } = require('resend');
 const { authenticate } = require('../middleware/auth');
 const pool = require('../config/database');
-const { upstreamSignal } = require('../utils/upstream');
 const { stripHtml } = require('../utils/sanitize');
+// Round 20: this file used to build its own Resend client, at REQUIRE time:
+//
+//     const resend = process.env.RESEND_API_KEY ? new Resend(...) : null;
+//
+// and then guard each send with `if (!process.env.RESEND_API_KEY)`. The two
+// read the key at different MOMENTS. Any process that loaded this router before
+// the key reached the environment — a require-order change, a key rotation, a
+// test — held `resend === null` for its whole life, sailed past the guard, and
+// dereferenced null on every send. That failure is caught and reported as "this
+// contact could not be reached", for every contact, forever, on the SOS route.
+//
+// services/emailService.js exists for exactly this ("the client is built
+// lazily, not at require time, so a module loaded before dotenv (or in a test)
+// does not permanently capture a missing key") and its header names this file
+// as one of the two callers that should stop hand-rolling it. That migration is
+// now done, and it brings three more things with it: one definition of what a
+// deliverable address is, CR/LF stripping on the subject, and masked recipients
+// in the log.
+const emailService = require('../services/emailService');
+const { escapeHtml, isMailableAddress, maskAddress } = emailService;
 
-// ── Resend email client (configured via RESEND_API_KEY on Railway) ──
-const resend = process.env.RESEND_API_KEY ? new Resend(process.env.RESEND_API_KEY) : null;
-
-// Round 17: users.name is interpolated straight into the alert HTML and into
-// the Resend subject line. A display name is user-controlled text that we never
-// re-escape on the way out, so `<img src=x onerror=...>` — or, far more
-// plausibly on a safety email, `<a href="http://evil">` — landed inside a
-// message sent to somebody's mother. Escaping for the HTML context (rather than
-// stripping tags) also keeps ordinary names intact: "O'Brien & Sons" renders as
-// itself. CR/LF is removed separately because the subject is a header field.
-function escapeHtml(str) {
-  return String(str == null ? '' : str)
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
-}
+// Names are capped shorter than a whole subject line because a subject reads
+// "🚨 Emergency Alert from {name}" and the words that matter are at the front.
 function safeSubjectText(str) {
   return String(str == null ? '' : str).replace(/[\r\n]+/g, ' ').trim().slice(0, 120);
 }
 
+// Every send on this route goes through the shared sender, which owns the lazy
+// client, the 8s deadline (round 12: an undeadlined send held an EMERGENCY
+// alert open for minutes with nothing sent), the recipient check and the log
+// masking. The only thing kept here is the from-address: an SOS does not come
+// from the marketing mailbox.
+const SAFETY_FROM = 'Flock Safety <alerts@flockcorp.com>';
+
 async function sendAlertEmail(to, subject, htmlBody) {
-  if (!process.env.RESEND_API_KEY) {
-    console.warn('[Safety] RESEND_API_KEY not set — skipping email to', to);
-    return { skipped: true };
+  const result = await emailService.sendEmail({
+    to, subject, html: htmlBody, from: SAFETY_FROM,
+  });
+  if (result.skipped) {
+    console.warn('[Safety] alert NOT sent to', maskAddress(to), ': RESEND_API_KEY is not set');
+  } else if (!result.sent) {
+    console.error('[Safety] alert NOT sent to', maskAddress(to), ':', result.error);
   }
-  try {
-    // Round 12: the Resend SDK passes request options straight through to
-    // fetch, and without a deadline a slow Resend held an EMERGENCY alert open
-    // for minutes with nothing sent. 8s budget — see utils/upstream.js.
-    const { data, error } = await resend.emails.send({
-      from: 'Flock Safety <alerts@flockcorp.com>',
-      to,
-      subject,
-      html: htmlBody,
-    }, { signal: upstreamSignal('email') });
-    if (error) {
-      console.error('[Safety] Resend error for', to, JSON.stringify(error));
-      return { sent: false, error: error.message || JSON.stringify(error) };
-    }
-    console.log('[Safety] Email sent to', to, 'id:', data?.id);
-    return { sent: true };
-  } catch (err) {
-    console.error('[Safety] Email failed for', to, err.message);
-    return { sent: false, error: err.message };
-  }
+  return result;
 }
 
 // ── Test email endpoint ──
@@ -69,6 +63,22 @@ router.get('/test-email', authenticate, async (req, res) => {
     if (testEmailLog.size > 5000) {
       for (const [k, v] of testEmailLog) { if (now > v.dayResetAt) testEmailLog.delete(k); }
     }
+    // Round 20: the allowance used to be charged HERE, before the route looked
+    // at whether there was anywhere to send to. An account with no mailable
+    // address (an Apple private-relay signup, before the user adds a real one)
+    // spent its whole day's budget on three refusals, and the button whose only
+    // job is to answer "are my emergency alerts set up" stopped answering for
+    // 24 hours. Nothing is spent by asking a question whose answer cannot
+    // change inside the window, and no mail leaves on that path either way, so
+    // the lookup moves in front of the meter.
+    const user = await pool.query('SELECT name, email FROM users WHERE id = $1', [req.user.id]);
+    // The `.invalid` check here was the first half of the rule that the trusted
+    // contact form was missing entirely. Both now ask the shared question, so
+    // the two cannot drift again.
+    if (!isMailableAddress(user.rows[0]?.email)) {
+      return res.json({ ok: false, error: 'No email address on file' });
+    }
+
     let entry = testEmailLog.get(req.user.id);
     if (!entry || now > entry.dayResetAt) {
       entry = { lastAt: 0, dayCount: 0, dayResetAt: now + 24 * 60 * 60 * 1000 };
@@ -80,13 +90,9 @@ router.get('/test-email', authenticate, async (req, res) => {
     entry.lastAt = now;
     entry.dayCount += 1;
 
-    const user = await pool.query('SELECT name, email FROM users WHERE id = $1', [req.user.id]);
-    if (!user.rows[0]?.email || user.rows[0].email.endsWith('.invalid')) {
-      return res.json({ ok: false, error: 'No email address on file' });
-    }
     const result = await sendAlertEmail(
       user.rows[0].email,
-      'Flock Safety — Test Email',
+      'Flock Safety: test email',
       '<div style="font-family:Arial,sans-serif;padding:20px;text-align:center"><h2>It works!</h2><p>Your Flock emergency alerts are set up correctly.</p></div>'
     );
     res.json({ ok: result.sent || false, error: result.error });
@@ -144,7 +150,23 @@ router.get('/contacts', authenticate, async (req, res) => {
 // Trusted contacts are an EMAIL-SENDING surface, so they're bounded (round 5:
 // unbounded contacts + no cooldown made /share-location a harassment relay).
 const MAX_TRUSTED_CONTACTS = 5;
-const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
+// Round 20: this was a private `/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/`, whose class
+// excluded whitespace and `@` and nothing else. Three things it accepted, all
+// on the field that is handed to the provider as `to` on the emergency path:
+//
+//   mum@example.invalid   RFC 2606 reserved, can NEVER be delivered to — and it
+//                         is the exact domain this codebase mints for Apple
+//                         private-relay placeholders (@apple-signin.invalid)
+//                         and evicted squats (@unclaimed.invalid), so a user
+//                         pasting their own Apple address hit it
+//   a@b.co,x.co           one contact row, two recipients
+//   Mum<a@b.co>           an RFC 5322 display name the user chose, rendered by
+//                         the mail client INSTEAD of the address it goes to
+//
+// services/moderationAlerts.js already refused all three for the operator-
+// facing list. The user-facing one, on the route where being unreachable
+// matters most, did not. Both now ask the same shared question.
+const EMAIL_RE = emailService.MAILABLE_RE;
 
 // Round 17. Three separate problems on this form, all of which surfaced as
 // "Failed to add contact" on a safety screen:
@@ -163,7 +185,11 @@ const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
 //
 // Existing rows without an email are NOT deleted — they are reported honestly
 // by /alert instead (see the unreachable-contacts branch there).
-const FIELD_LIMITS = { name: 100, phone: 20, email: 255, relationship: 50 };
+// contact_email is VARCHAR(255); the limit here is 254 because that is RFC
+// 5321's maximum path length and therefore what isMailableAddress enforces. The
+// two have to agree, or a 255-character address gets "does not look right"
+// instead of the message that names the actual problem.
+const FIELD_LIMITS = { name: 100, phone: 20, email: 254, relationship: 50 };
 
 function readContactFields(body) {
   const name = typeof body.name === 'string' ? stripHtml(body.name).trim() : '';
@@ -172,18 +198,102 @@ function readContactFields(body) {
   const relationship = typeof body.relationship === 'string' ? stripHtml(body.relationship).trim() : '';
 
   if (!name || !phone) return { error: 'Name and phone are required' };
-  if (!email) return { error: 'An email address is required — alerts are sent by email' };
-  if (!EMAIL_RE.test(email)) return { error: 'That email address does not look right' };
+  if (!email) return { error: 'An email address is required. Alerts are sent by email.' };
+  // Length before shape, so an over-long address gets the message that names
+  // the actual problem instead of "does not look right".
+  if (email.length > FIELD_LIMITS.email) return { error: 'That email address is too long' };
+  if (!isMailableAddress(email)) return { error: 'That email address does not look right. It has to be one address that can receive mail.' };
   if (name.length > FIELD_LIMITS.name) return { error: `Name must be ${FIELD_LIMITS.name} characters or fewer` };
   if (phone.length > FIELD_LIMITS.phone) return { error: `Phone number must be ${FIELD_LIMITS.phone} characters or fewer` };
-  if (email.length > FIELD_LIMITS.email) return { error: 'That email address is too long' };
   if (relationship.length > FIELD_LIMITS.relationship) return { error: `Relationship must be ${FIELD_LIMITS.relationship} characters or fewer` };
 
   return { name, phone, email, relationship: relationship || null };
 }
 
+// ---------------------------------------------------------------------------
+// THE CONTACT FORM IS THE MAIL RELAY, NOT THE ALERT (round 20).
+// ---------------------------------------------------------------------------
+// A trusted contact is an address the user types, and nothing verifies it —
+// nobody asks Mum whether she agreed to this. /alert is well bounded per USER
+// (MAX_ATTEMPTS_PER_WINDOW attempts per 15 minutes) but says nothing at all
+// about which ADDRESSES those attempts reach, and the contact form had no
+// throttle of any kind. Five slots rewritten between alerts turned a bounded
+// six-attempts-per-quarter-hour into roughly 120 Flock-branded emails an hour
+// aimed at 120 DIFFERENT strangers, each with a subject line ending in a
+// display name the sender chose.
+//
+// The lever is deliberately here and not on /alert. Throttling the alert would
+// mean delaying an SOS in order to slow down a spammer, and that is not a trade
+// this file is allowed to make. Changing who your emergency contacts are is not
+// something anyone does thirty times an hour; sending an SOS might be.
+//
+// DELETE is deliberately NOT counted. Removing a recipient cannot send mail to
+// anybody, and taking someone off your emergency contact list is not an action
+// to put a speed limit on.
+//
+// Per process, like shareCooldowns and checkin.js's tapCache. On a multi-
+// instance deployment the effective ceiling is this number times the instance
+// count, which still bounds the relay; the DB-backed limit that would not have
+// that property belongs on the same table as the /alert cooldown and is noted
+// as a follow-up rather than built here.
+const MAX_CONTACT_WRITES_PER_HOUR = 20;
+const CONTACT_WRITE_WINDOW_MS = 60 * 60 * 1000;
+const CONTACT_WRITE_MAX_KEYS = 5000;
+const contactWrites = new Map(); // userId -> { count, resetAt }
+
+function windowFor(userId, now) {
+  if (contactWrites.size > CONTACT_WRITE_MAX_KEYS) {
+    for (const [k, v] of contactWrites) if (now >= v.resetAt) contactWrites.delete(k);
+    while (contactWrites.size > CONTACT_WRITE_MAX_KEYS) {
+      contactWrites.delete(contactWrites.keys().next().value);
+    }
+  }
+  let entry = contactWrites.get(userId);
+  if (!entry || now >= entry.resetAt) {
+    entry = { count: 0, resetAt: now + CONTACT_WRITE_WINDOW_MS };
+    contactWrites.set(userId, entry);
+  }
+  return entry;
+}
+
+function allowContactWrite(userId, now = Date.now()) {
+  return windowFor(userId, now).count < MAX_CONTACT_WRITES_PER_HOUR;
+}
+
+// CHARGED WHERE THE WRITE LANDS, not where the request arrives.
+//
+// The first version of this charged up front, on the theory that a limiter
+// counting only successes can be walked past. That does not survive contact
+// with what the limiter is for: reaching a NEW address requires a write that
+// actually STORES one. A request refused for a bad address, or a PUT against
+// somebody else's contact, stores nothing, mails nothing and does not even open
+// a database connection, so charging it buys no safety.
+//
+// What it did buy was the wrong person paying. Somebody adding five contacts on
+// a phone keyboard and mistyping a few addresses could spend the hour's budget
+// without saving a single contact, and then be locked out of their own Safety
+// screen. That is the worst trade available here: this throttle exists to
+// protect strangers from a spammer, and it was charging the person setting up
+// their emergency contacts.
+//
+// Check-then-charge is not atomic, so two simultaneous writes can both see the
+// last slot. Being one over on a spam ceiling is not worth an advisory lock;
+// the five-contact cap, where an off-by-one is a real bypass, keeps its.
+function chargeContactWrite(userId) {
+  windowFor(userId, Date.now()).count += 1;
+}
+
+function refuseContactWriteBurst(req, res) {
+  if (allowContactWrite(req.user.id)) return false;
+  res.status(429).json({
+    error: 'You have changed your trusted contacts a lot in the last hour. Give it a while before changing them again.',
+  });
+  return true;
+}
+
 router.post('/contacts', authenticate, async (req, res) => {
   try {
+    if (refuseContactWriteBurst(req, res)) return;
     const fields = readContactFields(req.body);
     if (fields.error) return res.status(400).json({ error: fields.error });
     const { name, phone, email, relationship } = fields;
@@ -222,6 +332,11 @@ router.post('/contacts', authenticate, async (req, res) => {
       client.release();
     }
 
+    // Reached only when the INSERT committed. The five-contact refusal above
+    // returns from inside the transaction, so it never gets here: nothing was
+    // stored, so nothing is charged. An address in the table is the only state
+    // that can turn into mail to a stranger, and this is where it is spent.
+    chargeContactWrite(req.user.id);
     res.status(201).json({ contact });
   } catch (err) {
     console.error('[Safety] Add contact error:', err);
@@ -237,6 +352,7 @@ const contactId = (raw) => (/^\d+$/.test(String(raw)) ? parseInt(raw, 10) : null
 
 router.put('/contacts/:id', authenticate, async (req, res) => {
   try {
+    if (refuseContactWriteBurst(req, res)) return;
     const id = contactId(req.params.id);
     if (id === null) return res.status(404).json({ error: 'Contact not found' });
     const fields = readContactFields(req.body);
@@ -248,8 +364,10 @@ router.put('/contacts/:id', authenticate, async (req, res) => {
       [name, phone, email, relationship, id, req.user.id]
     );
     if (result.rowCount === 0) {
+      // Nothing changed, so nothing new can be mailed: not charged.
       return res.status(404).json({ error: 'Contact not found' });
     }
+    chargeContactWrite(req.user.id);
     res.json({ contact: result.rows[0] });
   } catch (err) {
     console.error('[Safety] Update contact error:', err);
@@ -535,10 +653,17 @@ router.post('/alert', authenticate, async (req, res) => {
       // Detect it BEFORE claiming a slot: this is not a transient failure that
       // a retry can fix, so it must not burn the retry window, and the message
       // has to say what to actually do.
-      if (!contacts.rows.some((c) => c.contact_email)) {
+      // Round 20: this asked only whether contact_email was TRUTHY, so a row
+      // holding an address that can never be delivered to — an .invalid domain,
+      // a comma-joined pair, anything saved before the rule above existed —
+      // read as reachable. The alert then claimed a slot, fanned out, failed,
+      // and answered 502 "try again right away", which is the wrong advice: no
+      // number of retries fixes an undeliverable address. The same shared
+      // question that guards the add form guards the send.
+      if (!contacts.rows.some((c) => isMailableAddress(c.contact_email))) {
         await client.query('ROLLBACK');
         return res.status(400).json({
-          error: `None of your trusted contacts have an email address, so the alert cannot reach anyone. Add an email to a contact in Safety settings. ${CALL_911}`,
+          error: `None of your trusted contacts have an email address that can receive mail, so the alert cannot reach anyone. Add an email to a contact in Safety settings. ${CALL_911}`,
           unreachableContacts: true,
         });
       }
@@ -607,10 +732,17 @@ router.post('/alert', authenticate, async (req, res) => {
     // brownout would still delay the last contact by half a minute. Fan out and
     // settle: contact 3 is not held hostage by contact 1's slow send, and no
     // single rejection can abort the loop mid-alert.
-    const withEmail = contacts.rows.filter((c) => c.contact_email);
+    const withEmail = contacts.rows.filter((c) => isMailableAddress(c.contact_email));
     for (const c of contacts.rows) {
-      if (!c.contact_email) {
-        alerts.push({ contactName: c.contact_name, email: null, sent: false, reason: 'no email' });
+      if (!isMailableAddress(c.contact_email)) {
+        // The response says which contact could not be reached and why, because
+        // the only person who can fix it is the one reading it.
+        alerts.push({
+          contactName: c.contact_name,
+          email: c.contact_email || null,
+          sent: false,
+          reason: c.contact_email ? 'that address cannot receive mail' : 'no email',
+        });
         emailsSkipped++;
       }
     }
@@ -632,10 +764,27 @@ router.post('/alert', authenticate, async (req, res) => {
     // contacts_alerted = confirmed sends only; leaving it at 0 means the row
     // stops blocking retries once the in-flight window lapses.
     if (emailsSent > 0) {
+      // Round 20: this write was the only statement in the route with no
+      // `.catch()`, and it runs AFTER every email has already gone out. A blip
+      // on a one-row UPDATE therefore threw into the outer catch and answered
+      // "500 Failed to send alert" for an alert that had been DELIVERED.
+      //
+      // That is round 17's bug pointing the other way and this direction is
+      // worse: the user is told nobody was reached when everybody was, so they
+      // tap again, and the row is still sitting at contacts_alerted = 0, so it
+      // reads as in flight and refuses the retry for a further sixty seconds.
+      // Delivered, disbelieved, and locked out.
+      //
+      // This write is bookkeeping for the COOLDOWN. Losing it costs at worst a
+      // duplicate alert a minute later, which on this route is the cheap
+      // direction. It is not the thing the user asked for and its failure is
+      // not theirs to hear about, so it is logged and the truth is reported.
       await pool.query(
         'UPDATE emergency_alerts SET contacts_alerted = $1 WHERE id = $2',
         [emailsSent, alertId]
-      );
+      ).catch((e) => console.error(
+        `[Safety] alert ${alertId} was DELIVERED to ${emailsSent} contact(s) but the count could not be recorded: ${e.message}. The cooldown for this user is not armed.`
+      ));
     } else {
       // Round 17: leaving the claim row at contacts_alerted = 0 still blocked
       // the next attempt for the remainder of the 60-second in-flight window —
@@ -664,7 +813,7 @@ router.post('/alert', authenticate, async (req, res) => {
     }
 
     const parts = [`${emailsSent} email${emailsSent > 1 ? 's' : ''} sent`];
-    if (emailsSkipped > 0) parts.push(`${emailsSkipped} contact${emailsSkipped > 1 ? 's' : ''} skipped (no email)`);
+    if (emailsSkipped > 0) parts.push(`${emailsSkipped} contact${emailsSkipped > 1 ? 's' : ''} skipped (no usable email address)`);
 
     res.json({
       success: true,
@@ -723,12 +872,12 @@ router.post('/share-location', authenticate, async (req, res) => {
     if (contacts.rows.length === 0) {
       return res.status(400).json({ error: 'No trusted contacts set up' });
     }
-    if (!contacts.rows.some((c) => c.contact_email)) {
+    if (!contacts.rows.some((c) => isMailableAddress(c.contact_email))) {
       // Same honest refusal as /alert, and it must not burn the 10-minute
       // window on a share that could never have been delivered.
       shareCooldowns.set(req.user.id, last);
       return res.status(400).json({
-        error: 'None of your trusted contacts have an email address, so there is nowhere to send this. Add an email to a contact in Safety settings.',
+        error: 'None of your trusted contacts have an email address that can receive mail, so there is nowhere to send this. Add an email to a contact in Safety settings.',
         unreachableContacts: true,
       });
     }
@@ -758,8 +907,8 @@ router.post('/share-location', authenticate, async (req, res) => {
     let emailsSent = 0;
     let emailsSkipped = 0;
 
-    // Same fan-out as /alert (round 12).
-    const withEmail = contacts.rows.filter((c) => c.contact_email);
+    // Same fan-out as /alert (round 12), and the same reachability question.
+    const withEmail = contacts.rows.filter((c) => isMailableAddress(c.contact_email));
     emailsSkipped = contacts.rows.length - withEmail.length;
     const settled = await Promise.allSettled(
       withEmail.map((c) => sendAlertEmail(c.contact_email, `📍 ${safeSubjectText(userName)} shared their location with you`, htmlBody))
@@ -785,7 +934,10 @@ router.post('/share-location', authenticate, async (req, res) => {
     }
 
     const parts = [`Location shared with ${emailsSent} contact${emailsSent > 1 ? 's' : ''}`];
-    if (emailsSkipped > 0) parts.push(`${emailsSkipped} skipped (no email)`);
+    // "no email" was accurate when the only reason to skip was a missing
+    // address. It now also covers an address that cannot receive mail, and a
+    // message that names the wrong cause sends the user to the wrong fix.
+    if (emailsSkipped > 0) parts.push(`${emailsSkipped} skipped (no usable email address)`);
 
     res.json({
       success: true,
@@ -818,4 +970,7 @@ module.exports.__test = {
   MAX_ESCALATIONS,
   MAX_ATTEMPTS_PER_WINDOW,
   ESCALATION_METERS,
+  MAX_CONTACT_WRITES_PER_HOUR,
+  allowContactWrite,
+  resetContactWrites: () => contactWrites.clear(),
 };

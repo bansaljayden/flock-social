@@ -28,6 +28,20 @@ const PROD_API_URL = 'https://flock-app-production.up.railway.app';
 
 // True for anything that would produce a dead or downgraded link: a non-https
 // scheme, a loopback / link-local / .local host, or junk that does not parse.
+//
+// Round 20: the comment above has always said "link-local" and the code did not
+// check a single link-local address. 169.254.0.0/16 was absent — that is the
+// range the cloud metadata endpoint lives on — and so were fe80::/10 and
+// fc00::/7, the IPv6 link-local and unique-local ranges, the second of which
+// has no IPv4 equivalent anywhere in the list. A base URL is interpolated into
+// a verification link and a password-reset link, so a host from any of those
+// ranges is a dead link mailed to a real person for the one action that
+// unlocks their account.
+//
+// The IPv6 rules are applied ONLY to a host that is actually an IPv6 literal.
+// Matching `^f[cd]` against a hostname would refuse fdic.gov and fcbank.com,
+// which is the classic way a prefix check for an address range starts refusing
+// domain names.
 function isUnmailableBase(value) {
   if (typeof value !== 'string' || !value.trim()) return true;
   let u;
@@ -39,17 +53,107 @@ function isUnmailableBase(value) {
   if (u.protocol !== 'https:') return true;
   const host = u.hostname.toLowerCase().replace(/^\[|\]$/g, '');
   if (host === 'localhost' || host.endsWith('.localhost')) return true;
-  if (host === '::1' || host === '0.0.0.0') return true;
   if (host.endsWith('.local') || host.endsWith('.internal')) return true;
+
+  // An IPv6 literal is the only host that can contain a colon.
+  if (host.includes(':')) {
+    if (host === '::' || host === '::1') return true;
+    if (host.startsWith('::ffff:')) return true;      // IPv4-mapped; we never mail one
+    if (/^fe[89ab]/.test(host)) return true;          // fe80::/10 link-local
+    if (/^f[cd][0-9a-f]{2}:/.test(host)) return true; // fc00::/7 unique-local
+    return false;
+  }
+
+  if (host === '0.0.0.0') return true;
   if (/^127\./.test(host) || /^10\./.test(host) || /^192\.168\./.test(host)) return true;
+  if (/^169\.254\./.test(host)) return true;
   if (/^172\.(1[6-9]|2\d|3[01])\./.test(host)) return true;
   return false;
+}
+
+// ---------------------------------------------------------------------------
+// CAN THIS ADDRESS RECEIVE MAIL — one definition, for everything that sends.
+// ---------------------------------------------------------------------------
+// There were three, and they disagreed:
+//
+//   routes/auth.js            isMailableAddress
+//   services/moderationAlerts.js  isMailable   `[^\s@,;]+@[^\s@,;]+\.[^\s@,;]+`
+//   routes/safety.js          EMAIL_RE         `[^\s@]+@[^\s@]+\.[^\s@]{2,}`
+//
+// The disagreement had teeth. The safety copy's character class excluded
+// whitespace and `@` and nothing else, so `mum@example.invalid` (RFC 2606 —
+// guaranteed undeliverable, and the domain THIS codebase mints for Apple
+// private-relay placeholders and evicted-squat tombstones) was a perfectly good
+// trusted contact, while the moderation copy refused the identical string. A
+// trusted contact who cannot be mailed is a person on the Safety screen who
+// will never be told anything, on a feature whose only channel is email.
+//
+// Beyond the reserved TLDs, the class also has to exclude the characters that
+// make one field mean more than one recipient: `,` and `;` separate addresses,
+// and `<` `>` `"` open the RFC 5322 display-name form, so `Mum<a@b.co>` is a
+// user-chosen label rendered in place of the address it actually goes to.
+//
+// This is deliberately a DELIVERABILITY test, not an RFC 5322 parser. Nobody's
+// real address is refused by it; every string it refuses is one that would
+// bounce, fan out, or mislead.
+const MAILABLE_RE = /^[^\s@,;<>"]+@[^\s@,;<>"]+\.[^\s@,;<>".]{2,}$/;
+const MAX_ADDRESS_LENGTH = 254; // RFC 5321 §4.5.3.1
+
+function isMailableAddress(addr) {
+  if (typeof addr !== 'string') return false;
+  const t = addr.trim();
+  if (!t || t.length > MAX_ADDRESS_LENGTH) return false;
+  if (!MAILABLE_RE.test(t)) return false;
+  // .invalid is reserved and can never resolve. .test / .example / .localhost
+  // are reserved on the same RFC and are just as undeliverable.
+  if (/\.(invalid|test|example|localhost)$/i.test(t)) return false;
+  return true;
+}
+
+// A subject IS a header, so a CR or LF in one is header injection, and an
+// unbounded one is a truncated line in somebody's inbox list. Applied HERE, in
+// the one place every outbound message passes through, rather than in each
+// caller's own copy — a caller that forgets is the entire failure mode, and
+// there are now three callers.
+const MAX_SUBJECT_LENGTH = 200;
+function safeSubjectLine(s) {
+  return String(s == null ? '' : s).replace(/[\r\n\t]+/g, ' ').trim().slice(0, MAX_SUBJECT_LENGTH);
+}
+
+// A recipient address is the most identifying thing in most of these messages,
+// and on the SOS path it belongs to a THIRD PARTY who never signed up for Flock
+// — typically a parent, on a product whose floor is 13. Railway keeps stderr,
+// and nobody consented to that.
+//
+// The question a log line here has to answer is "did this go out, and roughly
+// where to". The domain answers the deliverability half; the local part answers
+// nothing that is not already in the database. So the local part goes.
+function maskAddress(to) {
+  if (Array.isArray(to)) return to.map(maskAddress).join(', ');
+  if (typeof to !== 'string' || !to.trim()) return '(no address)';
+  const t = to.trim();
+  const at = t.lastIndexOf('@');
+  if (at <= 0) return '(address hidden)';
+  return `${t[0]}${'*'.repeat(5)}@${t.slice(at + 1)}`;
+}
+
+// The HTML-escaper the three email sinks each had a copy of. Escaping (rather
+// than stripping) is what keeps "O'Brien & Sons" rendering as itself while
+// `<a href="http://evil">` cannot become a link in a message sent to somebody's
+// mother.
+function escapeHtml(s) {
+  return String(s == null ? '' : s)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 }
 
 function pickBase(envValue, fallback, label) {
   if (isUnmailableBase(envValue)) {
     if (envValue) {
-      console.warn(`[email] ${label} is not a public https URL ("${envValue}") — mailing ${fallback} instead`);
+      console.warn(`[email] ${label} is not a public https URL ("${envValue}"), so ${fallback} is being mailed instead`);
     }
     return fallback;
   }
@@ -72,40 +176,72 @@ function baseApiUrl() {
 }
 
 let client = null;
+let clientKey = null;
 function resendClient() {
-  if (!process.env.RESEND_API_KEY) return null;
-  if (!client) {
+  const key = process.env.RESEND_API_KEY;
+  if (!key) return null;
+  // Round 20: the client was built once and kept forever, so a key ROTATED
+  // inside a live process left every subsequent send authenticating with the
+  // old secret. That is a 401 from the provider on every message including an
+  // SOS, with nothing in the code able to notice — resetClient() exists but
+  // only the tests ever call it. This is the same defect routes/safety.js was
+  // migrated off (a client that outlives the value it was built from), one
+  // layer down, so the cache is keyed on the thing it was built from.
+  if (!client || clientKey !== key) {
     const { Resend } = require('resend');
-    client = new Resend(process.env.RESEND_API_KEY);
+    client = new Resend(key);
+    clientKey = key;
   }
   return client;
 }
 
-// Reset point for tests and for a key rotation that swaps the env in place.
+// Reset point for tests. A key rotation no longer needs it (see above), but
+// swapping the `resend` module itself under a test does.
 function resetClient() {
   client = null;
+  clientKey = null;
 }
 
-// Never throws. Returns { sent } | { skipped } | { sent: false, error }.
+// Never throws. Returns { sent } | { sent:false, skipped } | { sent: false, error }.
+//
+// ONE MESSAGE, ONE RECIPIENT. `to` used to be passed through untouched, so an
+// array fanned out to every element, a comma-joined string became a header with
+// several recipients, and `undefined` bought a provider round trip and an 8s
+// deadline before failing. Every caller in the codebase sends exactly one
+// address, which is why refusing anything else costs nothing and closes the
+// class for whatever the next caller turns out to be.
 async function sendEmail({ to, subject, html, from = 'Flock <hello@flockcorp.com>' }) {
+  if (!isMailableAddress(to)) {
+    console.error('[email] refusing a recipient that is not one deliverable address:', maskAddress(to));
+    return { sent: false, error: 'invalid recipient' };
+  }
+  const recipient = to.trim();
+  const safeSubject = safeSubjectLine(subject);
+  // `to` and `subject` are settled above; `from` is the third header and was
+  // the only one still passed through untouched. It is a constant at both call
+  // sites today, which is the argument for closing it now rather than after a
+  // fourth caller builds one out of something it read.
+  const safeFrom = String(from == null ? '' : from).replace(/[\r\n]+/g, ' ').trim();
+  const shown = maskAddress(recipient);
+
   const resend = resendClient();
   if (!resend) {
-    console.warn('[email] RESEND_API_KEY not set — skipping email to', to);
+    console.warn('[email] RESEND_API_KEY not set, skipping email to', shown);
     return { sent: false, skipped: true };
   }
   try {
     const { data, error } = await resend.emails.send(
-      { from, to, subject, html },
+      { from: safeFrom, to: recipient, subject: safeSubject, html },
       { signal: upstreamSignal('email') }
     );
     if (error) {
-      console.error('[email] Resend error for', to, JSON.stringify(error));
+      console.error('[email] Resend error for', shown, JSON.stringify(error));
       return { sent: false, error: error.message || 'send failed' };
     }
-    console.log('[email] sent to', to, 'id:', data?.id);
+    console.log('[email] sent to', shown, 'id:', data?.id);
     return { sent: true, id: data?.id };
   } catch (err) {
-    console.error('[email] send failed for', to, err.message);
+    console.error('[email] send failed for', shown, err.message);
     return { sent: false, error: err.message };
   }
 }
@@ -127,15 +263,6 @@ function verificationLink(token) {
 // token because consuming one requires an explicit POST from the screen.
 function passwordResetLink(token) {
   return `${baseWebUrl()}/reset-password#token=${encodeURIComponent(token)}`;
-}
-
-function escapeHtml(s) {
-  return String(s == null ? '' : s)
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
 }
 
 // Copy rules (SLOP-AUDIT.md): no em dashes, no marketing words, sounds like a
@@ -255,4 +382,14 @@ module.exports = {
   resetClient,
   PROD_WEB_URL,
   PROD_API_URL,
+  // The shared vocabulary every sender needs. routes/safety.js and
+  // services/moderationAlerts.js import these instead of keeping their own; see
+  // the note on isMailableAddress for what the three private copies cost.
+  // routes/auth.js still has its own isMailableAddress and should move to this
+  // one — it is owned by another agent this round.
+  isMailableAddress,
+  MAILABLE_RE,
+  safeSubjectLine,
+  maskAddress,
+  escapeHtml,
 };
