@@ -1,5 +1,29 @@
 # https://www.robotstxt.org/robotstxt.html
-User-agent: *
-Disallow:
+# www.flockcorp.com is canonical. The apex 308-redirects to it, and every
+# absolute URL in this file, in sitemap.xml and in index.html uses the www host.
 
-Sitemap: https://flockcorp.com/sitemap.xml
+User-agent: *
+Allow: /
+
+# Nothing is disallowed here, on purpose.
+#
+# The pages that must stay out of a search index are the app shell (/app,
+# /signup, /reset-password, the /f/ /dm/ /checkin/ deep links), the moderation
+# dashboard, and every /i/<token> invite link. All of them are noindex via the
+# X-Robots-Tag response header in frontend/vercel.json instead of being blocked
+# here, because the two rules do different jobs and only one of them works:
+#
+#   Disallow stops the fetch. A crawler that never fetches the page never sees
+#   the noindex, so a URL someone links to can still turn up in results with no
+#   description under it. And for invites it is worse than useless: Twitterbot,
+#   Slackbot, Discordbot and the rest read robots.txt before building a link
+#   preview, so a Disallow on /i/ would kill the preview that is the entire
+#   reason to send the link.
+#
+#   X-Robots-Tag keeps the page fetchable, which link previews need, and still
+#   keeps it out of the index, which is what actually matters for a URL that
+#   carries a bearer token.
+#
+# If you add a route, add its noindex rule to vercel.json, not a Disallow here.
+
+Sitemap: https://www.flockcorp.com/sitemap.xml

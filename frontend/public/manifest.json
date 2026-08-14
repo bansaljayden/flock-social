@@ -1,31 +1,70 @@
 {
-  "short_name": "Flock",
+  "id": "/",
   "name": "Flock",
+  "short_name": "Flock",
+  "lang": "en-US",
+  "dir": "ltr",
   "description": "Plan nights out with friends. Vote on where to go, see how busy it is, and split the bill.",
+  "start_url": "/app",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "theme_color": "#0b1a2e",
+  "background_color": "#0b1a2e",
+  "categories": ["social", "lifestyle"],
   "icons": [
     {
       "src": "favicon.ico",
-      "sizes": "64x64 32x32 24x24 16x16",
+      "sizes": "16x16 32x32 48x48",
       "type": "image/x-icon"
     },
     {
       "src": "logo192.png",
       "type": "image/png",
       "sizes": "192x192",
-      "purpose": "any maskable"
+      "purpose": "any"
     },
     {
       "src": "logo512.png",
       "type": "image/png",
       "sizes": "512x512",
-      "purpose": "any maskable"
+      "purpose": "any"
+    },
+    {
+      "src": "appstore-icon-1024.png",
+      "type": "image/png",
+      "sizes": "1024x1024",
+      "purpose": "maskable"
     }
   ],
-  "start_url": "/",
-  "display": "standalone",
-  "orientation": "portrait",
-  "theme_color": "#0d2847",
-  "background_color": "#0a1628",
-  "scope": "/",
-  "categories": ["social", "lifestyle", "entertainment"]
+  "screenshots": [
+    {
+      "src": "screenshots/app-nest.png",
+      "type": "image/png",
+      "sizes": "390x844",
+      "form_factor": "narrow",
+      "label": "Your flocks and who still owes a vote"
+    },
+    {
+      "src": "screenshots/app-create.png",
+      "type": "image/png",
+      "sizes": "390x844",
+      "form_factor": "narrow",
+      "label": "Starting a flock: name it, pick a night, invite people"
+    },
+    {
+      "src": "screenshots/app-crowd.png",
+      "type": "image/png",
+      "sizes": "390x844",
+      "form_factor": "narrow",
+      "label": "How busy each place is before you leave"
+    },
+    {
+      "src": "screenshots/app-birdie.png",
+      "type": "image/png",
+      "sizes": "390x844",
+      "form_factor": "narrow",
+      "label": "Asking Birdie where to go tonight"
+    }
+  ]
 }

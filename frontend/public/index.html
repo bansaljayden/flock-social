@@ -2,7 +2,6 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <link rel="icon" href="%PUBLIC_URL%/favicon.ico" />
     <!-- viewport-fit=cover is REQUIRED and must not be removed: it is what makes
          the Capacitor WebView edge to edge, so the app paints into the rounded
          screen corners like a native app instead of sitting in a letterboxed
@@ -16,25 +15,75 @@
          in an app whose type is hardcoded px. Do not re-add them: if pinch zoom
          reveals a broken fixed element, fix the element. -->
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+
+    <!-- #0b1a2e is the launch navy. The same value is hardcoded three places on
+         purpose and they must move together: the iOS LaunchScreen.storyboard
+         background, `ios.backgroundColor` in capacitor.config.ts, and this tag.
+         It is deliberately NOT either app theme (cream #f1ede0 / slate #0f172a):
+         it only shows during the splash-to-first-paint handoff, and matching the
+         splash is what makes that handoff invisible. manifest.json repeats it as
+         theme_color and background_color for the same reason. -->
     <meta name="theme-color" content="#0b1a2e" />
+
+    <!-- iOS turns bare digit runs into blue tel: links. In a planning app that
+         means "9 PM", "$40", and "Fri 8:30" become tappable. This kills the
+         auto-detection only; the explicit <a href="tel:911"> in the SOS sheet
+         and the venue phone links keep working. -->
+    <meta name="format-detection" content="telephone=no" />
+
     <meta name="description" content="Vote on where to go, see how busy it is before you leave, and split the bill after. Flock turns the group chat argument into an actual plan. Free." />
 
-    <!-- Open Graph. og:image must be an absolute URL for crawlers; this one
-         goes live with the flockcorp.com DNS cutover (DOMAIN.md). Until then
-         the Vercel URL still serves the same file at its own /og-image.png. -->
+    <!-- ═══════════════════════════════════════════════════════════════════
+         SHARE PREVIEW (Open Graph + Twitter)
+
+         These are the DEFAULT tags. One index.html is served for every route
+         (CRA has no server rendering), so whatever is written here is what
+         iMessage, Slack, Discord and WhatsApp show for the marketing pages AND
+         for every /i/<token> invite link. An invite therefore currently
+         previews as "Flock", not as "Sarah invited you to Friday Night Out".
+         Fixing that needs a per-request response, which means a serverless
+         function at frontend/api/invite-preview.js plus a UA-conditional
+         rewrite in vercel.json. Neither exists yet.
+
+         Rules for editing this block:
+         - og:image must be an ABSOLUTE url on the canonical host. www is
+           canonical; the apex 308-redirects to it, and several scrapers do not
+           follow redirects when fetching an image.
+         - There is deliberately NO og:url. A static one would claim every
+           invite link IS the homepage, and Facebook/Messenger would then
+           collapse the preview onto flockcorp.com and send the tap there
+           instead of to the invite. With it absent, scrapers use the URL they
+           actually fetched, which is correct on every route.
+         - Every claim here has to be true of the shipping build. Voting, the
+           crowd read, and bill splitting all ship. "Free" is true while
+           PAYWALL_ENABLED is unset; if the paywall is ever switched on, this
+           copy and the landing page change together.
+         ═══════════════════════════════════════════════════════════════════ -->
     <meta property="og:title" content="Flock | Plans that actually happen" />
     <meta property="og:description" content="Vote on where to go, see how busy it is before you leave, and split the bill after. Free." />
-    <meta property="og:image" content="https://flockcorp.com/og-image.png" />
-    <meta property="og:url" content="https://flockcorp.com" />
+    <meta property="og:image" content="https://www.flockcorp.com/og-image.png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:image:type" content="image/png" />
+    <meta property="og:image:alt" content="Flock. Plans die in the group chat. Flock is where they happen." />
     <meta property="og:type" content="website" />
     <meta property="og:site_name" content="Flock" />
+    <meta property="og:locale" content="en_US" />
     <meta name="twitter:card" content="summary_large_image" />
     <meta name="twitter:title" content="Flock | Plans that actually happen" />
     <meta name="twitter:description" content="Vote on where to go, see how busy it is before you leave, and split the bill after. Free." />
-    <meta name="twitter:image" content="https://flockcorp.com/og-image.png" />
+    <meta name="twitter:image" content="https://www.flockcorp.com/og-image.png" />
+    <meta name="twitter:image:alt" content="Flock. Plans die in the group chat. Flock is where they happen." />
 
-    <!-- PWA: Apple-specific — makes it look native on iPhone -->
-    <link rel="apple-touch-icon" href="%PUBLIC_URL%/apple-touch-icon.png" />
+    <!-- Icons. The sizes below are the real contents of each file, not a wish
+         list: favicon.ico is a 3-image ICO (16/32/48, verified by reading its
+         directory), logo192.png is 192, apple-touch-icon.png is 180. All are the
+         cream disc with the three-bird mark, so the app is recognisable at 16px
+         and at 180px. If you regenerate favicon.ico, re-check these numbers. -->
+    <link rel="icon" href="%PUBLIC_URL%/favicon.ico" sizes="16x16 32x32 48x48" />
+    <link rel="icon" type="image/png" sizes="192x192" href="%PUBLIC_URL%/logo192.png" />
+    <link rel="apple-touch-icon" sizes="180x180" href="%PUBLIC_URL%/apple-touch-icon.png" />
+
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
@@ -42,8 +91,19 @@
 
     <link rel="manifest" href="%PUBLIC_URL%/manifest.json" />
     <title>Flock | Plans that actually happen</title>
-    <!-- Satoshi is self-hosted and bundled from src/fonts (@font-face in index.css),
-         so it renders offline inside the Capacitor WebView instead of relying on a CDN. -->
+    <!-- Fraunces (display) + Hanken Grotesk (body) are self-hosted and bundled
+         from src/fonts (@font-face in index.css), so they render offline inside
+         the Capacitor WebView instead of relying on a CDN. Nothing render-
+         blocking belongs in this head: no font CDN link, no analytics tag, no
+         third-party script. Sentry and PostHog are dynamic imports in
+         src/index.js and are not fetched at all unless their env keys are set.
+         There is no rel=canonical here either: one static canonical would point
+         /about, /privacy and /terms at the homepage and get them dropped from
+         the index. Canonicals are served per route as HTTP Link headers from
+         frontend/vercel.json, which is also where caching, the security headers
+         and the noindex on /i/ and /admin/ live. vercel.json is validated
+         against Vercel's own schema and rejects unknown keys, so it can carry
+         no comments of its own; this block is its documentation. -->
 
   </head>
   <body>
