@@ -63,14 +63,50 @@ async function adminFetch(path, options = {}) {
   return data;
 }
 
-const fmt = (t) => (t ? new Date(t).toLocaleString() : '');
+const fmt = (t) => {
+  if (!t) return '';
+  const d = new Date(t);
+  // toLocaleString on an unparseable value prints the literal string
+  // "Invalid Date" next to a real one, which reads as a timestamp nobody can
+  // question. An em dash for "we do not know" is the honest render.
+  return Number.isNaN(d.getTime()) ? '—' : d.toLocaleString();
+};
+
+// Both admin list endpoints are `LIMIT 200` (backend/routes/admin.js). The
+// header counts are NOT: they come from a GROUP BY over the whole table. So a
+// deployment with 250 open reports shows "250" above 200 cards and says nothing
+// about the other fifty — and because the queue orders `(status = 'open') DESC,
+// created_at DESC`, the rows that fall off are the OLDEST open reports, i.e.
+// the ones that have been waiting longest. Silently hiding those is the exact
+// failure mode Guideline 1.2 is about, so the console says when it is looking
+// at a truncated list.
+const LIST_LIMIT = 200;
 
 export default function ModerationDashboard() {
-  const [reports, setReports] = useState([]);
-  const [counts, setCounts] = useState([]);
-  const [actions, setActions] = useState([]);
-  const [error, setError] = useState('');
+  // TWO READS, TWO VERDICTS, AND EACH VERDICT LIVES WITH ITS OWN DATA.
+  //
+  // One shared `error` string had two failure modes, both of them the console
+  // saying something untrue about a list it never touched. An audit-log failure
+  // printed "The queue could not be loaded, so this is not a count of anything."
+  // over a queue that had loaded perfectly and was genuinely empty — and the
+  // sentence it replaced, "Queue is clear.", is the one sentence on this screen
+  // that must never be wrong in either direction. The reads were also
+  // sequential inside one try, so a failure on the queue meant the audit log
+  // was never fetched at all and then reported as having failed.
+  //
+  // Two loose strings would have fixed the symptom. Keeping each error in the
+  // same object as the rows it is about is what makes the class of bug hard to
+  // re-introduce: there is no `error` in scope that could be paired with the
+  // wrong list.
+  const [queue, setQueue] = useState({ reports: [], counts: [], error: '' });
+  const [log, setLog] = useState({ actions: [], error: '' });
   const [loading, setLoading] = useState(true);
+  // Refreshing is NOT loading. `setLoading(true)` on every refresh replaced the
+  // whole queue with the word "Loading…", so a moderator half way down a
+  // 200-row list lost their place, lost every image and body they had opened
+  // from the screen, and watched the evidence they were judging disappear. The
+  // first load owns the blank screen; every later one keeps the queue up.
+  const [refreshing, setRefreshing] = useState(false);
   const [busyId, setBusyId] = useState(null);
   // reportId -> { status: 'loading' | 'ready' | 'collapsed' | 'error',
   //               url, error, renderFailed, attempt }
@@ -82,8 +118,8 @@ export default function ModerationDashboard() {
   // Same keying, same reason, same shape as `images` above.
   const [texts, setTexts] = useState({});
 
-  const load = useCallback(async () => {
-    setLoading(true); setError('');
+  const load = useCallback(async ({ background = false } = {}) => {
+    if (background) setRefreshing(true); else setLoading(true);
     try {
       // `|| []` on its own turned a malformed 200 into "Queue is clear." A
       // proxy, a gzip failure or a redirect to an HTML error page all arrive as
@@ -91,19 +127,48 @@ export default function ModerationDashboard() {
       // sentence on a moderation console is the one it must never say by
       // accident. Same rule the strip view in routes/venueDashboard.js was
       // fixed for: an upstream failure is not an empty result set.
-      const r = await adminFetch('/api/admin/reports');
-      if (!Array.isArray(r.reports) || !Array.isArray(r.counts)) {
-        throw new Error('The queue came back in a shape this console does not understand. Reload the page.');
-      }
-      setReports(r.reports);
-      setCounts(r.counts);
-      const a = await adminFetch('/api/admin/moderation-actions');
-      if (!Array.isArray(a.actions)) {
-        throw new Error('The audit log came back in a shape this console does not understand. Reload the page.');
-      }
-      setActions(a.actions);
-    } catch (e) { setError(e.message); }
-    finally { setLoading(false); }
+      try {
+        const r = await adminFetch('/api/admin/reports');
+        if (!Array.isArray(r.reports) || !Array.isArray(r.counts)) {
+          throw new Error('The queue came back in a shape this console does not understand. Reload the page.');
+        }
+        setQueue({ reports: r.reports, counts: r.counts, error: '' });
+        // Drop the opened evidence for reports that are no longer in the queue.
+        // `images` holds base64 bodies up to 700KB of reported UGC, sometimes
+        // posted by a minor, which the server sets Cache-Control: no-store on
+        // precisely so that nothing holds on to it — and this map was keyed by
+        // report id and never pruned, so anything a moderator opened stayed in
+        // memory for the life of the tab even after the row rotated out of the
+        // 200-row window. Closing an image already frees it; this frees the ones
+        // that were never closed.
+        const live = new Set(r.reports.map((row) => String(row.id)));
+        const prune = (prev) => {
+          const keys = Object.keys(prev).filter((k) => !live.has(k));
+          if (keys.length === 0) return prev;
+          const next = { ...prev };
+          for (const k of keys) delete next[k];
+          return next;
+        };
+        setImages(prune);
+        setTexts(prune);
+        // The rows and counts are deliberately NOT cleared on a failure: a
+        // moderator half way through a queue should not lose it to one dropped
+        // request. They are labelled as stale in the header instead.
+      } catch (e) { setQueue((p) => ({ ...p, error: e.message || 'The queue could not be loaded.' })); }
+
+      // Deliberately not chained off the queue read: they are two endpoints and
+      // one being down says nothing about the other.
+      try {
+        const a = await adminFetch('/api/admin/moderation-actions');
+        if (!Array.isArray(a.actions)) {
+          throw new Error('The audit log came back in a shape this console does not understand. Reload the page.');
+        }
+        setLog({ actions: a.actions, error: '' });
+      } catch (e) { setLog((p) => ({ ...p, error: e.message || 'The audit log could not be loaded.' })); }
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
   }, []);
 
   useEffect(() => { load(); }, [load]);
@@ -238,18 +303,32 @@ export default function ModerationDashboard() {
     const labels = {
       hide: `Hide this ${noun}`, ban: `Ban ${report.reported_user_name || 'this user'}`,
       dismiss: 'Dismiss this report', unban: `Unban ${report.reported_user_name || 'this user'}`,
-      unhide: `Put this ${noun} back where everyone can see it`,
+      // "…where everyone can see it" was a promise the action does not make. A
+      // restored DM goes back to two people and a restored story goes back to
+      // the author's friends; only the audience it was hidden from gets it
+      // back. The confirm on the one screen that performs takedowns should not
+      // describe a wider reversal than the one it is about to run.
+      unhide: `Put this ${noun} back`,
     };
     if (!window.confirm(`${labels[action]}?`)) return;
     setBusyId(report.id);
     try {
       await adminFetch(`/api/admin/reports/${report.id}`, { method: 'PUT', body: JSON.stringify({ action }) });
-      await load();
-    } catch (e) { alert(e.message); }
-    finally { setBusyId(null); }
+      await load({ background: true });
+    } catch (e) {
+      alert(e.message);
+      // A refusal is news about the world, not just about the click. "That
+      // content no longer exists" and "that account is a moderator" both mean
+      // the card in front of the moderator is describing a row that has moved
+      // on, and leaving it untouched leaves a button up that can only refuse
+      // again. Re-read so the card re-gates itself. In the background, because
+      // blanking the queue behind an alert is how you lose the report you were
+      // in the middle of.
+      await load({ background: true });
+    } finally { setBusyId(null); }
   };
 
-  const countOf = (s) => (counts.find((c) => c.status === s) || {}).count || 0;
+  const countOf = (s) => (queue.counts.find((c) => c.status === s) || {}).count || 0;
 
   return (
     <div style={S.page}>
@@ -257,14 +336,31 @@ export default function ModerationDashboard() {
         <h1 style={S.h1}>Moderation</h1>
         <p style={S.sub}>
           Report queue. Act promptly. Hide content and/or ban the user. Every action is logged.
-          <button onClick={load} style={S.refresh}>{Icons.repeat('currentColor', 14)} Refresh</button>
+          <button
+            onClick={() => load({ background: true })}
+            disabled={loading || refreshing}
+            style={{ ...S.refresh, opacity: (loading || refreshing) ? 0.6 : 1, cursor: (loading || refreshing) ? 'progress' : 'pointer' }}
+          >
+            {Icons.repeat('currentColor', 14)} {refreshing ? 'Refreshing…' : 'Refresh'}
+          </button>
         </p>
 
-        {error && (
-          <div style={S.err}>
-            {error}{/403|Admin/i.test(error) ? '. Sign in to the app as an admin account first, then reload this page.' : ''}
+        {/* One banner per failed read, each naming its own list, and the admin
+            hint attached to whichever message actually carries a 403 — so a
+            queue that is down for an unrelated reason does not tell a signed-in
+            moderator to go and sign in.
+
+            The Set is load-bearing rather than tidy: an offline tab, a dropped
+            VPN and a CORS refusal all fail BOTH reads with the identical
+            message, and two children keyed on the same string is a React key
+            collision on the error path of a moderation console. It also reads
+            better — that sentence is about the network rather than about either
+            list, so saying it twice says nothing extra. */}
+        {Array.from(new Set([queue.error, log.error].filter(Boolean))).map((m) => (
+          <div key={m} style={S.err} role="alert">
+            {m}{/403|Admin/i.test(m) ? '. Sign in to the app as an admin account first, then reload this page.' : ''}
           </div>
-        )}
+        ))}
 
         <div style={S.counts}>
           <Badge label="Open" value={countOf('open')} color="#e5484d" />
@@ -275,6 +371,12 @@ export default function ModerationDashboard() {
           <Badge label="Resolved" value={countOf('resolved')} color="#30a46c" />
           <Badge label="Dismissed" value={countOf('dismissed')} color="#7c7c87" />
         </div>
+        {/* Counts survive a failed refresh so the header does not flash to zero,
+            which means they can be older than the screen implies. Say so rather
+            than presenting last week's tally as this minute's. */}
+        {queue.error && queue.counts.length > 0 ? (
+          <p style={{ ...S.dimSmall, margin: '8px 0 0' }}>These numbers are from the last load that worked, not from now.</p>
+        ) : null}
 
         {loading ? <p style={S.dim}>Loading…</p> : (
           <>
@@ -283,11 +385,11 @@ export default function ModerationDashboard() {
                 screen, so it is never printed over a failed load. An empty list
                 and an unread list look identical, and only one of them means
                 there is nothing to do. */}
-            {reports.length === 0 ? (
-              <p style={S.dim}>{error ? 'The queue could not be loaded, so this is not a count of anything.' : 'Queue is clear.'}</p>
+            {queue.reports.length === 0 ? (
+              <p style={S.dim}>{queue.error ? 'The queue could not be loaded, so this is not a count of anything.' : 'Queue is clear.'}</p>
             ) : (
               <div style={S.list}>
-                {reports.map((r) => {
+                {queue.reports.map((r) => {
                   const unhandled = !!own(UNHANDLED_STATUS, r.status);
                   // Each button is gated on whether the SERVER can honour it and
                   // whether it would change anything — not on the report still
@@ -357,20 +459,32 @@ export default function ModerationDashboard() {
                 })}
               </div>
             )}
+            {queue.reports.length >= LIST_LIMIT ? (
+              <p style={{ ...S.dimSmall, marginTop: 10 }}>
+                {`This is the first ${LIST_LIMIT} reports the server will send, and the counts above are of the whole table. The queue is ordered open-first and newest-first, so anything beyond this is the OLDEST work — action what is here and refresh.`}
+              </p>
+            ) : null}
 
             <h2 style={S.h2}>Audit log</h2>
-            {actions.length === 0 ? (
-              <p style={S.dim}>{error ? 'The audit log could not be loaded.' : 'No actions yet.'}</p>
+            {log.actions.length === 0 ? (
+              <p style={S.dim}>{log.error ? 'The audit log could not be loaded.' : 'No actions yet.'}</p>
             ) : (
-              <div style={S.log}>
-                {actions.map((a) => (
-                  <div key={a.id} style={S.logRow}>
-                    <b>{String(a.action || '').replace(/_/g, ' ')}</b>{a.target_user_name ? ` → ${a.target_user_name}` : ''}
-                    {a.content_type ? `  (${typeLabel(a.content_type)}${a.content_id ? ` #${a.content_id}` : ''})` : ''}
-                    <span style={S.logMeta}>  by {a.moderator_name || '—'} · {fmt(a.created_at)}</span>
-                  </div>
-                ))}
-              </div>
+              <>
+                <div style={S.log}>
+                  {log.actions.map((a) => (
+                    <div key={a.id} style={S.logRow}>
+                      <b>{String(a.action || '').replace(/_/g, ' ')}</b>{a.target_user_name ? ` → ${a.target_user_name}` : ''}
+                      {a.content_type ? `  (${typeLabel(a.content_type)}${a.content_id ? ` #${a.content_id}` : ''})` : ''}
+                      <span style={S.logMeta}>  by {a.moderator_name || '—'} · {fmt(a.created_at)}</span>
+                    </div>
+                  ))}
+                </div>
+                {log.actions.length >= LIST_LIMIT ? (
+                  <p style={{ ...S.dimSmall, margin: '8px 0 0' }}>
+                    {`The last ${LIST_LIMIT} actions. Older ones are in moderation_actions and are not served to this screen.`}
+                  </p>
+                ) : null}
+              </>
             )}
           </>
         )}
@@ -496,6 +610,13 @@ function ReportedContent({ report: r, image, onToggleImage, onImageBroken, text,
                   src={image.url}
                   alt={`Reported ${label}`}
                   style={S.img}
+                  // A hosted content_image_url is a string the reported user
+                  // chose. Fetching it from here otherwise hands whoever is on
+                  // the other end the admin console's URL in a Referer header,
+                  // i.e. tells the person being moderated that a moderator is
+                  // looking at their report, and from where. data: URLs are
+                  // unaffected; this costs nothing and closes that.
+                  referrerPolicy="no-referrer"
                   onError={onImageBroken}
                 />
               ) : null}
@@ -532,22 +653,36 @@ function Badge({ label, value, color }) {
 
 const S = {
   page: { minHeight: '100vh', background: '#0e0e11', color: '#e7e7ea', fontFamily: "'Hanken Grotesk', -apple-system, system-ui, 'Segoe UI', Roboto, sans-serif" },
-  wrap: { maxWidth: 880, margin: '0 auto', padding: '32px 20px 80px' },
+  // boxSizing: nothing in this app resets it (index.css has no `* { box-sizing }`
+  // rule at all — checked), so a content-box max-width of 880 plus 40px of
+  // padding is a 920px element. Between 880 and 920 CSS pixels of viewport that
+  // is a horizontally scrolling page on a console that fits comfortably.
+  wrap: { maxWidth: 880, margin: '0 auto', padding: '32px 20px 80px', boxSizing: 'border-box' },
   h1: { fontSize: 28, margin: '0 0 4px' },
   h2: { fontSize: 18, margin: '28px 0 12px', color: '#c7c7cd' },
   sub: { color: '#9a9aa3', margin: '0 0 20px', fontSize: 14 },
   refresh: { marginLeft: 12, background: 'transparent', color: '#6cb8ff', border: 'none', cursor: 'pointer', fontSize: 14, display: 'inline-flex', alignItems: 'center', gap: 5, verticalAlign: -3, padding: 0, fontFamily: 'inherit' },
   err: { background: '#3a1416', border: '1px solid #e5484d', color: '#ffb3b6', padding: '10px 14px', borderRadius: 10, marginBottom: 16, fontSize: 14 },
-  counts: { display: 'flex', gap: 12, marginBottom: 8 },
-  badge: { background: '#17171b', border: '1px solid #25252b', borderRadius: 12, padding: '12px 18px', minWidth: 88, textAlign: 'center' },
+  // MEASURED at a 320px viewport, which is the narrowest phone SLOP-AUDIT rule 6
+  // holds this app to. Content-box (no reset — see `wrap`), so each badge was
+  // minWidth 88 + 36 padding + 2 border = 126px wide; four of them plus three
+  // 12px gaps is 540px inside a 280px content column. That is 260px of
+  // horizontal overflow on the header of the moderation console, i.e. the
+  // sideways-scrolling, pinch-to-read screen this page was reported for. Wrap
+  // plus border-box plus a smaller floor puts it at two rows of two.
+  counts: { display: 'flex', flexWrap: 'wrap', gap: 12, marginBottom: 8 },
+  badge: { background: '#17171b', border: '1px solid #25252b', borderRadius: 12, padding: '12px 18px', minWidth: 76, flex: '1 1 auto', boxSizing: 'border-box', textAlign: 'center' },
   badgeVal: { fontSize: 24, fontWeight: 700 },
   badgeLabel: { fontSize: 12, color: '#8a8a93', marginTop: 2 },
   dim: { color: '#7c7c87' },
   list: { display: 'flex', flexDirection: 'column', gap: 10 },
   card: { background: '#17171b', border: '1px solid #25252b', borderRadius: 12, padding: 14 },
-  cardTop: { display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6 },
+  // Same measurement: "Nudity or sexual content" + "Venue promotion #123456" +
+  // "UNDER REVIEW" is well over the 252px a card gets at 320px, and this row
+  // had no wrap, so the status pushed off the right edge of the card.
+  cardTop: { display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 10, marginBottom: 6 },
   reason: { fontWeight: 700 },
-  type: { fontSize: 12, color: '#8a8a93', background: '#222228', padding: '2px 8px', borderRadius: 6 },
+  type: { fontSize: 12, color: '#8a8a93', background: '#222228', padding: '2px 8px', borderRadius: 6, overflowWrap: 'anywhere' },
   status: { marginLeft: 'auto', fontSize: 12, textTransform: 'uppercase', letterSpacing: 0.5 },
   meta: { fontSize: 13, color: '#9a9aa3' },
   banned: { color: '#e5484d', fontWeight: 700, marginLeft: 6, fontSize: 11 },
@@ -561,7 +696,9 @@ const S = {
   dimSmall: { fontSize: 13, color: '#7c7c87' },
   textBlock: { marginTop: 8, display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 6 },
   imgBlock: { marginTop: 10, display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 6 },
-  img: { width: 320, maxWidth: '100%', maxHeight: 320, objectFit: 'contain', borderRadius: 8, border: '1px solid #25252b', background: '#0a0a0c', display: 'block' },
+  // border-box so the 1px border is inside the 100% cap. Without it a 320px
+  // image in a 320px column is a 322px element.
+  img: { width: 320, maxWidth: '100%', maxHeight: 320, boxSizing: 'border-box', objectFit: 'contain', borderRadius: 8, border: '1px solid #25252b', background: '#0a0a0c', display: 'block' },
   imgBtn: { background: '#222228', color: '#c7c7cd', border: '1px solid #33333a', borderRadius: 8, padding: '5px 10px', cursor: 'pointer', fontSize: 12, fontFamily: 'inherit' },
   imgErr: { fontSize: 13, color: '#ffb3b6', display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' },
   link: { color: '#6cb8ff' },

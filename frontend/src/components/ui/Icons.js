@@ -329,6 +329,26 @@ const Icons = {
     </>
   ),
 
+  // Block. Added because there was no honest way to draw "this person cannot
+  // reach you" out of the existing set: shield is the SOS mark, lock reads as
+  // private, x reads as close, and minus reads as remove. The moderation sheet
+  // (components/ModerationSheet.js) and the Blocked accounts screen in App.js
+  // had each hand-rolled the same round-capped circle-and-slash instead, which
+  // is the one screen an App Review reviewer opens to check Guideline 1.2.
+  //
+  // Obeys the system: r=9 so the ring carries the 30deg gap on the upper-right
+  // diagonal, and the slash is a 45deg segment whose two ends land exactly on
+  // that radius (6.36 * sqrt(2) = 9.0). It runs UPPER-LEFT to LOWER-RIGHT on
+  // purpose. The other diagonal terminates at theta=45deg, dead centre of the
+  // ring's own gap, so the bar would stop in mid-air and read as damage rather
+  // than as a bar across a circle.
+  ban: make(
+    <>
+      <path d={ring(12, 12, 9)} />
+      <path d="M5.64 5.64 18.36 18.36" />
+    </>
+  ),
+
   barChart: make(<path d="M5 20 5 14M12 20 12 6M19 20 19 10" />),
 
   beer: MUG_ICON,

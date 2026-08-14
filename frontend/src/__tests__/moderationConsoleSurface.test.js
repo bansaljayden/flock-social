@@ -1,0 +1,885 @@
+/**
+ * The moderation SURFACES: the admin console, the user-facing report/block
+ * sheet, and the venue portal's front door.
+ *
+ *   src/website/ModerationDashboard.js
+ *   src/components/ModerationSheet.js
+ *   src/components/auth/VenueLoginScreen.js
+ *   src/components/ui/Icons.js   (the `ban` glyph only)
+ *
+ * WHY THESE THREE ARE ONE TEST FILE
+ * They are the whole of Apple Guideline 1.2 as a user and a reviewer meet it:
+ * the sheet is where a report is filed, the console is where it is actioned,
+ * and the venue portal is the third front door into the same binary. The
+ * console in particular is unreachable in production today (ADMIN_USER_IDS is
+ * unset on Railway, so no account holds role='admin'), which means it has had
+ * far less real use than the rest of the app and cannot be checked by hand.
+ * Everything below therefore has to be checked mechanically.
+ *
+ * WHAT IT COVERS, and why each part is shaped the way it is
+ *
+ *   1. THE iOS FOCUS ZOOM, MEASURED. iOS Safari and every iOS WKWebView — the
+ *      launch target, since this ships as a Capacitor shell — zoom the entire
+ *      viewport when the user focuses an input, select or textarea whose
+ *      computed font-size is under 16px. The report sheet's details box was
+ *      13px. The assertion reads the size off the RENDERED control rather than
+ *      off the source, and a second sweep walks every input/textarea/select in
+ *      all three files so the next one cannot be added under 16px either.
+ *
+ *      Two non-fixes are pinned as non-fixes: public/index.html must keep a
+ *      viewport with no `maximum-scale` and no `user-scalable=no` (modern iOS
+ *      ignores them and they fail WCAG 1.4.4 where they are honoured), and
+ *      touch-action: manipulation is not a fix for this at all.
+ *
+ *   2. HORIZONTAL OVERFLOW AT 320px, ARITHMETIC RATHER THAN LAYOUT. jsdom does
+ *      no layout, so the console's style object is lifted out of the source and
+ *      the width of the counts row is computed from it, including the fact that
+ *      nothing in this app resets box-sizing.
+ *
+ *   3. THE TWO READS ARE INDEPENDENT. The console fetches the queue and the
+ *      audit log separately, and used to fail them together in both directions.
+ *      Rendered against a stubbed fetch, not scanned.
+ *
+ *   4. REFRESH IS NOT LOAD. A refresh used to replace the queue with the word
+ *      "Loading…", taking the moderator's place in a 200-row list and every
+ *      image and body they had opened with it.
+ *
+ *   5. THE ACTION ROW. Pins the fix made earlier today — every button is gated
+ *      on what the SERVER can honour, never on the report still being open —
+ *      so the one-action-per-report bug cannot come back by accident.
+ *
+ *   6. THE ICON SYSTEM. All three files used hand-rolled inline SVG with round
+ *      caps and cubic curves, which is not the geometry components/ui/Icons.js
+ *      is built on. The `ban` glyph added for the Block control is checked
+ *      against the system's own rules by computing them, not by matching the
+ *      string it was drawn with.
+ *
+ *   7. DRIFT. NOUNS in the sheet is diffed against VALID_CONTENT_TYPES in
+ *      backend/routes/moderation.js. This repo has shipped "a route widened a
+ *      set of values and the thing behind it did not" three separate times
+ *      (migrations 003, 016 and 017 each undo an instance), and venue_event was
+ *      a fourth, mild one: a reported venue event read "Report this content".
+ *
+ * HOW TO RUN
+ *   cd frontend && CI=true npx react-scripts test --watchAll=false
+ *
+ * This is a FRONTEND test (jest via react-scripts), not a `node --test` one.
+ */
+
+const fs = require('fs');
+const path = require('path');
+const React = require('react');
+const { render, screen, fireEvent, waitFor, act } = require('@testing-library/react');
+
+// ───────────────────────────────────────────────────────────────────────────
+// services/api opens PostHog and a fetch wrapper on import. The three surfaces
+// need four names off it and nothing else.
+//
+// Plain functions, not jest.fn(): react-scripts sets resetMocks: true, which
+// strips the implementation off every jest mock before each test, so a jest.fn()
+// factory returns undefined from the second test on.
+// ───────────────────────────────────────────────────────────────────────────
+jest.mock('../services/api', () => ({
+  BASE_URL: 'https://api.test',
+  getToken: () => 'test-token',
+  reportContent: () => Promise.resolve({ message: 'ok' }),
+  blockUser: () => Promise.resolve({ message: 'ok' }),
+}));
+
+// eslint-disable-next-line import/no-dynamic-require, global-require
+const ModerationDashboard = require('../website/ModerationDashboard').default;
+// eslint-disable-next-line global-require
+const ModerationSheet = require('../components/ModerationSheet').default;
+// eslint-disable-next-line global-require
+const Icons = require('../components/ui/Icons').default;
+
+const SRC = path.join(__dirname, '..');
+// Normalised to LF: these files are CRLF on disk, and a multi-line assertion
+// written with \n would pass on a checkout with one convention and fail on the
+// other, which is a failure that says nothing about the code.
+const read = (p) => fs.readFileSync(p, 'utf8').replace(/\r\n/g, '\n');
+
+const CONSOLE_FILE = path.join(SRC, 'website', 'ModerationDashboard.js');
+const SHEET_FILE = path.join(SRC, 'components', 'ModerationSheet.js');
+const VENUE_FILE = path.join(SRC, 'components', 'auth', 'VenueLoginScreen.js');
+const SHELL_FILE = path.join(SRC, 'components', 'auth', 'AuthShell.js');
+const INDEX_HTML = path.join(SRC, '..', 'public', 'index.html');
+const MODERATION_ROUTE = path.join(SRC, '..', '..', 'backend', 'routes', 'moderation.js');
+
+const consoleSrc = read(CONSOLE_FILE);
+const sheetSrc = read(SHEET_FILE);
+const venueSrc = read(VENUE_FILE);
+
+const OWNED = [
+  ['ModerationDashboard.js', consoleSrc],
+  ['ModerationSheet.js', sheetSrc],
+  ['VenueLoginScreen.js', venueSrc],
+];
+
+/**
+ * Pull `const <name> = …;` out of a source file, from a module-scope
+ * declaration (column 0) to the semicolon that closes it. Strings, template
+ * literals and both comment styles are skipped so a `;` or a brace inside one
+ * cannot end the scan early — every declaration read here carries long prose
+ * comments with apostrophes and braces in them.
+ *
+ * Same helper as contentTakedownWiring.test.js, for the same reason: these
+ * modules cannot be imported for their internals, so the internals are lifted
+ * out by name and evaluated.
+ */
+function extractDeclaration(source, name) {
+  const start = source.search(new RegExp(`^const ${name} = `, 'm'));
+  if (start === -1) throw new Error(`extractDeclaration: no module-scope \`const ${name} =\` in source`);
+  let i = source.indexOf('=', start) + 1;
+  let depth = 0;
+  while (i < source.length) {
+    const ch = source[i];
+    const next = source[i + 1];
+    if (ch === '/' && next === '/') {
+      i = source.indexOf('\n', i);
+      if (i === -1) break;
+      continue;
+    }
+    if (ch === '/' && next === '*') {
+      const end = source.indexOf('*/', i + 2);
+      i = end === -1 ? source.length : end + 2;
+      continue;
+    }
+    if (ch === "'" || ch === '"' || ch === '`') {
+      const quote = ch;
+      i += 1;
+      while (i < source.length) {
+        if (source[i] === '\\') { i += 2; continue; }
+        if (source[i] === quote) { i += 1; break; }
+        i += 1;
+      }
+      continue;
+    }
+    if (ch === '(' || ch === '[' || ch === '{') depth += 1;
+    else if (ch === ')' || ch === ']' || ch === '}') depth -= 1;
+    else if (ch === ';' && depth === 0) return source.slice(start, i + 1);
+    i += 1;
+  }
+  throw new Error(`extractDeclaration: unterminated declaration for ${name}`);
+}
+
+const evalDeclaration = (source, name) => {
+  // eslint-disable-next-line no-new-func
+  return new Function(`${extractDeclaration(source, name)}\nreturn ${name};`)();
+};
+
+// ───────────────────────────────────────────────────────────────────────────
+// A stubbed fetch for the admin router. adminFetch does res.json().catch(...),
+// so a response only needs { ok, status, json }.
+// ───────────────────────────────────────────────────────────────────────────
+const REPORTS = '/api/admin/reports';
+const ACTIONS = '/api/admin/moderation-actions';
+
+let routes;
+let calls;
+
+const respond = (body, { ok = true, status = 200 } = {}) => ({
+  ok, status, json: () => Promise.resolve(body),
+});
+
+const aReport = (over = {}) => ({
+  id: 1,
+  status: 'open',
+  reason: 'harassment',
+  content_type: 'flock_message',
+  content_id: 55,
+  reported_user_id: 9,
+  reported_user_name: 'Sam',
+  reported_user_banned: false,
+  reporter_name: 'Rae',
+  created_at: '2026-08-14T10:00:00Z',
+  details: '',
+  content_excerpt: 'the reported words',
+  content_excerpt_clipped: false,
+  content_has_image: false,
+  content_image_url: null,
+  content_image_deferred: false,
+  content_created_at: '2026-08-14T09:00:00Z',
+  content_is_hidden: false,
+  content_missing: false,
+  ...over,
+});
+
+const queueBody = (reports, counts) => ({
+  reports,
+  counts: counts || [
+    { status: 'open', count: reports.filter((r) => r.status === 'open').length },
+    { status: 'resolved', count: 0 },
+    { status: 'dismissed', count: 0 },
+  ],
+});
+
+beforeEach(() => {
+  calls = [];
+  routes = {};
+  global.fetch = (url, options) => {
+    const p = String(url).replace('https://api.test', '');
+    // A PUT lands on /api/admin/reports/:id, which must not be mistaken for the
+    // queue read. Longest match first.
+    const key = routes[p] ? p : Object.keys(routes).sort((a, b) => b.length - a.length).find((k) => p.startsWith(k));
+    calls.push({ path: p, method: (options && options.method) || 'GET', body: options && options.body });
+    const handler = key ? routes[key] : null;
+    if (!handler) return Promise.resolve(respond({ error: `no stub for ${p}` }, { ok: false, status: 404 }));
+    return Promise.resolve(handler(p, options));
+  };
+  // jsdom implements neither, and the console calls both.
+  window.confirm = () => true;
+  window.alert = () => {};
+});
+
+const renderConsole = async () => {
+  const view = render(React.createElement(ModerationDashboard));
+  // The first paint is "Loading…"; wait for the first read to settle.
+  await waitFor(() => expect(screen.queryByText('Loading…')).toBeNull());
+  return view;
+};
+
+const countCalls = (prefix, method) =>
+  calls.filter((c) => c.path.startsWith(prefix) && (!method || c.method === method)).length;
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 1. The iOS focus zoom
+// ═══════════════════════════════════════════════════════════════════════════
+describe('iOS focus zoom: no focusable control renders under 16px', () => {
+  /**
+   * Every `<input>`, `<textarea>` and `<select>` element in a source file, as
+   * raw text from the tag name to the `>` that closes the opening tag. A naive
+   * /<textarea[^>]*>/ cannot be used: the handlers inside carry arrow functions,
+   * so `>` appears well before the tag ends. Brace depth and quotes are tracked
+   * for the same reason extractDeclaration tracks them.
+   */
+  function focusableTags(source) {
+    const found = [];
+    const re = /<(input|textarea|select)\b/g;
+    let m = re.exec(source);
+    while (m) {
+      let i = m.index + m[0].length;
+      let depth = 0;
+      let quote = null;
+      while (i < source.length) {
+        const ch = source[i];
+        if (quote) {
+          if (ch === '\\') { i += 2; continue; }
+          if (ch === quote) quote = null;
+        } else if (ch === "'" || ch === '"' || ch === '`') {
+          quote = ch;
+        } else if (ch === '{') depth += 1;
+        else if (ch === '}') depth -= 1;
+        else if (ch === '>' && depth === 0) break;
+        i += 1;
+      }
+      found.push({ tag: m[1], text: source.slice(m.index, i + 1) });
+      m = re.exec(source);
+    }
+    return found;
+  }
+
+  test('the parser finds the controls it is meant to police', () => {
+    // A silent zero here would make every assertion below vacuously true, which
+    // is the failure mode of every "grep for the bad thing" test.
+    expect(focusableTags(sheetSrc).map((t) => t.tag)).toEqual(['textarea']);
+    expect(focusableTags(venueSrc).filter((t) => t.tag === 'input').length).toBeGreaterThanOrEqual(4);
+    // The console is a read-and-act screen: no form controls at all, which is
+    // why its zoom problem was overflow rather than focus (section 2).
+    expect(focusableTags(consoleSrc)).toHaveLength(0);
+  });
+
+  test.each(OWNED)('%s declares no inline font-size below 16px on a focusable control', (name, source) => {
+    for (const el of focusableTags(source)) {
+      const m = /fontSize:\s*'([\d.]+)px'/.exec(el.text);
+      if (!m) continue;
+      expect({ file: name, tag: el.tag, fontSize: Number(m[1]) })
+        .toEqual(expect.objectContaining({ fontSize: expect.any(Number) }));
+      expect(Number(m[1])).toBeGreaterThanOrEqual(16);
+    }
+  });
+
+  test('the report sheet details box renders at 16px, read off the element', () => {
+    render(React.createElement(ModerationSheet, {
+      target: { userId: 3, userName: 'Sam', contentType: 'flock_message', contentId: 9 },
+      onClose: () => {},
+      showToast: () => {},
+    }));
+    fireEvent.click(screen.getByRole('button', { name: /^Report this message$/ }));
+    const box = screen.getByLabelText('Add details (optional)');
+    expect(box.tagName).toBe('TEXTAREA');
+    // 13px here is what "it zooms in and ruins it" was: iOS scales the whole
+    // viewport on focus below 16.
+    expect(parseFloat(box.style.fontSize)).toBeGreaterThanOrEqual(16);
+  });
+
+  test('the venue portal fields inherit 16px from .auth-field, not from a local style', () => {
+    // VenueLoginScreen carries no inline font-size on any input; all four are
+    // className="auth-field". jsdom resolves no cascade, so the rule itself is
+    // the thing under test, in the file that owns it.
+    const shell = read(SHELL_FILE);
+    // Closed on `\n}` rather than the first `}`: AUTH_CSS is a template literal
+    // and its declarations carry ${AUTH.cream} interpolations, whose closing
+    // brace would end a lazy match three lines above the font-size.
+    const rule = /\.auth-field\s*\{([\s\S]*?)\n\}/.exec(shell);
+    expect(rule).not.toBeNull();
+    const size = /font-size:\s*([\d.]+)px/.exec(rule[1]);
+    expect(size).not.toBeNull();
+    expect(Number(size[1])).toBeGreaterThanOrEqual(16);
+    // And every field on the venue screen really does use that class.
+    const inputs = venueSrc.match(/<input\b[\s\S]*?className="auth-field"/g) || [];
+    expect(inputs.length).toBeGreaterThanOrEqual(4);
+  });
+
+  test('the fix is not attempted on the viewport, which is an accessibility failure of its own', () => {
+    const html = read(INDEX_HTML);
+    const meta = /<meta name="viewport" content="([^"]+)"/.exec(html);
+    expect(meta).not.toBeNull();
+    expect(meta[1]).toContain('width=device-width');
+    // Modern iOS ignores both, and where they are honoured they block pinch
+    // zoom, which is WCAG 1.4.4. The 16px rule above is the whole fix.
+    expect(meta[1]).not.toMatch(/maximum-scale/);
+    expect(meta[1]).not.toMatch(/user-scalable/);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 2. Horizontal overflow at a 320px viewport
+// ═══════════════════════════════════════════════════════════════════════════
+describe('the console fits a 320px viewport', () => {
+  const S = evalDeclaration(consoleSrc, 'S');
+
+  // 320px device, minus the wrapper's 20px of padding on each side.
+  const CONTENT = 320 - 40;
+  const num = (v) => (typeof v === 'number' ? v : parseFloat(v));
+
+  test('the page wrapper is border-box, so max-width + padding is not 920px', () => {
+    // There is no `* { box-sizing: border-box }` anywhere in src/ — checked.
+    // Content-box, a maxWidth of 880 plus 40px of padding is a 920px element,
+    // which scrolls sideways on any viewport between 880 and 920.
+    expect(S.wrap.boxSizing).toBe('border-box');
+    expect(num(S.wrap.maxWidth)).toBeLessThanOrEqual(880);
+  });
+
+  test('the counts row wraps, and one badge fits the column on its own', () => {
+    expect(S.counts.flexWrap).toBe('wrap');
+
+    const [, padX] = String(S.badge.padding).split(/\s+/).map(parseFloat);
+    const border = 2; // 1px each side, from `border: '1px solid …'`
+    const badgeWidth = S.badge.boxSizing === 'border-box'
+      ? num(S.badge.minWidth)
+      : num(S.badge.minWidth) + 2 * padX + border;
+
+    // Wrapping only helps if a single badge fits. Four of these at 126px each
+    // plus three 12px gaps was 540px inside a 280px column: ~260px of overflow
+    // on the header of the moderation console.
+    expect(badgeWidth).toBeLessThanOrEqual(CONTENT);
+  });
+
+  test('the card header wraps rather than pushing the status off the right edge', () => {
+    expect(S.cardTop.flexWrap).toBe('wrap');
+    // The action row already wrapped; keep it that way.
+    expect(S.actions.flexWrap).toBe('wrap');
+  });
+
+  test('nothing declares a fixed pixel width wider than the 320px column', () => {
+    for (const [key, rule] of Object.entries(S)) {
+      if (!rule || typeof rule !== 'object') continue;
+      if (rule.width === undefined || typeof rule.width !== 'number') continue;
+      // A fixed width is only allowed alongside a maxWidth that releases it.
+      expect({ key, width: rule.width, maxWidth: rule.maxWidth }).toEqual(
+        expect.objectContaining({ maxWidth: '100%' })
+      );
+      // …and border-box, or the border pushes it past the cap it just accepted.
+      expect(rule.boxSizing).toBe('border-box');
+    }
+  });
+
+  test('the reported body cannot be widened by an unbroken 5,000-character string', () => {
+    expect(S.excerpt.overflowWrap).toBe('anywhere');
+    expect(S.type.overflowWrap).toBe('anywhere');
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 3. The queue read and the audit-log read are independent
+// ═══════════════════════════════════════════════════════════════════════════
+describe('two lists, two verdicts', () => {
+  test('an audit-log failure never prints "the queue could not be loaded" over a queue that loaded', async () => {
+    routes[REPORTS] = () => respond(queueBody([]));
+    routes[ACTIONS] = () => respond({ error: 'Failed to fetch audit log' }, { ok: false, status: 500 });
+
+    await renderConsole();
+
+    // The queue genuinely IS clear. Saying otherwise is the one sentence on
+    // this screen that must never be wrong in either direction.
+    expect(await screen.findByText('Queue is clear.')).toBeInTheDocument();
+    expect(screen.queryByText(/queue could not be loaded/i)).toBeNull();
+    expect(screen.getByText('The audit log could not be loaded.')).toBeInTheDocument();
+  });
+
+  test('a queue failure does not stop the audit log from being read at all', async () => {
+    routes[REPORTS] = () => respond({ error: 'Failed to fetch reports' }, { ok: false, status: 500 });
+    routes[ACTIONS] = () => respond({
+      actions: [{ id: 4, action: 'user_banned', target_user_name: 'Sam', moderator_name: 'Jay', created_at: '2026-08-14T11:00:00Z' }],
+    });
+
+    await renderConsole();
+
+    // Chained inside one try, the second fetch never happened and the screen
+    // then reported the audit log as having failed — about a request it never
+    // made.
+    expect(countCalls(ACTIONS)).toBe(1);
+    expect(screen.getByText('user banned', { exact: false })).toBeInTheDocument();
+    expect(screen.queryByText('The audit log could not be loaded.')).toBeNull();
+    expect(screen.getByText(/queue could not be loaded/i)).toBeInTheDocument();
+  });
+
+  test('the audit log says when it is only showing the last 200 actions', async () => {
+    // moderation_actions is the compliance record. A log that silently stops at
+    // 200 and looks complete is worse than one that says where it stops.
+    const many = Array.from({ length: 200 }, (_, i) => ({
+      id: i + 1, action: 'content_hidden', content_type: 'dm', content_id: i + 1,
+      moderator_name: 'Jay', created_at: '2026-08-14T11:00:00Z',
+    }));
+    routes[REPORTS] = () => respond(queueBody([]));
+    routes[ACTIONS] = () => respond({ actions: many });
+
+    await renderConsole();
+    expect(screen.getByText(/last 200 actions/)).toBeInTheDocument();
+  }, 30000);
+
+  test('a malformed 200 is a failure, not an empty queue', async () => {
+    routes[REPORTS] = () => respond({ reports: 'not an array' });
+    routes[ACTIONS] = () => respond({ actions: [] });
+
+    await renderConsole();
+
+    expect(screen.queryByText('Queue is clear.')).toBeNull();
+    expect(screen.getByText(/does not understand/i)).toBeInTheDocument();
+    // …and the audit log is still allowed to be honestly empty.
+    expect(screen.getByText('No actions yet.')).toBeInTheDocument();
+  });
+
+  test('a 403 gets the sign-in hint; an unrelated failure does not', async () => {
+    routes[REPORTS] = () => respond({ error: 'Admin access required' }, { ok: false, status: 403 });
+    routes[ACTIONS] = () => respond({ error: 'Failed to fetch audit log' }, { ok: false, status: 500 });
+
+    await renderConsole();
+
+    expect(screen.getByText(/Sign in to the app as an admin account first/)).toBeInTheDocument();
+    // Exactly one banner carries it: the one that actually saw a 403.
+    expect(screen.getAllByText(/Sign in to the app as an admin account first/)).toHaveLength(1);
+  });
+
+  test('one failure that takes out both reads is stated once, not keyed twice', async () => {
+    // An offline tab, a dropped VPN and a CORS refusal all fail BOTH reads with
+    // the identical message. Two banners keyed on the same string is a React key
+    // collision on the error path of a moderation console, and the sentence is
+    // about the network rather than about either list, so it belongs once.
+    const dead = () => { throw new TypeError('Failed to fetch'); };
+    routes[REPORTS] = dead;
+    routes[ACTIONS] = dead;
+    const warn = jest.spyOn(console, 'error').mockImplementation(() => {});
+
+    await renderConsole();
+
+    expect(screen.getAllByText('Failed to fetch')).toHaveLength(1);
+    expect(warn.mock.calls.some((c) => /same key|duplicate key/i.test(String(c[0])))).toBe(false);
+    warn.mockRestore();
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 4. Refreshing is not loading
+// ═══════════════════════════════════════════════════════════════════════════
+describe('refresh keeps the queue on screen', () => {
+  test('the rows and the opened evidence survive a refresh in flight', async () => {
+    routes[REPORTS] = () => respond(queueBody([aReport({ content_excerpt: 'the reported words' })]));
+    routes[ACTIONS] = () => respond({ actions: [] });
+
+    await renderConsole();
+    expect(screen.getByText('the reported words')).toBeInTheDocument();
+
+    // Hold the refresh open.
+    let release;
+    routes[REPORTS] = () => new Promise((resolve) => { release = () => resolve(respond(queueBody([aReport()]))); });
+
+    fireEvent.click(screen.getByRole('button', { name: /Refresh/ }));
+
+    // setLoading(true) on a refresh replaced all of this with the word
+    // "Loading…", so a moderator lost their place in a 200-row list and every
+    // image and body they had opened from it.
+    expect(screen.queryByText('Loading…')).toBeNull();
+    expect(screen.getByText('the reported words')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Refreshing…/ })).toBeDisabled();
+
+    await act(async () => { release(); });
+    await waitFor(() => expect(screen.getByRole('button', { name: /Refresh$/ })).toBeEnabled());
+  });
+
+  test('a failed refresh keeps the counts and says they are stale', async () => {
+    routes[REPORTS] = () => respond(queueBody([aReport()], [{ status: 'open', count: 7 }]));
+    routes[ACTIONS] = () => respond({ actions: [] });
+
+    await renderConsole();
+    expect(screen.getByText('7')).toBeInTheDocument();
+
+    routes[REPORTS] = () => respond({ error: 'Failed to fetch reports' }, { ok: false, status: 500 });
+    fireEvent.click(screen.getByRole('button', { name: /Refresh/ }));
+
+    await screen.findByText(/These numbers are from the last load that worked/);
+    // The number is still on screen — it just no longer claims to be current.
+    expect(screen.getByText('7')).toBeInTheDocument();
+    expect(screen.getByText('the reported words')).toBeInTheDocument();
+  });
+
+  test('a refresh that works clears the banner it put up', async () => {
+    routes[REPORTS] = () => respond({ error: 'Failed to fetch reports' }, { ok: false, status: 500 });
+    routes[ACTIONS] = () => respond({ actions: [] });
+    await renderConsole();
+    expect(screen.getByText('Failed to fetch reports')).toBeInTheDocument();
+
+    routes[REPORTS] = () => respond(queueBody([aReport()]));
+    fireEvent.click(screen.getByRole('button', { name: /Refresh/ }));
+
+    // An error that outlives the condition it described is the same lie as an
+    // empty state that outlives a failed load, pointing the other way.
+    await waitFor(() => expect(screen.queryByText('Failed to fetch reports')).toBeNull());
+    await waitFor(() => expect(screen.queryByText(/last load that worked/)).toBeNull());
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 4b. The reported evidence
+// ═══════════════════════════════════════════════════════════════════════════
+describe('the opened evidence', () => {
+  const withImage = aReport({
+    content_has_image: true,
+    content_image_url: 'https://cdn.example.test/reported.jpg',
+    content_image_deferred: false,
+  });
+
+  const openTheImage = async () => {
+    routes[REPORTS] = () => respond(queueBody([withImage]));
+    routes[ACTIONS] = () => respond({ actions: [] });
+    await renderConsole();
+    fireEvent.click(screen.getByRole('button', { name: 'Show image' }));
+    return screen.getByAltText('Reported flock message');
+  };
+
+  test('a hosted image is fetched without telling its host who is looking', async () => {
+    // content_image_url is a string the reported user chose. Without this, the
+    // browser sends the admin console's URL in a Referer header to whoever is
+    // hosting it — which tells the person being moderated that a moderator is
+    // reading their report, and from where.
+    const img = await openTheImage();
+    expect(img.getAttribute('referrerpolicy')).toBe('no-referrer');
+  });
+
+  test('evidence for a report that leaves the queue is dropped, not parked', async () => {
+    await openTheImage();
+    expect(screen.getByAltText('Reported flock message')).toBeInTheDocument();
+
+    // The row rotates out of the 200-row window…
+    routes[REPORTS] = () => respond(queueBody([]));
+    fireEvent.click(screen.getByRole('button', { name: /Refresh/ }));
+    await screen.findByText('Queue is clear.');
+
+    // …and comes back. Unpruned, the image state survived by report id and the
+    // picture would paint again unasked — reported UGC, sometimes posted by a
+    // minor, held in memory for the life of the tab on a response the server
+    // marks no-store.
+    routes[REPORTS] = () => respond(queueBody([withImage]));
+    fireEvent.click(screen.getByRole('button', { name: /Refresh/ }));
+
+    await screen.findByRole('button', { name: 'Show image' });
+    expect(screen.queryByAltText('Reported flock message')).toBeNull();
+  });
+
+  test('graphic UGC never appears unannounced', async () => {
+    routes[REPORTS] = () => respond(queueBody([withImage]));
+    routes[ACTIONS] = () => respond({ actions: [] });
+    await renderConsole();
+    // Click-to-open, whether or not the payload already carried the url.
+    expect(screen.queryByAltText('Reported flock message')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Show image' })).toBeInTheDocument();
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 5. The action row
+// ═══════════════════════════════════════════════════════════════════════════
+describe('every action the server can still honour is on the card', () => {
+  const onlyReport = (over) => {
+    routes[REPORTS] = () => respond(queueBody([aReport(over)]));
+    routes[ACTIONS] = () => respond({ actions: [] });
+  };
+
+  test('a RESOLVED report still offers hide and ban', async () => {
+    // The bug this pins: every action resolves the report, and the whole row was
+    // gated on the report being open, so banning an account made the Hide
+    // button vanish with the content still live.
+    onlyReport({ status: 'resolved', content_is_hidden: false, reported_user_banned: false });
+    await renderConsole();
+
+    expect(screen.getByRole('button', { name: 'Hide content' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Ban user' })).toBeInTheDocument();
+    // Dismissing something already finished changes nothing but the word on the
+    // row, so that one IS status-gated, deliberately.
+    expect(screen.queryByRole('button', { name: 'Dismiss' })).toBeNull();
+  });
+
+  test('un-hiding is reachable after the report is closed', async () => {
+    // A mistaken takedown is discovered once the report is already resolved.
+    onlyReport({ status: 'resolved', content_is_hidden: true });
+    await renderConsole();
+
+    expect(screen.getByRole('button', { name: 'Restore content' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Hide content' })).toBeNull();
+  });
+
+  test('a profile report offers no takedown, because the server refuses one', async () => {
+    // TAKEDOWN_TARGETS in backend/routes/admin.js has no 'profile' entry: there
+    // is no row to hide. A button that can only produce a refusal is worse than
+    // no button on the screen where takedowns happen.
+    onlyReport({ content_type: 'profile', content_id: null, content_is_hidden: false });
+    await renderConsole();
+
+    expect(screen.queryByRole('button', { name: 'Hide content' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Restore content' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Ban user' })).toBeInTheDocument();
+  });
+
+  test('…and still offers none if a profile report ever arrives carrying a content id', async () => {
+    // Belt to the absent content_id above. content_reports has no path that
+    // writes one for a profile report today, so the two gates are separate
+    // claims: "there is nothing to hide" and "the server has no takedown for
+    // this type". HIDEABLE.profile is the second, and it must hold on its own.
+    // (backend/__tests__/moderationConsoleContract.test.js pins the same value
+    // against TAKEDOWN_TARGETS; this pins what the screen does with it.)
+    onlyReport({ content_type: 'profile', content_id: 77, content_is_hidden: false });
+    await renderConsole();
+
+    expect(screen.queryByRole('button', { name: 'Hide content' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Restore content' })).toBeNull();
+  });
+
+  test('content that is gone offers no takedown and says why', async () => {
+    onlyReport({ content_missing: true });
+    await renderConsole();
+
+    expect(screen.queryByRole('button', { name: 'Hide content' })).toBeNull();
+    expect(screen.getByText('That content no longer exists. Dismiss the report.')).toBeInTheDocument();
+  });
+
+  test('a report naming no user offers no ban', async () => {
+    onlyReport({ reported_user_id: null, reported_user_name: null, content_type: 'guest_rsvp' });
+    await renderConsole();
+
+    expect(screen.queryByRole('button', { name: 'Ban user' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Unban user' })).toBeNull();
+  });
+
+  test('a refused action re-reads the queue instead of leaving the dead button up', async () => {
+    onlyReport({});
+    await renderConsole();
+    const before = countCalls(REPORTS, 'GET');
+
+    routes[REPORTS] = (p, options) => {
+      if (options && options.method === 'PUT') {
+        return respond({ error: 'That content no longer exists. Dismiss the report instead.' }, { ok: false, status: 404 });
+      }
+      return respond(queueBody([aReport({ content_missing: true })]));
+    };
+
+    fireEvent.click(screen.getByRole('button', { name: 'Hide content' }));
+
+    // The refusal is news about the world, not just about the click: the card
+    // has to re-gate itself or it keeps offering a takedown that cannot run.
+    await waitFor(() => expect(countCalls(REPORTS, 'GET')).toBe(before + 1));
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Hide content' })).toBeNull());
+  });
+
+  test('an unparseable timestamp never renders as "Invalid Date"', async () => {
+    onlyReport({ created_at: 'not-a-timestamp', content_created_at: null });
+    await renderConsole();
+    expect(screen.queryByText(/Invalid Date/)).toBeNull();
+  });
+
+  test('the 200-row cap is stated, because the counts above it are of the whole table', async () => {
+    const many = Array.from({ length: 200 }, (_, i) => aReport({ id: i + 1, content_id: i + 1 }));
+    routes[REPORTS] = () => respond(queueBody(many, [{ status: 'open', count: 250 }]));
+    routes[ACTIONS] = () => respond({ actions: [] });
+
+    await renderConsole();
+    // Ordered open-first then newest-first, so what falls off the end is the
+    // oldest open work: the reports that have been waiting longest.
+    expect(screen.getByText(/first 200 reports/)).toBeInTheDocument();
+  }, 30000);
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 6. The icon system
+// ═══════════════════════════════════════════════════════════════════════════
+describe('icons come from components/ui/Icons.js', () => {
+  test.each(OWNED)('%s hand-rolls no <svg> of its own', (name, source) => {
+    // Comments talk ABOUT the old glyphs; the code must not contain them.
+    const code = source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+    expect(code).not.toMatch(/<svg\b/);
+    expect(code).not.toMatch(/strokeLinecap="round"/);
+  });
+
+  test.each(OWNED)('%s imports the icon system', (name, source) => {
+    expect(source).toMatch(/import Icons from '.*ui\/Icons'/);
+  });
+
+  test('the report sheet uses the two system glyphs, not local ones', () => {
+    expect(sheetSrc).toContain('Icons.flag');
+    expect(sheetSrc).toContain('Icons.ban');
+    expect(sheetSrc).not.toContain('FlagIcon');
+    expect(sheetSrc).not.toContain('BlockIcon');
+  });
+
+  test('both sheet glyphs render as system icons and are decorative', () => {
+    render(React.createElement(ModerationSheet, {
+      target: { userId: 3, userName: 'Sam', contentType: 'dm', contentId: 9 },
+      onClose: () => {},
+      showToast: () => {},
+    }));
+    const dialog = screen.getByRole('dialog');
+    const svgs = dialog.querySelectorAll('svg');
+    expect(svgs).toHaveLength(2);
+    for (const el of svgs) {
+      expect(el.getAttribute('class')).toContain('flock-icon');
+      // The geometry contract: butt caps, miter joins. A round-capped glyph
+      // beside these reads as a different product.
+      expect(el.getAttribute('stroke-linecap')).toBe('butt');
+      expect(el.getAttribute('stroke-linejoin')).toBe('miter');
+      // Each sits beside its own text label, so it must not be announced.
+      expect(el.getAttribute('aria-hidden')).toBe('true');
+      expect(el.getAttribute('aria-label')).toBeNull();
+    }
+    // …and the labels really are there for a screen reader to read instead.
+    expect(screen.getByRole('button', { name: /^Report this message$/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^Block Sam$/ })).toBeInTheDocument();
+  });
+
+  test('the venue password checklist uses system glyphs for both states', () => {
+    expect(venueSrc).toContain('Icons.check');
+    expect(venueSrc).toContain('Icons.minus');
+    // The set has no bare circle, and the two circles it does have say the
+    // wrong thing: alertCircle reads as an error against a rule the user has
+    // simply not reached yet.
+    expect(venueSrc).not.toContain('Icons.alertCircle');
+  });
+
+  describe('Icons.ban, the glyph added for the Block control', () => {
+    // Nothing in the set said "this person cannot reach you": shield is the SOS
+    // mark, lock reads as private, x reads as close, minus reads as remove.
+    const paths = () => {
+      const { container } = render(React.createElement('div', null, Icons.ban('currentColor', 18)));
+      return [...container.querySelectorAll('path')].map((p) => p.getAttribute('d'));
+    };
+
+    test('it exists and is a ring plus one straight bar', () => {
+      expect(typeof Icons.ban).toBe('function');
+      const d = paths();
+      expect(d).toHaveLength(2);
+      expect(d[0]).toMatch(/A9 9 0 1 0/);          // the open ring at r=9
+      expect(d[1]).toMatch(/^M[\d.]+ [\d.]+ [\d.]+ [\d.]+$/); // one segment, no curve
+    });
+
+    test('the bar is a true 45 degree chord with both ends on the ring', () => {
+      const [, slash] = paths();
+      const [x1, y1, x2, y2] = slash.replace('M', '').split(/\s+/).map(Number);
+      const r = (x, y) => Math.hypot(x - 12, y - 12);
+      // Every straight segment in this set runs at exactly 0 / 45 / 90 degrees.
+      expect(Math.abs(Math.abs(x2 - x1) - Math.abs(y2 - y1))).toBeLessThan(0.01);
+      // Both ends land on the ring's own radius, whole-unit per the system.
+      expect(r(x1, y1)).toBeCloseTo(9, 1);
+      expect(r(x2, y2)).toBeCloseTo(9, 1);
+    });
+
+    test('neither end of the bar terminates inside the ring\'s 30 degree gap', () => {
+      // The ring at r >= 7 is cut by a 30deg gap centred on the upper-right
+      // diagonal, spanning theta 30..60. The other diagonal would put an
+      // endpoint at theta=45 — dead centre of the gap — so the bar would stop
+      // in mid-air and read as damage rather than as a bar across a circle.
+      const [, slash] = paths();
+      const [x1, y1, x2, y2] = slash.replace('M', '').split(/\s+/).map(Number);
+      const theta = (x, y) => {
+        const deg = (Math.atan2(12 - y, x - 12) * 180) / Math.PI;
+        return (deg + 360) % 360;
+      };
+      for (const t of [theta(x1, y1), theta(x2, y2)]) {
+        expect(t > 30 && t < 60).toBe(false);
+      }
+    });
+
+    test('it obeys the shared geometry and is decorative unless labelled', () => {
+      const { container } = render(React.createElement('div', null, Icons.ban('#EF4444', 17)));
+      const svg = container.querySelector('svg');
+      expect(svg.getAttribute('stroke-linecap')).toBe('butt');
+      expect(svg.getAttribute('stroke-linejoin')).toBe('miter');
+      expect(svg.getAttribute('aria-hidden')).toBe('true');
+
+      const labelled = render(React.createElement('div', null, Icons.ban('#EF4444', 17, 'Block this account')));
+      const el = labelled.container.querySelector('svg');
+      expect(el.getAttribute('role')).toBe('img');
+      expect(el.getAttribute('aria-label')).toBe('Block this account');
+      expect(el.getAttribute('aria-hidden')).toBeNull();
+    });
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 7. Drift between the sheet and the server
+// ═══════════════════════════════════════════════════════════════════════════
+describe('the sheet names every content type the server accepts', () => {
+  const VALID_CONTENT_TYPES = (() => {
+    const src = read(MODERATION_ROUTE);
+    const m = /const VALID_CONTENT_TYPES = \[([^\]]*)\]/.exec(src);
+    expect(m).not.toBeNull();
+    const types = [...m[1].matchAll(/'([^']+)'/g)].map((q) => q[1]);
+    expect(types.length).toBeGreaterThanOrEqual(7);
+    return types;
+  })();
+
+  test('NOUNS has an entry for each one', () => {
+    const NOUNS = evalDeclaration(sheetSrc, 'NOUNS');
+    for (const type of VALID_CONTENT_TYPES) {
+      // Missing, the button says "Report this content" over a named thing — the
+      // same route-widened-and-the-thing-behind-it-did-not shape as migrations
+      // 003, 016 and 017, in its mildest form. venue_event was the instance.
+      expect(Object.prototype.hasOwnProperty.call(NOUNS, type)).toBe(true);
+      expect(typeof NOUNS[type]).toBe('string');
+      expect(NOUNS[type].length).toBeGreaterThan(0);
+    }
+  });
+
+  test('and no entry the server would reject', () => {
+    const NOUNS = evalDeclaration(sheetSrc, 'NOUNS');
+    for (const type of Object.keys(NOUNS)) {
+      expect(VALID_CONTENT_TYPES).toContain(type);
+    }
+  });
+
+  test('the reasons offered are exactly the ones the server accepts', () => {
+    const src = read(MODERATION_ROUTE);
+    const m = /const VALID_REASONS = \[([^\]]*)\]/.exec(src);
+    expect(m).not.toBeNull();
+    const serverReasons = [...m[1].matchAll(/'([^']+)'/g)].map((q) => q[1]).sort();
+    const REASONS = evalDeclaration(sheetSrc, 'REASONS');
+    expect(REASONS.map((r) => r.value).sort()).toEqual(serverReasons);
+  });
+
+  test('the details box cannot exceed the length the server will store', () => {
+    const src = read(MODERATION_ROUTE);
+    const cap = /isLength\(\{\s*max:\s*(\d+)\s*\}\)/.exec(src);
+    expect(cap).not.toBeNull();
+    const local = /maxLength=\{(\d+)\}/.exec(sheetSrc);
+    expect(local).not.toBeNull();
+    expect(Number(local[1])).toBeLessThanOrEqual(Number(cap[1]));
+  });
+});
