@@ -47,15 +47,39 @@ import './icons.css';
  * Shared helpers
  * ------------------------------------------------------------------ */
 
-// Stroke weight per size band, in rendered CSS pixels. Deliberately heavier in
-// relative terms at small sizes. The top bands exist because 24 and 40 sharing
-// a 2px stroke left the large glyphs looking hairline next to the small ones.
+/**
+ * Stroke weight in rendered CSS pixels.
+ *
+ * This used to be five hard bands (1.25 / 1.5 / 1.75 / 2 / 2.5 / 3) and the
+ * header above claimed the result was "optically comparable at 10px and at
+ * 40px". It measurably was not. Size-to-stroke ratio under the old bands:
+ *
+ *     12px -> 9.6:1   14px -> 9.3:1   16px -> 10.7:1
+ *     18px -> 10.3:1  24px -> 12.0:1  32px -> 12.8:1
+ *
+ * a 38% spread, and non-monotonic: 14px came out HEAVIER than 12px because
+ * both sat in bands whose width did not match the sizes actually called. On
+ * screen that reads as the small icons looking chunky and the 24-32px ones
+ * looking hairline - which is exactly what a header icon next to a 14px
+ * section heading looks like in the venue dashboard.
+ *
+ * One ratio, held everywhere: 10.5:1. That is heavier than Lucide/Feather
+ * (12:1) on purpose - this set is thin-walled and open, and it needs the
+ * weight - but it no longer drifts. The floor exists because below ~1px a
+ * stroke stops being antialiased into a visible line on a 1x display; the
+ * ceiling stops a 96px marketing render from turning into a blob. The ceiling
+ * sits at 4.5, i.e. it does not engage until 47px - deliberately clear of 40,
+ * the largest size any call site in App.js asks for, so the ratio genuinely
+ * holds everywhere the app draws an icon rather than everywhere but the top.
+ *
+ * Old -> new at the sizes actually used: 10 -> 1.25/1.00, 12 -> 1.25/1.14,
+ * 14 -> 1.5/1.33, 16 -> 1.5/1.52, 18 -> 1.75/1.71, 24 -> 2/2.29,
+ * 32 -> 2.5/3.05. Small sizes get very slightly lighter, large ones
+ * noticeably heavier. That is the correction, not a side effect.
+ */
+const SIZE_TO_STROKE = 10.5;
 const sw = (size) =>
-  size <= 12 ? 1.25 :
-  size <= 17 ? 1.5 :
-  size <= 23 ? 1.75 :
-  size <= 31 ? 2 :
-  size <= 47 ? 2.5 : 3;
+  Math.round(Math.min(4.5, Math.max(1, size / SIZE_TO_STROKE)) * 100) / 100;
 
 const r2 = (n) => Math.round(n * 100) / 100;
 
@@ -277,17 +301,23 @@ const Icons = {
     </>
   ),
 
-  // 10. calendar. Refuses the box-with-a-grid; the open bottom echoes the wire.
-  // The two hangers are the only thing separating a calendar from the six other
-  // open-box glyphs in this set, and the box is now as tall as clock is round,
-  // so a date and a time sitting side by side read at the same optical size.
+  // 10. calendar. The header rule is not decoration and it is not the
+  // "box-with-a-grid" this glyph used to refuse - it is the one line that stops
+  // this being a chat bubble. The old drawing was an open box carrying THREE
+  // dots on a single row at y=13.5, which at the 14 and 18px the venue
+  // dashboard calls it at is an ellipsis inside a rounded container: the
+  // universal typing indicator, and a direct collision with `chat`, which is
+  // also an open box. Two dots instead of three (an ellipsis needs three) on
+  // the lower row, 8 units apart, well clear of the 5-unit minimum.
+  // Hangers + header rule is the classic and it is pure 0/90, so nothing here
+  // costs the system anything.
   calendar: make(
     <>
       <path d="M4 20 4 7 20 7 20 20" />
       <path d="M8 7 8 4M16 7 16 4" />
-      {dot(7, 13.5)}
-      {dot(12, 13.5)}
-      {dot(17, 13.5)}
+      <path d="M4 11 20 11" />
+      {dot(8, 15.5)}
+      {dot(16, 15.5)}
     </>
   ),
 
@@ -349,7 +379,16 @@ const Icons = {
     </>
   ),
 
-  barChart: make(<path d="M5 20 5 14M12 20 12 6M19 20 19 10" />),
+  // Three bars standing on a baseline. Without the baseline they are three
+  // floating tally marks and the glyph reads as a signal-strength meter, which
+  // is what it looked like sitting in the venue dashboard's Analytics tab.
+  // The axis is a rule, not a container, so it takes no open-bottom treatment.
+  barChart: make(
+    <>
+      <path d="M5 20 5 14M12 20 12 6M19 20 19 10" />
+      <path d="M3 20 21 20" />
+    </>
+  ),
 
   beer: MUG_ICON,
 
@@ -430,10 +469,16 @@ const Icons = {
 
   // Box + one full-width stripe read as a table. The short second rule is what
   // makes it a card. Also pulled in from 2..22, which was the widest glyph here.
+  //
+  // The container was 18 x 13, which is 1.38:1 - closer to square than to a
+  // card, and a near-square open box is the same silhouette as `layers`,
+  // `briefcase` and half a dozen others in this set. Now 18 x 11 (1.64:1,
+  // against a real card's 1.586), and the two interior rules are re-spaced so
+  // nothing sits closer than 4 units to its neighbour.
   creditCard: make(
     <>
-      <path d="M3 19 3 6 21 6 21 19" />
-      <path d="M3 10 21 10" />
+      <path d="M3 18 3 7 21 7 21 18" />
+      <path d="M3 11 21 11" />
       <path d="M6 15 12 15" />
     </>
   ),
@@ -449,12 +494,19 @@ const Icons = {
   ),
 
   // The S is built from horizontals and verticals only - a geometric dollar.
-  // Bars sit 5 units apart (was 4) and run 10 wide (was 8): at the 13-15px this
-  // renders at, the old spacing put three strokes inside 2px and filled in.
+  // The identity of this glyph is the RISERS, not the bars: three parallel
+  // horizontals crossed by a full-height vertical is a double-dagger, and that
+  // is exactly what this rendered as in the admin dashboard's Revenue tab at
+  // 18px. The riser length equals the bar spacing, so the fix is to spread the
+  // bars: 6.5 units apart (was 5) and 8 wide (was 10). At 14px that turns a
+  // 1.4px gap between strokes into 2.5px, and the S-motion survives.
+  //
+  // Honest limit: a $ that reads instantly at 12px needs the curved bowls of a
+  // real S, and the 0/45/90 rule forbids them. This is as far as the rule goes.
   dollar: make(
     <>
-      <path d="M17 7 7 7 7 12 17 12 17 17 7 17" />
-      <path d="M12 4 12 20" />
+      <path d="M16 5.5 8 5.5 8 12 16 12 16 18.5 8 18.5" />
+      <path d="M12 3 12 21" />
     </>
   ),
 
@@ -520,11 +572,17 @@ const Icons = {
     </>
   ),
 
+  // The bow was an open V floating above the lid, arms splaying up and outward
+  // from the centre - which is a tote bag's handles, and that is what this read
+  // as. Two closed triangles resting ON the lid instead: a bow is a bow because
+  // it is two solid loops, and an outline that closes cannot be mistaken for a
+  // handle. Both triangles are 45deg, so nothing moves off-system.
   gift: make(
     <>
       <path d="M4 20 4 10 20 10 20 20" />
       <path d="M12 10 12 20" />
-      <path d="M8 6 12 10 16 6" />
+      <path d="M12 10 8 6 12 6Z" />
+      <path d="M12 10 16 6 12 6Z" />
     </>
   ),
 

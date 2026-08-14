@@ -8232,7 +8232,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
             <div style={{ flex: 1, minWidth: 0 }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                 <h4 style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: colors.navy, margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{dmPinnedVenue.name}</h4>
-                {dmPinnedVenue.rating && <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: '#F59E0B', display: 'flex', alignItems: 'center', gap: '2px', flexShrink: 0 }}>{Icons.starFilled('#F59E0B', 11)} {dmPinnedVenue.rating}</span>}
+                {dmPinnedVenue.rating && <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: '#F59E0B', display: 'flex', alignItems: 'center', gap: '2px', flexShrink: 0 }}>{Icons.starFilled('#F59E0B', 12)} {dmPinnedVenue.rating}</span>}
               </div>
               {dmPinnedVenue.addr && <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '2px 0 0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{dmPinnedVenue.addr}</p>}
             </div>
@@ -8975,7 +8975,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                               {v.price_level != null && <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', fontWeight: '500', flexShrink: 0 }}>{'$'.repeat(v.price_level || 1)}</span>}
                               {v.rating && (
                                 <span style={{ display: 'inline-flex', alignItems: 'center', gap: '3px', fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', fontWeight: '500', flexShrink: 0 }}>
-                                  {Icons.starFilled('#d97706', 11)}{v.rating}
+                                  {Icons.starFilled('#d97706', 12)}{v.rating}
                                 </span>
                               )}
                               {v.address && (
@@ -11737,7 +11737,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                   <h4 style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: colors.navy, margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{flock.venue}</h4>
                   {flock.venueRating && (
                     <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: '#F59E0B', display: 'flex', alignItems: 'center', gap: '2px', flexShrink: 0 }}>
-                      {Icons.starFilled('#F59E0B', 11)} {flock.venueRating}
+                      {Icons.starFilled('#F59E0B', 12)} {flock.venueRating}
                     </span>
                   )}
                 </div>
@@ -18159,9 +18159,20 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 <div style={{ padding: '12px', backgroundColor: 'var(--bg-tertiary)', borderRadius: '10px', marginBottom: '8px' }}>
                   <p style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: 'var(--text-primary)', margin: '0 0 6px' }}>Your Rating</p>
                   <div style={{ display: 'flex', gap: '4px', marginBottom: '8px' }}>
+                    {/* Two things were wrong here, and this is the rating INPUT,
+                        so both cost more than they do on a display row.
+                        Unselected stars were colors.disabled (#e5e7eb) on
+                        --bg-tertiary (#e8e0d5): 1.1:1, invisible, so before you
+                        tapped anything there was no visible five-star scale to
+                        aim at — the control looked empty. --star-empty is barely
+                        better on this particular surface, so the unselected
+                        state uses --text-tertiary, which is a real outline.
+                        And all five buttons were labelled "Rate", so a screen
+                        reader offered five identical buttons and no way to pick
+                        a number. */}
                     {[1, 2, 3, 4, 5].map(s => (
-                      <button aria-label="Rate" className="hit44" key={s} onClick={() => setReviewRating(s)} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '2px' }}>
-                        {s <= reviewRating ? Icons.starFilled(colors.amber, 22) : Icons.star(colors.disabled, 22)}
+                      <button aria-label={`Rate ${s} star${s === 1 ? '' : 's'}`} aria-pressed={reviewRating === s} className="hit44" key={s} onClick={() => setReviewRating(s)} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '2px' }}>
+                        {s <= reviewRating ? Icons.starFilled(colors.amber, 22) : Icons.star('var(--text-tertiary)', 22)}
                       </button>
                     ))}
                   </div>
