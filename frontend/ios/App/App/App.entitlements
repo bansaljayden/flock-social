@@ -1,5 +1,44 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+	Two entitlements, both genuinely used by shipping code. Neither can be
+	completed from this repo: an entitlement is only half of a capability, and
+	the other half lives on App ID com.flockcorp.flock in the Apple Developer
+	portal. Codemagic's `app-store-connect fetch-signing-files` step (run with
+	its create flag) builds the provisioning profile FROM that App ID, so a
+	capability that is off in the portal produces a profile without it and the
+	archive fails with "provisioning profile does not match the entitlements
+	file".
+
+	Status as of this audit, matching TASKS.md section A2:
+
+	  Sign in with Apple  -  CLAIMED HERE, NOT YET ENABLED ON THE APP ID.
+	    This is the current build blocker, and it is a portal visit, not a
+	    code change. Do not "fix" the build by deleting the key: the button is
+	    shipping (components/auth/AppleSignInButton.js, rendered on native iOS)
+	    and Guideline 4.8 requires it wherever Google sign-in is offered, so
+	    removing the entitlement trades a build failure for a rejection.
+	    Separately, account deletion cannot revoke the Apple grant until the
+	    APPLE_* variables are set in Railway from the Sign in with Apple key
+	    (.p8) created during the same portal visit. That is 5.1.1(v), and the
+	    privacy policy and the deletion page already promise it happens.
+
+	  aps-environment: production  -  CORRECT FOR THIS PIPELINE.
+	    "production" is the right value because codemagic.yaml only ever
+	    fetches an IOS_APP_STORE profile and ships to TestFlight; a build
+	    signed for App Store distribution talks to the production APNs
+	    gateway. It would be wrong only for a Development-signed build run
+	    from Xcode, which this project does not produce. Push is used:
+	    AppDelegate.swift forwards the APNs token to
+	    @capacitor-firebase/messaging and backend/services/firebaseService.js
+	    sends alert pushes through FCM. Still needs Push Notifications
+	    confirmed ON for the App ID in the portal.
+
+	Deliberately NOT here: com.apple.developer.associated-domains. Nothing can
+	be signed with it until the capability is enabled on the App ID and an
+	apple-app-site-association file is served from flockcorp.com. See the
+	deep-link note in Info.plist.
+-->
 <plist version="1.0">
 <dict>
 	<key>com.apple.developer.applesignin</key>
