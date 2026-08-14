@@ -57,6 +57,102 @@ const MAX_USER_ID = 2147483647;
 const scalarUserId = () =>
   scalarOnly(body('user_id'), 'user_id').isInt({ min: 1, max: MAX_USER_ID }).withMessage('user_id is required');
 
+// ---------------------------------------------------------------------------
+// EVERY WRITE HERE IS A READ-THEN-WRITE, AND THE WRITE MUST NAME WHAT IT READ.
+// (§O round: "two things at once".)
+//
+// Both request paths do the same thing: SELECT the existing friendship, branch
+// on its `status`, then UPDATE by row id. Between those two statements the
+// other person is looking at the same row on their own phone. The window is
+// small and it is exactly the window that matters, because the two people
+// involved are both acting on the same relationship at the same time — that is
+// what a friend request IS.
+//
+// The re-request write was:
+//
+//     UPDATE friendships SET status = 'pending', requester_id = $1,
+//            addressee_id = $2 WHERE id = $3
+//
+// keyed on the row id and nothing else. If the other person tapped Accept in
+// that window, this landed on an ACCEPTED row and put it back to pending, with
+// the direction flipped: two people who are friends, neither of whom is told,
+// and the accepter's own confirmation silently undone. This is the same shape
+// as the invite bug found in flocks this week, where re-inviting demoted a
+// member who had accepted mid-request.
+//
+// So each write carries the status it was decided on. A write that matches
+// nothing means the row moved, and the honest answer is what the row says NOW,
+// re-read rather than assumed.
+// ---------------------------------------------------------------------------
+async function reRequestDeclined(rowId, requesterId, addresseeId) {
+  const r = await pool.query(
+    `UPDATE friendships SET status = 'pending', requester_id = $1, addressee_id = $2
+      WHERE id = $3 AND status = 'declined'
+      RETURNING id`,
+    [requesterId, addresseeId, rowId]
+  );
+  return r.rows.length > 0;
+}
+
+async function acceptPending(rowId) {
+  const r = await pool.query(
+    "UPDATE friendships SET status = 'accepted' WHERE id = $1 AND status = 'pending' RETURNING id",
+    [rowId]
+  );
+  return r.rows.length > 0;
+}
+
+// A CROSSED PAIR IS AN ORPHAN THAT NO SCREEN CAN CLEAR (§O round: "two things
+// at once", the other direction).
+//
+// A requests B and B requests A in the same instant. Neither read finds a row,
+// both INSERTs succeed — the unique constraint is on the ORDERED pair, so
+// (A,B) and (B,A) are two different keys — and the two of them now hold two
+// pending rows. Accepting one left the other pending forever: the accepter sees
+// a live outgoing request to somebody they are already friends with, sitting on
+// the outgoing screen with no button that touches it, because every other
+// handler here matches on `status = 'pending'` in ONE direction.
+//
+// Once the pair is accepted, any remaining PENDING row between them is that
+// orphan by definition. `status = 'pending'` in the predicate is what keeps
+// this from being a friendship-deleting statement if it is ever called in the
+// wrong place.
+// CLEANUP MUST NOT FAIL THE THING IT FOLLOWS. This runs AFTER the friendship
+// has been accepted and committed, and it is housekeeping. Letting it throw
+// would answer a successful accept with a 500 — and the retry cannot succeed,
+// because the accept is status-guarded and the row is no longer pending, so the
+// user would be told "no pending request from this user" about the friend they
+// just made. A leftover orphan row is a far smaller problem than that, and the
+// next accept between these two would clear it anyway.
+async function clearCrossedPending(a, b) {
+  try {
+    await pool.query(
+      `DELETE FROM friendships
+        WHERE status = 'pending'
+          AND ((requester_id = $1 AND addressee_id = $2) OR (requester_id = $2 AND addressee_id = $1))`,
+      [a, b]
+    );
+  } catch (err) {
+    console.error('Crossed-request cleanup failed (friendship is accepted regardless):', err.message);
+  }
+}
+
+// What the relationship is right now, for the caller who lost one of the races
+// above. Reported rather than guessed: the whole point is that we no longer
+// know without asking.
+async function currentState(a, b) {
+  const r = await pool.query(
+    `SELECT status FROM friendships
+      WHERE (requester_id = $1 AND addressee_id = $2) OR (requester_id = $2 AND addressee_id = $1)
+      LIMIT 1`,
+    [a, b]
+  );
+  const status = r.rows[0]?.status || 'none';
+  if (status === 'accepted') return { message: 'Already friends', status: 'accepted' };
+  if (status === 'pending') return { message: 'Friend request already sent', status: 'pending' };
+  return { message: 'Friend request could not be sent. Try again.', status };
+}
+
 // POST /api/friends/request - Send a friend request
 router.post('/request',
   scalarUserId(),
@@ -85,9 +181,20 @@ router.post('/request',
       // Check if a friendship already exists in either direction. This runs
       // FIRST because it reads the caller's own relationships (no directory
       // information) and decides whether this call is a probe at all.
+      //
+      // ORDERED, because there can be two rows. The unique constraint is on the
+      // ORDERED pair, so a crossed request (A asks B while B asks A) leaves
+      // (A,B) and (B,A) both present and legal. With no ORDER BY, `rows[0]` was
+      // whatever Postgres handed back first, so the same pair of people got a
+      // different answer to the same tap depending on physical row order —
+      // including "friend request sent" to somebody they are already friends
+      // with. Strongest state first: an accepted relationship is the truth
+      // about these two people whatever else is lying around.
       const existing = await pool.query(
         `SELECT id, status, requester_id FROM friendships
-         WHERE (requester_id = $1 AND addressee_id = $2) OR (requester_id = $2 AND addressee_id = $1)`,
+         WHERE (requester_id = $1 AND addressee_id = $2) OR (requester_id = $2 AND addressee_id = $1)
+         ORDER BY CASE status WHEN 'accepted' THEN 0 WHEN 'pending' THEN 1 ELSE 2 END, id
+         LIMIT 1`,
         [req.user.id, user_id]
       );
 
@@ -117,9 +224,14 @@ router.post('/request',
           return res.json({ message: 'Already friends', status: 'accepted' });
         }
         if (row.status === 'pending') {
-          // If the OTHER person sent us a request, auto-accept
+          // If the OTHER person sent us a request, auto-accept. Guarded by the
+          // status it read: if they withdrew it in the meantime this must not
+          // resurrect a relationship neither side is currently asking for.
           if (row.requester_id === user_id) {
-            await pool.query("UPDATE friendships SET status = 'accepted' WHERE id = $1", [row.id]);
+            if (!await acceptPending(row.id)) {
+              return res.json(await currentState(req.user.id, user_id));
+            }
+            await clearCrossedPending(req.user.id, user_id);
             // Notify both sides
             if (io) {
               io.to(`user:${user_id}`).emit('friend_request_responded', { fromUserId: req.user.id, fromUserName: req.user.name, action: 'accepted' });
@@ -128,19 +240,37 @@ router.post('/request',
           }
           return res.json({ message: 'Friend request already sent', status: 'pending' });
         }
-        // If declined, allow re-request
-        await pool.query(
-          "UPDATE friendships SET status = 'pending', requester_id = $1, addressee_id = $2 WHERE id = $3",
-          [req.user.id, user_id, row.id]
-        );
+        // If declined, allow re-request — but only over a row that is STILL
+        // declined. See reRequestDeclined() for what the unguarded version did.
+        const revived = await reRequestDeclined(row.id, req.user.id, user_id);
+        if (!revived) return res.json(await currentState(req.user.id, user_id));
         if (io) io.to(`user:${user_id}`).emit('friend_request_received', { fromUserId: req.user.id, fromUserName: req.user.name });
         return res.json({ message: `Friend request sent to ${userCheck.rows[0].name}`, status: 'pending' });
       }
 
-      await pool.query(
-        "INSERT INTO friendships (requester_id, addressee_id, status) VALUES ($1, $2, 'pending')",
+      // ON CONFLICT DO NOTHING, because the read above and this write are not
+      // one operation (§O round: "two things at once"). friendships carries
+      // UNIQUE(requester_id, addressee_id). Two taps of the same button, or the
+      // client's own retry after a lost connection, both read "no relationship"
+      // and both INSERT; the loser raised 23505 straight into the outer catch
+      // and answered 500 — for a request that had in fact succeeded a
+      // millisecond earlier, on a row already committed and a push already sent
+      // to the other person. The user sees a failure, taps again, and the same
+      // thing happens for as long as the row exists.
+      const inserted = await pool.query(
+        `INSERT INTO friendships (requester_id, addressee_id, status)
+         VALUES ($1, $2, 'pending')
+         ON CONFLICT (requester_id, addressee_id) DO NOTHING
+         RETURNING id`,
         [req.user.id, user_id]
       );
+
+      // Nothing inserted means the row was already there. It is the same
+      // outcome the caller asked for, so it is a success — but it is NOT a new
+      // event, so nothing is emitted and nobody's phone rings a second time.
+      if (inserted.rows.length === 0) {
+        return res.json({ message: 'Friend request already sent', status: 'pending' });
+      }
 
       // Notify target user
       if (io) io.to(`user:${user_id}`).emit('friend_request_received', { fromUserId: req.user.id, fromUserName: req.user.name });
@@ -200,6 +330,10 @@ router.post('/accept',
         return res.status(404).json({ error: 'No pending request from this user' });
       }
 
+      // If they had also requested us at the same moment, that second row is
+      // now an orphan. See clearCrossedPending.
+      await clearCrossedPending(req.user.id, user_id);
+
       // Notify the requester
       const io = req.app.get('io');
       if (io) {
@@ -235,6 +369,18 @@ router.get('/', async (req, res) => {
 });
 
 // GET /api/friends/pending - List pending friend requests received
+//
+// MUTUAL INVISIBILITY HAS TO HOLD ON EVERY LIST, NOT JUST THE MAIN ONE.
+// GET /api/friends has filtered blocked accounts out since round 5. These two
+// lists did not, and they are the ones where it shows: blocking somebody left
+// their name and their photo sitting at the top of the requests screen, which
+// is the most visible place in the app that a block is supposed to reach.
+// POST /accept already refuses a blocked requester and deletes the row, so
+// until that was tapped the entry was both unactionable and undismissable — the
+// user's only reading is that the block did not work.
+//
+// getInvisibleUserIds, once, rather than a per-row check: see utils/blocks.js
+// on what the per-pair version cost the invite path.
 router.get('/pending', async (req, res) => {
   try {
     const result = await pool.query(
@@ -245,7 +391,8 @@ router.get('/pending', async (req, res) => {
        ORDER BY f.created_at DESC`,
       [req.user.id]
     );
-    res.json({ requests: result.rows });
+    const invisible = new Set(await getInvisibleUserIds(req.user.id));
+    res.json({ requests: result.rows.filter((r) => !invisible.has(r.id)) });
   } catch (err) {
     console.error('Get pending requests error:', err);
     res.status(500).json({ error: 'Failed to get pending requests' });
@@ -322,7 +469,9 @@ router.get('/outgoing', async (req, res) => {
        ORDER BY f.created_at DESC`,
       [req.user.id]
     );
-    res.json({ requests: result.rows });
+    // Same reason as /pending above.
+    const invisible = new Set(await getInvisibleUserIds(req.user.id));
+    res.json({ requests: result.rows.filter((r) => !invisible.has(r.id)) });
   } catch (err) {
     console.error('Get outgoing requests error:', err);
     res.status(500).json({ error: 'Failed to get outgoing requests' });
@@ -446,7 +595,9 @@ router.post('/add-by-code',
       // the directory read, with one indistinguishable answer for all misses.
       const existing = await pool.query(
         `SELECT id, status, requester_id FROM friendships
-         WHERE (requester_id = $1 AND addressee_id = $2) OR (requester_id = $2 AND addressee_id = $1)`,
+         WHERE (requester_id = $1 AND addressee_id = $2) OR (requester_id = $2 AND addressee_id = $1)
+         ORDER BY CASE status WHEN 'accepted' THEN 0 WHEN 'pending' THEN 1 ELSE 2 END, id
+         LIMIT 1`,
         [req.user.id, targetUserId]
       );
 
@@ -469,23 +620,38 @@ router.post('/add-by-code',
         if (row.status === 'accepted') {
           return res.json({ message: `Already friends with ${userCheck.rows[0].name}`, status: 'accepted', user: userCheck.rows[0] });
         }
+        // Every write below carries the status it was decided on, and every
+        // race answers with the state the row actually reached. Same rules as
+        // POST /request — the two paths are the same operation reached through
+        // two different front doors, and they must not drift apart.
         if (row.status === 'pending' && row.requester_id === targetUserId) {
-          await pool.query("UPDATE friendships SET status = 'accepted' WHERE id = $1", [row.id]);
+          if (!await acceptPending(row.id)) {
+            return res.json({ ...await currentState(req.user.id, targetUserId), user: userCheck.rows[0] });
+          }
+          await clearCrossedPending(req.user.id, targetUserId);
           if (io) io.to(`user:${targetUserId}`).emit('friend_request_responded', { fromUserId: req.user.id, fromUserName: req.user.name, action: 'accepted' });
           return res.json({ message: `You and ${userCheck.rows[0].name} are now friends!`, status: 'accepted', user: userCheck.rows[0] });
         }
         if (row.status === 'pending') {
           return res.json({ message: 'Friend request already sent', status: 'pending', user: userCheck.rows[0] });
         }
-        await pool.query("UPDATE friendships SET status = 'pending', requester_id = $1, addressee_id = $2 WHERE id = $3", [req.user.id, targetUserId, row.id]);
+        if (!await reRequestDeclined(row.id, req.user.id, targetUserId)) {
+          return res.json({ ...await currentState(req.user.id, targetUserId), user: userCheck.rows[0] });
+        }
         if (io) io.to(`user:${targetUserId}`).emit('friend_request_received', { fromUserId: req.user.id, fromUserName: req.user.name });
         return res.json({ message: `Friend request sent to ${userCheck.rows[0].name}`, status: 'pending', user: userCheck.rows[0] });
       }
 
-      await pool.query(
-        "INSERT INTO friendships (requester_id, addressee_id, status) VALUES ($1, $2, 'pending')",
+      const inserted = await pool.query(
+        `INSERT INTO friendships (requester_id, addressee_id, status)
+         VALUES ($1, $2, 'pending')
+         ON CONFLICT (requester_id, addressee_id) DO NOTHING
+         RETURNING id`,
         [req.user.id, targetUserId]
       );
+      if (inserted.rows.length === 0) {
+        return res.json({ message: 'Friend request already sent', status: 'pending', user: userCheck.rows[0] });
+      }
       if (io) io.to(`user:${targetUserId}`).emit('friend_request_received', { fromUserId: req.user.id, fromUserName: req.user.name });
       res.json({ message: `Friend request sent to ${userCheck.rows[0].name}`, status: 'pending', user: userCheck.rows[0] });
     } catch (err) {
@@ -533,16 +699,27 @@ router.post('/find-by-phone',
         return res.status(400).json({ error: `Sync up to ${MAX_SYNC_PHONES} contacts at a time` });
       }
 
-      if (!contactSyncBudget.allow(req.user.id)) {
-        return res.status(429).json({ error: 'You have synced your contacts a few times already. Try again later.' });
-      }
-
+      // NORMALISE FIRST, THEN CHARGE (§O round: "does nothing").
+      //
+      // The budget is 3/hour because a real person syncs contacts a handful of
+      // times, and it was charged BEFORE the numbers were parsed. So a batch
+      // with nothing usable in it — an address book of email-only contacts, a
+      // first run where the client hands over whatever the OS gave it, a
+      // permission prompt that returned placeholders — spent the user's whole
+      // allowance on lookups that never happened, and their fourth attempt,
+      // the one where they had finally granted the right permission, was
+      // refused for an hour. A budget denominated in directory reads must only
+      // be charged for a directory read.
       const normalized = phones
         .filter((p) => typeof p === 'string')
         .map((p) => p.replace(/\D/g, '').slice(-10))
         .filter((p) => p.length >= 7)
         .slice(0, MAX_SYNC_PHONES);
       if (normalized.length === 0) return res.json({ users: [] });
+
+      if (!contactSyncBudget.allow(req.user.id)) {
+        return res.status(429).json({ error: 'You have synced your contacts a few times already. Try again later.' });
+      }
 
       // Find users whose phone matches (last 10 digits comparison).
       // Blocked pairs never rediscover each other via contact sync (round 5).

@@ -24,7 +24,7 @@ const { body, param, query, validationResult } = require('express-validator');
 const { authenticate } = require('../middleware/auth');
 const pool = require('../config/database');
 // Shape before content — see validators/shape.js.
-const { freeText } = require('../validators/shape');
+const { freeText, scalarOnly } = require('../validators/shape');
 // The story visibility predicate. See the GET handler for why it is not written
 // out here, and utils/relationships.js for what each argument decides.
 const { storyVisibilitySql } = require('../utils/relationships');
@@ -162,7 +162,16 @@ const IMAGE_DATA_URL = /^data:image\/(png|jpe?g|webp);base64,[A-Za-z0-9+/]+={0,2
 //                   a story that is still on someone's feed.
 //   * EVIDENCE    — a story with an open or under-review report is left alone.
 //                   Deleting it would erase the only copy of the content a
-//                   moderator is being asked to judge.
+//                   moderator is being asked to judge. Known limit: once that
+//                   report is resolved or dismissed, the row purges after the
+//                   grace window like any other — so the ONE-YEAR preservation
+//                   that 18 U.S.C. § 2258A(h) attaches to content behind a
+//                   CyberTipline report cannot rest on this table (nor can it
+//                   survive the author deleting their account, which cascades
+//                   this row away regardless of report status). The control
+//                   that satisfies § 2258A(h) is MODERATION-LEGAL.md step 2:
+//                   export the evidence out of the database BEFORE resolving
+//                   the report or touching the account.
 const PURGE_BATCH = 500;
 const MAX_PURGE_GRACE_HOURS = 30 * 24;
 const PURGE_GRACE_HOURS = (() => {
@@ -223,12 +232,33 @@ function maybePurgeStories(now = Date.now()) {
 // ---------------------------------------------------------------------------
 router.get('/',
   [
-    query('limit').optional().isInt({ min: 1, max: MAX_FEED_LIMIT }),
+    // `checkFalsy`, not the bare `.optional()`. `.optional()` skips only
+    // `undefined`, and `?limit=&offset=` is what a client that builds its query
+    // string out of possibly-unset state actually sends — the empty string is
+    // present, so the rule ran and the whole feed was a 400. A parameter the
+    // caller did not set is a parameter the caller did not set.
+    //
+    // `'0'` is a non-empty string and therefore still checked, so `?limit=0` is
+    // refused as the out-of-range value it is rather than silently defaulting.
+    //
+    // And both carry a message. Without one the user is shown express-
+    // validator's default, "Invalid value", as the whole explanation of why
+    // their feed did not load.
+    // scalarOnly, because `?limit=30&limit=50` makes req.query.limit an array
+    // and express-validator runs isInt on each ELEMENT — both pass, the value
+    // stays an array, and `parseInt(['30','50'], 10)` quietly answers 30. The
+    // consequence here is only a silently-ignored second value rather than a
+    // 500, but the rule is the rule: settle the shape before anything reads it.
+    scalarOnly(query('limit').optional({ checkFalsy: true }), 'limit')
+      .isInt({ min: 1, max: MAX_FEED_LIMIT })
+      .withMessage(`Ask for between 1 and ${MAX_FEED_LIMIT} stories at a time`),
     // The upper bound is not decoration. `isInt({ min: 0 })` accepts
     // "99999999999999999999", which parseInt turns into 1e20 and node-postgres
     // sends as a literal Postgres refuses as out of range for bigint — a 500 on
     // a request that is plainly the client's fault.
-    query('offset').optional().isInt({ min: 0, max: INT4_MAX }),
+    scalarOnly(query('offset').optional({ checkFalsy: true }), 'offset')
+      .isInt({ min: 0, max: INT4_MAX })
+      .withMessage('That page of stories does not exist'),
   ],
   async (req, res) => {
     try {
@@ -401,10 +431,30 @@ router.post('/',
         });
       }
 
-      // The rate limit lives in the INSERT itself so two requests racing each
-      // other cannot both read "4 in the last hour" and both write. A story
+      // The rate limit lives in the INSERT itself, so the gap between the cheap
+      // pre-check above and this write cannot be walked through: by the time
+      // the count is taken, the row is going in on the same statement. A story
       // hidden by a moderator still counts against the active cap: a takedown
       // must not hand the poster a free slot.
+      //
+      // WHAT THIS DOES NOT DO, corrected during the §O sweep. This comment used
+      // to claim that "two requests racing each other cannot both read 4 in the
+      // last hour and both write", and that is not true of an INSERT ... SELECT
+      // under READ COMMITTED. Two concurrent statements each take their own
+      // snapshot, neither sees the other's uncommitted row, both count 4 and
+      // both insert. N simultaneous posts can overshoot by up to N-1.
+      //
+      // That is a real gap and it is left open on purpose, written down rather
+      // than quietly fixed the wrong way: closing it properly means serialising
+      // every post through a per-user lock, and 5/hour is a courtesy cap on a
+      // 24-hour format, not a safety control. The two things this looks like it
+      // is protecting are protected elsewhere and not by this count — the
+      // moderation screen runs on every image whatever the count says, and the
+      // Cloud Vision spend is bounded by its own budget (see
+      // __tests__/imageSpendLimits.test.js), which is what the cheap pre-check
+      // above is really for. A claim that a race is handled is worse than no
+      // claim, because the next person to add a hard limit here will copy this
+      // shape and believe it.
       //
       // The parameters carry explicit casts because this is INSERT ... SELECT,
       // not INSERT ... VALUES: a bare `$1` in a SELECT target list resolves to
