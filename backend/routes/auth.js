@@ -629,7 +629,12 @@ const signupValidation = [
     .matches(/[A-Z]/).withMessage('Password must contain at least one uppercase letter')
     .matches(/[0-9]/).withMessage('Password must contain at least one number'),
   body('name').trim().customSanitizer(stripHtml).isLength({ min: 1, max: 255 }).withMessage('Name is required'),
-  body('phone').optional().isMobilePhone().withMessage('Invalid phone number'),
+  // Phone is deliberately NOT accepted at signup. It has no UNIQUE constraint
+  // and drives contact-sync friend discovery, so accepting it here let an
+  // attacker claim a victim's number from a fresh account that only ever proved
+  // a throwaway email — the same squat email verification closes, run through
+  // phone instead. Phone is set only via PUT /users/profile, which requires
+  // one-account-per-number and a fresh-auth proof.
   // Required: the age gate is meaningless if DOB is optional (audit 2026-08-12)
   body('date_of_birth').exists().withMessage('Add your date of birth to create an account.')
     .isISO8601().withMessage('Invalid date of birth'),
@@ -648,7 +653,7 @@ router.post('/signup', signupValidation, async (req, res) => {
       return res.status(400).json({ error: errors.array()[0].msg });
     }
 
-    const { email, password, name, phone, interests, date_of_birth } = req.body;
+    const { email, password, name, interests, date_of_birth } = req.body;
     const safeInterests = sanitizeArray(interests || []);
 
     // Display names are UGC shown in invites, messages, and search — the same
@@ -676,7 +681,7 @@ router.post('/signup', signupValidation, async (req, res) => {
     // Ban-evasion tombstone (migration 012). Checked before the bcrypt hash so
     // a blocked signup costs nothing, and before the INSERT so no row is
     // created for an identity that is not allowed to have one.
-    if (await banTombstones().rejectIfBannedIdentity(res, { email, phone })) return;
+    if (await banTombstones().rejectIfBannedIdentity(res, { email })) return;
 
     const hashedPassword = await bcrypt.hash(password, SALT_ROUNDS);
 
@@ -684,10 +689,10 @@ router.post('/signup', signupValidation, async (req, res) => {
     // FALSE after migration 011, but an INSERT that says so cannot be silently
     // changed by a future default.
     const result = await pool.query(
-      `INSERT INTO users (email, password, name, phone, interests, terms_accepted_at, date_of_birth, email_verified)
-       VALUES ($1, $2, $3, $4, $5, NOW(), $6, FALSE)
+      `INSERT INTO users (email, password, name, interests, terms_accepted_at, date_of_birth, email_verified)
+       VALUES ($1, $2, $3, $4, NOW(), $5, FALSE)
        RETURNING id, email, name, phone, interests, role, profile_image_url, email_verified, created_at`,
-      [email, hashedPassword, name, phone || null, safeInterests, date_of_birth || null]
+      [email, hashedPassword, name, safeInterests, date_of_birth || null]
     );
 
     const user = result.rows[0];
