@@ -21,7 +21,7 @@ const { pushIfOfflineDebounced } = require('../services/pushHelper');
 // pin, a future change to how JWT_SECRET is loaded (a PEM/KeyObject) could
 // silently widen the accepted set to the asymmetric family here while the
 // handshake still refused it. Single source of truth in middleware/auth.js.
-const { TOKEN_ALGORITHMS } = require('../middleware/auth');
+const { TOKEN_ALGORITHMS, tokenVersionOf } = require('../middleware/auth');
 
 // Track which users are in which rooms for presence.
 // Keyed by the CANONICAL room id (String(flockId)), because the client picks
@@ -357,9 +357,10 @@ function __resetRateLimiters() {
 // disconnectSockets — and it stays handled here too, for ban paths that don't.)
 const SESSION_RECHECK_MS = 60_000;
 
-function tokenVersionOf(value) {
-  return Number.isInteger(value) ? value : 0;
-}
+// tokenVersionOf ("a missing or non-integer version reads as 0") is imported
+// from middleware/auth.js — it used to be a local copy of that file's private
+// rule, which meant a change to how a missing `tv` claim is read there would
+// not have reached the live-socket revalidation here.
 
 // Pure: given the token's claims and the CURRENT user row, why (if at all) must
 // this connection die? Mirrors authenticateSocket in middleware/auth.js — the
