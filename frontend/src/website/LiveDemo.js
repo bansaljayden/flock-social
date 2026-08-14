@@ -141,15 +141,46 @@ async function fetchDemo(url, signal) {
   }
 }
 
+// --- the product boundary --------------------------------------------------
+// The demo deliberately serves the FREE tier in full and stops where the paid
+// product starts: live score, label, confidence and open/closed on every venue,
+// no account needed, and the forecast half withheld once PAYWALL_ENABLED is on.
+// backend/routes/publicCrowd.js gateDemoCard() marks that with `forecast_locked`
+// and empties best_time, peak_hours and hourly.
+//
+// Without a line of copy for it the section just silently loses its chart, and
+// a visitor reads a card with a hole in it as a thin or broken product, which
+// is the exact opposite of what a demo is for. THE LINE IS NOT AN ERROR STATE:
+// nothing failed, and the retry button and the failure styling stay well away
+// from it.
+//
+// Guarded on the card really being without those parts, not on the flag alone.
+// Saying the hour by hour forecast is in the app while drawing an hour by hour
+// chart underneath would be the same dishonesty pointed the other way.
+const forecastIsLocked = (card) => !!card
+  && card.forecast_locked === true
+  && !(Array.isArray(card.hourly) && card.hourly.length > 0)
+  && !(typeof card.best_time === 'string' && card.best_time.trim());
+
+// Copy lives here, said once, so the printed line and the spoken one cannot
+// drift apart. Every noun in it is a real, shipping part of the venue sheet in
+// the app: the 12-hour chart, the best-time line, the Busiest Hours tile. No
+// price, no trial, no feature that does not exist.
+const LOCKED_FORECAST_COPY = 'The hour by hour forecast, the best time to go and when it peaks are in the app.';
+
 // What the live region says when a card lands. Kept next to the card shape it
 // reads so the spoken sentence and the printed one cannot drift.
 function cardSentence(card) {
   if (!card) return '';
   const s = pct(card.score);
-  if (card.is_open === false) return `${venueName(card)} is closed right now.`;
+  // Said out loud too. A visitor using a screen reader hears the score and
+  // would otherwise never learn that the rest of the card is a boundary and
+  // not an omission.
+  const tail = forecastIsLocked(card) ? ` ${LOCKED_FORECAST_COPY}` : '';
+  if (card.is_open === false) return `${venueName(card)} is closed right now.${tail}`;
   // "Good Dog Bar, 35 percent busy, Not Busy" is what reading the two fields in
   // order gets you. Said as a sentence it is "Good Dog Bar is not busy, 35 percent".
-  return `${venueName(card)} is ${(card.label || crowdWord(s)).toLowerCase()}, ${s} percent.`;
+  return `${venueName(card)} is ${(card.label || crowdWord(s)).toLowerCase()}, ${s} percent.${tail}`;
 }
 
 // The app's AnimatedDial (App.js), verbatim technique at 104px: canvas ring
@@ -729,6 +760,10 @@ export default function LiveDemo() {
     ? `Crowd forecast for the next ${hourly.length} hours, starting now: ${hourly.map(h => (h.open === false ? `${h.hour} closed` : `${h.hour} ${pct(h.score)} percent`)).join(', ')}`
     : 'Hour by hour crowd forecast';
   const shut = isShut(selected);
+  // Read once and used twice, so the "Best time to go" line and the locked
+  // note can never both decide they are the right thing to draw.
+  const bestTime = (typeof selected?.best_time === 'string' && selected.best_time) ? selected.best_time : null;
+  const forecastLocked = forecastIsLocked(selected);
   const score = pct(selected?.score);
   const dialLabel = selected
     ? (shut
@@ -944,13 +979,31 @@ export default function LiveDemo() {
                 </div>
               </div>
 
-              {typeof selected.best_time === 'string' && selected.best_time && (
+              {bestTime && (
                 selected.best_is_now
                   // "Best time to go: Packed now, and it stays that way" is not
                   // a sentence. When the answer is "now" the copy is already a
                   // whole thought, so it stands on its own line.
-                  ? <p className="lpd-best"><strong>{selected.best_time}</strong></p>
-                  : <p className="lpd-best">Best time to go: <strong>{selected.best_time}</strong></p>
+                  ? <p className="lpd-best"><strong>{bestTime}</strong></p>
+                  : <p className="lpd-best">Best time to go: <strong>{bestTime}</strong></p>
+              )}
+
+              {/* Where the free half ends. Quiet, ruled off, same ink as the
+                  rest of the card: this is the product boundary, so it must
+                  not borrow anything from the error state sitting a few lines
+                  up. The CTA under it already says where to go, so this line
+                  adds no second button and makes no offer. */}
+              {forecastLocked && (
+                <p style={{
+                  margin: '14px 0 0',
+                  paddingTop: 12,
+                  borderTop: '1px solid var(--rule)',
+                  fontSize: 13.5,
+                  lineHeight: 1.5,
+                  color: 'var(--ink-3)',
+                }}>
+                  {LOCKED_FORECAST_COPY}
+                </p>
               )}
 
               {hourly.length > 0 && (
