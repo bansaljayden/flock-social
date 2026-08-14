@@ -67,36 +67,31 @@ class Rollback extends Error {}
 // ---------------------------------------------------------------------------
 // Scalar guard — runs BEFORE the express-validator chain.
 //
-// express-validator 7 treats an ARRAY field as a list of values to validate
-// individually, so an EMPTY array validates vacuously: `{ crowd_level: [] }`
-// satisfies `body('crowd_level').isInt({ min: 1, max: 3 })` with no error, and
-// the raw array is left in req.body untouched (sanitisers do not write back
-// over arrays either). node-postgres then serialises it as the array literal
-// '{}', Postgres rejects it for a SMALLINT column with 22P02, and the catch
-// turns that into a 500. `{ venue_name: [] }` slips past a `min: 1` length
-// check the same way, so "required" was not required.
+// A coerced non-scalar satisfies rules that look like they constrain a scalar:
+// `{ crowd_level: [] }` and `{ crowd_level: [2] }` both satisfy
+// `isInt({ min: 1, max: 3 })`, the raw array survives into req.body, and
+// node-postgres sends it to a SMALLINT column as an array literal (22P02, a
+// 500). `{ venue_name: [] }` slips a `min: 1` length check the same way, so
+// "required" was not required. The full account is in validators/shape.js.
 //
-// This cannot be fixed inside the chain: a .custom() link is skipped for an
-// empty array for exactly the same reason. It has to be a gate in front.
-//
-// Every field this route reads is a single scalar, and nothing it accepts is
-// ever legitimately an object or an array. The check is over EVERY key present
-// in the body rather than a list of known fields on purpose: a list would have
-// to be kept in step with the validator chain by hand, and the day it drifts is
-// the day the hole reopens silently. Unknown fields are ignored by the route
+// This route takes the WHOLE-BODY form of the guard rather than the per-field
+// one, because every field it reads is a single scalar and nothing it accepts
+// is ever legitimately structured. The check is over EVERY key present in the
+// body rather than a list of known fields on purpose: a list would have to be
+// kept in step with the validator chain by hand, and the day it drifts is the
+// day the hole reopens silently. Unknown fields are ignored by the route
 // anyway, so refusing a structured one costs nothing.
+//
+// CORRECTION, round 19. This block used to claim the fix "cannot be done inside
+// the chain: a .custom() link is skipped for an empty array". That is not true
+// of express-validator 7.3.1 — a .custom() link DOES run for `[]` and does
+// reject it, which is what makes the per-field `scalarOnly()` in
+// validators/shape.js sound for the eleven routes that DO have a legitimately
+// structured field and cannot use this gate. The middleware stays because it is
+// the stronger option HERE (it needs no list), not because the alternative was
+// broken. Same predicate underneath either way.
 // ---------------------------------------------------------------------------
-function requireScalarFields(req, res, next) {
-  const body = req.body;
-  if (body === null || body === undefined) return next(); // validators will 400 on the missing required fields
-  if (typeof body !== 'object') return next();
-  for (const [field, value] of Object.entries(body)) {
-    if (value !== null && typeof value === 'object') {
-      return res.status(400).json({ error: `${field} must be a single value` });
-    }
-  }
-  return next();
-}
+const { requireScalarBody: requireScalarFields } = require('../validators/shape');
 
 // ---------------------------------------------------------------------------
 // Venue-local clock
@@ -319,12 +314,66 @@ router.post('/',
         // A flock_id is an attribution claim, and nothing checked it: any
         // account could file feedback against a stranger's flock id, which is
         // the join key the research/analytics layer is meant to use. Require a
-        // membership row. Any status is enough — the question here is "is this
-        // your flock", not "were you there"; presence is decided separately by
-        // VERIFIED_PRESENCE_SQL, which insists on 'accepted'.
+        // membership row.
+        //
+        // ROUND 19 — WHY 'accepted' AND NOT "any status".
+        //
+        // This check used to accept ANY status, defended on the grounds that
+        // the question is "is this your flock", not "were you there" (presence
+        // being VERIFIED_PRESENCE_SQL's job, which does insist on 'accepted').
+        // The framing is right and the implementation did not match it. The
+        // column is `CHECK (status IN ('invited','accepted','declined'))`, and
+        // neither of the other two values is a flock that is YOURS:
+        //   - 'invited' is somebody else's assertion ABOUT you. You have not
+        //     answered. Being asked to a party is not being at the party, and
+        //     it is not having a party.
+        //   - 'declined' is you saying, in writing, that this is not your plan.
+        // So "any status" did not implement "is this your flock". It
+        // implemented "has anyone ever named you in this flock", which is a
+        // thing another account does to you without your consent.
+        //
+        // THE COST OF TIGHTENING IS ZERO, and that is checkable rather than a
+        // judgement call. There is no 'maybe', no 'attended', no intermediate
+        // value in that CHECK constraint — accepting is the only way to become
+        // part of a flock (routes/flocks.js writes 'accepted' on join and
+        // nowhere else). Anyone who was actually at the hangout has an
+        // 'accepted' row. No honest submitter loses anything.
+        //
+        // That last paragraph is the part worth being strict about, because
+        // this exact route has twice refused honest submissions on rules that
+        // LOOKED harmless: the flock_id validator that demanded a UUID for a
+        // SERIAL column, and the `.optional()` that refused the JSON null the
+        // shipping client sends. Both were reasoned about instead of checked.
+        // Here the schema answers it.
+        //
+        // WHY IT MATTERS EVEN THOUGH THE ROW IS INERT TODAY. Nothing reads
+        // venue_feedback.flock_id — not routes/crowd.js, not
+        // services/mlPredictor.js, not routes/venueDashboard.js, not
+        // scripts/ml/train/export_training_data.js — and every one of those
+        // filters `verified = true`, which an unaccepted invitee cannot get.
+        // So the loose check leaked nothing and moved no number. That is an
+        // argument for tightening it, not against: its safety rested entirely
+        // on a column having no consumers yet, and flock_id exists precisely so
+        // that consumer can be written. CLAUDE.md records that this codebase
+        // has already shipped the same shape of mistake three times — route
+        // code widening a value set while the constraint behind it did not
+        // follow. A write whose safety depends on nobody ever selecting a
+        // column is a trap laid for whoever writes that select.
+        //
+        // AND IT RESTORES A PROPERTY WORTH BEING ABLE TO STATE. middleware/
+        // auth.js's rule is that an unverified account "may READ AND BE
+        // REACHED, BUT MUST NOT ACCUMULATE", and its deny list keeps such an
+        // account out of flock create, join, invite and invite-link. An
+        // invitation is the one thing that happens TO an unverified account
+        // without its participation, and everywhere else in the backend that
+        // row is completely inert. This was the single exception. "An
+        // invitation is inert" is a sentence somebody should be able to rely on
+        // without re-deriving it per route; one exception costs more than it
+        // buys.
         if (flockId !== null) {
           const membership = await client.query(
-            `SELECT 1 FROM flock_members WHERE flock_id = $1 AND user_id = $2 LIMIT 1`,
+            `SELECT 1 FROM flock_members
+              WHERE flock_id = $1 AND user_id = $2 AND status = 'accepted' LIMIT 1`,
             [flockId, req.user.id]
           );
           if (membership.rowCount === 0) {
