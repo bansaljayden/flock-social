@@ -105,6 +105,39 @@
          against Vercel's own schema and rejects unknown keys, so it can carry
          no comments of its own; this block is its documentation. -->
 
+    <!-- NO PRELOAD FOR THE LANDING PAGE HERO SCREENSHOT, and this was measured
+         before it was decided, because the obvious move once that image got a
+         WebP source was to add
+           <link rel="preload" as="image" href="/screenshots/app-nest.webp"
+                 type="image/webp" fetchpriority="high" />
+         here to mirror the hero's <picture> in src/website/LandingPage.js.
+
+         1. It would not buy anything, because the hero screenshot is NOT this
+            page's largest contentful paint element at any width. Measured on
+            an emulated Slow 4G phone (1.6 Mbps down, 150 ms RTT, 4x CPU) at
+            320, 390, 768 and 1280, the LCP element is the Fraunces h1 every
+            single time. The phone plate hangs under the copy, so only 77 to
+            410px of it is inside the first viewport depending on width, and
+            LCP scores an image on its VISIBLE area, which stays smaller than
+            the headline's box at all four. The h1 is also why the Fraunces
+            preload in LandingPage.js is the one that pays: the font is on the
+            LCP path, the screenshot is not.
+         2. It would cost something on every other route. CRA has no server
+            rendering, so this one file is the response for /, /app, /signup,
+            /about, /support, /privacy, /terms, /guidelines, /i/<token> and
+            /admin, plus the Capacitor shell. A preload here fires on all of
+            them and only one renders the landing page, so the rest pay 29 KB
+            fetched and dropped and a "preloaded but not used" console warning.
+
+         Mirroring is not what stopped this, and if the fold is ever recomposed
+         so the screenshot becomes the LCP element the link above is correct as
+         written: `type` on a preload link gates the fetch on format support,
+         so it matches <source type="image/webp"> exactly, and a browser
+         without WebP preloads nothing and still gets the PNG from the
+         <picture>. Getting that wrong is what downloads both formats. Re-measure
+         first, and route-scope it (LandingPage.js already preloads a font from
+         module scope) rather than putting it in this shared file. -->
+
   </head>
   <body>
     <noscript>You need to enable JavaScript to run this app.</noscript>
