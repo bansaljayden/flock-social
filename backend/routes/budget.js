@@ -4,9 +4,15 @@ const pool = require('../config/database');
 const { authenticate } = require('../middleware/auth');
 
 const { pushIfOffline, pushAlways } = require('../services/pushHelper');
+const { emitToFlockMembers } = require('../sockets/handlers');
 
 const router = express.Router();
 router.use(authenticate);
+
+// SERIAL flock ids are INT4; an id past this reaches the query as an out-of-range
+// value and 500s instead of 400ing. Bound every :flockId param to it (mirrors
+// friends.js MAX_USER_ID and the routesReliability.test.js bug class).
+const INT4_MAX = 2147483647;
 
 // Rate limit reminders: 1 per flock per 5 minutes.
 //
@@ -41,7 +47,7 @@ function sweepReminderCooldowns(now) {
 // POST /api/budget/:flockId/submit — Submit or update a budget amount
 router.post('/:flockId/submit',
   [
-    param('flockId').isInt().withMessage('Invalid flock ID'),
+    param('flockId').isInt({ min: 1, max: INT4_MAX }).withMessage('Invalid flock ID'),
     body('amount').optional().isFloat({ min: 0.01, max: 10000 }).withMessage('Amount must be between $0.01 and $10,000'),
     body('skipped').optional().isBoolean(),
   ],
@@ -175,14 +181,19 @@ router.post('/:flockId/submit',
       // Emit socket event to flock room
       const io = req.app.get('io');
       if (io) {
-        io.to(`flock:${flockId}`).emit('budget_updated', {
+        // Per-member fan-out, not the `flock:{id}` room, so a member sitting
+        // anywhere else in the app still gets the budget-ready signal. Payload
+        // is aggregate-only (visibleCeiling is null below the 3-submission
+        // threshold); no individual amount is ever put on the wire. Guarded so a
+        // fan-out failure cannot 500 a submission that already committed.
+        await emitToFlockMembers(io, flockId, 'budget_updated', {
           flockId,
           ceiling: visibleCeiling,
           submissionCount,
           totalMembers,
           isReady,
           skipCount,
-        });
+        }).catch((e) => console.error('budget_updated fan-out failed:', e.message));
       }
 
       // Push "Budget set!" only when this submission CROSSED the threshold
@@ -221,7 +232,7 @@ router.post('/:flockId/submit',
 
 // GET /api/budget/:flockId — Get budget status for a flock
 router.get('/:flockId',
-  [param('flockId').isInt().withMessage('Invalid flock ID')],
+  [param('flockId').isInt({ min: 1, max: INT4_MAX }).withMessage('Invalid flock ID')],
   async (req, res) => {
     try {
       const errors = validationResult(req);
@@ -304,7 +315,7 @@ router.get('/:flockId',
 
 // POST /api/budget/:flockId/lock — Creator locks the budget
 router.post('/:flockId/lock',
-  [param('flockId').isInt().withMessage('Invalid flock ID')],
+  [param('flockId').isInt({ min: 1, max: INT4_MAX }).withMessage('Invalid flock ID')],
   async (req, res) => {
     try {
       const errors = validationResult(req);
@@ -376,11 +387,14 @@ router.post('/:flockId/lock',
 
       const io = req.app.get('io');
       if (io) {
-        io.to(`flock:${flockId}`).emit('budget_locked', {
+        // Per-member fan-out so the lock reaches members wherever they are.
+        // `ceiling` here is only computed after the >=3 non-skip check above, so
+        // it is never an individual's amount. Guarded (post-commit work).
+        await emitToFlockMembers(io, flockId, 'budget_locked', {
           flockId,
           ceiling,
           locked: true,
-        });
+        }).catch((e) => console.error('budget_locked fan-out failed:', e.message));
       }
 
       res.json({ locked: true, ceiling });
@@ -393,7 +407,7 @@ router.post('/:flockId/lock',
 
 // POST /api/budget/:flockId/remind — Send reminder to members who haven't submitted
 router.post('/:flockId/remind',
-  [param('flockId').isInt().withMessage('Invalid flock ID')],
+  [param('flockId').isInt({ min: 1, max: INT4_MAX }).withMessage('Invalid flock ID')],
   async (req, res) => {
     try {
       const errors = validationResult(req);
