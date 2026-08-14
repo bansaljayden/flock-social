@@ -3,7 +3,12 @@ import './PrivacyPolicy.css';
 
 const EFFECTIVE_DATE = 'August 14, 2026';
 const SUPPORT_EMAIL = 'social@flockcorp.com';
-const CHILD_SAFETY_EMAIL = 'safety@flockcorp.com';
+// Deliberately the same mailbox as SUPPORT_EMAIL. A designated child-safety
+// contact is a real commitment, and safety@ was named here before it existed,
+// so a report about a child's safety would have bounced. Point it at an address
+// that is actually monitored (Cloudflare forwards social@ to a real inbox).
+// Split it out again only after the dedicated mailbox exists and is watched.
+const CHILD_SAFETY_EMAIL = SUPPORT_EMAIL;
 
 export default function CommunityGuidelines() {
   useEffect(() => {
