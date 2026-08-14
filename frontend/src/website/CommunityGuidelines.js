@@ -17,7 +17,11 @@ export default function CommunityGuidelines() {
 
   return (
     <main className="pp">
-      <a href="/landing" className="pp-back">&larr; flockcorp.com</a>
+      {/* The arrow is decoration and must stay out of the link's accessible
+          name, or it is announced as "left arrow flockcorp.com". */}
+      <a href="/landing" className="pp-back">
+        <span aria-hidden="true">&larr;</span> flockcorp.com
+      </a>
 
       <header className="pp-header">
         <h1>Community Guidelines</h1>
@@ -81,7 +85,18 @@ export default function CommunityGuidelines() {
         <h2>How to report or block</h2>
         <p>
           Tap a message in a flock chat or a direct message and use the flag to{' '}
-          <strong>Report</strong> it. The <strong>⋯</strong> menu at the top of a direct
+          <strong>Report</strong> it. The{' '}
+          {/* ⋯ (U+22EF) is an icon rendered as a character. Screen readers at
+              their default punctuation level say nothing for it, so this
+              sentence lost its subject and became "The menu at the top of a
+              direct message". The hidden text is the exact aria-label the
+              button carries in App.js, so what is read here is what is read
+              when the user gets there. */}
+          <strong>
+            <span aria-hidden="true">⋯</span>
+            <span className="pp-sr-only">More options</span>
+          </strong>{' '}
+          menu at the top of a direct
           message reports or blocks the person. You can also report from someone's profile,
           from a venue review, and from a guest's name on a plan.
         </p>
