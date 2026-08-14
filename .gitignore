@@ -45,7 +45,13 @@ backend/uploads/*
 backend/scripts/ml/train/*.csv
 backend/scripts/ml/train/*.pkl
 backend/scripts/ml/train/plots/
-backend/scripts/ml/models/crowd_model.onnx
+# NOT ignored: backend/scripts/ml/models/crowd_model.onnx is the SHIPPING model.
+# It was committed before this rule existed, and git ignores .gitignore for
+# already-tracked files, so the rule was inert and the model kept deploying. It
+# was also a trap: one `git rm --cached` and the 11MB model silently stops
+# shipping, mlPredictor finds no artifact, and production falls back to the rule
+# engine forever with no error anyone would notice. The rule is removed rather
+# than left sitting there looking authoritative.
 
 # ML collection-run scratch output (local only)
 backend/collection_log*.txt
