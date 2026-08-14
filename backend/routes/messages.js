@@ -9,6 +9,7 @@ const VENUE_REJECTED_MESSAGE = "That venue card couldn't be shared.";
 const { isBlockedBetween, getInvisibleUserIds } = require('../utils/blocks');
 const { hasDmRelationship, NOT_CONNECTED_MESSAGE } = require('../utils/relationships');
 const { emitToFlockExcludingBlocked } = require('../sockets/handlers');
+const { pushIfOfflineDebounced } = require('../services/pushHelper');
 
 const router = express.Router();
 
@@ -194,6 +195,40 @@ router.post('/flocks/:id/messages',
       message.reactions = [];
 
       res.status(201).json({ message });
+
+      // Offline push, mirroring the socket send_message path in
+      // sockets/handlers.js. The socket client falls back to THIS endpoint when
+      // its connection is down — which is exactly when the recipient is likely
+      // offline and a push matters most — so a REST send has to notify offline
+      // members just like the socket send does. Same debounce key shape
+      // ({ type: 'flock_message', flockId }) so a message that happens to go out
+      // on both transports collapses into one notification rather than two.
+      // Runs AFTER the response and is fully self-contained, so a Firebase
+      // hiccup can never turn a stored message into a 500.
+      try {
+        const io = req.app.get('io');
+        if (io) {
+          const flockInfo = await pool.query('SELECT name FROM flocks WHERE id = $1', [flockId]);
+          const flockName = flockInfo.rows[0]?.name || 'Flock';
+          const members = await pool.query(
+            "SELECT user_id FROM flock_members WHERE flock_id = $1 AND status = 'accepted' AND user_id != $2",
+            [flockId, req.user.id]
+          );
+          const invisible = new Set(await getInvisibleUserIds(req.user.id));
+          const preview = (message_text || '').substring(0, 100);
+          await Promise.allSettled(
+            members.rows
+              .filter((m) => !invisible.has(m.user_id))
+              .map((m) => pushIfOfflineDebounced(io, m.user_id,
+                `${req.user.name} in ${flockName}`,
+                preview,
+                { type: 'flock_message', flockId: String(flockId) }
+              ))
+          );
+        }
+      } catch (pushErr) {
+        console.error('Flock message push error:', pushErr.message);
+      }
     } catch (err) {
       console.error('Send message error:', err);
       res.status(500).json({ error: 'Failed to send message' });
@@ -576,6 +611,27 @@ router.post('/dm/:userId',
       message.reactions = [];
 
       res.status(201).json({ message });
+
+      // Offline push, mirroring the socket send_dm path in sockets/handlers.js.
+      // This route is the socket client's fallback when disconnected, so without
+      // this an offline recipient of a fallback-delivered DM was never notified.
+      // Same debounce key shape ({ type: 'dm_message', senderId }) as the socket
+      // path so the two transports never double-notify. The block gate reads
+      // senderId; a mutual block was already refused above. Post-response and
+      // self-contained so Firebase cannot turn a stored DM into a 500.
+      try {
+        const io = req.app.get('io');
+        if (io) {
+          const preview = (message_text || '').substring(0, 100);
+          await pushIfOfflineDebounced(io, receiverId,
+            req.user.name,
+            preview,
+            { type: 'dm_message', senderId: String(req.user.id) }
+          );
+        }
+      } catch (pushErr) {
+        console.error('DM push error:', pushErr.message);
+      }
     } catch (err) {
       console.error('Send DM error:', err);
       res.status(500).json({ error: 'Failed to send message' });

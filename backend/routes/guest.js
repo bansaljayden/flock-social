@@ -165,7 +165,12 @@ async function announceGuestRsvp(req, link, { guestId, name, status, isNew }) {
         await pushIfOffline(io, host.rows[0].creator_id,
           `${name} is in!`,
           host.rows[0].name,
-          { type: 'guest_rsvp', flockId: String(link.flock_id) }
+          // A guest has no user account, so there is nobody the host could have
+          // blocked; the namespaced guest id (guest:N) is a non-numeric string,
+          // so the block-gate's actor check reads it as "no actor" and correctly
+          // skips the block lookup. Carried for payload consistency with the
+          // authenticated push sites.
+          { type: 'guest_rsvp', flockId: String(link.flock_id), fromUserId: guestEntryId(guestId) }
         );
       }
     }
