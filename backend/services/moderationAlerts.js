@@ -67,6 +67,41 @@ try {
 // once someone remembers to set an environment variable.
 const MODERATION_INBOX = 'hello@flockcorp.com';
 
+// ---------------------------------------------------------------------------
+// Child-safety reports — 18 U.S.C. § 2258A.
+//
+// Flock is a "provider" under § 2258E (an electronic communication service
+// offered to the public), and the statute has NO size floor: the duty attaches
+// at one user. On actual knowledge of apparent child sexual abuse material
+// (or enticement / trafficking of a minor — §§ 2251, 2252, 2252A, 2422(b),
+// 1591), federal law requires a report to the NCMEC CyberTipline "as soon as
+// reasonably possible" and one year of evidence preservation (§ 2258A(h), as
+// amended by the REPORT Act, Pub. L. 118-59). Knowing and willful failure to
+// report is a federal offense with six-figure fines (§ 2258A(e)).
+//
+// "Actual knowledge" arrives through exactly one channel in this app: a human
+// reads a report and looks at the content. The report vocabulary
+// (routes/moderation.js VALID_REASONS) has no dedicated child-safety reason —
+// adding one needs a client change and coordinated copy — so on a 13+ app the
+// reason a CSAM report lands under is 'sexual'. Those reports must not read
+// like one more row in the queue: they get a distinct log token, a distinct
+// subject line, a statutory note in the mail body, and their OWN email rate
+// window, so a brigade of spam reports can never exhaust the ceiling out from
+// under the one category with criminal-law stakes.
+//
+// The full operator runbook — what to actually do when one of these is real —
+// is MODERATION-LEGAL.md in the repo root. The alert points at it by name.
+// ---------------------------------------------------------------------------
+const CHILD_SAFETY_REASONS = new Set(['sexual']);
+const CHILD_SAFETY_DOC = 'MODERATION-LEGAL.md';
+
+function isChildSafetyReason(reason) {
+  // Strings only, deliberately: `String(['sexual'])` coerces to 'sexual', and
+  // a shape the route's scalarOnly validator would have refused must not be
+  // able to trip (or dodge) the category by coercion.
+  return typeof reason === 'string' && CHILD_SAFETY_REASONS.has(reason.trim().toLowerCase());
+}
+
 // The Apple placeholder (@apple-signin.invalid) and evicted-squat tombstones
 // (@unclaimed.invalid) can never receive mail, and an admin row can hold
 // either. Round 20: this was one of three private copies of that rule, and the
@@ -127,22 +162,37 @@ function dedupe(addresses) {
 const EMAILS_PER_HOUR = 40;
 const emailWindow = { startedAt: 0, count: 0 };
 
+// Child-safety alerts spend from a SEPARATE window with the same ceiling. The
+// generic window is exactly what a brigading incident fills first, and "the
+// spam reports used up the quota" must never be the reason the one report with
+// a federal reporting duty behind it went unmailed. Separate windows also cut
+// the other way: forty child-safety alerts cannot silence the generic queue.
+const childSafetyEmailWindow = { startedAt: 0, count: 0 };
+
 // `cost` is the number of addresses this alert is about to mail. The whole
 // alert is refused or allowed together: sending to four of ten recipients would
 // be a partial page, which is harder to reason about than no page at all, and
 // the log line below is what carries the report either way.
-function allowAlertEmail(cost = 1, now = Date.now()) {
+function chargeEmailWindow(win, cost = 1, now = Date.now()) {
   // A cost that is not a small positive integer is a caller bug, and charging
   // whatever it handed us would either exhaust the window on one alert or
   // silently charge nothing. One email is the honest floor.
   const charge = Number.isInteger(cost) && cost > 0 && cost <= MAX_RECIPIENTS ? cost : 1;
-  if (now - emailWindow.startedAt > 60 * 60 * 1000) {
-    emailWindow.startedAt = now;
-    emailWindow.count = 0;
+  if (now - win.startedAt > 60 * 60 * 1000) {
+    win.startedAt = now;
+    win.count = 0;
   }
-  if (emailWindow.count + charge > EMAILS_PER_HOUR) return false;
-  emailWindow.count += charge;
+  if (win.count + charge > EMAILS_PER_HOUR) return false;
+  win.count += charge;
   return true;
+}
+
+function allowAlertEmail(cost = 1, now = Date.now()) {
+  return chargeEmailWindow(emailWindow, cost, now);
+}
+
+function allowChildSafetyEmail(cost = 1, now = Date.now()) {
+  return chargeEmailWindow(childSafetyEmailWindow, cost, now);
 }
 
 const { safeSubjectLine: safeSubject, escapeHtml } = emailService;
@@ -179,6 +229,17 @@ function alertHtml(report) {
           <td style="padding: 6px 0; color: #0d2847; font-size: 14px; font-weight: 600;">${v}</td>
         </tr>`).join('');
 
+  // The statutory note rides ONLY on child-safety reports. It names the duty,
+  // the one thing not to do (delete), and the runbook, and nothing else: the
+  // decision still happens in the queue, on the content, by a person.
+  const childSafetyNote = isChildSafetyReason(report.reason) ? `
+        <p style="font-size: 14px; color: #7b341e; background: #fffaf0; border: 1px solid #f6ad55; border-radius: 8px; padding: 12px 16px; line-height: 1.6; margin: 0 0 24px;">
+          This report is in the sexual content category, and Flock users can be minors.
+          If the content appears to involve a minor, federal law (18 U.S.C. 2258A) requires
+          a report to the NCMEC CyberTipline and one year of evidence preservation.
+          Do not delete the content. Follow the steps in ${CHILD_SAFETY_DOC} in the repo root before acting.
+        </p>` : '';
+
   return `
       <div style="font-family: -apple-system, BlinkMacSystemFont, sans-serif; max-width: 480px; margin: 0 auto; padding: 40px 24px;">
         <h1 style="font-size: 22px; font-weight: 700; color: #0d2847; margin-bottom: 8px;">A new report is in the queue</h1>
@@ -186,7 +247,7 @@ function alertHtml(report) {
           Someone reported content in Flock. Open the queue to read it and decide.
         </p>
         <table style="border-collapse: collapse; margin-bottom: 24px;">${rows}
-        </table>
+        </table>${childSafetyNote}
         <p style="margin: 0 0 24px;">
           <a href="${escapeHtml(link)}" style="display: inline-block; background: #0d2847; color: #ffffff; text-decoration: none; padding: 14px 28px; border-radius: 10px; font-size: 16px; font-weight: 600;">Open the moderation queue</a>
         </p>
@@ -210,6 +271,7 @@ async function alertModerators(io, rawReport = {}) {
     pushAttempts: 0,
     adminLookupFailed: false,
     usedFallbackInbox: false,
+    childSafety: false,
   };
 
   // Round 20: the header promises "nothing in here is allowed to throw" and its
@@ -234,6 +296,21 @@ async function alertModerators(io, rawReport = {}) {
   // and not one word about the report.
   console.warn(`[MODERATION] New report #${reportId}: ${label}`);
   summary.logged = true;
+
+  // Child-safety reports get a SECOND, distinct line, at error level, with a
+  // stable greppable token — because on the day it matters, "the alert is
+  // somewhere in the stderr stream between forty spam refusals" is the same
+  // thing as no alert. Emitted here, before any database or network work, for
+  // the same reason as the line above: it must survive everything below.
+  const childSafety = isChildSafetyReason(report.reason);
+  summary.childSafety = childSafety;
+  if (childSafety) {
+    console.error(
+      `[MODERATION][CHILD-SAFETY] report #${reportId} is in the sexual-content category on a 13+ app. ` +
+      `If review shows apparent CSAM, 18 U.S.C. 2258A requires a CyberTipline report and one year of evidence preservation. ` +
+      `Do not delete the content. Read ${CHILD_SAFETY_DOC} before acting.`
+    );
+  }
 
   try {
     // One database round trip for both remaining legs. Its own try: losing the
@@ -274,7 +351,7 @@ async function alertModerators(io, rawReport = {}) {
       if (pushHelper && pushHelper.pushIfOffline) {
         summary.pushAttempts += 1;
         pushHelper
-          .pushIfOffline(io, a.id, 'New content report', label, {
+          .pushIfOffline(io, a.id, childSafety ? 'Child safety report' : 'New content report', label, {
             type: 'moderation_report',
             reportId: String(report.reportId || ''),
           })
@@ -317,15 +394,18 @@ async function alertModerators(io, rawReport = {}) {
     if (!process.env.RESEND_API_KEY) {
       summary.emailSkipped = true;
       console.error(`[MODERATION] report #${reportId}: NO EMAIL SENT. RESEND_API_KEY is not set, so the email leg is off and this log line is the only record.`);
-    } else if (!allowAlertEmail(recipients.length)) {
+    } else if (!(childSafety ? allowChildSafetyEmail : allowAlertEmail)(recipients.length)) {
+      // Child-safety alerts are charged to their own window (see the note on
+      // childSafetyEmailWindow): spam reports can exhaust the generic ceiling
+      // without ever touching this category's budget.
       summary.emailSkipped = true;
-      console.error(`[MODERATION] report #${reportId}: NO EMAIL SENT. The ${EMAILS_PER_HOUR}-email hourly ceiling would have been crossed by this alert's ${recipients.length} recipient(s), so it was held back. Read the queue at ${emailService.baseWebUrl()}/admin/moderation.`);
+      console.error(`[MODERATION] report #${reportId}: NO EMAIL SENT. The ${EMAILS_PER_HOUR}-email hourly ceiling${childSafety ? ' for child-safety alerts' : ''} would have been crossed by this alert's ${recipients.length} recipient(s), so it was held back. Read the queue at ${emailService.baseWebUrl()}/admin/moderation.`);
     } else {
       // A subject is a header, not a body: a CR/LF in one is header injection.
       // `reason` comes from the fixed VALID_REASONS vocabulary in routes/
       // moderation.js today, but this function is reachable from anywhere and
       // must not depend on its caller having validated for it.
-      const subject = safeSubject(`New Flock report #${reportId} (${labelField(report.reason) || 'report'})`);
+      const subject = safeSubject(`${childSafety ? 'CHILD SAFETY: ' : ''}New Flock report #${reportId} (${labelField(report.reason) || 'report'})`);
       const html = alertHtml({ ...report, reportId });
       const results = await Promise.all(
         recipients.map((to) => emailService.sendEmail({ to, subject, html }).catch((e) => ({ sent: false, error: e.message })))
@@ -364,12 +444,21 @@ module.exports = {
     dedupe,
     configuredRecipients,
     allowAlertEmail,
+    allowChildSafetyEmail,
+    isChildSafetyReason,
     safeSubject,
     labelField,
     alertHtml,
     MODERATION_INBOX,
     EMAILS_PER_HOUR,
     MAX_RECIPIENTS,
-    resetEmailWindow: () => { emailWindow.startedAt = 0; emailWindow.count = 0; },
+    CHILD_SAFETY_REASONS,
+    CHILD_SAFETY_DOC,
+    resetEmailWindow: () => {
+      emailWindow.startedAt = 0;
+      emailWindow.count = 0;
+      childSafetyEmailWindow.startedAt = 0;
+      childSafetyEmailWindow.count = 0;
+    },
   },
 };

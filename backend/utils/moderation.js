@@ -9,6 +9,17 @@
 //   is screened before it becomes visible via Google Cloud Vision SafeSearch; if
 //   the provider errors, times out, or exhausts quota, the upload is REJECTED
 //   rather than letting unmoderated imagery through during a degradation.
+//
+// LEGAL POSTURE (18 U.S.C. § 2258A — see MODERATION-LEGAL.md in the repo root):
+//   this screening is VOLUNTARY. § 2258A(f) imposes no duty to scan, and
+//   SafeSearch is NOT a CSAM detector — its 'adult' category cannot judge age,
+//   and Google's actual CSAM tooling (Content Safety API / CSAI Match) is a
+//   separate, vetted-access product this app does not use. The statutory duty
+//   (report to the NCMEC CyberTipline, preserve for one year) triggers on
+//   ACTUAL KNOWLEDGE, which on this app arrives through human reports and
+//   moderator review. What this file owes that pipeline is visibility: a hard
+//   adult flag from the screen must not be indistinguishable from a timeout in
+//   the logs. See the [CHILD-SAFETY] line in moderateImage.
 // ---------------------------------------------------------------------------
 const { Filter } = require('content-checker');
 
@@ -543,6 +554,25 @@ async function moderateImage(imageUrl) {
       if (!LIKELIHOODS.has(safe[key]) || safe[key] === 'UNKNOWN') {
         throw new Error(`incomplete safeSearch annotation: ${key}`);
       }
+    }
+    // CHILD-SAFETY VISIBILITY. A hard adult flag (LIKELY / VERY_LIKELY) used to
+    // produce the same generic refusal as a quota error, so the one class of
+    // rejection a human should glance at drowned in fail-closed noise. It gets
+    // a distinct, greppable token instead. Stated plainly so nobody over-reads
+    // it: SafeSearch cannot judge age, so this is NOT knowledge of CSAM and
+    // does not trigger the § 2258A reporting duty by itself — and the image was
+    // refused BEFORE storage, so no copy exists and nothing attaches to it. It
+    // is a pattern signal (one account tripping it repeatedly is worth a look),
+    // and the operator's search string for it is documented in
+    // MODERATION-LEGAL.md. POSSIBLE is deliberately excluded: that band exists
+    // to eat ordinary night-out photos, and alerting on it would train the
+    // operator to ignore the token.
+    if (HARD_REJECT.has(safe.adult)) {
+      console.error(
+        `🛡️ [CHILD-SAFETY] SafeSearch scored an upload adult=${safe.adult} (racy=${safe.racy}). ` +
+        'The image was rejected before storage; no copy was kept. SafeSearch cannot judge age, so this is ' +
+        'a pattern signal for a human, not knowledge of CSAM. See MODERATION-LEGAL.md.'
+      );
     }
     for (const key of STRICT_CATEGORIES) {
       if (HARD_REJECT.has(safe[key]) || safe[key] === 'POSSIBLE') {
