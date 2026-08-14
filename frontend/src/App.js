@@ -2463,6 +2463,65 @@ function getGroupAdmission(crowdScore, partySize, venue) {
 // These manage their own local state so typing doesn't re-render the parent.
 // Only onSave and onCancel callbacks escape.
 
+// ─── Venue dashboard: moderation takedowns ───────────────────────────────────
+//
+// The ONE reading of "a moderator took this down", for both venue promotions
+// and venue events. Nothing in App.js read this at all until now, so an owner
+// whose promotion had been removed saw it listed exactly like one that was
+// running: /public-promotions refused to serve it to a single user, the
+// dashboard said nothing, and the only signal they ever got was a 409 on trying
+// to edit it, which reads as a broken feature when the screen has never
+// mentioned a takedown.
+//
+// TWO SPELLINGS, BOTH READ, and that is not belt-and-braces. Checked against
+// backend/routes/venueDashboard.js:
+//   * GET /promotions and GET /events map their rows to state
+//     `hidden_by_moderation` explicitly, precisely so a future SELECT list
+//     cannot quietly drop a raw column the frontend was inferring from;
+//   * POST and PUT on both resources answer with `RETURNING *`, which carries
+//     the raw `is_hidden` column and NO derived flag.
+// So the list rows and the write responses genuinely arrive under different
+// names, and anything built from a write response has to be readable too.
+const isModerationHidden = (row) =>
+  row?.hidden_by_moderation === true || row?.is_hidden === true;
+
+// What the owner is told, said once. The server's own 409 (CONTENT_HIDDEN) says
+// the same thing in the same words, so the screen and the refusal cannot drift.
+//
+// SLOP-AUDIT rule 5: this names only things that exist. There is no appeals
+// flow, nothing emails a venue owner about a takedown, and no screen in this
+// app can ask for a review — so this promises none of that. A moderator CAN put
+// content back (routes/admin.js 'unhide'), which is why it does not say
+// "permanently". Delete and re-create both work on a hidden row today, which is
+// what it tells them to do.
+// The event line does not repeat "not being shown": the events list already
+// says in its own header that no Flock user sees venue events at all, and two
+// sentences about visibility on one row read as a bug rather than a fact.
+const MODERATION_HIDDEN_COPY = {
+  promotion: 'Removed by moderation. It is not being shown to anyone and it cannot be edited. Delete it and post a new one.',
+  event: 'Removed by moderation. It cannot be edited. Delete it and create a new one.',
+};
+
+// The marker itself. Deliberately not colour alone: the words carry it, so it
+// survives a colourblind reader, a screenshot, and dark mode. No role="status":
+// these are present on first paint rather than announced on a change, and a
+// list of five would fire five live-region announcements on entering the tab.
+const ModerationHiddenNotice = ({ kind }) => (
+  <div
+    style={{
+      marginTop: '8px',
+      padding: '8px 10px',
+      borderRadius: '8px',
+      backgroundColor: 'var(--accent-red-bg)',
+      border: '1px solid var(--accent-red-text)',
+    }}
+  >
+    <p style={{ fontSize: 'var(--t-meta)', fontWeight: '600', color: 'var(--accent-red-text)', margin: 0, lineHeight: 1.45 }}>
+      {MODERATION_HIDDEN_COPY[kind]}
+    </p>
+  </div>
+);
+
 const PromoModal = React.memo(function PromoModal({ editing, onSave, onCancel, colors }) {
   const [form, setForm] = React.useState(() => editing
     ? { title: editing.title || '', desc: editing.description || editing.desc || '', time: editing.time_slot || editing.time || 'Happy Hour', days: editing.days || 'Daily' }
@@ -12007,7 +12066,12 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                     </div>
                     <div style={{ flex: 1 }}>
                       <p style={{ fontSize: 'var(--t-body)', fontWeight: '600', color: colors.navy, margin: 0 }}>{venue.name}</p>
-                      <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '2px 0 0' }}>{venue.type} • {venue.price}</p>
+                      {/* `price` is null for every venue Google gives no
+                          price_level for, and the separator was printed
+                          unconditionally — so most rows in this list read
+                          "Bar • " with nothing after the bullet. Every other
+                          venue row in the file already guards it this way. */}
+                      <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '2px 0 0' }}>{venue.type}{venue.price ? ` • ${venue.price}` : ''}</p>
                     </div>
                     {typeof venue.crowd === 'number' && <div style={{
                       padding: '4px 10px',
@@ -13601,6 +13665,12 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   const [dealDescription, setDealDescription] = useState('');
   const [dealTimeSlot, setDealTimeSlot] = useState('Happy Hour');
   const [realIncomingFlocks, setRealIncomingFlocks] = useState([]);
+  // A failed list read is NOT an empty list. Both of these lists render "No
+  // promotions yet. Create your first one!" from an empty array, so a network
+  // blip on the dashboard load told a venue owner their promotions were gone
+  // and invited them to type them in again. `.catch(() => ({ promotions: [] }))`
+  // is what made that indistinguishable from the truth.
+  const [venueListErrors, setVenueListErrors] = useState({ promotions: false, events: false });
   const [venueReviewsData, setVenueReviewsData] = useState({ reviews: [], stats: null });
   const [replyingToReview, setReplyingToReview] = useState(null);
   const [replyText, setReplyText] = useState('');
@@ -13649,6 +13719,52 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
       try { input.value = ''; } catch { /* detached */ }
     }
   };
+
+  // ONE definition of "read the promotions list" and "read the events list",
+  // shared by the dashboard load and by the Try again button the error state
+  // renders. Two rules both of them keep:
+  //
+  //   * a failed read leaves whatever is on screen ALONE and raises the flag.
+  //     It must never write [] over content the owner has, because the empty
+  //     state below asks them to create it again;
+  //   * `hidden_by_moderation` is carried through. The events mapper reduces
+  //     each row to {id,title,date,time,capacity} and used to drop the takedown
+  //     flag on the floor, so the events tab could not have rendered it even
+  //     once the backend started sending it (migration 019).
+  const loadVenuePromotions = React.useCallback(async () => {
+    try {
+      const d = await getVenuePromotions();
+      setPromotions(d?.promotions || []);
+      setVenueListErrors(prev => (prev.promotions ? { ...prev, promotions: false } : prev));
+      return true;
+    } catch (err) {
+      setVenueListErrors(prev => (prev.promotions ? prev : { ...prev, promotions: true }));
+      return false;
+    }
+  }, []);
+
+  const loadVenueEvents = React.useCallback(async () => {
+    try {
+      const d = await getVenueEvents();
+      // `rsvps` is not carried: venue_events.rsvps is DEFAULT 0 and no route,
+      // socket handler or job in the repo ever increments it, so "0/50 RSVPs"
+      // was printed under every event a venue ever created and could never say
+      // anything else. There is no way for a Flock user to RSVP to a venue
+      // event at all. Capacity is real (the owner types it).
+      // The takedown flag keeps the SERVER'S name on the reduced row, so
+      // isModerationHidden reads a mapped event and a raw one identically and
+      // nobody has to remember which shape they are holding.
+      setVenueEventsList((d?.events || []).map(e => ({
+        id: e.id, title: e.title, date: e.event_date, time: e.event_time,
+        capacity: e.capacity, hidden_by_moderation: isModerationHidden(e),
+      })));
+      setVenueListErrors(prev => (prev.events ? { ...prev, events: false } : prev));
+      return true;
+    } catch (err) {
+      setVenueListErrors(prev => (prev.events ? prev : { ...prev, events: true }));
+      return false;
+    }
+  }, []);
 
   // Load venue profile + all dashboard data when entering
   React.useEffect(() => {
@@ -13743,27 +13859,26 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           }
         }
         // Load all dashboard data in parallel
+        // The two owner-content lists load through their shared readers, which
+        // own their own success and failure states; the other two keep their
+        // inline fallbacks because neither renders a create prompt from empty.
         Promise.all([
-          getVenuePromotions().catch(() => ({ promotions: [] })),
-          getVenueEvents().catch(() => ({ events: [] })),
+          loadVenuePromotions(),
+          loadVenueEvents(),
           getIncomingFlocks().catch(() => ({ flocks: [] })),
           getVenueReviews().catch(() => ({ reviews: [], stats: null })),
-        ]).then(([promoData, eventData, flockData, reviewData]) => {
-          setPromotions(promoData.promotions || []);
-          // `rsvps` is not carried any more: venue_events.rsvps is DEFAULT 0 and
-          // no route, socket handler or job in the repo ever increments it, so
-          // "0/50 RSVPs" was printed under every event a venue ever created and
-          // could never say anything else. There is no way for a Flock user to
-          // RSVP to a venue event at all — the feature behind the number does
-          // not exist. Capacity is real (the owner types it).
-          setVenueEventsList((eventData.events || []).map(e => ({
-            id: e.id, title: e.title, date: e.event_date, time: e.event_time,
-            capacity: e.capacity,
-          })));
+        ]).then(([, , flockData, reviewData]) => {
           setRealIncomingFlocks(flockData.flocks || []);
           setVenueReviewsData(reviewData);
         });
-      }).catch(() => setVenueDashProfileLoaded(true));
+      }).catch(() => {
+        setVenueDashProfileLoaded(true);
+        // The profile read failing means the two list reads below it never ran
+        // at all. Without this the promotions and events tabs render their
+        // "create your first one" empty state for content nobody ever asked the
+        // server about, which is the same lie the list-level catch removes.
+        setVenueListErrors({ promotions: true, events: true });
+      });
     }
   }, [currentScreen, venueDashProfileLoaded]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -13882,11 +13997,21 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
     // shows: api.js already puts the response's `error` on err.message, and a
     // generic "couldn't delete" would throw away the only sentence that says
     // what to do next. The fallback covers an error carrying no message at all.
+    //
+    // A 404 is reconciled rather than reported as a failure. The server answers
+    // 404 for "not yours / already gone", so the row in front of the owner does
+    // not exist any more — leaving it on screen means the delete button appears
+    // to have failed and every further tap on it fails the same way. Deleting
+    // is what they asked for and it is already true, so the row goes.
     const deletePromo = async (id) => {
       try {
         await deleteVenuePromotion(id);
         setPromotions(prev => prev.filter(p => p.id !== id));
       } catch (e) {
+        if (e?.status === 404) {
+          setPromotions(prev => prev.filter(p => p.id !== id));
+          return;
+        }
         showToast(e?.message || "That promotion couldn't be deleted. Try again.", 'error');
       }
     };
@@ -13897,14 +14022,48 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
       setShowEventModal(true);
     };
 
-    // Same dead-button fix as deletePromo above, same reasons.
+    // Same dead-button fix as deletePromo above, and the same 404
+    // reconciliation, for the same reasons.
     const deleteEvent = async (id) => {
       try {
         await deleteVenueEvent(id);
         setVenueEventsList(prev => prev.filter(e => e.id !== id));
       } catch (e) {
+        if (e?.status === 404) {
+          setVenueEventsList(prev => prev.filter(e2 => e2.id !== id));
+          return;
+        }
         showToast(e?.message || "That event couldn't be deleted. Try again.", 'error');
       }
+    };
+
+    // A 409 CONTENT_HIDDEN from a SAVE is the server telling us this list is
+    // out of date: the row was taken down after the dashboard loaded, which is
+    // how the Edit button that no longer renders for hidden rows can still be
+    // reached. Two things follow, and the second matters as much as the first.
+    //
+    //   1. Mark the row. It explains itself from here on instead of offering an
+    //      Edit button that refuses again. Nothing re-reads the list to find
+    //      this out: the 409 IS the fact, and a refetch is one more thing that
+    //      can fail.
+    //   2. CLOSE the composer. Every other failure in these two save handlers
+    //      leaves it open, because trying again is the right move there: a
+    //      profanity screen, a lost connection, a tier refusal all clear. This
+    //      one never does. Leaving the form up with a Save button that can only
+    //      ever answer 409 is precisely the control-that-cannot-succeed this
+    //      change exists to remove, and the row behind it now carries the
+    //      reason in full.
+    //
+    // Named rather than inlined so both catch blocks stay short enough to read.
+    const markPromoTakenDown = (id) => {
+      setPromotions(prev => prev.map(p => (p.id === id ? { ...p, hidden_by_moderation: true } : p)));
+      setShowPromoModal(false);
+      setEditingPromo(null);
+    };
+    const markEventTakenDown = (id) => {
+      setVenueEventsList(prev => prev.map(e => (e.id === id ? { ...e, hidden_by_moderation: true } : e)));
+      setShowEventModal(false);
+      setEditingEvent(null);
     };
 
     // Reply to review handler
@@ -14344,12 +14503,33 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 {Icons.plus('white', 18)} Create Promotion
               </button>
 
-              {/* Active Promotions */}
+              {/* Your Promotions. NOT "Active Promotions" any more: a
+                  moderation-hidden promotion is in this list (deliberately, so
+                  the owner is not left staring at one that vanished with no
+                  reason given) and it is the opposite of active. The heading
+                  counted it as active and the row was styled as if it were
+                  running. */}
               <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
-                <h3 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy, margin: '0 0 10px' }}>Active Promotions ({promotions.length})</h3>
+                <h3 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy, margin: '0 0 10px' }}>Your Promotions ({promotions.length})</h3>
+                {/* A BANNER, not a replacement for the list. The failed read
+                    leaves whatever was already loaded on screen, and a
+                    promotion created after the failure still renders — hiding
+                    it behind the error would be the same lie in the other
+                    direction. Only the "create your first one" empty state is
+                    suppressed, because that is the line that is not true. */}
+                {venueListErrors.promotions && (
+                  <div style={{ padding: '10px', marginBottom: '8px', borderRadius: '8px', backgroundColor: 'var(--bg-tertiary)' }}>
+                    <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '0 0 8px' }}>We couldn't load your promotions. Nothing has been deleted.</p>
+                    <button className="hit44" onClick={() => loadVenuePromotions()} style={{ padding: '8px 16px', borderRadius: '8px', border: '1px solid var(--border-mid)', backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontWeight: '600', fontSize: 'var(--t-meta)', cursor: 'pointer' }}>Try again</button>
+                  </div>
+                )}
                 {promotions.length === 0 ? (
-                  <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', textAlign: 'center', padding: '20px' }}>No promotions yet. Create your first one!</p>
-                ) : promotions.map(promo => (
+                  venueListErrors.promotions ? null : (
+                    <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', textAlign: 'center', padding: '20px' }}>No promotions yet. Create your first one!</p>
+                  )
+                ) : promotions.map(promo => {
+                  const hidden = isModerationHidden(promo);
+                  return (
                   <div key={promo.id} style={{ padding: '10px', backgroundColor: 'var(--bg-card-solid)', borderRadius: '8px', marginBottom: '8px' }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
                       <div style={{ flex: 1 }}>
@@ -14358,10 +14538,19 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                         <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: 0 }}>{promo.time_slot || promo.time} - {promo.days}</p>
                       </div>
                       <div style={{ display: 'flex', gap: '6px' }}>
-                        <button aria-label="Edit" className="hit44" onClick={() => openPromoModal(promo)} style={{ padding: '6px', borderRadius: '6px', border: 'none', backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer' }}>{Icons.edit(colors.navy, 14)}</button>
+                        {/* No Edit on a hidden promotion. PUT /promotions/:id
+                            answers 409 CONTENT_HIDDEN on one, so the button
+                            could only ever open a form, take everything the
+                            owner typed, and refuse it on Save. A control that
+                            cannot succeed does not render; the notice below
+                            says why and names the two things that do work. */}
+                        {!hidden && (
+                          <button aria-label="Edit" className="hit44" onClick={() => openPromoModal(promo)} style={{ padding: '6px', borderRadius: '6px', border: 'none', backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer' }}>{Icons.edit(colors.navy, 14)}</button>
+                        )}
                         <button aria-label="Delete" className="hit44" onClick={() => deletePromo(promo.id)} style={{ padding: '6px', borderRadius: '6px', border: 'none', backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer' }}>{Icons.trash(colors.red, 14)}</button>
                       </div>
                     </div>
+                    {hidden && <ModerationHiddenNotice kind="promotion" />}
                     {/* "N claims" was removed 2026-08-14. venue_promotions.claims
                         is written by nothing in the repo — no route, no socket
                         handler, no job — so it was DEFINITIONALLY 0 on every
@@ -14380,7 +14569,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                       </div>
                     </div>
                   </div>
-                ))}
+                  );
+                })}
               </div>
 
               {/* The "Pro Tips" box was deleted 2026-08-14. It advised that
@@ -14439,9 +14629,21 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                     no public read of venue_events anywhere in the backend.
                     Delete this line the day one ships. */}
                 <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: '0 0 10px' }}>Only you can see these. We are not showing them to Flock users yet.</p>
+                {/* Banner, not a replacement for the list — same reasoning as
+                    the promotions tab above. */}
+                {venueListErrors.events && (
+                  <div style={{ padding: '10px', marginBottom: '8px', borderRadius: '8px', backgroundColor: 'var(--bg-tertiary)' }}>
+                    <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '0 0 8px' }}>We couldn't load your events. Nothing has been deleted.</p>
+                    <button className="hit44" onClick={() => loadVenueEvents()} style={{ padding: '8px 16px', borderRadius: '8px', border: '1px solid var(--border-mid)', backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontWeight: '600', fontSize: 'var(--t-meta)', cursor: 'pointer' }}>Try again</button>
+                  </div>
+                )}
                 {venueEventsList.length === 0 ? (
-                  <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', textAlign: 'center', padding: '20px' }}>No events yet. Create your first one!</p>
-                ) : venueEventsList.map(event => (
+                  venueListErrors.events ? null : (
+                    <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', textAlign: 'center', padding: '20px' }}>No events yet. Create your first one!</p>
+                  )
+                ) : venueEventsList.map(event => {
+                  const hidden = isModerationHidden(event);
+                  return (
                   <div key={event.id} style={{ padding: '10px', backgroundColor: 'var(--bg-card-solid)', borderRadius: '8px', marginBottom: '8px' }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
                       <div style={{ flex: 1 }}>
@@ -14450,12 +14652,21 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                         {event.capacity ? <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: 0 }}>Capacity {event.capacity}</p> : null}
                       </div>
                       <div style={{ display: 'flex', gap: '6px' }}>
-                        <button aria-label="Edit" className="hit44" onClick={() => openEventModal(event)} style={{ padding: '6px', borderRadius: '6px', border: 'none', backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer' }}>{Icons.edit(colors.navy, 14)}</button>
+                        {/* Same rule as the promotions list: PUT /events/:id
+                            answers 409 CONTENT_HIDDEN on a taken-down event, so
+                            an Edit button on one cannot succeed and does not
+                            render. Delete still works on a hidden row, which is
+                            why it stays. */}
+                        {!hidden && (
+                          <button aria-label="Edit" className="hit44" onClick={() => openEventModal(event)} style={{ padding: '6px', borderRadius: '6px', border: 'none', backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer' }}>{Icons.edit(colors.navy, 14)}</button>
+                        )}
                         <button aria-label="Delete" className="hit44" onClick={() => deleteEvent(event.id)} style={{ padding: '6px', borderRadius: '6px', border: 'none', backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer' }}>{Icons.trash(colors.red, 14)}</button>
                       </div>
                     </div>
+                    {hidden && <ModerationHiddenNotice kind="event" />}
                   </div>
-                ))}
+                  );
+                })}
               </div>
 
               {/* The "This Week" calendar was deleted 2026-08-14. It rendered
@@ -14737,7 +14948,15 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
             </div>
           )}
 
-          {/* Promotion Modal — isolated component, typing doesn't re-render parent */}
+          {/* Promotion Modal — isolated component, typing doesn't re-render parent
+              A refused save used to be console.error AND close the modal anyway,
+              which is worse than a dead button: a promotion the server refused
+              (profanity screen, a moderation-hidden row, a free-tier account once
+              venue billing is on) disappeared along with everything the owner had
+              typed, looking exactly like a save. Both save handlers below say what
+              the server said and leave the form open with the text still in it.
+              The ONE exception is a 409 CONTENT_HIDDEN, which no retry can ever
+              clear; see markPromoTakenDown / markEventTakenDown. */}
           {showPromoModal && (
             <PromoModal
               editing={editingPromo}
@@ -14754,14 +14973,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                     setPromotions(prev => [created, ...prev]);
                   }
                 } catch (e) {
-                  // This was console.error AND the modal closed anyway, which is
-                  // worse than a dead button: a promotion the server refused
-                  // (profanity screen, a moderation-hidden row, a free-tier
-                  // account once venue billing is on) disappeared along with
-                  // everything the owner had typed, looking exactly like a save.
-                  // Say what the server said and leave the form open with their
-                  // text still in it.
                   showToast(e?.message || "That promotion couldn't be saved. Try again.", 'error');
+                  if (e?.code === 'CONTENT_HIDDEN' && editingPromo) markPromoTakenDown(editingPromo.id);
                   return;
                 }
                 setShowPromoModal(false);
@@ -14770,7 +14983,13 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
             />
           )}
 
-          {/* Event Modal */}
+          {/* Event Modal. Two things the save handler below does that are not
+              obvious: the takedown flag is read off the write response rather
+              than hardcoded false (those routes answer with RETURNING *, so they
+              carry the raw is_hidden column, which isModerationHidden also
+              reads), and a created event is PREPENDED because GET /events orders
+              by created_at DESC — appending put it at the bottom until the next
+              dashboard load silently moved it to the top. */}
           {showEventModal && (
             <EventModal
               editing={editingEvent}
@@ -14781,14 +15000,14 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 try {
                   if (editingEvent) {
                     const updated = await updateVenueEvent(editingEvent.id, { title: form.title, eventDate: form.date, eventTime: form.time, capacity: parseInt(form.capacity) || null });
-                    setVenueEventsList(prev => prev.map(e => e.id === editingEvent.id ? { id: updated.id, title: updated.title, date: updated.event_date, time: updated.event_time, capacity: updated.capacity } : e));
+                    setVenueEventsList(prev => prev.map(e => e.id === editingEvent.id ? { id: updated.id, title: updated.title, date: updated.event_date, time: updated.event_time, capacity: updated.capacity, hidden_by_moderation: isModerationHidden(updated) } : e));
                   } else {
                     const created = await createVenueEvent({ title: form.title, eventDate: form.date, eventTime: form.time, capacity: parseInt(form.capacity) || null });
-                    setVenueEventsList(prev => [...prev, { id: created.id, title: created.title, date: created.event_date, time: created.event_time, capacity: created.capacity }]);
+                    setVenueEventsList(prev => [{ id: created.id, title: created.title, date: created.event_date, time: created.event_time, capacity: created.capacity, hidden_by_moderation: isModerationHidden(created) }, ...prev]);
                   }
                 } catch (e) {
-                  // Same false-success fix as the promotion modal above.
                   showToast(e?.message || "That event couldn't be saved. Try again.", 'error');
+                  if (e?.code === 'CONTENT_HIDDEN' && editingEvent) markEventTakenDown(editingEvent.id);
                   return;
                 }
                 setShowEventModal(false);
