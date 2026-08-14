@@ -4979,7 +4979,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   // bigger change than this pass owns, and hoisting the state is what the
   // adminTab line above already did about it.
   const [numVenues, setNumVenues] = useState(20);
-  const [subscriptionPrice, setSubscriptionPrice] = useState(50); // avg of $35 Premium + $75 Pro
+  const [subscriptionPrice, setSubscriptionPrice] = useState(55); // midpoint of $35 Premium and $75 Pro (was 50 with a comment calling it the average, which it is not)
   const [eventsPerVenue, setEventsPerVenue] = useState(12);
   const [avgSpend, setAvgSpend] = useState(120);
   const [takeRate, setTakeRate] = useState(2.5); // pitch deck: 2.5% transaction fee
@@ -14378,7 +14378,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   const [replyText, setReplyText] = useState('');
   const [venueLogoUrl, setVenueLogoUrl] = useState(null);
   const [venueLogoUploading, setVenueLogoUploading] = useState(false);
-  const venueLogoInputRef = React.useRef(null);
+  // The logo picker sheet. null = closed, 'loading' = fetching the listing's
+  // photos, 'error' = that fetch failed, { photos: [...] } = open.
+  const [venueLogoPicker, setVenueLogoPicker] = useState(null);
   // Real model-powered intelligence (replaces the old hardcoded demo numbers).
   // null = loading, {available:false} = no linked Google listing yet.
   const [venueIntel, setVenueIntel] = useState(null);
@@ -14392,33 +14394,51 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [venueTab, venueProfile?.google_place_id]);
 
-  // Handler for uploading a venue logo
-  const handleVenueLogoUpload = async (e) => {
-    const input = e.target;
-    const file = input.files?.[0];
-    if (!file) return;
+  // The venue logo is one of the listing's own Google photos, picked from the
+  // set our photo proxy already serves for the venue's place id.
+  //
+  // It used to be a file upload through uploadProfileImage, and that was broken
+  // twice over. First, the handler destructured { url } from a call that
+  // returns { profile_image_url }, so the photoUrl it sent the server had been
+  // undefined since the day it was written. Second, even fixed, it could never
+  // work again: the avatar store returns a moderated data: URL, and
+  // PUT /api/venue-profile deliberately refuses the data: shape because it
+  // cannot tell our moderated data URL from a raw unscreened one. The server
+  // stores exactly one kind of photo_url, the /api/venues/photo?... proxy path
+  // this app mints, so the honest control is a picker over those photos, not
+  // an upload button that can only ever 400.
+  const venueLogoPlaceId = venueProfile?.google_place_id || ownerVenuePlaceId || null;
+
+  const openVenueLogoPicker = async () => {
+    if (!venueLogoPlaceId) return;
+    setVenueLogoPicker('loading');
+    try {
+      const data = await getVenueDetails(venueLogoPlaceId);
+      setVenueLogoPicker({ photos: data?.venue?.photos || [] });
+    } catch (err) {
+      setVenueLogoPicker('error');
+    }
+  };
+
+  const handleVenueLogoPick = async (url) => {
     // What to fall back to if this does not land. The optimistic preview below
-    // used to survive a failed upload, so the dashboard showed a logo that was
-    // never saved and came back blank on the next load.
+    // must not survive a failed save, or the dashboard shows a logo that was
+    // never stored and comes back blank on the next load.
     const previousLogo = venueLogoUrl;
-    // Show preview immediately
-    const reader = new FileReader();
-    reader.onload = (ev) => setVenueLogoUrl(ev.target.result);
-    reader.readAsDataURL(file);
+    setVenueLogoPicker(null);
+    setVenueLogoUrl(url);
     try {
       setVenueLogoUploading(true);
-      const { url } = await uploadProfileImage(file);
-      setVenueLogoUrl(url);
-      await updateVenueProfile({ photoUrl: url });
+      const saved = await updateVenueProfile({ photoUrl: url });
+      // The server stores the proxy path normalized to its relative form, so
+      // re-read it through the same resolver the profile load uses.
+      if (saved?.photo_url) setVenueLogoUrl(resolveVenuePhoto(saved.photo_url));
     } catch (err) {
-      console.error('Logo upload failed:', err);
+      console.error('Logo save failed:', err);
       setVenueLogoUrl(previousLogo);
-      showToast(err?.message || "That logo didn't upload. Try again.", 'error');
+      showToast(err?.message || "That logo didn't save. Try again.", 'error');
     } finally {
       setVenueLogoUploading(false);
-      // Clearing the file input is what makes a retry possible: picking the
-      // same file twice fires no change event while the old value is still set.
-      try { input.value = ''; } catch { /* detached */ }
     }
   };
 
@@ -14643,8 +14663,12 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           if (p.tier && ['free', 'premium', 'pro'].includes(p.tier)) {
             setVenueTier(p.tier);
           }
-          // Load saved logo
-          if (p.photo_url) setVenueLogoUrl(p.photo_url);
+          // Load saved logo. photo_url is stored as the RELATIVE proxy path
+          // (/api/venues/photo?...), which is not an origin this SPA serves —
+          // rendered raw it 404s against Vercel. resolveVenuePhoto prefixes
+          // BASE_URL, exactly as every other photo_url read in this file does,
+          // and passes grandfathered absolute values through untouched.
+          if (p.photo_url) setVenueLogoUrl(resolveVenuePhoto(p.photo_url));
           // Load saved operating hours. (Notification prefs used to be
           // hydrated here too; the panel that read them is gone, see the note
           // in the Settings tab.)
@@ -15104,11 +15128,18 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
             {/* Was a <div onClick> whose only affordance was a 10px camera
                 glyph, carrying its meaning in a `title` — a tooltip is not an
                 accessible name and does not exist on touch at all. A real
-                button, keyboard reachable, with the name on the control. */}
+                button, keyboard reachable, with the name on the control.
+
+                Only a button while a Google listing is linked: the logo comes
+                from the listing's own photos (see openVenueLogoPicker), so
+                with no place id there is nothing this control could ever do,
+                and a control that cannot succeed does not get rendered as
+                one. */}
+            {venueLogoPlaceId ? (
             <button
               type="button"
-              onClick={() => venueLogoInputRef.current?.click()}
-              aria-label={venueLogoUrl ? 'Replace venue logo' : 'Upload venue logo'}
+              onClick={() => openVenueLogoPicker()}
+              aria-label={venueLogoUrl ? 'Replace venue logo' : 'Choose venue logo'}
               style={{ width: '48px', height: '48px', padding: 0, border: 'none', borderRadius: '12px', backgroundColor: 'rgba(255,255,255,0.2)', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', overflow: 'hidden', position: 'relative', flexShrink: 0 }}
             >
               {venueLogoUrl ? (
@@ -15124,7 +15155,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                   §10), not a bird: mascots do not sit on wait states inside a
                   work tool. role="status" so the wait is announced. */}
               {venueLogoUploading && (
-                <div role="status" aria-label="Uploading logo" style={{ position: 'absolute', inset: 0, backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <div role="status" aria-label="Saving logo" style={{ position: 'absolute', inset: 0, backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                   <div style={{ width: '16px', height: '16px', border: '2px solid rgba(255,255,255,0.3)', borderTopColor: 'white', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
                 </div>
               )}
@@ -15135,8 +15166,18 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
               <span style={{ position: 'absolute', bottom: -2, right: -2, width: '20px', height: '20px', borderRadius: '10px', backgroundColor: colors.steel, display: 'flex', alignItems: 'center', justifyContent: 'center', border: '2px solid var(--bg-primary)' }}>
                 {Icons.camera('white', 12)}
               </span>
-              <input ref={venueLogoInputRef} type="file" accept="image/*" onChange={handleVenueLogoUpload} style={{ display: 'none' }} />
             </button>
+            ) : (
+            <div aria-hidden style={{ width: '48px', height: '48px', borderRadius: '12px', backgroundColor: 'rgba(255,255,255,0.2)', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', flexShrink: 0 }}>
+              {venueLogoUrl ? (
+                <img src={venueLogoUrl} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+              ) : (
+                <span style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: 'white' }}>
+                  {(venueData.name || 'V').charAt(0).toUpperCase()}
+                </span>
+              )}
+            </div>
+            )}
             <div style={{ flex: 1 }}>
               <h1 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: 'white', margin: 0 }}>Welcome, {venueData.name}</h1>
               <p style={{ fontSize: 'var(--t-meta)', color: 'rgba(255,255,255,0.7)', margin: 0 }}>{venueProfile?.category || venueOnboardingData.category || 'Venue Dashboard'}{(venueProfile?.location || venueOnboardingData.location) ? ` · ${venueProfile?.location || venueOnboardingData.location}` : ''}</p>
@@ -15958,6 +15999,55 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 </p>
 
                 <button className="hit44" onClick={() => setShowUpgradeModal(false)} style={{ width: '100%', padding: '10px', borderRadius: '8px', border: '1px solid var(--border-mid)', backgroundColor: 'var(--bg-card-solid)', color: 'var(--text-secondary)', fontWeight: '500', cursor: 'pointer' }}>Close</button>
+              </div>
+            </div>
+          )}
+
+          {/* Venue logo picker. The server only stores photo URLs this app
+              mints (the /api/venues/photo proxy path), so the choices are the
+              linked listing's own Google photos and nothing else. See
+              openVenueLogoPicker for why this replaced the file upload. */}
+          {venueLogoPicker && (
+            <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.8)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 50, padding: '16px' }}>
+              <DialogBehavior onClose={() => setVenueLogoPicker(null)} label="Venue logo" />
+              <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '24px', padding: '20px', width: '100%', maxWidth: '320px', maxHeight: '80%', overflowY: 'auto' }}>
+                <h2 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy, margin: '0 0 6px', textAlign: 'center' }}>Venue logo</h2>
+                <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '0 0 16px', textAlign: 'center', lineHeight: 1.5 }}>
+                  Pick a photo from your Google listing.
+                </p>
+                {venueLogoPicker === 'loading' && (
+                  <div role="status" aria-label="Loading photos" style={{ display: 'flex', justifyContent: 'center', padding: '24px 0' }}>
+                    <div style={{ width: '20px', height: '20px', border: '2px solid var(--border-mid)', borderTopColor: colors.navy, borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
+                  </div>
+                )}
+                {venueLogoPicker === 'error' && (
+                  <div style={{ textAlign: 'center', padding: '8px 0 16px' }}>
+                    <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '0 0 12px' }}>Couldn't load your listing's photos.</p>
+                    <button className="hit44" onClick={() => openVenueLogoPicker()} style={{ padding: '8px 16px', borderRadius: '8px', border: 'none', backgroundColor: colors.navy, color: 'white', fontWeight: '600', fontSize: 'var(--t-meta)', cursor: 'pointer' }}>Try again</button>
+                  </div>
+                )}
+                {typeof venueLogoPicker === 'object' && venueLogoPicker.photos.length === 0 && (
+                  <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '0 0 16px', textAlign: 'center', lineHeight: 1.5 }}>
+                    Your Google listing has no photos yet. Add some on Google Business Profile and they will show up here.
+                  </p>
+                )}
+                {typeof venueLogoPicker === 'object' && venueLogoPicker.photos.length > 0 && (
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', marginBottom: '16px' }}>
+                    {venueLogoPicker.photos.map((url, i) => (
+                      <button
+                        key={url}
+                        type="button"
+                        className="hit44"
+                        onClick={() => handleVenueLogoPick(url)}
+                        aria-label={`Use listing photo ${i + 1} as your logo`}
+                        style={{ padding: 0, border: 'none', borderRadius: '12px', overflow: 'hidden', cursor: 'pointer', backgroundColor: 'var(--bg-primary)' }}
+                      >
+                        <img src={url} alt="" loading="lazy" style={{ width: '100%', height: '96px', objectFit: 'cover', display: 'block' }} />
+                      </button>
+                    ))}
+                  </div>
+                )}
+                <button className="hit44" onClick={() => setVenueLogoPicker(null)} style={{ width: '100%', padding: '10px', borderRadius: '8px', border: '1px solid var(--border-mid)', backgroundColor: 'var(--bg-card-solid)', color: 'var(--text-secondary)', fontWeight: '500', cursor: 'pointer' }}>Close</button>
               </div>
             </div>
           )}

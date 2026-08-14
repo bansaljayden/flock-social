@@ -132,7 +132,7 @@ flock-app/
 | `SLOP-AUDIT.md` | Design/copy standard + per-rule audit status |
 | `MONEY-MODEL.md` | Monetization reality: venue B2B first, consumer Pro later |
 | `PAYWALL-DECISION.md` | **The current decision memo on when to charge anyone.** Sourced; supersedes the timing language in `PAYWALL.md` and `MONEY-MODEL.md` |
-| `VENUE-BILLING.md` | Venue subscriptions. Tier enforcement is built; the Stripe half is a design spec with no code. Authoritative on price ($49 / $149) |
+| `VENUE-BILLING.md` | Venue subscriptions. Tier enforcement is built; the Stripe half is a design spec with no code. Authoritative on price: $35 Premium / $75 Pro, FINAL as of 2026-08-14 (matches the app) |
 | `PAYWALL.md` | Consumer Flock Pro operator runbook. The client, webhook and kill switch are built and dormant; **none of the runbook's dashboard steps have been executed** |
 | `BACKUP-AND-VERIFICATION.md` | Backup/restore research memo, not a runbook |
 | `SUBMIT-CHECKLIST.md` | App Store submission: assets, ordered steps, privacy labels — **the current submission doc** |

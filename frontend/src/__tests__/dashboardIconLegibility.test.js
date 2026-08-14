@@ -269,8 +269,10 @@ describe('an icon that is the only content of a control has a name', () => {
    * 10px camera glyph, with its meaning in a `title` — a tooltip, which is not
    * an accessible name and does not exist on touch at all.
    */
-  it('the venue logo uploader is a real button with an accessible name', () => {
-    const i = APP.indexOf('venueLogoInputRef.current?.click()');
+  it('the venue logo control is a real button with an accessible name', () => {
+    // (It opens the listing-photo picker now, not a file input, but the
+    // accessibility requirement is the same.)
+    const i = APP.indexOf('onClick={() => openVenueLogoPicker()}');
     expect(i).toBeGreaterThan(-1);
     const around = APP.slice(i - 400, i + 400);
     expect(around).toMatch(/<button/);
@@ -280,10 +282,11 @@ describe('an icon that is the only content of a control has a name', () => {
   it('draws its camera badge at a size the glyph survives', () => {
     // camera's lens is an r=5 circle inside an 18-unit box. At 10px that is a
     // 4px ring with a 1px wall, i.e. a smudge.
-    // The badge sits at the far end of the uploader's own subtree, so the
-    // window runs from the click handler to the hidden <input> that closes it.
-    const start = APP.indexOf('venueLogoInputRef.current?.click()');
-    const end = APP.indexOf('onChange={handleVenueLogoUpload}', start);
+    // The badge sits at the far end of the control's own subtree, so the
+    // window runs from the click handler to the button's closing tag.
+    const start = APP.indexOf('onClick={() => openVenueLogoPicker()}');
+    expect(start).toBeGreaterThan(-1);
+    const end = APP.indexOf('</button>', start);
     expect(end).toBeGreaterThan(start);
     const call = APP.slice(start, end).match(/Icons\.camera\('white',\s*(\d+)\)/);
     expect(call).not.toBeNull();
