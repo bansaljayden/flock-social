@@ -1,6 +1,9 @@
 const express = require('express');
 const pool = require('../config/database');
 const { authenticate } = require('../middleware/auth');
+// Round 18: a takedown has to reach the people looking at the content right
+// now, the same way a ban force-disconnects instead of waiting for a refetch.
+const { emitToFlockMembers } = require('../sockets/handlers');
 
 const router = express.Router();
 router.use(authenticate);
@@ -180,8 +183,35 @@ router.get('/reports', async (req, res) => {
   }
 });
 
+// The takedown target for each reportable content type. Hoisted out of the
+// 'hide' branch (round 18) because un-hide needs exactly the same map — a
+// second copy inline is how the guest_rsvp entry went missing from one of two
+// places last time. Table names come from THIS map and never from the request
+// body, which is what keeps the interpolation below out of reach of user input.
+//
+// `audience` is the SQL the takedown UPDATE returns so the people who can
+// currently see the content are captured inside the transaction, before it can
+// change underneath us. Every entry returns the same two column names so the
+// caller does not branch: `flock_id` (fan out to accepted members) and
+// `notify_*` user ids (personal rooms). 'profile' is deliberately absent — a
+// profile report has no row to hide.
+const TAKEDOWN_TARGETS = {
+  // Flock chat: the audience is the flock, not the author.
+  flock_message: { table: 'messages', audience: 'flock_id, NULL::int AS notify_a, NULL::int AS notify_b' },
+  // A DM has exactly two people who can see it, and both need to be told: the
+  // recipient so it leaves their thread, the author so a takedown is not silent.
+  dm: { table: 'direct_messages', audience: 'NULL::int AS flock_id, sender_id AS notify_a, receiver_id AS notify_b' },
+  story: { table: 'stories', audience: 'NULL::int AS flock_id, user_id AS notify_a, NULL::int AS notify_b' },
+  venue_review: { table: 'venue_reviews', audience: 'NULL::int AS flock_id, user_id AS notify_a, NULL::int AS notify_b' },
+  venue_promotion: { table: 'venue_promotions', audience: 'NULL::int AS flock_id, venue_user_id AS notify_a, NULL::int AS notify_b' },
+  // A guest RSVP has no account behind it, so there is nobody personal to tell;
+  // the flock members watching the roster are the whole audience.
+  guest_rsvp: { table: 'guest_rsvps', audience: 'flock_id, NULL::int AS notify_a, NULL::int AS notify_b' },
+};
+
 // PUT /api/admin/reports/:id — take a moderation action:
-//   action ∈ 'hide' (take content down) | 'ban' | 'unban' | 'dismiss'
+//   action ∈ 'hide' (take content down) | 'unhide' (put it back) | 'ban' |
+//            'unban' | 'dismiss'
 router.put('/reports/:id', async (req, res) => {
   try {
     // A non-numeric :id used to reach Postgres as NaN and surface as a 500,
@@ -191,7 +221,7 @@ router.put('/reports/:id', async (req, res) => {
     if (reportId === null) return res.status(404).json({ error: 'Report not found' });
 
     const { action, reason } = req.body;
-    if (!['hide', 'ban', 'unban', 'dismiss'].includes(action)) {
+    if (!['hide', 'unhide', 'ban', 'unban', 'dismiss'].includes(action)) {
       return res.status(400).json({ error: 'Invalid action' });
     }
 
@@ -199,7 +229,20 @@ router.put('/reports/:id', async (req, res) => {
     if (rep.rows.length === 0) return res.status(404).json({ error: 'Report not found' });
     const report = rep.rows[0];
 
-    const newStatus = action === 'dismiss' ? 'dismissed' : 'resolved';
+    // An un-hide resolves the report as DISMISSED, not resolved (round 18).
+    // `resolved` is this queue's word for "the complaint was upheld and we
+    // acted on it"; putting the content back is the opposite finding, so
+    // recording it as resolved would sit next to a `content_restored` audit row
+    // contradicting it, and would count a reversed takedown in the same header
+    // tally as the ones we stand behind — which is exactly the number you would
+    // look at to find out how often we get this wrong.
+    //
+    // 'unban' is knowingly NOT changed here. It is the murkier case (a ban is
+    // usually lifted from a different report than the one that imposed it, and
+    // is as often a time-served decision as a reversal), and it is out of the
+    // scope this change was asked to settle. The asymmetry is deliberate, not
+    // an oversight.
+    const newStatus = (action === 'dismiss' || action === 'unhide') ? 'dismissed' : 'resolved';
 
     // Round 11: the mutation, the report resolution and the audit row were
     // three independent pool.query calls. A failure between them could ban a
@@ -212,43 +255,67 @@ router.put('/reports/:id', async (req, res) => {
     let actionType;
     let banTargetId = null;
     let refusal = null;
+    let audience = null;
     try {
       await client.query('BEGIN');
 
-      if (action === 'hide') {
-        // Table name comes from this fixed map, never from the request body.
+      if (action === 'hide' || action === 'unhide') {
+        // Round 18: hide and un-hide are ONE branch over a boolean. Before this
+        // there was no un-hide at all — a mistaken takedown could only be
+        // reversed with direct database access, because every read path in the
+        // app filters COALESCE(is_hidden, false) = false and nothing anywhere
+        // wrote false back.
+        const hiding = action === 'hide';
         // guest_rsvps added round 13 — migration 005 built the takedown and
         // nothing was ever wired to it, so an abusive guest RSVP name could not
         // be removed by anyone.
-        const table = {
-          flock_message: 'messages',
-          dm: 'direct_messages',
-          story: 'stories',
-          venue_review: 'venue_reviews',
-          venue_promotion: 'venue_promotions',
-          guest_rsvp: 'guest_rsvps',
-        }[report.content_type];
+        const target = TAKEDOWN_TARGETS[report.content_type];
 
         // FAIL LOUDLY (round 13). A 'profile' report has no row in this map, so
         // the UPDATE never ran — and the route still answered "Action applied",
         // resolved the report, and wrote an audit row claiming content_hidden.
         // A moderator was told abusive content was down while it was still
         // live, and the audit log recorded work nobody did.
-        if (!table || !report.content_id) {
+        if (!target || !report.content_id) {
           refusal = {
             status: 400,
             error: report.content_type === 'profile'
-              ? 'A profile report has no content to hide. Ban the user or dismiss the report.'
-              : 'There is nothing to hide on this report.',
+              // "or dismiss the report" on both halves because it is the one
+              // alternative that is always available: an un-hide can be reached
+              // on a report whose user was never banned, so offering only
+              // "unban" would name an action that does nothing.
+              ? `A profile report has no content to ${hiding ? 'hide' : 'restore'}. ${hiding ? 'Ban' : 'Unban'} the user or dismiss the report.`
+              : `There is nothing to ${hiding ? 'hide' : 'restore'} on this report.`,
           };
         } else {
-          // The audit action is derived from what the database actually did,
-          // never assumed.
-          const hidden = await client.query(`UPDATE ${table} SET is_hidden = true WHERE id = $1`, [report.content_id]);
-          if (hidden.rowCount === 0) {
-            refusal = { status: 404, error: 'That content no longer exists. Dismiss the report instead.' };
+          // RETURNING captures the audience INSIDE the transaction. Reading it
+          // afterwards would be reading a world the takedown has already
+          // changed (a DM's receiver, a message's flock), and on a rollback it
+          // would name people about an event that never happened.
+          const changed = await client.query(
+            `UPDATE ${target.table} SET is_hidden = $1 WHERE id = $2 RETURNING ${target.audience}`,
+            [hiding, report.content_id]
+          );
+          if (changed.rowCount === 0) {
+            refusal = hiding
+              ? { status: 404, error: 'That content no longer exists. Dismiss the report instead.' }
+              // Every refusal on this route leaves the moderator an action they
+              // can actually take. A dead end tells someone the takedown queue
+              // is broken when it is only telling them the row is gone.
+              : { status: 404, error: 'That content no longer exists, so there is nothing to restore. Dismiss the report instead.' };
           } else {
-            actionType = 'content_hidden';
+            // The audit action is derived from what the database actually did,
+            // never assumed. 'content_restored' only became a legal value in
+            // migration 017; without it this INSERT dies as a 23514 and takes
+            // the un-hide down with it.
+            actionType = hiding ? 'content_hidden' : 'content_restored';
+            const row = changed.rows[0];
+            audience = {
+              flockId: row.flock_id ?? null,
+              // Nullable on purpose: messages.sender_id is ON DELETE SET NULL,
+              // and a guest RSVP has no account behind it at all.
+              userIds: [row.notify_a, row.notify_b].filter((id) => id != null),
+            };
           }
         }
       } else if (action === 'ban' || action === 'unban') {
@@ -306,6 +373,55 @@ router.put('/reports/:id', async (req, res) => {
     if (banTargetId) {
       const io = req.app.get('io');
       if (io) io.in(`user:${banTargetId}`).disconnectSockets(true);
+    }
+
+    // Round 18: a takedown must bite as immediately as a ban does. Hiding a
+    // message only changes what a FUTURE fetch returns, so the harassing DM sat
+    // on the victim's screen, and in every open flock thread, until somebody
+    // happened to reload. Same reasoning as the disconnect above, same
+    // placement: after COMMIT, so a rolled-back takedown never tells anyone
+    // their content is gone when it is still live.
+    //
+    // Deliberate deviation worth naming: the un-hide emits 'content_restored',
+    // not 'content_removed' with an inverted flag. A client that has already
+    // dropped the row needs a different instruction than one that still has it,
+    // and an event called "removed" that means "put it back" is the kind of
+    // name that gets handled wrong once and stays wrong.
+    if (audience) {
+      try {
+        const io = req.app.get('io');
+        if (io) {
+          const event = actionType === 'content_hidden' ? 'content_removed' : 'content_restored';
+          // Carries only what a client needs to drop or restore its own copy.
+          // No moderator id, no reason, no reporter: the reason is free text a
+          // moderator wrote for other moderators, and the reporter's identity
+          // is the one thing a report must never hand to the reported.
+          const payload = {
+            contentType: report.content_type,
+            contentId: report.content_id,
+            flockId: audience.flockId,
+          };
+          // Membership is re-read at emit time by emitToFlockMembers, so this
+          // cannot reach someone whose membership has already ended. It returns
+          // the ids it delivered to, which the personal fan-out below subtracts:
+          // nobody is told twice, whatever a future map entry does.
+          const already = new Set();
+          if (audience.flockId != null) {
+            for (const id of await emitToFlockMembers(io, audience.flockId, event, payload)) {
+              already.add(id);
+            }
+          }
+          for (const uid of new Set(audience.userIds)) {
+            if (already.has(uid)) continue;
+            io.to(`user:${uid}`).emit(event, payload);
+          }
+        }
+      } catch (emitErr) {
+        // The content IS hidden and the audit row IS written — both committed
+        // above. A socket failure must not turn that into a 500 that tells the
+        // moderator to try the takedown again.
+        console.error('Takedown notify failed (the action itself committed):', emitErr);
+      }
     }
 
     res.json({ message: 'Action applied', status: newStatus, action: actionType });

@@ -54,11 +54,25 @@ router.get('/promotions', async (req, res) => {
     // venue_promotions grows with usage and one owner can create arbitrarily
     // many over time — this list had no ceiling. A generous cap bounds the worst
     // case without hiding any realistic set.
+    // Round 18: hidden promotions stay VISIBLE to their author, unlike reviews.
+    // The asymmetry is the point. A hidden review is somebody else's words about
+    // this owner and they have no business reading it after a takedown; a hidden
+    // promotion is the owner's OWN copy, and silently dropping it from their
+    // list would leave them staring at a promotion that vanished with no reason
+    // given, re-creating it, and having that hidden too.
+    //
+    // But it must be MARKED, not just present. Before this the row came back
+    // through `SELECT *` looking exactly like a live one, so the dashboard
+    // showed a taken-down promotion as running while /public-promotions refused
+    // to serve it to a single user. `hidden_by_moderation` is stated explicitly
+    // rather than leaving the frontend to infer it from a raw `is_hidden`
+    // column that a future SELECT list could quietly drop.
     const { rows } = await pool.query(
       'SELECT * FROM venue_promotions WHERE venue_user_id = $1 ORDER BY created_at DESC LIMIT 200',
       [req.user.id]
     );
-    res.json({ promotions: rows });
+    const promotions = rows.map((p) => ({ ...p, hidden_by_moderation: p.is_hidden === true }));
+    res.json({ promotions });
   } catch (err) {
     console.error('Get promotions error:', err);
     res.status(500).json({ error: 'Failed to get promotions' });
@@ -110,19 +124,61 @@ router.put('/promotions/:id', requirePremium, [
     if (req.body.title && rejectIfProfane(res, req.body.title)) return;
     if (req.body.description && rejectIfProfane(res, req.body.description)) return;
 
+    // Round 18: an edit to a taken-down promotion is REFUSED, and refused by
+    // name. The old statement happily updated a hidden row and answered 200 with
+    // it, so the owner retitled a promotion, was told it saved, and it stayed
+    // invisible to every user because /public-promotions filters is_hidden. An
+    // endpoint that reports success for work the product then declines to honour
+    // is worse than one that says no.
+    //
+    // Unlike the reply route, naming the takedown here leaks nothing: it is the
+    // owner's own promotion, GET /promotions already returns it flagged, and
+    // "why can I not edit this" has no other answer.
+    //
+    // One statement, not a SELECT-then-UPDATE: `target` names the row, the
+    // UPDATE simply does not fire when it is hidden, and the outer SELECT still
+    // returns a row whenever the promotion exists — so "not yours / gone" (0
+    // rows) stays distinguishable from "taken down" (a row whose UPDATE half is
+    // missing) with no window between the check and the write. Same shape as the
+    // verify route in routes/admin.js.
     const { title, description, timeSlot, days } = req.body;
     const { rows } = await pool.query(
-      `UPDATE venue_promotions SET
-        title = COALESCE($1, title),
-        description = COALESCE($2, description),
-        time_slot = COALESCE($3, time_slot),
-        days = COALESCE($4, days),
-        updated_at = NOW()
-      WHERE id = $5 AND venue_user_id = $6 RETURNING *`,
+      `WITH target AS (
+         SELECT id, COALESCE(is_hidden, false) AS is_hidden
+         FROM venue_promotions WHERE id = $5 AND venue_user_id = $6
+       ),
+       upd AS (
+         UPDATE venue_promotions SET
+           title = COALESCE($1, title),
+           description = COALESCE($2, description),
+           time_slot = COALESCE($3, time_slot),
+           days = COALESCE($4, days),
+           updated_at = NOW()
+         WHERE id = $5 AND venue_user_id = $6
+           AND EXISTS (SELECT 1 FROM target t WHERE t.is_hidden = false)
+         RETURNING *
+       )
+       SELECT t.is_hidden AS target_hidden, u.*
+       FROM target t LEFT JOIN upd u ON true`,
       [title || null, description || null, timeSlot || null, days || null, req.params.id, req.user.id]
     );
     if (rows.length === 0) return res.status(404).json({ error: 'Promotion not found' });
-    res.json(rows[0]);
+    const row = rows[0];
+    // The refusal is read off the UPDATE, never off `target_hidden` alone: the
+    // missing updated row IS the refusal, and nothing else can stop the write.
+    if (row.id == null) {
+      return res.status(409).json({
+        // SLOP-AUDIT.md rule 5: this names only things that exist. Nothing in
+        // the codebase emails a content author about a takedown, so an earlier
+        // draft of this line ("reply to the moderation email") pointed at a
+        // feature that has never been built. Delete and re-create both work on
+        // a hidden row today, so that is what it says.
+        error: 'This promotion was taken down by moderation and cannot be edited. Delete it and create a new one if you want to run something different.',
+        code: 'CONTENT_HIDDEN',
+      });
+    }
+    const { target_hidden: _targetHidden, ...promotion } = row;
+    res.json(promotion);
   } catch (err) {
     console.error('Update promotion error:', err);
     res.status(500).json({ error: 'Failed to update promotion' });
@@ -309,6 +365,16 @@ router.get('/reviews', async (req, res) => {
     const statsResult = await pool.query(
       // Same JOIN as the list below, so the two can never disagree about which
       // rows count (venue_reviews.user_id is nullable; the join is the rule).
+      // Round 18: `AND COALESCE(vr.is_hidden, false) = false`, the same
+      // predicate /public-reviews has carried since the takedown shipped. The
+      // owner tab ignored takedowns entirely, in both queries. Two consequences,
+      // and the second is the worse one:
+      //   * a review taken down FOR HARASSING THIS OWNER was still served to
+      //     them in full text, so moderation removed it from everyone except
+      //     the person it was aimed at;
+      //   * the hidden row still moved the average and the star distribution the
+      //     owner sees, so the owner's number permanently disagreed with the
+      //     public one and there was nothing on the screen to explain the gap.
       `SELECT COUNT(*)::int AS total,
               AVG(vr.rating)::float AS average,
               COUNT(*) FILTER (WHERE vr.rating = 1)::int AS r1,
@@ -318,17 +384,21 @@ router.get('/reviews', async (req, res) => {
               COUNT(*) FILTER (WHERE vr.rating = 5)::int AS r5
        FROM venue_reviews vr
        JOIN users u ON u.id = vr.user_id
-       WHERE vr.google_place_id = $1`,
+       WHERE vr.google_place_id = $1
+         AND COALESCE(vr.is_hidden, false) = false`,
       [venue.google_place_id]
     );
     const s = statsResult.rows[0] || {};
     const total = s.total || 0;
 
     const { rows } = await pool.query(
+      // Same visibility predicate as the stats above, for the same reason the
+      // JOIN is duplicated: the two must never disagree about which rows count.
       `SELECT vr.*, u.name, u.profile_image_url
        FROM venue_reviews vr
        JOIN users u ON u.id = vr.user_id
        WHERE vr.google_place_id = $1
+         AND COALESCE(vr.is_hidden, false) = false
        ORDER BY vr.created_at DESC
        LIMIT $2`,
       [venue.google_place_id, limit]
@@ -369,9 +439,26 @@ router.post('/reviews/:id/reply', [
     if (!venue.verified) return res.status(403).json({ error: 'Replies unlock once your venue is verified' });
     if (rejectIfProfane(res, req.body.reply)) return;
 
+    // Round 18: a hidden review is not repliable, and `RETURNING *` on one was
+    // the worst leak of the three on this file. The route had no is_hidden
+    // predicate at all, so an owner holding an id their client cached before the
+    // takedown could POST a one-character reply and get the full row back —
+    // rating, text, author — reading taken-down content straight through a write
+    // endpoint. Writing the reply was itself a bypass: replies ride the verified
+    // badge on the public card, so it attached business speech to a review
+    // moderation had removed.
+    //
+    // 404 rather than a named refusal, and that is the deliberate answer: the
+    // GET above no longer lists hidden reviews, so from this owner's side the
+    // review genuinely is not there. Saying "that review was taken down" would
+    // confirm the existence and the moderation state of a row we just decided
+    // they may not see, and it would tell a harassing owner that their complaint
+    // landed on a specific review.
     const { rows } = await pool.query(
       `UPDATE venue_reviews SET venue_reply = $1, venue_replied_at = NOW()
-       WHERE id = $2 AND google_place_id = $3 RETURNING *`,
+       WHERE id = $2 AND google_place_id = $3
+         AND COALESCE(is_hidden, false) = false
+       RETURNING *`,
       [req.body.reply, req.params.id, venue.google_place_id]
     );
     if (rows.length === 0) return res.status(404).json({ error: 'Review not found' });
