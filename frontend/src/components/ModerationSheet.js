@@ -1,11 +1,11 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { reportContent, blockUser } from '../services/api';
 
-// UGC moderation sheet (Apple Guideline 1.2). Opened from a message action or a
-// user/profile menu. Lets a user REPORT objectionable content and BLOCK an abusive
-// user — the two mechanisms Apple requires and that our CommunityGuidelines /
-// TermsOfService pages promise ("long-press a message or open a profile to Report
-// content or Block a user").
+// UGC moderation sheet (Apple Guideline 1.2). Opened from a message action, a
+// user/profile menu, or a guest's card in a flock roster. Lets a user REPORT
+// objectionable content and BLOCK an abusive user — the two mechanisms Apple
+// requires and that our CommunityGuidelines / TermsOfService pages promise
+// ("long-press a message or open a profile to Report content or Block a user").
 //
 // `target` shape (null = closed):
 //   { userId, userName, contentType, contentId }
@@ -174,7 +174,11 @@ const ModerationSheet = ({ target, onClose, showToast, onBlocked }) => {
         ref={sheetRef}
         role="dialog"
         aria-modal="true"
-        aria-label={`Report or block ${who}`}
+        // Announces only what the sheet actually offers. Without a userId there
+        // is no account to block and the Block control does not render, so
+        // saying "report or block" would promise a screen reader an action that
+        // is not there. That is the guest RSVP case.
+        aria-label={userId ? `Report or block ${who}` : `Report ${who}`}
         onClick={(e) => e.stopPropagation()}
         style={{ width: '100%', maxWidth: '440px', backgroundColor: 'var(--bg-card-solid)', borderTopLeftRadius: '20px', borderTopRightRadius: '20px', overflow: 'hidden', boxShadow: '0 -8px 30px rgba(0,0,0,0.25)', animation: 'fadeInUp 0.25s ease-out', fontFamily: FONT }}
       >
@@ -230,10 +234,15 @@ const ModerationSheet = ({ target, onClose, showToast, onBlocked }) => {
         {mode === 'block' && (
           <div style={{ padding: '4px 16px 20px' }}>
             <h3 style={{ fontSize: '16px', fontWeight: '700', color: 'var(--text-primary)', margin: '6px 0 6px' }}>Block {who}?</h3>
-            <p style={{ fontSize: '13px', color: 'var(--text-secondary)', margin: '0 0 16px', lineHeight: 1.5 }}>{/* Do NOT add "you can undo this in Settings" here until the
-                unblock screen actually ships: getBlockedUsers/unblockUser exist
-                in services/api.js but nothing in App.js calls them, so blocking
-                is currently one-way inside the app. See the routed fix. */}
+            <p style={{ fontSize: '13px', color: 'var(--text-secondary)', margin: '0 0 16px', lineHeight: 1.5 }}>{/* This used to warn that blocking was one-way inside the app,
+                because getBlockedUsers/unblockUser existed in services/api.js
+                with no caller. That stopped being true: App.js ships a Blocked
+                accounts screen in Settings which lists them and unblocks with a
+                confirm step. So saying it can be undone would now be honest.
+                It is still left unsaid on purpose, because this is the moment
+                someone is getting away from a person who is harassing them and
+                "you can undo this later" is an argument against doing it. Say
+                it on the screen that performs the undo, not on this one. */}
               They won't be able to message you or see your activity, and you won't see theirs. Blocking is mutual.</p>
             <div style={{ display: 'flex', gap: '10px' }}>
               <button onClick={() => setMode('menu')} disabled={busy} style={ghostBtn}>Cancel</button>

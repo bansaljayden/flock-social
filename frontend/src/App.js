@@ -560,23 +560,64 @@ const OfflineGate = () => {
 // aspect ratios (steps is nearly 3:1) and without it a width clamp at 390px
 // would stretch them. Decorative, so alt="" + aria-hidden — the copy beside
 // them carries the meaning.
+//
+// Both densities are served as WebP, with the PNGs kept as the <picture>
+// fallback. The 2x entry was the expensive one and nothing was compressing it:
+// mark-crowd.png is 1,194,700 bytes against 391,212 for the WebP, and
+// mark-money.png 2,088,033 against 141,310. That weight is inside the Capacitor
+// download, not just a slow request. The `-400` WebP files predate this and are
+// also served by the marketing site, so they are used exactly as they are.
+//
+// LANDMINE for a new `name`: all FOUR files have to exist. <picture> falls back
+// to the <img> when the browser cannot decode the source's TYPE, never when the
+// chosen URL 404s, so a missing .webp is a broken image and not a silent
+// downgrade to the PNG. crowd, steps and money each have all four today.
+//
+// display:contents on the <picture> keeps this component's layout identical to
+// the bare <img> it replaced: the wrapper contributes no box, so the img is
+// still the element the parent flex column lays out.
 // ---------------------------------------------------------------------------
 const EmptyMark = ({ name, height = 160, style }) => (
-  <img
-    src={`/marks/mark-${name}-400.png`}
-    srcSet={`/marks/mark-${name}-400.png 1x, /marks/mark-${name}.png 2x`}
-    alt=""
-    aria-hidden="true"
-    loading="lazy"
-    draggable="false"
-    style={{ display: 'block', height: `${height}px`, width: 'auto', maxWidth: '100%', objectFit: 'contain', ...style }}
-  />
+  <picture style={{ display: 'contents' }}>
+    <source type="image/webp" srcSet={`/marks/mark-${name}-400.webp 1x, /marks/mark-${name}.webp 2x`} />
+    <img
+      src={`/marks/mark-${name}-400.png`}
+      srcSet={`/marks/mark-${name}-400.png 1x, /marks/mark-${name}.png 2x`}
+      alt=""
+      aria-hidden="true"
+      loading="lazy"
+      draggable="false"
+      style={{ display: 'block', height: `${height}px`, width: 'auto', maxWidth: '100%', objectFit: 'contain', ...style }}
+    />
+  </picture>
 );
 
 // The backend stores venue photo URLs as RELATIVE proxy paths
 // (/api/venues/photo?ref=...) so senders can't smuggle tracking hosts.
 // Resolve to the API origin whenever a stored value is rendered.
 const resolveVenuePhoto = (u) => (u && u.startsWith('/api/') ? `${BASE_URL}${u}` : u || null);
+
+// A guest's identity arrives in two forms and the roster used to keep only the
+// wrong one. `id` is the namespaced string the roster is keyed on ("guest:12",
+// deliberately non-numeric so it can never be mistaken for a user id); the REST
+// roster also sends `guest_id`, the plain `guest_rsvps` row id. Reporting needs
+// the number, because POST /api/reports validates content_id as an integer.
+//
+// Dropping it is why reporting a guest name was unreachable: the content type,
+// the sheet's wording, the flock-membership visibility gate and migration 016
+// (which widened the CHECK constraint so those reports stop 500ing) all shipped,
+// and the client still had nothing to put in content_id.
+//
+// The socket event carries only the namespaced form, so parse that as the
+// fallback rather than leaving a guest who just arrived unreportable until the
+// next refetch.
+const guestRsvpId = (g) => {
+  const raw = g?.guest_id != null
+    ? g.guest_id
+    : String(g?.id ?? g?.guestId ?? '').replace(/^guest:/, '');
+  const n = Number(raw);
+  return Number.isInteger(n) && n > 0 ? n : null;
+};
 
 // The server talks about votes as { venue_name, venue_id, voters, guest_count }
 // where voters are either { id, name } rows (GET /votes) or plain names (vote
@@ -4633,8 +4674,13 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
       // belong in the roster and in "going", but deliberately NOT in
       // flock.members: that array feeds the bill-split payer picker and the
       // location-share guard, both of which take real user ids. Their ids
-      // are namespaced strings ("guest:12") so a stray one is loud.
-      const guests = (data.guests || []).map(g => ({ id: g.id, name: g.name, status: g.status, isGuest: true }));
+      // are namespaced strings ("guest:12") so a stray one is loud. `guestId`
+      // is the same guest as a plain number, carried alongside rather than
+      // instead of, because it is the only thing a guest_rsvp report can be
+      // filed against. See guestRsvpId.
+      const guests = (data.guests || []).map(g => ({
+        id: g.id, guestId: guestRsvpId(g), name: g.name, status: g.status, isGuest: true,
+      }));
       const eventTime = data.flock?.event_time || null;
       setFlocks(prev => prev.map(f => f.id === flockId
         ? {
@@ -4953,7 +4999,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
     const unsub = onGuestRsvp((data) => {
       setFlocks(prev => prev.map(f => {
         if (String(f.id) !== String(data.flockId)) return f;
-        const entry = { id: data.guestId, name: data.name, status: data.status === 'in' ? 'accepted' : 'declined', isGuest: true };
+        // data.guestId is the namespaced form ("guest:12"); guestRsvpId digs the
+        // number back out so a guest who arrives live is as reportable as one
+        // that came from the roster fetch.
+        const entry = { id: data.guestId, guestId: guestRsvpId(data), name: data.name, status: data.status === 'in' ? 'accepted' : 'declined', isGuest: true };
         const guests = [...(f.guests || []).filter(g => g.id !== data.guestId), entry];
         return { ...f, guests, memberCount: data.going };
       }));
@@ -11782,10 +11831,22 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                   const mId = typeof member === 'object' ? member.id : null;
                   // The roster is the whole point of the person card: these are
                   // people you share a plan with who may never have typed a
-                  // word, and before this there was nothing to tap. Guests have
-                  // no Flock account behind them, and you cannot report
-                  // yourself, so both stay plain.
+                  // word, and before this there was nothing to tap. You cannot
+                  // report yourself, so your own face stays plain.
                   const canOpen = !isGuest && mId != null && String(mId) !== String(authUser?.id);
+                  // A guest gets the report sheet instead of the person card.
+                  // There is no account behind them so there is nothing to
+                  // block and no profile to open, but the NAME is user-written,
+                  // unauthenticated, and broadcast live to everyone in the
+                  // flock. It is the one piece of content here a stranger can
+                  // put in front of you, and this roster is the only place it
+                  // is shown, so it is the only place a takedown can start.
+                  // guestId, not a re-parse of the namespaced id: the roster
+                  // mapping is the one place that derives it, so there is a
+                  // single thing to fix if the server's shape ever moves.
+                  const guestReportId = isGuest ? (member.guestId ?? null) : null;
+                  const canReport = guestReportId != null;
+                  const tappable = canOpen || canReport;
                   const bgColors = [colors.navy, colors.navyMid, colors.steel, colors.amber, '#4a7ba7', '#ec4899'];
                   const boxStyle = { display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '5px', minWidth: '54px' };
                   const inner = (
@@ -11800,12 +11861,16 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                     </>
                   );
                   const rowKey = typeof member === 'object' && member.id != null ? String(member.id) : i;
-                  return canOpen ? (
+                  return tappable ? (
                     <button
                       key={rowKey}
                       className="hit44"
-                      aria-label={`About ${mName}`}
-                      onClick={() => openUserProfile({ id: mId, name: mName, image: mImage })}
+                      aria-label={canOpen ? `About ${mName}` : `Report guest ${mName}`}
+                      onClick={canOpen
+                        ? () => openUserProfile({ id: mId, name: mName, image: mImage })
+                        // No userId: there is no Flock account behind a guest, so
+                        // the sheet correctly renders Report without Block.
+                        : () => setModerationTarget({ userName: mName, contentType: 'guest_rsvp', contentId: guestReportId })}
                       style={{ ...boxStyle, background: 'none', border: 'none', padding: 0, cursor: 'pointer', flexShrink: 0 }}
                     >
                       {inner}
