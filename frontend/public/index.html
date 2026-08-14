@@ -118,11 +118,21 @@
          would claim /privacy and /terms carry those same questions. That one
          belongs in src/website/SupportPage.js, injected per route.
 
+         This same @graph is duplicated, on purpose, in api/marketing-page.js,
+         which serves a static HTML rendering of the five marketing routes to
+         AI crawlers that cannot execute JavaScript (UA-conditional rewrites
+         in vercel.json, same pattern as the invite preview). The two copies
+         are pinned to each other by src/__tests__/aiCrawlerSurface.test.js:
+         edit this block and that suite tells you where the other copy is.
+
          Rules for editing:
          - No aggregateRating, no ratingValue, no userInteractionCount, no
            downloadCount. Flock is pre-launch. Inventing any of those is
            fabricated review markup and is a manual-action risk, not a
            shortcut.
+         - The one credibility claim, `award`, is the DECA credential in the
+           same words the visible site uses. Do not add anything here the
+           rendered pages do not say.
          - No sameAs for the App Store. Apple ID 6781442127 is real but the
            listing 404s until Apple approves the app (checked 2026-08-14),
            and LandingPage.js keeps APP_STORE_LIVE=false for the same reason.
@@ -158,7 +168,8 @@
           "founder": {
             "@type": "Person",
             "name": "Jayden Bansal"
-          }
+          },
+          "award": "1st place, PA DECA States"
         },
         {
           "@type": "WebSite",
