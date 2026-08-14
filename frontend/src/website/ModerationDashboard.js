@@ -77,15 +77,31 @@ export default function ModerationDashboard() {
   // Keyed by report id, which is stable across a refresh, so a picture a
   // moderator already opened is not re-fetched every time the queue reloads.
   const [images, setImages] = useState({});
+  // reportId -> { status: 'loading' | 'ready' | 'error',
+  //               text, clipped, totalLength, error }
+  // Same keying, same reason, same shape as `images` above.
+  const [texts, setTexts] = useState({});
 
   const load = useCallback(async () => {
     setLoading(true); setError('');
     try {
+      // `|| []` on its own turned a malformed 200 into "Queue is clear." A
+      // proxy, a gzip failure or a redirect to an HTML error page all arrive as
+      // a 200 whose body adminFetch reduces to {}, and the most reassuring
+      // sentence on a moderation console is the one it must never say by
+      // accident. Same rule the strip view in routes/venueDashboard.js was
+      // fixed for: an upstream failure is not an empty result set.
       const r = await adminFetch('/api/admin/reports');
-      setReports(r.reports || []);
-      setCounts(r.counts || []);
+      if (!Array.isArray(r.reports) || !Array.isArray(r.counts)) {
+        throw new Error('The queue came back in a shape this console does not understand. Reload the page.');
+      }
+      setReports(r.reports);
+      setCounts(r.counts);
       const a = await adminFetch('/api/admin/moderation-actions');
-      setActions(a.actions || []);
+      if (!Array.isArray(a.actions)) {
+        throw new Error('The audit log came back in a shape this console does not understand. Reload the page.');
+      }
+      setActions(a.actions);
     } catch (e) { setError(e.message); }
     finally { setLoading(false); }
   }, []);
@@ -158,6 +174,61 @@ export default function ModerationDashboard() {
     }
   };
 
+  // The rest of the words, on demand and one report at a time.
+  //
+  // The queue clips its excerpt at 280 characters so a 200-row response stays
+  // small, and until GET /api/admin/reports/:id/content existed the console
+  // could only be honest about that: it labelled the excerpt "(first 280
+  // characters)" and offered no way to read the other 4,720 a flock message may
+  // hold. A moderator judging harassment on a long message read the opening and
+  // decided on it. That label is now this control.
+  //
+  // Fetched through adminFetch for the same reason the image is: the whole
+  // admin router is behind a Bearer token, so a plain URL 401s.
+  const toggleText = async (report) => {
+    const cur = texts[report.id];
+    if (cur && cur.status === 'loading') return;
+    if (cur && cur.status === 'ready') {
+      // Closing drops the bytes rather than parking them, exactly as a fetched
+      // image does: this is reported UGC up to 20,000 characters per report,
+      // and a moderator working a 200-row queue would otherwise accumulate
+      // every message they had ever expanded for as long as the tab stayed
+      // open. Re-opening costs one request. Nothing is cached to fall back on —
+      // unlike an image url, the full text is never carried by the list — so
+      // there is no 'collapsed' state to keep.
+      setTexts((p) => {
+        const next = { ...p };
+        delete next[report.id];
+        return next;
+      });
+      return;
+    }
+    setTexts((p) => ({ ...p, [report.id]: { status: 'loading' } }));
+    try {
+      const data = await adminFetch(`/api/admin/reports/${report.id}/content`);
+      // A 200 with no text is still a failure to show anything, and rendering
+      // an empty box under a button that just said "loading" explains nothing.
+      if (!data || typeof data.text !== 'string' || data.text === '') {
+        throw new Error('The server returned no text for this report.');
+      }
+      setTexts((p) => ({
+        ...p,
+        [report.id]: {
+          status: 'ready',
+          text: data.text,
+          // The server caps what it will serve and says so; the console repeats
+          // it rather than trailing off the way the 280-character excerpt did.
+          clipped: !!data.clipped,
+          totalLength: Number(data.totalLength) || data.text.length,
+        },
+      }));
+    } catch (e) {
+      // The server's own wording again: "That content no longer exists. Dismiss
+      // the report instead." names the next action.
+      setTexts((p) => ({ ...p, [report.id]: { status: 'error', error: e.message } }));
+    }
+  };
+
   const markImageBroken = (reportId) => {
     setImages((p) => (p[reportId] ? { ...p, [reportId]: { ...p[reportId], renderFailed: true } } : p));
   };
@@ -208,7 +279,13 @@ export default function ModerationDashboard() {
         {loading ? <p style={S.dim}>Loading…</p> : (
           <>
             <h2 style={S.h2}>Reports</h2>
-            {reports.length === 0 ? <p style={S.dim}>Queue is clear.</p> : (
+            {/* "Queue is clear." is the most reassuring sentence on this
+                screen, so it is never printed over a failed load. An empty list
+                and an unread list look identical, and only one of them means
+                there is nothing to do. */}
+            {reports.length === 0 ? (
+              <p style={S.dim}>{error ? 'The queue could not be loaded, so this is not a count of anything.' : 'Queue is clear.'}</p>
+            ) : (
               <div style={S.list}>
                 {reports.map((r) => {
                   const unhandled = !!own(UNHANDLED_STATUS, r.status);
@@ -255,6 +332,8 @@ export default function ModerationDashboard() {
                       image={images[r.id]}
                       onToggleImage={() => toggleImage(r)}
                       onImageBroken={() => markImageBroken(r.id)}
+                      text={texts[r.id]}
+                      onToggleText={() => toggleText(r)}
                     />
 
                     {showActions && (
@@ -280,7 +359,9 @@ export default function ModerationDashboard() {
             )}
 
             <h2 style={S.h2}>Audit log</h2>
-            {actions.length === 0 ? <p style={S.dim}>No actions yet.</p> : (
+            {actions.length === 0 ? (
+              <p style={S.dim}>{error ? 'The audit log could not be loaded.' : 'No actions yet.'}</p>
+            ) : (
               <div style={S.log}>
                 {actions.map((a) => (
                   <div key={a.id} style={S.logRow}>
@@ -306,11 +387,14 @@ export default function ModerationDashboard() {
 // Field names come from GET /api/admin/reports (backend/routes/admin.js):
 // content_excerpt, content_excerpt_clipped, content_has_image, content_image_url,
 // content_image_deferred, content_created_at, content_is_hidden, content_missing.
-function ReportedContent({ report: r, image, onToggleImage, onImageBroken }) {
+// The expanded body comes from GET /api/admin/reports/:id/content, which answers
+// { text, clipped, totalLength } and is capped server-side.
+function ReportedContent({ report: r, image, onToggleImage, onImageBroken, text, onToggleText }) {
   const label = lowerLabel(r.content_type);
   const gone = !!r.content_missing;
   const empty = !gone && !r.content_excerpt && !r.content_has_image && !r.content_created_at;
   const showable = image && image.status === 'ready' && !image.renderFailed;
+  const expanded = !!(text && text.status === 'ready');
 
   return (
     <div style={S.content}>
@@ -337,10 +421,52 @@ function ReportedContent({ report: r, image, onToggleImage, onImageBroken }) {
       ) : (
         <>
           {r.content_excerpt ? (
-            <div style={S.excerpt}>
-              {r.content_excerpt}
-              {r.content_excerpt_clipped ? <span style={S.clip}>… (first 280 characters)</span> : null}
-            </div>
+            <>
+              {/* Bounded once expanded. 20,000 characters is roughly 300 lines,
+                  and pushing Hide and Ban that far down the card would make
+                  reading the evidence and acting on it two different screens.
+                  Nothing is withheld: the box scrolls. */}
+              <div style={expanded ? { ...S.excerpt, ...S.excerptFull } : S.excerpt}>
+                {expanded ? text.text : r.content_excerpt}
+                {/* The ellipsis means "there is more than this", so it belongs
+                    on the clipped excerpt AND on a full text the SERVER had to
+                    cap — and on neither once everything is on the screen. */}
+                {(expanded ? text.clipped : !!r.content_excerpt_clipped) ? <span style={S.clip}>…</span> : null}
+              </div>
+
+              {/* Gated on the queue's own clipped flag: when the excerpt is
+                  already the whole thing there is nothing behind this control,
+                  and a button that can only re-render what is on the screen is
+                  the same defect as one that can only produce a refusal. */}
+              {r.content_excerpt_clipped ? (
+                <div style={S.textBlock}>
+                  {text && text.status === 'error' ? (
+                    <div style={S.imgErr}>{text.error || 'The rest of the text could not be loaded.'}</div>
+                  ) : null}
+
+                  {expanded && text.clipped ? (
+                    // Says what was withheld and how much, rather than trailing
+                    // off. The number is read back off the response, so it
+                    // cannot drift from the server's own cap.
+                    <div style={S.dimSmall}>
+                      {`Showing the first ${text.text.length.toLocaleString()} of ${text.totalLength.toLocaleString()} characters. That is the most the server will serve for one report.`}
+                    </div>
+                  ) : null}
+
+                  {/* One control, always present, whatever state the text is
+                      in — same rule as the image button below. */}
+                  {text && text.status === 'loading' ? (
+                    <span style={S.dimSmall}>Loading the full text…</span>
+                  ) : (
+                    <button onClick={onToggleText} style={S.imgBtn}>
+                      {expanded ? 'Show less'
+                        : (text && text.status === 'error') ? 'Try again'
+                        : 'Show the full text'}
+                    </button>
+                  )}
+                </div>
+              ) : null}
+            </>
           ) : (
             <div style={S.dimSmall}>{r.content_has_image ? 'No text. Image only.' : 'No text on this item.'}</div>
           )}
@@ -430,8 +556,10 @@ const S = {
   contentHead: { fontSize: 12, color: '#8a8a93', marginBottom: 6, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' },
   hiddenTag: { color: '#a8cbe8', border: '1px solid #2d5a87', borderRadius: 5, padding: '1px 6px', fontSize: 10, letterSpacing: 0.5 },
   excerpt: { fontSize: 14, color: '#e7e7ea', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' },
+  excerptFull: { maxHeight: 360, overflowY: 'auto', paddingRight: 6 },
   clip: { color: '#7c7c87', fontSize: 12, marginLeft: 4 },
   dimSmall: { fontSize: 13, color: '#7c7c87' },
+  textBlock: { marginTop: 8, display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 6 },
   imgBlock: { marginTop: 10, display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 6 },
   img: { width: 320, maxWidth: '100%', maxHeight: 320, objectFit: 'contain', borderRadius: 8, border: '1px solid #25252b', background: '#0a0a0c', display: 'block' },
   imgBtn: { background: '#222228', color: '#c7c7cd', border: '1px solid #33333a', borderRadius: 8, padding: '5px 10px', cursor: 'pointer', fontSize: 12, fontFamily: 'inherit' },

@@ -253,11 +253,25 @@ router.get('/events', async (req, res) => {
     if (!venue) return res.json({ events: [] });
 
     // Same unbounded-growth cap as the promotions list above.
+    //
+    // Round 22: and the same MARKING, which events were passed over for. A
+    // hidden event stays visible to its author for the reason round 18 gives
+    // for promotions — it is the owner's own copy, and dropping it silently
+    // leaves them staring at an event that vanished with no reason given — but
+    // it has to be marked, not merely present. `SELECT *` handed a taken-down
+    // event back looking exactly like a running one, so the one screen that
+    // could tell an owner a moderator had acted said nothing at all.
+    // venue_events only grew is_hidden in migration 019; this is the read side
+    // catching up with it.
     const { rows } = await pool.query(
       'SELECT * FROM venue_events WHERE venue_user_id = $1 ORDER BY created_at DESC LIMIT 200',
       [req.user.id]
     );
-    res.json({ events: rows });
+    // Stated explicitly rather than leaving the dashboard to infer it from a raw
+    // is_hidden column a future SELECT list could quietly drop — same contract,
+    // same field name, as the promotions list.
+    const events = rows.map((e) => ({ ...e, hidden_by_moderation: e.is_hidden === true }));
+    res.json({ events });
   } catch (err) {
     console.error('Get events error:', err);
     res.status(500).json({ error: 'Failed to get events' });
@@ -268,6 +282,13 @@ router.get('/events', async (req, res) => {
 // Event titles are the same story as promotion titles: owner-typed, read back
 // on the dashboard and (via venue_events) intended for the venue card, screened
 // by rejectIfProfane and by nothing else. An array skipped even that.
+//
+// Round 22: the OTHER two strings on an event were screened by nothing at all.
+// `eventDate` and `eventTime` are 40 characters of owner-typed free text each —
+// not a DATE and not a TIME column, so "this Friday" and "doors 9, band 10" are
+// the normal values — and they sat beside a title that was screened. Exactly the
+// gap round 20 closed on promotions, where time_slot and days were published
+// unscreened while the same string in the title was refused. Same rule here.
 //
 // `capacity` had a second problem of its own. `isInt({ min: 1 })` has no
 // ceiling, and the column is INTEGER — so `capacity: 3000000000` was a 22003
@@ -282,7 +303,13 @@ router.post('/events', requirePremium, [
   try {
     const errors = validationResult(req);
     if (!errors.isEmpty()) return res.status(400).json({ error: errors.array()[0].msg });
-    if (rejectIfProfane(res, req.body.title)) return;
+    // All THREE owner-typed strings, not just the title — same list, same shape
+    // and same placement as the promotions routes above. Screening runs on the
+    // STRIPPED value (freeText's sanitizer has already fired in the chain), so
+    // `f<b>u</b>ck` in an event date cannot split a word past the filter either.
+    for (const field of ['title', 'eventDate', 'eventTime']) {
+      if (req.body[field] && rejectIfProfane(res, req.body[field])) return;
+    }
 
     const venue = await getVenueCtx(req.user.id);
     if (!venue) return res.status(404).json({ error: 'No venue profile found' });
@@ -301,6 +328,10 @@ router.post('/events', requirePremium, [
 });
 
 // PUT /api/venue-dashboard/events/:id
+// An edit is the same surface as a creation, across the same three text fields
+// (round 22) — the promotions PUT has screened its full set since round 20, and
+// an unscreened edit route makes a screened create route decorative: post a
+// clean event, then rename the date to a slur.
 router.put('/events/:id', requirePremium, [
   param('id').isInt({ min: 1, max: INT4_MAX }),
   freeText(body('title').optional({ nullable: true }), 'title').isLength({ min: 1, max: 120 }).withMessage('Title too long (max 120 characters)'),
@@ -311,21 +342,64 @@ router.put('/events/:id', requirePremium, [
   try {
     const errors = validationResult(req);
     if (!errors.isEmpty()) return res.status(400).json({ error: errors.array()[0].msg });
-    if (req.body.title && rejectIfProfane(res, req.body.title)) return;
+    for (const field of ['title', 'eventDate', 'eventTime']) {
+      if (req.body[field] && rejectIfProfane(res, req.body[field])) return;
+    }
 
+    // Round 22: an edit to a taken-down event is REFUSED, and refused by name —
+    // the rule the promotions PUT has followed since round 18, arriving here now
+    // that migration 019 has given venue_events an is_hidden column to read. The
+    // old statement updated a hidden row and answered 200 with it, so an owner
+    // retitled an event a moderator had removed, was told it saved, and nothing
+    // on any screen disagreed. An endpoint that reports success for work the
+    // product declines to honour is worse than one that says no.
+    //
+    // Naming the takedown leaks nothing: it is the owner's own event, GET
+    // /events now returns it flagged, and "why can I not edit this" has no other
+    // answer.
+    //
+    // One statement, not a SELECT-then-UPDATE, for the same reason as
+    // promotions: `target` names the row, the UPDATE simply does not fire when
+    // it is hidden, and the outer SELECT still returns a row whenever the event
+    // exists — so "not yours / gone" (0 rows) stays distinguishable from "taken
+    // down" (a row whose UPDATE half is missing) with no window between the
+    // check and the write.
     const { title, eventDate, eventTime, capacity } = req.body;
     const { rows } = await pool.query(
-      `UPDATE venue_events SET
-        title = COALESCE($1, title),
-        event_date = COALESCE($2, event_date),
-        event_time = COALESCE($3, event_time),
-        capacity = COALESCE($4, capacity),
-        updated_at = NOW()
-      WHERE id = $5 AND venue_user_id = $6 RETURNING *`,
+      `WITH target AS (
+         SELECT id, COALESCE(is_hidden, false) AS is_hidden
+         FROM venue_events WHERE id = $5 AND venue_user_id = $6
+       ),
+       upd AS (
+         UPDATE venue_events SET
+           title = COALESCE($1, title),
+           event_date = COALESCE($2, event_date),
+           event_time = COALESCE($3, event_time),
+           capacity = COALESCE($4, capacity),
+           updated_at = NOW()
+         WHERE id = $5 AND venue_user_id = $6
+           AND EXISTS (SELECT 1 FROM target t WHERE t.is_hidden = false)
+         RETURNING *
+       )
+       SELECT t.is_hidden AS target_hidden, u.*
+       FROM target t LEFT JOIN upd u ON true`,
       [title || null, eventDate || null, eventTime || null, capacity || null, req.params.id, req.user.id]
     );
     if (rows.length === 0) return res.status(404).json({ error: 'Event not found' });
-    res.json(rows[0]);
+    const row = rows[0];
+    // Read off the UPDATE, never off `target_hidden` alone: the missing updated
+    // row IS the refusal, and nothing else can stop the write.
+    if (row.id == null) {
+      return res.status(409).json({
+        // SLOP-AUDIT.md rule 5: names only things that exist. Nothing in this
+        // codebase emails a content author about a takedown. Delete and
+        // re-create both work on a hidden row today, so that is what it says.
+        error: 'This event was taken down by moderation and cannot be edited. Delete it and create a new one if you want to run something different.',
+        code: 'CONTENT_HIDDEN',
+      });
+    }
+    const { target_hidden: _targetHidden, ...event } = row;
+    res.json(event);
   } catch (err) {
     console.error('Update event error:', err);
     res.status(500).json({ error: 'Failed to update event' });
