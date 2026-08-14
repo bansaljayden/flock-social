@@ -6,6 +6,12 @@ const { authenticate } = require('../middleware/auth');
 const router = express.Router();
 router.use(authenticate);
 
+// A phone, a tablet, a laptop, a couple of browsers. Twenty is already far more
+// devices than anyone signs in from; it exists to bound the fan-out, not to
+// ration devices. services/firebaseService.js enforces the same ceiling at send
+// time so pre-existing bloat is bounded too.
+const MAX_TOKENS_PER_USER = 20;
+
 // POST /api/notifications/register — Register a device token for push notifications
 router.post('/register',
   [
@@ -39,6 +45,25 @@ router.post('/register',
          SET user_id = EXCLUDED.user_id, device_type = EXCLUDED.device_type, updated_at = NOW()`,
         [req.user.id, token, safeDeviceType]
       );
+
+      // Nothing bounded how many tokens one account could accumulate. Every
+      // push to a user fans out CONCURRENTLY over every row here, so an account
+      // that had registered ten thousand tokens turned each of its own
+      // notifications into ten thousand simultaneous requests to Google. Real
+      // people have a handful of devices; the cap is far above that and evicts
+      // the least recently seen. Never fatal to the registration itself — the
+      // token is already stored, which is the part the caller asked for.
+      await pool.query(
+        `DELETE FROM device_tokens
+          WHERE user_id = $1
+            AND id NOT IN (
+              SELECT id FROM device_tokens
+               WHERE user_id = $1
+               ORDER BY updated_at DESC NULLS LAST, id DESC
+               LIMIT $2
+            )`,
+        [req.user.id, MAX_TOKENS_PER_USER]
+      ).catch((e) => console.warn('Device token prune failed:', e.message));
 
       res.json({ registered: true });
     } catch (err) {
