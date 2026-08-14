@@ -25,10 +25,23 @@ const DISPOSABLE_DOMAINS = new Set([
 
 // True when the address's domain (or any parent domain) is a known
 // disposable-email service.
+//
+// Two things this had to be fixed for (round 20 audit):
+//   - it measured `String(email)` and then sliced `email` ITSELF, so any
+//     non-string that stringifies with an '@' threw out of a signup handler
+//     instead of returning a boolean. `['a@mailinator.com']` reaches
+//     Array.prototype.slice, and `.toLowerCase` on the array it returns is a
+//     TypeError — a 500 on the OAuth paths, which pass the provider's value
+//     straight in. It is a predicate: it answers true or false for anything.
+//   - a trailing dot walked past the list. 'a@mailinator.com.' is the same
+//     mailbox to a resolver, and the fully-qualified form is exactly what
+//     somebody probing this list tries second.
 function isDisposableEmail(email) {
-  const at = String(email || '').lastIndexOf('@');
+  const value = typeof email === 'string' ? email : String(email == null ? '' : email);
+  const at = value.lastIndexOf('@');
   if (at === -1) return false;
-  let domain = email.slice(at + 1).toLowerCase().trim();
+  // Trailing dots are the root label, not part of the name.
+  let domain = value.slice(at + 1).trim().toLowerCase().replace(/\.+$/, '');
   while (domain) {
     if (DISPOSABLE_DOMAINS.has(domain)) return true;
     const dot = domain.indexOf('.');
