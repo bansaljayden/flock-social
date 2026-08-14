@@ -18,9 +18,27 @@ const SYNCED_KEYS = {
   onboardingComplete: 'flockOnboardingComplete',
   userMode: 'flockUserMode',
   locationEnabled: 'flock_location_enabled',
+  // App.js queueSync()s both of these on change, but until they were listed
+  // here a first-time sync never pushed them up and a pull never wrote them
+  // back to this device — so the safety toggle and interests synced one way
+  // only, from whichever device happened to change them last.
+  safetyOn: 'flock_safety_on',
+  userInterests: 'flock_interests',
 };
 
-const JSON_KEYS = new Set(['pinnedFlockIds', 'flockOrder']);
+const JSON_KEYS = new Set(['pinnedFlockIds', 'flockOrder', 'userInterests']);
+
+// THE String() LANDMINE — read before adding a synced key.
+//
+// pullSettings() writes every non-JSON value to localStorage as
+// String(value), because localStorage only holds strings. A boolean false
+// stored server-side therefore lands here as the STRING 'false', which is
+// truthy. Every reader of these keys must compare against the string, never
+// truthiness: App.js reads flock_location_enabled and flock_safety_on with
+// `!== 'false'` / `=== 'false'`, and adopts safetyOn from the settings event
+// with `String(s.safetyOn) !== 'false'`. The test file pins those exact
+// reader patterns; if you add a boolean-ish key, write its reader the same
+// way or route it through JSON_KEYS.
 
 let pending = {};
 let timer = null;
@@ -33,8 +51,26 @@ export function queueSync(partial) {
     pending = {};
     timer = null;
     if (!isLoggedIn()) return;
-    updateUserSettings(payload).catch(err => console.warn('[settings] sync failed:', err.message));
+    updateUserSettings(payload).catch(err => {
+      console.warn('[settings] sync failed:', err.message);
+      // A sync lost to a dead spot is still the user's intent. Put it back in
+      // the queue (anything queued since the flush wins a conflict) so the
+      // next queueSync — or coming back online below — carries it up. Non-
+      // network failures (413 payload too large, expired session) stay
+      // dropped: re-sending those would fail identically forever.
+      if (err && err.isNetworkError) {
+        pending = { ...payload, ...pending };
+      }
+    });
   }, 600);
+}
+
+if (typeof window !== 'undefined') {
+  window.addEventListener('online', () => {
+    // Flush anything a dead spot stranded. queueSync({}) merges nothing and
+    // arms the normal debounce timer over the surviving pending payload.
+    if (Object.keys(pending).length > 0) queueSync({});
+  });
 }
 
 function readLocalSettings() {
