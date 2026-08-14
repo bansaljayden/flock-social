@@ -849,10 +849,23 @@ function registerHandlers(io, socket) {
         // one-word text message, and an image is not the same thing. Each one
         // costs a PAID Google Vision call (utils/moderation.js), a row holding
         // up to CHAT_IMAGE_MAX_BYTES, and that payload again for every
-        // recipient. The REST twin is capped by the body limit in server.js and
-        // 300 requests per 15 minutes; the socket path allowed 2 per second of a
-        // far larger payload with no separate ceiling at all. Its own bucket, so
-        // photos are metered as photos and normal chat is unaffected.
+        // recipient. The socket path allowed 2 per second of a far larger
+        // payload with no separate ceiling at all. Its own bucket, so photos are
+        // metered as photos and normal chat is unaffected.
+        //
+        // WHAT THE REST TWIN ACTUALLY HAS. This comment used to say the REST
+        // side was "capped by the body limit in server.js and 300 requests per
+        // 15 minutes", and both halves were wrong. apiLimiter is 3000 per 15
+        // minutes, not 300 — 200 requests a minute, per ADDRESS — so the number
+        // that made REST look already handled overstated the protection by a
+        // factor of ten, and that misreading is a direct cause of the hole
+        // server.js's billed-image limiter was later written to close. There is
+        // now a real per-image meter on that side: imageSpendLimiter in
+        // server.js charges IMAGE_SCREENS_PER_WINDOW screens per window, keyed
+        // on the verified ACCOUNT rather than the address, deliberately mirrored
+        // off this very call site. __tests__/imageSpendLimits.test.js reads both
+        // files and fails if one number moves without the other, so do not
+        // change the literals below without reading it.
         //
         // The format and size checks are deliberately AHEAD of this bucket:
         // refusing a malformed or oversized frame costs nothing, so it should
@@ -1499,10 +1512,18 @@ function registerHandlers(io, socket) {
         // one-word text message, and an image is not the same thing. Each one
         // costs a PAID Google Vision call (utils/moderation.js), a row holding
         // up to CHAT_IMAGE_MAX_BYTES, and that payload again for the recipient.
-        // The REST twin is capped by the body limit in server.js and 300
-        // requests per 15 minutes; the socket path allowed 2 per second of a far
-        // larger payload with no separate ceiling at all. Its own bucket, so
-        // photos are metered as photos and normal chat is unaffected.
+        // The socket path allowed 2 per second of a far larger payload with no
+        // separate ceiling at all. Its own bucket, so photos are metered as
+        // photos and normal chat is unaffected.
+        //
+        // WHAT THE REST TWIN ACTUALLY HAS — same correction as the flock-chat
+        // send above, restated because this call site is read on its own. The
+        // old text here claimed "the body limit in server.js and 300 requests
+        // per 15 minutes"; apiLimiter is 3000 per 15 minutes (200 a minute, per
+        // ADDRESS), and POST /api/dm/:userId is now metered per image by
+        // imageSpendLimiter in server.js, keyed on the verified ACCOUNT and
+        // sized off the literals below. Keep the two call sites identical:
+        // __tests__/imageSpendLimits.test.js asserts they meter the same way.
         if (!allowEvent(socket, 'send_image', 10, 60_000)) {
           socket.emit('error', { message: 'Slow down a moment.' });
           return;
