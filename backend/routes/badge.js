@@ -4,6 +4,7 @@ const pool = require('../config/database');
 const { getWeather } = require('../services/weatherService');
 const mlPredictor = require('../services/mlPredictor');
 const { upstreamSignal } = require('../utils/upstream');
+const { allowGlobalPlacesCall } = require('../utils/placesBudget');
 
 const router = express.Router();
 
@@ -118,6 +119,17 @@ router.get('/:placeId.svg',
       );
       if (!claimed.rows.length) return res.status(404).send('');
       if (!GOOGLE_KEY) return res.status(503).send('');
+
+      // The claimed-and-verified check plus the 15-minute cache are a fine rate
+      // limit, but they are not a spending limit: this is a PAID Place Details
+      // call with no authenticated user to charge, so until now it spent Google
+      // money entirely outside the "global" daily ceiling. Charged BEFORE the
+      // fetch, because Google bills a request it received even if we abort it.
+      // One unit: one Place Details call per cache miss.
+      if (!allowGlobalPlacesCall(1)) {
+        console.warn('[Badge] Global Places budget spent; serving no badge for', placeId);
+        return res.status(503).send('');
+      }
 
       const r = await fetch(`https://places.googleapis.com/v1/places/${placeId}`, {
         headers: {

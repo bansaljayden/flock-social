@@ -35,6 +35,12 @@ const PLACES_API_KEY = process.env.GOOGLE_PLACES_API_KEY;
 // (most generous free RPD) — one env var flip.
 // ---------------------------------------------------------------------------
 const BIRDIE_MODEL = process.env.BIRDIE_MODEL || 'gemini-3.5-flash-lite';
+// Wall-clock ceiling for one chat turn. The per-call deadline
+// (UPSTREAM_TIMEOUT_MS.gemini) bounds a single round trip, but a turn is up to
+// six of them plus the tool work in between, so the worst case is their sum.
+// This bounds the whole turn instead: past it the tool loop stops asking for
+// another round and answers with what it has.
+const BIRDIE_TURN_BUDGET_MS = 45_000;
 let genAIClient = null;
 function getGenAI() {
   if (!genAIClient && process.env.GEMINI_API_KEY) {
@@ -332,7 +338,12 @@ async function executeTool(toolName, toolInput, userId, opts = {}) {
     }
 
     case 'get_weather': {
-      const weather = await getWeather(toolInput.lat, toolInput.lng);
+      // Coordinates here come from the model, which is steered by the user's
+      // own prompt — the same enumeration shape as GET /api/weather, not a
+      // venue-derived lookup. Charge the caller's per-user weather ceiling so
+      // one account cannot walk lat/lng through Birdie and spend the global
+      // daily allowance that every crowd score depends on.
+      const weather = await getWeather(toolInput.lat, toolInput.lng, { userId });
       return weather || { error: 'Weather data unavailable' };
     }
 
@@ -525,34 +536,66 @@ router.post('/chat',
 
       // Chat session on the unified SDK: model per call, system prompt and
       // tools live in config (includes user name + current app context).
+      //
+      // Round 15: this config object is now reused per request rather than
+      // written inline, because a per-request config REPLACES the chat's config
+      // outright — the SDK does `config: params.config ?? this.config`, no
+      // merge. Passing `{ abortSignal }` alone on sendMessage would therefore
+      // have silently dropped Birdie's system prompt AND every tool
+      // declaration, which is a far worse bug than the one being fixed.
+      const chatConfig = {
+        systemInstruction: buildSystemPrompt(userName, currentContext, { ageBracket, freeTier }),
+        tools: [{ functionDeclarations: toolDeclarations }],
+      };
       const chat = genAI.chats.create({
         model: BIRDIE_MODEL,
         history,
-        config: {
-          systemInstruction: buildSystemPrompt(userName, currentContext, { ageBracket, freeTier }),
-          tools: [{ functionDeclarations: toolDeclarations }],
-        },
+        config: chatConfig,
       });
 
-      // Helper: send to Gemini with one retry on transient upstream errors
+      // Round 15: Gemini was the last outbound call in the app with no deadline
+      // at all — UPSTREAM_TIMEOUT_MS.gemini was declared and never used. Node's
+      // fetch applies none of its own, so a hung vendor socket parked this
+      // Express connection for minutes; and this is the one endpoint whose call
+      // count a user can steer, since the tool loop below runs up to five more
+      // round trips on prompts they write. A fresh signal per call, because
+      // AbortSignal.timeout starts counting when it is constructed.
+      //
+      // The retry deliberately does NOT cover a timeout. Gemini is PAID per
+      // token and the vendor has already parsed and metered a request we abort,
+      // so retrying one is a second invoice for a question we paid to ask —
+      // the rule stated in utils/upstream.js. Transient 429/5xx failures, which
+      // are cheap and fast, still get their one retry.
       async function sendWithRetry(payload) {
+        const send = () => chat.sendMessage({
+          message: payload,
+          config: { ...chatConfig, abortSignal: upstreamSignal('gemini') },
+        });
         try {
-          return await chat.sendMessage({ message: payload });
+          return await send();
         } catch (e) {
+          const aborted = e?.name === 'AbortError' || e?.name === 'TimeoutError'
+            || /abort|timed? ?out/i.test(e?.message || '');
+          if (aborted) throw e;
           const transient = e.status === 429 || e.status >= 500 || /quota|overloaded|unavailable|fetch failed/i.test(e.message || '');
           if (!transient) throw e;
           await new Promise(r => setTimeout(r, 800));
-          return await chat.sendMessage({ message: payload });
+          return await send();
         }
       }
 
       // Send message and handle tool calls
+      const turnDeadline = Date.now() + BIRDIE_TURN_BUDGET_MS;
       let response = await sendWithRetry(userText);
       let iterations = 0;
       const collectedVenues = []; // Track venues for card display
       let navigationAction = null; // Track navigation commands
 
       while (iterations < 5) {
+        if (Date.now() > turnDeadline) {
+          console.warn('[AI] Turn budget spent; answering without further tool rounds');
+          break;
+        }
         iterations++;
         const candidate = response.candidates?.[0];
         if (!candidate) break;
@@ -643,3 +686,8 @@ router.post('/chat',
 );
 
 module.exports = router;
+// Exposed for backend/__tests__/paidCallBudgets.test.js. The tool executor is
+// where Birdie spends money on the user's behalf (Places, and weather at
+// caller-chosen coordinates), and those charges are invisible from the route's
+// JSON, so they are tested directly.
+module.exports.__testables = { executeTool };
