@@ -161,17 +161,20 @@ describe('every NS*UsageDescription is one the app actually needs', () => {
     const picks = (app.match(/type="file" accept="image\/\*"/g) || []).length;
     expect(picks > 0).toBe(hasKey(infoPlist, 'NSPhotoLibraryUsageDescription'));
 
-    // The four pickers the string describes: profile picture, flock chat, DM,
-    // venue logo. If this count changes, re-read the string.
-    expect(picks).toBe(4);
+    // The three pickers the string describes: profile picture, flock chat, DM.
+    // If this count changes, re-read the string. The venue logo used to be the
+    // fourth, and is deliberately not anymore: the server only stores our own
+    // Places-proxy photo URLs, so the logo is picked from the linked Google
+    // listing's photos (openVenueLogoPicker) and never touches the library.
+    expect(picks).toBe(3);
     for (const handler of [
       'handlePhotoUpload',
       'handleChatImageSelect',
       'handleDmImageSelect',
-      'handleVenueLogoUpload',
     ]) {
       expect(app).toContain(handler);
     }
+    expect(app).not.toContain('handleVenueLogoUpload');
   });
 
   test('a location string is present exactly while the client reads location', () => {
@@ -227,9 +230,13 @@ describe('every NS*UsageDescription is one the app actually needs', () => {
     for (const s of [camera, photos]) {
       expect(s).toMatch(/flock chat/i);
       expect(s).toMatch(/direct message/i);
-      // Both reach the profile picture and the venue logo, so both say so.
+      // Both reach the profile picture, so both say so.
       expect(s).toMatch(/profile/i);
-      expect(s).toMatch(/venue/i);
+      // Neither reaches the venue logo anymore: it is picked from the linked
+      // Google listing's photos, not the camera or the library, so a string
+      // that still said "venue picture" would describe a surface that does
+      // not exist.
+      expect(s).not.toMatch(/venue/i);
     }
     expect(camera).toMatch(/scan/i);
   });
@@ -239,15 +246,14 @@ describe('every NS*UsageDescription is one the app actually needs', () => {
     // the system, so the camera is reachable from every picker even though no
     // line of client code mentions it. A camera string that described only the
     // in-app viewfinder would under-describe the permission.
-    const pickerHandlers = ['handlePhotoUpload', 'handleVenueLogoUpload'];
+    const pickerHandlers = ['handlePhotoUpload'];
     for (const handler of pickerHandlers) expect(app).toContain(handler);
-    // Neither picker pins itself to the library with capture=, so both can open
-    // the camera.
+    // No picker pins itself to the library with capture=, so every one can
+    // open the camera.
     expect(app).not.toMatch(/accept="image\/\*"\s+capture=/);
 
     const camera = plistString(infoPlist, 'NSCameraUsageDescription');
     expect(camera).toMatch(/profile/i);
-    expect(camera).toMatch(/venue/i);
   });
 });
 
