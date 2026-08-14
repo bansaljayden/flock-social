@@ -1,7 +1,7 @@
 import React, { useEffect } from 'react';
 import './PrivacyPolicy.css';
 
-const EFFECTIVE_DATE = 'June 16, 2026';
+const EFFECTIVE_DATE = 'August 14, 2026';
 const SUPPORT_EMAIL = 'social@flockcorp.com';
 
 export default function TermsOfService() {
@@ -73,6 +73,13 @@ export default function TermsOfService() {
           showing your messages to other members of your flock). You are responsible for the
           content you share and confirm you have the rights to share it.
         </p>
+        <p>
+          One narrower permission on top of that: when you report how busy a venue is, you
+          allow us to use that report to correct our crowd predictions and to train the model
+          that produces them. Nobody else is shown that you were the one who reported. This
+          applies to crowd reports and to nothing else you post. Our{' '}
+          <a href="/privacy">Privacy Policy</a> describes what is stored.
+        </p>
       </section>
 
       <section>
@@ -109,7 +116,10 @@ export default function TermsOfService() {
         <p>
           You may stop using Flock and delete your account at any time from the app (Profile
           &rarr; Delete account) or via our <a href="/delete-account">account deletion page</a>.
-          We may suspend or terminate your access for violations of these Terms.
+          Deleting your account also deletes every flock you created, including its chat,
+          RSVPs, and votes, for everyone who was in it. Deletion is irreversible. We may
+          suspend or terminate your access for violations of these Terms, and deleting a
+          banned account does not lift the ban.
         </p>
       </section>
 

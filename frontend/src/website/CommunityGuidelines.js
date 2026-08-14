@@ -61,8 +61,9 @@ export default function CommunityGuidelines() {
             (NCMEC) and/or the relevant authorities, as required by law.
           </li>
           <li>
-            Flock is intended for users 13 and older; we use a neutral age screen and do not
-            knowingly allow children under 13.
+            Flock is intended for users 13 and older. Sign-up asks for a date of birth, our
+            server recalculates the age from it rather than trusting the app, and anyone
+            under 13 is refused an account. We do not knowingly allow children under 13.
           </li>
           <li>
             Child-safety concerns can be reported any time to{' '}
@@ -79,10 +80,16 @@ export default function CommunityGuidelines() {
       <section>
         <h2>How to report or block</h2>
         <p>
-          In Flock, tap any message to <strong>Report</strong> it, or open the <strong>⋯</strong> menu
-          in a direct message to <strong>Report</strong> content or <strong>Block</strong> a user.
-          Blocking is mutual: a blocked user can't message you,
-          add you, or see your content, and you won't see theirs. You can also email{' '}
+          Tap a message in a flock chat or a direct message and use the flag to{' '}
+          <strong>Report</strong> it. The <strong>⋯</strong> menu at the top of a direct
+          message reports or blocks the person. You can also report from someone's profile,
+          from a venue review, and from a guest's name on a plan.
+        </p>
+        <p>
+          Blocking is mutual: a blocked account can't message you, add you, or see your
+          content, and you won't see theirs. Blocking also ends the friendship if you had
+          one, and unblocking does not restore it. You can see and undo your blocks in{' '}
+          <strong>Profile</strong> &rarr; <strong>Blocked accounts</strong>. You can also email{' '}
           <a href={`mailto:${SUPPORT_EMAIL}`}>{SUPPORT_EMAIL}</a>.
         </p>
       </section>
@@ -100,10 +107,11 @@ export default function CommunityGuidelines() {
       <section>
         <h2>Automatic screening</h2>
         <p>
-          Reports aren't the only line of defense. Messages and other text you post pass
-          through a language filter before they're stored, and photos are checked
-          automatically before anyone can see them. If a check fails, the content simply
-          doesn't post.
+          Reports aren't the only line of defense. Messages, captions, and the other text
+          you type pass through a language filter before they're stored, and every photo is
+          screened by Google's SafeSearch before anyone can see it. Animated images are
+          refused, because a scan of the first frame says nothing about the rest. If a check
+          fails, or if it cannot run at all, the content does not post.
         </p>
       </section>
 

@@ -39,8 +39,24 @@ export default function DeleteAccount() {
           Open Flock &rarr; <strong>Profile</strong> &rarr; <strong>Delete account</strong>, then
           type DELETE to confirm. If your account has a password, you'll enter it to prove it's
           you. If you sign in with Apple or Google, you may be asked to sign in again first.
-          Your account and data are then deleted immediately. If you signed in with Apple, we
-          also revoke Flock's Sign in with Apple access.
+          Your account and data are then deleted immediately.
+        </p>
+        {/*
+          APPLE REVOCATION IS NOT LIVE. `services/appleAuth.js` needs APPLE_TEAM_ID,
+          APPLE_KEY_ID and APPLE_PRIVATE_KEY; none is set on the server (verified
+          2026-08-14, TASKS.md A2), so `isConfigured()` is false, no refresh token
+          is stored at sign-in, and routes/users.js skips revocation on deletion.
+          When those variables are set, replace this paragraph with the plain
+          statement that deletion revokes the Apple grant, and update the matching
+          note in PrivacyPolicy.js. Do not restore the promise before the
+          variables exist: Apple 5.1.1(v) is checked by a human.
+        */}
+        <p>
+          <strong>If you signed in with Apple:</strong> deleting your account is meant to
+          revoke Flock's access to your Apple ID at the same time. That step is built but
+          not switched on yet, so for now disconnect it yourself: on your iPhone open{' '}
+          <strong>Settings</strong>, tap your name, then <strong>Sign in with Apple</strong>,
+          then <strong>Flock</strong>, then <strong>Stop using Apple ID</strong>.
         </p>
       </section>
 
@@ -62,18 +78,37 @@ export default function DeleteAccount() {
       <section>
         <h2>What gets deleted</h2>
         <p>
-          Deleting your account removes your profile, messages, direct messages, flocks you
-          created, friendships, budgets, trusted contacts, and notification tokens. Some records
-          may persist briefly in encrypted backups (typically up to 30 days) before they roll
-          off, and we may retain the minimum required for legal or security obligations.
+          Deleting your account removes your profile, chat messages, direct messages,
+          friendships, RSVPs and votes, budget submissions, trusted contacts, SOS records,
+          venue reviews, check-ins, and notification tokens.
         </p>
         <p>
-          Two things survive a deletion, both explained in our{' '}
-          <a href="/privacy">Privacy Policy</a>: reports and moderation records are kept with
-          your account unlinked from them, and if your account was banned when you deleted it,
-          a one-way hashed code of its email, phone number, and sign-in ID is kept for 12
-          months to stop the ban from being dodged. That code can't be turned back into your
-          info and expires on its own.
+          It also deletes <strong>every flock you created</strong>, and everything inside
+          those flocks: the whole chat, the RSVPs, and the votes, for every person who was
+          in them. They are not moved to another owner. Flocks you only joined are left
+          alone; you are removed from them, and the messages you sent in them go with you.
+        </p>
+        <p>
+          Direct messages go too, on both sides. A DM belongs to the two people in it, so
+          deleting your account removes that conversation from the other person's app as
+          well.
+        </p>
+        <p>
+          Information you deleted can still sit in a database backup until that backup is
+          deleted. Our rule is that no backup is kept longer than 90 days, except an
+          occasional archive we keep so our crowd-model training data is never lost, which
+          today is a copy of the whole database. We may also keep the minimum required for
+          legal or security obligations.
+        </p>
+        <p>
+          Three things survive a deletion, all explained in our{' '}
+          <a href="/privacy">Privacy Policy</a>. Reports and moderation records are kept, with
+          your account unlinked from them. If your account was banned when you deleted it, a
+          one-way hashed code of its email, phone number, and sign-in ID is kept for 12 months
+          to stop the ban from being dodged; that code can't be turned back into your info and
+          expires on its own. And one row per finished plan is kept describing how it went
+          (group size, whether a budget was used, whether it was confirmed, where it stalled),
+          which carries no names, no messages, and no individual budget amounts.
         </p>
       </section>
 
