@@ -7,10 +7,38 @@ const { rejectIfProfane } = require('../utils/moderation');
 const { safeVenuePhotoUrl } = require('../utils/venuePayload');
 const { isBlockedBetween } = require('../utils/blocks');
 const { GUEST_RSVP_SELECT, toGuestEntry, combineRsvpCounts } = require('../utils/guestRsvp');
+const { createUserBudget } = require('../utils/probeBudget');
+const { isPlaceIdShaped } = require('../utils/places');
+const { emitToFlockExcludingBlocked } = require('../sockets/handlers');
 
 const { pushIfOffline } = require('../services/pushHelper');
 
 const router = express.Router();
+
+// ---------------------------------------------------------------------------
+// Invite budget (audit 2026-08-14)
+//
+// POST /:id/invite took 25 arbitrary user ids per call from any accepted
+// member, wrote a membership row for each, pushed a notification to each, and
+// handed the caller back every target's display name. Nothing bounded it but
+// the general 300/15min limiter, so one account could ring ~28,000 strangers'
+// phones a day — and read the directory while doing it.
+//
+// 25/hour and 60/day of NEW invitations per inviter. A real flock is 3-15
+// people; 25 in an hour already covers "I invited my whole group and then
+// remembered six more", and 60 a day covers someone running several plans.
+// Beyond that it is not planning, it is broadcast.
+//
+// Re-inviting someone who is already invited or already a member costs nothing
+// (those calls are idempotent and reveal nothing), so normal UI behaviour —
+// re-submitting the same list, tapping twice — never eats the allowance.
+// ---------------------------------------------------------------------------
+const inviteBudget = createUserBudget({ name: 'flock-invite', hourly: 25, daily: 60 });
+
+// A flock is a plan, not a mailing list. This bounds the OTHER shape of the
+// same abuse: one flock accumulating thousands of `invited` rows (and the push
+// notification each one sends) across many callers or many days.
+const MAX_FLOCK_MEMBERSHIPS = 50;
 
 // All flock routes require authentication
 router.use(authenticate);
@@ -116,7 +144,10 @@ router.post('/',
     body('name').trim().customSanitizer(stripHtml).isLength({ min: 1, max: 255 }).withMessage('Flock name is required'),
     body('venue_name').optional().trim().customSanitizer(stripHtml),
     body('venue_address').optional().trim().customSanitizer(stripHtml),
-    body('venue_id').optional().trim(),
+    // Google place id shape (utils/places.js). flocks.venue_id is one of the
+    // sources the known-venue check reads, and it used to accept any string of
+    // any length, including one long enough to overflow the column.
+    body('venue_id').optional({ checkFalsy: true }).trim().custom(isPlaceIdShaped).withMessage('Invalid venue id'),
     body('venue_latitude').optional().isFloat(),
     body('venue_longitude').optional().isFloat(),
     body('venue_rating').optional().isFloat(),
@@ -171,11 +202,27 @@ router.post('/',
         // Invite additional users if provided (parameterized, status = 'invited').
         // Mutual blocks hold here too — the standalone invite endpoint skips
         // blocked pairs, and creating a fresh flock must not be a way around it.
+        // Creating a flock with invited_user_ids is the SAME action as POST
+        // /:id/invite — a membership row and a push notification per id — so it
+        // draws on the same budget. Budgeting only the standalone endpoint
+        // would have left "create a throwaway flock, invite 25 strangers,
+        // repeat" wide open, which is the cheaper version of the attack.
         const invitedUids = [];
+        const seenInvitees = new Set();
         if (invited_user_ids && invited_user_ids.length > 0) {
           for (const userId of invited_user_ids) {
-            const uid = parseInt(userId);
-            if (!Number.isFinite(uid) || uid === req.user.id) continue;
+            const uid = parseInt(userId, 10);
+            // Round-2 audit: `Number.isFinite` alone let an id past Postgres's
+            // INTEGER range through, and a fabricated id had no existence check
+            // at all — the FK rejection rolled the whole transaction back, so
+            // "did the create succeed?" answered "does user 91824 exist?" for
+            // free, and cost the caller their flock either way.
+            if (!Number.isInteger(uid) || uid < 1 || uid > 2147483647 || uid === req.user.id) continue;
+            if (seenInvitees.has(uid)) continue;
+            seenInvitees.add(uid);
+            if (!inviteBudget.allow(req.user.id)) break;
+            const invitee = await client.query('SELECT 1 FROM users WHERE id = $1', [uid]);
+            if (invitee.rows.length === 0) continue;
             if (await isBlockedBetween(req.user.id, uid)) continue;
             await client.query(
               `INSERT INTO flock_members (flock_id, user_id, status) VALUES ($1, $2, 'invited')
@@ -205,7 +252,10 @@ router.post('/',
           }
         }
 
-        res.status(201).json({ flock });
+        // invited_user_ids echoes who actually got a row: with a budget in play
+        // the list can be shorter than what was asked for, and a client that
+        // assumes "everyone I listed" would show a member count nobody has.
+        res.status(201).json({ flock, invited_user_ids: invitedUids });
       } catch (err) {
         await client.query('ROLLBACK');
         throw err;
@@ -453,7 +503,10 @@ router.put('/:id',
     body('name').optional().trim().isLength({ min: 1, max: 255 }),
     body('venue_name').optional().trim(),
     body('venue_address').optional().trim(),
-    body('venue_id').optional().trim(),
+    // Google place id shape (utils/places.js). flocks.venue_id is one of the
+    // sources the known-venue check reads, and it used to accept any string of
+    // any length, including one long enough to overflow the column.
+    body('venue_id').optional({ checkFalsy: true }).trim().custom(isPlaceIdShaped).withMessage('Invalid venue id'),
     body('venue_latitude').optional().isFloat(),
     body('venue_longitude').optional().isFloat(),
     body('venue_rating').optional().isFloat(),
@@ -741,13 +794,21 @@ router.post('/:id/join', param('id').isInt().withMessage('Invalid flock ID'), as
       // Notify flock members that someone joined
       const io = req.app.get('io');
       if (io) {
-        io.to(`flock:${flockId}`).emit('flock_invite_responded', {
+        // Per-member fan-out, not the `flock:{id}` room. A socket only joins
+        // that room while the flock's screen is open, so the host — who is the
+        // one waiting to hear "Bob is coming" and is almost never sitting on
+        // that screen — never got this. Same fix, and the same reasoning, as
+        // broadcastGuestRsvp in sockets/handlers.js: `user:{id}` is joined on
+        // connect, so it is a superset of the flock room and still delivers
+        // exactly once. Block-aware, so an accepted RSVP does not carry the
+        // joiner's name and photo to someone who blocked them.
+        emitToFlockExcludingBlocked(io, flockId, req.user.id, 'flock_invite_responded', {
           flockId: parseInt(flockId),
           userId: req.user.id,
           userName: req.user.name,
           userImage: req.user.profile_image_url || null,
           action: 'accepted',
-        });
+        }).catch(() => {});
       }
 
       // Push notification to flock creator
@@ -800,19 +861,33 @@ router.post('/:id/invite',
         return res.status(404).json({ error: 'Flock not found' });
       }
 
+      // Bound the flock itself, not just the caller (see MAX_FLOCK_MEMBERSHIPS).
+      // Declined rows do not hold a seat — someone who said no is not occupying
+      // the plan. Soft cap: two invite calls racing can overshoot it slightly,
+      // which is fine for a spam ceiling and not worth a lock.
+      const rosterSize = await pool.query(
+        "SELECT COUNT(*)::int AS n FROM flock_members WHERE flock_id = $1 AND status IN ('invited', 'accepted')",
+        [flockId]
+      );
+      let seatsLeft = MAX_FLOCK_MEMBERSHIPS - (rosterSize.rows[0]?.n || 0);
+      if (seatsLeft <= 0) {
+        return res.status(400).json({ error: 'This flock already has as many people as it can hold' });
+      }
+
       const invited = [];
+      let throttled = false; // ran out of personal allowance
+      let full = false;      // ran out of seats in this flock
+      // Duplicate ids in one call must not each buy a seat or a budget unit.
+      const seen = new Set();
       for (const userId of user_ids) {
-        const uid = parseInt(userId);
-        if (!Number.isFinite(uid) || uid === req.user.id) continue;
+        const uid = parseInt(userId, 10);
+        if (!Number.isInteger(uid) || uid < 1 || uid > 2147483647 || uid === req.user.id) continue;
+        if (seen.has(uid)) continue;
+        seen.add(uid);
 
-        const userCheck = await pool.query('SELECT id, name FROM users WHERE id = $1', [uid]);
-        if (userCheck.rows.length === 0) continue;
-
-        // Blocked pairs never invite each other (round 3: filtering only the
-        // socket notification still created the membership row)
-        if (await isBlockedBetween(req.user.id, uid)) continue;
-
-        // Check if already a member
+        // Check if already a member. Flock-scoped, tells the caller nothing
+        // about the user directory, so it runs before the budget — a repeat
+        // invite is free.
         const existing = await pool.query(
           'SELECT status FROM flock_members WHERE flock_id = $1 AND user_id = $2',
           [flockId, uid]
@@ -827,6 +902,22 @@ router.post('/:id/invite',
           console.log('[Invite] User', uid, 'already invited, skipping');
           continue;
         }
+
+        if (seatsLeft <= 0) { full = true; break; }
+
+        // Charged BEFORE the user lookup and stops the whole loop, so an
+        // exhausted caller gets no per-id answers at all: the response cannot
+        // be read as "id 4193 exists but id 4194 does not".
+        if (!inviteBudget.allow(req.user.id)) { throttled = true; break; }
+
+        const userCheck = await pool.query('SELECT id, name FROM users WHERE id = $1', [uid]);
+        if (userCheck.rows.length === 0) continue;
+
+        // Blocked pairs never invite each other (round 3: filtering only the
+        // socket notification still created the membership row)
+        if (await isBlockedBetween(req.user.id, uid)) continue;
+
+        seatsLeft -= 1;
 
         if (existing.rows.length > 0 && existing.rows[0].status === 'declined') {
           // Re-invite
@@ -876,7 +967,20 @@ router.post('/:id/invite',
         }
       }
 
-      res.json({ message: `Invited ${invited.length} user(s)`, invited, flock: flockResult.rows[0] });
+      if (invited.length === 0 && full) {
+        return res.status(400).json({ error: 'This flock already has as many people as it can hold' });
+      }
+      if (invited.length === 0 && throttled) {
+        return res.status(429).json({ error: "You've invited a lot of people recently. Try again in a bit." });
+      }
+
+      res.json({
+        message: `Invited ${invited.length} user(s)`,
+        invited,
+        ...(throttled ? { throttled: true } : {}),
+        ...(full ? { full: true } : {}),
+        flock: flockResult.rows[0],
+      });
     } catch (err) {
       console.error('[Invite] Error:', err.message, err.detail || '');
       res.status(500).json({ error: 'Failed to invite users' });
@@ -905,12 +1009,13 @@ router.post('/:id/decline', param('id').isInt().withMessage('Invalid flock ID'),
     // Notify flock members
     const io = req.app.get('io');
     if (io) {
-      io.to(`flock:${flockId}`).emit('flock_invite_responded', {
+      // Per-member fan-out for the same reason as the accept path above.
+      emitToFlockExcludingBlocked(io, flockId, req.user.id, 'flock_invite_responded', {
         flockId,
         userId: req.user.id,
         userName: req.user.name,
         action: 'declined',
-      });
+      }).catch(() => {});
     }
 
     res.json({ message: 'Invite declined' });
@@ -1171,3 +1276,7 @@ router.post('/:id/attendance',
 );
 
 module.exports = router;
+
+// Test hook only — the invite budget is process-wide in-memory state, so a test
+// suite needs a way to start each case from a clean allowance.
+module.exports.__resetBudgets = () => { inviteBudget.reset(); };
