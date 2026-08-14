@@ -1066,6 +1066,189 @@ function contactSyncAvailable() {
   return 'contacts' in navigator && 'ContactsManager' in window;
 }
 
+// ---------------------------------------------------------------------------
+// Paying somebody back, when the wallet app may not be installed
+//
+// GET /api/billing/:flockId/payment-links (backend/routes/billing.js) returns a
+// `methods` array, and the three shapes it builds are NOT interchangeable:
+//
+//   venmo    deepLink venmo scheme + webLink venmo.com
+//   cashapp  deepLink cashapp scheme + webLink cash.app
+//   zelle    deepLink null, webLink null, `instructions` prose, on purpose,
+//            because Zelle lives inside each bank's own app and has no shared
+//            scheme to open
+//
+// The Pay control used to be `if (m.deepLink) window.open(m.deepLink)`, with
+// webLink reached only when deepLink was NULL. On iOS that is a control that
+// cannot succeed for anybody without the wallet app installed: window.open on a
+// non-http URL reaches Capacitor's WebViewDelegationHandler, which calls
+// UIApplication.open(url), and -open: on a scheme no installed app claims fails
+// SILENTLY. No error, no exception, no callback, no rejected promise. The payer
+// taps "Pay", nothing happens, and the money conversation goes back to the group
+// chat.
+//
+// Nothing available in this app can ask the question directly. -canOpenURL: is
+// the API that answers it (and Info.plist's LSApplicationQueriesSchemes is the
+// list that authorises it), but no installed plugin exposes it to JavaScript:
+// @capacitor/app 8.x has getInfo, getState, getLaunchUrl, exitApp, minimizeApp
+// and the listeners, and no canOpenUrl. So the only signal is whether the app
+// went away, which is what the two helpers below race against a timeout.
+// ---------------------------------------------------------------------------
+
+// How long the app has to disappear before we conclude the wallet app never
+// opened. An installed app takes the foreground in well under a second; this is
+// generous enough for a cold launch on a tired phone and short enough that a
+// payer who got nothing is not left staring at a dead screen.
+const PAYMENT_HANDOFF_MS = 1500;
+
+// One `methods` element reduced to what the UI can actually do with it.
+const paymentRoutes = (method) => {
+  const str = (v) => (typeof v === 'string' && v.trim() ? v.trim() : null);
+  const appUrl = str(method?.deepLink);
+  const webUrl = str(method?.webLink);
+  const instructions = str(method?.instructions);
+  return {
+    appUrl,
+    webUrl,
+    instructions,
+    // A row with none of the three has nothing to do when it is tapped, so it
+    // is never rendered as a control. The route does not build one today; a
+    // payer whose handle is only stored on one of the three services gets one
+    // method, not three empty ones.
+    actionable: !!(appUrl || webUrl || instructions),
+  };
+};
+
+// "venmo.com", for the button that offers the web route by name. Anything that
+// is not a parseable absolute URL has no name to show and gets none.
+const paymentWebHost = (webUrl) => {
+  if (typeof webUrl !== 'string' || !webUrl) return null;
+  try {
+    const host = new URL(webUrl).host.replace(/^www\./, '');
+    return host || null;
+  } catch (err) {
+    return null;
+  }
+};
+
+/**
+ * Hand off to a wallet app, and notice when the handoff did not happen.
+ *
+ * The race, and why the fallback cannot fire on a handoff that WORKED:
+ *
+ *   - The deep link is opened inside the tap, so it is a real user gesture.
+ *   - If the wallet app takes the foreground, WKWebView backgrounds. That fires
+ *     `visibilitychange` with visibilityState 'hidden' and `pagehide`. Either
+ *     one cancels the timer, and both are edges that only happen when something
+ *     else is on screen.
+ *   - The timeout re-reads document.visibilityState before it does anything, so
+ *     a listener that never ran (a missed event, a suspended timer that fires
+ *     late on resume) still cannot produce a false "it did not open": a hidden
+ *     document is the app not being on screen, whatever the events did.
+ *   - `blur` is deliberately NOT one of the signals. In WKWebView the window
+ *     blurs when a native input takes focus and when the keyboard opens, with
+ *     the app still fully on screen, and treating that as a handoff would
+ *     recreate exactly the silent failure this exists to fix.
+ *
+ * Where the race is weakest, stated plainly: a DESKTOP browser answers
+ * window.open on an unknown scheme by opening a real blank tab, and that tab
+ * taking focus hides the opener, which reads here as a successful handoff and
+ * suppresses the prompt. That is the iOS shell's signal being borrowed by a
+ * platform it was not measured on. It is not a regression (the desktop tap
+ * previously did nothing AND offered no web route), and bill splitting is a
+ * phone flow, but it is the case to fix first if this ever needs to work on a
+ * laptop.
+ *
+ * The other direction matters too: the fallback is a PROMPT, not a navigation.
+ * Auto-opening the web link on the timeout would not work here and would be a
+ * second control that cannot succeed. WKWebView blocks window.open outside a
+ * user gesture unless javaScriptCanOpenWindowsAutomatically is set, and
+ * Capacitor's CAPBridgeViewController never sets it, so the popup would be
+ * swallowed before WebViewDelegationHandler's createWebViewWith ever ran. The
+ * prompt puts the web route behind a fresh tap, which always works, on the web
+ * build too.
+ *
+ * Returns a cancel function; calling it disarms the race and guarantees no
+ * callback afterwards.
+ */
+function attemptPaymentHandoff(method, options = {}) {
+  const {
+    win = typeof window !== 'undefined' ? window : null,
+    doc = typeof document !== 'undefined' ? document : null,
+    timeoutMs = PAYMENT_HANDOFF_MS,
+    onInstructions = () => {},
+    onNoHandoff = () => {},
+  } = options;
+
+  const routes = paymentRoutes(method);
+  const { appUrl, webUrl, instructions } = routes;
+  const noop = () => {};
+  if (!win || typeof win.open !== 'function') return noop;
+
+  // No app to hand off to. Whatever is left IS the route, and it is taken
+  // inside the tap rather than raced against anything.
+  if (!appUrl) {
+    if (webUrl) {
+      win.open(webUrl, '_blank');
+      return noop;
+    }
+    // Zelle. The instructions used to be passed to showToast and then
+    // immediately overwritten by the next showToast call in the same block, so
+    // the one method that is nothing BUT instructions displayed none of them.
+    if (instructions) onInstructions(routes);
+    return noop;
+  }
+
+  win.open(appUrl, '_blank');
+
+  let settled = false;
+  let timer = null;
+
+  const cleanup = () => {
+    if (timer !== null && typeof win.clearTimeout === 'function') win.clearTimeout(timer);
+    timer = null;
+    if (doc && typeof doc.removeEventListener === 'function') {
+      doc.removeEventListener('visibilitychange', onBackgrounded);
+    }
+    if (typeof win.removeEventListener === 'function') {
+      win.removeEventListener('pagehide', onBackgrounded);
+    }
+  };
+
+  function onBackgrounded(event) {
+    if (settled) return;
+    // visibilitychange fires on the way back too. Only the hidden edge means
+    // something replaced the app on screen.
+    if (event && event.type === 'visibilitychange' && doc && doc.visibilityState !== 'hidden') return;
+    settled = true;
+    cleanup();
+  }
+
+  if (doc && typeof doc.addEventListener === 'function') {
+    doc.addEventListener('visibilitychange', onBackgrounded);
+  }
+  if (typeof win.addEventListener === 'function') {
+    win.addEventListener('pagehide', onBackgrounded);
+  }
+
+  if (typeof win.setTimeout === 'function') {
+    timer = win.setTimeout(() => {
+      timer = null;
+      if (settled) return;
+      settled = true;
+      const stillOnScreen = !doc || doc.visibilityState !== 'hidden';
+      cleanup();
+      if (stillOnScreen) onNoHandoff(routes);
+    }, timeoutMs);
+  }
+
+  return () => {
+    if (settled) return;
+    settled = true;
+    cleanup();
+  };
+}
+
 // Memoized VenueCard — unified design for both DMs and Flocks
 const VenueCard = React.memo(({ venue, onViewDetails, onVote, colors: c, Icons: I, getCategoryColor: gcc }) => {
   const rating = venue.stars || venue.rating || null;
@@ -4129,6 +4312,50 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   const [paymentSaving, setPaymentSaving] = useState(false);
   const [paymentOptions, setPaymentOptions] = useState(null);
   const [showPaymentPicker, setShowPaymentPicker] = useState(false);
+  // The wallet app did not come to the foreground, or there was never one to
+  // open (Zelle). Shape: { method, routes, reason, payTo, amount }.
+  const [paymentFallback, setPaymentFallback] = useState(null);
+  // The live handoff race, so it can be disarmed when the screen goes away.
+  const paymentHandoffRef = useRef(null);
+
+  // Tap a payment method. One entry point for both the single-method "Settle
+  // Up" button and the picker sheet, so the two cannot drift the way they did
+  // when each had its own copy of `if (m.deepLink) window.open(...)`.
+  const startPaymentHandoff = useCallback((method, ctx) => {
+    if (paymentHandoffRef.current) {
+      paymentHandoffRef.current();
+      paymentHandoffRef.current = null;
+    }
+    const routes = paymentRoutes(method);
+    if (!routes.actionable) return;
+
+    const raise = (reason) => setPaymentFallback({
+      method,
+      routes,
+      reason,
+      payTo: ctx?.payTo || null,
+      amount: typeof ctx?.amount === 'number' ? ctx.amount : null,
+    });
+
+    paymentHandoffRef.current = attemptPaymentHandoff(method, {
+      onInstructions: () => raise('instructions'),
+      onNoHandoff: () => raise('no-handoff'),
+    });
+
+    // Only for a route that actually left the app. Opening the wallet proves
+    // nothing about payment, so the debt is never auto-settled here; the payer
+    // confirms with "Mark as paid" (round 4 recorded cancelled payments as
+    // paid). Zelle takes the sheet instead, which carries the same line.
+    if (routes.appUrl || routes.webUrl) showToast('After paying, tap "Mark as paid"');
+  }, [showToast]);
+
+  // A pending race must not outlive the component: its callback sets state.
+  useEffect(() => () => {
+    if (paymentHandoffRef.current) {
+      paymentHandoffRef.current();
+      paymentHandoffRef.current = null;
+    }
+  }, []);
 
   // Explore
   // searchText removed — filtering handled by venue search
@@ -12159,17 +12386,16 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                       <button className="hit44 glass-btn glass-primary" onClick={async () => {
                         try {
                           const result = await getPaymentLinks(selectedFlockId);
-                          if (result.methods && result.methods.length > 0) {
-                            if (result.methods.length === 1) {
-                              const m = result.methods[0];
-                              if (m.deepLink) window.open(m.deepLink, '_blank');
-                              else if (m.webLink) window.open(m.webLink, '_blank');
-                              else if (m.instructions) showToast(m.instructions);
-                              // Opening the payment app proves nothing about
-                              // payment — the user confirms with "Mark as paid"
-                              showToast('After paying, tap "Mark as paid"');
+                          // A method with no deep link, no web link and no
+                          // instructions is a row that does nothing when it is
+                          // tapped, so it is not offered and it does not count
+                          // towards "is there anything to pay through".
+                          const methods = (result.methods || []).filter((m) => paymentRoutes(m).actionable);
+                          if (methods.length > 0) {
+                            if (methods.length === 1) {
+                              startPaymentHandoff(methods[0], result);
                             } else {
-                              setPaymentOptions(result);
+                              setPaymentOptions({ ...result, methods });
                               setShowPaymentPicker(true);
                             }
                           } else {
@@ -14342,6 +14568,22 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           if (p.notification_prefs && typeof p.notification_prefs === 'object') {
             setVenueNotifications(p.notification_prefs);
           }
+
+          // The venue's own Google place id, which is what the Live Sensor
+          // panel is keyed on. It belongs here, in the unconditional profile
+          // hydration, and it used to live inside the `needsGoogleData` branch
+          // below.
+          //
+          // That branch only runs when the profile is INCOMPLETE (no phone, or
+          // no valid hours). So the sensor effect below, the venue socket room,
+          // and the whole Live Sensor card only ever appeared for venues that
+          // had not finished filling in their profile, and vanished the moment
+          // they did. A venue with real hardware on the wall, a phone number
+          // and correct hours got nothing: the dashboard never asked. That is
+          // the exact inverse of the intent.
+          const savedPlaceId = p.google_place_id || venueOnboardingData.googlePlaceId;
+          if (savedPlaceId) setOwnerVenuePlaceId(savedPlaceId);
+
           // Fetch phone + hours from Google if missing or invalid
           const needsGoogleData = !p.phone || !hoursValid;
           if (needsGoogleData && p.business_name) {
@@ -14380,8 +14622,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
             };
 
             // 1) Try saved place ID — only trust result if venue name matches
-            const savedPlaceId = p.google_place_id || venueOnboardingData.googlePlaceId;
-            if (savedPlaceId) setOwnerVenuePlaceId(savedPlaceId);
+            // (savedPlaceId is resolved and published above, unconditionally.)
             let verifiedVenue = await fetchAndVerify(savedPlaceId);
             let resolvedPlaceId = savedPlaceId;
 
@@ -14403,6 +14644,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
             if (verifiedVenue) {
               // Save the correct place_id if it differs from saved
               applyVenue(verifiedVenue, resolvedPlaceId, resolvedPlaceId !== savedPlaceId);
+              // And point the sensor panel at it. When the saved id turned out
+              // to be the wrong venue, the corrected one is the only id whose
+              // sensor readings belong to this owner.
+              if (resolvedPlaceId && resolvedPlaceId !== savedPlaceId) setOwnerVenuePlaceId(resolvedPlaceId);
             }
           }
         }
@@ -14700,12 +14945,23 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
       ],
     };
 
-    const isFeatureLocked = (feature) => {
-      if (venueTier === 'pro') return false;
-      if (venueTier === 'premium' && features.premium.includes(feature)) return false;
-      if (features.free.includes(feature)) return false;
-      return true;
-    };
+    // There used to be an `isFeatureLocked(feature)` here that took a feature
+    // NAME and looked it up in the lists above with .includes(). It is gone,
+    // and this is what it cost while it was here.
+    //
+    // Every one of its four call sites passed 'Post deals'. The premium list
+    // spells the same feature 'Post deals and specials'. .includes() is exact,
+    // so the lookup missed, the function fell through to its closing `return
+    // true`, and a venue PAYING for Premium opened the Analytics tab to find
+    // Post-a-Deal greyed out under a "Premium Feature" overlay, on the plan
+    // that includes it. Only Pro escaped, through the early return on the first
+    // line. The failure was silent in both directions: a typo could not throw,
+    // and the safe-looking default was "locked".
+    //
+    // The lists it read are marketing copy for the upgrade sheet, and copy gets
+    // reworded. The gate now reads `can` below, which is derived from the tier
+    // itself and cannot drift from a sentence. If a gate is ever needed for a
+    // feature that has no `can` flag, add the flag; do not match on prose.
 
     // Capability gates by tier — used elsewhere in the dashboard
     const can = {
@@ -14723,8 +14979,13 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
     // Locked tab placeholder — shown when feature isn't available on current tier
     const LockedTab = ({ requiredTier, featureName, description }) => (
       <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '16px', padding: '32px 20px', textAlign: 'center', margin: '12px 0', border: `2px dashed ${requiredTier === 'pro' ? '#2d5a87' : 'var(--accent-amber-text)'}` }}>
+        {/* The last hand-drawn icon on this surface. It was a padlock with
+            rounded caps and a rounded rect, which is a different drawing
+            language from every other mark in the app; components/ui/Icons.js
+            owns that geometry and already has this shape. Decorative, so no
+            label argument. */}
         <div style={{ display: 'flex', justifyContent: 'center', marginBottom: '10px' }} aria-hidden>
-          <svg aria-hidden="true" focusable="false" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke={requiredTier === 'pro' ? '#2d5a87' : 'var(--accent-amber-text)'} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" /><path d="M7 11V7a5 5 0 0 1 10 0v4" /></svg>
+          {Icons.lock(requiredTier === 'pro' ? '#2d5a87' : 'var(--accent-amber-text)', 32)}
         </div>
         <h3 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: 'var(--text-primary)', margin: '0 0 6px' }}>{featureName}</h3>
         <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '0 0 16px', lineHeight: '1.5' }}>{description}</p>
@@ -14987,11 +15248,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
               onCommit={setDealDescription}
               placeholder="e.g., 2-for-1 drinks until 8pm"
               style={{ width: '100%', padding: '10px', borderRadius: '8px', border: `1px solid ${colors.creamDark}`, fontSize: 'var(--t-meta)', marginBottom: '8px', boxSizing: 'border-box', backgroundColor: 'var(--bg-tertiary)', color: 'var(--text-primary)' }}
-              disabled={isFeatureLocked('Post deals')}
+              disabled={!can.postDeals}
             />
             <div style={{ display: 'flex', gap: '6px', marginBottom: '8px' }}>
               {['Happy Hour', 'Late Night', 'Weekend', 'All Day'].map(slot => (
-                <button key={slot} className="hit44 glass-btn glass-secondary" onClick={() => setDealTimeSlot(slot)} style={{ padding: '6px 10px', borderRadius: '16px', border: `1px solid ${dealTimeSlot === slot ? colors.navy : colors.creamDark}`, backgroundColor: dealTimeSlot === slot ? colors.navyBg : 'var(--bg-card-solid)', color: dealTimeSlot === slot ? 'white' : colors.navy, fontSize: 'var(--t-meta)', fontWeight: '500', cursor: 'pointer' }} disabled={isFeatureLocked('Post deals')}>
+                <button key={slot} className="hit44 glass-btn glass-secondary" onClick={() => setDealTimeSlot(slot)} style={{ padding: '6px 10px', borderRadius: '16px', border: `1px solid ${dealTimeSlot === slot ? colors.navy : colors.creamDark}`, backgroundColor: dealTimeSlot === slot ? colors.navyBg : 'var(--bg-card-solid)', color: dealTimeSlot === slot ? 'white' : colors.navy, fontSize: 'var(--t-meta)', fontWeight: '500', cursor: 'pointer' }} disabled={!can.postDeals}>
                   {slot}
                 </button>
               ))}
@@ -15013,10 +15274,13 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 console.error('Post deal failed:', e);
                 showToast(e?.message || "That deal didn't post. Try again.", 'error');
               }
-            }} style={{ width: '100%', padding: '10px', borderRadius: '8px', border: 'none', background: colors.navyMidBg, color: 'white', fontWeight: '600', fontSize: 'var(--t-meta)', cursor: 'pointer' }} disabled={isFeatureLocked('Post deals') || !dealDescription.trim()}>
+            }} style={{ width: '100%', padding: '10px', borderRadius: '8px', border: 'none', background: colors.navyMidBg, color: 'white', fontWeight: '600', fontSize: 'var(--t-meta)', cursor: 'pointer' }} disabled={!can.postDeals || !dealDescription.trim()}>
               Post Deal
             </button>
-            {isFeatureLocked('Post deals') && <div style={{ position: 'absolute', inset: 0, backgroundColor: 'var(--locked-overlay)', borderRadius: '12px', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>{Icons.shield(colors.textTertiary, 24)}<span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', marginTop: '4px' }}>Premium Feature</span></div>}
+            {/* Same mark as LockedTab above. A shield here and a padlock there
+                read as two different states of two different things, on one
+                tab, both meaning "your plan does not include this". */}
+            {!can.postDeals && <div style={{ position: 'absolute', inset: 0, backgroundColor: 'var(--locked-overlay)', borderRadius: '12px', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>{Icons.lock(colors.textTertiary, 24)}<span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', marginTop: '4px' }}>Premium Feature</span></div>}
           </div>
 
           {/* Today, hour by hour — from the model */}
@@ -17437,19 +17701,16 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
       {/* Payment Picker Modal */}
       {showPaymentPicker && paymentOptions && (
         <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.5)', zIndex: 9999, display: 'flex', alignItems: 'flex-end', justifyContent: 'center' }} onClick={() => setShowPaymentPicker(false)}>
+          <DialogBehavior onClose={() => setShowPaymentPicker(false)} label={`Pay ${paymentOptions.payTo || 'them'}`} />
           <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '16px 16px 0 0', padding: '20px', width: '100%', maxWidth: '420px', paddingBottom: 'calc(20px + var(--safe-bottom))' }} onClick={e => e.stopPropagation()}>
             <h3 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy, margin: '0 0 4px' }}>Pay {paymentOptions.payTo}</h3>
-            <p style={{ fontSize: 'var(--t-label)', color: 'var(--text-secondary)', margin: '0 0 16px' }}>${paymentOptions.amount.toFixed(2)} · {paymentOptions.note}</p>
+            <p style={{ fontSize: 'var(--t-label)', color: 'var(--text-secondary)', margin: '0 0 16px' }}>${Number(paymentOptions.amount || 0).toFixed(2)} · {paymentOptions.note}</p>
             {paymentOptions.methods.map(m => (
               <button className="hit44" key={m.method} onClick={() => {
-                // Opening the payment app proves nothing about payment —
-                // same as the single-method path, the user confirms with
-                // "Mark as paid" afterward. Auto-settling here recorded
-                // canceled payments as paid (round 4).
-                if (m.deepLink) window.open(m.deepLink, '_blank');
-                else if (m.webLink) window.open(m.webLink, '_blank');
-                else if (m.instructions) showToast(m.instructions);
-                showToast('After paying, tap "Mark as paid"');
+                // Same single entry point as the one-method "Settle Up" path:
+                // it opens the wallet app, watches for the app to actually go
+                // away, and raises the fallback sheet when it does not.
+                startPaymentHandoff(m, paymentOptions);
                 setShowPaymentPicker(false);
               }} style={{ width: '100%', padding: '14px', marginBottom: '8px', borderRadius: '12px', border: '1px solid var(--border-default)', backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '12px', textAlign: 'left' }}>
                 <span style={{ width: '40px', height: '40px', borderRadius: '10px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 'var(--t-title)', background: m.method === 'venmo' ? 'linear-gradient(135deg, #3D95CE, #008CFF)' : m.method === 'cashapp' ? 'linear-gradient(135deg, #00C244, #00D64B)' : 'linear-gradient(135deg, #6C1CD3, #8A2BE2)', flexShrink: 0 }}>
@@ -17465,6 +17726,57 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           </div>
         </div>
       )}
+
+      {/* The wallet app never came to the foreground, or there was never one to
+          open. Either way the payer is owed an explanation and a route that
+          works, instead of a tap that did nothing. See attemptPaymentHandoff. */}
+      {paymentFallback && (() => {
+        const { method: fm, routes: fr, reason, payTo, amount } = paymentFallback;
+        const label = fm?.label || 'that app';
+        const host = paymentWebHost(fr?.webUrl);
+        const close = () => setPaymentFallback(null);
+        return (
+          <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.5)', zIndex: 9999, display: 'flex', alignItems: 'flex-end', justifyContent: 'center' }} onClick={close}>
+            <DialogBehavior onClose={close} label={`Pay ${payTo || 'them'} with ${label}`} />
+            <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '16px 16px 0 0', padding: '20px', width: '100%', maxWidth: '420px', paddingBottom: 'calc(20px + var(--safe-bottom))' }} onClick={e => e.stopPropagation()}>
+              <h3 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy, margin: '0 0 8px' }}>
+                {reason === 'instructions' ? `Pay ${payTo || 'them'} with ${label}` : `${label} did not open`}
+              </h3>
+              <p style={{ fontSize: 'var(--t-label)', color: 'var(--text-secondary)', margin: '0 0 14px', lineHeight: 1.5 }}>
+                {reason === 'instructions'
+                  ? (fr?.instructions || `Send ${fm?.handle || payTo} the money in ${label}, then come back here.`)
+                  : `Nothing happened when your phone tried to open ${label}. That usually means it is not installed on this device.`}
+              </p>
+              {typeof amount === 'number' && (
+                <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: '0 0 14px' }}>
+                  You owe ${amount.toFixed(2)}{fm?.handle ? ` to ${fm.handle}` : ''}.
+                </p>
+              )}
+              {fr?.webUrl && (
+                <button className="hit44 glass-btn glass-primary" onClick={() => {
+                  // A fresh tap, so this window.open is inside a user gesture
+                  // and WKWebView will hand it to the system. That is the whole
+                  // reason the fallback is a prompt and not an automatic
+                  // redirect on the timeout.
+                  window.open(fr.webUrl, '_blank');
+                  close();
+                  showToast('After paying, tap "Mark as paid"');
+                }} style={{ ...styles.gradientButton, padding: '14px', marginBottom: '8px' }}>
+                  {host ? `Pay on ${host}` : `Pay ${label} in your browser`}
+                </button>
+              )}
+              {!fr?.webUrl && reason === 'no-handoff' && (
+                <p style={{ fontSize: 'var(--t-label)', color: 'var(--text-secondary)', margin: '0 0 14px', lineHeight: 1.5 }}>
+                  Install {label}, or pay {fm?.handle || payTo} another way and mark it paid below.
+                </p>
+              )}
+              <button className="hit44" onClick={close} style={{ width: '100%', padding: '12px', border: 'none', backgroundColor: 'transparent', color: 'var(--text-secondary)', fontSize: 'var(--t-label)', fontWeight: '600', cursor: 'pointer' }}>
+                Close
+              </button>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* Venue Details Modal */}
       {venueDetailModal && (() => {

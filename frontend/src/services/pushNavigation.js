@@ -11,6 +11,18 @@
 //
 // Intents that arrive before the UI has subscribed are queued, because a cold
 // start from a notification tap always arrives first.
+//
+// WHAT IS ACTUALLY DELIVERED TODAY (checked 2026-08-14). The service worker and
+// notificationActionPerformed paths are live. The appUrlOpen path is NOT: iOS
+// hands this app no URL at all, because Info.plist declares no CFBundleURLTypes
+// and App.entitlements no associated domains, and both of those are decisions
+// recorded at length in Info.plist rather than oversights. `intentFromUrl` is
+// still exercised on every platform by the query form the backend emits
+// (/?flock=12), which is why it is not dead code; the PATH form (/f/12, /dm/45)
+// is only reachable by typing the URL until associated domains are enabled.
+// It does not parse /i/<token>, the invite link that is the actual growth path,
+// and there is no screen in App.js that redeems an invite token either. Both of
+// those have to land with the capability, not after it.
 // ---------------------------------------------------------------------------
 
 const FLOCK_TYPES = new Set([
@@ -80,10 +92,22 @@ export function intentFromUrl(rawUrl) {
   const tab = q.get('tab');
   if (tab === 'you' || tab === 'profile') return { screen: 'friends', tab: 'profile', type: 'link' };
 
+  // asId, not Number(), for the same reason the query forms above use it: \d+
+  // matches "0", and Number('0') is a perfectly well formed id that no row can
+  // ever have. That produced { screen: 'dm', userId: 0 }, which App.js then
+  // dropped on a falsy check while the query form of the same link answered
+  // null. One of those two is a bug whichever way you read it, and an intent
+  // that names a row that cannot exist is the one to stop making.
   const flockPath = url.pathname.match(/^\/(?:f|flock)\/(\d+)\/?$/);
-  if (flockPath) return { screen: 'flock', flockId: Number(flockPath[1]), type: 'link' };
+  if (flockPath) {
+    const flockId = asId(flockPath[1]);
+    if (flockId) return { screen: 'flock', flockId, type: 'link' };
+  }
   const dmPath = url.pathname.match(/^\/dm\/(\d+)\/?$/);
-  if (dmPath) return { screen: 'dm', userId: Number(dmPath[1]), type: 'link' };
+  if (dmPath) {
+    const userId = asId(dmPath[1]);
+    if (userId) return { screen: 'dm', userId, type: 'link' };
+  }
 
   return null;
 }
@@ -176,18 +200,62 @@ export function startPushNavigation() {
   if (isNativeApp()) {
     import('@capacitor-firebase/messaging')
       .then(({ FirebaseMessaging }) => {
-        FirebaseMessaging.addListener('notificationActionPerformed', (event) => {
+        // addListener answers a promise. Left unhandled, a plugin that is not
+        // registered rejects into an unhandled rejection instead of the quiet
+        // no-op every other branch here degrades to.
+        const p = FirebaseMessaging.addListener('notificationActionPerformed', (event) => {
           const data = event?.notification?.data || {};
           emit(intentFromData(data) || intentFromUrl(data.link));
         });
+        if (p && typeof p.catch === 'function') p.catch(() => {});
       })
       .catch(() => {});
 
     import('@capacitor/app')
       .then(({ App }) => {
-        App.addListener('appUrlOpen', (event) => {
-          if (event?.url) handleDeepLinkUrl(event.url);
+        // Two halves, and only one of them used to be here.
+        //
+        // WARM: the app is already running, iOS hands the URL to
+        // application(_:open:options:), the plugin fires appUrlOpen, this
+        // listener has been attached for a long time. That is the easy case.
+        //
+        // COLD: the tap LAUNCHES the app. iOS delivers the URL before the web
+        // view has loaded a single byte, so by the time this dynamic import
+        // resolves and the listener attaches, the event is long gone and the
+        // tap opens the app on whatever screen it last had. getLaunchUrl is the
+        // plugin's answer for exactly that window, and nothing was asking it.
+        //
+        // Both orders are possible for the two calls below (the listener can
+        // fire before the getLaunchUrl round trip returns, or after), so the
+        // de-duplication has to work in both directions: the launch URL is
+        // consumed at most once, and an appUrlOpen carrying that same URL
+        // straight afterwards is the same tap, not a second one. Routing it
+        // twice is a flash of the right screen mounting twice, not a
+        // navigation, but it is still wrong.
+        let sawUrlEvent = false;
+        let launchUrlConsumed = null;
+
+        const p = App.addListener('appUrlOpen', (event) => {
+          const url = event?.url;
+          if (!url) return;
+          sawUrlEvent = true;
+          if (url === launchUrlConsumed) { launchUrlConsumed = null; return; }
+          handleDeepLinkUrl(url);
         });
+        if (p && typeof p.catch === 'function') p.catch(() => {});
+
+        if (typeof App.getLaunchUrl === 'function') {
+          Promise.resolve(App.getLaunchUrl())
+            .then((result) => {
+              const url = result?.url;
+              // A launch from the icon has no URL, and a warm tap that already
+              // arrived means the live path is working.
+              if (!url || sawUrlEvent) return;
+              launchUrlConsumed = url;
+              handleDeepLinkUrl(url);
+            })
+            .catch(() => {});
+        }
       })
       .catch(() => {});
   }
