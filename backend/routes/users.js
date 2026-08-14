@@ -4,7 +4,7 @@ const { body, query, validationResult } = require('express-validator');
 const multer = require('multer');
 const path = require('path');
 const pool = require('../config/database');
-const { authenticate, authenticateAllowBanned, signUserToken } = require('../middleware/auth');
+const { authenticate, authenticateAllowBanned, signUserToken, revokeUserSessions } = require('../middleware/auth');
 const { stripHtml, sanitizeArray } = require('../utils/sanitize');
 const { rejectIfProfane, moderateImage, IMAGE_REJECTED_MESSAGE } = require('../utils/moderation');
 const { revokeAppleToken, isConfigured: appleAuthConfigured } = require('../services/appleAuth');
@@ -231,6 +231,13 @@ router.put('/profile',
         // never silently rewrites a stored address into its normalized form.
         [name || null, changingEmail ? email : null, phone || null, safeInterests, hashedPassword, req.user.id]
       );
+
+      // A password change bumps token_version, which stops the thief's REST
+      // calls, but a WebSocket authenticates once at the handshake and then
+      // lives indefinitely in user:{id}, where every DM, flock message and
+      // location update is delivered. Without this the person you changed your
+      // password to evict keeps reading your traffic in real time.
+      if (hashedPassword) revokeUserSessions(req.app.get('io'), req.user.id);
 
       const { token_version: _tv, ...safeUser } = result.rows[0];
       res.json({

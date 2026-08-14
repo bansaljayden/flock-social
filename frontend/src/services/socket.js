@@ -61,6 +61,39 @@ function dispose(instance) {
   try { instance.disconnect(); } catch { /* already torn down */ }
 }
 
+/**
+ * A handshake rejected by the server's auth middleware will be rejected again,
+ * identically, forever: the token is expired, revoked (password change, account
+ * claim), the account is banned, or the account is gone. socket.io retries on
+ * its own schedule and — since reconnectionAttempts is Infinity — would keep
+ * re-presenting the same dead credential every 30 seconds for as long as the
+ * app is open, costing a signature check and a database read per client per
+ * attempt, and never telling anyone.
+ *
+ * These are the exact strings middleware/auth.js's authenticateSocket puts on
+ * the error. 'Too many connections' and every transport failure are NOT here:
+ * those are transient and must keep retrying.
+ */
+const FATAL_AUTH_ERRORS = [
+  'no token provided',
+  'user not found',
+  'session expired',
+  'account suspended',
+  'authentication failed',
+];
+
+// 'Authentication failed' is also authenticateSocket's catch-all, which a
+// database blip can reach — so a few in a row, not one, ends the retry loop,
+// and an explicit reconnect (online / tab-visible / reconnectSocket) always
+// gets another chance.
+const FATAL_AUTH_STRIKES = 3;
+let fatalAuthStrikes = 0;
+
+function isFatalAuthError(message) {
+  const m = String(message || '').toLowerCase();
+  return FATAL_AUTH_ERRORS.some((known) => m.includes(known));
+}
+
 function createSocket(token) {
   const instance = io(BASE_URL, {
     auth: { token },
@@ -78,10 +111,20 @@ function createSocket(token) {
   });
 
   instance.on('connect', () => {
-    console.log('Socket connected:', instance.id);
+    fatalAuthStrikes = 0;
   });
   instance.on('connect_error', (err) => {
     console.warn('Socket connection error:', err?.message);
+    if (!isFatalAuthError(err?.message)) {
+      fatalAuthStrikes = 0;
+      return;
+    }
+    fatalAuthStrikes += 1;
+    if (fatalAuthStrikes < FATAL_AUTH_STRIKES) return;
+    // Stop the loop. Clearing socketToken means the next connectSocket() —
+    // after a fresh sign-in, say — rebuilds instead of reusing this instance.
+    socketToken = null;
+    try { instance.disconnect(); } catch { /* already torn down */ }
   });
   instance.on('error', (data) => {
     console.warn('Socket error:', data?.message);
@@ -172,7 +215,6 @@ if (typeof window !== 'undefined') {
 }
 
 export function joinFlock(flockId) {
-  console.log('Joining flock:', flockId);
   if (socket?.connected) {
     socket.emit('join_flock', flockId);
   }
@@ -206,8 +248,11 @@ export function onVenueCheckin(callback) {
   return register('venue_checkin', callback);
 }
 
+// Message bodies, image payloads and GPS fixes used to be console.logged on
+// every send. On a phone that console is captured by the OS and by any crash/
+// analytics SDK linked into the shell, which turns private chat and a user's
+// exact location into log data nobody consented to. Nothing here logs content.
 export function sendMessage(flockId, messageText, opts = {}) {
-  console.log('Emitting send_message:', { flockId, message: messageText, opts });
   if (socket?.connected) {
     socket.emit('send_message', {
       flockId,
@@ -219,7 +264,6 @@ export function sendMessage(flockId, messageText, opts = {}) {
 }
 
 export function sendImageMessage(flockId, imageUrl) {
-  console.log('Emitting send_message (image):', { flockId, imageUrl });
   if (socket?.connected) {
     socket.emit('send_message', {
       flockId,
@@ -348,7 +392,6 @@ export function onDmMemberStoppedSharing(callback) {
 // --- Live location sharing ---
 
 export function emitLocation(flockId, lat, lng) {
-  console.log('[Location] Emitting:', { flockId, lat, lng });
   if (socket?.connected) {
     socket.emit('update_location', { flockId, lat, lng });
   }
@@ -450,6 +493,14 @@ export function onFlockMemberLeft(callback) {
 // flock room, which a client only joins while it is on the chat screen.
 export function onGuestRsvp(callback) {
   return register('guest_rsvp', callback);
+}
+
+// The server cuts a live connection loose when the session behind it stops
+// being valid mid-flight (password change, account claim, ban, deletion,
+// expiry) and says why first. Subscribe to send the user back to sign-in
+// instead of leaving them on a screen that has quietly gone read-only.
+export function onSessionRevoked(callback) {
+  return register('session_revoked', callback);
 }
 
 // --- Budget events ---

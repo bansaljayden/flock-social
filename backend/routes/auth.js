@@ -7,7 +7,7 @@ const { OAuth2Client } = require('google-auth-library');
 const pool = require('../config/database');
 // signUserToken is the ONLY way tokens are minted (round 13): it stamps the
 // user's token_version into the JWT so a bump revokes every outstanding token.
-const { authenticate, signUserToken } = require('../middleware/auth');
+const { authenticate, signUserToken, revokeUserSessions } = require('../middleware/auth');
 const { stripHtml, sanitizeArray } = require('../utils/sanitize');
 const { rejectIfProfane, moderateText } = require('../utils/moderation');
 const { upstreamSignal } = require('../utils/upstream');
@@ -34,6 +34,115 @@ const router = express.Router();
 
 const SALT_ROUNDS = 10;
 
+// ---------------------------------------------------------------------------
+// Email identity (round 15)
+// ---------------------------------------------------------------------------
+// Signup and login run express-validator's normalizeEmail(), which for Gmail
+// strips dots and +subaddresses. OAuth addresses are NOT normalized — we store
+// the provider's address verbatim, because that is the mailbox we actually
+// send to. So the two sides of every "does this email already exist?" check
+// were written in different alphabets, and `LOWER(email) = LOWER($1)` could
+// not see across the gap:
+//
+//   * SHADOW ACCOUNT. Victim signs in with Google as `john.doe@gmail.com`
+//     (stored with dots). Attacker then signs up with a password as
+//     `johndoe@gmail.com`; normalizeEmail leaves it alone, LOWER() finds no
+//     match, the users.email UNIQUE index sees a different string, and a
+//     SECOND row now owns the victim's real mailbox. Friend discovery and
+//     invites by email resolve to the attacker's row, and every Flock mail for
+//     that account lands in the victim's inbox for an account they don't
+//     control.
+//   * SQUAT CLAIM MISS. The round-8 anti-squat claim only fires when the
+//     OAuth address matches a password row. Attacker squats
+//     `john.doe@gmail.com`, which normalizeEmail STORES as `johndoe@gmail.com`;
+//     the victim's Google sign-in then looks up `john.doe@gmail.com`, misses,
+//     and silently creates a second account instead of reclaiming the squat.
+//
+// canonicalEmail() is the one alphabet both sides are compared in. It mirrors
+// normalizeEmail()'s Gmail defaults and normalizedAddress() in routes/users.js.
+// Addresses are still STORED verbatim; only comparison is canonical.
+function canonicalEmail(addr) {
+  if (typeof addr !== 'string') return '';
+  const trimmed = addr.trim();
+  const at = trimmed.lastIndexOf('@');
+  if (at < 1) return trimmed.toLowerCase();
+  let local = trimmed.slice(0, at).toLowerCase();
+  let domain = trimmed.slice(at + 1).toLowerCase();
+  if (domain === 'googlemail.com') domain = 'gmail.com';
+  if (domain === 'gmail.com') local = local.split('+')[0].replace(/\./g, '');
+  return `${local}@${domain}`;
+}
+
+// The SQL half of canonicalEmail(), applied to the STORED column so a raw
+// OAuth address is compared in the same alphabet as the submitted one. $1 is
+// the address as given, $2 is canonicalEmail($1). The exact match is kept as
+// the first branch (and ordered first) so an address that exists verbatim
+// always wins over a canonical twin.
+const EMAIL_MATCH_SQL = `
+      LOWER(email) = LOWER($1)
+      OR (CASE
+            WHEN split_part(LOWER(email), '@', 2) IN ('gmail.com', 'googlemail.com')
+              THEN regexp_replace(split_part(split_part(LOWER(email), '@', 1), '+', 1), '\\.', '', 'g') || '@gmail.com'
+            ELSE LOWER(email)
+          END) = $2`;
+
+// Find the account that owns a mailbox, dot/subaddress variants included.
+async function findUserByEmail(email) {
+  const result = await pool.query(
+    `SELECT * FROM users
+      WHERE ${EMAIL_MATCH_SQL}
+      ORDER BY (LOWER(email) = LOWER($1)) DESC, id ASC
+      LIMIT 1`,
+    [email, canonicalEmail(email)]
+  );
+  return result.rows[0] || null;
+}
+
+// ---------------------------------------------------------------------------
+// Per-account login throttle (round 15)
+// ---------------------------------------------------------------------------
+// server.js rate limits /api/auth at 10/min PER IP. That is a speed limit on
+// one attacker's connection, not on attempts against one account: a credential
+// stuffing run spread over a botnet (or a few hundred cloud IPs) gets an
+// unbounded number of guesses at a single password, and nothing anywhere
+// counts failures per account. Passwords here are 8 chars with one uppercase
+// and one digit, which is well inside range for that.
+//
+// Keyed on the canonical address so `v.ictim+a@gmail.com` cannot be used to
+// mint a fresh bucket for the same mailbox. In-memory and therefore per
+// process: it is a real ceiling on a single-instance deployment (Railway
+// today) and a partial one behind N instances. Counting is deliberately
+// identical for known and unknown addresses so it reveals nothing new.
+const LOGIN_FAIL_LIMIT = 10;
+const LOGIN_FAIL_WINDOW_MS = 15 * 60 * 1000;
+const LOGIN_FAIL_MAX_KEYS = 20000;
+const loginFailures = new Map();
+
+function loginLockedFor(key, now = Date.now()) {
+  const entry = loginFailures.get(key);
+  if (!entry) return 0;
+  if (now >= entry.expiresAt) { loginFailures.delete(key); return 0; }
+  return entry.count >= LOGIN_FAIL_LIMIT ? entry.expiresAt - now : 0;
+}
+
+function recordLoginFailure(key, now = Date.now()) {
+  // Bounded: an attacker cycling addresses must not grow this without limit.
+  if (loginFailures.size > LOGIN_FAIL_MAX_KEYS) {
+    for (const [k, v] of loginFailures) if (now >= v.expiresAt) loginFailures.delete(k);
+    if (loginFailures.size > LOGIN_FAIL_MAX_KEYS) loginFailures.clear();
+  }
+  const entry = loginFailures.get(key);
+  if (!entry || now >= entry.expiresAt) {
+    loginFailures.set(key, { count: 1, expiresAt: now + LOGIN_FAIL_WINDOW_MS });
+    return;
+  }
+  entry.count += 1;
+}
+
+function clearLoginFailures(key) {
+  loginFailures.delete(key);
+}
+
 // Age gate (C4) — SERVER-SIDE enforcement. The mobile neutral age screen collects
 // a DOB and sends it at account creation; we compute age here so the under-13
 // block survives local-storage clears / reinstalls and is recorded on the user row.
@@ -43,10 +152,19 @@ const UNDERAGE_MSG = 'You must be at least 13 to use Flock.';
 // Legacy accounts predate the DOB requirement (round 3): they must not stay
 // permanently outside the age gate. On sign-in, a null-DOB account either
 // supplies a DOB now (persisted, under-13 rejected) or gets needsDob back.
+// Round 15: `date_of_birth` reaches here straight off the body. Only /signup
+// validates it (isISO8601); the login and OAuth paths do not, so anything
+// Date() can parse — a number of milliseconds, an array — passed ageFromDob
+// and then went into a DATE column, where pg rejected it and the sign-in 500'd.
+// Shape-check before persisting: YYYY-MM-DD, or a full ISO timestamp.
+const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}([T ].*)?$/;
+
 async function enforceDobOnLogin(user, req, res) {
   if (user.date_of_birth) return true;
   const supplied = req.body.date_of_birth;
-  const age = ageFromDob(supplied);
+  const age = typeof supplied === 'string' && ISO_DATE_RE.test(supplied.trim())
+    ? ageFromDob(supplied.trim())
+    : null;
   if (age === null) {
     res.status(403).json({ error: 'Add your date of birth to continue.', needsDob: true });
     return false;
@@ -124,9 +242,11 @@ router.post('/signup', signupValidation, async (req, res) => {
       return res.status(403).json({ error: UNDERAGE_MSG });
     }
 
-    // Check if email already exists
-    const existing = await pool.query('SELECT id FROM users WHERE LOWER(email) = LOWER($1)', [email]);
-    if (existing.rows.length > 0) {
+    // Check if email already exists. Canonical match (round 15) so a Gmail
+    // dot/subaddress variant cannot open a SECOND account on a mailbox that
+    // already has one — see canonicalEmail above.
+    const existing = await findUserByEmail(email);
+    if (existing) {
       return res.status(400).json({ error: 'Email already registered' });
     }
 
@@ -159,8 +279,17 @@ router.post('/login', loginValidation, async (req, res) => {
 
     const { email, password } = req.body;
 
+    // Per-account throttle (round 15) — checked BEFORE the lookup so a locked
+    // account costs an attacker a database round trip of nothing.
+    const throttleKey = canonicalEmail(email);
+    if (loginLockedFor(throttleKey) > 0) {
+      console.warn(`Login throttled for ${throttleKey} from ${req.ip} at ${new Date().toISOString()}`);
+      return res.status(429).json({ error: 'Too many failed sign-in attempts. Try again in a few minutes.' });
+    }
+
     const result = await pool.query('SELECT * FROM users WHERE LOWER(email) = LOWER($1)', [email]);
     if (result.rows.length === 0) {
+      recordLoginFailure(throttleKey);
       console.warn(`Failed login attempt (unknown email) for ${email} from ${req.ip} at ${new Date().toISOString()}`);
       return res.status(401).json({ error: 'Invalid email or password' });
     }
@@ -172,9 +301,12 @@ router.post('/login', loginValidation, async (req, res) => {
     }
     const validPassword = await bcrypt.compare(password, user.password);
     if (!validPassword) {
+      recordLoginFailure(throttleKey);
       console.warn(`Failed login attempt for ${email} from ${req.ip} at ${new Date().toISOString()}`);
       return res.status(401).json({ error: 'Invalid email or password' });
     }
+
+    clearLoginFailures(throttleKey);
 
     if (!(await enforceDobOnLogin(user, req, res))) return;
 
@@ -210,10 +342,40 @@ router.get('/me', authenticate, async (req, res) => {
 });
 
 // POST /api/auth/logout
+// Single-device sign-out. Tokens carry no per-session id, so the only thing
+// that can be revoked is EVERY session at once (token_version) — doing that
+// here would sign a user out of their laptop every time they signed out of
+// their phone. So this stays advisory: the client discards the token.
+// POST /api/auth/logout-all below is the one that actually revokes.
 router.post('/logout', authenticate, (req, res) => {
-  // JWT is stateless - client should discard the token.
-  // If you need server-side invalidation, implement a token blacklist with Redis.
   res.json({ message: 'Logged out successfully' });
+});
+
+// POST /api/auth/logout-all — sign out on every device, for real.
+//
+// Round 15: nothing a user could reach revoked a token. /logout was purely
+// advisory, so a token lifted from a shared or lost phone stayed valid for the
+// rest of its 24h no matter what its owner did, and the only two things in the
+// app that bump token_version are the OAuth claim and a password change —
+// neither available to an OAuth account whose device was stolen. This is that
+// control: bump the version (killing every outstanding JWT for the account,
+// this caller's included) and drop the live sockets those tokens are holding.
+router.post('/logout-all', authenticate, async (req, res) => {
+  try {
+    const result = await pool.query(
+      'UPDATE users SET token_version = token_version + 1, updated_at = NOW() WHERE id = $1 RETURNING id',
+      [req.user.id]
+    );
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+    revokeUserSessions(req.app.get('io'), req.user.id);
+    console.warn(`[auth] all sessions revoked for user ${req.user.id} at ${new Date().toISOString()}`);
+    res.json({ message: 'Signed out on all devices' });
+  } catch (err) {
+    console.error('Logout-all error:', err);
+    res.status(500).json({ error: 'Failed to sign out other devices' });
+  }
 });
 
 // POST /api/auth/google — Google OAuth sign-in.
@@ -308,12 +470,27 @@ router.post('/google', [
       // claim a password-only row for them and clear its password, which cuts
       // off the squatter. Rows already linked to another provider stay
       // untouchable (no cross-provider takeover).
-      result = await pool.query('SELECT * FROM users WHERE LOWER(email) = LOWER($1)', [email]);
-      if (result.rows.length > 0) {
-        const existing = result.rows[0];
+      // Canonical lookup (round 15): the provider's address is stored
+      // verbatim while signup normalizes Gmail dots away, so an exact
+      // LOWER() match could not see the squatted row it exists to reclaim.
+      const existing = await findUserByEmail(email);
+      if (existing) {
         if (existing.oauth_provider || !emailVerified) {
           return res.status(409).json({
             error: 'An account with this email already exists. Log in the way you originally signed up.',
+          });
+        }
+        // Round 15: a claim of a BANNED row silently handed the ban to the
+        // address's real owner. Squat `victim@gmail.com`, earn a ban on it,
+        // and the victim's first Google sign-in welded their Google identity
+        // onto a suspended account: every request 403s, with no explanation
+        // and nothing they can do. Refuse the claim instead — and never lift
+        // the ban here, because "sign in with Google on the same address"
+        // would then be a one-click ban evasion for any password account.
+        if (existing.is_banned) {
+          console.warn(`[auth] refused Google claim of BANNED account ${existing.id} (${email})`);
+          return res.status(403).json({
+            error: 'An account with this email has been suspended. Contact support if you think that is a mistake.',
           });
         }
         // Round 13: the claim transferred the ROW but not the SESSION. The
@@ -330,6 +507,12 @@ router.post('/google', [
           [googleId, picture || null, existing.id]
         );
         user = claimed.rows[0];
+        // Round 15: the bump kills REST sessions on the next request, but a
+        // Socket.io connection authenticates ONCE at the handshake. Without
+        // this the squatter's live socket stays in `user:{id}` and keeps
+        // receiving the real owner's DMs, flock messages and location the
+        // whole time. See revokeUserSessions in middleware/auth.js.
+        revokeUserSessions(req.app.get('io'), existing.id);
         console.warn(`[auth] Google verified-email claim of password account ${existing.id} (${email})`);
       } else {
         // New user — create account (server-side age gate, C4).
@@ -438,12 +621,20 @@ router.post('/apple', [
       // the squat permanently block the real owner. Rows linked to another
       // provider are never absorbed.
       const appleEmailVerified = payload.email_verified === true || payload.email_verified === 'true';
-      result = await pool.query('SELECT * FROM users WHERE LOWER(email) = LOWER($1)', [email]);
-      if (result.rows.length > 0) {
-        const existing = result.rows[0];
+      // Canonical lookup (round 15) — same reason as the Google branch.
+      const existing = await findUserByEmail(email);
+      if (existing) {
         if (existing.oauth_provider || !appleEmailVerified) {
           return res.status(409).json({
             error: 'An account with this email already exists. Log in the way you originally signed up.',
+          });
+        }
+        // Round 15: same refusal as the Google branch — never hand a banned
+        // row to the address's verified owner, and never lift the ban here.
+        if (existing.is_banned) {
+          console.warn(`[auth] refused Apple claim of BANNED account ${existing.id} (${email})`);
+          return res.status(403).json({
+            error: 'An account with this email has been suspended. Contact support if you think that is a mistake.',
           });
         }
         // Round 13: same session handover as the Google claim — bump
@@ -455,6 +646,9 @@ router.post('/apple', [
           [appleId, existing.id]
         );
         user = claimed.rows[0];
+        // Round 15: kill the squatter's live Socket.io connection too — the
+        // token_version bump alone never reaches an already-open socket.
+        revokeUserSessions(req.app.get('io'), existing.id);
         console.warn(`[auth] Apple verified-email claim of password account ${existing.id} (${email})`);
       }
     }
@@ -547,3 +741,16 @@ router.post('/apple', [
 });
 
 module.exports = router;
+
+// Exported for backend/__tests__/authSurface.test.js. The SQL half of the
+// canonical match (EMAIL_MATCH_SQL) is verified by inspection against
+// canonicalEmail's unit tests, the same way routes' SQL is covered elsewhere
+// in this suite — no test here touches a real database.
+module.exports.__testing = {
+  canonicalEmail,
+  EMAIL_MATCH_SQL,
+  loginLockedFor,
+  recordLoginFailure,
+  clearLoginFailures,
+  LOGIN_FAIL_LIMIT,
+};
