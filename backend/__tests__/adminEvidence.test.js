@@ -247,9 +247,11 @@ test('the queue reads every public column of a promotion and an event, not the h
   // /public-promotions serves title, description, time_slot AND days to every
   // user who opens the venue card (routes/venueDashboard.js screens all four
   // for profanity precisely because all four are published) — the queue showed
-  // the first two. venue_events is worse: rejectIfProfane runs on `title`
-  // alone, so event_date and event_time are 40 characters each of owner-typed
-  // text through no screen at all.
+  // the first two. venue_events was worse: rejectIfProfane ran on `title` alone,
+  // leaving event_date and event_time — 40 characters each of owner-typed text —
+  // through no screen at all. Round 22 closed that; both the events POST and PUT
+  // screen all three strings now. The queue must still READ all three, because a
+  // wordlist catches slurs and does not catch "text me at 555-0100".
   handlers = [
     [/FROM content_reports r/, () => ({ rows: [] })],
     [/SELECT status, COUNT/, () => ({ rows: [] })],
