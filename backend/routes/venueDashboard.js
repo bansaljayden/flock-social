@@ -506,6 +506,9 @@ router.get('/public-promotions/:placeId', async (req, res) => {
 
 const { getWeather } = require('../services/weatherService');
 const mlPredictor = require('../services/mlPredictor');
+// Round 15: the owner dashboard scored on Railway's UTC clock. venueLocalNow +
+// weekdayOffset move scoring onto the venue's wall clock, same as routes/crowd.js.
+const crowdEngine = require('../services/crowdEngine');
 // Round 9: these Places fetches bypassed the shared paid-call budget that
 // venueSearch and crowd.js are both charged against.
 const { allowPlacesSearch } = require('../utils/placesBudget');
@@ -546,7 +549,10 @@ async function fetchVenueBasics(placeId, userId) {
   const r = await fetch(`https://places.googleapis.com/v1/places/${placeId}`, {
     headers: {
       'X-Goog-Api-Key': GOOGLE_KEY,
-      'X-Goog-FieldMask': 'id,displayName,rating,userRatingCount,priceLevel,types,location,currentOpeningHours',
+      // Round 15: utcOffsetMinutes drives the venue-clock scoring below and the
+      // event window in predictBusyness (trueEventInstant). Dropping it reverts
+      // both to the server clock — mirrors the crowd.js field mask.
+      'X-Goog-FieldMask': 'id,displayName,rating,userRatingCount,priceLevel,types,location,currentOpeningHours,utcOffsetMinutes',
     },
     signal: upstreamSignal('places'), // round 12 — see utils/upstream.js
   });
@@ -560,6 +566,9 @@ async function fetchVenueBasics(placeId, userId) {
     types: p.types || [],
     location: p.location || null,
     isOpen: p.currentOpeningHours?.openNow ?? null,
+    // Nullable: Google omits it for some places, and callers fall back to the
+    // server clock when it is null.
+    utcOffsetMinutes: p.utcOffsetMinutes != null ? p.utcOffsetMinutes : null,
   };
 }
 
@@ -582,12 +591,26 @@ router.get('/intelligence', async (req, res) => {
     const weather = (lat && lng) ? await getWeather(lat, lng).catch(() => null) : null;
 
     const now = new Date();
-    const current = await mlPredictor.predictBusyness(venue, weather, now);
+    // Score on the VENUE's wall clock, not Railway's UTC. Same contract as
+    // routes/crowd.js: venueLocalNow turns Google's utcOffsetMinutes into the
+    // hour/day the doors actually run on, and weekdayOffset lands the base date
+    // on the venue's own weekday (nearest match) so the holiday / special-night
+    // features and the 6-day outlook walk the venue's calendar, not the
+    // server's. Falls back to the server clock when Google gives us no offset.
+    const venueClock = crowdEngine.venueLocalNow(venue.utcOffsetMinutes, now);
+    const localHour = venueClock ? venueClock.hour : now.getHours();
+    const localDay = venueClock ? venueClock.day : now.getDay();
+    const venueBase = new Date(now);
+    venueBase.setDate(venueBase.getDate() + crowdEngine.weekdayOffset(venueBase.getDay(), localDay));
+    const scoreTime = new Date(venueBase);
+    scoreTime.setHours(localHour, 0, 0, 0);
+
+    const current = await mlPredictor.predictBusyness(venue, weather, scoreTime);
     // Full day today (6 AM start), then evening curves for the next 6 days.
-    const todayHourly = await mlPredictor.predictHourlyForecast(venue, weather, 6, 18, now);
+    const todayHourly = await mlPredictor.predictHourlyForecast(venue, weather, 6, 18, venueBase);
     const week = [];
     for (let d = 1; d <= 6; d++) {
-      const day = new Date(now);
+      const day = new Date(venueBase);
       day.setDate(day.getDate() + d);
       day.setHours(17, 0, 0, 0);
       const evening = await mlPredictor.predictHourlyForecast(venue, weather, 17, 7, day);
@@ -642,7 +665,9 @@ router.get('/strip', async (req, res) => {
       headers: {
         'Content-Type': 'application/json',
         'X-Goog-Api-Key': GOOGLE_KEY,
-        'X-Goog-FieldMask': 'places.id,places.displayName,places.types,places.location,places.priceLevel,places.rating,places.currentOpeningHours',
+        // Round 15: utcOffsetMinutes so each competitor is scored on its own
+        // wall clock (see scoreOne) instead of the server's.
+        'X-Goog-FieldMask': 'places.id,places.displayName,places.types,places.location,places.priceLevel,places.rating,places.currentOpeningHours,places.utcOffsetMinutes',
       },
       body: JSON.stringify({
         includedTypes: wanted.length ? wanted : ['bar'],
@@ -658,9 +683,22 @@ router.get('/strip', async (req, res) => {
     const now = new Date();
 
     const scoreOne = async (v) => {
+      // Each venue is scored on ITS OWN wall clock (same contract as
+      // routes/crowd.js), not Railway's UTC. Competitors sit beside `me` so
+      // they share a zone in practice, but reading the offset per venue keeps
+      // this correct regardless, and lets trueEventInstant land the event
+      // window on the real instant. Server clock is the fallback when Google
+      // gave us no offset.
+      const clock = crowdEngine.venueLocalNow(v.utcOffsetMinutes, now);
+      const localHour = clock ? clock.hour : now.getHours();
+      const localDay = clock ? clock.day : now.getDay();
+      const base = new Date(now);
+      base.setDate(base.getDate() + crowdEngine.weekdayOffset(base.getDay(), localDay));
+      const scoreTime = new Date(base);
+      scoreTime.setHours(localHour, 0, 0, 0);
       const [current, evening] = await Promise.all([
-        mlPredictor.predictBusyness(v, weather, now),
-        mlPredictor.predictHourlyForecast(v, weather, 17, 7, now),
+        mlPredictor.predictBusyness(v, weather, scoreTime),
+        mlPredictor.predictHourlyForecast(v, weather, 17, 7, base),
       ]);
       const peak = evening.reduce((a, b) => (b.score > a.score ? b : a), { score: -1 });
       return { name: v.name, score: current.score, label: current.label, peakScore: peak.score ?? null, peakHour: peak.hour ?? null };
@@ -676,6 +714,8 @@ router.get('/strip', async (req, res) => {
         location: p.location || null,
         rating: p.rating || null,
         isOpen: p.currentOpeningHours?.openNow ?? null,
+        // Scored on the competitor's own clock in scoreOne; null -> server clock.
+        utcOffsetMinutes: p.utcOffsetMinutes != null ? p.utcOffsetMinutes : null,
       }));
 
     const result = {
