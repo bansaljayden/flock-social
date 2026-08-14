@@ -10,6 +10,12 @@ const router = express.Router();
 
 router.use(authenticate);
 
+// flocks.id is INTEGER. A bare isInt() accepts 99999999999, which Postgres
+// rejects with 22003 — a 500 on a route where the honest answer is "no such
+// flock". Same bound routes/flocks.js already uses on its own :id params.
+const INT4_MAX = 2147483647;
+const flockIdParam = () => param('id').isInt({ min: 1, max: INT4_MAX }).withMessage('Invalid flock ID');
+
 // Voter identities respect mutual blocks (round 5): counts stay honest, but a
 // blocked user's id/name never appears in a voters list either direction.
 async function invisibleSetsForFlock(flockId) {
@@ -55,6 +61,17 @@ async function collectVoteRows(flockId) {
   //   - guestByVenue below is keyed by NAME, so every duplicate group got the
   //     FULL guest count added to it — guest votes were double counted.
   // Grouping by the name alone (what the unique key is on) fixes both.
+  //
+  // Round 17: the tally counted every venue_votes row for the flock, whether or
+  // not its author is still in it. POST /api/flocks/:id/leave deletes the
+  // flock_members row and nothing else, so a vote outlived its voter: the
+  // departed member kept a permanent vote in the tally, their name kept
+  // appearing in the voters list, and they could not take it back either
+  // (DELETE /vote requires membership). That is a public tally anyone can skew
+  // — join, vote, leave, repeat from a second account — and the winning venue
+  // is what the flock actually goes to. Membership is the rule for reading the
+  // tally (verifyFlockMember on all three routes); it is the rule for
+  // contributing to it too.
   const raw = await pool.query(
     `SELECT venue_name,
             MIN(venue_id) FILTER (WHERE venue_id IS NOT NULL) AS venue_id,
@@ -62,6 +79,8 @@ async function collectVoteRows(flockId) {
             ARRAY_AGG(json_build_object('id', u.id, 'name', u.name)) AS voter_rows
      FROM venue_votes vv
      JOIN users u ON u.id = vv.user_id
+     JOIN flock_members fm ON fm.flock_id = vv.flock_id AND fm.user_id = vv.user_id
+       AND fm.status = 'accepted'
      WHERE vv.flock_id = $1
      GROUP BY venue_name
      ORDER BY member_count DESC`,
@@ -140,7 +159,7 @@ async function broadcastVotes(req, flockId, rows, venue_name, notify = true) {
 // POST /api/flocks/:id/vote - Vote for a venue
 router.post('/:id/vote',
   [
-    param('id').isInt(),
+    flockIdParam(),
     // Round 13: this was the ONE venue-name write with no stripHtml, no
     // profanity screen and no maximum length — the socket `vote_venue` handler
     // does all three (sockets/handlers.js). The name is persisted and
@@ -229,7 +248,7 @@ router.post('/:id/vote',
 // DELETE /api/flocks/:id/vote - Take back my vote
 // Without this an un-vote in the UI never reached the server and came back on
 // the next refresh (round 10).
-router.delete('/:id/vote', param('id').isInt(), async (req, res) => {
+router.delete('/:id/vote', flockIdParam(), async (req, res) => {
   try {
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
@@ -259,7 +278,7 @@ router.delete('/:id/vote', param('id').isInt(), async (req, res) => {
 });
 
 // GET /api/flocks/:id/votes - Get vote counts for a flock
-router.get('/:id/votes', param('id').isInt(), async (req, res) => {
+router.get('/:id/votes', flockIdParam(), async (req, res) => {
   try {
     const errors = validationResult(req);
     if (!errors.isEmpty()) {

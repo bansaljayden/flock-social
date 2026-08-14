@@ -1,41 +1,48 @@
 import React, { useState } from 'react';
-import { login, signup, googleLogin } from '../../services/api';
-import { GoogleLogin } from '@react-oauth/google';
+import { login, signup, googleLoginWithToken, resendVerificationEmail } from '../../services/api';
+import { useGoogleLogin } from '@react-oauth/google';
+import AppleSignInButton from './AppleSignInButton';
+import AuthShell, { AUTH, AuthError, AuthRule, GoogleG, PasswordEye } from './AuthShell';
 
-const colors = {
-  navyDark: '#0f172a',
-  cream: '#f0ead8',
-  creamDark: '#e0dac9',
-  navy: '#1a2744',
+/* ═══════════════════════════════════════════════════════════════════
+   VENUE PORTAL — the operator's front door.
+
+   Audit 2026-08-14: this screen used to be its own hand-rolled surface
+   (inline "liquid glass" card over a video, labels with no htmlFor, a
+   26px eye button with no accessible name, 14px inputs that make iOS
+   zoom on focus, body text at rgba(148,163,184,0.5) over MOVING
+   footage, and a hardcoded 344px-wide Google button that overflowed a
+   320px viewport). It also silently diverged from the consumer screens
+   on three things that are not cosmetic: no Sign in with Apple beside
+   the Google button (guideline 4.8), no terms/privacy consent on the
+   signup path (1.2), and no handling of the email-verification reply,
+   so a new venue owner landed in the app and met 403s.
+
+   It now renders on the same AuthShell as Login and Signup, so the
+   contrast ratios, focus rings, hit targets and reduced-motion /
+   save-data backdrop rules are the shared ones rather than a second
+   set that has to be audited separately. A venue owner is a customer
+   we are asking for money; their front door gets the same standard.
+   ═══════════════════════════════════════════════════════════════════ */
+
+const TERMS_URL = 'https://www.flockcorp.com/terms';
+const PRIVACY_URL = 'https://www.flockcorp.com/privacy';
+const GUIDELINES_URL = 'https://www.flockcorp.com/guidelines';
+
+// Matches backend/routes/auth.js and the age gate in backend/utils/age.js.
+// Client-side only for the message; the server recomputes and is the truth.
+const MIN_AGE = 13;
+
+const ageFromDob = (value) => {
+  if (!value) return null;
+  const b = new Date(value);
+  if (isNaN(b.getTime())) return null;
+  const now = new Date();
+  let age = now.getFullYear() - b.getFullYear();
+  const m = now.getMonth() - b.getMonth();
+  if (m < 0 || (m === 0 && now.getDate() < b.getDate())) age -= 1;
+  return age;
 };
-
-// Video city background — different clip than user login.
-// The 27KB poster is what paints first; preload="metadata" keeps the 880KB
-// clip off the critical path, and the poster stays put if playback never
-// starts. (Same treatment as the user login backdrop in AuthShell.js.)
-const SceneBackground = () => (
-  <div style={{ position: 'absolute', inset: 0, overflow: 'hidden', pointerEvents: 'none' }}>
-    <video autoPlay muted loop playsInline preload="metadata" poster="/bg-city-venue-poster.jpg" style={{
-      position: 'absolute', width: '100%', height: '100%', objectFit: 'cover',
-      filter: 'brightness(0.65) saturate(1)',
-    }}>
-      <source src="/bg-city-venue.mp4" type="video/mp4" />
-    </video>
-    <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(180deg, rgba(6,10,20,0.45) 0%, rgba(10,21,40,0.15) 40%, rgba(6,10,20,0.4) 100%)' }} />
-  </div>
-);
-
-const EyeIcon = ({ size = 20 }) => (
-  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="rgba(148,163,184,0.6)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-    <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>
-  </svg>
-);
-
-const EyeOffIcon = ({ size = 20 }) => (
-  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="rgba(148,163,184,0.6)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-    <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/>
-  </svg>
-);
 
 const VenueLoginScreen = ({ onLoginSuccess, onSwitchToUserLogin }) => {
   const [isSignup, setIsSignup] = useState(false);
@@ -48,22 +55,106 @@ const VenueLoginScreen = ({ onLoginSuccess, onSwitchToUserLogin }) => {
   const [loading, setLoading] = useState(false);
   // Legacy accounts with no DOB on file get 403 {needsDob: true} at login.
   const [needsDob, setNeedsDob] = useState(false);
+  // Signup sends a confirmation link and the account cannot do much until it
+  // is clicked. The old venue screen ignored that reply and called
+  // onLoginSuccess anyway, dropping the owner into a dashboard that 403s.
+  const [awaitingVerification, setAwaitingVerification] = useState(false);
+  const [resendCooldown, setResendCooldown] = useState(0);
+  const [resendNote, setResendNote] = useState('');
+
+  React.useEffect(() => {
+    if (resendCooldown <= 0) return undefined;
+    const t = setTimeout(() => setResendCooldown((n) => n - 1), 1000);
+    return () => clearTimeout(t);
+  }, [resendCooldown]);
+
+  const handleResend = async () => {
+    if (resendCooldown > 0) return;
+    setResendNote('');
+    setResendCooldown(60);
+    try {
+      await resendVerificationEmail();
+      setResendNote('Sent. Check your inbox, and your spam folder.');
+    } catch (err) {
+      if (err?.status === 429) setResendNote('That is a lot of emails. Try again in a few minutes.');
+      else setResendNote(err?.message || 'Could not send it just now. Try again shortly.');
+    }
+  };
+
+  // Live password checklist, identical rules to backend/routes/auth.js, so
+  // nobody submits a password the server will bounce for a rule they were
+  // never shown. Only used on the signup path.
+  const pwChecks = [
+    { label: '8 characters', ok: password.length >= 8 },
+    { label: 'One uppercase letter', ok: /[A-Z]/.test(password) },
+    { label: 'One number', ok: /[0-9]/.test(password) },
+  ];
+
+  const maxDob = (() => {
+    const d = new Date();
+    d.setFullYear(d.getFullYear() - MIN_AGE);
+    return d.toISOString().split('T')[0];
+  })();
+
+  const startGoogle = useGoogleLogin({
+    onSuccess: async (tokenResponse) => {
+      setLoading(true);
+      try {
+        const data = await googleLoginWithToken(tokenResponse.access_token, dob || undefined);
+        onLoginSuccess(data.user);
+      } catch (err) {
+        if (err.data?.needsDob) {
+          setNeedsDob(true);
+          setError('Add your date of birth below, then tap Continue with Google again.');
+        } else {
+          setError(err.message || 'Google sign-in failed');
+        }
+      } finally {
+        setLoading(false);
+      }
+    },
+    onError: () => setError('Google sign-in failed'),
+  });
 
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError('');
+
+    if (isSignup) {
+      if (!pwChecks.every((c) => c.ok)) {
+        setError('Your password is missing a requirement below');
+        return;
+      }
+      const age = ageFromDob(dob);
+      if (age === null) {
+        setError('Please enter your date of birth');
+        return;
+      }
+      if (age < MIN_AGE) {
+        setError(`You must be at least ${MIN_AGE} to use Flock`);
+        return;
+      }
+    }
+
     setLoading(true);
     try {
       // signup's declared order is (name, email, password, dateOfBirth) — the
       // old call passed (email, password, name), mapping every field wrong.
-      const data = isSignup
-        ? await signup(name, email, password, dob)
-        : await login(email, password, needsDob && dob ? dob : undefined);
-      onLoginSuccess(data.user);
+      if (isSignup) {
+        const data = await signup(name, email, password, dob);
+        if (data?.emailVerificationRequired) {
+          setAwaitingVerification(true);
+          return;
+        }
+        onLoginSuccess(data.user);
+      } else {
+        const data = await login(email, password, needsDob && dob ? dob : undefined);
+        onLoginSuccess(data.user);
+      }
     } catch (err) {
       if (err.data?.needsDob) {
         setNeedsDob(true);
-        setError('Add your date of birth to continue.');
+        setError(needsDob && dob ? err.message : 'One more thing: add your date of birth below to continue.');
       } else {
         setError(err.message);
       }
@@ -72,120 +163,225 @@ const VenueLoginScreen = ({ onLoginSuccess, onSwitchToUserLogin }) => {
     }
   };
 
+  const switchMode = () => {
+    setIsSignup((v) => !v);
+    setError('');
+    setNeedsDob(false);
+    // A password typed under the login rules is not carried into a signup form
+    // that is about to grade it against a checklist.
+    setPassword('');
+  };
+
+  const hero = (
+    <>
+      <img className="auth-mark" src="/logo192.png" alt="" aria-hidden="true" />
+      <h1 className="auth-h1">{isSignup ? 'Register your venue' : 'Venue portal'}</h1>
+      <p className="auth-sub">
+        {/* Says only what a new account actually gets. Claiming is immediate;
+            replying to reviews and publishing promotions wait on the admin
+            verification step, so the copy says so rather than implying the
+            dashboard is live the moment you sign up. */}
+        {isSignup
+          ? 'Claim your listing. We check it is yours before it goes live.'
+          : 'Sign in to manage your venue.'}
+      </p>
+    </>
+  );
+
+  if (awaitingVerification) {
+    return (
+      <AuthShell hero={(
+        <>
+          <img className="auth-mark" src="/logo192.png" alt="" aria-hidden="true" />
+          <h1 className="auth-h1">Confirm your email</h1>
+          <p className="auth-sub">We sent a link to {email}. Open it and you are in.</p>
+        </>
+      )}
+      >
+        <p className="auth-sub" style={{ margin: '0 0 18px' }}>
+          Your account exists. Clicking the link is what lets you claim your venue and reply to reviews. If it has not landed in a minute, check your spam folder.
+        </p>
+        {resendNote && <p role="status" className="auth-hint" style={{ margin: '0 0 12px' }}>{resendNote}</p>}
+        <button
+          type="button"
+          onClick={handleResend}
+          disabled={resendCooldown > 0}
+          className="auth-primary"
+        >
+          {resendCooldown > 0 ? `Send it again in ${resendCooldown}s` : 'Send the link again'}
+        </button>
+        <p className="auth-foot">
+          Already confirmed?
+          <button type="button" className="auth-textbtn" onClick={() => { setAwaitingVerification(false); setIsSignup(false); }}>Sign in</button>
+        </p>
+      </AuthShell>
+    );
+  }
+
   return (
-    <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px', fontFamily: "'Hanken Grotesk', -apple-system, BlinkMacSystemFont, sans-serif", position: 'relative', overflow: 'hidden' }}>
-      <SceneBackground />
-      <div style={{ width: '100%', maxWidth: '400px', position: 'relative', zIndex: 1, animation: 'fadeInUp 0.8s ease-out' }}>
-        <div style={{ textAlign: 'center', marginBottom: '24px' }}>
-          <img src="/flock-logo.png" alt="Flock" style={{ width: '160px', height: '160px', borderRadius: '50%', objectFit: 'cover', display: 'block', margin: '0 auto 12px', boxShadow: '0 8px 40px rgba(0,0,0,0.4)', animation: 'floatIn 0.8s ease-out' }} />
-          <h1 style={{ fontSize: '28px', fontWeight: '900', color: colors.cream, margin: '0 0 2px', letterSpacing: '-0.5px' }}>Venue Portal</h1>
-          <p style={{ fontSize: '14px', color: 'rgba(148,163,184,0.5)', fontWeight: '400', margin: 0 }}>{isSignup ? 'Register your venue' : 'Sign in to manage your venue'}</p>
-        </div>
+    <AuthShell hero={hero}>
+      <form onSubmit={handleSubmit}>
+        <AuthError>{error}</AuthError>
 
-        <div style={{ position: 'relative', borderRadius: '28px', padding: '32px 28px' }}>
-          <div style={{
-            position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', borderRadius: '28px', zIndex: 0,
-            boxShadow: '0 0 6px rgba(0,0,0,0.03), 0 2px 6px rgba(0,0,0,0.08), inset 3px 3px 0.5px -3.5px rgba(255,255,255,0.09), inset -3px -3px 0.5px -3.5px rgba(255,255,255,0.85), inset 1px 1px 1px -0.5px rgba(255,255,255,0.6), inset -1px -1px 1px -0.5px rgba(255,255,255,0.6), inset 0 0 6px 6px rgba(255,255,255,0.12), inset 0 0 2px 2px rgba(255,255,255,0.06), 0 0 12px rgba(0,0,0,0.15)',
-          }} />
-          <div style={{
-            position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', borderRadius: '28px', zIndex: -1, overflow: 'hidden',
-            backdropFilter: 'url(#liquid-glass-v)', WebkitBackdropFilter: 'url(#liquid-glass-v)',
-          }} />
-          <div style={{
-            position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', borderRadius: '28px', zIndex: 0,
-            background: 'linear-gradient(145deg, rgba(255,255,255,0.1) 0%, rgba(255,255,255,0.03) 50%, rgba(255,255,255,0.05) 100%)',
-            border: '1px solid rgba(255,255,255,0.15)', borderTop: '1px solid rgba(255,255,255,0.25)', borderLeft: '1px solid rgba(255,255,255,0.18)',
-            pointerEvents: 'none',
-          }} />
-          <svg style={{ position: 'absolute', width: 0, height: 0 }}>
-            <defs>
-              <filter id="liquid-glass-v" x="0%" y="0%" width="100%" height="100%" colorInterpolationFilters="sRGB">
-                <feTurbulence type="fractalNoise" baseFrequency="0.04 0.04" numOctaves="1" seed="2" result="turbulence" />
-                <feGaussianBlur in="turbulence" stdDeviation="3" result="blurredNoise" />
-                <feDisplacementMap in="SourceGraphic" in2="blurredNoise" scale="50" xChannelSelector="R" yChannelSelector="B" result="displaced" />
-                <feGaussianBlur in="displaced" stdDeviation="5" result="finalBlur" />
-                <feComposite in="finalBlur" in2="finalBlur" operator="over" />
-              </filter>
-            </defs>
-          </svg>
-          <div style={{ position: 'relative', zIndex: 1 }}>
-          <form onSubmit={handleSubmit}>
-            {error && <div style={{ backgroundColor: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.2)', borderRadius: '12px', padding: '10px 14px', marginBottom: '20px', color: '#fca5a5', fontSize: '13px', fontWeight: '500' }}>{error}</div>}
-
-            {isSignup && (
-              <div style={{ marginBottom: '20px' }}>
-                <label className="login-label">Name</label>
-                <input type="text" value={name} onChange={(e) => setName(e.target.value)} placeholder="Your name" required className="login-input" />
-              </div>
-            )}
-
-            {(isSignup || needsDob) && (
-              <div style={{ marginBottom: '20px' }}>
-                <label className="login-label">Date of birth</label>
-                <input type="date" value={dob} onChange={(e) => setDob(e.target.value)} required className="login-input" />
-              </div>
-            )}
-
-            <div style={{ marginBottom: '20px' }}>
-              <label className="login-label">Email</label>
-              <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@example.com" required className="login-input" />
-            </div>
-
-            <div style={{ marginBottom: '28px' }}>
-              <label className="login-label">Password</label>
-              <div style={{ position: 'relative' }}>
-                <input type={showPassword ? 'text' : 'password'} value={password} onChange={(e) => setPassword(e.target.value)} placeholder="Enter your password" required className="login-input" style={{ paddingRight: '44px' }} />
-                <button type="button" onClick={() => setShowPassword(!showPassword)} style={{ position: 'absolute', right: '8px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', padding: '4px', display: 'flex', alignItems: 'center', opacity: 0.7 }}>
-                  {showPassword ? <EyeOffIcon size={18} /> : <EyeIcon size={18} />}
-                </button>
-              </div>
-            </div>
-
-            <button type="submit" disabled={loading} className="login-btn" style={{ opacity: loading ? 0.7 : 1, cursor: loading ? 'not-allowed' : 'pointer' }}>
-              {loading ? 'Signing in...' : isSignup ? 'Create Account' : 'Sign In'}
-            </button>
-          </form>
-
-          <div style={{ display: 'flex', alignItems: 'center', gap: '14px', margin: '22px 0' }}>
-            <div style={{ flex: 1, height: '1px', background: 'linear-gradient(90deg, transparent, rgba(148,163,184,0.12), transparent)' }} />
-            <span style={{ fontSize: '11px', color: 'rgba(148,163,184,0.35)', fontWeight: '500', textTransform: 'uppercase', letterSpacing: '1px' }}>or</span>
-            <div style={{ flex: 1, height: '1px', background: 'linear-gradient(90deg, transparent, rgba(148,163,184,0.12), transparent)' }} />
-          </div>
-
-          <div style={{ display: 'flex', justifyContent: 'center' }}>
-            <GoogleLogin
-              onSuccess={async (response) => { setError(''); setLoading(true); try { const data = await googleLogin(response.credential, dob || undefined); onLoginSuccess(data.user); } catch (err) { if (err.data?.needsDob) { setNeedsDob(true); setError('Add your date of birth above, then tap the Google button again.'); } else { setError(err.message || 'Google sign-in failed'); } } finally { setLoading(false); } }}
-              onError={() => setError('Google sign-in failed')}
-              theme="filled_black" shape="pill" size="large" width="344" text="continue_with"
+        {isSignup && (
+          <div className="auth-field-row">
+            <label className="auth-label" htmlFor="venue-name">Your name</label>
+            <input
+              id="venue-name"
+              className="auth-field"
+              type="text"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="Who we should ask for"
+              autoComplete="name"
+              required
             />
           </div>
+        )}
 
-          <p style={{ textAlign: 'center', marginTop: '22px', paddingTop: '18px', borderTop: '1px solid rgba(255,255,255,0.06)', fontSize: '14px', color: 'rgba(148,163,184,0.5)', margin: '22px 0 0' }}>
-            {isSignup ? 'Already have an account? ' : "Don't have an account? "}
-            <button onClick={() => { setIsSignup(!isSignup); setError(''); }} style={{ background: 'none', border: 'none', color: colors.cream, fontWeight: '700', cursor: 'pointer', fontSize: '14px', padding: 0 }}>{isSignup ? 'Sign In' : 'Sign Up'}</button>
-          </p>
-          </div>{/* close content wrapper */}
-        </div>{/* close glass card */}
+        {(isSignup || needsDob) && (
+          <div className="auth-field-row">
+            <label className="auth-label" htmlFor="venue-dob">Date of birth</label>
+            <input
+              id="venue-dob"
+              className="auth-field"
+              type="date"
+              value={dob}
+              max={isSignup ? maxDob : undefined}
+              onChange={(e) => setDob(e.target.value)}
+              autoComplete="bday"
+              aria-describedby={isSignup ? 'venue-dob-hint' : undefined}
+              required
+            />
+            {isSignup && <p className="auth-hint" id="venue-dob-hint">Yours, not the venue's. You have to be 13 or older to use Flock.</p>}
+          </div>
+        )}
 
-        <button onClick={onSwitchToUserLogin} className="venue-link-btn">
-          Not a venue? <span style={{ fontWeight: '700', color: colors.cream }}>Back to user login</span>
+        <div className="auth-field-row">
+          <label className="auth-label" htmlFor="venue-email">Email</label>
+          <input
+            id="venue-email"
+            className="auth-field"
+            type="email"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            placeholder="you@example.com"
+            autoComplete="email"
+            autoCapitalize="none"
+            spellCheck="false"
+            required
+          />
+        </div>
+
+        <div className="auth-field-row" style={{ marginBottom: '24px' }}>
+          <label className="auth-label" htmlFor="venue-password">Password</label>
+          <div className="auth-pw-wrap">
+            <input
+              id="venue-password"
+              className="auth-field"
+              type={showPassword ? 'text' : 'password'}
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              placeholder={isSignup ? 'At least 8 characters' : 'Your password'}
+              autoComplete={isSignup ? 'new-password' : 'current-password'}
+              minLength={isSignup ? 8 : undefined}
+              required
+            />
+            <PasswordEye shown={showPassword} onToggle={() => setShowPassword(!showPassword)} />
+          </div>
+          {isSignup && password.length > 0 && (
+            <ul style={{ listStyle: 'none', margin: '12px 0 0', padding: 0, display: 'grid', gap: '7px' }}>
+              {pwChecks.map((c) => (
+                <li
+                  key={c.label}
+                  style={{
+                    display: 'flex', alignItems: 'center', gap: '8px',
+                    fontSize: '12.5px', fontWeight: '500',
+                    color: c.ok ? AUTH.green : AUTH.cream2,
+                  }}
+                >
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                    {c.ok ? <polyline points="20 6 9 17 4 12" /> : <circle cx="12" cy="12" r="9" />}
+                  </svg>
+                  {c.label}
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+
+        <button type="submit" className="auth-primary" disabled={loading}>
+          {loading
+            ? (isSignup ? 'Creating account…' : 'Signing in…')
+            : (isSignup ? 'Create account' : 'Sign in')}
         </button>
-      </div>
 
-      <style>{`
-        @keyframes fadeInUp { from { opacity: 0; transform: translateY(30px); } to { opacity: 1; transform: translateY(0); } }
-        @keyframes floatIn { from { opacity: 0; transform: translateY(-16px) scale(0.9); } to { opacity: 1; transform: translateY(0) scale(1); } }
-        .login-label { display: block; font-size: 12px; font-weight: 600; color: rgba(148,163,184,0.7); margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.5px; }
-        .login-input { width: 100%; padding: 12px 14px; border-radius: 12px; border: 1.5px solid rgba(148,163,184,0.1); font-size: 14px; font-weight: 400; outline: none; box-sizing: border-box; transition: border-color 0.2s, box-shadow 0.2s, background-color 0.2s; background-color: rgba(15,23,42,0.4); color: white; font-family: inherit; }
-        .login-input::placeholder { color: rgba(148,163,184,0.3); }
-        .login-input:focus { border-color: rgba(240,234,216,0.3); box-shadow: 0 0 0 3px rgba(240,234,216,0.05); background-color: rgba(15,23,42,0.6); }
-        .login-btn { width: 100%; padding: 14px; border-radius: 14px; border: none; background: linear-gradient(135deg, #f0ead8 0%, #d4c9a8 100%); color: #1a2744; font-size: 15px; font-weight: 800; letter-spacing: 0.3px; font-family: inherit; box-shadow: 0 4px 20px rgba(240,234,216,0.15); transition: transform 0.15s, box-shadow 0.15s; }
-        .login-btn:hover:not(:disabled) { transform: translateY(-1px); box-shadow: 0 6px 24px rgba(240,234,216,0.2); }
-        .login-btn:active:not(:disabled) { transform: translateY(0); }
-        .venue-link-btn { display: block; width: 100%; margin-top: 14px; padding: 11px 20px; border-radius: 14px; border: 1px solid rgba(148,163,184,0.1); background: rgba(15,23,42,0.3); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); color: rgba(148,163,184,0.5); font-size: 13px; font-family: inherit; cursor: pointer; transition: border-color 0.2s, color 0.2s, background 0.2s; text-align: center; }
-        .venue-link-btn:hover { border-color: rgba(148,163,184,0.2); color: rgba(148,163,184,0.8); background: rgba(15,23,42,0.5); }
-      `}</style>
-    </div>
+        {/* Guideline 1.2 / EULA consent. The backend stamps terms_accepted_at on
+            every signup path, so the agreement has to be on screen before any
+            of the three buttons below is pressed. */}
+        {isSignup && (
+          <p className="auth-legal">
+            Creating an account means you agree to the{' '}
+            <a href={TERMS_URL} target="_blank" rel="noopener noreferrer">Terms</a>,{' '}
+            <a href={PRIVACY_URL} target="_blank" rel="noopener noreferrer">Privacy Policy</a>, and{' '}
+            <a href={GUIDELINES_URL} target="_blank" rel="noopener noreferrer">Community Guidelines</a>.
+          </p>
+        )}
+      </form>
+
+      <AuthRule label={isSignup ? 'or sign up with' : 'or continue with'} />
+
+      <button
+        type="button"
+        className="auth-provider"
+        disabled={loading}
+        onClick={() => {
+          setError('');
+          if (isSignup) {
+            // Age gate the Google path the same way the email path is gated.
+            const age = ageFromDob(dob);
+            if (age === null) {
+              setError('Add your date of birth above first, then continue with Google.');
+              return;
+            }
+            if (age < MIN_AGE) {
+              setError(`You must be at least ${MIN_AGE} to use Flock`);
+              return;
+            }
+          }
+          startGoogle();
+        }}
+      >
+        <GoogleG /> Continue with Google
+      </button>
+
+      {/* Apple guideline 4.8: the venue portal ships inside the same iOS binary
+          and offers Google above, so it must offer Sign in with Apple too.
+          Renders null on web. Its absence here was a standing 4.8 rejection
+          risk that the consumer screens had already fixed. */}
+      <AppleSignInButton onSuccess={onLoginSuccess} onError={(m) => setError(m)} dob={dob} />
+
+      {/* The server will not say which addresses belong to Google or Apple
+          accounts — answering that turns login into an account enumeration
+          oracle — so the hint stands here for everyone, same as the consumer
+          login screen. */}
+      {!isSignup && (
+        <p className="auth-hint" style={{ textAlign: 'center', marginTop: '12px' }}>
+          Signed up with Google or Apple? Use that button.
+        </p>
+      )}
+
+      <p className="auth-foot">
+        {isSignup ? 'Already registered?' : 'New venue?'}
+        <button type="button" className="auth-textbtn" onClick={switchMode}>
+          {isSignup ? 'Sign in' : 'Create an account'}
+        </button>
+      </p>
+
+      <button type="button" className="auth-venue" onClick={onSwitchToUserLogin}>
+        Not a venue? <span>Back to user login</span>
+      </button>
+    </AuthShell>
   );
 };
 
