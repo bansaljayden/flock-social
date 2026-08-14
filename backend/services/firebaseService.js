@@ -43,11 +43,19 @@ function init() {
   }
 }
 
+// Test seam. The delivery tests need to drive the provider's failure modes —
+// an unregistered token, a transient 5xx, a request that never answers —
+// without real credentials and without reaching Google. Nothing outside
+// __tests__ may set this.
+let senderOverride = null;
+function __setSenderForTests(fn) { senderOverride = fn; }
+
 // True when push is actually configured. Callers use this to skip the work
 // they would otherwise do to BUILD a notification (membership lookups, block
-// checks) on a deployment where nothing can be delivered anyway.
+// checks, a paid weather call in the crowd-alert sweep) on a deployment where
+// nothing can be delivered anyway.
 function isEnabled() {
-  return init();
+  return senderOverride ? true : init();
 }
 
 // ---------------------------------------------------------------------------
@@ -95,6 +103,68 @@ function absoluteLink(path) {
   return `${base}${path}`;
 }
 
+// ---------------------------------------------------------------------------
+// Text integrity
+//
+// Round 18: every caller clips its preview with `substring(0, 100)` — see
+// routes/messages.js and sockets/handlers.js. A JS string is UTF-16, so that
+// cuts CODE UNITS, not characters: a message whose 100th unit lands inside an
+// emoji, or any other astral character (musical symbols, CJK extension B, most
+// flags), leaves a LONE SURROGATE on the end. FCM's JSON parser rejects
+// unpaired surrogates outright with 400 INVALID_ARGUMENT, so the whole
+// notification is dropped — and, correctly, isStaleError does NOT read that as
+// a dead token, so the same message fails forever with nothing in the logs but
+// a generic send error. Repairing it here fixes every caller at once, which is
+// the reason one place builds the FCM message.
+//
+// Also stripped: C0/C1 control characters, which a lock screen renders as
+// nothing or as a box and which push the payload toward the 4KB ceiling.
+const LONE_SURROGATE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g;
+
+// APNs and FCM both drop a notification whose payload exceeds 4KB, and nothing
+// upstream bounds a venue name, a flock name or a display name — several bodies
+// concatenate two of them. These caps are generous next to any real value (the
+// longest data value the app sends is a two-word busyness label) and leave the
+// whole serialized message under 4KB even when every field is astral text at
+// four bytes a character.
+const MAX_TITLE = 120;
+const MAX_BODY = 300;
+// Deliberately smaller than MAX_DATA_BYTES: no single value may consume the
+// whole data budget and starve the routing keys behind it. The longest value
+// the app actually sends is a busyness label ("Very Busy").
+const MAX_DATA_VALUE = 64;
+// Per-value caps do not bound a payload on their own: they multiply by the
+// number of keys. This is the ceiling that actually holds, and it is eight
+// times the largest payload any real caller builds.
+const MAX_DATA_BYTES = 512;
+// If the budget ever does run out, these are the keys the client needs in order
+// to resolve where a tap goes, so they are spent first.
+const DATA_PRIORITY = ['type', 'flockId', 'senderId', 'fromUserId'];
+
+function isControl(cp) {
+  return cp < 0x20 || (cp >= 0x7f && cp <= 0x9f);
+}
+
+function sanitizeText(value) {
+  if (typeof value !== 'string') return '';
+  let out = '';
+  // Iterating the string yields CODE POINTS, so a surviving pair is never
+  // examined half at a time.
+  for (const ch of value.replace(LONE_SURROGATE, '')) {
+    out += isControl(ch.codePointAt(0)) ? ' ' : ch;
+  }
+  return out.replace(/ {2,}/g, ' ').trim();
+}
+
+// Clip on a CODE POINT boundary, never a code unit one, so the repair above
+// cannot be undone by the cap that follows it.
+function clip(value, max) {
+  if (value.length <= max) return value;
+  const points = Array.from(value);
+  if (points.length <= max) return value;
+  return `${points.slice(0, max - 1).join('').trimEnd()}…`;
+}
+
 // A notification whose body is empty renders as a bare title with a blank
 // line under it. Image and venue-card messages carry no text, and that is
 // exactly how they used to arrive.
@@ -104,9 +174,19 @@ const EMPTY_BODY_FALLBACK = {
 };
 
 function normalizeBody(body, type) {
-  const trimmed = typeof body === 'string' ? body.trim() : '';
-  if (trimmed) return trimmed;
+  const clean = sanitizeText(body);
+  if (clean) return clip(clean, MAX_BODY);
   return EMPTY_BODY_FALLBACK[type] || 'Open Flock to see it';
+}
+
+// firebase-admin validates that notification.title is a string and rejects the
+// WHOLE message when it is not, so a null display name — or one that arrived as
+// an object, which a template literal would have rendered "[object Object]" —
+// used to lose the push rather than degrade it. Nothing upstream guarantees a
+// title; this is the only place that can.
+function normalizeTitle(title) {
+  const clean = sanitizeText(typeof title === 'string' ? title : '');
+  return clean ? clip(clean, MAX_TITLE) : 'Flock';
 }
 
 // Collapse key: a second notification about the same conversation replaces the
@@ -121,21 +201,40 @@ function buildFcmMessage(token, title, body, data = {}) {
   const type = data.type ? String(data.type) : '';
   const link = deepLinkPath(data);
 
-  // All data values must be strings
+  // All data values must be strings — and only SCALARS become sensible ones.
+  // String({}) is "[object Object]", which is a value the client would then
+  // route on; a non-scalar here is a caller bug, so drop it rather than ship a
+  // placeholder that looks like data.
   const stringData = {};
-  for (const [k, v] of Object.entries(data)) {
+  let dataBytes = Buffer.byteLength(`link${link}`, 'utf8');
+  const entries = Object.entries(data);
+  const ordered = [
+    ...entries.filter(([k]) => DATA_PRIORITY.includes(k)),
+    ...entries.filter(([k]) => !DATA_PRIORITY.includes(k)),
+  ];
+  for (const [k, v] of ordered) {
     if (v === undefined || v === null) continue;
-    stringData[k] = String(v);
+    const t = typeof v;
+    if (t !== 'string' && t !== 'number' && t !== 'boolean' && t !== 'bigint') continue;
+    if (t === 'number' && !Number.isFinite(v)) continue;
+    const clean = clip(sanitizeText(String(v)), MAX_DATA_VALUE);
+    if (!clean) continue;
+    const cost = Buffer.byteLength(k, 'utf8') + Buffer.byteLength(clean, 'utf8');
+    if (dataBytes + cost > MAX_DATA_BYTES) continue;
+    dataBytes += cost;
+    stringData[k] = clean;
   }
+  // Always present: it is the only thing that decides where a tap lands.
   stringData.link = link;
 
   const tag = collapseId(data);
+  const safeTitle = normalizeTitle(title);
   const safeBody = normalizeBody(body, type);
   const url = absoluteLink(link);
 
   const message = {
     token,
-    notification: { title, body: safeBody },
+    notification: { title: safeTitle, body: safeBody },
     data: stringData,
     android: {
       priority: 'high',
@@ -186,13 +285,58 @@ function isStaleError(err) {
   return false;
 }
 
+// ---------------------------------------------------------------------------
+// Deadline
+//
+// firebase-admin's own timeout is 15s PER ATTEMPT and it retries connection
+// resets and timeouts up to four times. routes/flocks.js awaits its entire push
+// fan-out BEFORE res.json, so an unreachable FCM held a flock-status response
+// open for the better part of a minute — a notification failing must never be
+// something the user experiences as the app hanging. Resolving as a plain
+// failure is safe: the timeout carries no provider code, so isStaleError reads
+// it as transient and the token survives.
+// ---------------------------------------------------------------------------
+const SEND_TIMEOUT_MS = 8000;
+
+// Kept in step with routes/notifications.js MAX_TOKENS_PER_USER. Interpolated
+// rather than bound because it is a module constant, never anything a caller
+// supplies.
+const MAX_TOKENS_PER_USER = 20;
+
+function timeoutError() {
+  const err = new Error(`push send exceeded ${SEND_TIMEOUT_MS}ms`);
+  err.code = 'push/deadline-exceeded';
+  return err;
+}
+
+async function rawSend(message) {
+  if (senderOverride) return senderOverride(message);
+  return admin.messaging().send(message);
+}
+
+async function sendWithDeadline(message, timeoutMs) {
+  let timer = null;
+  try {
+    return await Promise.race([
+      rawSend(message),
+      new Promise((_, reject) => {
+        timer = setTimeout(() => reject(timeoutError()), timeoutMs);
+        if (typeof timer.unref === 'function') timer.unref();
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
 // Send push notification to a single device token
 // Returns { success: true } or { success: false, stale: boolean }
-async function sendPushNotification(token, title, body, data = {}) {
-  if (!init()) return { success: false, stale: false };
+async function sendPushNotification(token, title, body, data = {}, opts = {}) {
+  if (!senderOverride && !init()) return { success: false, stale: false };
 
+  const timeoutMs = Number.isFinite(opts.timeoutMs) ? opts.timeoutMs : SEND_TIMEOUT_MS;
   try {
-    await admin.messaging().send(buildFcmMessage(token, title, body, data));
+    await sendWithDeadline(buildFcmMessage(token, title, body, data), timeoutMs);
     return { success: true };
   } catch (err) {
     const stale = isStaleError(err);
@@ -206,11 +350,18 @@ async function sendPushNotification(token, title, body, data = {}) {
 // Send push notification to all devices belonging to a user
 // Cleans up stale tokens automatically
 async function sendPushToUser(userId, title, body, data = {}) {
-  if (!init()) return { sent: 0, failed: 0 };
+  if (!senderOverride && !init()) return { sent: 0, failed: 0 };
 
   try {
+    // Bounded, and newest first. The rows below are sent to CONCURRENTLY, so an
+    // unbounded row count here is an unbounded burst of outbound requests for
+    // one notification. routes/notifications.js prunes to the same ceiling on
+    // registration; this is the half that also bounds rows that predate it.
     const result = await pool.query(
-      'SELECT id, token FROM device_tokens WHERE user_id = $1',
+      `SELECT id, token FROM device_tokens
+        WHERE user_id = $1
+        ORDER BY updated_at DESC NULLS LAST, id DESC
+        LIMIT ${MAX_TOKENS_PER_USER}`,
       [userId]
     );
 
@@ -238,9 +389,20 @@ async function sendPushToUser(userId, title, body, data = {}) {
       }
     }
 
-    // Clean up stale tokens
+    // Clean up stale tokens.
+    //
+    // Round 18: scoped to the account we were pushing to. A device token is
+    // TRANSFERABLE — routes/notifications.js reassigns the same row to a new
+    // account with ON CONFLICT (token) DO UPDATE SET user_id — so between the
+    // SELECT above and this DELETE the row can have become someone else's
+    // freshly registered device. Deleting by row id alone silently unsubscribes
+    // that account instead, and the only symptom is a user who stops getting
+    // notifications after a phone changes hands.
     if (staleIds.length > 0) {
-      await pool.query('DELETE FROM device_tokens WHERE id = ANY($1)', [staleIds]);
+      await pool.query(
+        'DELETE FROM device_tokens WHERE id = ANY($1) AND user_id = $2',
+        [staleIds, userId]
+      );
     }
 
     return { sent, failed };
@@ -255,9 +417,11 @@ module.exports = {
   sendPushToUser,
   isEnabled,
   // Exported for the delivery tests — these are the parts that decide where a
-  // tap lands and whether a token gets deleted.
+  // tap lands, what text arrives, and whether a token gets deleted.
   deepLinkPath,
   buildFcmMessage,
   isStaleError,
   normalizeBody,
+  normalizeTitle,
+  __setSenderForTests,
 };
