@@ -36,9 +36,15 @@ const pool = new Pool({
   // (scripts/ml/*, backfills) whose whole purpose is a long aggregate. Those
   // run as `PG_STATEMENT_TIMEOUT_MS=0 node scripts/...` (0 disables it); the
   // API server never sets the variable and gets the 15s cap.
-  statement_timeout: Number.isInteger(parseInt(process.env.PG_STATEMENT_TIMEOUT_MS, 10))
-    ? parseInt(process.env.PG_STATEMENT_TIMEOUT_MS, 10)
-    : 15000,
+  // A NEGATIVE override is not a longer timeout, it is a connection that fails:
+  // Postgres rejects `SET statement_timeout = -5` outright, so every checkout
+  // from this pool would error at startup rather than at the first slow query.
+  // Only 0 (disabled) and positive values are accepted; anything else falls
+  // back to the default, which is the direction that keeps the cap on.
+  statement_timeout: (() => {
+    const n = parseInt(process.env.PG_STATEMENT_TIMEOUT_MS, 10);
+    return Number.isInteger(n) && n >= 0 ? n : 15000;
+  })(),
 });
 
 pool.on('error', (err) => {
@@ -68,9 +74,39 @@ pool.query = function safeQuery(...args) {
   return originalQuery(...args);
 };
 
-// Verify connection on startup
-pool.query('SELECT NOW()')
-  .then(() => console.log('PostgreSQL connected'))
-  .catch((err) => console.error('PostgreSQL connection error:', err.message));
+// ---------------------------------------------------------------------------
+// STARTUP CONNECTIVITY CHECK — only in the process that is actually a server.
+//
+// This used to run at module scope, unconditionally. Requiring the pool is not
+// the same thing as booting the API: `services/entitlements.js` requires it,
+// every route requires it, and therefore every one of the ~60 files under
+// `node --test`, every one-shot script under scripts/, and anything that pulls
+// in a helper three levels down, all opened a real connection the moment they
+// were loaded — from processes that were never going to run a query.
+//
+// Against an unset DATABASE_URL that is a harmless connection-refused. Against a
+// REACHABLE host it is not harmless: a developer with production PG* variables
+// in their shell runs the test suite and takes one connection per test process
+// out of a 20-slot pool on the live database, and nothing in the output says so.
+//
+// A boot-time check is genuinely useful when the server starts (it turns "the
+// database URL is wrong" into a log line at second zero instead of a 500 on the
+// first request) and useless everywhere else. So it runs when THIS process's
+// entry point is server.js, and anything else that wants it asks for it:
+// `pool.verifyConnection()`, or PG_STARTUP_PING=true for a script that wants the
+// same log line.
+pool.verifyConnection = function verifyConnection() {
+  return pool.query('SELECT NOW()')
+    .then(() => { console.log('PostgreSQL connected'); return true; })
+    .catch((err) => { console.error('PostgreSQL connection error:', err.message); return false; });
+};
+
+const entryFile = require.main && typeof require.main.filename === 'string' ? require.main.filename : '';
+// `npm start` is `node server.js`; nodemon execs the same file. Matched on the
+// path separator so a file called `my-server.js` does not count.
+const IS_API_SERVER_BOOT = /(^|[\\/])server\.js$/.test(entryFile);
+if (IS_API_SERVER_BOOT || process.env.PG_STARTUP_PING === 'true') {
+  pool.verifyConnection();
+}
 
 module.exports = pool;
