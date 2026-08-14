@@ -293,11 +293,33 @@
 
 .lp-btn-lg { height: 52px; padding: 0 26px; font-size: 16px; }
 
+/* Focus rings hold 3:1 against the ground they actually sit on: --steel on
+   paper/white (6.1:1 / 7.2:1), --steel-lift on the navy surfaces (5.9:1).
+   One lifted ring everywhere measured 2.5:1 on paper, which is an invisible
+   focus state for exactly the sighted-keyboard users it exists for. */
 .lp a:focus-visible,
 .lp button:focus-visible,
 .lp input:focus-visible {
-  outline: 2px solid var(--steel-lift);
+  outline: 2px solid var(--steel);
   outline-offset: 3px;
+}
+.lp-nav a:focus-visible,
+.lp-nav button:focus-visible,
+.lp-menu a:focus-visible,
+.lp-on-navy a:focus-visible,
+.lp-on-navy button:focus-visible,
+.lp-on-navy input:focus-visible,
+.lp-sec-navy a:focus-visible,
+.lp-sec-navy button:focus-visible,
+.lp-sec-navy input:focus-visible,
+.lp-footer a:focus-visible,
+.lp-plan-venue a:focus-visible {
+  outline-color: var(--steel-lift);
+}
+/* The demo stage is a white plate even when its section is navy. */
+.lpd-stage a:focus-visible,
+.lpd-stage button:focus-visible {
+  outline-color: var(--steel);
 }
 
 /* ============ sections ============ */
@@ -582,7 +604,10 @@
   display: grid;
   gap: clamp(16px, 2.4vw, 24px);
   margin-top: clamp(32px, 5vw, 52px);
-  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  /* min(300px, 100%): a bare 300px floor overflowed the wrap at 320px, and
+     .lp's overflow-x clip then CUT OFF the card's right edge instead of
+     scrolling to it. */
+  grid-template-columns: repeat(auto-fit, minmax(min(300px, 100%), 1fr));
   align-items: start;
 }
 .lp-plan {
@@ -648,7 +673,9 @@
   padding-bottom: 32px; border-bottom: 1px solid var(--rule-cream);
 }
 @media (min-width: 720px) { .lp-footer-grid { grid-template-columns: 1.4fr 1fr 1fr; } }
-.lp-footer h4 { font-size: 13px; font-weight: 700; color: var(--cream); margin: 0 0 14px; }
+/* h3 (heading order), styled as the small column label it is. This rule is
+   after the .lp h3 type rule, so equal specificity resolves in its favour. */
+.lp-footer h3 { font-family: var(--font-body); font-size: 13px; font-weight: 700; color: var(--cream); margin: 0 0 14px; letter-spacing: 0; }
 .lp-footer ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
 .lp-footer a { color: var(--cream-3); text-decoration: none; font-size: 14.5px; }
 .lp-footer a:hover { color: var(--cream); }
@@ -657,6 +684,15 @@
   padding-top: 24px;
   display: flex; flex-wrap: wrap; gap: 10px 20px; justify-content: space-between;
   font-size: 13px;
+}
+
+/* On touch devices every footer link becomes its own ≥44px row: the padding
+   replaces the grid gap, so the rhythm loosens rather than doubles. Same for
+   the map's zoom buttons, which ship from MapLibre at 29px. */
+@media (pointer: coarse) {
+  .lp-footer ul { gap: 0; }
+  .lp-footer ul a { display: inline-block; padding: 13px 0; }
+  .lpd-map .maplibregl-ctrl-group button { width: 44px; height: 44px; }
 }
 
 /* .lp-hero-glow deleted along with its markup. See .lp-hero-rule above.
@@ -897,7 +933,10 @@
 .lpd-pin-badge {
   margin-top: -8px; position: relative; z-index: 1;
   padding: 1px 7px; border: 2px solid #fff; border-radius: 999px;
-  color: #fff; font: 700 11px 'Hanken Grotesk', sans-serif;
+  /* Black, not white: the badge ground is whichever crowd colour the venue
+     scored, and white text measured 2.1:1 on green and amber. Black holds
+     4.5:1 on all four grounds (green 9.8, amber 9.4, red 6.1, slate 4.5). */
+  color: #000; font: 700 11px 'Hanken Grotesk', sans-serif;
   box-shadow: 0 2px 6px rgba(15, 23, 42, 0.3);
 }
 
@@ -957,6 +996,12 @@
   .lpd-bar { transition: none; }
   .lpd-live-dot { animation: none; }
   .lpd-pin:hover .lpd-pin-photo { transform: none; }
+}
+
+/* MapLibre's cooperative-gestures overlay ("Use Ctrl + scroll to zoom") ships
+   with a scrim that leaves its white text at 2.9:1 over a light basemap. */
+.lpd-map .maplibregl-cooperative-gesture-screen {
+  background: rgba(10, 17, 32, 0.72);
 }
 
 @media (max-width: 860px) {
