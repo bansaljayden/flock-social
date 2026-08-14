@@ -24,14 +24,86 @@ function serialId(raw) {
   return n >= 1 && n <= INT4_MAX ? n : null;
 }
 
-// Admin middleware
+// Admin middleware.
+//
+// `!req.user` is not defensive decoration. This middleware reads a property off
+// req.user, so mounted before `authenticate` (or on a router whose authenticate
+// was moved) it throws a TypeError, which Express turns into a 500 — a gate that
+// fails by CRASHING is a gate nobody notices has stopped gating. Same doctrine
+// as requireVerified in middleware/auth.js: no user is a refusal, loudly, not an
+// exception. Every route below is behind this; __tests__/adminEvidence.test.js
+// walks router.stack and refuses to let a new one be added without it.
 function requireAdmin(req, res, next) {
-  if (req.user.role !== 'admin') {
+  if (!req.user || req.user.role !== 'admin') {
     return res.status(403).json({ error: 'Admin access required' });
   }
   next();
 }
 router.use(requireAdmin);
+
+// ---------------------------------------------------------------------------
+// WHAT THE REPORTED CONTENT ACTUALLY SAYS — one definition, two readers
+// ---------------------------------------------------------------------------
+//
+// Round 21. The queue built its excerpt from ONE column per type, and for two
+// types that column is not where the words are:
+//
+//   flock_message / dm   A venue card carries its name, address and category in
+//                        `venue_data` (JSONB). Those three strings are clamped
+//                        and profanity-screened by utils/venuePayload.js, and
+//                        they are otherwise WHATEVER THE SENDER TYPED — the
+//                        server never checks a place_id against Google, so
+//                        "venue name" is a 256-character free-text field that
+//                        renders as the card's title on every recipient's
+//                        screen. A report against one arrived at the moderator
+//                        as the accompanying message_text ("Check out X!") and
+//                        nothing else, and against a hand-rolled client that
+//                        sends a bland message_text, as evidence of nothing.
+//   venue_review         `venue_reply` is the venue owner's public answer,
+//                        rendered under the review by the same screen, capped at
+//                        1000 characters of owner-typed text — and there is no
+//                        'venue_review_reply' content type, so reporting the
+//                        review IS how a user reports the reply. The queue
+//                        showed vr.text: the moderator read the reviewer's words
+//                        while judging a complaint about the owner's.
+//
+// Both readers now come from this map, so a type cannot be rendered one way in
+// the list and another in the detail endpoint. `alias` is always a table alias
+// this file wrote; nothing here interpolates a request value.
+function venueCardSql(t) {
+  // NULLIF collapses a card with no usable strings to NULL, and `'…' || NULL`
+  // is NULL, so an empty venue_data adds no label rather than a bare prefix.
+  return `('Venue card: ' || NULLIF(CONCAT_WS(' · ', ${t}.venue_data->>'name', ${t}.venue_data->>'addr', ${t}.venue_data->>'category'), ''))`;
+}
+
+// chr(10) rather than an escaped newline: this SQL is built in a JS template
+// literal and read back by a test that matches on it, and a literal newline in
+// the middle of a quoted SQL string is the kind of thing that survives one edit
+// and not the next.
+const CONTENT_TEXT_SQL = {
+  flock_message: (t) => `NULLIF(CONCAT_WS(chr(10), NULLIF(${t}.message_text, ''), ${venueCardSql(t)}), '')`,
+  dm: (t) => `NULLIF(CONCAT_WS(chr(10), NULLIF(${t}.message_text, ''), ${venueCardSql(t)}), '')`,
+  story: (t) => `NULLIF(${t}.caption, '')`,
+  venue_review: (t) => `NULLIF(CONCAT_WS(chr(10), NULLIF(${t}.text, ''), ('Owner reply: ' || NULLIF(${t}.venue_reply, ''))), '')`,
+  // time_slot and days are not decoration. GET /public-promotions serves all
+  // FOUR of these columns to every user who opens the venue card — round 20's
+  // own note in routes/venueDashboard.js records "Fri <slur>" being published
+  // from the days field — and a wordlist screen is not a substitute for a
+  // moderator being able to READ the field, because it catches slurs and not
+  // "text me at 555-0100".
+  venue_promotion: (t) => `NULLIF(CONCAT_WS(chr(10), NULLIF(CONCAT_WS(': ', ${t}.title, ${t}.description), ''), NULLIF(CONCAT_WS(' · ', ${t}.time_slot, ${t}.days), '')), '')`,
+  // Same shape, and worse: routes/venueDashboard.js runs rejectIfProfane on
+  // `title` ALONE, so event_date and event_time are 40 characters of
+  // owner-typed text apiece that pass through no screen at all. Nothing renders
+  // venue events publicly yet, which is exactly why the queue should be able to
+  // read them before something does.
+  venue_event: (t) => `NULLIF(CONCAT_WS(chr(10), NULLIF(${t}.title, ''), NULLIF(CONCAT_WS(' · ', ${t}.event_date, ${t}.event_time), '')), '')`,
+  // A guest has no account: the reported content IS the self-chosen name.
+  guest_rsvp: (t) => `NULLIF(${t}.name, '')`,
+  // The profile IS the reported content. users has no bio column, so name plus
+  // interests plus the avatar (served by /reports/:id/image) is all of it.
+  profile: (t) => `NULLIF(CONCAT_WS(' / ', ${t}.name, NULLIF(ARRAY_TO_STRING(${t}.interests, ', '), '')), '')`,
+};
 
 // GET /api/admin/analytics - Research analytics dashboard data
 router.get('/analytics', async (req, res) => {
@@ -61,11 +133,19 @@ router.get('/analytics', async (req, res) => {
        FROM research_analytics WHERE flock_completed = true`
     );
 
+    // The only variable-length result on this router that had no ceiling.
+    // stall_point is server-chosen today (routes/flocks.js picks one of five
+    // words), so this returns five rows — but that is a property of ANOTHER
+    // file, and "a route widened the set of values it writes and the thing
+    // reading them back did not hear about it" is the exact drift this codebase
+    // has now hit four times (003, 016, 017, and the guest_rsvp console gap).
+    // A dashboard chart with more than 50 categories is not a chart anyway.
     const stallPoints = await pool.query(
       `SELECT stall_point, COUNT(*) AS count
        FROM research_analytics
        GROUP BY stall_point
-       ORDER BY count DESC`
+       ORDER BY count DESC
+       LIMIT 50`
     );
 
     const weeklyTrends = await pool.query(
@@ -179,25 +259,28 @@ router.get('/reports', async (req, res) => {
        LEFT JOIN users ru ON ru.id = r.reporter_id
        LEFT JOIN users tu ON tu.id = r.reported_user_id
        LEFT JOIN LATERAL (
-         SELECT m.message_text AS body, m.image_url, m.sender_id AS author_id,
+         -- Every body expression comes from CONTENT_TEXT_SQL above, which the
+         -- detail endpoint reads too, so the excerpt and the full text can never
+         -- describe the same row differently.
+         SELECT ${CONTENT_TEXT_SQL.flock_message('m')} AS body, m.image_url, m.sender_id AS author_id,
                 m.created_at, COALESCE(m.is_hidden, false) AS is_hidden
          FROM messages m WHERE r.content_type = 'flock_message' AND m.id = r.content_id
          UNION ALL
-         SELECT d.message_text, d.image_url, d.sender_id, d.created_at, COALESCE(d.is_hidden, false)
+         SELECT ${CONTENT_TEXT_SQL.dm('d')}, d.image_url, d.sender_id, d.created_at, COALESCE(d.is_hidden, false)
          FROM direct_messages d WHERE r.content_type = 'dm' AND d.id = r.content_id
          UNION ALL
-         SELECT s.caption, s.image_url, s.user_id, s.created_at, COALESCE(s.is_hidden, false)
+         SELECT ${CONTENT_TEXT_SQL.story('s')}, s.image_url, s.user_id, s.created_at, COALESCE(s.is_hidden, false)
          FROM stories s WHERE r.content_type = 'story' AND s.id = r.content_id
          UNION ALL
-         SELECT vr.text, NULL, vr.user_id, vr.created_at, COALESCE(vr.is_hidden, false)
+         SELECT ${CONTENT_TEXT_SQL.venue_review('vr')}, NULL, vr.user_id, vr.created_at, COALESCE(vr.is_hidden, false)
          FROM venue_reviews vr WHERE r.content_type = 'venue_review' AND vr.id = r.content_id
          UNION ALL
          -- Guest RSVPs have no Flock account behind them, so author_id is NULL;
          -- the reported content IS the guest's self-chosen display name.
-         SELECT gr.name, NULL, NULL, gr.created_at, COALESCE(gr.is_hidden, false)
+         SELECT ${CONTENT_TEXT_SQL.guest_rsvp('gr')}, NULL, NULL, gr.created_at, COALESCE(gr.is_hidden, false)
          FROM guest_rsvps gr WHERE r.content_type = 'guest_rsvp' AND gr.id = r.content_id
          UNION ALL
-         SELECT NULLIF(CONCAT_WS(': ', vp.title, vp.description), ''), NULL, vp.venue_user_id,
+         SELECT ${CONTENT_TEXT_SQL.venue_promotion('vp')}, NULL, vp.venue_user_id,
                 vp.created_at, COALESCE(vp.is_hidden, false)
          FROM venue_promotions vp WHERE r.content_type = 'venue_promotion' AND vp.id = r.content_id
          UNION ALL
@@ -205,7 +288,7 @@ router.get('/reports', async (req, res) => {
          -- Listed here for the same reason it is in TAKEDOWN_TARGETS below: a
          -- type the queue cannot render is a type a moderator cannot judge, and
          -- the report already reaches this table.
-         SELECT ve.title, NULL, ve.venue_user_id, ve.created_at, COALESCE(ve.is_hidden, false)
+         SELECT ${CONTENT_TEXT_SQL.venue_event('ve')}, NULL, ve.venue_user_id, ve.created_at, COALESCE(ve.is_hidden, false)
          FROM venue_events ve WHERE r.content_type = 'venue_event' AND ve.id = r.content_id
          UNION ALL
          -- A profile report has no row to hide, which is why it is absent from
@@ -215,7 +298,7 @@ router.get('/reports', async (req, res) => {
          -- reached a moderator with the avatar missing and the only available
          -- action being a permanent ban. The keyed column is reported_user_id,
          -- not content_id — a profile report carries no content_id at all.
-         SELECT NULLIF(CONCAT_WS(' / ', pu.name, NULLIF(ARRAY_TO_STRING(pu.interests, ', '), '')), ''),
+         SELECT ${CONTENT_TEXT_SQL.profile('pu')},
                 pu.profile_image_url, pu.id, pu.created_at::timestamptz, false
          FROM users pu WHERE r.content_type = 'profile' AND pu.id = r.reported_user_id
          LIMIT 1
@@ -326,6 +409,105 @@ router.get('/reports/:id/image', async (req, res) => {
   }
 });
 
+// ---------------------------------------------------------------------------
+// GET /api/admin/reports/:id/content — the rest of the words
+// ---------------------------------------------------------------------------
+//
+// Round 21, the text half of the image endpoint above, and for the same reason.
+// The queue clips its excerpt at 280 characters so a 200-row response stays
+// small; nothing served the other 4,720 a flock message is allowed to hold. A
+// moderator judging "harassment" on a long message read the opening and decided
+// on it, and the console could only tell them honestly that they were looking at
+// the first 280 characters — which is a truthful label on an incomplete record,
+// not a way to see the record.
+//
+// 280 is genuinely enough for most reports and is the right default for the
+// LIST. It is not enough for the ones that matter: abuse is routinely buried
+// under a civil opening, and that is not an accident of the medium, it is how
+// people write when they know something is being logged.
+//
+// Same gate (requireAdmin, whole router), same id rule (serialId), same
+// no-store, same hasOwnProperty-guarded map, and deliberately NOT filtered on
+// is_hidden — a moderator reviewing an un-hide request has to read what was
+// taken down.
+const REPORT_TEXT_SOURCES = {
+  flock_message: { table: 'messages' },
+  dm: { table: 'direct_messages' },
+  story: { table: 'stories' },
+  venue_review: { table: 'venue_reviews' },
+  venue_promotion: { table: 'venue_promotions' },
+  venue_event: { table: 'venue_events' },
+  guest_rsvp: { table: 'guest_rsvps' },
+  // A profile report carries no content_id; the row IS the account.
+  profile: { table: 'users', keyedOn: 'reported_user_id' },
+};
+
+// One row, one admin, one open card — but still bounded. venue_reviews.text is
+// an uncapped TEXT column on a table any signed-in user can write to, so
+// "serve whatever is in there" is a response size set by an attacker rather
+// than by the content. 20,000 is four times the longest thing any write path in
+// this backend accepts, and `clipped` says plainly when even that was not all
+// of it rather than trailing off the way the 280-character excerpt used to.
+const FULL_TEXT_MAX = 20000;
+const NO_TEXT = 'That report has no text content.';
+
+router.get('/reports/:id/content', async (req, res) => {
+  try {
+    const reportId = serialId(req.params.id);
+    if (reportId === null) return res.status(404).json({ error: 'Report not found' });
+
+    const rep = await pool.query(
+      'SELECT id, content_type, content_id, reported_user_id FROM content_reports WHERE id = $1',
+      [reportId]
+    );
+    if (rep.rows.length === 0) return res.status(404).json({ error: 'Report not found' });
+    const report = rep.rows[0];
+
+    // hasOwnProperty on BOTH maps: a bare lookup answers 'constructor' and
+    // '__proto__' from the prototype chain with a truthy value, and here that
+    // value would be a function reaching the SQL interpolation. Unreachable
+    // while the content_reports CHECK holds; 003, 016 and 017 are three separate
+    // occasions on which it did not.
+    const own = (map, key) => (Object.prototype.hasOwnProperty.call(map, key) ? map[key] : null);
+    const source = own(REPORT_TEXT_SOURCES, report.content_type);
+    const bodySql = own(CONTENT_TEXT_SQL, report.content_type);
+    if (!source || typeof bodySql !== 'function') return res.status(404).json({ error: NO_TEXT });
+
+    const rowId = source.keyedOn === 'reported_user_id' ? report.reported_user_id : report.content_id;
+    if (!rowId) return res.status(404).json({ error: NO_TEXT });
+
+    const found = await pool.query(
+      `SELECT LEFT(${bodySql('t')}, ${FULL_TEXT_MAX}) AS body,
+              (COALESCE(LENGTH(${bodySql('t')}), 0) > ${FULL_TEXT_MAX}) AS clipped,
+              COALESCE(LENGTH(${bodySql('t')}), 0) AS total_length
+       FROM ${source.table} t WHERE t.id = $1`,
+      [rowId]
+    );
+    if (found.rows.length === 0) {
+      // Distinct from "no text": the row is gone, which is also the answer to
+      // why the card looked empty, and it names the action still available.
+      return res.status(404).json({ error: 'That content no longer exists. Dismiss the report instead.' });
+    }
+    const { body, clipped, total_length: totalLength } = found.rows[0];
+    if (!body) return res.status(404).json({ error: NO_TEXT });
+
+    // Reported UGC, sometimes written by a minor, served to a moderator. It must
+    // not sit in a proxy or a browser cache — same rule as the image endpoint.
+    res.set('Cache-Control', 'no-store, private');
+    res.json({
+      reportId,
+      contentType: report.content_type,
+      contentId: report.content_id,
+      text: body,
+      clipped: !!clipped,
+      totalLength: Number(totalLength) || 0,
+    });
+  } catch (err) {
+    console.error('Admin report content error:', err);
+    res.status(500).json({ error: 'Failed to load the reported text' });
+  }
+});
+
 // The takedown target for each reportable content type. Hoisted out of the
 // 'hide' branch (round 18) because un-hide needs exactly the same map — a
 // second copy inline is how the guest_rsvp entry went missing from one of two
@@ -403,9 +585,33 @@ router.put('/reports/:id', async (req, res) => {
     const reportId = serialId(req.params.id);
     if (reportId === null) return res.status(404).json({ error: 'Report not found' });
 
-    const { action, reason } = req.body;
+    // `|| {}` matches PUT /venues/:profileId/verify below, and it is honestly
+    // belt-and-braces rather than a live bug fix: body-parser 1.20 assigns
+    // `req.body = req.body || {}` BEFORE deciding whether to parse, so under
+    // the express.json() this router is mounted behind, req.body is never
+    // undefined — MEASURED, by deleting this `|| {}` and watching every test
+    // still pass. It earns its place only for a mount without that parser,
+    // where destructuring undefined is a TypeError the moderator reads as
+    // `500 Failed to apply action`. Do not read it as a tested guard.
+    const { action, reason } = req.body || {};
     if (!['hide', 'unhide', 'ban', 'unban', 'dismiss'].includes(action)) {
       return res.status(400).json({ error: 'Invalid action' });
+    }
+    // `reason` is free text a moderator writes for other moderators and it is
+    // stored verbatim in the audit log. node-postgres does not refuse a
+    // non-string for a TEXT parameter, it CONVERTS one: `["harassment"]` lands
+    // as the array literal `{harassment}` and `{"a":1}` as `{"a":1}`, so the
+    // permanent record of why an account was banned would read as neither what
+    // was sent nor what was meant. Nor is it length-bounded anywhere else —
+    // moderation_actions.reason is an uncapped TEXT column read back by a
+    // LIMIT 200 list. Refuse rather than coerce, and say which it was.
+    if (reason !== undefined && reason !== null) {
+      if (typeof reason !== 'string') {
+        return res.status(400).json({ error: 'reason must be text' });
+      }
+      if (reason.length > 1000) {
+        return res.status(400).json({ error: 'reason is too long (max 1000 characters)' });
+      }
     }
 
     const rep = await pool.query('SELECT * FROM content_reports WHERE id = $1', [reportId]);
@@ -514,13 +720,46 @@ router.put('/reports/:id', async (req, res) => {
           refusal = { status: 400, error: 'This report names no user, so there is nobody to ban or unban.' };
         } else {
           const banned = action === 'ban';
+          // ROUND 21 — A BAN MUST NOT BE ABLE TO CLOSE THE CONSOLE.
+          //
+          // middleware/auth.js refuses a banned account with 403 BEFORE
+          // requireAdmin ever runs, and server.js only ever GRANTS the role
+          // (`UPDATE users SET role='admin' WHERE id = ANY($1) AND role !=
+          // 'admin'`) — it never clears is_banned. So banning an admin, whether
+          // that is a mis-click on your own row or one moderator acting on
+          // another, permanently removes that account's access to the only
+          // moderation surface this product has, and the only way back in is a
+          // psql prompt against production. On a deployment with one admin (the
+          // current one — ADMIN_USER_IDS is unset, so today there are none at
+          // all) that is the whole Guideline 1.2 control gone, silently, with
+          // the console still answering 200 to the click that did it.
+          //
+          // Un-ban is deliberately NOT guarded: it is the recovery direction and
+          // it cannot lock anybody out.
+          //
+          // The role check rides on the UPDATE's own WHERE rather than a
+          // separate SELECT, so the success path costs no extra round trip and
+          // no race window; the refusal path pays one read to say WHICH refusal
+          // it was, because "that user no longer exists" would be a lie about a
+          // moderator who is sitting right there.
           const changed = await client.query(
             banned
-              ? 'UPDATE users SET is_banned = true, banned_at = NOW() WHERE id = $1'
+              ? `UPDATE users SET is_banned = true, banned_at = NOW()
+                 WHERE id = $1 AND COALESCE(role, 'user') <> 'admin'`
               : 'UPDATE users SET is_banned = false, banned_at = NULL WHERE id = $1',
             [report.reported_user_id]
           );
-          if (changed.rowCount === 0) {
+          if (changed.rowCount === 0 && banned) {
+            const who = await client.query('SELECT id, role FROM users WHERE id = $1', [report.reported_user_id]);
+            refusal = who.rows.length === 0
+              ? { status: 404, error: 'That user no longer exists. Dismiss the report instead.' }
+              : {
+                status: 403,
+                error: report.reported_user_id === req.user.id
+                  ? 'You cannot ban your own moderator account. A banned account cannot reach this console, and nothing in the app can undo that.'
+                  : 'That account is a moderator, and a banned moderator cannot reach this console again. Remove its admin role on the deployment first.',
+              };
+          } else if (changed.rowCount === 0) {
             refusal = { status: 404, error: 'That user no longer exists. Dismiss the report instead.' };
           } else {
             actionType = banned ? 'user_banned' : 'user_unbanned';
@@ -785,3 +1024,15 @@ router.get('/moderation-actions', async (req, res) => {
 });
 
 module.exports = router;
+// Exposed for __tests__/adminEvidence.test.js, which diffs CONTENT_TEXT_SQL and
+// REPORT_TEXT_SOURCES against routes/moderation.js's VALID_CONTENT_TYPES — the
+// same drift guard safetyFlow.test.js runs against the migration and
+// moderationConsoleContract.test.js runs against the console. A property on the
+// router changes nothing about the mount in server.js.
+module.exports.__test = {
+  CONTENT_TEXT_SQL,
+  REPORT_TEXT_SOURCES,
+  REPORT_IMAGE_SOURCES,
+  TAKEDOWN_TARGETS,
+  FULL_TEXT_MAX,
+};
