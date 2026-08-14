@@ -272,13 +272,35 @@ test('an unauthenticated surface and a logged-in user draw down one ledger', asy
 // 2. Charge what you spend
 // ---------------------------------------------------------------------------
 
+// Each alternatives test uses a place id of its own. The route caches its
+// response for 10 minutes in a module-level map that no beforeEach can reach, so
+// two tests sharing an id would have the second one silently measuring a cache
+// hit — which is exactly the failure mode a money test must not have.
 test('alternatives charges two units for its two paid Google calls', async () => {
-  const res = await get('/api/crowd/PLACE_A/alternatives?localHour=20&localDay=5');
+  const res = await get('/api/crowd/PLACE_ALT_COST/alternatives?localHour=20&localDay=5');
   assert.strictEqual(res.status, 200);
   assert.strictEqual(placesBudgetStatus(7).globalUsed, 2,
     'Place Details + Text Search is two invoice lines, so it is two units');
   assert.strictEqual(placesBudgetStatus(7).userRemaining, 28,
     'and both come out of the caller‘s hourly allowance');
+});
+
+test('a second identical alternatives request costs nothing and never reaches Google', async () => {
+  // The most expensive endpoint in the app: two paid calls, and until it grew a
+  // cache the only thing between a client that re-asks and the invoice was the
+  // 30-per-hour budget, i.e. fifteen requests. A cache hit must be answered
+  // BEFORE the charge (utils/placesBudget.js: charging for a call we did not
+  // make masks the real burn rate), so the second request costs zero units.
+  const first = await get('/api/crowd/PLACE_ALT_CACHE/alternatives?localHour=20&localDay=5');
+  assert.strictEqual(first.status, 200);
+  assert.strictEqual(placesBudgetStatus(7).globalUsed, 2);
+
+  googleCalls = [];
+  const second = await get('/api/crowd/PLACE_ALT_CACHE/alternatives?localHour=20&localDay=5');
+  assert.strictEqual(second.status, 200);
+  assert.deepStrictEqual(second.body, first.body, 'a cache hit must be the same answer, not a stub');
+  assert.strictEqual(googleCalls.length, 0, 'the repeat request reached Google anyway');
+  assert.strictEqual(placesBudgetStatus(7).globalUsed, 2, 'a call we did not make was charged');
 });
 
 test('a caller with one unit left cannot start a two-call request', async () => {
@@ -287,7 +309,7 @@ test('a caller with one unit left cannot start a two-call request', async () => 
   for (let i = 0; i < 29; i++) assert.strictEqual(placesBudget.allowPlacesSearch(7), true);
   const before = placesBudgetStatus(7).globalUsed;
   googleCalls = [];
-  const res = await get('/api/crowd/PLACE_A/alternatives?localHour=20&localDay=5');
+  const res = await get('/api/crowd/PLACE_ALT_BUDGET/alternatives?localHour=20&localDay=5');
   assert.strictEqual(res.status, 429);
   assert.strictEqual(googleCalls.length, 0);
   assert.strictEqual(placesBudgetStatus(7).globalUsed, before, 'a refused charge costs nothing');
@@ -335,6 +357,20 @@ test('POST /api/crowd/batch identifies its caller too — those coordinates are 
   assert.deepStrictEqual(call.opts, { userId: 7 });
 });
 
+// The batch feedback read asks for (venue_place_id, day_of_week, hour) TRIPLES,
+// one per venue per window slot, because every venue in the body is scored on
+// its own clock. Three parallel arrays keep the bind-parameter count at three
+// however many venues arrive. Read them back as triples rather than by index, so
+// these assertions say what they mean and survive a reshaping of the statement.
+function batchWindowTriples(q) {
+  const [ids, days, hours] = q.params;
+  assert.ok(Array.isArray(ids) && Array.isArray(days) && Array.isArray(hours),
+    'the batch feedback read binds three parallel arrays');
+  assert.strictEqual(days.length, ids.length);
+  assert.strictEqual(hours.length, ids.length);
+  return ids.map((id, i) => [id, days[i], hours[i]]);
+}
+
 test('a junk clock in the batch body is ignored, never fed to the model as NaN', async () => {
   const res = await post('/api/crowd/batch', {
     venues: [{ place_id: 'PLACE_A', location: { latitude: 39.74, longitude: -104.98 } }],
@@ -345,8 +381,12 @@ test('a junk clock in the batch body is ignored, never fed to the model as NaN',
   // hour, weekday, month, holiday, the event window — would be zero-filled.
   assert.ok(!Number.isNaN(Date.parse(res.body.timestamp)));
   const fb = queries.find((q) => /FROM venue_feedback/.test(q.sql));
-  for (const p of fb.params.slice(1)) {
-    assert.ok(Number.isInteger(p), `feedback window param ${p} must be a real clock value`);
+  const triples = batchWindowTriples(fb);
+  assert.ok(triples.length > 0, 'the batch route asked for no feedback at all');
+  for (const [id, day, hour] of triples) {
+    assert.strictEqual(typeof id, 'string');
+    assert.ok(Number.isInteger(day) && day >= 0 && day <= 6, `day ${day} is not a real weekday`);
+    assert.ok(Number.isInteger(hour) && hour >= 0 && hour <= 23, `hour ${hour} is not a real clock value`);
   }
 });
 
@@ -544,16 +584,18 @@ test('a report filed at 23:00 is asked for by the midnight read', async () => {
 test('the batch and alternatives queries use the same wrapped window', async () => {
   handlers.push([/FROM venue_feedback/, () => ({ rows: [] })]);
   await post('/api/crowd/batch', {
+    // No utcOffsetMinutes on this venue, so it falls back to the caller's clock
+    // and the window is the caller's 23:00 Friday — wrapped into Saturday.
     venues: [{ place_id: 'PLACE_A', location: { latitude: 39.74, longitude: -104.98 } }],
     localHour: 23, localDay: 5,
   });
   const batch = queries.find((q) => /FROM venue_feedback/.test(q.sql));
   assert.deepStrictEqual(
-    [[batch.params[1], batch.params[2]], [batch.params[3], batch.params[4]], [batch.params[5], batch.params[6]]],
-    feedbackWindow(5, 23));
+    batchWindowTriples(batch),
+    feedbackWindow(5, 23).map(([d, h]) => ['PLACE_A', d, h]));
 
   queries = [];
-  await get('/api/crowd/PLACE_A/alternatives?localHour=23&localDay=5');
+  await get('/api/crowd/PLACE_WINDOW_ALT/alternatives?localHour=23&localDay=5');
   const alts = queries.find((q) => /FROM venue_feedback/.test(q.sql));
   assert.match(alts.sql, /\(day_of_week, hour\) IN/);
   assert.strictEqual(alts.params.length, 7);
