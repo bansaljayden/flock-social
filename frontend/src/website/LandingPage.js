@@ -342,13 +342,34 @@ export default function LandingPage() {
 
           <figure className="lp-phone-wrap">
             {/* Real capture of the shipping app, not a mockup. */}
-            <img
-              className="lp-shot lp-shot-hero"
-              src="/screenshots/app-nest.png"
-              width="390" height="844"
-              fetchPriority="high"
-              alt="The Flock home screen: tonight's status, your flocks, and a plan that needs votes."
-            />
+            {/* WebP first, PNG fallback. Format choice cannot ride on srcSet:
+                srcset entries carry only density and width descriptors, so
+                there is nowhere to say "this one is WebP" and a browser that
+                cannot decode it would still pick it and show a broken image.
+                <source type> is the only mechanism that gates on format, and a
+                browser that does not support the type skips the source and
+                falls through to the <img> untouched. The <img> below is
+                verbatim what shipped before this wrapper existed: same src,
+                same intrinsic width/height, same priority hint, same alt. It
+                is still the element the CSS styles and the only element that
+                renders.
+
+                Every KB figure in these five comments is bytes ON THE WIRE,
+                measured off the built page at 1.6 Mbps rather than read off
+                the filesystem, so it includes response headers. This one:
+                224.7 KB of PNG against 29.1 KB of WebP, same 390x844 pixels.
+                See the `picture` rule in LandingPage.css for what the wrapper
+                does and, more usefully, what it does not do. */}
+            <picture>
+              <source type="image/webp" srcSet="/screenshots/app-nest.webp" />
+              <img
+                className="lp-shot lp-shot-hero"
+                src="/screenshots/app-nest.png"
+                width="390" height="844"
+                fetchPriority="high"
+                alt="The Flock home screen: tonight's status, your flocks, and a plan that needs votes."
+              />
+            </picture>
             <figcaption className="lp-plate-cap">
               The Nest, top of screen. Who is in tonight, and which plans still
               need votes.
@@ -401,8 +422,18 @@ export default function LandingPage() {
                 is generous, so mark-steps (124.7 KB) was already being fetched
                 at 396 ms, inside the hero's window. Lazy decides WHEN, priority
                 decides what it is allowed to slow down. */}
+            {/* WebP first (see the hero for why this is <picture> and not
+                srcSet). This mark's PNG is a palette image with a tRNS chunk,
+                so it is transparent, and mark-steps-400.webp is VP8X with an
+                ALPH chunk, which is the only WebP shape that keeps alpha under
+                lossy compression. Verified rather than assumed: a plain "VP8 "
+                WebP has no alpha channel at all and would have painted a solid
+                box over the cream. 121.7 KB of PNG, 76.5 KB of WebP. */}
             <figure className="lp-flock lp-flock-steps">
-              <img src="/marks/mark-steps-400.png" alt="" width="864" height="290" loading="lazy" decoding="async" fetchPriority="low" />
+              <picture>
+                <source type="image/webp" srcSet="/marks/mark-steps-400.webp" />
+                <img src="/marks/mark-steps-400.png" alt="" width="864" height="290" loading="lazy" decoding="async" fetchPriority="low" />
+              </picture>
             </figure>
             <p className="lp-kicker">How it works</p>
             <h2>Four steps, then you’re out the door.</h2>
@@ -445,9 +476,16 @@ export default function LandingPage() {
         <div className="lp-wrap">
           <div className="lp-demo-head">
             <div>
+              {/* Transparent PNG, and the WebP is VP8X + ALPH, so the cutout
+                  survives. This one has to keep its alpha more than the others
+                  do: it sits on the navy section, where an opaque cream or
+                  white ground would be unmissable. 300.6 KB PNG, 129.7 KB WebP. */}
               <figure className="lp-flock lp-flock-crowd">
-              <img src="/marks/mark-crowd-400.png" alt="" width="1024" height="498" loading="lazy" decoding="async" fetchPriority="low" />
-            </figure>
+                <picture>
+                  <source type="image/webp" srcSet="/marks/mark-crowd-400.webp" />
+                  <img src="/marks/mark-crowd-400.png" alt="" width="1024" height="498" loading="lazy" decoding="async" fetchPriority="low" />
+                </picture>
+              </figure>
               <p className="lp-kicker">Crowd levels</p>
               <h2>Know how busy it is before you leave.</h2>
               <p className="lp-lead">
@@ -481,14 +519,19 @@ export default function LandingPage() {
       <section className="lp-sec lp-sec-paper" id="birdie">
         <div className="lp-wrap lp-row">
           <div className="lp-row-media">
-            {/* Real capture of the shipping app, not a mockup. */}
-            <img
-              className="lp-shot"
-              src="/screenshots/app-birdie.png"
-              width="390" height="844"
-              loading="lazy"
-              alt="Birdie answering 'Where's poppin in Philadelphia rn?' with a recommendation and venue cards."
-            />
+            {/* Real capture of the shipping app, not a mockup. WebP first, PNG
+                fallback, and the <img> is byte-for-byte the one that shipped
+                before, loading="lazy" included. 298.2 KB PNG, 53.7 KB WebP. */}
+            <picture>
+              <source type="image/webp" srcSet="/screenshots/app-birdie.webp" />
+              <img
+                className="lp-shot"
+                src="/screenshots/app-birdie.png"
+                width="390" height="844"
+                loading="lazy"
+                alt="Birdie answering 'Where's poppin in Philadelphia rn?' with a recommendation and venue cards."
+              />
+            </picture>
           </div>
           <div>
             {/* The character himself, not a linocut plate of him. This is the
@@ -550,8 +593,19 @@ export default function LandingPage() {
       <section className="lp-sec lp-sec-paper lp-sec-ruled" id="money">
         <div className="lp-wrap lp-row lp-row-flip">
           <div>
+            {/* The one mark whose WebP is a plain "VP8 " chunk with no ALPH,
+                i.e. no alpha channel. That is correct here and only here:
+                mark-money-400.png is a palette PNG with NO tRNS chunk, so the
+                PNG is opaque too and the two are equivalent. Do not copy this
+                pattern to the other two marks, whose PNGs are transparent. If
+                this asset is ever regenerated as a cutout, the WebP has to be
+                re-encoded as VP8X+ALPH or it will paint a box on the cream.
+                424.6 KB PNG, 57.3 KB WebP, the biggest single win on the page. */}
             <figure className="lp-flock lp-flock-money">
-              <img src="/marks/mark-money-400.png" alt="" width="1024" height="1024" loading="lazy" decoding="async" fetchPriority="low" />
+              <picture>
+                <source type="image/webp" srcSet="/marks/mark-money-400.webp" />
+                <img src="/marks/mark-money-400.png" alt="" width="1024" height="1024" loading="lazy" decoding="async" fetchPriority="low" />
+              </picture>
             </figure>
             <h2>Nobody wants to say “that’s too expensive” out loud.</h2>
             <p className="lp-lead">

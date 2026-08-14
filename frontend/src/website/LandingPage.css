@@ -119,6 +119,57 @@
 .lp *, .lp *::before, .lp *::after { box-sizing: border-box; }
 .lp img { max-width: 100%; display: block; }
 
+/* Five images on this page are wrapped in <picture> so a WebP source can be
+   offered ahead of the PNG (see LandingPage.js). <picture> computes to
+   `display: inline`, so the wrapping moves each of those images from "child of
+   a block container" to "child of an inline box", and this rule takes the
+   wrapper back out of the layout tree so the <img> is laid out exactly where
+   it was.
+
+   BE HONEST ABOUT WHAT THIS RULE DOES: measured across 320 / 390 / 768 / 1280,
+   deleting it changes nothing. 428 geometry values (x, y, width, height of 26
+   elements at each of the four widths) compared with the rule and without it,
+   zero differences. It is kept as a guard, not as a fix, and the next person
+   deserves the real reason rather than a plausible one.
+
+   Why the wrapping is already harmless without it: every <img> on the page is
+   `display: block`, from BOTH `.lp img` above and the Tailwind preflight reset
+   in index.css (`audio,canvas,embed,iframe,img,object,svg,video{display:block}`).
+   A block-level box inside an inline box triggers the block-in-inline rule:
+   the browser splits the inline and wraps the block in an anonymous block box
+   the full width of the containing block. So `.lp-shot`'s `margin: 0 auto`
+   still has a full-width box to centre inside, and the split leaves two EMPTY
+   inline fragments, which generate no line boxes and therefore no baseline gap
+   under the marks. `.lp-flock`'s `line-height: 0` is not doing that work.
+
+   What IS load-bearing, and was verified by breaking it on purpose: the
+   `display: block` on the img. Forcing these five images back to inline moved
+   the hero screenshot 204px at 768 and the Birdie screenshot 196px, because
+   `margin: auto` resolves to zero on an inline-level replaced element. That
+   break happens with or without this rule, since `display: contents` removes
+   the WRAPPER's box and says nothing about the img's own display. If you ever
+   touch the img display reset, that is the thing to re-measure.
+
+   Where this rule would start to earn its place: if any of these three
+   containers becomes a flex or grid container, the <picture> and not the <img>
+   would become the flex/grid item, and every rule below that sizes the image
+   would be aiming one level too deep. `display: contents` promotes the img
+   back to being the item.
+
+   Selector check, done rather than assumed: `.lp img`, `.lp-shot`,
+   `.lp-shot-hero`, `.lp-flock img` and the three `.lp-flock-* img` width rules
+   are all class or descendant selectors, so every one still matches through
+   the wrapper. No `>` combinator and no structural pseudo-class on this page
+   targets these images. No accessibility cost either: <picture> carries no
+   implicit ARIA role, which is the case `display: contents` is known to drop.
+
+   Scoped to these three containers rather than `.lp picture`, so a future
+   <picture> that DOES want to be a layout box is not silently flattened. Add
+   the container here when you add one. */
+.lp-phone-wrap picture,
+.lp-row-media picture,
+.lp-flock picture { display: contents; }
+
 .lp-wrap {
   width: 100%;
   max-width: 1160px;
