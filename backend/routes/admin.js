@@ -400,6 +400,32 @@ router.get('/reports/:id/image', async (req, res) => {
     const imageUrl = found.rows[0].image_url;
     if (!imageUrl) return res.status(404).json({ error: NO_IMAGE });
 
+    // Round 23: the access is RECORDED. This endpoint serves reported UGC in
+    // full, deliberately unfiltered on is_hidden, and — the sentence below has
+    // said it since round 11 — sometimes from a minor's camera roll. Until now
+    // nothing distinguished a moderator who opened one report from one who
+    // enumerated the queue. One 'evidence_viewed' row per successful serve
+    // ('evidence_viewed' becomes legal in migration 020, same commit): a row
+    // per view is the honest unit, because "who read this, when" is exactly
+    // the question the record exists to answer, and a coarser record (first
+    // view only, or a counter) cannot answer it. The audit-log LIST excludes
+    // these rows by default so they do not drown the decisions a moderator
+    // reads it for — see GET /moderation-actions below.
+    //
+    // Written BEFORE the response and awaited, so a failed write is a failed
+    // read (the 500 serves nothing). Fail-open logging records nothing exactly
+    // when the database is flaky, which is when you least know who read what.
+    // Refusal paths above record nothing on purpose: a 404 handed nobody any
+    // evidence, and the record answers "who read", not "who knocked".
+    // target_user_id stays NULL — its FK is ON DELETE CASCADE, so naming the
+    // reported user would delete the access record with their account;
+    // report_id (SET NULL) and the content coordinates carry the linkage.
+    await pool.query(
+      `INSERT INTO moderation_actions (report_id, moderator_id, action, content_type, content_id, reason)
+       VALUES ($1, $2, 'evidence_viewed', $3, $4, 'image')`,
+      [reportId, req.user.id, report.content_type, report.content_id]
+    );
+
     // Reported UGC, served to a moderator, sometimes from a minor's camera
     // roll. It must not sit in a proxy or a browser cache.
     res.set('Cache-Control', 'no-store, private');
@@ -496,6 +522,16 @@ router.get('/reports/:id/content', async (req, res) => {
     }
     const { body, clipped, total_length: totalLength } = found.rows[0];
     if (!body) return res.status(404).json({ error: NO_TEXT });
+
+    // Round 23: same access record as the image endpoint above, same rules
+    // (before the response, awaited, refusals record nothing, target_user_id
+    // NULL because of the CASCADE), and the reason names WHICH half was read
+    // so one row is interpretable on its own.
+    await pool.query(
+      `INSERT INTO moderation_actions (report_id, moderator_id, action, content_type, content_id, reason)
+       VALUES ($1, $2, 'evidence_viewed', $3, $4, 'full text')`,
+      [reportId, req.user.id, report.content_type, report.content_id]
+    );
 
     // Reported UGC, sometimes written by a minor, served to a moderator. It must
     // not sit in a proxy or a browser cache — same rule as the image endpoint.
@@ -1013,6 +1049,19 @@ router.put('/venues/:profileId/verify', async (req, res) => {
       return res.status(400).json({ error: 'verified must be true or false' });
     }
     const verified = payload.verified !== false;
+    // Optional, and validated exactly like the reason on PUT /reports/:id, for
+    // the same reason: node-postgres CONVERTS a non-string for a TEXT
+    // parameter rather than refusing it, and this string is about to become
+    // the permanent record of why a business badge was granted or pulled.
+    const reason = payload.reason;
+    if (reason !== undefined && reason !== null) {
+      if (typeof reason !== 'string') {
+        return res.status(400).json({ error: 'reason must be text' });
+      }
+      if (reason.length > 1000) {
+        return res.status(400).json({ error: 'reason is too long (max 1000 characters)' });
+      }
+    }
     // Migration 002 puts a unique partial index on venue_profiles
     // (google_place_id) WHERE verified = true, so verifying a SECOND claimant on
     // a place someone else already holds raised 23505 and came back a 500 — the
@@ -1029,9 +1078,28 @@ router.put('/venues/:profileId/verify', async (req, res) => {
     //
     // Un-verifying is never blocked, and a NULL google_place_id cannot conflict
     // (the partial index treats NULLs as distinct), so both skip the check.
+    //
+    // Round 23: the `audit` CTE. This route flips the gate on who may speak as
+    // a business (the public badge, promotions, review replies all key off
+    // `verified`) and until now recorded nothing in either direction — the only
+    // state-changing admin route with no moderation_actions row. The INSERT
+    // rides INSIDE the same statement as the UPDATE rather than in a second
+    // query or a client transaction, so the flip and its record land together
+    // or not at all — the same doctrine as the takedown transaction above, at
+    // the cost of zero extra round trips (and the venueTierGate tests hold the
+    // route to exactly one statement). Reading FROM upd is what keeps the log
+    // honest: a refused conflict or a missing profile produces no upd row and
+    // therefore no audit row claiming work nobody did (round 13's rule).
+    //
+    // The action is derived from the SAME bound boolean as the write, so the
+    // record cannot say the opposite of what happened. 'venue_verified' and
+    // 'venue_unverified' become legal values in migration 020 — same commit,
+    // per 017's hard-learned rule. target_user_id is the venue OWNER (the
+    // person the action is about); content_id carries the profile id so the
+    // row still names the claim when user_id is NULL.
     const result = await pool.query(
       `WITH target AS (
-         SELECT id, google_place_id FROM venue_profiles WHERE id = $2
+         SELECT id, user_id, google_place_id FROM venue_profiles WHERE id = $2
        ),
        blocked AS (
          SELECT other.user_id
@@ -1047,12 +1115,19 @@ router.put('/venues/:profileId/verify', async (req, res) => {
          UPDATE venue_profiles SET verified = $1, updated_at = NOW()
          WHERE id = $2 AND NOT EXISTS (SELECT 1 FROM blocked)
          RETURNING id, business_name, verified
+       ),
+       audit AS (
+         INSERT INTO moderation_actions (moderator_id, target_user_id, action, content_type, content_id, reason)
+         SELECT $3, t.user_id,
+                CASE WHEN $1::boolean THEN 'venue_verified' ELSE 'venue_unverified' END,
+                'venue_profile', t.id, $4
+         FROM upd u JOIN target t ON t.id = u.id
        )
        SELECT u.id, u.business_name, u.verified,
               t.google_place_id,
               (SELECT user_id FROM blocked) AS conflict_user_id
        FROM target t LEFT JOIN upd u ON true`,
-      [verified, profileId]
+      [verified, profileId, req.user.id, reason || null]
     );
     if (result.rows.length === 0) return res.status(404).json({ error: 'Venue profile not found' });
     const row = result.rows[0];
@@ -1091,20 +1166,57 @@ router.put('/venues/:profileId/verify', async (req, res) => {
 // path for demos and hand-sold venues until Stripe self-serve exists).
 router.post('/venues/:userId/tier', async (req, res) => {
   try {
-    const { tier, reason } = req.body;
+    const { tier, reason } = req.body || {};
     if (!['free', 'premium', 'pro'].includes(tier)) {
       return res.status(400).json({ error: 'tier must be free, premium, or pro' });
+    }
+    // Round 23: the reason is validated like every other audit reason on this
+    // router (see PUT /reports/:id) because it is about to be stored, not
+    // logged. Before this round it was interpolated into console.log, which
+    // Railway rotates away — so the ONLY server-side writer of
+    // venue_profiles.tier, the whole manual billing control, kept no durable
+    // record of who comped what or why.
+    if (reason !== undefined && reason !== null) {
+      if (typeof reason !== 'string') {
+        return res.status(400).json({ error: 'reason must be text' });
+      }
+      if (reason.length > 1000) {
+        return res.status(400).json({ error: 'reason is too long (max 1000 characters)' });
+      }
     }
     // A non-numeric :userId reached Postgres as NaN and came back a 500; users.id
     // is an integer key, so a non-digit id names no venue owner — 404, not 500.
     const targetUserId = serialId(req.params.userId);
     if (targetUserId === null) return res.status(404).json({ error: 'Venue profile not found' });
+    // One statement, three CTEs, same shape and same reasons as the verify
+    // route above: `old` reads the tier from the statement's snapshot (i.e.
+    // BEFORE the write), so the audit row records a transition — "tier free ->
+    // premium" — and not merely that something changed; `audit` reads FROM upd
+    // so a missing profile writes no row; and 'tier_changed' becomes legal in
+    // migration 020, in this same commit. The stored reason is the transition
+    // plus the moderator's text, because moderation_actions has no other
+    // column for it and a tier_changed row that does not say from-what
+    // to-what answers none of the questions a billing dispute asks.
     const result = await pool.query(
-      'UPDATE venue_profiles SET tier = $1, updated_at = NOW() WHERE user_id = $2 RETURNING id, business_name, tier',
-      [tier, targetUserId]
+      `WITH old AS (
+         SELECT user_id, tier FROM venue_profiles WHERE user_id = $2
+       ),
+       upd AS (
+         UPDATE venue_profiles SET tier = $1, updated_at = NOW()
+         FROM old
+         WHERE venue_profiles.user_id = old.user_id
+         RETURNING venue_profiles.id, venue_profiles.business_name, venue_profiles.tier, old.tier AS old_tier
+       ),
+       audit AS (
+         INSERT INTO moderation_actions (moderator_id, target_user_id, action, content_type, content_id, reason)
+         SELECT $3, $2, 'tier_changed', 'venue_profile', u.id,
+                'tier ' || COALESCE(u.old_tier, 'free') || ' -> ' || u.tier || COALESCE(': ' || $4::text, '')
+         FROM upd u
+       )
+       SELECT id, business_name, tier FROM upd`,
+      [tier, targetUserId, req.user.id, reason || null]
     );
     if (result.rows.length === 0) return res.status(404).json({ error: 'Venue profile not found' });
-    console.log(`[Admin] venue tier: user ${req.params.userId} -> ${tier} by admin ${req.user.id} (${reason || 'no reason given'})`);
     res.json(result.rows[0]);
   } catch (err) {
     console.error('Admin venue tier error:', err);
@@ -1115,12 +1227,21 @@ router.post('/venues/:userId/tier', async (req, res) => {
 // GET /api/admin/moderation-actions — audit log
 router.get('/moderation-actions', async (req, res) => {
   try {
+    // Round 23: evidence-access records ('evidence_viewed', two per fully
+    // opened report) are excluded from the DEFAULT list, because they would
+    // drown the LIMIT-200 window a moderator reads for DECISIONS — hides,
+    // bans, reversals. They are not hidden: ?include_evidence=true serves
+    // them, so answering "which reports did this moderator open" is one query
+    // away rather than a psql prompt. A bound boolean, not string-built SQL.
+    const includeEvidence = req.query.include_evidence === 'true';
     const result = await pool.query(
       `SELECT ma.*, mod.name AS moderator_name, tu.name AS target_user_name
        FROM moderation_actions ma
        LEFT JOIN users mod ON mod.id = ma.moderator_id
        LEFT JOIN users tu ON tu.id = ma.target_user_id
-       ORDER BY ma.created_at DESC LIMIT 200`
+       WHERE ($1::boolean OR ma.action <> 'evidence_viewed')
+       ORDER BY ma.created_at DESC LIMIT 200`,
+      [includeEvidence]
     );
     res.json({ actions: result.rows });
   } catch (err) {
