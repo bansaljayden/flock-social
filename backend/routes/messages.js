@@ -8,7 +8,20 @@ const { sanitizeVenueData, safeVenuePhotoUrl } = require('../utils/venuePayload'
 const VENUE_REJECTED_MESSAGE = "That venue card couldn't be shared.";
 const { isBlockedBetween, getInvisibleUserIds } = require('../utils/blocks');
 const { hasDmRelationship, NOT_CONNECTED_MESSAGE } = require('../utils/relationships');
-const { emitToFlockExcludingBlocked } = require('../sockets/handlers');
+// CHAT_IMAGE_MAX_BYTES is the ONE ceiling on a chat photo's data: URL, defined
+// in sockets/handlers.js and imported (never re-declared) by everything that has
+// to agree with it: server.js sizes the JSON body limit from it, the socket
+// handler enforces it on the way in, and the two send routes below enforce it on
+// the REST twin. IMAGE_TOO_LARGE_MESSAGE / IMAGE_FORMAT_MESSAGE come from the
+// same place for the same reason — the user is shown these strings verbatim, and
+// two transports refusing the same photo with two different sentences reads as
+// two different products.
+const {
+  emitToFlockExcludingBlocked,
+  CHAT_IMAGE_MAX_BYTES,
+  IMAGE_TOO_LARGE_MESSAGE,
+  IMAGE_FORMAT_MESSAGE,
+} = require('../sockets/handlers');
 const { pushIfOfflineDebounced } = require('../services/pushHelper');
 // Shape before content — see validators/shape.js.
 const { scalarOnly, freeText } = require('../validators/shape');
@@ -29,6 +42,18 @@ const INT4_MAX = 2147483647;
 // (VARCHAR(10) in the schema) turned any long string into a 500 as well. This
 // is the single gate they all call now.
 // ---------------------------------------------------------------------------
+// One spelling of "is this a chat image", used by both send routes. It is the
+// same prefix the socket's checkInboundImage tests, INCLUDING its treatment of
+// the empty string: '' there means "no image", and the routes below read it the
+// same way (`empty` sees a falsy image; the INSERT stores null). The validator
+// used to refuse it outright, so `{ message_text: 'hi', image_url: '' }` was a
+// 400 over REST and a delivered message over the socket — the same divergence
+// as the size cap, one field over. Nothing else falsy is waved through: `false`
+// and `0` are not "no image", they are a client bug, and both transports say so.
+const IMAGE_DATA_URL_PREFIX = /^data:image\/(png|jpe?g|gif|webp);base64,/;
+const isChatImageUrl = (value) => value === '' || IMAGE_DATA_URL_PREFIX.test(value);
+
+// ---------------------------------------------------------------------------
 // A message must CARRY something — text or an image. Not text unconditionally.
 //
 // Both send routes required `message_text` with isLength({ min: 1 }), so an
@@ -41,20 +66,36 @@ const INT4_MAX = 2147483647;
 // fallback that refuses what the primary accepts is not a fallback.
 //
 // The rule is spelled as "text or an image" rather than copied from the socket's
-// `message_type !== 'image'` on purpose. The socket's version accepts a bare
-// `{ message_type: 'image' }` with no image and no text and stores an empty row
-// — a blank bubble in the thread. Every real client sends `image_url` with it,
-// so nothing that works today is refused here; the socket should adopt THIS
-// rule rather than this file adopting that one (reported, not edited — it is
-// not my file).
+// old `message_type !== 'image'`, which tested the TYPE LABEL instead of the
+// payload: a bare `{ message_type: 'image' }` with no image and no text passed
+// it and stored an empty row (a blank bubble in the thread). The socket handler
+// has since adopted this spelling — `!message_text && !checkInboundImage(...)`
+// in sockets/handlers.js send_message and send_dm — so both transports now
+// answer the same question about the same payload rather than about a label.
 //
 // message_text is NOT NULL on both tables, so an absent or null value has to
 // become '' rather than travelling to Postgres as NULL (23502, a 500). Same
 // normalisation the socket path does with `typeof ... === 'string' ? ... : ''`.
+//
+// SIZE is settled here too, and for the same parity reason. The JSON body limit
+// server.js hands these three routes is CHAT_IMAGE_MAX_BYTES + a 64KB envelope,
+// which is a limit on the WHOLE BODY and therefore not a cap on the image: a
+// request carrying nothing but `image_url` was accepted up to ~1.09MB over REST
+// while the socket refused anything past 1,048,576 — the fallback transport
+// admitting a photo the primary would not, into a column both of them share.
+// Byte length, not .length: isChatImageUrl above is prefix-anchored, so
+// multi-byte characters can follow the base64 payload and make `.length`
+// (UTF-16 code units) smaller than what the body limit and the socket both
+// count. Same expression as checkInboundImage.
 function messageBody(req) {
   const text = typeof req.body.message_text === 'string' ? req.body.message_text : '';
   const image = typeof req.body.image_url === 'string' ? req.body.image_url : null;
-  return { text, image, empty: !text && !image };
+  return {
+    text,
+    image,
+    empty: !text && !image,
+    tooLarge: image !== null && Buffer.byteLength(image, 'utf8') > CHAT_IMAGE_MAX_BYTES,
+  };
 }
 const EMPTY_MESSAGE = 'Message is required';
 
@@ -191,7 +232,8 @@ router.post('/flocks/:id/messages',
     // venue_data is LEGITIMATELY an object, so it gets isObject() (which already
     // rejects an array) plus sanitizeVenueData, never a scalar guard.
     body('venue_data').optional({ values: 'null' }).isObject(),
-    scalarOnly(body('image_url').optional({ values: 'null' }), 'image').matches(/^data:image\/(png|jpe?g|gif|webp);base64,/),
+    scalarOnly(body('image_url').optional({ values: 'null' }), 'image')
+      .custom(isChatImageUrl).withMessage(IMAGE_FORMAT_MESSAGE),
   ],
   async (req, res) => {
     try {
@@ -203,8 +245,15 @@ router.post('/flocks/:id/messages',
       // Read and settle the content BEFORE the membership query: it is the last
       // piece of validation, it costs nothing, and the validator chain it used
       // to live in ran ahead of every query too. See messageBody.
-      const { text: message_text, image: image_url, empty } = messageBody(req);
+      const { text: message_text, image: image_url, empty, tooLarge } = messageBody(req);
       if (empty) return res.status(400).json({ error: EMPTY_MESSAGE });
+      // Ahead of every query AND ahead of moderateImage, which is a BILLED Cloud
+      // Vision call: a refusal we can make for free from the byte count must
+      // never be made after paying for one. Same ordering the socket path uses
+      // (checkInboundImage runs before the send_image rate bucket and before
+      // moderateImage), and the same sentence, so the two transports refuse the
+      // same photo identically.
+      if (tooLarge) return res.status(400).json({ error: IMAGE_TOO_LARGE_MESSAGE });
 
       const flockId = req.params.id;
 
@@ -278,6 +327,16 @@ router.post('/flocks/:id/messages',
             [flockId, req.user.id]
           );
           const invisible = new Set(await getInvisibleUserIds(req.user.id));
+          // An image-only message makes this the empty string, which is correct
+          // and deliberate rather than an oversight. services/firebaseService.js
+          // normalizeBody() turns an empty body into "Shared something in the
+          // chat" for a flock_message and "Sent you something" for a dm_message,
+          // so nothing arrives as a title over a blank line, and that single
+          // fallback covers the socket send path (which builds this preview the
+          // same way), the crowd alerts, and anything else that pushes. Writing
+          // a REST-only "Sent a photo" here would put a different sentence on
+          // the same message depending on which transport happened to be up —
+          // the exact divergence the rest of this file exists to close.
           const preview = (message_text || '').substring(0, 100);
           await Promise.allSettled(
             members.rows
@@ -613,7 +672,8 @@ router.post('/dm/:userId',
     body('venue_data').optional({ values: 'null' }).isObject(),
     // data: URLs only — a sender-controlled https image is a tracking pixel
     // aimed at every recipient (round 7); the socket path already refuses them.
-    scalarOnly(body('image_url').optional({ values: 'null' }), 'image').matches(/^data:image\/(png|jpe?g|gif|webp);base64,/),
+    scalarOnly(body('image_url').optional({ values: 'null' }), 'image')
+      .custom(isChatImageUrl).withMessage(IMAGE_FORMAT_MESSAGE),
     // direct_messages.reply_to_id is int4: `[5]` passed isInt and then reached
     // the reply-scope lookup as '{5}', which is 22P02 — a 500 rather than the
     // 400 an unusable reply target deserves.
@@ -627,11 +687,15 @@ router.post('/dm/:userId',
       }
 
       // Same "text or an image" rule as the flock-message twin, and in the same
-      // place — before any query. The DM client only gets away with the old
-      // text-is-mandatory rule because App.js sends the literal word "Photo" as
-      // the text of every image DM.
-      const { text: message_text, image: image_url, empty } = messageBody(req);
+      // place — before any query. This is no longer theoretical: App.js used to
+      // send the literal word "Photo" as the text of every image DM, which is
+      // the only reason the old text-is-mandatory rule survived contact with the
+      // client. It stopped, so an image DM now genuinely carries no text.
+      const { text: message_text, image: image_url, empty, tooLarge } = messageBody(req);
       if (empty) return res.status(400).json({ error: EMPTY_MESSAGE });
+      // Same free-before-billed ordering as the flock twin above, and the same
+      // ceiling the socket's send_dm enforces.
+      if (tooLarge) return res.status(400).json({ error: IMAGE_TOO_LARGE_MESSAGE });
 
       const receiverId = parseInt(req.params.userId);
       if (receiverId === req.user.id) {
@@ -720,6 +784,8 @@ router.post('/dm/:userId',
       try {
         const io = req.app.get('io');
         if (io) {
+          // Empty for an image-only DM, and normalizeBody() answers that with
+          // "Sent you something" — see the note on the flock twin above.
           const preview = (message_text || '').substring(0, 100);
           await pushIfOfflineDebounced(io, receiverId,
             req.user.name,
