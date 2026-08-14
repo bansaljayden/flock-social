@@ -23,9 +23,11 @@
 //   1. POST /api/flocks/:id/invite issued up to FOUR round trips per submitted
 //      id — membership lookup, user lookup, isBlockedBetween (which talks to the
 //      POOL, so it briefly holds a SECOND connection while the request already
-//      holds one), and the write. 25 ids, the validator's own cap, was ~103
-//      queries. POST /api/flocks had already batched these exact three reads;
-//      this route was the copy left behind.
+//      holds one), and the write. 25 ids, the validator's own cap, was 103
+//      queries and 1594ms at a 4ms round trip. POST /api/flocks had already
+//      batched these exact three reads; this route was the copy left behind.
+//      BATCHED 2026-08-14: 7 queries, 105ms, and the count no longer moves with
+//      the size of the list.
 //
 //   2. POST /api/flocks/:id/attendance issued one UPDATE per entry plus THREE
 //      queries per affected member, ALL on a checked-out client with an open
@@ -166,47 +168,109 @@ async function call(method, p, body) {
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
-// 1. POST /api/flocks/:id/invite — the fan-out that is STILL an N+1
+// 1. POST /api/flocks/:id/invite — the fan-out that WAS an N+1
 // ═════════════════════════════════════════════════════════════════════════════
 //
-// Read the long comment above the loop in routes/flocks.js first. In short: the
-// batched rewrite works, was measured at 103 queries / 1631ms -> 7 / 124ms, and
-// is not applied, because the batched query shapes are unknown to the fixture
-// dispatchers in __tests__/spamBudgets.test.js and __tests__/flockSanitize.test.js
-// (which fall through to an empty result), so twelve passing behaviour tests go
-// red on a change that alters none of the behaviour they assert. Those files
-// belong to another rotation.
+// Read the long comment above the loop in routes/flocks.js first. It issued up
+// to four round trips per submitted id; it now issues three set-based reads and
+// at most two array writes, whatever the length of the list.
 //
-// What this section does instead:
-//   * MEASURES the N+1 so the number in the report is not a guess, and pins it
-//     as a CEILING — if the per-id work gets worse, this goes red;
-//   * pins the two defects that WERE fixed in place, both of which survive a
-//     later batching rewrite unchanged.
+// WHAT REPLACED THE OLD CEILING, and why the replacement is not weaker.
+//
+// This section used to assert `countForMany === 103` and "one block query per
+// invitee". Those two pinned the N+1 as a deliberate ceiling: the point was that
+// if the per-id work ever got WORSE — a fifth query in the loop — it would go
+// red. No batched implementation can satisfy them, so they are gone, and what
+// replaced them is the assertion the rest of this file already uses:
+//
+//     the number of queries for 25 invitees must equal the number for 1
+//
+// which is strictly tighter than any constant ceiling. 103 permitted a fifth
+// per-id query as long as somebody edited the number; equality permits no per-id
+// query at all. The absolute count is still pinned too (<= 8), so a batched
+// rewrite that quietly added a constant read would also be caught, and the
+// wall-clock guard the attendance section uses is now applied here as well —
+// a count can be gamed by moving work into one enormous statement, elapsed time
+// under a simulated round trip cannot.
+//
+// The one thing genuinely NOT carried over: the old numbers were evidence of the
+// defect, and evidence of a fixed defect belongs in the header, not in an
+// assertion. They are recorded at the top of this file.
 
-function scriptInvite({ existing = new Map(), blocked = new Set(), seated = 1 } = {}) {
+// `missing` = ids with no `users` row at all. `displayNames` overrides the
+// generated name for an id, including with null — a user whose display name is
+// NULL is an EXISTING user, and the per-id version pushed that null straight
+// through to the response.
+function scriptInvite({
+  existing = new Map(), blocked = new Set(), seated = 1,
+  missing = new Set(), displayNames = new Map(),
+} = {}) {
   on(/SELECT id FROM flock_members WHERE flock_id = \$1 AND user_id = \$2 AND status = 'accepted'/,
     () => ({ rows: [{ id: 99 }], rowCount: 1 }));
   on(/SELECT id, name FROM flocks WHERE id = \$1/,
     (p) => ({ rows: [{ id: Number(p[0]), name: 'Friday' }], rowCount: 1 }));
   on(/COUNT\(\*\)::int AS n FROM flock_members WHERE flock_id = \$1/, () => ({ rows: [{ n: seated }], rowCount: 1 }));
 
-  // The per-id shapes the loop actually issues.
-  on(/SELECT status FROM flock_members WHERE flock_id = \$1 AND user_id = \$2/, (p) => {
-    const st = existing.get(Number(p[1]));
-    return st ? { rows: [{ status: st }], rowCount: 1 } : { rows: [], rowCount: 0 };
+  // The three set-based reads. Each answers exactly what the per-id shape it
+  // replaced answered, id for id, so every behaviour assertion below is
+  // comparing like with like.
+  on(/SELECT user_id, status FROM flock_members WHERE flock_id = \$1 AND user_id = ANY\(\$2::int\[\]\)/, (p) => {
+    const rows = (p[1] || [])
+      .map(Number)
+      .filter((uid) => existing.has(uid))
+      .map((uid) => ({ user_id: uid, status: existing.get(uid) }));
+    return { rows, rowCount: rows.length };
   });
-  on(/SELECT id, name FROM users WHERE id = \$1/, (p) => (
-    { rows: [{ id: Number(p[0]), name: `User${p[0]}` }], rowCount: 1 }
-  ));
-  on(/SELECT 1 FROM user_blocks/, (p) => (
-    blocked.has(Number(p[1])) ? { rows: [{ '?column?': 1 }], rowCount: 1 } : { rows: [], rowCount: 0 }
-  ));
+  on(/SELECT id, name FROM users WHERE id = ANY\(\$1::int\[\]\)/, (p) => {
+    // Answers for every element of the array and nothing else. An id in
+    // `missing` gets no row, which is how a directory says "no such user" — the
+    // per-id branch said it by returning zero rows.
+    const rows = (p[0] || [])
+      .map(Number)
+      .filter((id) => !missing.has(id))
+      .map((id) => ({ id, name: displayNames.has(id) ? displayNames.get(id) : `User${id}` }));
+    return { rows, rowCount: rows.length };
+  });
+  on(/SELECT blocker_id, blocked_id FROM user_blocks/, (p) => {
+    // `blocked` is a set of INVITEE ids, exactly as it was when it drove the
+    // per-pair `SELECT 1`. That query returned a bare 1 and so was direction
+    // blind; this one returns the pair, so a direction has to be chosen — and a
+    // real user_blocks row only ever exists in ONE direction. Alternating on
+    // parity means both arms of the route's blocker/blocked ternary are
+    // exercised by the same fixture. Read a hit as "these two are invisible to
+    // each other", which is what utils/blocks.js means by it.
+    const me = Number(p[0]);
+    const rows = (p[1] || [])
+      .map(Number)
+      .filter((uid) => blocked.has(uid))
+      .map((uid) => (uid % 2 === 0
+        ? { blocker_id: me, blocked_id: uid }    // the caller blocked them
+        : { blocker_id: uid, blocked_id: me }));  // they blocked the caller
+    return { rows, rowCount: rows.length };
+  });
 
-  on(/UPDATE flock_members SET status = 'invited'/, () => ({ rows: [], rowCount: 1 }));
-  on(/INSERT INTO flock_members/, () => ({ rows: [], rowCount: 1 }));
+  // Tripwires, the same shape scriptAttendance uses: the per-id statements no
+  // longer exist, so issuing one is the loop coming back rather than a fixture
+  // gap, and it must fail loudly instead of falling through to an empty result.
+  on(/SELECT status FROM flock_members WHERE flock_id = \$1 AND user_id = \$2/, () => {
+    throw new Error('PER-ID membership lookup issued — the invite loop is back');
+  });
+  on(/SELECT id, name FROM users WHERE id = \$1/, () => {
+    throw new Error('PER-ID directory lookup issued — the invite loop is back');
+  });
+  on(/SELECT 1 FROM user_blocks/, () => {
+    throw new Error('PER-PAIR isBlockedBetween issued — the invite loop is back');
+  });
+
+  on(/UPDATE flock_members SET status = 'invited'/, (p) => (
+    { rows: [], rowCount: (Array.isArray(p[1]) ? p[1].length : 1) }
+  ));
+  on(/INSERT INTO flock_members/, (p) => (
+    { rows: [], rowCount: (Array.isArray(p[1]) ? p[1].length : 1) }
+  ));
 }
 
-test('invite: the per-invitee round trip count, measured and capped', async () => {
+test('invite: the round trip count does not grow with the size of the list', async () => {
   scriptInvite();
   const one = await call('POST', '/api/flocks/7/invite', { user_ids: [2] });
   assert.strictEqual(one.status, 200, one.text);
@@ -223,37 +287,93 @@ test('invite: the per-invitee round trip count, measured and capped', async () =
   assert.strictEqual(many.body.invited.length, 25);
   const countForMany = dataQueries().length;
 
-  // THIS IS THE DEFECT, PINNED AS A CEILING, NOT AS A TARGET. 3 setup queries
-  // plus 4 per id: membership, directory, isBlockedBetween (on a SECOND pool
-  // connection), write. If somebody adds a fifth per-id query this goes red; if
-  // somebody batches it — the right answer — this goes red too and points at
-  // the two fixture files that have to move with it.
-  assert.strictEqual(countForOne, 7, 'setup(3) + one invitee(4)');
+  // This is the definition of "not N+1", and it is what the old
+  // `countForMany === 103` was standing in for. It cannot be satisfied by
+  // accident and it cannot be satisfied by a rewrite that reintroduces the loop
+  // under a different name.
   assert.strictEqual(
-    countForMany, 103,
-    `25 invitees issued ${countForMany} queries. Expected the known 3 + 25x4 = 103. ` +
-    'If this dropped, the batching rewrite landed: delete this assertion and add the ' +
-    'batched shapes to spamBudgets.test.js and flockSanitize.test.js.'
+    countForMany, countForOne,
+    `25 invitees issued ${countForMany} queries and 1 invitee issued ${countForOne}; ` +
+    'a per-invitee query has come back'
   );
-  assert.ok(
-    countForMany > countForOne,
-    'if this ever stops being true the N+1 is gone and this test should be replaced ' +
-    'by the constant-count assertion the attendance section uses'
-  );
+  // And the absolute count, so a batched version that added a constant read is
+  // caught too. 3 setup + roster + directory + blocks + one write = 7; a call
+  // that both re-invites and invites pays one more write, hence 8.
+  assert.strictEqual(countForOne, 7,
+    'setup(3) + roster/directory/blocks(3) + one write. Was 3 + 4 per id.');
+  assert.ok(countForMany <= 8, `expected a handful of queries, got ${countForMany}`);
+  assert.strictEqual(checkedOut, 0, 'no pool client is taken on this path at all');
 });
 
-test('invite: isBlockedBetween borrows a SECOND pool connection per invitee', async () => {
-  // Not a nitpick: the request already holds nothing from the pool, but the
-  // per-id block check is a fresh pool.query for every id, so a 25-id invite is
+test('invite: 25 invitees do not cost 100 round trips of latency', async () => {
+  // A count alone can be gamed by folding the same work into one enormous
+  // statement, so the wall clock is checked too: every dispatched query gets a
+  // simulated round trip, and 103 of them cannot hide.
+  //
+  // The load-bearing form is a RATIO, not a bound. Test files run in parallel,
+  // so an absolute millisecond ceiling measures the machine as much as the code
+  // and flakes on a busy one; the ratio between two requests taken in the same
+  // process, under the same latency, does not. Measured: 1594ms for 25 against
+  // 142ms for 1 before (11.2x), 105ms against 130ms after (0.8x).
+  const timedInvite = async (n) => {
+    log = [];
+    handlers = [];
+    flocksRouter.__resetBudgets();
+    scriptInvite();
+    QUERY_LATENCY_MS = 4;
+    const started = Date.now();
+    const res = await call('POST', '/api/flocks/7/invite', {
+      user_ids: Array.from({ length: n }, (_, i) => i + 2),
+    });
+    const elapsed = Date.now() - started;
+    QUERY_LATENCY_MS = 0;
+    assert.strictEqual(res.status, 200, res.text);
+    assert.strictEqual(res.body.invited.length, n, 'and everybody still got invited');
+    return elapsed;
+  };
+
+  const forTwentyFive = await timedInvite(25);
+  const forOne = await timedInvite(1);
+
+  assert.ok(
+    forTwentyFive < forOne * 3 + 60,
+    `25 invitees took ${forTwentyFive}ms and 1 invitee took ${forOne}ms under the same ` +
+    'simulated round trip. Time that scales with the list is the per-invitee loop'
+  );
+  // A generous absolute backstop, so a machine slow enough to make the ratio
+  // meaningless still cannot hide 103 round trips (which cost ~1600ms here).
+  assert.ok(forTwentyFive < 700, `took ${forTwentyFive}ms for 25 invitees`);
+});
+
+test('invite: the block rule is asked ONCE, for the whole list', async () => {
+  // The per-id block check was a fresh pool.query per id, so a 25-id invite was
   // 25 sequential checkouts of a ~20-slot pool interleaved with 75 other
-  // queries. The batched rewrite replaces all 25 with one.
+  // queries. One set-based read replaces all of them — and it is deliberately
+  // the SAME statement POST /api/flocks issues, because two spellings of one
+  // safety rule is how these two paths drift apart.
   scriptInvite();
   await call('POST', '/api/flocks/7/invite', { user_ids: [2, 3, 4] });
-  assert.strictEqual(
-    countMatching(/SELECT 1 FROM user_blocks/), 3,
-    'one block round trip per invitee — this is the cheapest of the four to batch, ' +
-    'because POST /api/flocks already has the set-based version written'
+  assert.strictEqual(countMatching(/SELECT blocker_id, blocked_id FROM user_blocks/), 1,
+    'one block round trip for the whole list');
+  assert.strictEqual(countMatching(/SELECT 1 FROM user_blocks/), 0,
+    'and none of the per-pair form');
+
+  const q = dataQueries().find((x) => /SELECT blocker_id, blocked_id FROM user_blocks/.test(x.sql));
+  assert.match(
+    q.sql,
+    /WHERE \(blocker_id = \$1 AND blocked_id = ANY\(\$2::int\[\]\)\) OR \(blocked_id = \$1 AND blocker_id = ANY\(\$2::int\[\]\)\)/,
+    'both directions, in one statement — a block only has to exist one way round'
   );
+  assert.deepStrictEqual(q.params[1], [2, 3, 4], 'and it really is asked about the whole list');
+
+  // Same call with 25 ids: still one.
+  log = [];
+  handlers = [];
+  flocksRouter.__resetBudgets();
+  scriptInvite();
+  await call('POST', '/api/flocks/7/invite', { user_ids: Array.from({ length: 25 }, (_, i) => i + 2) });
+  assert.strictEqual(countMatching(/SELECT blocker_id, blocked_id FROM user_blocks/), 1,
+    'still one at the validator cap');
 });
 
 test('invite: the re-invite UPDATE cannot demote an accepted member', async () => {
@@ -279,9 +399,78 @@ test('invite: a concurrent duplicate cannot 23505 the whole request', async () =
   assert.ok(ins);
   assert.match(
     ins.sql, /ON CONFLICT \(flock_id, user_id\) DO NOTHING/,
-    'every statement in this loop is its own autocommit, so a UNIQUE(flock_id, user_id) race ' +
+    'every statement in this write used to be its own autocommit, so a UNIQUE(flock_id, user_id) race ' +
     'threw a 500 for the WHOLE request after earlier ids had already been written and notified'
   );
+
+  // A TEXT assertion, deliberately, and the one place in this file where text is
+  // the only thing that can carry the fact. In INSERT ... SELECT (unlike
+  // INSERT ... VALUES) Postgres does NOT infer a parameter's type from the target
+  // column, so an uncast $1 resolves to text and the insert fails on the integer
+  // column at runtime. No fixture can reproduce that — a scripted pool answers a
+  // cast and an uncast statement identically — so the cast is pinned as written.
+  assert.match(
+    ins.sql, /SELECT \$1::int, t\.uid, 'invited' FROM UNNEST\(\$2::int\[\]\)/,
+    "the flock id must keep its ::int cast in the INSERT ... SELECT, and the id array its ::int[]"
+  );
+});
+
+// The four tests below were added with the batching, because four route
+// mutations survived the suite without them: deleting the existence check,
+// reading existence by truthiness instead of presence, deleting the seat
+// ceiling, and deleting the id-range filter. All four are properties the per-id
+// loop also had and nothing pinned; batching moved the code they live in, so
+// they are pinned here now rather than left to the next rewrite to notice.
+
+test('invite: an id with no user behind it gets no row and no name', async () => {
+  scriptInvite({ missing: new Set([3]) });
+  const res = await call('POST', '/api/flocks/7/invite', { user_ids: [2, 3, 4] });
+  assert.strictEqual(res.status, 200, res.text);
+  assert.deepStrictEqual(res.body.invited.map((i) => i.user_id), [2, 4],
+    'a fabricated id must not come back as an invite');
+
+  const ins = dataQueries().find((q) => /INSERT INTO flock_members/.test(q.sql));
+  assert.deepStrictEqual(ins.params[1], [2, 4],
+    'and it must not reach the write either — the FK would reject the whole batch');
+});
+
+test('invite: a user whose display name is NULL is still a user', async () => {
+  // `names.has(uid)`, not `names.get(uid)`. Read by truthiness, a NULL display
+  // name reads as "no such user" and a real account silently stops being
+  // invitable — which is exactly what the per-id `rows.length === 0` did not do.
+  scriptInvite({ displayNames: new Map([[3, null]]) });
+  const res = await call('POST', '/api/flocks/7/invite', { user_ids: [3] });
+  assert.strictEqual(res.status, 200, res.text);
+  assert.deepStrictEqual(res.body.invited, [{ user_id: 3, user_name: null }],
+    'the null goes through to the response, as it always did');
+});
+
+test('invite: the seat ceiling bites in the MIDDLE of a call, not only at the top', async () => {
+  // Every other seat-cap test in the suite fills the flock first, so it is
+  // refused by the pre-loop check and the in-loop one is never reached. This is
+  // the in-loop one: 49 seats taken, so exactly one of three invitees fits.
+  scriptInvite({ seated: 49 });
+  const res = await call('POST', '/api/flocks/7/invite', { user_ids: [2, 3, 4] });
+  assert.strictEqual(res.status, 200, res.text);
+  assert.deepStrictEqual(res.body.invited.map((i) => i.user_id), [2],
+    'the ceiling is decremented as seats are taken, not read once and forgotten');
+  assert.strictEqual(res.body.full, true, 'and the caller is told the flock filled up');
+});
+
+test('invite: an unusable id never reaches the int4 array', async () => {
+  // 9999999999 is past INT4_MAX and used to come back as a 500 ("integer out of
+  // range") from the per-id lookup. In an ARRAY parameter it is worse: it poisons
+  // the whole statement, so one bad id in a list of 25 fails everybody.
+  scriptInvite();
+  const res = await call('POST', '/api/flocks/7/invite', {
+    user_ids: [9999999999, 0, -5, 'nope', null, 2],
+  });
+  assert.strictEqual(res.status, 200, res.text);
+  assert.deepStrictEqual(res.body.invited.map((i) => i.user_id), [2]);
+
+  const read = dataQueries().find((q) => /SELECT user_id, status FROM flock_members/.test(q.sql));
+  assert.deepStrictEqual(read.params[1], [2],
+    'only the real, in-range id is handed to the database');
 });
 
 test('invite: still refuses blocked pairs, dupes, self and the already-invited', async () => {

@@ -190,6 +190,16 @@ pool.query = async (text, params = []) => {
     const rows = (params[0] || []).map((id) => userRow(id)).filter(Boolean).map((u) => ({ id: u.id }));
     return { rows, rowCount: rows.length };
   }
+  // POST /:id/invite batched the same way (2026-08-14). It needs the NAME as
+  // well, because the response echoes it, so this is the id-array form of the
+  // `SELECT id, name FROM users WHERE id = $1` branch above and answers from the
+  // same `userRow` — an id past HIGHEST_REAL_USER is still absent from the
+  // result, which is what makes the "not an existence oracle" tests mean
+  // anything.
+  if (has('SELECT id, name FROM users WHERE id = ANY($1::int[])')) {
+    const rows = (params[0] || []).map((id) => userRow(id)).filter(Boolean);
+    return { rows, rowCount: rows.length };
+  }
   if (has('SELECT blocker_id, blocked_id FROM user_blocks')) {
     const me = Number(params[0]);
     const ids = (params[1] || []).map(Number);
@@ -214,6 +224,17 @@ pool.query = async (text, params = []) => {
     const m = Number(params[0]) === FLOCK_ID ? memberOf(params[1]) : null;
     return { rows: m ? [{ status: m.status }] : [], rowCount: m ? 1 : 0 };
   }
+  // The invite path's set-based form of the branch directly above: one row per
+  // id that HAS a row, none for the ids that do not, scoped to this flock. Same
+  // answers, asked once.
+  if (has('SELECT user_id, status FROM flock_members WHERE flock_id = $1 AND user_id = ANY($2::int[])')) {
+    if (Number(params[0]) !== FLOCK_ID) return { rows: [], rowCount: 0 };
+    const asked = new Set((params[1] || []).map(Number));
+    const rows = members
+      .filter((m) => asked.has(m.user_id))
+      .map((m) => ({ user_id: m.user_id, status: m.status }));
+    return { rows, rowCount: rows.length };
+  }
   if (has('INSERT INTO flock_members')) {
     // Two shapes now: one row per call (POST /:id/invite) and the batched
     // UNNEST insert the create path uses.
@@ -237,9 +258,16 @@ pool.query = async (text, params = []) => {
     return { rows: [{ creator_id: 1, name: 'Rooftop Friday' }], rowCount: 1 };
   }
   if (has("UPDATE flock_members SET status = 'invited'")) {
-    const m = memberOf(params[1]);
-    if (m) m.status = 'invited';
-    return { rows: [], rowCount: m ? 1 : 0 };
+    // Two shapes, same rule per id: one row per call, or `user_id = ANY($2)`.
+    const ids = Array.isArray(params[1]) ? params[1].map(Number) : [Number(params[1])];
+    let affected = 0;
+    for (const id of ids) {
+      const m = memberOf(id);
+      if (!m) continue;
+      m.status = 'invited';
+      affected += 1;
+    }
+    return { rows: [], rowCount: affected };
   }
 
   // utils/relationships.js

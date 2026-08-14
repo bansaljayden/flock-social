@@ -5,7 +5,11 @@ const { authenticate, requireVerified, UNVERIFIED_MESSAGE } = require('../middle
 const { stripHtml } = require('../utils/sanitize');
 const { rejectIfProfane } = require('../utils/moderation');
 const { safeVenuePhotoUrl } = require('../utils/venuePayload');
-const { isBlockedBetween, getInvisibleUserIds } = require('../utils/blocks');
+// isBlockedBetween is NOT imported here any more: the two places in this file
+// that asked the block question — flock creation and POST /:id/invite — both ask
+// it once for a whole id set now, with the same bidirectional predicate written
+// out inline. The helper is unchanged and keeps every other caller it has.
+const { getInvisibleUserIds } = require('../utils/blocks');
 const { GUEST_RSVP_SELECT, toGuestEntry, combineRsvpCounts } = require('../utils/guestRsvp');
 const { createUserBudget } = require('../utils/probeBudget');
 const { isPlaceIdShaped } = require('../utils/places');
@@ -1296,91 +1300,142 @@ router.post('/:id/invite',
         return res.status(400).json({ error: 'This flock already has as many people as it can hold' });
       }
 
-      // ── THIS LOOP IS AN N+1 AND IS KNOWN TO BE ONE ──────────────────────────
+      // ── THIS WAS AN N+1. IT IS BATCHED NOW (landed 2026-08-14) ─────────────
       //
-      // Per submitted id it issues up to FOUR round trips: the membership
-      // lookup, the user lookup, isBlockedBetween (which talks to the POOL, so
-      // it borrows a SECOND connection while this request already holds one),
-      // and the write. user_ids is capped at 25, so a full invite is ~103
-      // queries — measured — against a pool of roughly twenty.
+      // What it used to be: per submitted id, up to FOUR round trips — the
+      // membership lookup, the user lookup, isBlockedBetween (which talks to the
+      // POOL, so it borrowed a SECOND connection while this request already held
+      // one), and the write. Measured on the fixture harness at a 4ms simulated
+      // round trip, 25 ids (the validator's cap):
       //
-      // POST / above hit this exact wall and batched these exact three reads
-      // into one set-based query each. The same rewrite here has now been
-      // written and measured TWICE, by two rotations, at the same numbers:
-      // 103 queries / 1623ms down to 7 queries / 128ms at a 4ms simulated round
-      // trip, with the 25 extra pool checkouts (one per isBlockedBetween call)
-      // going to zero. It is still NOT applied, and the reason has never been
-      // technical.
+      //     before   103 queries   1594ms   25 extra pool checkouts
+      //     after      7 queries    105ms    0 extra pool checkouts
       //
-      // WHAT IT COSTS, MEASURED rather than estimated (2026-08-14, second
-      // rotation, whole suite run with the batched version applied): 26 tests
-      // across SIX files, because the batched shapes are unknown to fixture
-      // dispatchers that either fall through to an empty result or reject an
-      // unscripted query outright.
+      // and the count is now FLAT: one invitee and twenty-five invitees issue
+      // the same 7 (8 if the call both re-invites and invites, because the two
+      // writes are separate statements). That flatness, not the absolute number,
+      // is what __tests__/queryReliability.test.js pins — see the note there
+      // about what replaced the old `countForMany === 103` ceiling.
       //
-      //   __tests__/spamBudgets.test.js      8  — needs 3 new fixture branches
-      //   __tests__/flockSanitize.test.js    3  — needs the same 3
-      //   __tests__/queryFollowups.test.js   8  — needs the same 3
-      //   __tests__/queryReliability.test.js 5  — needs the 3, AND two of its
-      //                                           assertions REPLACED: it pins
-      //                                           this N+1 as a ceiling
-      //                                           (countForMany === 103, and one
-      //                                           block query per invitee). Its
-      //                                           own comment says to delete
-      //                                           them when the rewrite lands.
-      //   __tests__/alertPreferences.test.js 1  — scriptInvite() needs the 3
-      //   __tests__/takedownLeaks.test.js    1  — its invite script needs the 3
+      // The shape is three set-based reads, copied from POST / above rather than
+      // re-derived, then ONE replay loop over the candidates in submission
+      // order, then at most two array writes:
       //
-      // The three branches every one of those files needs are the same three:
       //   SELECT user_id, status FROM flock_members WHERE flock_id = $1 AND user_id = ANY($2::int[])
       //   SELECT id, name FROM users WHERE id = ANY($1::int[])
-      //   SELECT blocker_id, blocked_id FROM user_blocks WHERE (blocker_id = $1 AND blocked_id = ANY($2::int[])) OR (blocked_id = $1 AND blocker_id = ANY($2::int[]))
-      // plus the two writes taking arrays: the re-invite UPDATE gains
-      // `user_id = ANY($2::int[])` and the INSERT becomes the same
-      // `SELECT ... FROM UNNEST($2::int[])` form POST / already uses.
+      //   SELECT blocker_id, blocked_id FROM user_blocks ...   (verbatim from POST /)
       //
-      // NO ASSERTED BEHAVIOUR CHANGES. Both rotations landed on the same replay
-      // loop: the free skip for the already-invited and already-accepted, then
-      // the seat ceiling, then the row ceiling, then the budget charge, then
-      // existence, then blocks — same order, same per-id outcomes, budget still
-      // charged before existence is consulted and still stopping the whole list.
-      // The only reads issued past the budget are none: the batched directory
-      // and block reads are sliced to `inviteBudget.remaining()` first.
+      // utils/blocks.js is UNCHANGED and isBlockedBetween keeps every other
+      // caller it has. The set-based block query is the same rule asked once,
+      // and it is deliberately the same TEXT as the one in POST / — two
+      // spellings of one safety rule is how the drift bugs in this file start.
       //
-      // It stays unapplied because no rotation has yet owned all six files at
-      // once, and half-applying it leaves the tree red. It is one change; it
-      // needs one owner.
+      // NO ASSERTED BEHAVIOUR CHANGES. The replay loop below runs the same
+      // decisions in the same order the per-id loop did: the free skip for the
+      // already-invited and already-accepted, then the seat ceiling, then the
+      // row ceiling, then the budget charge, then existence, then blocks. Both
+      // ceilings are still decremented AS rows are taken, inside the loop, so
+      // "the ceiling is charged as rows are created" still holds; the budget is
+      // still charged before existence is consulted and still stops the whole
+      // list, so the response still cannot be read as "4193 exists, 4194 does
+      // not".
       //
-      // Two defects WERE fixed in place, because neither moves a query shape
-      // the fixtures match — see the UPDATE and the INSERT below.
+      // TWO GATES SAY THE SAME THING ON PURPOSE. The already-invited and the
+      // already-accepted are dropped both from `pending` (so they are never
+      // looked up) and again at the top of the replay loop (so they can never be
+      // charged or written). Removing either one alone changes no behaviour,
+      // which is exactly why neither should be "tidied" away: the first is what
+      // keeps a repeat invite free, the second is what keeps it correct.
+      //
+      // ATOMICITY, since the writes moved. This is still autocommit — there is
+      // no transaction here and there never was — but it is now at most TWO
+      // statements instead of up to fifty, so the window in which a request can
+      // half-apply shrank by an order of magnitude. Both statements are
+      // idempotent (`ON CONFLICT DO NOTHING`, and an UPDATE guarded on the
+      // status it is replacing), so the client's retry is safe.
+      //
+      // WHY THE READS ARE NOT SLICED TO `inviteBudget.remaining()`. Two earlier
+      // rotations wrote that they were, and it is not sound: the set of ids the
+      // loop actually charges is not a prefix of the candidate list, because the
+      // ROW ceiling skips a brand-new id WITHOUT charging it (`continue`, not
+      // `break`) and a later re-invite is then charged after it. So a slice can
+      // cut off an id the loop really does reach — e.g. one row left, ids
+      // [new, new, declined], two units of allowance: the loop charges the first
+      // and the third. The reads therefore cover every candidate that is not
+      // already invited or accepted, which is at most 25 ids in one round trip
+      // and is invisible from outside: nothing past an exhausted budget is ever
+      // CONSULTED, which is the property that mattered. The one sound saving is
+      // kept — an allowance of zero skips both reads entirely.
       const invited = [];
       let throttled = false; // ran out of personal allowance
       let full = false;      // ran out of seats, or of rows, in this flock
+
+      // Candidate pass — pure bookkeeping, no I/O, same filters as before.
       // Duplicate ids in one call must not each buy a seat or a budget unit.
       const seen = new Set();
+      const candidates = [];
       for (const userId of user_ids) {
         const uid = parseInt(userId, 10);
         if (!Number.isInteger(uid) || uid < 1 || uid > INT4_MAX || uid === req.user.id) continue;
         if (seen.has(uid)) continue;
         seen.add(uid);
+        candidates.push(uid);
+      }
 
-        // Check if already a member. Flock-scoped, tells the caller nothing
-        // about the user directory, so it runs before the budget — a repeat
-        // invite is free.
-        const existing = await pool.query(
-          'SELECT status FROM flock_members WHERE flock_id = $1 AND user_id = $2',
-          [flockId, uid]
+      // Read 1 — who already has a row here. Flock-scoped, tells the caller
+      // nothing about the user directory, so it stays ahead of the budget: a
+      // repeat invite is still free.
+      const statusByUid = new Map();
+      if (candidates.length > 0) {
+        const existingRows = await pool.query(
+          'SELECT user_id, status FROM flock_members WHERE flock_id = $1 AND user_id = ANY($2::int[])',
+          [flockId, candidates]
         );
+        for (const row of existingRows.rows) statusByUid.set(Number(row.user_id), row.status);
+      }
 
-        if (existing.rows.length > 0 && existing.rows[0].status === 'accepted') {
-          console.log('[Invite] User', uid, 'already accepted member, skipping');
-          continue;
-        }
+      // Everyone who could still cost something. The already-invited and the
+      // already-accepted are dropped here, exactly as the old loop's two free
+      // `continue`s dropped them before it ever looked them up.
+      const pending = candidates.filter((uid) => {
+        const st = statusByUid.get(uid);
+        if (st === 'accepted') { console.log('[Invite] User', uid, 'already accepted member, skipping'); return false; }
+        if (st === 'invited') { console.log('[Invite] User', uid, 'already invited, skipping'); return false; }
+        return true;
+      });
 
-        if (existing.rows.length > 0 && existing.rows[0].status === 'invited') {
-          console.log('[Invite] User', uid, 'already invited, skipping');
-          continue;
+      // Reads 2 and 3 — the directory and the block set, one round trip each.
+      const allowance = inviteBudget.remaining(req.user.id);
+      const names = new Map();
+      const blocked = new Set();
+      if (pending.length > 0 && Math.min(allowance.hourly, allowance.daily) > 0) {
+        const userRows = await pool.query(
+          'SELECT id, name FROM users WHERE id = ANY($1::int[])',
+          [pending]
+        );
+        // `set`, not a truthiness test: a NULL display name is an EXISTING user,
+        // and the per-id version pushed that null through to the response.
+        for (const row of userRows.rows) names.set(Number(row.id), row.name);
+
+        // Same bidirectional rule as utils/blocks.js, asked once. Verbatim from
+        // POST / — do not respell it.
+        const blockRows = await pool.query(
+          `SELECT blocker_id, blocked_id FROM user_blocks
+           WHERE (blocker_id = $1 AND blocked_id = ANY($2::int[]))
+              OR (blocked_id = $1 AND blocker_id = ANY($2::int[]))`,
+          [req.user.id, pending]
+        );
+        for (const row of blockRows.rows) {
+          blocked.add(Number(row.blocker_id === req.user.id ? row.blocked_id : row.blocker_id));
         }
+      }
+
+      // The replay. Same order of decisions as the per-id loop, no I/O.
+      const reinviteIds = [];
+      const newIds = [];
+      for (const uid of candidates) {
+        const status = statusByUid.get(uid);
+        if (status === 'accepted' || status === 'invited') continue;
 
         if (seatsLeft <= 0) { full = true; break; }
 
@@ -1395,62 +1450,71 @@ router.post('/:id/invite',
         // Before the budget charge, for the same reason as the seat check above:
         // a ceiling the caller can do nothing about must not also cost them
         // their allowance.
-        if (existing.rows.length === 0 && rowsLeft <= 0) { full = true; continue; }
+        if (status === undefined && rowsLeft <= 0) { full = true; continue; }
 
-        // Charged BEFORE the user lookup and stops the whole loop, so an
+        // Charged BEFORE existence is consulted and stops the whole loop, so an
         // exhausted caller gets no per-id answers at all: the response cannot
         // be read as "id 4193 exists but id 4194 does not".
         if (!inviteBudget.allow(req.user.id)) { throttled = true; break; }
 
-        const userCheck = await pool.query('SELECT id, name FROM users WHERE id = $1', [uid]);
-        if (userCheck.rows.length === 0) continue;
+        if (!names.has(uid)) continue;
 
         // Blocked pairs never invite each other (round 3: filtering only the
         // socket notification still created the membership row)
-        if (await isBlockedBetween(req.user.id, uid)) continue;
+        if (blocked.has(uid)) continue;
 
         seatsLeft -= 1;
-        // A row is only spent when one is created. The re-invite branch below
-        // writes into a row that is already counted in `total`.
-        if (existing.rows.length === 0) rowsLeft -= 1;
+        // A row is only spent when one is created. The re-invite branch writes
+        // into a row that is already counted in `total`.
+        if (status === undefined) rowsLeft -= 1;
 
-        if (existing.rows.length > 0 && existing.rows[0].status === 'declined') {
-          // Re-invite.
-          //
-          // `AND status = 'declined'` is new (query-reliability round). Without
-          // it this statement had no predicate on the status it was overwriting,
-          // so if the target ACCEPTED an invite between the read four lines up
-          // and this write, the re-invite DEMOTED an accepted member back to
-          // `invited` — silently removing them from the roster, the chat, the
-          // votes and every count, on a plan they had already joined. A narrow
-          // window, one clause to close, and the failure mode is a person
-          // vanishing from a night out.
-          await pool.query(
-            `UPDATE flock_members SET status = 'invited'
-             WHERE flock_id = $1 AND user_id = $2 AND status = 'declined'`,
-            [flockId, uid]
-          );
-          invited.push({ user_id: uid, user_name: userCheck.rows[0].name });
+        if (status === 'declined') {
+          reinviteIds.push(uid);
           console.log('[Invite] Re-invited declined user', uid);
         } else {
-          // New invite.
-          //
-          // ON CONFLICT DO NOTHING is new, and matches what POST / already
-          // does. Without it, two invite calls naming the same person at the
-          // same moment raced UNIQUE(flock_id, user_id) into a 23505 — and
-          // because every statement in this loop is its own autocommit, that
-          // 500 landed AFTER earlier ids in the same request had already been
-          // written. A partially applied invite reported as a total failure is
-          // the worst of both, and the client's only sane response (retry)
-          // then re-notifies everyone it already reached.
-          await pool.query(
-            `INSERT INTO flock_members (flock_id, user_id, status) VALUES ($1, $2, 'invited')
-             ON CONFLICT (flock_id, user_id) DO NOTHING`,
-            [flockId, uid]
-          );
-          invited.push({ user_id: uid, user_name: userCheck.rows[0].name });
+          newIds.push(uid);
           console.log('[Invite] Invited new user', uid);
         }
+        invited.push({ user_id: uid, user_name: names.get(uid) });
+      }
+
+      if (reinviteIds.length > 0) {
+        // Re-invite.
+        //
+        // `AND status = 'declined'` is load-bearing. Without it this statement
+        // has no predicate on the status it is overwriting, so if a target
+        // ACCEPTED an invite between the read above and this write, the
+        // re-invite DEMOTED an accepted member back to `invited` — silently
+        // removing them from the roster, the chat, the votes and every count, on
+        // a plan they had already joined. Batching WIDENS that window (the read
+        // now happens once, at the top), which makes the clause more important,
+        // not less: it is what makes the write safe to issue late.
+        await pool.query(
+          `UPDATE flock_members SET status = 'invited'
+           WHERE flock_id = $1 AND user_id = ANY($2::int[]) AND status = 'declined'`,
+          [flockId, reinviteIds]
+        );
+      }
+
+      if (newIds.length > 0) {
+        // New invites, one statement — the same UNNEST form POST / uses.
+        //
+        // ON CONFLICT DO NOTHING: two invite calls naming the same person at the
+        // same moment raced UNIQUE(flock_id, user_id) into a 23505, and a
+        // partially applied invite reported as a total failure is the worst of
+        // both, because the client's only sane response (retry) then re-notifies
+        // everyone it already reached.
+        //
+        // $1::int is explicit on purpose: in INSERT ... SELECT (unlike
+        // INSERT ... VALUES) Postgres does NOT infer a parameter's type from the
+        // target column, so an uncast $1 resolves to text and the insert fails on
+        // the integer column at runtime.
+        await pool.query(
+          `INSERT INTO flock_members (flock_id, user_id, status)
+           SELECT $1::int, t.uid, 'invited' FROM UNNEST($2::int[]) AS t(uid)
+           ON CONFLICT (flock_id, user_id) DO NOTHING`,
+          [flockId, newIds]
+        );
       }
 
       // Notify invited users via socket

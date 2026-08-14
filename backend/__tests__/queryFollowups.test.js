@@ -141,12 +141,27 @@ pool.query = async (text, params = []) => {
   if (has('AS total') && has('FROM flock_members')) {
     return { rows: [rosterSizeRow(flat, params)], rowCount: 1 };
   }
-  if (has('SELECT status FROM flock_members WHERE flock_id = $1 AND user_id = $2')) {
-    const st = Number(params[0]) === FLOCK_ID ? members.get(Number(params[1])) : undefined;
-    return st ? { rows: [{ status: st }], rowCount: 1 } : { rows: [], rowCount: 0 };
+  // The invite path reads the roster, the directory and the block set ONE set at
+  // a time now, not one row at a time. Each branch below answers EXACTLY what
+  // the per-row branch it replaced answered, id for id — this file's ceiling
+  // arithmetic is asserted to the row, so anything else would show up as a
+  // different number rather than as a green test.
+  if (has('SELECT user_id, status FROM flock_members WHERE flock_id = $1 AND user_id = ANY($2::int[])')) {
+    // Scoped to the flock the same way Postgres would scope it: asked about
+    // another flock, this table has nothing to say.
+    if (Number(params[0]) !== FLOCK_ID) return { rows: [], rowCount: 0 };
+    const asked = new Set((params[1] || []).map(Number));
+    const rows = [...members.entries()]
+      .filter(([uid]) => asked.has(uid))
+      .map(([user_id, status]) => ({ user_id, status }));
+    return { rows, rowCount: rows.length };
   }
-  if (has('SELECT id, name FROM users WHERE id = $1')) {
-    return { rows: [{ id: Number(params[0]), name: `User${params[0]}` }], rowCount: 1 };
+  if (has('SELECT id, name FROM users WHERE id = ANY($1::int[])')) {
+    // The per-row branch answered a row for every id it was handed (there is no
+    // user directory in this file — every id exists), so this returns a row for
+    // every id in the array and no others.
+    const rows = (params[0] || []).map((id) => ({ id: Number(id), name: `User${Number(id)}` }));
+    return { rows, rowCount: rows.length };
   }
   if (has('FROM user_blocks')) return { rows: [], rowCount: 0 };
 
@@ -158,22 +173,43 @@ pool.query = async (text, params = []) => {
   }
 
   if (has('INSERT INTO flock_members')) {
-    // ON CONFLICT DO NOTHING: an id that already has a row is not a new row.
-    const uid = Number(params[1]);
-    if (members.has(uid)) return { rows: [], rowCount: 0 };
-    members.set(uid, 'invited');
-    return { rows: [], rowCount: 1 };
+    // One statement over an id ARRAY now (UNNEST), so the row-by-row rule is
+    // applied per element and the rowCount is the number of rows that really
+    // landed. ON CONFLICT DO NOTHING: an id that already has a row is not a new
+    // row — unchanged, just applied to each id instead of to the only id.
+    const ids = Array.isArray(params[1]) ? params[1].map(Number) : [Number(params[1])];
+    let affected = 0;
+    for (const uid of ids) {
+      if (members.has(uid)) continue;
+      members.set(uid, 'invited');
+      affected += 1;
+    }
+    return { rows: [], rowCount: affected };
   }
   if (has("UPDATE flock_members SET status = 'invited'")) {
     // Honour the statement's own `AND status = 'declined'` guard, so the SQL
-    // predicate is exercised rather than merely present.
-    const uid = Number(params[1]);
+    // predicate is exercised rather than merely present. Same per-id rule as
+    // before; the id list is now `user_id = ANY($2::int[])`, so a statement that
+    // dropped the guard would still promote a non-declined row here and the
+    // demotion test would still catch it.
+    // Flock scope, read out of the statement rather than assumed. This table
+    // holds one flock, so a fixture that just applied the update would answer
+    // identically for a statement that had lost `flock_id = $1` — and that
+    // statement promotes a declined row in EVERY flock the person has ever been
+    // asked to, which is a silent re-invite from strangers.
+    assert.match(flat, /WHERE flock_id = \$1 AND/,
+      'the re-invite UPDATE must still be scoped to one flock');
+    if (Number(params[0]) !== FLOCK_ID) return { rows: [], rowCount: 0 };
+    const ids = Array.isArray(params[1]) ? params[1].map(Number) : [Number(params[1])];
     const guarded = /AND status = 'declined'/.test(flat);
-    if (!members.has(uid) || (guarded && members.get(uid) !== 'declined')) {
-      return { rows: [], rowCount: 0 };
+    let affected = 0;
+    for (const uid of ids) {
+      if (!members.has(uid)) continue;
+      if (guarded && members.get(uid) !== 'declined') continue;
+      members.set(uid, 'invited');
+      affected += 1;
     }
-    members.set(uid, 'invited');
-    return { rows: [], rowCount: 1 };
+    return { rows: [], rowCount: affected };
   }
 
   unknown.push(flat);

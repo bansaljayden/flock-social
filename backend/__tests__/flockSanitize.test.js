@@ -103,6 +103,14 @@ pool.query = async (text, params = []) => {
     const rows = (params[0] || []).map((id) => users[id]).filter(Boolean).map((u) => ({ id: u.id }));
     return { rows, rowCount: rows.length };
   }
+  // The invite path's id-array directory read. Same source as the `id = $1`
+  // branch above and the same two columns, so an id with no user is still
+  // absent and a real one still carries its real name — which is what the
+  // "a verified user CAN invite an unverified account" test reads back.
+  if (has('SELECT id, name FROM users WHERE id = ANY($1::int[])')) {
+    const rows = (params[0] || []).map((id) => users[id]).filter(Boolean).map((u) => ({ id: u.id, name: u.name }));
+    return { rows, rowCount: rows.length };
+  }
 
   // ── flocks ────────────────────────────────────────────────────────────────
   if (has('INSERT INTO flocks')) {
@@ -169,6 +177,16 @@ pool.query = async (text, params = []) => {
     const m = Number(params[0]) === FLOCK_ID ? memberOf(params[1]) : null;
     return { rows: m ? [{ status: m.status }] : [], rowCount: m ? 1 : 0 };
   }
+  // The invite path asks the branch above for a whole id set in one statement.
+  // A row per id that has one, nothing for the ids that do not, this flock only.
+  if (has('SELECT user_id, status FROM flock_members WHERE flock_id = $1 AND user_id = ANY($2::int[])')) {
+    if (Number(params[0]) !== FLOCK_ID) return { rows: [], rowCount: 0 };
+    const asked = new Set((params[1] || []).map(Number));
+    const rows = members
+      .filter((m) => asked.has(m.user_id))
+      .map((m) => ({ user_id: m.user_id, status: m.status }));
+    return { rows, rowCount: rows.length };
+  }
   if (has('SELECT * FROM flock_members WHERE flock_id = $1 AND user_id = $2')) {
     const m = rowVanishes ? null : memberOf(params[1]);
     return { rows: m ? [{ flock_id: FLOCK_ID, user_id: m.user_id, status: m.status }] : [], rowCount: m ? 1 : 0 };
@@ -189,9 +207,16 @@ pool.query = async (text, params = []) => {
     return { rows: [], rowCount: ids.length };
   }
   if (has("UPDATE flock_members SET status = 'invited'")) {
-    const m = memberOf(params[1]);
-    if (m) m.status = 'invited';
-    return { rows: [], rowCount: m ? 1 : 0 };
+    // Two shapes, same rule per id: one row per call, or `user_id = ANY($2)`.
+    const ids = Array.isArray(params[1]) ? params[1].map(Number) : [Number(params[1])];
+    let affected = 0;
+    for (const id of ids) {
+      const m = memberOf(id);
+      if (!m) continue;
+      m.status = 'invited';
+      affected += 1;
+    }
+    return { rows: [], rowCount: affected };
   }
 
   unknown.push(sql);
