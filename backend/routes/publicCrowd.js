@@ -99,6 +99,12 @@ function toVenueShape(p, localDay) {
     isOpen: p.currentOpeningHours?.openNow ?? null,
     openHour,
     closeHour,
+    // The venue shape is what predictBusyness scores, and it reads
+    // utcOffsetMinutes to build the Ticketmaster query window (trueEventInstant).
+    // venueClock() reads the offset off the raw place for the scoring clock, but
+    // the event window was left on the wrong (server) instant because the shape
+    // dropped this. Carry it through so both halves use the venue's real time.
+    utcOffsetMinutes: p.utcOffsetMinutes != null ? p.utcOffsetMinutes : null,
   };
 }
 
@@ -427,4 +433,4 @@ module.exports = router;
 // Two of the subtlest card bugs live in these two helpers (a weekday
 // difference read as a day count, and a cached card claiming to be fresh), so
 // they are reachable from the tests rather than only from a live Google key.
-module.exports.__testables = { clockFor, withAge, buildCard };
+module.exports.__testables = { clockFor, withAge, buildCard, toVenueShape };
