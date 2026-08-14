@@ -804,9 +804,10 @@ test('weather: an explicitly null options argument is not a silent outage', asyn
 
 test('weather: the documented ceilings are the ones actually enforced', () => {
   const { limits } = weatherService.weatherBudgetStatus();
-  // WX_DAILY is a recorded human decision (it sits above OpenWeatherMap's free
-  // 1,000/day). Do not "fix" it here — pin it so a silent change is visible.
-  assert.equal(limits.daily, 3000);
+  // WX_DAILY was decided 2026-08-14: 950, UNDER OpenWeatherMap's free
+  // 1,000/day (was 3000, spending past free unconfirmed). Pinned so a silent
+  // change stays visible; raise only with a paid plan confirmed on an invoice.
+  assert.equal(limits.daily, 950);
   assert.equal(limits.perMinute, 55);
   assert.equal(limits.perUserHourly, 40);
 });
