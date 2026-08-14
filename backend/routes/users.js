@@ -262,6 +262,28 @@ const TOO_MANY_PROOFS_MESSAGE = 'Too many incorrect passwords. Try again in a fe
 // metered by. Nobody changes their number five times an hour.
 const phoneChangeAttempts = attemptLimiter({ limit: 5, windowMs: 60 * 60 * 1000 });
 
+// Email-address CHANGE attempts, successful ones included — round 19.
+//
+// The phone branch got this treatment and the email branch beside it did not,
+// even though the email uniqueness check answers the strictly more valuable
+// question: "does an account exist at this address?" That is the same oracle
+// POST /api/auth/signup answers, and signup is behind the 10/min auth limiter
+// precisely because of it — while PUT /api/users/profile sits behind the general
+// API limiter at 3000/15min, roughly 200/min. So the profile form was a ~20x
+// cheaper way to enumerate Flock's user base by address than the endpoint that
+// was rate limited for exactly that reason, and the "already in use" 400 and the
+// 200 are both answers.
+//
+// Ten an hour rather than the phone branch's five: an address is the field
+// people actually mistype, and this must not turn a user who fat-fingers their
+// new address a few times into a support ticket. Ten still takes the oracle from
+// two hundred a minute to ten an hour, and costs an attacker a whole fresh
+// account (which needs an address and a DOB, through the throttled auth
+// limiter) for every ten probes.
+const emailChangeAttempts = attemptLimiter({ limit: 10, windowMs: 60 * 60 * 1000 });
+const TOO_MANY_EMAIL_CHANGES_MESSAGE =
+  'You have changed your email address several times already. Try again later.';
+
 // ---------------------------------------------------------------------------
 // Ban-evasion tombstones (round 16) — see migrations/012_banned_identities.sql
 // ---------------------------------------------------------------------------
@@ -376,9 +398,8 @@ async function recordBannedIdentity(client, user) {
   // with a 365-day expiry. The real owner could then never sign up on any path
   // (password, Google, Apple all 403 on the tombstone), and the reclaim-via-
   // verified-OAuth-claim path never runs because the squat row is gone. So only
-  // tombstone an address this account actually PROVED: email_verified is true
-  // AND the proven address still matches the current one. The oauth digest
-  // stays unconditional — a provider-verified identity genuinely belongs to the
+  // tombstone an address this account actually PROVED. The oauth digest stays
+  // unconditional — a provider-verified identity genuinely belongs to the
   // banned person. An unverified banned account then leaves only an oauth
   // tombstone or none, never a block on a stranger's mailbox.
   // A grandfathered row (verified before migration 011) carries email_verified
@@ -386,14 +407,53 @@ async function recordBannedIdentity(client, user) {
   // exactly that state, so this mirrors it — a null recorded address on a
   // verified row means "trust the address it holds". The attack this closes is
   // an UNVERIFIED squat, which has email_verified === false and never reaches
-  // here. When verified_email IS recorded, it must still match the current
-  // address, so an account that proved one mailbox and then edited onto a
-  // victim's cannot tombstone the victim's.
-  const emailProven = user.email_verified === true
-    && (user.verified_email == null
-      || normalizedAddress(user.verified_email) === normalizedAddress(user.email));
+  // here.
+  //
+  // ROUND 19 (re-audit): the first cut of this fix required verified_email to
+  // MATCH the current email and tombstoned user.email. That branded the address
+  // the row HOLDS, and it only did so when the row also still held the address
+  // it had PROVED — so an account that moved off its proven address before the
+  // ban landed shed the tombstone entirely. Deleting it recorded nothing about
+  // an email, and the banned person signed up again on the original address with
+  // a clean row. (The ban blocks PUT /profile, so the move has to happen before
+  // the ban; that narrows the window, it does not close it.)
+  //
+  // Brand the PROVED address instead. verified_email is only ever written as
+  // `verified_email = email` at the moment a link was clicked (consumeVerification
+  // in routes/auth.js), at an OAuth INSERT where the provider vouched for the
+  // address, or by migration 011's grandfathering — it is never attacker-chosen
+  // free text. So it carries the same poison-pill safety the round-16 fix was
+  // reaching for: an address a squatter merely TYPED into its profile never
+  // appears here, and a stranger's mailbox can still never be branded by
+  // someone who cannot read it. What it adds is that the brand follows the
+  // proof rather than the current holder of the row.
+  //
+  // Order matters: verified_email FIRST, current email only as the grandfathered
+  // fallback. Reading them the other way round would go back to branding the
+  // address the row holds whenever it happens to be flagged verified, which is
+  // the state a pre-round-18 profile edit leaves behind (email_verified TRUE for
+  // an address the row never proved) — the poison pill, exactly.
+  //
+  // Residual, accepted: if the banned row vacated its proved address long enough
+  // ago that somebody else has since registered it, that person's address is now
+  // branded too — they keep their account, but a delete-and-re-signup would be
+  // refused for the rest of the retention window. It is the same recycled-
+  // identifier exposure the phone digest already carries, it needs the address to
+  // have been vacated AND re-registered AND then re-registered again, and the
+  // alternative is branding nothing at all, which is a guaranteed evasion. A
+  // "skip if another row holds it now" check would be worse: it hands the
+  // attacker a suppression switch (park a second account on the address before
+  // the ban lands).
+  //
+  // NOT used: email_verifications rows with used_at set. That looks like a proof
+  // history, but releaseSquattedAddress() in routes/auth.js bulk-stamps used_at
+  // on an evicted squat's PENDING links purely to invalidate them, so a row
+  // there can record an address that was never read by anybody. Tombstoning off
+  // that table would re-arm the exact poison pill this guard exists to prevent.
+  const provenAddress = user.verified_email
+    || (user.email_verified === true ? user.email : null);
   const { emailHash, phoneHash, oauthHash } = identityDigests({
-    email: emailProven ? user.email : undefined,
+    email: provenAddress || undefined,
     phone: user.phone,
     oauthProvider: user.oauth_provider,
     oauthId: user.oauth_id,
@@ -561,6 +621,30 @@ router.put('/profile',
             error: 'This account signs in with Google or Apple, so its email is managed by that provider and cannot be changed here.',
           });
         }
+        // Belt (round 19): every branch below assumes this request proved
+        // possession, and for a password row it did — the bcrypt compare above
+        // refuses the whole handler otherwise. An OAuth row is refused outright
+        // just above. That leaves a row with NEITHER, which no path in the app
+        // is supposed to produce; if one ever appears (a drifted row, a future
+        // provider unlink), changing the account's identifying address would be
+        // the one identity-defining edit in this file reachable on a bearer
+        // token alone. Require the same recent sign-in the phone branch does.
+        if (!user.password && !hasFreshSession(req)) {
+          return res.status(401).json({
+            error: 'For your security, sign in again before changing your email address.',
+            reauthRequired: 'reauth',
+          });
+        }
+
+        // Metered BEFORE the uniqueness probe, the same way the phone branch
+        // meters before its own — the refusal below IS the oracle's answer, so
+        // counting only the attempts that get past it would meter everything
+        // except the thing worth metering. See emailChangeAttempts above.
+        if (emailChangeAttempts.lockedFor(req.user.id) > 0) {
+          return res.status(429).json({ error: TOO_MANY_EMAIL_CHANGES_MESSAGE });
+        }
+        emailChangeAttempts.record(req.user.id);
+
         // SHADOW ACCOUNT (round 18 re-audit). This was a plain LOWER() match
         // while every lookup in routes/auth.js compares in the CANONICAL
         // alphabet, and the two sides of that comparison are written in
@@ -587,6 +671,28 @@ router.put('/profile',
         if (emailCheck.rows.length > 0) {
           return res.status(400).json({ error: 'Email is already in use' });
         }
+
+        // ROUND 19 (re-audit): the same gap MEDIUM 3 closed for phone, left open
+        // for email. banned_identities.email_hash is consulted on the three
+        // ACCOUNT CREATION paths in routes/auth.js and nowhere else, so a banned
+        // user who deleted their account could sign up on a throwaway address
+        // (allowed — nothing about it is tombstoned) and then MOVE that fresh row
+        // onto their tombstoned address here, which is the address their friends,
+        // their invites and their reputation are attached to. Every other gate on
+        // this branch waves it through: the address is free (the banned row was
+        // deleted), the row has no oauth_provider, and the current-password proof
+        // is their own. Consult the tombstone where the address is actually
+        // claimed, not only where a row is created.
+        //
+        // Placed AFTER the uniqueness check on purpose. It adds no oracle that
+        // does not already exist — POST /api/auth/signup answers "is this address
+        // tombstoned?" with a 403 for free — and putting it last keeps the
+        // cheapest answer on this route the one it already gave.
+        //
+        // No poison-pill risk in the other direction: a tombstoned address is
+        // already refused to everyone at signup, so refusing it here denies
+        // nothing that was still available.
+        if (await rejectIfBannedIdentity(res, { email })) return;
       }
 
       // PHONE NUMBER CLAIMS (round 16). phone is not a cosmetic profile field:
@@ -626,7 +732,17 @@ router.put('/profile',
         // branch-level check and not a coarse requireVerified on the route.
         // (current_password is NOT proof of phone ownership; a real fix needs
         // SMS possession, which is out of scope here.)
-        if (req.user.email_verified === false) {
+        //
+        // Round 19: read BOTH copies of the flag, not just req.user's. req.user
+        // is middleware/auth.js's projection of the row and this handler has
+        // already re-read the whole row into `user`; a gate that consults only
+        // the projection fails OPEN the day that SELECT stops carrying the
+        // column, and it would fail open silently. `=== false` on each is the
+        // convention claimDecision() uses for a NOT NULL column that was
+        // grandfathered TRUE. `user` is also the fresher of the two reads, so a
+        // row that lost its verification between the middleware's SELECT and
+        // this one is caught in the right direction.
+        if (user.email_verified === false || req.user.email_verified === false) {
           return res.status(403).json({ error: UNVERIFIED_MESSAGE, emailVerificationRequired: true });
         }
 
@@ -1277,6 +1393,10 @@ async function deleteAccount(req, res) {
     const client = await pool.connect();
     let deleted;
     let tombstoned = false;
+    // What the LOCKED read said, not the stale fetch at the top — the audit line
+    // and the retention purge below both key off "was this account banned", and
+    // after the re-read that answer is only correct inside the transaction.
+    let wasBanned = account.is_banned;
     try {
       await client.query('BEGIN');
 
@@ -1293,8 +1413,29 @@ async function deleteAccount(req, res) {
       // evidence de-attribution above and for the same reason — the account
       // must never vanish while the record of why it was banned fails to land.
       // Nothing is written for accounts that were not banned.
-      if (account.is_banned) {
-        tombstoned = await recordBannedIdentity(client, account);
+      //
+      // Round 19 (re-audit): decided on a row re-read INSIDE the transaction and
+      // locked, not on the copy fetched at the top of this handler. Between the
+      // two reads sit a bcrypt compare and, for an Apple account, a network call
+      // to Apple's revocation endpoint — hundreds of milliseconds to seconds in
+      // which a moderator's ban can commit. On the stale copy that ban is
+      // invisible, so the account deletes clean and the tombstone is never
+      // written: the ban is lost by losing a race, which is the same one-tap ban
+      // reset this block exists to prevent, just harder to hit on purpose. FOR
+      // UPDATE makes the ban and this decision serialize instead of interleave.
+      // Deliberately the same statement text as the fetch above so it stays one
+      // query to keep in step, and so the existing harnesses keep matching it.
+      const locked = await client.query(
+        `SELECT id, email, phone, password, oauth_provider, oauth_id, apple_refresh_token, is_banned, banned_at, email_verified, verified_email
+           FROM users WHERE id = $1 FOR UPDATE`,
+        [req.user.id]
+      );
+      // A missing row means it went away underneath us; the guarded DELETE below
+      // is what turns that into a 404, so nothing is decided here.
+      const banState = locked.rows[0] || account;
+      wasBanned = Boolean(banState.is_banned);
+      if (wasBanned) {
+        tombstoned = await recordBannedIdentity(client, banState);
       }
 
       const result = await client.query('DELETE FROM users WHERE id = $1 RETURNING id', [req.user.id]);
@@ -1315,15 +1456,29 @@ async function deleteAccount(req, res) {
       client.release();
     }
 
+    // Round 19 (re-audit): the row is gone, so every REST call 401s on the next
+    // request — but a Socket.io connection authenticates ONCE at the handshake
+    // and then lives on the TCP connection. Without this, a deleted account's
+    // live socket stays subscribed to `user:{id}` and keeps emitting on the
+    // rooms it already joined until the SESSION_RECHECK_MS sweep in
+    // sockets/handlers.js gets to it, which is up to a minute of a deleted
+    // account still being present in the product. Every other path in the app
+    // that ends a session calls this (the OAuth claims, the squat eviction, the
+    // password reset, /logout-all, the password change above); the one that ends
+    // the ACCOUNT did not. A missing io is a documented no-op, so this can never
+    // turn a completed deletion into an error — and it deliberately runs AFTER
+    // the COMMIT, so a rolled-back deletion never disconnects anyone.
+    revokeUserSessions(req.app.get('io'), req.user.id);
+
     // Says what actually happened: recordBannedIdentity can decline to write
     // (no usable identifier), and an audit line that claims a tombstone exists
     // when none does is worse than no line at all.
-    console.log(`Account deleted: user ${req.user.id}${account.is_banned ? (tombstoned ? ' (banned, tombstoned)' : ' (banned, NOT tombstoned)') : ''} at ${new Date().toISOString()}`);
+    console.log(`Account deleted: user ${req.user.id}${wasBanned ? (tombstoned ? ' (banned, tombstoned)' : ' (banned, NOT tombstoned)') : ''} at ${new Date().toISOString()}`);
 
     // Housekeeping. Outside the transaction, rate limited to once an hour per
     // process, and fully swallowed: a failed purge is a tidiness problem and
     // must never turn into a failed account deletion.
-    if (account.is_banned) maybePurgeExpired();
+    if (wasBanned) maybePurgeExpired();
 
     res.json({ message: 'Account deleted' });
   } catch (err) {
@@ -1363,6 +1518,7 @@ module.exports.__testing = {
   resetPurgeClock: () => { lastPurgeAt = 0; },
   proofFailures,
   phoneChangeAttempts,
+  emailChangeAttempts,
   REAUTH_WINDOW_MS,
   BAN_TOMBSTONE_RETENTION_DAYS,
   BANNED_IDENTITY_MESSAGE,
