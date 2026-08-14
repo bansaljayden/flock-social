@@ -95,10 +95,21 @@ async function canNotify(userId, data = {}) {
     if (row.is_banned) return false; // no pulling a banned user back into an app that rejects them
     return row.can_see !== false;
   } catch (err) {
-    // Fail open. A blip on the visibility query must not silence the entire
-    // notification feature; the call sites already filtered membership once.
-    console.error('[Push] visibility check failed:', err.message);
-    return true;
+    // FAIL CLOSED. This was the one block-enforcement point in the codebase
+    // that failed open, and it was the loudest one: a push is delivered to a
+    // phone's lock screen, so a database blip here pushed a blocked user's NAME
+    // ("{name} invited you to a flock", "You owe {name} $12") to the person who
+    // blocked them, where it stays until it is dismissed. Every sibling check
+    // already fails closed for exactly this reason — utils/blocks.js throws out
+    // to the caller's guard, announceToRoomExcludingBlocked stays silent,
+    // routes/moderation.js refuses — and a rule that holds only while the
+    // database is healthy is not the guarantee Apple 1.2 asks for.
+    //
+    // The cost of being wrong in this direction is a notification that arrives
+    // late or not at all, which the app recovers from the moment the user opens
+    // it; the cost in the other direction cannot be taken back.
+    console.error('[Push] visibility check failed, suppressing push:', err.message);
+    return false;
   }
 }
 

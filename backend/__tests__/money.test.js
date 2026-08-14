@@ -230,6 +230,10 @@ function scriptBillCreate({ existingBill, existingShares, members, creatorId = 1
   handlers = [
     [/SELECT id FROM flock_members WHERE flock_id = \$1 AND user_id = \$2/, isMember],
     [/SELECT u\.id, u\.name FROM flock_members/, () => ({ rows: members })],
+    // Every view of a bill is block-filtered (2026-08-14): the 201 body, the
+    // socket fan-out and the GET all drop shares belonging to someone the
+    // reader cannot see. Nobody blocks anybody in these fixtures.
+    [/FROM user_blocks/, () => ({ rows: [] })],
     [/SELECT name, creator_id FROM flocks/, () => ({ rows: [{ name: 'Dinner', creator_id: creatorId }] })],
     [/SELECT id FROM flocks WHERE id = \$1 FOR UPDATE/, () => ({ rows: [{ id: 42 }] })],
     [/SELECT id, paid_by FROM bill_splits/, () => ({ rows: existingBill ? [existingBill] : [] })],

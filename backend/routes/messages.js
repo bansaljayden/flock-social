@@ -258,8 +258,16 @@ router.post('/messages/:id/react',
       const messageId = req.params.id;
       const { emoji } = req.body;
 
-      // Verify the message exists and user is in that flock
-      const msgResult = await pool.query('SELECT flock_id FROM messages WHERE id = $1', [messageId]);
+      // Verify the message exists and user is in that flock.
+      // A6 takedown: a hidden message is gone from every read path, so it must
+      // not still be reactable — otherwise a taken-down message keeps
+      // generating flock_reaction_added broadcasts naming the reactor against
+      // content nobody is allowed to see. Removing a reaction stays possible
+      // (see the DELETE twin): cleanup after a takedown is not interaction.
+      const msgResult = await pool.query(
+        'SELECT flock_id FROM messages WHERE id = $1 AND is_hidden IS NOT TRUE',
+        [messageId]
+      );
       if (msgResult.rows.length === 0) {
         return res.status(404).json({ error: 'Message not found' });
       }
@@ -591,11 +599,18 @@ router.post('/dm/:userId',
 
       // SECURITY: a reply may only reference a message from THIS conversation
       // (same invariant as the socket path — see sockets/handlers.js).
+      //
+      // The socket twin also refuses a HIDDEN target; this one did not, so a
+      // moderator-hidden DM could be quoted back into the thread by replying to
+      // it over REST — the takedown undone through the transport that forgot to
+      // check. Kept identical to the socket predicate so the two transports
+      // cannot drift again.
       let safeReplyId = null;
       if (reply_to_id) {
         const replyCheck = await pool.query(
           `SELECT id FROM direct_messages
            WHERE id = $1
+             AND COALESCE(is_hidden, false) = false
              AND ((sender_id = $2 AND receiver_id = $3) OR (sender_id = $3 AND receiver_id = $2))`,
           [reply_to_id, req.user.id, receiverId]
         );
@@ -663,8 +678,15 @@ router.post('/dm/messages/:id/react',
       const dmId = parseInt(req.params.id);
       const { emoji } = req.body;
 
-      // Verify DM exists and user is sender or receiver
-      const dm = await pool.query('SELECT sender_id, receiver_id FROM direct_messages WHERE id = $1', [dmId]);
+      // Verify DM exists and user is sender or receiver. Hidden DMs are not
+      // reactable, for the same reason as flock messages above: a takedown ends
+      // the message, and reacting is the one interaction left that could still
+      // reach across it.
+      const dm = await pool.query(
+        `SELECT sender_id, receiver_id FROM direct_messages
+         WHERE id = $1 AND COALESCE(is_hidden, false) = false`,
+        [dmId]
+      );
       if (dm.rows.length === 0) return res.status(404).json({ error: 'Message not found' });
       if (dm.rows[0].sender_id !== req.user.id && dm.rows[0].receiver_id !== req.user.id) {
         return res.status(403).json({ error: 'Not authorized' });
@@ -839,14 +861,30 @@ router.put('/dm/:messageId/read', param('messageId').isInt({ min: 1, max: INT4_M
     if (rejectInvalid(req, res)) return;
     const messageId = parseInt(req.params.messageId);
 
+    // A6 takedown: every OTHER read path on this table filters
+    // `COALESCE(is_hidden, false) = false` (the thread reads above, the socket
+    // twin, the reply lookup). This one did not, and `RETURNING *` handed back
+    // message_text, image_url and venue_data — so the recipient of a
+    // moderator-hidden DM could re-read the taken-down content verbatim,
+    // forever, using an id their client already held. A takedown that any
+    // recipient can undo with a PUT is not a takedown.
+    //
+    // Both halves of the fix, because either alone leaves a gap: the predicate
+    // stops hidden rows being touched at all, and the narrowed RETURNING means
+    // a route whose entire job is "flip a boolean" can never be a content read
+    // again. No caller reads anything but the ack (frontend has no caller at
+    // all today), so nothing client-side depends on the wide row.
     const result = await pool.query(
       `UPDATE direct_messages SET read_status = TRUE
        WHERE id = $1 AND receiver_id = $2
-       RETURNING *`,
+         AND COALESCE(is_hidden, false) = false
+       RETURNING id, read_status`,
       [messageId, req.user.id]
     );
 
     if (result.rows.length === 0) {
+      // Same answer for "no such message", "not yours" and "taken down" — the
+      // status code must not tell a holder of the id which one it was.
       return res.status(404).json({ error: 'Message not found' });
     }
 
