@@ -84,6 +84,13 @@ async function request(endpoint, options = {}) {
 }
 
 // Auth
+// Re-send the signup confirmation link. Rate limited server-side: one every
+// 60 seconds and five an hour, so the caller must sit on a cooldown rather
+// than letting the button be tapped repeatedly.
+export async function resendVerificationEmail() {
+  return request('/api/auth/resend-verification', { method: 'POST' });
+}
+
 export async function signup(name, email, password, dateOfBirth) {
   const body = { name, email, password };
   // Send DOB only when provided so the backend's server-side age gate (>= 13)
