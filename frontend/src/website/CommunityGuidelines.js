@@ -1,7 +1,7 @@
 import React, { useEffect } from 'react';
 import './PrivacyPolicy.css';
 
-const EFFECTIVE_DATE = 'June 16, 2026';
+const EFFECTIVE_DATE = 'August 14, 2026';
 const SUPPORT_EMAIL = 'social@flockcorp.com';
 const CHILD_SAFETY_EMAIL = 'safety@flockcorp.com';
 
@@ -87,7 +87,18 @@ export default function CommunityGuidelines() {
         <p>
           Our team reviews reports and acts promptly, typically by removing the violating
           content and ejecting the responsible user. Serious or repeated violations result in a permanent
-          ban. Illegal content may be reported to the authorities.
+          ban. Deleting a banned account does not lift the ban. Illegal content may be reported
+          to the authorities.
+        </p>
+      </section>
+
+      <section>
+        <h2>Automatic screening</h2>
+        <p>
+          Reports aren't the only line of defense. Messages and other text you post pass
+          through a language filter before they're stored, and photos are checked
+          automatically before anyone can see them. If a check fails, the content simply
+          doesn't post.
         </p>
       </section>
 
