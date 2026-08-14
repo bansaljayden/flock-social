@@ -110,8 +110,15 @@ router.post('/promotions', requirePremium, [
     const errors = validationResult(req);
     if (!errors.isEmpty()) return res.status(400).json({ error: errors.array()[0].msg });
     // Promotions are public UGC — same screen as every user-writable field.
-    if (rejectIfProfane(res, req.body.title)) return;
-    if (req.body.description && rejectIfProfane(res, req.body.description)) return;
+    // Round 20: all FOUR fields, not two. /public-promotions serves time_slot
+    // and days to every user who opens the venue card, exactly as it serves
+    // title and description, and neither was screened — so "Fri <slur>" in the
+    // days field was published unscreened while the same string in the title
+    // was refused. Screening runs on the STRIPPED value (freeText's sanitizer
+    // has already fired), which also closes `f<b>u</b>ck`.
+    for (const field of ['title', 'description', 'timeSlot', 'days']) {
+      if (req.body[field] && rejectIfProfane(res, req.body[field])) return;
+    }
 
     const venue = await getVenueCtx(req.user.id);
     if (!venue) return res.status(404).json({ error: 'No venue profile found' });
@@ -146,9 +153,11 @@ router.put('/promotions/:id', requirePremium, [
   try {
     const errors = validationResult(req);
     if (!errors.isEmpty()) return res.status(400).json({ error: errors.array()[0].msg });
-    // Edits are the same public UGC surface as creation (round 8).
-    if (req.body.title && rejectIfProfane(res, req.body.title)) return;
-    if (req.body.description && rejectIfProfane(res, req.body.description)) return;
+    // Edits are the same public UGC surface as creation (round 8), across the
+    // same four fields the create route screens (round 20).
+    for (const field of ['title', 'description', 'timeSlot', 'days']) {
+      if (req.body[field] && rejectIfProfane(res, req.body[field])) return;
+    }
 
     // Round 18: an edit to a taken-down promotion is REFUSED, and refused by
     // name. The old statement happily updated a hidden row and answered 200 with
@@ -626,13 +635,42 @@ router.post('/submit-review', [
       });
     }
 
+    // Round 20: an edit that CHANGES the review drops the owner's reply.
+    //
+    // This is an upsert, so the same POST rewrites an existing review — and the
+    // DO UPDATE list left venue_reply and venue_replied_at alone. On the public
+    // card a reply is rendered underneath the review it answers, carrying the
+    // verified badge, so the sequence "write a fair review -> owner replies
+    // 'thanks for coming' -> rewrite the review as an abusive one" left the
+    // owner's name attached to, and apparently endorsing, words they never saw.
+    // The owner had no way to notice and no way to retract it: the reply route
+    // only ever sets a reply, never clears one.
+    //
+    // Only a real change clears it. A resubmit of identical content — which is
+    // what a double-tapped Submit button sends — must not throw away a reply
+    // the owner wrote, so the CASE compares the incoming values with
+    // IS DISTINCT FROM rather than clearing unconditionally. is_hidden is
+    // deliberately still untouched: a taken-down review stays taken down
+    // however many times its author rewrites it.
+    //
+    // A cleared reply is a deletion, not a takedown, so nothing is said about
+    // it here; the owner sees the reply gone from their reviews tab and can
+    // reply again to the words that are actually there now.
     const { rows } = await pool.query(
       `INSERT INTO venue_reviews (google_place_id, user_id, rating, text)
        VALUES ($1, $2, $3, $4)
        ON CONFLICT (google_place_id, user_id) DO UPDATE SET
          rating = EXCLUDED.rating,
          text = EXCLUDED.text,
-         created_at = NOW()
+         created_at = NOW(),
+         venue_reply = CASE
+           WHEN EXCLUDED.rating IS DISTINCT FROM venue_reviews.rating
+             OR EXCLUDED.text IS DISTINCT FROM venue_reviews.text
+           THEN NULL ELSE venue_reviews.venue_reply END,
+         venue_replied_at = CASE
+           WHEN EXCLUDED.rating IS DISTINCT FROM venue_reviews.rating
+             OR EXCLUDED.text IS DISTINCT FROM venue_reviews.text
+           THEN NULL ELSE venue_reviews.venue_replied_at END
        RETURNING *`,
       [googlePlaceId, req.user.id, rating, text || null]
     );
@@ -643,9 +681,19 @@ router.post('/submit-review', [
   }
 });
 
+// google_place_id is VARCHAR(255) everywhere it is stored, so a longer path
+// segment can never match a row — it is only an index scan we pay for. Bound it
+// at the column width and READ the result: a declared-but-unread chain is the
+// decorative-validator bug this file has already been fixed for twice.
+const placeIdParam = param('placeId').isString().isLength({ min: 1, max: 255 })
+  .withMessage('placeId required');
+
 // GET /api/venue-dashboard/public-reviews/:placeId — get reviews for any venue (for user-facing venue cards)
-router.get('/public-reviews/:placeId', async (req, res) => {
+router.get('/public-reviews/:placeId', placeIdParam, async (req, res) => {
   try {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) return res.status(400).json({ error: errors.array()[0].msg });
+
     const limit = reviewPageSize(req.query.limit);
 
     // `average` and `total` were derived from the 50-row page, so past 50
@@ -709,8 +757,11 @@ router.get('/public-reviews/:placeId', async (req, res) => {
 });
 
 // GET /api/venue-dashboard/public-promotions/:placeId — get active promotions for a venue (user-facing)
-router.get('/public-promotions/:placeId', async (req, res) => {
+router.get('/public-promotions/:placeId', placeIdParam, async (req, res) => {
   try {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) return res.status(400).json({ error: errors.array()[0].msg });
+
     // Only VERIFIED venues publish publicly — an unverified claim on a Google
     // Place ID must not let a stranger speak as that business (audit 2026-08-12).
     // Round 4: the join is on the promotion AUTHOR's own profile, not the place
