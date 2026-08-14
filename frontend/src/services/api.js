@@ -860,10 +860,27 @@ export async function getCrowdAlternatives(placeId) {
 }
 
 // Venue Feedback
+//
+// The device clock rides along, the same way getCrowdBatch already sends it.
+// day_of_week / hour on a feedback row are bucket keys, and the read side
+// (/api/crowd) looks them up with this same device's clock. The backend
+// prefers the venue's own timezone from ml_venues, but most venues are not in
+// that table, and without a hint it falls back to the server clock, which is
+// UTC on Railway: a 9pm Friday report gets filed as 2am Saturday, so the
+// Friday-night lookup never finds it and the Saturday lookup finds a crowd
+// level from a different part of the week entirely.
+//
+// snake_case here on purpose: routes/feedback.js validates `local_day` and
+// `local_hour`, while the crowd routes take camelCase. A caller that supplies
+// its own values keeps them.
 export async function submitVenueFeedback(data) {
+  const now = new Date();
+  const body = { ...data };
+  if (body.local_day == null) body.local_day = now.getDay();
+  if (body.local_hour == null) body.local_hour = now.getHours();
   const res = await request('/api/feedback', {
     method: 'POST',
-    body: JSON.stringify(data),
+    body: JSON.stringify(body),
   });
   track('crowd_feedback', { crowd_level: data.crowd_level });
   return res;
