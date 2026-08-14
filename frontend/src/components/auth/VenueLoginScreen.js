@@ -3,6 +3,7 @@ import { login, signup, googleLoginWithToken, resendVerificationEmail } from '..
 import { useGoogleLogin } from '@react-oauth/google';
 import AppleSignInButton from './AppleSignInButton';
 import AuthShell, { AUTH, AuthError, AuthRule, GoogleG, PasswordEye } from './AuthShell';
+import Icons from '../ui/Icons';
 
 /* ═══════════════════════════════════════════════════════════════════
    VENUE PORTAL — the operator's front door.
@@ -300,9 +301,20 @@ const VenueLoginScreen = ({ onLoginSuccess, onSwitchToUserLogin }) => {
                     color: c.ok ? AUTH.green : AUTH.cream2,
                   }}
                 >
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                    {c.ok ? <polyline points="20 6 9 17 4 12" /> : <circle cx="12" cy="12" r="9" />}
-                  </svg>
+                  {/* System glyphs, not a local <svg>. The old pair was drawn
+                      with round caps at strokeWidth 2.4, which is neither of
+                      the two things components/ui/Icons.js allows, so a rule
+                      that renders inches from Icons-drawn UI elsewhere in the
+                      app came from a different drawing system.
+                      Icons.check for met; Icons.minus for not-yet, because the
+                      set has no bare circle and the two circles it does have
+                      say the wrong thing here — alertCircle reads as an error
+                      against a rule the user simply has not reached yet.
+                      Decorative: the rule's own text is right beside it, and
+                      the state is already carried by colour AND by wording. */}
+                  <span aria-hidden="true" style={{ display: 'inline-flex', flexShrink: 0 }}>
+                    {(c.ok ? Icons.check : Icons.minus)('currentColor', 14)}
+                  </span>
                   {c.label}
                 </li>
               ))}
