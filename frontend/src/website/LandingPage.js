@@ -263,7 +263,9 @@ export default function LandingPage() {
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.error || 'Something went wrong.');
-      setMsg("You’re on the list. We’ll email you when it opens up.");
+      // Same register fix as the lead above: the confirmation says what the
+      // reader gets, not who is sending it.
+      setMsg("You’re on the list. You’ll get an email when it opens up.");
       setMsgBad(false);
       setEmail('');
     } catch (err) {
@@ -490,7 +492,13 @@ export default function LandingPage() {
                 <img src="/marks/mark-steps-400.png" alt="" width="864" height="290" loading="lazy" decoding="async" fetchPriority="low" />
               </picture>
             </figure>
-            <p className="lp-kicker">How it works</p>
+            {/* The "How it works" kicker was cut. An eyebrow is an ordinal
+                device, and this section already has the strongest ordinal
+                device on the page directly underneath it: a band numbered 01 to
+                04. A label saying "How it works" above four numbered steps is
+                narrating what the numbers already say. Two eyebrows survive on
+                the page (Crowd levels, Safety) and they are the two whose
+                headline never states the subject as a noun. */}
             <h2 id="lp-h-how">Four steps, then you’re out the door.</h2>
           </div>
           <div className="lp-steps">
@@ -556,9 +564,26 @@ export default function LandingPage() {
             </ul>
           </div>
 
+          {/* The training figures are the most checkable thing this site owns,
+              and until now they only existed on /about, which is the page
+              nobody reads. They belong here, one line above the demo that is
+              about to run the model in front of you: "everything below is live"
+              is an assertion, and 2.1 million observations across 31 cities is
+              the reason to believe it.
+
+              Both numbers are read straight out of
+              backend/scripts/ml/models/model_metadata.json (training_rows
+              2,070,239 and 31 entries in training_cities) and are pinned
+              against that file in landingPageClaims.test.js, the same way
+              AboutPage's five figures are pinned. If the model is retrained and
+              the corpus changes, that test goes red and this sentence gets
+              corrected rather than quietly becoming a lie. "venue-hour
+              observations" is the unit /about uses; do not round it into
+              "hours" or "venues", which are different quantities. */}
           <p className="lp-demo-proof" id="try">
             Everything below is live. The map, the pins, and the numbers come
-            from the same model that ships inside Flock. Pick a pin.
+            from the same model that ships inside Flock, trained on 2.1 million
+            venue-hour observations across 31 cities. Pick a pin.
           </p>
           {/* 800px of lead: the demo is loading and drawing before it reaches
               the screen, so arriving here still feels like it was always
@@ -570,24 +595,16 @@ export default function LandingPage() {
         </div>
       </section>
 
-      {/* ---------------- birdie ---------------- */}
+      {/* ---------------- birdie ----------------
+          Was .lp-row, i.e. media-left / text-right at half and half — which is
+          the identical composition to the Money section two screens down. The
+          two of them read as the same panel with different nouns in it. This is
+          .lp-birdie now: the phone sits as a 300px plate in the right margin,
+          the way the hero treats the same asset, and the text runs at a reading
+          measure rather than filling half a page. Text first in the DOM, so a
+          phone gets the heading before the screenshot instead of after it. */}
       <section className="lp-sec lp-sec-paper" id="birdie" aria-labelledby="lp-h-birdie">
-        <div className="lp-wrap lp-row">
-          <div className="lp-row-media">
-            {/* Real capture of the shipping app, not a mockup. WebP first, PNG
-                fallback, and the <img> is byte-for-byte the one that shipped
-                before, loading="lazy" included. 298.2 KB PNG, 53.7 KB WebP. */}
-            <picture>
-              <source type="image/webp" srcSet="/screenshots/app-birdie.webp" />
-              <img
-                className="lp-shot"
-                src="/screenshots/app-birdie.png"
-                width="390" height="844"
-                loading="lazy"
-                alt="Birdie answering 'Where's poppin in Philadelphia rn?' with a recommendation and venue cards."
-              />
-            </picture>
-          </div>
+        <div className="lp-wrap lp-birdie">
           <div>
             {/* The character himself, not a linocut plate of him. This is the
                 one section where the mascot IS the subject, so he stands in
@@ -637,6 +654,22 @@ export default function LandingPage() {
               <li>Crowd numbers come from the same model as the map above</li>
               <li>Tap a card for the details, or send it straight to your flock</li>
             </ul>
+          </div>
+
+          <div className="lp-row-media">
+            {/* Real capture of the shipping app, not a mockup. WebP first, PNG
+                fallback, and the <img> is byte-for-byte the one that shipped
+                before, loading="lazy" included. 298.2 KB PNG, 53.7 KB WebP. */}
+            <picture>
+              <source type="image/webp" srcSet="/screenshots/app-birdie.webp" />
+              <img
+                className="lp-shot"
+                src="/screenshots/app-birdie.png"
+                width="390" height="844"
+                loading="lazy"
+                alt="Birdie answering 'Where's poppin in Philadelphia rn?' with a recommendation and venue cards."
+              />
+            </picture>
           </div>
         </div>
       </section>
@@ -703,9 +736,16 @@ export default function LandingPage() {
           than a section of their own. A page that says the same six things four
           times is not thorough, it is unsure. */}
 
-      {/* ---------------- safety ---------------- */}
+      {/* ---------------- safety ----------------
+          The third .lp-row in a row was this one, and three identical panels is
+          where a page stops reading as composed. It is two tiers now instead of
+          two columns: the statement sits beside the real email, and the four
+          rules run across the full width underneath as a 2x2 ruled block. The
+          rules are the section's actual promise, so they get the width rather
+          than being a sidebar to it, and the shape belongs to this section
+          alone. */}
       <section className="lp-sec lp-sec-navy lp-on-navy" id="safety" aria-labelledby="lp-h-safety">
-        <div className="lp-wrap lp-row">
+        <div className="lp-wrap lp-safety">
           <div>
             {/* No plate here on purpose. The marks are navy ink with no dark
                 variant, and the SOS email beside this column is already the
@@ -717,12 +757,6 @@ export default function LandingPage() {
               only while it’s on. If something goes wrong, one button tells the
               people you picked where you are.
             </p>
-            <ul className="lp-list">
-              <li>One-tap SOS to your trusted contacts</li>
-              <li>Live location inside the flock, off by default</li>
-              <li>No background tracking, ever</li>
-              <li>Report and block on any message or profile</li>
-            </ul>
           </div>
           <div className="lp-row-media">
             {/* Excerpt of the real SOS email the backend sends — not a mock UI */}
@@ -739,6 +773,13 @@ export default function LandingPage() {
               <p className="lp-sos-cap">The actual email. It goes out the moment you tap SOS.</p>
             </div>
           </div>
+
+          <ul className="lp-list lp-safety-rules">
+            <li>One-tap SOS to your trusted contacts</li>
+            <li>Live location inside the flock, off by default</li>
+            <li>No background tracking, ever</li>
+            <li>Report and block on any message or profile</li>
+          </ul>
         </div>
       </section>
 
@@ -754,11 +795,32 @@ export default function LandingPage() {
               <BirdieBird bird={WARM_BIRD} size={112} style={{ width: 'clamp(84px, 9vw, 112px)', height: 'auto', aspectRatio: '332 / 333' }} />
               <BirdieBird size={128} style={{ width: 'clamp(92px, 10vw, 128px)', height: 'auto', aspectRatio: '316 / 400' }} />
             </WhenNear>
-            <p className="lp-kicker">Pricing</p>
+            {/* The "Pricing" kicker was cut for the same reason as "How it
+                works": the section below it is two plan cards, one of which
+                reads "$0", so nothing here was in any doubt about being the
+                pricing. */}
             <h2 id="lp-h-pricing">Free for your friend group.</h2>
+            {/* This line survived the first sweep of the venue card below it and
+                should not have — it is the SAME promoted-placement pitch, one
+                paragraph higher and in the present tense. "Venues pay to show
+                up in front of groups that are picking a place right now" is two
+                untrue things at once: nothing in the repo can put a venue in
+                front of a group that is voting, and no venue has ever been
+                charged anything. There is no `stripe` dependency in
+                backend/package.json, VENUE_BILLING_ENABLED is unset on Railway,
+                and the only writer of venue_profiles.tier is an admin comp
+                route. The founder dashboard already had to be corrected to say
+                this out loud; the homepage was still saying the opposite.
+
+                The replacement is the honest version of the same reassurance,
+                which is a better sentence anyway: the reader's question is "so
+                what's the catch", and "nobody is paying yet" answers it more
+                convincingly than a revenue model would. Caught by screenshot,
+                not by grep — the phrasing dodged every pattern written for the
+                card below. */}
             <p className="lp-lead" style={{ marginTop: 16 }}>
-              You and your friends don’t pay. Venues pay to show up in front of
-              groups that are picking a place right now.
+              You and your friends don’t pay. Venues are the side Flock is built
+              to charge, and none of them is being charged yet.
             </p>
           </div>
 
@@ -780,18 +842,51 @@ export default function LandingPage() {
             <div className="lp-plan lp-plan-venue">
               <h3>For venues</h3>
               <div className="lp-plan-price">Let’s talk<small>bars, clubs, restaurants</small></div>
+              {/* EVERY LINE IN THIS CARD WAS RE-CHECKED AGAINST THE BACKEND on
+                  2026-08-14, because the card ends in a sales mailto and a
+                  venue reading it is being asked to start a conversation on the
+                  strength of it. Three claims were selling things that do not
+                  exist, and `.claude/CLAUDE.md` lists all three under "Not
+                  built":
+
+                  "Reach groups at the exact moment they're picking a place" and
+                  "Show up in venue voting near you" are both promoted placement
+                  in vote lists. There is no promoted placement. Vote rows come
+                  from Google Places in plain distance order; nothing in the
+                  repo can move a venue up one.
+
+                  "Put an offer up on a slow night" is the slow-night push
+                  offer. There is no code that pushes anything to a group
+                  because a venue is quiet.
+
+                  "Post deals and events to nearby groups" was half true and the
+                  false half was the important one. Promotions really do reach
+                  users — POST /api/venue-dashboard/promotions writes them and
+                  GET /public-promotions/:placeId is read by the venue detail
+                  screen in App.js. EVENTS DO NOT: there is no public-events
+                  route at all, so a venue event is visible to the owner who
+                  typed it and to nobody else. And neither one is delivered "to
+                  nearby groups" — both sit on the venue's own card, waiting to
+                  be opened.
+
+                  What is below ships today, with the route behind each one:
+                    GET /incoming-flocks   the flocks that chose this venue
+                    POST /promotions + GET /public-promotions/:placeId
+                    POST /reviews/:id/reply, over public reviews on the card
+                    GET /intelligence      the owner's own forecast + demand curve
+
+                  This is the fifth time this page has had to delete a claim
+                  nothing implemented. Before adding a line here, find the route
+                  that answers it and the screen that renders it. */}
               <p className="lp-plan-note">
-                Reach groups at the exact moment they’re picking a place, before they
-                end up somewhere else.
+                A dashboard for your door: who picked you tonight, how the week
+                ahead looks, and a card inside the app that you write.
               </p>
-              {/* "See how many groups considered you" was cut: the venue
-                  analytics tab it described was deleted from the product on
-                  2026-08-12, and the page cannot sell a screen that no longer
-                  exists. */}
               <ul className="lp-list">
-                <li>Show up in venue voting near you</li>
-                <li>Post deals and events to nearby groups</li>
-                <li>Put an offer up on a slow night</li>
+                <li>See the flocks that chose you</li>
+                <li>Put a deal on your venue’s card, where groups open it</li>
+                <li>Reply to reviews from people who went</li>
+                <li>Your own hour-by-hour forecast, from the model the app runs</li>
               </ul>
               <a className="lp-btn lp-btn-navy" href={`mailto:${CONTACT_EMAIL}?subject=Flock%20for%20venues`}>
                 Get in touch
@@ -806,8 +901,15 @@ export default function LandingPage() {
         <div className="lp-wrap lp-cta-in">
           <div>
             <h2 id="lp-h-get">Give the next plan a fighting chance.</h2>
+            {/* "we'll tell you" became "you'll hear". Flock is one student, and
+                /about says so in the first paragraph; a corporate we on the
+                homepage and a solo founder on the about page is a register
+                mismatch a reader can catch in two clicks. The rewrite is not a
+                swap to "I" either — the waitlist mail is sent by a cron and a
+                template, so nobody is telling anyone anything. Saying what
+                happens to the reader is both truer and the better sentence. */}
             <p className="lp-lead" style={{ marginTop: 16 }}>
-              Open Flock in your browser, or leave your email and we’ll tell you the
+              Open Flock in your browser, or leave your email and you’ll hear the
               moment the iPhone app is out.
             </p>
             <div className="lp-cta-row">
@@ -848,11 +950,22 @@ export default function LandingPage() {
             </form>
             {/* Both stay mounted with empty text: a live region has to exist
                 before its content changes or the first announcement is missed.
-                Same pattern as the guest invite page. */}
-            <p className="lp-form-msg" role="status">{msgBad ? '' : msg}</p>
-            <p className="lp-form-msg lp-form-msg-bad" id="lp-form-problem" role="alert">
-              {msgBad ? msg : ''}
-            </p>
+                Same pattern as the guest invite page.
+
+                The wrapper is not decoration. Both children collapse to zero
+                height while empty, which is what keeps the pair one line tall
+                once one of them fills — but at rest that meant BOTH were zero,
+                so the first failed submit inserted a line and pushed the whole
+                CTA band down under the reader's hands. The wrapper holds one
+                line of space open from the start. It is a plain div, carries no
+                role, and sits outside both live regions, so nothing about the
+                announcements changes. */}
+            <div className="lp-form-status">
+              <p className="lp-form-msg" role="status">{msgBad ? '' : msg}</p>
+              <p className="lp-form-msg lp-form-msg-bad" id="lp-form-problem" role="alert">
+                {msgBad ? msg : ''}
+              </p>
+            </div>
           </div>
         </div>
       </section>
