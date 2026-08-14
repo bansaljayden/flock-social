@@ -93,6 +93,36 @@ function timeoutError() {
   return err;
 }
 
+// Venue wifi with a sign-in page. The captive portal answers every request
+// itself: 200 OK, an HTML login page, no matter what URL was asked for. Every
+// endpoint here speaks JSON, so a 2xx that is not JSON means the reply never
+// came from Flock at all. Before this guard, that HTML page was returned to
+// the caller as if it were data, and getFlocks().flocks (etc.) blew up with a
+// TypeError deep in App.js instead of an honest connection error. Not retried:
+// the portal answers instantly and identically every time, so the only fix is
+// the user signing in to the network or leaving it.
+function captivePortalError() {
+  const err = new Error('This network is blocking Flock. If this wifi has a sign-in page, open it, or switch to cellular data.');
+  err.isNetworkError = true;
+  err.isCaptivePortal = true;
+  return err;
+}
+
+// A 2xx whose JSON body could not be read: the connection died mid-download,
+// after the status line arrived. For a GET this is just a network blip and is
+// retried like one. For a write it is genuinely ambiguous — the server most
+// likely committed before the reply was lost — so the copy tells the user to
+// check before firing the same write again, instead of inviting a double-post
+// with a plain "try again".
+function badReplyError(method) {
+  const err = new Error(method === 'GET'
+    ? "Couldn't reach Flock. Give it a second and try again."
+    : 'Your signal dropped mid-reply. That may have gone through, so check before trying it again.');
+  err.isNetworkError = true;
+  err.isBadReply = true;
+  return err;
+}
+
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -113,23 +143,40 @@ async function fetchWithTimeout(url, options, timeoutMs) {
   }
 }
 
+// Distinguishes "the body said null" from "the body could not be read at
+// all". On an error status the difference is cosmetic (the status code is the
+// signal); on a 2xx it is the difference between returning data and returning
+// a lie, so request() checks for this sentinel before handing data back.
+const PARSE_FAILED = Symbol('flock-parse-failed');
+
 async function parseBody(res) {
   if (res.status === 204) return null;
   const contentType = res.headers.get('content-type') || '';
   if (contentType.includes('application/json')) {
     // A body that dies mid-download, or a proxy error page mislabeled as
-    // JSON, must not surface as a SyntaxError. The status code is the signal.
-    return res.json().catch(() => null);
+    // JSON, must not surface as a SyntaxError.
+    return res.json().catch(() => PARSE_FAILED);
   }
-  return res.text().catch(() => null);
+  return res.text().catch(() => PARSE_FAILED);
+}
+
+// Guard a 2xx before it is returned as data. Every endpoint is JSON, so a
+// success that is not usable JSON is a network problem wearing a 200. Returns
+// the error to throw, or null when the reply is genuine.
+function badResponseGuard(res, data, method) {
+  if (res.status === 204) return null;
+  const contentType = res.headers.get('content-type') || '';
+  if (!contentType.includes('application/json')) return captivePortalError();
+  if (data === PARSE_FAILED) return badReplyError(method);
+  return null;
 }
 
 // Mid-session token death (24h JWT expiry, password change, account claim).
 // Without this, every request fails 401 forever while the UI looks merely
 // flaky. We clear the token so isLoggedIn() goes false and the next boot
-// lands on sign-in, and we announce it once: App.js already listens for
-// 'flock-toast'; 'flock-session-expired' is there for App.js to route on
-// (see cross-area note in the audit report — not yet wired).
+// lands on sign-in, and we announce it once: App.js listens for 'flock-toast'
+// and routes to sign-in on 'flock-session-expired'; socket.js tears down its
+// connection on the same event so the dead token stops being re-presented.
 //
 // Exclusions: the auth flows themselves (a wrong password is 401 and is not
 // an expired session), requests that carried no token, and account deletion
@@ -224,7 +271,19 @@ async function request(endpoint, options = {}) {
     }
 
     const data = await parseBody(res);
-    if (!res.ok) throw buildHttpError(res, data, endpoint, !!token);
+    if (!res.ok) throw buildHttpError(res, data === PARSE_FAILED ? null : data, endpoint, !!token);
+
+    const guardErr = badResponseGuard(res, data, method);
+    if (guardErr) {
+      // A truncated body on a GET is a blip worth one more shot. A captive
+      // portal is not: it answers the retry with the same login page.
+      if (guardErr.isBadReply && canRetry && attempt < RETRY_DELAYS_MS.length) {
+        await sleep(RETRY_DELAYS_MS[attempt] * (0.75 + Math.random() * 0.5));
+        attempt += 1;
+        continue;
+      }
+      throw guardErr;
+    }
     return data;
   }
 }
@@ -730,7 +789,11 @@ export async function uploadProfileImage(file) {
     body: formData,
   }, UPLOAD_TIMEOUT_MS);
   const data = await parseBody(res);
-  if (!res.ok) throw buildHttpError(res, data, '/api/users/upload-image', !!token);
+  if (!res.ok) throw buildHttpError(res, data === PARSE_FAILED ? null : data, '/api/users/upload-image', !!token);
+  // Same 200-but-not-JSON guard as request(): venue wifi portals intercept
+  // multipart POSTs too, and never retried for the same reason as above.
+  const guardErr = badResponseGuard(res, data, 'POST');
+  if (guardErr) throw guardErr;
   return data;
 }
 
