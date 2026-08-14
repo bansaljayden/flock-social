@@ -957,9 +957,27 @@ function isOpenHour(h, types, openHour, closeHour, closeMinute) {
 // "Now" is always the VENUE's hour, supplied by the caller. Reading the process
 // clock here would score a Philadelphia bar on Railway's UTC afternoon.
 
-// Inside 5 points is a coin flip at this model's accuracy (metadata reports
-// ~58% of predictions within 15), so "quieter" has to clear that margin before
-// we send anyone to a different hour.
+// "Quieter" has to clear this margin before we send anyone to a different hour.
+//
+// Round 18 — THE NUMBER THIS WAS JUSTIFIED WITH WAS STALE. It read "inside 5
+// points is a coin flip at this model's accuracy (metadata reports ~58% of
+// predictions within 15)". 58% is from a model that no longer ships.
+// scripts/ml/models/model_metadata.json, v2.5.0-starling, holdout
+// (barcelona/miami/tokyo, 419k rows): mae 5.81, rmse 12.85, within_5 76.1%,
+// within_10 81.1%, within_15 85.1%. The leave-one-city-out CV run on the same
+// model reports median_ae 0.92.
+//
+// 5 still holds on the real figures, for a better reason than the old one: it
+// is just under the mean absolute error, so a gap smaller than this is inside
+// the band that already contains three quarters of the model's predictions.
+// Recommending a different hour on a difference that size is recommending
+// noise. It is NOT a coin flip — most predictions are close (the median error
+// is under a point) and the mean is dragged out by a thin tail of bad ones,
+// which is exactly why the threshold is set from the spread and not the median.
+//
+// Re-derive this if the model is retrained; the figures above are the ones to
+// re-read, and __tests__/socketTakedownParity.test.js keeps the margin inside
+// the band the metadata actually reports.
 const TIE_MARGIN = 5;
 const NO_WINDOW_LEFT = 'No good window left today';
 
@@ -1226,25 +1244,55 @@ const FEEDBACK_SCORE_SPAN = 80 - 20;
 //     non-skipped submissions and ghost commit refuses to open below 3
 //     (routes/budget.js, routes/billing.js). One rule, one number.
 //   - It is what the anti-gaming story needs. Reports only reach this path
-//     when venue_feedback.verified is true — an HMAC-signed NFC tap at the
-//     venue or accepted membership in a flock that met there — and combined
-//     with the per-reporter dedupe below, moving a venue's public score now
-//     costs three verified identities that were physically at that venue in
-//     the same weekly hour bucket, not one account tapping three times.
+//     when venue_feedback.verified is true, and combined with the per-reporter
+//     dedupe below, moving a venue's public score costs three separate
+//     accounts reporting in the same weekly (day, hour) bucket rather than one
+//     account tapping three times.
+//
+//     Be precise about what `verified` buys, because it is not uniform (see
+//     VERIFIED_PRESENCE_SQL in routes/feedback.js). One of its two branches is
+//     an HMAC-signed NFC tap at the venue inside three hours, which really is
+//     physical presence. The other is accepted membership in a non-cancelled
+//     flock that met at that venue within twelve hours and has at least two
+//     accepted members — good evidence about real users, but self-assertable
+//     by two cooperating accounts, since a flock's venue_id is client-supplied.
+//     routes/feedback.js says so in as many words. So the honest statement of
+//     the floor is "three accounts, and for the flock branch at least three
+//     that accepted the same fabricated plan", NOT "three people who were
+//     provably in the building". Do not restate it as the stronger claim; the
+//     next person tuning this number should see the real cost of an attack.
 //   - The cost of the floor is small and safe: below it the model's own answer
 //     stands, which is the number every other surface already ships.
 const MIN_CALIBRATION_REPORTERS = 3;
 
-// The most any ONE report may move the published score, in points.
+// The most any ONE report may move the published score, in points, ONCE
+// calibration is live for that venue and hour.
 //
-// Deliberately equal to TIE_MARGIN above, which this file already justifies as
-// the width of a coin flip at this model's accuracy: a single stranger's tap
-// must never move the public number by more than the noise the same file
-// refuses to act on. Enforced by construction — the blended weight is capped so
+// Deliberately equal to TIE_MARGIN above, which this file justifies from the
+// shipped model's holdout error: a single stranger's tap must never move the
+// public number by more than the difference the same file refuses to act on as
+// noise. Enforced by construction — the blended weight is capped so
 // that weight * (FEEDBACK_SCORE_SPAN / n) can never exceed it — so the bound
 // survives someone retuning the ladder without re-deriving the arithmetic.
 // (Kept as its own constant rather than referencing TIE_MARGIN, so tuning the
 // best-time margin cannot silently retune what strangers can do to a score.)
+//
+// READ THE QUALIFIER. The bound is on the MARGINAL effect of a report among n
+// reports, and it does not describe the step at the floor. Going from
+// MIN_CALIBRATION_REPORTERS - 1 reporters to MIN_CALIBRATION_REPORTERS switches
+// blending on at once, so the report that crosses the line moves the published
+// number by weight * |feedbackScore - engine| — up to 0.25 * 80 = 20 points if
+// three reporters unanimously contradict the model. That discontinuity is
+// inherent to having a floor at all (some report is always the one that turns
+// calibration on) and it is the deliberate trade: below the floor user feedback
+// is worth nothing, above it the first three verified reporters are worth
+// having. What keeps the step honest is the gate in FRONT of it, not this cap:
+// venue_feedback.verified, and the per-account dedupe below that makes three
+// reports three people rather than one person three times. Read what `verified`
+// actually proves in the MIN_CALIBRATION_REPORTERS note above before leaning on
+// it — one of its two branches is presence, the other is not. Do not restate
+// this constant as "no user feedback can move a score by more than 5 points";
+// that is not what it enforces.
 const MAX_SINGLE_REPORT_LEVERAGE = 5;
 
 // A report is evidence about how busy a place is, and that evidence goes stale.
@@ -1254,8 +1302,12 @@ const MAX_SINGLE_REPORT_LEVERAGE = 5;
 // last spring. It also puts a clock on influence — an account that reported
 // once cannot keep steering that venue's slot forever.
 //
-// This is a backstop, not the primary control: the SQL should not be reading
-// year-old rows in the first place. See the note on the query below.
+// This is a backstop, not the primary control. The same window is enforced in
+// SQL (`created_at > NOW() - INTERVAL '28 days'` on all three calibration
+// reads), which is the cheaper place for it and the only place that stops the
+// single-venue LIMIT 50 spending its budget on rows that were going to be
+// discarded. Keep the two equal — __tests__/calibrationQueries.test.js compares
+// this constant against the interval in each query.
 const CALIBRATION_MAX_AGE_MS = 28 * 24 * 60 * 60 * 1000;
 
 function calibrationRowTime(row) {
@@ -1269,26 +1321,38 @@ function calibrationRowTime(row) {
 // From raw feedback rows to the set of reports that may vote: recent, and one
 // per account.
 //
-// ONE VOTE PER ACCOUNT. The calibration query selects every matching row, so a
-// single account that filed six reports for the same venue and hour used to
-// arrive as six independent voices — which both cleared any sample floor by
-// itself and pushed the blend weight up the ladder. Newest report per user_id
-// wins; an account revising its own opinion is one opinion.
+// ONE VOTE PER ACCOUNT. A single account that filed six reports for the same
+// venue and hour used to arrive as six independent voices — which both cleared
+// any sample floor by itself and pushed the blend weight up the ladder. Newest
+// report per user_id wins; an account revising its own opinion is one opinion.
 //
-// THE ROW MUST CARRY user_id FOR THAT TO WORK. routes/crowd.js currently
-// selects `crowd_level, predicted_score` and nothing else, so in production
-// these rows arrive anonymous and each one still counts as its own reporter.
-// Rows without a user_id are therefore counted individually — degrading to the
-// old behaviour rather than silently switching calibration off for the whole
-// product — and the fix belongs in that file's three SELECTs. Reported, not
-// edited; it is not my file.
+// THE ROW CARRIES user_id AND created_at. It did not always: routes/crowd.js
+// selected `crowd_level, predicted_score` and nothing else, so both protections
+// here degraded to "keep every row" in production while looking enforced in
+// this file. All three calibration SELECTs now project `user_id, created_at`
+// and bound the age in SQL with `created_at > NOW() - INTERVAL '28 days'`, and
+// the single-venue read additionally collapses to `DISTINCT ON (user_id)
+// ... ORDER BY user_id, created_at DESC` so its LIMIT 50 means fifty reporters
+// rather than fifty rows one account can own.
+// __tests__/calibrationQueries.test.js pins all of that, including that the
+// SQL interval and CALIBRATION_MAX_AGE_MS stay the same window.
 //
-// RECENCY. Same story: the age filter here can only act on rows that carry
-// created_at, and the SELECTs do not ask for it either. The real fix is a
-// `created_at > NOW() - INTERVAL '28 days'` predicate in the query, which is
-// also the cheaper place to do it — idx_venue_feedback_user_created
-// (migration 013) already indexes (user_id, created_at DESC), and bounding it
-// in SQL means the LIMIT 50 stops discarding recent rows in favour of old ones.
+// So what runs below is a SECOND line of defence over rows that have already
+// been deduped and aged in the database, not the only one. Keep it anyway: it
+// is what makes buildCalibrationAdjustment safe to call with rows from any
+// caller, and it is why a future query that forgets a predicate degrades to
+// weaker filtering instead of to none.
+//
+// The one behaviour that is still a graceful degradation rather than a rule:
+// a row with a NULL user_id cannot be attributed, so it is counted
+// individually instead of being dropped. Nothing writes such a row today
+// (venue_feedback.user_id is set from the authenticated caller and CASCADEs on
+// delete), and on the single-venue path Postgres collapses NULLs together
+// under DISTINCT ON. The batch and alternatives queries do not dedupe in SQL,
+// so if a NULL-reporter row ever became writable it would count once per row
+// there — worth a predicate in those two SELECTs at that point.
+// Likewise a row whose created_at is unreadable is kept, because the SQL
+// window has already excluded anything genuinely old.
 function usableCalibrationReports(feedbackRows, nowMs) {
   const cutoff = nowMs - CALIBRATION_MAX_AGE_MS;
   const byReporter = new Map();
