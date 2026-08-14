@@ -3,6 +3,15 @@ import './PrivacyPolicy.css';
 
 const CONTACT_EMAIL = 'social@flockcorp.com';
 
+// PrivacyPolicy.css's --pp-ink-3 is commented "meta — 4.6:1 on paper". It is
+// not: #6b7a8c on #f1ede0 measures 3.75:1, and 3.42:1 on the --pp-paper-2
+// panels. That is a WCAG 1.4.3 failure for every string it carries, all of
+// which are 13-16px body text. The token is shared by six pages and lives in a
+// file this pass does not own, so the two pages it does own step off it here
+// and the token itself is reported instead of edited. --pp-ink-2 is the next
+// step up and is defined in BOTH themes: 8.14:1 light, 10.12:1 dark.
+const READABLE = { color: 'var(--pp-ink-2)' };
+
 // The public why-does-this-exist page: what users get, why venues pay, and
 // what the forecast model actually is. Every claim on this page is real and
 // verifiable in the product (SLOP-AUDIT.md C1: never advertise what doesn't
@@ -16,11 +25,13 @@ export default function AboutPage() {
 
   return (
     <main className="pp">
-      <a href="/" className="pp-back">&larr; flockcorp.com</a>
+      <a href="/" className="pp-back" style={READABLE}>
+        <span aria-hidden="true">&larr;</span> flockcorp.com
+      </a>
 
       <header className="pp-header">
         <h1>What Flock is</h1>
-        <p className="pp-meta">And why it works as a business.</p>
+        <p className="pp-meta" style={READABLE}>And why it works as a business.</p>
       </header>
 
       <section>
@@ -69,6 +80,22 @@ export default function AboutPage() {
         </p>
       </section>
 
+      {/* "how many groups considered it this week" was cut from the paragraph
+          below. It does not exist: `grep -ri considered backend/` returns
+          exactly one hit, and it is a comment in venueDashboard.js quoting the
+          VENUE-BILLING.md PRICING TABLE. There is no route, no query and no UI
+          for it. LandingPage cut the identical claim on 2026-08-12 and this
+          page kept it, so the site was still advertising a screen that had
+          already been deleted (SLOP-AUDIT C1 / design rule 5). All three
+          replacements are shipping code: GET /incoming-flocks (the flocks that
+          selected this venue), GET /intelligence (the hour-by-hour demand
+          curve, same crowd model users see), and venue promotions, which
+          App.js fetches through getPublicPromotions onto the venue detail
+          screen, i.e. in front of a group while it is choosing.
+
+          KEEP COMMENTS LIKE THIS OUTSIDE THE <p>. A JSX expression container
+          between two text lines eats the whitespace on both sides of itself,
+          so a comment dropped mid-sentence renders "chartsare". */}
       <section>
         <h2>Why venues pay (and users never do)</h2>
         <p>
@@ -76,9 +103,9 @@ export default function AboutPage() {
           tonight. For a bar or restaurant, that is the moment every ad channel
           misses: review sites show what people thought after the fact, social ads
           broadcast to people who aren't going out, and busyness charts are
-          read-only. Flock can tell a venue how many groups considered it this week,
-          when demand for it peaks, and let it put a deal in front of nearby groups
-          mid-decision, which matters most on the slow nights when a couple of extra
+          read-only. Flock can show a venue the flocks that picked it, its own
+          hour-by-hour demand curve, and let it put a deal in front of nearby groups,
+          which matters most on the slow nights when a couple of extra
           tables changes the week.
         </p>
         <p>
@@ -100,8 +127,8 @@ export default function AboutPage() {
 
       <footer className="pp-footer">
         <p>
-          Flock &middot; <a href="/">flockcorp.com</a> &middot;{' '}
-          <a href={`mailto:${CONTACT_EMAIL}`}>{CONTACT_EMAIL}</a>
+          Flock &middot; <a href="/" style={READABLE}>flockcorp.com</a> &middot;{' '}
+          <a href={`mailto:${CONTACT_EMAIL}`} style={READABLE}>{CONTACT_EMAIL}</a>
         </p>
       </footer>
     </main>
