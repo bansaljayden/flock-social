@@ -64,31 +64,195 @@ const newLinkToken = () => {
 // existing RSVP is untouched — that path is already gated on holding a
 // server-issued UUID and cannot create anything.
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// Round 23 — one bounded counter, because the hand-rolled one was neither.
+//
+// The old newGuestLog maintenance was: "if the map holds more than 5000
+// entries, delete the ones that have already EXPIRED". On a one-hour window
+// that deletes nothing at all while a flood is in progress — every entry the
+// flood just made is fresh — so:
+//
+//   * the map had no ceiling. Keys are `ip|flockId` and both halves come from
+//     the request, so an unauthenticated caller rotating source addresses grew
+//     it without bound; and
+//   * past 5000 entries EVERY new-guest request paid a full O(n) scan of it
+//     before doing anything else, so growing the map was also a way to make
+//     each subsequent request more expensive. Measured at 40,000 keys the scan
+//     alone dominated the route.
+//
+// Eviction order is LEAST CONSUMED first, never a clear(). That is the rule
+// utils/probeBudget.js states and routes/checkin.js repeats, and the reason is
+// the attack itself: a flooder SPENDS their allowance and only then sprays
+// fresh keys, so their own entry is the oldest thing in the map and an
+// oldest-first policy (or a wholesale clear) deletes precisely the counter they
+// wanted gone. Dropping the entries with almost nothing left to remember costs
+// an attacker a flood of keys that have each already spent a full window.
+//
+// Evict down to a low-water mark rather than to the ceiling, for the reason
+// probeBudget spells out: stopping exactly at the ceiling means a map held at
+// the ceiling sorts itself on every single call.
+//
+// WHY NOT utils/probeBudget.js: createUserBudget refuses any identity that is
+// not a positive integer user id — "a budget denies an identity it cannot pin
+// down" is one of its tested invariants — and neither key here is one. Same
+// reasoning routes/checkin.js records for its anonymous tap budget.
+// ---------------------------------------------------------------------------
+function createGuestCounter({ name, limit, windowMs, maxKeys }) {
+  const entries = new Map(); // key -> { count, resetAt }
+  const lowWater = Math.floor(maxKeys * 0.9);
+
+  function evict(now) {
+    for (const [k, v] of entries) { if (now > v.resetAt) entries.delete(k); }
+    if (entries.size <= maxKeys) return;
+    const byConsumption = [...entries.entries()].sort(
+      (a, b) => (a[1].count - b[1].count) || (a[1].resetAt - b[1].resetAt)
+    );
+    for (const [k] of byConsumption) {
+      if (entries.size <= lowWater) break;
+      entries.delete(k);
+    }
+  }
+
+  function allow(key) {
+    const k = String(key);
+    const now = Date.now();
+    let entry = entries.get(k);
+    if (!entry || now > entry.resetAt) {
+      entry = { count: 0, resetAt: now + windowMs };
+      entries.set(k, entry);
+      // NOTE, because two other caches in this codebase do the opposite: there
+      // is deliberately no delete-before-set here. routes/checkin.js's tapCache
+      // and utils/places.js's venue cache both evict by AGE, so they have to
+      // delete first — a Map keeps an existing key's insertion position, which
+      // would make a frequently refreshed entry look permanently old. Nothing
+      // here reads insertion order: eviction sorts by CONSUMPTION, and the
+      // expiry pass is order-independent. Adding the dance would be a line that
+      // implies a rule this counter does not follow.
+    }
+    if (entry.count >= limit) return false;
+    entry.count += 1;
+    if (entries.size > maxKeys) evict(now);
+    return true;
+  }
+
+  return { name, allow, entries, limit, windowMs, maxKeys };
+}
+
 const NEW_GUESTS_PER_IP_PER_FLOCK = 3;
 const NEW_GUEST_WINDOW_MS = 60 * 60 * 1000;
-const newGuestLog = new Map(); // "ip|flockId" -> { count, resetAt }
+const NEW_GUEST_MAX_KEYS = 5000;
+
+const newGuestCounter = createGuestCounter({
+  name: 'guest-identity',
+  limit: NEW_GUESTS_PER_IP_PER_FLOCK,
+  windowMs: NEW_GUEST_WINDOW_MS,
+  maxKeys: NEW_GUEST_MAX_KEYS,
+});
+// The Map itself stays exported under its old name: __tests__/unauthSurface.js
+// and __tests__/pushRestDelivery.js clear it between cases.
+const newGuestLog = newGuestCounter.entries; // "ip|flockId" -> { count, resetAt }
 
 function allowNewGuest(ip, flockId) {
-  const now = Date.now();
-  if (newGuestLog.size > 5000) {
-    for (const [k, v] of newGuestLog) { if (now > v.resetAt) newGuestLog.delete(k); }
-  }
-  const key = `${ip}|${flockId}`;
-  let entry = newGuestLog.get(key);
-  if (!entry || now > entry.resetAt) {
-    entry = { count: 0, resetAt: now + NEW_GUEST_WINDOW_MS };
-    newGuestLog.set(key, entry);
-  }
-  if (entry.count >= NEW_GUESTS_PER_IP_PER_FLOCK) return false;
-  entry.count += 1;
-  return true;
+  return newGuestCounter.allow(`${ip}|${flockId}`);
 }
+
+// ---------------------------------------------------------------------------
+// Round 23 — a ceiling on what ONE guest identity can make the server do.
+//
+// allowNewGuest bounds how many identities a caller may MINT. Nothing bounded
+// what an identity could then do with itself, and both remaining writes are
+// amplifiers: each one re-runs the member-facing tally and emits a tailored
+// payload into every accepted member's personal room.
+//
+//   - /vote had no repeat guard at all. Re-posting the same venue took a pool
+//     connection, an advisory lock, a DELETE, an INSERT, a tally and a fan-out
+//     to every member — for a vote that changed nothing. (That specific case is
+//     now a no-op; see the route.)
+//   - /rsvp DID guard a repeat, but only a literal one: `changed` compares the
+//     name and the status, so alternating `in` / `out` is "changed" every time
+//     and announced every time. The general limiter admits thousands of
+//     requests per IP per window, and this route needs no account.
+//
+// 30 an hour is far above an honest guest — arrive, answer, change your mind,
+// vote, change your vote — and far below useful as an amplifier.
+//
+// KEYED ON THE guest_rsvps ROW ID that the lookup returned — never on the
+// guest_token the caller sent. Two reasons, and the second was found by
+// mutating the first version of this fix rather than by reading it:
+//
+//   1. The token is caller-supplied, so budgeting on it BEFORE the lookup would
+//      let anyone fill this map with invented UUIDs. Waiting for the row bounds
+//      the key space by rows that actually exist; an unknown token is refused on
+//      its own merits and leaves nothing behind.
+//   2. A UUID has more than one spelling. Postgres compares the `uuid` type
+//      case-insensitively, so `A1B2…` and `a1b2…` are the SAME row — but they
+//      are two different Map keys, and a 36-character hex string can be
+//      re-cased about 2^32 ways. Keying on the token would therefore have been
+//      defeated exactly the way probeBudget.js records the email limiter being
+//      defeated: "by changing the case". The row id has one spelling.
+// ---------------------------------------------------------------------------
+const GUEST_ACTIONS_PER_HOUR = 30;
+const GUEST_ACTION_WINDOW_MS = 60 * 60 * 1000;
+const GUEST_ACTION_MAX_KEYS = 20000;
+
+const guestActionCounter = createGuestCounter({
+  name: 'guest-action',
+  limit: GUEST_ACTIONS_PER_HOUR,
+  windowMs: GUEST_ACTION_WINDOW_MS,
+  maxKeys: GUEST_ACTION_MAX_KEYS,
+});
+const guestActionLog = guestActionCounter.entries;
+
+function allowGuestAction(guestRowId) {
+  return guestActionCounter.allow(guestRowId);
+}
+
+// ---------------------------------------------------------------------------
+// A flock that is over is not a live write surface.
+//
+// resolveLink only asked whether the LINK was revoked, so a share link to a
+// cancelled or completed plan still accepted RSVPs and votes — writing rows,
+// fanning out to every member and pushing the host "Alice is in!" about a plan
+// they had already called off. Reading stays open (GET /:token still answers,
+// and the preview carries `status`, which is how the holder finds out the plan
+// is off); only the writes are refused.
+// ---------------------------------------------------------------------------
+const TERMINAL_FLOCK_STATUSES = new Set(['completed', 'cancelled']);
+const flockIsOver = (link) => TERMINAL_FLOCK_STATUSES.has(String(link.status || ''));
 
 // Two display names are "the same" for takedown purposes if they differ only by
 // case, surrounding space, or runs of whitespace. Deliberately conservative: it
 // is a replay guard, not a similarity engine.
 function normalizeGuestName(name) {
   return String(name || '').trim().toLowerCase().replace(/\s+/g, ' ');
+}
+
+// ---------------------------------------------------------------------------
+// Is this display name one a moderator has already removed from this flock?
+//
+// ONE definition, because round 23 found the takedown had two doors and only
+// one of them was locked — see the RSVP route. `run` is the query function to
+// use, so the insert path can ask inside its transaction (under the same
+// advisory lock that serialises the cap check) and the edit path can ask on the
+// pool without checking a connection out.
+//
+// The comparison is normalised on both sides: SQL lowercases, trims and
+// collapses whitespace runs in the stored name, normalizeGuestName does the
+// same to the candidate. It runs on the SANITIZED name, because freeText's
+// customSanitizer has already fired by the time a handler reads req.body — so
+// `B<b></b>ob` is compared as `bob` and markup cannot split a removed name past
+// the guard the way it once split words past the profanity filter.
+// ---------------------------------------------------------------------------
+async function nameIsTakenDown(run, flockId, name) {
+  const r = await run(
+    `SELECT 1 FROM guest_rsvps
+     WHERE flock_id = $1
+       AND COALESCE(is_hidden, false) = true
+       AND lower(regexp_replace(btrim(name), '\\s+', ' ', 'g')) = $2
+     LIMIT 1`,
+    [flockId, normalizeGuestName(name)]
+  );
+  return r.rows.length > 0;
 }
 
 // Resolve a link token to its live flock, or null.
@@ -263,6 +427,9 @@ router.post('/:token/rsvp',
 
       const link = await resolveLink(req.params.token);
       if (!link) return res.status(404).json({ error: 'This invite link is no longer active' });
+      if (flockIsOver(link)) {
+        return res.status(409).json({ error: 'This plan is no longer taking RSVPs' });
+      }
 
       const { name, status, guestToken } = req.body;
 
@@ -274,17 +441,48 @@ router.post('/:token/rsvp',
       // Returning guest updates their RSVP; new guest gets a fresh identity.
       if (guestToken) {
         const existing = await pool.query(
-          `SELECT name, status, COALESCE(is_hidden, false) AS is_hidden
+          // `id` is selected for the per-guest budget below — it is the identity
+          // the counter is keyed on, because a uuid has many spellings and a
+          // row id has one.
+          `SELECT id, name, status, COALESCE(is_hidden, false) AS is_hidden
            FROM guest_rsvps WHERE guest_token = $1 AND flock_id = $2`,
           [guestToken, link.flock_id]
         );
         if (existing.rows.length && existing.rows[0].is_hidden) {
           return res.status(403).json({ error: 'This RSVP was removed and cannot be edited' });
         }
+
+        // Round 23 — the takedown had two doors.
+        //
+        // Round 15 made a removed name stick by refusing to INSERT it again,
+        // because dropping your guest_token and re-RSVPing was a one-request
+        // bypass. The guard went on the creation path only, and this is the
+        // other one: a guest holding ANY live token for this flock could simply
+        // RENAME their existing row to the removed name. Same column, same
+        // broadcast to every member, and the row is not hidden so no read
+        // filters it. The per-IP allowance is three identities an hour, so the
+        // same person who was moderated usually still holds one.
+        //
+        // Checked on every edit rather than only when the name changes: the
+        // sanitizer means `B<b></b>ob` and `Bob` are the same submitted value,
+        // and "did it change" is not the question a takedown asks.
+        if (existing.rows.length) {
+          // Only now — the row is confirmed, so the budget's key space is
+          // bounded by rows that exist rather than by tokens a caller invented.
+          if (!allowGuestAction(existing.rows[0].id)) {
+            return res.status(429).json({ error: 'Too many changes. Try again later.' });
+          }
+          if (await nameIsTakenDown((q, p) => pool.query(q, p), link.flock_id, name)) {
+            return res.status(403).json({ error: 'That name cannot be used on this flock. Try a different one.' });
+          }
+        }
+
         // A guest editing their answer is now broadcast (it wasn't before, which
         // is how a host's count silently drifted). That makes an UNAUTHENTICATED
         // route a fan-out amplifier, so a re-POST of the SAME answer — the
-        // cheapest thing to script against a link — announces nothing.
+        // cheapest thing to script against a link — announces nothing. That
+        // guard is necessary and not sufficient: alternating `in` / `out` is
+        // "changed" every time, which is what the per-guest budget above bounds.
         const prior = existing.rows[0] || null;
         const changed = !prior || prior.name !== name || prior.status !== status;
         const upd = await pool.query(
@@ -341,15 +539,11 @@ router.post('/:token/rsvp',
         //
         // Profanity screening does not cover this: the names that get reported
         // are targeted at a person, not obscene, and pass the filter cleanly.
-        const revoked = await client.query(
-          `SELECT 1 FROM guest_rsvps
-           WHERE flock_id = $1
-             AND COALESCE(is_hidden, false) = true
-             AND lower(regexp_replace(btrim(name), '\\s+', ' ', 'g')) = $2
-           LIMIT 1`,
-          [link.flock_id, normalizeGuestName(name)]
-        );
-        if (revoked.rows.length > 0) {
+        //
+        // Round 23: the same question the EDIT path now asks, from the same
+        // definition, so the two doors cannot be locked differently.
+        const revoked = await nameIsTakenDown((q, p) => client.query(q, p), link.flock_id, name);
+        if (revoked) {
           blockedByTakedown = true;
           await client.query('ROLLBACK');
         } else {
@@ -404,6 +598,9 @@ router.post('/:token/vote',
 
       const link = await resolveLink(req.params.token);
       if (!link) return res.status(404).json({ error: 'This invite link is no longer active' });
+      if (flockIsOver(link)) {
+        return res.status(409).json({ error: 'This plan is no longer taking votes' });
+      }
 
       const { guestToken, venueName } = req.body;
 
@@ -413,6 +610,17 @@ router.post('/:token/vote',
         [guestToken, link.flock_id]
       );
       if (!guest.rows.length) return res.status(403).json({ error: 'RSVP first, then vote' });
+      const guestId = guest.rows[0].id;
+
+      // Round 23: budget the identity, now that the database has confirmed it
+      // and named it. Before the confirmation the key would be a caller-invented
+      // UUID; after it, the key space is bounded by rows that exist and the key
+      // itself has exactly one spelling. Nothing below this line is free — the
+      // tally and the per-member fan-out are the expensive part of this route,
+      // and this is an UNAUTHENTICATED caller.
+      if (!allowGuestAction(guestId)) {
+        return res.status(429).json({ error: 'Too many votes. Try again later.' });
+      }
 
       // Guests vote on venues the group is already considering — they can't
       // introduce new venues from outside the flock.
@@ -431,26 +639,54 @@ router.post('/:token/vote',
       // Delete-then-insert under a per-guest advisory lock, so two taps racing
       // each other can't both land (guest.rsvp id, not the flock: guests on the
       // same link vote independently).
-      const guestId = guest.rows[0].id;
-      const client = await pool.connect();
-      try {
-        await client.query('BEGIN');
-        await client.query("SELECT pg_advisory_xact_lock(hashtext('guest_vote:' || $1::text))", [String(guestId)]);
-        await client.query(
-          'DELETE FROM guest_votes WHERE flock_id = $1 AND guest_rsvp_id = $2 AND venue_name <> $3',
-          [link.flock_id, guestId, venueName]
-        );
-        await client.query(
-          `INSERT INTO guest_votes (flock_id, guest_rsvp_id, venue_name)
-           VALUES ($1, $2, $3) ON CONFLICT (flock_id, guest_rsvp_id, venue_name) DO NOTHING`,
-          [link.flock_id, guestId, venueName]
-        );
-        await client.query('COMMIT');
-      } catch (txErr) {
-        await client.query('ROLLBACK').catch(() => {});
-        throw txErr;
-      } finally {
-        client.release();
+      // ---------------------------------------------------------------------
+      // Round 23: a vote that changes nothing does nothing.
+      //
+      // The RSVP route has refused to announce an unchanged answer since round
+      // 14, and said why: an unauthenticated route that fans out to every
+      // member is an amplifier, and re-posting the same value is the cheapest
+      // thing to script against a share link. This route had no equivalent, so
+      // one guest token could spend the general limiter's whole allowance on
+      // pool checkouts, advisory locks, paired writes, two tally queries and an
+      // N-member socket fan-out, all to re-assert a vote already on record.
+      //
+      // Asked as one cheap counting query rather than by reading the row back:
+      // the no-op is only correct when this venue is the guest's ONLY vote, so
+      // the answer needed is "how many, and how many of them are this one".
+      // A stale extra row (there should never be one — the write below is a
+      // delete-then-insert) therefore falls through to the normal path and gets
+      // cleaned up, rather than being mistaken for a no-op.
+      // ---------------------------------------------------------------------
+      const current = await pool.query(
+        `SELECT COUNT(*)::int AS n,
+                COUNT(*) FILTER (WHERE venue_name = $3)::int AS same
+         FROM guest_votes WHERE flock_id = $1 AND guest_rsvp_id = $2`,
+        [link.flock_id, guestId, venueName]
+      );
+      const cur = current.rows[0];
+      const unchanged = !!cur && cur.n === 1 && cur.same === 1;
+
+      if (!unchanged) {
+        const client = await pool.connect();
+        try {
+          await client.query('BEGIN');
+          await client.query("SELECT pg_advisory_xact_lock(hashtext('guest_vote:' || $1::text))", [String(guestId)]);
+          await client.query(
+            'DELETE FROM guest_votes WHERE flock_id = $1 AND guest_rsvp_id = $2 AND venue_name <> $3',
+            [link.flock_id, guestId, venueName]
+          );
+          await client.query(
+            `INSERT INTO guest_votes (flock_id, guest_rsvp_id, venue_name)
+             VALUES ($1, $2, $3) ON CONFLICT (flock_id, guest_rsvp_id, venue_name) DO NOTHING`,
+            [link.flock_id, guestId, venueName]
+          );
+          await client.query('COMMIT');
+        } catch (txErr) {
+          await client.query('ROLLBACK').catch(() => {});
+          throw txErr;
+        } finally {
+          client.release();
+        }
       }
 
       const venues = await guestTallies(link.flock_id);
@@ -462,8 +698,15 @@ router.post('/:token/vote',
       // and their tally arrives complete rather than needing a refetch. One
       // implementation of that tally, in the file that owns it — see
       // broadcastGuestVote in routes/venues.js.
-      await broadcastGuestVote(req.app.get('io'), link.flock_id, venueName);
+      //
+      // Not for a no-op: the members' tally is byte-for-byte what they already
+      // hold, so the only thing the fan-out would carry is load.
+      if (!unchanged) {
+        await broadcastGuestVote(req.app.get('io'), link.flock_id, venueName);
+      }
 
+      // The guest still gets the live tally back either way — their client asked
+      // what the standings are, and "you already voted for this" is not an error.
       res.status(201).json({ venues });
     } catch (err) {
       console.error('Guest vote error:', err);
@@ -472,4 +715,22 @@ router.post('/:token/vote',
   }
 );
 
-module.exports = { router, newLinkToken, allowNewGuest, normalizeGuestName, newGuestLog };
+module.exports = {
+  router,
+  newLinkToken,
+  allowNewGuest,
+  normalizeGuestName,
+  newGuestLog,
+  // Round 23 — exposed for __tests__/guestSurfaceAbuse.test.js, which pins the
+  // ceilings and the eviction order rather than trusting them.
+  allowGuestAction,
+  guestActionLog,
+  // The counter factory itself, so its eviction ORDER can be exercised on a
+  // ten-key instance instead of by flooding the twenty-thousand-key one.
+  createGuestCounter,
+  GUEST_ACTIONS_PER_HOUR,
+  GUEST_ACTION_MAX_KEYS,
+  NEW_GUESTS_PER_IP_PER_FLOCK,
+  NEW_GUEST_MAX_KEYS,
+  TERMINAL_FLOCK_STATUSES,
+};
