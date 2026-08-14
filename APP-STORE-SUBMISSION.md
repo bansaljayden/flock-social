@@ -227,30 +227,23 @@ contains two em dashes; do not paste from it).
 
 ### 6.1 App name (limit 30 characters)
 
-> Flock
-
-**5 characters.** "Flock" is a contested name on the App Store, and App Store
-Connect enforces name uniqueness at reservation time, so this may simply be
-unavailable. The subtitle carries the disambiguation either way. If the bare
-name is taken, the fallback is:
-
 > Flock: Plan Nights Out
 
-**22 characters.** If the fallback is used, swap the subtitle for the
-alternate in 6.2 so the two do not say the same thing twice (duplicated words
-also waste keyword index space).
+**22 characters.** This IS the live name: Jayden set it in App Store Connect
+on 2026-08-14 after the bare name "Flock" was confirmed unavailable (the API
+returned STATE_ERROR.DUPLICATE_NAME.DIFFERENT_ACCOUNT; another account holds
+it). The subtitle below is the alternate from the original plan, switched per
+that plan's own rule: name and subtitle must not say the same thing twice
+(duplicated words also waste keyword index space).
 
 ### 6.2 Subtitle (limit 30 characters)
-
-> Plan nights out with friends
-
-**28 characters.** Says what the app is in one line, no superlatives.
-Alternate, for use only with the fallback name above:
 
 > Vote, match budgets, go
 
 **23 characters.** All three verbs name shipped surfaces (venue voting,
-anonymous budget matching, the confirmed plan).
+anonymous budget matching, the confirmed plan). The original primary subtitle
+"Plan nights out with friends" retired with the bare name; its words now live
+in the name itself.
 
 ### 6.3 Keyword field (limit 100 bytes)
 
@@ -587,21 +580,27 @@ dashes, no "seamless" class words. If the pipeline ships bare screenshots
 with no caption frames, that is also fine; the captions below are then
 unused rather than required.
 
+This table matches what the capture pipeline
+(`frontend/scripts/capture-screenshots.mjs`) actually delivered on
+2026-08-14: six screens, light and dark, 1320x2868 (the required 6.9 inch
+slot; the 1284x2778 6.5 inch fallbacks sit in `appstore/extra-6.5in/` for
+manual upload if ever wanted). The original 8-slot plan named budget, split,
+and safety screens the pipeline could not capture headlessly (they need
+mid-flow modal state); those three remain the first candidates for a future
+re-shoot.
+
 | # | Files | Screen to show | Caption |
 |---|---|---|---|
-| 1 | `01-plan-light.png` / `01-plan-dark.png` | A confirmed flock: venue, time, who is in | The plan, decided: place, time, and who is in. |
-| 2 | `02-vote-light.png` / `02-vote-dark.png` | Venue voting list mid-vote | Everyone suggests. Everyone votes. |
-| 3 | `03-crowd-light.png` / `03-crowd-dark.png` | Venue page with the hour-by-hour crowd forecast | See how busy it is before you leave. |
-| 4 | `04-budget-light.png` / `04-budget-dark.png` | Budget entry with the group ceiling revealed | Type your budget in private. The group only sees the ceiling. |
-| 5 | `05-split-light.png` / `05-split-dark.png` | Bill split with per-person shares and pay buttons | Split the bill. Everyone sees their share. |
-| 6 | `06-chat-light.png` / `06-chat-dark.png` | Flock chat with a venue card in the thread | The chat and the plan live in the same place. |
-| 7 | `07-birdie-light.png` / `07-birdie-dark.png` | Birdie answering a "where's busy" question with venues | Ask Birdie what is busy right now. |
-| 8 | `08-safety-light.png` / `08-safety-dark.png` | Safety screen: live share toggle + SOS | Live location for your flock, and one-tap SOS to trusted contacts. |
+| 1 | `01-nest-light.png` / `01-nest-dark.png` | Home: flocks with Needs Votes chips, Tonight? pulse | Every plan in one place, and who still owes a vote. |
+| 2 | `02-create-light.png` / `02-create-dark.png` | Start-a-flock form with a night and time picked | Name it, pick a night, invite your people. |
+| 3 | `03-chat-light.png` / `03-chat-dark.png` | Flock chat with a venue card and the budget meter | The chat and the plan live in the same place. |
+| 4 | `04-crowd-light.png` / `04-crowd-dark.png` | Search results with real crowd percentages | See how busy it is before you leave. |
+| 5 | `05-discover-light.png` / `05-discover-dark.png` | Live map with real venues and photo pins | Real venues on a live map. |
+| 6 | `06-birdie-light.png` / `06-birdie-dark.png` | Birdie answering a "where's poppin" question with venue cards | Ask Birdie what is busy right now. |
 
-Story logic: the first three sell the decision (the product's whole point),
-4 and 5 sell the money mechanics, 6 grounds it in the chat it replaces, 7
-and 8 are the differentiators that reward a scroller who gets that far. If
-the set must be 6, drop 7 and 8 last; never drop 1 to 3.
+Story logic: 1 to 3 sell the decision loop (the product's whole point), 4
+and 5 sell the crowd intelligence, 6 is the differentiator that rewards a
+scroller who gets that far. Never drop 1 to 3.
 
 Screenshot content rules for whoever frames them: no em dashes in any
 caption (checked above), no fake counts or seeded vanity metrics in the UI,

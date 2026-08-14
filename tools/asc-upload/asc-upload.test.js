@@ -105,9 +105,10 @@ test('real doc: every computed count matches the doc-declared count, zero valida
   const errors = validateListing(listing);
   assert.deepEqual(errors, [], `validation must pass on the real doc, got: ${JSON.stringify(errors)}`);
   // Spot-check against the doc's own numbers (section 6).
-  assert.equal(listing.name, 'Flock');
+  assert.equal(listing.name, 'Flock: Plan Nights Out');
   assert.equal(listing.name.length, listing.declaredCounts.name.chars);
-  assert.equal(listing.subtitle.length, 28);
+  assert.equal(listing.subtitle, 'Vote, match budgets, go');
+  assert.equal(listing.subtitle.length, 23);
   assert.equal(listing.description.length, 2140);
   assert.equal(Buffer.byteLength(listing.keywords, 'utf8'), 98);
   assert.equal(listing.promotionalText.length, 157);
@@ -132,14 +133,14 @@ test('real doc: URLs are the canonical https://www forms', () => {
   assert.equal(listing.privacyPolicyUrl, 'https://www.flockcorp.com/privacy');
 });
 
-test('real doc: screenshot plan has 8 slots, 16 files, naming convention holds', () => {
+test('real doc: screenshot plan has 6 slots, 12 files, naming convention holds', () => {
   const listing = parseSubmissionDoc(DOC);
-  assert.equal(listing.screenshotPlan.length, 8);
+  assert.equal(listing.screenshotPlan.length, 6);
   const manifest = buildScreenshotManifest(listing.screenshotPlan, new Map());
   assert.deepEqual(manifest.errors, []);
-  assert.equal(manifest.missing.length, 16);
-  assert.ok(manifest.missing.includes('01-plan-light.png'));
-  assert.ok(manifest.missing.includes('08-safety-dark.png'));
+  assert.equal(manifest.missing.length, 12);
+  assert.ok(manifest.missing.includes('01-nest-light.png'));
+  assert.ok(manifest.missing.includes('06-birdie-dark.png'));
 });
 
 // ---------------------------------------------------------------------------
@@ -173,7 +174,7 @@ test('mutation: over-100-byte keyword field fails naming the byte limit', () => 
 
 test('mutation: over-30-character app name fails naming the limit', () => {
   // ^...$ with /m tolerates CRLF line endings in the doc.
-  const mutated = DOC.replace(/^> Flock\r?$/m, '> Flock The Coordination App For Nights Out');
+  const mutated = DOC.replace(/^> Flock: Plan Nights Out\r?$/m, '> Flock The Coordination App For Nights Out Tonight');
   const errors = validateListing(parseSubmissionDoc(mutated));
   const limitError = errors.find((e) => e.field === 'name' && /limit is 30.*FIX/s.test(e.message));
   assert.ok(limitError, `expected a name over-limit error, got: ${JSON.stringify(errors)}`);
@@ -230,12 +231,12 @@ test('mutation: an unsupported pixel size fails listing the allowed sizes', () =
 
 test('missing files are listed and never fatal (metadata-only continue)', () => {
   const listing = parseSubmissionDoc(DOC);
-  const files = new Map([['01-plan-light.png', { size: 100, width: 1290, height: 2796 }]]);
+  const files = new Map([['01-nest-light.png', { size: 100, width: 1290, height: 2796 }]]);
   const manifest = buildScreenshotManifest(listing.screenshotPlan, files);
   assert.deepEqual(manifest.errors, []);
   assert.equal(manifest.present.length, 1);
-  assert.equal(manifest.missing.length, 15);
-  assert.ok(manifest.missing.includes('01-plan-dark.png'));
+  assert.equal(manifest.missing.length, 11);
+  assert.ok(manifest.missing.includes('01-nest-dark.png'));
 });
 
 test('mutation: a planned file breaking the naming convention fails naming the convention', () => {
@@ -256,7 +257,7 @@ test('a stray misnamed file on disk fails naming the convention', () => {
   assert.ok(manifest.errors.some((e) => /naming convention/.test(e) && /FIX/.test(e)));
 });
 
-test('per-set cap: 16 same-size files plan 10 uploads, all lights first, 6 skipped', () => {
+test('per-set cap: 12 same-size files plan 10 uploads, all lights first, 2 skipped', () => {
   const listing = parseSubmissionDoc(DOC);
   const files = new Map();
   for (const slot of listing.screenshotPlan) {
@@ -267,10 +268,10 @@ test('per-set cap: 16 same-size files plan 10 uploads, all lights first, 6 skipp
   const uploads = planScreenshotUploads(manifest);
   const set = uploads.APP_IPHONE_67;
   assert.equal(set.upload.length, MAX_SCREENSHOTS_PER_SET);
-  assert.equal(set.skipped.length, 6);
-  assert.deepEqual(set.upload.slice(0, 8).map((s) => s.mode), Array(8).fill('light'));
-  assert.deepEqual(set.upload.slice(0, 8).map((s) => s.slot), [1, 2, 3, 4, 5, 6, 7, 8]);
-  assert.deepEqual(set.upload.slice(8).map((s) => `${s.slot}-${s.mode}`), ['1-dark', '2-dark']);
+  assert.equal(set.skipped.length, 2);
+  assert.deepEqual(set.upload.slice(0, 6).map((s) => s.mode), Array(6).fill('light'));
+  assert.deepEqual(set.upload.slice(0, 6).map((s) => s.slot), [1, 2, 3, 4, 5, 6]);
+  assert.deepEqual(set.upload.slice(6).map((s) => `${s.slot}-${s.mode}`), ['1-dark', '2-dark', '3-dark', '4-dark']);
 });
 
 // ---------------------------------------------------------------------------
@@ -366,7 +367,7 @@ test('CLI dry run exits 0, prints the plan, missing screenshots, and the never-t
   const result = spawnSync(process.execPath, [join(HERE, 'upload.mjs'), '--dry-run'], { encoding: 'utf8' });
   assert.equal(result.status, 0, `stderr: ${result.stderr}`);
   assert.match(result.stdout, /DRY RUN, no network writes/);
-  assert.match(result.stdout, /01-plan-light\.png/); // listed as missing today
+  assert.match(result.stdout, /present: 12 of 12 planned/); // captures exist on disk now
   assert.match(result.stdout, /appStoreVersionLocalizations/);
   assert.match(result.stdout, /Privacy nutrition labels: NOT pushed/);
   assert.match(result.stdout, /Age rating questionnaire: NOT pushed/);
