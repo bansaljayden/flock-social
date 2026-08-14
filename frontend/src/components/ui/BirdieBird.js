@@ -188,6 +188,56 @@ const layer = {
   willChange: 'auto',
 };
 
+// ---------------------------------------------------------------------------
+// BirdieStill — the same photographed bird, standing still.
+//
+// For the dashboards and other work surfaces: they get the mark, not the
+// machinery. No rAF loop, no window listeners, no IntersectionObserver, no
+// compositor promotion — two <img> layers at rest, which is pixel-identical
+// to what BirdieBird renders between moves.
+//
+// It still composites body + head, and that is not optional. The body file's
+// own head is deliberately soft (the sharp turning head normally sits over
+// it, and what shows through mid-turn should be more bird rather than a
+// hole), so the bare body image reads as a blurry face at ANY size. If you
+// want the bird without the head layer, you want a different asset.
+//
+// The wrapper carries explicit width/height, so the box is reserved before
+// either photo arrives and nothing below it shifts when they do. WebP through
+// <picture> with the PNG fallback, same as everything else here.
+// ---------------------------------------------------------------------------
+export function BirdieStill({ size = 96, bird = BIRDIE, style, eager = false }) {
+  const loading = eager ? 'eager' : 'lazy';
+  return (
+    <div style={{ width: size, height: size, position: 'relative', ...style }} aria-hidden="true">
+      <picture style={PICTURE}>
+        <source type="image/webp" srcSet={`${bird.body}-400.webp 1x, ${bird.body}.webp 2x`} />
+        <img
+          src={`${bird.body}-400.png`}
+          srcSet={`${bird.body}-400.png 1x, ${bird.body}.png 2x`}
+          alt=""
+          draggable={false}
+          decoding="async"
+          loading={loading}
+          style={layer}
+        />
+      </picture>
+      <picture style={PICTURE}>
+        <source type="image/webp" srcSet={`${bird.head}-400.webp 1x, ${bird.head}.webp 2x`} />
+        <img
+          src={`${bird.head}-400.png`}
+          srcSet={`${bird.head}-400.png 1x, ${bird.head}.png 2x`}
+          alt=""
+          draggable={false}
+          decoding="async"
+          loading={loading}
+          style={layer}
+        />
+      </picture>
+    </div>
+  );
+}
+
 // `dark` is accepted so existing call sites keep working. The photo carries
 // its own light and reads on both surfaces, so no per-theme treatment.
 //
