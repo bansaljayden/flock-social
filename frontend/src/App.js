@@ -4704,6 +4704,15 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   // Set when the server answers reauthRequired: 'reauth' — an OAuth account
   // whose session is too old. There is no password to ask for in that case.
   const [deleteNeedsReauth, setDeleteNeedsReauth] = useState(false);
+  // Same pattern as AuthError on the auth screens: the refusal renders with
+  // role="alert" AND takes focus (tabIndex -1, programmatic only). Without the
+  // focus move a keyboard user is left standing on the Delete button — which
+  // the reauth refusal has just disabled — with no idea anything happened.
+  // One ref serves both panels because they never render together.
+  const deleteAlertRef = useRef(null);
+  useEffect(() => {
+    if ((deleteError || deleteNeedsReauth) && deleteAlertRef.current) deleteAlertRef.current.focus();
+  }, [deleteError, deleteNeedsReauth]);
   const [dmSearchText, setDmSearchText] = useState('');
   const [showDmMenu, setShowDmMenu] = useState(false);
   const [showDeleteDmConfirm, setShowDeleteDmConfirm] = useState(false);
@@ -9312,7 +9321,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
               <h1 style={{ fontFamily: 'var(--font-display)', fontSize: 'var(--t-display)', fontWeight: '600', margin: 0, color: 'var(--text-primary)', letterSpacing: '-0.005em', lineHeight: 1.1 }}>Hey, {profileName.split(' ')[0]}</h1>
               {themeMode === 'auto' && isNightModeActive && (
                 <span style={{ display: 'inline-flex', alignItems: 'center', gap: '3px', padding: '2px 7px', borderRadius: '6px', backgroundColor: 'rgba(109,154,195,0.15)', fontSize: 'var(--t-meta)', fontWeight: '500', color: '#a9c7e4', letterSpacing: '0.3px' }}>
-                  {Icons.moon('#a9c7e4', 10)} NIGHT
+                  {Icons.moon('#a9c7e4', 12)} NIGHT
                 </span>
               )}
             </div>
@@ -9409,7 +9418,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 </p>
               </div>
               <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', padding: '3px 8px', borderRadius: '8px', backgroundColor: 'rgba(45,90,135,0.12)', color: 'var(--accent-purple-text)', display: 'inline-flex', alignItems: 'center', gap: '3px', flexShrink: 0 }}>
-                {Icons.vote('var(--accent-purple-text)', 10)} Needs Votes
+                {Icons.vote('var(--accent-purple-text)', 12)} Needs Votes
               </span>
             </button>
           );
@@ -9509,10 +9518,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '10px', marginBottom: '8px' }}>
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <h3 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy, margin: 0, lineHeight: 1.2 }}>{f.name}</h3>
-                    <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '3px 0 0', display: 'flex', alignItems: 'center', gap: '3px' }}>{Icons.mapPin(colors.textSecondary, 10)} {f.venue}</p>
+                    <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '3px 0 0', display: 'flex', alignItems: 'center', gap: '3px' }}>{Icons.mapPin(colors.textSecondary, 12)} {f.venue}</p>
                   </div>
                   <span style={{ fontSize: 'var(--t-meta)', padding: '3px 8px', borderRadius: '10px', fontWeight: '500', flexShrink: 0, whiteSpace: 'nowrap', backgroundColor: f.status === 'voting' ? 'rgba(45,90,135,0.12)' : 'var(--icon-bg)', color: f.status === 'voting' ? 'var(--accent-purple-text)' : 'var(--text-secondary)', display: 'flex', alignItems: 'center', gap: '3px' }}>
-                    {f.status === 'voting' ? Icons.vote('var(--accent-purple-text)', 9) : Icons.check('var(--text-secondary)', 9)} {f.status === 'voting' ? 'Needs Votes' : 'Locked In'}
+                    {f.status === 'voting' ? Icons.vote('var(--accent-purple-text)', 12) : Icons.check('var(--text-secondary)', 12)} {f.status === 'voting' ? 'Needs Votes' : 'Locked In'}
                   </span>
                 </div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -9545,21 +9554,17 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
       return '$'.repeat(level);
     };
 
+    // System stars, not a local drawing. The hand-rolled version predated the
+    // icon system, reused id="halfStar" on every instance (duplicate DOM ids),
+    // and was five silent glyphs. Rounding replaces the half-star gradient:
+    // every other star row in the app rounds, and the exact figure is carried
+    // by the label and the number printed beside the row.
     const StarRating = ({ rating }) => {
       if (!rating) return null;
-      const full = Math.floor(rating);
-      const half = rating - full >= 0.3;
       return (
-        <span style={{ display: 'inline-flex', alignItems: 'center', gap: '1px' }}>
-          {[...Array(5)].map((_, i) => (
-            <svg aria-hidden="true" focusable="false" key={i} width={12} height={12} viewBox="0 0 24 24" fill={i < full ? '#F59E0B' : (i === full && half ? 'url(#halfStar)' : 'var(--star-empty)')} stroke="none">
-              {i === full && half && (
-                <defs><linearGradient id="halfStar"><stop offset="50%" stopColor="#F59E0B"/><stop offset="50%" stopColor="var(--star-empty)"/></linearGradient></defs>
-              )}
-              <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/>
-            </svg>
-          ))}
-        </span>
+        <div role="img" aria-label={`${rating} out of 5 stars`} style={{ display: 'flex', gap: '1px' }}>
+          {[1, 2, 3, 4, 5].map(s => <React.Fragment key={s}>{s <= Math.round(rating) ? Icons.starFilled(colors.amber, 12) : Icons.star('var(--star-empty)', 12)}</React.Fragment>)}
+        </div>
       );
     };
 
@@ -10140,8 +10145,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                   {/* Google returns no rating for plenty of places. Unguarded,
                       this printed the literal word "undefined" next to a star. */}
                   {activeVenue.stars != null && (
+                    /* A star rating drawn with the party-popper glyph: every
+                       other rating chip in the app pairs the number with
+                       starFilled, and a popper next to "4.6" says nothing. */
                     <div style={{ display: 'flex', alignItems: 'center', gap: '2px' }}>
-                      {Icons.party('#fbbf24', 10)}
+                      {Icons.starFilled('#fbbf24', 12)}
                       <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: 'var(--text-primary)' }}>{activeVenue.stars}</span>
                     </div>
                   )}
@@ -10602,7 +10610,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 <motion.div initial={{ opacity: 0, y: 14 }} animate={cd ? { opacity: 1, y: 0 } : { opacity: 0, y: 14 }} transition={{ delay: 0.8, duration: 0.4, ease: 'easeOut' }} style={{ display: 'flex', gap: '6px', marginBottom: '6px' }}>
                   <div style={{ flex: 1, backgroundColor: 'var(--bg-card-solid)', borderRadius: '8px', padding: '4px 8px', border: '1px solid var(--border-subtle)' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '4px', marginBottom: '2px' }}>
-                      {Icons.trendingUp(colors.red, 10)}
+                      {Icons.trendingUp(colors.red, 12)}
                       <span style={{ fontSize: 'var(--t-micro)', color: 'var(--text-secondary)', textTransform: 'uppercase' }}>Busiest Hours</span>
                     </div>
                     {/* `peak` is one of the fields the forecast gate withholds
@@ -10623,7 +10631,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                   </div>
                   <div style={{ flex: 1, backgroundColor: 'var(--bg-card-solid)', borderRadius: '8px', padding: '4px 8px', border: '1px solid var(--border-subtle)' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '4px', marginBottom: '2px' }}>
-                      {Icons.zap(colors.amber, 10)}
+                      {Icons.zap(colors.amber, 12)}
                       <span style={{ fontSize: 'var(--t-micro)', color: 'var(--text-secondary)', textTransform: 'uppercase' }}>{isClosed ? 'Status' : /^\d|^~|wait/i.test(waitText) ? 'Est. Wait Right Now' : 'Crowd Level'}</span>
                     </div>
                     <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: isClosed ? colors.red : colors.navy }}>{isClosed ? 'Closed' : waitText}</span>
@@ -10968,7 +10976,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                     <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap', marginBottom: '6px' }}>
                       {event.venue_name && (
                         <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', gap: '3px' }}>
-                          {Icons.mapPin('var(--text-tertiary)', 11)} {event.venue_name}
+                          {Icons.mapPin('var(--text-tertiary)', 12)} {event.venue_name}
                         </span>
                       )}
                       {dist != null && (
@@ -10978,7 +10986,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                     <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
                       {timeStr && (
                         <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: colors.navy, display: 'flex', alignItems: 'center', gap: '3px' }}>
-                          {Icons.clock(colors.navy, 11)} {timeStr}
+                          {Icons.clock(colors.navy, 12)} {timeStr}
                         </span>
                       )}
                       {!event.image_url && dateStr && (
@@ -11237,10 +11245,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
               <div style={{ flex: 1 }}>
                 <p style={{ fontWeight: '600', fontSize: 'var(--t-body)', color: colors.navy, margin: 0 }}>{event.title}</p>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '2px' }}>
-                  <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', gap: '3px' }}>{Icons.clock(colors.textSecondary, 10)} {event.time}</span>
-                  <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', gap: '3px' }}>{Icons.mapPin(colors.textSecondary, 10)} {event.venue}</span>
+                  <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', gap: '3px' }}>{Icons.clock(colors.textSecondary, 12)} {event.time}</span>
+                  <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', gap: '3px' }}>{Icons.mapPin(colors.textSecondary, 12)} {event.venue}</span>
                 </div>
-                {event.members > 1 && <div style={{ display: 'flex', alignItems: 'center', gap: '3px', marginTop: '4px' }}>{Icons.users(colors.textSecondary, 10)}<span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)' }}>{event.members} going</span></div>}
+                {event.members > 1 && <div style={{ display: 'flex', alignItems: 'center', gap: '3px', marginTop: '4px' }}>{Icons.users(colors.textSecondary, 12)}<span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)' }}>{event.members} going</span></div>}
               </div>
               {event.derived ? (
                 <button aria-label={`Open ${event.title}`} className="hit44 glass-btn glass-secondary" onClick={() => { setSelectedFlockId(event.flockId); setCurrentScreen('detail'); }} style={{ padding: '6px 12px', borderRadius: '10px', border: `1px solid ${colors.creamDark}`, backgroundColor: 'var(--icon-bg)', color: colors.navy, fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer', flexShrink: 0 }}>Open</button>
@@ -11558,7 +11566,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                       <div style={{ flex: 1, minWidth: 0 }}>
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '2px' }}>
                           <div style={{ display: 'flex', alignItems: 'center', gap: '5px', minWidth: 0 }}>
-                            {isPinned && <span style={{ flexShrink: 0 }}>{Icons.pinFilled(colors.navy, 11)}</span>}
+                            {isPinned && <span style={{ flexShrink: 0 }}>{Icons.pinFilled(colors.navy, 12)}</span>}
                             <h2 style={{ fontSize: 'var(--t-body)', fontWeight: hasUnread ? '600' : '600', color: colors.navy, margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{f.name}</h2>
                           </div>
                           <span style={{ fontSize: 'var(--t-meta)', color: hasUnread ? colors.navy : '#b0b0b0', fontWeight: hasUnread ? '500' : '400', flexShrink: 0, marginLeft: '8px' }}>{getRelativeTime(lastMsg?.time)}</span>
@@ -11570,7 +11578,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                           {f.venue && f.venue !== 'TBD' && (
                             <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{f.venue}</span>
                           )}
-                          <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', marginLeft: 'auto', flexShrink: 0 }}>{f.memberCount || 0} {Icons.users(colors.textTertiary, 10)}</span>
+                          <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', marginLeft: 'auto', flexShrink: 0 }}>{f.memberCount || 0} {Icons.users(colors.textTertiary, 12)}</span>
                         </div>
 
                         {/* Last message */}
@@ -11857,7 +11865,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 </p>
               )}
             </div>
-            <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)' }}>{Icons.arrowLeft(colors.textTertiary, 10)}</span>
+            {/* Was arrowLeft at 10px: a LEFT-pointing arrow as the "opens a
+                sheet" affordance on a forward-navigating row. chevronRight is
+                the disclosure mark the rest of the app uses. */}
+            <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)' }}>{Icons.chevronRight(colors.textTertiary, 12)}</span>
           </div>
         )}
 
@@ -13238,10 +13249,15 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
               </div>
 
               <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '0 0 8px', fontWeight: '500' }}>Rate it (optional)</p>
+              {/* System stars, same pattern as the venue review form: each
+                  button names its number (five buttons all reading "Rate" give
+                  a screen reader nothing to pick between), aria-pressed carries
+                  the selection, and the empty state is --text-tertiary because
+                  an INPUT star has to read as a real outline to aim at. */}
               <div style={{ display: 'flex', gap: '4px', marginBottom: '16px' }}>
                 {[1, 2, 3, 4, 5].map(star => (
-                  <button className="hit44" key={star} onClick={() => setFeedbackState(prev => ({ ...prev, rating: prev.rating === star ? null : star }))} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '2px', transition: 'opacity 0.15s ease' }}>
-                    <svg aria-hidden="true" focusable="false" width={22} height={22} viewBox="0 0 24 24" fill={feedbackState.rating >= star ? '#F59E0B' : 'var(--star-empty)'} stroke="none"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"></polygon></svg>
+                  <button aria-label={`Rate ${star} star${star === 1 ? '' : 's'}`} aria-pressed={feedbackState.rating === star} className="hit44" key={star} onClick={() => setFeedbackState(prev => ({ ...prev, rating: prev.rating === star ? null : star }))} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '2px', transition: 'opacity 0.15s ease' }}>
+                    {feedbackState.rating >= star ? Icons.starFilled(colors.amber, 22) : Icons.star('var(--text-tertiary)', 22)}
                   </button>
                 ))}
               </div>
@@ -13289,7 +13305,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 Going ({goingCount})
               </h4>
               <button className="hit44 glass-btn glass-navy" onClick={() => { setCurrentScreen('chatDetail'); setTimeout(() => { setShowFlockInviteModal(true); setCopiedInviteUrl(''); setFlockInviteSelected([]); setFlockInviteSearch(''); setFlockInviteResults([]); }, 100); }} style={{ padding: '5px 12px', background: colors.navyBg, border: 'none', borderRadius: '16px', color: 'white', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }}>
-                {Icons.userPlus('white', 11)} Invite
+                {Icons.userPlus('white', 12)} Invite
               </button>
             </div>
             {roster.length > 0 ? (
@@ -14099,15 +14115,19 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                   </>
                 )}
 
+                {/* This panel answers a server 403 in a destructive flow. It is
+                    an alert exactly like its deleteError sibling below: shown
+                    but never announced, a screen-reader user heard the Delete
+                    button go dead and nothing else. */}
                 {deleteNeedsReauth && (
-                  <div style={{ padding: '12px', borderRadius: '12px', backgroundColor: 'var(--accent-amber-bg)', marginBottom: '14px' }}>
+                  <div role="alert" tabIndex={-1} ref={deleteAlertRef} style={{ padding: '12px', borderRadius: '12px', backgroundColor: 'var(--accent-amber-bg)', marginBottom: '14px' }}>
                     <p style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: 'var(--accent-amber-text)', margin: '0 0 4px' }}>Sign in again first</p>
                     <p style={{ fontSize: 'var(--t-meta)', color: 'var(--accent-amber-text)', margin: 0, lineHeight: 1.5 }}>Your account uses Google or Apple to sign in, and this session is older than five minutes. Log out, sign back in, then come straight here. Your account can still be deleted.</p>
                   </div>
                 )}
 
                 {deleteError && !deleteNeedsReauth && (
-                  <p role="alert" style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: '#EF4444', margin: '0 0 14px' }}>{deleteError}</p>
+                  <p role="alert" tabIndex={-1} ref={deleteAlertRef} style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: '#EF4444', margin: '0 0 14px' }}>{deleteError}</p>
                 )}
 
                 <p style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: 'var(--text-secondary)', margin: '0 0 6px' }}>Type <strong>DELETE</strong> to confirm</p>
@@ -15852,9 +15872,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                     <p style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: colors.navy, margin: 0 }}>{tierBadge[venueData.tier].label} Plan</p>
                     <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0 }}>{/* "Free forever" was a promise about future pricing that nobody has
                         made. The tier is free today; that is all this can say.
-                        The two prices below are stale against VENUE-BILLING.md
-                        ($49 / $149) and are deliberately left alone: changing a
-                        price is the founder's call, not a cleanup. */}
+                        Pricing call made 2026-08-14: $35 Premium / $75 Pro is
+                        canonical. VENUE-BILLING.md's old $49 / $149 figures are
+                        being updated to match these, not the other way round. */}
                     {venueTier === 'free' ? 'Free' : venueTier === 'premium' ? '$35/month' : '$75/month'}</p>
                   </div>
                   {venueTier !== 'pro' && (
@@ -17653,7 +17673,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                               <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(transparent 40%, rgba(0,0,0,0.6) 100%)' }} />
                               {venue.topRated && (
                                 <div style={{ position: 'absolute', top: '8px', left: '8px', padding: '3px 8px', borderRadius: '8px', backgroundColor: 'rgba(245,158,11,0.9)', display: 'flex', alignItems: 'center', gap: '3px' }}>
-                                  {Icons.flame('#fff', 10)}
+                                  {Icons.flame('#fff', 12)}
                                   <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: 'white' }}>Top Rated</span>
                                 </div>
                               )}
@@ -17685,7 +17705,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                           <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', marginBottom: '8px' }}>
                             {dist != null && (
                               <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: colors.steel, display: 'flex', alignItems: 'center', gap: '3px' }}>
-                                {Icons.mapPin(colors.steel, 11)} {dist < 1 ? `${Math.round(dist*1000)}m` : `${dist.toFixed(1)}km`}
+                                {Icons.mapPin(colors.steel, 12)} {dist < 1 ? `${Math.round(dist*1000)}m` : `${dist.toFixed(1)}km`}
                               </span>
                             )}
                             {!venue.photo_url && crowdScore != null && (
@@ -17694,9 +17714,14 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                                 {crowdLabel} {crowdScore}%
                               </span>
                             )}
-                            {crowdLabel && (
+                            {/* Photo cards carry the bare percentage in their
+                                overlay, so this names it. Photo-less cards
+                                already printed "{label} {score}%" one span to
+                                the left, so here this line said the same word
+                                twice on one row. */}
+                            {crowdLabel && (venue.photo_url || crowdScore == null) && (
                             <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: colors.navy, display: 'flex', alignItems: 'center', gap: '3px' }}>
-                              {Icons.clock(colors.navy, 10)} {crowdLabel}
+                              {Icons.clock(colors.navy, 12)} {crowdLabel}
                             </span>
                             )}
                           </div>
@@ -17817,7 +17842,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
 
             {/* Distance */}
             {eventDetail.distance_miles != null && Number.isFinite(Number(eventDetail.distance_miles)) && (
-              <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', fontWeight: '500', marginBottom: '16px' }}>{Icons.mapPin(colors.steel, 11)} {Number(eventDetail.distance_miles).toFixed(1)} miles away</p>
+              <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', fontWeight: '500', marginBottom: '16px' }}>{Icons.mapPin(colors.steel, 12)} {Number(eventDetail.distance_miles).toFixed(1)} miles away</p>
             )}
           </div>
 
