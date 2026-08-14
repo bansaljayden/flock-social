@@ -352,19 +352,26 @@ router.post('/:flockId/create',
       // exactly the "committed bill reported as a 500" failure this block was
       // moved out of the transaction to prevent.
       const payerName = payer?.name || 'Someone';
-      for (const share of shares) {
-        if (share.userId === payerId) continue; // Don't notify the payer
-        if (share.settled) continue; // Already paid — "you owe" would be false
-        try {
-          await pushIfOffline(io, share.userId,
+      // Concurrent fan-out: a 20-member bill was 20 sequential Firebase round
+      // trips holding the request open after the response. allSettled runs them
+      // at once, never rejects (so no post-commit throw reaches the outer catch),
+      // and lets one failed delivery not abort the rest.
+      //
+      // fromUserId is the PAYER, not req.user: the block-gate suppresses a push
+      // that NAMES a blocked user, and this body names the payer ("You owe
+      // {payerName}"). paidBy can be set to a member other than the creator, so
+      // req.user.id would leave the gate checking the wrong person. (The task
+      // suggested req.user.id; payerId is what actually makes the gate do its
+      // job here — flagged in the change report.)
+      await Promise.allSettled(
+        shares
+          .filter((share) => share.userId !== payerId && !share.settled)
+          .map((share) => pushIfOffline(io, share.userId,
             'Bill split created',
             `You owe ${payerName} $${share.amount.toFixed(2)} for ${flockName}`,
-            { type: 'bill_created', flockId: String(flockId) }
-          );
-        } catch (pushErr) {
-          console.error('Bill push failed:', pushErr.message);
-        }
-      }
+            { type: 'bill_created', flockId: String(flockId), fromUserId: String(payerId) }
+          ))
+      );
     } catch (err) {
       console.error('Bill create error:', err);
       if (!res.headersSent) res.status(500).json({ error: 'Failed to create bill split' });
