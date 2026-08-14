@@ -637,13 +637,17 @@ router.put('/:id',
         );
         const timeStr = updated.event_time ? new Date(updated.event_time).toLocaleString('en-US', { weekday: 'short', hour: 'numeric', minute: '2-digit' }) : '';
         const bodyText = [updated.name, updated.venue_name, timeStr].filter(Boolean).join(' — ');
-        for (const m of membersResult.rows) {
-          await pushIfOffline(io, m.user_id,
+        // Concurrent fan-out: a 20-member confirm was 20 sequential Firebase
+        // round trips blocking the response. allSettled so one member's failed
+        // delivery does not abort the rest. (No actor id: this push names the
+        // flock, not a user.)
+        await Promise.allSettled(
+          membersResult.rows.map((m) => pushIfOffline(io, m.user_id,
             "It's happening!",
             bodyText,
             { type: 'flock_confirmed', flockId: String(flockId) }
-          );
-        }
+          ))
+        );
       }
 
       // Auto-populate research analytics on completion or cancellation
@@ -862,7 +866,7 @@ router.post('/:id/join', param('id').isInt().withMessage('Invalid flock ID'), as
         await pushIfOffline(io, flockData.rows[0].creator_id,
           `${req.user.name} is going!`,
           flockData.rows[0].name,
-          { type: 'flock_rsvp', flockId: String(flockId) }
+          { type: 'flock_rsvp', flockId: String(flockId), fromUserId: String(req.user.id) }
         );
       }
     }
@@ -1001,14 +1005,17 @@ router.post('/:id/invite',
             invitedUserIds: invited.map(i => i.user_id),
           });
 
-          // Push notifications for offline invited users
-          for (const inv of invited) {
-            await pushIfOffline(io, inv.user_id,
+          // Push notifications for offline invited users — concurrent, so a
+          // 25-person invite is not 25 sequential Firebase round trips before
+          // the response. allSettled so one failure does not abort the rest.
+          // fromUserId lets the block-gate suppress a push that names the inviter.
+          await Promise.allSettled(
+            invited.map((inv) => pushIfOffline(io, inv.user_id,
               `${req.user.name} invited you to a flock`,
               flockName,
-              { type: 'flock_invite', flockId: String(flockId) }
-            );
-          }
+              { type: 'flock_invite', flockId: String(flockId), fromUserId: String(req.user.id) }
+            ))
+          );
         }
       }
 
@@ -1303,16 +1310,20 @@ router.post('/:id/attendance',
         }
       }
 
-      // Push to offline users
-      for (const r of results) {
-        if (r.userId !== req.user.id) {
-          await pushIfOffline(io, r.userId,
+      // Push to offline users — concurrent, so marking a full flock's
+      // attendance is not one sequential Firebase round trip per member before
+      // the response. allSettled so one failure does not abort the rest.
+      // fromUserId lets the block-gate suppress a push naming the person who
+      // marked attendance.
+      await Promise.allSettled(
+        results
+          .filter((r) => r.userId !== req.user.id)
+          .map((r) => pushIfOffline(io, r.userId,
             'Attendance recorded',
             `${flock.rows[0].name} — your reliability score updated`,
-            { type: 'attendance_marked', flockId: String(flockId) }
-          );
-        }
-      }
+            { type: 'attendance_marked', flockId: String(flockId), fromUserId: String(req.user.id) }
+          ))
+      );
 
       res.json({ success: true, results });
     } catch (err) {
