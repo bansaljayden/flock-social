@@ -14,6 +14,7 @@ const { query, param, validationResult } = require('express-validator');
 const { getWeather } = require('../services/weatherService');
 const mlPredictor = require('../services/mlPredictor');
 const { upstreamSignal } = require('../utils/upstream');
+const { allowGlobalPlacesCall } = require('../utils/placesBudget');
 const { recommendBestTime, findPeakTime, getLabel, venueLocalNow, isOpenAt, buildHoursByDay, weekdayOffset } = require('../services/crowdEngine');
 
 const router = express.Router();
@@ -264,6 +265,13 @@ router.get('/demo/venues',
       if (cached) return res.json(cached.card ? { ...cached, card: withAge(cached.card) } : cached);
 
       if (!allowDemo(req)) return res.status(429).json({ error: DEMO_BUSY_MSG });
+      // allowDemo caps REQUESTS per IP and per day; it never touched the shared
+      // Places ledger, so everything this endpoint spends at Google was
+      // invisible to the "global" daily ceiling. One paid Text Search per cache
+      // miss, charged before the fetch (an aborted request still bills).
+      // Ordered after allowDemo so a request the demo refuses never charges for
+      // a call it was never going to make.
+      if (!allowGlobalPlacesCall(1)) return res.status(429).json({ error: DEMO_BUSY_MSG });
 
       // Round 11: resp.ok was never checked, so a quota, auth or upstream
       // outage came back as a 200 with an empty venue list and the marketing
@@ -389,6 +397,9 @@ router.get('/demo/venue/:placeId',
       if (cached) return res.json(withAge(cached));
 
       if (!allowDemo(req)) return res.status(429).json({ error: DEMO_BUSY_MSG });
+      // One paid Place Details call per cache miss. Same reasoning as the area
+      // search above: the per-IP demo gate is not a spending control.
+      if (!allowGlobalPlacesCall(1)) return res.status(429).json({ error: DEMO_BUSY_MSG });
 
       // Round 11: same as the area search — an upstream failure used to read as
       // "Venue not found". Only a real upstream 404 is a 404 now.

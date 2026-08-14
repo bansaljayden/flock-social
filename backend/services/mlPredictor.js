@@ -552,6 +552,77 @@ async function getNeighborActivity(placeId, lat, lng, dayOfWeek, hour) {
   return entry.byDowHour.get(`${dayOfWeek}_${hour}`) || none;
 }
 
+// ---------------------------------------------------------------------------
+// A WEATHER OUTAGE MUST NOT BECOME A FABRICATED READING (round 15).
+//
+// services/weatherService.js returns null when it has no reading — that is its
+// documented FAILURE CONTRACT, and the rule engine reads it honestly:
+// getWeatherFactor contributes 0, 'weather' is left out of dataSourcesUsed, and
+// confidence drops by the 15 points a live reading is worth. This file did the
+// opposite: `weather?.temp ?? 20`. weatherService fetches units=imperial, and
+// every training row was collected through that same function, so 20 meant
+// 20°F. Every prediction made during a weather outage was told the venue was
+// below freezing, which is exactly the confident-wrong-number failure the
+// feature-parity gate exists to prevent — and it shipped on the ML path, the
+// one that actually serves.
+//
+// WHY A CLIMATE NORM AND NOT A SENTINEL. The model has never seen "missing".
+// prepare_features.add_weather_features() imputes a null temperature with the
+// city-month median and then the global median before training, so
+// `temperature` is always an ordinary number inside the training distribution;
+// there is no NaN, no -999 and no 0 for the model to recognise as absence. A
+// sentinel would therefore be a value it has never been shown, and 0 would be
+// a second, colder lie. The train-consistent substitute is the CLIMATE NORM for
+// this venue's latitude band and month — the `temp_norms` table the training
+// run itself saved into metadata, and precisely what add_climate_anomaly()
+// fills a missing temperature with. It also makes temp_anomaly resolve to 0,
+// i.e. "nothing unusual about the weather", which is the neutral the rule
+// engine expresses by zeroing its weather factor.
+//
+// The remaining honesty is at the caller: the imputed value is NOT evidence, so
+// predictBusyness leaves 'weather' out of dataSourcesUsed and takes the same 15
+// confidence points off that the rule engine adds for having a reading.
+// ---------------------------------------------------------------------------
+
+function hasTempReading(weather) {
+  const t = weather?.temp ?? weather?.temperature;
+  return typeof t === 'number' && Number.isFinite(t);
+}
+
+// Mean of the whole norms table = prepare_features' `global_mean`, the value it
+// fills an unseen latitude band / month with. Recomputed whenever the metadata
+// object identity changes (i.e. never, in practice — it is loaded once).
+let tempNormMean = { src: null, value: null };
+function globalTempNorm() {
+  const norms = (metadata && metadata.temp_norms) || {};
+  if (tempNormMean.src === norms) return tempNormMean.value;
+  const vals = Object.values(norms).map(Number).filter(Number.isFinite);
+  const value = vals.length ? vals.reduce((a, b) => a + b, 0) / vals.length : null;
+  tempNormMean = { src: norms, value };
+  return value;
+}
+
+// The training run's climatology for this venue: same 5-degree latitude banding
+// as prepare_features.add_climate_anomaly, same global-mean fallback. Units are
+// whatever the training rows were in, which is °F.
+function climateNorm(lat, month) {
+  const norms = (metadata && metadata.temp_norms) || {};
+  const band = Math.round((Number(lat) || 0) / 5) * 5;
+  const exact = Number(norms[`${band}_${month}`]);
+  if (Number.isFinite(exact)) return exact;
+  return globalTempNorm();
+}
+
+// The temperature to hand the model: the real reading, else the climatology.
+// Returns null only when metadata carries no norms at all, which predictBusyness
+// treats as "cannot build a train-consistent vector" and answers with the rule
+// engine rather than letting the vector zero-fill 0°F.
+function tempForFeature(weather, lat, month) {
+  if (hasTempReading(weather)) return weather.temp ?? weather.temperature;
+  const norm = climateNorm(lat, month);
+  return Number.isFinite(norm) ? norm : null;
+}
+
 // Round 13: split from buildFeatureVector so init() can verify that every
 // name in metadata.feature_names is actually produced. The vector builder
 // zero-fills any name it doesn't recognize (`features[name] || 0`), which is
@@ -578,19 +649,37 @@ function buildFeatureMap(venue, weather, timestamp, eventData, feedback, baselin
   const priceLevel = venue.price_level != null ? venue.price_level : (metadata.median_price_level || 2);
   const reviewCount = venue.user_ratings_total || venue.review_count || 0;
 
+  // Coordinates. Round 15: this read only venue.latitude/venue.lat, and NOT ONE
+  // live caller sets those — routes/crowd.js, routes/ai.js, routes/badge.js and
+  // routes/publicCrowd.js all shape a venue as `{ location: { latitude,
+  // longitude } }`, which is also what predictBusyness itself reads. So every
+  // live prediction built its features at lat/lng 0,0: astronomy ran on the
+  // equator, the temperature anomaly looked up latitude band 0, and
+  // specialNightContext returned all-zeros because 0,0 is nowhere near a
+  // training city — i.e. the v2.5 special-night features, the headline of the
+  // shipped model, were dead on every request while the training rows carried
+  // real coordinates. Read the same place the predictor does, then fall back.
+  const lat = venue.location?.latitude ?? venue.latitude ?? venue.lat ?? 0;
+  const lng = venue.location?.longitude ?? venue.longitude ?? venue.lng ?? 0;
+
   // Weather — accept BOTH naming styles. weatherService returns camelCase
   // (windSpeed/isRaining/conditionId); reading only snake_case silently fed
   // the model wind=0, rain=0, weather_group=unknown on every live prediction
   // (audit 2026-08-12), skewing all bad-weather forecasts.
-  const temp = weather?.temp ?? weather?.temperature ?? 20;
-  const humidity = weather?.humidity ?? 50;
-  const windSpeed = weather?.wind_speed ?? weather?.windSpeed ?? 0;
-  const isRaining = (weather?.is_raining ?? weather?.isRaining) ? 1 : 0;
+  //
+  // A MISSING reading is not a reading of 20. See tempForFeature: the old
+  // `?? 20` told the model 20°F — below freezing — every time OpenWeatherMap
+  // was down, because weatherService fetches units=imperial and the training
+  // rows were collected through that same function.
+  const temp = tempForFeature(weather, lat, month);
+  const humidity = weather?.humidity ?? 50;      // prepare_features: fillna(50)
+  const windSpeed = weather?.wind_speed ?? weather?.windSpeed ?? 0; // fillna(0)
+  const isRaining = (weather?.is_raining ?? weather?.isRaining) ? 1 : 0; // fillna(0)
   const weatherCode = weather?.weather_condition_code || weather?.conditionId || weather?.id || null;
+  // No code -> 'unknown', which is a real one-hot column the model was trained
+  // on (prepare_features emits weather_unknown), so a missing reading lands in
+  // a bucket the model has actually seen rather than being smeared into 'clear'.
   const weatherGroup = groupWeatherCode(weatherCode);
-
-  const lat = venue.latitude || venue.lat || 0;
-  const lng = venue.longitude || venue.lng || 0;
 
   // Map venue category
   const categoryMap = metadata.category_encoding || {};
@@ -651,7 +740,12 @@ function buildFeatureMap(venue, weather, timestamp, eventData, feedback, baselin
     log_review_count: Math.log(reviewCount + 1),
     rain_x_weekend: isRaining * isWeekend,
     rain_x_dinner: isRaining * isDinner,
-    cold_outdoor: (temp < 5 && weatherGroup === 'clear') ? 1 : 0,
+    // Number.isFinite first: with no reading AND no climatology to impute from
+    // (see tempForFeature) `temp` is null, and `null < 5` is true — which would
+    // turn "we have no idea what the weather is" into "it is freezing and
+    // clear". Serving never reaches that state (predictBusyness answers with
+    // the rule engine instead), and this makes the map itself safe anyway.
+    cold_outdoor: (Number.isFinite(temp) && temp < 5 && weatherGroup === 'clear') ? 1 : 0,
     // Baseline + freshness — venue-specific if available, category fallback otherwise
     baseline_busyness: baseline || 0,
     category_baseline: (metadata.category_baselines || {})[`${venueCategory}_${dayOfWeek}_${hour}`] || 0,
@@ -693,10 +787,16 @@ function buildFeatureMap(venue, weather, timestamp, eventData, feedback, baselin
     // v2.4 features (older models simply don't list these in feature_names)
     ...astronomyFeatures(lat, month, hour),
     ...(() => {
-      const norms = metadata.temp_norms || {};
-      const band = Math.round((lat || 0) / 5) * 5;
-      const norm = norms[`${band}_${month}`];
-      const anomaly = norm != null ? Math.max(-25, Math.min(25, temp - norm)) : 0;
+      // prepare_features.add_climate_anomaly: temp_norm is the latitude-band x
+      // month mean, filled with the mean of the whole norms table where that
+      // band/month was never seen, and temp_anomaly is (temperature, itself
+      // filled with temp_norm when missing) minus temp_norm, clipped to +/-25.
+      // climateNorm() is that same number, which is why an imputed temperature
+      // comes out at anomaly 0 here without a second special case.
+      const norm = climateNorm(lat, month);
+      const anomaly = Number.isFinite(norm) && Number.isFinite(temp)
+        ? Math.max(-25, Math.min(25, temp - norm))
+        : 0;
       return {
         temp_anomaly: anomaly,
         is_warm_anomaly_evening: (anomaly > 5 && hour >= 17) ? 1 : 0,
@@ -823,6 +923,22 @@ async function predictBusyness(venue, weather, timestamp) {
       return result;
     }
 
+    // Weather honesty (round 15). With no reading the vector carries the
+    // training run's climatology for this venue (see tempForFeature). If the
+    // metadata has no climatology at all there is no in-distribution number to
+    // hand a model that was trained on `temperature`, and zero-filling it would
+    // be 0°F — so the rule engine, which handles a null reading honestly,
+    // answers instead of the model guessing cold.
+    const hasWeather = hasTempReading(weather);
+    if (!hasWeather
+        && (metadata.feature_names || []).includes('temperature')
+        && tempForFeature(weather, lat, ts.getMonth() + 1) == null) {
+      const result = crowdEngine.calculateCrowdScore(venue, weather, timestamp);
+      result.predictionMethod = 'rule_engine_no_weather_norm';
+      result.modelVersion = null;
+      return result;
+    }
+
     const ort = require('onnxruntime-node');
     const vector = buildFeatureVector(venue, weather, timestamp, eventData, feedback, baseline, neighbors);
     const inputName = metadata.onnx_input_name || 'input';
@@ -846,9 +962,14 @@ async function predictBusyness(venue, weather, timestamp) {
     const label = getLabel(score);
 
     // Real accuracy from training metrics (within_15 = % of predictions within 15 pts)
-    const confidence = Math.round(metadata.training_metrics?.within_15 || 58);
+    let confidence = Math.round(metadata.training_metrics?.within_15 || 58);
+    // Without a live reading the temperature in the vector is climatology, not
+    // evidence, and the weather one-hot sits in 'unknown'. The rule engine adds
+    // 15 confidence for having weather; take the same 15 back off here so a
+    // degraded prediction cannot report an undegraded number.
+    if (!hasWeather) confidence = Math.max(0, confidence - 15);
 
-    const dataSources = ['ml_model', weather ? 'weather' : null, 'venue_data'];
+    const dataSources = ['ml_model', hasWeather ? 'weather' : null, 'venue_data'];
     if (eventData.hasEvent) dataSources.push('ticketmaster_events');
 
     const response = {
@@ -951,6 +1072,9 @@ module.exports = {
     groupWeatherCode,
     baselineFromPopularTimes,
     trueEventInstant,
+    hasTempReading,
+    climateNorm,
+    tempForFeature,
     getMetadata: () => metadata,
   },
 };

@@ -2,6 +2,11 @@ const express = require('express');
 const { query, validationResult } = require('express-validator');
 const { authenticate } = require('../middleware/auth');
 const { upstreamSignal } = require('../utils/upstream');
+// Per-user Places budget: 30/hour fresh calls, 3000/day globally. Shared with
+// crowd.js and ai.js so every paid Places fetch draws from the SAME pool
+// (round 8). allowGlobalPlacesCall is the door for surfaces with no
+// authenticated user to charge — here, the public photo proxy (round 15).
+const { allowPlacesSearch, allowGlobalPlacesCall } = require('../utils/placesBudget');
 
 const router = express.Router();
 
@@ -62,6 +67,17 @@ router.get('/photo',
       }
 
       if (!allowPhotoFetch(req)) {
+        return res.status(429).json({ error: 'Too many photo requests right now' });
+      }
+      // allowPhotoFetch is a per-IP request limit with its own separate 4000/day
+      // counter, which is not the same thing as the shared Places ledger: this
+      // proxy is unauthenticated and its first leg (the /media metadata call) is
+      // a PAID Places request, so its spend never reached the "global" daily
+      // ceiling. Charged before the fetch. Cost 1: only the metadata leg is
+      // believed to be metered — the second leg pulls bytes from Google's CDN
+      // with the returned photoUri. If an invoice ever shows that leg billed
+      // too, this is a 2 (see the note in utils/upstream.js).
+      if (!allowGlobalPlacesCall(1)) {
         return res.status(429).json({ error: 'Too many photo requests right now' });
       }
 
@@ -142,10 +158,6 @@ function setCache(key, data) {
     while (venueCache.size > 200) venueCache.delete(venueCache.keys().next().value);
   }
 }
-
-// Per-user Places budget: 30/hour fresh calls, 3000/day globally. Shared with
-// crowd.js so its Places fetches draw from the SAME pool (round 8).
-const { allowPlacesSearch } = require('../utils/placesBudget');
 
 // Build photo URL — proxied through our backend so the API key stays server-side
 function photoUrl(photoName, maxWidth = 400) {
