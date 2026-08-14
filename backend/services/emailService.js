@@ -114,6 +114,21 @@ function verificationLink(token) {
   return `${baseApiUrl()}/api/auth/verify-email?token=${encodeURIComponent(token)}`;
 }
 
+// Where a reset link points. The WEB app, not the API: unlike verification,
+// consuming a reset needs the person to type a new password, so the link has to
+// land on a screen. Same pinned base URL, same reasoning as baseApiUrl above.
+//
+// The token rides in the FRAGMENT, not the query string. Three things read a
+// URL that a fragment is invisible to: the server it is requested from (so the
+// token never reaches a Vercel access log), the Referer header sent to anything
+// the page loads, and any mailbox scanner that prefetches links. That last one
+// matters here in a way it did not for verification: Outlook Safe Links and
+// friends GET every link in every message, and a GET can never spend a reset
+// token because consuming one requires an explicit POST from the screen.
+function passwordResetLink(token) {
+  return `${baseWebUrl()}/reset-password#token=${encodeURIComponent(token)}`;
+}
+
 function escapeHtml(s) {
   return String(s == null ? '' : s)
     .replace(/&/g, '&amp;')
@@ -157,10 +172,83 @@ async function sendVerificationEmail({ to, name, link, hours }) {
   });
 }
 
+// The reset mail itself. Two things it deliberately does NOT say: it never
+// names the account (no display name lookup beyond the one on the row, no "your
+// Flock account for X"), and it never confirms anything to a person who did not
+// ask, because the "if you did not ask for this" line has to be true for a
+// mistyped address as well as a targeted one.
+async function sendPasswordResetEmail({ to, name, link, minutes }) {
+  const safeName = escapeHtml(name || 'there');
+  const safeLink = escapeHtml(link);
+  return sendEmail({
+    to,
+    subject: 'Reset your Flock password',
+    html: `
+      <div style="font-family: -apple-system, BlinkMacSystemFont, sans-serif; max-width: 480px; margin: 0 auto; padding: 40px 24px;">
+        <div style="text-align: center; margin-bottom: 32px;">
+          <img src="${baseWebUrl()}/flock-logo.png" alt="Flock" width="64" height="64" style="border-radius: 16px;" />
+        </div>
+        <h1 style="font-size: 24px; font-weight: 700; color: #0d2847; margin-bottom: 16px;">Reset your password</h1>
+        <p style="font-size: 16px; color: #4a5568; line-height: 1.6; margin-bottom: 24px;">
+          Hi ${safeName}, someone asked to reset the password on the Flock account for this address. Set a new one here.
+        </p>
+        <p style="margin: 0 0 24px;">
+          <a href="${safeLink}" style="display: inline-block; background: #0d2847; color: #ffffff; text-decoration: none; padding: 14px 28px; border-radius: 10px; font-size: 16px; font-weight: 600;">Set a new password</a>
+        </p>
+        <p style="font-size: 14px; color: #4a5568; line-height: 1.6; margin-bottom: 24px;">
+          This link works once and expires in ${minutes} minutes. If the button does nothing, paste this into your browser:<br />
+          <span style="word-break: break-all; color: #2b6cb0;">${safeLink}</span>
+        </p>
+        <p style="font-size: 14px; color: #4a5568; line-height: 1.6; margin-bottom: 24px;">
+          If you did not ask for this, you can ignore it. Your password has not changed, and nobody can change it without this link. Setting a new password signs the account out everywhere.
+        </p>
+        <p style="font-size: 14px; color: #a0aec0;">The Flock Team</p>
+      </div>
+    `,
+  });
+}
+
+// The other half of the neutral answer. An account created with Google or Apple
+// has no password, so there is nothing to reset. Silently creating one would be
+// the worst possible outcome: it would add a second, weaker way into an account
+// whose owner never asked for one and would never think to protect it. So the
+// mailbox owner gets told which button to press instead. Naming the provider is
+// safe here and nowhere else, because this only ever reaches the mailbox that
+// owns the account.
+async function sendPasswordResetOAuthEmail({ to, name, provider }) {
+  const safeName = escapeHtml(name || 'there');
+  const safeProvider = escapeHtml(provider === 'apple' ? 'Apple' : 'Google');
+  return sendEmail({
+    to,
+    subject: 'About your Flock sign-in',
+    html: `
+      <div style="font-family: -apple-system, BlinkMacSystemFont, sans-serif; max-width: 480px; margin: 0 auto; padding: 40px 24px;">
+        <div style="text-align: center; margin-bottom: 32px;">
+          <img src="${baseWebUrl()}/flock-logo.png" alt="Flock" width="64" height="64" style="border-radius: 16px;" />
+        </div>
+        <h1 style="font-size: 24px; font-weight: 700; color: #0d2847; margin-bottom: 16px;">There is no password to reset</h1>
+        <p style="font-size: 16px; color: #4a5568; line-height: 1.6; margin-bottom: 24px;">
+          Hi ${safeName}, someone asked to reset a Flock password for this address. This account signs in with ${safeProvider}, so it has never had a password. Open Flock and tap Continue with ${safeProvider}.
+        </p>
+        <p style="margin: 0 0 24px;">
+          <a href="${baseWebUrl()}" style="display: inline-block; background: #0d2847; color: #ffffff; text-decoration: none; padding: 14px 28px; border-radius: 10px; font-size: 16px; font-weight: 600;">Open Flock</a>
+        </p>
+        <p style="font-size: 14px; color: #4a5568; line-height: 1.6; margin-bottom: 24px;">
+          Nothing about the account has changed. If this was not you, you can ignore it.
+        </p>
+        <p style="font-size: 14px; color: #a0aec0;">The Flock Team</p>
+      </div>
+    `,
+  });
+}
+
 module.exports = {
   sendEmail,
   sendVerificationEmail,
+  sendPasswordResetEmail,
+  sendPasswordResetOAuthEmail,
   verificationLink,
+  passwordResetLink,
   baseWebUrl,
   baseApiUrl,
   isUnmailableBase,

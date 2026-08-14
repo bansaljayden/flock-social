@@ -152,6 +152,22 @@ export const AuthError = ({ children }) => (
   children ? <div className="auth-error" role="alert">{children}</div> : null
 );
 
+/* The good-news counterpart to AuthError. Green rather than red, role="status"
+   rather than "alert" so a screen reader announces it politely instead of
+   interrupting: "we sent a link" and "your password is updated" are not
+   emergencies. Same box as the error so the sheet does not jump when one
+   replaces the other. */
+export const AuthNotice = ({ children }) => (
+  children ? <div className="auth-notice" role="status">{children}</div> : null
+);
+
+/* A label with a link on the same line, for "Password ... Forgot password?".
+   The link is the smaller, quieter half: it is a way out of the screen, not the
+   thing the screen is for. */
+export const AuthLabelRow = ({ children }) => (
+  <div className="auth-label-row">{children}</div>
+);
+
 /* One stylesheet for both screens. Kept in JS (not index.css) because the auth
    surface is owned here and index.css is shared with the whole app.
 
@@ -341,6 +357,28 @@ const AUTH_CSS = `
   border: 1px solid rgba(239,68,68,0.34);
   color: ${AUTH.red}; font-size: 13.5px; font-weight: 500; line-height: 1.45;
 }
+.auth-notice {
+  border-radius: 12px; padding: 11px 14px; margin-bottom: 18px;
+  background: rgba(52,211,153,0.10);
+  border: 1px solid rgba(52,211,153,0.30);
+  color: ${AUTH.green}; font-size: 13.5px; font-weight: 500; line-height: 1.45;
+}
+
+/* baseline alignment so the 13px label and the 13px link sit on one line, and
+   the link keeps its 44px finger target through .hit44 without pushing the
+   field down (the pseudo-element does not affect layout). */
+.auth-label-row {
+  display: flex; align-items: baseline; justify-content: space-between; gap: 12px;
+}
+.auth-label-row .auth-label { margin-bottom: 7px; }
+.auth-link {
+  background: none; border: none; padding: 0; margin: 0 2px 7px 0;
+  color: ${AUTH.cream}; font-size: 13px; font-weight: 600; font-family: inherit;
+  cursor: pointer;
+  text-decoration: underline; text-underline-offset: 3px;
+  text-decoration-color: rgba(244,239,227,0.5);
+}
+.auth-link:hover { text-decoration-color: ${AUTH.cream}; }
 
 .auth-legal {
   margin: 14px 0 0; font-size: 12.5px; line-height: 1.6;
