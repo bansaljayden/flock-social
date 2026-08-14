@@ -250,10 +250,40 @@ test('a data URL with trailing junk after the payload is refused', async () => {
   noQuery('INSERT INTO stories');
 });
 
-test('an animated GIF is refused: SafeSearch only ever sees the first frame', async () => {
+// This test used to be called "an animated GIF is refused: SafeSearch only ever
+// sees the first frame", and every clause of that was wrong. The payload below
+// is a one-frame GIF, nothing here inspects frames, and the refusal comes from
+// the FORMAT ALLOWLIST in routes/stories.js, which cannot see frames at all.
+// Naming it after the animation gate made the format rule look like a safety
+// control, which is the reading that talks the next person into widening it.
+//
+// The rule it actually pins, and the reason the omission survived a review that
+// asked whether it should: refusing GIF by format costs ZERO billed Cloud
+// Vision calls. Animation is not what is being bought — an animated GIF that
+// reached moderateImage would be refused by the byte-level frame gate before
+// the provider is contacted, i.e. for free as well. What is bought is the STILL
+// GIF, which is a real image and would otherwise cost a paid call to reach an
+// answer nobody needs, for a format no camera roll produces.
+test('a GIF story is refused by the format allowlist, for free', async () => {
   const calls = stubImageModeration(async () => ({ allowed: true, reason: null }));
   const res = await call('POST', '/api/stories', 'alice', {
     image_url: 'data:image/gif;base64,R0lGODlhAQABAAAAACw=',
+  });
+  assert.strictEqual(res.status, 400);
+  assert.deepStrictEqual(calls, [], 'a format refusal must never reach the billed screen');
+  noQuery('INSERT INTO stories');
+});
+
+test('the GIF rule is about the format, not about frames', async () => {
+  // A GIF87a header: the version that predates animation entirely, so there is
+  // no reading of "we refuse animation" that reaches it. It is refused all the
+  // same, which is what makes this a product rule rather than a safety one, and
+  // it is refused before the billed screen, which is what makes it worth
+  // keeping. If someone widens the allowlist to admit GIF, this goes red and
+  // they get to decide the money question deliberately.
+  const calls = stubImageModeration(async () => ({ allowed: true, reason: null }));
+  const res = await call('POST', '/api/stories', 'alice', {
+    image_url: 'data:image/gif;base64,R0lGODdhAQABAAAAACw=',
   });
   assert.strictEqual(res.status, 400);
   assert.deepStrictEqual(calls, []);

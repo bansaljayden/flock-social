@@ -77,7 +77,18 @@ const MAX_IMAGE_DATA_URL_BYTES = 700 * 1024;
 // keeps slack, and __tests__/imageRouteParity.test.js pins the property that
 // actually matters — a photo of exactly the advertised size encodes to a data
 // URL that fits under the enforced ceiling.
-const ADVERTISED_PHOTO_KB = Math.floor(MAX_IMAGE_DATA_URL_BYTES * 3 / 4 / 1024 / 50) * 50;
+//
+// The `data:image/...;base64,` prefix comes off BEFORE the conversion, and it is
+// not a rounding nicety. It changes nothing here (700 KB gives 500 either way),
+// but the same derivation without it hands routes/users.js a 450 KB answer for
+// its 600 KB ceiling — and 450 KB of photo encodes to exactly 614,400 bytes,
+// which IS that ceiling, so the prefix alone would put a photo of precisely the
+// advertised size over it. Rounding down to a round number only keeps slack
+// when there was slack to start with; taking the prefix off first is what
+// guarantees it. The two files run the same arithmetic for that reason.
+const DATA_URL_PREFIX_BYTES = 'data:image/jpeg;base64,'.length; // the longest we accept
+const ADVERTISED_PHOTO_KB =
+  Math.floor(Math.floor((MAX_IMAGE_DATA_URL_BYTES - DATA_URL_PREFIX_BYTES) / 4) * 3 / 1024 / 50) * 50;
 const IMAGE_TOO_LARGE_MESSAGE =
   `That photo is too large to post. Please pick a smaller one (under about ${ADVERTISED_PHOTO_KB} KB).`;
 
@@ -114,11 +125,23 @@ const MAX_ACTIVE_STORIES = 10;
 // goes through the shared screen: moderateImage() runs on every story,
 // fail-closed, before the INSERT.
 //
-// GIF stays off this list anyway, as a product decision rather than a safety
-// one: a still GIF is not a photo anybody posts from a camera roll, refusing it
-// here is free, and __tests__/storiesFlow.test.js pins that a GIF story costs
-// zero moderation calls. Removing it would be a behaviour change to argue on
-// its own merits, not a by-product of fixing this comment.
+// GIF stays off this list anyway. Removing it was argued on its own merits and
+// declined, and the accounting is worth writing down because the obvious
+// version of the argument is wrong in both directions:
+//
+//   * Dropping the format does NOT weaken the animation defence. An animated
+//     GIF that reached moderateImage would be refused by the byte-level gate,
+//     and refused for FREE — that gate runs before the provider is contacted,
+//     so it never costs a Vision call either way.
+//   * What the omission actually buys is the STILL GIF. That one is a real
+//     image, so it would go all the way to the provider and cost a billed call
+//     to reach the answer "yes, that is a photo of something" — for a format
+//     nobody's camera roll produces. Refusing it from the MIME string costs
+//     nothing at all.
+//
+// So it stays: same answer, no invoice. __tests__/storiesFlow.test.js pins that
+// a GIF story costs zero moderation calls, and that the rule is about the
+// FORMAT, not about frames — a still GIF is refused here too.
 const IMAGE_DATA_URL = /^data:image\/(png|jpe?g|webp);base64,[A-Za-z0-9+/]+={0,2}$/;
 
 // ---------------------------------------------------------------------------
