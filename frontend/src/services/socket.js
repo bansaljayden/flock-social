@@ -52,6 +52,46 @@ function applyRegistry(instance) {
   });
 }
 
+/**
+ * ROOM REGISTRY — the same idea as the subscription registry, for membership.
+ *
+ * Room membership lives on the SERVER's socket object, so a reconnect starts
+ * with none of it: socket.io hands the client a new server-side socket and
+ * every `socket.join()` the old one had performed is gone. App.js emits
+ * join_flock once, from an effect keyed on the selected flock, and join_venue
+ * once per open venue sheet — neither re-runs when the connection drops and
+ * comes back. The result was a socket that looked healthy and delivered
+ * nothing room-scoped: typing indicators, live votes, presence, budget and
+ * bill events, live sensor pushes. Nothing failed; the events were simply
+ * addressed to a room this connection was no longer in, and the only cure was
+ * leaving the chat and coming back.
+ *
+ * So intent is recorded here rather than fired and forgotten, and replayed on
+ * every 'connect'. Recording it also fixes the narrower race that existed
+ * before a drop: joinFlock() used to no-op outright while the socket was still
+ * handshaking, so opening a chat during connect never joined at all.
+ *
+ * Both server handlers are safe to replay — join_flock re-verifies membership
+ * and join_venue re-checks the place id, and both are idempotent (socket.join
+ * on a room you already hold does nothing). Their rate limits (20 and 30 per
+ * 10s) are far above the one or two rooms a real client holds.
+ */
+const joinedFlocks = new Map(); // String(flockId) -> the id as the caller gave it
+const joinedVenues = new Set(); // place ids
+
+function replayRooms(instance) {
+  joinedFlocks.forEach((flockId) => instance.emit('join_flock', flockId));
+  joinedVenues.forEach((placeId) => instance.emit('join_venue', { placeId }));
+}
+
+// Rooms are per-identity, unlike subscriptions. A sign-out or an account switch
+// must not leave the next connection auto-joining the previous user's flocks:
+// the server would refuse them, but asking is still wrong.
+function clearRooms() {
+  joinedFlocks.clear();
+  joinedVenues.clear();
+}
+
 // Fully dispose an instance so it can never keep reconnecting in the
 // background. Skipping this is how a mid-reconnect socket became an orphan
 // that burned a server slot while delivering events to nobody.
@@ -118,6 +158,10 @@ function createSocket(token) {
 
   instance.on('connect', () => {
     fatalAuthStrikes = 0;
+    // Re-enter every room this client believes it is in. Fires on the first
+    // connect too, which is harmless (the registry is empty) and is what makes
+    // a join issued mid-handshake land instead of being dropped.
+    replayRooms(instance);
   });
   instance.on('connect_error', (err) => {
     console.warn('Socket connection error:', err?.message);
@@ -159,6 +203,7 @@ export function connectSocket() {
     // as the previous user and must go, not linger.
     const stale = socket;
     socket = null;
+    clearRooms();
     dispose(stale);
   }
 
@@ -198,6 +243,10 @@ export function disconnectSocket() {
   const stale = socket;
   socket = null;
   socketToken = null;
+  // Rooms do NOT survive, for the opposite reason subscriptions do: a room is a
+  // fact about one authenticated connection, not a standing request by a
+  // component. Sign-out and session expiry both land here.
+  clearRooms();
   dispose(stale);
   // The registry deliberately survives. Subscriptions belong to the
   // components that made them and are removed by their own unsubscribe
@@ -235,30 +284,37 @@ if (typeof window !== 'undefined') {
   });
 }
 
+// Join is an intent, not a one-shot emit: it is remembered so the reconnect
+// handler above can re-enter the room. See the room registry note.
 export function joinFlock(flockId) {
-  if (socket?.connected) {
-    socket.emit('join_flock', flockId);
-  }
+  if (flockId == null) return;
+  joinedFlocks.set(String(flockId), flockId);
+  if (socket?.connected) socket.emit('join_flock', flockId);
 }
 
 export function leaveFlock(flockId) {
-  if (socket?.connected) {
-    socket.emit('leave_flock', flockId);
-  }
+  if (flockId == null) return;
+  // Forget it even while offline. Otherwise a user who closed a chat during an
+  // outage would be silently re-joined to it on reconnect, and would keep
+  // receiving that flock's messages and presence for the rest of the session.
+  joinedFlocks.delete(String(flockId));
+  if (socket?.connected) socket.emit('leave_flock', flockId);
 }
 
 // --- Venue rooms (live sensor + check-in feed) ---
 
+// Same intent-not-emit treatment as joinFlock: the live sensor and check-in
+// feed is a room, so it goes silent after a reconnect exactly the same way.
 export function joinVenueRoom(placeId) {
-  if (socket?.connected && placeId) {
-    socket.emit('join_venue', { placeId });
-  }
+  if (!placeId) return;
+  joinedVenues.add(placeId);
+  if (socket?.connected) socket.emit('join_venue', { placeId });
 }
 
 export function leaveVenueRoom(placeId) {
-  if (socket?.connected && placeId) {
-    socket.emit('leave_venue', { placeId });
-  }
+  if (!placeId) return;
+  joinedVenues.delete(placeId);
+  if (socket?.connected) socket.emit('leave_venue', { placeId });
 }
 
 export function onVenueSensorUpdate(callback) {
@@ -450,6 +506,15 @@ export function onDmMemberStoppedSharing(callback) {
   return register('dm_member_stopped_sharing', callback);
 }
 
+// The server fires this when the person you are sharing your live location
+// with in a DM blocks you, so the client can stop the 10-second emit loop
+// instead of pushing coordinates the server is already dropping. App.js bound
+// it straight to getSocket(), which is the exact failure mode the registry
+// exists to prevent — after a rebuild the loop kept running.
+export function onBlockedBy(callback) {
+  return register('blocked_by', callback);
+}
+
 // --- Live location sharing ---
 
 export function emitLocation(flockId, lat, lng) {
@@ -488,6 +553,15 @@ export function onFriendRequestReceived(callback) {
 
 export function onFriendRequestResponded(callback) {
   return register('friend_request_responded', callback);
+}
+
+// --- Availability pulses ---
+
+// A friend setting or clearing their "down tonight" pulse. Was bound directly
+// to getSocket() in App.js, in an effect with an empty dependency array, so it
+// was welded to whichever instance existed at mount and never re-attached.
+export function onAvailabilityUpdated(callback) {
+  return register('availability_updated', callback);
 }
 
 // --- Flock invites ---
