@@ -1,0 +1,44 @@
+name: Secret scan
+
+# Enforces the same secret scan as the local pre-commit hook, so the rule holds
+# even when a commit comes from a machine where nobody ran `pre-commit install`.
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  # Keep in sync with .pre-commit-config.yaml
+  GITLEAKS_VERSION: 8.30.1
+  GITLEAKS_SHA256: 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
+
+jobs:
+  gitleaks:
+    name: Scan git history for secrets
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out full history
+        uses: actions/checkout@v4
+        with:
+          # gitleaks scans every commit, so the default shallow clone would miss
+          # a secret that was committed earlier in the branch and later removed.
+          fetch-depth: 0
+
+      - name: Install gitleaks
+        run: |
+          set -euo pipefail
+          archive="gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          curl -sSfL -o "$archive" \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/${archive}"
+          echo "${GITLEAKS_SHA256}  ${archive}" | sha256sum --check --strict
+          tar -xzf "$archive" gitleaks
+          sudo install gitleaks /usr/local/bin/gitleaks
+
+      - name: Scan
+        # `gitleaks git` with no --staged/--pre-commit scans the whole history.
+        # --redact keeps a detected secret out of the build log.
+        # --exit-code 1 fails the build on any finding.
+        run: gitleaks git --redact --no-banner --exit-code 1 .
