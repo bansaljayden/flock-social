@@ -5,6 +5,8 @@ const { authenticate } = require('../middleware/auth');
 
 const { pushIfOffline, pushAlways } = require('../services/pushHelper');
 const { emitToFlockMembers } = require('../sockets/handlers');
+// Shape before content — see validators/shape.js.
+const { scalarOnly } = require('../validators/shape');
 
 const router = express.Router();
 router.use(authenticate);
@@ -48,8 +50,32 @@ function sweepReminderCooldowns(now) {
 router.post('/:flockId/submit',
   [
     param('flockId').isInt({ min: 1, max: INT4_MAX }).withMessage('Invalid flock ID'),
-    body('amount').optional().isFloat({ min: 0.01, max: 10000 }).withMessage('Amount must be between $0.01 and $10,000'),
-    body('skipped').optional().isBoolean(),
+    //
+    // Round 19, two separate faults on this one line.
+    //
+    // SHAPE. `amount: ["50"]` satisfied isFloat by coercion and stayed an array
+    // in req.body, then went into budget_submissions.amount (DECIMAL) as the
+    // literal '{50}' — 22P02, i.e. a 500 with the whole submit transaction
+    // rolled back. `skipped: ["false"]` was worse than a 500: isBoolean passed,
+    // `!!skipped` read the ARRAY as true, and a person who said "no, here is my
+    // budget" was recorded as having skipped. This is the anonymous
+    // budget-matching surface, where a wrong `skipped` moves the 3-submission
+    // privacy threshold that gates the ceiling.
+    //
+    // OPTIONALITY. `.optional()` skips only `undefined`, and the shipping
+    // client's Skip button posts `{ amount: 0, skipped: true }`
+    // (frontend/src/App.js -> submitBudget). 0 is PRESENT, so it fell through to
+    // isFloat({ min: 0.01 }) and every skip in the app was answered
+    // "400 Amount must be between $0.01 and $10,000" — the same shape of bug as
+    // the feedback route's `optional()`-vs-null. checkFalsy skips 0/''/null/
+    // undefined; a non-skip submission with no usable amount is still refused,
+    // by the explicit check in the handler that says so in words.
+    scalarOnly(body('amount').optional({ checkFalsy: true }), 'amount')
+      .isFloat({ min: 0.01, max: 10000 }).withMessage('Amount must be between $0.01 and $10,000'),
+    // values:'null' for the same reason — an explicit `skipped: null` means "not
+    // skipped", which is what `!!skipped` already computes, so refusing it was
+    // pure friction.
+    scalarOnly(body('skipped').optional({ values: 'null' }), 'skip flag').isBoolean(),
   ],
   async (req, res) => {
     try {

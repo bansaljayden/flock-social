@@ -2,6 +2,10 @@ const express = require('express');
 const { body, validationResult } = require('express-validator');
 const pool = require('../config/database');
 const { authenticate } = require('../middleware/auth');
+// Shape before content — see validators/shape.js. Only the five text fields and
+// the two ids below get the guard: goals / operatingHours / notificationPrefs
+// are LEGITIMATELY structured and have their own custom() shape rules.
+const { scalarOnly } = require('../validators/shape');
 
 const router = express.Router();
 router.use(authenticate);
@@ -80,7 +84,12 @@ function sanitizePrefs(prefs) {
 // our own upload endpoint, which returns a relative /uploads/... path, so
 // accept that and https and nothing else (no javascript:, no data:, and no
 // protocol-relative //host that would silently point at a third party).
-const photoRule = body('photoUrl').optional({ nullable: true }).trim()
+// Round 19 (shape sweep): the custom() below tests `v` with a REGEX, and a
+// regex stringifies its argument — so `photoUrl: ["https://evil.example/x"]`
+// satisfied the https branch, skipped the trim, and went to the column as an
+// array. The scheme allowlist is the whole point of this rule, so it has to be
+// reading a string.
+const photoRule = scalarOnly(body('photoUrl').optional({ nullable: true }), 'photo URL').trim()
   .isLength({ max: MAX_PHOTO_URL }).withMessage('Photo URL is too long')
   .custom((v) => {
     if (v === '') return true;
@@ -89,7 +98,10 @@ const photoRule = body('photoUrl').optional({ nullable: true }).trim()
     throw new Error('Photo URL must be an https link or an uploaded file');
   });
 
-const placeIdRule = body('googlePlaceId').optional({ nullable: true }).trim()
+// googlePlaceId is the claim key: it is compared against other owners' rows in
+// claimedByAnother() and then written to venue_profiles.google_place_id, so an
+// array reached both the ownership query and a VARCHAR column as a literal.
+const placeIdRule = scalarOnly(body('googlePlaceId').optional({ nullable: true }), 'Google place id').trim()
   .isLength({ max: MAX_PLACE_ID }).withMessage('Google place id is too long');
 
 // ─── Claim integrity ─────────────────────────────────────────────────────────
@@ -114,12 +126,16 @@ async function claimedByAnother(placeId, userId) {
 
 // POST /api/venue-profile — create venue profile (onboarding)
 router.post('/', [
-  body('businessName').trim()
+  // Round 19 (shape sweep): every one of these lands in a bounded column, and
+  // an array satisfied isLength by coercion while skipping trim (a sanitizer
+  // returns a non-string untouched) — so the 22001-instead-of-400 bug the
+  // bounds were added for was still reachable, just through a different door.
+  scalarOnly(body('businessName'), 'business name').trim()
     .isLength({ min: 1 }).withMessage('Business name is required')
     .isLength({ max: MAX_BUSINESS_NAME }).withMessage('Business name is too long'),
-  body('category').optional({ nullable: true }).trim().isLength({ max: MAX_CATEGORY }).withMessage('Category is too long'),
-  body('location').optional({ nullable: true }).trim().isLength({ max: MAX_LOCATION }).withMessage('Location is too long'),
-  body('description').optional({ nullable: true }).trim().isLength({ max: MAX_DESCRIPTION }).withMessage('Description is too long'),
+  scalarOnly(body('category').optional({ nullable: true }), 'category').trim().isLength({ max: MAX_CATEGORY }).withMessage('Category is too long'),
+  scalarOnly(body('location').optional({ nullable: true }), 'location').trim().isLength({ max: MAX_LOCATION }).withMessage('Location is too long'),
+  scalarOnly(body('description').optional({ nullable: true }), 'description').trim().isLength({ max: MAX_DESCRIPTION }).withMessage('Description is too long'),
   goalsRule,
   placeIdRule,
   // tier and verified are intentionally NOT accepted here either — see the PUT.
@@ -205,12 +221,13 @@ router.get('/', async (req, res) => {
 
 // PUT /api/venue-profile — update venue profile (all settings)
 router.put('/', [
-  body('businessName').optional({ nullable: true }).trim().isLength({ max: MAX_BUSINESS_NAME }).withMessage('Business name is too long'),
-  body('category').optional({ nullable: true }).trim().isLength({ max: MAX_CATEGORY }).withMessage('Category is too long'),
-  body('location').optional({ nullable: true }).trim().isLength({ max: MAX_LOCATION }).withMessage('Location is too long'),
-  body('description').optional({ nullable: true }).trim().isLength({ max: MAX_DESCRIPTION }).withMessage('Description is too long'),
+  // Same shape rule as the create route — the two must not drift.
+  scalarOnly(body('businessName').optional({ nullable: true }), 'business name').trim().isLength({ max: MAX_BUSINESS_NAME }).withMessage('Business name is too long'),
+  scalarOnly(body('category').optional({ nullable: true }), 'category').trim().isLength({ max: MAX_CATEGORY }).withMessage('Category is too long'),
+  scalarOnly(body('location').optional({ nullable: true }), 'location').trim().isLength({ max: MAX_LOCATION }).withMessage('Location is too long'),
+  scalarOnly(body('description').optional({ nullable: true }), 'description').trim().isLength({ max: MAX_DESCRIPTION }).withMessage('Description is too long'),
   goalsRule,
-  body('phone').optional({ nullable: true }).trim().isLength({ max: 50 }).withMessage('Phone number is too long'),
+  scalarOnly(body('phone').optional({ nullable: true }), 'phone number').trim().isLength({ max: 50 }).withMessage('Phone number is too long'),
   hoursRule,
   prefsRule,
   placeIdRule,
