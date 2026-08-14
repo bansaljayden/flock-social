@@ -19,10 +19,65 @@ function secretMatches(header, secret) {
 // client reads (frontend/src/services/purchases.js -> entitlements.active['pro']).
 const PRO_ENTITLEMENT = process.env.REVENUECAT_ENTITLEMENT_ID || 'pro';
 
+// ---------------------------------------------------------------------------
+// The ids this webhook is allowed to act on
+// ---------------------------------------------------------------------------
+// users.id is SERIAL, i.e. int4. `parseInt` on its own says nothing about that
+// range, so `{"app_user_id": "99999999999"}` reached `WHERE id = $2` as
+// 99999999999 and came back a Postgres 22003 — a 500. RevenueCat treats a 5xx as
+// a delivery failure and retries it, so a payload that can NEVER succeed is
+// retried on their schedule until they give up, and the 500 sits in our logs
+// looking like an outage. A caller-supplied id outside the column's range is a
+// client error and has to be answered as one, the first time.
+//
+// Strict digits, too. `parseInt('4242junk')` is 4242, which means a mangled id
+// silently resolved to a REAL user's row and flipped their is_premium. The one
+// producer of this field is our own client calling Purchases.logIn(userId) with
+// the numeric Flock user id, so a value that is not exactly digits is not an id
+// we should be guessing at.
+const MAX_INT4 = 2147483647;
+function userIdFrom(value) {
+  if (typeof value !== 'string' && typeof value !== 'number') return null;
+  const raw = String(value).trim();
+  if (!/^[0-9]+$/.test(raw)) return null;
+  const n = Number(raw);
+  return n >= 1 && n <= MAX_INT4 ? n : null;
+}
+
+// How many app_user_ids one TRANSFER may move.
+//
+// This is the only field on this route that reaches a query as a SET rather than
+// as a single value, and it had no maximum of its own: the webhook parser in
+// server.js is 256KB, so `transferred_to` could carry tens of thousands of ids
+// and one request would rewrite is_premium on tens of thousands of rows. That
+// ceiling is not this route's to own, and it moves whenever somebody tunes the
+// parser for an unrelated reason.
+//
+// 50 is where the product puts it. A subscriber's alias set is the set of
+// app_user_ids the SDK has ever been logged in as on that subscriber, and our
+// client calls Purchases.logIn(userId) with the numeric Flock user id, so this
+// is "how many distinct Flock accounts has one person signed into on one
+// device". Fifty is already far past any real person.
+//
+// Refused rather than truncated. Acting on the first fifty of a much larger set
+// would move some entitlements and silently drop the rest, which is the worst of
+// the three options. A 400 makes RevenueCat mark the delivery failed, retry, and
+// eventually surface it in their dashboard, which is where a payload our client
+// cannot produce should show up.
+const MAX_TRANSFER_IDS = 50;
+
 // True when the event carries entitlement identifiers and none of them is the
 // Pro entitlement. Events that carry no identifiers at all fall through to the
 // old behavior — RevenueCat omits them on some legacy payloads and dropping
 // those would be worse than acting on them.
+//
+// `entitlement_ids` is DELIBERATELY unbounded, and that is a different answer to
+// the same question rather than an oversight. Nothing here is stored and nothing
+// here reaches a query: the array is already in memory (the parser built it) and
+// all we do is scan it once, which is strictly cheaper than the parse that
+// produced it. Adding a ceiling would only add a way to refuse a real
+// entitlement event, and a refused event is a paying subscriber who silently
+// does not get Pro.
 function isForeignEntitlement(event) {
   const ids = Array.isArray(event.entitlement_ids)
     ? event.entitlement_ids
@@ -38,7 +93,18 @@ function isForeignEntitlement(event) {
 //
 // Auth: shared secret via REVENUECAT_WEBHOOK_SECRET (Railway env) matched against
 // the Authorization header configured in the RevenueCat dashboard. No secret in code.
-router.post('/webhook', express.json(), async (req, res) => {
+//
+// NO PARSER HERE. This handler used to be mounted behind a bare `express.json()`
+// of its own, which read as though this route controlled its own body handling
+// and controlled nothing at all: body-parser sets `req._body` once the body has
+// been read, and the parser block in server.js runs first, so the second one saw
+// a body already consumed and returned immediately. Harmless while it was bare
+// and a live trap the moment somebody added a `limit` to it, because that number
+// would never apply and the next reader would believe it. This route's ceiling
+// is WEBHOOK_JSON_BODY_BYTES in server.js, scoped there precisely because the
+// sender is not us. __tests__/bodyLimitAudit.test.js fails if a limit reappears
+// in any router.
+router.post('/webhook', async (req, res) => {
   try {
     const secret = process.env.REVENUECAT_WEBHOOK_SECRET;
     // Fail closed: without a configured secret this endpoint must not accept
@@ -70,9 +136,17 @@ router.post('/webhook', express.json(), async (req, res) => {
     // the receiving user stayed locked out of something they own, and the
     // old one kept access they no longer have (round 10).
     if (type === 'TRANSFER') {
+      // Counted on the RAW arrays, before the map: measuring what survived
+      // parsing would let a caller send a hundred thousand junk entries and pay
+      // for the whole walk to arrive at a set of two.
+      const oversized = (arr) => Array.isArray(arr) && arr.length > MAX_TRANSFER_IDS;
+      if (oversized(event.transferred_from) || oversized(event.transferred_to)) {
+        console.error(`[RevenueCat] TRANSFER naming more than ${MAX_TRANSFER_IDS} app_user_ids, refused`);
+        return res.status(400).json({ error: 'Too many app_user_ids in transfer' });
+      }
       const ids = (arr) => (Array.isArray(arr) ? arr : [])
-        .map((v) => parseInt(v))
-        .filter((n) => Number.isInteger(n));
+        .map(userIdFrom)
+        .filter((n) => n !== null);
       const from = ids(event.transferred_from);
       const to = ids(event.transferred_to);
       if (from.length) {
@@ -85,7 +159,7 @@ router.post('/webhook', express.json(), async (req, res) => {
       return res.json({ ok: true });
     }
 
-    const appUserId = parseInt(event.app_user_id);
+    const appUserId = userIdFrom(event.app_user_id);
     if (!appUserId) return res.status(400).json({ error: 'Missing app_user_id' });
 
     const ACTIVE = ['INITIAL_PURCHASE', 'RENEWAL', 'UNCANCELLATION', 'PRODUCT_CHANGE'];

@@ -2,10 +2,21 @@ const express = require('express');
 const { body, validationResult } = require('express-validator');
 const pool = require('../config/database');
 const { authenticate } = require('../middleware/auth');
-// Shape before content — see validators/shape.js. Only the five text fields and
-// the two ids below get the guard: goals / operatingHours / notificationPrefs
-// are LEGITIMATELY structured and have their own custom() shape rules.
-const { scalarOnly } = require('../validators/shape');
+// Shape before content — see validators/shape.js. Every scalar field on these
+// two routes gets the guard; goals / operatingHours / notificationPrefs are
+// LEGITIMATELY structured and have their own custom() shape rules instead.
+//
+// The four owner-typed PROSE fields (businessName, category, location,
+// description) use freeText rather than a bare trim. freeText is
+// shape -> trim -> stripHtml -> trim, and the reason they need the strip is that
+// business_name and location are rendered to somebody other than their author:
+// routes/admin.js reads both into the venue verification queue. A value that can
+// BE markup on the way into a column is a value nobody downstream can assume is
+// text. phone, photoUrl and googlePlaceId keep the plain scalar guard: stripping
+// a URL or an id would corrupt it, and each has a stricter rule of its own below.
+// goals and operatingHours are owner-only (nothing reads them but the dashboard
+// that wrote them), so they are bounded rather than screened.
+const { scalarOnly, freeText } = require('../validators/shape');
 // ONE definition of "is that a place id", shared with routes/checkin.js,
 // routes/flocks.js, routes/feedback.js and sockets/handlers.js. See the note on
 // placeIdRule below for why this router is the one that had to adopt it.
@@ -22,6 +33,16 @@ router.use(authenticate);
 // guard. description / goals / operating_hours / notification_prefs are TEXT,
 // TEXT[] and JSONB, which do not overflow: they just store whatever they are
 // given, so an authenticated owner could park unbounded JSON in their row.
+//
+// MARKUP, BUT NOT A WORDLIST (2026-08-14). The four prose fields go through
+// freeText now, so nothing stored here can BE markup. They are deliberately NOT
+// run through rejectIfProfane, unlike every personal free-text field in
+// routes/users.js and routes/messages.js: this is a business's own name and
+// address, chosen by its owner and printed on its door, and content-checker's
+// wordlist refuses plenty of real ones. What screens a venue is the human step
+// the venue path already has, which is that nothing a venue says reaches a user
+// until an admin sets verified (routes/admin.js). A wordlist here would refuse
+// honest businesses and catch nothing a person would not.
 const MAX_BUSINESS_NAME = 255;
 const MAX_CATEGORY = 100;
 const MAX_LOCATION = 255;
@@ -32,6 +53,29 @@ const MAX_GOALS = 20;
 const MAX_GOAL_LEN = 80;
 const MAX_HOURS_ROWS = 21;      // 7 days, up to three shifts each
 const MAX_HOURS_FIELD = 60;
+
+// How many keys a notificationPrefs object may carry.
+//
+// AUDIT 2026-08-14. This field had no maximum of ITS OWN. The rule below checked
+// that the value was an object and stopped there, so the only thing deciding how
+// big that object could be was express.json()'s limit in server.js, which was
+// just moved from 1MB to 64KB for reasons that had nothing to do with this
+// route. A bound that lives in another file is a bound that changes when nobody
+// is looking at this one.
+//
+// 12 is four times the three switches the dashboard renders (PREF_KEYS below).
+// A client can only round-trip keys this dashboard has ever produced, and it has
+// only ever produced three, so four times that already covers a stale build
+// posting an older shape back at us. Unknown keys are still ACCEPTED and
+// dropped, exactly as before, because refusing them would break that stale
+// client; what is refused is somebody using the column as a bucket.
+//
+// The VALUES are deliberately not bounded, and that is not the same oversight
+// wearing a different hat: sanitizePrefs keeps only booleans, and only for the
+// three known keys, so nothing a value contains can reach the column. Bounding
+// the values would refuse requests that are already harmless, and one of them is
+// a case __tests__/venueOwner.test.js pins as having to succeed.
+const MAX_PREF_KEYS = 12;
 
 // goals is TEXT[]. node-pg will happily serialize objects into it
 // ("[object Object]"), and a non-array value is a raw Postgres error, so the
@@ -69,6 +113,9 @@ const hoursRule = body('operatingHours').optional({ nullable: true }).custom((v)
 
 const prefsRule = body('notificationPrefs').optional({ nullable: true }).custom((v) => {
   if (!v || typeof v !== 'object' || Array.isArray(v)) throw new Error('Notification preferences must be an object');
+  if (Object.keys(v).length > MAX_PREF_KEYS) {
+    throw new Error(`Too many notification preferences (max ${MAX_PREF_KEYS})`);
+  }
   return true;
 });
 
@@ -108,6 +155,21 @@ const prefsRule = body('notificationPrefs').optional({ nullable: true }).custom(
 // lands. What guards the gap is a test, not this comment:
 // __tests__/alertPreferences.test.js fails the moment any file grows both a
 // venue-owner lookup and a send without also reading notification_prefs.
+//
+// ─── AND THE WRITE MERGES, IT DOES NOT REPLACE (audit 2026-08-14) ────────────
+//
+// sanitizePrefs returns only the keys the request actually SENT, and the write
+// used to be `notification_prefs = COALESCE($8, notification_prefs)`. COALESCE
+// picks one side or the other, so `{"bookings": false}` replaced the whole
+// column with `{"bookings": false}` and the owner's reviews and weekly settings
+// were gone. Worse in kind: `{"junk": 1}` sanitizes to `{}`, which is not null,
+// so it replaced the column with an empty object and silently cleared all three.
+//
+// That is inert today only because nothing reads the column. It stops being
+// inert on the day the first owner notification ships, and by then the wrong
+// values are already stored, so the fix belongs here now rather than in the
+// change that finally reads it. The statement below merges with jsonb `||`,
+// which is per-key and leaves the keys this request did not mention alone.
 const PREF_KEYS = ['bookings', 'reviews', 'weekly'];
 function sanitizePrefs(prefs) {
   const out = {};
@@ -199,12 +261,12 @@ router.post('/', [
   // an array satisfied isLength by coercion while skipping trim (a sanitizer
   // returns a non-string untouched) — so the 22001-instead-of-400 bug the
   // bounds were added for was still reachable, just through a different door.
-  scalarOnly(body('businessName'), 'business name').trim()
+  freeText(body('businessName'), 'business name')
     .isLength({ min: 1 }).withMessage('Business name is required')
     .isLength({ max: MAX_BUSINESS_NAME }).withMessage('Business name is too long'),
-  scalarOnly(body('category').optional({ nullable: true }), 'category').trim().isLength({ max: MAX_CATEGORY }).withMessage('Category is too long'),
-  scalarOnly(body('location').optional({ nullable: true }), 'location').trim().isLength({ max: MAX_LOCATION }).withMessage('Location is too long'),
-  scalarOnly(body('description').optional({ nullable: true }), 'description').trim().isLength({ max: MAX_DESCRIPTION }).withMessage('Description is too long'),
+  freeText(body('category').optional({ nullable: true }), 'category').isLength({ max: MAX_CATEGORY }).withMessage('Category is too long'),
+  freeText(body('location').optional({ nullable: true }), 'location').isLength({ max: MAX_LOCATION }).withMessage('Location is too long'),
+  freeText(body('description').optional({ nullable: true }), 'description').isLength({ max: MAX_DESCRIPTION }).withMessage('Description is too long'),
   goalsRule,
   placeIdRule,
   // tier and verified are intentionally NOT accepted here either — see the PUT.
@@ -291,10 +353,10 @@ router.get('/', async (req, res) => {
 // PUT /api/venue-profile — update venue profile (all settings)
 router.put('/', [
   // Same shape rule as the create route — the two must not drift.
-  scalarOnly(body('businessName').optional({ nullable: true }), 'business name').trim().isLength({ max: MAX_BUSINESS_NAME }).withMessage('Business name is too long'),
-  scalarOnly(body('category').optional({ nullable: true }), 'category').trim().isLength({ max: MAX_CATEGORY }).withMessage('Category is too long'),
-  scalarOnly(body('location').optional({ nullable: true }), 'location').trim().isLength({ max: MAX_LOCATION }).withMessage('Location is too long'),
-  scalarOnly(body('description').optional({ nullable: true }), 'description').trim().isLength({ max: MAX_DESCRIPTION }).withMessage('Description is too long'),
+  freeText(body('businessName').optional({ nullable: true }), 'business name').isLength({ max: MAX_BUSINESS_NAME }).withMessage('Business name is too long'),
+  freeText(body('category').optional({ nullable: true }), 'category').isLength({ max: MAX_CATEGORY }).withMessage('Category is too long'),
+  freeText(body('location').optional({ nullable: true }), 'location').isLength({ max: MAX_LOCATION }).withMessage('Location is too long'),
+  freeText(body('description').optional({ nullable: true }), 'description').isLength({ max: MAX_DESCRIPTION }).withMessage('Description is too long'),
   goalsRule,
   scalarOnly(body('phone').optional({ nullable: true }), 'phone number').trim().isLength({ max: 50 }).withMessage('Phone number is too long'),
   hoursRule,
@@ -331,7 +393,19 @@ router.put('/', [
         goals = COALESCE($5, goals),
         phone = COALESCE($6, phone),
         operating_hours = COALESCE($7, operating_hours),
-        notification_prefs = COALESCE($8, notification_prefs),
+        -- Merge, do not replace. jsonb_typeof rather than a bare COALESCE on
+        -- the left: concatenating an object with a jsonb scalar raises
+        -- "invalid concatenation of jsonb objects", so a row that somehow
+        -- holds anything but an object would turn every save into a 500
+        -- instead of being overwritten by the first one. NULL and a drifted
+        -- value both read as "start from empty".
+        -- (NO BACKTICKS IN HERE. This is inside a template literal, so one
+        -- ends the string, and the rest of the statement silently becomes a
+        -- second literal joined with ||. The query still parses as JavaScript
+        -- and reaches Postgres truncated at that point.)
+        notification_prefs = CASE WHEN $8::jsonb IS NULL THEN notification_prefs
+                                  ELSE (CASE WHEN jsonb_typeof(notification_prefs) = 'object'
+                                             THEN notification_prefs ELSE '{}'::jsonb END) || $8::jsonb END,
         google_place_id = COALESCE($9, google_place_id),
         -- Verification binds to the PLACE, not the profile row: changing the
         -- place id resets verified so a verified owner can't pivot their badge
