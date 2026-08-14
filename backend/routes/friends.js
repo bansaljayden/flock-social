@@ -5,6 +5,7 @@ const { authenticate } = require('../middleware/auth');
 
 const { pushIfOffline } = require('../services/pushHelper');
 const { isBlockedBetween, getInvisibleUserIds } = require('../utils/blocks');
+const { createUserBudget } = require('../utils/probeBudget');
 
 const router = express.Router();
 router.use(authenticate);
@@ -12,9 +13,40 @@ router.use(authenticate);
 // friendships table lives in migrations/003 — route-owned DDL raced the
 // migration runner on fresh deployments (see REVIEW-ROUND5).
 
+// ---------------------------------------------------------------------------
+// Directory-probe budget (audit 2026-08-14)
+//
+// /request and /add-by-code both answer "is there a user behind this id, and
+// what are they called?" and both fire a push notification at whoever is
+// behind it. find-by-phone already carried a budget for exactly that reason;
+// these two did not, so under the general 300/15min limiter one account could
+// walk ~28,000 ids a day, harvest the display name for every hit, and ring a
+// real person's phone on each one.
+//
+// 20/hour and 60/day: a legitimate burst is "I met a group of people tonight
+// and I am adding all of them", which tops out around 10-15. 60 a day covers an
+// unusually social onboarding day with room to spare, while cutting a directory
+// walk from ~28,000 ids/day to 60 (a ~460x reduction) and capping the push
+// spam any one account can send at 60 strangers a day.
+//
+// ONE budget shared by both endpoints, on purpose: two separate 60s would just
+// hand an enumerator 120.
+//
+// A probe is only charged when the caller has NO existing friendship row with
+// the target. Re-tapping "add" on someone you already have a relationship with
+// tells you nothing you did not already know, so it stays free and the UI
+// cannot burn a user's budget on double-taps.
+// ---------------------------------------------------------------------------
+const friendProbeBudget = createUserBudget({ name: 'friend-probe', hourly: 20, daily: 60 });
+
+// Postgres INTEGER ceiling. An id past this reaches the query as an out-of-range
+// value and comes back a 500 (which is itself a signal); it is a malformed id,
+// so it is rejected as one.
+const MAX_USER_ID = 2147483647;
+
 // POST /api/friends/request - Send a friend request
 router.post('/request',
-  body('user_id').isInt().withMessage('user_id is required'),
+  body('user_id').isInt({ min: 1, max: MAX_USER_ID }).withMessage('user_id is required'),
   async (req, res) => {
     try {
       const errors = validationResult(req);
@@ -22,29 +54,47 @@ router.post('/request',
         return res.status(400).json({ error: errors.array()[0].msg });
       }
 
-      const { user_id } = req.body;
+      // isInt() passes for the STRING "5", and `"5" === 5` is false, so the
+      // self-check below used to be bypassable by sending user_id as a string —
+      // which minted a friendship row pointing at yourself.
+      const user_id = parseInt(req.body.user_id, 10);
 
       if (user_id === req.user.id) {
         return res.status(400).json({ error: 'Cannot send friend request to yourself' });
       }
 
-      // Check if user exists
+      // The single response for "nothing here". Budget exhaustion answers with
+      // exactly this, because a distinguishable 429 would replace the
+      // enumeration channel rather than close it: "429 = real user, 404 = no
+      // such user" is the same oracle wearing a different status code.
+      const miss = () => res.status(404).json({ error: 'User not found' });
+
+      // Check if a friendship already exists in either direction. This runs
+      // FIRST because it reads the caller's own relationships (no directory
+      // information) and decides whether this call is a probe at all.
+      const existing = await pool.query(
+        `SELECT id, status, requester_id FROM friendships
+         WHERE (requester_id = $1 AND addressee_id = $2) OR (requester_id = $2 AND addressee_id = $1)`,
+        [req.user.id, user_id]
+      );
+
+      // Charged on every probe at a stranger, hit or miss. Charging only on
+      // hits would leave misses free and unbounded, and "the free answers are
+      // the misses" is the enumeration signal itself.
+      const withinBudget = existing.rows.length > 0 || friendProbeBudget.allow(req.user.id);
+
+      // Deliberately queried even when the budget is spent, so the exhausted
+      // path does the same work as a genuine miss and cannot be separated from
+      // it by response time.
       const userCheck = await pool.query('SELECT id, name FROM users WHERE id = $1', [user_id]);
-      if (userCheck.rows.length === 0) {
-        return res.status(404).json({ error: 'User not found' });
+      if (!withinBudget || userCheck.rows.length === 0) {
+        return miss();
       }
 
       // Mutual block — can't friend someone you (or they) blocked.
       if (await isBlockedBetween(req.user.id, user_id)) {
         return res.status(403).json({ error: 'You can no longer connect with this user.' });
       }
-
-      // Check if a friendship already exists in either direction
-      const existing = await pool.query(
-        `SELECT id, status, requester_id FROM friendships
-         WHERE (requester_id = $1 AND addressee_id = $2) OR (requester_id = $2 AND addressee_id = $1)`,
-        [req.user.id, user_id]
-      );
 
       const io = req.app.get('io');
 
@@ -336,7 +386,9 @@ router.get('/my-code', async (req, res) => {
 
 // POST /api/friends/add-by-code - Add friend by their friend code
 router.post('/add-by-code',
-  body('code').trim().isLength({ min: 1 }).withMessage('Friend code is required'),
+  // Bounded: a code is 'FLOCK-' plus a base36 id, so anything long is not a
+  // typo, it is someone feeding a megabyte to a regex and a toUpperCase().
+  body('code').trim().isLength({ min: 1, max: 64 }).withMessage('Friend code is required'),
   async (req, res) => {
     try {
       const errors = validationResult(req);
@@ -352,27 +404,40 @@ router.post('/add-by-code',
       }
 
       const targetUserId = parseInt(match[1], 36);
-      if (isNaN(targetUserId) || targetUserId === req.user.id) {
-        return res.status(400).json({ error: targetUserId === req.user.id ? "That's your own code!" : 'Invalid friend code' });
+      if (targetUserId === req.user.id) {
+        return res.status(400).json({ error: "That's your own code!" });
       }
 
-      // Check target user exists
+      // The single "no such code" response. Budget exhaustion answers with this
+      // too — see the note on POST /request. Friend codes are just base36 user
+      // ids, so the code space IS the id space and walking it is trivial.
+      const miss = () => res.status(404).json({ error: 'No user found with this code' });
+
+      // 'FLOCK-ZZZZZZZZZZ' parses to a number far past Postgres's INTEGER
+      // range, which used to surface as a 500 (and a 500 vs a 404 is a signal).
+      if (!Number.isSafeInteger(targetUserId) || targetUserId < 1 || targetUserId > MAX_USER_ID) {
+        return miss();
+      }
+
+      // Same order as POST /request: own-relationship lookup, then budget, then
+      // the directory read, with one indistinguishable answer for all misses.
+      const existing = await pool.query(
+        `SELECT id, status, requester_id FROM friendships
+         WHERE (requester_id = $1 AND addressee_id = $2) OR (requester_id = $2 AND addressee_id = $1)`,
+        [req.user.id, targetUserId]
+      );
+
+      const withinBudget = existing.rows.length > 0 || friendProbeBudget.allow(req.user.id);
+
       const userCheck = await pool.query('SELECT id, name FROM users WHERE id = $1', [targetUserId]);
-      if (userCheck.rows.length === 0) {
-        return res.status(404).json({ error: 'No user found with this code' });
+      if (!withinBudget || userCheck.rows.length === 0) {
+        return miss();
       }
 
       // Mutual block — can't friend someone you (or they) blocked.
       if (await isBlockedBetween(req.user.id, targetUserId)) {
         return res.status(403).json({ error: 'You can no longer connect with this user.' });
       }
-
-      // Reuse friend request logic
-      const existing = await pool.query(
-        `SELECT id, status, requester_id FROM friendships
-         WHERE (requester_id = $1 AND addressee_id = $2) OR (requester_id = $2 AND addressee_id = $1)`,
-        [req.user.id, targetUserId]
-      );
 
       const io = req.app.get('io');
 
@@ -411,32 +476,20 @@ router.post('/add-by-code',
 // number belong to a Flock user, and who?", so an unbudgeted caller could walk
 // a number range and harvest id/name/photo for the whole user base. Contact
 // sync is something a real user does a handful of times, not hundreds, so it
-// gets a hard per-user budget in the style of utils/placesBudget.js. Kept local
-// to this route on purpose — it is not a shared resource pool.
-const CONTACT_SYNC_HOURLY = 3;
-const CONTACT_SYNC_DAILY = 10;
+// keeps its hard per-user budget of 3/hour and 10/day.
+//
+// The hand-rolled counter this used to carry is now utils/probeBudget.js — the
+// same code was about to exist a third time for the friend-probe budget, and
+// the old version could be flushed wholesale (`contactSyncHits.clear()` on
+// overflow handed everyone a fresh allowance).
+//
+// Unlike the friend-probe budget, an exhausted sync answers 429: this endpoint
+// takes a caller-supplied list and returns matches, so "no matches" and "you
+// are throttled" are not confusable states an attacker can exploit — and a
+// silent empty result would look like "none of your contacts use Flock", which
+// is a lie the UI would show to a real user.
 const MAX_SYNC_PHONES = 200;
-const contactSyncHits = new Map(); // userId -> { hourly: number[], dayCount, dayResetAt }
-
-function allowContactSync(userId) {
-  const now = Date.now();
-  if (contactSyncHits.size > 5000) {
-    for (const [k, v] of contactSyncHits) { if (now > v.dayResetAt) contactSyncHits.delete(k); }
-    if (contactSyncHits.size > 5000) contactSyncHits.clear();
-  }
-  let entry = contactSyncHits.get(userId);
-  if (!entry || now > entry.dayResetAt) {
-    entry = { hourly: [], dayCount: 0, dayResetAt: now + 24 * 60 * 60 * 1000 };
-    contactSyncHits.set(userId, entry);
-  }
-  entry.hourly = entry.hourly.filter((t) => now - t < 3600_000);
-  if (entry.hourly.length >= CONTACT_SYNC_HOURLY || entry.dayCount >= CONTACT_SYNC_DAILY) {
-    return false;
-  }
-  entry.hourly.push(now);
-  entry.dayCount += 1;
-  return true;
-}
+const contactSyncBudget = createUserBudget({ name: 'contact-sync', hourly: 3, daily: 10 });
 
 // POST /api/friends/find-by-phone - Find users by phone numbers (for contacts sync)
 router.post('/find-by-phone',
@@ -457,7 +510,7 @@ router.post('/find-by-phone',
         return res.status(400).json({ error: `Sync up to ${MAX_SYNC_PHONES} contacts at a time` });
       }
 
-      if (!allowContactSync(req.user.id)) {
+      if (!contactSyncBudget.allow(req.user.id)) {
         return res.status(429).json({ error: 'You have synced your contacts a few times already. Try again later.' });
       }
 
@@ -538,3 +591,11 @@ router.get('/status/:userId', async (req, res) => {
 });
 
 module.exports = router;
+
+// Test hook only. The budgets above are process-wide in-memory state, so a test
+// suite needs a way to start each case from a clean allowance. Nothing in the
+// running server calls this.
+module.exports.__resetBudgets = () => {
+  friendProbeBudget.reset();
+  contactSyncBudget.reset();
+};

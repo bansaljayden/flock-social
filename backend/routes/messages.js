@@ -7,6 +7,7 @@ const { rejectIfProfane, moderateImage, IMAGE_REJECTED_MESSAGE } = require('../u
 const { sanitizeVenueData, safeVenuePhotoUrl } = require('../utils/venuePayload');
 const VENUE_REJECTED_MESSAGE = "That venue card couldn't be shared.";
 const { isBlockedBetween, getInvisibleUserIds } = require('../utils/blocks');
+const { hasDmRelationship, NOT_CONNECTED_MESSAGE } = require('../utils/relationships');
 const { emitToFlockExcludingBlocked } = require('../sockets/handlers');
 
 const router = express.Router();
@@ -512,15 +513,20 @@ router.post('/dm/:userId',
         return res.status(400).json({ error: 'Cannot send a DM to yourself' });
       }
 
-      // Verify receiver exists
-      const receiver = await pool.query('SELECT id FROM users WHERE id = $1', [receiverId]);
-      if (receiver.rows.length === 0) {
-        return res.status(404).json({ error: 'User not found' });
-      }
-
       // Mutual block: if either user blocked the other, no DMs in either direction.
       if (await isBlockedBetween(req.user.id, receiverId)) {
         return res.status(403).json({ error: 'You can no longer message this user.' });
+      }
+
+      // Audit 2026-08-14: this route used to answer "404 User not found" for an
+      // id nobody holds and "201 Created" for one somebody does, with no
+      // relationship required either way — a directory walk that dropped a
+      // message in a stranger's inbox on every hit. The socket transport has
+      // required a real relationship for persisting DM writes since round 5;
+      // the REST twin now does too, and the ONE refusal covers both "no such
+      // user" and "not connected", so neither can be read off the other.
+      if (!(await hasDmRelationship(req.user.id, receiverId))) {
+        return res.status(403).json({ error: NOT_CONNECTED_MESSAGE });
       }
 
       const { message_text, message_type, venue_data, image_url, reply_to_id } = req.body;
@@ -686,11 +692,14 @@ router.post('/dm/:userId/venue-votes',
       if (await isBlockedBetween(req.user.id, otherUserId)) {
         return res.status(403).json({ error: 'You can no longer interact with this user.' });
       }
-      // Round 9: the pair key was derived without ever checking the counterpart
-      // exists, so DM metadata could be written against made-up user ids.
-      const other = await pool.query('SELECT 1 FROM users WHERE id = $1', [otherUserId]);
-      if (other.rows.length === 0) {
-        return res.status(404).json({ error: 'User not found' });
+      // Round 9 checked the counterpart existed; that turned the route into an
+      // existence oracle (404 vs 200) and still let anyone write DM metadata
+      // into a conversation they are not part of. dm_venue_votes is keyed on
+      // the ordered pair, which is why the socket transport requires a real
+      // relationship here — this is the REST twin of that gate, with one
+      // refusal covering both "no such user" and "not connected".
+      if (!(await hasDmRelationship(req.user.id, otherUserId))) {
+        return res.status(403).json({ error: NOT_CONNECTED_MESSAGE });
       }
       const venue_name = stripHtml(req.body.venue_name);
       // Venue names ride into the other person's UI (round 9 follow-up).
@@ -788,10 +797,11 @@ router.put('/dm/:userId/pinned-venue',
       if (await isBlockedBetween(req.user.id, otherUserId)) {
         return res.status(403).json({ error: 'You can no longer interact with this user.' });
       }
-      // Round 9: same missing existence check as the venue-vote route.
-      const other = await pool.query('SELECT 1 FROM users WHERE id = $1', [otherUserId]);
-      if (other.rows.length === 0) {
-        return res.status(404).json({ error: 'User not found' });
+      // Same gate as the venue-vote route. dm_pinned_venues is an UPSERT on the
+      // ordered pair, so an outsider writing here overwrites what those two
+      // people pinned — the exact case sockets/handlers.js closed on its side.
+      if (!(await hasDmRelationship(req.user.id, otherUserId))) {
+        return res.status(403).json({ error: NOT_CONNECTED_MESSAGE });
       }
       const { user1, user2 } = dmPairKey(req.user.id, otherUserId);
       const venue_name = stripHtml(req.body.venue_name).slice(0, 255);
