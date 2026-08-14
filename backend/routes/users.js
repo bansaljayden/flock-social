@@ -40,11 +40,28 @@ router.use(authenticate);
 // user_settings table lives in migrations/003 — route-owned DDL raced the
 // migration runner on fresh deployments (see REVIEW-ROUND5).
 
-// Magic bytes for image validation
+// Magic bytes for image validation.
+//
+// Round 19: these were TRUNCATED signatures — four bytes of PNG's eight, and a
+// bare `GIF8` rather than the two GIF versions that exist. That let this
+// function and utils/moderation.js's inspectImageFrames disagree about what a
+// file IS: bytes beginning `47 49 46 38 58 61` typed as a GIF here, were
+// stamped `data:image/gif` and stored, and were an unrecognised container over
+// there — which is the branch that does NOT look for extra frames. Two
+// byte-typers in one repo that can reach different conclusions about the same
+// bytes is a moderation bypass waiting for someone to find the seam. Full
+// signatures, so both answer the same question the same way.
+//
+// This is format TYPING, not frame counting: how many frames a file holds is
+// decided in exactly one place, inside moderateImage. Real uploads are
+// unaffected — the only two GIF versions ever published are 87a and 89a.
 const IMAGE_SIGNATURES = {
   jpeg: [Buffer.from([0xFF, 0xD8, 0xFF])],
-  png:  [Buffer.from([0x89, 0x50, 0x4E, 0x47])],
-  gif:  [Buffer.from([0x47, 0x49, 0x46, 0x38])],
+  png:  [Buffer.from([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A])],
+  gif:  [
+    Buffer.from([0x47, 0x49, 0x46, 0x38, 0x37, 0x61]),  // GIF, version 87a
+    Buffer.from([0x47, 0x49, 0x46, 0x38, 0x39, 0x61]),  // GIF, version 89a
+  ],
   // 'RIFF' alone is a container header, not an image one: WAV and AVI open the
   // same four bytes. The 'WEBP' form type at offset 8 is what makes it an image.
   webp: [Buffer.from([0x52, 0x49, 0x46, 0x46])], // RIFF header
