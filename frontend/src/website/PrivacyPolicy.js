@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import './PrivacyPolicy.css';
+import SiteFooter from './SiteFooter';
 
 const EFFECTIVE_DATE = 'August 14, 2026';
 const CONTACT_EMAIL = 'social@flockcorp.com';
@@ -418,13 +419,9 @@ export default function PrivacyPolicy() {
             </section>
           </div>
 
-          <footer className="pp-footer">
-            <span>&copy; {new Date().getFullYear()} Flock Corp.</span>
-            <span>
-              <a href="/terms">Terms</a> · <a href="/guidelines">Community Guidelines</a> ·{' '}
-              <a href="/delete-account">Delete account</a>
-            </span>
-          </footer>
+          {/* The shared SiteFooter: legal links, the one real mailbox, and the
+              copyright. It stays inside main.pp because .pp paints the page. */}
+          <SiteFooter className="pp-footer" />
         </div>
       </div>
     </main>

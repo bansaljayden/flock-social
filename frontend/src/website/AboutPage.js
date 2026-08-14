@@ -1,5 +1,6 @@
 import React, { useEffect } from 'react';
 import './PrivacyPolicy.css';
+import SiteFooter from './SiteFooter';
 
 const CONTACT_EMAIL = 'social@flockcorp.com';
 
@@ -135,12 +136,17 @@ export default function AboutPage() {
         </p>
       </section>
 
-      <footer className="pp-footer">
+      {/* The shared SiteFooter carries the legal links, the mailbox and the
+          copyright; the lead line below keeps this page's brand row. The
+          anchor is written out here, not defaulted inside SiteFooter, because
+          marketingSiteAccessibility.test.js pins BY SOURCE SCAN of this file
+          that every footer link carries the READABLE override; linkStyle
+          threads the same override onto the links SiteFooter renders. */}
+      <SiteFooter className="pp-footer" linkStyle={READABLE}>
         <p>
-          Flock &middot; <a href="/" style={READABLE}>flockcorp.com</a> &middot;{' '}
-          <a href={`mailto:${CONTACT_EMAIL}`} style={READABLE}>{CONTACT_EMAIL}</a>
+          Flock &middot; <a href="/" style={READABLE}>flockcorp.com</a>
         </p>
-      </footer>
+      </SiteFooter>
     </main>
   );
 }

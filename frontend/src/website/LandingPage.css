@@ -1433,9 +1433,10 @@ html:has(.lp) body { overflow-x: clip; }
      already harmless in a browser — the floor block in index.css is (0,7,1) and
      this class is (0,1,0), so the floor won — but a size that is only correct
      because a rule in another file out-specifies it is one refactor away from
-     being wrong, and index.css's own comment names this class as the reason its
-     :not() chain has to be as long as it is. Correct at source instead;
-     iosFocusZoomFontFloor.test.js lists this exact fix as outstanding. */
+     being wrong, and index.css's own comment names this class as the case that
+     taught its :not() chain to be as long as it is. Corrected at source;
+     the matching KNOWN_OUTSTANDING entry in iosFocusZoomFontFloor.test.js has
+     been pruned. */
   padding: 12px 16px; font: inherit; font-size: 16px;
   color: var(--ink); background: var(--plate);
   border: 1px solid var(--rule); border-radius: 12px; outline: none;

@@ -424,10 +424,11 @@ body::after {
      zoom, camera zoom), the hidden file pickers, checkboxes and radios.
    - Its specificity is (0,7,1), because each :not([type=...]) contributes
      an attribute selector. That is what lets it beat the single-class
-     rules elsewhere in the build without !important — specifically
-     `.lpd-input` in website/LandingPage.css, which is 15px. Simplifying
-     this back to a bare `input` selector drops to (0,0,1), loses to that
-     class, and the LiveDemo field starts zooming again.
+     rules elsewhere in the build without !important. The case that taught
+     it, `.lpd-input` in website/LandingPage.css, has since been fixed to
+     16px at source; the chain stays because a bare `input` selector drops
+     to (0,0,1) and loses to ANY sub-16px class rule a control picks up
+     (the dormant shadcn vanish input's Tailwind text-sm, 14px, is one).
 
    WHAT THIS STILL DOES NOT REACH: an inline style with a LITERAL px value
    under 16, because a normal stylesheet declaration loses to the style

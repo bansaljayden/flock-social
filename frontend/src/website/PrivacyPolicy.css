@@ -511,6 +511,16 @@
 .pp-footer a { color: var(--pp-ink-3); border-bottom-color: var(--pp-rule); }
 .pp-footer a:hover { color: var(--pp-accent); }
 
+/* The optional lead line a page passes into SiteFooter (About and Support keep
+   their brand row there). Full-width, so it sits on its own row above the
+   copyright and the legal links; re-sized because `.pp p` (0,1,1) would
+   otherwise win its 16px over the footer's 13px small print. */
+.pp-footer p {
+  flex-basis: 100%;
+  margin: 0;
+  font-size: 13px;
+}
+
 /* ---------- entrance: one subtle, single-run settle ---------- */
 
 /* THE CONTENT IS VISIBLE WITH NO ANIMATION AT ALL, AND THAT IS THE POINT.
