@@ -35,13 +35,19 @@ function isWeekend(day) {
   return day === 5 || day === 6; // Fri or Sat
 }
 
+// Both primitives tolerate a non-array `types`. Routes sanitize the shape
+// (routes/crowd.js filters to string arrays), but this engine is also the
+// cold-start fallback called with venue objects from several shapes, and a
+// string or object here used to THROW from inside scoring (`types.some is not
+// a function`) — a crashed prediction where the worst acceptable outcome is a
+// less-informed one. Not an array = no type information, same as absent.
 function isIndoor(types) {
-  if (!types || !types.length) return true;
+  if (!Array.isArray(types) || !types.length) return true;
   return types.some(t => ['restaurant', 'bar', 'night_club', 'cafe', 'movie_theater', 'bowling_alley', 'shopping_mall', 'juice_shop', 'diner', 'american_restaurant', 'fast_food_restaurant', 'gym', 'fitness_center', 'library', 'museum', 'steak_house', 'seafood_restaurant', 'sushi_restaurant', 'italian_restaurant', 'mexican_restaurant', 'indian_restaurant', 'chinese_restaurant', 'japanese_restaurant', 'korean_restaurant', 'thai_restaurant', 'vietnamese_restaurant', 'french_restaurant', 'mediterranean_restaurant', 'pizza_restaurant', 'hamburger_restaurant', 'ice_cream_shop', 'bakery', 'dessert_shop', 'ramen_restaurant', 'barbecue_restaurant'].includes(t));
 }
 
 function hasType(types, ...targets) {
-  if (!types) return false;
+  if (!Array.isArray(types)) return false;
   return targets.some(t => types.includes(t));
 }
 
@@ -170,9 +176,17 @@ function getTimeFactor(dayOfWeek, hour) {
 }
 
 function getRatingFactor(rating) {
-  if (!rating) return 0;
+  // Coerce first, then gate on finiteness. `!rating` alone let a non-numeric
+  // string through ("abc" is truthy), and ("abc" - 3.0) * 6 is NaN — which
+  // survived every Math.min/Math.max/Math.round downstream and shipped a card
+  // whose score was NaN and whose label was "Very Busy" (NaN fails every <=
+  // comparison in getLabel, so the final return wins). A rating we cannot read
+  // is no rating: 0, the same answer a missing rating gets. Numeric strings
+  // ("4.5", a DECIMAL column read back as text) still count, as before.
+  const r = Number(rating);
+  if (!r || !Number.isFinite(r)) return 0;
   // Continuous: 3.0 → 0, 4.0 → 6, 4.5 → 9, 5.0 → 12
-  return Math.min(12, Math.max(0, Math.round((rating - 3.0) * 6)));
+  return Math.min(12, Math.max(0, Math.round((r - 3.0) * 6)));
 }
 
 // ---------------------------------------------------------------------------
@@ -712,8 +726,13 @@ function estimateWait(score, types, priceLevel) {
     return '45+ min — reserve ahead';
   }
 
-  // Fine dining — almost always need reservations at peak
-  if (isFineDining(types)) {
+  // Fine dining — almost always need reservations at peak.
+  // The priceLevel argument was accepted by this function but never forwarded,
+  // so isFineDining saw undefined, `undefined >= 3` was false, and this branch
+  // was unreachable: every fine-dining venue fell through to the generic
+  // table-wait strings ("35+ min" instead of "Reservation needed"). Callers
+  // (routes/crowd.js) have always passed venue.price_level here.
+  if (isFineDining(types, priceLevel)) {
     if (score < 40) return 'Walk-in likely';
     if (score <= 60) return '15-25 min';
     if (score <= 80) return '30-60 min';
