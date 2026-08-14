@@ -71,17 +71,20 @@ function applyRegistry(instance) {
  * before a drop: joinFlock() used to no-op outright while the socket was still
  * handshaking, so opening a chat during connect never joined at all.
  *
- * Both server handlers are safe to replay — join_flock re-verifies membership
- * and join_venue re-checks the place id, and both are idempotent (socket.join
- * on a room you already hold does nothing). Their rate limits (20 and 30 per
+ * All three server handlers are safe to replay — join_flock re-verifies
+ * membership, join_venue and join_venue_content re-check the place id against
+ * the venues we already know, and all of them are idempotent (socket.join on a
+ * room you already hold does nothing). Their rate limits (20, 30 and 30 per
  * 10s) are far above the one or two rooms a real client holds.
  */
 const joinedFlocks = new Map(); // String(flockId) -> the id as the caller gave it
-const joinedVenues = new Set(); // place ids
+const joinedVenues = new Set(); // place ids — the live sensor / check-in feed
+const joinedVenueContent = new Set(); // place ids — the open venue card's reviews and promotions
 
 function replayRooms(instance) {
   joinedFlocks.forEach((flockId) => instance.emit('join_flock', flockId));
   joinedVenues.forEach((placeId) => instance.emit('join_venue', { placeId }));
+  joinedVenueContent.forEach((placeId) => instance.emit('join_venue_content', { placeId }));
 }
 
 // Rooms are per-identity, unlike subscriptions. A sign-out or an account switch
@@ -90,6 +93,7 @@ function replayRooms(instance) {
 function clearRooms() {
   joinedFlocks.clear();
   joinedVenues.clear();
+  joinedVenueContent.clear();
 }
 
 // Fully dispose an instance so it can never keep reconnecting in the
@@ -315,6 +319,32 @@ export function leaveVenueRoom(placeId) {
   if (!placeId) return;
   joinedVenues.delete(placeId);
   if (socket?.connected) socket.emit('leave_venue', { placeId });
+}
+
+// --- Venue content rooms (the open card's reviews and promotions) ---
+//
+// A SECOND room on the same place id, deliberately not the one above.
+// `venue:{placeId}` is the crowd feed: joined from the map bottom sheet and
+// from the venue owner's own dashboard. `venue_content:{placeId}` is the set of
+// screens holding the PUBLIC reviews and promotions a moderator takedown has to
+// retract from, and the venue detail card that holds them also opens from a
+// flock card, a search result and a chat share, with no map pin involved.
+// backend/sockets/handlers.js explains at length why merging the two would both
+// miss viewers and reach people who hold none of that state.
+//
+// Same intent-not-emit treatment as the rooms above, so the retraction survives
+// a reconnect; without it a card left open across a tunnel goes back to keeping
+// hidden content on screen, which is the exact bug the room was added to fix.
+export function joinVenueContentRoom(placeId) {
+  if (!placeId) return;
+  joinedVenueContent.add(placeId);
+  if (socket?.connected) socket.emit('join_venue_content', { placeId });
+}
+
+export function leaveVenueContentRoom(placeId) {
+  if (!placeId) return;
+  joinedVenueContent.delete(placeId);
+  if (socket?.connected) socket.emit('leave_venue_content', { placeId });
 }
 
 export function onVenueSensorUpdate(callback) {
@@ -639,10 +669,24 @@ export function onGuestRsvp(callback) {
  * carrying { contentType, contentId, flockId } and nothing else — no moderator,
  * no reason, no reporter. contentType is one of the keys of TAKEDOWN_TARGETS
  * there: flock_message, dm, story, venue_review, venue_promotion, venue_event,
- * guest_rsvp. How far each one reaches differs by type (the flock room for a
- * flock_message and a guest_rsvp, both parties for a dm, the author or the
- * venue owner alone for the rest), so a handler must not assume the person
- * receiving it is the person who wrote it.
+ * guest_rsvp. How far each one reaches differs by type, and the venue types
+ * were WIDENED (backend commit fcb3236) after this note first claimed the
+ * author or the owner was the whole audience:
+ *
+ *   flock_message, guest_rsvp   the flock room.
+ *   dm                          both parties.
+ *   venue_review                the author AND every socket in
+ *                               venue_content:{placeId}, which is every card
+ *                               currently showing that venue's reviews.
+ *   venue_promotion             the venue owner AND that same room.
+ *   venue_event, story          the owner / the author alone, because nothing
+ *                               public serves either one yet.
+ *
+ * So a handler must not assume the person receiving it wrote it, or even that
+ * they have any relationship to it beyond having the card open. The room emit
+ * is NOT de-duplicated against the personal ones, so an author looking at their
+ * own review is told twice; every reducer on the App.js side is idempotent and
+ * returns the same array when nothing matched, which is what makes that safe.
  *
  * Both go through the registry rather than getSocket().on(...), for the reason
  * the top of this file exists. A takedown is rare: a listener welded to one

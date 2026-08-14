@@ -116,7 +116,7 @@ test('a flock room joined before the handshake finishes is still joined', () => 
   assert.deepStrictEqual(sock.sent('join_flock'), [42], 'the pending join must land on connect');
 });
 
-test('a reconnect re-emits join_flock and join_venue', () => {
+test('a reconnect re-emits every room the client believes it is in', () => {
   const { api, built } = loadSocketModule();
   api.connectSocket();
   const sock = built[0];
@@ -124,8 +124,12 @@ test('a reconnect re-emits join_flock and join_venue', () => {
 
   api.joinFlock(7);
   api.joinVenueRoom('ChIJplace');
+  // The venue CARD's room, which is not the crowd room above: it carries
+  // moderation takedowns of the reviews and promotions on the open card.
+  api.joinVenueContentRoom('ChIJplace');
   assert.deepStrictEqual(sock.sent('join_flock'), [7]);
   assert.deepStrictEqual(sock.sent('join_venue'), [{ placeId: 'ChIJplace' }]);
+  assert.deepStrictEqual(sock.sent('join_venue_content'), [{ placeId: 'ChIJplace' }]);
 
   // Tunnel, lift, lock screen. socket.io reconnects the SAME instance, and the
   // server-side socket behind it is new and holds no rooms.
@@ -136,6 +140,182 @@ test('a reconnect re-emits join_flock and join_venue', () => {
     'the flock room must be re-entered, or typing indicators and live votes stay silent');
   assert.deepStrictEqual(sock.sent('join_venue'), [{ placeId: 'ChIJplace' }, { placeId: 'ChIJplace' }],
     'the venue sensor feed must be re-entered too');
+  assert.deepStrictEqual(sock.sent('join_venue_content'), [{ placeId: 'ChIJplace' }, { placeId: 'ChIJplace' }],
+    'a card left open across an outage must be re-entered, or it goes back to showing content a moderator has taken down');
+});
+
+// The room set is derived from replayRooms itself rather than listed here, so a
+// FOURTH room added to the registry without a replay fails the day it lands.
+// Same class as a route widening a set of values that the thing behind it does
+// not follow, which this repo has shipped three times.
+test('every room the registry records is replayed, and dropped on sign-out', () => {
+  const replay = SOCKET_SRC.slice(
+    SOCKET_SRC.indexOf('function replayRooms('),
+    SOCKET_SRC.indexOf('function clearRooms(')
+  );
+  const clear = SOCKET_SRC.slice(
+    SOCKET_SRC.indexOf('function clearRooms('),
+    SOCKET_SRC.indexOf('function dispose(')
+  );
+  const registries = [...SOCKET_SRC.matchAll(/^const (joined\w+) = new (?:Map|Set)\(\)/gm)].map((m) => m[1]);
+  assert.ok(registries.length >= 3,
+    `expected the room registries to still be module constants, found ${registries.length}`);
+  for (const name of registries) {
+    assert.match(replay, new RegExp(`\\b${name}\\.forEach\\(`),
+      `${name} records a room the reconnect handler never re-enters, so it goes silent after the first outage`);
+    assert.match(clear, new RegExp(`\\b${name}\\.clear\\(\\)`),
+      `${name} survives a sign-out, so the next account asks to re-enter the previous one's rooms`);
+  }
+});
+
+test('the venue card room is left on close, and forgotten even while offline', () => {
+  const { api, built } = loadSocketModule();
+  api.connectSocket();
+  const sock = built[0];
+  goOnline(sock);
+
+  api.joinVenueContentRoom('ChIJplace');
+  api.leaveVenueContentRoom('ChIJplace');
+  assert.deepStrictEqual(sock.sent('leave_venue_content'), [{ placeId: 'ChIJplace' }]);
+
+  // Card closed during an outage: the emit cannot go out, but the intent must
+  // still be forgotten, or the reconnect re-subscribes a screen that is gone.
+  api.joinVenueContentRoom('ChIJother');
+  sock.disconnect();
+  api.leaveVenueContentRoom('ChIJother');
+  goOnline(sock);
+  assert.deepStrictEqual(sock.sent('join_venue_content'), [{ placeId: 'ChIJplace' }, { placeId: 'ChIJother' }],
+    'a closed card was re-joined on reconnect');
+});
+
+test('the two venue rooms are separate registries, not one', () => {
+  // They hold different people and have different lifetimes. Sharing a Set
+  // would make closing the card leave the crowd feed, and vice versa.
+  const { api, built } = loadSocketModule();
+  api.connectSocket();
+  const sock = built[0];
+  goOnline(sock);
+
+  api.joinVenueRoom('ChIJplace');
+  api.joinVenueContentRoom('ChIJplace');
+  api.leaveVenueContentRoom('ChIJplace'); // the card closed; the map pin is still selected
+
+  sock.disconnect();
+  goOnline(sock);
+  assert.deepStrictEqual(sock.sent('join_venue'), [{ placeId: 'ChIJplace' }, { placeId: 'ChIJplace' }],
+    'closing the venue card must not silence the live crowd feed');
+  assert.deepStrictEqual(sock.sent('join_venue_content'), [{ placeId: 'ChIJplace' }],
+    'the card room must stay left');
+});
+
+// The App.js half. Without it the room emit in routes/admin.js is addressed at
+// a room nobody is in, and the widened takedown is inert.
+test('App.js joins the venue content room for exactly the life of the card state', () => {
+  const start = APP_SRC.indexOf('const venueDetailPlaceId = ');
+  assert.ok(start > 0, 'venueDetailPlaceId not found');
+  const region = APP_SRC.slice(start, APP_SRC.indexOf('const [showConnectPanel', start));
+
+  // Same effect that fetches the two lists, so the membership and the state it
+  // retracts begin and end together.
+  const effect = region.slice(region.indexOf('getPublicReviews('));
+  assert.match(effect, /joinVenueContentRoom\(venueDetailPlaceId\)/,
+    'nothing joins the room, so the server emits into an empty room');
+  assert.match(effect, /return \(\) => leaveVenueContentRoom\(venueDetailPlaceId\)/,
+    'the room outlives the card, so a closed card keeps a subscription it can no longer use');
+  assert.ok(effect.indexOf('getPublicPromotions(') < effect.indexOf('joinVenueContentRoom('),
+    'the join must sit with the reads it protects');
+
+  // And it is NOT welded to the crowd room, which is a different set of people
+  // with a different lifetime (see sockets/handlers.js).
+  assert.ok(!/joinVenueRoom\(venueDetailPlaceId\)/.test(region),
+    'the card must not join the crowd room; that one belongs to the map sheet');
+});
+
+test('a taken-down promotion leaves the viewer\'s card as well as being marked', () => {
+  const start = APP_SRC.indexOf("case 'venue_promotion':");
+  assert.ok(start > 0, "the venue_promotion branch is gone");
+  const branch = codeOnly(APP_SRC.slice(start, APP_SRC.indexOf("case 'venue_event':", start)));
+
+  assert.match(branch, /setModerationHidden\(prev, ev\.contentId, hidden\)/,
+    'the owner dashboard must still MARK, because its own read keeps hidden rows');
+  assert.match(branch, /setVenueDetailPromos\(prev => dropContentById\(prev, ev\.contentId\)\)/,
+    'a viewer with the card open keeps seeing a promotion a moderator took down');
+  // Both, unconditionally on identity: neither list holds the other's rows, so
+  // there is nothing to branch on and a branch would only be a way to be wrong.
+  assert.ok(!/isVenueOwner|venueProfile/.test(branch),
+    'this branch must not try to work out who the recipient is');
+});
+
+test('the review branch keeps its viewer half, and neither branch touches the dashboard lists', () => {
+  const start = APP_SRC.indexOf("case 'venue_review':");
+  assert.ok(start > 0);
+  const branch = codeOnly(APP_SRC.slice(start, APP_SRC.indexOf('default:', start)));
+  assert.match(branch, /setVenueDetailReviews\(prev => dropContentById\(prev, ev\.contentId\)\)/);
+  // `reviews` is the owner dashboard's list; dropping a row from it prints
+  // "12 reviews" over eleven, because the header stats come from the server.
+  assert.ok(!/\bsetReviews\(/.test(branch),
+    'the owner dashboard review list must not be dropped from');
+});
+
+// The other half of moderating a promotion. A takedown that reaches every open
+// card is worth nothing if no open card can file the report that starts it.
+test('a public promotion can be reported from the one screen that shows it', () => {
+  const list = APP_SRC.slice(
+    APP_SRC.indexOf('{venueDetailPromos.map(p => ('),
+    APP_SRC.indexOf('{/* Flock Reviews */}')
+  );
+  assert.match(list, /contentType: 'venue_promotion', contentId: p\.id/,
+    'the only public surface showing a promotion has no way to report one');
+  assert.match(list, /aria-label="Report promotion"/);
+
+  // The three things that make that control able to succeed, checked rather
+  // than assumed: the type is reportable, the row id is actually served, and
+  // the sheet has a noun for it (without which it says "this content").
+  const moderation = fs.readFileSync(path.join(__dirname, '..', 'routes', 'moderation.js'), 'utf8');
+  assert.ok(/VALID_CONTENT_TYPES = \[[^\]]*'venue_promotion'/.test(moderation),
+    'the report route refuses the type this button sends');
+  assert.match(moderation, /FROM venue_promotions/,
+    'the route must derive the owner off the row, since the client sends no user id');
+  const dash = fs.readFileSync(path.join(__dirname, '..', 'routes', 'venueDashboard.js'), 'utf8');
+  assert.match(dash, /SELECT p\.id, p\.title/, '/public-promotions must still serve the row id');
+  const sheet = fs.readFileSync(path.join(CLIENT_DIR, 'components', 'ModerationSheet.js'), 'utf8');
+  assert.match(sheet, /venue_promotion: '/, 'ModerationSheet has no noun for a promotion');
+});
+
+test('the stale "author only" claims are gone from both files', () => {
+  // The audience was widened by the backend; a comment that still says the
+  // server tells the author alone is a wrong map of the contract, and this file
+  // is the one that reads both halves.
+  const dropNote = APP_SRC.slice(
+    APP_SRC.lastIndexOf('//', APP_SRC.indexOf('const dropContentById = ')) - 600,
+    APP_SRC.indexOf('const dropContentById = ')
+  );
+  assert.ok(!/tells the AUTHOR only/.test(dropNote),
+    'App.js still claims the takedown reaches the author alone');
+  assert.ok(/venue_content:/.test(dropNote), 'the note should name the room the event now reaches');
+
+  const removedDoc = SOCKET_SRC.slice(
+    SOCKET_SRC.indexOf('* A moderator took a piece of content down'),
+    SOCKET_SRC.indexOf('export function onContentRemoved')
+  );
+  assert.ok(!/venue owner alone for the rest/.test(removedDoc),
+    'services/socket.js still claims the audience is the author or the owner alone');
+  assert.ok(/venue_content:\{placeId\}/.test(removedDoc));
+});
+
+test('the client emits the exact event names sockets/handlers.js listens for', () => {
+  const handlers = fs.readFileSync(path.join(__dirname, '..', 'sockets', 'handlers.js'), 'utf8');
+  for (const event of ['join_venue_content', 'leave_venue_content']) {
+    assert.ok(handlers.includes(`socket.on('${event}'`), `the server does not handle ${event}`);
+    assert.ok(SOCKET_SRC.includes(`emit('${event}', { placeId })`),
+      `the client does not emit ${event} in the shape the server reads`);
+  }
+  // And the room those two enter is the one the takedown is addressed to.
+  const admin = fs.readFileSync(path.join(__dirname, '..', 'routes', 'admin.js'), 'utf8');
+  assert.ok(/emitToVenueContentViewers\(io, audience\.placeId, event, payload\)/.test(admin),
+    'routes/admin.js no longer emits into the venue content room');
+  assert.ok(handlers.includes('`venue_content:${placeId}`'),
+    'the room name changed; the client joins by event name, but this pins the pair together');
 });
 
 test('leaving a room stops it being replayed, even while offline', () => {
