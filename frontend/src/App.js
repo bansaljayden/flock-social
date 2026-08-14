@@ -12,11 +12,11 @@ import {
   calculateProfitMargin
 } from './lib/finance';
 import { getCurrentUser, logout, isLoggedIn, getFlocks, getFlock, createFlock as apiCreateFlock, getMessages, sendMessage as apiSendMessage, updateProfile, searchVenues, searchUsers, getSuggestedUsers, sendFriendRequest, getVenueDetails, leaveFlock as apiLeaveFlock, getDMConversations, getDMs, sendDM as apiSendDM, getDmVenueVotes, getDmPinnedVenue, BASE_URL, inviteToFlock, acceptFlockInvite, declineFlockInvite, getFriends, acceptFriendRequest, declineFriendRequest, getPendingRequests, getOutgoingRequests, getFriendSuggestions, addFriendByCode, findFriendsByPhone, removeFriend, getTrustedContacts, addTrustedContact, updateTrustedContact, deleteTrustedContact, sendEmergencyAlert, shareLocationWithContacts, getUserStats, getCrowdPrediction, getCrowdBatch, getCrowdAlternatives, getWeather, submitVenueFeedback, uploadProfileImage, saveProfileImageUrl, submitBudget, getBudgetStatus, lockBudget, sendBudgetReminder, createBillSplit, getBillSplit, settleShare, ghostCommit, updatePaymentMethods, getPaymentLinks, getFeaturedEvents, searchEvents, getEventDetails, sendAiChat, getWeatherForecast, submitAttendance, getAdminAnalytics, createVenueProfile, getVenueProfile, updateVenueProfile, getVenuePromotions, createVenuePromotion, updateVenuePromotion, deleteVenuePromotion, getVenueEvents, createVenueEvent, updateVenueEvent, deleteVenueEvent, getIncomingFlocks, getVenueReviews, replyToReview, submitVenueReview, getPublicReviews, getPublicPromotions, deleteAccount } from './services/api';
-import { connectSocket, disconnectSocket, getSocket, joinFlock, leaveFlock, sendMessage as socketSendMessage, sendImageMessage as socketSendImage, startTyping, stopTyping, onNewMessage, onUserTyping, onUserStoppedTyping, emitLocation, stopSharingLocation as socketStopSharing, onLocationUpdate, onMemberStoppedSharing, socketSendDm, onNewDm, dmStartTyping, dmStopTyping, onDmUserTyping, onDmUserStoppedTyping, dmReact, dmRemoveReact, onDmReactionAdded, onDmReactionRemoved, dmVoteVenue, onDmNewVote, dmShareLocation, dmStopSharingLocation, onDmLocationUpdate, onDmMemberStoppedSharing, dmPinVenue, onDmVenuePinned, onFlockInviteReceived, onFlockInviteResponded, onFriendRequestReceived, onFriendRequestResponded, onBudgetUpdated, onBudgetLocked, onBudgetReminder, onBillCreated, onShareSettled, onBillFullySettled, onGhostCommitted, onNewVote, onVenueSelected, onFlockReactionAdded, onFlockReactionRemoved, onFlockDeleted, onFlockUpdated, onFlockMemberLeft, onGuestRsvp } from './services/socket';
+import { connectSocket, disconnectSocket, getSocket, joinFlock, leaveFlock, sendMessage as socketSendMessage, startTyping, stopTyping, onNewMessage, onUserTyping, onUserStoppedTyping, emitLocation, stopSharingLocation as socketStopSharing, onLocationUpdate, onMemberStoppedSharing, socketSendDm, onNewDm, dmStartTyping, dmStopTyping, onDmUserTyping, onDmUserStoppedTyping, dmReact, dmRemoveReact, onDmReactionAdded, onDmReactionRemoved, dmVoteVenue, onDmNewVote, dmShareLocation, dmStopSharingLocation, onDmLocationUpdate, onDmMemberStoppedSharing, dmPinVenue, onDmVenuePinned, onFlockInviteReceived, onFlockInviteResponded, onFriendRequestReceived, onFriendRequestResponded, onBudgetUpdated, onBudgetLocked, onBudgetReminder, onBillCreated, onShareSettled, onBillFullySettled, onGhostCommitted, onNewVote, onVenueSelected, onFlockReactionAdded, onFlockReactionRemoved, onFlockDeleted, onFlockUpdated, onFlockMemberLeft, onGuestRsvp } from './services/socket';
 import { requestNotificationPermission, onForegroundMessage, getNotificationStatus, onPushNavigate, unregisterPushToken } from './services/firebase';
 import { resendVerificationEmail } from './services/api';
 import { setAvailability, clearAvailability, getMyAvailability, getFriendsAvailability, getSensorCurrent, getSensorHistory, checkInManual, getNfcCheckin, getCalendarEvents, createCalendarEvent, deleteCalendarEvent } from './services/api';
-import { joinVenueRoom, leaveVenueRoom, onVenueSensorUpdate, onVenueCheckin, onSessionRevoked } from './services/socket';
+import { joinVenueRoom, leaveVenueRoom, onVenueSensorUpdate, onVenueCheckin, onSessionRevoked, onSocketError, onAvailabilityUpdated, onBlockedBy } from './services/socket';
 import { pullSettings, queueSync } from './services/userSettings';
 import { QRCodeSVG } from 'qrcode.react';
 import { Html5Qrcode } from 'html5-qrcode';
@@ -3050,10 +3050,18 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
         setAllVenues(venuesToMapPins(venues));
         setActiveVenue(null);
         // Fire batch crowd prediction (non-blocking)
+        // utcOffsetMinutes is Google's offset for the VENUE, and /api/crowd/batch
+        // scores each row on its own wall clock when it arrives — without it
+        // every venue in the list is scored on the caller's clock, so a bar two
+        // time zones away got the viewer's 11pm instead of its own 8pm, while
+        // that same bar's detail card (which fetches the offset itself) showed
+        // the right hour. Forwarded, never invented: the server takes it only
+        // when Number.isFinite and otherwise falls back exactly as before.
         const batchPayload = venues.slice(0, 20).map(v => ({
           place_id: v.place_id, name: v.name, rating: v.rating,
           user_ratings_total: v.user_ratings_total, types: v.types,
           price_level: v.price_level, location: v.location,
+          utcOffsetMinutes: v.utcOffsetMinutes != null ? v.utcOffsetMinutes : null,
         }));
         getCrowdBatch(batchPayload)
           .then(res => {
@@ -3672,9 +3680,12 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
     getMyAvailability().then(d => setMyPulse(d.pulse || null)).catch(() => {});
     refreshFriendsPulses();
 
-    const sock = getSocket && getSocket();
-    if (!sock) return;
-    const onUpdate = (payload) => {
+    // Registry subscription, not sock.on(): this effect has an empty dependency
+    // array, so a listener bound to whatever instance getSocket() returned at
+    // mount stayed bound to it forever — and returned undefined (no listener at
+    // all) when this ran before the socket existed, which is the common order on
+    // a cold start. Friends' pulses then never updated live for the session.
+    return onAvailabilityUpdated((payload) => {
       if (!payload || !payload.userId) return;
       setFriendsPulses(prev => {
         const next = prev.filter(f => f.id !== payload.userId);
@@ -3694,9 +3705,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           return (order[a.status] || 9) - (order[b.status] || 9);
         });
       });
-    };
-    sock.on('availability_updated', onUpdate);
-    return () => { sock.off('availability_updated', onUpdate); };
+    });
   }, [refreshFriendsPulses]);
 
   // Flock ordering & pinning (persisted in localStorage)
@@ -5361,19 +5370,27 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
       pending: true,
     });
 
-    // Send via WebSocket when connected, HTTP only as the fallback —
-    // both paths persist server-side, so firing both stored every
-    // message twice (round 3: duplicates appeared on history reload).
+    // Send via WebSocket when connected, HTTP only as the fallback — both
+    // paths persist server-side, so firing both stored every message twice
+    // (round 3: duplicates appeared on history reload).
+    //
+    // One emit, carrying whatever this message actually is. This used to
+    // branch — sendImageMessage() for a photo, sendMessage() for text —
+    // because socket.js's sendMessage() had no image_url field, so a CAPTIONED
+    // photo could not be expressed at all: the caption was dropped on the
+    // socket and kept on the HTTP fallback, and the same photo arrived with
+    // different content depending on the network. Both helpers now take text
+    // and image together, and the fields below are exactly what the
+    // apiSendMessage() fallback sends.
+    //
+    // The emit's return value is what picks the transport, not the `connected`
+    // check alone: it answers false when the socket dropped between the two,
+    // and nothing was written to the wire in that case, so the HTTP branch
+    // below cannot double-post. That window used to lose the message entirely.
     const sock = getSocket();
-    if (sock?.connected) {
-      // Photo and text are separate emitters here because services/socket.js
-      // sendMessage() has no image_url field at all — the same omission this
-      // change just fixed in api.js, on the other transport (reported; not my
-      // file). So a CAPTIONED photo cannot go out over the socket today: pass
-      // text and an image together only once that helper carries both, or the
-      // caption is dropped on the primary path and kept on the fallback.
-      if (image) socketSendImage(flockId, image);
-      else socketSendMessage(flockId, text);
+    const sentOverSocket = !!sock?.connected
+      && socketSendMessage(flockId, text, { message_type: msgType, image_url: image });
+    if (sentOverSocket) {
       // A connected socket doesn't prove persistence — rate limits,
       // moderation, or a DB failure drop the message with no echo. If no
       // echo arrives, the message shows as failed with tap-to-retry. An
@@ -5441,6 +5458,13 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
         clearTimeout(typingTimeoutRef.current);
         stopTyping(selectedFlockId);
       }
+      // Resetting the throttle latch is not optional. handleChatInputChange
+      // emits 'typing' only when this is false and sets it true; sending
+      // cancelled the 2s timer that would have cleared it, so it stayed true
+      // and the NEXT message this user typed never showed a typing indicator to
+      // anyone in the flock. It only recovered if they paused mid-word for two
+      // full seconds. (The DM composer has no latch, so it never had this.)
+      typingActiveRef.current = false;
       transmitFlockMessage(selectedFlockId, text);
     }
   }, [selectedFlockId, transmitFlockMessage]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -5526,10 +5550,13 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
 
     // ONE transport only — both paths persist server-side, so firing both
     // stored every shared venue twice (same fix text messages got in round 3).
+    // Same as transmitFlockMessage: the emit itself reports whether it went
+    // out, so a socket that dropped between the check and the send falls
+    // through to HTTP instead of silently posting nothing.
     const sock = getSocket();
-    if (sock?.connected) {
-      socketSendMessage(flockId, msgText, { message_type: 'venue_card', venue_data: venueData });
-    } else {
+    const cardSentOverSocket = !!sock?.connected
+      && socketSendMessage(flockId, msgText, { message_type: 'venue_card', venue_data: venueData });
+    if (!cardSentOverSocket) {
       try {
         await apiSendMessage(flockId, msgText, { message_type: 'venue_card', venue_data: venueData });
       } catch (err) {
@@ -5551,13 +5578,27 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   //
   // The pending image is cleared FIRST so a second tap on Send cannot queue the
   // same photo twice while the first is still in flight.
+  //
+  // Anything already typed in the composer goes with the photo as its caption.
+  // This used to hardcode '' because neither transport could carry a photo and
+  // text in one message, so the two were structurally separate; both can now,
+  // the bubble already renders an image with text under it, and leaving the
+  // typed line sitting in the box after the photo flies away is the behaviour
+  // no other messenger has.
   const shareImageToChat = useCallback((flockId) => {
     if (!pendingImage) return;
     const image = pendingImage;
+    const caption = chatInputRef.current || '';
     setPendingImage(null);
     setShowImagePreview(false);
-    transmitFlockMessage(flockId, '', { message_type: 'image', image_url: image });
-  }, [pendingImage, transmitFlockMessage]);
+    setChatInput('');
+    if (typingTimeoutRef.current) {
+      clearTimeout(typingTimeoutRef.current);
+      stopTyping(flockId);
+    }
+    typingActiveRef.current = false;
+    transmitFlockMessage(flockId, caption, { message_type: 'image', image_url: image });
+  }, [pendingImage, transmitFlockMessage, setChatInput]);
 
   // Handle image selection. The picked file is sized for sending BEFORE it
   // becomes the preview, so what is on screen is what goes out.
@@ -6796,14 +6837,21 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
       ? { ...d, messages: d.messages.map(m => (m.id === tempId ? { ...m, ...patch } : m)) }
       : d));
 
+    // The emit's own return value decides, not just the connected check before
+    // it. socketSendDm() answers false when the socket went down between the
+    // check and the emit — a real window on a phone changing networks — and
+    // nothing was put on the wire in that case, so falling through to REST here
+    // cannot duplicate anything. Gating on `connected` alone meant that message
+    // was never sent by either transport and only announced itself 8 seconds
+    // later as a failed bubble.
     const dmSock = getSocket();
-    if (dmSock?.connected) {
-      socketSendDm(userId, payload.text, {
-        message_type: payload.message_type,
-        venue_data: payload.venue_data,
-        image_url: payload.image_url,
-        reply_to_id: payload.reply_to_id || null,
-      });
+    const dmSentOverSocket = !!dmSock?.connected && socketSendDm(userId, payload.text, {
+      message_type: payload.message_type,
+      venue_data: payload.venue_data,
+      image_url: payload.image_url,
+      reply_to_id: payload.reply_to_id || null,
+    });
+    if (dmSentOverSocket) {
       // No automatic REST retry here: if the insert succeeded and only its echo
       // was lost, a silent retry would post the photo twice. Only the user can
       // decide that, so the bubble offers a retry instead of taking one.
@@ -6893,17 +6941,18 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   // worded toast on the REST path. There is no correlation id on that channel,
   // so this only speaks up while one of our own sends is actually in flight;
   // the per-message pending timers still decide which bubble failed.
+  //
+  // Through onSocketError (the subscription registry), not sock.on(): bound to
+  // a raw getSocket() instance this listener was lost on every socket rebuild —
+  // account switch, fatal-auth teardown, session expiry — and never attached at
+  // all if this effect happened to run before connectSocket() had made one.
   useEffect(() => {
-    const sock = getSocket();
-    if (!sock) return undefined;
-    const onServerError = (data) => {
+    return onSocketError((data) => {
       const message = typeof data?.message === 'string' ? data.message.trim() : '';
       if (!message) return;
       if (pendingEchoRef.current.size === 0 && dmEchoRef.current.size === 0) return;
       showToast(message, 'error');
-    };
-    sock.on('error', onServerError);
-    return () => { sock.off('error', onServerError); };
+    });
   }, [authUser?.id, showToast]);
 
   // Listen for real-time DMs
@@ -7042,14 +7091,15 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   // Emit DM location periodically when sharing
   // If the person we're sharing DM location with blocks us, stop the interval
   // immediately — the server refuses the events anyway (round 5).
+  //
+  // Registry subscription for the same reason as the others: bound to a raw
+  // getSocket() this was lost on any socket rebuild, and skipped entirely when
+  // the effect beat connectSocket() — leaving the emit loop running against
+  // someone who had blocked us.
   useEffect(() => {
-    const sock = getSocket();
-    if (!sock) return;
-    const onBlockedBy = ({ userId }) => {
+    return onBlockedBy(({ userId }) => {
       setDmSharingLocation(prev => (String(prev) === String(userId) ? null : prev));
-    };
-    sock.on('blocked_by', onBlockedBy);
-    return () => sock.off('blocked_by', onBlockedBy);
+    });
   }, [dmSharingLocation]);
 
   useEffect(() => {
@@ -11065,7 +11115,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
             </div>
             <div style={{ flex: 1 }}>
               <p style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: colors.navy, margin: 0 }}>Ready to send</p>
-              <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '2px 0 0' }}>Tap send to share this image</p>
+              <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '2px 0 0' }}>Type a caption below if you want one</p>
             </div>
             <button className="hit44"
               onClick={() => shareImageToChat(selectedFlockId)}
@@ -11836,11 +11886,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                     setShowFlockMenu(false);
                     setCurrentScreen('main');
                     setCurrentTab('home');
-                                       // Notify other members via socket
-                    const sock = getSocket();
-                    if (sock?.connected) {
-                      sock.emit('leave_flock', flockId);
-                    }
+                    // Notify other members via socket. Through the helper, not
+                    // a raw emit on getSocket(): the helper also drops the room
+                    // from the join registry, so a later reconnect does not try
+                    // to re-enter a flock this person has actually left.
+                    leaveFlock(flockId);
                   } catch (err) {
                     showToast(err.message || 'Failed to leave flock', 'error');
                   } finally {
@@ -13345,9 +13395,15 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           getVenueReviews().catch(() => ({ reviews: [], stats: null })),
         ]).then(([promoData, eventData, flockData, reviewData]) => {
           setPromotions(promoData.promotions || []);
+          // `rsvps` is not carried any more: venue_events.rsvps is DEFAULT 0 and
+          // no route, socket handler or job in the repo ever increments it, so
+          // "0/50 RSVPs" was printed under every event a venue ever created and
+          // could never say anything else. There is no way for a Flock user to
+          // RSVP to a venue event at all — the feature behind the number does
+          // not exist. Capacity is real (the owner types it).
           setVenueEventsList((eventData.events || []).map(e => ({
             id: e.id, title: e.title, date: e.event_date, time: e.event_time,
-            capacity: e.capacity, rsvps: e.rsvps || 0
+            capacity: e.capacity,
           })));
           setRealIncomingFlocks(flockData.flocks || []);
           setVenueReviewsData(reviewData);
@@ -13462,11 +13518,22 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
       setShowPromoModal(true);
     };
 
+    // The server refuses this for real reasons the owner can act on: a
+    // moderation-hidden promotion answers 409 CONTENT_HIDDEN with a sentence
+    // telling them to delete and re-create, and once venue billing is switched
+    // on a free-tier account gets 403 UPGRADE_REQUIRED. Both used to land in
+    // console.error, so the trash icon was a dead button — tap it and nothing
+    // whatsoever happens (SLOP-AUDIT rule 5). The server's own wording is what
+    // shows: api.js already puts the response's `error` on err.message, and a
+    // generic "couldn't delete" would throw away the only sentence that says
+    // what to do next. The fallback covers an error carrying no message at all.
     const deletePromo = async (id) => {
       try {
         await deleteVenuePromotion(id);
         setPromotions(prev => prev.filter(p => p.id !== id));
-      } catch (e) { console.error('Delete promo failed:', e); }
+      } catch (e) {
+        showToast(e?.message || "That promotion couldn't be deleted. Try again.", 'error');
+      }
     };
 
     // Event handlers — real API
@@ -13475,11 +13542,14 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
       setShowEventModal(true);
     };
 
+    // Same dead-button fix as deletePromo above, same reasons.
     const deleteEvent = async (id) => {
       try {
         await deleteVenueEvent(id);
         setVenueEventsList(prev => prev.filter(e => e.id !== id));
-      } catch (e) { console.error('Delete event failed:', e); }
+      } catch (e) {
+        showToast(e?.message || "That event couldn't be deleted. Try again.", 'error');
+      }
     };
 
     // Reply to review handler
@@ -13493,7 +13563,12 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
         }));
         setReplyingToReview(null);
         setReplyText('');
-      } catch (e) { console.error('Reply failed:', e); }
+      } catch (e) {
+        // Was swallowed too. A reply the server rejects (profanity screen,
+        // a hidden review, a lost session) left the composer sitting there
+        // with the text still in it and no explanation.
+        showToast(e?.message || "That reply didn't post. Try again.", 'error');
+      }
     };
 
     // Everything on the analytics tab is now computed, never invented:
@@ -13932,14 +14007,21 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                         <button aria-label="Delete" className="hit44" onClick={() => deletePromo(promo.id)} style={{ padding: '6px', borderRadius: '6px', border: 'none', backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer' }}>{Icons.trash(colors.red, 14)}</button>
                       </div>
                     </div>
+                    {/* "N claims" was removed 2026-08-14. venue_promotions.claims
+                        is written by nothing in the repo — no route, no socket
+                        handler, no job — so it was DEFINITIONALLY 0 on every
+                        promotion ever created, and the owner being asked to pay
+                        for this dashboard was reading it as "nobody redeemed
+                        this". Same rule as the Pro Tips box below: a number that
+                        cannot move is fabricated data, and it gets cut rather
+                        than dressed up. Views stays because it is genuinely
+                        counted (venueDashboard.js increments it when a non-owner
+                        is served the venue's promotions). Bring claims back the
+                        day something actually records a redemption. */}
                     <div style={{ display: 'flex', gap: '12px', marginTop: '8px' }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
                         {Icons.eye(colors.textSecondary, 12)}
-                        <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)' }}>{promo.views} views</span>
-                      </div>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                        {Icons.checkCircle(colors.steel, 12)}
-                        <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)' }}>{promo.claims} claims</span>
+                        <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)' }}>{promo.views || 0} views</span>
                       </div>
                     </div>
                   </div>
@@ -13952,14 +14034,22 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                   either claim, and the venue owner reading it is the person
                   being asked to pay. Same rule as the fake venue analytics tab
                   (SLOP-AUDIT §H13): invented numbers get cut, not softened.
-                  The views and claims counts above are real, and once there are
-                  enough of them the tips can come back as measurements. */}
+                  The views count above is real, and once there are enough of
+                  them the tips can come back as measurements. */}
             </div>
           )}
 
           {/* EVENTS TAB */}
+          {/* The old description sold "capacity tracking and RSVPs" and this
+              one first said events "show up on your venue card". Neither is
+              true. Nothing in Flock lets anyone RSVP to a venue event, the
+              column that would count them is never written, and venue_events
+              has no public read at all: GET /api/venue-dashboard/events is the
+              only route that returns them and it is owner-only. What is behind
+              this lock today is the incoming-flocks feed, which is real. The
+              description names that and nothing else. */}
           {venueTab === 'events' && !can.events && (
-            <LockedTab requiredTier="premium" featureName="Event Promotion" description="Promote live music, trivia nights, and special events with capacity tracking and RSVPs." />
+            <LockedTab requiredTier="premium" featureName="Event Promotion" description="See which flocks are heading your way, and keep your upcoming events in one list." />
           )}
           {venueTab === 'events' && can.events && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
@@ -13988,7 +14078,12 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
 
               {/* Your Events */}
               <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
-                <h3 style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: colors.navy, margin: '0 0 10px', display: 'flex', alignItems: 'center', gap: '6px' }}>{Icons.calendar(colors.navy, 14)} Your Events ({venueEventsList.length})</h3>
+                <h3 style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: colors.navy, margin: '0 0 4px', display: 'flex', alignItems: 'center', gap: '6px' }}>{Icons.calendar(colors.navy, 14)} Your Events ({venueEventsList.length})</h3>
+                {/* Said plainly because an owner typing in an event has every
+                    reason to assume it reaches somebody. It does not: there is
+                    no public read of venue_events anywhere in the backend.
+                    Delete this line the day one ships. */}
+                <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: '0 0 10px' }}>Only you can see these. We are not showing them to Flock users yet.</p>
                 {venueEventsList.length === 0 ? (
                   <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', textAlign: 'center', padding: '20px' }}>No events yet. Create your first one!</p>
                 ) : venueEventsList.map(event => (
@@ -13996,8 +14091,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
                       <div style={{ flex: 1 }}>
                         <h4 style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: colors.navy, margin: 0 }}>{event.title}</h4>
-                        <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '2px 0' }}>{event.date} at {event.time}</p>
-                        <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: 0 }}>{event.rsvps}{event.capacity ? `/${event.capacity}` : ''} RSVPs</p>
+                        <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '2px 0' }}>{[event.date, event.time].filter(Boolean).join(' at ')}</p>
+                        {event.capacity ? <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: 0 }}>Capacity {event.capacity}</p> : null}
                       </div>
                       <div style={{ display: 'flex', gap: '6px' }}>
                         <button aria-label="Edit" className="hit44" onClick={() => openEventModal(event)} style={{ padding: '6px', borderRadius: '6px', border: 'none', backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer' }}>{Icons.edit(colors.navy, 14)}</button>
@@ -14008,21 +14103,17 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 ))}
               </div>
 
-              {/* Event Calendar Preview */}
-              <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
-                <h3 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy, margin: '0 0 10px' }}>This Week</h3>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: '4px', textAlign: 'center' }}>
-                  {['S', 'M', 'T', 'W', 'T', 'F', 'S'].map((d, i) => (
-                    <div key={i} style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: 'var(--text-tertiary)', padding: '4px' }}>{d}</div>
-                  ))}
-                  {[19, 20, 21, 22, 23, 24, 25].map((day, i) => (
-                    <div key={day} style={{ padding: '8px 4px', borderRadius: '6px', backgroundColor: i === 5 || i === 6 ? colors.navyBg : 'transparent', color: i === 5 || i === 6 ? 'white' : colors.navy, fontSize: 'var(--t-meta)', fontWeight: '500' }}>
-                      {day}
-                      {(i === 5 || i === 6) && <div style={{ width: '4px', height: '4px', borderRadius: '2px', backgroundColor: colors.amber, margin: '2px auto 0' }} />}
-                    </div>
-                  ))}
-                </div>
-              </div>
+              {/* The "This Week" calendar was deleted 2026-08-14. It rendered
+                  the literal numbers 19 through 25 under S-M-T-W-T-F-S, with
+                  the last two cells highlighted and dotted, no matter what day
+                  it actually was and no matter whether the venue had a single
+                  event. It was a mockup that shipped: wrong dates every day of
+                  the year except one week in a month it did not name, and
+                  "something is on" markers over nothing. It cannot be made real
+                  either — venue_events.event_date is a free-text field the
+                  owner types ("Friday", "8/15", "next week"), not a date, so
+                  there is nothing to place on a grid. Same rule as the claims
+                  count and the Pro Tips box: cut, do not soften. */}
             </div>
           )}
 
@@ -14113,9 +14204,19 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                   {!editingVenueInfo ? (
                     <button className="hit44" onClick={() => setEditingVenueInfo(true)} style={{ padding: '4px 8px', borderRadius: '6px', border: 'none', backgroundColor: 'var(--icon-bg)', color: colors.navy, fontSize: 'var(--t-meta)', fontWeight: '500', cursor: 'pointer' }}>Edit</button>
                   ) : (
-                    <button className="hit44" onClick={() => {
-                      setEditingVenueInfo(false);
-                      updateVenueProfile({ businessName: venueInfo.name, location: venueInfo.address, phone: venueInfo.phone }).catch(() => {});
+                    <button className="hit44" onClick={async () => {
+                      // Was fire-and-forget: it closed the editor first and
+                      // threw the failure away, so a name the profanity screen
+                      // refused (or a save with no venue profile, or an expired
+                      // session) looked saved and reverted on the next load.
+                      // The editor stays open with the owner's text now, and
+                      // the toast is the server's own sentence.
+                      try {
+                        await updateVenueProfile({ businessName: venueInfo.name, location: venueInfo.address, phone: venueInfo.phone });
+                        setEditingVenueInfo(false);
+                      } catch (e) {
+                        showToast(e?.message || "Those details didn't save. Try again.", 'error');
+                      }
                     }} style={{ padding: '4px 8px', borderRadius: '6px', border: 'none', backgroundColor: colors.steel, color: 'white', fontSize: 'var(--t-meta)', fontWeight: '500', cursor: 'pointer' }}>Save</button>
                   )}
                 </div>
@@ -14297,7 +14398,17 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                     const created = await createVenuePromotion({ title: form.title, description: form.desc, timeSlot: form.time, days: form.days });
                     setPromotions(prev => [created, ...prev]);
                   }
-                } catch (e) { console.error('Save promo failed:', e); }
+                } catch (e) {
+                  // This was console.error AND the modal closed anyway, which is
+                  // worse than a dead button: a promotion the server refused
+                  // (profanity screen, a moderation-hidden row, a free-tier
+                  // account once venue billing is on) disappeared along with
+                  // everything the owner had typed, looking exactly like a save.
+                  // Say what the server said and leave the form open with their
+                  // text still in it.
+                  showToast(e?.message || "That promotion couldn't be saved. Try again.", 'error');
+                  return;
+                }
                 setShowPromoModal(false);
                 setEditingPromo(null);
               }}
@@ -14315,12 +14426,16 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 try {
                   if (editingEvent) {
                     const updated = await updateVenueEvent(editingEvent.id, { title: form.title, eventDate: form.date, eventTime: form.time, capacity: parseInt(form.capacity) || null });
-                    setVenueEventsList(prev => prev.map(e => e.id === editingEvent.id ? { id: updated.id, title: updated.title, date: updated.event_date, time: updated.event_time, capacity: updated.capacity, rsvps: updated.rsvps || 0 } : e));
+                    setVenueEventsList(prev => prev.map(e => e.id === editingEvent.id ? { id: updated.id, title: updated.title, date: updated.event_date, time: updated.event_time, capacity: updated.capacity } : e));
                   } else {
                     const created = await createVenueEvent({ title: form.title, eventDate: form.date, eventTime: form.time, capacity: parseInt(form.capacity) || null });
-                    setVenueEventsList(prev => [...prev, { id: created.id, title: created.title, date: created.event_date, time: created.event_time, capacity: created.capacity, rsvps: 0 }]);
+                    setVenueEventsList(prev => [...prev, { id: created.id, title: created.title, date: created.event_date, time: created.event_time, capacity: created.capacity }]);
                   }
-                } catch (e) { console.error('Save event failed:', e); }
+                } catch (e) {
+                  // Same false-success fix as the promotion modal above.
+                  showToast(e?.message || "That event couldn't be saved. Try again.", 'error');
+                  return;
+                }
                 setShowEventModal(false);
                 setEditingEvent(null);
               }}
@@ -14347,7 +14462,17 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 </div>
                 <div style={{ display: 'flex', gap: '10px', marginTop: '20px' }}>
                   <button className="hit44" onClick={() => setShowHoursModal(false)} style={{ flex: 1, padding: '12px', borderRadius: '8px', border: '1px solid var(--border-mid)', backgroundColor: 'var(--bg-card-solid)', color: 'var(--text-secondary)', fontWeight: '600', cursor: 'pointer' }}>Cancel</button>
-                  <button className="hit44" onClick={() => { setShowHoursModal(false); updateVenueProfile({ operatingHours }).catch(() => {}); }} style={{ flex: 1, padding: '12px', borderRadius: '8px', border: 'none', backgroundColor: colors.navyBg, color: 'white', fontWeight: '600', cursor: 'pointer' }}>Save Hours</button>
+                  {/* Same fix as the Venue Information Save above: the modal
+                      used to close before the request and discard its failure,
+                      so rejected hours vanished looking saved. */}
+                  <button className="hit44" onClick={async () => {
+                    try {
+                      await updateVenueProfile({ operatingHours });
+                      setShowHoursModal(false);
+                    } catch (e) {
+                      showToast(e?.message || "Those hours didn't save. Try again.", 'error');
+                    }
+                  }} style={{ flex: 1, padding: '12px', borderRadius: '8px', border: 'none', backgroundColor: colors.navyBg, color: 'white', fontWeight: '600', cursor: 'pointer' }}>Save Hours</button>
                 </div>
               </div>
             </div>
@@ -16362,7 +16487,15 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                         const updated = await getPublicReviews(venueDetailModal.place_id);
                         setVenueDetailReviews(updated.reviews || []);
                         setShowReviewForm(false);
-                      } catch (e) { console.error('Review submit failed:', e); }
+                      } catch (e) {
+                        // The server refuses this for reasons the reviewer can
+                        // act on — no verified visit to this venue, one review
+                        // per person, the text failed the profanity screen —
+                        // and every one of them used to be a console line. The
+                        // button spun, said "Submitting...", and then sat back
+                        // down with the review still in the box and no reason.
+                        showToast(e?.message || "That review didn't post. Try again.", 'error');
+                      }
                       setReviewSubmitting(false);
                     }} style={{ flex: 1, padding: '8px', borderRadius: '8px', border: 'none', backgroundColor: reviewRating ? colors.navy : colors.disabled, color: 'white', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: reviewRating ? 'pointer' : 'not-allowed' }}>
                       {reviewSubmitting ? 'Submitting...' : 'Submit Review'}
