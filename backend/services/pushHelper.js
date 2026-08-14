@@ -6,6 +6,52 @@
 //   1. online check  — the user is already looking at the thing
 //   2. visibility    — the user can still SEE the thing the push is about
 //   3. debounce      — per conversation, not per person
+//
+// ---------------------------------------------------------------------------
+// App Review 4.5.4 — the classification every push in this app lives under
+//
+// The guideline (current text, developer.apple.com/app-store/review/guidelines):
+//   "Push Notifications must not be required for the app to function, and
+//    should not be used to send sensitive personal or confidential
+//    information. Push Notifications should not be used for promotions or
+//    direct marketing purposes unless customers have explicitly opted in to
+//    receive them via consent language displayed in your app's UI, and you
+//    provide a method in your app for a user to opt out from receiving such
+//    messages."
+//
+// Every push this backend sends today is TRANSACTIONAL: it reports a concrete
+// thing that happened to a plan, conversation, or account the recipient is
+// already part of. The full inventory, by data.type:
+//
+//   flock_invite       someone invited the recipient          (routes/flocks.js)
+//   flock_rsvp         someone joined the recipient's flock   (routes/flocks.js)
+//   flock_confirmed    a plan the recipient accepted is on    (routes/flocks.js)
+//   attendance_marked  the recipient's own score changed      (routes/flocks.js)
+//   flock_message      chat in a flock they belong to         (routes/messages.js, sockets/handlers.js)
+//   dm_message         a DM addressed to them                 (routes/messages.js, sockets/handlers.js)
+//   friend_request     someone asked to be their friend       (routes/friends.js)
+//   guest_rsvp         a guest joined the host's flock        (routes/guest.js)
+//   budget_ready       their group's budget resolved          (routes/budget.js)
+//   budget_reminder    the organizer asked them to submit     (routes/budget.js, user-initiated)
+//   bill_created       they owe a share of a real bill        (routes/billing.js)
+//   moderation_report  admin-only: a report needs review      (services/moderationAlerts.js)
+//   crowd_alert        forecast for an event they committed to (services/crowdAlerts.js)
+//
+// crowd_alert is the only push not directly triggered by a person's action, so
+// it sits closest to the 4.5.4 line and carries its own user switch
+// (user_settings.settings.crowdAlerts). That switch is enforced twice: at the
+// producer (services/crowdAlerts.js filters recipients before claiming the
+// alert) and again below in deliver(), so no future caller can reuse the type
+// and skip the check.
+//
+// THE RULE FOR ADDING A PUSH. If the notification promotes anything — Flock
+// Pro, an upgrade, a venue's offer or slow night, a discount, a "we miss you"
+// re-engagement nudge — it is a promotion or direct marketing under 4.5.4 and
+// it MUST NOT ship on the transactional inventory above. It needs its own
+// explicit opt-IN collected through consent language in the app UI (not a
+// pre-checked default, not this file's default-on switch), its own opt-out,
+// and its own data.type so both are enforceable here. No such push exists
+// today; do not be the first without all three pieces.
 // ---------------------------------------------------------------------------
 
 const pool = require('../config/database');
@@ -144,7 +190,66 @@ function debounceKey(userId, data = {}) {
   return `${userId}|${type}|${scope}`;
 }
 
+// ---------------------------------------------------------------------------
+// The crowd-alert switch (see the 4.5.4 block above)
+//
+// Stored in user_settings.settings (JSONB), key `crowdAlerts`, default ON.
+// The default is defensible only because the alert is transactional: it fires
+// for a flock the recipient ACCEPTED, inside the 3 hours before an event they
+// committed to, at most once per flock. A promotional push could not inherit
+// this default; 4.5.4 requires explicit opt-in for those.
+//
+// WHY IT TOLERATES A STRING. frontend/src/services/userSettings.js pullSettings
+// writes every synced value into localStorage with String(value), and
+// readLocalSettings pushes those raw strings back up on a first sync — so a
+// boolean false round-trips into this column as the JSON string "false". A
+// reader that only understood booleans would read a switched-off account as
+// switched on, which is exactly the failure this code exists to prevent.
+//
+// Anything we cannot read means UNSET, not off: junk in the blob must not
+// silently stop a notification the user never asked to stop.
+const CROWD_ALERT_KEY = 'crowdAlerts';
+const OFF_VALUES = new Set(['false', '0', 'off', 'no']);
+
+function wantsCrowdAlerts(settings) {
+  if (!settings || typeof settings !== 'object' || Array.isArray(settings)) return true;
+  const v = settings[CROWD_ALERT_KEY];
+  if (v === undefined || v === null) return true;
+  if (typeof v === 'boolean') return v;
+  if (typeof v === 'number') return v !== 0;
+  if (typeof v === 'string') return !OFF_VALUES.has(v.trim().toLowerCase());
+  return true;
+}
+
+// Fail OPEN, and the asymmetry with canNotify's fail-closed is deliberate. The
+// preference's own doctrine is "unreadable means unset, unset means on": a
+// database blip here must not silently stop an alert the user never switched
+// off. The stakes are also different in kind — canNotify fails closed because
+// delivering to the wrong person cannot be taken back, while this check only
+// decides whether a person who never opted out hears about their own evening.
+// A user who DID opt out and hits this window gets one alert at most (the
+// crowd_alert_sends claim), not a stream. The safety gate below still runs
+// either way.
+async function crowdAlertOptedOut(userId) {
+  try {
+    const r = await pool.query(
+      'SELECT settings FROM user_settings WHERE user_id = $1',
+      [userId]
+    );
+    return !wantsCrowdAlerts(r.rows.length ? r.rows[0].settings : null);
+  } catch (err) {
+    return false;
+  }
+}
+
 async function deliver(userId, title, body, data) {
+  // Enforced HERE, not only in the producer: services/crowdAlerts.js filters
+  // its recipients before claiming the alert, but a chokepoint check is what
+  // makes "the user's switch works" a property of the type rather than a habit
+  // of the one caller that currently sends it.
+  if (data && String(data.type || '') === 'crowd_alert' && (await crowdAlertOptedOut(userId))) {
+    return { skipped: true, reason: 'opted-out' };
+  }
   if (!(await canNotify(userId, data))) {
     return { skipped: true, reason: 'not-visible' };
   }
@@ -190,7 +295,11 @@ async function pushIfOfflineDebounced(io, userId, title, body, data = {}) {
   return result;
 }
 
-// Send push regardless of online status (for explicit user actions like reminders)
+// Send push regardless of online status. Two callers, both time-sensitive
+// enough that "already in the app" is not a reason to stay silent: the
+// organizer-initiated budget reminder (routes/budget.js) and the pre-event
+// crowd alert (services/crowdAlerts.js). Not a channel for anything
+// promotional — see the 4.5.4 block at the top of this file.
 async function pushAlways(userId, title, body, data = {}) {
   if (disabled()) return { skipped: true, reason: 'disabled' };
   return deliver(userId, title, body, data);
@@ -203,6 +312,10 @@ module.exports = {
   pushAlways,
   canNotify,
   debounceKey,
+  // The crowd-alert preference reader. services/crowdAlerts.js uses it to
+  // filter recipients before burning the once-per-flock claim; deliver() above
+  // re-checks it at send time.
+  wantsCrowdAlerts,
   // Background producers (services/crowdAlerts.js) ask this BEFORE they do the
   // scoring and the paid weather call that build a notification nothing can
   // deliver — and, just as importantly, before they write a marker row saying
