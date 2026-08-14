@@ -173,7 +173,7 @@ app.use(helmet({
 // free buffer on /api/auth/login, /api/waitlist and /api/public — none of which
 // carry an image — on a single Railway instance that also runs ONNX inference.
 // The endpoints that legitimately carry an image are three authenticated POSTs,
-// so those get their own parser and everything else keeps the 1mb ceiling.
+// so those get their own parser and everything else keeps the smaller ceiling.
 //
 // The size is derived rather than picked. CHAT_IMAGE_MAX_BYTES is what
 // sockets/handlers.js enforces on the data: URL itself, so REST has to fit that
@@ -184,7 +184,127 @@ app.use(helmet({
 // in exactly one place.
 const JSON_BODY_ENVELOPE_BYTES = 64 * 1024;
 const imageJsonParser = express.json({ limit: CHAT_IMAGE_MAX_BYTES + JSON_BODY_ENVELOPE_BYTES });
-const defaultJsonParser = express.json({ limit: '1mb' });
+
+// ── THE DEFAULT WAS 1mb, AND NOTHING JUSTIFIED IT ──────────────────────────
+//
+// 1mb was body-parser's own default, carried forward. The paragraph above says
+// why that matters: the parser is the FIRST middleware after cors and helmet,
+// so every ceiling it hands out is available with no credential at all.
+// `POST /api/auth/login` offered a 1 MB buffer to a caller who has not proved
+// anything, and so did /api/waitlist, /api/public and every other unauthed
+// surface. The fix is not a smaller number picked by feel — it is knowing what
+// the largest HONEST body on each route actually is, and that is the audit
+// below. It is written down because the next person to move this number needs
+// the reasoning, not the value.
+//
+// HOW A CHARACTER COUNT BECOMES A BYTE COUNT. Every bound below is a character
+// (code point) count from a validator. A JSON string of N code points costs at
+// most 4N bytes on the wire from any ordinary serializer — JSON.stringify,
+// encoding/json, Jackson — because those escape only control characters, `"`
+// and `\`, and the widest UTF-8 code point is 4 bytes. A serializer that also
+// \u-escapes non-ASCII (Python's json.dumps with its default ensure_ascii)
+// costs up to 3x that. No client of this API does; the browser bundle and the
+// Capacitor shell both go through JSON.stringify. Where that distinction would
+// change an answer it is called out by name.
+const JSON_STRING_BYTES_PER_CHAR = 4;
+
+// ── EVERY ROUTE THAT TAKES A JSON BODY, AND ITS LARGEST HONEST ONE ─────────
+//
+// Read off the validators and handlers, not the route names. Grouped by what
+// actually bounds the body.
+//
+// SERVED BY THE 64KB DEFAULT (largest first):
+//   * PUT /api/venue-profile — the biggest body under the default, and the
+//     tightest fit. businessName 255 + category 100 + location 255 +
+//     description 2000 + goals 20x80 + operatingHours 21 rows x 3 fields x 60 +
+//     phone 50 + photoUrl 500 + placeId 255 = ~8.8K chars -> 35KB at 4 bytes
+//     each. 1.8x of headroom, and the fields are business copy, so in practice
+//     it is a few KB. (routes/venueProfile.js MAX_* constants.)
+//   * POST /api/crowd/batch — THE NAMED SUSPECT, and it is not the largest.
+//     `venues` is isArray({ min: 1, max: 20 }); the handler then TRUNCATES each
+//     item itself — place_id .slice(0,256), name .slice(0,256), types
+//     .slice(0,10) — so anything past that is thrown away rather than used.
+//     20 x (256 place_id + 256 name + 10 type strings + location + 6 numbers)
+//     is ~22K chars. Only `name` is UGC; place ids and Google type strings are
+//     ASCII by definition, so the real ceiling is 20 x (256 + 4x256 + ~400 +
+//     ~200) = ~37KB, and the test that costs this builds exactly that body and
+//     sends it. The only client that calls the route (getCrowdBatch in
+//     frontend/src/services/api.js, fed by `venues.slice(0, 20)` in App.js)
+//     forwards our own venue-search rows and sends ~10KB. Comfortably inside.
+//   * PATCH /api/users/settings — the settings batch. The handler refuses when
+//     JSON.stringify(body).length > 8192 (routes/users.js), i.e. at most 24KB
+//     of UTF-8. NOTE the one way this could be squeezed: 8192 UTF-16 units of
+//     \u-escaped input is ~49KB on the wire, still under the default, but that
+//     is the one route where an escaping serializer gets within reach. Anyone
+//     raising that 8192 has to come back here.
+//   * POST /api/friends/find-by-phone — the contacts batch. 200 numbers
+//     (MAX_SYNC_PHONES) -> ~5KB. POST /api/flocks and POST /api/flocks/:id/
+//     invite carry 25 user ids, /attendance 50 rows, POST /api/billing/:id/
+//     create up to 100 { userId, amount } shares: every id/amount batch in the
+//     app is arrays of numbers, all under 4KB.
+//   * Largest free text outside chat is 1000 characters, three times over:
+//     POST /api/reports `details`, POST /api/venue-dashboard/reviews/:id/reply,
+//     POST /api/venue-dashboard/submit-review. Under 4KB each.
+//   * POST /api/notifications/register — token 1024 chars.
+//   * POST /api/auth/* — signup/login/verify-email/forgot-password/reset-
+//     password/logout*/google/apple. The largest field anywhere in them is a
+//     Google or Apple identity token, a JWT of a couple of KB; everything else
+//     is <=255 chars. Two fields here have NO bound of their own and the
+//     default IS their bound, which is an argument for a low one, not against:
+//     `interests` is isArray() with no max (routes/auth.js signupValidation and
+//     routes/users.js PUT /profile) and `password` has only isLength({ min: 8 }).
+//   * Everything else — availability, calendar, budget, checkin, feedback,
+//     guest RSVP/vote, moderation blocks, safety contacts/alert/share-location,
+//     sensors, users venmo/payment-methods/profile-image, venues vote,
+//     venue-dashboard promotions/events, waitlist, admin — is under 2KB.
+//
+// SCOPED LARGER, each for a reason it can state:
+//   * the three IMAGE_BODY_ROUTES below, unchanged and still derived from
+//     CHAT_IMAGE_MAX_BYTES;
+//   * POST /api/ai/chat, derived from Birdie's own message caps;
+//   * POST /api/revenuecat/webhook, because the sender is not us.
+const DEFAULT_JSON_BODY_BYTES = 64 * 1024;
+const defaultJsonParser = express.json({ limit: DEFAULT_JSON_BODY_BYTES });
+
+// Birdie. This is the one non-image route in the app that legitimately needs
+// more than the default, and it needs a lot more: routes/ai.js accepts
+// `messages` as isArray({ min: 1, max: 24 }) with `messages.*.text` at
+// isLength({ max: 4000 }), so one honest turn can carry 96,000 characters of
+// conversation history — up to 384KB once they are emoji. The old 1mb ceiling
+// hid that; a flat 64KB would have broken a long chat with a 413, and refusing
+// a real request to save memory is a worse outcome than the buffer.
+//
+// The two numbers are restated here because routes/ai.js exports neither, and
+// this file must not import a router to size a parser that runs before it.
+// What keeps them honest is a test, not this comment: bodyLimitAudit.test.js
+// reads both literals back out of routes/ai.js and fails if either moves
+// without this parser moving with it.
+//
+// express-validator's isLength counts CODE POINTS (it discounts surrogate
+// pairs), so 4000 "characters" of astral text is 4000 code points at 4 bytes
+// each, not 4000 UTF-16 units. That is why the multiplier is 4 and not 2.
+const AI_CHAT_MAX_MESSAGES = 24;
+const AI_CHAT_MAX_MESSAGE_CHARS = 4000;
+const AI_CHAT_JSON_BODY_BYTES =
+  AI_CHAT_MAX_MESSAGES * AI_CHAT_MAX_MESSAGE_CHARS * JSON_STRING_BYTES_PER_CHAR + JSON_BODY_ENVELOPE_BYTES;
+const aiChatJsonParser = express.json({ limit: AI_CHAT_JSON_BODY_BYTES });
+
+// The RevenueCat webhook. Scoped rather than defaulted because THE SENDER IS
+// NOT US: a webhook we refuse is an entitlement event nobody sees, so a paying
+// subscriber silently does not get Pro. Every documented RevenueCat event is a
+// few KB (the event object plus subscriber_attributes, whose values RevenueCat
+// itself caps at 500 characters), so 256KB is roughly two orders of magnitude
+// of margin on a payload shape we do not control and cannot re-derive from a
+// validator. It is still 4x below the 1mb this route used to get. Nothing else
+// in the app is a third-party POST; if a second one ever lands, it belongs on
+// this parser and in this comment.
+//
+// (routes/revenuecat.js also mounts its own bare `express.json()` on the
+// handler. That is a no-op: body-parser sets req._body and skips a body that
+// has already been read, and this middleware runs first. It is not a second
+// ceiling and must not be mistaken for one.)
+const WEBHOOK_JSON_BODY_BYTES = 256 * 1024;
+const webhookJsonParser = express.json({ limit: WEBHOOK_JSON_BODY_BYTES });
 
 // POSTs whose body legitimately carries a base64 image. Anchored and
 // case-insensitive: Express routes case-insensitively by default, so a
@@ -217,13 +337,54 @@ const IMAGE_BODY_ROUTES = [
 // there is nothing else to strip.)
 const imageRoutePath = (req) => req.path.replace(/\/{2,}/g, '/');
 
+// The two scoped non-image routes. Same three properties as the list above,
+// for the same reasons, and they are not decorative on either one:
+//   * anchored, so a longer path that merely starts with these does not
+//     inherit the bigger buffer;
+//   * case-insensitive, because Express routes case-insensitively by default
+//     and POST /API/AI/CHAT reaches the Birdie handler (measured);
+//   * matched through imageRoutePath, because POST /api/ai//chat and
+//     POST /api/revenuecat//webhook ALSO reach their handlers (measured — one
+//     extra slash immediately after a mount point survives Express 4's router,
+//     though /api//ai/chat does not). Without the collapse, a client that
+//     doubled a slash would be served the 64KB default and its perfectly legal
+//     long conversation would come back 413. Over-matching is the safe
+//     direction here for the same reason it is above: a spelling that reaches
+//     no handler gets a larger buffer and then a 404.
+// The function's name is historical — it is the shared path normaliser now,
+// not an image-only one — and it is left alone because
+// __tests__/imageSpendLimits.test.js lifts it out of this file by that name.
+const AI_CHAT_BODY_ROUTE = /^\/api\/ai\/chat\/?$/i;
+const WEBHOOK_BODY_ROUTE = /^\/api\/revenuecat\/webhook\/?$/i;
+
+// One table, one dispatch. A fourth scoped parser is a row here, not a second
+// `if` — two places deciding which ceiling a request gets is how the ceiling
+// and the meter drifted apart the last three times something in this block
+// broke. First match wins; the patterns are disjoint by construction (a test
+// pins that they are).
+const SCOPED_JSON_PARSERS = [
+  ...IMAGE_BODY_ROUTES.map((re) => [re, imageJsonParser]),
+  [AI_CHAT_BODY_ROUTE, aiChatJsonParser],
+  [WEBHOOK_BODY_ROUTE, webhookJsonParser],
+];
+
+// GET/PUT/PATCH/DELETE take the default unconditionally: every route with a
+// scoped ceiling is a POST, and the largest body on any non-POST verb in the
+// app is PUT /api/venue-profile at ~35KB (see the audit above).
 app.use((req, res, next) => {
-  const parser = req.method === 'POST' && IMAGE_BODY_ROUTES.some((re) => re.test(imageRoutePath(req)))
-    ? imageJsonParser
-    : defaultJsonParser;
-  return parser(req, res, next);
+  if (req.method !== 'POST') return defaultJsonParser(req, res, next);
+  const routePath = imageRoutePath(req);
+  const scoped = SCOPED_JSON_PARSERS.find(([re]) => re.test(routePath));
+  return (scoped ? scoped[1] : defaultJsonParser)(req, res, next);
 });
-app.use(express.urlencoded({ extended: true }));
+// Form-encoded bodies get the same ceiling as JSON ones, and for the same
+// reason: this parser is also ahead of every limiter, and its own default is
+// 100KB. Nothing in this app posts a form — the frontend sends JSON everywhere
+// and the one multipart upload (POST /api/users/upload-image) is buffered by
+// multer inside routes/users.js, which neither of these parsers touches — so
+// this ceiling exists to be an unauthenticated buffer and nothing else. Size it
+// like one.
+app.use(express.urlencoded({ extended: true, limit: DEFAULT_JSON_BODY_BYTES }));
 
 // Round 12: the /uploads static mount is gone. Nothing writes to that
 // directory any more — routes/users.js buffers the one upload endpoint in
