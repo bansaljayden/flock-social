@@ -117,7 +117,14 @@ async function fetchVenueFromGoogle(placeId, clientDay) {
   // clients still reading a single window.
   const periods = p.currentOpeningHours?.periods;
   const hoursByDay = buildHoursByDay(periods);
-  const today = clientDay != null ? clientDay : new Date().getDay(); // 0=Sun
+  // The venue's OWN weekday decides "today's hours", not the viewer's. A bar in
+  // Los Angeles is still on Friday's window while a viewer in London has rolled
+  // over to Saturday, and the card is scored on the venue's clock — so the
+  // displayed hours must use the same day the score does, or the two disagree by
+  // a day. Mirrors publicCrowd.toVenueShape. Falls back to the caller's day, then
+  // the server's, when Google gives us no offset.
+  const venueDay = crowdEngine.venueLocalNow(p.utcOffsetMinutes)?.day;
+  const today = venueDay != null ? venueDay : (clientDay != null ? clientDay : new Date().getDay()); // 0=Sun
   const hoursToday = hoursByDay ? (hoursByDay[today] || []) : [];
   const todayWindow = hoursToday[0] || null;
   const openHour = todayWindow ? todayWindow.open : null;
@@ -139,6 +146,13 @@ async function fetchVenueFromGoogle(placeId, clientDay) {
     isOpen: p.currentOpeningHours?.openNow ?? null,
     openHour,
     closeHour,
+    // The field mask fetches this and the whole venue-clock path depends on it:
+    // venueLocalNow (scores on the venue's wall clock) and trueEventInstant
+    // (the Ticketmaster query window) both read venue.utcOffsetMinutes. Dropping
+    // it here silently reverted BOTH to the server/viewer clock — the exact bug
+    // the venue-clock rewrite was meant to kill. Google omits it for some
+    // places, so it stays nullable and callers fall back to the caller's clock.
+    utcOffsetMinutes: p.utcOffsetMinutes != null ? p.utcOffsetMinutes : null,
   };
 }
 
@@ -368,6 +382,10 @@ router.post('/batch',
         isOpen: typeof v?.isOpen === 'boolean' ? v.isOpen : null,
         openHour: Number.isInteger(v?.openHour) ? v.openHour : null,
         closeHour: Number.isInteger(v?.closeHour) ? v.closeHour : null,
+        // Whitelisted so a client that has the venue's Google offset lets the
+        // event window (trueEventInstant) land on the venue's real instant
+        // rather than the viewer's. Absent -> null -> old fallback behavior.
+        utcOffsetMinutes: Number.isFinite(v?.utcOffsetMinutes) ? v.utcOffsetMinutes : null,
       }));
       const now = new Date();
 
@@ -515,6 +533,10 @@ router.get('/:placeId/alternatives',
           price_level: priceLevelToNum(p.priceLevel),
           types: p.types || [],
           location: p.location || null,
+          // Same reason as fetchVenueFromGoogle: predictBusyness reads this for
+          // the Ticketmaster event window (trueEventInstant). The searchText
+          // field mask requests it, so pass it through instead of dropping it.
+          utcOffsetMinutes: p.utcOffsetMinutes != null ? p.utcOffsetMinutes : null,
         }));
 
       // Round 14: "Less crowded nearby" was scored by a different engine than
@@ -567,3 +589,7 @@ router.get('/:placeId/alternatives',
 );
 
 module.exports = router;
+// Exposed for backend/__tests__/crowdReaudit.test.js — the venue-clock path
+// depends on utcOffsetMinutes surviving the Google->venue shaping, and that
+// drop was invisible to every existing test because the shaping is internal.
+module.exports.__testables = { fetchVenueFromGoogle };
