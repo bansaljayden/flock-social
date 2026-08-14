@@ -284,9 +284,11 @@ describe('iOS focus zoom: no focusable control renders under 16px', () => {
     // is the failure mode of every "grep for the bad thing" test.
     expect(focusableTags(sheetSrc).map((t) => t.tag)).toEqual(['textarea']);
     expect(focusableTags(venueSrc).filter((t) => t.tag === 'input').length).toBeGreaterThanOrEqual(4);
-    // The console is a read-and-act screen: no form controls at all, which is
-    // why its zoom problem was overflow rather than focus (section 2).
-    expect(focusableTags(consoleSrc)).toHaveLength(0);
+    // The console gained exactly one control: the per-card audit-reason input.
+    // Its font-size lives in S.reasonInput rather than inline in the tag, so
+    // the inline sweep below cannot see it; the 16px floor for it is asserted
+    // by name in section 2, where S is already evaluated.
+    expect(focusableTags(consoleSrc).map((t) => t.tag)).toEqual(['input']);
   });
 
   test.each(OWNED)('%s declares no inline font-size below 16px on a focusable control', (name, source) => {
@@ -398,6 +400,18 @@ describe('the console fits a 320px viewport', () => {
   test('the reported body cannot be widened by an unbroken 5,000-character string', () => {
     expect(S.excerpt.overflowWrap).toBe('anywhere');
     expect(S.type.overflowWrap).toBe('anywhere');
+    // The stored audit reason is up to 1000 characters of free text, rendered
+    // back into the log; same rule.
+    expect(S.logReason.overflowWrap).toBe('anywhere');
+  });
+
+  test('the audit-reason input renders at 16px, the iOS focus-zoom floor', () => {
+    // The one focusable control the console owns (section 1 counts it). Its
+    // size lives in S rather than inline, so the inline sweep cannot police it.
+    expect(num(S.reasonInput.fontSize)).toBeGreaterThanOrEqual(16);
+    // …and it cannot widen the card: full-width inside a border-box.
+    expect(S.reasonInput.boxSizing).toBe('border-box');
+    expect(S.reasonInput.maxWidth).toBe('100%');
   });
 });
 
@@ -707,17 +721,179 @@ describe('every action the server can still honour is on the card', () => {
     expect(screen.queryByText(/Invalid Date/)).toBeNull();
   });
 
-  test('the 200-row cap is stated, because the counts above it are of the whole table', async () => {
+  test('a truncated queue is stated AND navigable: hasMore renders a working Load more', async () => {
+    // The guarded property this test used to pin was "the 200-row cap is
+    // stated". The cap is now a window the server reports the edge of
+    // (hasMore) and the console can extend, so the pin moved with it: the
+    // truncation must still be STATED (counts are of the whole table) and must
+    // now also be NAVIGABLE. The old harm — the oldest open reports silently
+    // falling off — is closed on the server by the oldest-unhandled-first
+    // ordering, which the new backend test file pins.
     const many = Array.from({ length: 200 }, (_, i) => aReport({ id: i + 1, content_id: i + 1 }));
-    routes[REPORTS] = () => respond(queueBody(many, [{ status: 'open', count: 250 }]));
+    routes[REPORTS] = (p) => {
+      if (/limit=400/.test(p)) {
+        const more = Array.from({ length: 201 }, (_, i) => aReport({ id: i + 1, content_id: i + 1 }));
+        return respond({ ...queueBody(more, [{ status: 'open', count: 250 }]), hasMore: false });
+      }
+      return respond({ ...queueBody(many, [{ status: 'open', count: 250 }]), hasMore: true });
+    };
     routes[ACTIONS] = () => respond({ actions: [] });
 
     await renderConsole();
-    // Ordered open-first then newest-first, so what falls off the end is the
-    // oldest open work: the reports that have been waiting longest.
-    expect(screen.getByText(/first 200 reports/)).toBeInTheDocument();
-  }, 30000);
+    expect(screen.getByText(/counts above are of the whole table/)).toBeInTheDocument();
+
+    // The console pages by growing its window, not by appending an offset
+    // fetch: the next ask must carry limit=400 and REPLACE the list.
+    fireEvent.click(screen.getByRole('button', { name: /Load 200 more/ }));
+    await waitFor(() => expect(calls.some((c) => /limit=400/.test(c.path))).toBe(true));
+
+    // The server said that was everything; the button and the notice go away.
+    await waitFor(() => expect(screen.queryByRole('button', { name: /Load 200 more/ })).toBeNull());
+    expect(screen.queryByText(/counts above are of the whole table/)).toBeNull();
+  }, 60000);
+
+  test('a queue that fits sends no hasMore and shows no Load more', async () => {
+    onlyReport({});
+    await renderConsole();
+    expect(screen.queryByRole('button', { name: /Load 200 more/ })).toBeNull();
+  });
+
+  test('a failed Load more is its own error, never the queue banner, and the rows stay up', async () => {
+    const many = Array.from({ length: 200 }, (_, i) => aReport({ id: i + 1, content_id: i + 1 }));
+    routes[REPORTS] = (p) => {
+      if (/limit=400/.test(p)) return respond({ error: 'Failed to fetch reports' }, { ok: false, status: 500 });
+      return respond({ ...queueBody(many, [{ status: 'open', count: 250 }]), hasMore: true });
+    };
+    routes[ACTIONS] = () => respond({ actions: [] });
+
+    await renderConsole();
+    fireEvent.click(screen.getByRole('button', { name: /Load 200 more/ }));
+
+    await screen.findAllByText('Failed to fetch reports');
+    // The rows already on screen are not the thing that failed.
+    expect(screen.queryByText(/These numbers are from the last load that worked/)).toBeNull();
+    // And the button is still there to try again.
+    expect(screen.getByRole('button', { name: /Load 200 more/ })).toBeInTheDocument();
+  }, 60000);
 });
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 5b. The reason loop: typed on the card, sent with the action, read in the log
+// ═══════════════════════════════════════════════════════════════════════════
+describe('the audit reason travels from the card to the log', () => {
+  const onlyReport = (over) => {
+    routes[REPORTS] = () => respond(queueBody([aReport(over)]));
+    routes[ACTIONS] = () => respond({ actions: [] });
+  };
+
+  test('a typed reason rides in the PUT body; an empty one is omitted, not sent as ""', async () => {
+    onlyReport({});
+    await renderConsole();
+
+    const puts = [];
+    routes[REPORTS] = (p, options) => {
+      if (options && options.method === 'PUT') {
+        puts.push(JSON.parse(options.body));
+        return respond({ message: 'Action applied', status: 'resolved', action: 'user_banned' });
+      }
+      return respond(queueBody([aReport()]));
+    };
+
+    fireEvent.change(screen.getByLabelText('Reason for actions on this report'), { target: { value: '  repeat offender, second report  ' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Ban user' }));
+    await waitFor(() => expect(puts).toHaveLength(1));
+    // Trimmed: the server stores what it is sent verbatim.
+    expect(puts[0]).toEqual({ action: 'ban', reason: 'repeat offender, second report' });
+
+    // The background reload the action triggers has to settle (the buttons are
+    // disabled while it is in flight) before the next action can be clicked.
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Dismiss' })).toBeEnabled());
+
+    // No reason typed -> no reason key at all. The route treats undefined and
+    // null as absent, but an empty string would be stored as a moderator who
+    // wrote nothing on purpose.
+    fireEvent.click(screen.getByRole('button', { name: 'Dismiss' }));
+    await waitFor(() => expect(puts).toHaveLength(2));
+    expect(puts[1]).toEqual({ action: 'dismiss' });
+  });
+
+  test('the input cannot compose a reason the server would refuse', () => {
+    // PUT /api/admin/reports/:id refuses reason.length > 1000. The cap is read
+    // from the console source so it cannot drift silently.
+    const m = /maxLength=\{(\d+)\}/.exec(consoleSrc);
+    expect(m).not.toBeNull();
+    expect(Number(m[1])).toBeLessThanOrEqual(1000);
+  });
+
+  test('the log renders stored reasons, and names the new 020 actions properly', async () => {
+    routes[REPORTS] = () => respond(queueBody([]));
+    routes[ACTIONS] = () => respond({
+      actions: [
+        { id: 1, action: 'user_banned', target_user_name: 'Sam', moderator_name: 'Jay', created_at: '2026-08-14T11:00:00Z', reason: 'threats in DMs' },
+        { id: 2, action: 'tier_changed', content_type: 'venue_profile', content_id: 7, moderator_name: 'Jay', created_at: '2026-08-14T11:01:00Z', reason: 'tier free -> premium: hand-sold, 6mo comp' },
+        { id: 3, action: 'venue_verified', content_type: 'venue_profile', content_id: 7, moderator_name: 'Jay', created_at: '2026-08-14T11:02:00Z' },
+      ],
+    });
+
+    await renderConsole();
+
+    // The moderator's stored words are on the row, verbatim.
+    expect(screen.getByText('threats in DMs')).toBeInTheDocument();
+    // The transition text migration 020's routes store in reason renders too.
+    expect(screen.getByText('tier free -> premium: hand-sold, 6mo comp')).toBeInTheDocument();
+    // Friendly labels for the new action types, not replace(/_/g, ' ').
+    expect(screen.getByText('Venue tier changed')).toBeInTheDocument();
+    expect(screen.getByText('Venue verified')).toBeInTheDocument();
+    // And the audit-only content type has a label, not the raw column value.
+    expect(screen.queryByText(/venue_profile/)).toBeNull();
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 5c. The evidence-access toggle
+// ═══════════════════════════════════════════════════════════════════════════
+describe('the audit log can show evidence access, clearly marked', () => {
+  test('the toggle asks the server by name and re-reads only the log', async () => {
+    routes[REPORTS] = () => respond(queueBody([]));
+    routes[ACTIONS] = (p) => {
+      if (/include_evidence=true/.test(p)) {
+        return respond({
+          actions: [
+            { id: 1, action: 'content_hidden', content_type: 'dm', content_id: 9, moderator_name: 'Jay', created_at: '2026-08-14T11:00:00Z' },
+            { id: 2, action: 'evidence_viewed', content_type: 'dm', content_id: 9, moderator_name: 'Jay', created_at: '2026-08-14T10:59:00Z', reason: 'full text' },
+          ],
+        });
+      }
+      return respond({ actions: [{ id: 1, action: 'content_hidden', content_type: 'dm', content_id: 9, moderator_name: 'Jay', created_at: '2026-08-14T11:00:00Z' }] });
+    };
+
+    await renderConsole();
+    // Default: decisions only, and no access rows were requested.
+    expect(calls.filter((c) => /include_evidence=true/.test(c.path))).toHaveLength(0);
+    expect(screen.queryByText('Evidence viewed')).toBeNull();
+
+    const queueReads = countCalls(REPORTS, 'GET');
+    fireEvent.click(screen.getByRole('button', { name: 'Show evidence access' }));
+
+    // The access row arrives, labelled and marked as reading rather than
+    // deciding, with the server's 'image' / 'full text' reason folded into a
+    // sentence instead of rendered like a moderator's own words.
+    expect(await screen.findByText('Evidence viewed')).toBeInTheDocument();
+    expect(screen.getByText('ACCESS')).toBeInTheDocument();
+    expect(screen.getByText('Opened the full text.')).toBeInTheDocument();
+    expect(screen.getByText(/records of reading, not decisions/)).toBeInTheDocument();
+    // The decision is still there beside it…
+    expect(screen.getByText('Content hidden')).toBeInTheDocument();
+    // …and the queue was not re-fetched to show it.
+    expect(countCalls(REPORTS, 'GET')).toBe(queueReads);
+
+    // Toggling back drops the access rows and the explainer.
+    fireEvent.click(screen.getByRole('button', { name: 'Hide evidence access' }));
+    await waitFor(() => expect(screen.queryByText('Evidence viewed')).toBeNull());
+    expect(screen.queryByText(/records of reading, not decisions/)).toBeNull();
+  });
+});
+
 
 // ═══════════════════════════════════════════════════════════════════════════
 // 6. The icon system
