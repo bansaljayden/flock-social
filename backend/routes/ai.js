@@ -21,6 +21,12 @@ const {
   nextUtcMidnightISO,
   PREMIUM_DAILY_LIMIT,
   FREE_DAILY_LIMIT,
+  // The spend ledger. The turn meter above counts MESSAGES, which is the
+  // product limit; these count TOKENS per Gemini call, which is the money.
+  // services/birdieUsage.js explains at length why one is not the other.
+  estimateGeminiTokens,
+  allowGeminiCall,
+  settleGeminiCall,
 } = require('../services/birdieUsage');
 
 const router = express.Router();
@@ -52,7 +58,83 @@ function getGenAI() {
 // ---------------------------------------------------------------------------
 // Per-user rate limiting — moved to services/birdieUsage.js (shared with
 // entitlements). 150/day premium (or paywall off), 10/day free tier, 15/min all.
+//
+// That meter counts TURNS. Gemini bills TOKENS, and one turn is up to six calls
+// (the tool loop below) of a size the caller chooses, each of which may buy a
+// retry. The token ledger in the same module is what bounds the invoice; this
+// file's job is to charge it before EVERY chat.sendMessage and to true it up
+// afterwards. See __tests__/geminiSpendLedger.test.js.
 // ---------------------------------------------------------------------------
+
+// A refusal from the spend ledger, distinguishable from a vendor error so the
+// retry path never treats it as transient and the tool loop can stop cleanly
+// instead of 500ing. Never retried: a refusal is not a failure to fix, it is the
+// ceiling doing its job, and retrying it would be a second charge attempt for a
+// call we already decided not to make.
+class GeminiBudgetError extends Error {
+  constructor() {
+    super('Gemini spend ceiling reached');
+    this.name = 'GeminiBudgetError';
+    this.geminiBudget = true;
+    // 429 is what this condition IS, and saying so out loud is what makes the
+    // `geminiBudget` check in the retry path load-bearing rather than
+    // decorative. Without a status, this error happened not to match the
+    // transient test below — but only because its MESSAGE happened not to
+    // contain "quota" or "unavailable", which is a property of a sentence, not
+    // a design. Anything that reaches the route's outer catch with status 429
+    // is answered as a 429, so if a future refactor ever drops the explicit
+    // handling, the fallback is still the right answer instead of a 500.
+    this.status = 429;
+  }
+}
+
+// What Birdie says when the ledger stops a turn. Same register as the other
+// refusals in this file, and deliberately not an apology for being down — the
+// system prompt forbids that voice and the user is reading this sentence, not
+// the model.
+const BIRDIE_BUSY_MESSAGE = 'lot of chatter right now. hit me again in a bit';
+
+// How many characters a payload puts on the wire. The SDK holds no server-side
+// session, so the WHOLE conversation is re-sent on every call; the caller of
+// this adds the result to a running total rather than measuring one message.
+//
+// An unserializable payload is charged as if it were huge. Failing expensive is
+// the only safe direction for a spending control: a payload we cannot measure
+// must not be a payload that costs nothing.
+const UNMEASURABLE_PAYLOAD_CHARS = 400_000;
+function payloadChars(payload) {
+  if (typeof payload === 'string') return payload.length;
+  try {
+    const s = JSON.stringify(payload);
+    return typeof s === 'string' ? s.length : UNMEASURABLE_PAYLOAD_CHARS;
+  } catch {
+    return UNMEASURABLE_PAYLOAD_CHARS;
+  }
+}
+
+// What came back also becomes part of the next call's prompt, so it is measured
+// the same way. Tool-call arguments count as well as text — a model that emits
+// six function calls has grown the conversation just as surely as one that
+// wrote six paragraphs.
+function responseChars(resp) {
+  try {
+    const s = JSON.stringify(resp?.candidates?.[0]?.content ?? '');
+    return typeof s === 'string' ? s.length : 0;
+  } catch {
+    return 0;
+  }
+}
+
+// The SDK reports real usage on the response. Shape has moved between SDK
+// versions, so read the total defensively and treat an absent one as "no
+// information" rather than as zero — settleGeminiCall ignores a non-finite
+// value, which leaves the pre-call estimate standing.
+function reportedTokens(resp) {
+  const u = resp?.usageMetadata;
+  if (!u) return null;
+  const total = u.totalTokenCount ?? u.totalTokens;
+  return Number.isFinite(total) ? total : null;
+}
 
 // ---------------------------------------------------------------------------
 // Tool definitions for Gemini
@@ -475,6 +557,26 @@ router.post('/chat',
       const { messages, location, currentContext } = req.body;
       const userId = req.user.id;
 
+      // The turn has to HAVE a message. `messages.*.text` is optional in the
+      // validator above, so `{ messages: [{}] }` passed it, and the last element
+      // is the current user input: userText came out undefined, and the location
+      // prefix below would then send Gemini the literal string "undefined" — a
+      // paid call for nothing, or an SDK throw reported as a 500.
+      //
+      // Refusing here rather than further down is a SPENDING decision, not a
+      // tidiness one. This check sits ahead of both meters. Without it the spend
+      // ledger charged an unmeasurable payload at the deliberately-expensive
+      // fallback rate (~100,000 tokens) for a request that never reached Gemini,
+      // so a caller could burn the whole process-wide daily ceiling with a
+      // hundred and fifty empty bodies and take Birdie down for everyone without
+      // spending a cent of Google's money or their own. Fail-expensive is the
+      // right default for a payload we cannot measure; the fix is to not be
+      // holding an unmeasurable payload by the time we start charging for it.
+      const lastMessage = messages[messages.length - 1];
+      if (typeof lastMessage?.text !== 'string' || lastMessage.text.trim() === '') {
+        return res.status(400).json({ error: 'type something first' });
+      }
+
       // Resolve tier ONCE per request (isPremium is a DB query). When the
       // paywall is off (default), no DB hit — behavior is identical to before.
       const freeTier = paywallEnabled() && !(await isPremium(userId));
@@ -523,8 +625,8 @@ router.post('/chat',
         history.pop();
       }
 
-      // The last message is the current user input
-      const lastMessage = messages[messages.length - 1];
+      // The last message is the current user input. Its presence and type were
+      // established above, before either meter was touched.
       let userText = lastMessage.text;
 
       // Prepend location context if available — rounded to ~1km (2 decimals).
@@ -566,14 +668,49 @@ router.post('/chat',
       // so retrying one is a second invoice for a question we paid to ask —
       // the rule stated in utils/upstream.js. Transient 429/5xx failures, which
       // are cheap and fast, still get their one retry.
+      //
+      // THE SPEND LEDGER IS CHARGED HERE, ONCE PER ATTEMPT.
+      //
+      // Not once per turn, and not once per payload. Every attempt below is a
+      // separate request Google receives, parses and bills, so every attempt
+      // charges — including the retry, which is a second invoice for the same
+      // question and is charged like one. The charge happens BEFORE the call
+      // for the reason utils/upstream.js states: an aborted paid request is
+      // still billed, so a charge-on-success design undercounts exactly when
+      // the upstream is sick and our call rate is highest.
+      //
+      // `promptChars` is the size of the WHOLE conversation, not of this
+      // message. The SDK keeps no server-side session: the system prompt, every
+      // tool declaration and the entire history go up the wire again on each
+      // call. Measuring only the new part is precisely how a six-round tool loop
+      // came to be billed as one short question.
+      let promptChars = payloadChars(chatConfig) + payloadChars(history);
       async function sendWithRetry(payload) {
-        const send = () => chat.sendMessage({
-          message: payload,
-          config: { ...chatConfig, abortSignal: upstreamSignal('gemini') },
-        });
+        // Once per payload, not once per attempt: a retry re-sends the same
+        // message, it does not append a second copy of it.
+        promptChars += payloadChars(payload);
+        const send = async () => {
+          const estimate = estimateGeminiTokens(promptChars);
+          if (!allowGeminiCall(userId, estimate)) throw new GeminiBudgetError();
+          const resp = await chat.sendMessage({
+            message: payload,
+            config: { ...chatConfig, abortSignal: upstreamSignal('gemini') },
+          });
+          // Estimating from characters is a brake, not a billing
+          // reconciliation. Where the SDK tells us the real figure, use it, so
+          // a systematically low estimate cannot accumulate into a free
+          // allowance across a long tool loop.
+          settleGeminiCall(userId, estimate, reportedTokens(resp));
+          promptChars += responseChars(resp);
+          return resp;
+        };
         try {
           return await send();
         } catch (e) {
+          // A ledger refusal is not a vendor failure and must never be retried:
+          // the second attempt would charge again for a call we already decided
+          // not to make, and a ceiling that retries itself is not a ceiling.
+          if (e?.geminiBudget) throw e;
           const aborted = e?.name === 'AbortError' || e?.name === 'TimeoutError'
             || /abort|timed? ?out/i.test(e?.message || '');
           if (aborted) throw e;
@@ -586,7 +723,19 @@ router.post('/chat',
 
       // Send message and handle tool calls
       const turnDeadline = Date.now() + BIRDIE_TURN_BUDGET_MS;
-      let response = await sendWithRetry(userText);
+      // The very first call is refused outright when the ledger is spent —
+      // there is nothing to answer with, so this is a 429 rather than a
+      // degraded reply, and Gemini is never reached.
+      let response;
+      let budgetStopped = false;
+      try {
+        response = await sendWithRetry(userText);
+      } catch (e) {
+        if (e?.geminiBudget) {
+          return res.status(429).json({ error: BIRDIE_BUSY_MESSAGE });
+        }
+        throw e;
+      }
       let iterations = 0;
       const collectedVenues = []; // Track venues for card display
       let navigationAction = null; // Track navigation commands
@@ -640,14 +789,27 @@ router.post('/chat',
           }
         }
 
-        // Send tool results back to Gemini
-        response = await sendWithRetry(functionResponses);
+        // Send tool results back to Gemini. A ledger refusal mid-loop stops the
+        // turn the same way the wall-clock deadline above does: answer with
+        // what we already have rather than 500. The tool work is done and any
+        // venue cards it produced are still worth returning.
+        try {
+          response = await sendWithRetry(functionResponses);
+        } catch (e) {
+          if (e?.geminiBudget) {
+            console.warn('[AI] Gemini spend ceiling reached mid-turn; answering without further tool rounds');
+            budgetStopped = true;
+            break;
+          }
+          throw e;
+        }
       }
 
       // Extract final text
       const candidate = response.candidates?.[0];
       const textParts = candidate?.content?.parts?.filter(p => p.text) || [];
-      const responseText = textParts.map(p => p.text).join('') || "say that one more time?";
+      const fallbackText = budgetStopped ? BIRDIE_BUSY_MESSAGE : 'say that one more time?';
+      const responseText = textParts.map(p => p.text).join('') || fallbackText;
 
       // Collect venue data from tool results to send as cards
       const venueCards = [];
