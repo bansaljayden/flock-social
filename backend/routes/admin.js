@@ -92,11 +92,14 @@ const CONTENT_TEXT_SQL = {
   // moderator being able to READ the field, because it catches slurs and not
   // "text me at 555-0100".
   venue_promotion: (t) => `NULLIF(CONCAT_WS(chr(10), NULLIF(CONCAT_WS(': ', ${t}.title, ${t}.description), ''), NULLIF(CONCAT_WS(' · ', ${t}.time_slot, ${t}.days), '')), '')`,
-  // Same shape, and worse: routes/venueDashboard.js runs rejectIfProfane on
-  // `title` ALONE, so event_date and event_time are 40 characters of
-  // owner-typed text apiece that pass through no screen at all. Nothing renders
-  // venue events publicly yet, which is exactly why the queue should be able to
-  // read them before something does.
+  // Same shape. routes/venueDashboard.js used to run rejectIfProfane on `title`
+  // ALONE, leaving event_date and event_time — 40 characters of owner-typed text
+  // apiece — through no screen at all; round 22 fixed that, and both the POST and
+  // the PUT now screen all three strings on the STRIPPED value. The queue still
+  // reads all three, because a wordlist is not a substitute for a moderator being
+  // able to READ the field: it catches slurs and not "text me at 555-0100".
+  // Nothing renders venue events publicly yet, which is exactly why the queue
+  // should be able to read them before something does.
   venue_event: (t) => `NULLIF(CONCAT_WS(chr(10), NULLIF(${t}.title, ''), NULLIF(CONCAT_WS(' · ', ${t}.event_date, ${t}.event_time), '')), '')`,
   // A guest has no account: the reported content IS the self-chosen name.
   guest_rsvp: (t) => `NULLIF(${t}.name, '')`,
