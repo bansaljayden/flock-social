@@ -76,6 +76,36 @@ router.get('/test-email', authenticate, async (req, res) => {
   }
 });
 
+// ---------------------------------------------------------------------------
+// Coordinates arrive on the two email-sending routes as raw request-body JSON
+// and were never validated. Round 15 fixes two separate problems with that.
+//
+// 1. AVAILABILITY OF THE EMERGENCY PATH. Both routes call `latitude.toFixed(6)`
+//    while building the email. `toFixed` exists on numbers and nothing else, so
+//    a client sending coordinates as JSON strings ("40.712") or as an array
+//    threw a TypeError. On /alert that throw happens AFTER the alert row is
+//    committed, so the outer catch answered `500 Failed to send alert` having
+//    sent NOTHING to ANY trusted contact, and the claimed row then blocked the
+//    retry for a further 60 seconds. A type mismatch must degrade an SOS to
+//    "sent without a location", never to "not sent".
+//
+// 2. CONSENT. /alert wrote `latitude || null` into emergency_alerts regardless
+//    of includeLocation, so a user who declined to attach their location still
+//    had their precise position persisted. Only consented coordinates are
+//    stored now.
+//
+// Returns a finite {lat, lng} in range, or null.
+// ---------------------------------------------------------------------------
+function readCoords(latitude, longitude) {
+  const lat = typeof latitude === 'number' ? latitude
+    : (typeof latitude === 'string' && latitude.trim() !== '' ? Number(latitude) : NaN);
+  const lng = typeof longitude === 'number' ? longitude
+    : (typeof longitude === 'string' && longitude.trim() !== '' ? Number(longitude) : NaN);
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+  if (lat < -90 || lat > 90 || lng < -180 || lng > 180) return null;
+  return { lat, lng };
+}
+
 // ── Get user's trusted contacts ──
 router.get('/contacts', authenticate, async (req, res) => {
   try {
@@ -148,8 +178,15 @@ router.post('/contacts', authenticate, async (req, res) => {
 });
 
 // ── Update trusted contact ──
+// trusted_contacts.id is an integer key. A non-numeric :id reached Postgres and
+// came back as a 500; these are 404s, and a 500 on a safety screen reads to the
+// user as "the app is broken" rather than "that contact is gone".
+const contactId = (raw) => (/^\d+$/.test(String(raw)) ? parseInt(raw, 10) : null);
+
 router.put('/contacts/:id', authenticate, async (req, res) => {
   try {
+    const id = contactId(req.params.id);
+    if (id === null) return res.status(404).json({ error: 'Contact not found' });
     const { name, phone, email, relationship } = req.body;
     if (!name || !phone) {
       return res.status(400).json({ error: 'Name and phone are required' });
@@ -160,7 +197,7 @@ router.put('/contacts/:id', authenticate, async (req, res) => {
     const result = await pool.query(
       `UPDATE trusted_contacts SET contact_name = $1, contact_phone = $2, contact_email = $3, relationship = $4
        WHERE id = $5 AND user_id = $6 RETURNING *`,
-      [name.trim(), phone.trim(), email?.trim() || null, relationship?.trim() || null, req.params.id, req.user.id]
+      [name.trim(), phone.trim(), email?.trim() || null, relationship?.trim() || null, id, req.user.id]
     );
     if (result.rowCount === 0) {
       return res.status(404).json({ error: 'Contact not found' });
@@ -175,9 +212,11 @@ router.put('/contacts/:id', authenticate, async (req, res) => {
 // ── Delete trusted contact ──
 router.delete('/contacts/:id', authenticate, async (req, res) => {
   try {
+    const id = contactId(req.params.id);
+    if (id === null) return res.status(404).json({ error: 'Contact not found' });
     const result = await pool.query(
       'DELETE FROM trusted_contacts WHERE id = $1 AND user_id = $2 RETURNING id',
-      [req.params.id, req.user.id]
+      [id, req.user.id]
     );
     if (result.rowCount === 0) {
       return res.status(404).json({ error: 'Contact not found' });
@@ -199,6 +238,12 @@ const ALERT_COOLDOWN_MS = 5 * 60 * 1000;
 router.post('/alert', authenticate, async (req, res) => {
   try {
     const { latitude, longitude, includeLocation, timezone } = req.body;
+
+    // Parsed once, up front, before anything is committed or sent. `coords` is
+    // null when the user opted out OR when the client sent something we cannot
+    // safely put on a map — both mean "alert without a location", which is a
+    // degraded alert, not a failed one.
+    const coords = includeLocation === false ? null : readCoords(latitude, longitude);
 
     // Claim phase: cooldown check, contact read, and the emergency_alerts row
     // are one atomic unit. The row is written with contacts_alerted = 0, which
@@ -251,7 +296,7 @@ router.post('/alert', authenticate, async (req, res) => {
       const claim = await client.query(
         `INSERT INTO emergency_alerts (user_id, latitude, longitude, contacts_alerted)
          VALUES ($1, $2, $3, 0) RETURNING id`,
-        [req.user.id, latitude || null, longitude || null]
+        [req.user.id, coords?.lat ?? null, coords?.lng ?? null]
       );
       alertId = claim.rows[0].id;
 
@@ -268,9 +313,11 @@ router.post('/alert', authenticate, async (req, res) => {
     try { time = new Date().toLocaleString('en-US', { timeZone: tz }); }
     catch { time = new Date().toISOString(); }
 
-    const locationBlock = includeLocation && latitude && longitude
-      ? `<p style="margin:12px 0"><a href="https://maps.google.com/?q=${latitude},${longitude}" style="display:inline-block;padding:12px 24px;background:#ef4444;color:white;text-decoration:none;border-radius:8px;font-weight:bold">View Location on Map</a></p>
-         <p style="color:#6b7280;font-size:13px">Coordinates: ${latitude.toFixed(6)}, ${longitude.toFixed(6)}</p>`
+    // coords is already numeric and in range, so nothing user-controlled reaches
+    // this HTML — the href cannot be broken out of and toFixed cannot throw.
+    const locationBlock = coords
+      ? `<p style="margin:12px 0"><a href="https://maps.google.com/?q=${coords.lat},${coords.lng}" style="display:inline-block;padding:12px 24px;background:#ef4444;color:white;text-decoration:none;border-radius:8px;font-weight:bold">View Location on Map</a></p>
+         <p style="color:#6b7280;font-size:13px">Coordinates: ${coords.lat.toFixed(6)}, ${coords.lng.toFixed(6)}</p>`
       : '<p style="color:#6b7280">Location was not available.</p>';
 
     const htmlBody = `
@@ -359,7 +406,13 @@ const shareCooldowns = new Map();
 router.post('/share-location', authenticate, async (req, res) => {
   try {
     const { latitude, longitude, timezone } = req.body;
-    if (!latitude || !longitude) {
+    // Unlike /alert, a location share with no usable location is pointless, so
+    // this one is a 400 — but it is now an HONEST 400 up front rather than the
+    // 500 a string coordinate used to produce halfway through building the
+    // email. `!latitude` also rejected the equator and the prime meridian,
+    // which a range check does not.
+    const coords = readCoords(latitude, longitude);
+    if (!coords) {
       return res.status(400).json({ error: 'Location required' });
     }
 
@@ -392,8 +445,8 @@ router.post('/share-location', authenticate, async (req, res) => {
           <p style="color:#0c4a6e;margin:0;font-size:15px"><strong>${userName}</strong> shared their location</p>
         </div>
         <p style="font-size:15px;color:#1e293b">${userName} wants you to know where they are right now.</p>
-        <p style="margin:12px 0"><a href="https://maps.google.com/?q=${latitude},${longitude}" style="display:inline-block;padding:12px 24px;background:#0ea5e9;color:white;text-decoration:none;border-radius:8px;font-weight:bold">View Location on Map</a></p>
-        <p style="color:#6b7280;font-size:13px">Coordinates: ${latitude.toFixed(6)}, ${longitude.toFixed(6)}</p>
+        <p style="margin:12px 0"><a href="https://maps.google.com/?q=${coords.lat},${coords.lng}" style="display:inline-block;padding:12px 24px;background:#0ea5e9;color:white;text-decoration:none;border-radius:8px;font-weight:bold">View Location on Map</a></p>
+        <p style="color:#6b7280;font-size:13px">Coordinates: ${coords.lat.toFixed(6)}, ${coords.lng.toFixed(6)}</p>
         <hr style="border:none;border-top:1px solid #e5e7eb;margin:20px 0">
         <p style="color:#6b7280;font-size:12px">Shared at ${time}</p>
         <p style="color:#9ca3af;font-size:11px">This is an automated message from the Flock app.</p>
@@ -428,3 +481,6 @@ router.post('/share-location', authenticate, async (req, res) => {
 });
 
 module.exports = router;
+// Exposed for __tests__/safetySecurity.test.js. See the checkin.js note: a
+// property on the router changes nothing about the mount in server.js.
+module.exports.__test = { readCoords, EMAIL_RE, MAX_TRUSTED_CONTACTS };
