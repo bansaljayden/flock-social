@@ -786,27 +786,6 @@ router.put('/:id',
         }).catch((e) => console.error('flock_updated fan-out failed:', e.message));
       }
 
-      // Push "It's happening!" when flock is confirmed
-      if (status === 'confirmed') {
-        const membersResult = await pool.query(
-          "SELECT user_id FROM flock_members WHERE flock_id = $1 AND status = 'accepted' AND user_id != $2",
-          [flockId, req.user.id]
-        );
-        const timeStr = updated.event_time ? new Date(updated.event_time).toLocaleString('en-US', { weekday: 'short', hour: 'numeric', minute: '2-digit' }) : '';
-        const bodyText = [updated.name, updated.venue_name, timeStr].filter(Boolean).join(' — ');
-        // Concurrent fan-out: a 20-member confirm was 20 sequential Firebase
-        // round trips blocking the response. allSettled so one member's failed
-        // delivery does not abort the rest. (No actor id: this push names the
-        // flock, not a user.)
-        await Promise.allSettled(
-          membersResult.rows.map((m) => pushIfOffline(io, m.user_id,
-            "It's happening!",
-            bodyText,
-            { type: 'flock_confirmed', flockId: String(flockId) }
-          ))
-        );
-      }
-
       // Auto-populate research analytics on completion or cancellation
       if (status === 'completed' || status === 'cancelled') {
         try {
@@ -867,9 +846,53 @@ router.put('/:id',
         if ((thr.rows[0]?.n || 0) < 3) flockResponse.budget_ceiling = null;
       }
       res.json({ flock: flockResponse });
+
+      // Push "It's happening!" when flock is confirmed.
+      //
+      // AFTER the response, like routes/billing.js and routes/messages.js. The
+      // update is already committed and nothing in the response depends on a
+      // notification, so holding the request open on Firebase only ever made
+      // the confirm button spin. services/firebaseService.js now caps each
+      // attempt, so this could no longer hang forever, but a bounded wait for
+      // something the caller is not waiting for is still the wrong shape.
+      //
+      // Its own try/catch, not the outer one: the response has been sent, so a
+      // throw reaching the handler's catch would try to send a second one
+      // (ERR_HTTP_HEADERS_SENT) instead of logging the real failure.
+      if (status === 'confirmed') {
+        try {
+          const membersResult = await pool.query(
+            "SELECT user_id FROM flock_members WHERE flock_id = $1 AND status = 'accepted' AND user_id != $2",
+            [flockId, req.user.id]
+          );
+          const timeStr = updated.event_time ? new Date(updated.event_time).toLocaleString('en-US', { weekday: 'short', hour: 'numeric', minute: '2-digit' }) : '';
+          // SLOP-AUDIT rule 1: this used to join the three parts on ' — ' and
+          // land an em dash on a lock screen. Restructured rather than swapped
+          // for another separator, because the parts are not a list: the venue
+          // belongs to the plan, and the time is a second sentence. The
+          // formatted time already contains a comma ("Fri, 7:00 PM"), so a
+          // comma-joined version would have read as one long stutter.
+          const where = [updated.name, updated.venue_name].filter(Boolean).join(' at ');
+          const bodyText = [where, timeStr].filter(Boolean).join('. ');
+          // Concurrent fan-out: a 20-member confirm was 20 sequential Firebase
+          // round trips. allSettled so one member's failed delivery does not
+          // abort the rest. (No actor id: this push names the flock, not a user.)
+          await Promise.allSettled(
+            membersResult.rows.map((m) => pushIfOffline(io, m.user_id,
+              "It's happening!",
+              bodyText,
+              { type: 'flock_confirmed', flockId: String(flockId) }
+            ))
+          );
+        } catch (pushErr) {
+          console.error('Flock confirmed push error:', pushErr.message);
+        }
+      }
     } catch (err) {
       console.error('Update flock error:', err);
-      res.status(500).json({ error: 'Failed to update flock' });
+      // headersSent: everything after res.json above runs post-response, so a
+      // failure there must not attempt a second write to a finished response.
+      if (!res.headersSent) res.status(500).json({ error: 'Failed to update flock' });
     }
   }
 );
@@ -1053,22 +1076,32 @@ router.post('/:id/join', requireVerified, param('id').isInt({ min: 1, max: INT4_
           action: 'accepted',
         }).catch(() => {});
       }
-
-      // Push notification to flock creator
-      const flockData = await pool.query('SELECT creator_id, name FROM flocks WHERE id = $1', [flockId]);
-      if (flockData.rows.length > 0 && flockData.rows[0].creator_id !== req.user.id) {
-        await pushIfOffline(io, flockData.rows[0].creator_id,
-          `${req.user.name} is going!`,
-          flockData.rows[0].name,
-          { type: 'flock_rsvp', flockId: String(flockId), fromUserId: String(req.user.id) }
-        );
-      }
     }
 
     res.json({ member });
+
+    // Push notification to flock creator, AFTER the response. The membership row
+    // is committed; the host learning about it is not something the joiner is
+    // waiting on. Own try/catch so a Firebase failure cannot try to answer an
+    // already-answered request.
+    if (transitioned) {
+      try {
+        const io = req.app.get('io');
+        const flockData = await pool.query('SELECT creator_id, name FROM flocks WHERE id = $1', [flockId]);
+        if (flockData.rows.length > 0 && flockData.rows[0].creator_id !== req.user.id) {
+          await pushIfOffline(io, flockData.rows[0].creator_id,
+            `${req.user.name} is going!`,
+            flockData.rows[0].name,
+            { type: 'flock_rsvp', flockId: String(flockId), fromUserId: String(req.user.id) }
+          );
+        }
+      } catch (pushErr) {
+        console.error('Join flock push error:', pushErr.message);
+      }
+    }
   } catch (err) {
     console.error('Join flock error:', err);
-    res.status(500).json({ error: 'Failed to join flock' });
+    if (!res.headersSent) res.status(500).json({ error: 'Failed to join flock' });
   }
 });
 
@@ -1250,18 +1283,6 @@ router.post('/:id/invite',
             invitedBy: { userId: req.user.id, name: req.user.name },
             invitedUserIds: invited.map(i => i.user_id),
           }).catch((e) => console.error('flock_members_invited fan-out failed:', e.message));
-
-          // Push notifications for offline invited users — concurrent, so a
-          // 25-person invite is not 25 sequential Firebase round trips before
-          // the response. allSettled so one failure does not abort the rest.
-          // fromUserId lets the block-gate suppress a push that names the inviter.
-          await Promise.allSettled(
-            invited.map((inv) => pushIfOffline(io, inv.user_id,
-              `${req.user.name} invited you to a flock`,
-              flockName,
-              { type: 'flock_invite', flockId: String(flockId), fromUserId: String(req.user.id) }
-            ))
-          );
         }
       }
 
@@ -1279,9 +1300,33 @@ router.post('/:id/invite',
         ...(full ? { full: true } : {}),
         flock: flockResult.rows[0],
       });
+
+      // Push notifications for offline invited users, AFTER the response. A
+      // 25-person invite was 25 Firebase round trips the inviter sat through
+      // before their own screen updated, and the rows were already written.
+      // Concurrent + allSettled so one failure does not abort the rest.
+      // fromUserId lets the block-gate suppress a push that names the inviter.
+      // Own try/catch: the response is gone, so nothing here may reach the
+      // outer handler and try to send a second one.
+      if (invited.length > 0) {
+        try {
+          const io = req.app.get('io');
+          if (io) {
+            await Promise.allSettled(
+              invited.map((inv) => pushIfOffline(io, inv.user_id,
+                `${req.user.name} invited you to a flock`,
+                flockResult.rows[0].name,
+                { type: 'flock_invite', flockId: String(flockId), fromUserId: String(req.user.id) }
+              ))
+            );
+          }
+        } catch (pushErr) {
+          console.error('[Invite] push error:', pushErr.message);
+        }
+      }
     } catch (err) {
       console.error('[Invite] Error:', err.message, err.detail || '');
-      res.status(500).json({ error: 'Failed to invite users' });
+      if (!res.headersSent) res.status(500).json({ error: 'Failed to invite users' });
     }
   }
 );
@@ -1588,25 +1633,35 @@ router.post('/:id/attendance',
         }
       }
 
-      // Push to offline users — concurrent, so marking a full flock's
-      // attendance is not one sequential Firebase round trip per member before
-      // the response. allSettled so one failure does not abort the rest.
-      // fromUserId lets the block-gate suppress a push naming the person who
-      // marked attendance.
-      await Promise.allSettled(
-        results
-          .filter((r) => r.userId !== req.user.id)
-          .map((r) => pushIfOffline(io, r.userId,
-            'Attendance recorded',
-            `${flock.rows[0].name} — your reliability score updated`,
-            { type: 'attendance_marked', flockId: String(flockId), fromUserId: String(req.user.id) }
-          ))
-      );
-
       res.json({ success: true, results });
+
+      // Push to offline users, AFTER the response, for the same reason as the
+      // confirm path above: the transaction has committed, `results` is already
+      // in the client's hands, and nothing here can change it. Own try/catch so
+      // a post-response throw cannot try to answer a finished request.
+      //
+      // Concurrent so a full flock is not one sequential Firebase round trip per
+      // member; allSettled so one failure does not abort the rest. fromUserId
+      // lets the block-gate suppress a push naming the person who marked
+      // attendance. The body used to read "{flock} — your reliability score
+      // updated"; SLOP-AUDIT rule 1 forbids the em dash, and the sentence reads
+      // better as a sentence.
+      try {
+        await Promise.allSettled(
+          results
+            .filter((r) => r.userId !== req.user.id)
+            .map((r) => pushIfOffline(io, r.userId,
+              'Attendance recorded',
+              `Your reliability score updated after ${flock.rows[0].name}.`,
+              { type: 'attendance_marked', flockId: String(flockId), fromUserId: String(req.user.id) }
+            ))
+        );
+      } catch (pushErr) {
+        console.error('Attendance push error:', pushErr.message);
+      }
     } catch (err) {
       console.error('Attendance error:', err);
-      res.status(500).json({ error: 'Failed to record attendance' });
+      if (!res.headersSent) res.status(500).json({ error: 'Failed to record attendance' });
     }
   }
 );

@@ -75,6 +75,39 @@ const prefsRule = body('notificationPrefs').optional({ nullable: true }).custom(
 // Only the three switches the dashboard actually renders are stored. Unknown
 // keys are dropped rather than rejected, so a client round-tripping an older
 // shape still saves, but nobody can use this column as a JSON bucket.
+//
+// ─── OPEN FINDING: nothing reads this column, and nothing can ────────────────
+//
+// notification_prefs is written here and read NOWHERE in the backend. The
+// obvious fix is "make the send paths honour it", and that fix cannot be
+// written, because none of the three sends exists. Checked, 2026-08-14:
+//
+//   * "New bookings / Get notified when a flock books" — no notification of any
+//     kind is ever addressed to a venue owner. Every pushAlways / pushIfOffline
+//     / pushIfOfflineDebounced call in routes/, services/ and sockets/ targets a
+//     flock member, a DM recipient, a flock creator or an admin. A flock naming
+//     this venue shows up only when the owner pulls
+//     GET /api/venue-dashboard/incoming-flocks.
+//   * "New reviews / Alerts for customer reviews" — routes/venueDashboard.js
+//     inserts into venue_reviews and notifies nobody.
+//   * "Weekly reports / Performance summary emails" — services/emailService.js
+//     sends exactly two kinds of mail, verification and password reset. There is
+//     no digest, no scheduler for one, and no template.
+//
+// So this is not a control somebody forgot to wire. It is a control for a
+// feature that was never built, which is the thing SLOP-AUDIT rule 5 forbids:
+// the owner flips a switch, we store the flip, and nothing anywhere changes.
+// Wiring it would mean INVENTING three owner notifications days before
+// submission, which is not a fix for a dead switch; the fix is to remove the
+// panel (it lives in frontend/src/App.js, near the "Get notified when a flock
+// books" copy) or to build the sends.
+//
+// The WRITE stays as it is meanwhile. Deleting it would make the switch look
+// saved and silently forget, which is strictly worse than storing a preference
+// nothing consumes yet, and it would throw away the setting the day a real send
+// lands. What guards the gap is a test, not this comment:
+// __tests__/alertPreferences.test.js fails the moment any file grows both a
+// venue-owner lookup and a send without also reading notification_prefs.
 const PREF_KEYS = ['bookings', 'reviews', 'weekly'];
 function sanitizePrefs(prefs) {
   const out = {};
