@@ -4,16 +4,26 @@ import './PrivacyPolicy.css';
 const EFFECTIVE_DATE = 'August 14, 2026';
 const SUPPORT_EMAIL = 'social@flockcorp.com';
 
+// PER-ROUTE <meta name="description">. CRA has no server rendering, so
+// public/index.html is the response for every route and its one static
+// description was the description this page shipped with. There is no head
+// manager in this app and adding one is a dependency, so the mechanism is the
+// one LandingPage.js already uses: rewrite the tag index.html ships, from this
+// route's own effect. Googlebot renders JS and reads the rewritten value.
+const DESCRIPTION = 'The terms and EULA for using Flock: eligibility, acceptable use, user content, reporting and moderation, and how to get in touch.';
+
 export default function TermsOfService() {
   useEffect(() => {
-    document.title = 'Terms of Service · Flock';
+    document.title = 'Terms of Service and EULA | Flock';
+    const meta = document.querySelector('meta[name="description"]');
+    if (meta) meta.setAttribute('content', DESCRIPTION);
   }, []);
 
   return (
     <main className="pp">
       {/* The arrow is decoration and must stay out of the link's accessible
           name, or it is announced as "left arrow flockcorp.com". */}
-      <a href="/landing" className="pp-back">
+      <a href="/" className="pp-back">
         <span aria-hidden="true">&larr;</span> flockcorp.com
       </a>
 
@@ -86,12 +96,21 @@ export default function TermsOfService() {
         </p>
       </section>
 
+      {/* This section used to say "reach our team", which named people who do
+          not exist: Flock is one person, and /about says so. The first-person
+          plural everywhere else in this document is NOT the same problem and
+          was deliberately left alone. The preamble defines "we" and "us" as
+          Flock Corp, a real company, so "we act on reports of objectionable
+          content promptly" in section 3 asserts a commitment rather than a
+          headcount, and it is the commitment App Review reads for Guideline
+          1.2. Rewriting a binding agreement into the first-person singular
+          would be the worse error. */}
       <section>
         <h2>5. Reporting &amp; moderation</h2>
         <p>
           Flock provides in-app tools to report objectionable content and to block abusive
           users. We review reports and take action under our Community Guidelines. You can also
-          reach our team at <a href={`mailto:${SUPPORT_EMAIL}`}>{SUPPORT_EMAIL}</a>.
+          reach us at <a href={`mailto:${SUPPORT_EMAIL}`}>{SUPPORT_EMAIL}</a>.
         </p>
       </section>
 

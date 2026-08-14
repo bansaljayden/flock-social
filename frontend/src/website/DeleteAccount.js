@@ -5,9 +5,19 @@ const SUPPORT_EMAIL = 'social@flockcorp.com';
 
 // Public account-deletion page (Google Play requires a public URL where users
 // who uninstalled can still request deletion). Routed at /delete-account.
+// PER-ROUTE <meta name="description">. CRA has no server rendering, so
+// public/index.html is the response for every route and its one static
+// description was the description this page shipped with. There is no head
+// manager in this app and adding one is a dependency, so the mechanism is the
+// one LandingPage.js already uses: rewrite the tag index.html ships, from this
+// route's own effect. Googlebot renders JS and reads the rewritten value.
+const DESCRIPTION = 'How to delete your Flock account from inside the app or by email, and exactly what data is removed when you do.';
+
 export default function DeleteAccount() {
   useEffect(() => {
-    document.title = 'Delete Your Account · Flock';
+    document.title = 'Delete your account | Flock';
+    const meta = document.querySelector('meta[name="description"]');
+    if (meta) meta.setAttribute('content', DESCRIPTION);
   }, []);
 
   const mailto =
@@ -22,7 +32,7 @@ export default function DeleteAccount() {
     <main className="pp">
       {/* The arrow is decoration and must stay out of the link's accessible
           name, or it is announced as "left arrow flockcorp.com". */}
-      <a href="/landing" className="pp-back">
+      <a href="/" className="pp-back">
         <span aria-hidden="true">&larr;</span> flockcorp.com
       </a>
 
@@ -67,7 +77,7 @@ export default function DeleteAccount() {
       <section>
         <h2>If you've uninstalled the app</h2>
         <p>
-          Email us from the address on your account and we'll delete it for you:
+          Email me from the address on your account and I'll delete it for you:
         </p>
         <p>
           {/* This is the whole deletion path for someone who has already
@@ -82,9 +92,14 @@ export default function DeleteAccount() {
           </a>{' '}
           (or write to <a href={`mailto:${SUPPORT_EMAIL}`}>{SUPPORT_EMAIL}</a>)
         </p>
+        {/* "We action verified requests promptly" claimed both a team and a
+            response time, and Flock is one person. The retention paragraphs
+            below keep the first-person plural on purpose: those are statements
+            about what the company does with data, not about who reads the
+            mail. */}
         <p>
-          Include the email on the account so we can verify the request. We action verified
-          requests promptly.
+          Include the email on the account so I can verify the request. Once it checks out,
+          I delete the account.
         </p>
       </section>
 

@@ -18,9 +18,19 @@ const READABLE = { color: 'var(--pp-ink-2)' };
 // ship). The numbers quoted for the model come from the committed
 // model_metadata.json holdout evaluation. The rehearsal pitch with sourced
 // market stats lives OUTSIDE this public repo, on purpose.
+// PER-ROUTE <meta name="description">. CRA has no server rendering, so
+// public/index.html is the response for every route and its one static
+// description was the description this page shipped with. There is no head
+// manager in this app and adding one is a dependency, so the mechanism is the
+// one LandingPage.js already uses: rewrite the tag index.html ships, from this
+// route's own effect. Googlebot renders JS and reads the rewritten value.
+const DESCRIPTION = 'What Flock is, why group plans fall apart, how the crowd model works, and why venues pay while you never do.';
+
 export default function AboutPage() {
   useEffect(() => {
-    document.title = 'About · Flock';
+    document.title = 'What Flock is, and why venues pay | Flock';
+    const meta = document.querySelector('meta[name="description"]');
+    if (meta) meta.setAttribute('content', DESCRIPTION);
   }, []);
 
   return (
