@@ -16,7 +16,7 @@ import { connectSocket, disconnectSocket, getSocket, joinFlock, leaveFlock, send
 import { requestNotificationPermission, onForegroundMessage, getNotificationStatus, onPushNavigate, unregisterPushToken } from './services/firebase';
 import { resendVerificationEmail } from './services/api';
 import { setAvailability, clearAvailability, getMyAvailability, getFriendsAvailability, getSensorCurrent, getSensorHistory, checkInManual, getNfcCheckin, getCalendarEvents, createCalendarEvent, deleteCalendarEvent } from './services/api';
-import { joinVenueRoom, leaveVenueRoom, onVenueSensorUpdate, onVenueCheckin, onSessionRevoked, onSocketError, onAvailabilityUpdated, onBlockedBy } from './services/socket';
+import { joinVenueRoom, leaveVenueRoom, onVenueSensorUpdate, onVenueCheckin, onSessionRevoked, onSocketError, onAvailabilityUpdated, onBlockedBy, onContentRemoved, onContentRestored } from './services/socket';
 import { pullSettings, queueSync } from './services/userSettings';
 import { QRCodeSVG } from 'qrcode.react';
 import { Html5Qrcode } from 'html5-qrcode';
@@ -2521,6 +2521,171 @@ const ModerationHiddenNotice = ({ kind }) => (
     </p>
   </div>
 );
+
+/* ═══════════════════════════════════════════════════════════════════
+   LIVE MODERATION TAKEDOWNS
+
+   backend/routes/admin.js emits 'content_removed' (and 'content_restored'
+   for an un-hide) the moment a moderator acts, carrying
+   { contentType, contentId, flockId }. Until now NOTHING in frontend/src
+   listened for either event, for any type — admin.js's own comment said so
+   and used it as the reason not to widen the fan-out. The consequences were
+   all the same shape: every read path filters is_hidden, so the content was
+   gone from the next fetch and still sitting on the screen of anyone who
+   already had it.
+
+   The reducers below are the whole client-side behaviour, kept as pure
+   functions of state so they can be tested without mounting a 17k-line
+   component. Each one returns the SAME array it was given when nothing
+   matched, so a takedown in a flock you are not in costs one comparison and
+   no re-render.
+
+   SCOPE. This retracts content the viewer is holding. It does NOT raise a
+   toast, a banner or a badge: the server addresses these events to a whole
+   flock room for a message, so most recipients are bystanders who may never
+   have scrolled past the thing, and announcing a removal to them is louder
+   than the removal. The two types whose recipient IS always the author —
+   promotions and events — already have a written notice on the row itself
+   (ModerationHiddenNotice), and that is what these events now switch on live
+   instead of only on a refetch or a 409.
+   ═══════════════════════════════════════════════════════════════════ */
+
+// Ids cross the socket as JSON numbers and sit in state as numbers or, for an
+// unsent bubble, as a 'temp-…' string. One spelling of the comparison.
+const sameContentId = (a, b) => a != null && b != null && String(a) === String(b);
+
+// Every contentType admin.js's TAKEDOWN_TARGETS can emit for, and what this
+// client does with it. This map exists to be checked against that one: the
+// repo has shipped the "a route widened a set of values and the thing behind
+// it did not" bug three times (migrations 003, 016, 017 all fix an instance of
+// it), and a takedown type the client silently ignores is the same bug wearing
+// a different hat. If a type is added there, add it here.
+const TAKEDOWN_HANDLED = {
+  flock_message: 'flocks',        // drop the bubble out of the flock thread
+  guest_rsvp: 'flocks',           // drop the guest out of the roster
+  dm: 'dms',                      // drop the bubble out of the DM thread
+  venue_promotion: 'ownerRow',    // keep it listed, mark it removed
+  venue_event: 'ownerRow',        // same
+  venue_review: 'venueReviews',   // drop it from the venue card's review list
+  // Stories have no UI in this client at all: no story state, no story screen,
+  // and the story reader in services/api.js has zero callers anywhere. The
+  // server emits this one to the author, who has nowhere to see it. 'none' is a
+  // claim about THIS file, so it is checked by the test rather than assumed —
+  // the day a story feed lands, this entry has to change with it.
+  story: 'none',
+};
+
+// A flock_message or a guest_rsvp, out of the flock list.
+//
+// `flockId` is the server's own scoping and is honoured when it is there, but
+// the id match is what actually decides: messages.id and guest_rsvps.id are
+// both globally unique, so a null flockId (which is what a dm carries) can
+// never make this touch the wrong row.
+const applyTakedownToFlocks = (flocks, ev) => {
+  if (!Array.isArray(flocks) || !ev) return flocks;
+  const { contentType, contentId, flockId } = ev;
+  if (contentId == null) return flocks;
+  if (contentType !== 'flock_message' && contentType !== 'guest_rsvp') return flocks;
+  let touched = false;
+  const next = flocks.map((f) => {
+    if (flockId != null && !sameContentId(f.id, flockId)) return f;
+    if (contentType === 'flock_message') {
+      const msgs = f.messages || [];
+      const kept = msgs.filter((m) => !sameContentId(m.id, contentId));
+      if (kept.length === msgs.length) return f;
+      touched = true;
+      // Nothing else has to move: the flock list row reads its preview and its
+      // unread dot off this array, so both correct themselves.
+      return { ...f, messages: kept };
+    }
+    const guests = f.guests || [];
+    // guestId is the plain guest_rsvps row id; `id` is the namespaced
+    // "guest:12" string the roster is keyed on. content_id is the number.
+    const kept = guests.filter((g) => !sameContentId(g.guestId, contentId));
+    if (kept.length === guests.length) return f;
+    touched = true;
+    // A guest who was going was counted in "going" — momentum.accepted on the
+    // server includes guests. Leaving memberCount alone would print "5 going"
+    // over four faces, which is the mismatch that makes someone go looking for
+    // the fifth.
+    const goingRemoved = guests.filter(
+      (g) => sameContentId(g.guestId, contentId) && g.status === 'accepted'
+    ).length;
+    return { ...f, guests: kept, memberCount: Math.max(0, (f.memberCount || 0) - goingRemoved) };
+  });
+  return touched ? next : flocks;
+};
+
+// A dm, out of the conversation list.
+//
+// Two removals, not one. Dropping the bubble is the obvious half; the second is
+// the QUOTE. DMs are the only messages in this app that can reply to another
+// message, and a reply carries a verbatim copy of the body it is quoting
+// (reply_to.text, rendered in full above the bubble). Take down a message and
+// its exact words stay on screen inside every reply to it — which is the one
+// thing a takedown is for. routes/messages.js already refuses to hydrate a
+// hidden parent (`AND COALESCE(dm.is_hidden, false) = false` on the reply
+// lookup), so nulling it here is what the next refetch would do anyway.
+const applyTakedownToDms = (conversations, ev) => {
+  if (!Array.isArray(conversations) || !ev || ev.contentType !== 'dm') return conversations;
+  const { contentId } = ev;
+  if (contentId == null) return conversations;
+  let touched = false;
+  const next = conversations.map((d) => {
+    const msgs = d.messages || [];
+    const quoting = msgs.some((m) => m.reply_to && sameContentId(m.reply_to.id, contentId));
+    const kept = msgs.filter((m) => !sameContentId(m.id, contentId));
+    if (kept.length === msgs.length && !quoting) return d;
+    touched = true;
+    // Null rather than a tombstone: the bubble simply loses its quote block,
+    // which is exactly what a reply loaded from the server after the takedown
+    // looks like. Anything else would need new copy for a state the rest of
+    // the app never produces.
+    const cleaned = quoting
+      ? kept.map((m) => (m.reply_to && sameContentId(m.reply_to.id, contentId) ? { ...m, reply_to: null } : m))
+      : kept;
+    // While a loaded message is left, the inbox row derives its preview from
+    // the last one and fixes itself. When none is, the row falls back to the
+    // stored lastMessage — which is the text that was just taken down, printed
+    // on the inbox screen for as long as the app stays open. Clear it.
+    if (cleaned.length > 0) return { ...d, messages: cleaned };
+    return { ...d, messages: cleaned, lastMessage: '', lastMessageTime: null, lastMessageIsYou: false };
+  });
+  return touched ? next : conversations;
+};
+
+// A venue promotion or venue event: MARKED, not removed. The owner keeps
+// seeing their own copy with the reason on it, which is the asymmetry
+// routes/venueDashboard.js deliberately built (a hidden review is somebody
+// else's words and stops being served to the owner; a hidden promotion is the
+// owner's own copy and silently dropping it explains nothing).
+//
+// Both spellings are written because isModerationHidden reads either — a list
+// row arrives as hidden_by_moderation and a write response as raw is_hidden,
+// so a restore that cleared only one would leave the row still reading hidden.
+const setModerationHidden = (rows, contentId, hidden) => {
+  if (!Array.isArray(rows) || contentId == null) return rows;
+  let touched = false;
+  const next = rows.map((r) => {
+    if (!sameContentId(r.id, contentId)) return r;
+    if (isModerationHidden(r) === hidden) return r;
+    touched = true;
+    return { ...r, hidden_by_moderation: hidden, is_hidden: hidden };
+  });
+  return touched ? next : rows;
+};
+
+// A venue_review, out of whichever review list this client is holding. The
+// server tells the AUTHOR only, so in practice this is someone looking at the
+// venue card their own review is on. The owner dashboard's list is deliberately
+// not touched: nothing addresses this event to the owner, and its header stats
+// (average, total) come from the server, so dropping a row there would leave
+// "12 reviews" over eleven of them.
+const dropContentById = (rows, contentId) => {
+  if (!Array.isArray(rows) || contentId == null) return rows;
+  const kept = rows.filter((r) => !sameContentId(r.id, contentId));
+  return kept.length === rows.length ? rows : kept;
+};
 
 const PromoModal = React.memo(function PromoModal({ editing, onSave, onCancel, colors }) {
   const [form, setForm] = React.useState(() => editing
@@ -13665,12 +13830,24 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   const [dealDescription, setDealDescription] = useState('');
   const [dealTimeSlot, setDealTimeSlot] = useState('Happy Hour');
   const [realIncomingFlocks, setRealIncomingFlocks] = useState([]);
-  // A failed list read is NOT an empty list. Both of these lists render "No
-  // promotions yet. Create your first one!" from an empty array, so a network
-  // blip on the dashboard load told a venue owner their promotions were gone
-  // and invited them to type them in again. `.catch(() => ({ promotions: [] }))`
+  // A failed list read is NOT an empty list. Every one of these lists renders a
+  // confident empty state from an empty array — "No promotions yet. Create your
+  // first one!", "No incoming flocks yet", "No reviews yet" — so a network blip
+  // on the dashboard load told a venue owner their content was gone and, on the
+  // promotions tab, invited them to type it in again. `.catch(() => ({ … }))`
   // is what made that indistinguishable from the truth.
-  const [venueListErrors, setVenueListErrors] = useState({ promotions: false, events: false });
+  //
+  // `incomingFlocksLocked` is a SEPARATE flag from `incomingFlocks`, not a
+  // fancier spelling of it. GET /incoming-flocks sits behind requirePremium,
+  // which is a no-op today and starts refusing free venues with 403
+  // UPGRADE_REQUIRED the day VENUE_BILLING_ENABLED is switched on (and refuses
+  // the same way, fail-closed, if the tier lookup itself errors). A refusal is
+  // not a failed read: "Try again" on one is a button that can only ever refuse
+  // again, which is the control-that-cannot-succeed this dashboard has already
+  // removed twice.
+  const [venueListErrors, setVenueListErrors] = useState({
+    promotions: false, events: false, reviews: false, incomingFlocks: false, incomingFlocksLocked: false,
+  });
   const [venueReviewsData, setVenueReviewsData] = useState({ reviews: [], stats: null });
   const [replyingToReview, setReplyingToReview] = useState(null);
   const [replyText, setReplyText] = useState('');
@@ -13766,6 +13943,152 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
     }
   }, []);
 
+  // The same two rules, for the two lists the promotions/events pass left out.
+  //
+  // Reviews are other people's words about this venue, so there is no "create
+  // your first one" to suppress — but "No reviews yet. Reviews from Flock users
+  // will appear here." is the same lie in a quieter voice, and it is the line a
+  // venue owner would read as "nobody has reviewed us". The rating overview is
+  // worse: a swallowed read left `stats` null, which renders that copy under a
+  // card that has a real average sitting on the server.
+  const loadVenueReviews = React.useCallback(async () => {
+    try {
+      const d = await getVenueReviews();
+      setVenueReviewsData({ reviews: d?.reviews || [], stats: d?.stats || null });
+      setVenueListErrors(prev => (prev.reviews ? { ...prev, reviews: false } : prev));
+      return true;
+    } catch (err) {
+      setVenueListErrors(prev => (prev.reviews ? prev : { ...prev, reviews: true }));
+      return false;
+    }
+  }, []);
+
+  // Incoming flocks is the one read on this screen behind a paid gate, so it has
+  // two distinct failures and they need different words on screen. A 403
+  // UPGRADE_REQUIRED is the server saying "your plan does not include this",
+  // which is permanent until the plan changes; anything else is a read that
+  // might work on the next tap. Both are cleared on a successful read so a
+  // venue that upgrades mid-session stops being told to upgrade.
+  //
+  // Today requireVenueTier returns next() unconditionally because
+  // VENUE_BILLING_ENABLED is unset, so this branch is dormant — with one live
+  // exception: the gate fails CLOSED, so if the tier lookup throws it answers
+  // 403 UPGRADE_REQUIRED even with billing off. Without this that database blip
+  // renders as "No incoming flocks yet".
+  const loadIncomingFlocks = React.useCallback(async () => {
+    try {
+      const d = await getIncomingFlocks();
+      setRealIncomingFlocks(d?.flocks || []);
+      setVenueListErrors(prev => (
+        (prev.incomingFlocks || prev.incomingFlocksLocked)
+          ? { ...prev, incomingFlocks: false, incomingFlocksLocked: false }
+          : prev
+      ));
+      return true;
+    } catch (err) {
+      const locked = err?.code === 'UPGRADE_REQUIRED';
+      setVenueListErrors(prev => (
+        (prev.incomingFlocks === !locked && prev.incomingFlocksLocked === locked)
+          ? prev
+          : { ...prev, incomingFlocks: !locked, incomingFlocksLocked: locked }
+      ));
+      return false;
+    }
+  }, []);
+
+  /* ── Live moderation takedowns ────────────────────────────────────────────
+     The client half of backend/routes/admin.js's 'content_removed'. See the
+     reducers at module scope for what each content type does and why.
+
+     Declared down here rather than up with the other socket effects only
+     because it touches state that is declared here (promotions, events); it
+     has no dependencies and runs for the whole session either way.
+
+     Both subscriptions go through services/socket.js's registry, so they
+     survive the socket being rebuilt on a token swap or a session expiry.
+     Binding to getSocket() would have looked identical and gone quiet. */
+  React.useEffect(() => {
+    const applyRemoval = (data, hidden) => {
+      const ev = {
+        contentType: data?.contentType,
+        contentId: data?.contentId,
+        flockId: data?.flockId ?? null,
+      };
+      if (!ev.contentType || ev.contentId == null) return;
+      // The map is the gate, not a comment. hasOwnProperty for the reason
+      // admin.js uses it on its own map: a bare lookup answers 'constructor'
+      // and '__proto__' out of the prototype chain with a truthy value.
+      // 'none' short-circuits here, so a type this client does not render costs
+      // one lookup and never reaches a setState.
+      const target = Object.prototype.hasOwnProperty.call(TAKEDOWN_HANDLED, ev.contentType)
+        ? TAKEDOWN_HANDLED[ev.contentType]
+        : null;
+      if (!target || target === 'none') return;
+      switch (ev.contentType) {
+        case 'flock_message':
+        case 'guest_rsvp':
+          // A restore cannot put a dropped bubble or a dropped guest back: the
+          // row is no longer in state and the payload carries no content to
+          // rebuild it from. Every read path filters is_hidden, so re-opening
+          // the thread or the roster brings it back on its own.
+          if (!hidden) break;
+          setFlocks(prev => applyTakedownToFlocks(prev, ev));
+          // The reply composer quotes the message it is answering, body and
+          // all, so left alone it keeps the removed words on screen under
+          // "Replying to …". (A flock reply is composer-only — send_message
+          // carries no reply_to_id — so this is purely about what is displayed;
+          // the DM branch below has the stored-reference problem too.) Scoped
+          // to the matching type because messages.id and direct_messages.id are
+          // separate sequences that collide constantly.
+          if (ev.contentType === 'flock_message') {
+            setReplyingTo(prev => (prev && sameContentId(prev.id, ev.contentId) ? null : prev));
+          }
+          break;
+        case 'dm':
+          if (!hidden) break;
+          setDirectMessages(prev => applyTakedownToDms(prev, ev));
+          setDmReplyingTo(prev => (prev && sameContentId(prev.id, ev.contentId) ? null : prev));
+          break;
+        case 'venue_promotion':
+          // Marked, not dropped, so this one IS reversible in place.
+          setPromotions(prev => setModerationHidden(prev, ev.contentId, hidden));
+          // Same rule the 409 CONTENT_HIDDEN path already follows: a composer
+          // left open on a row that has just been taken down has a Save button
+          // that can only ever answer 409, and the row behind it now carries
+          // the reason in full.
+          if (hidden && editingPromo && sameContentId(editingPromo.id, ev.contentId)) {
+            setShowPromoModal(false);
+            setEditingPromo(null);
+          }
+          break;
+        case 'venue_event':
+          setVenueEventsList(prev => setModerationHidden(prev, ev.contentId, hidden));
+          if (hidden && editingEvent && sameContentId(editingEvent.id, ev.contentId)) {
+            setShowEventModal(false);
+            setEditingEvent(null);
+          }
+          break;
+        case 'venue_review':
+          if (hidden) setVenueDetailReviews(prev => dropContentById(prev, ev.contentId));
+          break;
+        default:
+          // 'story' lands here, and so does any type added to admin.js later.
+          // Doing nothing is correct for a type this client does not render and
+          // is the honest failure for one it does; TAKEDOWN_HANDLED is what
+          // makes the difference visible instead of silent.
+          break;
+      }
+    };
+    const offRemoved = onContentRemoved((data) => applyRemoval(data, true));
+    const offRestored = onContentRestored((data) => applyRemoval(data, false));
+    return () => { offRemoved(); offRestored(); };
+    // Re-subscribing when a composer opens or closes is what lets the two
+    // branches above read it directly instead of through a mirror ref. The
+    // registry makes that free: an unsubscribe and a subscribe are a Set delete
+    // and a Set add, and no event can slip through the gap because cleanup and
+    // setup run in the same commit.
+  }, [editingPromo, editingEvent]);
+
   // Load venue profile + all dashboard data when entering
   React.useEffect(() => {
     if (currentScreen === 'venueDashboard' && !venueDashProfileLoaded) {
@@ -13858,26 +14181,27 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
             }
           }
         }
-        // Load all dashboard data in parallel
-        // The two owner-content lists load through their shared readers, which
-        // own their own success and failure states; the other two keep their
-        // inline fallbacks because neither renders a create prompt from empty.
+        // Load all dashboard data in parallel. All four go through their shared
+        // readers now, which own their own success and failure states — the two
+        // inline `.catch(() => ({ flocks: [] }))` fallbacks that used to sit
+        // here turned a dropped connection into a confident empty list.
         Promise.all([
           loadVenuePromotions(),
           loadVenueEvents(),
-          getIncomingFlocks().catch(() => ({ flocks: [] })),
-          getVenueReviews().catch(() => ({ reviews: [], stats: null })),
-        ]).then(([, , flockData, reviewData]) => {
-          setRealIncomingFlocks(flockData.flocks || []);
-          setVenueReviewsData(reviewData);
-        });
+          loadIncomingFlocks(),
+          loadVenueReviews(),
+        ]);
       }).catch(() => {
         setVenueDashProfileLoaded(true);
-        // The profile read failing means the two list reads below it never ran
-        // at all. Without this the promotions and events tabs render their
-        // "create your first one" empty state for content nobody ever asked the
-        // server about, which is the same lie the list-level catch removes.
-        setVenueListErrors({ promotions: true, events: true });
+        // The profile read failing means NONE of the four list reads below it
+        // ran. Without this the tabs render their empty states for content
+        // nobody ever asked the server about, which is the same lie the
+        // list-level catches remove. Written as a whole object rather than a
+        // merge on purpose: this is the "we know nothing" state, and every flag
+        // has to be named or a new one silently defaults to "loaded fine".
+        setVenueListErrors({
+          promotions: true, events: true, reviews: true, incomingFlocks: true, incomingFlocksLocked: false,
+        });
       });
     }
   }, [currentScreen, venueDashProfileLoaded]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -14275,7 +14599,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
             </div>
             <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
               <p style={{ fontSize: 'var(--t-micro)', color: 'var(--text-secondary)', margin: 0, textTransform: 'uppercase' }}>Groups Eyeing You</p>
-              <p style={{ fontSize: 'var(--t-display)', fontWeight: '600', color: colors.navy, margin: '4px 0 0' }}>{realIncomingFlocks.length}</p>
+              {/* A read that never landed is not zero. The other three tiles on
+                  this grid already print '–' when the model has nothing to say;
+                  this one printed a confident 0 for a request that 403'd or
+                  timed out, and 0 here is the number a venue would act on. */}
+              <p style={{ fontSize: 'var(--t-display)', fontWeight: '600', color: colors.navy, margin: '4px 0 0' }}>{(venueListErrors.incomingFlocks || venueListErrors.incomingFlocksLocked) ? '–' : realIncomingFlocks.length}</p>
               <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '2px 0 0' }}>flocks with you in their vote</p>
             </div>
             <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
@@ -14606,6 +14934,23 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
               {/* Incoming Flocks */}
               <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
                 <h3 style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: colors.navy, margin: '0 0 10px', display: 'flex', alignItems: 'center', gap: '6px' }}>{Icons.users(colors.steel, 14)} Incoming Flocks</h3>
+                {/* Banner above the list, never instead of it — same rule as
+                    the promotions and events tabs. */}
+                {venueListErrors.incomingFlocks && (
+                  <div style={{ padding: '10px', marginBottom: '8px', borderRadius: '8px', backgroundColor: 'var(--bg-tertiary)' }}>
+                    <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '0 0 8px' }}>We couldn't load the flocks heading your way.</p>
+                    <button className="hit44" onClick={() => loadIncomingFlocks()} style={{ padding: '8px 16px', borderRadius: '8px', border: '1px solid var(--border-mid)', backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontWeight: '600', fontSize: 'var(--t-meta)', cursor: 'pointer' }}>Try again</button>
+                  </div>
+                )}
+                {/* A plan refusal, which is not a failure. No "Try again": the
+                    server will refuse the retry identically until the plan
+                    changes, so the control offered is the one that can work. */}
+                {venueListErrors.incomingFlocksLocked && (
+                  <div style={{ padding: '10px', marginBottom: '8px', borderRadius: '8px', backgroundColor: 'var(--bg-tertiary)' }}>
+                    <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '0 0 8px' }}>The incoming-flocks feed is part of the Premium plan. Your current plan doesn't include it.</p>
+                    <button className="hit44" onClick={() => setShowUpgradeModal(true)} style={{ padding: '8px 16px', borderRadius: '8px', border: 'none', backgroundColor: 'var(--accent-amber-text)', color: 'white', fontWeight: '600', fontSize: 'var(--t-meta)', cursor: 'pointer' }}>See plans</button>
+                  </div>
+                )}
                 {incomingFlocks.length > 0 ? incomingFlocks.map(flock => (
                   <div key={flock.id} style={{ padding: '10px', backgroundColor: 'var(--bg-card-solid)', borderRadius: '8px', marginBottom: '8px' }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -14618,7 +14963,13 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                       </span>
                     </div>
                   </div>
-                )) : <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', textAlign: 'center', padding: '20px' }}>No incoming flocks yet</p>}
+                )) : (
+                  // Only the empty-state SENTENCE is suppressed, because it is
+                  // the part that is not true when nothing was ever read.
+                  (venueListErrors.incomingFlocks || venueListErrors.incomingFlocksLocked) ? null : (
+                    <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', textAlign: 'center', padding: '20px' }}>No incoming flocks yet</p>
+                  )
+                )}
               </div>
 
               {/* Your Events */}
@@ -14686,6 +15037,14 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           {/* REVIEWS TAB */}
           {venueTab === 'reviews' && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+              {/* Above the rating card and the list, not instead of either, so
+                  a partial load still shows what it has. */}
+              {venueListErrors.reviews && (
+                <div style={{ padding: '10px', borderRadius: '8px', backgroundColor: 'var(--bg-tertiary)' }}>
+                  <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '0 0 8px' }}>We couldn't load your reviews. Nothing has been deleted.</p>
+                  <button className="hit44" onClick={() => loadVenueReviews()} style={{ padding: '8px 16px', borderRadius: '8px', border: '1px solid var(--border-mid)', backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontWeight: '600', fontSize: 'var(--t-meta)', cursor: 'pointer' }}>Try again</button>
+                </div>
+              )}
               {/* Rating Overview */}
               <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
                 {reviewStats && reviewStats.total > 0 ? (
@@ -14709,7 +15068,15 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                     </div>
                   </div>
                 ) : (
-                  <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0, textAlign: 'center', padding: '12px 0' }}>No reviews yet. Reviews from Flock users will appear here.</p>
+                  // Same rule as the other tabs: the failed read suppresses the
+                  // sentence, not the card. "No reviews yet" over a read that
+                  // never landed is the venue owner's version of being told
+                  // their content is gone.
+                  venueListErrors.reviews ? (
+                    <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: 0, textAlign: 'center', padding: '12px 0' }}>Ratings unavailable right now.</p>
+                  ) : (
+                    <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0, textAlign: 'center', padding: '12px 0' }}>No reviews yet. Reviews from Flock users will appear here.</p>
+                  )
                 )}
               </div>
 
