@@ -129,8 +129,22 @@ export async function getBlockedUsers() {
 // Permanently delete the signed-in user's account (Apple Guideline 5.1.1(v)).
 // Backend hard-deletes the user row (DELETE /api/users/me); we drop the local
 // token afterward so the app falls back to the logged-out state.
-export async function deleteAccount() {
-  const data = await request('/api/users/me', { method: 'DELETE' });
+// Deletion now requires proof the person holding the token is the account
+// owner, because a stolen token could otherwise destroy an account outright
+// and, for Apple users, revoke their Apple grant. Password accounts send their
+// password; OAuth accounts prove a recent sign-in instead, so they send
+// nothing and the backend checks how old the token is.
+//
+// A 401 here carries `reauthRequired`, which is 'password' when the caller
+// should be asked for one, or 'reauth' when they need to sign in again. The
+// caller is expected to catch that and re-prompt rather than treat it as a
+// failure. Deletion must stay reachable and must genuinely complete: it is an
+// App Store requirement, not a nicety.
+export async function deleteAccount(password) {
+  const data = await request('/api/users/me', {
+    method: 'DELETE',
+    ...(password ? { body: JSON.stringify({ password }) } : {}),
+  });
   clearToken();
   return data;
 }

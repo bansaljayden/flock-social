@@ -53,11 +53,12 @@ export default function AboutPage() {
         <p>
           Flock runs its own machine-learning crowd model, not a wrapper around
           someone else's chart. It predicts how busy a venue will be, hour by hour,
-          from 95 signals: time patterns, weather, nearby events, venue category,
-          and how that specific spot actually behaves. It was trained on 3.5 million
-          venue-hour observations across 31 cities and evaluated on cities it never
-          saw in training, where it beats the popular-times baseline it started from
-          (R&sup2; 0.75 vs 0.62, with 89% of predictions landing within 15 points).
+          from 106 signals: time patterns, weather, nearby events, venue category,
+          and how that specific spot actually behaves. It was trained on 2.1 million
+          venue-hour observations across 31 cities and held out another 419,000 it
+          never saw. Where it earns its place is live conditions: on 68,000 realtime
+          observations it cuts the average error by 2.3 points against the
+          popular-times baseline it started from.
           When a venue is too new or too small for the model to know it yet, a
           rule-based engine answers instead of guessing wildly.
         </p>
