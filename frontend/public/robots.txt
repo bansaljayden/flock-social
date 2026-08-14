@@ -26,4 +26,72 @@ Allow: /
 #
 # If you add a route, add its noindex rule to vercel.json, not a Disallow here.
 
+# ---------------------------------------------------------------------------
+# AI AND ANSWER-ENGINE CRAWLERS
+#
+# All of these already matched "User-agent: *" above and were already allowed.
+# They are named explicitly because being the answer when someone asks an
+# assistant for a way to plan something with friends is worth more to a
+# pre-launch consumer app than a blue-link position, and silence in this file
+# left that as an accident rather than a decision.
+#
+# !! READ BEFORE ADDING A Disallow ANYWHERE
+# A named group REPLACES the "*" group for that crawler; it does not stack.
+# Every bot listed below now ignores the "User-agent: *" rules entirely. So a
+# future "Disallow: /whatever" added to "*" would NOT apply to any of them.
+# If you add a Disallow, add it to every group here as well, or delete these
+# groups and let "*" cover them again.
+#
+# Note that these agents do different jobs, and the distinction is a business
+# decision that has been made in the permissive direction:
+#   - OAI-SearchBot, ChatGPT-User, Claude-User, Claude-SearchBot and
+#     PerplexityBot fetch pages to ANSWER and CITE. Blocking them removes
+#     Flock from AI answers.
+#   - GPTBot, ClaudeBot, Google-Extended and Applebot-Extended feed MODEL
+#     TRAINING. Allowing them is what is currently configured. If Flock ever
+#     wants out of training while staying citable, disallow those four and
+#     leave the answer-time agents allowed.
+
+User-agent: OAI-SearchBot
+Allow: /
+
+User-agent: ChatGPT-User
+Allow: /
+
+User-agent: GPTBot
+Allow: /
+
+User-agent: Claude-User
+Allow: /
+
+User-agent: Claude-SearchBot
+Allow: /
+
+User-agent: ClaudeBot
+Allow: /
+
+User-agent: PerplexityBot
+Allow: /
+
+User-agent: Perplexity-User
+Allow: /
+
+User-agent: Google-Extended
+Allow: /
+
+User-agent: Applebot-Extended
+Allow: /
+
+User-agent: Bingbot
+Allow: /
+
+# ---------------------------------------------------------------------------
+# /llms.txt is a plain-text summary of the site for language models. It exists
+# because flockcorp.com is a client-rendered React app: a crawler that does not
+# run JavaScript receives an empty <body>, so llms.txt is the only readable
+# description of the product those crawlers get. There is no registered
+# robots.txt directive for it, hence a comment rather than a key.
+#   https://www.flockcorp.com/llms.txt
+# Keep it in step with the landing page copy and with sitemap.xml.
+
 Sitemap: https://www.flockcorp.com/sitemap.xml

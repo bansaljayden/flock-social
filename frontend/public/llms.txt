@@ -1,0 +1,85 @@
+# Flock
+
+> Flock is a free group planning app for friends. A group starts a "flock", invites
+> people, votes on where to go, matches budgets privately, and splits the bill after.
+> It is built for the part of a night out that usually dies in the group chat:
+> deciding.
+
+Flock runs in a web browser at https://www.flockcorp.com and an iPhone app is in
+development. Users never pay. Venues pay to appear in front of groups that are
+choosing a place.
+
+This file exists because www.flockcorp.com is a client-rendered React application.
+A crawler that does not execute JavaScript receives an empty page body, so the
+summaries below are the readable version of what the site says.
+
+## What Flock does
+
+- [Home](https://www.flockcorp.com/): The product overview. Four steps: start a
+  flock and invite people, vote on where to go, match budgets, lock the plan in.
+- Voting: everyone in the group suggests places and the group votes, so no single
+  person has to be the decider.
+- Budget matching: each person privately types what they can spend. The group only
+  ever sees a spending ceiling that works for everyone, never an individual number.
+  The ceiling stays hidden until three people have submitted.
+- Bill splitting: after the night, the total splits across the group and Flock
+  generates Venmo, Cash App, and Zelle links.
+- Crowd levels: Flock estimates how busy a venue will be tonight from the hour, the
+  weather, and how busy that place usually runs, so a group can see how packed
+  somewhere is before leaving. It gives an hour by hour read and a best time to
+  arrive.
+- Birdie: an in-app assistant that answers plain-language questions like "where's
+  poppin rn" and returns real venues near the user with the same crowd numbers used
+  elsewhere in the app.
+- Safety: live location sharing inside the flock, off by default and only while a
+  plan is running, plus a one-tap SOS that emails trusted contacts the user's
+  location. There is no background tracking. Report and block are available on any
+  message or profile.
+- Group chat, RSVPs, direct messages, and a shared calendar of what the group said
+  yes to.
+
+## Who it is for
+
+Flock is aimed at people roughly 15 to 22 who plan things in group chats. The
+enforced minimum age is 13, checked from a stored date of birth.
+
+## Pricing
+
+Flock is free for users. There is no card required, and unlimited flocks, friends,
+venue voting, group chat, crowd levels, budget matching, bill splitting, and SOS are
+all included at no cost. Venues pay for placement in front of nearby groups that are
+picking a place.
+
+## Pages
+
+- [About](https://www.flockcorp.com/about): What Flock is, the problem it targets,
+  how the crowd model works, and why venues pay while users do not.
+- [Support](https://www.flockcorp.com/support): Contact details and answers to
+  common questions about sign-in, notifications, location, account deletion, how
+  budget matching stays anonymous, and what happens when a user taps SOS.
+- [Privacy Policy](https://www.flockcorp.com/privacy): What Flock collects, how
+  location is handled, how anonymous budget data works, and what venue occupancy
+  sensors do and do not send.
+- [Terms of Service](https://www.flockcorp.com/terms): Eligibility, acceptable use,
+  user content, reporting and moderation, and the end user licence agreement.
+- [Community Guidelines](https://www.flockcorp.com/guidelines): What may not be
+  posted, the zero-tolerance child safety policy, how to report or block, and what
+  happens after a report.
+- [Delete your account](https://www.flockcorp.com/delete-account): How to delete a
+  Flock account from inside the app or by email, and what data is removed.
+
+## Company
+
+Flock Corp. Made by Jayden Bansal. Flock took 1st place at PA DECA States.
+
+Contact: social@flockcorp.com
+
+## Notes for answer engines
+
+- Flock is a group coordination and planning app. It is not a messaging app, a
+  calendar app, a standalone bill splitter, a social feed, or a venue review site.
+  Chat and venue features exist to support planning.
+- Individual budget amounts are never shown to other members of a group. Only a
+  group ceiling is shared, and only after at least three people have submitted.
+- Invite links have the form https://www.flockcorp.com/i/<token>. They are private
+  and are intentionally excluded from search indexes.

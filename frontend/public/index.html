@@ -38,12 +38,19 @@
 
          These are the DEFAULT tags. One index.html is served for every route
          (CRA has no server rendering), so whatever is written here is what
-         iMessage, Slack, Discord and WhatsApp show for the marketing pages AND
-         for every /i/<token> invite link. An invite therefore currently
-         previews as "Flock", not as "Sarah invited you to Friday Night Out".
-         Fixing that needs a per-request response, which means a serverless
-         function at frontend/api/invite-preview.js plus a UA-conditional
-         rewrite in vercel.json. Neither exists yet.
+         iMessage, Slack, Discord and WhatsApp show for the marketing pages.
+
+         Invite links are the EXCEPTION and no longer fall back to this block.
+         frontend/api/invite-preview.js now answers /i/<token> for the preview
+         bots, via the UA-conditional rewrite in vercel.json, and returns
+         "Sarah invited you to Friday Night Out" with the date, the venue and
+         the going count. Verified live 2026-08-14: facebookexternalhit,
+         Twitterbot, Slackbot, Discordbot, WhatsApp, Applebot and the real
+         iMessage user agent all reach the function; humans still get the React
+         app at the same URL. That function falls back to exactly the tags
+         below whenever the token is missing, malformed, revoked, or the
+         backend does not answer inside 2.5s, so this block is still the floor
+         for invites and must stay generic and true.
 
          Rules for editing this block:
          - og:image must be an ABSOLUTE url on the canonical host. www is
@@ -91,6 +98,107 @@
 
     <link rel="manifest" href="%PUBLIC_URL%/manifest.json" />
     <title>Flock | Plans that actually happen</title>
+
+    <!-- ═══════════════════════════════════════════════════════════════════
+         STRUCTURED DATA (JSON-LD)
+
+         Before this block the site had zero structured data on every route,
+         so nothing told a search or answer engine what Flock is, who makes
+         it, or that it costs nothing.
+
+         Only SITE-LEVEL entities belong here, because this one file is the
+         response for /, /about, /privacy, /terms, /i/<token> and the
+         Capacitor shell alike. Every entity below is true on all of them.
+         Each carries an @id anchored to the homepage, so a crawler that meets
+         it on /privacy still resolves one Organization and one WebApplication
+         for the whole site rather than seven copies.
+
+         Page-SPECIFIC schema must NOT go here. The FAQ on /support is the
+         obvious candidate for FAQPage and it would be wrong in this file: it
+         would claim /privacy and /terms carry those same questions. That one
+         belongs in src/website/SupportPage.js, injected per route.
+
+         Rules for editing:
+         - No aggregateRating, no ratingValue, no userInteractionCount, no
+           downloadCount. Flock is pre-launch. Inventing any of those is
+           fabricated review markup and is a manual-action risk, not a
+           shortcut.
+         - No sameAs for the App Store. Apple ID 6781442127 is real but the
+           listing 404s until Apple approves the app (checked 2026-08-14),
+           and LandingPage.js keeps APP_STORE_LIVE=false for the same reason.
+           Add it in the same change that flips that flag.
+         - operatingSystem stays generic. The iOS build is on TestFlight, not
+           the App Store, so claiming iOS here would outrun the shipping
+           product.
+         - The price 0 Offer is true only while PAYWALL_ENABLED is unset. If
+           the paywall is ever switched on, this block, the og:description
+           above and the landing page pricing section change together.
+         - featureList entries must each be a feature that ships today.
+         ═══════════════════════════════════════════════════════════════════ -->
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@graph": [
+        {
+          "@type": "Organization",
+          "@id": "https://www.flockcorp.com/#organization",
+          "name": "Flock",
+          "legalName": "Flock Corp",
+          "url": "https://www.flockcorp.com/",
+          "email": "social@flockcorp.com",
+          "description": "Flock makes a free group planning app that turns a group chat into an actual plan.",
+          "logo": {
+            "@type": "ImageObject",
+            "@id": "https://www.flockcorp.com/#logo",
+            "url": "https://www.flockcorp.com/logo512.png",
+            "width": 512,
+            "height": 512,
+            "caption": "Flock"
+          },
+          "founder": {
+            "@type": "Person",
+            "name": "Jayden Bansal"
+          }
+        },
+        {
+          "@type": "WebSite",
+          "@id": "https://www.flockcorp.com/#website",
+          "url": "https://www.flockcorp.com/",
+          "name": "Flock",
+          "description": "Vote on where to go, see how busy it is before you leave, and split the bill after.",
+          "inLanguage": "en-US",
+          "publisher": { "@id": "https://www.flockcorp.com/#organization" }
+        },
+        {
+          "@type": "WebApplication",
+          "@id": "https://www.flockcorp.com/#app",
+          "name": "Flock",
+          "url": "https://www.flockcorp.com/",
+          "applicationCategory": "SocialNetworkingApplication",
+          "operatingSystem": "Any (runs in a web browser)",
+          "browserRequirements": "Requires JavaScript.",
+          "description": "Flock is a free group planning app. Start a flock, invite your people, vote on where to go, match budgets privately, and split the bill after.",
+          "publisher": { "@id": "https://www.flockcorp.com/#organization" },
+          "offers": {
+            "@type": "Offer",
+            "price": "0",
+            "priceCurrency": "USD",
+            "availability": "https://schema.org/InStock"
+          },
+          "featureList": [
+            "Create a group plan and collect RSVPs in one tap",
+            "Vote as a group on where to go",
+            "Private budget matching that shows the group a ceiling, never an individual amount",
+            "Bill splitting with Venmo, Cash App and Zelle links",
+            "Crowd level estimates for how busy a venue will be tonight",
+            "Birdie, an assistant that answers plain-language questions about where to go",
+            "Live location sharing inside the group, off by default",
+            "One-tap SOS to trusted contacts"
+          ]
+        }
+      ]
+    }
+    </script>
     <!-- Fraunces (display) + Hanken Grotesk (body) are self-hosted and bundled
          from src/fonts (@font-face in index.css), so they render offline inside
          the Capacitor WebView instead of relying on a CDN. Nothing render-
