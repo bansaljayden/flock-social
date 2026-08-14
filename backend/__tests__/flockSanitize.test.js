@@ -147,9 +147,12 @@ pool.query = async (text, params = []) => {
   }
 
   // ── flock_members ─────────────────────────────────────────────────────────
+  // `n` = seats (invited + accepted; declining gives the seat back).
+  // `total` = every row, declined included — the second ceiling. The subquery
+  // that produces it carries no status predicate, so it counts the whole roster.
   if (has('COUNT(*)::int AS n FROM flock_members WHERE flock_id = $1')) {
     const n = members.filter((m) => m.status === 'invited' || m.status === 'accepted').length;
-    return { rows: [{ n }], rowCount: 1 };
+    return { rows: [{ n, total: members.length }], rowCount: 1 };
   }
   if (has("SELECT id FROM flock_members WHERE flock_id = $1 AND user_id = $2 AND status = 'accepted'")) {
     const m = Number(params[0]) === FLOCK_ID ? memberOf(params[1]) : null;

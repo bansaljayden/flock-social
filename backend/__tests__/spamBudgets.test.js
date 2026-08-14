@@ -155,9 +155,15 @@ pool.query = async (text, params = []) => {
       ? { rows: [{ id: FLOCK_ID, name: 'Rooftop Friday' }], rowCount: 1 }
       : { rows: [], rowCount: 0 };
   }
+  // Two ceilings, one statement: `n` is the SEATS (invited + accepted only,
+  // because declining gives the seat back) and `total` is EVERY row for the
+  // flock, declined included, because every row is read back on every roster
+  // load. Modelled the way Postgres would answer it — the subquery has no status
+  // predicate, so it counts the whole roster, and the outer COUNT carries the
+  // IN ('invited', 'accepted') filter.
   if (has('COUNT(*)::int AS n FROM flock_members WHERE flock_id = $1')) {
     const n = members.filter((m) => m.status === 'invited' || m.status === 'accepted').length;
-    return { rows: [{ n }], rowCount: 1 };
+    return { rows: [{ n, total: members.length }], rowCount: 1 };
   }
 
   // flock creation (runs on a pooled client, same dispatcher)
