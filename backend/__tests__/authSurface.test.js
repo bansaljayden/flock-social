@@ -276,7 +276,13 @@ const post = (path, body, token) => fetch(base + path, {
   body: JSON.stringify(body || {}),
 });
 
-const reset = () => { users = []; verifications = []; nextId = 1; disconnectedRooms = []; };
+const reset = () => {
+  users = []; verifications = []; nextId = 1; disconnectedRooms = [];
+  // The under-13 retry lockout (minors-compliance audit 2026-08-14) keys on
+  // the client IP, and every test here shares 127.0.0.1 — one under-13 test
+  // would otherwise block every later account creation in the file.
+  authRouter.__testing.clearUnderageAttempts();
+};
 
 // Google's tokeninfo + userinfo endpoints, stubbed for the duration of one
 // call. Only the googleapis.com hosts are intercepted — the test client's own
@@ -559,15 +565,19 @@ test('the legacy DOB backfill only persists a real date, and never 500s on junk'
   assert.strictEqual(ok.status, 200);
   assert.strictEqual(users[1].date_of_birth, '2000-05-04');
 
-  // And the under-13 gate still bites on a well-formed date.
+  // And the under-13 gate still bites on a well-formed date. Since the
+  // minors-compliance audit (2026-08-14) the refusal is the neutral sentence
+  // and the date IS persisted: "I am under 13" is COPPA actual knowledge, so
+  // the account freezes on it instead of staying retryable with an older
+  // date. minorsCompliance.test.js owns the freeze/retry assertions.
   mk(43, 'legacy3@example.com');
   const kid = await post('/api/auth/login', {
     email: 'legacy3@example.com', password: 'Password1',
     date_of_birth: `${new Date().getFullYear() - 9}-01-01`,
   });
   assert.strictEqual(kid.status, 403);
-  assert.match((await kid.json()).error, /at least 13/);
-  assert.strictEqual(users[2].date_of_birth, null);
+  assert.strictEqual((await kid.json()).error, authRouter.__testing.UNDERAGE_MSG);
+  assert.strictEqual(users[2].date_of_birth, `${new Date().getFullYear() - 9}-01-01`);
 });
 
 // ---------------------------------------------------------------------------
