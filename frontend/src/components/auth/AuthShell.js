@@ -265,6 +265,17 @@ const AUTH_CSS = `
   border-color: ${AUTH.steel};
   box-shadow: 0 0 0 3px rgba(109,154,195,0.22);
 }
+/* Keyboard focus ring for the controls on the sheet. index.css ships a global
+   :focus-visible, but its blue composites to ~2.6:1 on this navy sheet
+   (#0b1220), under the 3:1 WCAG 2.4.11 minimum for a non-text indicator. Steel
+   is 6.3:1 here, so keyboard users get a ring that actually reads against the
+   surface. Outline follows each control's own radius in modern browsers, so no
+   radius is set here. */
+.auth-root button:focus-visible,
+.auth-root a:focus-visible {
+  outline: 2px solid ${AUTH.steel};
+  outline-offset: 2px;
+}
 /* An empty date field prints mm/dd/yyyy in the value colour, which reads as
    already answered. Required + empty is :invalid, so it can be dimmed to the
    placeholder colour like every other empty field. */
