@@ -2,9 +2,10 @@ const express = require('express');
 const { body, param, validationResult } = require('express-validator');
 const pool = require('../config/database');
 const { authenticate } = require('../middleware/auth');
-const { stripHtml } = require('../utils/sanitize');
 const { rejectIfProfane } = require('../utils/moderation');
 const { getInvisibleUserIds } = require('../utils/blocks');
+// Shape before content — see validators/shape.js.
+const { scalarOnly, freeText } = require('../validators/shape');
 
 const router = express.Router();
 
@@ -165,10 +166,17 @@ router.post('/:id/vote',
     // does all three (sockets/handlers.js). The name is persisted and
     // broadcast to the whole flock, and 255 matches the VARCHAR(255) column,
     // so an over-long name was a 500 from Postgres instead of a 400.
-    body('venue_name').trim().customSanitizer(stripHtml)
+    //
+    // Round 19 (shape sweep): round 13 added stripHtml and the profanity screen
+    // here, and a one-element array walked past BOTH of them — stripHtml returns
+    // a non-string unchanged and moderateText answers allowed:true for one. The
+    // array then satisfied isLength by coercion and was persisted to
+    // venue_votes.venue_name and broadcast to the whole flock as `new_vote`.
+    // Shape first, so the screen round 13 added is actually reached.
+    freeText(body('venue_name'), 'venue name')
       .isLength({ min: 1 }).withMessage('Venue name is required')
       .isLength({ max: 255 }).withMessage('Venue name too long'),
-    body('venue_id').optional().trim().isLength({ max: 255 }).withMessage('Venue id too long'),
+    scalarOnly(body('venue_id').optional(), 'venue id').trim().isLength({ max: 255 }).withMessage('Venue id too long'),
   ],
   async (req, res) => {
     try {
@@ -301,4 +309,52 @@ router.get('/:id/votes', flockIdParam(), async (req, res) => {
   }
 });
 
+// ---------------------------------------------------------------------------
+// The guest transport's half of `new_vote` (audit 2026-08-14).
+//
+// routes/guest.js used to emit this event itself, straight into
+// `io.to('flock:'+id)`, with a third payload shape. Two problems, and
+// sockets/handlers.js's own export comment had already flagged the first:
+//
+//   1. The flock room is NOT a membership list. A socket joins it when the
+//      client opens that flock's screen and leaves when the connection drops,
+//      so a member sitting anywhere else in the app never learned a guest had
+//      voted — on the one surface (a shared invite link) whose entire purpose
+//      is to tell the group what the people they invited want.
+//   2. It carried `{ flockId, voter, venue_name }` and no `votes` array, while
+//      the member and socket producers of the same event both carry the
+//      recipient's tailored tally. A client handling one shape got a partial
+//      update from the other and had to refetch to find out what happened.
+//
+// So the guest path calls into THIS file, which owns the member-facing tally
+// (collectVoteRows + tailorVotes), rather than growing a fourth implementation
+// of it. Per-member fan-out to personal rooms, one payload per recipient.
+//
+// The per-recipient tailoring is still needed even though the VOTER is
+// anonymous: a guest has no account so nobody can have blocked them, but the
+// `votes` array names the MEMBER voters, and those blocks are real.
+//
+// Never throws: the vote is already committed by the time this runs, and a
+// fan-out failure must not turn a saved vote into a 500 the guest retries.
+async function broadcastGuestVote(io, flockId, venue_name) {
+  if (!io) return;
+  try {
+    const rows = await collectVoteRows(flockId);
+    const { ids, sets } = await invisibleSetsForFlock(flockId);
+    for (const uid of ids) {
+      io.to(`user:${uid}`).emit('new_vote', {
+        flockId: parseInt(flockId, 10),
+        voter: { guest: true },
+        venue_name,
+        votes: tailorVotes(rows, sets.get(uid) || new Set()),
+      });
+    }
+  } catch (err) {
+    console.error('Guest vote fan-out failed:', err.message);
+  }
+}
+
 module.exports = router;
+// A property on the router changes nothing about the mount in server.js — an
+// express Router is a function object. Same pattern as checkin.js/stories.js.
+module.exports.broadcastGuestVote = broadcastGuestVote;
