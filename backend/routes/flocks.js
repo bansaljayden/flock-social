@@ -15,6 +15,33 @@ const router = express.Router();
 // All flock routes require authentication
 router.use(authenticate);
 
+// A validator chain is inert unless something reads its result. Six routes in
+// this file declared `param('id').isInt()` and then never called
+// validationResult, so `/api/flocks/abc/join` handed "abc" straight to
+// Postgres: `invalid input syntax for type integer` came back as a 500 with a
+// stack in the logs instead of a 400. Every route below now runs this gate, so
+// an id is known to be a positive integer before it reaches a query.
+function rejectInvalid(req, res) {
+  const errors = validationResult(req);
+  if (errors.isEmpty()) return false;
+  res.status(400).json({ error: errors.array()[0].msg || 'Invalid request' });
+  return true;
+}
+
+// Flock ids are sequential integers, so "does flock 4193 exist?" is a question
+// an outsider must not be able to answer. GET /:id already returns 404 to
+// non-members; the mutating routes used to answer 403 ("only the creator can
+// …") for a real flock and 404 for a made-up one, which made the whole table
+// enumerable one request at a time. This collapses that distinction: unless
+// you hold a membership row, every flock looks like it does not exist.
+async function hasMembershipRow(flockId, userId) {
+  const r = await pool.query(
+    'SELECT 1 FROM flock_members WHERE flock_id = $1 AND user_id = $2',
+    [flockId, userId]
+  );
+  return r.rows.length > 0;
+}
+
 // GET /api/flocks - Get all flocks the user belongs to
 router.get('/', async (req, res) => {
   try {
@@ -449,6 +476,11 @@ router.put('/:id',
         return res.status(404).json({ error: 'Flock not found' });
       }
       if (flock.rows[0].creator_id !== req.user.id) {
+        // 403 here would confirm the flock is real to a total outsider walking
+        // the id space (see hasMembershipRow). Members already know it exists.
+        if (!(await hasMembershipRow(flockId, req.user.id))) {
+          return res.status(404).json({ error: 'Flock not found' });
+        }
         return res.status(403).json({ error: 'Only the creator can update this flock' });
       }
 
@@ -584,8 +616,9 @@ router.put('/:id',
 );
 
 // DELETE /api/flocks/:id - Delete a flock (creator only)
-router.delete('/:id', param('id').isInt(), async (req, res) => {
+router.delete('/:id', param('id').isInt().withMessage('Invalid flock ID'), async (req, res) => {
   try {
+    if (rejectInvalid(req, res)) return;
     const flockId = req.params.id;
 
     const flock = await pool.query('SELECT creator_id FROM flocks WHERE id = $1', [flockId]);
@@ -593,6 +626,10 @@ router.delete('/:id', param('id').isInt(), async (req, res) => {
       return res.status(404).json({ error: 'Flock not found' });
     }
     if (flock.rows[0].creator_id !== req.user.id) {
+      // Same existence-oracle rule as PUT — outsiders get 404, not 403.
+      if (!(await hasMembershipRow(flockId, req.user.id))) {
+        return res.status(404).json({ error: 'Flock not found' });
+      }
       return res.status(403).json({ error: 'Only the creator can delete this flock' });
     }
 
@@ -615,8 +652,9 @@ router.delete('/:id', param('id').isInt(), async (req, res) => {
 // guest link. Any accepted member can share it; guests RSVP + vote from the
 // link with no account (routes/guest.js). One active link per flock; calling
 // with { regenerate: true } revokes the old one (kills a leaked link).
-router.post('/:id/invite-link', param('id').isInt(), async (req, res) => {
+router.post('/:id/invite-link', param('id').isInt().withMessage('Invalid flock ID'), async (req, res) => {
   try {
+    if (rejectInvalid(req, res)) return;
     const flockId = req.params.id;
     const member = await pool.query(
       "SELECT id FROM flock_members WHERE flock_id = $1 AND user_id = $2 AND status = 'accepted'",
@@ -653,26 +691,28 @@ router.post('/:id/invite-link', param('id').isInt(), async (req, res) => {
 });
 
 // POST /api/flocks/:id/join - Accept a flock invite
-router.post('/:id/join', param('id').isInt(), async (req, res) => {
+router.post('/:id/join', param('id').isInt().withMessage('Invalid flock ID'), async (req, res) => {
   try {
+    if (rejectInvalid(req, res)) return;
     const flockId = req.params.id;
-
-    // Check flock exists
-    const flock = await pool.query('SELECT id FROM flocks WHERE id = $1', [flockId]);
-    if (flock.rows.length === 0) {
-      return res.status(404).json({ error: 'Flock not found' });
-    }
 
     // Access control: only users with an existing membership row (invited,
     // previously declined, or already accepted) may join. Without this check,
     // any authenticated user could add themselves to any flock by ID and read
     // its messages (IDOR).
+    //
+    // The membership lookup is also the existence check now. It used to run
+    // AFTER a `SELECT id FROM flocks`, so an uninvited caller got 404 for a
+    // made-up id and 403 for a real one — a two-response oracle that let
+    // anyone map every flock id in the database. A membership row cannot
+    // outlive its flock (FK, ON DELETE CASCADE), so no row means "not found"
+    // for this caller either way.
     const membership = await pool.query(
       'SELECT status FROM flock_members WHERE flock_id = $1 AND user_id = $2',
       [flockId, req.user.id]
     );
     if (membership.rows.length === 0) {
-      return res.status(403).json({ error: 'You must be invited to join this flock' });
+      return res.status(404).json({ error: 'Flock not found' });
     }
 
     // Flip membership to 'accepted'. Round 9: the UPDATE matched unconditionally,
@@ -845,8 +885,9 @@ router.post('/:id/invite',
 );
 
 // POST /api/flocks/:id/decline - Decline a flock invite
-router.post('/:id/decline', param('id').isInt(), async (req, res) => {
+router.post('/:id/decline', param('id').isInt().withMessage('Invalid flock ID'), async (req, res) => {
   try {
+    if (rejectInvalid(req, res)) return;
     console.log('[Decline] Route hit — flock:', req.params.id, '| user:', req.user.id);
     const flockId = parseInt(req.params.id);
 
@@ -880,8 +921,9 @@ router.post('/:id/decline', param('id').isInt(), async (req, res) => {
 });
 
 // POST /api/flocks/:id/leave - Leave a flock
-router.post('/:id/leave', param('id').isInt(), async (req, res) => {
+router.post('/:id/leave', param('id').isInt().withMessage('Invalid flock ID'), async (req, res) => {
   try {
+    if (rejectInvalid(req, res)) return;
     const flockId = req.params.id;
 
     const flock = await pool.query('SELECT id, name, creator_id FROM flocks WHERE id = $1', [flockId]);
@@ -895,14 +937,22 @@ router.post('/:id/leave', param('id').isInt(), async (req, res) => {
     // Round 5: without this, any authenticated user who guessed a flock id
     // could learn its name and broadcast fake departures that decrement every
     // member's displayed count. Non-members get the same 404 as a bad id.
+    let wasAccepted = isCreator;
     if (!isCreator) {
       const mem = await pool.query(
-        'SELECT 1 FROM flock_members WHERE flock_id = $1 AND user_id = $2',
+        'SELECT status FROM flock_members WHERE flock_id = $1 AND user_id = $2',
         [flockId, req.user.id]
       );
       if (mem.rows.length === 0) {
         return res.status(404).json({ error: 'Flock not found' });
       }
+      // An invitee who never accepted was never in the roster, but leaving
+      // still broadcast `flock_member_left` — which every open client applies
+      // to its own count. Anyone holding an invite could fire that at a flock
+      // repeatedly and make the roster appear to drain. The row still goes
+      // (declining by another name); only the departure event is now reserved
+      // for someone who had actually joined.
+      wasAccepted = mem.rows[0].status === 'accepted';
     }
 
     const io = req.app.get('io');
@@ -918,8 +968,8 @@ router.post('/:id/leave', param('id').isInt(), async (req, res) => {
       return res.json({ message: 'Left flock', flock_name: flockName, deleted: true });
     }
 
-    // Notify flock that member left
-    if (io) {
+    // Notify flock that member left (accepted members only — see above)
+    if (io && wasAccepted) {
       io.to(`flock:${flockId}`).emit('flock_member_left', { flockId: parseInt(flockId), userId: req.user.id, userName: req.user.name });
     }
 
@@ -953,8 +1003,9 @@ router.post('/:id/leave', param('id').isInt(), async (req, res) => {
 });
 
 // GET /api/flocks/:id/members - Get members of a flock
-router.get('/:id/members', param('id').isInt(), async (req, res) => {
+router.get('/:id/members', param('id').isInt().withMessage('Invalid flock ID'), async (req, res) => {
   try {
+    if (rejectInvalid(req, res)) return;
     const flockId = req.params.id;
 
     // ACCEPTED members only see the roster (round 3: invitees got every
@@ -1013,7 +1064,13 @@ router.post('/:id/attendance',
       // Verify creator + completed status
       const flock = await pool.query('SELECT creator_id, status, name FROM flocks WHERE id = $1', [flockId]);
       if (flock.rows.length === 0) return res.status(404).json({ error: 'Flock not found' });
-      if (flock.rows[0].creator_id !== req.user.id) return res.status(403).json({ error: 'Only the creator can mark attendance' });
+      if (flock.rows[0].creator_id !== req.user.id) {
+        // Outsiders get 404 so this cannot be used to probe flock ids either.
+        if (!(await hasMembershipRow(flockId, req.user.id))) {
+          return res.status(404).json({ error: 'Flock not found' });
+        }
+        return res.status(403).json({ error: 'Only the creator can mark attendance' });
+      }
       if (flock.rows[0].status !== 'completed') return res.status(400).json({ error: 'Flock must be completed to mark attendance' });
 
       const client = await pool.connect();
@@ -1022,9 +1079,14 @@ router.post('/:id/attendance',
         await client.query('BEGIN');
 
         for (const entry of attendance) {
-          const { userId, attended } = entry;
-          if (!userId) continue;
-          const status = attended ? 'attended' : 'no_show';
+          // userId went into an INTEGER column unparsed. A guest roster entry
+          // ("guest:12", which is exactly what GET /:id hands the client) or
+          // any other non-numeric value aborted the whole transaction, so one
+          // bad element rolled back every other member's attendance and
+          // returned a 500. Non-integers are skipped instead.
+          const userId = parseInt(entry?.userId, 10);
+          if (!Number.isInteger(userId) || userId <= 0) continue;
+          const status = entry?.attended ? 'attended' : 'no_show';
 
           await client.query(
             `UPDATE flock_members SET attendance = $1 WHERE flock_id = $2 AND user_id = $3 AND status = 'accepted'`,

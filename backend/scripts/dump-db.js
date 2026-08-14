@@ -20,8 +20,50 @@ const fs = require('fs');
 const path = require('path');
 const { Client } = require('pg');
 
-const OUT = process.argv[2]
-  || path.join(__dirname, '..', 'backups', `flock-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '')}.sql`);
+// ---------------------------------------------------------------------------
+// Where the dump is allowed to land.
+//
+// Security review: this file is not "user data", it is CREDENTIAL MATERIAL.
+// A full dump contains users.password (bcrypt hashes), users.apple_refresh_token
+// (a live Apple OAuth refresh token), device_tokens.token (APNs/FCM tokens that
+// let the holder push to any user), sensor_devices.api_key, and
+// password_reset_tokens.token (live reset tokens).
+//
+// backend/backups/ is gitignored; nothing else in the worktree is. The optional
+// [outfile] argument used to accept any path, so one `node scripts/dump-db.js
+// dump.sql` from the repo root dropped every one of those credentials into a
+// tracked directory, one `git add -A` away from a push. The dump is now pinned
+// to the ignored directory unless the operator explicitly opts out with
+// DUMP_ALLOW_ANY_PATH=1 (for writing to somewhere outside the repo entirely).
+// ---------------------------------------------------------------------------
+const BACKUP_DIR = path.join(__dirname, '..', 'backups');
+const REPO_ROOT = path.join(__dirname, '..', '..');
+
+const OUT = path.resolve(
+  process.argv[2]
+    || path.join(BACKUP_DIR, `flock-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '')}.sql`)
+);
+
+function assertSafeOutputPath(target) {
+  if (process.env.DUMP_ALLOW_ANY_PATH === '1') return;
+  const inBackups = target === BACKUP_DIR || target.startsWith(BACKUP_DIR + path.sep);
+  if (inBackups) return;
+  const inRepo = target === REPO_ROOT || target.startsWith(REPO_ROOT + path.sep);
+  console.error(
+    `\nRefusing to write the dump to:\n  ${target}\n\n` +
+    'A full dump contains bcrypt password hashes, Apple refresh tokens, push\n' +
+    'device tokens and password-reset tokens. Only backend/backups/ is gitignored,\n' +
+    `so ${inRepo ? 'that path is inside the repo and committable' : 'that path is outside the protected directory'}.\n\n` +
+    `Write it to ${BACKUP_DIR}\n` +
+    'or, if you really mean to write outside the repo, re-run with DUMP_ALLOW_ANY_PATH=1.\n'
+  );
+  process.exit(1);
+}
+
+// Column names whose values are credentials rather than user content. Matched
+// against every column actually dumped, so a migration that adds a new secret
+// column gets flagged without anyone remembering to update a list here.
+const SENSITIVE_COLUMN = /password|secret|token|api_key|private_key|refresh/i;
 
 // Postgres literal escaping. Buffers become bytea hex, dates become ISO,
 // objects become JSON. Anything else is quoted with doubled single quotes.
@@ -38,6 +80,8 @@ function lit(v) {
 }
 
 async function main() {
+  assertSafeOutputPath(OUT);
+
   const url = process.env.DATABASE_URL;
   if (!url) {
     console.error('DATABASE_URL is not set. It lives in backend/.env or the Railway Postgres service.');
@@ -96,7 +140,10 @@ async function main() {
   };
   names.forEach((n) => visit(n));
 
-  const out = fs.createWriteStream(OUT);
+  // 0600: the dump holds live credentials, so it is readable only by the user
+  // that produced it. (No-op on Windows; correct everywhere the dump is likely
+  // to be taken from, which is a Linux shell against the Railway proxy.)
+  const out = fs.createWriteStream(OUT, { mode: 0o600 });
   const write = (s) => new Promise((res) => (out.write(s) ? res() : out.once('drain', res)));
 
   await write(`-- Flock data dump ${new Date().toISOString()}\n`);
@@ -105,10 +152,17 @@ async function main() {
 
   let grand = 0;
   const counts = [];
+  // Reported at the end so the operator knows, concretely and per run, what
+  // they are now holding — the set grows whenever a migration adds a column,
+  // which is exactly when a stale comment would have stopped being true.
+  const credentialColumns = new Set();
   for (const table of ordered) {
     const { rows } = await client.query(`SELECT * FROM "${table}"`);
     if (!rows.length) { counts.push([table, 0]); continue; }
     const cols = Object.keys(rows[0]);
+    for (const c of cols) {
+      if (SENSITIVE_COLUMN.test(c)) credentialColumns.add(`${table}.${c}`);
+    }
     const collist = cols.map((c) => `"${c}"`).join(', ');
     await write(`-- ${table} (${rows.length})\n`);
     // Batch so a huge table does not become one unreadable statement.
@@ -146,6 +200,17 @@ async function main() {
     .forEach(([t, n]) => console.log(`  ${String(n).padStart(8)}  ${t}`));
   const empty = counts.filter(([, n]) => n === 0).map(([t]) => t);
   if (empty.length) console.log(`\n  empty: ${empty.join(', ')}`);
+
+  if (credentialColumns.size) {
+    console.log(
+      '\n  ------------------------------------------------------------------\n' +
+      '  This file contains CREDENTIALS in cleartext, not just user data:\n' +
+      [...credentialColumns].sort().map((c) => `    - ${c}`).join('\n') +
+      '\n\n  Treat it like a password vault: do not commit it, do not paste it\n' +
+      '  into an issue or a chat, and delete it when the restore is done.\n' +
+      '  ------------------------------------------------------------------'
+    );
+  }
 }
 
 main().catch((err) => { console.error('Dump failed:', err.message); process.exit(1); });

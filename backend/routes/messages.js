@@ -13,6 +13,18 @@ const router = express.Router();
 
 router.use(authenticate);
 
+// Several routes below declared param()/body() chains and then never read the
+// result, which made those chains decorative: `/api/dm/messages/abc/react`
+// reached Postgres as NaN and came back a 500, and an unvalidated `emoji`
+// (VARCHAR(10) in the schema) turned any long string into a 500 as well. This
+// is the single gate they all call now.
+function rejectInvalid(req, res) {
+  const errors = validationResult(req);
+  if (errors.isEmpty()) return false;
+  res.status(400).json({ error: errors.array()[0].msg || 'Invalid request' });
+  return true;
+}
+
 // Helper: check if user is a member of the flock
 async function verifyFlockMember(flockId, userId) {
   const result = await pool.query(
@@ -212,7 +224,11 @@ router.post('/messages/:id/react',
 
       const flockId = msgResult.rows[0].flock_id;
       if (!(await verifyFlockMember(flockId, req.user.id))) {
-        return res.status(403).json({ error: 'Not a member of this flock' });
+        // 404, not 403: message ids are sequential, and a 403 here would
+        // confirm "message 91824 exists, in a flock you cannot see" for every
+        // id an outsider cared to try. A non-member gets the same answer as
+        // for an id that was never issued.
+        return res.status(404).json({ error: 'Message not found' });
       }
 
       const result = await pool.query(
@@ -255,11 +271,13 @@ router.post('/messages/:id/react',
 
 // DELETE /api/messages/:id/react/:emoji - Remove emoji reaction
 router.delete('/messages/:id/react/:emoji',
-  [param('id').isInt()],
+  [param('id').isInt().withMessage('Invalid message ID')],
   async (req, res) => {
     try {
+      if (rejectInvalid(req, res)) return;
       const messageId = req.params.id;
-      const emoji = decodeURIComponent(req.params.emoji);
+      // Bounded before it reaches a VARCHAR(10) column (schema 000_bootstrap).
+      const emoji = decodeURIComponent(req.params.emoji).slice(0, 10);
 
       // Get flock_id for socket notification
       const msgResult = await pool.query('SELECT flock_id FROM messages WHERE id = $1', [messageId]);
@@ -566,9 +584,14 @@ function dmPairKey(a, b) {
 
 // POST /api/dm/messages/:id/react - Add reaction to a DM
 router.post('/dm/messages/:id/react',
-  [param('id').isInt(), body('emoji').trim().isLength({ min: 1, max: 10 })],
+  [
+    param('id').isInt().withMessage('Invalid message ID'),
+    body('emoji').isString().withMessage('Emoji is required')
+      .trim().isLength({ min: 1, max: 10 }).withMessage('Emoji is required'),
+  ],
   async (req, res) => {
     try {
+      if (rejectInvalid(req, res)) return;
       const dmId = parseInt(req.params.id);
       const { emoji } = req.body;
 
@@ -597,10 +620,11 @@ router.post('/dm/messages/:id/react',
 );
 
 // DELETE /api/dm/messages/:id/react/:emoji - Remove DM reaction
-router.delete('/dm/messages/:id/react/:emoji', [param('id').isInt()], async (req, res) => {
+router.delete('/dm/messages/:id/react/:emoji', [param('id').isInt().withMessage('Invalid message ID')], async (req, res) => {
   try {
+    if (rejectInvalid(req, res)) return;
     const dmId = parseInt(req.params.id);
-    const emoji = decodeURIComponent(req.params.emoji);
+    const emoji = decodeURIComponent(req.params.emoji).slice(0, 10);
     // Blocks end ALL interaction with the shared conversation, removals included.
     const dm = await pool.query('SELECT sender_id, receiver_id FROM direct_messages WHERE id = $1', [dmId]);
     if (dm.rows.length > 0) {
@@ -622,8 +646,9 @@ router.delete('/dm/messages/:id/react/:emoji', [param('id').isInt()], async (req
 });
 
 // GET /api/dm/:userId/venue-votes - Get venue votes for a DM conversation
-router.get('/dm/:userId/venue-votes', [param('userId').isInt()], async (req, res) => {
+router.get('/dm/:userId/venue-votes', [param('userId').isInt().withMessage('Invalid user ID')], async (req, res) => {
   try {
+    if (rejectInvalid(req, res)) return;
     // Mutual invisibility covers shared DM metadata reads, not just messages.
     if (await isBlockedBetween(req.user.id, parseInt(req.params.userId))) {
       return res.status(403).json({ error: 'You can no longer interact with this user.' });
@@ -701,8 +726,9 @@ router.post('/dm/:userId/venue-votes',
 );
 
 // PUT /api/dm/:messageId/read - Mark a DM as read
-router.put('/dm/:messageId/read', param('messageId').isInt(), async (req, res) => {
+router.put('/dm/:messageId/read', param('messageId').isInt().withMessage('Invalid message ID'), async (req, res) => {
   try {
+    if (rejectInvalid(req, res)) return;
     const messageId = parseInt(req.params.messageId);
 
     const result = await pool.query(
@@ -724,8 +750,9 @@ router.put('/dm/:messageId/read', param('messageId').isInt(), async (req, res) =
 });
 
 // GET /api/dm/:userId/pinned-venue - Get pinned venue for a DM conversation
-router.get('/dm/:userId/pinned-venue', [param('userId').isInt()], async (req, res) => {
+router.get('/dm/:userId/pinned-venue', [param('userId').isInt().withMessage('Invalid user ID')], async (req, res) => {
   try {
+    if (rejectInvalid(req, res)) return;
     // Mutual invisibility covers shared DM metadata reads, not just messages.
     if (await isBlockedBetween(req.user.id, parseInt(req.params.userId))) {
       return res.status(403).json({ error: 'You can no longer interact with this user.' });
@@ -746,9 +773,17 @@ router.get('/dm/:userId/pinned-venue', [param('userId').isInt()], async (req, re
 
 // PUT /api/dm/:userId/pinned-venue - Pin or update a venue for a DM conversation
 router.put('/dm/:userId/pinned-venue',
-  [param('userId').isInt(), body('venue_name').trim().isLength({ min: 1, max: 255 })],
+  [
+    param('userId').isInt().withMessage('Invalid user ID'),
+    body('venue_name').isString().withMessage('Venue name is required')
+      .trim().isLength({ min: 1, max: 255 }).withMessage('Venue name is required'),
+  ],
   async (req, res) => {
     try {
+      // Unenforced before: a body with no venue_name reached
+      // `stripHtml(undefined).slice(...)` and threw a TypeError out of the
+      // handler, and a non-string reached the same call.
+      if (rejectInvalid(req, res)) return;
       const otherUserId = parseInt(req.params.userId);
       if (await isBlockedBetween(req.user.id, otherUserId)) {
         return res.status(403).json({ error: 'You can no longer interact with this user.' });

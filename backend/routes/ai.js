@@ -12,6 +12,7 @@ const {
 const mlPredictor = require('../services/mlPredictor');
 const { isPremium, paywallEnabled } = require('../services/entitlements');
 const { allowPlacesSearch } = require('../utils/placesBudget');
+const { upstreamSignal } = require('../utils/upstream');
 const {
   checkUserRateLimit,
   nextUtcMidnightISO,
@@ -158,7 +159,12 @@ async function executeTool(toolName, toolInput, userId, opts = {}) {
           circle: { center: { latitude: lat, longitude: lng }, radius: 15000.0 },
         };
       }
+      // Birdie's tool loop is the one place Places was still called without a
+      // timeout, so a Places brownout parked an Express connection for undici's
+      // ~5 minute default. A user can steer the model into calling this
+      // repeatedly, which makes it a cheap way to exhaust the server.
       const resp = await fetch('https://places.googleapis.com/v1/places:searchText', {
+        signal: upstreamSignal('places'),
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -194,6 +200,7 @@ async function executeTool(toolName, toolInput, userId, opts = {}) {
       }
       const placeId = toolInput.place_id;
       const resp = await fetch(`https://places.googleapis.com/v1/places/${placeId}`, {
+        signal: upstreamSignal('places'),
         headers: {
           'X-Goog-Api-Key': PLACES_API_KEY,
           'X-Goog-FieldMask': 'id,displayName,formattedAddress,rating,userRatingCount,priceLevel,types,location,currentOpeningHours',
@@ -239,9 +246,18 @@ async function executeTool(toolName, toolInput, userId, opts = {}) {
       const weather = (lat && lon) ? await getWeather(lat, lon) : null;
 
       const crowdResult = await mlPredictor.predictBusyness(venue, weather, scoreTime);
-      const fullDay = await mlPredictor.predictHourlyForecast(venue, weather, 6, 24, scoreTime);
-      const peakResult = findPeakTime(fullDay, venue);
-      const bestTime = findBestTime(fullDay, venue, peakResult.startIdx, peakResult.endIdx, venue.isOpen);
+      // Round 13: forward-looking window (see crowdEngine.recommendBestTime).
+      // Birdie must never suggest an hour that already passed, and its answer
+      // has to agree with the score it quotes in the same sentence.
+      const fullDay = await mlPredictor.predictHourlyForecast(venue, weather, localHour, 24, scoreTime);
+      const next12 = fullDay.slice(0, 12);
+      // Peak off the next 12 hours: the rush that is coming, not tomorrow's.
+      // Indexes still line up with fullDay for the best-time exclusion.
+      const peakResult = findPeakTime(next12, venue);
+      const bestTime = findBestTime(fullDay, venue, peakResult.startIdx, peakResult.endIdx, venue.isOpen, {
+        currentHour: localHour,
+        currentScore: crowdResult.score,
+      });
 
       const result = {
         venue_name: venue.name,
@@ -256,8 +272,8 @@ async function executeTool(toolName, toolInput, userId, opts = {}) {
       // Hour-by-hour forecasts are a Pro surface (forecast meter). Free-tier
       // users get now + best time + peak through Birdie, same as the app.
       if (opts.includeForecast) {
-        const hourly = await mlPredictor.predictHourlyForecast(venue, weather, localHour, 12, scoreTime);
-        result.hourly_forecast = hourly.map(h => ({ hour: h.hour, label: h.label, score: h.score }));
+        // Same array the recommendation came from, so the two can't disagree.
+        result.hourly_forecast = next12.map(h => ({ hour: h.hour, label: h.label, score: h.score }));
       } else {
         result.hourly_forecast_note = 'Hour-by-hour forecast is a Flock Pro feature; do not invent one.';
       }

@@ -346,7 +346,12 @@ router.get('/search',
         return res.status(400).json({ error: errors.array()[0].msg });
       }
 
-      const searchTerm = `%${req.query.q}%`;
+      // ILIKE wildcards have to be escaped, not interpolated. `q=%` built the
+      // pattern '%%%', which matches every row: 20 arbitrary accounts (id,
+      // name, avatar) per request, and patterns like `a%` / `_` let a caller
+      // walk the whole user directory a slice at a time. Escaping turns the
+      // query back into a literal substring search.
+      const searchTerm = `%${String(req.query.q).replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
 
       // Mutual invisibility: blocked pairs never rediscover each other here.
       const result = await pool.query(
