@@ -6,7 +6,83 @@
    Type: Fraunces (display, h1/h2 ONLY — no tnum, never for live numbers) over
    Hanken Grotesk (body). Both variable, self-hosted via src/index.css. */
 
+/* ============ the fallback the headlines actually wait in ============
+
+   Fraunces is loaded with font-display: swap, so there is no invisible text —
+   but there IS a swap, and until this block existed the face the headlines
+   waited in was metrically nothing like the one that arrived. Measured with
+   canvas measureText at 100px over the hero string:
+
+     Fraunces 600            2696.2px advance
+     Times New Roman 400     2757.8px   (+2.3%)
+     Georgia 600             3492.2px  (+29.5%)   <- what Windows was using
+     Fraunces Fallback       2696.3px   (+0.0%)   <- this block, in the page
+
+   Every heading on the page uses a unitless line-height, so the line BOX never
+   depends on font metrics — the reflow came entirely from advance width
+   changing the line COUNT. Summed over the page's headings and leads at 320px
+   that was 86px of movement, worst single element 29px (an h2 dropping from
+   three lines to two the moment the real face landed).
+
+   So: one fallback face, metrics matched to Fraunces, declared against the
+   serif the fallback chain will actually resolve to on every platform Flock
+   ships to (Times New Roman exists on iOS, macOS, Windows and Android;
+   Liberation and DejaVu cover Linux). size-adjust does the width work.
+   ascent/descent are overridden too so the baseline does not hop inside the
+   line box on swap — 0.98/0.26 em are Fraunces's own, divided by the
+   size-adjust because size-adjust scales the overrides as well.
+
+   Georgia is deliberately NOT in the local() list: it is 29.5% wider, so
+   matching it under the same size-adjust would be worse than not trying. It
+   stays further down the CSS stack as a last resort instead.
+
+   `font-weight: 100 900` matters and is why the first pass of this block was
+   wrong. It tells the browser one local face covers the whole weight range, so
+   Times is used at its REGULAR width for the page's 600 headings with no
+   synthetic bold. So size-adjust must be solved against Times 400 (2757.8),
+   not against what `600 Times` measures in a canvas (2916.1). Solved: 2696.2 /
+   2757.8 = 97.77%. The overrides are Fraunces's own 0.98 / 0.26 em divided by
+   that same figure, because size-adjust scales the overrides too. Verified in
+   the browser afterwards: the fallback measures 2696.3 against Fraunces's
+   2696.2 on the hero string.
+
+   Measured reflow on swap, per group, at 320/390/768/1280:
+
+     h1          0 / 0 / 0 / 0      the LCP element, and the only heading in
+                                    the fold. Stable at every width.
+     menu links  0 / 0 / 0 / 0
+     kickers     0 / 0 / 0 / 0
+     plate caps  20 / 0 / 0 / 0
+     h2         57 / 90 / 37 / 47
+
+   The h2 residual is a real limit, not an oversight. `opsz` means Fraunces is
+   a different WIDTH at every size: h1 pins opsz 144, captions pin opsz 9, and
+   h2 runs opsz auto across 27-46px. One size-adjust constant cannot match
+   three optical cuts, and a sweep from 90% to 124% confirms it — the value
+   that minimises total height delta on today's copy is ~112%, which would
+   render the fallback 15% wider than the real face and is pure overfitting to
+   these exact sentences at these exact widths. Matching the advance width is
+   the value that stays right when the copy changes. Every h2 is below the
+   fold, so its reflow cannot score CLS anyway (measured: 0.000 at all four
+   widths), and with the font preloaded the fallback is usually never painted
+   at all. */
+@font-face {
+  font-family: 'Fraunces Fallback';
+  src: local('Times New Roman'), local('Liberation Serif'), local('DejaVu Serif'), local('Tinos');
+  size-adjust: 97.77%;
+  ascent-override: 100.24%;
+  descent-override: 26.59%;
+  line-gap-override: 0%;
+  font-weight: 100 900;
+}
+
 .lp {
+  /* Scoped to the landing page: the app's own --font-display (src/index.css)
+     is unchanged. The metric-matched face is inserted directly after Fraunces
+     so it is what the h1 and h2 render in for the few hundred ms before the
+     real one arrives. */
+  --font-display: 'Fraunces', 'Fraunces Fallback', 'Iowan Old Style', Georgia, 'Times New Roman', serif;
+
   --navy: #0f172a;
   --navy-deep: #0a1120;
   --navy-soft: #172236;
@@ -90,7 +166,24 @@
 }
 .lp h2 { font-size: clamp(27px, 1.35rem + 1.87vw, 46px); }
 .lp h3 { font-size: clamp(18px, 2vw, 21px); font-weight: 700; letter-spacing: -0.015em; }
-.lp p { margin: 0; text-wrap: pretty; }
+/* :where(), and it is not cosmetic. `.lp p` scores (0,1,1) — one class plus one
+   element — which outranks every single-class rule in this file. So every
+   margin written as `.lp-something { margin: ... }` on a <p> was silently
+   losing to this line and computing to 0. Measured before the fix, all dead:
+
+     .lp-kicker margin-bottom 12    .lp-hero-note margin-top 22
+     .lp-demo-proof 44/0/20         .lp-steps-after margin-top 20
+     .lp-form-msg margin-top 12     .lp-footer-blurb margin-top 12
+     .lp-sos-headline 0 0 10        .lp-sos-link 0 0 10
+     .lp-sos-cap 16 0 0             .lpd-best 16 0 0
+     .lpd-note 14 0 0               .lpd-addr / .lpd-label 4 0 0
+
+   That is why the hero note read as glued to the button above it and the SOS
+   card's three lines ran together. :where() contributes nothing to
+   specificity, so this drops to (0,1,0) — still enough to beat the UA's
+   `p { margin: 1em 0 }`, and now every class rule below it actually applies.
+   Do not put a bare element selector back in here. */
+.lp :where(p) { margin: 0; text-wrap: pretty; }
 /* Keeps a closing phrase off its own line when the wrap algorithms won't.
    font-family must be restated: index.css sets it on the universal selector
    (`*, *::before, *::after { font-family: var(--font-body) }`), and a rule that
@@ -326,6 +419,12 @@
 
 /* Anchor jumps from the menu land below the sticky bar, not under it. */
 .lp-sec { padding: clamp(56px, 8vw, 96px) 0; scroll-margin-top: 72px; }
+/* The two anchor targets that are NOT .lp-sec, and both are linked from the
+   page's own chrome: #get is where the App Store badge sends you before the
+   app is approved, and #try is the menu's "Try it live". Without this they
+   scrolled to a point 64px under an opaque sticky navbar, so the line you
+   jumped for was the one thing you could not see. */
+.lp-cta, .lp-demo-proof { scroll-margin-top: 72px; }
 .lp-sec-navy { background: var(--navy); color: var(--cream-2); }
 .lp-sec-paper { background: var(--paper); }
 
@@ -418,11 +517,18 @@
    which is cream, where --cream-3 measured 2.63:1. The navy hero opts back in
    to the cream variant below (5.67:1 on navy). */
 .lp-hero-note {
-  margin-top: 22px;
+  /* 30, not 22. The note used to sit under the App Store badge, which carried
+     its own 22px of air, so nobody saw how tight this was. With the badge moved
+     below it the note's first line landed ~10px off the ghost button's border
+     at 768 and read as attached to it. The note is a caption on the two
+     buttons, so it stays closer to them than the badge is to it: 30 above, 18
+     below. */
+  margin-top: 30px;
   font-size: 13.5px;
   max-width: 52ch;
   color: var(--ink-3);
 }
+.lp-hero-note + .lp-appstore { margin-top: 18px; }
 .lp-on-navy .lp-hero-note,
 .lp-sec-navy .lp-hero-note { color: var(--cream-3); }
 
@@ -688,8 +794,14 @@
 
 /* On touch devices every footer link becomes its own ≥44px row: the padding
    replaces the grid gap, so the rhythm loosens rather than doubles. Same for
-   the map's zoom buttons, which ship from MapLibre at 29px. */
-@media (pointer: coarse) {
+   the map's zoom buttons, which ship from MapLibre at 29px.
+
+   The width clause is not redundant with `pointer: coarse`. A device reports
+   its PRIMARY pointer, so a touchscreen laptop, a phone browser in desktop
+   mode, and anything driving the page through a remote/emulator all report
+   `fine` and used to get 19px rows in the footer. Measured at 320px before
+   this: eleven footer links at 19px tall. Either condition is enough. */
+@media (pointer: coarse), (max-width: 820px) {
   .lp-footer ul { gap: 0; }
   .lp-footer ul a { display: inline-block; padding: 13px 0; }
   .lpd-map .maplibregl-ctrl-group button { width: 44px; height: 44px; }
@@ -887,6 +999,17 @@
   color: var(--cream-2);
 }
 
+/* The holder the demo mounts into. It carries the demo's top margin and its
+   measured height, so the box is identical before and after the map arrives
+   and nothing under it moves. Numbers are measured, not guessed: .lpd renders
+   526px at 1280 (50px control row + 14px + a 462px stage) and 778px below
+   860px, where the stage stacks into a 320px map over the card. If the real
+   thing ends up a few px taller it simply grows — min-height, and by then it
+   is still a screen below the viewport. */
+.lpd-hold { margin-top: 34px; min-height: 526px; }
+.lpd-hold > .lpd { margin-top: 0; }
+@media (max-width: 860px) { .lpd-hold { min-height: 780px; } }
+
 .lpd { margin-top: 34px; }
 
 .lpd-controls { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin-bottom: 14px; }
@@ -1045,6 +1168,10 @@
   align-items: flex-end;
   gap: clamp(4px, 1.4vw, 18px);
   margin: 0 0 20px;
+  /* The taller of the two birds, so the row holds its height while they are
+     still off-screen and the pricing cards under them do not jump when the
+     photos mount. Same clamp as the bird itself, over its own aspect ratio. */
+  min-height: calc(clamp(92px, 10vw, 128px) * 400 / 316);
 }
 .lp-pair > :first-child { margin-bottom: 6px; }
 
