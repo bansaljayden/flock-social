@@ -1,3 +1,23 @@
+/* Hallmark · macrostructure: Workbench · genre: editorial
+ * theme: Flock house system (cream paper · navy ink · one steel accent)
+ * nav: N9 edge-aligned + corner block · footer: Ft3 index (kept — see the note
+ *      on .lp-footer for why the two column headings survive an Ft3 flag)
+ * exhibits: real app captures, a live crowd demo, the real SOS email
+ * pairing: Split Studio, but every panel carries a DIFFERENT proportion and a
+ *          different internal rhythm. Three consecutive 1fr|1fr text|media rows
+ *          with identical h2 → lead → ruled-list bodies is what this pass came
+ *          in to break; do not let a new section fall back into .lp-row by
+ *          default just because it is the cheapest markup.
+ * pre-emit critique: P5 H4 E4 S5 R4 V4
+ * contrast: pass (40–41) · chrome: pass (47) · honest: pass (46)
+ * tokens: pass (48) for opaque values; alpha-derived rgba() of --ink/--cream
+ *         left inline deliberately, see the token block
+ * mobile: pass (34, 49, 50–57) at 320 / 375 / 414 / 768
+ * open, reported not fixed: gate 24 (no named 4pt spacing scale — the px values
+ *         in this file are measured and documented, and a token sweep would
+ *         churn every number the comments justify)
+ */
+
 /* Flock — flockcorp.com
    The physical object: a printed field guide. Cream paper, navy ink, one steel
    accent, birds as the motif. The page alternates navy (the night you're going
@@ -115,6 +135,41 @@
   --crowd-quiet: #22c55e;
   --crowd-mid: #f59e0b;
   --crowd-busy: #ef4444;
+
+  /* THE PLATES. Every white object on the cream page — the chat transcript, the
+     split card, the two plan cards, the demo stage, the dial, the search field.
+     All six shipped as literal #ffffff, which is banned twice over: Hallmark's
+     slop test calls pure white a synthetic base colour, and frontend/DESIGN.md
+     bans pure #ffffff surfaces in its own words. It also just reads wrong on a
+     page whose whole conceit is printed cream stock: a pure-white card is a
+     different piece of paper. This is that stock lifted to a paper-white, same
+     hue family as the page. Measured against it: ink-3 5.77 to 1 (it was 6.03
+     on white, so the 4.5 floor still has a full point of headroom), ink-2 8.44,
+     ink 13.94. */
+  --plate: #fbfaf6;
+
+  /* Hover and state colours that were inline hexes scattered down the file.
+     Nine opaque literals lived outside this block; a page with a locked palette
+     that then freestyles a ninth colour in a hover rule is how cohesion goes.
+     Every one of these is a value the file already used, just named. */
+  --cream-hi: #fffaf0;   /* the cream button, hovered */
+  --ink-hover: #22394f;  /* the navy button, hovered */
+  --bad: #f0a3a3;        /* form failure text on the CTA gradient. 7.96 to 1 */
+  --alarm: #e88f8f;      /* the SOS email's one link */
+  --hero-lift: #1b2a44;  /* lightest stop of the hero radial */
+  --cta-lift: #142238;   /* lightest stop of the CTA band */
+  --cta-deep: #0d1a2e;   /* its darkest */
+  --pin-ground: #1e293b; /* a venue pin with no photograph behind it */
+  --badge-ink: #000;     /* the crowd badge. Black is not a base colour here, it
+                            is the only ink that clears 4.5 to 1 on ALL FOUR
+                            crowd grounds — see .lpd-pin-badge for the numbers */
+
+  /* Translucent cream, which is how every control on a navy ground is filled or
+     edged. These stay as rgba rather than becoming a colour-mix: they are all
+     derived from --cream at one alpha or another, so they are already a system,
+     and the accessibility test composites the 0.07 fill by hand. */
+  --field-fill: rgba(244, 239, 227, 0.07);
+  --edge-cream: rgba(244, 239, 227, 0.30);
 
   font-family: 'Hanken Grotesk', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   background: var(--paper);
@@ -245,6 +300,19 @@
   line-height: 1.04;
   margin: 0;
   text-wrap: balance;
+  /* Display type at 34-72px has exactly one break opportunity inside a word:
+     none. Today's copy happens to have no word long enough to overflow 280px of
+     content at 320px, so this is not fixing a visible bug — it is stopping the
+     next headline from being one. A single long compound ("group-chat",
+     "budget-matching", a venue name) is enough to push a heading past the
+     viewport, and .lp clips rather than scrolls, so it would be cut off rather
+     than reachable. `anywhere` and not `break-word` deliberately: only
+     `anywhere` also shrinks the min-content contribution, which is what stops
+     an h2 forcing its grid track wider than the track was allowed to be.
+     min-width: 0 is the same fight one level up — every heading here is a grid
+     item, and a grid item's automatic minimum size is its min-content width. */
+  overflow-wrap: anywhere;
+  min-width: 0;
 }
 /* Fraunces carries the headlines. -0.03em tracking was tuned for Satoshi's
    loose grotesque fitting; on a bracketed serif it jams the serifs together, so
@@ -498,16 +566,16 @@
 
 /* cream button on navy — the login-screen CTA language */
 .lp-btn-cream { background: var(--cream); color: var(--navy); }
-.lp-btn-cream:hover { background: #fffaf0; }
+.lp-btn-cream:hover { background: var(--cream-hi); }
 
 /* navy button on paper */
 .lp-btn-navy { background: var(--ink); color: var(--cream); }
-.lp-btn-navy:hover { background: #22394f; }
+.lp-btn-navy:hover { background: var(--ink-hover); }
 
 .lp-btn-ghost {
   background: transparent;
   color: var(--cream);
-  border-color: rgba(244, 239, 227, 0.28);
+  border-color: var(--edge-cream);
 }
 .lp-btn-ghost:hover { border-color: var(--cream); }
 
@@ -568,6 +636,27 @@
    way, so the support floor is unchanged. */
 html:has(.lp) { scroll-padding-top: 76px; }
 
+/* Root-level horizontal clipping, and this page needs it more than a normal web
+   page does. `.lp` already carries overflow-x: clip, but .lp is a DIV: anything
+   that escapes it — a fixed element, a margin on <body>, a scrollbar-width
+   miscount — still scrolls the document. On the web that costs you a stray
+   horizontal scrollbar. Inside the Capacitor shell it costs you the content:
+   index.css pins `body.native-shell` to `overflow: hidden`, so an overflow that
+   would merely scroll in a browser is CUT OFF in the app, with no scrollbar to
+   tell anyone it happened.
+
+   `clip`, not `hidden`, on both. `hidden` makes the element a scroll container,
+   which silently breaks `position: sticky` on descendants — and the whole
+   navbar is sticky. `clip` does not. Scoped through :has(.lp) so the app's own
+   routes are untouched; the file already reaches for :has() one line above, so
+   the support floor does not move.
+
+   overflow-y stays visible on both, which is legal alongside clip (the
+   "visible computes to auto" rule fires for hidden/scroll/auto, not for clip),
+   so neither element becomes a scroll container and the page scrolls normally. */
+html:has(.lp),
+html:has(.lp) body { overflow-x: clip; }
+
 /* Anchor jumps from the menu land below the sticky bar, not under it. */
 .lp-sec { padding: clamp(56px, 8vw, 96px) 0; scroll-margin-top: 72px; }
 /* The two anchor targets that are NOT .lp-sec, and both are linked from the
@@ -576,7 +665,17 @@ html:has(.lp) { scroll-padding-top: 76px; }
    scrolled to a point 64px under an opaque sticky navbar, so the line you
    jumped for was the one thing you could not see. */
 .lp-cta, .lp-demo-proof { scroll-margin-top: 72px; }
-.lp-sec-navy { background: var(--navy); color: var(--cream-2); }
+/* The navy sections are the page's chapter breaks, so they get more air than
+   the cream ones they interrupt — every section carrying identical top and
+   bottom padding is the thing that makes a long page read as one undivided
+   scroll. Cream keeps the tighter measure above; navy opens up by about a
+   third. The bottom is heavier than the top on both, which pulls each section
+   down into the next rather than letting it float in its own box. */
+.lp-sec-navy {
+  background: var(--navy);
+  color: var(--cream-2);
+  padding: clamp(64px, 9vw, 108px) 0 clamp(76px, 11vw, 128px);
+}
 .lp-sec-paper { background: var(--paper); }
 
 /* There used to be a second cream, --paper-2, alternating section by section.
@@ -623,8 +722,13 @@ html:has(.lp) { scroll-padding-top: 76px; }
 
 .lp-hero {
   background:
-    radial-gradient(120% 90% at 50% -10%, #1b2a44 0%, var(--navy) 55%, var(--navy-deep) 100%);
-  padding: clamp(56px, 8vw, 92px) 0 clamp(56px, 8vw, 96px);
+    radial-gradient(120% 90% at 50% -10%, var(--hero-lift) 0%, var(--navy) 55%, var(--navy-deep) 100%);
+  /* Bottom heavier than top, by about a third. Symmetric hero padding is what
+     makes a hero look like a box that was placed on the page rather than the
+     top of it: the extra air underneath hands the reader down into the section
+     that answers the headline. It costs nothing above the fold — padding under
+     the last element cannot push the first one. */
+  padding: clamp(56px, 8vw, 92px) 0 clamp(76px, 11vw, 126px);
   position: relative;
   overflow: hidden;
 }
@@ -743,7 +847,7 @@ html:has(.lp) { scroll-padding-top: 76px; }
 .lp-appstore.is-soon {
   background: transparent;
   color: var(--cream);
-  border: 1px solid rgba(244, 239, 227, 0.32);
+  border: 1px solid var(--edge-cream);
 }
 .lp-appstore.is-soon:hover { border-color: var(--cream); }
 .lp-appstore svg { width: 24px; height: 24px; }
@@ -758,12 +862,12 @@ html:has(.lp) { scroll-padding-top: 76px; }
   gap: clamp(28px, 5vw, 56px);
   align-items: start;
 }
-@media (min-width: 880px) { .lp-turn-grid { grid-template-columns: 1fr 1fr; } }
+@media (min-width: 880px) { .lp-turn-grid { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); } }
 
 .lp-chat {
   border: 1px solid var(--rule);
   border-radius: 16px;
-  background: #fff;
+  background: var(--plate);
   padding: 18px;
   display: grid;
   gap: 9px;
@@ -777,7 +881,7 @@ html:has(.lp) { scroll-padding-top: 76px; }
   max-width: 84%;
   width: fit-content;
 }
-.lp-msg-me { margin-left: auto; background: var(--steel); color: #fff; }
+.lp-msg-me { margin-left: auto; background: var(--steel); color: var(--cream); }
 .lp-msg-dead { color: var(--ink-3); font-style: italic; }
 
 /* ============ steps ============ */
@@ -791,8 +895,8 @@ html:has(.lp) { scroll-padding-top: 76px; }
   overflow: hidden;
   margin-top: clamp(32px, 5vw, 52px);
 }
-@media (min-width: 760px) { .lp-steps { grid-template-columns: repeat(2, 1fr); } }
-@media (min-width: 1060px) { .lp-steps { grid-template-columns: repeat(4, 1fr); } }
+@media (min-width: 760px) { .lp-steps { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (min-width: 1060px) { .lp-steps { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
 
 .lp-step { background: var(--paper); padding: clamp(22px, 3vw, 30px); }
 .lp-step-n {
@@ -807,17 +911,120 @@ html:has(.lp) { scroll-padding-top: 76px; }
 
 /* ============ feature rows ============ */
 
+/* .lp-row is now MONEY'S SHAPE AND ONLY MONEY'S. It used to carry Birdie,
+   Money and Safety, three sections in a row, each of them a 1fr|1fr grid whose
+   text column ran h2 → .lp-lead → ruled .lp-list and whose other column held one
+   media object. Birdie and Money were not merely similar, they were the same
+   composition: media left, text right, half and half. Reading down the page you
+   met that panel three times and the only thing that changed was the noun.
+   Alternating image/text rows is a real macrostructure (Hallmark calls it Split
+   Studio) and the page is allowed to use it — what it is not allowed to do is
+   use it with the same proportion and the same internal rhythm every time,
+   because that is the difference between a pairing and a template.
+
+   So: Money keeps the symmetric diptych, because the split card is a table of
+   numbers and needs parity with the column arguing for it. Birdie moved to
+   .lp-birdie (asymmetric, plate in the right margin, the hero's own
+   composition). Safety moved to .lp-safety (statement beside the document, then
+   its guarantees ruled across the full width underneath). Before adding a
+   fourth section here, check what shape its neighbours already are.
+
+   minmax(0, 1fr) rather than 1fr: a bare 1fr is minmax(auto, 1fr), and `auto`
+   floors the track at its content's min-content width, which for a native-width
+   image is the image. Nothing in .lp-row is image-bearing today. It costs
+   nothing to be right about it before something is. */
 .lp-row {
   display: grid;
   gap: clamp(32px, 5vw, 64px);
   align-items: center;
 }
 @media (min-width: 900px) {
-  .lp-row { grid-template-columns: 1fr 1fr; }
+  .lp-row { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
   .lp-row-flip .lp-row-media { order: -1; }
 }
 .lp-row h2 { margin-bottom: 16px; }
 .lp-row .lp-lead { margin-bottom: 22px; }
+
+/* ---- Birdie: a plate in the margin ----
+   The media here is a phone, which is a tall narrow object; giving it half the
+   page made it a slab and gave the text column a measure it did not want. It is
+   a 300px plate in the right margin now, which is what the hero does with the
+   same asset, and the text runs at a real reading measure beside it. The
+   breakpoint is the hero's 940 rather than .lp-row's 900, so the two plate
+   compositions collapse at the same width and the rhyme survives on a tablet. */
+.lp-birdie {
+  display: grid;
+  gap: clamp(28px, 4vw, 40px) clamp(32px, 5vw, 56px);
+  align-items: start;
+}
+@media (min-width: 940px) {
+  /* A FIXED MEASURE, not 1fr, and this was worth screenshotting to get right.
+     The first version of this section used minmax(0, 1fr) for the text and
+     capped the ruled list at 46ch inside it. Rendered at 1280 that gave a 740px
+     column holding 510px of list, so the rules stopped 190px short of a column
+     that itself stopped 190px short of the plate: two ragged right edges and a
+     hole between them that read as a bug rather than as a margin.
+
+     38rem is the measure the content already wanted — the h2 sets in one line
+     at 46px, the lead's own 56ch cap lands just inside it, and the ruled rows
+     now share their right edge with both. space-between then pushes the plate
+     to the page's right edge, so the whitespace is one deliberate gutter
+     between two blocks with straight edges rather than three different
+     leftovers. Centred rather than start-aligned because the phone is nearly
+     twice the height of the text beside it, and top-aligning left the text
+     stranded at the ceiling of an empty column. */
+  .lp-birdie {
+    grid-template-columns: minmax(0, 38rem) minmax(0, 300px);
+    justify-content: space-between;
+    align-items: center;
+  }
+}
+.lp-birdie h2 { margin-bottom: 16px; }
+.lp-birdie .lp-lead { margin-bottom: 0; }
+
+/* ---- Safety: statement, document, then the guarantees ----
+   Two tiers rather than two columns. The heading and its lead sit beside the
+   real SOS email, and the four rules run across the full width underneath in a
+   2x2 ruled block. It is the only section on the page built this way, which is
+   the point: it is the last feature section and the most serious one, and it
+   was previously the third identical panel in a row. */
+.lp-safety {
+  display: grid;
+  gap: clamp(28px, 4vw, 44px) clamp(32px, 5vw, 64px);
+  align-items: start;
+}
+.lp-safety h2 { margin-bottom: 16px; }
+.lp-safety .lp-lead { margin-bottom: 0; }
+@media (min-width: 900px) {
+  /* 1.2 to 1, not 1 to 1, and the reason is not variety for its own sake. The
+     first version of this section used a plain 1fr|1fr, which is Money's grid
+     exactly — so the two sections still opened with the identical composition
+     and only diverged below the fold of the panel. It was also wrong on its own
+     terms: the email is a short document whose longest line is "Emergency Alert
+     from Jordan", and at half the page it sat in a box 40% wider than anything
+     in it, while the heading next to it wrapped. Giving the statement the extra
+     fifth reads as statement-led with the exhibit inset beside it, which is what
+     the section is. */
+  .lp-safety { grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr); }
+  .lp-safety-rules {
+    grid-column: 1 / -1;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    column-gap: clamp(32px, 5vw, 64px);
+    margin-top: 0;
+    padding-top: clamp(18px, 2.5vw, 26px);
+    border-top: 1px solid var(--rule-cream);
+  }
+  /* In one column the rule sits between consecutive items. In two it must sit
+     between consecutive ROWS, or the top-right item gets a rule over it with
+     nothing above it to divide. The band's own border-top is the divider for
+     row one; items three and four carry the divider for row two. Both selectors
+     are written through .lp-sec-navy so they outrank the (0,2,2) navy recolour
+     of `.lp-list li + li` further up the file. */
+  .lp-sec-navy .lp-safety-rules li + li { border-top-width: 0; }
+  .lp-sec-navy .lp-safety-rules li:nth-child(n + 3) {
+    border-top: 1px solid var(--rule-cream);
+  }
+}
 
 .lp-list { display: grid; gap: 12px; margin-top: 20px; }
 .lp-list li { list-style: none; font-size: 15.5px; color: var(--ink-2); line-height: 1.5; }
@@ -834,7 +1041,7 @@ html:has(.lp) { scroll-padding-top: 76px; }
 .lp-split {
   border: 1px solid var(--rule);
   border-radius: 18px;
-  background: #fff;
+  background: var(--plate);
   padding: clamp(20px, 3vw, 26px);
 }
 .lp-split-total {
@@ -868,7 +1075,7 @@ html:has(.lp) { scroll-padding-top: 76px; }
   align-items: start;
 }
 .lp-plan {
-  background: #fff;
+  background: var(--plate);
   border: 1px solid var(--rule);
   border-radius: 18px;
   padding: clamp(24px, 3vw, 32px);
@@ -882,7 +1089,7 @@ html:has(.lp) { scroll-padding-top: 76px; }
 .lp-plan-venue .lp-plan-note { color: var(--cream-3); }
 .lp-plan-venue .lp-list li { color: var(--cream-2); }
 .lp-plan-venue .lp-btn-navy { background: var(--cream); color: var(--navy); }
-.lp-plan-venue .lp-btn-navy:hover { background: #fffaf0; }
+.lp-plan-venue .lp-btn-navy:hover { background: var(--cream-hi); }
 
 .lp-plan-price {
   font-size: clamp(30px, 3.4vw, 38px);
@@ -919,7 +1126,7 @@ html:has(.lp) { scroll-padding-top: 76px; }
      against the CTA gradient and 1.59:1 against the fill inside it — a box you
      had to already know was there. See the token for the numbers. */
   border: 1px solid var(--field-edge);
-  background: rgba(244, 239, 227, 0.07);
+  background: var(--field-fill);
   color: var(--cream);
   font-family: inherit;
   font-size: 16px; /* 16px — no zoom-on-focus in the iOS shell */
@@ -930,13 +1137,34 @@ html:has(.lp) { scroll-padding-top: 76px; }
    still 1.54:1 away from --cream, which the entered value is set in, so the
    two never read as the same thing. */
 .lp-form input::placeholder { color: var(--cream-2); }
-.lp-form-msg { margin-top: 12px; font-size: 14px; color: var(--cream-2); }
+/* The slot the two live regions share, and it is always one line tall whether
+   or not either of them has anything to say. Before this, both regions
+   collapsed to zero at rest, so the first failed submit inserted a line of text
+   and shoved the CTA band — the buttons, the field you had just pressed enter
+   in — down by its height, at the exact moment you were looking at it. That is
+   a layout shift caused by an error message, which is the least forgivable
+   place to have one. Reserving the line costs 20px of navy nobody will notice.
+
+   1lh, with a px floor for engines that do not have it: 1lh resolves against
+   this element's own line-height, so the reservation tracks the text that will
+   land in it rather than a number that has to be re-tuned when the size moves.
+   The children still collapse individually (below) — exactly one of the pair is
+   ever non-empty, and collapsing the other is what keeps the pair one line tall
+   instead of two. */
+.lp-form-status {
+  margin-top: 12px;
+  min-height: 20px;
+  min-height: 1lh;
+}
+.lp-form-msg { font-size: 14px; color: var(--cream-2); }
 /* 7.96:1 on the lightest stop of the CTA gradient. Bold as well as coloured:
    the failure must not be carried by hue alone. */
-.lp-form-msg-bad { color: #f0a3a3; font-weight: 600; }
+.lp-form-msg-bad { color: var(--bad); font-weight: 600; }
 /* Exactly one of the pair is ever non-empty. Collapsing the other keeps the
    pair one line tall while leaving BOTH live regions mounted, which is the
-   whole point of rendering them empty rather than conditionally. */
+   whole point of rendering them empty rather than conditionally. The reserved
+   line lives on .lp-form-status above, so collapsing these no longer collapses
+   the slot. */
 .lp-form-msg:empty { margin: 0; height: 0; overflow: hidden; }
 
 /* ============ footer ============ */
@@ -946,14 +1174,23 @@ html:has(.lp) { scroll-padding-top: 76px; }
   display: grid; gap: 32px;
   padding-bottom: 32px; border-bottom: 1px solid var(--rule-cream);
 }
-@media (min-width: 720px) { .lp-footer-grid { grid-template-columns: 1.4fr 1fr 1fr; } }
+/* minmax(0, ...) on every track: the brand column carries the 24px mark, and
+   a bare fr track floors itself at its content's min-content width. */
+@media (min-width: 720px) {
+  .lp-footer-grid {
+    grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr) minmax(0, 1fr);
+  }
+}
 /* h3 (heading order), styled as the small column label it is. This rule is
    after the .lp h3 type rule, so equal specificity resolves in its favour. */
 .lp-footer h3 { font-family: var(--font-body); font-size: 13px; font-weight: 700; color: var(--cream); margin: 0 0 14px; letter-spacing: 0; }
 .lp-footer ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
 .lp-footer a { color: var(--cream-3); text-decoration: none; font-size: 14.5px; }
 .lp-footer a:hover { color: var(--cream); }
-.lp-footer-blurb { font-size: 14.5px; color: var(--cream-3); max-width: 34ch; margin-top: 12px; }
+/* 46ch, not 34. Thirty-four characters is under the 45-75ch band that prose is
+   readable in: the blurb is one sentence and 34ch broke it into four choppy
+   lines in a column that had room for two. */
+.lp-footer-blurb { font-size: 14.5px; color: var(--cream-3); max-width: 46ch; margin-top: 12px; }
 .lp-footer-base {
   padding-top: 24px;
   display: flex; flex-wrap: wrap; gap: 10px 20px; justify-content: space-between;
@@ -1078,7 +1315,10 @@ html:has(.lp) { scroll-padding-top: 76px; }
 }
 .lp-sos-meta {
   display: grid;
-  grid-template-columns: auto 1fr;
+  /* minmax(0, 1fr) on the value column: a bare 1fr floors the track at its
+     content's min-content width, and "Emergency Alert from Jordan" is the
+     longest string in the section. */
+  grid-template-columns: auto minmax(0, 1fr);
   gap: 6px 14px;
   padding-bottom: 16px;
   border-bottom: 1px solid var(--rule-cream);
@@ -1102,7 +1342,7 @@ html:has(.lp) { scroll-padding-top: 76px; }
 .lp-sos-link {
   font-size: 14.5px;
   font-weight: 600;
-  color: #e88f8f;
+  color: var(--alarm);
   text-decoration: underline;
   text-underline-offset: 3px;
   margin: 0 0 10px;
@@ -1119,7 +1359,7 @@ html:has(.lp) { scroll-padding-top: 76px; }
 /* ============ cta band ============ */
 
 .lp-cta {
-  background: linear-gradient(135deg, #142238 0%, var(--navy) 55%, #0d1a2e 100%);
+  background: linear-gradient(135deg, var(--cta-lift) 0%, var(--navy) 55%, var(--cta-deep) 100%);
   padding: clamp(72px, 10vw, 116px) 0;
 }
 .lp-cta-in { max-width: 720px; }
@@ -1188,8 +1428,16 @@ html:has(.lp) { scroll-padding-top: 76px; }
   /* Capped, not greedy. At full row width a cream-filled field is the loudest
      thing in a navy section, and it is a search box, not the headline. */
   flex: 1 1 220px; min-width: 0; max-width: 360px;
-  padding: 12px 16px; font: inherit; font-size: 15px;
-  color: var(--ink); background: #fff;
+  /* 16px, not 15. iOS zooms the whole viewport when a focused control computes
+     under 16px, and in the Capacitor shell it does not zoom back out. This was
+     already harmless in a browser — the floor block in index.css is (0,7,1) and
+     this class is (0,1,0), so the floor won — but a size that is only correct
+     because a rule in another file out-specifies it is one refactor away from
+     being wrong, and index.css's own comment names this class as the reason its
+     :not() chain has to be as long as it is. Correct at source instead;
+     iosFocusZoomFontFloor.test.js lists this exact fix as outstanding. */
+  padding: 12px 16px; font: inherit; font-size: 16px;
+  color: var(--ink); background: var(--plate);
   border: 1px solid var(--rule); border-radius: 12px; outline: none;
 }
 .lpd-input:focus { border-color: var(--steel); box-shadow: 0 0 0 3px rgba(45, 90, 135, 0.15); }
@@ -1200,10 +1448,22 @@ html:has(.lp) { scroll-padding-top: 76px; }
   color: var(--steel); background: none; border: 1px solid var(--rule); border-radius: 12px; cursor: pointer;
 }
 .lpd-locate:hover { border-color: var(--steel); }
+/* Eight states, not two. This control had default and hover only. It is the one
+   button on the page that does real work before it answers (it waits on the
+   geolocation permission prompt), so pressed and busy are exactly the two
+   states it most needs to show. LiveDemo drops its opacity to 0.6 inline while
+   locating; cursor and pointer-events are the other two channels, because
+   opacity alone is not a state, it is a tint. */
+.lpd-locate:active { border-color: var(--steel); transform: translateY(1px); }
+.lpd-locate[disabled],
+.lpd-locate[aria-disabled='true'] { cursor: progress; pointer-events: none; }
+@media (prefers-reduced-motion: reduce) {
+  .lpd-locate:active { transform: none; }
+}
 
 .lpd-stage {
   display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(300px, 1fr);
-  gap: 0; border: 1px solid var(--rule); border-radius: 16px; overflow: hidden; background: #fff;
+  gap: 0; border: 1px solid var(--rule); border-radius: 16px; overflow: hidden; background: var(--plate);
 }
 .lpd-map { min-height: 460px; }
 .lpd-map .maplibregl-map { font: inherit; }
@@ -1216,21 +1476,21 @@ html:has(.lp) { scroll-padding-top: 76px; }
 }
 .lpd-pin-photo {
   width: 46px; height: 46px; border-radius: 50%;
-  background-size: cover; background-position: center; background-color: #1e293b;
+  background-size: cover; background-position: center; background-color: var(--pin-ground);
   transition: transform 0.15s ease;
 }
 .lpd-pin:hover .lpd-pin-photo { transform: scale(1.1); }
 .lpd-pin-noimg {
   display: flex; align-items: center; justify-content: center;
-  color: #f1ede0; font: 700 18px 'Hanken Grotesk', sans-serif;
+  color: var(--paper); font: 700 18px 'Hanken Grotesk', sans-serif;
 }
 .lpd-pin-badge {
   margin-top: -8px; position: relative; z-index: 1;
-  padding: 1px 7px; border: 2px solid #fff; border-radius: 999px;
+  padding: 1px 7px; border: 2px solid var(--plate); border-radius: 999px;
   /* Black, not white: the badge ground is whichever crowd colour the venue
      scored, and white text measured 2.1:1 on green and amber. Black holds
      4.5:1 on all four grounds (green 9.8, amber 9.4, red 6.1, slate 4.5). */
-  color: #000; font: 700 11px 'Hanken Grotesk', sans-serif;
+  color: var(--badge-ink); font: 700 11px 'Hanken Grotesk', sans-serif;
   box-shadow: 0 2px 6px rgba(15, 23, 42, 0.3);
 }
 
@@ -1240,13 +1500,13 @@ html:has(.lp) { scroll-padding-top: 76px; }
 .lpd-dial { position: relative; width: 104px; height: 104px; flex-shrink: 0; }
 .lpd-dial-glow { position: absolute; inset: 0; border-radius: 50%; pointer-events: none; }
 .lpd-dial-core {
-  position: absolute; inset: 11px; border-radius: 50%; background: #fff;
+  position: absolute; inset: 11px; border-radius: 50%; background: var(--plate);
   display: flex; align-items: center; justify-content: center;
 }
 .lpd-dial-num { font-size: 23px; font-weight: 800; font-variant-numeric: tabular-nums; line-height: 1; }
 .lpd-live-dot {
   display: inline-block; width: 7px; height: 7px; border-radius: 50%;
-  background: #22c55e; margin-right: 6px; vertical-align: 1px;
+  background: var(--crowd-quiet); margin-right: 6px; vertical-align: 1px;
   animation: lpd-live 2s ease-in-out infinite;
 }
 @keyframes lpd-live { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
@@ -1265,8 +1525,20 @@ html:has(.lp) { scroll-padding-top: 76px; }
   height: 110px; margin-top: 16px; padding-top: 8px; border-top: 1px solid var(--rule);
 }
 .lpd-bar-col { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 5px; height: 100%; justify-content: flex-end; min-width: 0; }
-.lpd-bar { width: 100%; max-width: 18px; border-radius: 4px 4px 2px 2px; transition: height 0.5s cubic-bezier(0.22, 1, 0.36, 1); }
-.lpd-bar-hour { font-size: 9px; color: var(--ink-3); font-variant-numeric: tabular-nums; white-space: nowrap; }
+/* No transition. This carried `transition: height 0.5s` and height is a layout
+   property: twenty-four bars re-running layout and paint for half a second,
+   every time you pick a different pin, inside a WKWebView. The bars are
+   percentage-height children of a flex column, so there is no transform version
+   of the same animation to swap in from CSS alone — the height arrives inline
+   from LiveDemo.js. Cutting it is the right trade anyway: the chart is
+   evidence, and evidence that slides into place reads as an animation about
+   itself. It just redraws. */
+.lpd-bar { width: 100%; max-width: 18px; border-radius: 4px 4px 2px 2px; }
+/* 10px, not 9. Nine is below any readable floor and this is the only axis on
+   the page. Headroom checked rather than assumed: every other column is hidden,
+   so twelve labels share the card's width — 23px per slot at 320px, and "12p"
+   sets to about 16px at this size. */
+.lpd-bar-hour { font-size: 10px; color: var(--ink-3); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .lpd-bar-col:nth-child(even) .lpd-bar-hour { visibility: hidden; }
 
 .lpd-note { margin: 14px 0 0; font-size: 12.5px; color: var(--ink-3); }
@@ -1287,7 +1559,6 @@ html:has(.lp) { scroll-padding-top: 76px; }
 @keyframes lpd-shimmer { to { background-position: -200% 0; } }
 @media (prefers-reduced-motion: reduce) {
   .lpd-skel-dial, .lpd-skel-line, .lpd-skel-bars { animation: none; }
-  .lpd-bar { transition: none; }
   .lpd-live-dot { animation: none; }
   .lpd-pin:hover .lpd-pin-photo { transform: none; }
 }
@@ -1299,7 +1570,10 @@ html:has(.lp) { scroll-padding-top: 76px; }
 }
 
 @media (max-width: 860px) {
-  .lpd-stage { grid-template-columns: 1fr; }
+  /* minmax(0, 1fr), not 1fr. This track holds the MapLibre canvas, which is the
+     one element on the page whose intrinsic width is set by a library rather
+     than by this stylesheet. A bare 1fr would let it set the track's floor. */
+  .lpd-stage { grid-template-columns: minmax(0, 1fr); }
   .lpd-map { min-height: 320px; }
   .lpd-card { border-left: none; border-top: 1px solid var(--rule); min-height: 0; }
 }
@@ -1314,7 +1588,7 @@ html:has(.lp) { scroll-padding-top: 76px; }
   box-shadow: 0 28px 64px rgba(5, 10, 20, 0.45);
 }
 .lp-sec-navy .lpd-input {
-  background: rgba(244, 239, 227, 0.07);
+  background: var(--field-fill);
   /* Same 1.4.11 reasoning as the waitlist field: --rule-cream was 1.59:1
      against this fill. --field-edge is 3.99:1. */
   border-color: var(--field-edge);
@@ -1332,7 +1606,7 @@ html:has(.lp) { scroll-padding-top: 76px; }
 /* Scoped to the control row so the "Get the full picture" button inside the
    white card keeps its navy fill. */
 .lp-sec-navy .lpd-controls .lp-btn-navy { background: var(--cream); color: var(--navy); }
-.lp-sec-navy .lpd-controls .lp-btn-navy:hover { background: #fffaf0; }
+.lp-sec-navy .lpd-controls .lp-btn-navy:hover { background: var(--cream-hi); }
 
 /* The two birds on the pricing section. Bottom-aligned so they read as
    perched on the same ground rather than floating at different heights, and
