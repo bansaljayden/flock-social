@@ -67,14 +67,13 @@ try {
 // once someone remembers to set an environment variable.
 const MODERATION_INBOX = 'hello@flockcorp.com';
 
-// Matches isMailableAddress in routes/auth.js: the Apple placeholder
-// (@apple-signin.invalid) and evicted-squat tombstones (@unclaimed.invalid)
-// can never receive mail, and an admin row can hold either.
-function isMailable(addr) {
-  return typeof addr === 'string'
-    && /^[^\s@,;]+@[^\s@,;]+\.[^\s@,;]+$/.test(addr.trim())
-    && !/\.invalid$/i.test(addr.trim());
-}
+// The Apple placeholder (@apple-signin.invalid) and evicted-squat tombstones
+// (@unclaimed.invalid) can never receive mail, and an admin row can hold
+// either. Round 20: this was one of three private copies of that rule, and the
+// three disagreed — routes/safety.js's copy accepted the .invalid addresses
+// this one refuses, on the emergency path. The definition now lives in the one
+// module that would have to do the delivering.
+const { isMailableAddress: isMailable } = emailService;
 
 // A typo in MODERATION_ALERT_EMAIL used to be indistinguishable from not
 // setting it: the entry was dropped and the alert quietly went somewhere else.
@@ -115,29 +114,51 @@ function dedupe(addresses) {
 // its own per-process ceiling. Crossing it is logged at error level WITH the
 // report id, so a suppressed alert is louder in the log than a sent one, never
 // quieter.
+//
+// Round 20: the constant is named EMAILS_PER_HOUR and the counter was charged
+// once per REPORT, which then fanned out to up to MAX_RECIPIENTS addresses. The
+// real ceiling was therefore ten times the stated one — 400 sends an hour from
+// a limiter that reads 40 — and the number that governs a paid quota was the
+// one number in the file that did not mean what it said. It is charged per
+// EMAIL now. That changes nothing for the production deployment, which has a
+// single fallback recipient and still gets 40 reports an hour alerted; it only
+// bites the many-admin-rows configuration the MAX_RECIPIENTS note already tells
+// you not to build.
 const EMAILS_PER_HOUR = 40;
 const emailWindow = { startedAt: 0, count: 0 };
-function allowAlertEmail(now = Date.now()) {
+
+// `cost` is the number of addresses this alert is about to mail. The whole
+// alert is refused or allowed together: sending to four of ten recipients would
+// be a partial page, which is harder to reason about than no page at all, and
+// the log line below is what carries the report either way.
+function allowAlertEmail(cost = 1, now = Date.now()) {
+  // A cost that is not a small positive integer is a caller bug, and charging
+  // whatever it handed us would either exhaust the window on one alert or
+  // silently charge nothing. One email is the honest floor.
+  const charge = Number.isInteger(cost) && cost > 0 && cost <= MAX_RECIPIENTS ? cost : 1;
   if (now - emailWindow.startedAt > 60 * 60 * 1000) {
     emailWindow.startedAt = now;
     emailWindow.count = 0;
   }
-  if (emailWindow.count >= EMAILS_PER_HOUR) return false;
-  emailWindow.count += 1;
+  if (emailWindow.count + charge > EMAILS_PER_HOUR) return false;
+  emailWindow.count += charge;
   return true;
 }
 
-function safeSubject(s) {
-  return String(s).replace(/[\r\n]+/g, ' ').trim().slice(0, 200);
-}
+const { safeSubjectLine: safeSubject, escapeHtml } = emailService;
 
-function escapeHtml(s) {
-  return String(s == null ? '' : s)
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
+// A display name has no length of its own anywhere on the report path. It is
+// interpolated into the log line, into `label` (which becomes the BODY of a
+// push notification on a moderator's lock screen), and through the subject
+// builder into a mail header. safeSubject caps the finished subject; nothing
+// capped the other two, so one 4000-character profile name produced a 4000-
+// character stderr line and a notification whose only actionable content — the
+// report id — was pushed past whatever the lock screen truncates at.
+const MAX_LABEL_FIELD = 60;
+function labelField(v) {
+  if (v === null || v === undefined) return '';
+  const s = typeof v === 'object' ? '[not text]' : String(v);
+  return s.replace(/[\r\n\t]+/g, ' ').trim().slice(0, MAX_LABEL_FIELD);
 }
 
 // Deliberately thin. The queue itself is the place to read a report, and this
@@ -178,7 +199,7 @@ function alertHtml(report) {
 
 // Returns a summary of what each leg actually did. Callers ignore it; the tests
 // and the log line do not.
-async function alertModerators(io, report = {}) {
+async function alertModerators(io, rawReport = {}) {
   const summary = {
     logged: false,
     admins: 0,
@@ -188,14 +209,30 @@ async function alertModerators(io, report = {}) {
     emailSkipped: false,
     pushAttempts: 0,
     adminLookupFailed: false,
+    usedFallbackInbox: false,
   };
-  const label = `${report.reason || 'report'} • ${report.content_type || ''}${report.reporter ? ` • by ${report.reporter}` : ''}`;
+
+  // Round 20: the header promises "nothing in here is allowed to throw" and its
+  // one caller (routes/moderation.js) fires this WITHOUT awaiting. But `label`
+  // and the log line below it were built OUTSIDE the try, so a report that was
+  // not a plain object — `null`, a string, an array — threw before the try
+  // opened and rejected the promise. At that point the report is already
+  // committed to the database, so the only thing lost is the notification, and
+  // that is exactly the outcome the try/catch further down exists to guarantee.
+  // Normalize once, here, and every field below is reading something known.
+  const report = (rawReport && typeof rawReport === 'object' && !Array.isArray(rawReport)) ? rawReport : {};
+  const reportId = labelField(report.reportId) || 'unknown';
+  const label = [
+    labelField(report.reason) || 'report',
+    labelField(report.content_type),
+    report.reporter ? `by ${labelField(report.reporter)}` : '',
+  ].filter(Boolean).join(' • ');
 
   // LEG 1, first and unconditionally. The old version logged this AFTER the
   // admin lookup, inside the same try, so a database failure lost the only
   // record that a report had ever been filed: the catch printed the pg error
   // and not one word about the report.
-  console.warn(`[MODERATION] New report #${report.reportId}: ${label}`);
+  console.warn(`[MODERATION] New report #${reportId}: ${label}`);
   summary.logged = true;
 
   try {
@@ -212,7 +249,7 @@ async function alertModerators(io, report = {}) {
       // misconfiguration and gets fixed by setting an environment variable that
       // was already set.
       summary.adminLookupFailed = true;
-      console.error(`[MODERATION] report #${report.reportId}: admin lookup failed (${dbErr.message}). Falling back to the configured alert address.`);
+      console.error(`[MODERATION] report #${reportId}: admin lookup failed (${dbErr.message}). Falling back to the configured alert address.`);
     }
     summary.admins = admins.length;
 
@@ -252,48 +289,68 @@ async function alertModerators(io, report = {}) {
     let recipients = dedupe(wanted);
     // Truncation is a silent no-op for whoever fell off the end, so it is named.
     if (wanted.length > recipients.length && recipients.length === MAX_RECIPIENTS) {
-      console.error(`[MODERATION] report #${report.reportId}: more than ${MAX_RECIPIENTS} alert addresses resolved; only the first ${MAX_RECIPIENTS} were mailed. Use a distribution list in MODERATION_ALERT_EMAIL instead of many admin rows.`);
+      console.error(`[MODERATION] report #${reportId}: more than ${MAX_RECIPIENTS} alert addresses resolved; only the first ${MAX_RECIPIENTS} were mailed. Use a distribution list in MODERATION_ALERT_EMAIL instead of many admin rows.`);
     }
-    if (recipients.length === 0) recipients = [MODERATION_INBOX];
+    // Round 20. TASKS.md records MODERATION_ALERT_EMAIL as UNSET in production,
+    // and this branch is what that looks like from the outside: the report is
+    // mailed to a hardcoded address, and every line below names that address
+    // without ever saying it is the last resort standing in for a setting
+    // nobody made. An operator reading "Email went to hello@flockcorp.com
+    // (1 delivered)" cannot tell a configured deployment from an unconfigured
+    // one, which is the same silent-no-op this whole file exists to stop. The
+    // zero-admins case has named ADMIN_USER_IDS since round 18; this is the
+    // other half of the same sentence and it was mute.
+    if (recipients.length === 0) {
+      recipients = [MODERATION_INBOX];
+      summary.usedFallbackInbox = true;
+      console.error(`[MODERATION] report #${reportId}: MODERATION_ALERT_EMAIL is not set and no admin row has a mailable address, so this alert went to the fallback inbox ${MODERATION_INBOX} instead of to whoever is on duty. Set MODERATION_ALERT_EMAIL on the deployment.`);
+    }
     summary.emailRecipients = recipients;
+
+    // Round 20: these two lines named every recipient verbatim. They are staff
+    // addresses rather than a minor's parent's, so the stakes are lower than on
+    // the SOS path, but it is the same rule and there is no reason for the
+    // alerting service to be the one exception to it. The domain is what makes
+    // a delivery problem diagnosable; the local part is not.
+    const shownRecipients = () => recipients.map(emailService.maskAddress).join(', ');
 
     if (!process.env.RESEND_API_KEY) {
       summary.emailSkipped = true;
-      console.error(`[MODERATION] report #${report.reportId}: NO EMAIL SENT. RESEND_API_KEY is not set, so the email leg is off and this log line is the only record.`);
-    } else if (!allowAlertEmail()) {
+      console.error(`[MODERATION] report #${reportId}: NO EMAIL SENT. RESEND_API_KEY is not set, so the email leg is off and this log line is the only record.`);
+    } else if (!allowAlertEmail(recipients.length)) {
       summary.emailSkipped = true;
-      console.error(`[MODERATION] report #${report.reportId}: NO EMAIL SENT. More than ${EMAILS_PER_HOUR} alert emails in the last hour, so this one was held back. Read the queue at ${emailService.baseWebUrl()}/admin/moderation.`);
+      console.error(`[MODERATION] report #${reportId}: NO EMAIL SENT. The ${EMAILS_PER_HOUR}-email hourly ceiling would have been crossed by this alert's ${recipients.length} recipient(s), so it was held back. Read the queue at ${emailService.baseWebUrl()}/admin/moderation.`);
     } else {
       // A subject is a header, not a body: a CR/LF in one is header injection.
       // `reason` comes from the fixed VALID_REASONS vocabulary in routes/
       // moderation.js today, but this function is reachable from anywhere and
       // must not depend on its caller having validated for it.
-      const subject = safeSubject(`New Flock report #${report.reportId} (${report.reason || 'report'})`);
-      const html = alertHtml(report);
+      const subject = safeSubject(`New Flock report #${reportId} (${labelField(report.reason) || 'report'})`);
+      const html = alertHtml({ ...report, reportId });
       const results = await Promise.all(
         recipients.map((to) => emailService.sendEmail({ to, subject, html }).catch((e) => ({ sent: false, error: e.message })))
       );
       summary.emailSent = results.filter((r) => r && r.sent).length;
       if (summary.emailSent === 0) {
-        console.error(`[MODERATION] report #${report.reportId}: EMAIL FAILED for every recipient (${recipients.join(', ')}). Nobody was mailed.`);
+        console.error(`[MODERATION] report #${reportId}: EMAIL FAILED for every recipient (${shownRecipients()}). Nobody was mailed.`);
       }
     }
 
     // The summary line. This is what makes "nobody was paged" visibly different
     // from "everybody was paged" in the log.
-    const mailOutcome = `Email went to ${recipients.join(', ')}${summary.emailSkipped ? ' (skipped)' : ` (${summary.emailSent} delivered)`}.`;
+    const mailOutcome = `Email went to ${shownRecipients()}${summary.emailSkipped ? ' (skipped)' : ` (${summary.emailSent} delivered)`}.`;
     if (summary.adminLookupFailed) {
-      console.error(`[MODERATION] report #${report.reportId}: the admin list could not be read, so nothing was emitted to a person in the app. This is a database failure, not a missing setting. ${mailOutcome}`);
+      console.error(`[MODERATION] report #${reportId}: the admin list could not be read, so nothing was emitted to a person in the app. This is a database failure, not a missing setting. ${mailOutcome}`);
     } else if (summary.admins === 0) {
-      console.error(`[MODERATION] report #${report.reportId}: NO ADMIN ACCOUNTS EXIST. Nothing was emitted to a person in the app. Set ADMIN_USER_IDS on the deployment. ${mailOutcome}`);
+      console.error(`[MODERATION] report #${reportId}: NO ADMIN ACCOUNTS EXIST. Nothing was emitted to a person in the app. Set ADMIN_USER_IDS on the deployment. ${mailOutcome}`);
     } else {
-      console.warn(`[MODERATION] report #${report.reportId} alert: ${summary.admins} admin(s), ${summary.onlineAdmins} connected, email ${summary.emailSkipped ? 'SKIPPED' : `${summary.emailSent}/${recipients.length} delivered`}.`);
+      console.warn(`[MODERATION] report #${reportId} alert: ${summary.admins} admin(s), ${summary.onlineAdmins} connected, email ${summary.emailSkipped ? 'SKIPPED' : `${summary.emailSent}/${recipients.length} delivered`}.`);
     }
     return summary;
   } catch (err) {
     // The report is already in the log above, so this can only ever lose the
     // notification, never the report.
-    console.error(`[MODERATION] report #${report.reportId}: alerting failed after logging (${err.message}). The report is in the queue; nobody was notified.`);
+    console.error(`[MODERATION] report #${reportId}: alerting failed after logging (${err.message}). The report is in the queue; nobody was notified.`);
     return summary;
   }
 }
@@ -308,6 +365,7 @@ module.exports = {
     configuredRecipients,
     allowAlertEmail,
     safeSubject,
+    labelField,
     alertHtml,
     MODERATION_INBOX,
     EMAILS_PER_HOUR,
