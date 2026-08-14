@@ -1,6 +1,17 @@
 // ---------------------------------------------------------------------------
 // BestTime API Wrapper — placeholder-ready
 // When BESTTIME_API_KEY is not set, functions return null gracefully.
+//
+// Error contract (both fetchers, so callers can protect the corpus + quota):
+//   return null            → venue-level "no data" (genuine 404 / no analysis).
+//                            Weekly caller may mark the venue 404 and move on.
+//   throw err.transient    → BestTime outage / rate limit / network. Caller
+//                            must NOT mark the venue; retry-or-bail per venue.
+//   throw err.fatal        → key/account-level failure (401/402/403: bad key,
+//                            out of credits, forbidden). NOTHING venue-specific
+//                            can be concluded; caller must abort the whole run
+//                            immediately or every remaining venue gets falsely
+//                            marked and the corpus is poisoned for the cycle.
 // ---------------------------------------------------------------------------
 
 const { sleep } = require('./config');
@@ -16,6 +27,44 @@ function getKey() {
   return key;
 }
 
+// Classify a non-OK HTTP status into the error contract above.
+// Returns an Error to throw, or null meaning "treat as venue-level no-data".
+function classifyHttpFailure(status, context) {
+  // 5xx / 429 = transient (BestTime outage / rate limit) → throw so the
+  // caller's per-venue catch + consecutive-error bail prevents false 404 marks.
+  if (status >= 500 || status === 429) {
+    const e = new Error(`BestTime ${status} (${context})`);
+    e.transient = true;
+    return e;
+  }
+  // 401/402/403 = key-level: invalid key, OUT OF CREDITS (402), forbidden.
+  // Before this classification these fell through to `return null`, and
+  // collectWeekly marked every remaining venue besttime_status='404' — one
+  // expired key or exhausted quota mid-run silently poisoned the whole corpus
+  // cycle. The run must stop, not "skip".
+  if (status === 401 || status === 402 || status === 403) {
+    const e = new Error(`BestTime ${status} (${context}) — key/credits problem, aborting run`);
+    e.fatal = true;
+    return e;
+  }
+  // 404 and other 4xx: venue genuinely not resolvable → caller may mark it.
+  return null;
+}
+
+const NETWORK_ERR_RE = /aborted|timeout|ETIMEDOUT|ECONNRESET|ECONNREFUSED|EAI_AGAIN|ENOTFOUND|fetch failed/i;
+
+async function fetchWithTimeout(url, options, ms) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), ms);
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } finally {
+    // Round 13: previously cleared only on the success path — a network error
+    // left a 30s timer pending, keeping the process alive after pool.end().
+    clearTimeout(timer);
+  }
+}
+
 // Fetch weekly forecast for a venue (7 days × 24 hours of busyness %)
 // Returns: { venueId, days: [{ dayInt, dayText, hours: [0-100 × 24] }], epochAnalysis }
 async function fetchWeeklyForecast(venueName, venueAddress, existingVenueId) {
@@ -27,25 +76,17 @@ async function fetchWeeklyForecast(venueName, venueAddress, existingVenueId) {
       ? new URLSearchParams({ api_key_private: apiKey, venue_id: existingVenueId })
       : new URLSearchParams({ api_key_private: apiKey, venue_name: venueName, venue_address: venueAddress });
 
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 30000);
-    const response = await fetch(`https://besttime.app/api/v1/forecasts?${params}`, {
-      method: 'POST',
-      signal: controller.signal,
-    });
-    clearTimeout(timeout);
+    const response = await fetchWithTimeout(
+      `https://besttime.app/api/v1/forecasts?${params}`,
+      { method: 'POST' },
+      30000
+    );
 
     if (!response.ok) {
       console.error(`[ML:BestTime] Weekly forecast failed (${response.status}) for ${venueName}`);
-      // 404 = venue genuinely not in BestTime → caller marks as 404, never retries.
-      // 5xx / 429 = transient (BestTime outage / quota) → throw so caller's per-venue
-      // catch + consecutive-error bail prevents false 404 marks.
-      if (response.status >= 500 || response.status === 429) {
-        const e = new Error(`BestTime ${response.status}`);
-        e.transient = true;
-        throw e;
-      }
-      return null;
+      const err = classifyHttpFailure(response.status, 'weekly');
+      if (err) throw err;
+      return null; // genuine venue-level 404 → caller marks as 404, never retries
     }
 
     const data = await response.json();
@@ -70,16 +111,19 @@ async function fetchWeeklyForecast(venueName, venueAddress, existingVenueId) {
     };
   } catch (err) {
     console.error(`[ML:BestTime] Weekly forecast error for ${venueName}:`, err.message);
-    // Re-throw transient errors (5xx/429 from above + network/timeout/abort) so
-    // caller doesn't mark these venues as 404 and lose them for the cycle.
-    const isNetwork = /aborted|timeout|ETIMEDOUT|ECONNRESET|ECONNREFUSED|EAI_AGAIN|ENOTFOUND|fetch failed/i.test(err.message || '');
-    if (err.transient || isNetwork) throw err;
+    // Re-throw classified errors (transient 5xx/429, fatal 401/402/403) and
+    // network/timeout/abort failures so the caller never 404-marks these.
+    if (err.transient || err.fatal || NETWORK_ERR_RE.test(err.message || '')) throw err;
     return null;
   }
 }
 
 // Fetch live busyness for a venue
 // Returns: { forecastedBusyness, liveBusyness, liveAvailable, hour, venueOpen }
+// Same error contract as fetchWeeklyForecast — before round 13 this swallowed
+// EVERY failure into null, so a BestTime outage or a dead key looked identical
+// to "venue has no live data" and collectRealtime kept hammering the API for
+// thousands of venues with no way to bail.
 async function fetchLiveBusyness(venueId) {
   const apiKey = getKey();
   if (!apiKey) return null;
@@ -90,16 +134,16 @@ async function fetchLiveBusyness(venueId) {
 
   try {
     const params = new URLSearchParams({ api_key_private: apiKey, venue_id: venueId });
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 30000);
-    const response = await fetch(`https://besttime.app/api/v1/forecasts/live?${params}`, {
-      method: 'POST',
-      signal: controller.signal,
-    });
-    clearTimeout(timeout);
+    const response = await fetchWithTimeout(
+      `https://besttime.app/api/v1/forecasts/live?${params}`,
+      { method: 'POST' },
+      30000
+    );
 
     if (!response.ok) {
       console.error(`[ML:BestTime] Live query failed (${response.status}) for ${venueId}`);
+      const err = classifyHttpFailure(response.status, 'live');
+      if (err) throw err;
       return null;
     }
 
@@ -120,6 +164,7 @@ async function fetchLiveBusyness(venueId) {
     };
   } catch (err) {
     console.error(`[ML:BestTime] Live query error for ${venueId}:`, err.message);
+    if (err.transient || err.fatal || NETWORK_ERR_RE.test(err.message || '')) throw err;
     return null;
   }
 }
