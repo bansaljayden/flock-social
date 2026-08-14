@@ -524,19 +524,38 @@ test('list previews do not spend the single-venue allowance', async () => {
 // `https://places.googleapis.com/v1/places/${placeId}`, the URL parser then
 // normalises that into a different Google endpoint — called with our
 // server-restricted API key attached — and a `?` or `#` in the id rewrites the
-// query string and field mask the same way. routes/publicCrowd.js has encoded
-// this since it was written; the other two calls did not.
+// query string and field mask the same way.
+//
+// These tests originally asserted the WEAK property: that a traversal id was
+// encoded by the time it reached Google. Both routes now shape-check the id
+// against utils/places.isPlaceIdShaped, so the strong property holds instead —
+// a traversal never reaches Google at all, and never spends a paid call.
+//
+// Both halves are asserted here on purpose. The refusal is what actually
+// protects today. The single-segment check is the reason it still holds if the
+// shape rule is ever loosened, and it is the only thing standing between us and
+// this bug returning: the shape rule is a separate file's decision, and a
+// place id that satisfies it must STILL land as exactly one path segment.
 // ===========================================================================
 
 const placesPathOf = (url) => new URL(url).pathname;
 
+// Shaped per utils/places.PLACE_ID_RE, so it gets through to Google.
+const LEGIT_PLACE_ID = 'ChIJN1t_tDeuEmsRUsoyG83frY4';
+
 test('a place id cannot walk out of /v1/places/ on the crowd card', async () => {
   scriptFeedback([]);
-  // Encoded on the wire, decoded by Express into a traversal, re-encoded by the
-  // route into a single segment.
+  // Encoded on the wire, decoded by Express into a traversal.
   const res = await call('GET', '/api/crowd/AAAAAA%2F..%2F..%2Fv1%3Aescape?localHour=20&localDay=5');
-  assert.ok(res.status === 200 || res.status === 502, res.text);
+  assert.strictEqual(res.status, 400, res.text);
+  assert.strictEqual(fetched.filter((u) => u.includes('/v1/places/')).length, 0,
+    'a paid Google call was spent on an id that cannot be real');
 
+  // And an id that IS shaped still becomes exactly one segment.
+  fetched.length = 0;
+  scriptFeedback([]);
+  const ok = await call('GET', `/api/crowd/${LEGIT_PLACE_ID}?localHour=20&localDay=5`);
+  assert.ok(ok.status === 200 || ok.status === 502, ok.text);
   const details = fetched.filter((u) => u.includes('/v1/places/'));
   assert.ok(details.length > 0, 'the route never called Google, so this proves nothing');
   for (const u of details) {
@@ -544,7 +563,6 @@ test('a place id cannot walk out of /v1/places/ on the crowd card', async () => 
     // /v1/places/<id> and nothing more.
     assert.deepStrictEqual(segments.slice(0, 2), ['v1', 'places']);
     assert.strictEqual(segments.length, 3, `a place id became extra path segments: ${placesPathOf(u)}`);
-    assert.strictEqual(new URL(u).search, '', `a place id injected a query string: ${u}`);
   }
 });
 
@@ -552,11 +570,16 @@ test('a place id cannot walk out of /v1/places/ on the alternatives list', async
   scriptFeedback([]);
   // Two `..` segments, so an unencoded id escapes /v1/places/ entirely. One is
   // not enough — it only pops the id itself and lands back inside the
-  // collection, which is why this assertion has to be written against a payload
-  // that actually gets out.
+  // collection, which is why the id is written this way.
   const res = await call('GET', '/api/crowd/BBBBBB%2F..%2F..%2Fv1%3Aescape/alternatives?localHour=20&localDay=5');
-  assert.ok(res.status === 200 || res.status === 502, res.text);
+  assert.strictEqual(res.status, 400, res.text);
+  assert.strictEqual(fetched.filter((x) => x.includes('/v1/places/')).length, 0,
+    'a paid Google call was spent on an id that cannot be real');
 
+  fetched.length = 0;
+  scriptFeedback([]);
+  const ok = await call('GET', `/api/crowd/${LEGIT_PLACE_ID}/alternatives?localHour=20&localDay=5`);
+  assert.ok(ok.status === 200 || ok.status === 502, ok.text);
   const details = fetched.filter((x) => x.includes('/v1/places/'));
   assert.ok(details.length > 0, 'the route never called Google, so this proves nothing');
   for (const u of details) {
