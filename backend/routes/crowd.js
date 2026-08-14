@@ -83,6 +83,26 @@ const { allowPlacesSearch } = require('../utils/placesBudget');
 // Helpers
 // ---------------------------------------------------------------------------
 
+// A user's crowd report informs reads within an hour either side of it.
+//
+// Round 15: that window was written as `hour BETWEEN GREATEST(0, h-1) AND
+// LEAST(23, h+1)`, which CLAMPS where the clock WRAPS. At hour 23 it asked for
+// 22..23 and at hour 0 it asked for 0..1, so a report filed at 11 PM could
+// never reach the midnight read and a midnight report could never reach 11 PM —
+// the exact hours where "how busy is it right now" is the whole question, and
+// the hours a bar's night actually turns on.
+//
+// Midnight is also a different weekday, so the window is (day, hour) PAIRS on
+// the 168-hour week rather than a range of hours: the neighbour of Friday 23:00
+// is Saturday 00:00, not Friday 00:00. Same shape as the neighbour smoothing in
+// services/mlPredictor.js getBaseline.
+function feedbackWindow(day, hour) {
+  const d = (((Math.trunc(day) % 7) + 7) % 7);
+  const h = (((Math.trunc(hour) % 24) + 24) % 24);
+  const slot = d * 24 + h;
+  return [(slot + 167) % 168, slot, (slot + 1) % 168].map((s) => [Math.floor(s / 24), s % 24]);
+}
+
 function priceLevelToNum(priceLevel) {
   const map = {
     'PRICE_LEVEL_FREE': 0,
@@ -248,10 +268,11 @@ router.get('/:placeId',
       try {
         const fbResult = await pool.query(
           `SELECT crowd_level, predicted_score FROM venue_feedback
-           WHERE venue_place_id = $1 AND day_of_week = $2 AND hour BETWEEN $3 AND $4
+           WHERE venue_place_id = $1
+             AND (day_of_week, hour) IN (($2::int, $3::int), ($4::int, $5::int), ($6::int, $7::int))
              AND verified = true -- only presence-verified reports: Sybil accounts could steer public predictions (REVIEW-ROUND5)
            ORDER BY created_at DESC LIMIT 50`,
-          [placeId, localDay, Math.max(0, localHour - 1), Math.min(23, localHour + 1)]
+          [placeId, ...feedbackWindow(localDay, localHour).flat()]
         );
         calibration = buildCalibrationAdjustment(fbResult.rows, crowdResult.score);
       } catch (fbErr) {
@@ -365,7 +386,18 @@ router.post('/batch',
         return res.status(400).json({ error: errors.array()[0].msg });
       }
 
-      const { venues: rawVenues, localHour, localDay } = req.body;
+      const { venues: rawVenues } = req.body;
+      // Round 15: localHour/localDay were read straight out of the body with no
+      // validation, unlike GET /:placeId which parses and range-checks them.
+      // `localHour: "abc"` reached setHours(NaN), which makes an Invalid Date,
+      // and every feature derived from it (day, hour, month, holiday, the event
+      // window) then came out NaN and was zero-filled into the vector — a
+      // confidently wrong score with no error anywhere. Anything that is not a
+      // real clock reading is treated as "not supplied".
+      let localHour = req.body.localHour != null ? parseInt(req.body.localHour, 10) : null;
+      let localDay = req.body.localDay != null ? parseInt(req.body.localDay, 10) : null;
+      if (!Number.isInteger(localHour) || localHour < 0 || localHour > 23) localHour = null;
+      if (!Number.isInteger(localDay) || localDay < 0 || localDay > 6) localDay = null;
       // Round 8: items were passed to the predictor as arbitrary objects,
       // pushing attacker-shaped keys into its caches. Keep only known fields
       // with the right types; malformed items score as low-signal venues.
@@ -396,10 +428,17 @@ router.post('/batch',
         clientTime.setHours(localHour, 0, 0, 0);
       }
 
-      // Get weather once from the first venue's location
+      // Get weather once from the first venue's location.
+      //
+      // Round 15: these coordinates LOOK venue-derived but they are not — they
+      // arrive in the request body, so a caller can put any lat/lng in the first
+      // item and this is an enumeration surface for the paid weather API exactly
+      // like GET /api/weather. Identify the caller so the per-user hourly
+      // ceiling applies. Real browsing is unaffected: the reading is cached per
+      // ~1km coordinate bucket and a cache hit charges nothing.
       const firstLoc = venues[0]?.location;
       const weather = (firstLoc?.latitude && firstLoc?.longitude)
-        ? await getWeather(firstLoc.latitude, firstLoc.longitude)
+        ? await getWeather(firstLoc.latitude, firstLoc.longitude, { userId: req.user.id })
         : null;
 
       // Bulk query feedback for all venues at once (non-blocking)
@@ -411,10 +450,9 @@ router.post('/batch',
         const fbResult = await pool.query(
           `SELECT venue_place_id, crowd_level, predicted_score FROM venue_feedback
            WHERE venue_place_id = ANY($1::text[])
-             AND day_of_week = $2
-             AND hour BETWEEN $3 AND $4
+             AND (day_of_week, hour) IN (($2::int, $3::int), ($4::int, $5::int), ($6::int, $7::int))
              AND verified = true -- only presence-verified reports: Sybil accounts could steer public predictions (REVIEW-ROUND5)`,
-          [placeIds, batchDay, Math.max(0, batchHour - 1), Math.min(23, batchHour + 1)]
+          [placeIds, ...feedbackWindow(batchDay, batchHour).flat()]
         );
         for (const row of fbResult.rows) {
           if (!feedbackByVenue[row.venue_place_id]) feedbackByVenue[row.venue_place_id] = [];
@@ -476,8 +514,11 @@ router.get('/:placeId/alternatives',
       if (!Number.isInteger(localHour) || localHour < 0 || localHour > 23) localHour = now.getHours();
       if (!Number.isInteger(localDay) || localDay < 0 || localDay > 6) localDay = now.getDay();
 
-      // Two paid Google calls per request — budget them (round 8)
-      if (!allowPlacesSearch(req.user.id)) {
+      // Two paid Google calls per request — a Place Details for the target and
+      // a Text Search for the neighbours — so charge two. Round 15: the comment
+      // already said two and the charge was one, which let this endpoint spend
+      // twice its share of the budget; `cost` exists for exactly this.
+      if (!allowPlacesSearch(req.user.id, 2)) {
         return res.status(429).json({ error: 'Loading venues too fast. Give it a few seconds.' });
       }
 
@@ -552,9 +593,9 @@ router.get('/:placeId/alternatives',
         const fbResult = await pool.query(
           `SELECT venue_place_id, crowd_level, predicted_score FROM venue_feedback
            WHERE venue_place_id = ANY($1::text[])
-             AND day_of_week = $2 AND hour BETWEEN $3 AND $4
+             AND (day_of_week, hour) IN (($2::int, $3::int), ($4::int, $5::int), ($6::int, $7::int))
              AND verified = true`,
-          [[placeId, ...altIds], localDay, Math.max(0, localHour - 1), Math.min(23, localHour + 1)]
+          [[placeId, ...altIds], ...feedbackWindow(localDay, localHour).flat()]
         );
         for (const row of fbResult.rows) {
           (feedbackByVenue[row.venue_place_id] ||= []).push(row);
@@ -592,4 +633,4 @@ module.exports = router;
 // Exposed for backend/__tests__/crowdReaudit.test.js — the venue-clock path
 // depends on utcOffsetMinutes surviving the Google->venue shaping, and that
 // drop was invisible to every existing test because the shaping is internal.
-module.exports.__testables = { fetchVenueFromGoogle };
+module.exports.__testables = { fetchVenueFromGoogle, feedbackWindow };
