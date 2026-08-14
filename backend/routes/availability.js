@@ -2,8 +2,9 @@ const express = require('express');
 const { body, validationResult } = require('express-validator');
 const pool = require('../config/database');
 const { authenticate } = require('../middleware/auth');
-const { stripHtml } = require('../utils/sanitize');
 const { rejectIfProfane } = require('../utils/moderation');
+// Shape before content — see validators/shape.js.
+const { scalarOnly, freeText } = require('../validators/shape');
 
 const router = express.Router();
 router.use(authenticate);
@@ -27,12 +28,27 @@ function clampExpiry(clientExpiry) {
 
 // POST /api/availability — set my pulse
 router.post('/',
-  body('status').isIn(['down', 'maybe', 'not']).withMessage('status must be down, maybe, or not'),
+  // SHAPE BEFORE CONTENT (round 20). `{"status": ["down"]}` satisfied isIn():
+  // express-validator stringifies a one-element array before testing it, and
+  // the value then stays an array in req.body. It reached pg as a parameter for
+  // availability_pulses.status, which is VARCHAR(10) behind
+  // CHECK (status IN ('down','maybe','not')) — a 500 (23514/22001) for a body
+  // the caller picks, instead of the 400 this line is written to give.
+  scalarOnly(body('status'), 'status').isIn(['down', 'maybe', 'not']).withMessage('status must be down, maybe, or not'),
   // Round 13: the note is UGC pushed to every friend over the
   // `availability_updated` socket event, and it was the last free-text field
   // with neither sanitizing nor a profanity screen.
-  body('note').optional().isString().trim().customSanitizer(stripHtml).isLength({ max: 80 }),
-  body('expires_at').optional().isISO8601(),
+  //
+  // Round 20: `optional()` skips ONLY undefined, so a client clearing its note
+  // with an explicit `null` was answered 400 by isString() even though the
+  // handler below already reads a falsy note as "no note". freeText() also adds
+  // the trailing trim the old chain lacked, so a markup-only note ("<b> </b>")
+  // is measured after sanitizing and stored as NULL rather than as a space.
+  freeText(body('note').optional({ nullable: true }), 'note').isLength({ max: 80 }),
+  // clampExpiry() already coerces anything unusable to a default, so a
+  // non-scalar here was inert rather than dangerous — but it was inert by
+  // accident, and `null` (which clampExpiry handles) was refused by isISO8601.
+  scalarOnly(body('expires_at').optional({ nullable: true }), 'expiry').isISO8601(),
   async (req, res) => {
     try {
       const errors = validationResult(req);
