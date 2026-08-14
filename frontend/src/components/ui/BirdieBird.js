@@ -31,9 +31,14 @@ import React, { useEffect, useRef } from 'react';
 // two layers would drift apart.
 //
 // No CSS filters (they re-rasterize every frame in the Capacitor WebView) and
-// nothing painted on top of the photo. The loop stops when he scrolls out of
-// view and never starts at all under prefers-reduced-motion, where the two
-// layers simply stack into the original bird and stand still.
+// nothing painted on top of the photo.
+//
+// Everything this component costs is scoped to "on screen, awake, and allowed
+// to move". The loop, the window listeners, the compositor layers and the
+// wings-spread image all appear when he scrolls into view and all go away
+// again when he leaves, when the tab or the app goes to the background, or
+// when prefers-reduced-motion is on, where the two layers simply stack into
+// the original bird and stand still.
 // ---------------------------------------------------------------------------
 
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
@@ -62,6 +67,21 @@ const HOP_MS = 700;
 const PERK_MS = 1100;
 const IDLE_AFTER = 2600;   // ms of pointer silence before he entertains himself
 
+// Frame budget, in ms between rendered frames. Nothing here needs 120Hz: on a
+// ProMotion iPhone an uncapped rAF loop writes twice the styles for motion no
+// eye resolves. 14 caps him at 60 while he is reacting to something; 28 caps
+// him at 30 while the only thing moving is a 4-second breath at 0.8% scale.
+// Both sit just under a real frame interval so a 60Hz panel never beats
+// against the gate and drops to half rate by accident.
+const STEP_BUSY = 14;
+const STEP_CALM = 28;
+// How long a cached rect is trusted before it is re-read anyway. Scroll,
+// resize and element-resize all invalidate it immediately; this only catches
+// layout that moved for a reason nothing told us about: a lazy image above him
+// arriving, a font swapping, or the AI panel transitioning its own `bottom`
+// and carrying him with it. Four reads a second against sixty.
+const REMEASURE_MS = 250;
+
 // Where the head meets the shoulders, in the head layer's own box. The head
 // sits right of centre on the canvas, so the pivot does too.
 const NECK = '66% 37%';
@@ -70,8 +90,8 @@ const NECK = '66% 37%';
 // head feathered at its own neck line on an identical canvas, and the pivot
 // that neck sits on. Birdie also has a wings-spread frame; the warm bird does
 // not, so the flap layer is optional and the hop simply runs without it.
-// These are module constants on purpose — the effect keys off the object, so
-// an inline literal at the call site would restart the loop on every render.
+// These are module constants on purpose — the effect keys off the flap path,
+// but the render reads the whole object every time.
 export const BIRDIE = {
   body: '/birdie/birdie-body',
   head: '/birdie/birdie-head',
@@ -85,6 +105,55 @@ export const WARM_BIRD = {
   neck: '62% 32%',
 };
 
+// --- shared pointer --------------------------------------------------------
+// One set of window listeners for the whole page however many birds are on it.
+// The pricing section alone renders two, and a per-instance pointermove
+// handler is work charged to the same thread that is running the animation.
+const pointer = { x: 0, y: 0, seen: false, at: -Infinity };
+let pointerRefs = 0;
+
+const onWindowPointer = (e) => {
+  // Touch has no hover. A finger dragging the page is not a cursor to follow,
+  // and tracking it would turn every scroll into head motion. Taps still make
+  // him hop; that listener is separate and lives on the bird itself.
+  if (e.pointerType === 'touch') return;
+  pointer.x = e.clientX;
+  pointer.y = e.clientY;
+  pointer.seen = true;
+  pointer.at = performance.now();
+};
+
+// Cursor left the window, or the window lost focus. Either way there is no
+// longer anything to look at, so he goes idle now instead of staring at the
+// edge the cursor left through for another two and a half seconds.
+const onWindowPointerGone = (e) => {
+  if (e && e.type === 'pointerout' && e.relatedTarget) return;
+  pointer.at = -Infinity;
+};
+
+const retainPointer = () => {
+  if (pointerRefs++ > 0) return;
+  window.addEventListener('pointermove', onWindowPointer, { passive: true });
+  window.addEventListener('pointerdown', onWindowPointer, { passive: true });
+  window.addEventListener('pointerout', onWindowPointerGone, { passive: true });
+  window.addEventListener('blur', onWindowPointerGone);
+};
+
+const releasePointer = () => {
+  if (--pointerRefs > 0) return;
+  pointerRefs = 0;
+  window.removeEventListener('pointermove', onWindowPointer);
+  window.removeEventListener('pointerdown', onWindowPointer);
+  window.removeEventListener('pointerout', onWindowPointerGone);
+  window.removeEventListener('blur', onWindowPointerGone);
+};
+
+// requestIdleCallback landed in Safari 16.4; older WebViews get a plain delay.
+const idleIn = (fn) =>
+  window.requestIdleCallback ? window.requestIdleCallback(fn, { timeout: 1500 }) : window.setTimeout(fn, 400);
+const idleCancel = (h) =>
+  window.requestIdleCallback ? window.cancelIdleCallback(h) : window.clearTimeout(h);
+
 const layer = {
   position: 'absolute',
   left: 0,
@@ -95,16 +164,32 @@ const layer = {
   objectPosition: 'center bottom',
   userSelect: 'none',
   WebkitUserSelect: 'none',
+  // Promotion is applied by the loop and taken back when it stops, so an
+  // off-screen or reduced-motion bird holds no compositor texture.
+  willChange: 'auto',
 };
 
 // `dark` is accepted so existing call sites keep working. The photo carries
 // its own light and reads on both surfaces, so no per-theme treatment.
-export default function BirdieBird({ size = 200, dark = false, style, bird = BIRDIE }) {
+//
+// `eager` is the escape hatch for a call site that puts him above the fold.
+// Every current one is below it (the landing page's Birdie and pricing
+// sections, and the AI panel, which does not exist until you open it), so the
+// default defers ~245KB at 2x per bird until he is actually scrolled to.
+export default function BirdieBird({ size = 200, dark = false, style, bird = BIRDIE, eager = false }) {
   const wrapRef = useRef(null);
   const bodyRef = useRef(null);
   const carrierRef = useRef(null);
   const headRef = useRef(null);
   const flapRef = useRef(null);
+
+  // Read through a ref inside the loop rather than closed over, so resizing
+  // him (the AI panel does, on expand) does not tear the loop down and rebuild
+  // every listener.
+  const sizeRef = useRef(size);
+  sizeRef.current = size;
+
+  const flapSrc = bird.flap;
 
   useEffect(() => {
     const wrap = wrapRef.current;
@@ -113,15 +198,10 @@ export default function BirdieBird({ size = 200, dark = false, style, bird = BIR
     const head = headRef.current;
     const flap = flapRef.current;
     // flap is optional — only Birdie has a wings-spread frame.
-    if (!wrap || !body || !carrier || !head) return;
+    if (!wrap || !body || !carrier || !head) return undefined;
 
-    const reduced = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
-    if (reduced) return;
-
-    // --- pointer state -----------------------------------------------------
-    let ptrX = 0, ptrY = 0;
-    let pointerSeen = false;
-    let lastMove = -Infinity;
+    const mq = window.matchMedia ? window.matchMedia('(prefers-reduced-motion: reduce)') : null;
+    let reduced = !!(mq && mq.matches);
 
     // --- pose state --------------------------------------------------------
     let curX = 0, curY = 0;   // smoothed aim, -1..1
@@ -137,14 +217,33 @@ export default function BirdieBird({ size = 200, dark = false, style, bird = BIR
     let perkT0 = -Infinity;
     let hopT0 = -Infinity;
 
-    let last = 0, raf = 0, running = false;
-    let lastBody = '', lastHead = '', lastFlap = '';
+    let last = 0, raf = 0, running = false, inView = false, holding = false;
 
-    const onPointer = (e) => {
-      ptrX = e.clientX;
-      ptrY = e.clientY;
-      pointerSeen = true;
-      lastMove = performance.now();
+    // Last pose actually written, quantised to what survives the trip to the
+    // screen. A frame that rounds to the same pose writes no style and builds
+    // no string, so the calm 30Hz loop mostly allocates nothing at all.
+    let qBY = NaN, qBX = NaN, qBSY = NaN;
+    let qHX = NaN, qHY = NaN, qHR = NaN;
+    let qFA = NaN;
+
+    // --- cached geometry ---------------------------------------------------
+    // getBoundingClientRect in the frame callback forces a synchronous layout
+    // every frame, per bird, right after that same frame wrote transforms.
+    // Cache it and re-read only when something could have moved him.
+    let mx = 0, my = 0, mw = 0, mh = 0;
+    let measuredAt = -Infinity;
+    let stale = true;
+    const invalidate = () => { stale = true; };
+
+    const measure = (now) => {
+      const r = wrap.getBoundingClientRect();
+      mw = r.width || sizeRef.current;
+      mh = r.height || sizeRef.current;
+      // His head sits right of centre on the canvas, near the top.
+      mx = r.left + mw * 0.66;
+      my = r.top + mh * 0.21;
+      measuredAt = now;
+      stale = false;
     };
 
     const onHop = () => {
@@ -170,20 +269,26 @@ export default function BirdieBird({ size = 200, dark = false, style, bird = BIR
     };
 
     const frame = (now) => {
-      if (!running) return;
+      if (!running) { raf = 0; return; }
+      raf = requestAnimationFrame(frame);
 
-      const dt = Math.min(now - last, 64) || 16;
+      const live = pointer.seen && now - pointer.at < IDLE_AFTER;
+      // Anything with a deadline runs at full rate. A bird that is only
+      // breathing does not.
+      const busy = live || idleMoving || prox > 0.002 ||
+        now - hopT0 < HOP_MS || now - perkT0 < PERK_MS;
+      const step = now - last;
+      if (step < (busy ? STEP_BUSY : STEP_CALM)) return;
+
+      // rAF timestamps are taken at the top of the frame and can read slightly
+      // earlier than a performance.now() called just before scheduling, so the
+      // first step of a run can be negative. Clamped at both ends: a negative
+      // dt would drive the smoothing backwards, a huge one would teleport him.
+      const dt = clamp(step, 0, 64);
       last = now;
 
-      const r = wrap.getBoundingClientRect();
-      const w = r.width || size;
-      const h = r.height || size;
-
-      // His head sits right of centre on the canvas, near the top.
-      const hx = r.left + w * 0.66;
-      const hy = r.top + h * 0.21;
-
-      const live = pointerSeen && now - lastMove < IDLE_AFTER;
+      if (stale || now - measuredAt > REMEASURE_MS) measure(now);
+      const w = mw, h = mh, hx = mx, hy = my;
 
       let aimX, aimY, tau;
 
@@ -193,8 +298,8 @@ export default function BirdieBird({ size = 200, dark = false, style, bird = BIR
         // pinning at full deflection the moment the cursor leaves his column.
         const reachX = Math.max(w * 2.5, window.innerWidth * 0.42);
         const reachY = Math.max(h * 2.0, window.innerHeight * 0.38);
-        const nx = clamp((ptrX - hx) / reachX, -1, 1);
-        const ny = clamp((ptrY - hy) / reachY, -1, 1);
+        const nx = clamp((pointer.x - hx) / reachX, -1, 1);
+        const ny = clamp((pointer.y - hy) / reachY, -1, 1);
         // Slight expansion so small nearby moves are still legible.
         aimX = Math.sign(nx) * Math.pow(Math.abs(nx), 0.8);
         aimY = Math.sign(ny) * Math.pow(Math.abs(ny), 0.85);
@@ -238,8 +343,10 @@ export default function BirdieBird({ size = 200, dark = false, style, bird = BIR
       let rawProx = 0;
       if (live) {
         const radius = Math.max(w * 2.6, 300);
-        const d = Math.hypot(ptrX - hx, ptrY - hy);
-        rawProx = clamp(1 - d / radius, 0, 1);
+        // Not Math.hypot: it does overflow-safe scaling nobody needs for two
+        // screen coordinates, and it is several times slower for it.
+        const dx = pointer.x - hx, dy = pointer.y - hy;
+        rawProx = clamp(1 - Math.sqrt(dx * dx + dy * dy) / radius, 0, 1);
       }
       prox = lerp(prox, rawProx, 1 - Math.exp(-dt / 180));
 
@@ -311,76 +418,181 @@ export default function BirdieBird({ size = 200, dark = false, style, bird = BIR
 
       const base = breathe * (1 + prox * 0.035) * (1 + perk * 0.015);
 
-      const bodyT =
-        `translate3d(0px, ${bodyY.toFixed(1)}px, 0) ` +
-        `scale(${(base * hopSX).toFixed(3)}, ${(base * hopSY).toFixed(3)})`;
-
       // --- head: the part that actually watches you ------------------------
       const turn = clamp(curX * MAX_TURN, -MAX_TURN, MAX_TURN);
       const headX = curX * w * HEAD_SLIDE;
       const headY = curY * h * 0.018 + perk * h * -0.012;
 
-      const headT =
-        `translate3d(${headX.toFixed(1)}px, ${headY.toFixed(1)}px, 0) ` +
-        `rotate(${turn.toFixed(2)}deg)`;
-
-      if (bodyT !== lastBody) {
-        lastBody = bodyT;
-        body.style.transform = bodyT;
-        carrier.style.transform = bodyT;
+      // --- write, and only what changed ------------------------------------
+      const nBY = Math.round(bodyY * 10);
+      const nBX = Math.round(base * hopSX * 1000);
+      const nBSY = Math.round(base * hopSY * 1000);
+      if (nBY !== qBY || nBX !== qBX || nBSY !== qBSY) {
+        qBY = nBY; qBX = nBX; qBSY = nBSY;
+        const t = `translate(0px, ${nBY / 10}px) scale(${nBX / 1000}, ${nBSY / 1000})`;
+        body.style.transform = t;
+        carrier.style.transform = t;
         // The flap frame is a whole bird, so it rides the same transform. It
         // carries its own head, so the head layer hides while it is up.
-        if (flap) flap.style.transform = bodyT;
+        if (flap) flap.style.transform = t;
       }
-      if (headT !== lastHead) {
-        lastHead = headT;
-        head.style.transform = headT;
+
+      const nHX = Math.round(headX * 10);
+      const nHY = Math.round(headY * 10);
+      const nHR = Math.round(turn * 100);
+      if (nHX !== qHX || nHY !== qHY || nHR !== qHR) {
+        qHX = nHX; qHY = nHY; qHR = nHR;
+        head.style.transform =
+          `translate(${nHX / 10}px, ${nHY / 10}px) rotate(${nHR / 100}deg)`;
       }
+
       if (flap) {
-        const flapS = flapA.toFixed(3);
-        if (flapS !== lastFlap) {
-          lastFlap = flapS;
-          flap.style.opacity = flapS;
+        const nFA = Math.round(flapA * 1000);
+        if (nFA !== qFA) {
+          qFA = nFA;
+          flap.style.opacity = nFA / 1000;
           // Fade the perched body out underneath so folded wings do not show
           // through the spread ones, and drop the turning head with it.
-          const under = (1 - flapA).toFixed(3);
+          const under = (1000 - nFA) / 1000;
           body.style.opacity = under;
           carrier.style.opacity = under;
         }
       }
+    };
 
+    // --- promotion ---------------------------------------------------------
+    // will-change costs a compositor texture for as long as it is set: at 3x
+    // on a phone each of these layers is a megabyte or so, and the landing
+    // page mounts three birds. So it is set for exactly as long as the loop is
+    // running and taken straight back when it stops.
+    //
+    // This is also why the transforms above are 2D translate() and not the
+    // usual translate3d() hack: translate3d pins a layer whatever will-change
+    // says, so turning promotion off would have freed nothing. will-change is
+    // what promotes here, which means dropping it genuinely hands the texture
+    // back for an off-screen, backgrounded or reduced-motion bird.
+    const promote = (on) => {
+      const v = on ? 'transform' : 'auto';
+      body.style.willChange = v;
+      carrier.style.willChange = v;
+      head.style.willChange = v;
+      if (flap) flap.style.willChange = on ? 'transform, opacity' : 'auto';
+    };
+
+    // Fold the wings back down and bring the perched bird back to full. Called
+    // whenever the loop stops, so he can never be parked mid-flap.
+    const clearFlap = () => {
+      if (!flap || qFA === 0) return;
+      qFA = 0;
+      flap.style.opacity = '0';
+      body.style.opacity = '';
+      carrier.style.opacity = '';
+    };
+
+    // Back to the photographed rest pose: the two layers stack into the
+    // original bird, nothing half-faded, nothing promoted.
+    const rest = () => {
+      qBY = qBX = qBSY = qHX = qHY = qHR = NaN;
+      body.style.transform = '';
+      carrier.style.transform = '';
+      head.style.transform = '';
+      // The flap rides the body transform, so it has to come home too. It is
+      // transparent at rest, but leaving it a fraction of a pixel off the
+      // body is exactly the kind of thing that shows up later.
+      if (flap) flap.style.transform = '';
+      clearFlap();
+    };
+
+    // --- the wings-spread frame, deferred ----------------------------------
+    // 303KB at 2x for a photograph that only appears if you tap him, which
+    // most visitors never do. It is not on the path to seeing the bird at all,
+    // so it is requested only once he is on screen and only when the main
+    // thread has nothing better to do. React never sets src/srcSet on this
+    // element, so it will not fight these writes on a re-render.
+    let flapArmed = false;
+    let idleHandle = 0;
+    const armFlap = () => {
+      if (flapArmed || !flap || !flapSrc) return;
+      flapArmed = true;
+      idleHandle = idleIn(() => {
+        idleHandle = 0;
+        flap.srcset = `${flapSrc}-400.png 1x, ${flapSrc}.png 2x`;
+        flap.src = `${flapSrc}-400.png`;
+      });
+    };
+
+    // --- run control -------------------------------------------------------
+    const start = () => {
+      if (running || reduced || !inView || document.hidden) return;
+      running = true;
+      // Behind the gate by a frame so the very first callback renders rather
+      // than being skipped.
+      last = performance.now() - STEP_BUSY - 1;
+      stale = true;
+      promote(true);
+      if (!holding) { retainPointer(); holding = true; }
+      wrap.addEventListener('pointerdown', onHop, { passive: true });
+      window.addEventListener('scroll', invalidate, { passive: true, capture: true });
+      window.addEventListener('resize', invalidate, { passive: true });
+      armFlap();
       raf = requestAnimationFrame(frame);
     };
 
-    const io = new IntersectionObserver(([entry]) => {
-      if (entry.isIntersecting && !raf) {
-        running = true;
-        last = performance.now();
-        raf = requestAnimationFrame(frame);
-      } else if (!entry.isIntersecting && raf) {
-        running = false;
-        cancelAnimationFrame(raf);
-        raf = 0;
-      }
+    const stop = () => {
+      if (!running) return;
+      running = false;
+      if (raf) { cancelAnimationFrame(raf); raf = 0; }
+      if (holding) { releasePointer(); holding = false; }
+      wrap.removeEventListener('pointerdown', onHop);
+      window.removeEventListener('scroll', invalidate, true);
+      window.removeEventListener('resize', invalidate);
+      promote(false);
+      // Never leave him parked mid-flap with the perched body faded out.
+      clearFlap();
+    };
+
+    const io = new IntersectionObserver((entries) => {
+      inView = entries[entries.length - 1].isIntersecting;
+      stale = true;
+      if (inView) start(); else stop();
     }, { threshold: 0.05 });
     io.observe(wrap);
 
-    // Listeners are attached imperatively rather than as JSX props so the
-    // wrapper stays a plain decorative div (out of the a11y tree, not a
-    // control) while still being tappable.
-    window.addEventListener('pointermove', onPointer, { passive: true });
-    window.addEventListener('pointerdown', onPointer, { passive: true });
-    wrap.addEventListener('pointerdown', onHop, { passive: true });
+    // A rAF loop behind a hidden tab or a backgrounded Capacitor app is pure
+    // battery. Browsers throttle rAF there, they do not all stop it.
+    const onVisibility = () => { if (document.hidden) stop(); else start(); };
+    document.addEventListener('visibilitychange', onVisibility);
+
+    // Reduced motion is a live setting, not a mount-time one. Turning it on
+    // has to stop a bird that is already moving.
+    const onReduced = () => {
+      reduced = !!(mq && mq.matches);
+      if (reduced) { stop(); rest(); } else start();
+    };
+    if (mq) {
+      if (mq.addEventListener) mq.addEventListener('change', onReduced);
+      else if (mq.addListener) mq.addListener(onReduced);
+    }
+
+    // Catches him being resized by his own container (the AI panel expands),
+    // which no window event reports.
+    const ro = typeof ResizeObserver === 'function' ? new ResizeObserver(invalidate) : null;
+    if (ro) ro.observe(wrap);
 
     return () => {
-      running = false;
-      if (raf) cancelAnimationFrame(raf);
+      stop();
       io.disconnect();
-      window.removeEventListener('pointermove', onPointer);
-      window.removeEventListener('pointerdown', onPointer);
-      wrap.removeEventListener('pointerdown', onHop);
+      if (ro) ro.disconnect();
+      document.removeEventListener('visibilitychange', onVisibility);
+      if (mq) {
+        if (mq.removeEventListener) mq.removeEventListener('change', onReduced);
+        else if (mq.removeListener) mq.removeListener(onReduced);
+      }
+      if (idleHandle) { idleCancel(idleHandle); idleHandle = 0; }
     };
-  }, [size, bird]);
+  }, [flapSrc]);
+
+  const loading = eager ? 'eager' : 'lazy';
 
   return (
     <div
@@ -395,13 +607,14 @@ export default function BirdieBird({ size = 200, dark = false, style, bird = BIR
         alt=""
         draggable={false}
         decoding="async"
-        style={{ ...layer, transformOrigin: '50% 88%', willChange: 'transform' }}
+        loading={loading}
+        style={{ ...layer, transformOrigin: '50% 88%' }}
       />
       {/* Carries the body's transform so the head rides the hop and the
           breath, then the head turns about the neck inside it. */}
       <div
         ref={carrierRef}
-        style={{ position: 'absolute', left: 0, top: 0, width: '100%', height: '100%', transformOrigin: '50% 88%', willChange: 'transform' }}
+        style={{ position: 'absolute', left: 0, top: 0, width: '100%', height: '100%', transformOrigin: '50% 88%', willChange: 'auto' }}
       >
         <img
           ref={headRef}
@@ -410,19 +623,20 @@ export default function BirdieBird({ size = 200, dark = false, style, bird = BIR
           alt=""
           draggable={false}
           decoding="async"
-          style={{ ...layer, transformOrigin: bird.neck, willChange: 'transform' }}
+          loading={loading}
+          style={{ ...layer, transformOrigin: bird.neck }}
         />
       </div>
       {/* Wings-spread frame. Bigger than the box and offset negatively so the
-          wingspan is not clipped; hidden until he hops. */}
+          wingspan is not clipped; hidden until he hops, and deliberately
+          rendered with no src — the effect assigns one once he is on screen
+          and the thread is idle. */}
       {bird.flap && <img
         ref={flapRef}
-        src={`${bird.flap}-400.png`}
-        srcSet={`${bird.flap}-400.png 1x, ${bird.flap}.png 2x`}
         alt=""
         draggable={false}
         decoding="async"
-        loading="lazy"
+        fetchPriority="low"
         style={{
           position: 'absolute',
           left: FLAP.left,
@@ -436,7 +650,7 @@ export default function BirdieBird({ size = 200, dark = false, style, bird = BIR
           userSelect: 'none',
           WebkitUserSelect: 'none',
           transformOrigin: '50% 88%',
-          willChange: 'transform, opacity',
+          willChange: 'auto',
         }}
       />}
     </div>
