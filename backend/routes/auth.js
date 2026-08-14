@@ -9,7 +9,10 @@ const pool = require('../config/database');
 // signUserToken is the ONLY way tokens are minted (round 13): it stamps the
 // user's token_version into the JWT so a bump revokes every outstanding token.
 const { authenticate, signUserToken, revokeUserSessions } = require('../middleware/auth');
-const { sendVerificationEmail, verificationLink, baseWebUrl } = require('../services/emailService');
+const {
+  sendVerificationEmail, verificationLink, baseWebUrl,
+  sendPasswordResetEmail, sendPasswordResetOAuthEmail, passwordResetLink,
+} = require('../services/emailService');
 const { stripHtml, sanitizeArray } = require('../utils/sanitize');
 const { rejectIfProfane, moderateText } = require('../utils/moderation');
 const { upstreamSignal } = require('../utils/upstream');
@@ -325,6 +328,313 @@ async function consumeVerification(rawToken) {
   if (updated.rowCount === 0) return { ok: false, reason: 'stale' };
 
   console.log(`[auth] email verified for user ${row.user_id}`);
+  return { ok: true, userId: row.user_id };
+}
+
+// ---------------------------------------------------------------------------
+// Password reset (round 17)
+// ---------------------------------------------------------------------------
+// THE HOLE. There was no way back into a password account. Forget the password
+// and the account was gone: nothing in the product could set a password without
+// the old one (PUT /api/users/profile requires current_password), so the only
+// route back was to sign up again on a different address. For an audience that
+// reinstalls phones and loses password managers, that is not an edge case.
+//
+// It is also the most attacked endpoint a consumer app has, because it converts
+// "can read this mailbox" into "owns this account". Everything below is one of
+// the four ways that conversion goes wrong:
+//
+//   1. ENUMERATION. The answer to "does victim@x have an account?" must be the
+//      same sentence, the same status code and roughly the same wall-clock time
+//      whether or not it does. Same body and status is easy and is done in the
+//      route. Same TIME is the part people get wrong: awaiting Resend on the
+//      "account exists" branch makes that branch measurably slower, which is a
+//      working oracle no wording can fix. So the mail is dispatched WITHOUT
+//      being awaited (see sendResetMailInBackground) and the response does not
+//      depend on it.
+//   2. TOKEN SHAPE. Same split token as email verification, on purpose: a
+//      selector to look up by and a verifier whose SHA-256 is all we store, so
+//      a database leak yields no usable links and the secret half is compared
+//      with crypto.timingSafeEqual rather than by a SQL string match. Single
+//      use via a guarded UPDATE, one hour of life (shorter than verification's
+//      24, because this one hands over the account), and the link is built from
+//      the pinned production URL in services/emailService.js.
+//   3. BUDGET. Counted in the DATABASE and keyed on the ADDRESS, not on a user
+//      id. A budget that could only count issued tokens would not count the
+//      addresses with no account, which reintroduces finding 1 through the back
+//      door: spray an address, see whether you get throttled, learn whether it
+//      exists. password_reset_requests records every accepted request the same
+//      way regardless.
+//   4. BLAST RADIUS. Consuming a token bumps token_version (so every JWT the
+//      account has outstanding dies), drops its live sockets, and retires every
+//      other reset link it holds. A reset is what someone does when they think
+//      an attacker has their password; leaving the attacker's session alive
+//      through it would defeat the whole exercise.
+const RESET_TTL_MINUTES = 60;
+// Per ADDRESS, so one mailbox cannot be buried, and per IP, so one attacker
+// cannot spray many mailboxes or burn the day's Resend quota (which the SOS
+// alert path shares). The per-IP number is loose for the same reason the
+// verification one is: Flock's users are on shared school and campus wifi, and
+// a tight cap there locks a whole friend group out of account recovery.
+const RESET_MIN_GAP_MS = 60 * 1000;
+const RESET_MAX_PER_HOUR_EMAIL = 3;
+const RESET_MAX_PER_DAY_EMAIL = 6;
+const RESET_MAX_PER_HOUR_IP = 20;
+
+// The one sentence this endpoint is allowed to say. It is deliberately not
+// "we sent you an email", because for an address with no account we did not.
+const RESET_NEUTRAL_MESSAGE = "If there's an account for that address, we sent a link. Check your inbox, and your spam folder.";
+
+// The rate-limit bucket key. HMAC rather than the address itself: this table
+// otherwise becomes a plaintext list of every address anyone typed into the
+// forgot-password box, most of which belong to people who are not our users.
+// Same pepper as the ban-evasion digests in routes/users.js, for the same
+// reason — an unkeyed SHA-256 of an email address is reversible with a wordlist.
+// Falls back to an unkeyed digest if no secret is configured at all, because a
+// rate limit that silently stops bucketing is worse than one that is merely
+// obfuscated; in practice JWT_SECRET is always present or nothing can mint a
+// token.
+function resetBucketKey(email) {
+  const pepper = process.env.BAN_TOMBSTONE_SECRET || process.env.JWT_SECRET || '';
+  const canonical = canonicalEmail(email);
+  return pepper
+    ? crypto.createHmac('sha256', pepper).update(`reset:${canonical}`).digest('hex')
+    : crypto.createHash('sha256').update(`reset:${canonical}`).digest('hex');
+}
+
+async function resetRequestBudget(emailKey, ip) {
+  const { rows } = await pool.query(
+    `SELECT
+       COUNT(*) FILTER (WHERE email_key = $1 AND created_at > NOW() - INTERVAL '1 hour')::int AS email_hour,
+       COUNT(*) FILTER (WHERE email_key = $1 AND created_at > NOW() - INTERVAL '1 day')::int  AS email_day,
+       MAX(created_at) FILTER (WHERE email_key = $1) AS email_last,
+       COUNT(*) FILTER (WHERE request_ip = $2 AND created_at > NOW() - INTERVAL '1 hour')::int AS ip_hour
+     FROM password_reset_requests
+     WHERE (email_key = $1 AND created_at > NOW() - INTERVAL '1 day')
+        OR (request_ip = $2 AND created_at > NOW() - INTERVAL '1 hour')`,
+    [emailKey, ip || null]
+  );
+  const row = rows[0] || {};
+  return {
+    emailHour: Number(row.email_hour) || 0,
+    emailDay: Number(row.email_day) || 0,
+    emailLast: row.email_last ? new Date(row.email_last).getTime() : 0,
+    ipHour: Number(row.ip_hour) || 0,
+  };
+}
+
+function resetBudgetExhausted(budget) {
+  return (budget.emailLast && Date.now() - budget.emailLast < RESET_MIN_GAP_MS)
+    || budget.emailHour >= RESET_MAX_PER_HOUR_EMAIL
+    || budget.emailDay >= RESET_MAX_PER_DAY_EMAIL
+    || budget.ipHour >= RESET_MAX_PER_HOUR_IP;
+}
+
+// Recorded for every request that gets past the budget, whether or not an
+// account was found. That is what makes the budget say nothing about existence.
+async function recordResetRequest(emailKey, ip) {
+  await pool.query(
+    'INSERT INTO password_reset_requests (email_key, request_ip) VALUES ($1, $2)',
+    [emailKey, ip || null]
+  );
+}
+
+// The janitor. Unlike email_verifications, this table takes a row for every
+// address ANYONE types into the forgot-password box, so a spray run writes rows
+// for addresses that have no account and will never have one. Nothing reads
+// past 24 hours, so a week is already generous. Hourly at most, per process,
+// fire and forget: a failed sweep must never fail the request that triggered it.
+const RESET_PURGE_INTERVAL_MS = 60 * 60 * 1000;
+let lastResetPurge = 0;
+function maybePurgeResetRequests() {
+  const now = Date.now();
+  if (now - lastResetPurge < RESET_PURGE_INTERVAL_MS) return;
+  lastResetPurge = now;
+  pool.query("DELETE FROM password_reset_requests WHERE created_at < NOW() - INTERVAL '7 days'")
+    .catch((err) => console.error('[auth] reset request purge failed:', err.message));
+}
+
+// Issue a link, retiring any older unused one for the account in the same
+// breath, so at most ONE live reset link exists per account at a time.
+async function issueReset(user, ip) {
+  const { selector, verifierHash, token } = mintVerificationToken();
+  await pool.query(
+    'UPDATE password_resets SET used_at = NOW() WHERE user_id = $1 AND used_at IS NULL',
+    [user.id]
+  );
+  await pool.query(
+    `INSERT INTO password_resets (user_id, selector, verifier_hash, email, request_ip, expires_at)
+     VALUES ($1, $2, $3, $4, $5, NOW() + ($6::int * INTERVAL '1 minute'))`,
+    [user.id, selector, verifierHash, user.email, ip || null, RESET_TTL_MINUTES]
+  );
+  return token;
+}
+
+// Fire-and-forget mail, with the in-flight promises tracked so tests can wait
+// for them (see __testing.flushResetMail). This is finding 1's timing half: the
+// response must not carry Resend's latency, because that latency only exists on
+// the branch where the account does. Never throws into the request.
+const pendingResetMail = new Set();
+function sendResetMailInBackground(label, factory) {
+  let p;
+  p = Promise.resolve()
+    .then(factory)
+    .catch((err) => console.error(`[auth] ${label} failed:`, err.message))
+    .finally(() => pendingResetMail.delete(p));
+  pendingResetMail.add(p);
+}
+
+// Decide what a found account gets, and mail it. Deliberately NOT async and
+// deliberately returning nothing: every branch is dispatched into the
+// background, so the request that called it does no more work for an address
+// that has an account than for one that does not. That is the difference
+// between "the body is the same" and "the response is the same".
+//
+// Issuing the token is inside the background work for the same reason. It is
+// two fast indexed writes, but it is also two writes that can FAIL, and a 500
+// that only ever happens for real accounts is an enumeration oracle wearing a
+// stack trace.
+function dispatchResetMail(user, ip) {
+  // A banned account gets nothing. A reset would not lift the ban (every
+  // request still 403s in middleware/auth.js) so the mail would be a lie, and
+  // "banned accounts can still generate Flock-branded mail on demand" is a
+  // budget an abuser would happily spend.
+  if (user.is_banned) {
+    console.warn(`[auth] password reset requested for banned account ${user.id} — mailing nothing`);
+    return;
+  }
+  if (!isMailableAddress(user.email)) {
+    // The Apple placeholder (@apple-signin.invalid) and evicted-squat
+    // tombstones (@unclaimed.invalid) can never receive mail.
+    return;
+  }
+  // OAuth accounts have no password. Never invent one: that would bolt a
+  // second, weaker credential onto an account whose owner never asked for one.
+  // The mailbox owner is told which button to press instead.
+  //
+  // Keyed on oauth_provider ALONE, not on "provider and no password". The two
+  // are equivalent today (both claim paths NULL the password when they link a
+  // provider), but if they ever drift, issuing a link here would mint a token
+  // that inspectReset then refuses for having a provider: a link mailed to a
+  // real person that can never work. One condition, checked the same way in
+  // both places.
+  if (user.oauth_provider) {
+    sendResetMailInBackground('password reset (oauth notice)', () => sendPasswordResetOAuthEmail({
+      to: user.email,
+      name: user.name,
+      provider: user.oauth_provider,
+    }));
+    return;
+  }
+  if (!user.password) {
+    // No password and no provider should not exist. Refuse rather than guess.
+    console.warn(`[auth] password reset requested for account ${user.id} with no credential of any kind`);
+    return;
+  }
+
+  sendResetMailInBackground('password reset', async () => {
+    const token = await issueReset(user, ip);
+    const link = passwordResetLink(token);
+    const result = await sendPasswordResetEmail({
+      to: user.email,
+      name: user.name,
+      link,
+      minutes: RESET_TTL_MINUTES,
+    });
+    // Same local-development escape hatch as the verification path, gated on
+    // both "no mail could be sent" and "not production", so a live server can
+    // never print a working reset link into its logs.
+    if (result.skipped && process.env.NODE_ENV !== 'production') {
+      console.log(`[auth] password reset link for ${user.email}: ${link}`);
+    }
+    return result;
+  });
+}
+
+// Read a reset token without spending it. Every failure returns the same shape;
+// the route maps them onto three honest states (invalid, expired, used) and
+// nothing else, so this cannot be used to probe which selectors exist.
+async function inspectReset(rawToken) {
+  const parsed = parseVerificationToken(rawToken);
+  if (!parsed) return { ok: false, reason: 'invalid' };
+
+  const { rows } = await pool.query(
+    `SELECT r.id, r.user_id, r.verifier_hash, r.email, r.used_at, r.expires_at,
+            u.email AS current_email, u.oauth_provider, u.is_banned,
+            (u.password IS NOT NULL) AS has_password
+       FROM password_resets r
+       JOIN users u ON u.id = r.user_id
+      WHERE r.selector = $1`,
+    [parsed.selector]
+  );
+  const row = rows[0];
+  if (!row) {
+    // Equal-cost comparison against a throwaway digest: an unknown selector
+    // must not answer faster than a known one.
+    verifierMatches(parsed.verifier, crypto.createHash('sha256').update('absent').digest('hex'));
+    return { ok: false, reason: 'invalid' };
+  }
+  if (!verifierMatches(parsed.verifier, row.verifier_hash)) return { ok: false, reason: 'invalid' };
+  if (row.used_at) return { ok: false, reason: 'used' };
+  if (new Date(row.expires_at).getTime() <= Date.now()) return { ok: false, reason: 'expired' };
+  // A link proves control of the address it was MAILED to. If the account has
+  // moved to another address since, this token says nothing about the account.
+  if (canonicalEmail(row.email) !== canonicalEmail(row.current_email)) return { ok: false, reason: 'invalid' };
+  // The account became an OAuth account (or was banned) between issue and use.
+  // Setting a password on an OAuth row here would be exactly the silent
+  // credential injection the OAuth branch above refuses to do.
+  if (row.oauth_provider || !row.has_password) return { ok: false, reason: 'invalid' };
+  if (row.is_banned) return { ok: false, reason: 'invalid' };
+  return { ok: true, row };
+}
+
+// Spend a reset token and set the new password.
+async function consumeReset(rawToken, newPassword) {
+  const found = await inspectReset(rawToken);
+  if (!found.ok) return found;
+  const row = found.row;
+
+  // Single-use, enforced by the database rather than by the read above: two
+  // simultaneous submissions both pass the checks, and exactly one wins here.
+  const claimed = await pool.query(
+    'UPDATE password_resets SET used_at = NOW() WHERE id = $1 AND used_at IS NULL AND expires_at > NOW() RETURNING id',
+    [row.id]
+  );
+  if (claimed.rowCount === 0) return { ok: false, reason: 'used' };
+
+  const hashed = await bcrypt.hash(newPassword, SALT_ROUNDS);
+
+  // The guard re-checks at WRITE time what inspectReset checked at read time:
+  // an account that turned into an OAuth account in the last few milliseconds
+  // must not have a password welded onto it, and the address must still be the
+  // one the link was mailed to. token_version + 1 kills every JWT the account
+  // has outstanding, the attacker's included, which is the entire point of
+  // resetting a password you think someone else knows.
+  //
+  // email_verified is deliberately NOT touched. A reset proves control of the
+  // mailbox exactly as well as a verification link does, but treating it as
+  // verification would let a reset walk around migration 011's gate: an
+  // unverified squat row would become a fully verified account the moment its
+  // address's real owner used the recovery flow, and inherit whatever the squat
+  // had accumulated. The row stays unverified and stays unable to accumulate
+  // until a genuine verification link is clicked.
+  const updated = await pool.query(
+    `UPDATE users SET password = $1, token_version = token_version + 1, updated_at = NOW()
+      WHERE id = $2 AND oauth_provider IS NULL AND LOWER(email) = LOWER($3)
+      RETURNING id`,
+    [hashed, row.user_id, row.current_email]
+  );
+  if (updated.rowCount === 0) return { ok: false, reason: 'invalid' };
+
+  // Any other link this account is holding dies with the one just spent. Two
+  // links in two inboxes (or two copies of the same mail) must not mean two
+  // shots at the account.
+  await pool.query(
+    'UPDATE password_resets SET used_at = NOW() WHERE user_id = $1 AND used_at IS NULL',
+    [row.user_id]
+  );
+
+  console.warn(`[auth] password reset completed for user ${row.user_id}`);
   return { ok: true, userId: row.user_id };
 }
 
@@ -809,6 +1119,144 @@ router.post('/resend-verification', authenticate, async (req, res) => {
   } catch (err) {
     console.error('Resend verification error:', err);
     res.status(500).json({ error: 'Could not send a new link' });
+  }
+});
+
+// POST /api/auth/forgot-password — { email }
+//
+// Answers with ONE sentence and ONE status code, always. Not "no account with
+// that address", not a 404, not a faster reply: this endpoint is the classic
+// way an attacker turns a leaked address list into a list of real users, and
+// every one of those is a way to read the answer off it. The only observable
+// difference between "there is an account" and "there is not" is what arrives
+// in a mailbox the requester may not be able to open.
+router.post('/forgot-password', [
+  body('email').isEmail().normalizeEmail().withMessage('Enter the email you sign in with'),
+], async (req, res) => {
+  try {
+    // TYPE check before the validators' CONTENT check. Given
+    // `{"email": ["a@b.com"]}` express-validator runs per element, every
+    // element passes isEmail, and req.body.email is STILL an array afterwards
+    // (see the same trap in routes/users.js PUT /profile). An array reaching
+    // canonicalEmail would silently bucket every such request together, and
+    // reaching pg as a parameter for a text column is a 500.
+    if (typeof req.body.email !== 'string') {
+      return res.status(400).json({ error: 'Enter the email you sign in with' });
+    }
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ error: errors.array()[0].msg });
+    }
+
+    const { email } = req.body;
+    const emailKey = resetBucketKey(email);
+
+    // Budget first, and it is keyed on the ADDRESS, so it counts identically
+    // for addresses that have no account. A 429 here therefore says "you have
+    // asked a lot", never "this address exists".
+    //
+    // The accepted cost: three requests an hour for one address is also three
+    // requests an attacker can burn to keep its owner from asking for a link
+    // for the rest of the hour. That is inherent to per-address limiting, the
+    // window is short, and the alternative (no per-address cap) is a mail
+    // cannon pointed at any address an attacker chooses.
+    const budget = await resetRequestBudget(emailKey, req.ip);
+    if (resetBudgetExhausted(budget)) {
+      console.warn(`[auth] password reset throttled from ${req.ip}`);
+      return res.status(429).json({ error: 'That is a few reset emails already. Try again in a few minutes.' });
+    }
+    await recordResetRequest(emailKey, req.ip);
+    maybePurgeResetRequests();
+
+    // Canonical lookup (round 15), the same one signup and the OAuth claims
+    // use, so a Gmail dot or +subaddress variant finds the account it belongs
+    // to instead of silently mailing nobody.
+    const user = await findUserByEmail(email);
+    if (user) {
+      dispatchResetMail(user, req.ip);
+    } else {
+      console.warn(`[auth] password reset requested for an address with no account from ${req.ip}`);
+    }
+
+    res.json({ message: RESET_NEUTRAL_MESSAGE });
+  } catch (err) {
+    console.error('Forgot password error:', err);
+    // Even the failure is shaped the same way. A 500 on one branch and a 200 on
+    // the other would be the oracle this endpoint exists to close.
+    res.status(500).json({ error: 'Could not start a password reset. Try again in a moment.' });
+  }
+});
+
+// POST /api/auth/reset-password/check — { token }
+//
+// Reads a link's state WITHOUT spending it, so the screen can say "this link
+// expired, ask for a new one" before the user picks and types a new password
+// rather than after. It is not a new attack surface: the caller already has to
+// hold a token, guessing the 256-bit verifier is not a thing that happens, and
+// the per-IP limiter on /api/auth applies here like everywhere else.
+router.post('/reset-password/check', [body('token').isString()], async (req, res) => {
+  try {
+    if (typeof req.body.token !== 'string') {
+      return res.json({ valid: false, reason: 'invalid' });
+    }
+    const result = await inspectReset(req.body.token);
+    res.json({ valid: result.ok === true, reason: result.ok ? null : result.reason });
+  } catch (err) {
+    console.error('Reset password check error:', err);
+    res.status(500).json({ error: 'Could not check that link' });
+  }
+});
+
+// POST /api/auth/reset-password — { token, password }
+//
+// The password policy is the one signup enforces, character for character. A
+// recovery flow that accepts a weaker password than signup does is just signup
+// with the rules switched off.
+router.post('/reset-password', [
+  body('token').isString().withMessage('This link is not valid. Ask for a new one.'),
+  body('password')
+    .isLength({ min: 8 }).withMessage('Password must be at least 8 characters')
+    .matches(/[A-Z]/).withMessage('Password must contain at least one uppercase letter')
+    .matches(/[0-9]/).withMessage('Password must contain at least one number'),
+], async (req, res) => {
+  try {
+    // Same array-shaped-body trap as above; bcrypt.hash on a non-string is a
+    // 500 rather than a 400.
+    for (const field of ['token', 'password']) {
+      if (typeof req.body[field] !== 'string') {
+        return res.status(400).json({ error: 'This link is not valid. Ask for a new one.' });
+      }
+    }
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ error: errors.array()[0].msg });
+    }
+
+    const result = await consumeReset(req.body.token, req.body.password);
+    if (!result.ok) {
+      const copy = {
+        expired: 'That link has expired. Ask for a new one.',
+        used: 'That link has already been used. Ask for a new one.',
+      };
+      return res.status(400).json({
+        error: copy[result.reason] || 'This link is not valid. Ask for a new one.',
+        reason: result.reason,
+      });
+    }
+
+    // The token_version bump already killed every REST session; this drops the
+    // live Socket.io connections those tokens are holding, which authenticate
+    // once at the handshake and would otherwise keep receiving the account's
+    // DMs, flock messages and location until the recheck timer noticed.
+    revokeUserSessions(req.app.get('io'), result.userId);
+
+    // No session is issued here on purpose. Somebody who just proved they can
+    // read the mailbox should sign in with the password they chose, which is
+    // also the moment they find out whether it saved.
+    res.json({ message: 'Password updated. Sign in with your new password.' });
+  } catch (err) {
+    console.error('Reset password error:', err);
+    res.status(500).json({ error: 'Could not set a new password. Try again in a moment.' });
   }
 });
 
@@ -1455,6 +1903,18 @@ module.exports.__testing = {
   RESEND_MAX_PER_HOUR_ACCOUNT,
   RESEND_MAX_PER_DAY_ACCOUNT,
   RESEND_MAX_PER_HOUR_IP,
+  // Round 17 (password reset)
+  resetBucketKey,
+  RESET_TTL_MINUTES,
+  RESET_MIN_GAP_MS,
+  RESET_MAX_PER_HOUR_EMAIL,
+  RESET_MAX_PER_DAY_EMAIL,
+  RESET_MAX_PER_HOUR_IP,
+  RESET_NEUTRAL_MESSAGE,
+  // The reset mail is dispatched without being awaited, so the response cannot
+  // carry Resend's latency (that latency only exists on the branch where the
+  // account does, which makes it an enumeration oracle). Tests await this.
+  flushResetMail: () => Promise.allSettled([...pendingResetMail]),
 };
 
 // ---------------------------------------------------------------------------
@@ -1477,3 +1937,25 @@ module.exports.__testing = {
 //    line rather than relying on the server to say so.
 // 4. PUBLIC_API_URL should be set on Railway to the public API origin.
 //    Unset falls back to the pinned production URL in services/emailService.js.
+//
+// ---------------------------------------------------------------------------
+// CROSS-AREA NOTES (round 17, password reset)
+// ---------------------------------------------------------------------------
+// 5. frontend/src/index.js scrubs guest invite tokens out of every PostHog and
+//    Sentry payload (`/i/<token>` -> `/i/:token`) and nothing else. The reset
+//    link keeps its token in the URL FRAGMENT for exactly that reason: a
+//    fragment never reaches the server, never goes out in a Referer, and cannot
+//    be spent by a mailbox scanner prefetching the link. It IS still part of
+//    `window.location.href`, which is what posthog-js reports as $current_url,
+//    so the scrub in index.js should be widened to strip `#token=` and
+//    `?token=` as well. The reset screen replaces the URL on mount, which wins
+//    the race in practice but is not a guarantee.
+// 6. routes/users.js PUT /profile changes a password and bumps token_version
+//    but never calls revokeUserSessions, so a live socket survives a password
+//    change for up to the socket recheck interval. This route does call it.
+//    Same one-line fix belongs there (already noted in middleware/auth.js).
+// 7. A completed reset does NOT set email_verified. An account that signed up,
+//    never confirmed its address and then reset its password stays unverified
+//    and stays inside the round-16 gate, which is deliberate: treating a reset
+//    as verification would let the recovery flow hand an unverified squat row,
+//    and whatever it holds, to the address's real owner.
