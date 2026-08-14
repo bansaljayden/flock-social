@@ -98,7 +98,29 @@ async function collectVoteRows(flockId) {
      WHERE gv.flock_id = $1 AND COALESCE(gr.is_hidden, false) = false
      GROUP BY gv.venue_name`,
     [flockId]
-  ).catch(() => ({ rows: [] }));
+  ).catch((err) => {
+    // NARROWED (query-reliability follow-up). This was `.catch(() => ({ rows: [] }))`,
+    // which swallowed a connection reset, a statement timeout and a permissions
+    // error exactly as readily as the case it was written for — and every one of
+    // those answered the member-facing tally with ZERO guest votes. The venue a
+    // flock is about to go to is decided by this tally, so a silent drop does not
+    // degrade a number on a screen, it changes where people end up, and it leaves
+    // nothing behind to say it happened.
+    //
+    // The fail-open is still right for the one case it was written for: a
+    // database that has not run the migrations these two tables came from
+    // (`guest_votes`/`guest_rsvps` in 001, `guest_rsvps.is_hidden` in 005). That
+    // is undefined_table (42P01) and undefined_column (42703), and on such a
+    // deploy there are no guest votes to miss. Anything else is a real failure
+    // and now reaches the caller's 500 — every call site of collectVoteRows is
+    // inside a try/catch that answers one, and broadcastGuestVote's own catch
+    // keeps a fan-out failure from turning a committed guest vote into an error.
+    if (err?.code === '42P01' || err?.code === '42703') {
+      console.warn('[venues] guest vote tally skipped: schema not migrated (' + err.code + ')');
+      return { rows: [] };
+    }
+    throw err;
+  });
   const guestByVenue = Object.fromEntries(guests.rows.map(g => [g.venue_name, g.guest_count]));
 
   const rows = raw.rows.map(v => ({

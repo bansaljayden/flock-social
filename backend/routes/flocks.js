@@ -48,21 +48,29 @@ const inviteBudget = createUserBudget({ name: 'flock-invite', hourly: 25, daily:
 // notification each one sends) across many callers or many days.
 const MAX_FLOCK_MEMBERSHIPS = 50;
 
-// The ROW count of a flock is NOT bounded by the ceiling above, and that is a
-// live finding rather than a decision (query-reliability round). MAX_FLOCK_
-// MEMBERSHIPS counts only `invited` and `accepted` rows, deliberately —
-// somebody who said no is not occupying the plan, so declining has to give the
-// seat back. But a DECLINED row is still a row, and the two roster reads in
-// this file (GET /:id's membersResult and GET /:id/members) return EVERY row
-// for the flock, with no status filter and no LIMIT, each joined to `users` for
-// a name and an avatar. So "invite 50, they all decline, invite 50 more" grows
-// the roster payload without ever touching the seat ceiling.
+// The ROW count of a flock is bounded SEPARATELY, and by a different number
+// (query-reliability round). MAX_FLOCK_MEMBERSHIPS counts only `invited` and
+// `accepted` rows, deliberately — somebody who said no is not occupying the
+// plan, so declining has to give the seat back. But a DECLINED row is still a
+// row, and the two roster reads in this file (GET /:id's membersResult and GET
+// /:id/members) return EVERY row for the flock, with no status filter and no
+// LIMIT, each joined to `users` for a name and an avatar. So "invite 50, they
+// all decline, invite 50 more" grew the roster payload forever without ever
+// touching the seat ceiling — every roster load paying for it.
 //
-// The fix is a second ceiling on TOTAL rows, charged only when a brand new
-// membership row is created, so that re-inviting somebody who declined (which
-// re-uses their row) still works. It is not applied here because it requires
-// widening the roster-size query below, and that query's exact text is what
-// __tests__/spamBudgets.test.js dispatches the seat cap on. See the handoff.
+// This is the second ceiling, and it is charged ONLY when a brand-new
+// membership row is created. Re-inviting somebody who declined re-uses their
+// existing row, so it costs a seat and no row, and the person who changed their
+// mind is never the one who gets refused.
+//
+// 200, not 50: the seat cap is what bounds the PLAN, and this only has to bound
+// the TABLE. A flock that has churned its entire 50-person roster three times
+// over is not a flock any more, and 200 rows is still a roster payload that
+// fits in one response. A caller who hits it sees the same message as a full
+// flock — the two are the same fact from the invitee's side ("there is no room
+// for another person here"), and spelling them differently would tell an
+// outsider how many people have declined.
+const MAX_FLOCK_ROWS = 200;
 
 // ---------------------------------------------------------------------------
 // The home list needs a ceiling (query-reliability round)
@@ -214,33 +222,38 @@ router.get('/', async (req, res) => {
                    OR (b.blocker_id = f.creator_id AND b.blocked_id = $1)
               ) THEN NULL ELSE u.name END AS creator_name,
               fm.status AS member_status,
-              -- These five scalar subqueries are really two, spelled out twice
-              -- each plus once more (query-reliability round). going_count is
+              -- These were FIVE scalar subqueries doing the work of two, and are
+              -- now two (query-reliability round, applied). going_count is
               -- member_count + guest_count, a SELECT list cannot reference its
               -- own output aliases, and Postgres does not deduplicate identical
               -- scalar subqueries — it executes each one. So the roster count
-              -- runs twice and the guest count runs twice, per flock row, on
-              -- the read the app issues every time it opens.
+              -- ran twice and the guest count ran twice, per flock row, on the
+              -- read the app issues every time it opens.
               --
-              -- Rewriting them as two LEFT JOIN LATERALs computes each once and
-              -- reads it three times, and is behaviour-identical. Not applied:
-              -- __tests__/rosterBlocks.test.js asserts this exact SQL TEXT to
-              -- pin the decision behind it ("counts are not block-filtered,
-              -- only member_previews is"), so the rewrite reds a test whose
-              -- subject it does not change. Out of scope for the rotation that
-              -- found it — see the handoff for the exact replacement.
-              (SELECT COUNT(*) FROM flock_members WHERE flock_id = f.id AND status = 'accepted') AS member_count,
+              -- The "c" lateral below computes each ONCE; these three columns
+              -- read it. going_count is now arithmetic on two values already in
+              -- hand rather than two more index scans.
+              --
+              -- THE TWO COUNTS KEEP THEIR EXACT OLD SPELLING inside that
+              -- lateral, and that is load-bearing, not laziness:
+              -- __tests__/rosterBlocks.test.js and __tests__/queryReliability.test.js
+              -- both assert that text in order to pin a DIFFERENT decision —
+              -- these are plain, unfiltered COUNTs, and only member_previews,
+              -- which carries names and faces, is block-filtered. Computing them
+              -- in a different place must not read as counting different rows.
+              --
+              -- TYPES ARE UNCHANGED, deliberately: member_count stays an uncast
+              -- bigint (node-postgres hands it to the client as a STRING, which
+              -- is what it has always done), guest_count and going_count stay
+              -- ::int. A performance fix is not a licence to change what the
+              -- client receives.
+              c.member_count,
               -- Guests RSVP from the share link and have no membership row, so
               -- they were invisible in every count the host saw. member_count
               -- keeps its old meaning (accounts); going_count is the number to
               -- put next to "going".
-              (SELECT COUNT(*) FROM guest_rsvps gr
-                WHERE gr.flock_id = f.id AND gr.status = 'in'
-                  AND COALESCE(gr.is_hidden, false) = false)::int AS guest_count,
-              ((SELECT COUNT(*) FROM flock_members WHERE flock_id = f.id AND status = 'accepted')
-               + (SELECT COUNT(*) FROM guest_rsvps gr
-                   WHERE gr.flock_id = f.id AND gr.status = 'in'
-                     AND COALESCE(gr.is_hidden, false) = false))::int AS going_count,
+              c.guest_count,
+              (c.member_count + c.guest_count)::int AS going_count,
               -- Blocks: member_previews carries a NAME and an AVATAR for up to
               -- four people, and had no block predicate at all — so a blocked
               -- user's face sat on the flock card of the person who blocked
@@ -265,6 +278,16 @@ router.get('/', async (req, res) => {
        FROM flocks f
        JOIN flock_members fm ON fm.flock_id = f.id AND fm.user_id = $1
        JOIN users u ON u.id = f.creator_id
+       -- The two counts, computed once per flock row and read three times above.
+       -- LATERAL because both correlate on f.id; LEFT ... ON TRUE because an
+       -- aggregate with no GROUP BY always produces exactly one row, so this can
+       -- never drop a flock from the list or introduce a NULL count.
+       LEFT JOIN LATERAL (
+         SELECT (SELECT COUNT(*) FROM flock_members WHERE flock_id = f.id AND status = 'accepted') AS member_count,
+                (SELECT COUNT(*) FROM guest_rsvps gr
+                  WHERE gr.flock_id = f.id AND gr.status = 'in'
+                    AND COALESCE(gr.is_hidden, false) = false)::int AS guest_count
+       ) c ON TRUE
        ORDER BY f.updated_at DESC
        LIMIT $2`,
       [req.user.id, FLOCK_LIST_LIMIT]
@@ -1239,15 +1262,36 @@ router.post('/:id/invite',
         return res.status(404).json({ error: 'Flock not found' });
       }
 
-      // Bound the flock itself, not just the caller (see MAX_FLOCK_MEMBERSHIPS).
-      // Declined rows do not hold a seat — someone who said no is not occupying
-      // the plan. Soft cap: two invite calls racing can overshoot it slightly,
-      // which is fine for a spam ceiling and not worth a lock.
+      // Bound the flock itself, not just the caller — on BOTH of its ceilings
+      // (see MAX_FLOCK_MEMBERSHIPS and MAX_FLOCK_ROWS). `n` is the seats:
+      // declined rows do not hold one, because someone who said no is not
+      // occupying the plan. `total` is every row, declined included, because
+      // every row is read back on every roster load. Soft caps: two invite calls
+      // racing can overshoot either slightly, which is fine for a spam ceiling
+      // and not worth a lock.
+      //
+      // ONE ROUND TRIP, and the shape is chosen so that `n` keeps the exact
+      // spelling it has always had. Several fixture dispatchers outside this
+      // rotation's files match the seat count on its literal SQL text; a
+      // `COUNT(*) FILTER (...) AS n` rewrite would have been tidier to read and
+      // would have silently handed those fixtures an undefined seat count —
+      // turning `seatsLeft` into NaN and quietly deleting the cap in four test
+      // files that never mention it. The total goes in front as a scalar
+      // subquery so the seat count stays the last item and its text stays
+      // contiguous. A fixture that models only `n` therefore keeps the seat cap
+      // exactly as it was and simply reports no rows for the row cap, which is
+      // the harmless direction for a ceiling being introduced.
       const rosterSize = await pool.query(
-        "SELECT COUNT(*)::int AS n FROM flock_members WHERE flock_id = $1 AND status IN ('invited', 'accepted')",
+        // The inner table is aliased so nothing here reads as correlated: an
+        // unaliased `flock_id` inside a subquery over the same table binds to the
+        // INNER reference, which is what is wanted, but only a reader who knows
+        // that can tell it apart from a correlation bug.
+        `SELECT (SELECT COUNT(*)::int FROM flock_members fm_all WHERE fm_all.flock_id = $1) AS total,
+                COUNT(*)::int AS n FROM flock_members WHERE flock_id = $1 AND status IN ('invited', 'accepted')`,
         [flockId]
       );
       let seatsLeft = MAX_FLOCK_MEMBERSHIPS - (rosterSize.rows[0]?.n || 0);
+      let rowsLeft = MAX_FLOCK_ROWS - (rosterSize.rows[0]?.total || 0);
       if (seatsLeft <= 0) {
         return res.status(400).json({ error: 'This flock already has as many people as it can hold' });
       }
@@ -1261,24 +1305,57 @@ router.post('/:id/invite',
       // queries — measured — against a pool of roughly twenty.
       //
       // POST / above hit this exact wall and batched these exact three reads
-      // into one set-based query each. The same rewrite here measured 103
-      // queries / 1631ms down to 7 queries / 124ms at a 4ms simulated round
-      // trip. It is NOT applied, and the reason is not technical: the batched
-      // shapes are unrecognised by the fixture dispatchers in
-      // __tests__/spamBudgets.test.js and __tests__/flockSanitize.test.js,
-      // which script `SELECT id, name FROM users WHERE id = $1` and
-      // `SELECT status FROM flock_members WHERE flock_id = $1 AND user_id = $2`
-      // and fall through to an EMPTY result for anything else — so twelve
-      // passing behaviour tests go red on a change that alters none of the
-      // behaviour they assert. Those files were out of scope for the rotation
-      // that found this. The batched version and the fixture branches it needs
-      // are written up in that rotation's report; land them together.
+      // into one set-based query each. The same rewrite here has now been
+      // written and measured TWICE, by two rotations, at the same numbers:
+      // 103 queries / 1623ms down to 7 queries / 128ms at a 4ms simulated round
+      // trip, with the 25 extra pool checkouts (one per isBlockedBetween call)
+      // going to zero. It is still NOT applied, and the reason has never been
+      // technical.
+      //
+      // WHAT IT COSTS, MEASURED rather than estimated (2026-08-14, second
+      // rotation, whole suite run with the batched version applied): 26 tests
+      // across SIX files, because the batched shapes are unknown to fixture
+      // dispatchers that either fall through to an empty result or reject an
+      // unscripted query outright.
+      //
+      //   __tests__/spamBudgets.test.js      8  — needs 3 new fixture branches
+      //   __tests__/flockSanitize.test.js    3  — needs the same 3
+      //   __tests__/queryFollowups.test.js   8  — needs the same 3
+      //   __tests__/queryReliability.test.js 5  — needs the 3, AND two of its
+      //                                           assertions REPLACED: it pins
+      //                                           this N+1 as a ceiling
+      //                                           (countForMany === 103, and one
+      //                                           block query per invitee). Its
+      //                                           own comment says to delete
+      //                                           them when the rewrite lands.
+      //   __tests__/alertPreferences.test.js 1  — scriptInvite() needs the 3
+      //   __tests__/takedownLeaks.test.js    1  — its invite script needs the 3
+      //
+      // The three branches every one of those files needs are the same three:
+      //   SELECT user_id, status FROM flock_members WHERE flock_id = $1 AND user_id = ANY($2::int[])
+      //   SELECT id, name FROM users WHERE id = ANY($1::int[])
+      //   SELECT blocker_id, blocked_id FROM user_blocks WHERE (blocker_id = $1 AND blocked_id = ANY($2::int[])) OR (blocked_id = $1 AND blocker_id = ANY($2::int[]))
+      // plus the two writes taking arrays: the re-invite UPDATE gains
+      // `user_id = ANY($2::int[])` and the INSERT becomes the same
+      // `SELECT ... FROM UNNEST($2::int[])` form POST / already uses.
+      //
+      // NO ASSERTED BEHAVIOUR CHANGES. Both rotations landed on the same replay
+      // loop: the free skip for the already-invited and already-accepted, then
+      // the seat ceiling, then the row ceiling, then the budget charge, then
+      // existence, then blocks — same order, same per-id outcomes, budget still
+      // charged before existence is consulted and still stopping the whole list.
+      // The only reads issued past the budget are none: the batched directory
+      // and block reads are sliced to `inviteBudget.remaining()` first.
+      //
+      // It stays unapplied because no rotation has yet owned all six files at
+      // once, and half-applying it leaves the tree red. It is one change; it
+      // needs one owner.
       //
       // Two defects WERE fixed in place, because neither moves a query shape
       // the fixtures match — see the UPDATE and the INSERT below.
       const invited = [];
       let throttled = false; // ran out of personal allowance
-      let full = false;      // ran out of seats in this flock
+      let full = false;      // ran out of seats, or of rows, in this flock
       // Duplicate ids in one call must not each buy a seat or a budget unit.
       const seen = new Set();
       for (const userId of user_ids) {
@@ -1307,6 +1384,19 @@ router.post('/:id/invite',
 
         if (seatsLeft <= 0) { full = true; break; }
 
+        // The ROW ceiling, charged only on a BRAND NEW row. `continue`, not
+        // `break`, and that difference is the whole point: a flock can be out of
+        // rows while it still has seats (50 seats, 200 rows, 150 of them
+        // declines), and in exactly that state re-inviting somebody who declined
+        // is the call that must still work — it re-uses their row and costs
+        // nothing. Breaking here would refuse the one person the ceiling was
+        // never aimed at.
+        //
+        // Before the budget charge, for the same reason as the seat check above:
+        // a ceiling the caller can do nothing about must not also cost them
+        // their allowance.
+        if (existing.rows.length === 0 && rowsLeft <= 0) { full = true; continue; }
+
         // Charged BEFORE the user lookup and stops the whole loop, so an
         // exhausted caller gets no per-id answers at all: the response cannot
         // be read as "id 4193 exists but id 4194 does not".
@@ -1320,6 +1410,9 @@ router.post('/:id/invite',
         if (await isBlockedBetween(req.user.id, uid)) continue;
 
         seatsLeft -= 1;
+        // A row is only spent when one is created. The re-invite branch below
+        // writes into a row that is already counted in `total`.
+        if (existing.rows.length === 0) rowsLeft -= 1;
 
         if (existing.rows.length > 0 && existing.rows[0].status === 'declined') {
           // Re-invite.

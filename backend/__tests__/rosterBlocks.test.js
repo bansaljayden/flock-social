@@ -253,9 +253,39 @@ test('the flock list counts heads the same way, so the two screens cannot disagr
   const sql = sqlOf(/member_previews/).replace(/\s+/g, ' ');
   // member_count / guest_count / going_count are plain COUNTs with no block
   // predicate; only member_previews, which carries names and faces, has one.
+  // This is the assertion this whole test exists for, and its text is unchanged:
+  // the count moved to a different PLACE in the statement (see below) and must
+  // not have quietly started counting different rows on the way.
   assert.match(sql, /\(SELECT COUNT\(\*\) FROM flock_members WHERE flock_id = f\.id AND status = 'accepted'\) AS member_count/);
   const previews = sql.slice(sql.indexOf('AS member_previews') - 900, sql.indexOf('AS member_previews'));
   assert.match(previews, /NOT EXISTS \( SELECT 1 FROM user_blocks b/, 'the identity-bearing column is the one that is filtered');
+
+  // ── and the second thing this SQL is now pinned on ────────────────────────
+  // Those two counts used to be spelled FIVE times between them: member_count,
+  // guest_count, and going_count re-running both because a SELECT list cannot
+  // reference its own output aliases. Postgres does not deduplicate identical
+  // scalar subqueries, it executes each one, so the home list paid for four
+  // index scans per flock row to produce three numbers. They live in one LATERAL
+  // now and are read three times. Counting the spellings is the assertion,
+  // because "computed once" is not something a text match on one of them can
+  // tell you.
+  assert.strictEqual((sql.match(/COUNT\(\*\) FROM flock_members/g) || []).length, 1,
+    'the accepted-member count must be spelled once, not once per column that reads it');
+  assert.strictEqual((sql.match(/FROM guest_rsvps/g) || []).length, 1,
+    'and the guest count once');
+  assert.match(sql, /\(c\.member_count \+ c\.guest_count\)::int AS going_count/,
+    'going_count reads the two values already in hand rather than re-running both counts');
+  // Where they moved to is still unfiltered. If a future edit filters the counts
+  // by block inside the lateral it is the same bug this file was written for,
+  // just one indent deeper: two people would read a different head count for the
+  // same night.
+  // indexOf FIRST, and asserted: `slice(-1)` on a missing marker is the last
+  // character of the statement, which contains no "user_blocks" and would have
+  // made the assertion below pass for the wrong reason.
+  assert.ok(sql.includes('LEFT JOIN LATERAL'), 'the counts are computed in a lateral');
+  const lateral = sql.slice(sql.indexOf('LEFT JOIN LATERAL'));
+  assert.ok(!/user_blocks/.test(lateral),
+    'the counts stay unfiltered where they now live — filtering here decrements the head count for the blocker alone');
 });
 
 test('an invitee gets counts and no names at all, blocked or otherwise', async () => {
