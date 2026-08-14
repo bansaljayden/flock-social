@@ -16,6 +16,7 @@ if (!process.env.JWT_SECRET) {
 const express = require('express');
 const Sentry = require('@sentry/node');
 const http = require('http');
+const util = require('node:util');
 const { Server } = require('socket.io');
 const cors = require('cors');
 const helmet = require('helmet');
@@ -70,25 +71,52 @@ const entitlementsRoutes = require('./routes/entitlements');
 // ---------------------------------------------------------------------------
 // Process-level safety net
 //
-// Node's default for an unhandled promise rejection is to print the reason and
-// KILL THE PROCESS. On Railway that drops every open WebSocket and 502s every
-// in-flight request until the container restarts — one stray floating promise
-// anywhere in the codebase takes the whole service down for everyone.
+// THE POLICY, in two lines (pinned by __tests__/observability.test.js):
+//   * unhandledRejection -> log a loud structured line and KEEP SERVING.
+//   * uncaughtException  -> CRASH AND RESTART, stack on the way out.
 //
-// Sentry does not cover this: instrument.js only calls Sentry.init() when
-// SENTRY_DSN is set, and it is not set in production, so today the failure is
-// silent as well as fatal.
+// Rejections stay alive because Node's default is to print the reason and KILL
+// THE PROCESS — on Railway that drops every open WebSocket and 502s every
+// in-flight request until the container restarts. The codebase has many
+// deliberate post-response fire-and-forgets (socket fan-outs, push sends, the
+// migration unlock, the demo-story refresh); every one is `.catch()`-guarded
+// today, so this handler is insurance against the NEXT one that is not. A
+// rejected promise leaves the process in a known state, so serving on is safe.
 //
-// Every floating promise in the tree is currently caught (the `.catch(() => {})`
-// tails on the socket fan-outs, the migration unlock, the demo-story refresh),
-// so this is insurance against a future regression, not a live bug. It is
-// deliberately NOT paired with an uncaughtException handler: a rejected promise
-// leaves the process in a known state, a thrown-past-the-top exception does not,
-// and swallowing the latter is how you serve corrupted state instead of
-// restarting.
+// Uncaughts crash on purpose, and there is deliberately NO
+// process.on for the uncaughtException event here (reliability.test.js pins its
+// absence): a thrown-past-the-top exception leaves UNKNOWN state, and a handler
+// that swallows it serves corrupted state instead of restarting. Crash-and-
+// restart already works with no code: Node's default prints the stack and exits
+// 1, Railway restarts the container, and once SENTRY_DSN is set @sentry/node's
+// own onUncaughtException integration captures + flushes + exits with the same
+// semantics. The MONITOR below observes without changing any of that — it
+// exists so the last thing a dying container logs is a grep-able tag naming
+// what killed it, not a bare stack scrolled past in the deploy noise.
+//
+// Sentry note: instrument.js only calls Sentry.init() when SENTRY_DSN is set.
+// Unset (production today), captureException is a no-op and these console
+// lines are the whole story — which is why they carry the stack, not just the
+// message.
 process.on('unhandledRejection', (reason) => {
-  console.error('Unhandled promise rejection (kept alive):', reason);
+  // The stack on the reason is the only pointer to the source there is — Node
+  // does not know which `await` was missing. A non-Error reason (a thrown
+  // string, a bare object) has no stack, so it is inspected in full rather
+  // than String()-flattened into '[object Object]'.
+  const detail = reason instanceof Error
+    ? (reason.stack || `${reason.name}: ${reason.message}`)
+    : `non-Error rejection: ${util.inspect(reason, { depth: 4, breakLength: 120 })}`;
+  console.error(`[unhandledRejection] kept alive — a floating promise is missing its .catch()\n${detail}`);
   Sentry.captureException(reason instanceof Error ? reason : new Error(String(reason)));
+});
+
+// A monitor NEVER prevents the exit — it runs just before Node's default (or
+// Sentry's) fatal handling, whatever that turns out to be.
+process.on('uncaughtExceptionMonitor', (err, origin) => {
+  console.error(
+    `[uncaughtException] ${origin} — process will exit; Railway restarts it on a clean state\n` +
+    `${(err && err.stack) || util.inspect(err)}`
+  );
 });
 
 const app = express();
@@ -332,7 +360,9 @@ function stripSecretFields(node, depth, budget) {
   for (const key of Object.keys(node)) {
     if (SECRET_RESPONSE_FIELDS.has(key)) {
       delete node[key];
-      console.warn(`[security] stripped '${key}' from a response body — the handler should not have selected it`);
+      // budget.route names the request (set by the middleware below) so the
+      // handler that over-selected can be found without reproducing the call.
+      console.warn(`[security] stripped '${key}' from the response body of ${budget.route || 'a response'} — the handler should not have selected it`);
       continue;
     }
     if (!stripSecretFields(node[key], depth + 1, budget)) return false;
@@ -347,9 +377,9 @@ app.use((req, res, next) => {
     // already served its purpose by the time it reaches res.json. Wrapped in a
     // try so a guard can never be the reason a response fails to send.
     try {
-      stripSecretFields(body, 0, { n: 0 });
+      stripSecretFields(body, 0, { n: 0, route: `${req.method} ${req.originalUrl}` });
     } catch (err) {
-      console.error('[security] response scan failed:', err.message);
+      console.error(`[security] response scan failed on ${req.method} ${req.originalUrl}:`, err.message);
     }
     return json(body);
   };
@@ -598,10 +628,72 @@ app.use(express.urlencoded({ extended: true, limit: DEFAULT_JSON_BODY_BYTES }));
 // platform could not keep: every redeploy emptied it while the column still
 // pointed at /uploads/<file>. No Railway volume is needed.
 
+// ---------------------------------------------------------------------------
 // Health check — defined BEFORE the authenticated /api/* routers so their auth
 // middleware doesn't shadow it with a 401 (caught by the local E2E harness).
-app.get('/api/health', (req, res) => {
-  res.json({ status: 'ok', timestamp: new Date().toISOString() });
+// ---------------------------------------------------------------------------
+// HONEST, AND CHEAP, IN THAT ORDER. The old handler returned {status:'ok'}
+// unconditionally, which made it a liveness ping wearing a health check's
+// name: with Postgres unreachable or the pool wedged, Railway kept routing
+// traffic to a process that could not serve a single route, and the operator —
+// at school, phone in a bag — had a green healthcheck over a dead app for
+// hours. Every route in this app needs the pool, so the pool IS the health of
+// this service, and one SELECT 1 is the whole question.
+//
+// Cheap is guaranteed two ways, because this endpoint is public and
+// unauthenticated and must never become a load source:
+//   * the answer is CACHED for HEALTH_CACHE_MS — however hard the endpoint is
+//     polled, the database sees at most one probe per window per instance;
+//   * concurrent cache misses SHARE one in-flight probe instead of each
+//     issuing their own.
+//
+// The probe races its own HEALTH_DB_TIMEOUT_MS timer because the pool's
+// connectionTimeoutMillis is 10s and its statement_timeout 15s
+// (config/database.js — sized for request traffic, not for this): a health
+// check that takes 10 seconds to say "down" has answered nobody. A pool that
+// cannot return SELECT 1 inside 1.5s is not serving users either — outage and
+// saturation both deserve the 503, and Railway routing away from a saturated
+// instance is the correct response to saturation too.
+//
+// State TRANSITIONS are logged once each, not per poll: hours of a 5-second
+// "still down" cadence would bury the one line that says when it started.
+const HEALTH_DB_TIMEOUT_MS = 1500;
+const HEALTH_CACHE_MS = 5000;
+let healthCache = { at: 0, ok: false };
+let healthProbe = null; // the shared in-flight probe, if one is running
+let healthWasDown = false;
+
+function probeDbHealth() {
+  if (healthProbe) return healthProbe;
+  healthProbe = Promise.race([
+    // Both contenders RESOLVE (the query maps its rejection to false), so this
+    // race can never itself become an unhandled rejection.
+    pool.query('SELECT 1').then(() => true, () => false),
+    new Promise((resolve) => setTimeout(() => resolve(false), HEALTH_DB_TIMEOUT_MS).unref()),
+  ]).then((ok) => {
+    healthCache = { at: Date.now(), ok };
+    if (!ok && !healthWasDown) {
+      healthWasDown = true;
+      console.error('[health] database probe FAILED — /api/health answers 503 until it recovers');
+    } else if (ok && healthWasDown) {
+      healthWasDown = false;
+      console.log('[health] database probe recovered — /api/health answering 200 again');
+    }
+    healthProbe = null;
+    return ok;
+  });
+  return healthProbe;
+}
+
+app.get('/api/health', async (req, res) => {
+  const ok = Date.now() - healthCache.at < HEALTH_CACHE_MS
+    ? healthCache.ok
+    : await probeDbHealth();
+  res.status(ok ? 200 : 503).json({
+    status: ok ? 'ok' : 'degraded',
+    db: ok ? 'ok' : 'unreachable',
+    timestamp: new Date().toISOString(),
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -900,7 +992,15 @@ app.use((err, req, res, next) => {
       .json({ error: 'That request could not be read.' });
   }
 
-  console.error('Unhandled error:', err);
+  // Everything below is a genuine server fault, and this line is where a 3am
+  // debug starts: which verb, which URL, which account — then the stack.
+  // req.originalUrl rather than req.path because by the time an error reaches
+  // this handler the request may have been routed through a mounted router,
+  // and the original spelling is the one to paste into a reproduction.
+  console.error(
+    `[unhandled-error] ${req.method} ${req.originalUrl} user=${req.user?.id ?? 'anon'}:`,
+    err
+  );
   return res.status(500).json({ error: 'Internal server error' });
 });
 
@@ -1015,7 +1115,7 @@ io.on('connection', (socket) => {
 // ---------------------------------------------------------------------------
 // Lightweight migrations (idempotent — safe to run every startup)
 // ---------------------------------------------------------------------------
-const pool = require('./config/database');
+// (The pool itself is required up by the health check, which probes it.)
 
 // ---------------------------------------------------------------------------
 // Schema: versioned migrations in backend/migrations/*.sql (db/migrate.js).
@@ -1092,6 +1192,13 @@ const PORT = process.env.PORT || 5000;
 // Migrations MUST complete before the port opens — listen() accepts requests
 // immediately, so migrating inside its callback let traffic hit a half-applied
 // schema (and kept serving briefly even after a failed migration).
+
+// Handles for the background timers, held so shutdown() can clear them —
+// a crowd-alert sweep firing into a closing pool would be one last error on
+// the way out of every deploy.
+let crowdAlertsInterval = null;
+let crowdAlertsKickoff = null;
+
 async function boot() {
   try {
     await migrate(pool);
@@ -1107,10 +1214,77 @@ async function boot() {
 
   // Proactive crowd alerts — check every 15 minutes
   const { checkCrowdAlerts } = require('./services/crowdAlerts');
-  setInterval(checkCrowdAlerts, 15 * 60 * 1000);
+  crowdAlertsInterval = setInterval(checkCrowdAlerts, 15 * 60 * 1000);
   // Run once after a short delay on startup
-  setTimeout(checkCrowdAlerts, 30 * 1000);
+  crowdAlertsKickoff = setTimeout(checkCrowdAlerts, 30 * 1000);
 }
+
+// ---------------------------------------------------------------------------
+// Graceful shutdown — Railway sends SIGTERM on EVERY deploy
+// ---------------------------------------------------------------------------
+// Without this, every push killed the process mid-flight: in-flight responses
+// dropped, pooled connections severed inside open transactions (Postgres rolls
+// those back, but the client saw a socket error instead of an answer), and
+// WebSockets cut without a close frame. Deploys happen many times a day, so
+// "what SIGTERM does" is this app's single most common failure mode.
+//
+// Order: stop taking new work, finish the work in hand, then close the pool,
+// then exit 0. A deadline backstops the drain, because a drain that never
+// completes only moves the mid-flight kill to Railway's SIGKILL — minus the
+// log line saying it happened.
+const SHUTDOWN_DEADLINE_MS = 8000; // under Railway's kill window, far above any legit request
+
+let shuttingDown = false;
+function shutdown(signal) {
+  if (shuttingDown) {
+    // A second signal is the operator (or the platform) insisting. Obey now.
+    console.error(`[shutdown] second ${signal} — exiting immediately`);
+    process.exit(1);
+    // Unreachable in production (exit never returns); the explicit return keeps
+    // this function correct even where exit is stubbed (observability.test.js),
+    // instead of silently re-running the whole drain.
+    return;
+  }
+  shuttingDown = true;
+  console.log(`[shutdown] ${signal} received — draining (deadline ${SHUTDOWN_DEADLINE_MS}ms)`);
+
+  // unref()'d so the timer never holds an otherwise-finished process open; if
+  // the drain completes first, the exit(0) below wins and this never fires.
+  setTimeout(() => {
+    console.error('[shutdown] deadline hit with work still open — exiting anyway');
+    process.exit(0);
+  }, SHUTDOWN_DEADLINE_MS).unref();
+
+  if (crowdAlertsInterval) clearInterval(crowdAlertsInterval);
+  if (crowdAlertsKickoff) clearTimeout(crowdAlertsKickoff);
+
+  // Disconnect socket clients FIRST: a live WebSocket is an open connection
+  // and server.close() waits on open connections indefinitely. Clients
+  // auto-reconnect (to the freshly deployed instance) — that is the
+  // transport's normal recovery path, exercised by every phone that rides an
+  // elevator.
+  try { io.disconnectSockets(true); } catch (err) {
+    console.error('[shutdown] socket disconnect failed:', err?.message || err);
+  }
+
+  // Stop accepting connections and let in-flight HTTP requests finish...
+  server.close(() => {
+    // ...and only then take the pool away from them.
+    pool.end()
+      .catch((err) => console.error('[shutdown] pool.end failed:', err?.message || err))
+      .finally(() => {
+        console.log('[shutdown] drained cleanly');
+        process.exit(0);
+      });
+  });
+  // Idle keep-alive connections hold no request but count as open — without
+  // this, close() waits out their keep-alive timers for nothing. Guarded
+  // because the method arrived in Node 18.2.
+  if (typeof server.closeIdleConnections === 'function') server.closeIdleConnections();
+}
+
+process.on('SIGTERM', () => shutdown('SIGTERM'));
+process.on('SIGINT', () => shutdown('SIGINT'));
 
 boot();
 
