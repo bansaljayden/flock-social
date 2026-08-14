@@ -23,6 +23,14 @@ node scripts/dump-db.js
 STAMP=$(ls -t backups/*.sql | head -1 | sed 's/.*flock-//; s/\.sql//')
 gzip -9 "backups/flock-$STAMP.sql"          # -> flock-$STAMP.sql.gz, removes the .sql
 
+node scripts/verify-backup.js "backups/flock-$STAMP.sql.gz"
+# Must end with VERDICT: PASS. This restores the dump into a throwaway
+# embedded Postgres and checks row counts, migrations, foreign keys,
+# sequences and invariants. It takes seconds on a small dump, minutes on the
+# full corpus. A dump that FAILS must not be encrypted or uploaded — take a
+# fresh dump and verify that instead. Encrypting a broken file just locks
+# the breakage behind the passphrase.
+
 gpg --symmetric --cipher-algo AES256 \
     --s2k-digest-algo SHA512 --s2k-count 65011712 \
     -o "backups/flock-$STAMP.sql.gz.gpg" \
@@ -40,7 +48,15 @@ Only `flock-$STAMP.sql.gz.gpg` and its `.sha256` leave this machine.
 
 ---
 
-## Verify a backup (run every time, takes seconds)
+## Verify the ciphertext (run every time, takes seconds)
+
+These check the ENCRYPTED artifact — that it arrived intact, decrypts, and is
+a whole gzip. The restore-verify above already proved the contents; these
+prove the encryption step and any transfer did not damage them. To re-verify
+an old backup end to end, decrypt to a temp file, run
+`node scripts/verify-backup.js` on it, then destroy the plaintext. The
+quarterly keep-forever corpus archive must pass that full verify before it is
+kept.
 
 Decrypts to a pipe. Never writes plaintext to disk.
 
