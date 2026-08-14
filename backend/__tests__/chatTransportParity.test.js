@@ -496,12 +496,32 @@ test('the larger body limit is applied to exactly the routes that carry an image
 });
 
 test('the default body limit was NOT raised globally', () => {
+  // This used to pin the literal string `limit: '1mb'`. That made it
+  // unsatisfiable the moment the default was audited downward and moved behind
+  // a named constant, which is a change it should never have had a vote on.
+  // The property it was actually protecting is a RELATIONSHIP, so assert that:
+  // whatever the default is, it must be smaller than the image ceiling, and it
+  // must not be spelled as a literal at the parser. The exact value is pinned
+  // by __tests__/bodyLimitAudit.test.js, which owns that number and derives it
+  // from every route's real maximum.
   assert.ok(
-    /const defaultJsonParser = express\.json\(\{ limit: '1mb' \}\)/.test(serverSrc),
-    'everything that does not carry an image must stay at 1mb'
+    /const defaultJsonParser = express\.json\(\{ limit: DEFAULT_JSON_BODY_BYTES \}\)/.test(serverSrc),
+    'the default must come from the audited constant, not an inline literal'
   );
+  const declared = /const DEFAULT_JSON_BODY_BYTES = (\d+) \* 1024;/.exec(serverSrc);
+  assert.ok(declared, 'DEFAULT_JSON_BODY_BYTES must be declared, not inlined');
+  const defaultBytes = Number(declared[1]) * 1024;
+  assert.ok(
+    defaultBytes < CHAT_IMAGE_MAX_BYTES,
+    `the default (${defaultBytes}) must stay below the image ceiling (${CHAT_IMAGE_MAX_BYTES}); ` +
+    'raising it to image size is the global raise this test exists to prevent'
+  );
+
   // The body is buffered before any rate limiter runs, so there must be exactly
-  // one place where a bigger limit is handed out.
+  // one place where the IMAGE limit is handed out. Other scoped parsers may
+  // exist (Birdie and the payment webhook both have one, both far below the
+  // image ceiling); what must never happen is a second route being handed the
+  // image-sized buffer.
   const bigParsers = serverSrc.match(/express\.json\(\{ limit: [^}]*CHAT_IMAGE_MAX_BYTES/g) || [];
   assert.strictEqual(bigParsers.length, 1);
 });
