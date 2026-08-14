@@ -126,6 +126,12 @@ const LoginScreen = ({ onLoginSuccess, onSwitchToSignup, onSwitchToVenueLogin })
 
         <div className="auth-field-row">
           <label className="auth-label" htmlFor="login-email">Email</label>
+          {/* autoComplete="username", not "email": on the sign-in form this
+              field is the account identifier, and "username" is the token
+              password managers pair with current-password below. "email"
+              autofills an address but does not reliably bind the saved
+              credential to it. The signup form keeps "email" — there the
+              field is contact data and new-password does the pairing. */}
           <input
             id="login-email"
             className="auth-field"
@@ -133,7 +139,7 @@ const LoginScreen = ({ onLoginSuccess, onSwitchToSignup, onSwitchToVenueLogin })
             value={email}
             onChange={(e) => setEmail(e.target.value)}
             placeholder="you@example.com"
-            autoComplete="email"
+            autoComplete="username"
             autoCapitalize="none"
             spellCheck="false"
             required

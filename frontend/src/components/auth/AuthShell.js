@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
+import Icons from '../ui/Icons';
 
 /* ═══════════════════════════════════════════════════════════════════
    AUTH SHELL — the shared surface behind Login and Signup.
@@ -106,28 +107,31 @@ const AuthBackdrop = () => {
   );
 };
 
-/* Eye toggle for password fields. 44x44 real box (Apple HIG 2.5.5) plus
-   .hit44 as the belt-and-braces from index.css; icons inherit currentColor
-   so hover/active states are one colour change, not four stroke props. */
+/* Eye toggle for password fields. 44x44 real box (Apple HIG / WCAG 2.5.5)
+   plus .hit44 as the belt-and-braces from index.css; icons inherit
+   currentColor so hover/active states are one colour change.
+
+   The glyphs come from components/ui/Icons.js, not a local <svg>: the old
+   pair was hand-drawn with its own stroke geometry, so the one control that
+   sits inside every password field on every auth screen came from a
+   different drawing system than the rest of the app.
+
+   Toggle semantics: ONE accessible name plus aria-pressed, per the standard
+   toggle-button pattern. The old code changed the label AND flipped
+   aria-pressed, which reads as "Hide password, not pressed" in one state — a
+   double negative the listener has to untangle. The icon is decorative
+   (aria-hidden inside Icons) because the name lives on the button. */
 export const PasswordEye = ({ shown, onToggle }) => (
   <button
     type="button"
     className="auth-eye hit44"
     onClick={onToggle}
-    aria-label={shown ? 'Hide password' : 'Show password'}
+    aria-label="Show password"
     aria-pressed={shown}
   >
-    {shown ? (
-      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-        <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24" />
-        <line x1="1" y1="1" x2="23" y2="23" />
-      </svg>
-    ) : (
-      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-        <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
-        <circle cx="12" cy="12" r="3" />
-      </svg>
-    )}
+    {/* eyeOff || eye: Icons.js is shared surface; if eyeOff is ever dropped
+        the toggle degrades to a static eye rather than a crash. */}
+    {((shown && Icons.eyeOff) || Icons.eye)('currentColor', 20)}
   </button>
 );
 
@@ -148,9 +152,21 @@ export const AuthRule = ({ label }) => (
   <div className="auth-rule"><span>{label}</span></div>
 );
 
-export const AuthError = ({ children }) => (
-  children ? <div className="auth-error" role="alert">{children}</div> : null
-);
+/* role="alert" announces the message the moment it renders. Focus moves there
+   too (tabIndex -1, programmatic only): on a failed submit the keyboard user
+   is otherwise left standing on the submit button with no idea anything
+   happened, and on a small screen the error can render above the fold they
+   are looking at — focus() also scrolls it into view. The div is not in the
+   tab order, so this costs the tab sequence nothing. */
+export const AuthError = ({ children }) => {
+  const ref = useRef(null);
+  useEffect(() => {
+    if (children && ref.current) ref.current.focus();
+  }, [children]);
+  return children
+    ? <div className="auth-error" role="alert" tabIndex={-1} ref={ref}>{children}</div>
+    : null;
+};
 
 /* The good-news counterpart to AuthError. Green rather than red, role="status"
    rather than "alert" so a screen reader announces it politely instead of
@@ -267,7 +283,10 @@ const AUTH_CSS = `
   width: 100%; box-sizing: border-box;
   height: 50px; padding: 0 14px;
   border-radius: 12px;
-  border: 1px solid rgba(244,239,227,0.16);
+  /* Field boundary at 3.2:1 against the sheet (1.4.11 non-text minimum is
+     3:1). The old 0.16 alpha composited to 1.8:1, which left the extent of
+     the field to be guessed from the placeholder alone. */
+  border: 1px solid rgba(244,239,227,0.34);
   background-color: #181f2c !important;
   color: ${AUTH.cream} !important;
   caret-color: ${AUTH.steel} !important;
@@ -283,7 +302,7 @@ const AUTH_CSS = `
 }
 /* Keyboard focus ring for the controls on the sheet. index.css ships a global
    :focus-visible, but its blue composites to ~2.6:1 on this navy sheet
-   (#0b1220), under the 3:1 WCAG 2.4.11 minimum for a non-text indicator. Steel
+   (#0b1220), under the 3:1 WCAG 1.4.11 minimum for a non-text indicator. Steel
    is 6.3:1 here, so keyboard users get a ring that actually reads against the
    surface. Outline follows each control's own radius in modern browsers, so no
    radius is set here. */

@@ -161,9 +161,11 @@ describe('glyphs that collided with each other', () => {
   /**
    * `calendar` was an open-bottom box carrying THREE dots on one row. At the 14
    * and 16px the dashboard draws it at, three dots in a rounded container is an
-   * ellipsis — the typing indicator — and `chat` in this set is also an
-   * open-bottom box. The two were the same picture. The header rule is what
-   * separates them, and an ellipsis needs three dots, so calendar carries two.
+   * ellipsis — the typing indicator — and `chat` was at the time also an
+   * open-bottom box. The two were the same picture. Both containers have since
+   * closed (2026-08 geometry), but the header rule is still what stops a boxed
+   * row of dots reading as a speech bubble, and an ellipsis needs three dots,
+   * so calendar carries two.
    */
   it('calendar carries a header rule', () => {
     const block = ICONS_SRC.slice(
@@ -189,18 +191,22 @@ describe('glyphs that collided with each other', () => {
     expect(block).toContain('M3 20 21 20');
   });
 
-  it('dollar keeps its bars far enough apart to survive 14px', () => {
-    // The identity of this glyph is the RISERS between the bars, and the riser
-    // length IS the bar spacing. At 5 units the three horizontals closed into a
-    // double-dagger. 6.5 units is what makes the S-motion read.
+  it('dollar is a real S — two bowls and a full-height riser', () => {
+    // Same guarded judgement as the pin this replaces: "reads as $ at 14px".
+    // The old glyph delivered that with 0/90 bars whose spacing barely
+    // survived (at 5 units apart it rendered as a double-dagger), and its own
+    // comment conceded the honest limit: a $ that reads instantly needs the
+    // curved bowls of a real S. The 2026-08 geometry allows curves where
+    // identity needs them, and this glyph is the canonical case: two r=3.5
+    // semicircular bowls making the S-motion, crossed by the riser. If the
+    // bowls degrade back to bars or the riser stops spanning the glyph, the
+    // double-dagger failure is on its way back.
     const block = ICONS_SRC.slice(
       ICONS_SRC.indexOf('dollar: make('),
       ICONS_SRC.indexOf('doorOpen: make(')
     );
-    const ys = [...block.matchAll(/M?16 ([\d.]+) 8 [\d.]+|8 ([\d.]+) 16/g)];
-    expect(ys.length).toBeGreaterThan(0);
-    expect(block).toContain('5.5');
-    expect(block).toContain('18.5');
+    expect((block.match(/A3\.5 3\.5/g) || []).length).toBe(2);
+    expect(block).toContain('M12 3 12 21');
   });
 });
 
