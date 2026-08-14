@@ -33,6 +33,57 @@ const newLinkToken = () => {
   return t;
 };
 
+// ---------------------------------------------------------------------------
+// Round 15 — creating a NEW guest identity is the only unauthenticated INSERT
+// in the app, and everything expensive hangs off it:
+//
+//   - Each new guest may cast one guest vote, and guest votes are NOT
+//     display-only: routes/venues.js folds them into the member-facing venue
+//     tally and routes/flocks.js counts them as voters. A typical flock has ~5
+//     members, and the per-flock guest cap is 50, so anyone holding a share link
+//     could mint 50 identities and outvote the actual group 10:1, deciding
+//     where they go.
+//   - Each new "in" answer pushes the host a notification.
+//   - Each one consumes a slot in the 50-guest cap, and hidden rows
+//     deliberately still count toward that cap (a takedown must not hand the
+//     abuser a fresh slot). The consequence nobody costed: filling all 50 slots
+//     with junk is a PERMANENT denial of service on that invite link that no
+//     moderator action can reverse — real guests get 429 until the host revokes
+//     the link and re-shares a new one.
+//
+// The general limiter (300/15min per IP) is nowhere near tight enough: 50
+// identities is 50 requests. A single script did the whole thing in one burst.
+// So new-identity creation gets its own budget, per IP, per flock. Editing an
+// existing RSVP is untouched — that path is already gated on holding a
+// server-issued UUID and cannot create anything.
+// ---------------------------------------------------------------------------
+const NEW_GUESTS_PER_IP_PER_FLOCK = 3;
+const NEW_GUEST_WINDOW_MS = 60 * 60 * 1000;
+const newGuestLog = new Map(); // "ip|flockId" -> { count, resetAt }
+
+function allowNewGuest(ip, flockId) {
+  const now = Date.now();
+  if (newGuestLog.size > 5000) {
+    for (const [k, v] of newGuestLog) { if (now > v.resetAt) newGuestLog.delete(k); }
+  }
+  const key = `${ip}|${flockId}`;
+  let entry = newGuestLog.get(key);
+  if (!entry || now > entry.resetAt) {
+    entry = { count: 0, resetAt: now + NEW_GUEST_WINDOW_MS };
+    newGuestLog.set(key, entry);
+  }
+  if (entry.count >= NEW_GUESTS_PER_IP_PER_FLOCK) return false;
+  entry.count += 1;
+  return true;
+}
+
+// Two display names are "the same" for takedown purposes if they differ only by
+// case, surrounding space, or runs of whitespace. Deliberately conservative: it
+// is a replay guard, not a similarity engine.
+function normalizeGuestName(name) {
+  return String(name || '').trim().toLowerCase().replace(/\s+/g, ' ');
+}
+
 // Resolve a link token to its live flock, or null.
 async function resolveLink(token) {
   const r = await pool.query(
@@ -225,6 +276,13 @@ router.post('/:token/rsvp',
         }
       }
 
+      // Everything below creates a NEW guest identity. See allowNewGuest above
+      // for why that is the expensive operation on this route and the edit path
+      // is not.
+      if (!allowNewGuest(req.ip, link.flock_id)) {
+        return res.status(429).json({ error: 'Too many RSVPs from here. Try again later.' });
+      }
+
       // Cap guests per flock so a leaked link can't flood a plan. Hidden rows
       // still count toward the cap: a takedown must not free up a slot.
       //
@@ -235,6 +293,7 @@ router.post('/:token/rsvp',
       // concurrent RSVPs on the same link.
       const client = await pool.connect();
       let ins;
+      let blockedByTakedown = false;
       try {
         await client.query('BEGIN');
         await client.query("SELECT pg_advisory_xact_lock(hashtext('guest_rsvp:' || $1::text))", [String(link.flock_id)]);
@@ -245,17 +304,49 @@ router.post('/:token/rsvp',
           return res.status(429).json({ error: 'This flock has too many guest RSVPs' });
         }
 
-        ins = await client.query(
-          `INSERT INTO guest_rsvps (flock_id, name, status) VALUES ($1, $2, $3)
-           RETURNING id, guest_token, COALESCE(is_hidden, false) AS is_hidden`,
-          [link.flock_id, name, status]
+        // Round 15 — make a takedown STICK.
+        //
+        // Hiding a guest RSVP was a one-request bypass: the 403 above only
+        // guards the path where the guest presents their original guestToken,
+        // and nothing forces them to. Dropping the token fell straight through
+        // to this INSERT, minting a fresh row with a fresh guest_token and the
+        // SAME abusive display name — which is then broadcast live to every
+        // member of the flock again. The name is the reported content here, so
+        // a moderator who removed it had removed nothing.
+        //
+        // Profanity screening does not cover this: the names that get reported
+        // are targeted at a person, not obscene, and pass the filter cleanly.
+        const revoked = await client.query(
+          `SELECT 1 FROM guest_rsvps
+           WHERE flock_id = $1
+             AND COALESCE(is_hidden, false) = true
+             AND lower(regexp_replace(btrim(name), '\\s+', ' ', 'g')) = $2
+           LIMIT 1`,
+          [link.flock_id, normalizeGuestName(name)]
         );
-        await client.query('COMMIT');
+        if (revoked.rows.length > 0) {
+          blockedByTakedown = true;
+          await client.query('ROLLBACK');
+        } else {
+          ins = await client.query(
+            `INSERT INTO guest_rsvps (flock_id, name, status) VALUES ($1, $2, $3)
+             RETURNING id, guest_token, COALESCE(is_hidden, false) AS is_hidden`,
+            [link.flock_id, name, status]
+          );
+          await client.query('COMMIT');
+        }
       } catch (txErr) {
         await client.query('ROLLBACK').catch(() => {});
         throw txErr;
       } finally {
         client.release();
+      }
+
+      // Deliberately vague, and the same shape as any other refusal: a
+      // moderated-off guest learns that this name will not go through, not that
+      // a moderator acted on them specifically.
+      if (blockedByTakedown) {
+        return res.status(403).json({ error: 'That name cannot be used on this flock. Try a different one.' });
       }
 
       // Let members see the RSVP land in real time. Hidden rows are never
@@ -354,4 +445,4 @@ router.post('/:token/vote',
   }
 );
 
-module.exports = { router, newLinkToken };
+module.exports = { router, newLinkToken, allowNewGuest, normalizeGuestName, newGuestLog };

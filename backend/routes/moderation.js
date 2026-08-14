@@ -60,12 +60,16 @@ router.post('/reports',
   ],
   async (req, res) => {
     try {
+      // Round 15: the quota was spent BEFORE validation, so every malformed
+      // request burned one of the ten reports a user gets per hour. Reporting
+      // abuse is an App Review 1.2 obligation and the budget must only be spent
+      // on real reports — validate first, meter second.
+      const errors = validationResult(req);
+      if (!errors.isEmpty()) return res.status(400).json({ error: errors.array()[0].msg });
+
       if (!allowReport(req.user.id)) {
         return res.status(429).json({ error: 'You have filed a lot of reports recently. Try again in a little while.' });
       }
-
-      const errors = validationResult(req);
-      if (!errors.isEmpty()) return res.status(400).json({ error: errors.array()[0].msg });
 
       const { content_type, content_id, reported_user_id, reason, details } = req.body;
 
@@ -221,9 +225,25 @@ router.get('/blocks', async (req, res) => {
 
 // POST /api/blocks/:userId — block a user. Mutual invisibility is enforced by
 // isBlockedBetween() across DMs, friend requests, invites, and visibility.
+// Round 15: `param('userId').isInt()` was declared on both block routes and its
+// result was never read, so the validator did nothing. `POST /api/blocks/abc`
+// reached Postgres as NaN and came back a 500 ("invalid input syntax for type
+// integer"), and `POST /api/blocks/12abc` silently blocked user 12 — parseInt
+// stops at the first non-digit. Blocking is the 1.2 safety control; it has to
+// act on the id the caller actually named or say plainly that it did not.
+function badId(req, res) {
+  const errors = validationResult(req);
+  if (!errors.isEmpty()) {
+    res.status(400).json({ error: 'Invalid user id' });
+    return true;
+  }
+  return false;
+}
+
 router.post('/blocks/:userId', [param('userId').isInt()], async (req, res) => {
   try {
-    const blockedId = parseInt(req.params.userId);
+    if (badId(req, res)) return;
+    const blockedId = parseInt(req.params.userId, 10);
     if (blockedId === req.user.id) return res.status(400).json({ error: 'You cannot block yourself' });
 
     const exists = await pool.query('SELECT id FROM users WHERE id = $1', [blockedId]);
@@ -262,7 +282,8 @@ router.post('/blocks/:userId', [param('userId').isInt()], async (req, res) => {
 // DELETE /api/blocks/:userId — unblock.
 router.delete('/blocks/:userId', [param('userId').isInt()], async (req, res) => {
   try {
-    const blockedId = parseInt(req.params.userId);
+    if (badId(req, res)) return;
+    const blockedId = parseInt(req.params.userId, 10);
     const result = await pool.query(
       'DELETE FROM user_blocks WHERE blocker_id = $1 AND blocked_id = $2 RETURNING id',
       [req.user.id, blockedId]

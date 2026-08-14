@@ -155,6 +155,14 @@ router.post('/:flockId/create',
           );
           for (const row of shareResult.rows) {
             if (row.committed) existingCommitments.set(row.user_id, true);
+            // The payer's share is auto-settled below as an artifact of having
+            // paid the venue — it is NOT a record that they settled a debt.
+            // Carrying it across a payer CHANGE left the former payer marked
+            // paid forever (audit 2026-08-13): Alice opens the bill (settled as
+            // payer), then rewrites it with Bob as payer, and walks away owing
+            // Bob nothing while everyone else still owes. Only a payer who is
+            // still the payer keeps that flag.
+            if (row.user_id === prevPayer && prevPayer !== payerId) continue;
             if (row.settled) existingSettled.set(row.user_id, row.settled_at || new Date());
           }
         }
@@ -170,8 +178,24 @@ router.post('/:flockId/create',
         );
         const billId = billResult.rows[0].id;
 
-        // Delete existing shares (for re-creation)
-        await client.query('DELETE FROM bill_split_shares WHERE bill_id = $1', [billId]);
+        // Delete existing shares (for re-creation). A blanket DELETE here
+        // erased SETTLED rows for anyone the rewrite dropped from the split,
+        // and a settled row is the only record that a debt was ever paid
+        // (audit 2026-08-13). Two edits then re-issued a paid debt: rewrite
+        // once with custom shares that omit Bob (his settled row is gone),
+        // rewrite again including Bob, and he is billed a second time with no
+        // trace of the first payment. Rows still in the split are rewritten
+        // just below; rows dropped from it only go if they were unsettled.
+        const keepIds = shares.map((s) => s.userId);
+        await client.query(
+          'DELETE FROM bill_split_shares WHERE bill_id = $1 AND user_id = ANY($2::int[])',
+          [billId, keepIds]
+        );
+        await client.query(
+          `DELETE FROM bill_split_shares
+           WHERE bill_id = $1 AND user_id <> ALL($2::int[]) AND settled = false`,
+          [billId, keepIds]
+        );
 
         // Insert shares — settled records survive the rewrite (a paid debt
         // must not silently become unpaid because the bill was edited)
@@ -334,6 +358,17 @@ router.post('/:flockId/settle',
       const flockId = parseInt(req.params.flockId);
       const userId = req.user.id;
 
+      // Membership, like every other route in this file. Share rows outlive
+      // the flock_members row (leaving a flock does not delete the bill), so
+      // "you have a share" was not the same test as "you are in this flock".
+      const memberCheck = await pool.query(
+        "SELECT id FROM flock_members WHERE flock_id = $1 AND user_id = $2 AND status = 'accepted'",
+        [flockId, userId]
+      );
+      if (memberCheck.rows.length === 0) {
+        return res.status(403).json({ error: 'You are not a member of this flock' });
+      }
+
       // Find the bill
       const billResult = await pool.query(
         'SELECT id FROM bill_splits WHERE flock_id = $1',
@@ -438,7 +473,10 @@ router.post('/:flockId/ghost-commit',
         [flockId]
       );
       const memberCount = parseInt(memberCountResult.rows[0].count);
-      const estimatedTotal = ceiling * memberCount;
+      // bill_splits.total_amount is DECIMAL(8,2): ceiling (up to 10,000) times
+      // a large roster overflowed the column and surfaced as a 500 instead of
+      // a placeholder bill.
+      const estimatedTotal = Math.min(Math.round(ceiling * memberCount * 100) / 100, 999999.99);
       const estimatedShare = ceiling;
 
       // Create or find placeholder bill
@@ -448,11 +486,23 @@ router.post('/:flockId/ghost-commit',
 
         let billId;
         const existingBill = await client.query(
-          'SELECT id FROM bill_splits WHERE flock_id = $1',
+          'SELECT id, paid_by FROM bill_splits WHERE flock_id = $1',
           [flockId]
         );
 
         if (existingBill.rows.length > 0) {
+          // A ghost commit is a pre-commitment made BEFORE anyone has paid, so
+          // it only ever belongs on a placeholder shell (paid_by NULL). Against
+          // a real bill it was a write primitive on someone else's split
+          // (audit 2026-08-13): a member left out of a custom split could
+          // INSERT themselves a share at the budget ceiling, and any member
+          // could flip `committed` on rows the payer had already finalized.
+          // Inserting that share also handed them /payment-links, which
+          // discloses the payer's Venmo, Cash App and Zelle handles.
+          if (existingBill.rows[0].paid_by !== null) {
+            await client.query('ROLLBACK');
+            return res.status(400).json({ error: 'The bill for this flock is already in, so there is nothing to pre-commit' });
+          }
           billId = existingBill.rows[0].id;
         } else {
           // Create placeholder bill
@@ -513,6 +563,18 @@ router.get('/:flockId/venmo-link',
 
       const flockId = parseInt(req.params.flockId);
       const userId = req.user.id;
+
+      // These routes disclose the payer's Venmo / Cash App / Zelle handles, so
+      // they need the same membership test as the rest of the file. Holding a
+      // share row is not the same thing: share rows survive leaving the flock,
+      // so an ex-member kept pulling the payer's payment handles forever.
+      const memberCheck = await pool.query(
+        "SELECT id FROM flock_members WHERE flock_id = $1 AND user_id = $2 AND status = 'accepted'",
+        [flockId, userId]
+      );
+      if (memberCheck.rows.length === 0) {
+        return res.status(403).json({ error: 'You are not a member of this flock' });
+      }
 
       // Get the bill
       const billResult = await pool.query(
@@ -587,6 +649,16 @@ router.get('/:flockId/payment-links',
 
       const flockId = parseInt(req.params.flockId);
       const userId = req.user.id;
+
+      // Same membership gate as /venmo-link — this response carries the payer's
+      // Venmo, Cash App and Zelle identifiers.
+      const memberCheck = await pool.query(
+        "SELECT id FROM flock_members WHERE flock_id = $1 AND user_id = $2 AND status = 'accepted'",
+        [flockId, userId]
+      );
+      if (memberCheck.rows.length === 0) {
+        return res.status(403).json({ error: 'You are not a member of this flock' });
+      }
 
       // Get the bill
       const billResult = await pool.query(

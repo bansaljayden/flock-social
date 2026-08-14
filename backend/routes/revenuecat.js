@@ -1,7 +1,35 @@
 const express = require('express');
+const crypto = require('crypto');
 const pool = require('../config/database');
 
 const router = express.Router();
+
+// Constant-time compare so the shared secret can't be recovered byte by byte.
+// /api/revenuecat is deliberately mounted without a rate limiter (webhook
+// retries must never be throttled), which is exactly the shape that makes a
+// timing oracle worth worrying about.
+function secretMatches(header, secret) {
+  const a = Buffer.from(String(header || ''));
+  const b = Buffer.from(`Bearer ${secret}`);
+  if (a.length !== b.length) return false;
+  return crypto.timingSafeEqual(a, b);
+}
+
+// Which RevenueCat entitlement means "Flock Pro". Must match the identifier the
+// client reads (frontend/src/services/purchases.js -> entitlements.active['pro']).
+const PRO_ENTITLEMENT = process.env.REVENUECAT_ENTITLEMENT_ID || 'pro';
+
+// True when the event carries entitlement identifiers and none of them is the
+// Pro entitlement. Events that carry no identifiers at all fall through to the
+// old behavior — RevenueCat omits them on some legacy payloads and dropping
+// those would be worse than acting on them.
+function isForeignEntitlement(event) {
+  const ids = Array.isArray(event.entitlement_ids)
+    ? event.entitlement_ids
+    : (event.entitlement_id ? [event.entitlement_id] : []);
+  if (ids.length === 0) return false;
+  return !ids.includes(PRO_ENTITLEMENT);
+}
 
 // RevenueCat webhook (D-lite scaffolding). Dormant in v1.0; wired so turning the
 // paywall on in v1.1 is a config flip. Flips users.is_premium on entitlement
@@ -18,11 +46,22 @@ router.post('/webhook', express.json(), async (req, res) => {
     if (!secret) {
       return res.status(503).json({ error: 'Webhook not configured' });
     }
-    const auth = req.headers.authorization || '';
-    if (auth !== `Bearer ${secret}`) return res.status(401).json({ error: 'Unauthorized' });
+    if (!secretMatches(req.headers.authorization, secret)) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
 
     const event = req.body?.event || {};
     const type = event.type;
+
+    // Only the Pro entitlement moves users.is_premium (audit 2026-08-13). The
+    // old handler flipped premium on ANY INITIAL_PURCHASE / RENEWAL and
+    // revoked it on ANY EXPIRATION, so the first non-Pro product ever added to
+    // the RevenueCat project (a consumable, a venue add-on, a cheaper tier)
+    // would have granted Flock Pro for its price — and its expiration would
+    // have revoked Pro from a paying subscriber.
+    if (isForeignEntitlement(event)) {
+      return res.json({ ok: true, ignored: 'entitlement' });
+    }
 
     // TRANSFER moves an entitlement between accounts (a restore on a new
     // login, or a family/device handover). Its payload carries no

@@ -27,8 +27,19 @@ yarn-debug.log*
 yarn-error.log*
 .claude
 
-# database backups (contain user data)
+# database backups — these contain LIVE CREDENTIALS, not just user data:
+# users.password (bcrypt), users.apple_refresh_token, device_tokens.token,
+# sensor_devices.api_key, password_reset_tokens.token. scripts/dump-db.js
+# additionally refuses to write anywhere but here. Never commit one.
 backend/backups/
+*.sql.gz
+*.dump
+
+# runtime upload staging. Nothing writes here since the round-12 move to
+# in-memory buffering, but if anything ever does, the file must not be
+# committed — user photo UGC is not repo content.
+backend/uploads/*
+!backend/uploads/.gitkeep
 
 # ML training artifacts
 backend/scripts/ml/train/*.csv
