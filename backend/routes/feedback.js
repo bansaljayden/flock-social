@@ -179,12 +179,21 @@ function venueLocalDayHour(timeZone, at) {
 // feedback. Closing that needs a presence signal we cannot fake for ourselves
 // (NFC hardware, or attested geolocation), which almost no venue has yet.
 //
-// NOTE FOR THE NEXT AUDIT: routes/venueDashboard.js runs a near-identical rule
-// for venue_reviews, with deliberately longer windows (a review is written the
-// next morning; a crowd report is live). It does NOT yet have the
-// two-accepted-members requirement, and its comment claims parity with this
-// file. That parity claim is now stale and venueDashboard.js should adopt the
-// same clause.
+// THE OTHER COPY OF THIS RULE. routes/venueDashboard.js (POST /submit-review)
+// decides the same question for venue_reviews and now runs the SAME
+// conditions — signed taps only, accepted membership, not a cancelled flock,
+// and the two-accepted-members clause it was missing when that gap was first
+// written down here.
+//
+// What still differs there is deliberate, and is documented at the statement
+// itself rather than duplicated here: the two 30-day windows, the 12-hour
+// forward edge it keeps from this file, and a third EXISTS that has no
+// counterpart here because submit-review UPSERTs and this route INSERTs.
+// __tests__/presenceParity.test.js compares the two statements clause by clause
+// and pins BOTH halves — the parity and the three differences — so neither file
+// can drift, and neither can be "unified" into a false equivalence. Change a
+// condition here and read that test before assuming the other file should
+// follow.
 // ---------------------------------------------------------------------------
 const VERIFIED_PRESENCE_SQL = `
   SELECT
