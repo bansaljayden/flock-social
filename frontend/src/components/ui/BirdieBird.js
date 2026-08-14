@@ -8,6 +8,13 @@ import React, { useEffect, useRef } from 'react';
 //                                 identical canvas, so the two line up exactly
 //                                 at rest with no offset math
 //
+// Every one of those files now has a .webp sibling, served through <picture>
+// with the PNG left in place as the fallback for an engine that cannot decode
+// WebP. The saving is not a web nicety here: this is a Capacitor app, so the
+// photographs are bytes in the download. Retina was the expensive case, because
+// the 2x entry of every srcSet was an uncompressed master. Per bird at 2x:
+// body 176KB -> 74KB, head 68KB -> 48KB, wings 304KB -> 104KB.
+//
 // The body deliberately keeps its own head underneath. As the head layer
 // swings away, what shows through is more bird rather than a hole.
 //
@@ -90,6 +97,13 @@ const NECK = '66% 37%';
 // head feathered at its own neck line on an identical canvas, and the pivot
 // that neck sits on. Birdie also has a wings-spread frame; the warm bird does
 // not, so the flap layer is optional and the hop simply runs without it.
+//
+// Each path below is a STEM, and every stem needs four files on disk:
+// `-400.png`, `.png`, `-400.webp`, `.webp`. <picture> falls back to the <img>
+// when the browser cannot decode the source's TYPE, never when the chosen URL
+// 404s, so a missing .webp is a broken bird rather than a quiet downgrade to
+// the PNG.
+//
 // These are module constants on purpose — the effect keys off the flap path,
 // but the render reads the whole object every time.
 export const BIRDIE = {
@@ -154,6 +168,11 @@ const idleIn = (fn) =>
 const idleCancel = (h) =>
   window.requestIdleCallback ? window.cancelIdleCallback(h) : window.clearTimeout(h);
 
+// The <picture> elements are pure transport for the WebP <source>: they must
+// not exist as far as layout is concerned, or the absolutely positioned layers
+// below would resolve against a new inline box instead of the wrapper.
+const PICTURE = { display: 'contents' };
+
 const layer = {
   position: 'absolute',
   left: 0,
@@ -175,13 +194,18 @@ const layer = {
 // `eager` is the escape hatch for a call site that puts him above the fold.
 // Every current one is below it (the landing page's Birdie and pricing
 // sections, and the AI panel, which does not exist until you open it), so the
-// default defers ~245KB at 2x per bird until he is actually scrolled to.
+// default defers ~122KB of WebP at 2x per bird (245KB before the conversion)
+// until he is actually scrolled to.
 export default function BirdieBird({ size = 200, dark = false, style, bird = BIRDIE, eager = false }) {
   const wrapRef = useRef(null);
   const bodyRef = useRef(null);
   const carrierRef = useRef(null);
   const headRef = useRef(null);
   const flapRef = useRef(null);
+  // The flap's WebP <source>. The flap is armed imperatively (see armFlap), and
+  // a <source> is only consulted if it HAS a srcset attribute, so this one is
+  // rendered bare and filled in at the same moment as the <img> beneath it.
+  const flapWebpRef = useRef(null);
 
   // Read through a ref inside the loop rather than closed over, so resizing
   // him (the AI panel does, on expand) does not tear the loop down and rebuild
@@ -197,6 +221,7 @@ export default function BirdieBird({ size = 200, dark = false, style, bird = BIR
     const carrier = carrierRef.current;
     const head = headRef.current;
     const flap = flapRef.current;
+    const flapWebp = flapWebpRef.current;
     // flap is optional — only Birdie has a wings-spread frame.
     if (!wrap || !body || !carrier || !head) return undefined;
 
@@ -504,11 +529,12 @@ export default function BirdieBird({ size = 200, dark = false, style, bird = BIR
     };
 
     // --- the wings-spread frame, deferred ----------------------------------
-    // 303KB at 2x for a photograph that only appears if you tap him, which
-    // most visitors never do. It is not on the path to seeing the bird at all,
-    // so it is requested only once he is on screen and only when the main
-    // thread has nothing better to do. React never sets src/srcSet on this
-    // element, so it will not fight these writes on a re-render.
+    // 104KB at 2x as WebP (it was 303KB as PNG) for a photograph that only
+    // appears if you tap him, which most visitors never do. It is not on the
+    // path to seeing the bird at all, so it is requested only once he is on
+    // screen and only when the main thread has nothing better to do. React
+    // never sets src/srcSet on either element here, so it will not fight these
+    // writes on a re-render.
     let flapArmed = false;
     let idleHandle = 0;
     const armFlap = () => {
@@ -516,6 +542,11 @@ export default function BirdieBird({ size = 200, dark = false, style, bird = BIR
       flapArmed = true;
       idleHandle = idleIn(() => {
         idleHandle = 0;
+        // The <source> first, then the <img>. Selection re-runs when either
+        // changes, but writing the source first means the very first pass
+        // already sees the WebP and no browser is given the chance to commit
+        // to the PNG and then throw it away.
+        if (flapWebp) flapWebp.srcset = `${flapSrc}-400.webp 1x, ${flapSrc}.webp 2x`;
         flap.srcset = `${flapSrc}-400.png 1x, ${flapSrc}.png 2x`;
         flap.src = `${flapSrc}-400.png`;
       });
@@ -600,59 +631,75 @@ export default function BirdieBird({ size = 200, dark = false, style, bird = BIR
       style={{ width: size, height: size, position: 'relative', touchAction: 'manipulation', ...style }}
       aria-hidden="true"
     >
-      <img
-        ref={bodyRef}
-        src={`${bird.body}-400.png`}
-        srcSet={`${bird.body}-400.png 1x, ${bird.body}.png 2x`}
-        alt=""
-        draggable={false}
-        decoding="async"
-        loading={loading}
-        style={{ ...layer, transformOrigin: '50% 88%' }}
-      />
+      {/* display:contents on every <picture> here is deliberate. These images
+          are absolutely positioned inside the wrapper and the loop writes
+          transforms straight onto them, so the WebP wrapper must add no box of
+          its own. An engine too old for display:contents is also too old for
+          <picture>, and gets the plain PNG <img> it always got. */}
+      <picture style={PICTURE}>
+        <source type="image/webp" srcSet={`${bird.body}-400.webp 1x, ${bird.body}.webp 2x`} />
+        <img
+          ref={bodyRef}
+          src={`${bird.body}-400.png`}
+          srcSet={`${bird.body}-400.png 1x, ${bird.body}.png 2x`}
+          alt=""
+          draggable={false}
+          decoding="async"
+          loading={loading}
+          style={{ ...layer, transformOrigin: '50% 88%' }}
+        />
+      </picture>
       {/* Carries the body's transform so the head rides the hop and the
           breath, then the head turns about the neck inside it. */}
       <div
         ref={carrierRef}
         style={{ position: 'absolute', left: 0, top: 0, width: '100%', height: '100%', transformOrigin: '50% 88%', willChange: 'auto' }}
       >
-        <img
-          ref={headRef}
-          src={`${bird.head}-400.png`}
-          srcSet={`${bird.head}-400.png 1x, ${bird.head}.png 2x`}
-          alt=""
-          draggable={false}
-          decoding="async"
-          loading={loading}
-          style={{ ...layer, transformOrigin: bird.neck }}
-        />
+        <picture style={PICTURE}>
+          <source type="image/webp" srcSet={`${bird.head}-400.webp 1x, ${bird.head}.webp 2x`} />
+          <img
+            ref={headRef}
+            src={`${bird.head}-400.png`}
+            srcSet={`${bird.head}-400.png 1x, ${bird.head}.png 2x`}
+            alt=""
+            draggable={false}
+            decoding="async"
+            loading={loading}
+            style={{ ...layer, transformOrigin: bird.neck }}
+          />
+        </picture>
       </div>
       {/* Wings-spread frame. Bigger than the box and offset negatively so the
           wingspan is not clipped; hidden until he hops, and deliberately
-          rendered with no src — the effect assigns one once he is on screen
-          and the thread is idle. */}
-      {bird.flap && <img
-        ref={flapRef}
-        alt=""
-        draggable={false}
-        decoding="async"
-        fetchPriority="low"
-        style={{
-          position: 'absolute',
-          left: FLAP.left,
-          top: FLAP.top,
-          width: FLAP.width,
-          height: FLAP.height,
-          objectFit: 'contain',
-          objectPosition: 'center bottom',
-          opacity: 0,
-          pointerEvents: 'none',
-          userSelect: 'none',
-          WebkitUserSelect: 'none',
-          transformOrigin: '50% 88%',
-          willChange: 'auto',
-        }}
-      />}
+          rendered with no src AND a bare <source> — the effect fills both in
+          once he is on screen and the thread is idle. A <source> carrying no
+          srcset is skipped by the picture algorithm, so until then this is
+          exactly the empty <img> it has always been. */}
+      {bird.flap && <picture style={PICTURE}>
+        <source ref={flapWebpRef} type="image/webp" />
+        <img
+          ref={flapRef}
+          alt=""
+          draggable={false}
+          decoding="async"
+          fetchPriority="low"
+          style={{
+            position: 'absolute',
+            left: FLAP.left,
+            top: FLAP.top,
+            width: FLAP.width,
+            height: FLAP.height,
+            objectFit: 'contain',
+            objectPosition: 'center bottom',
+            opacity: 0,
+            pointerEvents: 'none',
+            userSelect: 'none',
+            WebkitUserSelect: 'none',
+            transformOrigin: '50% 88%',
+            willChange: 'auto',
+          }}
+        />
+      </picture>}
     </div>
   );
 }
