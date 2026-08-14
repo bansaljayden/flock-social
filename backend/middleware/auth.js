@@ -56,8 +56,11 @@ function signUserToken(user) {
 // This is the IMMEDIATE half. sockets/handlers.js separately revalidates every
 // live connection on a timer (SESSION_RECHECK_MS), which catches bumps made by
 // code that never calls this — but only after up to a minute, during which the
-// intruder is still reading. Anything that bumps token_version should call this
-// as well; routes/users.js's password change currently does not.
+// intruder is still reading. Anything that bumps token_version must call this
+// as well. As of round 18 all four callers do: the Google claim, the Apple
+// claim and the squat eviction in routes/auth.js, the completed password reset
+// in the same file, /logout-all, and the password change in routes/users.js
+// (which this comment used to record as the outstanding gap — it is closed).
 function revokeUserSessions(io, userId) {
   if (!io || userId === undefined || userId === null) return false;
   try {

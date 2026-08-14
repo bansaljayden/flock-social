@@ -561,9 +561,28 @@ router.put('/profile',
             error: 'This account signs in with Google or Apple, so its email is managed by that provider and cannot be changed here.',
           });
         }
+        // SHADOW ACCOUNT (round 18 re-audit). This was a plain LOWER() match
+        // while every lookup in routes/auth.js compares in the CANONICAL
+        // alphabet, and the two sides of that comparison are written in
+        // different ones: the submitted address has been through
+        // normalizeEmail() (Gmail dots and +subaddresses stripped) while an
+        // OAuth row stores the provider's address verbatim, dots and all. So a
+        // victim signed in with Google as `john.doe@gmail.com`, an attacker
+        // moved their own row onto `johndoe@gmail.com`, LOWER() saw no clash,
+        // the users.email UNIQUE index saw a different string, and two rows
+        // owned one mailbox. That is precisely the hole canonicalEmail() was
+        // written for; this route was the one door still open to it.
+        //
+        // The expression comes from routes/auth.js so the two cannot drift.
+        // Required lazily for the same reason that file requires this one
+        // lazily: neither module should be pulled in at the other's load time.
+        // AND binds tighter than OR, so this reads `(exact AND other) OR
+        // (canonical AND other)` — both halves exclude the caller's own row.
+        const { canonicalEmail, EMAIL_CANONICAL_SQL } = require('./auth');
         const emailCheck = await pool.query(
-          'SELECT id FROM users WHERE LOWER(email) = LOWER($1) AND id != $2',
-          [email, req.user.id]
+          `SELECT id FROM users WHERE LOWER(email) = LOWER($1) AND id != $2
+              OR ${EMAIL_CANONICAL_SQL} = $3 AND id != $2`,
+          [email, req.user.id, canonicalEmail(email)]
         );
         if (emailCheck.rows.length > 0) {
           return res.status(400).json({ error: 'Email is already in use' });
@@ -669,17 +688,42 @@ router.put('/profile',
       // already outstanding for this account (round 13 — that is the whole
       // point of changing a password you think someone else has). The caller's
       // own token dies with the rest, so we mint and return a replacement.
+      //
+      // AN EMAIL CHANGE UN-VERIFIES THE ROW (round 18 re-audit). Verification is
+      // per-ADDRESS: email_verified means "this account proved it can read the
+      // address it currently holds", and moving the address makes that claim
+      // false. Leaving the flag set was a PERMANENT SQUAT on any address:
+      // sign up, verify your own mailbox, then move the row onto victim@gmail
+      // and stop. claimDecision() in routes/auth.js compares verified_email
+      // against the provider's address, sees a row that proved a DIFFERENT
+      // mailbox, and returns 'refuse' — so the victim's Google sign-in 409s,
+      // their Apple sign-in 409s and password signup says "already registered",
+      // for ever, with no admin route to undo it. Refusing to hand the row over
+      // was the right call; leaving it holding the address was not.
+      //
+      // Un-verified, the same row decides as 'evict': the address's real owner
+      // signs in with a provider-verified token, takes the address back, and the
+      // squatter keeps their own data under a tombstone. It also stops a
+      // moved-onto address being tombstoned on deletion (recordBannedIdentity
+      // reads exactly these two columns) and puts the row back inside the
+      // round-16 accumulation gate until it proves the NEW address.
+      //
+      // Written as CASE over $2 rather than a new parameter on purpose: $2 is
+      // already `changingEmail ? email : null`, so the two columns move with the
+      // address and only with the address, and the statement keeps its shape.
       const result = await pool.query(
         `UPDATE users
          SET name = COALESCE($1, name),
              email = COALESCE($2, email),
+             email_verified = CASE WHEN $2::text IS NULL THEN email_verified ELSE FALSE END,
+             verified_email = CASE WHEN $2::text IS NULL THEN verified_email ELSE NULL END,
              phone = COALESCE($3, phone),
              interests = COALESCE($4, interests),
              password = COALESCE($5, password),
              token_version = token_version + CASE WHEN $5::text IS NULL THEN 0 ELSE 1 END,
              updated_at = NOW()
          WHERE id = $6
-         RETURNING id, email, name, phone, interests, role, profile_image_url, token_version, created_at, updated_at`,
+         RETURNING id, email, name, phone, interests, role, profile_image_url, email_verified, token_version, created_at, updated_at`,
         // Only write the email column on a real change, so an unchanged form
         // never silently rewrites a stored address into its normalized form.
         [name || null, changingEmail ? email : null, phone || null, safeInterests, hashedPassword, req.user.id]
@@ -696,6 +740,11 @@ router.put('/profile',
       res.json({
         user: safeUser,
         ...(hashedPassword ? { token: signUserToken(result.rows[0]) } : {}),
+        // The address moved, so the row is unverified again and the round-16
+        // gate is back on. Say so, or the next payment/friend/flock call is an
+        // unexplained 403. POST /api/auth/resend-verification mails the link for
+        // the new address.
+        ...(changingEmail ? { emailVerificationRequired: true } : {}),
       });
     } catch (err) {
       console.error('Update profile error:', err);
