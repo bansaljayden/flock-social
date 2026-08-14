@@ -21,7 +21,7 @@ try { pool = require('../config/database'); } catch (_) {}
 
 let session = null;
 let metadata = null;
-let loadAttempted = false;
+let loadPromise = null;
 let useML = false;
 
 // Event cache: key = "lat,lng,YYYY-MM-DDTHH" (UTC) → { data, ts }
@@ -41,6 +41,21 @@ function allowEventFetch() {
   eventDayCount++;
   return true;
 }
+// Round 17: the four event-cache writes each carried their own hand-inlined
+// eviction, and two of them had it written out twice. THE DUPLICATE LINE WAS
+// DEAD, not a double-eviction — the second `if` re-reads map.size, which the
+// first delete has already put below the ceiling, so it never fires. (Checked,
+// because the obvious reading of it is wrong and this comment is the only place
+// that will say so.) What the duplication actually cost was a reader's
+// confidence and four independent copies of a policy that has to match.
+//
+// Routing every write through the one bounded helper is what matters: the
+// ceiling and the refresh-moves-to-the-back rule are now stated once, for this
+// cache and the other three alike. (Declared above boundedSet is fine — this is
+// only ever called at request time, long after the module body has run.)
+function cacheEvents(key, data) {
+  boundedSet(eventCache, key, { data, ts: Date.now() }, EVENT_CACHE_MAX);
+}
 
 // Baseline cache: key = "placeId_dow_hour" → baseline value
 const baselineCache = new Map();
@@ -53,9 +68,22 @@ const FEEDBACK_CACHE_TTL = 60 * 60 * 1000; // 1 hour
 // Round 8: these maps are keyed by caller-supplied place ids/coords (the batch
 // endpoint), so without a ceiling they grow forever. Oldest-first eviction —
 // Map iteration order is insertion order.
+//
+// Round 17: DELETE THE KEY FIRST. Map.set on an existing key keeps its ORIGINAL
+// position in the insertion order, so an oldest-first policy over a map that is
+// refreshed in place evicts the entries that get re-read the most — exactly
+// backwards, and exactly the bug services/weatherService.js setCache already
+// documents finding in itself. It costs money in this file too: an evicted
+// baseline or neighbour entry is another database round trip, and an evicted
+// event entry is another paid Ticketmaster call.
+//
+// Evicting BEFORE the insert also has to account for the key already being
+// present, or refreshing an entry while the map is full throws away a second,
+// unrelated entry for no reason and the map settles one below its ceiling.
 const PREDICTOR_CACHE_MAX = 2000;
-function boundedSet(map, key, value) {
-  while (map.size >= PREDICTOR_CACHE_MAX) map.delete(map.keys().next().value);
+function boundedSet(map, key, value, max = PREDICTOR_CACHE_MAX) {
+  map.delete(key);
+  while (map.size >= max) map.delete(map.keys().next().value);
   map.set(key, value);
 }
 
@@ -102,10 +130,108 @@ function evaluateShipGate(meta) {
   };
 }
 
-async function init() {
-  if (loadAttempted) return useML;
-  loadAttempted = true;
+// The ONNX graph consumes POSITIONS. metadata.feature_names is the only record
+// of which position means what, and metadata.feature_count is a third copy of
+// the same fact — so the artifact and the file describing it can disagree, and
+// until round 17 nothing compared them.
+//
+// Two failure shapes. If the widths differ, onnxruntime throws on EVERY
+// prediction: the catch in predictBusyness swallows it into
+// 'rule_engine_fallback' and the product runs on the rule engine indefinitely
+// while the logs fill with one identical line per request — a total outage of
+// the ML path that looks like the ML path working. If the widths happen to
+// match but the ORDER does not, nothing throws at all and every number served
+// is confidently wrong; the order itself is unrecoverable from the graph, but
+// __tests__/mlPipeline.test.js pins feature_names against the sorted order
+// prepare_features.py emits, which is the half that can be checked.
+//
+// Returns a list of problems; empty means the pair is coherent.
+function verifyModelShape(session_, meta) {
+  const problems = [];
+  const names = (meta && meta.feature_names) || null;
+  if (!Array.isArray(names) || names.length === 0) {
+    problems.push('metadata carries no feature_names — nothing says what the model\'s columns mean');
+    return problems;
+  }
+  if (meta.feature_count != null && meta.feature_count !== names.length) {
+    problems.push(`metadata.feature_count=${meta.feature_count} but feature_names lists ${names.length} — the metadata has been hand-edited`);
+  }
+  const inputName = meta.onnx_input_name || 'input';
+  const inputNames = (session_ && session_.inputNames) || [];
+  if (inputNames.length > 0 && !inputNames.includes(inputName)) {
+    problems.push(`metadata.onnx_input_name="${inputName}" is not an input of the graph (has: ${inputNames.join(', ')}) — every run() would throw`);
+  }
+  // inputMetadata is available from onnxruntime-node 1.20 onward; treat its
+  // absence as "cannot check", never as "checked and fine".
+  const md = ((session_ && session_.inputMetadata) || []).find((m) => m && m.name === inputName);
+  const shape = md && Array.isArray(md.shape) ? md.shape : null;
+  const width = shape ? shape[shape.length - 1] : null;
+  if (typeof width === 'number' && width !== names.length) {
+    problems.push(`the ONNX graph takes ${width} features but metadata.feature_names lists ${names.length} — the .onnx and the .json are from different training runs`);
+  }
+  // feature_types is a fourth copy of the same width and drifts the same way.
+  if (Array.isArray(meta.feature_types) && meta.feature_types.length !== names.length) {
+    problems.push(`metadata.feature_types has ${meta.feature_types.length} entries but feature_names has ${names.length}`);
+  }
+  // predictBusyness reads session.outputNames[0] and then .data[0], i.e. it
+  // assumes a single-value regression head. An artifact re-exported as a
+  // classifier ('label' + 'probabilities') runs without error and hands back a
+  // class index that gets clamped into 0..100 and shipped as a busyness score.
+  const outNames = (session_ && session_.outputNames) || [];
+  if (outNames.length > 1) {
+    problems.push(`the graph has ${outNames.length} outputs (${outNames.join(', ')}) — this code reads outputNames[0].data[0] and only a single-value regression head is safe to read that way`);
+  }
+  const outMd = ((session_ && session_.outputMetadata) || []).find((m) => m && m.name === outNames[0]);
+  const outShape = outMd && Array.isArray(outMd.shape) ? outMd.shape : null;
+  const outWidth = outShape && outShape.length > 1 ? outShape[outShape.length - 1] : null;
+  if (typeof outWidth === 'number' && outWidth !== 1) {
+    problems.push(`the graph's first output is ${outWidth} wide, not a single value`);
+  }
+  // A MODEL THAT CANNOT SAY HOW ACCURATE IT IS MUST NOT BE PROMOTED.
+  // predictBusyness publishes metadata.training_metrics.within_15 verbatim as
+  // the `confidence` percentage on the venue card. Where that was absent the
+  // code fell back to a bare `58` — a number with no provenance whatsoever,
+  // shipped to a user as a measurement. Fail closed instead, the same way the
+  // ship gate, the feature-coverage check and the missing-climatology check do,
+  // so the fallback constant is unreachable rather than merely unlikely.
+  const within15 = meta.training_metrics && meta.training_metrics.within_15;
+  if (!(typeof within15 === 'number' && Number.isFinite(within15) && within15 > 0 && within15 <= 100)) {
+    problems.push('metadata.training_metrics.within_15 is missing or unusable — this is the number served to users as `confidence`, and there is nothing honest to put there');
+  }
+  return problems;
+}
 
+// Concurrency: init() used to flip a `loadAttempted` flag SYNCHRONOUSLY and only
+// then await InferenceSession.create(). Everything before that await is
+// synchronous, so a second caller entering during the load saw the flag already
+// set, read `useML` while it was still false, and was told there is no model.
+// On a Railway cold boot — or the public demo scoring twenty venues in one
+// Promise.all — that meant some venues on one screen were scored by the model
+// and the rest by the rule engine, with nothing anywhere saying so. Callers now
+// share the load promise, so the answer is "wait", not "no".
+//
+// AND THE PROMISE MUST NEVER REJECT. Found re-auditing this fix: memoising a
+// promise converts a ONE-TIME failure into a PERMANENT one. `await init()` sits
+// OUTSIDE the try/catch in both predictBusyness and predictHourlyForecast, so a
+// stored rejection would reject every prediction for the life of the process —
+// routes/crowd.js turns that into a 500 and the card renders nothing, where the
+// old code merely degraded to the rule engine once. loadModel's own try/catch
+// does not cover the fs.existsSync calls that precede it, so this is reachable
+// (an unreadable model volume), not theoretical.
+function init() {
+  if (!loadPromise) {
+    loadPromise = loadModel().catch((err) => {
+      console.warn('[MLPredictor] Model load threw, serving rule engine:', err.message);
+      session = null;
+      metadata = null;
+      useML = false;
+      return false;
+    });
+  }
+  return loadPromise;
+}
+
+async function loadModel() {
   if (!fs.existsSync(ONNX_PATH) || !fs.existsSync(META_PATH)) {
     console.log('[MLPredictor] Model files not found — using rule engine');
     return false;
@@ -143,7 +269,22 @@ async function init() {
       console.warn(`[MLPredictor] ML_SHIP_GATE_OVERRIDE=true — promoting despite ${missing.length} missing feature(s): ${missing.join(', ')}`);
     }
 
-    session = await ort.InferenceSession.create(ONNX_PATH);
+    const loaded = await ort.InferenceSession.create(ONNX_PATH);
+
+    // Round 17: artifact/metadata coherence. See verifyModelShape — a mismatch
+    // is either an ML outage disguised as a working product or a silently
+    // wrong vector, so it fails closed like the two gates above.
+    const shapeProblems = verifyModelShape(loaded, metadata);
+    if (shapeProblems.length > 0 && process.env.ML_SHIP_GATE_OVERRIDE !== 'true') {
+      console.error(`[MLPredictor] REFUSING to promote model v${version}: the ONNX artifact and its metadata disagree — ${shapeProblems.join('; ')}. Serving rule engine instead.`);
+      metadata = null;
+      return false;
+    }
+    if (shapeProblems.length > 0) {
+      console.warn(`[MLPredictor] ML_SHIP_GATE_OVERRIDE=true — promoting despite artifact/metadata drift: ${shapeProblems.join('; ')}`);
+    }
+
+    session = loaded;
     useML = true;
     console.log(`[MLPredictor] Loaded ONNX model v${version} (${metadata.best_model || '?'}, ${metadata.feature_count || '?'} features) — ${overridden ? 'gate overridden' : gate.reason}`);
     return true;
@@ -348,6 +489,23 @@ function mapTmEventType(classifications) {
   return 'other';
 }
 
+// THIS MUST STAY BYTE-FOR-BYTE EQUIVALENT TO
+// scripts/ml/collectEvents.js estimateAttendance(), which is the function that
+// produced `estimated_attendance` for every event row in the corpus. Four
+// features are derived from the number it returns (nearest_event_attendance,
+// its log, total_nearby_attendance and its log) plus the binary
+// large_event_nearby, so a serving-side estimator that has drifted from the
+// collector labels the same Ticketmaster payload with one number at training
+// time and a different one at prediction time.
+//
+// Round 17: it had drifted, by four branches, all of them downward:
+//   * the arena vocabulary had lost "garden" and "field", so a concert at
+//     Madison Square Garden estimated 500 instead of 20,000;
+//   * music at a theatre (3,000) had no branch and fell to 500;
+//   * arts (1,500) and family (1,000) both collapsed to the 500 default.
+// The user-visible half of that: `eventAlert` on the venue card fires at
+// >5,000 attendance, so a Garden or arena show — exactly the event a person
+// wants to be warned about — could never raise the banner.
 function estimateTmAttendance(event) {
   const venues = event._embedded?.venues || [];
   for (const v of venues) {
@@ -357,10 +515,17 @@ function estimateTmAttendance(event) {
   }
   const venueName = (venues[0]?.name || '').toLowerCase();
   const isArena = venueName.includes('arena') || venueName.includes('stadium') ||
-                  venueName.includes('center') || venueName.includes('centre');
+                  venueName.includes('center') || venueName.includes('centre') ||
+                  venueName.includes('garden') || venueName.includes('field');
   const type = mapTmEventType(event.classifications);
   if (type === 'sports') return isArena ? 25000 : 5000;
-  if (type === 'music') return isArena ? 20000 : 500;
+  if (type === 'music') {
+    if (isArena) return 20000;
+    if (venueName.includes('theater') || venueName.includes('theatre')) return 3000;
+    return 500;
+  }
+  if (type === 'arts') return 1500;
+  if (type === 'family') return 1000;
   return 500;
 }
 
@@ -434,9 +599,7 @@ async function getNearbyEvents(lat, lng, timestamp) {
     );
 
     if (!response.ok) {
-      if (eventCache.size >= EVENT_CACHE_MAX) eventCache.delete(eventCache.keys().next().value);
-      if (eventCache.size >= EVENT_CACHE_MAX) eventCache.delete(eventCache.keys().next().value);
-      eventCache.set(cacheKey, { data: noEvents, ts: Date.now() });
+      cacheEvents(cacheKey, noEvents);
       return noEvents;
     }
 
@@ -444,23 +607,36 @@ async function getNearbyEvents(lat, lng, timestamp) {
     const events = data._embedded?.events || [];
 
     if (events.length === 0) {
-      if (eventCache.size >= EVENT_CACHE_MAX) eventCache.delete(eventCache.keys().next().value);
-      if (eventCache.size >= EVENT_CACHE_MAX) eventCache.delete(eventCache.keys().next().value);
-      eventCache.set(cacheKey, { data: noEvents, ts: Date.now() });
+      cacheEvents(cacheKey, noEvents);
       return noEvents;
     }
 
+    // ONE POPULATION, COUNTED ONCE. scripts/ml/enrichWithEvents.js builds the
+    // training values by filtering to DISTANCE_THRESHOLD_KM = 2 and then
+    // deriving total_nearby_events AND total_nearby_attendance from the same
+    // surviving list. Round 17: this counted `events.length` — everything
+    // Ticketmaster returned, including entries with no coordinates at all and
+    // whatever the vendor's own radius interpretation let through — while
+    // summing attendance over a strictly smaller set. So the two features
+    // described different populations, and total_nearby_events was inflated
+    // relative to every row the model was trained on.
+    const NEARBY_KM = 2; // enrichWithEvents.DISTANCE_THRESHOLD_KM
     let nearestDist = Infinity;
     let nearestEvent = null;
     let totalAttendance = 0;
+    let totalNearby = 0;
 
     for (const e of events) {
       const eLat = parseFloat(e._embedded?.venues?.[0]?.location?.latitude) || 0;
       const eLng = parseFloat(e._embedded?.venues?.[0]?.location?.longitude) || 0;
+      // An event we cannot place is an event we cannot say is nearby.
       if (!eLat || !eLng) continue;
 
       const dist = distanceKm(lat, lng, eLat, eLng);
+      if (dist > NEARBY_KM) continue;
+
       const attendance = estimateTmAttendance(e);
+      totalNearby++;
       totalAttendance += attendance;
 
       if (dist < nearestDist) {
@@ -472,21 +648,18 @@ async function getNearbyEvents(lat, lng, timestamp) {
     const result = nearestEvent ? {
       hasEvent: true,
       nearestAttendance: nearestEvent.attendance,
-      totalEvents: events.length,
+      totalEvents: totalNearby,
       totalAttendance,
       nearestType: nearestEvent.type,
       nearestDistance: Math.round(nearestDist * 100) / 100,
       nearestName: nearestEvent.name,
     } : noEvents;
 
-    if (eventCache.size >= EVENT_CACHE_MAX) eventCache.delete(eventCache.keys().next().value);
-
-    eventCache.set(cacheKey, { data: result, ts: Date.now() });
+    cacheEvents(cacheKey, result);
     return result;
   } catch (err) {
     console.error('[MLPredictor] Event lookup failed:', err.message);
-    if (eventCache.size >= EVENT_CACHE_MAX) eventCache.delete(eventCache.keys().next().value);
-    eventCache.set(cacheKey, { data: noEvents, ts: Date.now() });
+    cacheEvents(cacheKey, noEvents);
     return noEvents;
   }
 }
@@ -813,10 +986,29 @@ function buildFeatureMap(venue, weather, timestamp, eventData, feedback, baselin
     features[`weather_${g}`] = weatherGroup === g ? 1 : 0;
   }
 
-  // Google types one-hot
+  // Google types one-hot — ONLY THE FIRST THREE TYPES, because that is all the
+  // training corpus has.
+  //
+  // Round 17: this tested membership of the whole `types` array. The corpus
+  // does not have a whole array: scripts/ml/train/export_training_data.js
+  // rowToCsv writes exactly `types[0]`, `types[1]`, `types[2]` into
+  // google_type_1/2/3, and prepare_features.add_venue_features builds every
+  // gtype_* column by testing those three columns and nothing else. Anything at
+  // position 4 or later was zero in every row the model ever saw.
+  //
+  // That is not a rare edge. Google returns its generic tail types last on
+  // essentially every place — a bar comes back as
+  // ["bar","restaurant","food","point_of_interest","establishment"] — and both
+  // `point_of_interest` and `establishment` are in metadata.top_google_types.
+  // So two of the thirty type one-hots were ~always 1 at inference and ~always
+  // 0 in training: a systematic distribution shift on every single prediction,
+  // in the direction the model has no experience of. Same class as the 0,0
+  // coordinate bug — no error anywhere, just a different vector than the one
+  // the weights were fit on.
+  const trainedTypes = types.slice(0, 3);
   const topTypes = metadata.top_google_types || [];
   for (const t of topTypes) {
-    features[`gtype_${t}`] = types.includes(t) ? 1 : 0;
+    features[`gtype_${t}`] = trainedTypes.includes(t) ? 1 : 0;
   }
 
   return features;
@@ -1016,29 +1208,35 @@ async function predictHourlyForecast(venue, weather, startHour, count, baseTimes
   const base = baseTimestamp ? new Date(baseTimestamp) : new Date();
   base.setHours(start, 0, 0, 0);
 
+  // THE LABEL IS READ OFF THE TIMESTAMP THAT WAS ACTUALLY SCORED.
+  //
+  // Round 17: `ts` advances by i * 3,600,000 ms — a fixed amount of ELAPSED
+  // TIME — while the label was `(start + i) % 24`, a count of WALL-CLOCK hours.
+  // Those agree only when no clock change falls between them. Across a DST
+  // transition they diverge by an hour: on the fall-back night the entry
+  // labelled "2 AM" had been scored at 1 AM, and on the spring-forward night
+  // "2 AM" was labelled over a bar scored at 3 AM — an hour that does not exist.
+  // Every feature in the vector comes from ts.getHours(), so ts is the truth and
+  // the label has to follow it, not a parallel count that can drift from it.
+  // (Railway runs UTC, which has no transitions, so this was a developer-machine
+  // and future-deployment bug rather than a live one — but the card publishing a
+  // score under the wrong hour is the same failure whatever the odds.)
+  const labelFor = (d) => {
+    const h = d.getHours();
+    const period = h >= 12 ? 'PM' : 'AM';
+    const displayHour = h === 0 ? 12 : h > 12 ? h - 12 : h;
+    return `${displayHour} ${period}`;
+  };
+
   for (let i = 0; i < hours; i++) {
     const ts = new Date(base.getTime() + i * 60 * 60 * 1000);
     try {
       const result = await predictBusyness(venue, weather, ts);
-      const h = (start + i) % 24;
-      const period = h >= 12 ? 'PM' : 'AM';
-      const displayHour = h === 0 ? 12 : h > 12 ? h - 12 : h;
-      forecast.push({
-        hour: `${displayHour} ${period}`,
-        score: result.score,
-        label: result.label,
-      });
+      forecast.push({ hour: labelFor(ts), score: result.score, label: result.label });
     } catch (err) {
       // Fallback for this hour
       const fallback = crowdEngine.calculateCrowdScore(venue, weather, ts);
-      const h = (start + i) % 24;
-      const period = h >= 12 ? 'PM' : 'AM';
-      const displayHour = h === 0 ? 12 : h > 12 ? h - 12 : h;
-      forecast.push({
-        hour: `${displayHour} ${period}`,
-        score: fallback.score,
-        label: fallback.label,
-      });
+      forecast.push({ hour: labelFor(ts), score: fallback.score, label: fallback.label });
     }
   }
 
@@ -1075,6 +1273,14 @@ module.exports = {
     hasTempReading,
     climateNorm,
     tempForFeature,
+    estimateTmAttendance,
+    getNearbyEvents,
+    verifyModelShape,
+    boundedSet,
+    PREDICTOR_CACHE_MAX,
+    EVENT_CACHE_MAX,
+    eventCacheSize: () => eventCache.size,
     getMetadata: () => metadata,
+    getSession: () => session,
   },
 };
