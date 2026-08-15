@@ -1108,12 +1108,51 @@ async function enforceDobOnLogin(user, req, res) {
     // holds on every later sign-in; the write also records what we knew and
     // when we knew it for the human deletion step. Then remember the attempt,
     // so the same mailbox/IP cannot immediately open a fresh account either.
-    await pool.query('UPDATE users SET date_of_birth = $1 WHERE id = $2', [supplied, user.id]);
+    //
+    // Round 22: the same statement bumps token_version, and the live sockets
+    // are dropped with it. "This account belongs to a child" applies to the
+    // sessions the account ALREADY holds, not only to future sign-ins —
+    // without the bump, a JWT minted that morning kept working for the rest
+    // of its 24 hours after the freeze landed, and a live socket kept
+    // receiving DMs and location the whole time. Same blast-radius rule as a
+    // completed password reset, for the same reason: the refusal below is
+    // only real if it applies everywhere at once. Deliberately UNguarded
+    // (unlike the passing-date write below): if a racing sign-in persisted a
+    // passing date a few milliseconds ago, the under-13 answer still wins,
+    // because it is the answer the law attaches to.
+    await pool.query(
+      'UPDATE users SET date_of_birth = $1, token_version = token_version + 1 WHERE id = $2',
+      [supplied, user.id]
+    );
+    revokeUserSessions(req.app.get('io'), user.id);
     recordUnderageAttempt(user.email, req.ip);
     res.status(403).json({ error: UNDERAGE_MSG });
     return false;
   }
-  await pool.query('UPDATE users SET date_of_birth = $1 WHERE id = $2', [supplied, user.id]);
+  // Round 22: guarded on date_of_birth IS NULL. Two concurrent sign-ins can
+  // both read the row while its date is NULL; if the other one supplied an
+  // under-13 date (persisting the actual knowledge above) and this one
+  // supplies a passing date, an unguarded write here OVERWROTE the child date
+  // — the knowledge the paragraph above promises cannot be un-known was
+  // erased by a request racing it, and this request then signed in. The guard
+  // makes the first write win. Losing it means somebody else's date landed
+  // between our read and this write, so re-read what landed and hold this
+  // sign-in to THAT date, exactly as the freeze at the top would have.
+  const persisted = await pool.query(
+    'UPDATE users SET date_of_birth = $1 WHERE id = $2 AND date_of_birth IS NULL RETURNING date_of_birth',
+    [supplied, user.id]
+  );
+  if (persisted.rowCount === 0) {
+    const reread = await pool.query('SELECT date_of_birth FROM users WHERE id = $1', [user.id]);
+    const landed = reread.rows[0] ? reread.rows[0].date_of_birth : null;
+    const landedAge = ageFromDob(landed);
+    if (landedAge !== null && landedAge < MIN_AGE) {
+      res.status(403).json({ error: UNDERAGE_MSG });
+      return false;
+    }
+    user.date_of_birth = landed || supplied;
+    return true;
+  }
   user.date_of_birth = supplied;
   return true;
 }
