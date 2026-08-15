@@ -149,34 +149,42 @@ router.get('/flocks/:id/messages',
       const invisible = new Set(await getInvisibleUserIds(req.user.id));
       const invisibleArr = [...invisible];
 
-      let messagesQuery;
-      let params;
-
-      if (before) {
-        messagesQuery = `
-          -- Giant legacy base64 avatars would be repeated on every one of up to 100 rows; drop oversized ones instead of amplifying them (REVIEW-ROUND5)
-          SELECT m.*, u.name AS sender_name, CASE WHEN LENGTH(u.profile_image_url) > 12000 THEN NULL ELSE u.profile_image_url END AS sender_image
-          FROM messages m
-          LEFT JOIN users u ON u.id = m.sender_id
-          WHERE m.flock_id = $1 AND m.id < $2
-            AND m.is_hidden IS NOT TRUE
-            AND NOT (m.sender_id = ANY($4::int[]))
-          ORDER BY m.created_at DESC
-          LIMIT $3`;
-        params = [flockId, before, limit, invisibleArr];
-      } else {
-        messagesQuery = `
+      // ORDER BY the CURSOR column (messages-reliability round). This read
+      // sorted on created_at DESC while paging on `id < before` — two different
+      // keys. created_at is TIMESTAMP DEFAULT NOW(): NOW() is transaction-start
+      // time and carries no uniqueness, so a burst of sends ties on it (tie
+      // order unspecified, so the LIMIT boundary could split the tie one way on
+      // page 1 and the other way on page 2 — a duplicated or vanished row), and
+      // two concurrent transactions can commit with timestamps in the opposite
+      // order to their ids — a row stamped older than everything on page 1 but
+      // carrying an id ABOVE the cursor is then excluded by `id < before` on
+      // every later page: skipped forever, not just misplaced. id is SERIAL —
+      // unique and monotone with arrival — so sorting on the same key the
+      // cursor filters on makes pages tile exactly, and a message arriving
+      // between two page fetches (always a higher id) can never shift what an
+      // older cursor returns. The two branches this used to be are one
+      // statement: `$2::int IS NULL` is the first page, so the cursor predicate
+      // and the ordering can never drift apart between copies again.
+      const messagesQuery = `
           -- Giant legacy base64 avatars would be repeated on every one of up to 100 rows; drop oversized ones instead of amplifying them (REVIEW-ROUND5)
           SELECT m.*, u.name AS sender_name, CASE WHEN LENGTH(u.profile_image_url) > 12000 THEN NULL ELSE u.profile_image_url END AS sender_image
           FROM messages m
           LEFT JOIN users u ON u.id = m.sender_id
           WHERE m.flock_id = $1
+            AND ($2::int IS NULL OR m.id < $2)
             AND m.is_hidden IS NOT TRUE
-            AND NOT (m.sender_id = ANY($3::int[]))
-          ORDER BY m.created_at DESC
-          LIMIT $2`;
-        params = [flockId, limit, invisibleArr];
-      }
+            AND (m.sender_id IS NULL OR NOT (m.sender_id = ANY($4::int[])))
+          ORDER BY m.id DESC
+          LIMIT $3`;
+      // The `IS NULL OR` guard on sender_id is load-bearing, not defensive
+      // noise: messages.sender_id is ON DELETE SET NULL (schema 000), and in
+      // SQL `NOT (NULL = ANY(nonempty_array))` is NULL, which WHERE discards.
+      // So a deleted member's messages vanished from history — but only for
+      // viewers with at least one block relationship (an EMPTY array compares
+      // to FALSE, and NOT FALSE keeps the row), meaning two members of the same
+      // flock saw two different histories depending on who they had blocked,
+      // anywhere else in the app, ever.
+      const params = [flockId, before, limit, invisibleArr];
 
       const messagesResult = await pool.query(messagesQuery, params);
       const messages = messagesResult.rows;
@@ -558,10 +566,10 @@ router.get('/dm', async (req, res) => {
              AND COALESCE(dm.is_hidden, false) = false
          ) mine
          WHERE NOT (other_id = ANY($2::int[]))
-         ORDER BY other_id, created_at DESC
+         ORDER BY other_id, created_at DESC, id DESC
        ) l
        JOIN users u ON u.id = l.other_id
-       ORDER BY l.created_at DESC
+       ORDER BY l.created_at DESC, l.id DESC
        LIMIT $3`,
       [req.user.id, invisible, DM_CONVERSATION_LIMIT]
     );
@@ -628,11 +636,14 @@ router.get('/dm/:userId',
         return res.json({ messages: [], blocked: true });
       }
 
-      let dmQuery;
-      let params;
-
-      if (before) {
-        dmQuery = `
+      // Same cursor/order alignment as the flock read above, for the same
+      // reasons: the sort key IS the cursor key (id — SERIAL, unique, monotone
+      // with arrival), so pages tile exactly under ties and concurrent sends,
+      // and the first page and the cursor page are one statement instead of two
+      // copies that can drift. (direct_messages.sender_id is ON DELETE CASCADE,
+      // not SET NULL, so the null-sender guard the flock read needs has no
+      // equivalent here — a DM cannot outlive its sender.)
+      const dmQuery = `
           -- Giant legacy base64 avatars would be repeated on every one of up to 100 rows; drop oversized ones instead of amplifying them (REVIEW-ROUND5)
           SELECT dm.*, u.name AS sender_name, CASE WHEN LENGTH(u.profile_image_url) > 12000 THEN NULL ELSE u.profile_image_url END AS sender_image
           FROM direct_messages dm
@@ -640,23 +651,10 @@ router.get('/dm/:userId',
           WHERE ((dm.sender_id = $1 AND dm.receiver_id = $2)
               OR (dm.sender_id = $2 AND dm.receiver_id = $1))
             AND COALESCE(dm.is_hidden, false) = false
-            AND dm.id < $3
-          ORDER BY dm.created_at DESC
+            AND ($3::int IS NULL OR dm.id < $3)
+          ORDER BY dm.id DESC
           LIMIT $4`;
-        params = [req.user.id, otherUserId, before, limit];
-      } else {
-        dmQuery = `
-          -- Giant legacy base64 avatars would be repeated on every one of up to 100 rows; drop oversized ones instead of amplifying them (REVIEW-ROUND5)
-          SELECT dm.*, u.name AS sender_name, CASE WHEN LENGTH(u.profile_image_url) > 12000 THEN NULL ELSE u.profile_image_url END AS sender_image
-          FROM direct_messages dm
-          JOIN users u ON u.id = dm.sender_id
-          WHERE ((dm.sender_id = $1 AND dm.receiver_id = $2)
-             OR (dm.sender_id = $2 AND dm.receiver_id = $1))
-            AND COALESCE(dm.is_hidden, false) = false
-          ORDER BY dm.created_at DESC
-          LIMIT $3`;
-        params = [req.user.id, otherUserId, limit];
-      }
+      const params = [req.user.id, otherUserId, before, limit];
 
       const result = await pool.query(dmQuery, params);
       // Exclude moderator-hidden DMs (A6 takedown).
