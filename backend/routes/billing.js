@@ -8,6 +8,24 @@ const { pushIfOffline } = require('../services/pushHelper');
 const router = express.Router();
 router.use(authenticate);
 
+// ---------------------------------------------------------------------------
+// THIS FILE IS THE BILL SPLIT, NOT THE PAYWALL (trust sweep 2026-08-14)
+//
+// "Billing" here means who owes whom for dinner. Flock Pro lives in
+// services/entitlements.js, and the only thing that decides who has paid is the
+// column users.is_premium, written by exactly one writer in this repo:
+// routes/revenuecat.js.
+//
+// Nothing below is premium-gated and nothing below reads a premium claim off the
+// request. That is a fact worth writing down rather than leaving to be
+// rediscovered, because the day a Pro-only bill feature is added the cheapest
+// way to write it is `if (req.body.isPremium)` — and frontend gating is
+// cosmetic, so a client claim is not evidence of anything. Any gate added here
+// must ask services/entitlements.js, which reads the column on every call with
+// no cache. __tests__/billingWebhookTrust.test.js fails if a premium claim is
+// ever read off req.body, req.query, req.params or a header in this file.
+// ---------------------------------------------------------------------------
+
 // SERIAL ids are INT4; an id/payer past this 500s on the query rather than 400ing
 // (same class as routesReliability.test.js; friends.js bounds user ids the same
 // way). Every :flockId param and the paidBy body id below is bounded to it.
