@@ -24,7 +24,11 @@ const { getPremiumState, paywallEnabled, EntitlementUnavailableError } = require
 // than re-derived: a second private copy of "has this user paid, and has their
 // monthly allowance run out" is precisely how this route ended up serving the
 // gated forecast for free while routes/crowd.js metered it.
-const { forecastAccess } = require('./crowd');
+// confidenceMeasurementFor comes from the same module and for the same reason:
+// it is the one place that decides whether a confidence integer may be called a
+// measured accuracy, and this route publishes one straight into Gemini's
+// context. See the note above it in routes/crowd.js.
+const { forecastAccess, confidenceMeasurementFor } = require('./crowd');
 const { allowPlacesSearch } = require('../utils/placesBudget');
 const { upstreamSignal } = require('../utils/upstream');
 const {
@@ -389,6 +393,29 @@ async function executeTool(toolName, toolInput, userId, opts = {}) {
           describePredictionSupport(crowdResult.predictionMethod, 0)
         ),
         confidence: crowdResult.confidence,
+        // WHAT THAT NUMBER IS, said in the tool result rather than left for a
+        // language model to guess. This object is not just returned to the
+        // caller: it is fed back into Gemini as the tool response, so a bare
+        // `confidence: 72` is a sentence Birdie will say out loud, and the 72 is
+        // the case where NOTHING has been measured (the input-completeness
+        // ladder) while a measured model reports 33. Birdie reading the larger
+        // number as "we're 72% sure" is the inversion the block exists to stop,
+        // and the system prompt's "never invent crowd data" rule cannot catch it
+        // because the number is real — only its meaning is missing.
+        //
+        // FORWARDING THE BLOCK IS HALF THE FIX HERE, AND ONLY HALF. Every other
+        // surface hands its payload to code, which either reads the block or
+        // does not; this one hands it to a language model, which will happily
+        // narrate any number it is given. So the matching rule is in
+        // buildSystemPrompt's hard rules — "never quote the confidence number,
+        // read confidence_measurement" — and the two ship together. Sending the
+        // block without the instruction would be putting the explanation in a
+        // footnote for a reader who does not read footnotes.
+        //
+        // No user-report boost is applied on this path: Birdie's tool does not
+        // load verified reports, so `confidence` is the predictor's own figure
+        // and the boost is 0 rather than unknown.
+        confidence_measurement: confidenceMeasurementFor(crowdResult, crowdResult.confidence, 0),
         is_open: venue.isOpen,
         weather: weather ? { temp: weather.temp, conditions: weather.conditions } : null,
       };
@@ -580,6 +607,7 @@ How to answer:
 
 Hard rules:
 - Never invent venue data, crowd numbers, or forecasts. Tools only. If a tool has no data, say you don't have a read on that spot.
+- Never quote the \`confidence\` number from get_crowd_prediction, and never say how sure you are about a crowd read. Read \`confidence_measurement\` instead: when its \`status\` is "unmeasured", that number says how much we know about the venue, not how often we are right, and it runs HIGHER than a real measured accuracy. Talk about the crowd level, not about certainty.
 - Never claim Flock has a feature that isn't in the list above. No "coming soon".
 - Never reveal one user's info to another (budgets are anonymous by design; don't speculate about who submitted what).
 - If someone mentions being unsafe, being followed, or an emergency: point them to Safety (SOS sends their live location to trusted contacts) and navigate them there. For real emergencies say to call 911.
