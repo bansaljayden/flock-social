@@ -536,13 +536,47 @@ async function recordResetRequest(emailKey, ip) {
 // past 24 hours, so a week is already generous. Hourly at most, per process,
 // fire and forget: a failed sweep must never fail the request that triggered it.
 const RESET_PURGE_INTERVAL_MS = 60 * 60 * 1000;
+// How long a DEAD password_resets row (used, or past its expiry) is kept before
+// the sweep takes it. The same 7 days as the request ledger, for the same
+// reason: nothing load-bearing reads a dead row — the only reader is the
+// /reset-password/check screen saying "used" or "expired" honestly to someone
+// clicking a stale mail, and a week of that is generous for a link that lived
+// 60 minutes. Past the window the row is only a token hash and a request IP
+// with nobody left to serve, i.e. dead PII.
+const RESET_ROW_RETENTION_DAYS = 7;
 let lastResetPurge = 0;
+// In-flight sweep promises, tracked the same way pendingResetMail is and for
+// the same reason: the request never awaits them, tests can.
+const pendingResetSweeps = new Set();
+function sweepInBackground(label, factory) {
+  let p;
+  p = Promise.resolve()
+    .then(factory)
+    .catch((err) => console.error(`[auth] ${label} purge failed:`, err.message))
+    .finally(() => pendingResetSweeps.delete(p));
+  pendingResetSweeps.add(p);
+}
 function maybePurgeResetRequests() {
   const now = Date.now();
   if (now - lastResetPurge < RESET_PURGE_INTERVAL_MS) return;
   lastResetPurge = now;
-  pool.query("DELETE FROM password_reset_requests WHERE created_at < NOW() - INTERVAL '7 days'")
-    .catch((err) => console.error('[auth] reset request purge failed:', err.message));
+  sweepInBackground('reset request', () => pool.query(
+    "DELETE FROM password_reset_requests WHERE created_at < NOW() - INTERVAL '7 days'"
+  ));
+  // The token rows themselves. Only rows that are ALREADY dead — spent, or past
+  // their expiry — and old enough that the check screen is done with them. The
+  // dead-state condition, not the age alone, is what makes this sweep unable to
+  // touch a live link: a row a reset could still consume has expires_at in the
+  // future by definition, so no retention boundary race exists — anything the
+  // DELETE can take has been un-consumable for at least the whole window minus
+  // the 60-minute TTL. Never touches used_at/expires_at semantics; it only
+  // removes rows those semantics have already finished with.
+  sweepInBackground('reset token', () => pool.query(
+    `DELETE FROM password_resets
+      WHERE (used_at IS NOT NULL OR expires_at <= NOW())
+        AND created_at < NOW() - ($1::int * INTERVAL '1 day')`,
+    [RESET_ROW_RETENTION_DAYS]
+  ));
 }
 
 // Issue a link, retiring any older unused one for the account in the same
@@ -2614,6 +2648,12 @@ module.exports.__testing = {
   // carry Resend's latency (that latency only exists on the branch where the
   // account does, which makes it an enumeration oracle). Tests await this.
   flushResetMail: () => Promise.allSettled([...pendingResetMail]),
+  // The stale-row sweeps (request ledger + dead token rows) are fire-and-forget
+  // for the same reason the mail is; tests await them here, and rewind the
+  // hourly debounce so a single process can exercise more than one sweep.
+  RESET_ROW_RETENTION_DAYS,
+  flushResetSweeps: () => Promise.allSettled([...pendingResetSweeps]),
+  rewindResetPurgeClock: () => { lastResetPurge = 0; },
 };
 
 // ---------------------------------------------------------------------------
