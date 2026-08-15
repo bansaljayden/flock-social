@@ -445,6 +445,20 @@ export async function createFlockInviteLink(flockId, regenerate = false) {
   return data;
 }
 
+// The other end of that link: redeem it for real membership.
+//
+// The invite page's primary action, and the only authenticated route on the
+// guest surface. Answers { flockId, flockName, joined }, where `joined: false`
+// means the caller was already a member and should simply be taken to the chat.
+// The token is a bearer credential, so it is never put in a query string and
+// never sent to analytics: the event below carries whether it worked, not what
+// was redeemed. See services/inviteHandoff.js for the state machine around it.
+export async function joinFlockByInviteToken(token) {
+  const data = await request(`/api/guest/${encodeURIComponent(token)}/join`, { method: 'POST' });
+  track('invite_link_joined', { already_member: data?.joined === false });
+  return data;
+}
+
 export async function getCurrentUser() {
   return request('/api/auth/me');
 }
