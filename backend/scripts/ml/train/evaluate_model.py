@@ -211,14 +211,20 @@ def main():
     train_cities = train_data.get('cities')
     train_baseline = train_data.get('baseline')
     train_y_actual = train_data.get('y_actual')
+    train_weight = train_data.get('sample_weight')
     label_type = train_data.get('label_type', 'absolute')
     is_delta = (label_type == 'delta') and (train_baseline is not None) and (train_y_actual is not None)
     if is_delta:
         logger.info('Detected delta-label training. Will reconstruct absolute predictions via baseline + clamp(delta, -30, 30).')
 
-    # Load raw training data for category/hour info
-    train_df = pd.read_csv(SCRIPT_DIR / 'training_data.csv')
-    train_df = train_df.dropna(subset=['busyness_pct'])
+    # Per-row diagnostic keys travel INSIDE the pickle (audit finding 10). This
+    # script used to re-read the raw 3.57M-row CSV and slice it to the length of
+    # the 2.07M-row filtered feature matrix — `train_df['hour'].values[:len(y)]`
+    # — which pairs each prediction with an unrelated row's hour. The MAE-by-hour
+    # plot, the single diagnostic that would have exposed a six-hour clock skew,
+    # was drawn on scrambled pairs. Nothing is read from the CSV any more.
+    train_hours = train_data.get('hour')
+    train_categories = train_data.get('venue_category')
 
     # =================== CITY-BASED CV EVALUATION ===================
     logger.info('\n=== Leave-One-City-Out CV Evaluation ===')
@@ -228,10 +234,21 @@ def main():
     unique_cities = np.unique(train_cities)
     cv = GroupKFold(n_splits=len(unique_cities))
 
+    if train_weight is None:
+        logger.error(
+            'features_train.pkl carries no sample_weight. Every LOCO fold below '
+            'will be refit UNWEIGHTED, so these numbers would describe a model '
+            'that was never trained and never shipped. Re-run prepare_features.py.'
+        )
+        raise SystemExit(1)
+
     val_pred_all = np.full(len(y_train_all), np.nan)
     for train_idx, val_idx in cv.split(X_train_all, y_train_all, groups=train_cities):
         m = clone(model)
-        m.fit(X_train_all[train_idx], y_train_all[train_idx])
+        # The v2.3.1 blend (weekly rows at 0.05, vendor-forecast at 0.3) IS the
+        # training regime. Refitting without it evaluated a different model.
+        m.fit(X_train_all[train_idx], y_train_all[train_idx],
+              sample_weight=train_weight[train_idx])
         val_pred_all[val_idx] = m.predict(X_train_all[val_idx])
 
     if is_delta:
@@ -297,13 +314,28 @@ def main():
     plot_residuals(y_train_all_eval, val_pred_all, 'City CV: Predicted vs Actual', 'val_residuals.png')
     plot_error_distribution(val_pred_all - y_train_all_eval, 'City CV: Error Distribution', 'val_error_dist.png')
 
-    if 'hour' in train_df.columns:
-        plot_per_hour(y_train_all_eval, val_pred_all, train_df['hour'].values[:len(y_train_all_eval)],
+    # Aligned by construction: same pickle, same row order, length-checked.
+    if train_hours is not None and len(train_hours) == len(y_train_all_eval):
+        plot_per_hour(y_train_all_eval, val_pred_all, np.asarray(train_hours),
                       'City CV: MAE by Hour', 'val_per_hour.png')
+        hourly = (pd.DataFrame({'hour': np.asarray(train_hours),
+                                'actual': y_train_all_eval})
+                  .groupby('hour')['actual'].mean())
+        logger.info('Corpus mean busyness by hour (evening peak sanity check — a '
+                    'peak in the small hours means the clock axis is bent):')
+        logger.info('  %s', {int(h): round(float(v), 1) for h, v in hourly.items()})
+    else:
+        logger.error('No aligned hour column in features_train.pkl (got %s for %d rows) '
+                     '— SKIPPING the MAE-by-hour plot rather than drawing it on '
+                     'positionally-truncated rows. Re-run prepare_features.py.',
+                     None if train_hours is None else len(train_hours), len(y_train_all_eval))
 
-    if 'venue_category' in train_df.columns:
-        plot_per_category(y_train_all_eval, val_pred_all, train_df['venue_category'].values[:len(y_train_all_eval)],
+    if train_categories is not None and len(train_categories) == len(y_train_all_eval):
+        plot_per_category(y_train_all_eval, val_pred_all, np.asarray(train_categories),
                           'City CV: MAE by Category', 'val_per_category.png')
+    else:
+        logger.error('No aligned venue_category column in features_train.pkl — SKIPPING '
+                     'the MAE-by-category plot. Re-run prepare_features.py.')
 
     if train_cities is not None:
         plot_per_city(y_train_all_eval, val_pred_all, train_cities,

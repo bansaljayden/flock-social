@@ -24,15 +24,86 @@ model no longer trains on rows it will never serve.
 
 ## How to run a retrain
 
+> **The runbook used to start at `prepare_features.py`.** That was the single
+> most expensive line in this document: the checked-in CSVs were a 40-column
+> pre-round-10 export, `prepare_features.py` degraded silently on them, and
+> three shipped fixes (baseline smoothing, vendor-forecast weighting, the
+> leave-one-out baseline) never reached an artifact. **A retrain starts at the
+> export.** `prepare_features.py` now refuses a CSV that is not the current
+> 42-column shape, so this cannot recur silently, but do not try.
+
 ```bash
-cd backend/scripts/ml/train
-python prepare_features.py   # CSVs -> features_train.pkl / features_holdout.pkl
-python train_model.py        # LOCO CV + RandomizedSearchCV -> best_model.pkl
-python quick_eval.py         # SHIP GATE: realtime-only holdout metrics
-python export_model.py       # -> ../models/crowd_model.onnx + metadata
-cd ../../.. && node --test   # backend still green
-# commit crowd_model.onnx + model_metadata.json -> push -> Railway serves it
+# ── 0. PRESERVE THE INCUMBENT. Do this FIRST; it is unrecoverable afterwards.
+cd backend/scripts/ml
+mkdir -p models/incumbent
+cp models/crowd_model.onnx models/model_metadata.json models/incumbent/
+cp train/best_model.pkl train/features_holdout.pkl models/incumbent/
+#    quick_eval.py FAILS THE GATE without models/incumbent/best_model.pkl.
+#    features_holdout.pkl matters too: when the feature set changes (it will),
+#    it is the only way to score the incumbent on the same holdout ROWS.
+
+# ── 1. Clear stale artifacts so a partial failure cannot silently reuse them.
+cd train
+rm -f training_data.csv holdout_data.csv \
+      features_train.pkl features_holdout.pkl best_model.pkl
+
+# ── 2. Full pipeline, in this order. Never start in the middle.
+node export_training_data.js                     # 42-column CSVs
+head -1 training_data.csv | tr ',' '\n' | grep -c .   # must print 42
+python prepare_features.py                       # contract-checked; see below
+python train_model.py                            # LOCO CV -> best_model.pkl
+python evaluate_model.py                         # diagnostics + plots
+python quick_eval.py                             # SHIP GATE (must run last)
+MODEL_VERSION=2.6.0-<name> python export_model.py
+
+# ── 3. Verify the artifact the way production reads it.
+cd ../../..                                      # backend/
+node --test
+
+# ── 4. Read the gate before committing anything.
+node -e "const m=require('./scripts/ml/models/model_metadata.json');
+         console.log(m.model_version, JSON.stringify(m.ship_gate,null,1))"
+#    overall_pass must be true, gate_basis 'holdout_realtime_served', and
+#    ship_gate.incumbent.no_regression must be true.
+
+# ── 5. Commit crowd_model.onnx + model_metadata.json, push, Railway serves it.
 ```
+
+`evaluate_model.py` prints **corpus mean busyness by hour** before the
+MAE-by-hour plot. Read it. A peak anywhere but the evening means the clock axis
+is bent and the gate cannot see it — the gate compares `baseline + clamp(delta)`
+against `baseline`, so any error shared by both sides cancels.
+
+### What `prepare_features.py` will now refuse to do
+
+It fails loud instead of degrading. Each of these used to be a silent skip:
+
+| It stops when | Because |
+|---|---|
+| the CSV is not the 42-column export | `venue_id` drives baseline smoothing, `label_provenance` drives the vendor-forecast weight; without them both were skipped in silence |
+| a weather description is not in `WEATHER_DESCRIPTION_CODES` | guessing a group is inventing data — add the OpenWeatherMap id |
+| no `weather_condition_code` survives recovery | all ten `weather_*` features would be constant again |
+| any row lacks `month` / `season` | `month=0` with four zero season one-hots cannot occur at inference |
+| every row's `label_provenance` is `unknown` | vendor forecasts would all be weighted 1.0 again |
+| the holdout is missing a non-one-hot feature | the two frames went through different code paths |
+
+Two escape hatches exist. Both are explicit, both log a warning, both are
+recorded in `model_metadata.json.corpus_contract`, and **neither is acceptable
+for a release**:
+
+```bash
+FLOCK_WEATHER_POLICY=drop    # remove the 10 weather features instead of faking them
+FLOCK_CALENDAR_POLICY=drop   # remove the 12 calendar/month-derived features
+```
+
+Re-running `prepare_features.py` now **merges** into `model_metadata.json`
+instead of rewriting it from scratch, but it deliberately evicts `ship_gate`,
+`evaluation` and `training_metrics` and says so — those describe the previous
+feature set. Until `quick_eval.py` writes a fresh gate, `mlPredictor.init()`
+fails closed and the backend serves the rule engine. That is correct; it is no
+longer silent.
+
+If training dies, the feature pickles persist — rerun `train_model.py`.
 
 > **Gitignore trap.** `.gitignore:37` lists
 > `backend/scripts/ml/models/crowd_model.onnx`, but the file is already **tracked**,
@@ -42,19 +113,47 @@ cd ../../.. && node --test   # backend still green
 > succeeded. After pushing, confirm with
 > `git log --oneline -1 -- backend/scripts/ml/models/crowd_model.onnx`.
 
-Ship gate (do not ship on overall metrics): realtime-only holdout MAE must beat
-both the incumbent model and the popular-times baseline, and overall holdout
-must not regress materially.
+## The ship gate
 
-> **Do not hardcode the incumbent's numbers here.** The old "v2.2.1: 33.5 / 40.5"
-> figures are stale and are NOT comparable to current runs — the baselines
-> matured as more realtime rows accrued, so v2.5's honest realtime MAE (21.46 vs
-> the incumbent's 22.77) sits on a completely different scale from the 33.5 that
-> once counted as the bar. **Re-run the incumbent on the same holdout every
-> time** and compare within that run. `quick_eval.py` does this and writes the
-> verdict into `ship_gate`; trust it over any number typed in a doc.
+`quick_eval.py` writes `ship_gate` and `mlPredictor.init()` refuses to load an
+artifact whose gate fails. The gate is measured on **the holdout rows production
+actually serves** — `is_realtime == 1 AND baseline_busyness > 0` — using the same
+`serving_population_mask` predicate `prepare_features.py` filters training with.
+It is imported, not re-implemented, so the two cannot drift. All four of these
+must hold:
 
-If training dies, feature pickles persist — rerun train_model.py.
+1. vs the popular-times baseline on the gate slice: **MAE down ≥5 OR R² up ≥0.10**
+2. the MAE arm must **not regress** (Δ MAE ≥ 0) even when the R² arm carries it
+3. absolute floor: realtime **within-10 ≥ 29.2%**
+4. **no MAE regression against the incumbent artifact**
+
+Criteria 2–4 are new. Before them, v2.5 passed by failing the MAE arm by 2.7
+points and clearing the R² arm by 0.0026, and the gate slice included realtime
+rows with no baseline — rows where the model's reconstruction is capped at
+`0 + clamp(delta) ≤ 30` against actuals up to 100. The excluded count is written
+to `ship_gate.excluded_no_baseline_rows`, and the old unfiltered figure survives
+as `ship_gate.realtime_unfiltered_diagnostic`.
+
+> **The incumbent comparison now exists.** This document previously claimed
+> "`quick_eval.py` does this" — it did not. It loaded exactly one model and one
+> comparator (the popular-times baseline), so a retrain worse than v2.5 that
+> still beat the raw baseline would have shipped. The "21.46 vs 22.77" figures
+> quoted here were **not reproducible from any script in this repo** and appear
+> in none of the checked-in logs; `eval_v25.log` records 21.2073 vs a 23.498
+> popular-times baseline. Treat them as unverified.
+>
+> `quick_eval.py` now loads `models/incumbent/best_model.pkl` and scores it on
+> the same holdout rows. If the feature set is unchanged it runs on the same
+> matrix (`basis: same_rows_same_features`); if the feature set changed it runs
+> the incumbent through `models/incumbent/features_holdout.pkl` and verifies the
+> `y_actual` vectors are identical before comparing (`same_rows_preserved_features`).
+> A missing incumbent, a missing preserved pickle, or a row mismatch **fails the
+> gate**. `ML_ALLOW_NO_INCUMBENT=true` is the first-model-ever hatch;
+> `ML_ALLOW_APPROXIMATE_INCUMBENT=true` accepts a labelled row mismatch. Both are
+> recorded in `ship_gate.incumbent`.
+>
+> Do not hardcode any incumbent number in this document. Re-run the incumbent on
+> the same holdout every time and compare within that run.
 
 **Round 10:** `quick_eval.py` is no longer advisory. It writes
 `ship_gate.overall_pass` from the realtime-only holdout slice, and
@@ -71,6 +170,36 @@ serves the rule engine instead and logs why at startup. So:
   "MAE down ≥5" threshold cannot be met by any model. Use the realtime slice.
 - `ML_SHIP_GATE_OVERRIDE=true` promotes a failing artifact anyway (loudly).
   Local debugging only.
+
+## Pre-retrain audit status (`PRE-RETRAIN-AUDIT.md`, 8 BLOCKING items)
+
+Do not start the retrain until every BLOCKING row below reads DONE or has an
+owner. The audit file itself is the specification and is not edited; this is the
+status board.
+
+| # | Blocking finding | Status |
+|---|---|---|
+| 1 | Stale 40-column CSVs; runbook started after the export | **DONE (python side).** `prepare_features.py` raises `CorpusContractError` on any CSV that is not the 42-column export, naming the missing columns and telling you to re-run the exporter. Runbook above now starts at step 0 (preserve incumbent) then `node export_training_data.js`. Deleting the stale CSVs is step 1 of the runbook. |
+| 2 | No unique constraint on `ml_training_data`, so `ON CONFLICT DO NOTHING` is a no-op | **OPEN — needs a migration, owned elsewhere.** Exactly what is needed: `CREATE UNIQUE INDEX CONCURRENTLY … ON ml_training_data (venue_id, collection_mode, day_of_week, hour, COALESCE(observed_date,'1970-01-01'))`, a matching conflict target in `collectWeekly.js`, and a decision on collapsing the existing duplicate weekly rows. The Python side no longer *breaks* on the duplicates (see #3), but every average keyed on (venue, dow, hour) is still an unweighted mean over an uneven number of repeats until this lands. |
+| 3 | Positional `shift(1)` smoothed an hour against itself on duplicate rows | **DONE.** `smooth_baseline_hours()` collapses to one value per (venue_id, dow, hour), lays them on a complete 7×24 grid so a missing hour is a real gap, blends against the true clock neighbours with the day/week wraps `mlPredictor.getBaseline` uses, and merges back. Measured on a duplicate-heavy fixture: the old code left 9,714 of 14,112 cells holding more than one distinct smoothed baseline; the new code leaves 0. |
+| 4 | `weather_condition_code` NULL on 100% of rows → ten constant features | **DONE (recovery + contract).** `WEATHER_DESCRIPTION_CODES` maps every OpenWeatherMap description to its condition id and `recover_weather_codes()` backfills the column; the 25 descriptions present in the 2026-08-12 corpus are all covered. Unmapped descriptions are reported by name and count and stop the run. Still needed from the collector owner: write `weather.conditionId` into both collectors' INSERTs so new rows do not need recovery. |
+| 5 | 62.9% of rows carry `month=0` with all four season one-hots at 0 | **GUARDED, not fixed.** The fix has to be upstream: stamp `month`/`season` on weekly rows at collection, or backfill from `collected_at` in the export. Neither file is owned here. `prepare_features.py` now refuses to run on undated rows and prints the counts, and `FLOCK_CALENDAR_POLICY=drop` removes all 12 calendar-derived features instead of faking them. A retrain can no longer bake `month=0` by accident. |
+| 6 | Gate measured on holdout rows production refuses to serve | **DONE.** `quick_eval.py` imports `serving_population_mask` from `prepare_features` and applies it to the gate slice; the excluded count is logged and persisted, and the old unfiltered number is kept as a labelled diagnostic. |
+| 7 | No incumbent comparison, and this document claimed there was one | **DONE.** See "The ship gate" above. Absent or dishonest comparison = gate failure. |
+| 8 | Gate structurally blind to corpus-wide corruption; v2.5 passed by 0.0026 | **PARTLY DONE.** Added here: the MAE arm may not regress, an absolute realtime within-10 floor of 29.2%, and a per-hour corpus mean printed by `evaluate_model.py` so a bent axis is visible. Still open: the hard assertion that category peak hours land in the evening, which belongs with the clock fix — `__tests__/dinnerPeakAccuracy.test.js:332` currently *pins the bug* ("the shipped corpus is on a BestTime bucket axis") and must be inverted as part of that change, not worked around. |
+
+Non-blocking items also closed in the same pass: **#10** (`evaluate_model.py` no
+longer re-reads the raw CSV and positionally truncates it — `hour` and
+`venue_category` travel inside the pickle, and the LOCO folds refit **with**
+`sample_weight`, so `evaluation.validation` finally describes the model that was
+actually trained) and the first half of **#11** (`prepare_features.py` merges
+metadata instead of rewriting it, and names the keys it evicts).
+
+Still open in `run_training.sh`, which is not owned here: its summary reads
+`evaluation.validation`, a key `quick_eval.py` has never written (it writes
+`training_loco_cv`), so the summary prints `?`; and step 4 imports matplotlib +
+seaborn unguarded under `set -e`, so a missing plotting dependency aborts the
+pipeline **before** the ship gate runs.
 
 ## The continuous-learning loop ("constantly machine learning")
 
@@ -202,3 +331,82 @@ FSQ/Overture instead; see vault note on the baseline provenance question).
    rule-engine fallback dies entirely.
 5. Populate/verify `ml_venue_baselines` coverage in prod; set
    TICKETMASTER_API_KEY on Railway (event features currently zero).
+
+## THE HOUR AXIS IS FIXED (2026-08-15) — what the next retrain must assume
+
+The corpus the shipped model was trained on had **two clocks in one column**,
+and the next retrain is the first one that does not. Read this before running
+`export_training_data.js`.
+
+**What was wrong.** `collectWeekly.js` wrote BestTime's `day_raw` ARRAY INDEX
+into `ml_training_data.hour`. BestTime's day runs 06:00-05:59, so stored slot 18
+was the venue's midnight (`stored = (local_hour - 6) mod 24`). `collectRealtime.js`
+wrote the TRUE venue-local hour into the same column. `buildBaselines.js` copied
+the weekly axis into `ml_venue_baselines`, which `mlPredictor.getBaseline` reads
+as a wall clock — and this is a delta model, so the baseline is the answer. A
+6 PM request was answered with the venue's overnight number.
+
+**What changed, all of it free — no BestTime call was made.**
+
+1. `collectWeekly.js` now writes `(slot + 6) % 24` as the hour and rolls
+   `day_of_week` forward for slots 18-23 (BestTime day D covers local D 06:00
+   through D+1 05:59, so Saturday slot 20 is *Sunday* 02:00). Exported as
+   `bestTimeSlotToLocal()`.
+2. New column `ml_training_data.hour_axis` (`'venue_local'` | `'besttime_index'`
+   | NULL = written before the column existed). Both collectors declare
+   `'venue_local'` on every row they write.
+3. Migration `023_backfill_ml_weekly_local_hours.sql` applies the same transform
+   to every existing weekly row, in batches, resumably, and rebuilds
+   `ml_venue_baselines` from the corrected rows. It is idempotent and re-runnable
+   forever: its predicate is `collection_mode = 'weekly' AND hour_axis IS NULL
+   OR 'besttime_index'`, which is the disease itself. **Realtime rows are not
+   touched at all** — their hour was always correct, and the test proves
+   untouched by xmin, not by values.
+4. A CHECK constraint now REJECTS a weekly insert that does not declare its axis.
+5. `collectRealtime.js`'s baseline refresh was a second, drifted copy of
+   `buildBaselines.js`'s statement with no `collection_mode` filter — it averaged
+   live readings and weekly forecasts, on two clocks, into one slot. It now calls
+   `buildBaselines.refreshCollectedBaselines()`. One writer, one definition.
+
+**What the retrain must assume.**
+
+- **The delta labels are different now.** `export_training_data.js` computes its
+  leave-one-out baseline by grouping on `(google_place_id, day_of_week, hour)`
+  across BOTH modes. Before, each group mixed weekly rows at index *h* with
+  realtime rows at local hour *h* — two unrelated times of day — so every
+  realtime row's `busyness - baseline` label was computed against the wrong
+  anchor. That is fixed by the backfill alone; the export SQL needed no change.
+- **Do not compare to the old metrics.** v2.5.0's realtime MAE of 21.46 was
+  measured on the mixed axis. Re-run the incumbent on the same holdout, as the
+  doc says above — but understand that this time the incumbent is being scored on
+  data whose hour column means something different from what it was trained on.
+  The honest comparison is new-vs-new plus the ship gate.
+- `prepare_features.py`'s neighbouring-hour baseline smoothing (`shift(±1)`
+  within `venue_id, day_of_week`) now smooths across real adjacent hours, and the
+  00:00-05:00 block now sits in the correct weekday group.
+- The category peaks inside the CURRENT `model_metadata.json` are still on the
+  old axis. `__tests__/dinnerPeakAccuracy.test.js` PART 3 asserts that, and it
+  will go red the first time a model is exported from corrected data. That is the
+  signal to delete PART 3 and the long note above `getBaseline` in
+  `services/mlPredictor.js`, and to flip `crowdEngine.ML_BASELINE_AXIS_VERIFIED`.
+  Flip it only after the retrain ships — the baselines are correct now, but the
+  weights are not yet.
+
+**Order of operations for the retrain:**
+
+```bash
+# 1. migration 023 must have applied (it runs on server boot; check
+#    schema_migrations). Then, and only then:
+node scripts/ml/buildBaselines.js      # refuses if any weekly row is undeclared
+node scripts/ml/train/export_training_data.js
+# 2. usual pipeline from the top of this file
+```
+
+**Still broken, deliberately out of scope of that change:**
+`scripts/ml/discoverBestTime.js` `insertForecastData()` still writes the raw
+`day_raw` index and does not set `hour_axis`. Since 023 it fails LOUDLY on the
+CHECK constraint (logged per row, 0 rows inserted) instead of silently seeding a
+second clock. The fix is the same two lines `collectWeekly.js` got. Note the
+script also spends BestTime credits, so nothing runs it right now.
+`database/ml-schema.sql` and `initTables.js` also predate the column; migrations
+are the source of truth, and both collectors self-create the column anyway.
