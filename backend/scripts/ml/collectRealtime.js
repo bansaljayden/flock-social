@@ -13,6 +13,12 @@ const { CITIES, getLocalTime, isHoliday, isSchoolBreak, sleep } = require('./con
 const { getNearestEvent } = require('./eventService');
 const { specialNightFor, isHolidayEve } = require('./specialNights');
 const { refreshCollectedBaselines, REFUSAL_MESSAGE } = require('./buildBaselines');
+const { requireSlotIndex } = require('./collectWeekly');
+
+// Migration 024's realtime arbiter. Same reasoning as collectWeekly's: a
+// missing column can be created here, a missing unique index cannot, and a
+// silent 42P10 per venue is a worse outcome than one clear refusal.
+const REALTIME_SLOT_INDEX = 'ml_training_data_realtime_slot_uniq';
 
 // ---------------------------------------------------------------------------
 // THE HOUR AXIS. This collector has always written the TRUE venue-local hour
@@ -65,6 +71,7 @@ async function ensureHolidayColumns() {
 
 async function collectRealtime() {
   await ensureHolidayColumns();
+  await requireSlotIndex(pool, REALTIME_SLOT_INDEX);
   const { rows: venues } = await pool.query(
     `SELECT * FROM ml_venues WHERE is_active = true AND besttime_venue_id IS NOT NULL ORDER BY city, id`
   );
@@ -88,6 +95,10 @@ async function collectRealtime() {
   let skipped = 0;
   let liveRows = 0;
   let forecastRows = 0;
+  // Rows the unique index turned away because this venue-hour-date was already
+  // recorded. Counted and printed rather than swallowed: before migration 024
+  // these became extra rows and nothing said so.
+  let duplicateRows = 0;
   // Round 13: fetchLiveBusyness now throws on outage/rate-limit (transient)
   // and key/credit failures (fatal) instead of returning null. Before, a dead
   // key or a BestTime outage looked identical to "no live data for this
@@ -177,53 +188,78 @@ async function collectRealtime() {
         console.error(`  Event fetch error for ${venue.name}:`, err.message);
       }
 
+      // One value per column, in the column list's order, with the placeholder
+      // string generated from it. The previous form hand-numbered $1..$30 with
+      // hour_axis bound to $30 but written third, which is exactly the shape
+      // that miscounts the next time a column is added.
+      const columns = [
+        ['venue_id', venue.id],
+        ['hour_axis', HOUR_AXIS_VENUE_LOCAL],
+        ['day_of_week', local.dayOfWeek],
+        ['hour', local.hour],
+        ['month', local.month],
+        ['season', local.season],
+        ['is_holiday', isHoliday(local.dateStr)],
+        ['is_school_break', isSchoolBreak(local.dateStr)],
+        ['venue_category', venue.venue_category],
+        ['price_level', venue.price_level],
+        ['rating', venue.rating],
+        ['review_count', venue.review_count],
+        ['temperature', weather?.temp ?? null],
+        ['humidity', weather?.humidity ?? null],
+        ['wind_speed', weather?.windSpeed ?? null],
+        ['weather_condition', weather?.conditions ?? null],
+        // The OWM condition id. NULL in 100% of the corpus before this line,
+        // because no collector ever wrote it — which left ten weather_* features
+        // constant in training and dead at inference. weatherService has exposed
+        // conditionId since the 2026-08-12 audit.
+        ['weather_condition_code', weather?.conditionId ?? null],
+        ['is_raining', weather?.isRaining ?? null],
+        ['event_nearby', eventData.event_nearby],
+        ['event_distance_km', eventData.event_distance_km],
+        ['event_size', eventData.event_size],
+        ['event_type', eventData.event_type],
+        ['event_hours_until', eventData.event_hours_until],
+        ['baseline_busyness', baseline],
+        ['busyness_pct', Math.max(0, Math.min(100, busyness))],
+        ['observed_date', local.dateStr],
+        ['is_holiday_eve', holidayEve],
+        ['special_night', special?.name ?? null],
+        ['special_night_effect', special?.effect ?? null],
+        ['special_night_conf', special?.conf ?? null],
+        ['label_source', labelSource],
+      ];
+
       try {
-        await pool.query(
-          `INSERT INTO ml_training_data
-            (venue_id, collection_mode, hour_axis, day_of_week, hour, month, season, is_holiday, is_school_break,
-             venue_category, price_level, rating, review_count,
-             temperature, humidity, wind_speed, weather_condition, is_raining,
-             event_nearby, event_distance_km, event_size, event_type, event_hours_until,
-             baseline_busyness, busyness_pct,
-             observed_date, is_holiday_eve, special_night, special_night_effect, special_night_conf,
-             label_source)
-          VALUES ($1, 'realtime', $30, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23,
-                  $24, $25, $26, $27, $28, $29)`,
-          [
-            venue.id,
-            local.dayOfWeek,
-            local.hour,
-            local.month,
-            local.season,
-            isHoliday(local.dateStr),
-            isSchoolBreak(local.dateStr),
-            venue.venue_category,
-            venue.price_level,
-            venue.rating,
-            venue.review_count,
-            weather?.temp ?? null,
-            weather?.humidity ?? null,
-            weather?.windSpeed ?? null,
-            weather?.conditions ?? null,
-            weather?.isRaining ?? null,
-            eventData.event_nearby,
-            eventData.event_distance_km,
-            eventData.event_size,
-            eventData.event_type,
-            eventData.event_hours_until,
-            baseline,
-            Math.max(0, Math.min(100, busyness)),
-            local.dateStr,
-            holidayEve,
-            special?.name ?? null,
-            special?.effect ?? null,
-            special?.conf ?? null,
-            labelSource,
-            HOUR_AXIS_VENUE_LOCAL,
-          ]
+        // ON CONFLICT DO NOTHING against ml_training_data_realtime_slot_uniq
+        // (migration 024): one row per venue per venue-local hour per observed
+        // date. A second pull inside the same clock hour is the same observation
+        // re-read, not a new one.
+        //
+        // DO NOTHING here where collectWeekly.js does DO UPDATE, and the
+        // asymmetry is deliberate: a weekly row is an ESTIMATE of a typical week
+        // and a re-collection is a fresher read of it, so refreshing is right; a
+        // realtime row is an OBSERVATION of one venue-hour on one date, and
+        // overwriting a recorded observation is a different act.
+        //
+        // The predicate is repeated verbatim because the index is partial: it is
+        // what lets Postgres infer this arbiter. Legacy rows with no
+        // observed_date are outside the index, so nothing here can collide with
+        // or delete them.
+        const result = await pool.query(
+          `INSERT INTO ml_training_data (collection_mode, ${columns.map(([c]) => c).join(', ')})
+           VALUES ('realtime', ${columns.map((_, i) => `$${i + 1}`).join(', ')})
+           ON CONFLICT (venue_id, day_of_week, hour, observed_date)
+             WHERE collection_mode = 'realtime' AND observed_date IS NOT NULL
+           DO NOTHING`,
+          columns.map(([, v]) => v)
         );
-        totalRows++;
-        if (usedLive) liveRows++; else forecastRows++;
+        if (result.rowCount === 0) {
+          duplicateRows++;
+        } else {
+          totalRows++;
+          if (usedLive) liveRows++; else forecastRows++;
+        }
       } catch (err) {
         console.error(`  Insert error for ${venue.name}:`, err.message);
       }
@@ -233,7 +269,8 @@ async function collectRealtime() {
   }
 
   console.log(`\n[ML:Realtime] ${aborted ? 'ABORTED EARLY' : 'Done'}. ${totalRows} rows inserted `
-    + `(${liveRows} live-observed, ${forecastRows} vendor-forecast). ${skipped} venues skipped.`);
+    + `(${liveRows} live-observed, ${forecastRows} vendor-forecast). ${skipped} venues skipped`
+    + `${duplicateRows > 0 ? `, ${duplicateRows} already recorded for this venue-hour-date` : ''}.`);
 }
 
 async function run() {

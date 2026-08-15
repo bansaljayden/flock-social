@@ -180,10 +180,10 @@ status board.
 | # | Blocking finding | Status |
 |---|---|---|
 | 1 | Stale 40-column CSVs; runbook started after the export | **DONE (python side).** `prepare_features.py` raises `CorpusContractError` on any CSV that is not the 42-column export, naming the missing columns and telling you to re-run the exporter. Runbook above now starts at step 0 (preserve incumbent) then `node export_training_data.js`. Deleting the stale CSVs is step 1 of the runbook. |
-| 2 | No unique constraint on `ml_training_data`, so `ON CONFLICT DO NOTHING` is a no-op | **OPEN — needs a migration, owned elsewhere.** Exactly what is needed: `CREATE UNIQUE INDEX CONCURRENTLY … ON ml_training_data (venue_id, collection_mode, day_of_week, hour, COALESCE(observed_date,'1970-01-01'))`, a matching conflict target in `collectWeekly.js`, and a decision on collapsing the existing duplicate weekly rows. The Python side no longer *breaks* on the duplicates (see #3), but every average keyed on (venue, dow, hour) is still an unweighted mean over an uneven number of repeats until this lands. |
+| 2 | No unique constraint on `ml_training_data`, so `ON CONFLICT DO NOTHING` is a no-op | **DONE.** Migration `024_ml_training_data_unique_slot.sql` collapses the duplicates and adds the key; both collectors now name a real conflict target. The index shape deviates from the one specified here — see "The unique key on `ml_training_data`" below for what changed and why the `COALESCE(observed_date,'1970-01-01')` form would have destroyed data. |
 | 3 | Positional `shift(1)` smoothed an hour against itself on duplicate rows | **DONE.** `smooth_baseline_hours()` collapses to one value per (venue_id, dow, hour), lays them on a complete 7×24 grid so a missing hour is a real gap, blends against the true clock neighbours with the day/week wraps `mlPredictor.getBaseline` uses, and merges back. Measured on a duplicate-heavy fixture: the old code left 9,714 of 14,112 cells holding more than one distinct smoothed baseline; the new code leaves 0. |
-| 4 | `weather_condition_code` NULL on 100% of rows → ten constant features | **DONE (recovery + contract).** `WEATHER_DESCRIPTION_CODES` maps every OpenWeatherMap description to its condition id and `recover_weather_codes()` backfills the column; the 25 descriptions present in the 2026-08-12 corpus are all covered. Unmapped descriptions are reported by name and count and stop the run. Still needed from the collector owner: write `weather.conditionId` into both collectors' INSERTs so new rows do not need recovery. |
-| 5 | 62.9% of rows carry `month=0` with all four season one-hots at 0 | **GUARDED, not fixed.** The fix has to be upstream: stamp `month`/`season` on weekly rows at collection, or backfill from `collected_at` in the export. Neither file is owned here. `prepare_features.py` now refuses to run on undated rows and prints the counts, and `FLOCK_CALENDAR_POLICY=drop` removes all 12 calendar-derived features instead of faking them. A retrain can no longer bake `month=0` by accident. |
+| 4 | `weather_condition_code` NULL on 100% of rows → ten constant features | **DONE (recovery + contract).** `WEATHER_DESCRIPTION_CODES` maps every OpenWeatherMap description to its condition id and `recover_weather_codes()` backfills the column; the 25 descriptions present in the 2026-08-12 corpus are all covered. Unmapped descriptions are reported by name and count and stop the run. **The collector half is now DONE too:** both `collectWeekly.js` and `collectRealtime.js` write `weather.conditionId` into `weather_condition_code`, so recovery is a transitional path for old rows rather than a permanent one. The historical rows are deliberately NOT backfilled in SQL — the exporter already derives them, and a second full-table rewrite would have doubled the deploy's downtime for nothing. |
+| 5 | 62.9% of rows carry `month=0` with all four season one-hots at 0 | **DONE, with one stated limitation.** `collectWeekly.js` now stamps `month`/`season` from the venue's own clock at collection (falling back to UTC if `ml_venues.timezone` is unusable), and migration 024 backfills every existing row from its `collected_at`, which is a real `DEFAULT NOW()` insert timestamp and not an invented date. Rows whose `collected_at` is NULL are skipped, not guessed. The limitation, which the retrain must not forget: on a weekly row `month` means "the month this typical-week snapshot was taken in", not "the month this busyness happened in", and because collection ran in a narrow window it does **not** stop `month` from proxying row provenance. What it does fix is the impossible corner — every stamped row now has a month in 1..12 and exactly one season, a region the serving path actually reaches. `prepare_features.py`'s refusal and `FLOCK_CALENDAR_POLICY=drop` both stay as the guard. |
 | 6 | Gate measured on holdout rows production refuses to serve | **DONE.** `quick_eval.py` imports `serving_population_mask` from `prepare_features` and applies it to the gate slice; the excluded count is logged and persisted, and the old unfiltered number is kept as a labelled diagnostic. |
 | 7 | No incumbent comparison, and this document claimed there was one | **DONE.** See "The ship gate" above. Absent or dishonest comparison = gate failure. |
 | 8 | Gate structurally blind to corpus-wide corruption; v2.5 passed by 0.0026 | **PARTLY DONE.** Added here: the MAE arm may not regress, an absolute realtime within-10 floor of 29.2%, and a per-hour corpus mean printed by `evaluate_model.py` so a bent axis is visible. Still open: the hard assertion that category peak hours land in the evening, which belongs with the clock fix — `__tests__/dinnerPeakAccuracy.test.js:332` currently *pins the bug* ("the shipped corpus is on a BestTime bucket axis") and must be inverted as part of that change, not worked around. |
@@ -200,6 +200,22 @@ Still open in `run_training.sh`, which is not owned here: its summary reads
 `training_loco_cv`), so the summary prints `?`; and step 4 imports matplotlib +
 seaborn unguarded under `set -e`, so a missing plotting dependency aborts the
 pipeline **before** the ship gate runs.
+
+Also still open, and deliberately **not** closed in that pass: the
+`category_baseline` / `refined_category_baseline` leak that
+`metadata.training_contracts.known_residual_leak` names. `prepare_features.py`
+fits both on the whole training frame and applies them to it, so a city
+`train_model.py` later holds out has already built the cells its own rows are
+scored against. It makes `training_metrics` optimistic; it does **not** touch
+the ship gate, whose holdout cities contribute to neither map. Round 14
+attempted the fix, measured it, and rejected it — see next lever 2 for the
+numbers. What round 14 *did* ship is the raw material: `features_train.pkl`
+now carries `category_cell_stats` (per-city label sums and counts per category
+cell, plus each row's cell index), so the correct per-fold refit is a
+subtraction inside the fold loop rather than a second pass over the CSV, and
+`metadata.corpus_contract.category_baseline_fit` records where each map was
+fitted, where it was applied, and that the leak is still OPEN. Do not delete
+`known_residual_leak` until `train_model.py` consumes those statistics.
 
 ## The continuous-learning loop ("constantly machine learning")
 
@@ -325,7 +341,56 @@ FSQ/Overture instead; see vault note on the baseline provenance question).
 ## Next levers after v2.3 (in order)
 
 1. Feedback-rows-as-labels export (closes the loop for real).
-2. In-fold category_baseline recomputation (small leak, needs CV refactor).
+2. **In-fold `category_baseline` recomputation. It must be PER-FOLD. The cheap
+   substitute is disproven — do not reach for it.**
+
+   The leak: `prepare_features.build_category_baseline_maps` fits two means of
+   `busyness_pct` on the whole training frame, `add_baseline_features` applies
+   them to that same frame, and `train_model.py` then holds out one city per
+   `GroupKFold` fold — so a held-out city built the cells its own rows are
+   scored against. Optimistic `training_metrics`; the ship gate is untouched,
+   because the holdout cities contribute to neither map.
+
+   The obvious cheap fix — one leave-one-city-out map computed once, each row
+   reading `(cell_sum - own_city_sum) / (cell_n - own_city_n)`, the subtraction
+   `export_training_data.js` used for its round-13 anchor — **is eight times
+   worse than the leak it removes.** Under it the feature varies by city inside
+   a fold, and its deviation from the cell's typical value is an invertible
+   function of the held-out city's own labels: a tree splits on
+   (category, dow, hour) to find the cell, then on `category_baseline` inside
+   it, and reads that city's mean level straight off the feature.
+
+   Measured on a synthetic fixture (10 training cities, 3 never-seen holdout
+   cities, `GroupKFold` on city, identical hyperparameters, delta label whose
+   only learnable signal is a per-city deviation). Optimism = pristine-holdout
+   MAE minus the reported cross-validated MAE:
+
+   | category-baseline regime | reported CV MAE | true holdout MAE | optimism |
+   |---|---|---|---|
+   | whole-frame fit (what ships today) | 8.87 | 9.20 | **+0.34** |
+   | leave-one-city-out computed once | 6.20 | 9.02 | **+2.82** |
+   | K-fold block encoding, K=2 / 3 / 5 | 9.30 / 8.49 / 8.89 | 9.09 / 9.11 / 8.96 | −0.21 / **+0.63** / +0.07 |
+   | per-fold refit from the fold's own rows | 9.25 | 9.20 | **−0.04** |
+
+   Block encoding is not even monotone in K: at K=3 it is worse than doing
+   nothing. Only the per-fold refit is reliably honest, and it is honest for a
+   structural reason — inside a fold the map is one value per cell, shared by
+   that fold's training and validation rows alike, so there is no city-varying
+   residual left to invert. That property is what makes it correct, and it is
+   why the fix cannot live in `prepare_features.py`, which emits one feature
+   matrix and has no folds.
+
+   What is already done, so this lever is small: `features_train.pkl` carries
+   `category_cell_stats` — per-city label sums and counts for every coarse and
+   refined category cell, each row's cell index and group index, and the recipe
+   string. A fold's map is
+   `round(sums[fold_train_groups].sum(0) / counts[fold_train_groups].sum(0), 1)`,
+   then the 0.6/0.2/0.2 adjacent-hour smoothing for the coarse map, then index
+   with `row_cell`. Verified cell-by-cell against
+   `build_category_baseline_maps` refitted on each fold's rows: 38,136 cells
+   compared over 10 folds, zero mismatches. Remaining work is inside
+   `train_model.py`'s fold loop, plus deleting
+   `metadata.training_contracts.known_residual_leak` once it is consumed.
 3. Ensemble XGBoost + LightGBM (+0.02-0.05 R² typical).
 4. Absolute prediction head (second model for no-baseline venues) so the
    rule-engine fallback dies entirely.
@@ -410,3 +475,117 @@ second clock. The fix is the same two lines `collectWeekly.js` got. Note the
 script also spends BestTime credits, so nothing runs it right now.
 `database/ml-schema.sql` and `initTables.js` also predate the column; migrations
 are the source of truth, and both collectors self-create the column anyway.
+
+## THE UNIQUE KEY ON `ml_training_data` (2026-08-15) — audit findings 2, 4 and 5
+
+`collectWeekly.js` inserted 168 rows per venue with `ON CONFLICT DO NOTHING` and
+**no conflict target**, and no unique index existed for it to hit. Postgres
+accepts a bare `DO NOTHING` without an arbiter, so the clause was decorative:
+every re-collection stacked another full copy of the venue's week, and the log
+line still read "168 rows inserted". 16.1% of (venue, dow, hour, mode) cells in
+the last export held more than one row, up to 8 deep. Every average keyed on
+(venue, dow, hour) — `ml_venue_baselines`, the leave-one-out baseline in
+`export_training_data.js`, the category baselines — was an unweighted mean over
+an uneven number of repeats.
+
+Migration `024_ml_training_data_unique_slot.sql` fixes it. Read its header
+before touching any of this; the short version:
+
+**The survivor rule.** Duplicates differ in `busyness_pct`, `collected_at`,
+`baseline_busyness`, `hour_axis` and `observed_date`, so the choice is written
+down rather than left to the planner:
+
+```
+ORDER BY (hour_axis = 'venue_local') DESC NULLS LAST,   -- corrected beats legacy
+         collected_at              DESC NULLS LAST,     -- newest snapshot
+         besttime_epoch            DESC NULLS LAST,     -- newest vendor analysis
+         id                        DESC                 -- total order
+```
+
+Collapsed, not averaged: a weekly row is BestTime's *estimate* of a typical
+week, and three re-reads are one estimand sampled three times. Averaging would
+invent a busyness the vendor never reported and would leave a row whose label
+came from one fetch and whose weather came from another. The axis clause is
+first so recency can never promote a `besttime_index` row — whose `hour` is an
+array index six hours from what the column means — over a corrected one.
+
+**The index is not the one this document specified.** The audit asked for
+`(venue_id, collection_mode, day_of_week, hour, COALESCE(observed_date,
+'1970-01-01'))`. That key maps every *undated* legacy realtime row of a venue-hour
+onto one key, and undated realtime rows are exactly the rows the audit itself
+calls "legitimately repeated across dates". Enforcing it would have deleted real
+observations that carry sample weight 1.0 and whose dates cannot be
+reconstructed. Two partial indexes instead:
+
+```
+ml_training_data_weekly_slot_uniq    (venue_id, day_of_week, hour)
+    WHERE collection_mode = 'weekly' AND hour_axis = 'venue_local'
+ml_training_data_realtime_slot_uniq  (venue_id, day_of_week, hour, observed_date)
+    WHERE collection_mode = 'realtime' AND observed_date IS NOT NULL
+```
+
+The weekly one is scoped to the corrected axis for two reasons: an hour means
+nothing without its clock, and **migration 023's transform is a rotation of the
+168-cell week** — rows chase each other through it, so an axis-blind unique index
+would reject the intermediate state and 023 would stop being re-runnable. 023
+writes the shift and the axis stamp in the same UPDATE, which is what lets the
+rotation pass through this index. `__tests__/mlCorpusDedupe.test.js` pins that.
+
+**What the collectors do now.**
+
+- `collectWeekly.js` — `ON CONFLICT … DO UPDATE`: a re-collection **refreshes**
+  the venue's week in place rather than stacking. Same rule as the migration
+  applied to history. Its log now distinguishes new rows from refreshed ones
+  (`xmax = 0`), because "168 rows inserted" for a run that inserted nothing is
+  how the missing index stayed hidden. It also de-duplicates cells within a
+  single vendor response, since `DO UPDATE` raises 21000 if one statement hits
+  the same key twice.
+- `collectRealtime.js` — `ON CONFLICT … DO NOTHING`, and it counts and prints
+  what it turned away. The asymmetry is deliberate: a weekly row is an estimate
+  worth refreshing, a realtime row is an observation of one venue-hour on one
+  date and overwriting it is a different act.
+- **Both now write `weather_condition_code` from `weather.conditionId`**
+  (finding 4) and **`month` / `season`** (finding 5). `collectWeekly` takes the
+  calendar from the venue's own clock, falling back to UTC when
+  `ml_venues.timezone` is unusable, because a typo'd zone must not cost a venue
+  its whole week.
+- Both **refuse to run** against a database where the index is missing or
+  INVALID, naming migration 024. Without that, Postgres raises 42P10 once per
+  venue and thousands of venues report zero rows with no stated cause.
+
+**month / season on old rows: yes, honestly — with one thing the retrain must
+not forget.** They are derived from `collected_at`, which is `DEFAULT NOW()`,
+written by Postgres at insert time and never set by a caller. That is reading a
+date the row already carries, not inventing one; rows whose `collected_at` is
+NULL are skipped rather than guessed. Limits, stated: it is extracted in **UTC**,
+so a row collected near a month boundary can land in the adjacent month
+(consulting `ml_venues.timezone` would raise on the unusable zone strings 023
+already refused to depend on); on a weekly row `month` means "the month the
+snapshot was taken in", not "the month the busyness happened in"; and because
+collection ran in a narrow window it does **not** stop `month` from proxying row
+provenance. What it does fix is the impossible corner — `month = 0` with four
+zero season one-hots, which `mlPredictor` can never produce.
+
+`weather_condition_code` is deliberately **not** backfilled in SQL:
+`prepare_features.py`'s `recover_weather_codes()` already derives it from
+`weather_condition` for the whole corpus, and a second full-table rewrite would
+have doubled the deploy's downtime to store what the exporter computes anyway.
+
+**Deploy cost, measured.** Migrations run before `server.listen()`, so this is
+closed-port time. On an embedded Postgres holding a corpus of the export's shape
+(3,705,600 rows / 708 MB, 489,600 surplus weekly rows, 64.1% without a month):
+024 totals **31.7s** — 26.4s for the batched dedupe and calendar stamp, 4.6s and
+0.7s for the two concurrent index builds — against **38.0s** for 023's rotation
+UPDATE measured the same way. Production ran all of 023 (rotation *plus* an
+`ml_venue_baselines` rebuild) in 540s, which bounds the local-to-Railway factor
+at 14.2x and 024 at **451s, under eight minutes**. That bound credits the whole
+outage to the rotation and the rebuild was certainly most of it, so **two to
+four minutes is the realistic figure**; 024 has no baseline rebuild at all. It
+deletes 491,100 rows and leaves zero rows without a month.
+
+**Not covered, on purpose:** undated legacy realtime rows (no key can prove they
+are duplicates), and weekly rows still on `hour_axis = 'besttime_index'` (nothing
+writes them; 023's CHECK constraint makes an undeclared weekly row impossible,
+and `buildBaselines.js` refuses on a mixed-axis corpus). `database/ml-schema.sql`
+and `initTables.js` do not declare either index — same standing caveat as
+`hour_axis`: migrations are the source of truth.

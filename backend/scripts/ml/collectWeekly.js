@@ -9,7 +9,7 @@ require('dotenv').config({ path: require('path').join(__dirname, '..', '..', '.e
 const { Pool } = require('pg');
 const { getWeather } = require('../../services/weatherService');
 const { fetchWeeklyForecast } = require('./bestTimeService');
-const { bestTimeDayToJsDay, sleep } = require('./config');
+const { bestTimeDayToJsDay, getLocalTime, getSeason, sleep } = require('./config');
 
 if (!process.env.DATABASE_URL && process.env.PGHOST) {
   const host = process.env.PGHOST;
@@ -81,6 +81,40 @@ function bestTimeSlotToLocal(slot, jsDayOfWeek) {
   };
 }
 
+// ---------------------------------------------------------------------------
+// month / season. This collector omitted both columns entirely, which is why
+// 62.9% of the training corpus carried `month = 0` with all four season
+// one-hots at zero — a combination services/mlPredictor.js can never produce at
+// inference (it writes month 1..12 and exactly one season). Two thirds of the
+// corpus sat in a region of feature space the serving path cannot reach, and
+// train/prepare_features.py now REFUSES to run rather than fill it with zeros.
+//
+// What these two columns mean on a weekly row is worth being precise about:
+// BestTime's "typical week" is an average over a trailing window, so the month
+// is not the month the busyness happened in — it is the month the SNAPSHOT was
+// taken in. That is genuine information about the row, and it is the same thing
+// migration 024's backfill derives from `collected_at` for the existing rows, so
+// the two agree.
+//
+// The venue's own wall clock is used, matching collectRealtime.js
+// (config.getLocalTime(tz).month). ml_venues.timezone is not guaranteed usable —
+// Intl throws on a bad zone name — and a venue with a typo'd timezone must not
+// lose its whole week over a calendar column, so an unusable zone falls back to
+// UTC. Exported for the test.
+// ---------------------------------------------------------------------------
+function venueCalendar(venue, at) {
+  try {
+    if (venue && venue.timezone) {
+      const local = getLocalTime(venue.timezone, at);
+      if (Number.isInteger(local.month) && local.month >= 1 && local.month <= 12) {
+        return { month: local.month, season: local.season };
+      }
+    }
+  } catch (_) { /* unusable timezone: fall through to UTC rather than skip the venue */ }
+  const month = (at ? new Date(at) : new Date()).getUTCMonth() + 1;
+  return { month, season: getSeason(month) };
+}
+
 // The column normally arrives with migration 023 (db/migrate.js runs on every
 // boot). These scripts are also pointed at databases that have not booted the
 // current server yet, and the INSERT below names the column, so create it here
@@ -89,8 +123,44 @@ async function ensureAxisColumn() {
   await pool.query(`ALTER TABLE ml_training_data ADD COLUMN IF NOT EXISTS hour_axis VARCHAR(16)`);
 }
 
+// The INSERT below names a conflict target. A missing column can be created
+// here; a missing unique INDEX cannot — building one requires first collapsing
+// whatever duplicates the database is already holding, which is migration 024's
+// whole job and not something a collector should do behind an operator's back.
+// So this checks and refuses. Without it, Postgres raises 42P10 ("no unique or
+// exclusion constraint matching the ON CONFLICT specification") once per venue,
+// the per-venue catch logs it as a batch insert error, and a run of thousands of
+// venues reports "0 rows inserted" thousands of times without ever saying why.
+const WEEKLY_SLOT_INDEX = 'ml_training_data_weekly_slot_uniq';
+async function requireSlotIndex(client, indexName) {
+  const { rows } = await client.query(
+    `SELECT i.indisvalid
+       FROM pg_class c
+       JOIN pg_index i ON i.indexrelid = c.oid
+       JOIN pg_namespace n ON n.oid = c.relnamespace
+      WHERE n.nspname = 'public' AND c.relname = $1`,
+    [indexName]
+  );
+  if (rows.length === 0) {
+    throw new Error(
+      `${indexName} does not exist on this database. Migration `
+      + '024_ml_training_data_unique_slot.sql creates it (and collapses the duplicate rows it '
+      + 'forbids); it runs on server boot. Boot the backend against this database first — '
+      + 'without the index the ON CONFLICT clause in this collector has nothing to hit.'
+    );
+  }
+  if (rows[0].indisvalid === false) {
+    throw new Error(
+      `${indexName} exists but is INVALID — a CREATE INDEX CONCURRENTLY died partway. `
+      + 'It still enforces itself on every insert and is ignored by the planner. Re-run migration '
+      + '024 (delete its row from schema_migrations and boot); its cleanup block drops and rebuilds it.'
+    );
+  }
+}
+
 async function collectWeekly() {
   await ensureAxisColumn();
+  await requireSlotIndex(pool, WEEKLY_SLOT_INDEX);
   // Support --city=lehigh, --exclude-cities=beijing,foo, and --limit=10 flags
   const cityArg = process.argv.find(a => a.startsWith('--city='));
   const excludeArg = process.argv.find(a => a.startsWith('--exclude-cities='));
@@ -130,6 +200,7 @@ async function collectWeekly() {
   console.log(`[ML:Weekly] Starting weekly collection for ${venues.length} venues${cityFilter ? ` (city: ${cityFilter})` : ''}${limitFilter ? ` (limit: ${limitFilter})` : ''}...`);
 
   let totalRows = 0;
+  let newRows = 0;
   let skipped = 0;
 
   // Resilient query helper — retries up to 3× on transient pg pool errors
@@ -196,11 +267,23 @@ async function collectWeekly() {
       // Fetch weather for this venue's location (representative snapshot)
       const weather = await getWeather(venue.latitude, venue.longitude);
 
+      // When this snapshot was taken, on the venue's own clock. One value for
+      // the whole week — the 168 rows are one fetch.
+      const calendar = venueCalendar(venue);
+
       // Insert 168 rows (7 days × 24 hours) — batched into a single multi-row INSERT
       let venueRows = 0;
+      let venueNew = 0;
       const params = [];
       const valueRows = [];
-      let p = 0;
+      // The slot -> (day, hour) transform is a rotation of the 168-cell week, so
+      // a well-formed forecast cannot produce the same cell twice. A vendor
+      // response that repeats a day CAN, and `ON CONFLICT ... DO UPDATE` raises
+      // 21000 ("cannot affect row a second time") when one statement hits the
+      // same key twice — which would throw away the whole venue's week over a
+      // vendor glitch. Keep the first occurrence of each cell instead.
+      const seenCells = new Set();
+      let duplicateCells = 0;
       for (const day of forecast.days) {
         const jsDayOfWeek = bestTimeDayToJsDay(day.dayInt);
         // `slot` is BestTime's array index, NOT an hour. See THE HOUR AXIS above.
@@ -208,34 +291,99 @@ async function collectWeekly() {
           const busyness = day.hours[slot];
           if (busyness == null) continue;
           const local = bestTimeSlotToLocal(slot, jsDayOfWeek);
-          params.push(
+          const cell = `${local.dayOfWeek}:${local.hour}`;
+          if (seenCells.has(cell)) { duplicateCells++; continue; }
+          seenCells.add(cell);
+          // Built from the row's own values so the placeholder numbering cannot
+          // drift out of step with the column list when a column is added.
+          const rowParams = [
             venue.id, local.dayOfWeek, local.hour,
+            calendar.month, calendar.season,
             venue.venue_category, venue.price_level, venue.rating, venue.review_count,
             weather?.temp ?? null, weather?.humidity ?? null, weather?.windSpeed ?? null,
-            weather?.conditions ?? null, weather?.isRaining ?? null,
+            weather?.conditions ?? null, weather?.conditionId ?? null, weather?.isRaining ?? null,
             Math.max(0, Math.min(100, busyness)), forecast.epochAnalysis,
+          ];
+          const base = params.length;
+          params.push(...rowParams);
+          valueRows.push(
+            `($${base + 1}, 'weekly', '${HOUR_AXIS_VENUE_LOCAL}', `
+            + rowParams.slice(1).map((_, k) => `$${base + 2 + k}`).join(', ')
+            + ')'
           );
-          valueRows.push(`($${++p}, 'weekly', '${HOUR_AXIS_VENUE_LOCAL}', $${++p}, $${++p}, $${++p}, $${++p}, $${++p}, $${++p}, $${++p}, $${++p}, $${++p}, $${++p}, $${++p}, $${++p}, $${++p})`);
         }
+      }
+      if (duplicateCells > 0) {
+        console.warn(`  ${duplicateCells} repeated (day, hour) cells in the forecast — kept the first of each`);
       }
       if (valueRows.length > 0) {
         try {
-          await safeQuery(
+          // THE CONFLICT TARGET IS REAL NOW. This clause used to be a bare
+          // `ON CONFLICT DO NOTHING` with no arbiter, and no unique index
+          // existed for it to hit — so every re-run stacked another full copy of
+          // the venue's week and the log line still said "168 rows inserted".
+          // Migration 024 adds ml_training_data_weekly_slot_uniq; naming its
+          // columns and its predicate here is what makes the protection real.
+          // The index is partial, so the predicate is repeated verbatim — that
+          // is what lets Postgres infer this arbiter. It includes
+          // `hour_axis = 'venue_local'` because an hour means nothing without
+          // its clock, and because migration 023's rotation must stay re-runnable
+          // (see that index's header in 024).
+          //
+          // DO UPDATE, not DO NOTHING: a weekly row is BestTime's ESTIMATE of a
+          // typical week, and a re-collection is a fresher read of the same
+          // estimate, so it should replace the stored one. DO NOTHING would
+          // freeze the corpus at whatever was collected first and no
+          // re-collection could ever correct a venue. Migration 024 collapsed
+          // the historical duplicates by the same rule (newest wins), so history
+          // and go-forward behaviour are one rule.
+          //
+          // Every non-key column of the INSERT must appear below. If you add a
+          // column above and not here, a re-collection keeps the stale value.
+          const res = await safeQuery(
             `INSERT INTO ml_training_data
-              (venue_id, collection_mode, hour_axis, day_of_week, hour, venue_category, price_level, rating, review_count,
-               temperature, humidity, wind_speed, weather_condition, is_raining, busyness_pct, besttime_epoch)
+              (venue_id, collection_mode, hour_axis, day_of_week, hour, month, season,
+               venue_category, price_level, rating, review_count,
+               temperature, humidity, wind_speed, weather_condition, weather_condition_code,
+               is_raining, busyness_pct, besttime_epoch)
              VALUES ${valueRows.join(', ')}
-             ON CONFLICT DO NOTHING`,
+             ON CONFLICT (venue_id, day_of_week, hour)
+               WHERE collection_mode = 'weekly' AND hour_axis = 'venue_local'
+             DO UPDATE SET
+               hour_axis              = EXCLUDED.hour_axis,
+               month                  = EXCLUDED.month,
+               season                 = EXCLUDED.season,
+               venue_category         = EXCLUDED.venue_category,
+               price_level            = EXCLUDED.price_level,
+               rating                 = EXCLUDED.rating,
+               review_count           = EXCLUDED.review_count,
+               temperature            = EXCLUDED.temperature,
+               humidity               = EXCLUDED.humidity,
+               wind_speed             = EXCLUDED.wind_speed,
+               weather_condition      = EXCLUDED.weather_condition,
+               weather_condition_code = EXCLUDED.weather_condition_code,
+               is_raining             = EXCLUDED.is_raining,
+               busyness_pct           = EXCLUDED.busyness_pct,
+               besttime_epoch         = EXCLUDED.besttime_epoch,
+               collected_at           = NOW()
+             RETURNING (xmax = 0) AS inserted`,
             params
           );
-          venueRows = valueRows.length;
+          // `xmax = 0` on a row returned by an upsert means it was INSERTed;
+          // a non-zero xmax means the conflict path updated an existing row.
+          // The old log said "168 rows inserted" for a run that inserted
+          // nothing, which is the same class of untruth that let the missing
+          // unique index hide for so long.
+          venueRows = res.rows.length;
+          venueNew = res.rows.filter((r) => r.inserted).length;
         } catch (err) {
           console.error(`  Batch insert error:`, err.message);
         }
       }
 
       totalRows += venueRows;
-      console.log(`  ${venueRows} rows inserted`);
+      newRows += venueNew;
+      console.log(`  ${venueRows} rows written (${venueNew} new, ${venueRows - venueNew} refreshed)`);
 
       // Update last_collected_at
       await safeQuery(
@@ -264,7 +412,8 @@ async function collectWeekly() {
     }
   }
 
-  console.log(`\n[ML:Weekly] Done. ${totalRows} total rows inserted. ${skipped} venues skipped.`);
+  console.log(`\n[ML:Weekly] Done. ${totalRows} rows written `
+    + `(${newRows} new, ${totalRows - newRows} refreshed in place). ${skipped} venues skipped.`);
   await pool.end();
 }
 
@@ -275,8 +424,11 @@ async function run() {
 module.exports = {
   run,
   bestTimeSlotToLocal,
+  venueCalendar,
+  requireSlotIndex,
   BESTTIME_DAY_START_HOUR,
   HOUR_AXIS_VENUE_LOCAL,
+  WEEKLY_SLOT_INDEX,
 };
 
 // Allow direct execution
