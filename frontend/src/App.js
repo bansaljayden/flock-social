@@ -24,6 +24,7 @@ import LoginScreen from './components/auth/LoginScreen';
 import SignupScreen from './components/auth/SignupScreen';
 import VenueLoginScreen from './components/auth/VenueLoginScreen';
 import ModerationSheet from './components/ModerationSheet';
+import EmergencySheet from './components/safety/EmergencySheet';
 import PaywallSheet from './components/PaywallSheet';
 import { initPurchases } from './services/purchases';
 import { getEntitlements, createFlockInviteLink, getVenueIntelligence, getVenueStrip, getFlockVotes, voteForVenue, clearVenueVote, getBlockedUsers, unblockUser, blockUser, saveFlockVenue, setFlockStatus, setFlockEventTime } from './services/api';
@@ -910,7 +911,11 @@ const MOMENTUM_STAGES = [
   { key: 'idea', label: 'Idea', color: '#94a3b8' },
   { key: 'building', label: 'Building', color: '#f59e0b' },
   { key: 'almost_there', label: 'Almost There', color: '#F59E0B' },
-  { key: 'locked_in', label: 'Locked In', color: '#22c55e' },
+  // 'Ready', not 'Locked In': Locked In is the STATUS word for a confirmed
+  // flock, and this stage fires on signals alone, so the old label sat next
+  // to a "Planning" chip claiming the opposite. The stage means "everything
+  // is in place", and only the status may say locked.
+  { key: 'locked_in', label: 'Ready', color: '#22c55e' },
   { key: 'lets_go', label: "Let's Go", color: '#4a7ba7' },
 ];
 
@@ -7478,40 +7483,20 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   );
 
 
-  // SOS Modal
+  // SOS Modal — extracted to components/safety/EmergencySheet.js (2026-08-14
+  // rebuild: hierarchy, icon, and a11y contract live there). Every prop below
+  // is the same state/handler the inline modal used; behavior is unchanged.
   const SOSModal = () => showSOS && (
-    <div className="modal-backdrop" style={{ position: 'absolute', inset: 0, backgroundColor: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(8px)', WebkitBackdropFilter: 'blur(8px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 50, padding: '16px' }}>
-            <DialogBehavior onClose={() => setShowSOS(false)} label="Emergency" />
-      <div className="modal-content" style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '24px', padding: '24px', width: '100%', maxWidth: '300px' }}>
-        <div style={{ textAlign: 'center', marginBottom: '16px' }}>
-          <div style={{ width: '64px', height: '64px', borderRadius: '32px', backgroundColor: 'var(--accent-red-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 8px' }}>{Icons.bell(colors.red, 32)}</div>
-          <h2 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy, margin: '0 0 4px' }}>Emergency</h2>
-          <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0 }}>{trustedContacts.length > 0 ? `${trustedContacts.length} trusted contact${trustedContacts.length > 1 ? 's' : ''} will be notified` : 'No trusted contacts set up'}</p>
-        </div>
-        {/* With no trusted contacts there is nobody to alert, so the two
-            buttons that message them are dead. Showing a full-strength red
-            primary that cannot do anything is the worst possible lie to tell
-            in an emergency: they are visibly disabled instead, and setting
-            contacts up becomes the live action. */}
-        {(() => {
-        const noContacts = trustedContacts.length === 0;
-        return (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-          <a href="tel:911" style={{ ...styles.gradientButton, background: colors.red, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', textDecoration: 'none', color: 'white', fontWeight: '700' }}>{Icons.phone('white', 16)} Call 911</a>
-          {noContacts && (
-            <button className="hit44 glass-btn glass-primary" onClick={() => { setShowSOS(false); setProfileScreen('safety'); setCurrentScreen('profile'); loadTrustedContacts(); }} style={{ ...styles.gradientButton, background: colors.navyMidBg, color: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', fontSize: 'var(--t-label)' }}>{Icons.userPlus('white', 16)} Add trusted contacts</button>
-          )}
-          <button aria-label="Alert your trusted contacts" title={noContacts ? 'Add a trusted contact first' : undefined} className="hit44 glass-btn glass-danger" disabled={sosAlertSending || noContacts} onClick={() => { if (!sosArmed) { setSosArmed(true); setTimeout(() => setSosArmed(false), 4000); } else { setSosArmed(false); handleEmergencyAlert(); } }} style={{ ...styles.gradientButton, background: noContacts ? 'var(--bg-tertiary)' : colors.red, color: noContacts ? 'var(--text-tertiary)' : 'white', border: noContacts ? '1.5px solid var(--border-default)' : 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', position: 'relative', overflow: 'hidden', cursor: noContacts ? 'not-allowed' : 'pointer', opacity: sosAlertSending ? 0.6 : 1 }}>{Icons.shield(noContacts ? 'var(--text-tertiary)' : 'white', 16)} {sosAlertSending ? 'Sending...' : sosArmed ? 'Tap again to confirm' : 'Alert Contacts'}</button>
-          <button aria-label="Share your location" title={noContacts ? 'Add a trusted contact first' : undefined} className="hit44 glass-btn glass-secondary" disabled={sosAlertSending || noContacts} onClick={handleShareLocationWithContacts} style={{ ...styles.gradientButton, background: 'var(--bg-card-solid)', color: noContacts ? 'var(--text-tertiary)' : colors.navy, border: `2px solid ${noContacts ? 'var(--border-default)' : colors.navy}`, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', cursor: noContacts ? 'not-allowed' : 'pointer', opacity: sosAlertSending ? 0.6 : 1 }}>{Icons.mapPin(noContacts ? 'var(--text-tertiary)' : colors.navy, 16)} {sosAlertSending ? 'Sending...' : 'Share Location'}</button>
-          {noContacts && (
-            <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', textAlign: 'center', margin: 0 }}>Alerts need at least one trusted contact.</p>
-          )}
-          <button className="hit44 glass-btn glass-secondary" disabled={sosAlertSending} onClick={() => { setSosArmed(false); setShowSOS(false); }} style={{ background: 'none', border: 'none', color: 'var(--text-tertiary)', padding: '8px', cursor: 'pointer' }}>Cancel</button>
-        </div>
-        );
-        })()}
-      </div>
-    </div>
+    <EmergencySheet
+      contactCount={trustedContacts.length}
+      armed={sosArmed}
+      onArmedChange={setSosArmed}
+      sending={sosAlertSending}
+      onAlertContacts={handleEmergencyAlert}
+      onShareLocation={handleShareLocationWithContacts}
+      onAddContacts={() => { setShowSOS(false); setProfileScreen('safety'); setCurrentScreen('profile'); loadTrustedContacts(); }}
+      onClose={() => { setSosArmed(false); setShowSOS(false); }}
+    />
   );
 
   // Check-in Modal
@@ -13036,14 +13021,21 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
     const hasVenue = flock.venue && flock.venue !== 'TBD';
     // PUT /api/flocks/:id is creator-only, so only the creator gets the control.
     const isCreator = String(flock.creatorId) === String(authUser?.id);
+    // Exactly one person is in, and that person is you. Only then may the
+    // roster say "just you": a lone member who is somebody else (you are still
+    // deciding) must not be told they are you. Legacy string rosters carry no
+    // ids, and a solo string entry is the viewer.
+    const soloMember = acceptedMembers.length === 1 && goingGuests.length === 0 ? acceptedMembers[0] : null;
+    const justYou = soloMember != null &&
+      (typeof soloMember !== 'object' || String(soloMember.id) === String(authUser?.id));
 
     return (
       <div key="flock-detail-screen-container" style={{ display: 'flex', flexDirection: 'column', height: '100%', backgroundColor: 'var(--bg-primary)' }}>
 
-        {/* ── Header with navy gradient ── */}
+        {/* ── Header ── */}
         <div style={{ background: colors.navyBg, padding: '16px', paddingTop: '20px', flexShrink: 0 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '14px' }}>
-            <button className="hit44" onClick={() => setCurrentScreen('main')} style={{ width: '36px', height: '36px', borderRadius: '50%', background: 'rgba(255,255,255,0.2)', border: 'none', color: 'white', fontSize: 'var(--t-title)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>←</button>
+            <button className="hit44" aria-label="Back to your plans" onClick={() => setCurrentScreen('main')} style={{ width: '36px', height: '36px', borderRadius: '50%', background: 'rgba(255,255,255,0.16)', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{Icons.arrowLeft('white', 16)}</button>
             <div style={{ flex: 1, minWidth: 0 }}>
               <h1 style={{ fontFamily: 'var(--font-display)', letterSpacing: '-0.005em', color: 'white', margin: 0, fontSize: 'var(--t-title)', fontWeight: '600', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{flock.name}</h1>
               <div style={{ color: 'rgba(255,255,255,0.75)', fontSize: 'var(--t-label)', marginTop: '3px' }}>
@@ -13060,11 +13052,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 ? when.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
                 : (flock.time && flock.time !== 'TBD' ? flock.time : '9 PM');
               addEventToCalendar(flock.name, flock.venue, eventDate, eventTimeLabel);
-            }} style={{ width: '36px', height: '36px', borderRadius: '50%', background: 'rgba(255,255,255,0.2)', border: 'none', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{Icons.calendar('white', 16)}</button>
+            }} className="hit44" aria-label="Add to your calendar" style={{ width: '36px', height: '36px', borderRadius: '50%', background: 'rgba(255,255,255,0.16)', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{Icons.calendar('white', 16)}</button>
           </div>
 
           {/* Status badge */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
             <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', padding: '5px 12px', background: isCompleted ? 'rgba(74,123,167,0.25)' : isConfirmed ? 'rgba(34,197,94,0.25)' : 'rgba(245,158,11,0.25)', borderRadius: '20px', fontSize: 'var(--t-meta)', fontWeight: '500', color: isCompleted ? '#a9c7e4' : isConfirmed ? '#86efac' : '#fcd34d' }}>
               {isCompleted ? 'Done' : isConfirmed ? 'Locked In' : 'Planning'}
             </span>
@@ -13084,28 +13076,32 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
             return (
               <div style={{ marginTop: '12px' }}>
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '6px' }}>
-                  <span style={{ fontSize: 'var(--t-micro)', fontWeight: '700', color: 'rgba(255,255,255,0.6)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Momentum</span>
-                  <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: activeColor }}>{stages[activeIdx]?.label}</span>
+                  <span style={{ fontSize: 'var(--t-micro)', fontWeight: '700', color: 'rgba(255,255,255,0.72)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Momentum</span>
+                  {/* Stage label reads in white; the stage colour lives in the
+                      bar below it, where contrast rules for text do not apply. */}
+                  <span style={{ fontSize: 'var(--t-meta)', fontWeight: '600', color: 'rgba(255,255,255,0.92)' }}>{stages[activeIdx]?.label}</span>
                 </div>
-                {/* Progress bar */}
-                <div style={{ display: 'flex', gap: '3px', height: '6px' }}>
+                {/* Progress bar. Reached segments are filled, unreached ones are
+                    hollow outlines, so the boundary survives without colour. */}
+                <div role="img" aria-label={`Momentum stage ${activeIdx + 1} of ${stages.length}: ${stages[activeIdx]?.label}`} style={{ display: 'flex', gap: '3px', height: '6px' }}>
                   {stages.map((s, i) => (
-                    <div key={s.key} style={{ flex: 1, borderRadius: '3px', background: i <= activeIdx ? activeColor : 'rgba(255,255,255,0.15)', transition: 'background 0.4s ease' }} />
+                    <div key={s.key} style={{ flex: 1, borderRadius: '3px', background: i <= activeIdx ? activeColor : 'transparent', boxShadow: i <= activeIdx ? 'none' : 'inset 0 0 0 1px rgba(255,255,255,0.35)', transition: 'background 0.3s cubic-bezier(0.16, 1, 0.3, 1)' }} />
                   ))}
                 </div>
-                {/* Signal summary */}
-                <div style={{ display: 'flex', gap: '10px', marginTop: '8px', flexWrap: 'wrap' }}>
-                  <span style={{ fontSize: 'var(--t-meta)', color: m.accepted === m.totalMembers ? 'rgba(134,239,172,0.9)' : 'rgba(255,255,255,0.5)' }}>
-                    {m.accepted}/{m.totalMembers} RSVPs
-                  </span>
-                  <span style={{ fontSize: 'var(--t-meta)', color: m.hasVenue ? 'rgba(134,239,172,0.9)' : 'rgba(255,255,255,0.5)' }}>
-                    {m.hasVenue ? 'Venue set' : 'No venue'}
-                  </span>
-                  <span style={{ fontSize: 'var(--t-meta)', color: m.hasTime ? 'rgba(134,239,172,0.9)' : 'rgba(255,255,255,0.5)' }}>
-                    {m.hasTime ? 'Time set' : 'No time'}
-                  </span>
+                {/* Signal summary: check = done, open ring = not yet, so the
+                    two states differ by shape as well as colour. */}
+                <div style={{ display: 'flex', gap: '12px', marginTop: '8px', flexWrap: 'wrap' }}>
+                  {[
+                    { met: m.accepted === m.totalMembers, label: `${m.accepted}/${m.totalMembers} RSVPs` },
+                    { met: !!m.hasVenue, label: m.hasVenue ? 'Venue set' : 'No venue yet' },
+                    { met: !!m.hasTime, label: m.hasTime ? 'Time set' : 'No time yet' },
+                  ].map(sig => (
+                    <span key={sig.label} style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', fontSize: 'var(--t-meta)', fontWeight: '500', color: sig.met ? 'rgba(134,239,172,0.95)' : 'rgba(255,255,255,0.72)' }}>
+                      {sig.met ? Icons.check('rgba(134,239,172,0.95)', 12) : Icons.circle('rgba(255,255,255,0.55)', 12)} {sig.label}
+                    </span>
+                  ))}
                   {m.uniqueVoters > 0 && (
-                    <span style={{ fontSize: 'var(--t-meta)', color: 'rgba(255,255,255,0.5)' }}>
+                    <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: 'rgba(255,255,255,0.72)' }}>
                       {m.uniqueVoters} voted
                     </span>
                   )}
@@ -13186,14 +13182,13 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
         {/* ── Scrollable content ── */}
         <div style={{ flex: 1, overflowY: 'auto', padding: '14px', paddingBottom: '90px' }}>
 
-          {/* Venue Card */}
+          {/* Venue Card. No fade overlay on the photo: the old one faded to
+              white, which in dark mode painted a white fog over the card. A
+              clean photo edge is right in both themes. */}
           {hasVenue ? (
             <div style={{ ...styles.card, padding: 0, overflow: 'hidden', marginBottom: '12px' }}>
               {flock.venuePhoto && (
-                <div style={{ position: 'relative' }}>
-                  <img src={flock.venuePhoto} alt="" style={{ width: '100%', height: '170px', objectFit: 'cover', display: 'block' }} onError={(e) => { e.target.style.display = 'none'; }} />
-                  <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: '50px', background: 'linear-gradient(transparent, rgba(255,255,255,0.95))' }} />
-                </div>
+                <img src={flock.venuePhoto} alt="" width="375" height="170" style={{ width: '100%', height: '170px', objectFit: 'cover', display: 'block' }} onError={(e) => { e.target.style.display = 'none'; }} />
               )}
               <div style={{ padding: '14px' }}>
                 <div style={{ display: 'flex', alignItems: 'flex-start', gap: '8px', marginBottom: '6px' }}>
@@ -13222,11 +13217,37 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
               </div>
             </div>
           ) : (
-            <div style={{ ...styles.card, padding: '24px', marginBottom: '12px', textAlign: 'center' }}>
-              <div style={{ width: '48px', height: '48px', borderRadius: '50%', background: 'var(--accent-amber-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 10px' }}>{Icons.mapPin(colors.amber, 22)}</div>
-              <p style={{ color: colors.navy, fontSize: 'var(--t-body)', margin: '0 0 4px', fontWeight: '600' }}>No venue set yet</p>
-              <p style={{ color: 'var(--text-secondary)', fontSize: 'var(--t-meta)', margin: 0 }}>Open the chat to suggest and vote on places</p>
+            /* Genuine empty state: this flock has not picked anywhere yet, and
+               that is the flock's own data, so the mascot earns its place.
+               Cobalt Birdie because suggesting places is Birdie's beat. */
+            <div style={{ ...styles.card, padding: '16px', marginBottom: '12px', display: 'flex', alignItems: 'center', gap: '14px' }}>
+              <BirdieStill size={56} style={{ flexShrink: 0 }} />
+              <div style={{ minWidth: 0 }}>
+                <p style={{ color: colors.navy, fontSize: 'var(--t-body)', margin: '0 0 3px', fontWeight: '600' }}>No venue yet</p>
+                <p style={{ color: 'var(--text-secondary)', fontSize: 'var(--t-meta)', margin: 0, lineHeight: 1.45 }}>Suggest places in the chat and vote on where to go.</p>
+              </div>
             </div>
+          )}
+
+          {/* One venue action, one register: quiet row under the venue block.
+              Replaces the old Chat / Change Venue tile pair. Chat's primary
+              action is the Open Chat bar pinned below; a second equal tile for
+              it said nothing the bar does not. */}
+          {!isCompleted && (
+            <button className="hit44 glass-btn glass-secondary" onClick={() => {
+              if (isCreator) {
+                setPickingVenueForFlockId(flock.id); setPickingVenueForCreate(true); setCurrentTab('explore'); setCurrentScreen('main');
+              } else {
+                setCurrentScreen('chatDetail'); setShowVotePanel(true); loadPopularVenues();
+              }
+            }} style={{ width: '100%', display: 'flex', alignItems: 'center', gap: '10px', padding: '12px 14px', marginBottom: '12px', borderRadius: '12px', border: '1.5px solid var(--border-default)', backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer', textAlign: 'left' }}>
+              {Icons.mapPin(colors.navyMid, 16)}
+              <span style={{ flex: 1, minWidth: 0 }}>
+                <span style={{ display: 'block', color: colors.navy, fontWeight: '600', fontSize: 'var(--t-label)' }}>{isCreator ? (hasVenue ? 'Change the venue' : 'Pick a venue') : 'Vote on venues'}</span>
+                <span style={{ display: 'block', color: 'var(--text-secondary)', fontSize: 'var(--t-meta)' }}>{isCreator ? (hasVenue ? 'Search somewhere new' : 'Search places nearby') : 'Say where you want to go'}</span>
+              </span>
+              {Icons.chevronRight('var(--text-tertiary)', 14)}
+            </button>
           )}
 
           {/* Post-hangout feedback prompt — only after flock is marked done */}
@@ -13303,10 +13324,13 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
             </div>
           )}
 
-          {/* Members Section */}
-          <div style={{ ...styles.card, marginBottom: '12px' }}>
+          {/* ── The sheet ── Going, votes and details share one ruled surface:
+              full-bleed rules divide the sections and no row wears an
+              icon-in-a-rounded-square chip. Rule lines, not floating cards. */}
+          <div style={{ ...styles.card, padding: '2px 16px' }}>
+          <div style={{ padding: '10px 0 12px' }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px' }}>
-              <h4 style={{ color: colors.navy, margin: 0, fontSize: 'var(--t-title)', fontWeight: '700' }}>
+              <h4 style={{ color: colors.navy, margin: 0, fontSize: 'var(--t-body)', fontWeight: '700' }}>
                 Going ({goingCount})
               </h4>
               <button className="hit44 glass-btn glass-navy" onClick={() => { setCurrentScreen('chatDetail'); setTimeout(() => { setShowFlockInviteModal(true); setCopiedInviteUrl(''); setFlockInviteSelected([]); setFlockInviteSearch(''); setFlockInviteResults([]); }, 100); }} style={{ padding: '5px 12px', background: colors.navyBg, border: 'none', borderRadius: '16px', color: 'white', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }}>
@@ -13371,112 +13395,98 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                     <div key={rowKey} style={{ ...boxStyle, flexShrink: 0 }}>{inner}</div>
                   );
                 })}
+                {/* Roster empty-ish state: one accepted person and it is you.
+                    The warm bird keeps the flock's own space warm; the copy
+                    stays a fact, not a plea. */}
+                {justYou && (
+                  <div style={{ display: 'flex', alignItems: 'center', alignSelf: 'center', gap: '10px', paddingLeft: '4px', minWidth: 0 }}>
+                    <BirdieStill bird={WARM_BIRD} size={54} style={{ flexShrink: 0 }} />
+                    <p style={{ color: 'var(--text-secondary)', fontSize: 'var(--t-meta)', margin: 0, lineHeight: 1.45 }}>Just you so far. Friends you invite land here.</p>
+                  </div>
+                )}
               </div>
             ) : (
               <p style={{ color: 'var(--text-tertiary)', fontSize: 'var(--t-meta)', margin: 0, textAlign: 'center', padding: '8px 0' }}>Loading members...</p>
             )}
           </div>
 
-          {/* Quick Actions */}
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', marginBottom: '12px' }}>
-            <button className="hit44 glass-btn glass-navy" onClick={() => { setCurrentScreen('chatDetail'); }} style={{ ...styles.card, border: 'none', cursor: 'pointer', textAlign: 'center', padding: '16px 10px' }}>
-              <div style={{ width: '40px', height: '40px', borderRadius: '12px', background: colors.navyBg, display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 8px' }}><svg aria-hidden="true" focusable="false" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/><circle cx="9" cy="10" r="1" fill="white" stroke="none"/><circle cx="12" cy="10" r="1" fill="white" stroke="none"/><circle cx="15" cy="10" r="1" fill="white" stroke="none"/></svg></div>
-              <p style={{ color: colors.navy, fontWeight: '600', fontSize: 'var(--t-label)', margin: '0 0 2px' }}>Chat</p>
-              <p style={{ color: 'var(--text-tertiary)', fontSize: 'var(--t-meta)', margin: 0 }}>{flock.messages?.length > 0 ? `${flock.messages.length} messages` : 'Start chatting'}</p>
-            </button>
-            {/* Setting the venue is PUT /api/flocks/:id, creator-only. Everyone
-                else used to get the same "Pick Venue" tile and a venue-picker
-                flow that ended in a 403 nobody ever saw. They get the action
-                they actually have instead. */}
-            <button className="hit44 glass-btn glass-secondary" onClick={() => {
-              if (isCreator) {
-                setPickingVenueForFlockId(flock.id); setPickingVenueForCreate(true); setCurrentTab('explore'); setCurrentScreen('main');
-              } else {
-                setCurrentScreen('chatDetail'); setShowVotePanel(true); loadPopularVenues();
-              }
-            }} style={{ ...styles.card, border: 'none', cursor: 'pointer', textAlign: 'center', padding: '16px 10px' }}>
-              <div style={{ width: '40px', height: '40px', borderRadius: '12px', background: '#f59e0b', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 8px' }}><svg aria-hidden="true" focusable="false" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><polygon points="1 6 1 22 8 18 16 22 23 18 23 2 16 6 8 2 1 6"/><line x1="8" y1="2" x2="8" y2="18"/><line x1="16" y1="6" x2="16" y2="22"/><circle cx="12" cy="9" r="2.5"/><path d="M12 11.5 L12 13"/></svg></div>
-              <p style={{ color: colors.navy, fontWeight: '600', fontSize: 'var(--t-label)', margin: '0 0 2px' }}>{isCreator ? (hasVenue ? 'Change Venue' : 'Pick Venue') : 'Vote on Venue'}</p>
-              <p style={{ color: 'var(--text-tertiary)', fontSize: 'var(--t-meta)', margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{hasVenue ? flock.venue : (isCreator ? 'Search places' : 'Say where you want to go')}</p>
-            </button>
-          </div>
-
-          {/* Vote section - only if there are votes */}
+          {/* Venue votes — the flock-detail venue action itself moved up under
+              the venue card, and chat's action is the Open Chat bar below. */}
           {flock.votes && flock.votes.length > 0 && (
-            <div style={{ ...styles.card, marginBottom: '12px' }}>
-              <h4 style={{ color: colors.navy, margin: '0 0 10px', fontSize: 'var(--t-title)', fontWeight: '700' }}>Venue Votes</h4>
-              {flock.votes.map(v => {
+            <>
+            <div style={{ height: '1px', background: 'var(--border-default)', margin: '0 -16px' }} />
+            <div style={{ padding: '12px 0 6px' }}>
+              <h4 style={{ color: colors.navy, margin: '0 0 4px', fontSize: 'var(--t-body)', fontWeight: '700' }}>Venue votes</h4>
+              {flock.votes.map((v, vi) => {
                 const myVote = flock.votes.find(vt => vt.voters.includes('You'))?.venue || null;
                 const isMyVote = myVote === v.venue;
                 const count = voteTotal(v);
                 return (
-                  <button key={v.venue} className="hit44 glass-btn glass-secondary" onClick={() => {
+                  <button key={v.venue} className="hit44 glass-btn" aria-pressed={isMyVote} onClick={() => {
                     const newVotes = flock.votes.map(vt => ({ ...vt, voters: vt.venue === v.venue ? (vt.voters.includes('You') ? vt.voters : [...vt.voters, 'You']) : vt.voters.filter(x => x !== 'You') }));
                     updateFlockVotes(selectedFlockId, newVotes);
-                  }} style={{ width: '100%', textAlign: 'left', background: isMyVote ? 'var(--bg-hover)' : 'var(--bg-card-solid)', border: isMyVote ? `1.5px solid ${colors.navy}` : '1.5px solid var(--border-default)', borderRadius: '10px', padding: '11px', cursor: 'pointer', display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
-                    <div>
-                      <p style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: colors.navy, margin: 0 }}>{v.venue}</p>
-                      {v.type && <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '2px 0 0' }}>{v.type}</p>}
-                      <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: '2px 0 0' }}>{[v.voters.join(', '), (v.guestCount || 0) > 0 ? `${v.guestCount} guest${v.guestCount !== 1 ? 's' : ''}` : ''].filter(Boolean).join(' and ')}</p>
-                    </div>
-                    <span style={{ padding: '5px 14px', borderRadius: '20px', fontSize: 'var(--t-meta)', fontWeight: '500', backgroundColor: isMyVote ? colors.navyBg : 'var(--bg-card-solid)', color: isMyVote ? 'white' : colors.navy }}>
+                  }} style={{ width: '100%', textAlign: 'left', background: 'none', border: 'none', borderBottom: vi < flock.votes.length - 1 ? '1px solid var(--border-subtle)' : 'none', padding: '10px 0', cursor: 'pointer', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '10px' }}>
+                    <span style={{ flex: 1, minWidth: 0 }}>
+                      <span style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: colors.navy, display: 'flex', alignItems: 'center', gap: '5px' }}>{isMyVote && Icons.check(colors.steel, 12)}{v.venue}</span>
+                      {v.type && <span style={{ display: 'block', fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '2px 0 0' }}>{v.type}</span>}
+                      <span style={{ display: 'block', fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: '2px 0 0' }}>{[v.voters.join(', '), (v.guestCount || 0) > 0 ? `${v.guestCount} guest${v.guestCount !== 1 ? 's' : ''}` : ''].filter(Boolean).join(' and ')}</span>
+                    </span>
+                    {/* navyMidBg, not navyBg: in dark mode navyBg equals
+                        --bg-tertiary, so the voted pill would match the
+                        unvoted one exactly. navyMidBg differs in both themes. */}
+                    <span style={{ padding: '4px 12px', borderRadius: '14px', fontSize: 'var(--t-meta)', fontWeight: '600', backgroundColor: isMyVote ? colors.navyMidBg : 'var(--bg-tertiary)', color: isMyVote ? 'white' : colors.navy, flexShrink: 0 }}>
                       {count}
                     </span>
                   </button>
                 );
               })}
             </div>
+            </>
           )}
 
-          {/* Flock info */}
-          <div style={styles.card}>
-            <h4 style={{ color: colors.navy, margin: '0 0 10px', fontSize: 'var(--t-title)', fontWeight: '700' }}>Details</h4>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                <div style={{ width: '32px', height: '32px', borderRadius: '8px', background: colors.navyBg, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{Icons.user('white', 14)}</div>
-                <div>
-                  <p style={{ color: 'var(--text-tertiary)', fontSize: 'var(--t-micro)', margin: 0, fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.3px' }}>Created by</p>
-                  <p style={{ color: colors.navy, fontSize: 'var(--t-body)', fontWeight: '600', margin: 0 }}>{flock.host}</p>
-                </div>
-              </div>
-              {/* WHEN. Always shown, and the creator can change it here. This
-                  row is the only place in the app where a flock's time can be
-                  set after it was created. */}
-              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                <div style={{ width: '32px', height: '32px', borderRadius: '8px', background: 'var(--accent-amber-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{Icons.calendar(colors.amber, 14)}</div>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <p style={{ color: 'var(--text-tertiary)', fontSize: 'var(--t-micro)', margin: 0, fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.3px' }}>When</p>
-                  <p style={{ color: colors.navy, fontSize: 'var(--t-body)', fontWeight: '600', margin: 0 }}>
-                    {flock.eventTime
-                      ? new Date(flock.eventTime).toLocaleString([], { weekday: 'long', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
-                      : (flock.time && flock.time !== 'TBD' ? flock.time : 'Not set yet')}
-                  </p>
-                </div>
-                {isCreator && !isCompleted && (
-                  <button className="hit44 glass-btn glass-secondary" onClick={() => {
-                    const when = flock.eventTime ? new Date(flock.eventTime) : null;
-                    if (when && !isNaN(when.getTime())) {
-                      const h = when.getHours();
-                      const label = `${((h + 11) % 12) + 1} ${h < 12 ? 'AM' : 'PM'}`;
-                      setTimeEditHour(FLOCK_HOUR_CHOICES.includes(label) ? label : '9 PM');
-                    } else {
-                      setTimeEditHour('9 PM');
-                    }
-                    setTimeEditDay('Tonight');
-                    setShowTimeEditor(true);
-                  }} style={{ padding: '6px 12px', borderRadius: '10px', border: `1px solid ${colors.creamDark}`, backgroundColor: 'var(--icon-bg)', color: colors.navy, fontWeight: '600', fontSize: 'var(--t-meta)', cursor: 'pointer', flexShrink: 0 }}>
-                    {flock.eventTime ? 'Change' : 'Set time'}
-                  </button>
-                )}
-              </div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                <div style={{ width: '32px', height: '32px', borderRadius: '8px', background: isConfirmed ? 'var(--accent-green-bg)' : 'var(--accent-amber-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{isConfirmed ? Icons.check('var(--accent-green-text)', 14) : Icons.clock(colors.amber, 14)}</div>
-                <div>
-                  <p style={{ color: 'var(--text-tertiary)', fontSize: 'var(--t-micro)', margin: 0, fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.3px' }}>Status</p>
-                  <p style={{ color: colors.navy, fontSize: 'var(--t-body)', fontWeight: '600', margin: 0 }}>{isConfirmed ? 'Locked In' : 'Still Planning'}</p>
-                </div>
-              </div>
+          {/* Details: a ruled label/value list. No icon chips; the labels do
+              the work and the rules keep the rows apart. */}
+          <div style={{ height: '1px', background: 'var(--border-default)', margin: '0 -16px' }} />
+          <div style={{ padding: '12px 0 4px' }}>
+            <h4 style={{ color: colors.navy, margin: 0, fontSize: 'var(--t-body)', fontWeight: '700' }}>Details</h4>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '12px 0', borderBottom: '1px solid var(--border-subtle)' }}>
+              <span style={{ color: 'var(--text-secondary)', fontSize: 'var(--t-label)', fontWeight: '500', flexShrink: 0 }}>Created by</span>
+              <span style={{ flex: 1, textAlign: 'right', color: colors.navy, fontSize: 'var(--t-label)', fontWeight: '600', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{flock.host}</span>
             </div>
+            {/* WHEN. Always shown, and the creator can change it here. This
+                row is the only place in the app where a flock's time can be
+                set after it was created. */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '8px 0', borderBottom: '1px solid var(--border-subtle)', minHeight: '44px', boxSizing: 'border-box' }}>
+              <span style={{ color: 'var(--text-secondary)', fontSize: 'var(--t-label)', fontWeight: '500', flexShrink: 0 }}>When</span>
+              <span style={{ flex: 1, textAlign: 'right', color: colors.navy, fontSize: 'var(--t-label)', fontWeight: '600', minWidth: 0 }}>
+                {flock.eventTime
+                  ? new Date(flock.eventTime).toLocaleString([], { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
+                  : (flock.time && flock.time !== 'TBD' ? flock.time : 'Not set yet')}
+              </span>
+              {isCreator && !isCompleted && (
+                <button className="hit44 glass-btn glass-secondary" onClick={() => {
+                  const when = flock.eventTime ? new Date(flock.eventTime) : null;
+                  if (when && !isNaN(when.getTime())) {
+                    const h = when.getHours();
+                    const label = `${((h + 11) % 12) + 1} ${h < 12 ? 'AM' : 'PM'}`;
+                    setTimeEditHour(FLOCK_HOUR_CHOICES.includes(label) ? label : '9 PM');
+                  } else {
+                    setTimeEditHour('9 PM');
+                  }
+                  setTimeEditDay('Tonight');
+                  setShowTimeEditor(true);
+                }} style={{ padding: '7px 12px', borderRadius: '10px', border: '1px solid var(--border-mid)', backgroundColor: 'transparent', color: colors.navy, fontWeight: '600', fontSize: 'var(--t-meta)', cursor: 'pointer', flexShrink: 0 }}>
+                  {flock.eventTime ? 'Change' : 'Set time'}
+                </button>
+              )}
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '12px 0' }}>
+              <span style={{ color: 'var(--text-secondary)', fontSize: 'var(--t-label)', fontWeight: '500', flexShrink: 0 }}>Status</span>
+              <span style={{ flex: 1, display: 'inline-flex', alignItems: 'center', justifyContent: 'flex-end', gap: '5px', color: colors.navy, fontSize: 'var(--t-label)', fontWeight: '600' }}>
+                {isConfirmed ? Icons.check('var(--accent-green-text)', 12) : Icons.clock('var(--accent-amber-text)', 12)} {isConfirmed ? 'Locked In' : 'Still Planning'}
+              </span>
+            </div>
+          </div>
           </div>
 
         </div>
