@@ -76,6 +76,18 @@ const router = express.Router();
 // What this file DOES do about it: the signature is never echoed back in a
 // response and never written to a log line, so the server is not itself a way
 // to learn a tag's sig.
+//
+// Round 24 (adversarial re-audit): re-verified, and one step further — the
+// tempting in-file mitigation, a signed time-window plus a single-use check
+// per payload, is not merely disruptive but IMPOSSIBLE here: the payload has
+// no per-tap variability. Every tap of one tag, by every patron, is the same
+// bytes, so "single-use per payload" would mean one verified check-in per
+// venue EVER across all users, and there is no timestamp in the payload to
+// window. Replay resistance requires the tag side to vary (fixes 1 and 2
+// above). The bounds that DO hold — per-account dedupe and budget, no
+// cross-venue re-pointing, no attribution through a revoked token, no sig
+// echo, the 'nfc'-only allowlist downstream — are pinned in
+// __tests__/nfcTrustPath.test.js.
 // ---------------------------------------------------------------------------
 function nfcSigValid(placeId, sig) {
   const secret = process.env.NFC_TAG_SECRET;
