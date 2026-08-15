@@ -8,7 +8,10 @@ const { guestEntryId } = require('../utils/guestRsvp');
 // UNAUTHENTICATED write surface in the app and every value it takes is
 // re-broadcast to the flock, so it is the one that could least afford the hole.
 const { scalarOnly, freeText } = require('../validators/shape');
-const { broadcastGuestRsvp } = require('../sockets/handlers');
+const { broadcastGuestRsvp, emitToFlockExcludingBlocked } = require('../sockets/handlers');
+// The ONE authenticated route in this file (POST /:token/join). Everything else
+// here is deliberately unauthenticated; that route is deliberately not.
+const { authenticate, requireVerified } = require('../middleware/auth');
 // The member-facing venue tally has one implementation and it lives with the
 // member vote routes — see broadcastGuestVote there for why a guest vote is
 // announced through it rather than emitted from here.
@@ -27,8 +30,15 @@ const router = express.Router();
 //   re-generating. Tokens minted before the 2026-08-14 widening are 12 chars
 //   (~69 bits) and stay valid — resolveLink is an exact match either way.
 // - Guests see the PLAN only: flock name/date/time, host FIRST name, going
-//   count, and venue tallies. Never member lists, messages, budgets, or
-//   anything with PII.
+//   count, the ROSTER (first names + each person's answer, see the privacy
+//   boundary on rosterFor below), and venue tallies. Never messages, budgets,
+//   emails, phone numbers, user ids, photos or surnames.
+// - ONE route here is authenticated: POST /:token/join. Holding the link is
+//   how you find the flock; holding an ACCOUNT is how you get into its chat.
+//   There is deliberately no unauthenticated write to messages anywhere in
+//   this file, and there must never be one: a guest has no age gate, no
+//   account and no ban to enforce, so guest posting would put unmoderated UGC
+//   on the public surface (Apple Guideline 1.2).
 // - Guests are identified by a server-issued UUID (guest_token) returned once
 //   at RSVP time; votes require it. Clients never mint their own identity.
 // - Every route is rate-limited by the mount in server.js.
@@ -312,6 +322,99 @@ async function guestTallies(flockId) {
   return r.rows;
 }
 
+// ---------------------------------------------------------------------------
+// THE ROSTER — who is going, who is not, and who has not answered.
+//
+// The preview used to return two integers (`members` and `guests`, summed into
+// `going`), which answered "how many" and never "who". The person deciding
+// whether to walk across town is deciding about PEOPLE, so the page has to be
+// able to name them.
+//
+// PRIVACY BOUNDARY, decided here because this is an unauthenticated surface and
+// no caller can re-decide it:
+//
+//   WHAT CROSSES: a display FIRST name, and one of three answers.
+//   WHAT NEVER CROSSES: emails, phone numbers, user ids, guest row ids, guest
+//   tokens, profile photos, surnames, reliability scores, join times, or any
+//   way to tell a member apart from the account behind them.
+//
+// First name only is the rule `host` has followed since this route was written
+// (`.split(' ')[0]`), applied to everyone else on the plan. It is the same
+// amount of identity a group chat shows before you open it, and it is not
+// enough to find someone with. A surname plus a plan plus a time is.
+//
+// `kind` ('member' | 'guest') crosses because the page tells the truth about
+// what joining buys: guests answered from a link, members are in the chat. It
+// says nothing about the person that the answer does not already say.
+//
+// HIDDEN ROWS. Every is_hidden filter on this surface is load-bearing: a
+// moderator takedown removes a guest from the counts, the tallies and now the
+// roster, in the SQL rather than in a forgettable `if`. A roster that listed a
+// taken-down name would undo the takedown on the one page the abuser can still
+// reach.
+//
+// BOUNDED. A leaked link must not become a paginated directory, and the payload
+// must not grow with the flock, so the list is capped. The cap is deliberately
+// above the 50-guest cap this file already enforces.
+// ---------------------------------------------------------------------------
+const ROSTER_LIMIT = 60;
+
+// The same reduction `host` uses, in one place, with a length cap so a 60-char
+// single-token "first name" cannot be used to pad the payload.
+function firstNameOnly(name) {
+  return String(name || '').trim().split(/\s+/)[0].slice(0, 24);
+}
+
+async function rosterFor(flockId) {
+  const [members, guests] = await Promise.all([
+    // flock_members.status is invited | accepted | declined (CHECK constraint,
+    // migration 000). accepted IS the yes on this product: every capability and
+    // every count in the backend keys on it, and POST /:id/join is what a
+    // member taps to say they are coming.
+    pool.query(
+      `SELECT u.name AS name, fm.status AS status
+       FROM flock_members fm
+       JOIN users u ON u.id = fm.user_id
+       WHERE fm.flock_id = $1
+       ORDER BY CASE fm.status WHEN 'accepted' THEN 0 WHEN 'invited' THEN 1 ELSE 2 END, fm.id
+       LIMIT $2`,
+      [flockId, ROSTER_LIMIT]
+    ),
+    pool.query(
+      `SELECT name, status
+       FROM guest_rsvps
+       WHERE flock_id = $1 AND COALESCE(is_hidden, false) = false
+       ORDER BY CASE status WHEN 'in' THEN 0 ELSE 1 END, id
+       LIMIT $2`,
+      [flockId, ROSTER_LIMIT]
+    ),
+  ]);
+
+  const MEMBER_ANSWER = { accepted: 'in', declined: 'out', invited: 'none' };
+  const rows = [
+    ...members.rows.map((r) => ({
+      name: firstNameOnly(r.name),
+      rsvp: MEMBER_ANSWER[r.status] || 'none',
+      kind: 'member',
+    })),
+    ...guests.rows.map((r) => ({
+      name: firstNameOnly(r.name),
+      // guest_rsvps.status is in | out (CHECK constraint). A guest who opened
+      // the link and never answered has no row at all, so there is no third
+      // state to represent here.
+      rsvp: r.status === 'out' ? 'out' : 'in',
+      kind: 'guest',
+    })),
+  ].filter((p) => p.name.length > 0);
+
+  // Yes first, then no, then silent, so the page's most useful line is its
+  // first one. Ordering is done here rather than in two ORDER BYs because the
+  // two lists interleave.
+  const RANK = { in: 0, out: 1, none: 2 };
+  rows.sort((a, b) => RANK[a.rsvp] - RANK[b.rsvp]);
+  return rows.slice(0, ROSTER_LIMIT);
+}
+
 // Tell the members a guest answered the link.
 //
 // Round 14: the old code emitted `guest_rsvp` into the `flock:{id}` room and
@@ -385,7 +488,7 @@ router.get('/:token',
       const link = await resolveLink(req.params.token);
       if (!link) return res.status(404).json({ error: 'This invite link is no longer active' });
 
-      const [tallies, going] = await Promise.all([
+      const [tallies, going, people] = await Promise.all([
         guestTallies(link.flock_id),
         pool.query(
           `SELECT
@@ -393,6 +496,7 @@ router.get('/:token',
              (SELECT COUNT(*) FROM guest_rsvps WHERE flock_id = $1 AND status = 'in' AND COALESCE(is_hidden, false) = false)::int AS guests`,
           [link.flock_id]
         ),
+        rosterFor(link.flock_id),
       ]);
 
       res.json({
@@ -406,8 +510,11 @@ router.get('/:token',
         },
         // First name only — the host invited these people, but the page is
         // reachable by anyone with the link, so keep it minimal.
-        host: String(link.host_name || '').split(' ')[0],
+        host: firstNameOnly(link.host_name),
         going: going.rows[0].members + going.rows[0].guests,
+        // Who those people are, and what each of them said. The exact fields,
+        // and the ones deliberately withheld, are on rosterFor above.
+        people,
         venues: tallies,
       });
     } catch (err) {
@@ -739,6 +846,205 @@ router.post('/:token/vote',
   }
 );
 
+// ---------------------------------------------------------------------------
+// POST /api/guest/:token/join — the invited person joins the flock FOR REAL.
+//
+// This is the whole point of the page. Before this route existed, an invite
+// link was a dead end: a stranger could see the plan, answer it and vote on it,
+// and had no way at all to reach the conversation the plan was being made in.
+// The only path into a flock was the host manually inviting an account that
+// already existed, which is not something the person holding the link can do.
+//
+// WHY THIS IS AUTHENTICATED, AND WHY THE CHAT WILL NEVER BE OPEN TO GUESTS.
+// Everything else in this file is unauthenticated on purpose: reading a plan
+// and saying "I'm in" is inert. Posting into a flock's chat is not. A guest has
+// no age gate (the 13+ floor is checked from a stored date of birth), no
+// account to suspend, no ban to enforce and no report trail. Unauthenticated
+// posting would put unmoderated user content on a public link, which is the
+// exact shape of an Apple Guideline 1.2 rejection. So joining is the primary
+// action on the invite page, and the account is what buys the chat.
+//
+// WHAT IT COSTS THE FLOCK. Anyone holding the link can join, which is the same
+// trust model the link already had for RSVPs and votes: the token IS the
+// credential, and a host who leaked it revokes and re-shares (routes/flocks.js
+// { regenerate: true }). What is different is that a member is a real account,
+// so the moderation stack that guests are outside of applies in full: bans
+// (authenticate refuses a banned account before this handler runs), blocks (the
+// join fan-out below is block-aware), reports, and the 13+ floor.
+//
+// GATES, in the order they refuse:
+//   401  no session                     (authenticate)
+//   403  banned account                 (authenticate)
+//   403  unverified email               (requireVerified, plus the EXISTS in
+//                                        the write itself, plus the deny list
+//                                        in middleware/auth.js — three layers,
+//                                        deliberately, because this is now the
+//                                        SECOND statement in the codebase that
+//                                        promotes anybody to accepted flock
+//                                        membership and it must carry the same
+//                                        invariant as the first)
+//   404  unknown / revoked link, or a deleted flock — byte-identical to the
+//        other three routes, so this one cannot become the enumeration oracle
+//        the others were written to avoid
+//   409  the plan is cancelled or completed
+//   429  this link has already pulled in too many accounts
+//
+// ALREADY A MEMBER is a 200, not an error. Someone who is already in the flock
+// and taps their own invite link wants the chat, not a lecture; they get sent
+// to the same place, with `joined: false` so the client can stay quiet about it.
+// ---------------------------------------------------------------------------
+
+// A leaked link must not be able to pack a flock. 50 accepted members is far
+// above any real group and matches the guest cap this file already enforces, so
+// the two doors into a flock have the same ceiling.
+const LINK_JOIN_MEMBER_CAP = 50;
+
+// And one account cannot spend the route in a loop. Keyed on `userId|flockId`:
+// both halves are integers the server resolved (the id came off a verified JWT,
+// the flock id off the link lookup), so unlike the unauthenticated counters
+// above there is no caller-supplied spelling to defeat it with.
+const JOINS_PER_USER_PER_FLOCK = 10;
+const JOIN_WINDOW_MS = 60 * 60 * 1000;
+const JOIN_MAX_KEYS = 20000;
+
+const joinCounter = createGuestCounter({
+  name: 'link-join',
+  limit: JOINS_PER_USER_PER_FLOCK,
+  windowMs: JOIN_WINDOW_MS,
+  maxKeys: JOIN_MAX_KEYS,
+});
+const joinLog = joinCounter.entries;
+
+router.post('/:token/join',
+  authenticate,
+  requireVerified,
+  param('token').trim().isLength({ min: LINK_TOKEN_PARAM_MIN, max: LINK_TOKEN_PARAM_MAX }),
+  async (req, res) => {
+    try {
+      const errors = validationResult(req);
+      if (!errors.isEmpty()) return res.status(400).json({ error: 'Invalid link' });
+
+      const link = await resolveLink(req.params.token);
+      // The same sentence the other three routes answer a dead token with. A
+      // signed-in caller must not be able to learn more about which tokens
+      // exist than an anonymous one can.
+      if (!link) return res.status(404).json({ error: 'This invite link is no longer active' });
+      if (flockIsOver(link)) {
+        return res.status(409).json({ error: 'This plan is over. Ask them to start a new one.' });
+      }
+
+      if (!joinCounter.allow(`${req.user.id}|${link.flock_id}`)) {
+        return res.status(429).json({ error: 'Too many tries. Give it a minute.' });
+      }
+
+      // Already in? Answer before touching anything, so the common re-tap costs
+      // one indexed read and writes nothing.
+      const existing = await pool.query(
+        'SELECT status FROM flock_members WHERE flock_id = $1 AND user_id = $2',
+        [link.flock_id, req.user.id]
+      );
+      if (existing.rows.length && existing.rows[0].status === 'accepted') {
+        return res.json({ flockId: link.flock_id, flockName: link.name, joined: false });
+      }
+      const wasInvited = existing.rows.length > 0;
+
+      // The cap check and the write run in one transaction behind the same
+      // per-flock advisory lock the guest INSERT uses, for the same reason:
+      // read-then-write on a route several people can hit at once lets every
+      // concurrent caller read the same under-cap number and all of them land.
+      const client = await pool.connect();
+      let joined = false;
+      let overCap = false;
+      try {
+        await client.query('BEGIN');
+        await client.query("SELECT pg_advisory_xact_lock(hashtext('flock_join:' || $1::text))", [String(link.flock_id)]);
+
+        // An already-invited account is not new weight on the flock: the host
+        // put them there. Only a link walk-up is capped.
+        if (!wasInvited) {
+          const count = await client.query(
+            "SELECT COUNT(*)::int AS n FROM flock_members WHERE flock_id = $1 AND status = 'accepted'",
+            [link.flock_id]
+          );
+          if (count.rows[0].n >= LINK_JOIN_MEMBER_CAP) {
+            overCap = true;
+            await client.query('ROLLBACK');
+          }
+        }
+
+        if (!overCap) {
+          // The EXISTS clause is the last line of the unverified-account gate,
+          // written where the membership is actually minted. requireVerified
+          // above and the middleware deny list both already refuse this
+          // request, so in normal operation it never decides anything. It is
+          // here because "an unverified account is never an accepted member"
+          // must be a property of the write, not of two middlewares both
+          // continuing to be mounted. IS NOT FALSE, not = TRUE, for the reason
+          // routes/flocks.js records: a NULL must read as "not gated".
+          const ins = await client.query(
+            `INSERT INTO flock_members (flock_id, user_id, status, joined_at)
+             SELECT $1::int, $2::int, 'accepted', NOW()
+             WHERE EXISTS (SELECT 1 FROM users u WHERE u.id = $2::int AND u.email_verified IS NOT FALSE)
+             ON CONFLICT (flock_id, user_id)
+             DO UPDATE SET status = 'accepted', joined_at = NOW()
+             WHERE flock_members.status <> 'accepted'
+             RETURNING id`,
+            [link.flock_id, req.user.id]
+          );
+          joined = ins.rowCount > 0;
+          await client.query('COMMIT');
+        }
+      } catch (txErr) {
+        await client.query('ROLLBACK').catch(() => {});
+        throw txErr;
+      } finally {
+        client.release();
+      }
+
+      if (overCap) {
+        return res.status(429).json({
+          error: 'This plan is full. Ask them to add you in the app.',
+        });
+      }
+
+      res.json({ flockId: link.flock_id, flockName: link.name, joined });
+
+      // Everything below is after the response: the membership is committed and
+      // the joiner is not waiting on the rest of the flock finding out.
+      if (!joined) return;
+      try {
+        const io = req.app.get('io');
+        if (io) {
+          // Per-member fan-out, not the `flock:{id}` room, and block-aware —
+          // the same shape POST /api/flocks/:id/join uses, so a person joining
+          // through a link is announced exactly like a person accepting an
+          // invite, and never to someone who blocked them.
+          await emitToFlockExcludingBlocked(io, link.flock_id, req.user.id, 'flock_invite_responded', {
+            flockId: link.flock_id,
+            userId: req.user.id,
+            userName: req.user.name,
+            userImage: req.user.profile_image_url || null,
+            action: 'accepted',
+          });
+        }
+        const host = await pool.query('SELECT creator_id, name FROM flocks WHERE id = $1', [link.flock_id]);
+        if (host.rows.length && host.rows[0].creator_id !== req.user.id) {
+          await pushIfOffline(io, host.rows[0].creator_id,
+            `${req.user.name} is going!`,
+            host.rows[0].name,
+            { type: 'flock_rsvp', flockId: String(link.flock_id), fromUserId: String(req.user.id) }
+          );
+        }
+      } catch (announceErr) {
+        console.error('Link join announce error:', announceErr.message);
+      }
+    } catch (err) {
+      console.error('Link join error:', err);
+      if (!res.headersSent) res.status(500).json({ error: 'Could not join this flock' });
+    }
+  }
+);
+
 module.exports = {
   router,
   newLinkToken,
@@ -760,4 +1066,12 @@ module.exports = {
   NEW_GUESTS_PER_IP_PER_FLOCK,
   NEW_GUEST_MAX_KEYS,
   TERMINAL_FLOCK_STATUSES,
+  // The join path — pinned by __tests__/inviteJoinFlow.test.js, which exercises
+  // the ceilings rather than trusting them, and clears joinLog between cases.
+  rosterFor,
+  firstNameOnly,
+  ROSTER_LIMIT,
+  LINK_JOIN_MEMBER_CAP,
+  JOINS_PER_USER_PER_FLOCK,
+  joinLog,
 };

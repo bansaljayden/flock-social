@@ -210,9 +210,14 @@ test('a new token fits the widened column and the route validators', () => {
   assert.match(migration, /ALTER TABLE flock_invite_links ALTER COLUMN token TYPE VARCHAR\(64\)/,
     'the column must be widened to what the validator advertises');
 
+  // PIN UPDATE, 2026-08-14: four, not three. POST /:token/join joined the file
+  // and reads the same token off the same URL, so it has to be measured by the
+  // same bound. A route that validated the token differently would be a route
+  // that answers 400 where its neighbours answer 404, which is the enumeration
+  // oracle the rest of this file exists to prevent.
   const uses = guestSrc.match(/isLength\(\{ min: LINK_TOKEN_PARAM_MIN, max: LINK_TOKEN_PARAM_MAX \}\)/g) || [];
-  assert.strictEqual(uses.length, 3,
-    'all three routes (preview, rsvp, vote) must share the one token bound');
+  assert.strictEqual(uses.length, 4,
+    'all four routes (preview, rsvp, vote, join) must share the one token bound');
 });
 
 test('legacy 12-char tokens still resolve, and both formats pass validation', async () => {
@@ -262,6 +267,15 @@ test('unknown, revoked, and deleted-flock tokens are one uniform 404 on every ro
     assert.deepStrictEqual(res.body, { error: 'This invite link is no longer active' },
       'every route answers a dead token with the identical body — no oracle');
   }
+
+  // The fourth route, POST /:token/join, is authenticated, so it cannot be
+  // called from this fixture without a JWT — its live 404 is exercised in
+  // __tests__/inviteJoinFlow.test.js. What is pinned HERE is that it says the
+  // identical sentence, because a signed-in caller learning "that token existed
+  // once" is the same oracle as an anonymous one learning it.
+  const deadTokenAnswers = guestSrc.match(/error: 'This invite link is no longer active'/g) || [];
+  assert.strictEqual(deadTokenAnswers.length, 4,
+    'all four routes answer a dead token with the same sentence');
 });
 
 test('the guest mount sits behind the API rate limiter', () => {
@@ -274,21 +288,83 @@ test('the guest mount sits behind the API rate limiter', () => {
 
 test('the preview answers with a fixed allowlist and nothing else', async () => {
   // What a scraper who HAS a valid token can harvest: plan name, time, venue,
-  // status, host FIRST name, a going count, and vote counts. No member names,
-  // no guest names, no ids, no emails. The key-set assertions are exact, so a
-  // field added to the payload later fails here and has to argue its case.
+  // status, host FIRST name, a going count, a roster of FIRST names with each
+  // person's answer, and vote counts. No surnames, no emails, no phone numbers,
+  // no user ids, no guest row ids, no photos. The key-set assertions are exact,
+  // so a field added to the payload later fails here and has to argue its case.
+  //
+  // ── PIN UPDATE, 2026-08-14. `people` was added deliberately. ──────────────
+  // The old payload answered "how many" (`going: 3`) and never "who", so the
+  // page could not tell the person deciding whether to come who else was
+  // coming. That was the whole of Jayden's report on this surface. The widening
+  // is EXACTLY one key, and it is bounded on three axes rather than left open:
+  //
+  //   1. FIELD SET. Each row is { name, rsvp, kind } and the assertions below
+  //      are deepStrictEqual on the key set of a row, not a subset check, so
+  //      adding an id or a photo to the roster fails here.
+  //   2. IDENTITY. `name` is the same first-name reduction `host` has always
+  //      used, capped at 24 characters. A surname reaching this list fails the
+  //      test below.
+  //   3. LENGTH. Capped at ROSTER_LIMIT, so a leaked link is not a paginated
+  //      directory and the payload does not grow with the flock.
+  //
+  // What was NOT weakened: every is_hidden filter still stands (see PART 5,
+  // which now also covers the roster), bad tokens are still one uniform 404 on
+  // every route including the new one, and the post-event payload still may not
+  // grow.
   on(/FROM flock_invite_links/, () => ({ rows: [link()] }));
   on(/SUM\(c\)::int AS votes/, () => ({ rows: [{ venue_name: 'The Bar', votes: 3 }] }));
   on(/AS members/, () => ({ rows: [{ members: 2, guests: 1 }] }));
+  on(/FROM flock_members fm JOIN users u/, () => ({ rows: [
+    { name: 'Ava Brooks', status: 'accepted' },
+    { name: 'Noor Haddad', status: 'declined' },
+    { name: 'Theo Lang', status: 'invited' },
+  ] }));
+  on(/SELECT name, status FROM guest_rsvps/, () => ({ rows: [{ name: 'Sam', status: 'in' }] }));
 
   const res = await call('GET', `/api/guest/${LEGACY_TOKEN}`);
   assert.strictEqual(res.status, 200);
-  assert.deepStrictEqual(Object.keys(res.body).sort(), ['flock', 'going', 'host', 'venues']);
+  assert.deepStrictEqual(Object.keys(res.body).sort(), ['flock', 'going', 'host', 'people', 'venues']);
   assert.deepStrictEqual(Object.keys(res.body.flock).sort(), ['chosenVenue', 'name', 'status', 'when']);
   assert.strictEqual(res.body.host, 'Ava', 'host is a FIRST name only');
   assert.strictEqual(res.body.going, 3, 'going is a count, never a list');
   assert.deepStrictEqual(res.body.venues, [{ venue_name: 'The Bar', votes: 3 }],
     'venue tallies are counts only — no voter identities cross the guest surface');
+
+  // The roster: three answers, first names only, yes before no before silence.
+  assert.deepStrictEqual(res.body.people, [
+    { name: 'Ava', rsvp: 'in', kind: 'member' },
+    { name: 'Sam', rsvp: 'in', kind: 'guest' },
+    { name: 'Noor', rsvp: 'out', kind: 'member' },
+    { name: 'Theo', rsvp: 'none', kind: 'member' },
+  ]);
+  for (const p of res.body.people) {
+    assert.deepStrictEqual(Object.keys(p).sort(), ['kind', 'name', 'rsvp'],
+      'a roster row carries three fields and nothing else');
+    assert.ok(!/\s/.test(p.name), 'a surname must never cross this surface');
+    assert.ok(p.name.length <= 24, 'names are length-capped');
+  }
+});
+
+test('the roster is capped, and the cap is what the route advertises', async () => {
+  // A leaked link is not a directory. Pinned against the exported constant so
+  // raising the cap is a deliberate edit in two places, not a drift in one.
+  const many = Array.from({ length: 200 }, (_, i) => ({ name: `Person${i}`, status: 'accepted' }));
+  on(/FROM flock_invite_links/, () => ({ rows: [link()] }));
+  on(/SUM\(c\)::int AS votes/, () => ({ rows: [] }));
+  on(/AS members/, () => ({ rows: [{ members: 200, guests: 0 }] }));
+  on(/FROM flock_members fm JOIN users u/, () => ({ rows: many }));
+  on(/SELECT name, status FROM guest_rsvps/, () => ({ rows: [] }));
+
+  const res = await call('GET', `/api/guest/${LEGACY_TOKEN}`);
+  assert.strictEqual(res.status, 200);
+  assert.strictEqual(res.body.people.length, guest.ROSTER_LIMIT);
+
+  // And the cap is pushed into SQL as a LIMIT, not applied only after the rows
+  // have already been read into memory.
+  for (const q of ran(/FROM flock_members fm JOIN users u/).concat(ran(/SELECT name, status FROM guest_rsvps/))) {
+    assert.match(q.sql, /LIMIT \$2/, 'the roster reads are bounded in the database');
+  }
 });
 
 // ===========================================================================
@@ -437,7 +513,7 @@ test('a finished plan leaks nothing through the link that a live one did not', a
 // The sweeping every-reader source scan lives in guestSurfaceAbuse.test.js;
 // these three pin the behavior on the guest surface itself.
 
-test('the preview counts and tallies both exclude hidden guests', async () => {
+test('the preview counts, tallies and ROSTER all exclude hidden guests', async () => {
   on(/FROM flock_invite_links/, () => ({ rows: [link()] }));
   on(/SUM\(c\)::int AS votes/, () => ({ rows: [] }));
   on(/AS members/, () => ({ rows: [{ members: 2, guests: 0 }] }));
@@ -453,6 +529,34 @@ test('the preview counts and tallies both exclude hidden guests', async () => {
   assert.ok(tally, 'the venue tally ran');
   assert.match(tally.sql, /JOIN guest_rsvps gr ON gr\.id = gv\.guest_rsvp_id WHERE gv\.flock_id = \$1 AND COALESCE\(gr\.is_hidden, false\) = false/,
     'a hidden guest\'s votes must not move the public tally');
+
+  // The roster is the newest reader of guest_rsvps and therefore the newest way
+  // a takedown could have been undone: it is the one surface an abuser can
+  // still reach, and it names people. Filtered in the SQL, like every other
+  // reader on this route.
+  const roster = ran(/SELECT name, status FROM guest_rsvps/)[0];
+  assert.ok(roster, 'the roster read the guest rows');
+  assert.match(roster.sql, /COALESCE\(is_hidden, false\) = false/,
+    'a taken-down guest name must not come back on the roster');
+});
+
+test('a hidden guest is absent from the roster even when the row is returned', async () => {
+  // Belt to the SQL filter's braces: the filter above is what actually removes
+  // the row, and this pins that nothing downstream re-admits one. The fixture
+  // deliberately answers the roster query with a hidden row it would never see
+  // in production, and the assertion is that only what the WHERE clause admits
+  // is what the handler was given.
+  on(/FROM flock_invite_links/, () => ({ rows: [link()] }));
+  on(/SUM\(c\)::int AS votes/, () => ({ rows: [] }));
+  on(/AS members/, () => ({ rows: [{ members: 0, guests: 0 }] }));
+  on(/FROM flock_members fm JOIN users u/, () => ({ rows: [] }));
+  on(/SELECT name, status FROM guest_rsvps/, (params, sql) => {
+    assert.match(sql, /COALESCE\(is_hidden, false\) = false/);
+    return { rows: [{ name: 'Visible', status: 'in' }] };
+  });
+
+  const res = await call('GET', `/api/guest/${LEGACY_TOKEN}`);
+  assert.deepStrictEqual(res.body.people, [{ name: 'Visible', rsvp: 'in', kind: 'guest' }]);
 });
 
 test('a hidden guest cannot edit their RSVP back onto the surface', async () => {

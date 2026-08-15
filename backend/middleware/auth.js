@@ -184,7 +184,14 @@ const UNVERIFIED_DENY = [
   // 3. Flock membership — routes/flocks.js. Creating a flock makes you its
   //    first member, so it belongs on the list next to join and invite.
   { method: 'POST', pattern: /^\/api\/flocks$/ },
-  { method: 'POST', pattern: /^\/api\/flocks\/[^/]+\/(join|invite|invite-link)$/ },];
+  { method: 'POST', pattern: /^\/api\/flocks\/[^/]+\/(join|invite|invite-link)$/ },
+  //    The SECOND door into accepted membership, added with the invite-link
+  //    join (routes/guest.js POST /:token/join). It has to be on this list for
+  //    the same reason the four above are, and specifically because the B3-4
+  //    decision to leave POST /api/feedback OFF the list rests on the premise
+  //    that an unverified account cannot manufacture flock-membership evidence
+  //    — a premise that a second, ungated join route would have quietly broken.
+  { method: 'POST', pattern: /^\/api\/guest\/[^/]+\/join$/ },];
 
 const UNVERIFIED_MESSAGE =
   'Confirm your email to do this. Check your inbox for the link we sent, or ask for a new one.';
