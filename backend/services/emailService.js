@@ -418,11 +418,45 @@ async function sendPasswordResetOAuthEmail({ to, name, provider }) {
   });
 }
 
+// The waitlist confirmation. routes/waitlist.js was the last caller still
+// holding its own Resend client, its own null-key skip and its own copy of the
+// abort signal — the exact trio this module was extracted to own (see the
+// header). Moving the send here hands the route the rest of the hardening it
+// lacked: the settle contract, the pinned www logo host, and the recipient
+// gate. The body deliberately renders NO user-supplied value — the address
+// someone typed on the public marketing site is the recipient and nothing
+// else, and sendEmail refuses any address that could carry markup before the
+// provider is consulted (isMailableAddress excludes < > "). Copy is the
+// route's own, unchanged: plain "The Flock Team" signoff, logo from the
+// pinned www host via baseWebUrl().
+async function sendWaitlistConfirmation({ to }) {
+  return sendEmail({
+    to,
+    subject: "You're on the Flock waitlist",
+    html: `
+      <div style="font-family: -apple-system, BlinkMacSystemFont, sans-serif; max-width: 480px; margin: 0 auto; padding: 40px 24px;">
+        <div style="text-align: center; margin-bottom: 32px;">
+          <img src="${baseWebUrl()}/flock-logo.png" alt="Flock" width="64" height="64" style="border-radius: 16px;" />
+        </div>
+        <h1 style="font-size: 24px; font-weight: 700; color: #0d2847; margin-bottom: 16px;">You're on the list.</h1>
+        <p style="font-size: 16px; color: #4a5568; line-height: 1.6; margin-bottom: 24px;">
+          Thanks for signing up for early access to Flock. We're building the app that replaces the broken group chat planning process with something that actually works.
+        </p>
+        <p style="font-size: 16px; color: #4a5568; line-height: 1.6; margin-bottom: 24px;">
+          We'll let you know as soon as it's ready.
+        </p>
+        <p style="font-size: 14px; color: #a0aec0;">The Flock Team</p>
+      </div>
+    `,
+  });
+}
+
 module.exports = {
   sendEmail,
   sendVerificationEmail,
   sendPasswordResetEmail,
   sendPasswordResetOAuthEmail,
+  sendWaitlistConfirmation,
   verificationLink,
   passwordResetLink,
   baseWebUrl,
