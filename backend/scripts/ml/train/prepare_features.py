@@ -1,11 +1,30 @@
 """
 Feature engineering for Flock AI Crowd Forecasting Model.
 Reads raw CSV exports and creates a clean feature matrix.
+
+FAIL LOUD, NEVER SILENT
+-----------------------
+Every soft `if column in df.columns` guard that used to live in this file has
+been removed. The 2026-08-15 pre-retrain audit found three shipped fixes that
+never reached an artifact because this script degraded quietly when the CSV was
+not what it assumed: baseline smoothing was skipped, vendor-forecast labels were
+all weighted 1.0, and the leave-one-out baseline never arrived. The corpus
+contract is now checked up front and violations raise CorpusContractError.
+
+Two deliberate escape hatches exist, both explicit, both logged, both recorded in
+model_metadata.json so an artifact can never hide which one was used:
+
+  FLOCK_WEATHER_POLICY=require|drop    (default require)
+  FLOCK_CALENDAR_POLICY=require|drop   (default require)
+
+`require` means "the corpus must carry this signal"; `drop` means "we know it is
+absent, so remove the dead feature slots instead of shipping constants".
 """
 
 import logging
 import json
 import math
+import os
 import pickle
 from pathlib import Path
 from typing import Dict, List, Tuple
@@ -22,6 +41,111 @@ MODELS_DIR = SCRIPT_DIR.parent / 'models'
 # Top 30 Google Places types (will be computed from data)
 MAX_GOOGLE_TYPES = 30
 
+
+class CorpusContractError(RuntimeError):
+    """The CSV does not carry what this pipeline needs. Never degrade — stop."""
+
+
+# ---------------------------------------------------------------------------
+# Corpus contract — the exact column list export_training_data.js writes.
+# Audit finding 1: the checked-in CSVs were a 40-column pre-round-10 export
+# (no venue_id, no label_provenance) and this script silently accepted them.
+# ---------------------------------------------------------------------------
+EXPORT_COLUMNS: List[str] = [
+    'venue_id',
+    'day_of_week', 'hour', 'month', 'season',
+    'is_holiday', 'is_school_break',
+    'venue_category', 'price_level', 'rating', 'review_count',
+    'temperature', 'humidity', 'wind_speed',
+    'weather_condition', 'weather_condition_code', 'is_raining',
+    'event_nearby', 'event_distance_km', 'event_size', 'event_type', 'event_hours_until',
+    'has_nearby_event', 'nearest_event_distance_km', 'nearest_event_attendance',
+    'total_nearby_events', 'total_nearby_attendance', 'nearest_event_type',
+    'baseline_busyness', 'is_realtime',
+    'busyness_pct',
+    'city',
+    'google_type_1', 'google_type_2', 'google_type_3',
+    'latitude', 'longitude',
+    'avg_user_crowd', 'user_feedback_count', 'avg_prediction_error',
+    'observed_date', 'label_provenance',
+]
+
+EXPORTER_PATH = SCRIPT_DIR / 'export_training_data.js'
+
+
+def require_export_columns(df: pd.DataFrame, csv_path: Path, label: str) -> None:
+    """Hard contract check. Raises rather than degrading (audit finding 1)."""
+    missing = [c for c in EXPORT_COLUMNS if c not in df.columns]
+    if not missing:
+        return
+    hint = ''
+    try:
+        if csv_path.stat().st_mtime < EXPORTER_PATH.stat().st_mtime:
+            hint = (f'\n  {csv_path.name} is OLDER than export_training_data.js '
+                    f'— it is a stale export from a previous round.')
+    except OSError:
+        pass
+    raise CorpusContractError(
+        f'{label} ({csv_path}) is missing {len(missing)} required column(s): '
+        f'{missing}.\n'
+        f'  It has {len(df.columns)} columns; the current exporter writes '
+        f'{len(EXPORT_COLUMNS)}.{hint}\n'
+        f'  Fix: delete the stale CSVs and pickles, then re-run\n'
+        f'    node export_training_data.js\n'
+        f'  Do NOT start a retrain at prepare_features.py. venue_id drives the '
+        f'baseline smoothing and label_provenance drives the vendor-forecast '
+        f'sample weight; without them this script used to skip both in silence.'
+    )
+
+
+def _policy(env_name: str, default: str, allowed: set) -> str:
+    value = os.environ.get(env_name, default).strip().lower()
+    if value not in allowed:
+        raise CorpusContractError(
+            f'{env_name}={value!r} is not one of {sorted(allowed)}.'
+        )
+    if value != default:
+        logger.warning(
+            'POLICY OVERRIDE: %s=%s (default %s). This is recorded in '
+            'model_metadata.json.', env_name, value, default
+        )
+    return value
+
+
+WEATHER_POLICY = _policy('FLOCK_WEATHER_POLICY', 'require', {'require', 'drop'})
+CALENDAR_POLICY = _policy('FLOCK_CALENDAR_POLICY', 'require', {'require', 'drop'})
+
+# Smoke-test escape hatch for the realtime-row floor. A real retrain must never
+# set this; it exists so the pipeline can be exercised on a synthetic fixture.
+MIN_REALTIME_ROWS = int(os.environ.get('FLOCK_MIN_REALTIME_ROWS', '50000'))
+
+# Features that a policy switched off for this run. get_feature_columns()
+# excludes them, so metadata.feature_names never advertises a dead slot.
+DROPPED_FEATURES: set = set()
+DROP_REASONS: Dict[str, str] = {}
+
+
+def drop_features(names: List[str], reason: str) -> None:
+    DROPPED_FEATURES.update(names)
+    for n in names:
+        DROP_REASONS[n] = reason
+    logger.warning('DROPPING %d feature(s) — %s: %s', len(names), reason, sorted(names))
+
+
+# ---------------------------------------------------------------------------
+# The population production actually scores with the model.
+#
+# mlPredictor routes any venue whose baseline is 0 to the rule engine, so a row
+# with baseline == 0 is a row the model never serves. Audit finding 6: training
+# filtered on this and the SHIP GATE did not, so the gate was decided on rows
+# production refuses to serve. This predicate is the single definition of that
+# population — prepare_features filters the training frame with it and
+# quick_eval.py imports it for the gate slice. They cannot drift apart.
+# ---------------------------------------------------------------------------
+def serving_population_mask(baseline) -> np.ndarray:
+    """True where production would serve the ML model rather than the rule engine."""
+    return np.asarray(baseline, dtype=float) > 0
+
 # Weather condition code groupings
 WEATHER_GROUPS: Dict[str, List[range]] = {
     'thunderstorm': [range(200, 233)],
@@ -32,6 +156,14 @@ WEATHER_GROUPS: Dict[str, List[range]] = {
     'few_clouds': [range(801, 803)],
     'cloudy': [range(803, 805)],
 }
+
+# The nine one-hot levels built from WEATHER_GROUPS (+ the two catch-alls).
+# mlPredictor.groupWeatherCode produces exactly these names.
+WEATHER_GROUP_NAMES: List[str] = ['clear', 'few_clouds', 'cloudy', 'light_rain',
+                                  'heavy_rain', 'snow', 'thunderstorm', 'other',
+                                  'unknown']
+
+SEASON_NAMES: List[str] = ['spring', 'summer', 'fall', 'winter']
 
 
 def group_weather_code(code: float) -> str:
@@ -44,6 +176,219 @@ def group_weather_code(code: float) -> str:
             if code_int in r:
                 return group_name
     return 'other'
+
+
+# ---------------------------------------------------------------------------
+# weather_condition_code recovery (audit finding 4)
+#
+# No collector has ever written weather_condition_code — it is NULL on 100% of
+# the corpus, which made all ten weather_* one-hots constant (weather_unknown
+# identically 1) and left the careful groupWeatherCode parity work in
+# mlPredictor.js guarding a channel that carried nothing.
+#
+# The signal is recoverable: weather_condition holds the OpenWeatherMap
+# `description` string on 3.29M of 3.57M rows. This is the canonical
+# description -> condition-id table. It is a lookup of vendor constants, not an
+# estimate: every description below is the documented text OWM returns for that
+# id, so the recovered code produces exactly the group the live conditionId
+# would have produced at inference. Descriptions NOT in this table are reported
+# by name and count and, under the default policy, stop the run — a new
+# description must be mapped deliberately, never bucketed to 'other' in silence.
+# ---------------------------------------------------------------------------
+WEATHER_DESCRIPTION_CODES: Dict[str, int] = {
+    # Thunderstorm 2xx
+    'thunderstorm with light rain': 200,
+    'thunderstorm with rain': 201,
+    'thunderstorm with heavy rain': 202,
+    'light thunderstorm': 210,
+    'thunderstorm': 211,
+    'heavy thunderstorm': 212,
+    'ragged thunderstorm': 221,
+    'thunderstorm with light drizzle': 230,
+    'thunderstorm with drizzle': 231,
+    'thunderstorm with heavy drizzle': 232,
+    # Drizzle 3xx
+    'light intensity drizzle': 300,
+    'drizzle': 301,
+    'heavy intensity drizzle': 302,
+    'light intensity drizzle rain': 310,
+    'drizzle rain': 311,
+    'heavy intensity drizzle rain': 312,
+    'shower rain and drizzle': 313,
+    'heavy shower rain and drizzle': 314,
+    'shower drizzle': 321,
+    # Rain 5xx
+    'light rain': 500,
+    'moderate rain': 501,
+    'heavy intensity rain': 502,
+    'very heavy rain': 503,
+    'extreme rain': 504,
+    'freezing rain': 511,
+    'light intensity shower rain': 520,
+    'shower rain': 521,
+    'heavy intensity shower rain': 522,
+    'ragged shower rain': 531,
+    # Snow 6xx
+    'light snow': 600,
+    'snow': 601,
+    'heavy snow': 602,
+    'sleet': 611,
+    'light shower sleet': 612,
+    'shower sleet': 613,
+    'light rain and snow': 615,
+    'rain and snow': 616,
+    'light shower snow': 620,
+    'shower snow': 621,
+    'heavy shower snow': 622,
+    # Atmosphere 7xx — these all group to 'other', which is a real level
+    'mist': 701,
+    'smoke': 711,
+    'haze': 721,
+    'sand/dust whirls': 731,
+    'fog': 741,
+    'sand': 751,
+    'dust': 761,
+    'volcanic ash': 762,
+    'squalls': 771,
+    'tornado': 781,
+    # Clear / clouds 800-804
+    'clear sky': 800,
+    'few clouds': 801,
+    'scattered clouds': 802,
+    'broken clouds': 803,
+    'overcast clouds': 804,
+}
+
+
+def recover_weather_codes(df: pd.DataFrame, label: str) -> Dict:
+    """Fill weather_condition_code from weather_condition text. Reports honestly.
+
+    Returns a stats dict. Rows with neither a code nor a description keep NaN —
+    "we have no weather reading" is a true statement about those rows and
+    weather_unknown is the honest one-hot for them.
+    """
+    code = pd.to_numeric(df['weather_condition_code'], errors='coerce')
+    had_code = int(code.notna().sum())
+
+    desc = df['weather_condition'].astype('string').str.strip().str.lower()
+    need = code.isna()
+    mapped = desc.map(WEATHER_DESCRIPTION_CODES)
+
+    recovered_mask = need & mapped.notna()
+    # to_numeric again: .map against a nullable-string Series can hand back an
+    # object column, and group_weather_code would then be int()-ing whatever the
+    # CSV happened to contain.
+    code = pd.to_numeric(code.where(~recovered_mask, mapped), errors='coerce')
+    df['weather_condition_code'] = code
+
+    unmapped = desc[need & mapped.isna() & desc.notna() & (desc != '')]
+    unmapped_counts = unmapped.value_counts().to_dict()
+    no_reading = int((need & (desc.isna() | (desc == ''))).sum())
+
+    stats = {
+        'rows': int(len(df)),
+        'code_present_in_export': had_code,
+        'recovered_from_description': int(recovered_mask.sum()),
+        'no_weather_reading': no_reading,
+        'unmapped_descriptions': {str(k): int(v) for k, v in unmapped_counts.items()},
+        'final_coverage_pct': round(float(code.notna().mean()) * 100, 2),
+    }
+    logger.info(
+        '[%s] weather codes: %d in export, %d recovered from description text, '
+        '%d rows with no weather reading at all -> %.2f%% coverage',
+        label, had_code, stats['recovered_from_description'], no_reading,
+        stats['final_coverage_pct'],
+    )
+    if unmapped_counts:
+        logger.error('[%s] %d UNMAPPED weather description(s): %s', label,
+                     len(unmapped_counts), unmapped_counts)
+    return stats
+
+
+def enforce_weather_contract(stats: Dict) -> None:
+    """Audit finding 4: never re-bake ten constant weather features in silence."""
+    if WEATHER_POLICY == 'drop':
+        drop_features(
+            [f'weather_{g}' for g in WEATHER_GROUP_NAMES] + ['cold_outdoor'],
+            'FLOCK_WEATHER_POLICY=drop — no usable weather_condition_code in the corpus',
+        )
+        return
+    if stats['unmapped_descriptions']:
+        raise CorpusContractError(
+            'Unmapped weather descriptions: '
+            f'{stats["unmapped_descriptions"]}.\n'
+            '  Add each one to WEATHER_DESCRIPTION_CODES with its OpenWeatherMap '
+            'condition id (do not guess a group), or set '
+            'FLOCK_WEATHER_POLICY=drop to remove the weather one-hots entirely.'
+        )
+    if stats['final_coverage_pct'] <= 0:
+        raise CorpusContractError(
+            'weather_condition_code is empty on every row and nothing was '
+            'recoverable from weather_condition.\n'
+            '  All ten weather_* features would be constant (weather_unknown ≡ 1) '
+            'and the model would have no weather-condition signal at all — the '
+            'exact defect audit finding 4 describes.\n'
+            '  Fix the collectors to write weather.conditionId, or set '
+            'FLOCK_WEATHER_POLICY=drop to ship without the dead slots.'
+        )
+
+
+CALENDAR_FEATURES: List[str] = (
+    ['month', 'month_sin', 'month_cos']
+    + [f'season_{s}' for s in SEASON_NAMES]
+    # month-derived: with no month these are computed off a fabricated mid-year
+    # day-of-year / a global climatology fallback, so they go with it.
+    + ['daylight_hours', 'hours_after_sunset', 'is_after_sunset',
+       'temp_anomaly', 'is_warm_anomaly_evening']
+)
+
+
+def audit_calendar_coverage(df: pd.DataFrame, label: str) -> Dict:
+    """Report how many rows carry a real month/season (audit finding 5)."""
+    month = pd.to_numeric(df['month'], errors='coerce')
+    good_month = month.between(1, 12)
+    season = df['season'].astype('string').str.strip().str.lower()
+    good_season = season.isin(SEASON_NAMES).fillna(False)
+    stats = {
+        'rows': int(len(df)),
+        'rows_without_month': int((~good_month).sum()),
+        'rows_without_season': int((~good_season).sum()),
+    }
+    stats['pct_without_month'] = round(stats['rows_without_month'] / max(len(df), 1) * 100, 2)
+    logger.info('[%s] calendar coverage: %d rows without a usable month (%.2f%%), '
+                '%d without a season',
+                label, stats['rows_without_month'], stats['pct_without_month'],
+                stats['rows_without_season'])
+    return stats
+
+
+def enforce_calendar_contract(stats: Dict) -> None:
+    """Audit finding 5: month=0 with all four season one-hots at 0 cannot occur
+    at inference — mlPredictor always emits month in 1..12 and exactly one
+    season. Two-thirds of the corpus used to sit in that unreachable corner
+    because add_temporal_features computed sin/cos of NaN and the final
+    fillna(0) turned the NaN into a mathematically impossible point.
+    """
+    if CALENDAR_POLICY == 'drop':
+        drop_features(
+            CALENDAR_FEATURES,
+            'FLOCK_CALENDAR_POLICY=drop — undated rows carry no real month/season',
+        )
+        return
+    if stats['rows_without_month'] or stats['rows_without_season']:
+        raise CorpusContractError(
+            f'{stats["rows_without_month"]} rows ({stats["pct_without_month"]}%) have no '
+            f'usable month and {stats["rows_without_season"]} have no season.\n'
+            '  Filling them with 0 puts month=0, month_sin=0, month_cos=0 and all '
+            'four season one-hots at 0 — a combination inference can NEVER produce, '
+            'and a perfect proxy for row provenance (weekly vs realtime).\n'
+            '  Fix one of:\n'
+            '    - stamp month/season on weekly rows at collection time from the '
+            'collection date (collectWeekly.js omits both today), or\n'
+            '    - backfill them from collected_at in export_training_data.js, or\n'
+            '    - set FLOCK_CALENDAR_POLICY=drop to remove every calendar-derived '
+            f'feature ({len(CALENDAR_FEATURES)} of them) instead of faking it.'
+        )
 
 
 def add_temporal_features(df: pd.DataFrame) -> pd.DataFrame:
@@ -67,8 +412,12 @@ def add_temporal_features(df: pd.DataFrame) -> pd.DataFrame:
     df['is_morning'] = df['hour'].between(6, 10).astype(int)
 
     # Season one-hot
-    for s in ['spring', 'summer', 'fall', 'winter']:
-        df[f'season_{s}'] = (df['season'] == s).astype(int)
+    season = df['season'].astype('string').str.strip().str.lower()
+    for s in SEASON_NAMES:
+        # fillna(False): an absent season is "not this season" for every level,
+        # which is only ever reached under FLOCK_CALENDAR_POLICY=drop — where
+        # these columns are removed from the feature set anyway.
+        df[f'season_{s}'] = (season == s).fillna(False).astype(int)
 
     return df
 
@@ -207,8 +556,6 @@ def add_holiday_features(df: pd.DataFrame) -> pd.DataFrame:
         eve = 1 if str(_date(y, m, d) + _timedelta(days=1)) in hol_sets.get(cal, ()) else 0
         return (is_sp, boost, suppress, eve)
 
-    if 'observed_date' not in df.columns:
-        df['observed_date'] = ''
     keys = df['city'].fillna('').astype(str) + '|' + df['observed_date'].fillna('').astype(str)
     lut = {k: ctx(k) for k in keys.unique()}
     vals = np.array([lut[k] for k in keys], dtype=float)
@@ -245,12 +592,12 @@ def add_venue_features(df: pd.DataFrame) -> Tuple[pd.DataFrame, Dict]:
     df['review_count'] = df['review_count'].fillna(0)
     df['log_review_count'] = np.log1p(df['review_count'])
 
-    # Google types one-hot (top N most common)
+    # Google types one-hot (top N most common). The columns are part of the
+    # export contract, so their absence is a contract error, not a skip.
     type_cols = ['google_type_1', 'google_type_2', 'google_type_3']
     all_types = []
     for col in type_cols:
-        if col in df.columns:
-            all_types.extend(df[col].dropna().tolist())
+        all_types.extend(df[col].dropna().tolist())
 
     type_counts = pd.Series(all_types).value_counts()
     top_types = type_counts.head(MAX_GOOGLE_TYPES).index.tolist()
@@ -259,8 +606,7 @@ def add_venue_features(df: pd.DataFrame) -> Tuple[pd.DataFrame, Dict]:
         col_name = f'gtype_{t}'
         df[col_name] = 0
         for tc in type_cols:
-            if tc in df.columns:
-                df.loc[df[tc] == t, col_name] = 1
+            df.loc[df[tc] == t, col_name] = 1
 
     metadata = {
         'category_encoding': cat_map,
@@ -287,11 +633,11 @@ def add_weather_features(df: pd.DataFrame) -> pd.DataFrame:
     df['wind_speed'] = df['wind_speed'].fillna(0)
     df['is_raining'] = df['is_raining'].fillna(0).astype(int)
 
-    # Weather code groups
+    # Weather code groups. recover_weather_codes() has already run, so a NaN
+    # here means the row genuinely carries no weather reading — 'unknown' is
+    # then the truthful level, not a silent stand-in for the whole corpus.
     df['weather_group'] = df['weather_condition_code'].apply(group_weather_code)
-    weather_groups = ['clear', 'few_clouds', 'cloudy', 'light_rain', 'heavy_rain',
-                      'snow', 'thunderstorm', 'other', 'unknown']
-    for g in weather_groups:
+    for g in WEATHER_GROUP_NAMES:
         df[f'weather_{g}'] = (df['weather_group'] == g).astype(int)
 
     # Interaction features
@@ -358,6 +704,98 @@ def build_category_baseline_maps(df: pd.DataFrame) -> Dict:
     }
 
 
+def smooth_baseline_hours(df: pd.DataFrame) -> pd.DataFrame:
+    """Blend each venue-hour's baseline with its true adjacent hours.
+
+    Audit finding 3: this used to be `groupby(venue_id, dow).shift(1)`, i.e. the
+    previous ROW, not the previous HOUR. ml_training_data has no unique
+    constraint, so 16% of (venue, dow, hour) cells hold more than one row
+    (realtime cells average 2.05 and reach 8) — for k rows in a cell, k-1 of
+    them were smoothed against their own hour, biasing the delta label on
+    exactly the realtime rows that carry sample weight 1.0.
+
+    The fix collapses each cell to ONE value, lays those onto a complete 7x24
+    grid so a MISSING hour is a real gap instead of a silent positional
+    neighbour, and merges the two NEIGHBOUR hours back onto every row.
+
+    THE CENTRE TERM STAYS ROW-SPECIFIC, and that is not a detail. Round 13 made
+    export_training_data.js compute baseline_busyness leave-one-out:
+    b_i = (sum - y_i) / (n - 1), so a row's baseline never contains its own
+    label. Averaging the duplicates in a cell would undo it exactly —
+    mean_i(b_i) = sum/n, the plain average INCLUDING every row's own label. So
+    the blend uses the row's own leave-one-out value at the centre and cell
+    means only for the neighbours, which belong to a different hour and
+    therefore cannot contain this row's label.
+
+    The blend mirrors mlPredictor.getBaseline:
+      - neighbours are the adjacent CLOCK hours and wrap across the day
+        boundary (23 -> next day 00, 00 -> previous day 23);
+      - a neighbour that is absent or 0 is treated as unavailable and falls back
+        to the centre value;
+      - with neither neighbour available the centre value passes through;
+      - the result is rounded the way JS Math.round rounds (half up).
+    """
+    cell = (df.groupby(['venue_id', 'day_of_week', 'hour'], as_index=False)
+              ['baseline_busyness'].mean())
+    cell['venue_id'] = cell['venue_id'].astype(str)
+    cell['day_of_week'] = pd.to_numeric(cell['day_of_week'], errors='coerce')
+    cell['hour'] = pd.to_numeric(cell['hour'], errors='coerce')
+    cell = cell.dropna(subset=['day_of_week', 'hour'])
+    cell['day_of_week'] = cell['day_of_week'].astype('int64')
+    cell['hour'] = cell['hour'].astype('int64')
+    out_of_grid = cell[~cell['day_of_week'].between(0, 6) | ~cell['hour'].between(0, 23)]
+    if len(out_of_grid):
+        raise CorpusContractError(
+            f'{len(out_of_grid)} (venue, day_of_week, hour) cells fall outside the '
+            '7x24 week grid — day_of_week must be 0-6 and hour 0-23. '
+            f'Sample: {out_of_grid.head(3).to_dict("records")}'
+        )
+
+    venues = cell['venue_id'].unique()
+    grid_index = pd.MultiIndex.from_product(
+        [venues, range(7), range(24)], names=['venue_id', 'day_of_week', 'hour'])
+    series = (cell.set_index(['venue_id', 'day_of_week', 'hour'])['baseline_busyness']
+                  .reindex(grid_index))
+    arr = series.to_numpy(dtype=float).reshape(len(venues), 7 * 24)
+
+    # np.roll over the flattened 168-slot week gives the true clock neighbour,
+    # including the day-boundary and week-boundary wraps production uses.
+    prev = np.nan_to_num(np.roll(arr, 1, axis=1), nan=0.0)
+    nxt = np.nan_to_num(np.roll(arr, -1, axis=1), nan=0.0)
+
+    out = pd.DataFrame({
+        'venue_id': np.repeat(venues, 7 * 24),
+        'day_of_week': np.tile(np.repeat(np.arange(7), 24), len(venues)).astype('float64'),
+        'hour': np.tile(np.arange(24), 7 * len(venues)).astype('float64'),
+        '_bl_prev': prev.reshape(-1),
+        '_bl_next': nxt.reshape(-1),
+    })
+
+    keys = pd.DataFrame({
+        'venue_id': df['venue_id'].astype(str).values,
+        'day_of_week': pd.to_numeric(df['day_of_week'], errors='coerce').astype('float64').values,
+        'hour': pd.to_numeric(df['hour'], errors='coerce').astype('float64').values,
+    })
+    merged = keys.merge(out, on=['venue_id', 'day_of_week', 'hour'], how='left')
+    if len(merged) != len(df):
+        raise CorpusContractError(
+            'Baseline smoothing merge changed the row count '
+            f'({len(df)} -> {len(merged)}). The (venue_id, day_of_week, hour) '
+            'grid is not unique; refusing to continue with duplicated rows.'
+        )
+
+    current = df['baseline_busyness'].to_numpy(dtype=float)
+    prev_row = np.nan_to_num(merged['_bl_prev'].to_numpy(dtype=float), nan=0.0)
+    next_row = np.nan_to_num(merged['_bl_next'].to_numpy(dtype=float), nan=0.0)
+
+    has_neighbour = (prev_row > 0) | (next_row > 0)
+    prev_eff = np.where(prev_row > 0, prev_row, current)
+    next_eff = np.where(next_row > 0, next_row, current)
+    blended = np.floor(current * 0.6 + prev_eff * 0.2 + next_eff * 0.2 + 0.5)
+    df['baseline_busyness'] = np.where((current > 0) & has_neighbour, blended, current)
+    return df
+
+
 def add_baseline_features(df: pd.DataFrame, cat_maps: Dict = None) -> Tuple[pd.DataFrame, Dict]:
     """Add baseline busyness and data freshness features.
 
@@ -365,24 +803,9 @@ def add_baseline_features(df: pd.DataFrame, cat_maps: Dict = None) -> Tuple[pd.D
     frame" (training); pass the training maps for holdout/eval so no held-out
     label ever reaches a feature.
     """
-    # Baseline busyness — smooth with adjacent hours so model learns gradual
-    # transitions. This mirrors mlPredictor.getBaseline's runtime blend
-    # (current*0.6 + prev*0.2 + next*0.2); it only runs when venue_id survives
-    # the export (round 10 fix in export_training_data.js).
+    # Baseline busyness — smoothed against the TRUE neighbouring hours.
     df['baseline_busyness'] = df['baseline_busyness'].fillna(0)
-    if 'venue_id' in df.columns:
-        df = df.sort_values(['venue_id', 'day_of_week', 'hour'])
-        df['_bl_prev'] = df.groupby(['venue_id', 'day_of_week'])['baseline_busyness'].shift(1)
-        df['_bl_next'] = df.groupby(['venue_id', 'day_of_week'])['baseline_busyness'].shift(-1)
-        df['_bl_prev'] = df['_bl_prev'].fillna(df['baseline_busyness'])
-        df['_bl_next'] = df['_bl_next'].fillna(df['baseline_busyness'])
-        mask = df['baseline_busyness'] > 0
-        df.loc[mask, 'baseline_busyness'] = (df.loc[mask, 'baseline_busyness'] * 0.6 + df.loc[mask, '_bl_prev'] * 0.2 + df.loc[mask, '_bl_next'] * 0.2).round(1)
-        df.drop(columns=['_bl_prev', '_bl_next'], inplace=True)
-    else:
-        logger.warning('venue_id missing — skipping baseline smoothing; the model '
-                       'will learn deltas against RAW baselines while production '
-                       'serves smoothed ones. Re-run export_training_data.js.')
+    df = smooth_baseline_hours(df)
 
     if cat_maps is None:
         cat_maps = build_category_baseline_maps(df)
@@ -433,9 +856,15 @@ def add_event_features(df: pd.DataFrame) -> pd.DataFrame:
     # Large event flag
     df['large_event_nearby'] = (df['nearest_event_attendance'] > 5000).astype(int)
 
-    # Interaction features
-    df['event_x_weekend'] = (df['has_nearby_event'] * df.get('is_weekend', 0)).astype(int)
-    df['event_x_dinner'] = (df['has_nearby_event'] * df.get('is_dinner_hour', 0)).astype(int)
+    # Interaction features. add_temporal_features runs first and is the only
+    # producer of is_weekend / is_dinner_hour — a soft df.get(..., 0) here used
+    # to turn a call-order mistake into two silently-zero interaction features.
+    for needed in ('is_weekend', 'is_dinner_hour'):
+        if needed not in df.columns:
+            raise CorpusContractError(
+                f'add_event_features needs {needed}; call add_temporal_features first.')
+    df['event_x_weekend'] = (df['has_nearby_event'] * df['is_weekend']).astype(int)
+    df['event_x_dinner'] = (df['has_nearby_event'] * df['is_dinner_hour']).astype(int)
     df['event_x_bar'] = (
         df['has_nearby_event'] *
         df['venue_category'].isin(['bar', 'nightclub']).astype(int)
@@ -471,20 +900,56 @@ def get_feature_columns(df: pd.DataFrame) -> List[str]:
         'venue_id',  # identifier — a feature here is pure venue memorization
         'label_provenance',  # raw string; encodes label regime like sample_weight
     }
+    exclude |= DROPPED_FEATURES
     feature_cols = [c for c in df.columns if c not in exclude]
     return sorted(feature_cols)
 
 
 def main():
     logger.info('Loading training data...')
-    train_df = pd.read_csv(SCRIPT_DIR / 'training_data.csv')
+    train_path = SCRIPT_DIR / 'training_data.csv'
+    if not train_path.exists():
+        raise CorpusContractError(
+            f'{train_path} does not exist. Run `node export_training_data.js` first — '
+            'the retrain starts at the export, not at this script.'
+        )
+    train_df = pd.read_csv(train_path)
     logger.info(f'Training data: {len(train_df)} rows')
+    require_export_columns(train_df, train_path, 'training_data.csv')
 
     holdout_path = SCRIPT_DIR / 'holdout_data.csv'
-    holdout_df = None
-    if holdout_path.exists():
-        holdout_df = pd.read_csv(holdout_path)
-        logger.info(f'Holdout data: {len(holdout_df)} rows')
+    if not holdout_path.exists():
+        raise CorpusContractError(
+            f'{holdout_path} does not exist. The ship gate is measured on the '
+            'held-out cities; a run without them cannot be evaluated. Re-run '
+            '`node export_training_data.js`.'
+        )
+    holdout_df = pd.read_csv(holdout_path)
+    logger.info(f'Holdout data: {len(holdout_df)} rows')
+    require_export_columns(holdout_df, holdout_path, 'holdout_data.csv')
+
+    # ── CORPUS CONTRACT (audit findings 4 and 5) ────────────────────────────
+    # Recover weather_condition_code from the description text, then decide the
+    # weather and calendar policies ONCE, before any feature is built, so the
+    # feature set that comes out of this run cannot contain a dead slot without
+    # model_metadata.json saying so.
+    weather_stats = recover_weather_codes(train_df, 'train')
+    holdout_weather_stats = recover_weather_codes(holdout_df, 'holdout')
+    combined_unmapped = dict(weather_stats['unmapped_descriptions'])
+    for k, v in holdout_weather_stats['unmapped_descriptions'].items():
+        combined_unmapped[k] = combined_unmapped.get(k, 0) + v
+    enforce_weather_contract({**weather_stats, 'unmapped_descriptions': combined_unmapped})
+
+    calendar_stats = audit_calendar_coverage(train_df, 'train')
+    holdout_calendar_stats = audit_calendar_coverage(holdout_df, 'holdout')
+    enforce_calendar_contract({
+        'rows': calendar_stats['rows'] + holdout_calendar_stats['rows'],
+        'rows_without_month': (calendar_stats['rows_without_month']
+                               + holdout_calendar_stats['rows_without_month']),
+        'rows_without_season': (calendar_stats['rows_without_season']
+                                + holdout_calendar_stats['rows_without_season']),
+        'pct_without_month': calendar_stats['pct_without_month'],
+    })
 
     # Drop rows with null label
     train_df = train_df.dropna(subset=['busyness_pct'])
@@ -539,8 +1004,7 @@ def main():
             col_name = f'gtype_{t}'
             holdout_df[col_name] = 0
             for tc in ['google_type_1', 'google_type_2', 'google_type_3']:
-                if tc in holdout_df.columns:
-                    holdout_df.loc[holdout_df[tc] == t, col_name] = 1
+                holdout_df.loc[holdout_df[tc] == t, col_name] = 1
 
         holdout_df = add_weather_features(holdout_df)
         # TRAIN maps — holdout labels must never build holdout features (round 10)
@@ -558,8 +1022,6 @@ def main():
     train_df['baseline_busyness'] = train_df['baseline_busyness'].fillna(0)
     train_df['delta_label'] = (train_df['busyness_pct'] - train_df['baseline_busyness']).astype(float)
     if holdout_df is not None:
-        if 'baseline_busyness' not in holdout_df.columns:
-            holdout_df['baseline_busyness'] = 0
         holdout_df['baseline_busyness'] = holdout_df['baseline_busyness'].fillna(0)
         holdout_df['delta_label'] = (holdout_df['busyness_pct'] - holdout_df['baseline_busyness']).astype(float)
 
@@ -572,8 +1034,11 @@ def main():
     # no-baseline guard falls back to the rule engine), so rows with
     # baseline == 0 are a population we never serve.
     # v2.3 trains on the exact serving population: realtime rows with a real
-    # baseline. Holdout is NOT filtered — quick_eval.py already reports the
-    # realtime-only slice as the ship gate.
+    # baseline. The holdout FRAME is deliberately left unfiltered so overall
+    # diagnostics still see every row — but the SHIP GATE slice is filtered with
+    # the same serving_population_mask this filter uses (quick_eval.py imports
+    # it). Audit finding 6: it was not, so the gate was decided partly on rows
+    # production routes to the rule engine.
     before_filter = len(train_df)
     # v2.3.1 BLEND: pure realtime-only training (v2.3.0) overpredicted
     # deviations on ordinary nights (weekly holdout MAE 0.2 -> 11.7) because
@@ -581,7 +1046,7 @@ def main():
     # at 5% sample weight: enough anchor to calm typical nights, not enough
     # to drown the real deviations like v2.2.1 (where they were 91% of the
     # loss and taught delta=0 everywhere).
-    train_df = train_df[train_df['baseline_busyness'] > 0]
+    train_df = train_df[serving_population_mask(train_df['baseline_busyness'])]
     # Round 10 (provenance): collection_mode='realtime' says WHEN a row was
     # taken, not that the number was observed. collectRealtime.js falls back to
     # BestTime's own forecast when live traffic is unavailable, and those rows
@@ -591,8 +1056,11 @@ def main():
     # and live. Rows collected before label_provenance existed stay at 1.0:
     # their provenance is genuinely unknown and silently demoting the whole
     # historical corpus would be a bigger change than the bug.
-    if 'label_provenance' not in train_df.columns:
-        train_df['label_provenance'] = 'unknown'
+    # label_provenance is part of the export contract (require_export_columns
+    # already refused the file if it were absent). It used to be defaulted to
+    # 'unknown' here when missing, which silently weighted EVERY vendor-forecast
+    # label at 1.0 — the exact thing round 10 added the column to stop, and the
+    # regime the shipped v2.5 model was trained under without anyone noticing.
     train_df['label_provenance'] = train_df['label_provenance'].fillna('unknown')
     is_forecast_label = (train_df['is_realtime'] == 1) & (train_df['label_provenance'] == 'forecast')
     train_df['sample_weight'] = np.where(
@@ -609,25 +1077,52 @@ def main():
         f'{len(train_df) - n_rt} weekly @ weight 0.05; '
         f'effective realtime share of loss: {rt_w / total_w * 100:.0f}%)'
     )
-    if n_rt < 50000:
-        raise ValueError(f'Only {n_rt} realtime rows — expected 100K+. Check is_realtime/baseline columns.')
+    known_prov = sorted(train_df['label_provenance'].dropna().unique().tolist())
+    logger.info(f'label_provenance levels present: {known_prov}')
+    if known_prov == ['unknown']:
+        raise CorpusContractError(
+            'Every training row has label_provenance="unknown" — the column is '
+            'present but carries no signal, so vendor-forecast labels would all '
+            'be weighted 1.0 again. Re-export after collectRealtime.js has '
+            'written label_source, or fix the export join.'
+        )
+    if n_rt < MIN_REALTIME_ROWS:
+        raise ValueError(f'Only {n_rt} realtime rows — expected {MIN_REALTIME_ROWS}+. '
+                         'Check is_realtime/baseline columns.')
 
     # Get feature columns (excludes baseline_busyness — now in label)
     feature_cols = get_feature_columns(train_df)
 
-    # Ensure holdout has same columns
-    if holdout_df is not None:
-        for col in feature_cols:
-            if col not in holdout_df.columns:
-                holdout_df[col] = 0
-        # label_provenance rides along (NOT a feature — see get_feature_columns)
-        # so quick_eval can report the live-observed-only slice: vendor-forecast
-        # labels in the realtime gate slice measure agreement with BestTime's
-        # model, not with reality.
-        keep_extra = ['busyness_pct', 'delta_label', 'baseline_busyness', 'city']
-        if 'label_provenance' in holdout_df.columns:
-            keep_extra.append('label_provenance')
-        holdout_df = holdout_df[feature_cols + keep_extra]
+    # Ensure holdout has same columns. Zero-filling a MISSING feature is only
+    # defensible for a one-hot level that genuinely never occurs in the holdout
+    # cities (no venue of that Google type, no snow in Miami). Anything else
+    # missing means the two frames went through different transforms, which is
+    # a bug — so it stops the run instead of quietly becoming a column of zeros.
+    ONE_HOT_PREFIXES = ('gtype_', 'etype_', 'weather_', 'season_')
+    absent = [c for c in feature_cols if c not in holdout_df.columns]
+    unexpected = [c for c in absent if not c.startswith(ONE_HOT_PREFIXES)]
+    if unexpected:
+        raise CorpusContractError(
+            f'Holdout is missing {len(unexpected)} non-one-hot feature(s): {unexpected}.\n'
+            '  These are not levels that can legitimately be absent from a city; '
+            'the train and holdout frames were built by different code paths.'
+        )
+    if absent:
+        logger.warning('Zero-filling %d one-hot level(s) absent from the holdout '
+                       'cities (deliberate, level genuinely does not occur): %s',
+                       len(absent), absent)
+    for col in absent:
+        holdout_df[col] = 0
+    # label_provenance rides along (NOT a feature — see get_feature_columns)
+    # so quick_eval can report the live-observed-only slice: vendor-forecast
+    # labels in the realtime gate slice measure agreement with BestTime's
+    # model, not with reality. hour/venue_category ride along so
+    # evaluate_model.py's per-hour and per-category diagnostics are aligned to
+    # the SAME rows as the predictions (audit finding 10) instead of being
+    # positionally truncated against the raw CSV.
+    keep_extra = ['busyness_pct', 'delta_label', 'baseline_busyness', 'city',
+                  'label_provenance', 'venue_category']
+    holdout_df = holdout_df[feature_cols + keep_extra]
 
     logger.info(f'Feature count: {len(feature_cols)}')
     logger.info(f'Features: {feature_cols}')
@@ -652,41 +1147,64 @@ def main():
 
     # Fill any remaining NaN in features with 0
     train_df[feature_cols] = train_df[feature_cols].fillna(0)
-    if holdout_df is not None:
-        holdout_df[feature_cols] = holdout_df[feature_cols].fillna(0)
+    holdout_df[feature_cols] = holdout_df[feature_cols].fillna(0)
+
+    # Dead-slot report. A constant column is never a split in a tree model, so a
+    # feature that carries one value is not a wrong number — it is a feature
+    # slot that does nothing while metadata advertises it, and mlPredictor's
+    # parity guards defend a channel with no content. That is exactly how ten
+    # weather features and five feedback features went unnoticed for four
+    # rounds. Reported, not fatal: some of these (event features) are legitimately
+    # sparse and expected to fill in as data accrues.
+    constant_cols = [c for c in feature_cols if train_df[c].nunique(dropna=False) <= 1]
+    if constant_cols:
+        logger.warning(
+            'DEAD SLOTS — %d of %d features are CONSTANT across the training frame '
+            'and can never be split on: %s',
+            len(constant_cols), len(feature_cols), constant_cols)
+    else:
+        logger.info('No constant feature columns.')
 
     # Save
     logger.info('\nSaving artifacts...')
 
     # Save feature matrix as pickle
     # y = delta label (training target). y_actual + baseline kept for evaluation/reconstruction.
+    # 'hour' and 'venue_category' are carried EXPLICITLY (audit finding 10):
+    # evaluate_model.py used to re-read the 3.57M-row raw CSV and truncate it to
+    # the length of the 2.07M-row filtered matrix, aligning unrelated rows — the
+    # MAE-by-hour plot, the one diagnostic that would have caught a six-hour
+    # clock skew, was drawn on scrambled pairs.
     train_data = {
         'X': train_df[feature_cols].values.astype(np.float32),
         'y': train_df['delta_label'].values.astype(np.float32),
         'y_actual': train_df['busyness_pct'].values.astype(np.float32),
         'baseline': train_df['baseline_busyness'].values.astype(np.float32),
-        'sample_weight': train_df['sample_weight'].values.astype(np.float32) if 'sample_weight' in train_df.columns else None,
+        'sample_weight': train_df['sample_weight'].values.astype(np.float32),
         'feature_cols': feature_cols,
-        'cities': train_df['city'].values if 'city' in train_df.columns else None,
+        'cities': train_df['city'].values,
+        'hour': train_df['hour'].values.astype(np.int16),
+        'venue_category': train_df['venue_category'].astype(str).values,
+        'label_provenance': train_df['label_provenance'].astype(str).values,
         'label_type': 'delta',
     }
     with open(SCRIPT_DIR / 'features_train.pkl', 'wb') as f:
         pickle.dump(train_data, f)
 
-    if holdout_df is not None:
-        holdout_data = {
-            'X': holdout_df[feature_cols].values.astype(np.float32),
-            'y': holdout_df['delta_label'].values.astype(np.float32),
-            'y_actual': holdout_df['busyness_pct'].values.astype(np.float32),
-            'baseline': holdout_df['baseline_busyness'].values.astype(np.float32),
-            'feature_cols': feature_cols,
-            'cities': holdout_df['city'].values,
-            'label_type': 'delta',
-            'label_provenance': (holdout_df['label_provenance'].fillna('unknown').astype(str).values
-                                 if 'label_provenance' in holdout_df.columns else None),
-        }
-        with open(SCRIPT_DIR / 'features_holdout.pkl', 'wb') as f:
-            pickle.dump(holdout_data, f)
+    holdout_data = {
+        'X': holdout_df[feature_cols].values.astype(np.float32),
+        'y': holdout_df['delta_label'].values.astype(np.float32),
+        'y_actual': holdout_df['busyness_pct'].values.astype(np.float32),
+        'baseline': holdout_df['baseline_busyness'].values.astype(np.float32),
+        'feature_cols': feature_cols,
+        'cities': holdout_df['city'].values,
+        'hour': holdout_df['hour'].values.astype(np.int16),
+        'venue_category': holdout_df['venue_category'].astype(str).values,
+        'label_type': 'delta',
+        'label_provenance': holdout_df['label_provenance'].fillna('unknown').astype(str).values,
+    }
+    with open(SCRIPT_DIR / 'features_holdout.pkl', 'wb') as f:
+        pickle.dump(holdout_data, f)
 
     # Category/refined baseline lookups shipped to Node for inference.
     # Round 10: these are now the EXACT maps used to build the training
@@ -706,9 +1224,35 @@ def main():
     }
     logger.info(f'Refined baseline lookup: {len(ref_baseline_dict)} entries')
 
-    # Save metadata
+    # Save metadata. This used to write a FRESH dict, silently dropping
+    # ship_gate, label_type, delta_clamp_range, onnx_input_name, model_version
+    # and feature_types — so re-running feature prep after an export put
+    # production on the rule engine (mlPredictor.evaluateShipGate fails closed on
+    # a missing gate). Now: merge, and explicitly evict the keys that DESCRIBE A
+    # MODEL, because a new feature set invalidates them. Which keys were evicted
+    # is logged rather than implied.
     MODELS_DIR.mkdir(parents=True, exist_ok=True)
-    metadata = {
+    meta_path = MODELS_DIR / 'model_metadata.json'
+    metadata = {}
+    if meta_path.exists():
+        try:
+            metadata = json.loads(meta_path.read_text(encoding='utf-8'))
+        except (json.JSONDecodeError, OSError) as err:
+            logger.warning('Existing model_metadata.json unreadable (%s) — starting fresh.', err)
+            metadata = {}
+    STALE_AFTER_REPREP = ['ship_gate', 'evaluation', 'validation_baseline_delta',
+                          'training_metrics', 'incumbent_comparison']
+    evicted = [k for k in STALE_AFTER_REPREP if k in metadata]
+    for k in evicted:
+        metadata.pop(k)
+    if evicted:
+        logger.warning(
+            'Evicted %s from model_metadata.json — they describe the PREVIOUS '
+            'feature set. Run train_model.py -> evaluate_model.py -> quick_eval.py '
+            'before shipping; until quick_eval writes ship_gate, mlPredictor.init() '
+            'fails closed and the backend serves the rule engine.', evicted)
+
+    metadata.update({
         'feature_names': feature_cols,
         'feature_count': len(feature_cols),
         **venue_metadata,
@@ -716,9 +1260,29 @@ def main():
         'category_baselines': cat_baseline_dict,
         'refined_baselines': ref_baseline_dict,
         'training_rows': len(train_df),
-        'holdout_rows': len(holdout_df) if holdout_df is not None else 0,
-    }
-    with open(MODELS_DIR / 'model_metadata.json', 'w') as f:
+        'holdout_rows': len(holdout_df),
+        # Provenance of THIS feature build — an artifact can never hide which
+        # policy produced it (audit findings 4 and 5).
+        'corpus_contract': {
+            'export_columns_required': len(EXPORT_COLUMNS),
+            'weather_policy': WEATHER_POLICY,
+            'calendar_policy': CALENDAR_POLICY,
+            'weather_code_recovery': {
+                'train': weather_stats,
+                'holdout': holdout_weather_stats,
+            },
+            'calendar_coverage': {
+                'train': calendar_stats,
+                'holdout': holdout_calendar_stats,
+            },
+            'dropped_features': sorted(DROPPED_FEATURES),
+            'dropped_feature_reasons': DROP_REASONS,
+            'constant_feature_slots': constant_cols,
+            'serving_population_filter': 'baseline_busyness > 0',
+            'min_realtime_rows': MIN_REALTIME_ROWS,
+        },
+    })
+    with open(meta_path, 'w') as f:
         json.dump(metadata, f, indent=2)
 
     logger.info(f'Saved features_train.pkl ({len(train_df)} rows, {len(feature_cols)} features)')
