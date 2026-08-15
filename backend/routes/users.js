@@ -1479,7 +1479,21 @@ router.put('/payment-methods',
     // 255 is unchanged and is users.zelle_identifier VARCHAR(255).
     freeText(body('zelle_identifier').optional({ nullable: true }), 'Zelle identifier')
       .isLength({ max: 255 })
-      .withMessage('Zelle identifier too long'),
+      .withMessage('Zelle identifier too long')
+      // A real Zelle identifier is an email address or a US phone number, and
+      // this string is rendered on OTHER members' bill screens ("send $X to
+      // <this> via Zelle" in routes/billing.js) — so a link stored here is a
+      // phishing line delivered under the app's own voice. freeText already
+      // stripped markup; this refuses the link shapes that survive stripping:
+      // a scheme, a www. prefix, or any path separator. Deliberately a
+      // NEGATIVE rule rather than an email-or-phone shape check, so no odd but
+      // harmless identifier someone already stored becomes unsaveable.
+      .custom((v) => {
+        if (typeof v === 'string' && /[\/\\]|www\.|https?:/i.test(v)) {
+          throw new Error('A Zelle identifier is an email address or phone number, not a link.');
+        }
+        return true;
+      }),
   ],
   async (req, res) => {
     try {
@@ -1625,6 +1639,21 @@ router.patch('/settings', async (req, res) => {
 //     identify the reported person and the moderator.
 //   * flock rows: name/venue/time only — shared context the member already
 //     sees — never the roster, other RSVPs, or the flock's budget columns.
+//   * venue reviews: the caller's rating and text. venue_reply and
+//     venue_replied_at are the venue owner's words and behaviour, omitted.
+//   * bill splits: the caller's own share, and the bill's total/tip only on
+//     bills the caller paid (they typed those numbers). Other members' share
+//     amounts never appear, on the same principle as budget_submissions.
+//   * crowd reports (venue_feedback): the caller's own report. predicted_score
+//     is the model's number at the time, i.e. DERIVED data — omitted.
+//   * emoji reactions: the caller's emoji and when. The message ids they point
+//     at are omitted for the same reason DM reply_to_id is: pointers into
+//     content that may be somebody else's.
+//   * friends: accepted friendships only — the durable friend list the caller
+//     already sees in the app. Pending and declined rows are the OTHER
+//     person's undecided or negative decision, and are not exported.
+//   * SOS alerts (emergency_alerts): the caller's own stored coordinates —
+//     the one location trail the privacy policy says the database holds.
 //
 // STRIPPED AT SOURCE: every SELECT names its columns and every object below is
 // built from an explicit pick list, so password, apple_refresh_token,
@@ -1636,7 +1665,7 @@ router.patch('/settings', async (req, res) => {
 // and Railway's filesystem is ephemeral, so an async export would have to
 // invent both a queue and a durable artifact store. It doesn't need to: every
 // query is a single-user indexed lookup, rows are capped (EXPORT_MESSAGE_ROW_CAP
-// per message table, EXPORT_ROW_CAP elsewhere — at most ~24k rows total), and
+// per message table, EXPORT_ROW_CAP elsewhere — at most ~42k rows total), and
 // inline data-URL images are replaced with a marker, so the worst-case response
 // is a few tens of MB of text and the typical one is well under 1 MB. If real
 // usage ever outgrows those caps, that is the moment to build the async job —
@@ -1793,6 +1822,97 @@ router.get('/export', async (req, res) => {
       [userId], EXPORT_ROW_CAP
     );
 
+    // COMPLETENESS SWEEP 2026-08-14. The first cut of this export stopped at
+    // the tables above, but the privacy policy's "What we collect" list is the
+    // promise this file has to keep, and it also names venue votes, emoji
+    // reactions, venue reviews, crowd reports, bill splits, and stored SOS
+    // alerts — every one keyed to the account, every one absent from the first
+    // cut. Each addition below follows the same two rules as the originals:
+    // keyed on the caller's id, columns named explicitly, nothing that is
+    // another person's data or a derived model output. Per-section scope notes
+    // are in the header comment.
+    const venueVotes = await exportRows(
+      `SELECT flock_id, venue_name, venue_id, created_at
+         FROM venue_votes WHERE user_id = $1
+        ORDER BY created_at ASC, id ASC LIMIT $2`,
+      [userId], EXPORT_ROW_CAP
+    );
+
+    const dmVenueVotes = await exportRows(
+      `SELECT venue_name, venue_id, created_at
+         FROM dm_venue_votes WHERE user_id = $1
+        ORDER BY created_at ASC, id ASC LIMIT $2`,
+      [userId], EXPORT_ROW_CAP
+    );
+
+    const reactions = await exportRows(
+      `SELECT emoji, created_at
+         FROM emoji_reactions WHERE user_id = $1
+        ORDER BY created_at ASC, id ASC LIMIT $2`,
+      [userId], EXPORT_ROW_CAP
+    );
+
+    const dmReactions = await exportRows(
+      `SELECT emoji, created_at
+         FROM dm_emoji_reactions WHERE user_id = $1
+        ORDER BY created_at ASC, id ASC LIMIT $2`,
+      [userId], EXPORT_ROW_CAP
+    );
+
+    const reviews = await exportRows(
+      `SELECT google_place_id, rating, text, created_at
+         FROM venue_reviews WHERE user_id = $1
+        ORDER BY created_at ASC, id ASC LIMIT $2`,
+      [userId], EXPORT_ROW_CAP
+    );
+
+    const crowdReports = await exportRows(
+      `SELECT flock_id, venue_place_id, venue_name, crowd_level, price_worth,
+              rating, day_of_week, hour, created_at
+         FROM venue_feedback WHERE user_id = $1
+        ORDER BY created_at ASC, id ASC LIMIT $2`,
+      [userId], EXPORT_ROW_CAP
+    );
+
+    const billShares = await exportRows(
+      `SELECT b.flock_id, s.amount AS your_share, s.committed, s.settled,
+              s.settled_at, (b.paid_by = $1) AS you_paid,
+              CASE WHEN b.paid_by = $1 THEN b.total_amount END AS total_amount,
+              CASE WHEN b.paid_by = $1 THEN b.tip_percent END AS tip_percent,
+              b.created_at
+         FROM bill_split_shares s
+         JOIN bill_splits b ON b.id = s.bill_id
+        WHERE s.user_id = $1
+        ORDER BY b.created_at ASC, s.id ASC LIMIT $2`,
+      [userId], EXPORT_ROW_CAP
+    );
+
+    const sosAlerts = await exportRows(
+      `SELECT latitude, longitude, contacts_alerted, created_at
+         FROM emergency_alerts WHERE user_id = $1
+        ORDER BY created_at ASC, id ASC LIMIT $2`,
+      [userId], EXPORT_ROW_CAP
+    );
+
+    // No UI can create a story (server-only by decision), but the API can, so
+    // any row that does exist is this user's content and belongs in their copy.
+    const storyRows = await exportRows(
+      `SELECT caption, image_url, created_at, expires_at
+         FROM stories WHERE user_id = $1
+        ORDER BY created_at ASC, id ASC LIMIT $2`,
+      [userId], EXPORT_ROW_CAP
+    );
+
+    const friends = await exportRows(
+      `SELECT CASE WHEN requester_id = $1 THEN addressee_id ELSE requester_id END AS friend_user_id,
+              CASE WHEN requester_id = $1 THEN 'sent' ELSE 'received' END AS request_direction,
+              created_at
+         FROM friendships
+        WHERE (requester_id = $1 OR addressee_id = $1) AND status = 'accepted'
+        ORDER BY created_at ASC, id ASC LIMIT $2`,
+      [userId], EXPORT_ROW_CAP
+    );
+
     const settingsRow = await pool.query(
       'SELECT settings, updated_at FROM user_settings WHERE user_id = $1',
       [userId]
@@ -1815,7 +1935,7 @@ router.get('/export', async (req, res) => {
         // the copy the user keeps explains itself without our help.
         notes: [
           'This export contains the data you provided to Flock and activity recorded about your account.',
-          'Messages other people sent (including their half of your DMs), other members\' budget amounts, and group budget results are their data and are not included.',
+          'Messages other people sent (including their half of your DMs), other members\' budget amounts, group budget results, other members\' bill-split shares, and venue owners\' replies to your reviews are their data and are not included.',
           EXPORT_IMAGE_OMITTED_NOTE,
         ],
       },
@@ -1864,7 +1984,22 @@ router.get('/export', async (req, res) => {
         ...exportImage(m.image_url),
       })),
       budget_submissions: section('budget_submissions', budgets),
+      venue_votes: section('venue_votes', venueVotes),
+      dm_venue_votes: section('dm_venue_votes', dmVenueVotes),
+      emoji_reactions: section('emoji_reactions', reactions),
+      dm_emoji_reactions: section('dm_emoji_reactions', dmReactions),
+      venue_reviews: section('venue_reviews', reviews),
+      crowd_reports: section('crowd_reports', crowdReports),
+      bill_splits: section('bill_splits', billShares),
       venue_checkins: section('venue_checkins', checkins),
+      sos_alerts: section('sos_alerts', sosAlerts),
+      stories: section('stories', storyRows).map((s) => ({
+        caption: s.caption,
+        created_at: s.created_at,
+        expires_at: s.expires_at,
+        ...exportImage(s.image_url),
+      })),
+      friends: section('friends', friends),
       reports_filed: section('reports_filed', reports),
       trusted_contacts: section('trusted_contacts', contacts),
       truncated_sections: truncatedSections,
