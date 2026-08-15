@@ -17639,9 +17639,12 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
     <>
       <div
         role="alert"
-        style={{ flex: 1, minWidth: 0, overflowY: 'auto', backgroundColor: 'var(--bg-primary)', padding: '28px 20px', boxSizing: 'border-box', display: 'flex', flexDirection: 'column', justifyContent: 'center' }}
+        style={{ flex: 1, minWidth: 0, overflowY: 'auto', backgroundColor: 'var(--bg-primary)', padding: '28px 20px', boxSizing: 'border-box', display: 'flex', flexDirection: 'column' }}
       >
-        <div style={{ width: '100%', maxWidth: '340px', margin: '0 auto' }}>
+        {/* Centred with auto margins rather than justifyContent, which clips
+            the top of an overflowing child instead of scrolling to it. The
+            error message is the one string here with no length limit. */}
+        <div style={{ width: '100%', maxWidth: '340px', margin: 'auto' }}>
           <span aria-hidden="true" style={{ display: 'inline-flex', marginBottom: '10px' }}>
             {Icons.alertCircle('var(--text-tertiary)', 20)}
           </span>
@@ -17695,9 +17698,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', backgroundColor: 'var(--bg-primary)' }}>
       <div
         role="alert"
-        style={{ flex: 1, minWidth: 0, overflowY: 'auto', padding: '28px 20px', boxSizing: 'border-box', display: 'flex', flexDirection: 'column', justifyContent: 'center' }}
+        style={{ flex: 1, minWidth: 0, overflowY: 'auto', padding: '28px 20px', boxSizing: 'border-box', display: 'flex', flexDirection: 'column' }}
       >
-        <div style={{ width: '100%', maxWidth: '340px', margin: '0 auto' }}>
+        <div style={{ width: '100%', maxWidth: '340px', margin: 'auto' }}>
           <span aria-hidden="true" style={{ display: 'inline-flex', marginBottom: '10px' }}>
             {Icons.alertCircle('var(--text-tertiary)', 20)}
           </span>

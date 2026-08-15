@@ -20,18 +20,24 @@ import React from 'react';
  * REUSABLE ON PURPOSE. index.js wraps the whole tree in one of these, which is
  * the last line of defence: it catches everything, including a failed lazy
  * chunk load after a deploy, but the only recovery it can offer is a full
- * reload. A SECOND instance belongs inside App.js around the screen renderer,
- * given an `onReset` that returns the user to the home screen. That inner
- * boundary would contain a crash in one screen without tearing down the
- * socket, the session or the already-loaded flocks, so the user keeps their
- * place instead of rebooting the app. That change is listed in the handoff
- * notes as a pending App.js edit; it cannot be made from this file.
+ * reload. App.js now mounts SECOND-LEVEL instances around the screen renderer
+ * and the persistent Discover layer (search for ScreenSlot there), so a crash
+ * in one screen no longer tears down the socket, the session or the
+ * already-loaded flocks: the tab bar keeps working and the user keeps their
+ * place instead of rebooting the app.
  *
  * Props:
  *   label     string   identifies the boundary in logs and Sentry tags
  *   onReset   fn       optional. When given, a secondary button calls it and
  *                      clears the error so the subtree re-renders in place.
  *   resetLabel string  copy for that secondary button
+ *   resetKey  any      optional. When this value changes while the boundary is
+ *                      showing its fallback, the error is dropped and the
+ *                      children get another go. App.js passes the identity of
+ *                      the screen being shown, so navigating away from a
+ *                      crashed screen and back does not arrive at a permanent
+ *                      error state. Compared with Object.is: pass a string or
+ *                      a number, never a fresh object.
  *   fallback  fn|node  optional override. As a function it receives
  *                      { error, eventId, reload, reset }.
  */
@@ -56,6 +62,22 @@ class ErrorBoundary extends React.Component {
     this._mounted = false;
   }
 
+  // Navigating away from a crashed screen and back must not land on the error
+  // state again. The boundary around App.js's screen switch never unmounts (it
+  // is the same element for every screen), so without this the first crash
+  // would pin the fallback over every screen the switch can render.
+  //
+  // Clearing here rather than in getDerivedStateFromProps is deliberate: this
+  // runs after the fallback has painted, and the re-render it triggers is the
+  // one that re-mounts the children. If they throw again straight away the
+  // boundary catches again, and prevProps.resetKey now equals this.props one,
+  // so it stops. No loop.
+  componentDidUpdate(prevProps) {
+    if (!this.state.error) return;
+    if (Object.is(prevProps.resetKey, this.props.resetKey)) return;
+    this.setState({ error: null, eventId: null });
+  }
+
   componentDidCatch(error, info) {
     const label = this.props.label || 'root';
     // Console first and unconditionally. Sentry is best-effort; a crash must
@@ -71,7 +93,12 @@ class ErrorBoundary extends React.Component {
         });
         // The reference id is the one thing that turns "it crashed" into a
         // searchable report, so surface it to the user.
-        if (eventId && this._mounted) this.setState({ eventId });
+        //
+        // Still-the-same-error check: the SDK loads asynchronously, and with
+        // resetKey in play the boundary can have recovered, or crashed on a
+        // different screen, before this resolves. Without it the app would
+        // print one crash's reference under another crash's message.
+        if (eventId && this._mounted && this.state.error === error) this.setState({ eventId });
       })
       .catch(() => { /* reporting must never crash the fallback */ });
   }
