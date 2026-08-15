@@ -361,8 +361,27 @@ test('the promoted model publishes a measured accuracy, not a magic number', asy
     popular_times: Array.from({ length: 7 }, (_, d) => ({ day: d, data: Array(24).fill(50) })),
   });
   const r = await mlPredictor.predictBusyness(venue, WEATHER, new Date());
-  assert.equal(r.confidence, Math.round(within15),
-    'the confidence shown to a user is the training run\'s own within-15 accuracy');
+  // This used to assert the published confidence IS training_metrics.within_15.
+  // That number is computed over a blend in which four of five rows are weekly
+  // snapshots whose label equals the baseline by construction, so the model
+  // gets them free: 87.3% blended against 33.3% on the rows production
+  // actually scores. The pin was encoding the overstatement, so no honest
+  // implementation could satisfy it. What the test means is that the number is
+  // MEASURED rather than invented, and that claim now has two legitimate
+  // shapes: an artifact carrying a served-population figure publishes it, and
+  // an older artifact that never measured one publishes venue metadata
+  // completeness instead and says so, rather than reaching for the blend.
+  const acc = mlPredictor._internals.readServedAccuracy(meta);
+  if (acc.status === 'measured') {
+    assert.equal(r.confidence, Math.round(acc.percent),
+      'a measured artifact publishes its served-population accuracy');
+    assert.equal(r.confidenceMeasurement.status, 'measured');
+  } else {
+    assert.equal(r.confidenceMeasurement.status, 'unmeasured',
+      'an artifact with no served-population slice must say the accuracy is unmeasured');
+    assert.notEqual(r.confidence, Math.round(within15),
+      'the blended figure must never be republished as if it were an accuracy');
+  }
 });
 
 // ---------------------------------------------------------------------------

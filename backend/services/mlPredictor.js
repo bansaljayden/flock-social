@@ -188,17 +188,135 @@ function verifyModelShape(session_, meta) {
     problems.push(`the graph's first output is ${outWidth} wide, not a single value`);
   }
   // A MODEL THAT CANNOT SAY HOW ACCURATE IT IS MUST NOT BE PROMOTED.
-  // predictBusyness publishes metadata.training_metrics.within_15 verbatim as
-  // the `confidence` percentage on the venue card. Where that was absent the
-  // code fell back to a bare `58` — a number with no provenance whatsoever,
-  // shipped to a user as a measurement. Fail closed instead, the same way the
-  // ship gate, the feature-coverage check and the missing-climatology check do,
-  // so the fallback constant is unreachable rather than merely unlikely.
+  //
+  // THIS IS NO LONGER THE NUMBER USERS SEE, and the distinction matters to
+  // anyone editing either check. predictBusyness used to publish this figure
+  // verbatim as the card's `confidence`; it is the BLENDED population, ~80% of
+  // which is weekly rows whose label equals the baseline by construction, and
+  // readServedAccuracy below explains why the served slice replaced it. What this
+  // check still is: an artifact-completeness check. An export that cannot state
+  // its own headline accuracy is an incomplete export, whatever population that
+  // headline covers, and export_model.py guarantees the key
+  // (__tests__/mlExportContracts.test.js pins that guarantee against this
+  // function, and __tests__/predictorCorrectness.test.js pins the rejection of
+  // every malformed shape). The honesty of what gets PUBLISHED is enforced
+  // separately, at load, by the readServedAccuracy gate in loadModel — deliberately
+  // not folded in here, because this function's contract is coherence between
+  // the .onnx and the .json, not what the payload may claim.
   const within15 = meta.training_metrics && meta.training_metrics.within_15;
   if (!(typeof within15 === 'number' && Number.isFinite(within15) && within15 > 0 && within15 <= 100)) {
-    problems.push('metadata.training_metrics.within_15 is missing or unusable — this is the number served to users as `confidence`, and there is nothing honest to put there');
+    problems.push('metadata.training_metrics.within_15 is missing or unusable — an export that cannot state its own headline accuracy is incomplete (the number published to users is training_metrics_by_population.realtime_served.within_15 when the artifact carries it; see readServedAccuracy)');
   }
   return problems;
+}
+
+// ---------------------------------------------------------------------------
+// THE NUMBER ON THE VENUE CARD THAT SAYS HOW OFTEN THIS IS RIGHT.
+//
+// It used to be metadata.training_metrics.within_15, published verbatim. That
+// figure is measured over EVERY training row, and scripts/ml/MODEL-METRICS.md
+// section 2 counts what is in that population: 1,565,912 of 1,934,988 rows are
+// weekly popular_times snapshots whose label EQUALS the baseline by
+// construction. A delta model's correct answer on such a row is zero, and it
+// gets it free. Four rows in five are that kind, so the blend is mostly a count
+// of how many easy questions were on the test.
+//
+// The two numbers, from the same run, on the same model:
+//
+//   blended (all_rows)      within-15  87.3%   <- what users were told
+//   realtime_served          within-15  33.3%  <- what production scores
+//
+// A factor of 2.6. scripts/ml/WITHIN-CITY-EVAL.md then scored the serving
+// population a second way, within-city and forward in time, and got within-10
+// 20.7% against the blend's 85.1% — so the gap is not an artifact of one split.
+// SLOP-AUDIT.md rule 5 is "never claim what the shipping build cannot support",
+// and publishing 87 when the measured figure is 33 is the largest instance of
+// that in this repo.
+//
+// SO THIS READS THE SERVED SLICE AND NOTHING ELSE. The trainer writes
+// training_metrics_by_population with three keys (all_rows, realtime_served,
+// weekly_anchor); realtime_served is `is_realtime == 1 AND baseline > 0`, the
+// same serving_population_mask prepare_features filters training with and
+// quick_eval.py gates on, and it is the predicate this file's own no-baseline
+// guard enforces at request time. It is therefore the population predictBusyness
+// is actually asked to score, not an approximation of it.
+//
+// THREE STATES, AND THE MIDDLE ONE IS THE POINT.
+//
+//   measured    the slice is there and usable -> publish it, say what it is
+//   unmeasured  no slice at all (every artifact exported before 2026-08-15,
+//               including models/incumbent/model_metadata.json, which is what
+//               production runs) -> LOAD ANYWAY, and say the accuracy is
+//               unmeasured instead of quoting the blend
+//   malformed   a slice that exists but is garbage (a string, NaN, out of
+//               range, a row count of zero) -> refuse at load, fail closed
+//
+// WHY `unmeasured` LOADS, written down because the first version of this change
+// refused it and that was wrong. Refusing an artifact does not merely drop the
+// delta layer — it unloads this whole module, and getBaseline with it. The
+// per-venue curves in ml_venue_baselines (the ones migration 023 put back on the
+// venue-local clock) are the good layer: KOME in Lehigh reads 65 at 6 PM off its
+// own measured curve, and crowdEngine's generic restaurant category prior is
+// what answers instead. So the cost of refusing is not WITHIN-CITY-EVAL's +0.3
+// points of within-10; it is every venue in the corpus falling back to a
+// category shape. That is a large, user-visible downgrade, and shipping it to
+// fix a LABEL would be trading a real regression for a copy fix.
+//
+// The label is fixable without it. An old artifact still serves its baselines;
+// it just does not get to call anything an accuracy. See predictBusyness: the
+// published `confidence` for an unmeasured artifact is crowdEngine's own
+// input-completeness ladder, the same number and the same meaning the rule
+// engine publishes for the same venue, and confidenceMeasurement.means says
+// 'input_completeness' so nothing downstream can mistake it for a hit rate.
+//
+// Malformed still fails closed, because garbage in this field is not an older
+// honest artifact, it is a broken write, and refusing it is how every other gate
+// in this file behaves.
+function readServedAccuracy(meta) {
+  const byPop = meta && meta.training_metrics_by_population;
+  // Absent: an artifact from a trainer that did not report per-population
+  // metrics. Nothing is wrong with it; it simply cannot state this number.
+  if (byPop === undefined || byPop === null) {
+    return { status: 'unmeasured', reason: 'metadata carries no training_metrics_by_population' };
+  }
+  if (typeof byPop !== 'object' || Array.isArray(byPop)) {
+    return { status: 'malformed', reason: 'training_metrics_by_population is not an object' };
+  }
+
+  const served = byPop.realtime_served;
+  if (served === undefined || served === null) {
+    return { status: 'unmeasured', reason: 'training_metrics_by_population carries no realtime_served slice' };
+  }
+  // Present but not a metrics block: a broken write, not an old artifact.
+  if (typeof served !== 'object' || Array.isArray(served)) {
+    return { status: 'malformed', reason: 'training_metrics_by_population.realtime_served is not an object' };
+  }
+
+  const percent = served.within_15;
+  if (typeof percent !== 'number' || !Number.isFinite(percent) || percent <= 0 || percent > 100) {
+    return {
+      status: 'malformed',
+      reason: `realtime_served.within_15 is ${JSON.stringify(percent)}, which is not a percentage`,
+    };
+  }
+
+  // A percentage measured over no rows is not a measurement. `rows` absent is
+  // tolerated (nothing is claimed about the sample size); `rows` present and
+  // not a positive count means the slice was computed over an empty or
+  // nonsensical population, which is worse than silence.
+  let rows = null;
+  if (served.rows != null) {
+    const n = Number(served.rows);
+    if (!Number.isInteger(n) || n <= 0) {
+      return {
+        status: 'malformed',
+        reason: `realtime_served.rows is ${JSON.stringify(served.rows)}, so the percentage above it was measured over nothing`,
+      };
+    }
+    rows = n;
+  }
+
+  return { status: 'measured', percent, metric: 'within_15', population: 'realtime_served', rows };
 }
 
 // Concurrency: init() used to flip a `loadAttempted` flag SYNCHRONOUSLY and only
@@ -277,6 +395,22 @@ async function loadModel() {
       console.warn(`[MLPredictor] ML_SHIP_GATE_OVERRIDE=true — promoting despite ${missing.length} missing feature(s): ${missing.join(', ')}`);
     }
 
+    // Confidence honesty gate. This one refuses GARBAGE only: a served slice
+    // that exists and cannot be read is a broken write, and a broken artifact
+    // is refused here exactly like a broken graph. An artifact that never had
+    // the slice is not broken and still loads — it keeps serving ml_venue_baselines,
+    // which is the layer users feel, and gives up only the right to call
+    // anything an accuracy (see readServedAccuracy and predictBusyness).
+    const served = readServedAccuracy(candidate);
+    if (served.status === 'malformed' && process.env.ML_SHIP_GATE_OVERRIDE !== 'true') {
+      console.error(`[MLPredictor] REFUSING to promote model v${version}: ${served.reason}. That field is the accuracy published to users; a malformed one is a broken export, not an old artifact. Serving rule engine instead.`);
+      metadata = null;
+      return false;
+    }
+    if (served.status === 'malformed') {
+      console.warn(`[MLPredictor] ML_SHIP_GATE_OVERRIDE=true — promoting v${version} despite a malformed served-accuracy slice (${served.reason}); predictions will fall back per request rather than publish it.`);
+    }
+
     const loaded = await ort.InferenceSession.create(ONNX_PATH);
 
     // Round 17: artifact/metadata coherence. See verifyModelShape — a mismatch
@@ -295,6 +429,16 @@ async function loadModel() {
     session = loaded;
     useML = true;
     console.log(`[MLPredictor] Loaded ONNX model v${version} (${metadata.best_model || '?'}, ${metadata.feature_count || '?'} features) — ${overridden ? 'gate overridden' : gate.reason}`);
+    // BOTH NUMBERS, ONCE, WHERE AN OPERATOR CAN SEE THEM. The training report,
+    // the retrain runbook and every earlier version of this file quote the
+    // blended figure, so an operator who reads the logs and then reads a card
+    // would otherwise have no way to know why they disagree. This line says
+    // which one is published and why the other is not.
+    if (served.status === 'measured') {
+      console.log(`[MLPredictor] confidence published = ${served.percent}% (${served.metric} on ${served.population}${served.rows ? `, ${served.rows} rows` : ''}). The blended training_metrics figure ${metadata.training_metrics?.within_15}% is NOT published: ~80% of those rows are weekly anchors whose label equals the baseline by construction.`);
+    } else {
+      console.warn(`[MLPredictor] v${version} reports no usable served-population accuracy (${served.reason}). The model still serves, including its per-venue baselines. No accuracy figure will be published: \`confidence\` carries crowdEngine's input-completeness ladder and confidenceMeasurement.status says 'unmeasured'. Re-export from a training run that writes training_metrics_by_population to publish a real one.`);
+    }
     return true;
   } catch (err) {
     console.warn('[MLPredictor] Failed to load model:', err.message);
@@ -1252,13 +1396,67 @@ async function predictBusyness(venue, weather, timestamp) {
 
     const label = getLabel(score);
 
-    // Real accuracy from training metrics (within_15 = % of predictions within 15 pts)
-    let confidence = Math.round(metadata.training_metrics?.within_15 || 58);
-    // Without a live reading the temperature in the vector is climatology, not
-    // evidence, and the weather one-hot sits in 'unknown'. The rule engine adds
-    // 15 confidence for having weather; take the same 15 back off here so a
-    // degraded prediction cannot report an undegraded number.
-    if (!hasWeather) confidence = Math.max(0, confidence - 15);
+    // THE CONFIDENCE FIGURE, AND WHAT IT IS ALLOWED TO CLAIM.
+    //
+    // The `|| 58` that used to end this line is gone: a number with no
+    // provenance, shipped to a user as a measurement. What replaces it depends
+    // on what the artifact can actually support (readServedAccuracy).
+    const accuracy = readServedAccuracy(metadata);
+    if (accuracy.status === 'malformed') {
+      // Only reachable under ML_SHIP_GATE_OVERRIDE; the load gate refuses this
+      // artifact otherwise. Same shape as the non-finite-output guard: throw,
+      // and the catch below answers with the rule engine, honestly tagged.
+      throw new Error(`refusing to publish a confidence figure: ${accuracy.reason}`);
+    }
+
+    let confidence;
+    let confidenceMeasurement;
+    if (accuracy.status === 'measured') {
+      confidence = Math.round(accuracy.percent);
+      // Without a live reading the temperature in the vector is climatology,
+      // not evidence, and the weather one-hot sits in 'unknown'. The rule
+      // engine adds 15 confidence for having weather; take the same 15 back off
+      // here so a degraded prediction cannot report an undegraded number. It is
+      // an adjustment, not a measurement, so it is published as one rather than
+      // folded silently into the percentage.
+      const weatherPenalty = hasWeather ? 0 : 15;
+      confidence = Math.max(0, confidence - weatherPenalty);
+      confidenceMeasurement = {
+        status: 'measured',
+        means: 'measured_accuracy',
+        metric: accuracy.metric,
+        population: accuracy.population,
+        populationRows: accuracy.rows,
+        measuredPercent: accuracy.percent,
+        weatherPenalty,
+      };
+    } else {
+      // UNMEASURED (every artifact exported before 2026-08-15). The model still
+      // runs and its per-venue baseline still answers; what it cannot do is
+      // state a hit rate. The blend is not a substitute — it is the specific
+      // wrong number this whole change exists to stop publishing — and 0 would
+      // be a lie in the other direction, so `confidence` carries the only other
+      // defined quantity in this system: crowdEngine's input-completeness
+      // ladder, the SAME number and the SAME meaning the rule-engine path
+      // publishes for this venue, which routes/crowd.js already labels
+      // 'input_completeness'. It is not an accuracy and `means` says so.
+      //
+      // No weather penalty is applied on this branch and none is owed: the
+      // ladder already adds 15 for a live reading (crowdEngine
+      // calculateCrowdScore), so subtracting it again would double-count the
+      // same outage.
+      const ladder = Number(crowdEngine.calculateCrowdScore(venue, weather, timestamp).confidence);
+      confidence = Number.isFinite(ladder) ? Math.max(0, Math.min(100, Math.round(ladder))) : 0;
+      confidenceMeasurement = {
+        status: 'unmeasured',
+        means: 'input_completeness',
+        metric: 'venue_metadata_completeness',
+        population: null,
+        populationRows: null,
+        measuredPercent: null,
+        weatherPenalty: 0,
+      };
+    }
 
     const dataSources = ['ml_model', hasWeather ? 'weather' : null, 'venue_data'];
     if (eventData.hasEvent) dataSources.push('ticketmaster_events');
@@ -1271,6 +1469,21 @@ async function predictBusyness(venue, weather, timestamp) {
       dataSourcesUsed: dataSources.filter(Boolean),
       predictionMethod: 'ml',
       modelVersion: metadata.model_version || '2.1.0',
+      // WHAT THE NUMBER ABOVE IS, said in the payload rather than left to be
+      // inferred. `confidence` is one integer and cannot carry its own
+      // provenance: which metric, over which population, how many rows, and
+      // whether anything was subtracted from it. A client that renders a
+      // percentage without reading this is asserting a measurement it has not
+      // read. The shape is the same in both states so a client branches on
+      // `status`/`means` rather than on the presence of keys.
+      //
+      // `means: 'measured_accuracy'` describes THE NUMBER's provenance, not the
+      // card's standing. crowdEngine.describePredictionSupport still returns
+      // supported:false for the ML path while ML_BASELINE_AXIS_VERIFIED is
+      // false, and that hedge is about the baseline axis, a separate open
+      // question. Both can be true at once: a figure genuinely measured on the
+      // served rows, anchored on an axis nobody has vouched for yet.
+      confidenceMeasurement,
     };
 
     // Add event alert when large event nearby
@@ -1380,6 +1593,7 @@ module.exports = {
     estimateTmAttendance,
     getNearbyEvents,
     verifyModelShape,
+    readServedAccuracy,
     boundedSet,
     PREDICTOR_CACHE_MAX,
     EVENT_CACHE_MAX,
