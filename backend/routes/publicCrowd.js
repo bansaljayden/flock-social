@@ -17,6 +17,13 @@ const { upstreamSignal } = require('../utils/upstream');
 const { allowGlobalPlacesCall } = require('../utils/placesBudget');
 const { paywallEnabled } = require('../services/entitlements');
 const { recommendBestTime, findPeakTime, getLabel, publishedLabel, describePredictionSupport, venueLocalNow, isOpenAt, buildHoursByDay, weekdayOffset } = require('../services/crowdEngine');
+// The one place that decides whether a confidence integer may be called a
+// measured accuracy, defined in routes/crowd.js and imported rather than
+// re-derived — the same argument the forecast gate above records for
+// forecastAccess, and it applies harder here: this door is unauthenticated, so
+// a private copy that drifted would put the wrong claim in front of visitors
+// who have never seen the app. See the note above confidenceMeasurementFor.
+const { confidenceMeasurementFor } = require('./crowd');
 
 const router = express.Router();
 const API_KEY = process.env.GOOGLE_PLACES_API_KEY;
@@ -216,6 +223,17 @@ async function buildCard(v, weather, clock, preScored) {
     // the first claim the product makes and the least defensible one.
     label: publishedLabel(scored.score, describePredictionSupport(scored.predictionMethod, 0)),
     confidence: scored.confidence,
+    // The confidence above is the free half of this demo and is published to
+    // people who have no account, so it is the FIRST number this product shows
+    // anyone. It cannot go out bare: 72 here means "Google described this venue
+    // richly", 33 means "the model is right within 15 points a third of the
+    // time on the rows it actually serves", and without this block the demo
+    // shows its most ignorant state as its most confident one.
+    //
+    // Boost is 0 by construction: the demo runs no calibration query, so no
+    // verified report has moved this number. Survives gateDemoCard, which
+    // blanks the paid forecast fields and leaves the free half intact.
+    confidence_measurement: confidenceMeasurementFor(scored, scored.confidence, 0),
     best_time: best.text,
     // Which bar the chart should mark. Matched by index, not by label: the
     // recommendation is chosen over 24 hours and the chart only draws 12, so a
@@ -474,6 +492,15 @@ router.get('/demo/venues',
             photo_url: p.photos?.[0]?.name ? `/api/venues/photo?ref=${encodeURIComponent(p.photos[0].name)}&maxwidth=160` : null,
             score: scored.score,
             label: publishedLabel(scored.score, describePredictionSupport(scored.predictionMethod, 0)),
+            // NO `confidence` ON A PIN, and therefore no measurement block. A
+            // pin publishes the score and the hedged word, both of which stand
+            // on their own; the confidence integer is the field that cannot be
+            // read without its provenance, so the rule is one field, not two:
+            // publish the number and this block ships with it, or publish
+            // neither. If a confidence is ever added to this row, add
+            // `confidence_measurement: confidenceMeasurementFor(scored, <that
+            // number>, 0)` in the same edit —
+            // __tests__/confidenceForwarding.test.js fails if it is not.
           };
         } catch { return null; } // skip venues the model can't score
       }))).filter(Boolean);

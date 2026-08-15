@@ -168,6 +168,127 @@ const { allowPlacesSearch } = require('../utils/placesBudget');
 // Helpers
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// THE BLOCK THAT TRAVELS WITH EVERY PUBLISHED CONFIDENCE.
+//
+// `confidence` is a single integer, and it is two entirely different quantities
+// depending on which branch of services/mlPredictor.js produced it:
+//
+//   status 'measured'    the loaded model's within-15 on `realtime_served`, the
+//                        rows production is actually asked to score. Today that
+//                        is 33 (scripts/ml/MODEL-METRICS.md section 2).
+//   status 'unmeasured'  crowdEngine's input-completeness ladder, which counts
+//                        how richly GOOGLE describes the venue and reaches 72
+//                        without one observation of how full the room has been.
+//
+// THE UNMEASURED NUMBER IS THE LARGER OF THE TWO. 72 against 33. A client that
+// renders the bare percentage therefore pays the honest artifact — the one that
+// knows and states its own hit rate — with the lower-looking score, and rewards
+// the one that knows nothing about its accuracy with the higher one. That
+// inversion is the whole reason this block exists, and it is why it is not
+// optional decoration: the integer is unreadable on its own, so every surface
+// in this repo that publishes a confidence publishes this beside it.
+//
+// mlPredictor attaches the block to its OWN result. This function is what puts
+// one in a PAYLOAD, and it settles three things that file cannot:
+//
+//   1. THE RULE-ENGINE PATH. When the model throws, was never loaded, or was
+//      refused at the ship gate, predictBusyness returns
+//      crowdEngine.calculateCrowdScore's result and attaches NO block —
+//      __tests__/confidenceHonesty.test.js pins that absence deliberately,
+//      because no model measurement was used and there is nothing to describe.
+//      A payload cannot inherit that silence: an ABSENT field is exactly what a
+//      client falls back FROM into rendering the bare number as an accuracy. So
+//      the fallback here is the unmeasured block, and it is not a placeholder
+//      standing in for a missing answer. On that path `confidence` IS the
+//      input-completeness ladder, produced by the same crowdEngine function the
+//      predictor's own unmeasured branch calls for the same venue. Same number,
+//      same meaning, so the same block is the accurate description of it, not an
+//      approximation of one. (Which ENGINE answered is a separate question and
+//      already has its own fields: `predictionMethod` and `confidenceBasis`.)
+//
+//   2. FAIL CLOSED. 'measured' is published only when the arriving block says
+//      measured AND names measured_accuracy AND carries a finite percent.
+//      Anything else — a partial block, an unknown status, a future shape this
+//      function has not been taught — degrades to unmeasured. The two ways of
+//      being wrong here are not symmetric: describing a measured figure as
+//      unmeasured costs a bragging right, and describing an unmeasured one as
+//      measured is the exact claim this whole change exists to stop making.
+//
+//   3. THE PUBLISHED NUMBER IS NOT ALWAYS THE MEASURED ONE.
+//      crowdEngine.publishedConfidence adds up to +15 for verified reporters and
+//      clamps into 0..100, so the integer beside this block can be 48 while
+//      `measuredPercent` is 33. Publishing the measured figure alone would then
+//      describe a number the payload does not contain. `publishedPercent` is
+//      therefore ALWAYS the integer this payload's own `confidence` field
+//      carries, and `userReportBoost` says how much of any gap the reports
+//      account for. On the measured branch the arithmetic closes:
+//      published = clamp(measuredPercent - weatherPenalty + userReportBoost).
+//      On the unmeasured branch `measuredPercent` is null and claims nothing.
+//
+// The KEY SET IS IDENTICAL in both states, so a client branches on `status` and
+// never on the presence of a key. __tests__/confidenceForwarding.test.js pins
+// that, pins each surface, and pins the rule that no payload anywhere publishes
+// a confidence integer without this block next to it.
+//
+// REBUILT FIELD BY FIELD RATHER THAN SPREAD, the same rule gateForecast above
+// follows for the policy object and for the same reason: what mlPredictor
+// attaches is an internal object and this is a client contract. A field added
+// to the predictor's block therefore does NOT reach clients until it is added
+// here on purpose — which is the intended direction, since the cost of a field
+// arriving by accident is a claim nobody decided to make.
+// ---------------------------------------------------------------------------
+const UNMEASURED_CONFIDENCE = Object.freeze({
+  status: 'unmeasured',
+  means: 'input_completeness',
+  metric: 'venue_metadata_completeness',
+  population: null,
+  populationRows: null,
+  measuredPercent: null,
+  weatherPenalty: 0,
+});
+
+function confidenceMeasurementFor(prediction, publishedPercent, userReportBoost) {
+  // Read the TYPE, never coerce. `Number(null)` is 0, and 0 is a real
+  // confidence and a real boost, so a coercing read would turn "this value is
+  // missing" into "this value is zero" — a made-up number in the one function
+  // whose whole job is to stop numbers being made up.
+  const boost = (typeof userReportBoost === 'number' && Number.isFinite(userReportBoost))
+    ? userReportBoost : 0;
+  // Null rather than a substituted number: this field's contract is "the
+  // integer the payload published", and if that cannot be read, saying so is
+  // the only honest answer available.
+  const published = (typeof publishedPercent === 'number' && Number.isFinite(publishedPercent))
+    ? publishedPercent : null;
+
+  const m = prediction && prediction.confidenceMeasurement;
+  const isMeasured = !!m && typeof m === 'object' && !Array.isArray(m)
+    && m.status === 'measured'
+    && m.means === 'measured_accuracy'
+    && typeof m.measuredPercent === 'number' && Number.isFinite(m.measuredPercent);
+
+  if (!isMeasured) {
+    return { ...UNMEASURED_CONFIDENCE, userReportBoost: boost, publishedPercent: published };
+  }
+  // `populationRows` is legitimately null when the artifact reports the slice
+  // without a row count (readServedAccuracy allows that), and null must stay
+  // null here: Number(null) is 0, and a row count of zero is the malformed case
+  // the load gate refuses outright. Read the type, do not coerce.
+  const rows = m.populationRows;
+  const penalty = m.weatherPenalty;
+  return {
+    status: 'measured',
+    means: 'measured_accuracy',
+    metric: typeof m.metric === 'string' ? m.metric : null,
+    population: typeof m.population === 'string' ? m.population : null,
+    populationRows: (typeof rows === 'number' && Number.isFinite(rows)) ? rows : null,
+    measuredPercent: m.measuredPercent,
+    weatherPenalty: (typeof penalty === 'number' && Number.isFinite(penalty)) ? penalty : 0,
+    userReportBoost: boost,
+    publishedPercent: published,
+  };
+}
+
 // A user's crowd report informs reads within an hour either side of it.
 //
 // Round 15: that window was written as `hour BETWEEN GREATEST(0, h-1) AND
@@ -495,13 +616,19 @@ router.get('/:placeId',
         calibration.feedbackUsed ? calibration.reportCount : 0
       );
 
+      // Computed once and published twice: as `confidence` and, inside the
+      // measurement block, as `publishedPercent`. Calling publishedConfidence
+      // twice would let the two drift if it ever stopped being pure, and the
+      // block's whole job is to describe the number that actually shipped.
+      const cardConfidence = crowdEngine.publishedConfidence(crowdResult.confidence, support, feedbackConfidenceBoost);
+
       const result = {
         placeId,
         name: venue.name,
         score: finalScore,
         label: crowdEngine.publishedLabel(finalScore, support),
         rawEngineScore: crowdResult.score,
-        confidence: crowdEngine.publishedConfidence(crowdResult.confidence, support, feedbackConfidenceBoost),
+        confidence: cardConfidence,
         // Provenance, in the payload rather than only in the server's head.
         // `predictionMethod` is what services/mlPredictor.js decided; `basis`
         // and `supported` are what that entitles this card to claim.
@@ -511,6 +638,17 @@ router.get('/:placeId',
         // completeness' means "how much did we know about this venue", NOT
         // "how often is this right" — see crowdEngine.publishedConfidence.
         confidenceMeans: support.confidenceMeans,
+        // The same question asked of the NUMBER instead of the card, and the
+        // two answers can differ. `confidenceMeans` comes from
+        // describePredictionSupport, which hedges the entire ML path while
+        // ML_BASELINE_AXIS_VERIFIED is false — that hedge is about the baseline
+        // AXIS, a separate open question. `confidenceMeasurement.means`
+        // describes where this integer came from. When the model reports a
+        // served-population accuracy, both are true at once: a figure genuinely
+        // measured on the served rows, anchored on a clock nobody has vouched
+        // for yet. Neither field is redundant and neither may be dropped for
+        // the other; the note above confidenceMeasurementFor owns the argument.
+        confidenceMeasurement: confidenceMeasurementFor(crowdResult, cardConfidence, feedbackConfidenceBoost),
         supported: support.supported,
         capacity,
         bestTime,
@@ -891,16 +1029,23 @@ router.post('/batch',
             result.predictionMethod,
             cal.feedbackUsed ? cal.reportCount : 0
           );
+          const rowConfidence = crowdEngine.publishedConfidence(result.confidence, support, boost);
           return {
             placeId: v.place_id,
             name: v.name,
             score: cal.adjustedScore,
             label: crowdEngine.publishedLabel(cal.adjustedScore, support),
             rawEngineScore: result.score,
-            confidence: crowdEngine.publishedConfidence(result.confidence, support, boost),
+            confidence: rowConfidence,
             predictionMethod: result.predictionMethod || null,
             confidenceBasis: support.basis,
             confidenceMeans: support.confidenceMeans,
+            // Same rule as the card this list sits under, and it has to be the
+            // same one for the same reason the label and the clock do: a row
+            // whose 72 is a metadata ladder, sitting beside a card whose 33 is a
+            // measured hit rate, reads as "the list is more sure than the card"
+            // when it is the exact opposite.
+            confidenceMeasurement: confidenceMeasurementFor(result, rowConfidence, boost),
             supported: support.supported,
             calibration: {
               feedbackUsed: cal.feedbackUsed,
@@ -1161,6 +1306,13 @@ router.get('/:placeId/alternatives',
             predictionMethod: r.predictionMethod || null,
             confidenceBasis: support.basis,
             supported: support.supported,
+            // No `confidence` on an alternative row, so no measurement block:
+            // this list is a ranking, and the score plus the hedged label are
+            // what a ranking needs. The rule is one field, not two — publish a
+            // confidence integer here and
+            // `confidenceMeasurement: confidenceMeasurementFor(r, <it>, 0)`
+            // ships in the same edit, which
+            // __tests__/confidenceForwarding.test.js enforces.
           };
         } catch { return null; }
       }));
@@ -1209,6 +1361,15 @@ module.exports = router;
 // who has paid, and that is worse. (No cycle: routes/ai.js is never required
 // from here.)
 module.exports.forecastAccess = forecastAccess;
+// THE confidence-measurement normalizer, for every route that publishes a
+// confidence. Exported for the same reason forecastAccess is, and against the
+// same failure: the fields that qualify this number were already written out
+// per-payload in three files, and the one thing that must NOT be per-payload is
+// the decision about whether a number may be called an accuracy. A private copy
+// in routes/ai.js or routes/publicCrowd.js is how one surface ends up
+// publishing 72 as a hit rate after this file stopped. (No cycle: neither of
+// those modules is ever required from here.)
+module.exports.confidenceMeasurementFor = confidenceMeasurementFor;
 // Exposed for backend/__tests__/crowdReaudit.test.js — the venue-clock path
 // depends on utcOffsetMinutes surviving the Google->venue shaping, and that
 // drop was invisible to every existing test because the shaping is internal.
