@@ -262,13 +262,13 @@ test('a venue Google gives no offset for still says so out loud instead of prete
   // The one thing worse than falling back to the caller's clock is doing it
   // silently. `local: false` is the per-row signal that this row's hour is the
   // viewer's, and it is in the payload the client renders from.
-  const res = await post('/api/crowd/batch', {
+  const { out: res, allowed } = await venueHoursAround(-480, () => post('/api/crowd/batch', {
     venues: [
       { place_id: 'HAS_OFFSET', location: { latitude: 39.74, longitude: -104.98 }, utcOffsetMinutes: -480 },
       { place_id: 'NO_OFFSET', location: { latitude: 39.74, longitude: -104.98 } },
     ],
     localHour: 23, localDay: 5,
-  });
+  }));
   assert.strictEqual(res.status, 200, res.text);
   const byId = Object.fromEntries(res.body.predictions.map((p) => [p.placeId, p]));
 
@@ -277,8 +277,15 @@ test('a venue Google gives no offset for still says so out loud instead of prete
   assert.strictEqual(byId.NO_OFFSET.venueClock.hour, 23, 'the fallback is the caller‘s hour, as documented');
 
   assert.strictEqual(byId.HAS_OFFSET.venueClock.local, true);
-  assert.notStrictEqual(byId.HAS_OFFSET.venueClock.hour, byId.NO_OFFSET.venueClock.hour,
-    'two venues in one list must be able to answer on different clocks');
+  // This used to assert the two hours DIFFER, which is true for 23 hours out of
+  // every 24 and false for the one where the caller's hardcoded 23 happens to
+  // equal the venue's real UTC-8 hour. It failed for exactly that hour, every
+  // day, and passed every other time it was run. What the test means is that
+  // HAS_OFFSET is scored on the VENUE's clock rather than the caller's, so
+  // assert that directly against the real elapsed time; the two hours coinciding
+  // once a day is arithmetic, not a regression.
+  assert.ok(allowed.includes(byId.HAS_OFFSET.venueClock.hour),
+    `scored on hour ${byId.HAS_OFFSET.venueClock.hour}, but the venue's own clock says ${allowed.join(' or ')}`);
 });
 
 test('an offset of zero is a clock, not a missing one', async () => {
