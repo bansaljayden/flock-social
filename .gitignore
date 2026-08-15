@@ -45,6 +45,14 @@ backend/uploads/*
 backend/scripts/ml/train/*.csv
 backend/scripts/ml/train/*.pkl
 backend/scripts/ml/train/plots/
+backend/scripts/ml/models/incumbent/*.pkl
+backend/scripts/ml/models/incumbent/*.json
+# The preserved previous model, kept so quick_eval.py can score the incumbent on
+# the SAME holdout as a challenger. It is a local artifact of a retrain, not
+# source: best_model.pkl is 12MB and features_holdout.pkl is 183MB. RETRAIN.md
+# step 0 says how to populate it, and the gate FAILS rather than shrugging when
+# it is absent, so an unpopulated directory can never quietly skip the check.
+
 # NOT ignored: backend/scripts/ml/models/crowd_model.onnx is the SHIPPING model.
 # It was committed before this rule existed, and git ignores .gitignore for
 # already-tracked files, so the rule was inert and the model kept deploying. It
