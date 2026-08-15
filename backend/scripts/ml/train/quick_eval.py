@@ -1,25 +1,58 @@
 """
-Fast eval: compute popular_times-only baseline + ship-gate verdict using
-the already-trained model. Skips the redundant LOCO re-training that
-evaluate_model.py does.
+SHIP GATE. Scores the freshly-trained model on the holdout, compares it to the
+popular_times baseline AND to the incumbent artifact, and writes the verdict
+mlPredictor.init() reads.
 
 Training metrics: re-uses LOCO CV numbers from model_metadata.json (already
 computed honestly in train_model.py).
 Holdout: one forward pass with the full-trained model.
+
+Two audit fixes live here:
+
+  Finding 6 — the gate slice is now filtered to the population production
+  actually serves. mlPredictor routes any venue with no baseline to the rule
+  engine, and prepare_features filters TRAINING to baseline > 0 for exactly that
+  reason; the gate did not, so it was decided partly on rows the product never
+  scores with this model. The filter is not re-implemented here — it is imported
+  from prepare_features so the two cannot drift.
+
+  Finding 7 — the incumbent comparison now exists. RETRAIN.md claimed this
+  script "re-runs the incumbent on the same holdout every time"; it never loaded
+  a second model, so a retrain worse than v2.5 that still beat the raw baseline
+  would have shipped. The incumbent is required by default.
 """
 
 import json
 import logging
+import os
 import pickle
 from pathlib import Path
 
 import numpy as np
+
+from prepare_features import serving_population_mask
 
 logging.basicConfig(level=logging.INFO, format='[%(levelname)s] %(message)s')
 logger = logging.getLogger(__name__)
 
 SCRIPT_DIR = Path(__file__).parent
 MODELS_DIR = SCRIPT_DIR.parent / 'models'
+INCUMBENT_DIR = MODELS_DIR / 'incumbent'
+
+# Relative-improvement thresholds (unchanged doctrine).
+GATE_MAE_IMPROVEMENT = 5.0
+GATE_R2_IMPROVEMENT = 0.10
+
+# Absolute floor (audit finding 8). The gate is `baseline + clamp(delta)` versus
+# `baseline` on the same rows, so any error SHARED by both sides cancels and the
+# gate cannot see corpus-wide corruption. 29.2% is v2.5's realtime within-10 on
+# the unfiltered slice; the filtered slice must at least match it, or the model
+# is relatively better and absolutely useless.
+REALTIME_WITHIN10_FLOOR = 29.2
+
+# Explicit, recorded escape hatches. Neither may be used for a release.
+ALLOW_NO_INCUMBENT = os.environ.get('ML_ALLOW_NO_INCUMBENT', '').lower() == 'true'
+ALLOW_APPROXIMATE_INCUMBENT = os.environ.get('ML_ALLOW_APPROXIMATE_INCUMBENT', '').lower() == 'true'
 
 
 def metrics(y_true, y_pred):
@@ -35,27 +68,196 @@ def metrics(y_true, y_pred):
     }
 
 
+def reconstruct(raw_delta, baseline):
+    """Production's reconstruction: baseline + clamp(delta, -30, 30), clipped."""
+    return np.clip(baseline + np.clip(raw_delta, -30, 30), 0, 100)
+
+
+def realtime_flags(X, feature_cols, n_rows):
+    if 'is_realtime' not in feature_cols:
+        return np.zeros(n_rows, dtype=int)
+    return X[:, feature_cols.index('is_realtime')].astype(int)
+
+
+# ---------------------------------------------------------------------------
+# Incumbent comparison (audit finding 7)
+# ---------------------------------------------------------------------------
+def compare_incumbent(gate_mask, hold_y_actual, challenger_pred, current_feature_cols,
+                      X_hold, hold_baseline):
+    """Score the previous artifact on the SAME holdout rows as the challenger.
+
+    Returns (result_dict, incumbent_passes). `incumbent_passes` is False whenever
+    the comparison could not be made honestly — an unavailable comparison is a
+    gate failure, not a free pass.
+    """
+    model_path = INCUMBENT_DIR / 'best_model.pkl'
+    if not model_path.exists():
+        if ALLOW_NO_INCUMBENT:
+            logger.warning(
+                'NO INCUMBENT at %s and ML_ALLOW_NO_INCUMBENT=true — shipping '
+                'without a regression check. This is only correct for the FIRST '
+                'model ever trained.', model_path)
+            return {'status': 'absent_acknowledged',
+                    'note': 'ML_ALLOW_NO_INCUMBENT=true — no regression check was performed'}, True
+        logger.error(
+            'NO INCUMBENT at %s. The gate cannot tell whether this model is better '
+            'than the one in production.\n'
+            '  Before training, run:\n'
+            '    mkdir -p models/incumbent\n'
+            '    cp models/crowd_model.onnx models/model_metadata.json models/incumbent/\n'
+            '    cp train/best_model.pkl train/features_holdout.pkl models/incumbent/\n'
+            '  If this genuinely is the first model, set ML_ALLOW_NO_INCUMBENT=true.',
+            model_path)
+        return {'status': 'absent', 'reason': 'models/incumbent/best_model.pkl not found'}, False
+
+    with open(model_path, 'rb') as f:
+        inc_data = pickle.load(f)
+    inc_model = inc_data['model']
+    inc_feature_cols = list(inc_data.get('feature_cols') or [])
+
+    inc_version = None
+    inc_meta_path = INCUMBENT_DIR / 'model_metadata.json'
+    if inc_meta_path.exists():
+        try:
+            inc_version = json.loads(inc_meta_path.read_text(encoding='utf-8')).get('model_version')
+        except (json.JSONDecodeError, OSError):
+            inc_version = None
+
+    # Case A — identical feature set: score the incumbent on the challenger's own
+    # matrix. Same rows, same columns, nothing approximated.
+    if inc_feature_cols == list(current_feature_cols):
+        inc_pred = reconstruct(inc_model.predict(X_hold), hold_baseline)
+        inc_baseline = hold_baseline
+        basis = 'same_rows_same_features'
+        comparable = True
+        rows_note = None
+    else:
+        # Case B — the feature set changed (findings 4 and 5 both change columns).
+        # The honest comparison is the incumbent run through its OWN preserved
+        # holdout pickle, on the same holdout ROWS.
+        inc_hold_path = INCUMBENT_DIR / 'features_holdout.pkl'
+        if not inc_hold_path.exists():
+            logger.error(
+                'The feature set changed (%d incumbent columns vs %d now) and '
+                'models/incumbent/features_holdout.pkl was not preserved, so the '
+                'incumbent cannot consume this X and has no X of its own. '
+                'No honest comparison is possible.',
+                len(inc_feature_cols), len(current_feature_cols))
+            return {'status': 'incomparable',
+                    'reason': 'feature set changed and incumbent features_holdout.pkl was not preserved',
+                    'incumbent_feature_count': len(inc_feature_cols),
+                    'challenger_feature_count': len(current_feature_cols),
+                    'incumbent_version': inc_version}, False
+
+        with open(inc_hold_path, 'rb') as f:
+            inc_hold = pickle.load(f)
+        inc_y_actual = np.asarray(inc_hold['y_actual'], dtype=float)
+        inc_baseline = np.asarray(inc_hold['baseline'], dtype=float)
+        if len(inc_y_actual) != len(hold_y_actual):
+            logger.error('Incumbent holdout has %d rows, current has %d — the row masks '
+                         'cannot be applied to both.', len(inc_y_actual), len(hold_y_actual))
+            return {'status': 'incomparable',
+                    'reason': 'incumbent holdout row count differs from the current holdout',
+                    'incumbent_rows': len(inc_y_actual),
+                    'challenger_rows': len(hold_y_actual),
+                    'incumbent_version': inc_version}, False
+        same_rows = np.array_equal(inc_y_actual, np.asarray(hold_y_actual, dtype=float))
+        inc_pred = reconstruct(inc_model.predict(inc_hold['X']), inc_baseline)
+        if same_rows:
+            basis = 'same_rows_preserved_features'
+            comparable = True
+            rows_note = None
+        else:
+            basis = 'approximate_different_rows'
+            comparable = False
+            rows_note = ('the two holdout exports have the same row COUNT but different '
+                         'y_actual values — they are not the same rows')
+            logger.error('APPROXIMATE incumbent comparison: %s', rows_note)
+
+    # Both models must be judged on rows BOTH of them would serve. The LOO
+    # baseline change and the smoothing fix move which rows have a baseline at
+    # all, and scoring the incumbent on a row where ITS baseline is 0 caps its
+    # reconstruction at clamp(delta) <= 30 against actuals up to 100 — that would
+    # flatter the challenger and make this arm easier to pass, not harder.
+    cmp_mask = gate_mask & serving_population_mask(inc_baseline)
+    dropped = int(gate_mask.sum() - cmp_mask.sum())
+    if int(cmp_mask.sum()) < 100:
+        logger.error('Only %d rows are servable under BOTH the incumbent and the '
+                     'challenger baselines — too few for an honest comparison.',
+                     int(cmp_mask.sum()))
+        return {'status': 'incomparable',
+                'reason': 'fewer than 100 rows servable under both baselines',
+                'comparable_rows': int(cmp_mask.sum()),
+                'incumbent_version': inc_version}, False
+    if dropped:
+        logger.warning('%d gate rows have no incumbent baseline and are excluded from '
+                       'the head-to-head (both models scored on the remaining %d).',
+                       dropped, int(cmp_mask.sum()))
+
+    inc_metrics = metrics(hold_y_actual[cmp_mask], inc_pred[cmp_mask])
+    new_metrics = metrics(hold_y_actual[cmp_mask], challenger_pred[cmp_mask])
+    mae_change = round(inc_metrics['mae'] - new_metrics['mae'], 4)  # positive = challenger better
+
+    logger.info('\n========== INCUMBENT COMPARISON (%s, %d rows) ==========',
+                basis, int(cmp_mask.sum()))
+    logger.info('Incumbent %s — MAE: %s  R²: %s  W10: %s%%',
+                inc_version or '(version unrecorded)', inc_metrics['mae'],
+                inc_metrics['r2'], inc_metrics['within_10'])
+    logger.info('Challenger        — MAE: %s  R²: %s  W10: %s%%',
+                new_metrics['mae'], new_metrics['r2'], new_metrics['within_10'])
+    logger.info('Δ MAE vs incumbent: %+.4f (positive = challenger better)', mae_change)
+
+    no_regression = mae_change >= 0
+    result = {
+        'status': 'compared',
+        'basis': basis,
+        'comparable': comparable,
+        'incumbent_version': inc_version,
+        'comparable_rows': int(cmp_mask.sum()),
+        'gate_rows_without_incumbent_baseline': dropped,
+        'incumbent_realtime_mae': inc_metrics['mae'],
+        'incumbent_realtime_r2': inc_metrics['r2'],
+        'incumbent_realtime_within_10': inc_metrics['within_10'],
+        'new_realtime_mae': new_metrics['mae'],
+        'mae_improvement_vs_incumbent': mae_change,
+        'no_regression': bool(no_regression),
+        'rows_note': rows_note,
+    }
+    if not comparable and not ALLOW_APPROXIMATE_INCUMBENT:
+        logger.error('Comparison is approximate and ML_ALLOW_APPROXIMATE_INCUMBENT is not set — '
+                     'treating it as a gate failure.')
+        return result, False
+    if not no_regression:
+        logger.error('REGRESSION: the challenger is %.4f MAE WORSE than the incumbent on '
+                     'the gate slice.', -mae_change)
+    return result, bool(no_regression)
+
+
 def main():
     logger.info('Loading training features...')
     with open(SCRIPT_DIR / 'features_train.pkl', 'rb') as f:
         train_data = pickle.load(f)
     train_baseline = train_data['baseline']
     train_y_actual = train_data['y_actual']
-    train_cities = train_data['cities']
-    # is_realtime is feature index in the X matrix — find it
     feature_cols = train_data['feature_cols']
-    is_realtime_col = feature_cols.index('is_realtime') if 'is_realtime' in feature_cols else None
-    train_X = train_data['X']
-    train_is_realtime = train_X[:, is_realtime_col].astype(int) if is_realtime_col is not None else np.zeros(len(train_y_actual), dtype=int)
 
     logger.info('Loading holdout features + trained model...')
     with open(SCRIPT_DIR / 'features_holdout.pkl', 'rb') as f:
         hold_data = pickle.load(f)
     X_hold = hold_data['X']
-    hold_baseline = hold_data['baseline']
-    hold_y_actual = hold_data['y_actual']
+    # The gate reads is_realtime out of X BY POSITION. If the two pickles were
+    # written by different runs, that position means something else and the gate
+    # slice is silently the wrong rows.
+    if list(hold_data['feature_cols']) != list(feature_cols):
+        raise SystemExit(
+            'features_train.pkl and features_holdout.pkl carry different feature '
+            f'columns ({len(feature_cols)} vs {len(hold_data["feature_cols"])}). They '
+            'are from different prepare_features.py runs. Re-run prepare_features.py.'
+        )
+    hold_baseline = np.asarray(hold_data['baseline'], dtype=float)
+    hold_y_actual = np.asarray(hold_data['y_actual'], dtype=float)
     hold_cities = hold_data['cities']
-    hold_is_realtime = X_hold[:, is_realtime_col].astype(int) if is_realtime_col is not None else np.zeros(len(hold_y_actual), dtype=int)
+    hold_is_realtime = realtime_flags(X_hold, feature_cols, len(hold_y_actual))
 
     with open(SCRIPT_DIR / 'best_model.pkl', 'rb') as f:
         model_data = pickle.load(f)
@@ -80,9 +282,7 @@ def main():
 
     # ============= HOLDOUT SET (one forward pass) =============
     logger.info('\nPredicting on holdout (one forward pass)...')
-    raw_pred = model.predict(X_hold)
-    clamped_delta = np.clip(raw_pred, -30, 30)
-    hold_pred_absolute = np.clip(hold_baseline + clamped_delta, 0, 100)
+    hold_pred_absolute = reconstruct(model.predict(X_hold), hold_baseline)
     hold_baseline_pred = np.clip(hold_baseline, 0, 100)
 
     model_hold_metrics = metrics(hold_y_actual, hold_pred_absolute)
@@ -96,38 +296,65 @@ def main():
     hold_r2_delta = model_hold_metrics['r2'] - baseline_hold_metrics['r2']
     logger.info(f'Δ         — MAE improvement: {hold_mae_delta:+.4f}  R² improvement: {hold_r2_delta:+.4f}')
 
-    # ============= REALTIME-ONLY HOLDOUT (THE HONEST TEST) =============
-    # Realtime rows are where actual ≠ baseline. If model can't beat baseline here,
-    # it has no signal beyond the baseline itself.
-    rt_mask = hold_is_realtime == 1
+    # ============= THE GATE SLICE: realtime AND servable =============
+    # Audit finding 6. `served` is the SAME predicate prepare_features filters
+    # training with — imported, not re-implemented.
+    served = serving_population_mask(hold_baseline)
+    rt_all = hold_is_realtime == 1
+    rt_mask = rt_all & served
     rt_count = int(rt_mask.sum())
-    weekly_count = int((~rt_mask).sum())
-    logger.info(f'\n========== HOLDOUT BREAKDOWN ({rt_count:,} realtime / {weekly_count:,} weekly) ==========')
+    excluded_no_baseline = int((rt_all & ~served).sum())
+    weekly_count = int((~rt_all & served).sum())
+    logger.info(
+        '\n========== HOLDOUT BREAKDOWN ==========\n'
+        f'  gate slice (realtime AND baseline>0): {rt_count:,}\n'
+        f'  EXCLUDED realtime rows with baseline==0: {excluded_no_baseline:,} '
+        f'(production routes these to the rule engine; the model reconstructs '
+        f'0 + clamp(delta) <= 30 against actuals up to 100)\n'
+        f'  weekly rows with baseline>0: {weekly_count:,}'
+    )
+
+    # Kept as a labelled diagnostic so the change in the gate basis is visible.
+    rt_unfiltered = None
+    if int(rt_all.sum()) >= 100:
+        u_model = metrics(hold_y_actual[rt_all], hold_pred_absolute[rt_all])
+        u_base = metrics(hold_y_actual[rt_all], hold_baseline_pred[rt_all])
+        rt_unfiltered = {
+            'rows': int(rt_all.sum()),
+            'model_mae': u_model['mae'], 'baseline_mae': u_base['mae'],
+            'model_within_10': u_model['within_10'],
+            'mae_improvement': round(u_base['mae'] - u_model['mae'], 4),
+            'r2_improvement': round(u_model['r2'] - u_base['r2'], 4),
+            'note': 'DIAGNOSTIC ONLY — includes rows production never scores with this model',
+        }
+        logger.info(f'REALTIME unfiltered (diagnostic, {rt_unfiltered["rows"]:,} rows): '
+                    f'model MAE {u_model["mae"]}  baseline MAE {u_base["mae"]}  '
+                    f'W10 {u_model["within_10"]}%')
+
     if rt_count >= 100:
         rt_model_metrics = metrics(hold_y_actual[rt_mask], hold_pred_absolute[rt_mask])
         rt_baseline_metrics = metrics(hold_y_actual[rt_mask], hold_baseline_pred[rt_mask])
         rt_mae_delta = rt_baseline_metrics['mae'] - rt_model_metrics['mae']
         rt_r2_delta = rt_model_metrics['r2'] - rt_baseline_metrics['r2']
-        logger.info(f'REALTIME-only:')
+        logger.info('GATE SLICE (realtime, baseline>0):')
         logger.info(f'  Model     — MAE: {rt_model_metrics["mae"]}  R²: {rt_model_metrics["r2"]}  W10: {rt_model_metrics["within_10"]}%')
         logger.info(f'  Baseline  — MAE: {rt_baseline_metrics["mae"]}  R²: {rt_baseline_metrics["r2"]}  W10: {rt_baseline_metrics["within_10"]}%')
         logger.info(f'  Δ         — MAE improvement: {rt_mae_delta:+.4f}  R² improvement: {rt_r2_delta:+.4f}')
     else:
-        logger.info(f'Skipping realtime-only (only {rt_count} rows — too few to be meaningful)')
+        logger.info(f'Gate slice has only {rt_count} rows — too few to be meaningful')
         rt_model_metrics = None
         rt_baseline_metrics = None
         rt_mae_delta = None
         rt_r2_delta = None
 
-    # LIVE-OBSERVED-only diagnostic (round 13). The realtime gate slice mixes
-    # label provenances: 'live' rows are real observed foot traffic, but
-    # 'forecast' rows carry BestTime's OWN forecast as the label — beating the
-    # popular_times baseline there measures agreement with a vendor's model,
-    # not with reality. This slice is the strictest honest read we have. It is
-    # reported and persisted but does NOT change the gate basis (yet): rows
-    # collected before label_source existed are 'unknown' and can't be
-    # separated retroactively, so gating on live-only would judge new models
-    # on a much thinner slice than the incumbent was judged on.
+    # LIVE-OBSERVED-only diagnostic (round 13). The gate slice mixes label
+    # provenances: 'live' rows are real observed foot traffic, but 'forecast'
+    # rows carry BestTime's OWN forecast as the label — beating the popular_times
+    # baseline there measures agreement with a vendor's model, not with reality.
+    # Reported and persisted but NOT the gate basis: rows collected before
+    # label_source existed are 'unknown' and cannot be separated retroactively,
+    # so gating on live-only would judge new models on a much thinner slice than
+    # the incumbent was judged on.
     live_slice = None
     hold_prov = hold_data.get('label_provenance')
     if hold_prov is not None and rt_count >= 100:
@@ -149,82 +376,108 @@ def main():
         else:
             logger.info(f'LIVE-OBSERVED-only: only {live_count} rows — skipping diagnostic')
     if weekly_count >= 100:
-        wk_model_metrics = metrics(hold_y_actual[~rt_mask], hold_pred_absolute[~rt_mask])
-        wk_baseline_metrics = metrics(hold_y_actual[~rt_mask], hold_baseline_pred[~rt_mask])
+        wk = ~rt_all & served
+        wk_model_metrics = metrics(hold_y_actual[wk], hold_pred_absolute[wk])
+        wk_baseline_metrics = metrics(hold_y_actual[wk], hold_baseline_pred[wk])
         logger.info(f'WEEKLY-only (mostly tautological if baseline = avg of weekly):')
         logger.info(f'  Model     — MAE: {wk_model_metrics["mae"]}  R²: {wk_model_metrics["r2"]}')
         logger.info(f'  Baseline  — MAE: {wk_baseline_metrics["mae"]}  R²: {wk_baseline_metrics["r2"]}')
 
-    # Per-holdout-city
-    logger.info('\nPer-holdout-city breakdown:')
+    # Per-holdout-city, on the gate slice — audit finding 16 wants this visible.
+    logger.info('\nPer-holdout-city breakdown (gate slice):')
+    per_city = {}
     for city in np.unique(hold_cities):
-        mask = hold_cities == city
+        mask = (hold_cities == city) & rt_mask
+        if int(mask.sum()) < 50:
+            logger.info(f'  {city:10s} — only {int(mask.sum())} gate rows, skipping')
+            continue
         cm = metrics(hold_y_actual[mask], hold_pred_absolute[mask])
         bm = metrics(hold_y_actual[mask], hold_baseline_pred[mask])
-        logger.info(f'  {city:10s} — Model MAE: {cm["mae"]:6.2f} (baseline {bm["mae"]:6.2f}, Δ={bm["mae"]-cm["mae"]:+5.2f})  R²: {cm["r2"]:.3f} (baseline {bm["r2"]:.3f})')
+        per_city[str(city)] = {'rows': int(mask.sum()), 'model_mae': cm['mae'],
+                               'baseline_mae': bm['mae'], 'model_within_10': cm['within_10']}
+        logger.info(f'  {city:10s} — Model MAE: {cm["mae"]:6.2f} (baseline {bm["mae"]:6.2f}, '
+                    f'Δ={bm["mae"]-cm["mae"]:+5.2f})  W10: {cm["within_10"]}%')
 
-    # ============= SHIP VERDICT (REALTIME-WEIGHTED) =============
-    # The honest test is realtime-only on holdout: where actual ≠ baseline, can the model help?
-    # Overall holdout numbers will look great because most rows are weekly-where-actual=baseline.
-    logger.info('\n========== SHIP GATE: model must beat baseline by ≥5 MAE OR ≥0.10 R² ==========')
-    train_pass = (train_mae_delta >= 5.0) or (train_r2_delta >= 0.10)
-    hold_pass = (hold_mae_delta >= 5.0) or (hold_r2_delta >= 0.10)
-    rt_pass = None
+    # ============= INCUMBENT (audit finding 7) =============
+    incumbent = None
+    incumbent_pass = None
+    if rt_count >= 100:
+        incumbent, incumbent_pass = compare_incumbent(
+            rt_mask, hold_y_actual, hold_pred_absolute, feature_cols, X_hold, hold_baseline)
+
+    # ============= SHIP VERDICT =============
+    logger.info('\n========== SHIP GATE ==========')
+    logger.info('Criteria (ALL must hold):')
+    logger.info('  1. vs popular_times on the gate slice: MAE down ≥%.0f OR R² up ≥%.2f',
+                GATE_MAE_IMPROVEMENT, GATE_R2_IMPROVEMENT)
+    logger.info('  2. the MAE arm must not REGRESS (Δ MAE ≥ 0) even when the R² arm carries it')
+    logger.info('  3. absolute floor: realtime within-10 ≥ %.1f%%', REALTIME_WITHIN10_FLOOR)
+    logger.info('  4. no regression against the incumbent artifact')
+
+    train_pass = (train_mae_delta >= GATE_MAE_IMPROVEMENT) or (train_r2_delta >= GATE_R2_IMPROVEMENT)
+    hold_pass = (hold_mae_delta >= GATE_MAE_IMPROVEMENT) or (hold_r2_delta >= GATE_R2_IMPROVEMENT)
+
+    rt_pass = floor_pass = None
     if rt_mae_delta is not None:
-        rt_pass = (rt_mae_delta >= 5.0) or (rt_r2_delta >= 0.10)
+        relative_pass = (rt_mae_delta >= GATE_MAE_IMPROVEMENT) or (rt_r2_delta >= GATE_R2_IMPROVEMENT)
+        no_mae_regression = rt_mae_delta >= 0
+        rt_pass = bool(relative_pass and no_mae_regression)
+        floor_pass = bool(rt_model_metrics['within_10'] >= REALTIME_WITHIN10_FLOOR)
+        logger.info(f'  1+2 relative:  MAE Δ={rt_mae_delta:+.2f}  R² Δ={rt_r2_delta:+.3f}  '
+                    f'→ {"PASS" if rt_pass else "FAIL"}')
+        logger.info(f'  3   floor:     within-10 ={rt_model_metrics["within_10"]}% vs floor '
+                    f'{REALTIME_WITHIN10_FLOOR}%  → {"PASS" if floor_pass else "FAIL"}')
+        logger.info(f'  4   incumbent: → {"PASS" if incumbent_pass else "FAIL"}')
 
-    logger.info(f'Training (LOCO CV):       MAE Δ={train_mae_delta:+.2f}  R² Δ={train_r2_delta:+.3f}  → {"PASS" if train_pass else "FAIL"}')
-    logger.info(f'Holdout overall:          MAE Δ={hold_mae_delta:+.2f}  R² Δ={hold_r2_delta:+.3f}  → {"PASS" if hold_pass else "FAIL"}')
-    if rt_pass is not None:
-        logger.info(f'Holdout REALTIME-only ★:  MAE Δ={rt_mae_delta:+.2f}  R² Δ={rt_r2_delta:+.3f}  → {"PASS" if rt_pass else "FAIL"}    ← THE HONEST TEST')
+    logger.info(f'Diagnostics — training (LOCO CV) {"PASS" if train_pass else "FAIL"}, '
+                f'holdout overall {"PASS" if hold_pass else "FAIL"} '
+                f'(both dominated by rows where baseline == label)')
 
-    # Ship requires: at minimum the realtime-only test passes (if we have enough realtime rows)
-    # Otherwise fall back to the weaker overall test.
     if rt_pass is not None:
-        if rt_pass:
-            logger.info('VERDICT: ✅ SHIP — model beats baseline on realtime rows (where actual ≠ baseline).')
+        overall_pass = bool(rt_pass and floor_pass and incumbent_pass)
+        gate_basis = 'holdout_realtime_served'
+        verdict = 'ship' if overall_pass else 'do_not_ship'
+        if overall_pass:
+            logger.info('VERDICT: ✅ SHIP — beats the popular_times baseline on the served '
+                        'realtime rows, clears the absolute floor, and does not regress '
+                        'against the incumbent.')
         else:
-            logger.info('VERDICT: ❌ DO NOT SHIP — model does not beat baseline on realtime rows. Overall numbers are misleading (mostly weekly-where-baseline-trivially-wins).')
+            reasons = []
+            if not rt_pass:
+                reasons.append('does not beat the popular_times baseline on the gate slice')
+            if not floor_pass:
+                reasons.append(f'realtime within-10 below the {REALTIME_WITHIN10_FLOOR}% floor')
+            if not incumbent_pass:
+                reasons.append('no honest incumbent comparison, or a regression against it')
+            logger.info('VERDICT: ❌ DO NOT SHIP — %s.', '; '.join(reasons))
     else:
-        if hold_pass:
-            logger.info('VERDICT: ⚠️ PROVISIONAL SHIP — too few realtime rows to test honestly; passes overall holdout. Collect more realtime data and re-eval.')
-        else:
-            logger.info('VERDICT: ❌ DO NOT SHIP — fails overall holdout and not enough realtime to verify.')
-
-    # Save to metadata
-    # Round 10: the persisted gate used to disagree with the verdict printed
-    # above. It wrote overall_pass = train_pass AND hold_pass — both AGGREGATE
-    # slices, which this script itself documents as misleading (84% of holdout
-    # rows are weekly rows where busyness == baseline by construction, so the
-    # popular_times baseline is unbeatable there and a ≥5-MAE gain is
-    # arithmetically impossible against a baseline whose MAE is ~6). The
-    # realtime-only slice was computed, printed as "THE HONEST TEST", used for
-    # the VERDICT — and then thrown away. Consumers (mlPredictor.init) that
-    # read overall_pass therefore saw "reject" for a model this script shipped.
-    # overall_pass now carries the same decision the verdict prints, and the
-    # aggregate flags are kept but clearly labelled as diagnostics.
-    if rt_pass is not None:
-        overall_pass = bool(rt_pass)
-        gate_basis = 'holdout_realtime'
-        verdict = 'ship' if rt_pass else 'do_not_ship'
-    else:
-        overall_pass = bool(hold_pass)
-        gate_basis = 'holdout_overall_provisional'
-        verdict = 'provisional_ship' if hold_pass else 'do_not_ship'
+        overall_pass = False
+        gate_basis = 'insufficient_gate_rows'
+        verdict = 'do_not_ship'
+        logger.info('VERDICT: ❌ DO NOT SHIP — fewer than 100 servable realtime holdout rows, '
+                    'so nothing honest can be measured. The aggregate holdout number is not a '
+                    'substitute: most of those rows are weekly snapshots where the label equals '
+                    'the baseline by construction.')
 
     meta['ship_gate'] = {
-        # Decision — realtime-only holdout when we have enough realtime rows.
+        # Decision — realtime holdout rows that production would actually serve.
         'overall_pass': overall_pass,
         'gate_basis': gate_basis,
         'verdict': verdict,
         'realtime_rows': rt_count,
+        'excluded_no_baseline_rows': excluded_no_baseline,
         'realtime_mae_improvement': round(rt_mae_delta, 4) if rt_mae_delta is not None else None,
         'realtime_r2_improvement': round(rt_r2_delta, 4) if rt_r2_delta is not None else None,
-        'realtime_pass': bool(rt_pass) if rt_pass is not None else None,
-        # Diagnostic: realtime slice restricted to live-observed labels
-        # (excludes vendor-forecast rows). None when provenance is absent
-        # from the pickle or the slice is too thin.
+        'realtime_within_10': rt_model_metrics['within_10'] if rt_model_metrics else None,
+        'realtime_within_10_floor': REALTIME_WITHIN10_FLOOR,
+        'realtime_pass': rt_pass,
+        'floor_pass': floor_pass,
+        'incumbent_pass': incumbent_pass,
+        'incumbent': incumbent,
+        # Diagnostic: the pre-fix slice, and the live-observed-only slice.
+        'realtime_unfiltered_diagnostic': rt_unfiltered,
         'live_slice': live_slice,
+        'per_city': per_city,
         # Diagnostics only — dominated by weekly rows where baseline == label.
         'training_mae_improvement': round(train_mae_delta, 4),
         'training_r2_improvement': round(train_r2_delta, 4),
@@ -232,15 +485,21 @@ def main():
         'holdout_r2_improvement': round(hold_r2_delta, 4),
         'training_pass_diagnostic': bool(train_pass),
         'holdout_pass_diagnostic': bool(hold_pass),
-        'criteria': 'MAE down ≥5 OR R² up ≥0.10 vs popular_times-only baseline, '
-                    'measured on the realtime-only holdout slice',
+        'criteria': (
+            f'On the holdout rows production actually serves (is_realtime == 1 AND '
+            f'baseline_busyness > 0, the same serving_population_mask prepare_features '
+            f'filters training with): MAE down ≥{GATE_MAE_IMPROVEMENT} OR R² up '
+            f'≥{GATE_R2_IMPROVEMENT} vs the popular_times baseline, AND no MAE regression '
+            f'vs that baseline, AND within-10 ≥{REALTIME_WITHIN10_FLOOR}%, AND no MAE '
+            f'regression vs the incumbent artifact.'
+        ),
     }
     meta['evaluation'] = {
         'training_loco_cv': model_train_metrics,
         'training_baseline': baseline_train_metrics,
         'holdout': model_hold_metrics,
         'holdout_baseline': baseline_hold_metrics,
-        'holdout_cities': sorted(np.unique(hold_cities).tolist()),
+        'holdout_cities': sorted(str(c) for c in np.unique(hold_cities)),
     }
     with open(MODELS_DIR / 'model_metadata.json', 'w') as f:
         json.dump(meta, f, indent=2)
