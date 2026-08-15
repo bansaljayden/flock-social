@@ -1,17 +1,40 @@
 import React, { useEffect, useMemo, useRef, useState, useCallback } from 'react';
+import Icons from '../components/ui/Icons';
 import './GuestInvite.css';
 
 const API = process.env.REACT_APP_API_URL || 'https://flock-app-production.up.railway.app';
 
-// Guest invite page (/i/:token). The cold-start growth surface: someone who has
-// never heard of Flock opens this in Safari on a phone, understands it, RSVPs,
-// and votes WITHOUT an account. The account ask comes after the value, never
-// in front of it.
+// ---------------------------------------------------------------------------
+// GUEST INVITE (/i/:token) — the growth channel's entire first impression.
 //
-// Rules this page is held to (SLOP-AUDIT.md): no em dashes, no claim of a
-// feature that does not ship, no dead buttons, nothing that only works on
-// hover, 320px with zero horizontal overflow, and every failure says something
-// a person would say.
+// THE JOB, stated as the person doing it: a link lands in a group chat. They
+// open it on a phone, on data, having never heard of Flock, and inside about
+// five seconds they decide whether these people and this plan are worth
+// tapping into. Three things answer that, and the page is those three things:
+//
+//   1. THE PLAN.    What it is, where, when. Two ruled rows under a headline.
+//   2. THE ROSTER.  Who is going, who is not, and who has not said. Per person,
+//                   by name, because the decision is about people.
+//   3. THE WAY IN.  One unmistakable primary action that puts them in the chat.
+//
+// Anything that is not one of those three had to earn its place. What was cut
+// in the 2026-08-14 rebuild: a "What Flock is" prose section (its one useful
+// sentence moved into the join band), a duplicated going-count, and the
+// equal-weight RSVP button row that used to compete with the primary action.
+//
+// WHAT JOINING MEANS, AND WHY GUESTS STILL CANNOT TEXT. Joining is a real
+// account and real membership (POST /api/guest/:token/join). Guest RSVP stays
+// as the quieter second path for someone who will not make an account, and it
+// deliberately does NOT reach the chat: a guest has no age gate, no account to
+// suspend and no ban to enforce, so unauthenticated posting would put
+// unmoderated content on a public link. The page says that plainly rather than
+// implying the guest path is the same thing in fewer steps.
+//
+// Rules this page is held to (SLOP-AUDIT.md): no em dashes, no pill badge over
+// the headline, no gradients, no icon-in-rounded-square tiles, no card stack,
+// no scroll reveals, no claim of a feature that does not ship, no dead buttons,
+// nothing that only works on hover, 320px with zero horizontal overflow, and
+// every failure says something a person would say.
 //
 // Server contract lives in backend/routes/guest.js. Every branch below maps to
 // something that route actually returns:
@@ -19,16 +42,39 @@ const API = process.env.REACT_APP_API_URL || 'https://flock-app-production.up.ra
 //   POST /api/guest/:token/rsvp     400 bad name/status, 403 taken down,
 //                                   404 link died mid-session, 429 capped
 //   POST /api/guest/:token/vote     400 unknown venue, 403 not RSVPed, 404, 429
+//   POST /api/guest/:token/join     authenticated; the app redeems it, not this
+//                                   page (services/inviteHandoff.js)
+// ---------------------------------------------------------------------------
 
-// Matches the server's param('token').isLength({ min: 8, max: 20 }). Checking
-// it here means a truncated paste gets an honest answer with no round trip.
+// Matches the server's param('token').isLength({ min: 8, max: 64 }) in
+// backend/routes/guest.js. Checking it here means a truncated paste gets an
+// honest answer with no round trip.
+//
+// THIS WAS 20, AND 20 WAS A LIVE BUG. The token generator was widened to 24
+// characters (LINK_TOKEN_LENGTH, ~138 bits) and the column to VARCHAR(64), so
+// every freshly minted invite link was 24 characters long and this page
+// answered every one of them with "That link isn't complete" before it ever
+// asked the server. The only links that still worked were the legacy 12-char
+// ones. Pinned against the server's bound, in a comment, so the next widening
+// cannot quietly do it again.
 const TOKEN_MIN = 8;
-const TOKEN_MAX = 20;
+const TOKEN_MAX = 64;
 
 // An event is treated as over six hours past its start time. Shorter than that
 // and the night is probably still going, which is exactly when a late invite
 // gets forwarded.
 const OVER_AFTER_MS = 6 * 60 * 60 * 1000;
+
+// The longest flock name that still fits on one line inside the join button at
+// 320px, measured in a real Chromium against the production build rather than
+// guessed: `Join "..."` adds three characters, and the button's inner width
+// there is 252px at 16.5px/800.
+const JOIN_NAME_MAX = 18;
+
+// A roster is a list of people, not a directory. The server caps at 60; a
+// phone screen stops being scannable long before that, so the rest becomes one
+// honest line instead of an endless column.
+const ROSTER_SHOWN = 14;
 
 // Escaped rather than literal so the source file stays pure ASCII and cannot
 // pick up mojibake from a tool that guesses the encoding wrong.
@@ -65,6 +111,29 @@ const clearStore = (key) => {
   try { window.localStorage.removeItem(key); } catch { /* see above */ }
 };
 
+// The invite token, handed to the app so it survives signup, login, the Google
+// popup and the native Sign in with Apple sheet. Written with the same key and
+// the same shape services/inviteHandoff.js reads, and inlined here rather than
+// imported because that module pulls in the whole REST client, which this page
+// deliberately does not ship (it talks to three endpoints with bare fetch).
+const HANDOFF_KEY = 'flock_pending_invite';
+
+const stashInvite = (token, flockName) => {
+  try {
+    window.localStorage.setItem(HANDOFF_KEY, JSON.stringify({
+      token,
+      at: Date.now(),
+      flockName: flockName ? String(flockName).slice(0, 80) : null,
+    }));
+    return true;
+  } catch {
+    // Storage is off. The account still gets made, they just land on the home
+    // screen instead of in this flock, which is why the button copy below
+    // promises the chat and not "instantly".
+    return false;
+  }
+};
+
 const parseWhen = (ts) => {
   if (!ts) return null;
   const d = new Date(ts);
@@ -98,6 +167,15 @@ const failureText = (status, serverText, fallback, host) => {
   return serverText || fallback;
 };
 
+// The three answers, in one table, so the icon, the word and the row's weight
+// can never drift apart. Type is carried by an icon AND a word AND the row's
+// own contrast, never by colour alone (SLOP-AUDIT section N5).
+const ANSWERS = {
+  in: { word: 'Going', glyph: 'check', tone: 'yes' },
+  out: { word: 'Out', glyph: 'x', tone: 'no' },
+  none: { word: 'No answer', glyph: 'clock', tone: 'quiet' },
+};
+
 // Module scope, not a closure inside the component. Declared inside, it would
 // be a brand new component type on every render, so React would unmount and
 // remount the whole page on each keystroke and the name field would lose focus
@@ -124,17 +202,38 @@ function Feedback({ where, feedback }) {
   );
 }
 
+// The letterhead. The circular mark is the actual app icon, not a stand-in:
+// somebody opening an unfamiliar link is entitled to see whose product this is
+// before they read anything else.
 function Shell({ children }) {
   return (
     <main className="gi">
       <div className="gi-wrap">
         <p className="gi-brand">
-          <a className="gi-mark" href="/">Flock</a>
+          <a className="gi-mark" href="/">
+            <img src="/logo192.png" width="24" height="24" alt="" aria-hidden="true" />
+            Flock
+          </a>
           <span className="gi-brand-line">Where a group picks the place and the time.</span>
         </p>
         {children}
       </div>
     </main>
+  );
+}
+
+// One ruled row of the plan rail. Label column is fixed so the two values line
+// up on a single vertical edge, which is the whole reason this reads faster
+// than a paragraph.
+function Fact({ glyph, label, children }) {
+  return (
+    <div className="gi-fact">
+      <span className="gi-fact-k">
+        {Icons[glyph]('var(--gi-accent)', 13)}
+        {label}
+      </span>
+      <span className="gi-fact-v">{children}</span>
+    </div>
   );
 }
 
@@ -221,7 +320,7 @@ export default function GuestInvite() {
   //
   // Moving focus to the heading covers both: it is announced, and Tab resumes
   // from the message rather than from nowhere. Deliberately NOT done on the
-  // first render — stealing focus from someone who just opened a link is the
+  // first render: stealing focus from someone who just opened a link is the
   // bug this is meant to avoid, not a fix for it.
   useEffect(() => {
     const changed = lastPhase.current !== null && lastPhase.current !== phase;
@@ -262,6 +361,35 @@ export default function GuestInvite() {
     return rows.sort((a, b) => b.votes - a.votes);
   }, [data, flock]);
 
+  // The roster, defended against a payload that is not the shape it should be.
+  // This is an unauthenticated page rendering names it did not choose, and the
+  // server is already the only thing that decides what crosses; the filtering
+  // here is about never rendering `undefined` at somebody, not about trust.
+  // The frontend deploys to Vercel and the backend to Railway, separately, so
+  // there is always a window where one is newer than the other. A payload with
+  // no `people` at all is an OLD SERVER, and it is not the same fact as "nobody
+  // has answered": claiming an empty roster there would be the page inventing a
+  // fact in the one direction that discourages the reader. `going` has been in
+  // the payload since long before the roster and still answers "how many".
+  const hasRoster = !!(data && Array.isArray(data.people));
+  const people = useMemo(() => {
+    const rows = (data && Array.isArray(data.people) ? data.people : [])
+      .filter((p) => p && typeof p.name === 'string' && p.name.trim())
+      .map((p) => ({
+        name: p.name.trim(),
+        rsvp: ANSWERS[p.rsvp] ? p.rsvp : 'none',
+        isGuest: p.kind === 'guest',
+      }));
+    const RANK = { in: 0, out: 1, none: 2 };
+    return rows.sort((a, b) => RANK[a.rsvp] - RANK[b.rsvp]);
+  }, [data]);
+
+  const tally = useMemo(() => {
+    const t = { in: 0, out: 0, none: 0 };
+    for (const p of people) t[p.rsvp] += 1;
+    return t;
+  }, [people]);
+
   const topVotes = venues.reduce((m, v) => Math.max(m, v.votes), 0);
   const rsvpStatus = pendingRsvp || (guest && guest.status) || null;
   const answered = !!(guest && guest.guestToken);
@@ -288,6 +416,20 @@ export default function GuestInvite() {
     // carries aria-describedby="gi-problem-rsvp", so landing on it reads the
     // complaint out as the field's description rather than racing the alert.
     setTimeout(() => nameRef.current && nameRef.current.focus(), 0);
+  };
+
+  // THE PRIMARY ACTION. Stash the token, then hand the browser to the app's
+  // signup entry. index.js routes /signup into App.js, which opens on the
+  // create-account screen; App.js redeems the stash the moment a session
+  // exists and opens this flock's chat (services/inviteHandoff.js).
+  //
+  // A real navigation, not a fetch: the two live in different entry points and
+  // the app has to boot. window.location.assign rather than an <a href> is
+  // deliberate, because the write has to happen first and a plain link would
+  // race it.
+  const goJoin = (where) => {
+    stashInvite(token, flockName);
+    window.location.assign(where);
   };
 
   const submitRsvp = async (status) => {
@@ -425,9 +567,9 @@ export default function GuestInvite() {
         <p className="gi-sr" role="status">Loading the plan.</p>
         <span className="gi-skel gi-skel-h1" />
         <span className="gi-skel gi-skel-meta" />
+        <span className="gi-skel gi-skel-row" />
+        <span className="gi-skel gi-skel-row" />
         <span className="gi-skel gi-skel-block" />
-        <span className="gi-skel gi-skel-row" />
-        <span className="gi-skel gi-skel-row" />
       </Shell>
     );
   }
@@ -477,7 +619,7 @@ export default function GuestInvite() {
           <p>{copy.help}</p>
           {copy.retry && (
             <p className="gi-row">
-              <button type="button" className="gi-btn gi-btn-primary" onClick={() => load({ showLoading: true })}>
+              <button type="button" className="gi-btn gi-btn-strong" onClick={() => load({ showLoading: true })}>
                 Try again
               </button>
             </p>
@@ -499,21 +641,38 @@ export default function GuestInvite() {
   const when = whenLabel(eventDate);
   const going = Number(data && data.going) || 0;
   const showNameField = !guest || editingName;
-
-  const metaBits = [];
-  // event_time is nullable, and a plan with no time yet is common early on.
-  // Saying so beats leaving a blank where the date should be.
-  metaBits.push(when || 'time not set yet');
-  if (going > 0) metaBits.push(`${going} going`);
+  const shown = people.slice(0, ROSTER_SHOWN);
+  const hidden = people.length - shown.length;
 
   return (
     <Shell>
       <header className="gi-header">
+        {/* An eyebrow, not a badge: no pill, no fill, no border (SLOP-AUDIT
+            A4/H20). It names the sender before the plan, because "who sent me
+            this" is the first question an unfamiliar link raises. */}
+        <p className="gi-eyebrow">{host ? `${host} invited you to` : 'You are invited to'}</p>
         <h1>{flockName || 'A plan with friends'}</h1>
-        <p className="gi-meta">
-          <strong>{host || 'Someone'}</strong> invited you
-          {metaBits.length > 0 ? ` ${DOT} ${metaBits.join(` ${DOT} `)}` : ''}
-        </p>
+
+        <div className="gi-facts">
+          <Fact glyph="calendar" label="When">
+            {when || 'Not set yet'}
+          </Fact>
+          <Fact glyph="mapPin" label="Where">
+            {settled && flock.chosenVenue
+              ? flock.chosenVenue
+              : flock.chosenVenue
+                // A host can set a venue at creation, before a single vote
+                // exists, so an unconfirmed one is a proposal and is named as
+                // one. Past tense once the plan is over: "up for a vote" about
+                // a night that already happened is nonsense.
+                ? `${flock.chosenVenue}${closed ? '' : ', if the vote holds'}`
+                : closed
+                  ? 'Never settled'
+                  : venues.length > 0
+                    ? `Up for a vote, ${venues.length} ${venues.length === 1 ? 'place' : 'places'}`
+                    : 'Not decided yet'}
+          </Fact>
+        </div>
       </header>
 
       {closed && (
@@ -527,16 +686,136 @@ export default function GuestInvite() {
         </div>
       )}
 
+      {/* ------------------------------------------------------------ roster */}
+      <section className="gi-sec" aria-labelledby="gi-who-h">
+        {/* Past tense once it is over. "Who is coming" over a plan that was
+            called off last week is the page not reading its own data. */}
+        <h2 id="gi-who-h">{closed ? 'Who was coming' : 'Who is coming'}</h2>
+
+        {people.length === 0 ? (
+          <p className="gi-sub">
+            {!hasRoster && going > 0
+              ? `${going} ${going === 1 ? 'person is' : 'people are'} in so far.`
+              : closed
+                ? 'Nobody answered this one.'
+                : 'Nobody has answered yet. You would be the first.'}
+          </p>
+        ) : (
+          <>
+            {/* Counts AND legend in one strip. Repeating the answer word on
+                every row put a grey column of GOING / GOING / GOING down the
+                right of the list, which is noise: the count is the one-second
+                read, and once the strip says which glyph means which answer,
+                the rows only need the glyph. Nothing here is carried by tint,
+                which is the rule the repeated word was there to satisfy. */}
+            <div className="gi-tally">
+              {[['in', tally.in], ['out', tally.out], ['none', tally.none]].map(([key, n]) => (
+                <p className="gi-tally-cell" key={key}>
+                  <span className="gi-tally-n">{n}</span>
+                  <span className="gi-tally-k">
+                    {Icons[ANSWERS[key].glyph](key === 'in' ? 'var(--gi-accent)' : 'var(--gi-ink-3)', 12)}
+                    {ANSWERS[key].word}
+                  </span>
+                </p>
+              ))}
+            </div>
+
+            <ul className="gi-who">
+              {shown.map((p, i) => {
+                const a = ANSWERS[p.rsvp];
+                return (
+                  <li className={`gi-who-row gi-tone-${a.tone}`} key={`${p.name}-${i}`}>
+                    <span className="gi-who-mark">
+                      {Icons[a.glyph](a.tone === 'yes' ? 'var(--gi-accent)' : 'var(--gi-ink-3)', 14)}
+                    </span>
+                    <span className="gi-who-name">{p.name}</span>
+                    {/* Somebody who answered the link but has no account. Worth
+                        saying, because it is the difference between the people
+                        in the chat and the people who only answered. */}
+                    {p.isGuest && <span className="gi-who-kind">guest</span>}
+                    {/* The glyph is decoration, so the answer is spelled out
+                        here for anyone who is not looking at the legend. */}
+                    <span className="gi-sr">{a.word}</span>
+                  </li>
+                );
+              })}
+            </ul>
+            {hidden > 0 && (
+              <p className="gi-sub gi-who-more">
+                and {hidden} more {hidden === 1 ? 'person' : 'people'} on the plan.
+              </p>
+            )}
+          </>
+        )}
+      </section>
+
+      {/* -------------------------------------------------------- the way in */}
+      {!closed && (
+        <section className="gi-join" aria-labelledby="gi-join-h">
+          <div className="gi-join-body">
+            <h2 id="gi-join-h">Get in the chat</h2>
+            <p className="gi-join-lead">
+              Making an account puts you in this group chat, on the vote, and on
+              the plan when it moves. It is free and it takes a minute.
+            </p>
+            <button type="button" className="gi-join-btn" onClick={() => goJoin('/signup')}>
+              {/* Naming the plan makes the button specific, which is worth
+                  having. It is only worth having while it FITS: flocks.name is
+                  long enough that a 60-character title turned the one primary
+                  action on the page into a five-line block at 320px, which is
+                  the opposite of unmistakable. Past the bound the headline two
+                  inches above already says which flock this is. */}
+              {flockName && flockName.length <= JOIN_NAME_MAX
+                ? `Join "${flockName}"`
+                : 'Join this flock'}
+            </button>
+            <p className="gi-join-alt">
+              Already have Flock?{' '}
+              <button type="button" className="gi-join-link" onClick={() => goJoin('/app')}>
+                Sign in and join
+              </button>
+            </p>
+          </div>
+          {/* The brand bird, and the one place on this page it earns its keep:
+              a stranger is being asked to make an account, and this is the
+              product's face at the moment of the ask.
+
+              THE WARM BIRD, NOT THE COBALT ONE, for a reason that is not
+              preference: this band is navy in both themes, and cobalt Birdie is
+              navy plumage. He would read as a smudge on it. The warm bird is
+              sand against the same navy in light mode and against #1d293d in
+              dark, so one asset carries both themes.
+              A COMPOSITE, because the body file's own head is deliberately soft
+              (the sharp turning head normally sits over it) and a bare body is
+              a blurry-faced bird. Same two-layer construction BirdieStill uses,
+              written out here rather than imported: this page ships its own
+              tiny chunk and must not pull in the rAF mascot to draw a still
+              one. Both layers are 166x166 on an identical canvas, so they line
+              up with no offset maths. 10.5 KB of WebP for the pair, lazy and
+              low priority, so it never delays the plan. */}
+          <span className="gi-join-bird" aria-hidden="true">
+            <picture>
+              <source type="image/webp" srcSet="/birdie/warm-bird-400.webp" />
+              <img src="/birdie/warm-bird-400.png" alt="" width="166" height="166" loading="lazy" decoding="async" fetchPriority="low" />
+            </picture>
+            <picture>
+              <source type="image/webp" srcSet="/birdie/warm-bird-head-400.webp" />
+              <img src="/birdie/warm-bird-head-400.png" alt="" width="166" height="166" loading="lazy" decoding="async" fetchPriority="low" />
+            </picture>
+          </span>
+        </section>
+      )}
+
+      {/* ------------------------------------------------- the quieter path */}
       {!closed && (
         <section className="gi-sec" aria-labelledby="gi-rsvp-h">
-          <h2 id="gi-rsvp-h">Are you coming?</h2>
+          <h2 id="gi-rsvp-h">Or just answer</h2>
           <p className="gi-sub">
-            Answer right here. You do not need an account.
+            No account needed. Your name and your answer show up here and in
+            their app. It does not put you in the chat.
           </p>
 
-          <form
-            onSubmit={(e) => { e.preventDefault(); submitRsvp('in'); }}
-          >
+          <form onSubmit={(e) => { e.preventDefault(); submitRsvp('in'); }}>
             {showNameField ? (
               <span className="gi-field">
                 <label className="gi-label" htmlFor="gi-name">Your name</label>
@@ -572,10 +851,14 @@ export default function GuestInvite() {
               </p>
             )}
 
+            {/* Both outline, never filled: the join band above is the only
+                filled control on this page until an answer is given, which is
+                what makes it unmistakable. A pressed answer fills in the
+                accent, so the state is still obvious once it exists. */}
             <div className="gi-row">
               <button
                 type="submit"
-                className={rsvpStatus === 'in' ? 'gi-btn' : 'gi-btn gi-btn-primary'}
+                className="gi-btn"
                 aria-pressed={rsvpStatus === 'in'}
                 aria-disabled={busy !== null}
               >
@@ -605,19 +888,16 @@ export default function GuestInvite() {
         </section>
       )}
 
+      {/* ------------------------------------------------------------ venues */}
       <section className="gi-sec" aria-labelledby="gi-vote-h">
         <h2 id="gi-vote-h">Where should it be?</h2>
 
         {venues.length === 0 ? (
-          <div className="gi-empty">
-            <p>
-              {closed
-                ? 'No places were put up for a vote on this one.'
-                : answered
-                  ? 'Nobody has suggested a place yet. The group adds them in the app, and they show up here when they do. Your answer is saved either way.'
-                  : 'Nobody has suggested a place yet. The group adds them in the app, and they show up here when they do. You can still answer above.'}
-            </p>
-          </div>
+          <p className="gi-sub">
+            {closed
+              ? 'No places were put up for a vote on this one.'
+              : 'Nobody has suggested a place yet. The group adds them in the app, and they show up here when they do.'}
+          </p>
         ) : (
           <>
             <p className="gi-sub">
@@ -626,9 +906,6 @@ export default function GuestInvite() {
                 : canVote
                   ? 'Pick one. You can change it.'
                   : 'Answer above first, then you can vote.'}
-              {!closed && settled && flock.chosenVenue
-                ? ` They have settled on ${flock.chosenVenue} for now.`
-                : ''}
             </p>
             <ul className="gi-venues">
               {venues.map((v) => {
@@ -680,26 +957,6 @@ export default function GuestInvite() {
         )}
 
         <Feedback where="vote" feedback={feedback} />
-      </section>
-
-      <section className="gi-sec" aria-labelledby="gi-app-h">
-        <h2 id="gi-app-h">What Flock is</h2>
-        <p>
-          This plan was made in Flock. The app is where the rest of the night
-          runs: the group chat, how packed a place is before you leave, and the
-          bill split at the end.
-        </p>
-        <p>
-          An account is free.{' '}
-          {closed
-            ? ''
-            : answered
-              ? 'You did not need one for any of this, and you still do not. '
-              : 'You do not need one to answer above. '}
-          <a href="/signup">Create one</a> when you want to run a plan yourself.
-          Signing up will not pull this plan onto your account, so ask{' '}
-          {host || 'the host'} to add you if you want it on your phone.
-        </p>
       </section>
 
       <footer className="gi-footer">
