@@ -406,11 +406,24 @@ async function sendPushToUser(userId, title, body, data = {}) {
     // freshly registered device. Deleting by row id alone silently unsubscribes
     // that account instead, and the only symptom is a user who stops getting
     // notifications after a phone changes hands.
+    //
+    // BEST-EFFORT, never part of the delivery verdict. This DELETE used to sit
+    // bare inside the function's try, so a transient DB failure during CLEANUP
+    // fell through to the catch below and reported { sent: 0, failed: 0 } for
+    // a batch that had already been delivered. services/crowdAlerts.js releases
+    // its once-per-flock claim on that answer, which re-sent the same alert to
+    // every member who already had it on their lock screen. A prune that fails
+    // costs one wasted send attempt next time; a delivery report that lies
+    // costs a duplicate push.
     if (staleIds.length > 0) {
-      await pool.query(
-        'DELETE FROM device_tokens WHERE id = ANY($1) AND user_id = $2',
-        [staleIds, userId]
-      );
+      await pool
+        .query(
+          'DELETE FROM device_tokens WHERE id = ANY($1) AND user_id = $2',
+          [staleIds, userId]
+        )
+        .catch((pruneErr) => {
+          console.error('[Firebase] stale token prune failed (will retry on next send):', pruneErr.message);
+        });
     }
 
     return { sent, failed };
