@@ -124,6 +124,34 @@ async function fetchWeeklyForecast(venueName, venueAddress, existingVenueId) {
 // EVERY failure into null, so a BestTime outage or a dead key looked identical
 // to "venue has no live data" and collectRealtime kept hammering the API for
 // thousands of venues with no way to bail.
+//
+// ---------------------------------------------------------------------------
+// WHICH OF THE TWO NUMBERS IS AN OBSERVATION (round 19). This endpoint always
+// answers with a forecast and sometimes also with a live reading, and the ONLY
+// thing that separates them is the flag:
+//
+//   venue_forecasted_busyness       BestTime's own PREDICTION for this moment.
+//                                   Always present for an analysed venue. Not
+//                                   foot traffic; a model output.
+//   venue_live_busyness             the live reading — but ONLY when
+//                                   venue_live_busyness_available is true.
+//                                   When it is false this field still carries a
+//                                   number, and that number is the forecast
+//                                   again. It is an echo, not evidence.
+//   venue_live_busyness_available   the flag. This is the whole discriminator.
+//
+// So a caller must never infer "this is live" from `liveBusyness != null`.
+// `liveAvailable` is normalised to a strict boolean below precisely so that a
+// missing, null or malformed flag can only ever read as false: mislabelling a
+// vendor forecast as an observation trains it at full confidence, while the
+// opposite mistake only downweights a real observation. Classification itself
+// lives in collectRealtime.classifyReading(), which is the single place the
+// mapping is written and the place the tests pin.
+//
+// This matters because nothing in ml_training_data recorded the flag until
+// 2026-08-13, and all 457,402 realtime rows collected before then are
+// permanently 'unknown' as a result. See migration 025's header.
+// ---------------------------------------------------------------------------
 async function fetchLiveBusyness(venueId) {
   const apiKey = getKey();
   if (!apiKey) return null;
@@ -158,7 +186,10 @@ async function fetchLiveBusyness(venueId) {
     return {
       forecastedBusyness: data.analysis?.venue_forecasted_busyness ?? null,
       liveBusyness: data.analysis?.venue_live_busyness ?? null,
-      liveAvailable: data.analysis?.venue_live_busyness_available ?? false,
+      // `=== true`, not `?? false`: the previous form left any truthy
+      // non-boolean (the string "false" among them) reading as "live data
+      // available", which would stamp a vendor forecast as an observation.
+      liveAvailable: data.analysis?.venue_live_busyness_available === true,
       hour: data.analysis?.hour_analysis ?? null,
       venueOpen: data.analysis?.venue_open ?? null,
     };

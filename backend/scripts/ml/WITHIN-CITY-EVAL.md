@@ -409,3 +409,85 @@ FLOCK_TRAIN_DEVICE=cpu FLOCK_TRAIN_THREADS=12 python within_city_eval.py
 First run rebuilds the frame from `training_data.csv` (~33s) and performs four
 XGBoost fits (~40s each). Subsequent runs reuse the cached frame and
 predictions. Full numbers land in `<scratch>/results.json`.
+
+---
+
+## 9. Follow-up (2026-08-15): label provenance, answered
+
+Section 6 named the all-`unknown` provenance as "the single cheapest thing to
+fix" and section 7 as the one thing to spend engineering time on before any data
+purchase. It was chased. **The answer is not the one section 7 assumed, and the
+number it wanted cannot be produced from the corpus we have.**
+
+### The forecast-versus-observed split is NOT measurable on the existing corpus
+
+Measured read-only against production, 2026-08-15:
+
+| | |
+|---|---|
+| realtime rows | 457,402, **`label_source` NULL on every one** |
+| the same rows' `observed_date` | NULL on every one |
+| the same rows' `hour_axis` | NULL on every one |
+| the same rows' `besttime_epoch` | NULL on every one |
+| collection window | 2026-03-10 to **2026-05-18, then it stopped** |
+
+Nothing in the 41 columns records `venue_live_busyness_available`, which is the
+only thing that separates the two. Two candidate discriminators were tested and
+both are dead:
+
+1. **Value grid.** If live readings and forecasts were quantised differently, a
+   value off one grid would name itself. They are not. All 457,402 realtime
+   values *and* all 3,454,955 weekly values are multiples of 5, on the same
+   21-point grid, in every month of collection.
+2. **Echo of the weekly forecast.** A forecast-sourced realtime row should equal
+   the venue's weekly forecast for the same venue-local slot. It does on
+   25,158 / 446,039 rows = **5.64%**. The identical test aimed at a deliberately
+   **wrong** slot — the null control — scores 5.02% (dow+3), 5.07% (dow+4),
+   6.31% (hour+1), 6.89% (hour+2). Two of the four wrong answers score *higher*
+   than the right one. The equality is chance on a 21-point grid.
+
+So no backfill was written and none should be. The rows stay `unknown`, and
+`unknown` keeps meaning what it says. **Section 6's second suspect — that an
+unknown share of the residual is disagreement with a vendor's model rather than
+with reality — is therefore permanently untestable on this corpus.** It can only
+be answered by collecting again, and the collector now records what is needed.
+
+### Section 7's prescription was aimed at the wrong defect
+
+It says to fix `collectRealtime.js` "so `label_source` is actually written".
+The collector has written it since round 10; the corpus predates the column by
+three months. The real defects were two, and both are fixed:
+
+* `label_source` existed **only** because the collector ran
+  `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` on first use. On any database it
+  had not run against, `export_training_data.js`'s optional-column probe selects
+  `NULL AS label_source` and exports every realtime row as `unknown` with no
+  error and no log line. Migration **025** puts the column in the chain.
+* Nothing **verified** the write. The run now reads back the rows it committed
+  and refuses — loudly, exit 1 — if any carries a NULL `label_source`. A
+  collection that cannot say what its labels are is worse than no collection,
+  because it looks like evidence.
+
+`vendor_forecast_pct` is also added: BestTime hands us its forecast in the same
+response as the live reading and the collector was discarding it. Stored, a
+`live` label becomes falsifiable rather than an unbacked assertion, and the
+distance between the label and the vendor's own prediction — the quantity this
+document wanted and could not get — becomes measurable on every future row at no
+extra API call. It is **not** in the 42-column export contract yet; wiring it
+into `HEADER` and `prepare_features.py` is a separate change.
+
+### Consequence for section 7's spending advice
+
+Unchanged, and slightly firmer. "Would not buy: more observations on venues
+already in the corpus" was already refuted twice on measurement. It is now also
+true that **no purchase of BestTime rows can be evaluated against the existing
+corpus**, because we cannot say what fraction of that corpus is the vendor's own
+forecast. Any new collection should run for a period long enough to measure the
+live share directly before a purchase is priced.
+
+Migration 025 is **written and tested, not deployed.** It is catalog-only DDL:
+two nullable `ADD COLUMN`s and one `CHECK ... NOT VALID`, no backfill, no table
+scan. Measured on the embedded-Postgres harness at two corpus sizes — **3 ms on
+5 rows, 17 ms on 1,000,005 rows** — so it is O(1) in the row count, unlike 023
+(9 minutes of closed port) and 024 (~2). `__tests__/mlLabelProvenance.test.js`
+fails if that ever stops being true.
