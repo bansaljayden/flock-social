@@ -1,0 +1,182 @@
+/* SOS EMERGENCY SHEET — scoped es- classes, used only by EmergencySheet.js.
+   Every surface and text color is a theme token from index.css, so light and
+   dark parity is automatic. The two literal colors are deliberate and theme-
+   independent: #b91c1c is the app's destructive red (same as .glass-danger,
+   6.47:1 with white on every surface) and #2d5a87 is brand steel navy.
+
+   Safety-critical surface: boring and instantly readable. No gradients, no
+   glass, no decorative motion — one 200ms settle on open, collapsed by the
+   global prefers-reduced-motion rule and the scoped one below. */
+
+.es-backdrop {
+  position: fixed;
+  inset: 0;
+  /* Above the app shell (modals sit at 50) and below the toast layer (60):
+     an error toast during a failed send must stay visible over the sheet. */
+  z-index: 55;
+  background: var(--modal-backdrop);
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  animation: es-fade 150ms ease-out;
+}
+
+.es-sheet {
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 440px;
+  background: var(--bg-card-solid);
+  border-radius: 20px 20px 0 0;
+  padding: 22px 20px calc(16px + var(--safe-bottom));
+  animation: es-rise 200ms cubic-bezier(0.22, 1, 0.36, 1);
+  outline: none;
+}
+
+.es-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  margin: 0 0 18px;
+}
+
+.es-siren {
+  display: inline-flex;
+  flex-shrink: 0;
+  padding-top: 1px;
+  color: var(--accent-red-text);
+}
+
+.es-title {
+  margin: 0;
+  font-size: var(--t-title);
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  color: var(--text-primary);
+}
+
+.es-desc {
+  margin: 2px 0 0;
+  font-size: var(--t-body);
+  line-height: 1.45;
+  color: var(--text-secondary);
+}
+
+.es-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+/* Shared control chassis. 16px floor on every control label (iOS focus-zoom
+   doctrine applied to buttons too), 44px+ tap targets throughout. */
+.es-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  border: none;
+  border-radius: 14px;
+  background: none;
+  font-family: inherit;
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 1.2;
+  text-decoration: none;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  transition: transform 120ms ease, filter 120ms ease;
+}
+
+.es-btn:active {
+  transform: scale(0.98);
+}
+
+.es-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+  transform: none;
+}
+
+/* 1. Call 911 — the unmistakable primary: tallest, darkest, boldest. */
+.es-call {
+  min-height: 56px;
+  background: #b91c1c;
+  color: #ffffff;
+  font-size: 17px;
+  font-weight: 700;
+}
+
+.es-call:active {
+  filter: brightness(0.92);
+}
+
+/* Live second action only when there is nobody to alert yet. */
+.es-setup {
+  min-height: 50px;
+  background: #2d5a87;
+  color: #ffffff;
+}
+
+/* 2. Alert Contacts — red-tinted secondary; full red only while armed. */
+.es-alert {
+  min-height: 52px;
+  background: var(--accent-red-bg);
+  color: var(--accent-red-text);
+  font-weight: 700;
+}
+
+.es-alert.es-armed {
+  background: #b91c1c;
+  color: #ffffff;
+}
+
+/* 3. Share Location — neutral outline tertiary. */
+.es-share {
+  min-height: 52px;
+  border: 1.5px solid var(--border-mid);
+  background: transparent;
+  color: var(--text-primary);
+}
+
+/* Dead-because-no-contacts is a different statement than busy-sending:
+   the control is inert, not in flight, so it goes flat gray at full
+   opacity instead of a washed-out red that still promises action. */
+.es-btn.es-dead:disabled {
+  background: var(--bg-tertiary);
+  border-color: var(--border-default);
+  color: var(--text-tertiary);
+  opacity: 1;
+}
+
+.es-note {
+  margin: 0;
+  text-align: center;
+  font-size: var(--t-label);
+  color: var(--text-tertiary);
+}
+
+/* 4. Cancel — plain, but still a 44px+ target. */
+.es-cancel {
+  min-height: 44px;
+  color: var(--text-secondary);
+}
+
+@keyframes es-fade {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes es-rise {
+  from { transform: translateY(24px); }
+  to { transform: translateY(0); }
+}
+
+/* index.css collapses all animation globally under reduced motion; this
+   scoped rule keeps the sheet correct even if that global rule ever moves. */
+@media (prefers-reduced-motion: reduce) {
+  .es-backdrop,
+  .es-sheet {
+    animation: none;
+  }
+}
