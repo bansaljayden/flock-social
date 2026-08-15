@@ -360,25 +360,31 @@ FSQ/Overture instead; see vault note on the baseline provenance question).
    (category, dow, hour) to find the cell, then on `category_baseline` inside
    it, and reads that city's mean level straight off the feature.
 
-   Measured on a synthetic fixture (10 training cities, 3 never-seen holdout
+   Measured on a synthetic fixture over three independent draws (10 training
    cities, `GroupKFold` on city, identical hyperparameters, delta label whose
-   only learnable signal is a per-city deviation). Optimism = pristine-holdout
-   MAE minus the reported cross-validated MAE:
+   only learnable signal is a per-city deviation, so an honest model cannot
+   beat the predict-zero floor on a city it never saw). The per-fold refit is
+   the reference: its final model is the same artifact the whole-frame fit
+   produces, and on a pristine 3-city holdout the two score identically, so any
+   difference in the *reported* CV number is reporting, not model quality.
 
-   | category-baseline regime | reported CV MAE | true holdout MAE | optimism |
-   |---|---|---|---|
-   | whole-frame fit (what ships today) | 8.87 | 9.20 | **+0.34** |
-   | leave-one-city-out computed once | 6.20 | 9.02 | **+2.82** |
-   | K-fold block encoding, K=2 / 3 / 5 | 9.30 / 8.49 / 8.89 | 9.09 / 9.11 / 8.96 | −0.21 / **+0.63** / +0.07 |
-   | per-fold refit from the fold's own rows | 9.25 | 9.20 | **−0.04** |
+   | category-baseline regime | reported MAE below the honest reference | reported within-10 above it |
+   |---|---|---|
+   | whole-frame fit (what ships today) | 0.21 – 0.42 | 1.4 – 2.1 pp |
+   | leave-one-city-out computed once | **1.52 – 3.05** | **10.4 – 20.5 pp** |
+   | K-fold block encoding, K = 2 / 3 / 5 | −0.05 – 0.80, no ordering in K | 0.9 – 5.0 pp |
+   | per-fold refit from the fold's own rows | 0 by construction | 0 by construction |
 
-   Block encoding is not even monotone in K: at K=3 it is worse than doing
-   nothing. Only the per-fold refit is reliably honest, and it is honest for a
-   structural reason — inside a fold the map is one value per cell, shared by
-   that fold's training and validation rows alike, so there is no city-varying
-   residual left to invert. That property is what makes it correct, and it is
-   why the fix cannot live in `prepare_features.py`, which emits one feature
-   matrix and has no folds.
+   Within-10 matters here beyond the table: `mlPredictor.js` publishes a
+   within-N figure as the venue card's confidence, so the compute-once
+   formulation would move the number shown to users by 10 to 20 points on the
+   strength of a leak. Block encoding is not even monotone in K — at K=3 on one
+   draw it is worse than doing nothing. Only the per-fold refit is honest, and
+   it is honest for a structural reason: inside a fold the map is one value per
+   cell, shared by that fold's training and validation rows alike, so there is
+   no city-varying residual left to invert. That property is what makes it
+   correct, and it is why the fix cannot live in `prepare_features.py`, which
+   emits one feature matrix and has no folds.
 
    What is already done, so this lever is small: `features_train.pkl` carries
    `category_cell_stats` — per-city label sums and counts for every coarse and
@@ -589,3 +595,22 @@ writes them; 023's CHECK constraint makes an undeclared weekly row impossible,
 and `buildBaselines.js` refuses on a mixed-axis corpus). `database/ml-schema.sql`
 and `initTables.js` do not declare either index — same standing caveat as
 `hour_axis`: migrations are the source of truth.
+
+---
+
+## Measured results, 2026-08-15 retrain
+
+Full numbers, method and caveats: **`MODEL-METRICS.md`** in this directory.
+Read it before quoting any accuracy figure. Short version:
+
+- Challenger beats the incumbent (MAE 29.42 vs 30.77) and beats baseline-alone
+  (31.48) on the served population: live rows, usable baseline, holdout cities.
+- Ship gate says DO NOT SHIP on one criterion only: an absolute floor of 29.2%
+  realtime within-10, which the challenger misses at 20.6%.
+- **That floor's constant is stale.** It was derived before the clock axis was
+  corrected. The incumbent, measured honestly on the same rows, scores 19.3%.
+  Re-derive the floor from measurement; do not lower it to admit a model.
+- The 85% within-10 figure reported by training is a blend dominated by rows
+  whose label equals the baseline by construction. It is not an accuracy claim,
+  and `mlPredictor.js` currently publishes that family of number to users as
+  venue-card confidence.
