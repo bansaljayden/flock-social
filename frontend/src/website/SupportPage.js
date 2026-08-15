@@ -4,10 +4,11 @@ import SiteFooter from './SiteFooter';
 
 const SUPPORT_EMAIL = 'social@flockcorp.com';
 
-// See the same constant in AboutPage.js for the measurement. Short version:
-// PrivacyPolicy.css's --pp-ink-3 (#6b7a8c) measures 3.75:1 on the cream paper,
-// not the 4.6:1 its comment claims, and it carries the back link, the standfirst
-// and the footer links here. --pp-ink-2 is 8.14:1 light and 10.12:1 dark.
+// See the same constant in AboutPage.js for the history. Short version: this
+// override predates the fix to --pp-ink-3 (once #6b7a8c at a failing 3.75:1,
+// now #586473 at 5.14:1 in PrivacyPolicy.css). It stays because
+// marketingSiteAccessibility.test.js pins it by source scan and --pp-ink-2
+// (8.14:1 light, 10.12:1 dark) reads better for these strings anyway.
 const READABLE = { color: 'var(--pp-ink-2)' };
 
 // PER-ROUTE <title> AND <meta name="description">.

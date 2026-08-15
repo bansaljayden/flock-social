@@ -724,6 +724,10 @@ export default function LiveDemo() {
     // A button that silently does nothing is a rejection reason on its own
     // (SLOP-AUDIT K1). Every branch here ends in either a map move or a
     // sentence next to the button.
+    // The real double-press gate. The button below says aria-disabled while
+    // locating instead of the disabled attribute, so this guard is what
+    // actually stops a second request.
+    if (locating) return;
     if (!navigator.geolocation) {
       setNotice('This browser will not share a location. Search a city or a kind of place instead.');
       return;
@@ -825,7 +829,13 @@ export default function LiveDemo() {
           className="lpd-locate"
           type="button"
           onClick={useMyLocation}
-          disabled={locating}
+          // aria-disabled, not disabled, same rule as the waitlist submit and
+          // the guest invite buttons: the disabled attribute on the control
+          // you just pressed hands browser focus to <body>, so a keyboard user
+          // waiting on the geolocation permission prompt lost their place.
+          // useMyLocation returns early while locating, and the stylesheet's
+          // [aria-disabled='true'] rule carries cursor and pointer-events.
+          aria-disabled={locating || undefined}
           // 44px is the touch floor; the stylesheet's padding lands this
           // control at 37px next to a 46px button.
           style={{ minHeight: 44, opacity: locating ? 0.6 : 1 }}
