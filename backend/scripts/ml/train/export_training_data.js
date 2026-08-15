@@ -85,6 +85,59 @@
 // whatsoever — not its own, not another date's — so on the population the model
 // actually serves there is now no label leakage at all. That is strictly
 // stronger than round 13, and both halves are pinned by the contract test.
+//
+// ---------------------------------------------------------------------------
+// ROUND 20: label_source AND vendor_forecast_pct ARE CARRIED, NOT FEATURISED
+//
+// Migration 025 put two columns on ml_training_data that nothing downstream
+// could see, because the export contract did not name them. They are named now,
+// and the contract is 44 columns. What they are for, and what they are NOT for:
+//
+//   label_source         the RAW column collectRealtime.js writes: 'live' or
+//                        'forecast', NULL on every one of the 457,402 rows
+//                        collected before 2026-08-15.
+//   vendor_forecast_pct  BestTime's own forecast for the SAME moment, handed to
+//                        us in the same response as the live reading and thrown
+//                        away until round 19. NULL on all 3,912,357 existing
+//                        rows. Costs no extra API call.
+//
+// label_provenance was already exported and is DERIVED from label_source (see
+// labelProvenance below: weekly rows are named by mode, an unrecognised or
+// absent source becomes 'unknown'). Carrying the raw column alongside the
+// derived one is not duplication — it is what makes the derivation checkable
+// from the CSV alone. prepare_features.py recomputes label_provenance from
+// (is_realtime, label_source) and refuses when the two disagree, so a masked or
+// out-of-domain value can no longer arrive as a silent 'unknown'.
+//
+// vendor_forecast_pct is what makes a 'live' label FALSIFIABLE. On a 'forecast'
+// row it equals busyness_pct by construction; on a 'live' row it is the
+// counterfactual, and the gap between them is the distance between our label and
+// a vendor's model of it — the quantity WITHIN-CITY-EVAL.md section 9 wanted and
+// could not produce.
+//
+// NEITHER IS A MODEL FEATURE, AND vendor_forecast_pct MUST NEVER BECOME ONE
+// NAIVELY. Two independent reasons, and the second is the hard one:
+//
+//   1. Both are empty on the whole corpus today, so a feature built from either
+//      would be a constant column — a dead slot, and the last run already
+//      carried 11 of 106. A NULL filled with 0 would be worse than dead: it
+//      asserts "BestTime forecast 0% busy" on 3.9M rows where the truth is that
+//      nobody asked.
+//   2. On a 'forecast' row vendor_forecast_pct IS the label. Feeding it in on
+//      the day the corpus does carry it would hand the model the answer on every
+//      forecast-sourced row — the same leakage class as popular_times and as the
+//      category baselines. If it is ever used it has to be as a residual, on a
+//      slice the model is not scored against, and that decision needs data that
+//      does not exist yet.
+//
+// So: exported, available, excluded from the feature set at both ends, and
+// reported on every run so the moment coverage stops being zero is visible.
+//
+// EMPTY IS NOT ZERO. Both columns are written as an EMPTY FIELD when the row
+// does not carry a value, and 0 is a legal vendor forecast (a venue nobody is
+// at). pandas reads the empty field as NaN and prepare_features.py never
+// fillna(0)s a carried column — only feature columns — so "we never asked" and
+// "the vendor said nobody is there" stay different facts all the way through.
 // ---------------------------------------------------------------------------
 
 const fs = require('fs');
@@ -192,6 +245,13 @@ function cityQuery(city, optional = {}) {
         -- in training — a vendor's prediction carrying more confidence than
         -- anything else in the corpus. label_source records the truth.
         ${has('label_source', 't.label_source')},
+        -- Round 20: BestTime's forecast for the same moment, stored by
+        -- collectRealtime.js on every realtime row whatever its label_source.
+        -- Carried to the CSV as-is; see the header block for why it is not a
+        -- feature. Absent on a database that has not applied migration 025, and
+        -- selecting a column that does not exist is a hard SQL error, so it is
+        -- probed like the other optionals rather than assumed.
+        ${has('vendor_forecast_pct', 't.vendor_forecast_pct')},
         t.collected_at,
         ${has('observed_date', 't.observed_date AS stored_observed_date', 'stored_observed_date')},
         t.busyness_pct,
@@ -252,6 +312,47 @@ function labelProvenance(row) {
   return 'unknown';
 }
 
+// Round 20: the RAW label_source column, passed through without laundering.
+//
+// labelProvenance() above MASKS: a weekly row reports 'weekly' whatever the
+// column says, and anything outside {live, forecast} reports 'unknown'. Both
+// masks are correct for the derived column and both destroy evidence, which is
+// why the raw one now travels beside it. A value outside the domain must reach
+// the CSV rather than be silently normalised here: migration 025's CHECK is
+// what stops one being written, and a row carrying one is proof that the CHECK
+// is not on the database this corpus came from. prepare_features.py raises on
+// it by name.
+//
+// NULL becomes the empty field — never a string 'null', never 'unknown'. The
+// 457,402 legacy rows are unrecoverable (migration 025's header proves it), and
+// an empty field is the only honest thing to write for them.
+function labelSource(row) {
+  const v = row.label_source;
+  if (v === null || v === undefined) return '';
+  return String(v);
+}
+
+// Round 20: BestTime's own forecast for the row's moment.
+//
+// The ONLY thing this function exists to guarantee is that a missing value and
+// a value of zero do not collapse into each other. 0 is a legal forecast — a
+// venue the vendor expects to be empty — and NULL means the collector never had
+// the number, which is true of every row in the corpus today. So NULL yields
+// the empty field and 0 yields '0'; a fillna(0) anywhere downstream would turn
+// 3.9 million "nobody asked" rows into 3.9 million "the vendor said empty".
+// A value that is not a number is NOT normalised to empty either. "The
+// collector never had a forecast" and "something wrote a value nothing can read"
+// are different problems with different fixes, and collapsing the second into
+// the first would hide it in the 3.9 million rows that are legitimately empty.
+// It is passed through so prepare_features.py's unparsable_vendor_forecast check
+// can name it. Neither end of this pipeline launders.
+function vendorForecastPct(row) {
+  const v = row.vendor_forecast_pct;
+  if (v === null || v === undefined || v === '') return '';
+  const n = Number(v);
+  return Number.isFinite(n) ? n : String(v);
+}
+
 function rowToCsv(row) {
   const types = row.google_types || [];
   return [
@@ -297,9 +398,27 @@ function rowToCsv(row) {
     row.avg_prediction_error,
     observedDate(row),
     labelProvenance(row),
+    labelSource(row),
+    vendorForecastPct(row),
   ].map(escapeCsv).join(',');
 }
 
+// The corpus contract, 44 columns, in exactly this order.
+//
+// prepare_features.py's EXPORT_COLUMNS is the same list and the two are pinned
+// against each other by __tests__/mlPipelineContracts.test.js and
+// __tests__/mlExportContracts.test.js. rowToCsv() above must emit one field per
+// entry here, in this order — a column added to one and forgotten in the other
+// shifts every field after it and still produces a file pandas will read.
+//
+// Round 20's two additions are APPENDED, deliberately. Every column an older
+// reader knows keeps its index, so the growth cannot silently re-point a
+// positional consumer; and a pre-round-20 CSV fails require_export_columns by
+// NAME rather than by arriving one field short somewhere in the middle.
+//
+// Keep this a flat array of single-quoted literals with no comments inside it:
+// the contract tests parse it out of the source text, and any other quoted
+// string between the brackets would be read as a column name.
 const HEADER = [
   'venue_id',
   'day_of_week', 'hour', 'month', 'season',
@@ -317,6 +436,7 @@ const HEADER = [
   'latitude', 'longitude',
   'avg_user_crowd', 'user_feedback_count', 'avg_prediction_error',
   'observed_date', 'label_provenance',
+  'label_source', 'vendor_forecast_pct',
 ].join(',');
 
 const UNDECLARED_WEEKLY_MESSAGE =
@@ -332,6 +452,8 @@ const OPTIONAL_COLUMNS = {
   label_source: 'collectRealtime.js writes it; without it every realtime label is "unknown"',
   observed_date: 'collectRealtime.js writes it; without it the date is derived from collected_at',
   hour_axis: 'migration 023 adds it; without it NO weekly row can declare its axis',
+  vendor_forecast_pct: 'migration 025 adds it; without it the vendor forecast column is empty '
+    + 'on every row and a "live" label cannot be checked against the counterfactual',
 };
 
 async function columnsPresent(db, table) {
@@ -379,7 +501,64 @@ async function preflight(db, log = console.log) {
       WHERE busyness_pct IS NOT NULL`
   );
 
-  return { optional, undeclaredWeekly, calendarGaps };
+  // Round 20 coverage census. Not a refusal and it must never become one: BOTH
+  // columns are empty on 100% of the corpus today, and a gate on them would
+  // block every retrain until a new collection run finishes. It is a REPORT,
+  // because the number that matters is the day it stops being zero — and the
+  // only way that day is noticed is if the export says so out loud every time.
+  //
+  // Restricted to realtime rows because that is the only population either
+  // column describes; a weekly row leaving both NULL is the design, not a gap.
+  const provenance = await labelCoverage(db, optional);
+  const rt = Number(provenance.realtime_rows);
+  if (rt > 0) {
+    const pct = (n) => ((Number(n) / rt) * 100).toFixed(1);
+    log(`[Export] Label provenance: ${rt} realtime rows — `
+      + `${provenance.named} named live/forecast (${pct(provenance.named)}%), `
+      + `${provenance.with_vendor_forecast} carry a vendor forecast `
+      + `(${pct(provenance.with_vendor_forecast)}%).`);
+    if (Number(provenance.named) === 0) {
+      log('[Export] NOTE: every realtime row exports as label_provenance=unknown and an empty '
+        + 'vendor_forecast_pct. That is the recorded state of the pre-2026-08-15 corpus and it '
+        + 'is not recoverable (migration 025 header). The columns are carried, not featurised, '
+        + 'so this costs the retrain nothing — it only means the vendor-distance question '
+        + 'stays unanswerable until collectRealtime.js has run again.');
+    }
+  }
+
+  return { optional, undeclaredWeekly, calendarGaps, provenance };
+}
+
+// One pass, both counts, and NULL-safe against a database missing either
+// column: a column that does not exist cannot be named in SQL at all, so the
+// absent case selects a literal 0 rather than erroring the way the removed
+// ALTER TABLE used to paper over.
+//
+// COST, stated rather than assumed: this is a second sequential scan of
+// ml_training_data (~1 GB, 3.9M rows) on top of the calendar-gap count above,
+// so a handful of seconds ahead of a two-hour export. It is deliberately not
+// folded into that query — the two answer unrelated questions and this one has
+// to build its column list conditionally — and a handful of seconds is not a
+// reason to make either harder to read or to test.
+//
+// COUNT(vendor_forecast_pct), not a SUM over a truthiness test: COUNT of a
+// column counts NON-NULLS, so a stored forecast of 0 is counted. A row where
+// the vendor predicted an empty venue is a row that HAS a forecast.
+async function labelCoverage(db, optional) {
+  const named = optional.label_source
+    ? `COUNT(*) FILTER (WHERE label_source IN ('live', 'forecast'))::bigint`
+    : '0::bigint';
+  const vendored = optional.vendor_forecast_pct
+    ? 'COUNT(vendor_forecast_pct)::bigint'
+    : '0::bigint';
+  const { rows: [row] } = await db.query(
+    `SELECT COUNT(*)::bigint AS realtime_rows,
+            ${named} AS named,
+            ${vendored} AS with_vendor_forecast
+       FROM ml_training_data
+      WHERE collection_mode = 'realtime' AND busyness_pct IS NOT NULL`
+  );
+  return row;
 }
 
 // fs.WriteStream.write() returns false when its buffer is full and the rest is
@@ -466,7 +645,7 @@ async function runExport({ pool, outDir = __dirname, log = console.log } = {}) {
 
   // FIRST, before anything can fail: the previous run's files go. A refusal or
   // a crash must never leave a readable training_data.csv behind — it has the
-  // right header and the right 42 columns, so prepare_features.py accepts it,
+  // right header and the right 44 columns, so prepare_features.py accepts it,
   // and the retrain silently runs on the corpus the last export saw.
   for (const p of [trainPath, holdoutPath, trainTmp, holdoutTmp]) {
     fs.rmSync(p, { force: true });
@@ -602,9 +781,13 @@ module.exports = {
   rowToCsv,
   HEADER,
   labelProvenance,
+  labelSource,
+  vendorForecastPct,
   observedDate,
+  OPTIONAL_COLUMNS,
   escapeCsv,
   preflight,
+  labelCoverage,
   exportCity,
   runExport,
   createPool,
