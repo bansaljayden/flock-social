@@ -666,8 +666,27 @@ def _slice_keys(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+def _smooth_category_hours(cat: pd.DataFrame, by: List[str]) -> pd.DataFrame:
+    """Blend each category-hour cell with its adjacent hours within `by`.
+
+    Shared by the full-frame map and the leave-one-city-out maps so the two can
+    never drift into different smoothing. `by` is the grouping the shift runs
+    inside — ['venue_category', 'day_of_week'] for the full map, with the group
+    column prepended for the LOCO maps.
+    """
+    cat = cat.sort_values(by + ['hour'])
+    cat['_prev'] = cat.groupby(by)['category_baseline'].shift(1)
+    cat['_next'] = cat.groupby(by)['category_baseline'].shift(-1)
+    cat['_prev'] = cat['_prev'].fillna(cat['category_baseline'])
+    cat['_next'] = cat['_next'].fillna(cat['category_baseline'])
+    # Smooth across adjacent hours so the model sees gradual transitions.
+    cat['smooth'] = (cat['category_baseline'] * 0.6 + cat['_prev'] * 0.2
+                     + cat['_next'] * 0.2).round(1)
+    return cat
+
+
 def build_category_baseline_maps(df: pd.DataFrame) -> Dict:
-    """Category/refined baseline lookups — TRAINING DATA ONLY.
+    """Category/refined baseline lookups fit on the WHOLE frame handed in.
 
     Round 10 (leakage): both lookups are averages of busyness_pct, i.e. the
     LABEL, and neither is in get_feature_columns' exclude set. The holdout
@@ -676,24 +695,29 @@ def build_category_baseline_maps(df: pd.DataFrame) -> Dict:
     every holdout number was inflated. Same class of bug as the popular_times
     leak in the retrain doctrine: a feature that quietly carries the label.
 
-    They stay in the feature set (a category's typical shape is genuinely
-    useful and inference can compute it from metadata alone), but the lookup is
-    now fit on training rows and merely APPLIED to holdout, exactly like the
-    climate norms in add_climate_anomaly.
+    WHERE THIS MAP MAY BE USED, and where it may NOT.
+
+      * It is the map SHIPPED to Node (metadata.category_baselines /
+        refined_baselines). Inference has no notion of a held-out group, so the
+        best available estimate — every training row — is the right one to
+        serve, and a venue in a city the corpus has never seen is exactly the
+        case the shipped map has to cover.
+      * It is the map APPLIED to the holdout cities. Their rows contributed
+        nothing to it, so for them it is already out-of-sample.
+      * It must NOT be applied to the rows it was fitted on. That is round 14's
+        finding: train_model.py's GroupKFold holds out one CITY per fold, and a
+        held-out city had already contributed to the very category cells its
+        own rows were then scored against. That is still true and still open;
+        the note above build_category_cell_stats says why the correction cannot
+        be applied from this file and what this file ships instead.
     """
     df = _slice_keys(df.copy())
 
     cat = (
         df.groupby(CAT_KEYS)['busyness_pct'].mean().round(1)
         .rename('category_baseline').reset_index()
-        .sort_values(CAT_KEYS)
     )
-    cat['_prev'] = cat.groupby(['venue_category', 'day_of_week'])['category_baseline'].shift(1)
-    cat['_next'] = cat.groupby(['venue_category', 'day_of_week'])['category_baseline'].shift(-1)
-    cat['_prev'] = cat['_prev'].fillna(cat['category_baseline'])
-    cat['_next'] = cat['_next'].fillna(cat['category_baseline'])
-    # Smooth across adjacent hours so the model sees gradual transitions.
-    cat['smooth'] = (cat['category_baseline'] * 0.6 + cat['_prev'] * 0.2 + cat['_next'] * 0.2).round(1)
+    cat = _smooth_category_hours(cat, ['venue_category', 'day_of_week'])
 
     refined = df.groupby(REFINED_KEYS)['busyness_pct'].mean().round(1)
 
@@ -702,6 +726,149 @@ def build_category_baseline_maps(df: pd.DataFrame) -> Dict:
         'refined': refined,
         'global_mean': round(float(df['busyness_pct'].mean()), 1),
     }
+
+
+# ---------------------------------------------------------------------------
+# Per-fold category baselines (round 14) — the sufficient statistics, and why
+# the fix itself is NOT applied here.
+#
+# THE LEAK. category_baseline and refined_category_baseline are means of
+# busyness_pct — the label. build_category_baseline_maps fits them on the whole
+# training frame and add_baseline_features applies them to that same frame.
+# train_model.py splits with GroupKFold(n_splits=n_cities) grouped on city, so
+# every fold holds out exactly one city, and that city's own labels are already
+# baked into the category cells its rows are then scored against. It makes
+# training_metrics optimistic. It does NOT touch the ship gate, which is
+# measured on the separate holdout cities — their rows contribute nothing to
+# these maps, which is why the holdout path passes cat_maps in rather than
+# refitting.
+#
+# THE OBVIOUS CHEAP FIX IS WRONG, AND IT IS WRONG IN THE DANGEROUS DIRECTION.
+# The tempting formulation is a leave-one-city-out map computed once — replace
+# each cell mean with (cell_sum - own_city_sum) / (cell_n - own_city_n), the
+# same subtraction trick round 13 used for the leave-one-out anchor in
+# export_training_data.js. It looks equivalent to a per-fold refit and it is
+# not. Under it the feature VARIES BY CITY inside a fold, and its deviation
+# from the cell's typical value is a deterministic, invertible function of the
+# held-out city's own labels: a tree that splits on (category, dow, hour) to
+# identify the cell and then on category_baseline inside it is reading that
+# city's mean level straight off the feature. The model has every incentive to
+# learn exactly that, because the relationship is real in the fold's training
+# rows too.
+#
+# Measured on a synthetic fixture over three independent draws (10 training
+# cities, GroupKFold on city, identical hyperparameters; the delta label's only
+# learnable signal is a per-city deviation, so an honest model cannot beat the
+# predict-zero floor on a city it never saw). The per-fold refit is the honest
+# reference — its final model is the same artifact the whole-frame fit produces,
+# so any CV difference between them is reporting, not model quality. How far
+# each regime's REPORTED leave-one-city-out number sits below that reference,
+# across the three draws:
+#
+#     whole-frame fit (what this file does)    MAE 0.21..0.42 low,  w10 1.4..2.1pp high
+#     leave-one-city-out computed once         MAE 1.52..3.05 low,  w10 10.4..20.5pp high
+#     K-fold "block" encoding, K = 2 / 3 / 5   MAE -0.05..0.80 low, no ordering in K
+#     per-fold refit (the reference)           0 by construction
+#
+# So the cheap formulation understates the reported error by FIVE TO SEVEN TIMES
+# what the leak it claims to remove does, and inflates within-10 — the number
+# mlPredictor.js publishes as the venue card's confidence — by 10 to 20 points.
+# Block encoding is not even monotone in K; at K=3 on one draw it is worse than
+# doing nothing. Only the per-fold refit is honest, and it is honest for a
+# structural reason: inside a fold the map is one value per cell, shared by that
+# fold's training and validation rows alike, so there is no city-varying
+# residual left to invert.
+#
+# THEREFORE IT BELONGS IN train_model.py, NOT HERE. Being constant within a fold
+# is the property that makes it correct, and this script has no folds — it emits
+# one feature matrix. What legitimately belongs here is the label arithmetic,
+# because this is the only step that still holds the labels in a frame: the
+# per-(city, cell) sums and counts below let the trainer rebuild any fold's map
+# with one subtraction and no second pass over the CSV. RETRAIN.md tracks the
+# consuming half as next lever 2.
+# ---------------------------------------------------------------------------
+
+LEAVE_OUT_COL = 'city'
+
+
+def build_category_cell_stats(df: pd.DataFrame,
+                              group_col: str = LEAVE_OUT_COL) -> Dict:
+    """Sufficient statistics for a per-fold refit of the category baselines.
+
+    Returns, for both the coarse and the refined key:
+      cells       — the cell key tuples, in cell-index order (the coarse one
+                    carries (venue_category, day_of_week, hour) so the caller
+                    can redo the adjacent-hour smoothing);
+      row_cell    — each training row's cell index;
+      sums/counts — dense (n_groups x n_cells) label sums and counts.
+
+    A fold's map is then:
+        s = sums[train_groups].sum(0); n = counts[train_groups].sum(0)
+        cell_mean = round(s / n, 1)          # n == 0 -> no support, fall back
+    which is the identical arithmetic build_category_baseline_maps performs,
+    restricted to that fold's training rows. Nothing here is a feature and
+    nothing here is applied to a row by this script; it is raw material.
+
+    ONE POPULATION DIFFERENCE, STATED SO THE RETRAIN'S NUMBERS ARE EXPLAINABLE.
+    main() calls this AFTER the serving-population filter, because row_cell and
+    row_group are positional indexes into X and X is the filtered frame. The
+    map shipped to Node is fitted BEFORE that filter. So a per-fold refit built
+    from these statistics differs from today's feature in two ways at once: it
+    excludes the held-out city (the point), and it is fitted on the rows
+    production actually scores rather than on every row in the corpus. The
+    second difference is a narrowing in the same direction as audit finding 6
+    and is deliberate, but it is a second difference — do not attribute the
+    whole metric change to the leak.
+    """
+    if group_col not in df.columns:
+        raise CorpusContractError(
+            f'build_category_cell_stats needs the {group_col!r} column — it is the '
+            'group train_model.py holds one out of per fold, and without it a '
+            'per-fold refit of the category baselines is not expressible.'
+        )
+    d = _slice_keys(df.copy())
+    groups = d[group_col].fillna('__unknown__').astype(str)
+    group_levels, group_idx = np.unique(groups.to_numpy(), return_inverse=True)
+
+    out: Dict = {
+        'group_col': group_col,
+        'groups': [str(g) for g in group_levels],
+        'row_group': group_idx.astype(np.int32),
+        'global_sum': float(d['busyness_pct'].sum()),
+        'global_count': int(d['busyness_pct'].count()),
+        'recipe': (
+            'fold_map[cell] = round(sums[fold_train_groups].sum(0) / '
+            'counts[fold_train_groups].sum(0), 1); smooth the coarse map across '
+            'adjacent hours within (venue_category, day_of_week) with the '
+            '0.6/0.2/0.2 blend prepare_features._smooth_category_hours uses, then '
+            'index with row_cell. Cells with a zero fold count have no support '
+            'outside the held-out city — fall back to the fold global mean.'),
+    }
+
+    y = d['busyness_pct'].to_numpy(dtype=float)
+    finite = np.isfinite(y)
+    for name, keys in (('category', CAT_KEYS), ('refined', REFINED_KEYS)):
+        # Vectorised string concat, not `.agg(join, axis=1)`: the latter is a
+        # per-row Python call and this frame is millions of rows.
+        key_frame = d[keys[0]].astype(str)
+        for k in keys[1:]:
+            key_frame = key_frame + '\x1f' + d[k].astype(str)
+        cell_levels, cell_idx = np.unique(key_frame.to_numpy(), return_inverse=True)
+        sums = np.zeros((len(group_levels), len(cell_levels)), dtype=np.float64)
+        counts = np.zeros((len(group_levels), len(cell_levels)), dtype=np.int64)
+        flat = group_idx * len(cell_levels) + cell_idx
+        np.add.at(sums.reshape(-1), flat[finite], y[finite])
+        np.add.at(counts.reshape(-1), flat[finite], 1)
+        out[name] = {
+            'keys': list(keys),
+            'cells': [tuple(c.split('\x1f')) for c in cell_levels],
+            'row_cell': cell_idx.astype(np.int32),
+            'sums': sums,
+            'counts': counts,
+        }
+        logger.info('Per-fold %s baseline stats: %d cells x %d %s groups.',
+                    name, len(cell_levels), len(group_levels), group_col)
+    return out
 
 
 def smooth_baseline_hours(df: pd.DataFrame) -> pd.DataFrame:
@@ -802,6 +969,15 @@ def add_baseline_features(df: pd.DataFrame, cat_maps: Dict = None) -> Tuple[pd.D
     cat_maps: category/refined baseline lookups. None means "fit them from this
     frame" (training); pass the training maps for holdout/eval so no held-out
     label ever reaches a feature.
+
+    Round 14, stated plainly rather than left for someone to rediscover: when
+    cat_maps is None this fits the maps on `df` and applies them to `df`, so a
+    city that train_model.py's GroupKFold later holds out has already
+    contributed to the category cells its own rows are scored against. The
+    correction is a per-fold refit and it belongs in the trainer, for the reason
+    written above build_category_cell_stats — being constant within a fold is
+    what makes it correct, and this script has no folds. The statistics that
+    make that refit a one-pass subtraction travel in features_train.pkl.
     """
     # Baseline busyness — smoothed against the TRUE neighbouring hours.
     df['baseline_busyness'] = df['baseline_busyness'].fillna(0)
@@ -1175,6 +1351,55 @@ def main():
     # the length of the 2.07M-row filtered matrix, aligning unrelated rows — the
     # MAE-by-hour plot, the one diagnostic that would have caught a six-hour
     # clock skew, was drawn on scrambled pairs.
+    # Round 14. Computed HERE, after every row filter, so row_cell / row_group
+    # are positionally aligned with X — the same alignment mistake audit finding
+    # 10 found in evaluate_model.py is the one thing that would make these
+    # statistics silently wrong.
+    cell_stats = build_category_cell_stats(train_df, LEAVE_OUT_COL)
+    if (len(cell_stats['row_group']) != len(train_df)
+            or len(cell_stats['category']['row_cell']) != len(train_df)):
+        raise CorpusContractError(
+            'category_cell_stats row indexes do not match the training frame '
+            f'({len(cell_stats["row_group"])} / '
+            f'{len(cell_stats["category"]["row_cell"])} vs {len(train_df)}). They are '
+            'POSITIONAL indexes into X; a per-fold refit built from misaligned '
+            'indexes would score every row against the wrong category cell, silently.'
+        )
+    category_baseline_fit = {
+        'training_rows_fit': 'whole training frame (build_category_baseline_maps)',
+        'training_rows_applied': 'whole training frame',
+        'holdout_rows': 'training-frame maps, applied only — no holdout label reaches '
+                        'a holdout feature',
+        'serving_map': 'training-frame maps, shipped as metadata.category_baselines / '
+                       'refined_baselines',
+        'residual_leak': (
+            'OPEN, and narrowed to one sentence: train_model.py holds out one city '
+            'per GroupKFold fold, and that city contributed to the category cells its '
+            'own rows are scored against, so training_metrics is optimistic. The ship '
+            'gate is unaffected — the holdout cities contribute to nothing. Measured '
+            'on a synthetic 10-city fixture over three draws, it understates the '
+            'reported MAE by 0.21-0.42 and overstates within-10 by 1.4-2.1 points. '
+            'The leave-one-city-out-computed-once formulation that looks like the '
+            'cheap fix understates by 1.52-3.05 MAE and 10.4-20.5 points of '
+            'within-10 — five to seven times worse — and must not be used. Only a '
+            'per-fold refit is honest, and it has to happen where the folds are.'),
+        'per_fold_inputs_shipped': True,
+        'per_fold_inputs': ('features_train.pkl -> category_cell_stats; see '
+                            'prepare_features.build_category_cell_stats'),
+        'group_col': cell_stats['group_col'],
+        'groups': len(cell_stats['groups']),
+        'category_cells': len(cell_stats['category']['cells']),
+        'refined_cells': len(cell_stats['refined']['cells']),
+    }
+    logger.warning(
+        'category_baseline / refined_category_baseline are still fitted on the whole '
+        'training frame and applied to it. train_model.py holds out a city per fold, '
+        'so training_metrics will be optimistic (the ship gate is not affected). The '
+        'per-fold statistics are in features_train.pkl["category_cell_stats"]: %d '
+        'category cells and %d refined cells across %d %s groups.',
+        len(cell_stats['category']['cells']), len(cell_stats['refined']['cells']),
+        len(cell_stats['groups']), cell_stats['group_col'])
+
     train_data = {
         'X': train_df[feature_cols].values.astype(np.float32),
         'y': train_df['delta_label'].values.astype(np.float32),
@@ -1187,6 +1412,9 @@ def main():
         'venue_category': train_df['venue_category'].astype(str).values,
         'label_provenance': train_df['label_provenance'].astype(str).values,
         'label_type': 'delta',
+        # Round 14: raw material for a per-fold refit of the two category
+        # label-means. Not features, not applied to any row here.
+        'category_cell_stats': cell_stats,
     }
     with open(SCRIPT_DIR / 'features_train.pkl', 'wb') as f:
         pickle.dump(train_data, f)
@@ -1280,6 +1508,11 @@ def main():
             'constant_feature_slots': constant_cols,
             'serving_population_filter': 'baseline_busyness > 0',
             'min_realtime_rows': MIN_REALTIME_ROWS,
+            # Round 14. Where the two category label-means were fitted, where
+            # they were applied, and what is still open. Written so nobody has
+            # to infer the answer from the code, and so an artifact cannot claim
+            # the leak is closed while it is not.
+            'category_baseline_fit': category_baseline_fit,
         },
     })
     with open(meta_path, 'w') as f:
