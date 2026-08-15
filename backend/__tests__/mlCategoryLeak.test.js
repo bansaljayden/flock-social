@@ -197,8 +197,9 @@ test('the guards round 14 was not allowed to weaken are intact', () => {
   const exportBlock = PREPARE_PY.match(/EXPORT_COLUMNS: List\[str\] = \[([\s\S]*?)\n\]/);
   assert.ok(exportBlock, 'EXPORT_COLUMNS must still be a literal list');
   const cols = [...exportBlock[1].matchAll(/'([^']+)'/g)].map((m) => m[1]);
-  assert.equal(cols.length, 42,
-    'the export contract is 42 columns; round 14 must not have added or dropped one');
+  assert.equal(cols.length, 44,
+    'the export contract is 44 columns since round 20 appended label_source and '
+    + 'vendor_forecast_pct; round 14 must not have added or dropped one');
   assert.ok(cols.includes('venue_id') && cols.includes('label_provenance'),
     'venue_id drives the baseline smoothing and label_provenance drives the '
     + 'vendor-forecast sample weight');
