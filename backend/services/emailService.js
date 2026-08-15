@@ -23,7 +23,12 @@ const { upstreamSignal } = require('../utils/upstream');
 // triggered it, so `localhost` in a verification link is not a cosmetic bug: it
 // is a link that can never work, mailed to a real person, for the one action
 // that unlocks their account.
-const PROD_WEB_URL = 'https://flockcorp.com';
+// www, not the apex: DOMAIN.md and frontend/api/marketing-page.js pin
+// https://www.flockcorp.com as the canonical host, and the apex answers 308 to
+// it. A link in an email should land directly, not ride a redirect — mailbox
+// scanners follow redirects inconsistently, and a fragment-borne reset token
+// has one less hop on which a client can drop it.
+const PROD_WEB_URL = 'https://www.flockcorp.com';
 const PROD_API_URL = 'https://flock-app-production.up.railway.app';
 
 // True for anything that would produce a dead or downgraded link: a non-https
@@ -224,7 +229,18 @@ async function sendEmail({ to, subject, html, from = 'Flock <hello@flockcorp.com
   const safeFrom = String(from == null ? '' : from).replace(/[\r\n]+/g, ' ').trim();
   const shown = maskAddress(recipient);
 
-  const resend = resendClient();
+  // Round 21: resendClient() ran OUTSIDE the try below, so a throw from
+  // require('resend') or the Resend constructor (a broken install, a bad
+  // node_modules deploy) became a rejected promise — from the function whose
+  // contract line one says "Never throws", and which routes/safety.js and
+  // routes/auth.js await without a catch of their own on the strength of it.
+  let resend;
+  try {
+    resend = resendClient();
+  } catch (err) {
+    console.error('[email] Resend client could not be built:', err.message);
+    return { sent: false, error: err.message };
+  }
   if (!resend) {
     console.warn('[email] RESEND_API_KEY not set, skipping email to', shown);
     return { sent: false, skipped: true };
@@ -265,12 +281,40 @@ function passwordResetLink(token) {
   return `${baseWebUrl()}/reset-password#token=${encodeURIComponent(token)}`;
 }
 
+// A link in one of these messages is about to become a clickable href in
+// somebody's inbox. The builders above always produce one from a pinned https
+// base, so a value that fails the same test the base URLs pass can only mean a
+// caller was handed something it should not have been: user input, a
+// `javascript:` URI (which escapeHtml preserves perfectly — escaping is about
+// markup, not schemes), or a dev URL. Refusing to send beats mailing a link
+// that is dead or hostile.
+function isMailableLink(link) {
+  return typeof link === 'string' && !isUnmailableBase(link);
+}
+
+// The TTL numbers are interpolated into body copy unescaped, which is fine for
+// a number and is "expires in undefined hours" for anything else. The callers
+// pass constants today (auth.js: 24 hours, 60 minutes); the fallbacks match
+// them so a caller slip degrades to true-enough copy, never to gibberish.
+function ttlNumber(value, fallback) {
+  // Number(Symbol) THROWS, and this helper sits inside senders whose contract
+  // is "settles, never rejects" — so only the types Number can actually read
+  // are offered to it.
+  const n = (typeof value === 'number' || typeof value === 'string') ? Number(value) : NaN;
+  return Number.isFinite(n) && n > 0 ? n : fallback;
+}
+
 // Copy rules (SLOP-AUDIT.md): no em dashes, no marketing words, sounds like a
 // person. The name is UGC and is HTML-escaped even though it was screened at
 // signup, because this is the one place it is rendered outside our own client.
 async function sendVerificationEmail({ to, name, link, hours }) {
+  if (!isMailableLink(link)) {
+    console.error('[email] refusing to mail a verification link that is not a public https URL, to', maskAddress(to));
+    return { sent: false, error: 'invalid link' };
+  }
   const safeName = escapeHtml(name || 'there');
   const safeLink = escapeHtml(link);
+  const safeHours = ttlNumber(hours, 24);
   return sendEmail({
     to,
     subject: 'Confirm your email for Flock',
@@ -287,7 +331,7 @@ async function sendVerificationEmail({ to, name, link, hours }) {
           <a href="${safeLink}" style="display: inline-block; background: #0d2847; color: #ffffff; text-decoration: none; padding: 14px 28px; border-radius: 10px; font-size: 16px; font-weight: 600;">Confirm my email</a>
         </p>
         <p style="font-size: 14px; color: #4a5568; line-height: 1.6; margin-bottom: 24px;">
-          This link works once and expires in ${hours} hours. If the button does nothing, paste this into your browser:<br />
+          This link works once and expires in ${safeHours} hours. If the button does nothing, paste this into your browser:<br />
           <span style="word-break: break-all; color: #2b6cb0;">${safeLink}</span>
         </p>
         <p style="font-size: 14px; color: #4a5568; line-height: 1.6; margin-bottom: 24px;">
@@ -305,8 +349,13 @@ async function sendVerificationEmail({ to, name, link, hours }) {
 // ask, because the "if you did not ask for this" line has to be true for a
 // mistyped address as well as a targeted one.
 async function sendPasswordResetEmail({ to, name, link, minutes }) {
+  if (!isMailableLink(link)) {
+    console.error('[email] refusing to mail a reset link that is not a public https URL, to', maskAddress(to));
+    return { sent: false, error: 'invalid link' };
+  }
   const safeName = escapeHtml(name || 'there');
   const safeLink = escapeHtml(link);
+  const safeMinutes = ttlNumber(minutes, 60);
   return sendEmail({
     to,
     subject: 'Reset your Flock password',
@@ -323,7 +372,7 @@ async function sendPasswordResetEmail({ to, name, link, minutes }) {
           <a href="${safeLink}" style="display: inline-block; background: #0d2847; color: #ffffff; text-decoration: none; padding: 14px 28px; border-radius: 10px; font-size: 16px; font-weight: 600;">Set a new password</a>
         </p>
         <p style="font-size: 14px; color: #4a5568; line-height: 1.6; margin-bottom: 24px;">
-          This link works once and expires in ${minutes} minutes. If the button does nothing, paste this into your browser:<br />
+          This link works once and expires in ${safeMinutes} minutes. If the button does nothing, paste this into your browser:<br />
           <span style="word-break: break-all; color: #2b6cb0;">${safeLink}</span>
         </p>
         <p style="font-size: 14px; color: #4a5568; line-height: 1.6; margin-bottom: 24px;">
