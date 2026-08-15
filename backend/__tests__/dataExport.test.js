@@ -189,6 +189,18 @@ function handle(text, params = []) {
       : [];
     return { rows, rowCount: rows.length };
   }
+  // Sections added by the 2026-08-14 completeness sweep (venue votes, emoji
+  // reactions, venue reviews, crowd reports, bill splits, SOS alerts, stories,
+  // friends). Modelled EMPTY here so assertModelled keeps meaning something;
+  // their populated fixtures, per-table leakage probes, and the pinned
+  // top-level key set live in __tests__/userExportAndProfile.test.js.
+  if (['FROM venue_votes', 'FROM dm_venue_votes', 'FROM emoji_reactions',
+       'FROM dm_emoji_reactions', 'FROM venue_reviews', 'FROM venue_feedback',
+       'JOIN bill_splits', 'FROM emergency_alerts', 'FROM stories',
+       'FROM friendships'].some((s) => has(s))) {
+    return { rows: [], rowCount: 0 };
+  }
+
   // deleteAccount's account fetch (used by the shared-proof-budget test; the
   // 429 fires before the transaction, so nothing else needs modelling)
   if (has('apple_refresh_token, is_banned, banned_at')) {
