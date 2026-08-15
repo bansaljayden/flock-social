@@ -15,6 +15,166 @@ function getLabel(score) {
   return 'Very Busy';
 }
 
+// ---------------------------------------------------------------------------
+// WHAT IS ACTUALLY BEHIND THE NUMBER — and what the card may therefore claim.
+//
+// Written after a user reported a well-known dinner restaurant reading ~20% at
+// 6 PM. The investigation is in __tests__/dinnerPeakAccuracy.test.js; the short
+// version is that the crowd card has, until now, published EVERY answer in the
+// same shape — a precise percentage, a flat assertion ("Very Busy") and a
+// confidence figure — regardless of whether anything about that venue had ever
+// been observed. Three completely different things arrive here looking
+// identical:
+//
+//   1. THE TRAINED MODEL RAN. services/mlPredictor.js published
+//      metadata.training_metrics.within_15 as `confidence`, which is a figure
+//      somebody actually measured on a holdout. That claim is earned.
+//   2. VERIFIED USERS REPORTED THIS VENUE AT THIS HOUR. Three or more
+//      presence-verified reports in the same weekly bucket (see
+//      MIN_CALIBRATION_REPORTERS) is a real observation of this building.
+//   3. NOTHING. The model refused to run (no ml_venue_baselines row for this
+//      place — true for every venue outside the 34-city training corpus, which
+//      is nearly every venue a real user searches) and nobody has reported it.
+//      What answered is calculateCrowdScore below: a HAND-WRITTEN CURVE FOR THE
+//      VENUE'S CATEGORY, amplified by review count. It is a statement about
+//      what sushi restaurants are usually like at 6 PM on a Friday. It is not,
+//      and cannot be, a statement about this restaurant tonight.
+//
+// Case 3 is not a bug in itself — a category prior is a reasonable thing to
+// show when there is nothing better. Publishing it as though it were case 1 IS
+// the bug, and it is the one that costs trust: a person who knows the place
+// reads a confident wrong percentage and concludes the whole feature is fake.
+//
+// So the rule is: an answer may only claim as much as its evidence supports.
+// `basis` travels with the prediction from the moment it is made
+// (services/mlPredictor.js sets it) and every crowd payload publishes it.
+// ---------------------------------------------------------------------------
+
+// The rule engine's confidence ladder starts here, and this is the ONLY rung on
+// it that is not "how much metadata did Google give us". Review count, rating
+// precision, type count, price level and even a live weather reading all say
+// something about how well DESCRIBED a venue is; none of them is an observation
+// of how full it is. So when the number came from the category curve and
+// nothing else, the honest ceiling on what it may claim is exactly this rung —
+// the one the ladder itself labels "time/day always available".
+//
+// Deliberately the same literal the ladder starts from (calculateCrowdScore
+// reads this constant), so the two cannot drift apart.
+const TIME_ONLY_CONFIDENCE = 20;
+
+// Bands are assertions; this turns one into a description of the typical case,
+// which is what a category curve actually knows. "Very Busy" -> "Usually very
+// busy". Lower-cased so it reads like something a person would say rather than
+// a UI enum with a word bolted on front (SLOP-AUDIT rule 4).
+function hedgeLabel(label) {
+  if (typeof label !== 'string' || !label) return label;
+  return `Usually ${label.toLowerCase()}`;
+}
+
+// The one place that decides what a prediction is allowed to claim.
+//
+//   predictionMethod — as set by services/mlPredictor.js: 'ml' when the trained
+//     model produced the number, 'rule_engine*' for any of the honest refusals
+//     (no model on disk, ship gate failed, no baseline, no climatology,
+//     inference threw).
+//   verifiedReports — how many distinct verified reporters
+//     buildCalibrationAdjustment actually blended in. Below
+//     MIN_CALIBRATION_REPORTERS it is 0 influence and therefore 0 evidence.
+//
+// Returns the basis, whether the answer may be stated as fact, and the ceiling
+// (null = no cap; the model's confidence is a measured figure and stands).
+// ---------------------------------------------------------------------------
+// IS THE MODEL'S ANCHOR ON A CLOCK ANYBODY CAN VOUCH FOR? RIGHT NOW: NO.
+//
+// Flip this to true in the SAME change that lands the corpus fix and the
+// retrain, and the model goes back to stating its bands as fact. Nothing else
+// has to move.
+//
+// Why it is false. The shipped model is `label_type: 'delta'`, so
+// services/mlPredictor.js returns baseline + clamp(delta, ±30) — the
+// ml_venue_baselines row IS the answer and the network only nudges it. That
+// table's `hour` column is not a venue-local hour: scripts/ml/collectWeekly.js
+// writes BestTime's day_raw ARRAY INDEX, and BestTime's day starts at 06:00, so
+// stored slot 18 holds the venue's midnight. getBaseline looks it up as a local
+// hour. The full proof, the second writer that disagrees with the first, and
+// the four steps that fix it are in the note above getBaseline in
+// services/mlPredictor.js; the arithmetic is pinned in
+// __tests__/dinnerPeakAccuracy.test.js.
+//
+// So a corpus venue's dinner-hour card is anchored on its overnight slot. That
+// is a user reporting a packed restaurant reading 20% at 6 PM.
+//
+// WHAT THIS FLAG DOES AND DOES NOT DO. It does NOT change a single score: the
+// model still runs, still serves, and the number is byte-for-byte what it was.
+// Shifting the lookup to compensate would be changing served numbers on a hunch
+// with no holdout to check it against, and turning the model off would be a
+// product decision, not a bug fix. What it does is stop the payload calling
+// that number a measurement while the axis under it is unverified — which is
+// the one thing that can be said honestly from here.
+const ML_BASELINE_AXIS_VERIFIED = false;
+
+// ORDER MATTERS, and it is not the order you would guess. Verified reporters
+// are checked BEFORE the model, because when the model's anchor is on a clock
+// nobody can vouch for, three people who were actually in the building are the
+// better evidence — and because ordering it the other way silently downgraded
+// venues that DO have real reports, which is the one part of this system that
+// works end to end today.
+function describePredictionSupport(predictionMethod, verifiedReports) {
+  const reports = Number.isFinite(verifiedReports) ? verifiedReports : 0;
+  if (predictionMethod === 'ml' && ML_BASELINE_AXIS_VERIFIED) {
+    return { basis: 'model_holdout', supported: true, confidenceMeans: 'measured_accuracy' };
+  }
+  if (reports >= MIN_CALIBRATION_REPORTERS) {
+    // Somebody was in the building and said so. The number is still mostly the
+    // engine's (the blend weight is capped — see MAX_SINGLE_REPORT_LEVERAGE),
+    // but it is no longer an unobserved guess about this venue.
+    return { basis: 'user_reports', supported: true, confidenceMeans: 'input_completeness' };
+  }
+  if (predictionMethod === 'ml') {
+    // The model ran and metadata.training_metrics.within_15 was measured — but
+    // measured against labels on the same misaligned axis the prediction is
+    // anchored to, so it does not describe what this card is about to show.
+    return { basis: 'model_unverified_axis', supported: false, confidenceMeans: 'input_completeness' };
+  }
+  return { basis: 'category_pattern', supported: false, confidenceMeans: 'input_completeness' };
+}
+
+// WHY `confidence` IS NOT LOWERED HERE, only explained.
+//
+// The obvious move is to cap it. It would be wrong twice over. First, a cap is
+// a NUMBER, and inventing a number to sit next to a number I have just argued
+// nobody measured is the same mistake one level up. Second — and this is the
+// substantive half — the field is not an accuracy figure to begin with, on
+// either path: on the rule path it is calculateCrowdScore's ladder, which
+// counts how richly GOOGLE describes a venue (review count, rating precision,
+// type count, price level, weather) and reaches 95 without one observation of
+// how full the room has ever been; on the model path it is
+// metadata.training_metrics.within_15, measured on the axis
+// ML_BASELINE_AXIS_VERIFIED says we cannot vouch for. Capping it would leave a
+// smaller unqualified number, which is not more honest, just quieter.
+//
+// So `confidenceMeans` ships beside it and says which of the two it is, and the
+// visible degrade rides on the LABEL — the field the app actually paints. When
+// the retrain lands and the flag flips, `confidenceMeans` becomes
+// 'measured_accuracy' and the number means what its name has always implied.
+// (TIME_ONLY_CONFIDENCE, the one rung of that ladder that is not metadata
+// richness, is exported for whoever does want to derive a real ceiling later.)
+//
+// What this function still does is keep the field inside its contract: an
+// integer in 0..100 whatever the engine, the stub or the boost hands it.
+function publishedConfidence(engineConfidence, _support, feedbackBoost = 0) {
+  const raw = Number(engineConfidence);
+  const base = Number.isFinite(raw) ? raw : 0;
+  const boost = Number.isFinite(Number(feedbackBoost)) ? Number(feedbackBoost) : 0;
+  return Math.max(0, Math.min(100, Math.round(base + boost)));
+}
+
+// The label a payload should print, given the support behind it.
+function publishedLabel(score, support) {
+  const label = getLabel(score);
+  return support.supported ? label : hedgeLabel(label);
+}
+
 // Round 14: the word and the colour were computed from different cut points —
 // getLabel breaks at 20/40/60/80, every UI recomputed its colour at 40/70. A
 // venue at 65 printed "Busy" in amber and one at 75 printed "Busy" in red: same
@@ -598,8 +758,17 @@ function calculateCrowdScore(venue, weather, timestamp) {
   const rawScore = 8 + time + pop.base + rating + amplifiedFactors + weatherMod;
   const score = Math.max(0, Math.min(100, Math.round(rawScore)));
 
-  // Confidence based on data quality
-  let confidence = 20; // time/day always available
+  // Confidence based on data quality.
+  //
+  // READ WHAT THIS LADDER ACTUALLY MEASURES before publishing it as an accuracy
+  // figure: every rung below the first is "how much metadata did Google give
+  // us", not "how often is this number right". A venue with 5,000 reviews, a
+  // rating, three types, a price level and a live weather reading reaches 95
+  // without a single observation of how full it has ever been. That is why
+  // describePredictionSupport caps what this may claim down to
+  // TIME_ONLY_CONFIDENCE — the one rung here that is not metadata richness —
+  // whenever the trained model did not run and nobody has reported the venue.
+  let confidence = TIME_ONLY_CONFIDENCE; // time/day always available
 
   // Review count is the strongest confidence signal
   if (reviews >= 5000) confidence += 30;
@@ -1509,6 +1678,18 @@ module.exports = {
   // Round 14: colour bands derived from the label bands, so "Busy" is never
   // amber on one card and red on the next.
   getLevel,
+  // The evidence policy. One definition of what a crowd number may claim,
+  // imported by every payload that publishes one, so a card, a list row and an
+  // alternatives entry cannot disagree about whether the same answer is a
+  // measurement or a category prior.
+  describePredictionSupport,
+  publishedConfidence,
+  publishedLabel,
+  hedgeLabel,
+  TIME_ONLY_CONFIDENCE,
+  // Exported so the retrain that fixes the corpus can flip one flag and see
+  // every test that depends on it move together.
+  ML_BASELINE_AXIS_VERIFIED,
   // Round 13: venue-local wall clock from Google's utcOffsetMinutes. The
   // server runs UTC and the visitor may be three time zones from the venue;
   // neither clock is the one the doors run on.

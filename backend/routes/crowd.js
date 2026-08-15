@@ -14,7 +14,10 @@ const {
   estimateWait,
   findPeakTime,
   buildCalibrationAdjustment,
-  getLabel,
+  // getLabel is gone from this list on purpose: every payload in this file now
+  // goes through crowdEngine.publishedLabel, which decides whether the band may
+  // be stated as fact or has to be hedged. Reaching for the bare band again
+  // would quietly re-assert an unobserved number as a measurement.
 } = mlPredictor;
 const pool = require('../config/database');
 const { getPremiumState, paywallEnabled, EntitlementUnavailableError } = require('../services/entitlements');
@@ -467,13 +470,48 @@ router.get('/:placeId',
         ? Math.min(15, calibration.reportCount * 3)
         : 0;
 
+      // WHAT IS BEHIND THIS NUMBER, published rather than assumed.
+      //
+      // This card used to hand back a precise percentage, a flat assertion
+      // ("Very Busy") and a confidence figure in exactly the same shape whether
+      // the trained model had run or whether nothing about this venue had ever
+      // been observed — and for a venue outside the 34-city ML corpus (which is
+      // nearly every venue a real user searches) it is always the latter:
+      // services/mlPredictor.js finds no ml_venue_baselines row, refuses the
+      // delta model, and crowdEngine's hand-written category curve answers as
+      // 'rule_engine_no_baseline'. The route then dropped `predictionMethod` on
+      // the floor and published the fallback's confidence — a ladder that
+      // measures how much METADATA Google gave us, reaching 76 for a venue
+      // nobody has ever counted heads in.
+      //
+      // That is what a user meets as "Kome is 20% full at 6 PM": not a
+      // measurement that came out wrong, a category prior presented as a
+      // measurement. crowdEngine.describePredictionSupport is the one rule for
+      // which of the three it is; the label hedges and the confidence is capped
+      // when the answer is a prior, and `predictionMethod` now ships so the
+      // client, the logs and the next person auditing this can tell them apart.
+      const support = crowdEngine.describePredictionSupport(
+        crowdResult.predictionMethod,
+        calibration.feedbackUsed ? calibration.reportCount : 0
+      );
+
       const result = {
         placeId,
         name: venue.name,
         score: finalScore,
-        label: getLabel(finalScore),
+        label: crowdEngine.publishedLabel(finalScore, support),
         rawEngineScore: crowdResult.score,
-        confidence: Math.min(100, crowdResult.confidence + feedbackConfidenceBoost),
+        confidence: crowdEngine.publishedConfidence(crowdResult.confidence, support, feedbackConfidenceBoost),
+        // Provenance, in the payload rather than only in the server's head.
+        // `predictionMethod` is what services/mlPredictor.js decided; `basis`
+        // and `supported` are what that entitles this card to claim.
+        predictionMethod: crowdResult.predictionMethod || null,
+        confidenceBasis: support.basis,
+        // What the `confidence` number above actually measures. 'input_
+        // completeness' means "how much did we know about this venue", NOT
+        // "how often is this right" — see crowdEngine.publishedConfidence.
+        confidenceMeans: support.confidenceMeans,
+        supported: support.supported,
         capacity,
         bestTime,
         peak: peakResult.text,
@@ -844,13 +882,26 @@ router.post('/batch',
           const result = await mlPredictor.predictBusyness(v, weather, clock.at);
           const cal = buildCalibrationAdjustment(feedbackByVenue[v.place_id] || [], result.score);
           const boost = cal.feedbackUsed ? Math.min(15, cal.reportCount * 3) : 0;
+          // Same evidence rule as the card above, and it has to be the same one:
+          // this list is what the card sits under, so a row that says "Very
+          // Busy" while the card one tap away says "Usually very busy" about the
+          // same venue is the two-surfaces-disagree bug rounds 13-15 spent
+          // themselves closing, in a new field.
+          const support = crowdEngine.describePredictionSupport(
+            result.predictionMethod,
+            cal.feedbackUsed ? cal.reportCount : 0
+          );
           return {
             placeId: v.place_id,
             name: v.name,
             score: cal.adjustedScore,
-            label: getLabel(cal.adjustedScore),
+            label: crowdEngine.publishedLabel(cal.adjustedScore, support),
             rawEngineScore: result.score,
-            confidence: Math.min(100, result.confidence + boost),
+            confidence: crowdEngine.publishedConfidence(result.confidence, support, boost),
+            predictionMethod: result.predictionMethod || null,
+            confidenceBasis: support.basis,
+            confidenceMeans: support.confidenceMeans,
+            supported: support.supported,
             calibration: {
               feedbackUsed: cal.feedbackUsed,
               reportCount: cal.reportCount,
@@ -1086,12 +1137,31 @@ router.get('/:placeId/alternatives',
         console.error('[Crowd] Alternatives feedback query failed, using raw scores:', fbErr.message);
       }
 
-      const targetScore = buildCalibrationAdjustment(feedbackByVenue[placeId] || [], targetResult.score).adjustedScore;
+      const targetCal = buildCalibrationAdjustment(feedbackByVenue[placeId] || [], targetResult.score);
+      const targetScore = targetCal.adjustedScore;
       const scoredNearby = await Promise.all(nearby.map(async (v) => {
         try {
           const r = await mlPredictor.predictBusyness(v, weather, clientTime);
-          const score = buildCalibrationAdjustment(feedbackByVenue[v.place_id] || [], r.score).adjustedScore;
-          return { placeId: v.place_id, name: v.name, score, label: getLabel(score) };
+          const cal = buildCalibrationAdjustment(feedbackByVenue[v.place_id] || [], r.score);
+          const score = cal.adjustedScore;
+          // Third copy of the evidence rule, for the same reason the feedback
+          // projection is written out three times: this list is COMPARED against
+          // the card's number, so if only this one kept asserting bands as fact
+          // a hedged card would sit above a list of confident alternatives that
+          // are exactly as unobserved as it is.
+          const support = crowdEngine.describePredictionSupport(
+            r.predictionMethod,
+            cal.feedbackUsed ? cal.reportCount : 0
+          );
+          return {
+            placeId: v.place_id,
+            name: v.name,
+            score,
+            label: crowdEngine.publishedLabel(score, support),
+            predictionMethod: r.predictionMethod || null,
+            confidenceBasis: support.basis,
+            supported: support.supported,
+          };
         } catch { return null; }
       }));
 
@@ -1104,8 +1174,20 @@ router.get('/:placeId/alternatives',
       // so an outage is never cached as "we looked and found nothing quieter" —
       // the same mistake round 19 fixed one level up, which caching would have
       // re-introduced for ten minutes at a time.
+      const targetSupport = crowdEngine.describePredictionSupport(
+        targetResult.predictionMethod,
+        targetCal.feedbackUsed ? targetCal.reportCount : 0
+      );
       const payload = {
-        currentVenue: { name: target.name, score: targetScore },
+        currentVenue: {
+          name: target.name,
+          score: targetScore,
+          // The card's own number, so a client that shows "you are here at X"
+          // above this list qualifies it the same way the card does.
+          predictionMethod: targetResult.predictionMethod || null,
+          confidenceBasis: targetSupport.basis,
+          supported: targetSupport.supported,
+        },
         alternatives,
       };
       setCache(cacheKey, payload);

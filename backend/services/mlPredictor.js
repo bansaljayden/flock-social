@@ -306,6 +306,79 @@ async function loadModel() {
 // Baseline Lookup (from precomputed ml_venue_baselines table)
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// THE `hour` COLUMN OF ml_venue_baselines IS NOT A VENUE-LOCAL HOUR, AND THIS
+// FUNCTION LOOKS IT UP AS THOUGH IT WERE. Found 2026-08-14 chasing a user
+// report of a well-known dinner restaurant reading ~20% at 6 PM.
+//
+// THE WRITE SIDE. scripts/ml/collectWeekly.js iterates BestTime's `day_raw`
+// array and writes the ARRAY INDEX into ml_training_data.hour:
+//
+//     for (let hour = 0; hour < day.hours.length && hour < 24; hour++) {
+//       const busyness = day.hours[hour];        // day.hours = day.day_raw
+//       ... venue.id, jsDayOfWeek, hour, ...
+//
+// BestTime's day_raw does not start at midnight — its day runs 06:00 to 05:59,
+// so day_raw[0] is the venue's 6 AM and day_raw[18] is the venue's MIDNIGHT.
+// scripts/ml/buildBaselines.js then copies that column verbatim into
+// ml_venue_baselines.hour. So the stored key is a bucket index:
+//
+//     stored_hour = (venue_local_hour - 6) mod 24
+//
+// THE PROOF, from the shipped artifact rather than from the vendor's docs.
+// scripts/ml/models/model_metadata.json carries category_baselines derived from
+// the same column. Read literally they are impossible: restaurants peak at
+// 12:00-14:00 every day of the week and bottom out at midnight; bars peak at
+// 13:00-15:00; nightclubs peak at 17:00 and are emptiest at 00:00; gyms peak at
+// noon. Add six hours and every one of them lands where it belongs —
+// restaurants 18:00-20:00, bars 19:00-21:00, nightclubs 22:00-23:00, gyms
+// 18:00, museums 14:00, and every trough at 04:00-07:00. 84 of the 91
+// (category, day) peaks fall in stored buckets 6..15, i.e. local noon to 9 PM.
+// __tests__/dinnerPeakAccuracy.test.js pins that arithmetic.
+//
+// WHAT IT COSTS. This model is `label_type: 'delta'`: predictBusyness returns
+// baseline + clamp(delta, ±30), so the baseline IS the answer and the model
+// only nudges it. A 6 PM request reads stored slot 18, which holds the venue's
+// LOCAL MIDNIGHT busyness. For a restaurant the shipped corpus average at that
+// slot is 45 against 60 for the true 6 PM slot and 65 at the real dinner peak —
+// and a single venue that genuinely empties out overnight reads far lower than
+// any of those. That is exactly the reported symptom: a dinner venue reading a
+// small-hours number at dinner.
+//
+// WHY THIS IS NOT FIXED HERE, and it is a deliberate refusal rather than an
+// oversight. The obvious patch is to shift the lookup by six. It is wrong,
+// because the corpus does not have ONE clock:
+//   * scripts/ml/collectWeekly.js writes the BestTime bucket index (above);
+//   * scripts/ml/collectRealtime.js writes `local.hour` from
+//     config.getLocalTime(tz) — the TRUE venue-local hour;
+//   * scripts/ml/collectRealtime.js's baseline refresh has no
+//     `collection_mode` filter at all (`WHERE t.busyness_pct IS NOT NULL`), so
+//     it averages both conventions into the same slot, while
+//     buildBaselines.js filters to `collection_mode = 'weekly'`. Which blend a
+//     row holds depends on which script ran last.
+//   * collectRealtime also stamps each realtime row's baseline_busyness by
+//     looking weekly rows up at `local.hour`, so the DELTA LABEL the model was
+//     trained on was itself computed against a slot six hours off.
+// The trained weights therefore sit on a mixed axis. No shift applied here is
+// right for both halves, and there is no holdout on this side to check a guess
+// against — shifting the read would be changing served numbers on an
+// unverifiable hunch, which is how this class of bug got here.
+//
+// WHAT ACTUALLY FIXES IT (needs a decision + a retrain, not a serving patch):
+//   1. collectWeekly.js: write `(index + 6) % 24` as the hour, and roll the day
+//      forward for indices >= 18 (BestTime day D covers local D 06:00 to D+1
+//      05:59).
+//   2. Backfill ml_training_data for collection_mode = 'weekly' with the same
+//      transform, then rebuild ml_venue_baselines.
+//   3. Give collectRealtime.js's baseline refresh the same
+//      `collection_mode = 'weekly'` filter buildBaselines.js has, so the two
+//      writers stop disagreeing.
+//   4. Retrain. Until then every ml_venue_baselines-anchored number is on an
+//      axis nobody can vouch for.
+// Until step 4 lands, routes/crowd.js publishes the provenance of every number
+// it serves (see crowdEngine.describePredictionSupport) so a wrong one is at
+// least legible instead of being asserted as a measurement.
+// ---------------------------------------------------------------------------
 async function getBaseline(placeId, dayOfWeek, hour) {
   if (!pool || !placeId) return 0;
 
