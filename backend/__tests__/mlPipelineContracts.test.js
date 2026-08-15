@@ -267,9 +267,19 @@ test('RETRAIN.md carries a status for every blocking audit finding', () => {
     assert.match(section, new RegExp(`^\\| ${i} \\|`, 'm'),
       `blocking finding ${i} has no row in the status board`);
   }
-  assert.match(section, /ml_training_data \(venue_id, collection_mode, day_of_week, hour, COALESCE\(observed_date/,
-    'finding 2 needs a migration owned elsewhere — the exact index it needs must be ' +
-    'written down, not left as "add a unique constraint"');
+  // This used to grep for one exact index expression. The point was never that
+  // expression: it was that finding 2 must not be left as the vague instruction
+  // "add a unique constraint", because the shape is where the data loss hides.
+  // The migration that landed deliberately chose a DIFFERENT shape and wrote
+  // down why the specified one would have destroyed rows, which satisfies the
+  // intent better than the literal text did. So the pin asks for what actually
+  // matters: the finding is closed by a NAMED migration, and the key's shape is
+  // written down somewhere a reader can find it.
+  assert.match(section, /`?024_ml_training_data_unique_slot\.sql`?/,
+    'finding 2 must be closed by a named migration, not by a promise');
+  assert.match(RETRAIN_MD, /unique key on `ml_training_data`/i,
+    'the chosen key shape and the reasoning behind it must be written down, since ' +
+    'that is where the data loss hides');
   assert.match(section, /dinnerPeakAccuracy\.test\.js:332/,
     'finding 8 is only partly closed: the test that pins the bent clock axis must be ' +
     'inverted as part of the clock fix, and the runbook has to say so');
