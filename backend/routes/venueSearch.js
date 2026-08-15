@@ -34,15 +34,56 @@ function allowPhotoFetch(req) {
   if (hits.length >= 300) return false;
   hits.push(now);
   photoIpHits.set(ip, hits);
-  if (photoIpHits.size > 5000) photoIpHits.clear();
+  if (photoIpHits.size > 5000) prunePhotoIpHits(now, ip);
   photoDayCount++;
   return true;
+}
+
+// Round 18: this was `if (size > 5000) photoIpHits.clear()` — the exact
+// "one caller can reset shared state for everyone" shape utils/probeBudget.js
+// and utils/placesBudget.js both refuse, reachable here by anyone who can show
+// up from enough addresses: flood the table past its ceiling and every
+// throttled address, your own included, gets a fresh 300/hour. Prune expired
+// hits first, then evict LEAST CONSUMED first (a flood entry has one hit; an
+// address that has spent its whole allowance is the last to go, so the flood
+// cleans up after itself instead of laundering the flooder's counter). Evict
+// to a low-water mark, not the ceiling, so a full table does not pay a scan
+// and sort on every request.
+function prunePhotoIpHits(now, keepIp) {
+  for (const [k, v] of photoIpHits) {
+    const live = v.filter((t) => now - t < 3600_000);
+    if (live.length === 0) photoIpHits.delete(k);
+    else if (live.length !== v.length) photoIpHits.set(k, live);
+  }
+  if (photoIpHits.size <= 5000) return;
+  const bySpend = [...photoIpHits.entries()].sort((a, b) => a[1].length - b[1].length);
+  for (const [k] of bySpend) {
+    if (photoIpHits.size <= 4500) break;
+    if (k === keepIp) continue;
+    photoIpHits.delete(k);
+  }
 }
 
 // In-memory photo cache (avoids re-fetching from Google on every page load)
 const photoCache = new Map();
 const PHOTO_CACHE_TTL = 60 * 60 * 1000; // 1 hour
 const MAX_PHOTO_CACHE = 500;
+
+// In-flight coalescing (round 18). The caches above only help requests that
+// arrive AFTER the first one has finished; N concurrent requests for the same
+// uncached key were N budget charges and N paid Google calls — a hot venue's
+// photo cost one metadata call per viewer in the gap. The first request to
+// find neither a cache entry nor a flight (the leader) pays the budget and
+// makes the call; everyone else awaits the same promise. Sound because the
+// route code from cache check to flight registration is synchronous — Node
+// runs one turn at a time, so a second request cannot interleave into that
+// window. The worker functions NEVER reject: they resolve to a
+// { status, ... } descriptor, so awaiting a flight cannot throw into a
+// follower and the cleanup .then() cannot leak an unhandled rejection.
+// Entries are deleted the moment they settle, so a failure is never pinned —
+// the next request after a failed flight goes back upstream.
+const inflight = new Map();      // search:/detail: cacheKey -> Promise<descriptor>
+const photoInflight = new Map(); // photo cacheKey -> Promise<descriptor>
 
 // A Google photo resource name is exactly `places/{place}/photos/{photo}` and
 // nothing else. `ref` was bounded only by "at least one character" and was then
@@ -97,77 +138,101 @@ router.get('/photo',
       // Check cache first
       const cached = photoCache.get(cacheKey);
       if (cached && Date.now() - cached.ts < PHOTO_CACHE_TTL) {
-        res.set('Content-Type', cached.contentType);
-        res.set('Cache-Control', 'public, max-age=86400');
-        res.set('Cross-Origin-Resource-Policy', 'cross-origin');
-        return res.send(cached.buffer);
+        return sendPhoto(res, cached);
       }
 
-      if (!allowPhotoFetch(req)) {
-        return res.status(429).json({ error: 'Too many photo requests right now' });
-      }
-      // allowPhotoFetch is a per-IP request limit with its own separate 4000/day
-      // counter, which is not the same thing as the shared Places ledger: this
-      // proxy is unauthenticated and its first leg (the /media metadata call) is
-      // a PAID Places request, so its spend never reached the "global" daily
-      // ceiling. Charged before the fetch. Cost 1: only the metadata leg is
-      // believed to be metered — the second leg pulls bytes from Google's CDN
-      // with the returned photoUri. If an invoice ever shows that leg billed
-      // too, this is a 2 (see the note in utils/upstream.js).
-      if (!allowGlobalPlacesCall(1)) {
-        return res.status(429).json({ error: 'Too many photo requests right now' });
-      }
-
-      // Step 1: ask Google for the actual CDN url (JSON response)
-      const metaUrl = `https://places.googleapis.com/v1/${photoRef}/media?maxWidthPx=${maxWidth}&key=${API_KEY}&skipHttpRedirect=true`;
-      // Round 12: both legs of the photo proxy are outbound calls with no
-      // deadline of their own — see utils/upstream.js.
-      const metaRes = await fetch(metaUrl, { signal: upstreamSignal('places') });
-      if (!metaRes.ok) {
-        console.error('[Photo Proxy] Google API error:', metaRes.status, 'for ref:', photoRef.slice(0, 60));
-        return res.status(502).json({ error: 'Google API error' });
-      }
-      const meta = await metaRes.json();
-      if (!meta.photoUri) {
-        console.error('[Photo Proxy] No photoUri in response for ref:', photoRef.slice(0, 60));
-        return res.status(404).json({ error: 'Photo not found' });
-      }
-
-      // Step 2: fetch the actual image bytes from the CDN
-      const imgRes = await fetch(meta.photoUri, { signal: upstreamSignal('places') });
-      if (!imgRes.ok) {
-        console.error('[Photo Proxy] CDN fetch failed:', imgRes.status, 'for ref:', photoRef.slice(0, 60));
-        return res.status(502).json({ error: 'CDN fetch failed' });
-      }
-
-      // Step 3: cache and send the image bytes
-      const buffer = Buffer.from(await imgRes.arrayBuffer());
-      const contentType = imgRes.headers.get('content-type') || 'image/jpeg';
-
-      // Store in cache (evict old entries if too large)
-      if (photoCache.size >= MAX_PHOTO_CACHE) {
-        const now = Date.now();
-        for (const [k, v] of photoCache) {
-          if (now - v.ts > PHOTO_CACHE_TTL) photoCache.delete(k);
+      // A concurrent request for the SAME uncached photo rides the existing
+      // flight like a cache hit: no per-IP charge, no ledger charge — one
+      // Google call is one unit however many viewers share its answer.
+      let flight = photoInflight.get(cacheKey);
+      if (!flight) {
+        if (!allowPhotoFetch(req)) {
+          return res.status(429).json({ error: 'Too many photo requests right now' });
         }
-        // If still too large, delete oldest
-        if (photoCache.size >= MAX_PHOTO_CACHE) {
-          const firstKey = photoCache.keys().next().value;
-          photoCache.delete(firstKey);
+        // allowPhotoFetch is a per-IP request limit with its own separate 4000/day
+        // counter, which is not the same thing as the shared Places ledger: this
+        // proxy is unauthenticated and its first leg (the /media metadata call) is
+        // a PAID Places request, so its spend never reached the "global" daily
+        // ceiling. Charged before the fetch. Cost 1: only the metadata leg is
+        // believed to be metered — the second leg pulls bytes from Google's CDN
+        // with the returned photoUri. If an invoice ever shows that leg billed
+        // too, this is a 2 (see the note in utils/upstream.js).
+        if (!allowGlobalPlacesCall(1)) {
+          return res.status(429).json({ error: 'Too many photo requests right now' });
         }
+        flight = fetchPhotoOnce(photoRef, maxWidth, cacheKey);
+        photoInflight.set(cacheKey, flight);
+        flight.then(() => photoInflight.delete(cacheKey));
       }
-      photoCache.set(cacheKey, { buffer, contentType, ts: Date.now() });
-
-      res.set('Content-Type', contentType);
-      res.set('Cache-Control', 'public, max-age=86400');
-      res.set('Cross-Origin-Resource-Policy', 'cross-origin');
-      res.send(buffer);
+      const out = await flight;
+      if (out.status !== 200) return res.status(out.status).json({ error: out.error });
+      sendPhoto(res, out);
     } catch (err) {
       console.error('[Photo Proxy] Error:', err.message, '| ref:', req.query.ref?.slice(0, 60));
       res.status(500).json({ error: 'Failed to fetch photo' });
     }
   }
 );
+
+function sendPhoto(res, { buffer, contentType }) {
+  res.set('Content-Type', contentType);
+  res.set('Cache-Control', 'public, max-age=86400');
+  res.set('Cross-Origin-Resource-Policy', 'cross-origin');
+  res.send(buffer);
+}
+
+// The worker behind the photo proxy. Never rejects: resolves to
+// { status: 200, buffer, contentType } or { status, error }, so a failure
+// reaches every coalesced waiter as the same clean response and is never
+// written to photoCache — only a real image is.
+async function fetchPhotoOnce(photoRef, maxWidth, cacheKey) {
+  try {
+    // Step 1: ask Google for the actual CDN url (JSON response)
+    const metaUrl = `https://places.googleapis.com/v1/${photoRef}/media?maxWidthPx=${maxWidth}&key=${API_KEY}&skipHttpRedirect=true`;
+    // Round 12: both legs of the photo proxy are outbound calls with no
+    // deadline of their own — see utils/upstream.js.
+    const metaRes = await fetch(metaUrl, { signal: upstreamSignal('places') });
+    if (!metaRes.ok) {
+      console.error('[Photo Proxy] Google API error:', metaRes.status, 'for ref:', photoRef.slice(0, 60));
+      return { status: 502, error: 'Google API error' };
+    }
+    const meta = await metaRes.json();
+    if (!meta.photoUri) {
+      console.error('[Photo Proxy] No photoUri in response for ref:', photoRef.slice(0, 60));
+      return { status: 404, error: 'Photo not found' };
+    }
+
+    // Step 2: fetch the actual image bytes from the CDN
+    const imgRes = await fetch(meta.photoUri, { signal: upstreamSignal('places') });
+    if (!imgRes.ok) {
+      console.error('[Photo Proxy] CDN fetch failed:', imgRes.status, 'for ref:', photoRef.slice(0, 60));
+      return { status: 502, error: 'CDN fetch failed' };
+    }
+
+    // Step 3: cache and return the image bytes
+    const buffer = Buffer.from(await imgRes.arrayBuffer());
+    const contentType = imgRes.headers.get('content-type') || 'image/jpeg';
+
+    // Store in cache (evict old entries if too large)
+    if (photoCache.size >= MAX_PHOTO_CACHE) {
+      const now = Date.now();
+      for (const [k, v] of photoCache) {
+        if (now - v.ts > PHOTO_CACHE_TTL) photoCache.delete(k);
+      }
+      // If still too large, delete oldest
+      if (photoCache.size >= MAX_PHOTO_CACHE) {
+        const firstKey = photoCache.keys().next().value;
+        photoCache.delete(firstKey);
+      }
+    }
+    photoCache.set(cacheKey, { buffer, contentType, ts: Date.now() });
+
+    return { status: 200, buffer, contentType };
+  } catch (err) {
+    console.error('[Photo Proxy] Error:', err.message, '| ref:', photoRef.slice(0, 60));
+    return { status: 500, error: 'Failed to fetch photo' };
+  }
+}
 
 // All other routes require authentication
 router.use(authenticate);
@@ -274,90 +339,150 @@ router.get('/search',
         return res.status(500).json({ error: 'Google Places API key not configured' });
       }
 
-      const searchQuery = req.query.query.toLowerCase().trim();
-      const location = req.query.location; // "lat,lng"
-
-      // Coarse location in the key so nearby users share entries
-      let coarseLoc = '';
-      if (location) {
-        const [la, ln] = location.split(',').map(Number);
-        if (Number.isFinite(la) && Number.isFinite(ln)) coarseLoc = `${la.toFixed(2)},${ln.toFixed(2)}`;
+      // Round 18: `?query=a&query=b` arrives as an ARRAY, walked past the
+      // validator chain, and `.toLowerCase()` turned it into a 500 per request.
+      // Anything that is not a scalar string is a 400, before it costs anything.
+      if (typeof req.query.query !== 'string') {
+        return res.status(400).json({ error: 'Search query is required' });
       }
-      const cacheKey = `search:${searchQuery}|${coarseLoc}`;
+
+      // Round 18 — the cache key is a NORMAL FORM, not the raw string. "Bars
+      // Downtown", "bars   downtown" and full-width variants are the same
+      // question, and every casing/whitespace/width spelling used to mint its
+      // own cache entry and its own paid Google call. NFKC folds compatibility
+      // variants, \s+ collapses whitespace runs, and the result is BOTH what
+      // is cached under and what is sent to Google, so the key can never
+      // disagree with the answer stored under it.
+      const searchQuery = req.query.query
+        .normalize('NFKC')
+        .replace(/\s+/g, ' ')
+        .trim()
+        .toLowerCase();
+      if (!searchQuery) {
+        return res.status(400).json({ error: 'Search query is required' });
+      }
+
+      // Location: "lat,lng", parsed ONCE and snapped to the same 2-decimal
+      // grid (~1.1 km) the cache key has always used. Two fixes live here:
+      //   * the snapped value is now also what is SENT to Google (the bias
+      //     radius is 20 km, so a ≤800 m snap is noise), which closes the
+      //     jitter channel — two requests that share a cache key can no
+      //     longer differ upstream, and the cached answer honestly matches
+      //     its key;
+      //   * anything that is not two in-range finite numbers — an array from
+      //     `?location=a&location=b`, "abc,def", latitude 999 — is ignored
+      //     outright. The old code let garbage share the no-location cache
+      //     key while sending Google a locationBias of nulls (a paid call
+      //     spent on a guaranteed error), and an array crashed the handler
+      //     into a 500.
+      let coarse = null;
+      const rawLoc = req.query.location;
+      if (typeof rawLoc === 'string' && rawLoc.length > 0 && rawLoc.length <= 64) {
+        const parts = rawLoc.split(',');
+        if (parts.length === 2) {
+          const la = Number(parts[0]);
+          const ln = Number(parts[1]);
+          if (Number.isFinite(la) && Number.isFinite(ln) && Math.abs(la) <= 90 && Math.abs(ln) <= 180) {
+            coarse = { lat: Number(la.toFixed(2)), lng: Number(ln.toFixed(2)) };
+          }
+        }
+      }
+      const cacheKey = `search:${searchQuery}|${coarse ? `${coarse.lat.toFixed(2)},${coarse.lng.toFixed(2)}` : ''}`;
       const cached = getCached(cacheKey);
       if (cached) {
         return res.json(cached);
       }
 
-      // Upstream budget (round 7): text search is a PAID Google call and the
-      // general API limiter alone let one account burn it with unique queries.
-      if (!allowPlacesSearch(req.user.id)) {
-        return res.status(429).json({ error: 'Searching too fast. Give it a few seconds.' });
-      }
-
-      // Use Places API (New) - Text Search
-      const body = { textQuery: searchQuery };
-      if (location) {
-        const [lat, lng] = location.split(',').map(Number);
-        body.locationBias = {
-          circle: { center: { latitude: lat, longitude: lng }, radius: 20000.0 }
-        };
-      }
-
-      const response = await fetch('https://places.googleapis.com/v1/places:searchText', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-Goog-Api-Key': API_KEY,
-          'X-Goog-FieldMask': SEARCH_FIELD_MASK,
-        },
-        body: JSON.stringify(body),
-        signal: upstreamSignal('places'), // round 12
-      });
-
-      const data = await response.json();
-
-      if (data.error) {
-        console.error('Places API error:', data.error.status, data.error.message);
-        return res.status(502).json({ error: `Places API: ${data.error.message}` });
-      }
-
-      // Map results to clean venue objects
-      const venues = (data.places || []).map(place => {
-        let photo = null;
-        if (place.photos && place.photos.length > 0) {
-          photo = photoUrl(place.photos[0].name);
+      let flight = inflight.get(cacheKey);
+      if (!flight) {
+        // Upstream budget (round 7): text search is a PAID Google call and the
+        // general API limiter alone let one account burn it with unique
+        // queries. Only the leader charges — one Google call is one unit,
+        // however many concurrent requests share its answer.
+        if (!allowPlacesSearch(req.user.id)) {
+          return res.status(429).json({ error: 'Searching too fast. Give it a few seconds.' });
         }
-
-        return {
-          place_id: place.id,
-          name: place.displayName?.text || '',
-          formatted_address: place.formattedAddress || '',
-          rating: place.rating || null,
-          user_ratings_total: place.userRatingCount || 0,
-          price_level: priceLevelToNum(place.priceLevel),
-          photo_url: photo,
-          types: place.types || [],
-          opening_hours: place.currentOpeningHours || null,
-          location: place.location || null,
-          // camelCase on purpose: this is the exact key POST /api/crowd/batch
-          // whitelists off each body item, so the client forwards it untouched.
-          // Nullable — Google omits it for some places, and a null here is what
-          // makes the batch answer `venueClock.local: false` rather than pretend
-          // the caller's clock was the venue's.
-          utcOffsetMinutes: place.utcOffsetMinutes != null ? place.utcOffsetMinutes : null,
-        };
-      });
-
-      const result = { venues, total: venues.length };
-      setCache(cacheKey, result);
-      res.json(result);
+        flight = runTextSearch(searchQuery, coarse, cacheKey);
+        inflight.set(cacheKey, flight);
+        flight.then(() => inflight.delete(cacheKey));
+      }
+      const out = await flight;
+      if (out.status !== 200) return res.status(out.status).json({ error: out.error });
+      res.json(out.result);
     } catch (err) {
       console.error('Venue search error:', err);
       res.status(500).json({ error: 'Failed to search venues' });
     }
   }
 );
+
+// The worker behind GET /search. Never rejects: resolves to
+// { status: 200, result } or { status, error }, so a failure reaches every
+// coalesced waiter as the same clean response and is never cached — setCache
+// runs only on a real answer, so an upstream 429/5xx can never pin itself.
+async function runTextSearch(searchQuery, coarse, cacheKey) {
+  try {
+    // Use Places API (New) - Text Search
+    const body = { textQuery: searchQuery };
+    if (coarse) {
+      body.locationBias = {
+        circle: { center: { latitude: coarse.lat, longitude: coarse.lng }, radius: 20000.0 }
+      };
+    }
+
+    const response = await fetch('https://places.googleapis.com/v1/places:searchText', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Goog-Api-Key': API_KEY,
+        'X-Goog-FieldMask': SEARCH_FIELD_MASK,
+      },
+      body: JSON.stringify(body),
+      signal: upstreamSignal('places'), // round 12
+    });
+
+    const data = await response.json();
+
+    if (data.error) {
+      console.error('Places API error:', data.error.status, data.error.message);
+      return { status: 502, error: `Places API: ${data.error.message}` };
+    }
+
+    // Map results to clean venue objects
+    const venues = (data.places || []).map(place => {
+      let photo = null;
+      if (place.photos && place.photos.length > 0) {
+        photo = photoUrl(place.photos[0].name);
+      }
+
+      return {
+        place_id: place.id,
+        name: place.displayName?.text || '',
+        formatted_address: place.formattedAddress || '',
+        rating: place.rating || null,
+        user_ratings_total: place.userRatingCount || 0,
+        price_level: priceLevelToNum(place.priceLevel),
+        photo_url: photo,
+        types: place.types || [],
+        opening_hours: place.currentOpeningHours || null,
+        location: place.location || null,
+        // camelCase on purpose: this is the exact key POST /api/crowd/batch
+        // whitelists off each body item, so the client forwards it untouched.
+        // Nullable — Google omits it for some places, and a null here is what
+        // makes the batch answer `venueClock.local: false` rather than pretend
+        // the caller's clock was the venue's.
+        utcOffsetMinutes: place.utcOffsetMinutes != null ? place.utcOffsetMinutes : null,
+      };
+    });
+
+    const result = { venues, total: venues.length };
+    setCache(cacheKey, result);
+    return { status: 200, result };
+  } catch (err) {
+    console.error('Venue search error:', err);
+    return { status: 500, error: 'Failed to search venues' };
+  }
+}
 
 // GET /api/venues/details?place_id=xxx - Get full details for a venue
 router.get('/details',
@@ -394,54 +519,21 @@ router.get('/details',
       const cached = getCached(detailCacheKey);
       if (cached) return res.json(cached);
 
-      // Round 8: details is the same PAID Google surface as text search —
-      // rotating valid place ids bypassed the shared budget entirely.
-      if (!allowPlacesSearch(req.user.id)) {
-        return res.status(429).json({ error: 'Loading venues too fast. Give it a few seconds.' });
+      let flight = inflight.get(detailCacheKey);
+      if (!flight) {
+        // Round 8: details is the same PAID Google surface as text search —
+        // rotating valid place ids bypassed the shared budget entirely.
+        // Only the leader charges (round 18): one Google call, one unit.
+        if (!allowPlacesSearch(req.user.id)) {
+          return res.status(429).json({ error: 'Loading venues too fast. Give it a few seconds.' });
+        }
+        flight = runPlaceDetails(placeId, detailCacheKey);
+        inflight.set(detailCacheKey, flight);
+        flight.then(() => inflight.delete(detailCacheKey));
       }
-
-      // ENCODED, belt and braces behind the shape check above: one path segment,
-      // always. Matches routes/crowd.js fetchVenueFromGoogle and
-      // routes/publicCrowd.js.
-      const response = await fetch(`https://places.googleapis.com/v1/places/${encodeURIComponent(placeId)}`, {
-        headers: {
-          'X-Goog-Api-Key': API_KEY,
-          'X-Goog-FieldMask': DETAILS_FIELD_MASK,
-        },
-        signal: upstreamSignal('places'), // round 12
-      });
-
-      const p = await response.json();
-
-      if (p.error) {
-        return res.status(502).json({ error: `Places API: ${p.error.message}` });
-      }
-
-      const photos = (p.photos || []).slice(0, 5).map(photo => photoUrl(photo.name, 600));
-
-      const result = {
-        venue: {
-          place_id: p.id,
-          name: p.displayName?.text || '',
-          formatted_address: p.formattedAddress || '',
-          formatted_phone_number: p.nationalPhoneNumber || null,
-          website: p.websiteUri || null,
-          rating: p.rating || null,
-          user_ratings_total: p.userRatingCount || 0,
-          price_level: priceLevelToNum(p.priceLevel),
-          photos,
-          opening_hours: p.currentOpeningHours || null,
-          types: p.types || [],
-          location: p.location || null,
-          google_maps_url: p.googleMapsUri || null,
-          menu_url: null,
-          // Same key the batch endpoint whitelists, same nullability. See the
-          // field mask note above.
-          utcOffsetMinutes: p.utcOffsetMinutes != null ? p.utcOffsetMinutes : null,
-        },
-      };
-      setCache(detailCacheKey, result);
-      res.json(result);
+      const out = await flight;
+      if (out.status !== 200) return res.status(out.status).json({ error: out.error });
+      res.json(out.result);
     } catch (err) {
       console.error('Venue details error:', err);
       res.status(500).json({ error: 'Failed to get venue details' });
@@ -449,4 +541,69 @@ router.get('/details',
   }
 );
 
+// The worker behind GET /details. Same contract as runTextSearch: never
+// rejects, never caches a failure.
+async function runPlaceDetails(placeId, detailCacheKey) {
+  try {
+    // ENCODED, belt and braces behind the shape check above: one path segment,
+    // always. Matches routes/crowd.js fetchVenueFromGoogle and
+    // routes/publicCrowd.js.
+    const response = await fetch(`https://places.googleapis.com/v1/places/${encodeURIComponent(placeId)}`, {
+      headers: {
+        'X-Goog-Api-Key': API_KEY,
+        'X-Goog-FieldMask': DETAILS_FIELD_MASK,
+      },
+      signal: upstreamSignal('places'), // round 12
+    });
+
+    const p = await response.json();
+
+    if (p.error) {
+      return { status: 502, error: `Places API: ${p.error.message}` };
+    }
+
+    const photos = (p.photos || []).slice(0, 5).map(photo => photoUrl(photo.name, 600));
+
+    const result = {
+      venue: {
+        place_id: p.id,
+        name: p.displayName?.text || '',
+        formatted_address: p.formattedAddress || '',
+        formatted_phone_number: p.nationalPhoneNumber || null,
+        website: p.websiteUri || null,
+        rating: p.rating || null,
+        user_ratings_total: p.userRatingCount || 0,
+        price_level: priceLevelToNum(p.priceLevel),
+        photos,
+        opening_hours: p.currentOpeningHours || null,
+        types: p.types || [],
+        location: p.location || null,
+        google_maps_url: p.googleMapsUri || null,
+        menu_url: null,
+        // Same key the batch endpoint whitelists, same nullability. See the
+        // field mask note above.
+        utcOffsetMinutes: p.utcOffsetMinutes != null ? p.utcOffsetMinutes : null,
+      },
+    };
+    setCache(detailCacheKey, result);
+    return { status: 200, result };
+  } catch (err) {
+    console.error('Venue details error:', err);
+    return { status: 500, error: 'Failed to get venue details' };
+  }
+}
+
 module.exports = router;
+
+// Tests only (backend/__tests__/placesProxyAbuse.test.js). resetPhotoBudget
+// with { clearIps: false } rolls only the day counter — what a real UTC
+// midnight does; the per-IP table survives it, which is why the flood pin can
+// exist at all. Production code must never reset a spending counter.
+module.exports.__test = {
+  allowPhotoFetch,
+  resetPhotoBudget({ clearIps = true } = {}) {
+    photoDayKey = new Date().toISOString().slice(0, 10);
+    photoDayCount = 0;
+    if (clearIps) photoIpHits.clear();
+  },
+};
