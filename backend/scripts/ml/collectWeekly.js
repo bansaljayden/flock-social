@@ -20,12 +20,77 @@ if (!process.env.DATABASE_URL && process.env.PGHOST) {
   process.env.DATABASE_URL = `postgresql://${user}:${pass}@${host}:${port}/${db}`;
 }
 
+// Same rule config/database.js states at length: an explicit PGSSLMODE wins,
+// because whoever set it knew the endpoint. Without one, keep the Railway
+// default (TLS, self-signed tolerated). This is also what lets
+// __tests__/mlClockAxisBackfill.test.js run this collector against the embedded
+// Postgres harness instead of asserting the INSERT's shape by eye.
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
-  ssl: { rejectUnauthorized: false },
+  ssl: process.env.PGSSLMODE === 'disable' ? false : { rejectUnauthorized: false },
 });
 
+// ---------------------------------------------------------------------------
+// THE HOUR AXIS — read this before touching the INSERT below.
+//
+// `ml_training_data.hour` is a VENUE-LOCAL HOUR: 0 is the venue's midnight, 18
+// is the venue's 6 PM. Every row this file writes now states that in the row
+// itself (`hour_axis = 'venue_local'`), and migration
+// 023_backfill_ml_weekly_local_hours.sql adds a CHECK constraint that REJECTS a
+// weekly insert which does not declare its axis. That is deliberate: the column
+// used to hold something else and nothing said so.
+//
+// WHAT IT USED TO HOLD. This loop iterated BestTime's `day_raw` array and wrote
+// the ARRAY INDEX:
+//
+//     for (let hour = 0; hour < day.hours.length && hour < 24; hour++) {
+//       const busyness = day.hours[hour];      // day.hours = day.day_raw
+//       ... venue.id, jsDayOfWeek, hour, ...
+//
+// BestTime's day does not start at midnight — it runs 06:00 to 05:59 — so
+// day_raw[0] is the venue's 6 AM and day_raw[18] is the venue's MIDNIGHT.
+// scripts/ml/buildBaselines.js copied the column verbatim into
+// ml_venue_baselines, services/mlPredictor.js looked it up as a wall-clock
+// hour, and because the model is a delta model (score = baseline + a bounded
+// nudge) a 6 PM request was answered with the venue's overnight number. The
+// symptom was a well-known dinner restaurant reading ~20% at 6 PM; the proof is
+// arithmetic on the shipped artifact, pinned in
+// __tests__/dinnerPeakAccuracy.test.js PART 3.
+//
+// THE TRANSFORM, and the half of it that is easy to forget: the last six slots
+// of a BestTime day belong to the NEXT calendar day. Slot 18 of Saturday is
+// Sunday 00:00, so day_of_week must roll forward with the hour or the whole
+// small-hours block is filed under the wrong weekday — including across the
+// Saturday -> Sunday week boundary.
+// ---------------------------------------------------------------------------
+const BESTTIME_DAY_START_HOUR = 6;
+
+// The value written into ml_training_data.hour_axis by this collector. The
+// other legal value is 'besttime_index' (what the rows above held, and what
+// scripts/ml/discoverBestTime.js STILL writes — see RETRAIN.md).
+const HOUR_AXIS_VENUE_LOCAL = 'venue_local';
+
+// (slot, JS day the BestTime day is labelled with) -> venue-local (hour, day).
+// Exported so __tests__/mlClockAxisBackfill.test.js can pin that the SQL
+// backfill in migration 023 computes exactly this, rather than the two drifting.
+function bestTimeSlotToLocal(slot, jsDayOfWeek) {
+  const shifted = slot + BESTTIME_DAY_START_HOUR;
+  return {
+    hour: shifted % 24,
+    dayOfWeek: shifted >= 24 ? (jsDayOfWeek + 1) % 7 : jsDayOfWeek,
+  };
+}
+
+// The column normally arrives with migration 023 (db/migrate.js runs on every
+// boot). These scripts are also pointed at databases that have not booted the
+// current server yet, and the INSERT below names the column, so create it here
+// too — same self-migrating pattern as collectRealtime.ensureHolidayColumns().
+async function ensureAxisColumn() {
+  await pool.query(`ALTER TABLE ml_training_data ADD COLUMN IF NOT EXISTS hour_axis VARCHAR(16)`);
+}
+
 async function collectWeekly() {
+  await ensureAxisColumn();
   // Support --city=lehigh, --exclude-cities=beijing,foo, and --limit=10 flags
   const cityArg = process.argv.find(a => a.startsWith('--city='));
   const excludeArg = process.argv.find(a => a.startsWith('--exclude-cities='));
@@ -138,24 +203,26 @@ async function collectWeekly() {
       let p = 0;
       for (const day of forecast.days) {
         const jsDayOfWeek = bestTimeDayToJsDay(day.dayInt);
-        for (let hour = 0; hour < day.hours.length && hour < 24; hour++) {
-          const busyness = day.hours[hour];
+        // `slot` is BestTime's array index, NOT an hour. See THE HOUR AXIS above.
+        for (let slot = 0; slot < day.hours.length && slot < 24; slot++) {
+          const busyness = day.hours[slot];
           if (busyness == null) continue;
+          const local = bestTimeSlotToLocal(slot, jsDayOfWeek);
           params.push(
-            venue.id, jsDayOfWeek, hour,
+            venue.id, local.dayOfWeek, local.hour,
             venue.venue_category, venue.price_level, venue.rating, venue.review_count,
             weather?.temp ?? null, weather?.humidity ?? null, weather?.windSpeed ?? null,
             weather?.conditions ?? null, weather?.isRaining ?? null,
             Math.max(0, Math.min(100, busyness)), forecast.epochAnalysis,
           );
-          valueRows.push(`($${++p}, 'weekly', $${++p}, $${++p}, $${++p}, $${++p}, $${++p}, $${++p}, $${++p}, $${++p}, $${++p}, $${++p}, $${++p}, $${++p}, $${++p})`);
+          valueRows.push(`($${++p}, 'weekly', '${HOUR_AXIS_VENUE_LOCAL}', $${++p}, $${++p}, $${++p}, $${++p}, $${++p}, $${++p}, $${++p}, $${++p}, $${++p}, $${++p}, $${++p}, $${++p}, $${++p})`);
         }
       }
       if (valueRows.length > 0) {
         try {
           await safeQuery(
             `INSERT INTO ml_training_data
-              (venue_id, collection_mode, day_of_week, hour, venue_category, price_level, rating, review_count,
+              (venue_id, collection_mode, hour_axis, day_of_week, hour, venue_category, price_level, rating, review_count,
                temperature, humidity, wind_speed, weather_condition, is_raining, busyness_pct, besttime_epoch)
              VALUES ${valueRows.join(', ')}
              ON CONFLICT DO NOTHING`,
@@ -205,7 +272,12 @@ async function run() {
   await collectWeekly();
 }
 
-module.exports = { run };
+module.exports = {
+  run,
+  bestTimeSlotToLocal,
+  BESTTIME_DAY_START_HOUR,
+  HOUR_AXIS_VENUE_LOCAL,
+};
 
 // Allow direct execution
 if (require.main === module) {
