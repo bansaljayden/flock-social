@@ -1893,24 +1893,64 @@ router.post('/:id/attendance',
           // Reproduced verbatim as FILTER clauses, because narrowing either one
           // silently moves every reliability score in the database.
           //
+          // ── SOLO FLOCKS EARN NOTHING (self-credit audit) ──────────────────
+          // Both counts additionally require the flock to have at least TWO
+          // accepted members (mc.accepted_count >= 2). Without that bar the
+          // score was self-serviceable at zero social cost, two ways:
+          //   - create a flock at any venue with event_time = now, check in
+          //     (routes/checkin.js markFlockAttendance pre-sets
+          //     attendance = 'attended'), mark the flock completed, and mark
+          //     attendance — the tally counted the solo flock and the score
+          //     climbed with nobody else involved;
+          //   - skip the check-in entirely: the creator of a completed solo
+          //     flock can POST this very route naming themselves.
+          // ">= 2 accepted members" is the app's existing evidence bar for a
+          // real flock — routes/feedback.js VERIFIED_PRESENCE_SQL and the
+          // venue-review gate both use it, for the same reason: a solo flock
+          // is one free POST, so it certifies nothing. Requiring a second
+          // ACCEPTED member moves the cost from one request to a second real,
+          // email-verified account (middleware/auth.js UNVERIFIED_DENY blocks
+          // flock create/join/invite until the email link is clicked).
+          //
+          // The bar is applied to the DENOMINATOR too, deliberately: a solo
+          // flock must not count as "joined" either, or every solo plan would
+          // read as a flake and drag honest scores down. A plan with no other
+          // participants carries no social cost in either direction, so it is
+          // invisible to the score in both.
+          //
+          // A creation-time-vs-event_time floor ("no coordination happened")
+          // was considered and rejected: with the two-member bar an instant
+          // solo flock already earns nothing, and a lead-time floor would rob
+          // honest spontaneous groups — a "we're going out right now" flock a
+          // real friend accepts minutes before leaving is exactly the
+          // coordination this app exists for.
+          //
           // LEFT JOINs so an affected user with no other rows still comes back
           // as a row with zeroes rather than vanishing from the result — a
           // missing row here would leave their old score in place instead of
-          // clearing it, which the per-user loop never did.
+          // clearing it, which the per-user loop never did. The member count
+          // is a LATERAL for the same reason: it must never drop the t.uid row.
           const tally = await client.query(
             `SELECT t.uid,
                     COUNT(*) FILTER (
                       WHERE f.status = 'completed'
                         AND fm.status = 'accepted'
                         AND fm.attendance <> 'unmarked'
+                        AND mc.accepted_count >= 2
                     )::int AS joined,
                     COUNT(*) FILTER (
                       WHERE f.status = 'completed'
                         AND fm.attendance = 'attended'
+                        AND mc.accepted_count >= 2
                     )::int AS attended
              FROM UNNEST($1::int[]) AS t(uid)
              LEFT JOIN flock_members fm ON fm.user_id = t.uid
              LEFT JOIN flocks f ON f.id = fm.flock_id
+             LEFT JOIN LATERAL (
+               SELECT COUNT(*)::int AS accepted_count
+               FROM flock_members m2
+               WHERE m2.flock_id = fm.flock_id AND m2.status = 'accepted'
+             ) mc ON TRUE
              GROUP BY t.uid`,
             [affectedUserIds]
           );
