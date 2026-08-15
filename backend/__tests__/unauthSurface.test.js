@@ -152,13 +152,16 @@ test('guest name normalization is what makes a takedown stick', () => {
 });
 
 test('guest link tokens are not enumerable', () => {
-  // ~55^12. Also checks the alphabet excludes the look-alike characters, since
-  // these get read aloud and retyped.
+  // ~55^24 (≈139 bits — the 2026-08-14 sweep raised it from 12 chars, which
+  // was ~69). Also checks the alphabet excludes the look-alike characters,
+  // since these get read aloud and retyped. The deeper entropy properties
+  // (>=128-bit floor, unbiased sampling, column fit) are pinned in
+  // __tests__/guestInviteHardening.test.js.
   const seen = new Set();
   for (let i = 0; i < 500; i++) {
     const t = guest.newLinkToken();
-    assert.strictEqual(t.length, 12);
-    assert.match(t, /^[A-HJ-NP-Za-hjkmnp-z2-9]{12}$/, `unexpected characters in ${t}`);
+    assert.strictEqual(t.length, 24);
+    assert.match(t, /^[A-HJ-NP-Za-hjkmnp-z2-9]{24}$/, `unexpected characters in ${t}`);
     seen.add(t);
   }
   assert.strictEqual(seen.size, 500, 'tokens must not repeat');

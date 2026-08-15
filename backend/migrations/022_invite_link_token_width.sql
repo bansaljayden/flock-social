@@ -1,0 +1,11 @@
+-- Guest invite tokens grow from 12 to 24 characters (~69 -> ~139 bits of
+-- entropy). flock_invite_links.token was VARCHAR(20), sized for the old
+-- generator, so the new tokens need a wider column. 64 leaves headroom for a
+-- future format change without another migration; the route validator
+-- (routes/guest.js LINK_TOKEN_PARAM_MAX) is pinned to the same number by
+-- __tests__/guestInviteHardening.test.js.
+--
+-- Widening a varchar is a metadata-only change in Postgres (no table rewrite,
+-- no index rebuild), so this is safe inside the default single transaction.
+-- Existing 12-char tokens are untouched and keep resolving.
+ALTER TABLE flock_invite_links ALTER COLUMN token TYPE VARCHAR(64);
