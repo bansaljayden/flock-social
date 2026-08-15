@@ -218,6 +218,14 @@ function verifyModelShape(session_, meta) {
 // old code merely degraded to the rule engine once. loadModel's own try/catch
 // does not cover the fs.existsSync calls that precede it, so this is reachable
 // (an unreadable model volume), not theoretical.
+//
+// STICKY BY DESIGN: the settled promise is kept for the life of the process,
+// so a failed load (missing files, gate refusal, corrupt artifact) is decided
+// ONCE and every later prediction takes the rule engine without re-reading
+// disk or re-attempting InferenceSession.create per request — the alternative
+// is a load-retry storm on the hottest path in the API. Fixing the artifact
+// on disk therefore requires a process restart, which is how an artifact gets
+// fixed anyway (a deploy). Pinned in __tests__/mlPredictorHarness.test.js.
 function init() {
   if (!loadPromise) {
     loadPromise = loadModel().catch((err) => {
@@ -1021,7 +1029,15 @@ function buildFeatureVector(venue, weather, timestamp, eventData, feedback, base
   const featureNames = metadata.feature_names || [];
   const vector = new Float32Array(featureNames.length);
   for (let i = 0; i < featureNames.length; i++) {
-    vector[i] = features[featureNames[i]] || 0;
+    // Round 18: `features[name] || 0` only screened FALSY garbage. A non-numeric
+    // STRING is truthy, and Float32Array assignment coerces it — so a venue
+    // shaped from request-body fields (routes/crowd.js POST /batch scores
+    // exactly those) with rating: 'abc' or price_level: 'x' put literal NaN
+    // into the tensor. Number() first, then the finite check: every valid
+    // input coerces to the same value the typed array would have produced,
+    // and everything else zero-fills like any other absent feature.
+    const value = Number(features[featureNames[i]]);
+    vector[i] = Number.isFinite(value) ? value : 0;
   }
   return vector;
 }
@@ -1139,6 +1155,16 @@ async function predictBusyness(venue, weather, timestamp) {
 
     const outputName = session.outputNames[0];
     const rawOutput = results[outputName].data[0];
+    // A model output that is not a finite number must not reach the arithmetic
+    // below: NaN (or an empty output tensor's undefined, or an int64 head's
+    // BigInt) sails through clamp-and-round as NaN, getLabel(NaN) falls through
+    // every band to 'Very Busy', and the response ships score:null with
+    // predictionMethod 'ml'. verifyModelShape can only check the head shape
+    // when onnxruntime exposes outputMetadata, so this is the runtime backstop:
+    // throw, and the catch below answers with the rule engine, honestly labelled.
+    if (typeof rawOutput !== 'number' || !Number.isFinite(rawOutput)) {
+      throw new Error(`model emitted a non-finite output (${String(rawOutput)})`);
+    }
     let score;
     if (metadata.label_type === 'delta') {
       // Delta-trained model: reconstruct absolute as baseline + clamp(delta).
@@ -1205,7 +1231,12 @@ async function predictHourlyForecast(venue, weather, startHour, count, baseTimes
   const start = startHour != null ? startHour : new Date().getHours();
   const forecast = [];
 
-  const base = baseTimestamp ? new Date(baseTimestamp) : new Date();
+  let base = baseTimestamp ? new Date(baseTimestamp) : new Date();
+  // An unreadable baseTimestamp is not a timestamp — treat it exactly like an
+  // omitted one (same normalization getNearbyEvents applies to its cache key).
+  // Before this guard an Invalid Date rode through setHours untouched and
+  // labelFor below read NaN off it, printing "NaN AM" over every entry.
+  if (Number.isNaN(base.getTime())) base = new Date();
   base.setHours(start, 0, 0, 0);
 
   // THE LABEL IS READ OFF THE TIMESTAMP THAT WAS ACTUALLY SCORED.
