@@ -85,13 +85,24 @@ const scalarUserId = () =>
 // re-read rather than assumed.
 // ---------------------------------------------------------------------------
 async function reRequestDeclined(rowId, requesterId, addresseeId) {
-  const r = await pool.query(
-    `UPDATE friendships SET status = 'pending', requester_id = $1, addressee_id = $2
-      WHERE id = $3 AND status = 'declined'
-      RETURNING id`,
-    [requesterId, addresseeId, rowId]
-  );
-  return r.rows.length > 0;
+  try {
+    const r = await pool.query(
+      `UPDATE friendships SET status = 'pending', requester_id = $1, addressee_id = $2
+        WHERE id = $3 AND status = 'declined'
+        RETURNING id`,
+      [requesterId, addresseeId, rowId]
+    );
+    return r.rows.length > 0;
+  } catch (err) {
+    // 23505: the direction flip collided with an OPPOSITE-ordered row for the
+    // same pair (a legacy crossed pair where both rows ended up declined —
+    // today's decline DELETEs, so only old data can hold this shape). The
+    // caller answers with currentState() on `false`, which is the honest
+    // report; before this catch the constraint violation fell into the outer
+    // catch and answered 500 for a tap on a perfectly ordinary button.
+    if (err.code === '23505') return false;
+    throw err;
+  }
 }
 
 async function acceptPending(rowId) {
@@ -100,6 +111,40 @@ async function acceptPending(rowId) {
     [rowId]
   );
   return r.rows.length > 0;
+}
+
+// REQUEST-THEN-BLOCK, CLOSED FROM THE WRITE SIDE (reliability pass 2026-08-14).
+//
+// Every relationship write here is preceded by an isBlockedBetween() check, and
+// the check and the write are two snapshots: a block committed in the gap used
+// to mint a pending request — or an accepted friendship — across a block that
+// was already in force. The block route separates the pair too (it deletes
+// friendship rows after inserting the block), but ITS delete and OUR insert are
+// also two snapshots, so each side could miss the other.
+//
+// So the write is verified AFTER it lands: re-ask the block table, and if a
+// block turned up while the write was in flight, undo the relationship the same
+// way routes/moderation.js does — delete the pair's rows — and tell the caller.
+// This converges in every interleaving: either our write happens before the
+// block route's sweep (their delete removes it), or after (this re-check runs
+// later still, so it necessarily sees the committed block and undoes the write
+// itself).
+//
+// The undo swallows its own failure for the same reason the cleanup above does:
+// by this point the block verdict is what decides the response, and a failed
+// delete leaves rows the block route's sweep or the next accept will clear.
+async function severedByFreshBlock(a, b) {
+  if (!await isBlockedBetween(a, b)) return false;
+  try {
+    await pool.query(
+      `DELETE FROM friendships
+        WHERE (requester_id = $1 AND addressee_id = $2) OR (requester_id = $2 AND addressee_id = $1)`,
+      [a, b]
+    );
+  } catch (err) {
+    console.error('Post-write block separation failed:', err.message);
+  }
+  return true;
 }
 
 // A CROSSED PAIR IS AN ORPHAN THAT NO SCREEN CAN CLEAR (§O round: "two things
@@ -113,10 +158,18 @@ async function acceptPending(rowId) {
 // the outgoing screen with no button that touches it, because every other
 // handler here matches on `status = 'pending'` in ONE direction.
 //
-// Once the pair is accepted, any remaining PENDING row between them is that
-// orphan by definition. `status = 'pending'` in the predicate is what keeps
-// this from being a friendship-deleting statement if it is ever called in the
-// wrong place.
+// Once the pair is accepted, any remaining PENDING (or legacy declined) row
+// between them is that orphan by definition. Reliability pass 2026-08-14: the
+// pending-only DELETE left one more shape behind — BOTH crossed rows accepted.
+// A crossed pair holds two pending rows, and two people tapping Accept on each
+// other's request at the same moment each update a DIFFERENT row: two accepted
+// rows, and the friends list showed the same person twice, forever, because
+// nothing pending was left for this cleanup to find. So the statement now also
+// collapses duplicate ACCEPTED rows down to one canonical survivor — MIN(id),
+// the same row every racer computes, so concurrent cleanups agree instead of
+// deleting each other's survivor. The subquery guard means it can NEVER delete
+// the last accepted row: with one accepted row the pair is already canonical
+// and only the pending/declined leftovers go.
 // CLEANUP MUST NOT FAIL THE THING IT FOLLOWS. This runs AFTER the friendship
 // has been accepted and committed, and it is housekeeping. Letting it throw
 // would answer a successful accept with a 500 — and the retry cannot succeed,
@@ -124,18 +177,34 @@ async function acceptPending(rowId) {
 // user would be told "no pending request from this user" about the friend they
 // just made. A leftover orphan row is a far smaller problem than that, and the
 // next accept between these two would clear it anyway.
-async function clearCrossedPending(a, b) {
+async function collapseToOneFriendship(a, b) {
   try {
     await pool.query(
       `DELETE FROM friendships
-        WHERE status = 'pending'
-          AND ((requester_id = $1 AND addressee_id = $2) OR (requester_id = $2 AND addressee_id = $1))`,
+        WHERE ((requester_id = $1 AND addressee_id = $2) OR (requester_id = $2 AND addressee_id = $1))
+          AND (status = 'pending' OR status = 'declined'
+               OR (status = 'accepted' AND id <> (
+                     SELECT MIN(f2.id) FROM friendships f2
+                      WHERE ((f2.requester_id = $1 AND f2.addressee_id = $2) OR (f2.requester_id = $2 AND f2.addressee_id = $1))
+                        AND f2.status = 'accepted')))`,
       [a, b]
     );
   } catch (err) {
     console.error('Crossed-request cleanup failed (friendship is accepted regardless):', err.message);
   }
 }
+
+// ONE statement text for every read of "what is between these two people",
+// shared by the pre-insert read AND the post-insert convergence re-read below,
+// so the two cannot drift apart. Strongest state first, then lowest id, so a
+// crossed pair (two legal rows for one pair of people) always yields the same
+// answer — and, on the re-read after a fresh INSERT, yields the OTHER side's
+// earlier row rather than our own when both are pending.
+const PAIR_LOOKUP_SQL =
+  `SELECT id, status, requester_id FROM friendships
+   WHERE (requester_id = $1 AND addressee_id = $2) OR (requester_id = $2 AND addressee_id = $1)
+   ORDER BY CASE status WHEN 'accepted' THEN 0 WHEN 'pending' THEN 1 ELSE 2 END, id
+   LIMIT 1`;
 
 // What the relationship is right now, for the caller who lost one of the races
 // above. Reported rather than guessed: the whole point is that we no longer
@@ -144,6 +213,7 @@ async function currentState(a, b) {
   const r = await pool.query(
     `SELECT status FROM friendships
       WHERE (requester_id = $1 AND addressee_id = $2) OR (requester_id = $2 AND addressee_id = $1)
+      ORDER BY CASE status WHEN 'accepted' THEN 0 WHEN 'pending' THEN 1 ELSE 2 END, id
       LIMIT 1`,
     [a, b]
   );
@@ -190,13 +260,7 @@ router.post('/request',
       // including "friend request sent" to somebody they are already friends
       // with. Strongest state first: an accepted relationship is the truth
       // about these two people whatever else is lying around.
-      const existing = await pool.query(
-        `SELECT id, status, requester_id FROM friendships
-         WHERE (requester_id = $1 AND addressee_id = $2) OR (requester_id = $2 AND addressee_id = $1)
-         ORDER BY CASE status WHEN 'accepted' THEN 0 WHEN 'pending' THEN 1 ELSE 2 END, id
-         LIMIT 1`,
-        [req.user.id, user_id]
-      );
+      const existing = await pool.query(PAIR_LOOKUP_SQL, [req.user.id, user_id]);
 
       // Charged on every probe at a stranger, hit or miss. Charging only on
       // hits would leave misses free and unbounded, and "the free answers are
@@ -231,7 +295,10 @@ router.post('/request',
             if (!await acceptPending(row.id)) {
               return res.json(await currentState(req.user.id, user_id));
             }
-            await clearCrossedPending(req.user.id, user_id);
+            if (await severedByFreshBlock(req.user.id, user_id)) {
+              return res.status(403).json({ error: 'You can no longer connect with this user.' });
+            }
+            await collapseToOneFriendship(req.user.id, user_id);
             // Notify both sides
             if (io) {
               io.to(`user:${user_id}`).emit('friend_request_responded', { fromUserId: req.user.id, fromUserName: req.user.name, action: 'accepted' });
@@ -270,6 +337,41 @@ router.post('/request',
       // event, so nothing is emitted and nobody's phone rings a second time.
       if (inserted.rows.length === 0) {
         return res.json({ message: 'Friend request already sent', status: 'pending' });
+      }
+
+      // Verify the write against a block that may have landed while it was in
+      // flight — see severedByFreshBlock.
+      if (await severedByFreshBlock(req.user.id, user_id)) {
+        return res.status(403).json({ error: 'You can no longer connect with this user.' });
+      }
+
+      // CONVERGE THE CROSSED PAIR AT THE MOMENT IT IS CREATED. The read at the
+      // top and the insert above are two snapshots: A requests B while B
+      // requests A, both reads see nothing, both inserts succeed (the unique
+      // key is on the ORDERED pair), and the two of them used to hold two
+      // pending rows until someone accepted — and if both then accepted, two
+      // ACCEPTED rows. So re-read the pair now, after our insert. The later of
+      // the two crossed inserts is GUARANTEED to see both rows here, and the
+      // lookup's ORDER BY hands it the other side's earlier row: two people who
+      // asked for each other at the same instant are two people who agree, so
+      // it is accepted on the spot and the pair collapses to one row. A plain
+      // un-crossed request just sees its own row and takes the normal path.
+      const after = await pool.query(PAIR_LOOKUP_SQL, [req.user.id, user_id]);
+      const seen = after.rows[0];
+      if (seen && seen.status === 'accepted') {
+        // An accept landed between our insert and this read.
+        await collapseToOneFriendship(req.user.id, user_id);
+        return res.json({ message: `You and ${userCheck.rows[0].name} are now friends!`, status: 'accepted' });
+      }
+      if (seen && seen.status === 'pending' && seen.requester_id === user_id) {
+        if (await acceptPending(seen.id)) {
+          await collapseToOneFriendship(req.user.id, user_id);
+          if (io) {
+            io.to(`user:${user_id}`).emit('friend_request_responded', { fromUserId: req.user.id, fromUserName: req.user.name, action: 'accepted' });
+          }
+          return res.json({ message: `You and ${userCheck.rows[0].name} are now friends!`, status: 'accepted' });
+        }
+        return res.json(await currentState(req.user.id, user_id));
       }
 
       // Notify target user
@@ -327,12 +429,29 @@ router.post('/accept',
       );
 
       if (result.rows.length === 0) {
+        // Two accepts racing over a crossed pair: the winner's cleanup can
+        // delete the pending row this accept was aimed at AFTER our block check
+        // passed. The two people ARE friends — telling this caller "no pending
+        // request from this user" about the friend they just made is the race
+        // leaking into the UI. Report what the relationship actually is.
+        const state = await currentState(req.user.id, user_id);
+        if (state.status === 'accepted') {
+          return res.json({ message: 'Friend request accepted' });
+        }
+        return res.status(404).json({ error: 'No pending request from this user' });
+      }
+
+      // Verify the accept against a block that landed while it was in flight.
+      // The blocked-early path above answers the same 404, so the two are
+      // indistinguishable to the caller — and either way no friendship remains.
+      if (await severedByFreshBlock(req.user.id, user_id)) {
         return res.status(404).json({ error: 'No pending request from this user' });
       }
 
       // If they had also requested us at the same moment, that second row is
-      // now an orphan. See clearCrossedPending.
-      await clearCrossedPending(req.user.id, user_id);
+      // now an orphan — and if both of us accepted at once, there are two
+      // accepted rows to collapse. See collapseToOneFriendship.
+      await collapseToOneFriendship(req.user.id, user_id);
 
       // Notify the requester
       const io = req.app.get('io');
@@ -593,13 +712,7 @@ router.post('/add-by-code',
 
       // Same order as POST /request: own-relationship lookup, then budget, then
       // the directory read, with one indistinguishable answer for all misses.
-      const existing = await pool.query(
-        `SELECT id, status, requester_id FROM friendships
-         WHERE (requester_id = $1 AND addressee_id = $2) OR (requester_id = $2 AND addressee_id = $1)
-         ORDER BY CASE status WHEN 'accepted' THEN 0 WHEN 'pending' THEN 1 ELSE 2 END, id
-         LIMIT 1`,
-        [req.user.id, targetUserId]
-      );
+      const existing = await pool.query(PAIR_LOOKUP_SQL, [req.user.id, targetUserId]);
 
       const withinBudget = existing.rows.length > 0 || friendProbeBudget.allow(req.user.id);
 
@@ -628,7 +741,10 @@ router.post('/add-by-code',
           if (!await acceptPending(row.id)) {
             return res.json({ ...await currentState(req.user.id, targetUserId), user: userCheck.rows[0] });
           }
-          await clearCrossedPending(req.user.id, targetUserId);
+          if (await severedByFreshBlock(req.user.id, targetUserId)) {
+            return res.status(403).json({ error: 'You can no longer connect with this user.' });
+          }
+          await collapseToOneFriendship(req.user.id, targetUserId);
           if (io) io.to(`user:${targetUserId}`).emit('friend_request_responded', { fromUserId: req.user.id, fromUserName: req.user.name, action: 'accepted' });
           return res.json({ message: `You and ${userCheck.rows[0].name} are now friends!`, status: 'accepted', user: userCheck.rows[0] });
         }
@@ -642,6 +758,8 @@ router.post('/add-by-code',
         return res.json({ message: `Friend request sent to ${userCheck.rows[0].name}`, status: 'pending', user: userCheck.rows[0] });
       }
 
+      // Conflict-tolerant insert, post-write block verify, and the crossed-pair
+      // convergence re-read — same three steps, same reasons, as POST /request.
       const inserted = await pool.query(
         `INSERT INTO friendships (requester_id, addressee_id, status)
          VALUES ($1, $2, 'pending')
@@ -652,6 +770,26 @@ router.post('/add-by-code',
       if (inserted.rows.length === 0) {
         return res.json({ message: 'Friend request already sent', status: 'pending', user: userCheck.rows[0] });
       }
+
+      if (await severedByFreshBlock(req.user.id, targetUserId)) {
+        return res.status(403).json({ error: 'You can no longer connect with this user.' });
+      }
+
+      const after = await pool.query(PAIR_LOOKUP_SQL, [req.user.id, targetUserId]);
+      const seen = after.rows[0];
+      if (seen && seen.status === 'accepted') {
+        await collapseToOneFriendship(req.user.id, targetUserId);
+        return res.json({ message: `You and ${userCheck.rows[0].name} are now friends!`, status: 'accepted', user: userCheck.rows[0] });
+      }
+      if (seen && seen.status === 'pending' && seen.requester_id === targetUserId) {
+        if (await acceptPending(seen.id)) {
+          await collapseToOneFriendship(req.user.id, targetUserId);
+          if (io) io.to(`user:${targetUserId}`).emit('friend_request_responded', { fromUserId: req.user.id, fromUserName: req.user.name, action: 'accepted' });
+          return res.json({ message: `You and ${userCheck.rows[0].name} are now friends!`, status: 'accepted', user: userCheck.rows[0] });
+        }
+        return res.json({ ...await currentState(req.user.id, targetUserId), user: userCheck.rows[0] });
+      }
+
       if (io) io.to(`user:${targetUserId}`).emit('friend_request_received', { fromUserId: req.user.id, fromUserName: req.user.name });
       res.json({ message: `Friend request sent to ${userCheck.rows[0].name}`, status: 'pending', user: userCheck.rows[0] });
     } catch (err) {
