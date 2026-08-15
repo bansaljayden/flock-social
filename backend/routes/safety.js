@@ -191,6 +191,56 @@ const EMAIL_RE = emailService.MAILABLE_RE;
 // instead of the message that names the actual problem.
 const FIELD_LIMITS = { name: 100, phone: 20, email: 254, relationship: 50 };
 
+// ---------------------------------------------------------------------------
+// THE PHONE FIELD (round 22).
+// ---------------------------------------------------------------------------
+// Round 17 gave this field a length and round 20 rewrote the email rules onto
+// the shared deliverability question, and in between the phone stayed the one
+// field on the form checked for nothing but how long it was. It accepted
+// `<script>alert(1)</script>`, an email address, and the word "later".
+//
+// Nothing here dials it, and PrivacyPolicy.js says so to users in so many words
+// ("we store the phone number because the form asks for it and you may want it
+// on file, but nothing in Flock texts or calls it"). So this is NOT a
+// dialability test and it must not pretend to be one — a rule that guessed at
+// national formats would start refusing real numbers, and refusing a real
+// number on the emergency contact form is a worse failure than storing an odd
+// one. It is also why rows saved before this rule existed are left alone rather
+// than swept: the same treatment the email rule gave them (see the
+// unreachable-contacts branch on /alert). Editing one of those rows does have
+// to fix the phone, and the message says which character is the problem.
+//
+// Two things make it worth checking anyway:
+//
+//   * contact_phone is the ON CONFLICT key. UNIQUE(user_id, contact_phone)
+//     decides whether saving Mum a second time updates her row or spends
+//     another of the five slots, so a field that accepts free text quietly
+//     turns the five-contact list into four copies of one person.
+//   * it is rendered on the Safety screen next to people the user is trusting
+//     with an emergency.
+//
+// The rule is therefore the weakest one that is still true of every phone
+// number and false of everything that is not one: the characters people
+// actually write numbers with, and enough digits to be one. Four is under any
+// real number including short codes, and under every fixture in the suite.
+//
+// A literal space rather than \s, which also matches a newline and a tab. The
+// value is trimmed but not otherwise normalised before it is stored and
+// rendered, so there is no reason to accept a control character in the middle
+// of it.
+const PHONE_SHAPE_RE = /^\+?[\d ().-]+$/;
+const MIN_PHONE_DIGITS = 4;
+
+function phoneError(phone) {
+  if (!PHONE_SHAPE_RE.test(phone)) {
+    return 'A phone number can only contain digits, spaces, and + - ( ) .';
+  }
+  if ((phone.match(/\d/g) || []).length < MIN_PHONE_DIGITS) {
+    return 'That phone number does not look right';
+  }
+  return null;
+}
+
 function readContactFields(body) {
   const name = typeof body.name === 'string' ? stripHtml(body.name).trim() : '';
   const phone = typeof body.phone === 'string' ? body.phone.trim() : '';
@@ -205,6 +255,11 @@ function readContactFields(body) {
   if (!isMailableAddress(email)) return { error: 'That email address does not look right. It has to be one address that can receive mail.' };
   if (name.length > FIELD_LIMITS.name) return { error: `Name must be ${FIELD_LIMITS.name} characters or fewer` };
   if (phone.length > FIELD_LIMITS.phone) return { error: `Phone number must be ${FIELD_LIMITS.phone} characters or fewer` };
+  // After the length, for the same reason the email shape check is after its
+  // length: a pasted "+1 (555) 010-0000 ext. 4021" fails both, and the message
+  // that names the actual problem is the one about the length.
+  const phoneProblem = phoneError(phone);
+  if (phoneProblem) return { error: phoneProblem };
   if (relationship.length > FIELD_LIMITS.relationship) return { error: `Relationship must be ${FIELD_LIMITS.relationship} characters or fewer` };
 
   return { name, phone, email, relationship: relationship || null };
@@ -309,7 +364,20 @@ router.post('/contacts', authenticate, async (req, res) => {
       await client.query('BEGIN');
       await client.query("SELECT pg_advisory_xact_lock(hashtext('safety:' || $1::text))", [String(req.user.id)]);
 
-      const count = await client.query('SELECT COUNT(*)::int AS n FROM trusted_contacts WHERE user_id = $1', [req.user.id]);
+      // Round 22: the cap counted every row, including the one this request is
+      // about to UPDATE rather than insert. The INSERT below carries
+      // `ON CONFLICT (user_id, contact_phone) DO UPDATE`, so re-saving a number
+      // already on the list has never added a contact — but at five contacts
+      // the count refused it first, with "You can have up to 5 trusted
+      // contacts". The person that stops is the one at the cap fixing an
+      // address on a contact who cannot currently be reached, which is the
+      // exact repair the unreachable-contacts branch on /alert tells them to go
+      // and make. Counting the rows this write will NOT touch asks the question
+      // the cap is actually for: will this add a sixth person.
+      const count = await client.query(
+        'SELECT COUNT(*)::int AS n FROM trusted_contacts WHERE user_id = $1 AND contact_phone IS DISTINCT FROM $2',
+        [req.user.id, phone]
+      );
       if (count.rows[0].n >= MAX_TRUSTED_CONTACTS) {
         await client.query('ROLLBACK');
         return res.status(400).json({ error: `You can have up to ${MAX_TRUSTED_CONTACTS} trusted contacts` });
@@ -370,6 +438,18 @@ router.put('/contacts/:id', authenticate, async (req, res) => {
     chargeContactWrite(req.user.id);
     res.json({ contact: result.rows[0] });
   } catch (err) {
+    // Round 22. POST carries `ON CONFLICT (user_id, contact_phone) DO UPDATE`;
+    // this route had no answer for the same UNIQUE at all. Editing one
+    // contact's number to a number another of your contacts already has raised
+    // 23505 and came back as `500 Failed to update contact` — a safety screen
+    // telling somebody the app is broken when the real answer is one word of
+    // theirs to fix. It is a conflict, it is theirs to resolve, and 409 is what
+    // that is.
+    if (err.code === '23505') {
+      return res.status(409).json({
+        error: 'One of your other trusted contacts already has that phone number.',
+      });
+    }
     console.error('[Safety] Update contact error:', err);
     res.status(500).json({ error: 'Failed to update contact' });
   }
@@ -519,6 +599,70 @@ function agoPhrase(ms) {
   return `${m} minute${m === 1 ? '' : 's'} ago`;
 }
 
+// ---------------------------------------------------------------------------
+// THE THREE THINGS THIS ROUTE IS NOT ALLOWED TO DO (round 22, written down
+// because each one has been quietly proposed at least once).
+// ---------------------------------------------------------------------------
+//
+// 1. IT MUST NOT REFUSE A RETRY OF AN SOS THAT FAILED. The rule an emergency
+//    limiter has to satisfy is not "be strict", it is "never be the reason an
+//    alert did not go out", and a limiter that blocks the second attempt is
+//    worse than no limiter at all. Walking the three retries somebody
+//    frightened actually makes, against the numbers above:
+//
+//      first alert FAILED          allowed at once. The claim row backdates
+//                                  itself past the floor the moment the sends
+//                                  settle, so the retry the 502 tells them to
+//                                  make is already open. This is the case a
+//                                  naive cooldown gets wrong and it is the one
+//                                  that matters most.
+//      DELIVERED, and they have
+//      moved 250 m or gained a
+//      location they did not have  allowed after the 60s floor, up to
+//                                  MAX_ESCALATIONS delivered alerts per 15 min.
+//                                  That update is the thing a contact needs,
+//                                  and it cannot be produced by mashing the
+//                                  button, because an unchanged position is
+//                                  still refused.
+//      DELIVERED, nothing changed  refused — and the refusal says the earlier
+//                                  alert WENT OUT, to how many people, how long
+//                                  ago, and names 911. A duplicate of a
+//                                  confirmed-delivered alert adds nothing to
+//                                  what the contacts know; being told it was
+//                                  delivered adds a great deal to what the
+//                                  sender knows.
+//
+//    MAX_ATTEMPTS_PER_WINDOW is the only ceiling that can refuse an undelivered
+//    attempt, and it exists solely to stop the total-failure loop a provider
+//    outage produces (every retry allowed, every retry fanning out to every
+//    contact, forever). Six in fifteen minutes is well past any real sequence
+//    of taps, and it is checked LAST so every more specific and more useful
+//    refusal answers first.
+//
+// 2. IT MUST NOT ASK A QUESTION IT CAN BE REFUSED AN ANSWER TO. There is no
+//    block lookup on this route and there must not be one. A trusted contact is
+//    an address somebody typed, not a Flock account, so there is no
+//    relationship to consult — and if there were, a lookup that ERRORED would
+//    have to answer "send anyway", because an SOS that does not go out because
+//    a block table was slow is the worst outcome available here. The same rule
+//    governs everything else the route reads around the message: unreadable
+//    coordinates degrade the alert to one without a location, an unknown
+//    timezone falls back to a labelled UTC, and a missing display name falls
+//    back to "A Flock user". None of them may cost a delivery. The only two
+//    refusals before a send are "you have no contacts" and "none of them can
+//    receive mail", and both are conditions no retry could fix.
+//
+// 3. IT MUST NOT LET ONE RECIPIENT TAKE DOWN ANOTHER. There is exactly one
+//    delivery channel here — email, one message per contact — and there cannot
+//    be a second: a trusted contact has no Flock account and therefore no
+//    device token, which is why PrivacyPolicy.js tells users "SOS alerts are
+//    sent by email only". So the isolation that matters is per RECIPIENT, and
+//    it is Promise.allSettled below: a rejection, a provider error, or an
+//    address that can never be delivered to costs that contact and nobody else.
+//    The second seam is between the fan-out and the bookkeeping write that
+//    follows it, which is why that UPDATE carries a .catch — it runs after
+//    every email is already out, and its failure is not the user's to hear
+//    about.
 router.post('/alert', authenticate, async (req, res) => {
   try {
     const { latitude, longitude, includeLocation, timezone } = req.body;
@@ -958,6 +1102,12 @@ module.exports.__test = {
   EMAIL_RE,
   MAX_TRUSTED_CONTACTS,
   readContactFields,
+  // The column widths these have to stay under live in the migrations, and a
+  // limit wider than its column is a 22001 served as "Failed to add contact".
+  // __tests__/moderationSafetySweep.test.js diffs the two.
+  FIELD_LIMITS,
+  phoneError,
+  MIN_PHONE_DIGITS,
   escapeHtml,
   safeSubjectText,
   metresBetween,

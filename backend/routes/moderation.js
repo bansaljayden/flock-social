@@ -100,7 +100,16 @@ router.post('/reports',
     // content_reports CHECK refused '{dm}' with 23514. That landed in the catch
     // as a 500 AND printed the "VALID_CONTENT_TYPES has drifted ahead of the
     // constraint" alarm, which would have sent the next maintainer hunting for
-    // a missing migration that does not exist. `reason` has the same CHECK.
+    // a missing migration that does not exist.
+    //
+    // `reason` is NOT the same: content_reports.reason is a bare VARCHAR(50)
+    // with no CHECK behind it anywhere in the migrations, so VALID_REASONS is
+    // enforced here and only here. That is deliberate and it is what makes the
+    // alarm in the catch below able to say a 23514 on this table means exactly
+    // one thing. An earlier version of this comment claimed reason carried the
+    // same constraint, which would have had the next maintainer looking for a
+    // migration to widen instead of reading this array.
+    // __tests__/moderationSafetySweep.test.js pins both halves.
     scalarOnly(body('content_type'), 'content type').isIn(VALID_CONTENT_TYPES).withMessage('Invalid content type'),
     scalarOnly(body('reason'), 'reason').isIn(VALID_REASONS).withMessage('Invalid reason'),
     // Round 17: these were validated but never CONVERTED. isInt() accepts the
@@ -125,13 +134,11 @@ router.post('/reports',
       // Round 15: the quota was spent BEFORE validation, so every malformed
       // request burned one of the ten reports a user gets per hour. Reporting
       // abuse is an App Review 1.2 obligation and the budget must only be spent
-      // on real reports — validate first, meter second.
+      // on real reports — validate first, meter second. Round 22 puts the
+      // self-report refusal in the same half for the same reason: see the note
+      // on it below.
       const errors = validationResult(req);
       if (!errors.isEmpty()) return res.status(400).json({ error: errors.array()[0].msg });
-
-      if (!allowReport(req.user.id)) {
-        return res.status(429).json({ error: 'You have filed a lot of reports recently. Try again in a little while.' });
-      }
 
       // KNOWN GAP, left open deliberately, round 20. A report naming NEITHER
       // content nor a user — `{"content_type":"profile","reason":"spam"}` — is
@@ -153,6 +160,38 @@ router.post('/reports',
       // null must read as absent, not as a validation error), so the two rules
       // have to be reconciled by whoever owns that file, not routed around.
       const { content_type, content_id, reported_user_id, reason, details } = req.body;
+
+      // ---------------------------------------------------------------------
+      // A REPORT NAMING YOURSELF IS NOT A REPORT (round 22).
+      // ---------------------------------------------------------------------
+      // `{"content_type":"profile","reason":"spam","reported_user_id":<me>}` is
+      // the cheapest actionable-looking payload in the app. It needs no other
+      // account, no content and no visibility: the only gate on that shape is
+      // the "does this user exist" lookup below, and the caller is the proof.
+      // Every one of them filed a row, and every row paged every moderator
+      // through alertModerators. Ten an hour per account, all of them landing
+      // in the same LIMIT 200 queue as real reports, and all of them
+      // unactionable in every direction — admin.js refuses to hide a profile,
+      // and the only person there is to ban is the reporter.
+      //
+      // The block route beside this one has always refused the mirror-image
+      // request in so many words ("You cannot block yourself"). The two halves
+      // of the same Guideline 1.2 control now answer the same question the same
+      // way.
+      //
+      // BEFORE THE METER, deliberately, and for round 15's reason: the ten
+      // reports an account gets per hour must only be spent on real ones.
+      // Somebody who taps report on their own profile by accident must not lose
+      // a slot they may need for a real report minutes later. Nothing is stored
+      // and nothing is mailed on this path, so there is nothing for the meter
+      // to bound — the global API limiter already covers raw request volume.
+      if (reported_user_id && reported_user_id === req.user.id) {
+        return res.status(400).json({ error: 'You cannot report yourself' });
+      }
+
+      if (!allowReport(req.user.id)) {
+        return res.status(429).json({ error: 'You have filed a lot of reports recently. Try again in a little while.' });
+      }
 
       // Round 3: a report must reference REAL content the reporter can see,
       // authored by the person being reported — otherwise users can frame
@@ -265,6 +304,22 @@ router.post('/reports',
         }
         if (!row) {
           return res.status(400).json({ error: 'That content could not be found' });
+        }
+        // The other road to a self-report, and the one the story branch above
+        // opens on purpose. includeOwn:true is there so that reporting your own
+        // story is not answered with "that content could not be found", which
+        // would be a denial that the story exists; the honest answer it was
+        // reaching for is this one. Same for a venue review, a DM or a flock
+        // message you wrote yourself: your own content is not something a
+        // moderator can be asked to adjudicate, and you can delete it.
+        //
+        // `!= null` rather than a truthy test: a guest RSVP resolves sender_id
+        // to NULL because there is no Flock account behind a guest, and reading
+        // "no author" as "the author is me" would take the only takedown path
+        // for an abusive guest name back off the board — the exact outage
+        // migration 016 was written to end.
+        if (row.sender_id != null && row.sender_id === req.user.id) {
+          return res.status(400).json({ error: 'You cannot report your own content' });
         }
         if (row.is_hidden) {
           // Already taken down. Nothing to queue, nothing to alert on, and the
@@ -420,11 +475,27 @@ router.post('/blocks/:userId', [param('userId').isInt({ min: 1, max: INT4_MAX })
     // typing events check the cached variant (round 5).
     invalidateBlockCache(req.user.id, blockedId);
 
-    // Tell the blocked user's client to stop any live DM location interval
-    // aimed at the blocker; the server already refuses the events, this stops
-    // the pointless emitting too.
+    // Tell BOTH clients to stop any live DM location interval aimed at the
+    // other; the server already refuses the events in both directions, this
+    // stops the pointless emitting too.
+    //
+    // Round 22: only the blocked side was told, and the missing half is the one
+    // that matters more. Blocking somebody you are currently sharing your live
+    // location with in a DM is not a corner case, it is one of the likelier
+    // reasons to reach for the block button — and the blocker's own device kept
+    // a ten-second emit loop pointed at them and kept showing "sharing location
+    // with <the person you just blocked>" until the screen was navigated away
+    // from. The server dropped the coordinates, so nothing leaked; the UI told
+    // the user something about their own safety that was not true.
+    //
+    // App.js's onBlockedBy handler reads the payload as "stop emitting at this
+    // id" (it clears dmSharingLocation when it matches), so each side is sent
+    // the OTHER id and the existing client needs no change.
     const io = req.app.get('io');
-    if (io) io.to(`user:${blockedId}`).emit('blocked_by', { userId: req.user.id });
+    if (io) {
+      io.to(`user:${blockedId}`).emit('blocked_by', { userId: req.user.id });
+      io.to(`user:${req.user.id}`).emit('blocked_by', { userId: blockedId });
+    }
 
     res.status(201).json({ message: 'User blocked' });
   } catch (err) {
