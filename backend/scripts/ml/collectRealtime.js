@@ -12,6 +12,18 @@ const { fetchLiveBusyness } = require('./bestTimeService');
 const { CITIES, getLocalTime, isHoliday, isSchoolBreak, sleep } = require('./config');
 const { getNearestEvent } = require('./eventService');
 const { specialNightFor, isHolidayEve } = require('./specialNights');
+const { refreshCollectedBaselines, REFUSAL_MESSAGE } = require('./buildBaselines');
+
+// ---------------------------------------------------------------------------
+// THE HOUR AXIS. This collector has always written the TRUE venue-local hour
+// (config.getLocalTime(tz).hour) into ml_training_data.hour — but it never said
+// so, and scripts/ml/collectWeekly.js was writing BestTime's array index into
+// the same column. Two clocks, one column, nothing marking which. Every row
+// written from here now declares `hour_axis = 'venue_local'`; migration 023
+// converts the weekly half to the same axis and adds the CHECK constraint that
+// stops an undeclared weekly row from ever being inserted again.
+// ---------------------------------------------------------------------------
+const HOUR_AXIS_VENUE_LOCAL = 'venue_local';
 
 if (!process.env.DATABASE_URL && process.env.PGHOST) {
   const host = process.env.PGHOST;
@@ -22,9 +34,12 @@ if (!process.env.DATABASE_URL && process.env.PGHOST) {
   process.env.DATABASE_URL = `postgresql://${user}:${pass}@${host}:${port}/${db}`;
 }
 
+// An explicit PGSSLMODE wins (see config/database.js, and the same line in
+// collectWeekly.js) — which also lets the embedded-Postgres harness in
+// __tests__/mlClockAxisBackfill.test.js run this collector for real.
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
-  ssl: { rejectUnauthorized: false },
+  ssl: process.env.PGSSLMODE === 'disable' ? false : { rejectUnauthorized: false },
 });
 
 // Dated holiday context (2026-08-12): every realtime row now records WHEN it
@@ -42,6 +57,10 @@ async function ensureHolidayColumns() {
   // trained at sample weight 1.0 — a vendor forecast carrying more confidence
   // than any other label in the corpus. NULL on rows collected before this.
   await pool.query(`ALTER TABLE ml_training_data ADD COLUMN IF NOT EXISTS label_source VARCHAR(10)`);
+  // Which clock this row's `hour` is on. Normally created by migration 023;
+  // created here too because these scripts also run against databases that have
+  // not booted the current server, and the INSERT below names the column.
+  await pool.query(`ALTER TABLE ml_training_data ADD COLUMN IF NOT EXISTS hour_axis VARCHAR(16)`);
 }
 
 async function collectRealtime() {
@@ -128,15 +147,24 @@ async function collectRealtime() {
         continue;
       }
 
-      // Look up weekly baseline for this venue at current day/hour
+      // Look up the weekly baseline for this venue at the current venue-local
+      // day/hour. local.hour is a wall clock hour, so only weekly rows that
+      // DECLARE the venue-local axis may answer it: before migration 023 the
+      // weekly rows held BestTime array indices, and this lookup silently
+      // stamped every realtime row with the busyness of a slot six hours away.
+      // An undeclared corpus now yields NULL — an honest "no baseline" — rather
+      // than a confident wrong number. (Nothing in training reads this column:
+      // train/export_training_data.js recomputes the baseline leave-one-out at
+      // export time. It is kept for operational inspection.)
       let baseline = null;
       try {
         const { rows: baselineRows } = await pool.query(
           `SELECT ROUND(AVG(busyness_pct)) AS avg
            FROM ml_training_data
            WHERE venue_id = $1 AND collection_mode = 'weekly'
+             AND hour_axis = $4
              AND day_of_week = $2 AND hour = $3 AND busyness_pct IS NOT NULL`,
-          [venue.id, local.dayOfWeek, local.hour]
+          [venue.id, local.dayOfWeek, local.hour, HOUR_AXIS_VENUE_LOCAL]
         );
         baseline = baselineRows[0]?.avg ?? null;
       } catch (_) {}
@@ -152,14 +180,14 @@ async function collectRealtime() {
       try {
         await pool.query(
           `INSERT INTO ml_training_data
-            (venue_id, collection_mode, day_of_week, hour, month, season, is_holiday, is_school_break,
+            (venue_id, collection_mode, hour_axis, day_of_week, hour, month, season, is_holiday, is_school_break,
              venue_category, price_level, rating, review_count,
              temperature, humidity, wind_speed, weather_condition, is_raining,
              event_nearby, event_distance_km, event_size, event_type, event_hours_until,
              baseline_busyness, busyness_pct,
              observed_date, is_holiday_eve, special_night, special_night_effect, special_night_conf,
              label_source)
-          VALUES ($1, 'realtime', $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23,
+          VALUES ($1, 'realtime', $30, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23,
                   $24, $25, $26, $27, $28, $29)`,
           [
             venue.id,
@@ -191,6 +219,7 @@ async function collectRealtime() {
             special?.effect ?? null,
             special?.conf ?? null,
             labelSource,
+            HOUR_AXIS_VENUE_LOCAL,
           ]
         );
         totalRows++;
@@ -209,21 +238,20 @@ async function collectRealtime() {
 
 async function run() {
   await collectRealtime();
-  // Refresh baselines with latest realtime data
+  // Refresh baselines. This used to be a second, hand-written copy of
+  // buildBaselines.js's statement that had drifted from it: no
+  // `collection_mode = 'weekly'` filter at all, so it averaged live realtime
+  // readings and weekly forecast rows — on two different hour axes — into the
+  // same baseline slot, and whichever script ran last decided what a venue's
+  // baseline meant. One definition now, in buildBaselines.js.
   try {
     console.log('[ML:Realtime] Refreshing venue baselines...');
-    await pool.query(`
-      INSERT INTO ml_venue_baselines (google_place_id, day_of_week, hour, baseline, source, updated_at)
-      SELECT v.google_place_id, t.day_of_week, t.hour,
-        ROUND(AVG(t.busyness_pct))::smallint, 'collected', NOW()
-      FROM ml_training_data t
-      JOIN ml_venues v ON t.venue_id = v.id
-      WHERE t.busyness_pct IS NOT NULL
-      GROUP BY v.google_place_id, t.day_of_week, t.hour
-      ON CONFLICT (google_place_id, day_of_week, hour)
-      DO UPDATE SET baseline = EXCLUDED.baseline, updated_at = NOW()
-    `);
-    console.log('[ML:Realtime] Baselines refreshed');
+    const result = await refreshCollectedBaselines(pool);
+    if (!result.ok) {
+      console.error(`[ML:Realtime] Baseline refresh ${REFUSAL_MESSAGE}`);
+    } else {
+      console.log(`[ML:Realtime] Baselines refreshed (${result.upserted} changed, ${result.deleted} stale removed)`);
+    }
   } catch (err) {
     console.error('[ML:Realtime] Baseline refresh failed:', err.message);
   }
