@@ -22,8 +22,10 @@ const router = express.Router();
 // a flock can see the plan, RSVP, and vote from a link WITHOUT an account.
 //
 // Security model:
-// - The link token is 12 chars of crypto randomness (~62^12); knowing a flock
-//   id gets you nothing, and links can be revoked by re-generating.
+// - The link token is 24 chars of unbiased crypto randomness (~138 bits);
+//   knowing a flock id gets you nothing, and links can be revoked by
+//   re-generating. Tokens minted before the 2026-08-14 widening are 12 chars
+//   (~69 bits) and stay valid — resolveLink is an exact match either way.
 // - Guests see the PLAN only: flock name/date/time, host FIRST name, going
 //   count, and venue tallies. Never member lists, messages, budgets, or
 //   anything with PII.
@@ -32,11 +34,33 @@ const router = express.Router();
 // - Every route is rate-limited by the mount in server.js.
 // ---------------------------------------------------------------------------
 
+// The alphabet stays look-alike-free (no 0/O/1/I/l) because these tokens get
+// read aloud and retyped; log2(55) ≈ 5.78 bits per character.
+const LINK_TOKEN_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789'; // gitleaks:allow -- character set for token generation, not a credential
+// 24 × log2(55) ≈ 138.8 bits. The floor is 128: this is the app's only
+// unauthenticated door and the token is the entire credential. The previous
+// generator minted 12 chars (~69 bits) — never walkable through the rate
+// limiter, but far under that floor — and those legacy tokens still resolve.
+const LINK_TOKEN_LENGTH = 24;
+// Accept legacy 12-char tokens (min 8 predates this file) up to the widened
+// column (VARCHAR(64), migration 022). One definition for all three routes.
+const LINK_TOKEN_PARAM_MIN = 8;
+const LINK_TOKEN_PARAM_MAX = 64;
+
 const newLinkToken = () => {
-  const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789';
+  // Rejection sampling, because `byte % 55` on the full 0..255 range is
+  // biased: 256 % 55 = 36, so the first 36 characters of the alphabet would
+  // each be 25% more likely than the rest. 220 is the largest multiple of 55
+  // that fits in a byte; anything above it is redrawn.
+  const usable = 256 - (256 % LINK_TOKEN_ALPHABET.length); // 220
   let t = '';
-  const bytes = crypto.randomBytes(12);
-  for (let i = 0; i < 12; i++) t += alphabet[bytes[i] % alphabet.length];
+  while (t.length < LINK_TOKEN_LENGTH) {
+    for (const b of crypto.randomBytes(LINK_TOKEN_LENGTH)) {
+      if (b >= usable) continue;
+      t += LINK_TOKEN_ALPHABET[b % LINK_TOKEN_ALPHABET.length];
+      if (t.length === LINK_TOKEN_LENGTH) break;
+    }
+  }
   return t;
 };
 
@@ -352,7 +376,7 @@ async function announceGuestRsvp(req, link, { guestId, name, status, isNew }) {
 
 // GET /api/guest/:token — the public plan preview
 router.get('/:token',
-  param('token').trim().isLength({ min: 8, max: 20 }),
+  param('token').trim().isLength({ min: LINK_TOKEN_PARAM_MIN, max: LINK_TOKEN_PARAM_MAX }),
   async (req, res) => {
     try {
       const errors = validationResult(req);
@@ -396,7 +420,7 @@ router.get('/:token',
 // POST /api/guest/:token/rsvp — { name, status } -> { guestToken }
 router.post('/:token/rsvp',
   [
-    param('token').trim().isLength({ min: 8, max: 20 }),
+    param('token').trim().isLength({ min: LINK_TOKEN_PARAM_MIN, max: LINK_TOKEN_PARAM_MAX }),
     // max 60 matches the guest_rsvps.name column cap, so an over-long name is a
     // 400 here instead of a database error.
     // Round 13: this was the only user-writable name field in the app that
@@ -585,7 +609,7 @@ router.post('/:token/rsvp',
 // POST /api/guest/:token/vote — { guestToken, venueName } -> updated tallies
 router.post('/:token/vote',
   [
-    param('token').trim().isLength({ min: 8, max: 20 }),
+    param('token').trim().isLength({ min: LINK_TOKEN_PARAM_MIN, max: LINK_TOKEN_PARAM_MAX }),
     scalarOnly(body('guestToken'), 'guest token').isUUID().withMessage('RSVP first, then vote'),
     // venueName is compared against three tables and then written to a
     // VARCHAR(255); as an array it reached all four as a Postgres array literal.
@@ -718,6 +742,9 @@ router.post('/:token/vote',
 module.exports = {
   router,
   newLinkToken,
+  LINK_TOKEN_ALPHABET,
+  LINK_TOKEN_LENGTH,
+  LINK_TOKEN_PARAM_MAX,
   allowNewGuest,
   normalizeGuestName,
   newGuestLog,
