@@ -31,6 +31,79 @@ const REALTIME_SLOT_INDEX = 'ml_training_data_realtime_slot_uniq';
 // ---------------------------------------------------------------------------
 const HOUR_AXIS_VENUE_LOCAL = 'venue_local';
 
+// ---------------------------------------------------------------------------
+// THE LABEL AXIS (round 19). The hour axis above had two clocks in one column;
+// this column has two ESTIMANDS in one column, and until 2026-08-13 nothing
+// marked which. BestTime's live endpoint answers with a forecast always and a
+// live reading sometimes, and this collector stores whichever it got in
+// `busyness_pct`. A forecast row is a vendor model's output; a live row is an
+// observation of foot traffic. They are not the same quantity, and a model
+// trained on a mixture of them with no marker is partly trained to predict a
+// prediction.
+//
+// MEASURED against production on 2026-08-15, read-only:
+//   * all 457,402 realtime rows carry label_source IS NULL, so all 369,076 that
+//     survive into training export as label_provenance='unknown';
+//   * they also carry observed_date IS NULL, hour_axis IS NULL and
+//     besttime_epoch IS NULL — the corpus stopped on 2026-05-18, months before
+//     any of those columns existed;
+//   * NOTHING else stored separates the two. Both series live on the same
+//     21-point grid (0,5,...,100 — every one of the 457,402 realtime values and
+//     every one of the 3,454,955 weekly values is a multiple of 5), and
+//     "realtime value equals this venue's weekly forecast for the same slot"
+//     matches 5.64% of rows against 4.72-6.89% for the same test aimed at a
+//     deliberately WRONG slot. The signal is indistinguishable from chance.
+//
+// So the legacy rows stay 'unknown' forever. That is a fact to record, not a
+// gap to fill: see migration 025's header. What follows is the go-forward fix.
+// ---------------------------------------------------------------------------
+
+// The label domain. `unknown` is deliberately NOT here — it is what the
+// exporter says about a row that never declared itself, never a value this
+// collector may write.
+const LABEL_LIVE = 'live';
+const LABEL_FORECAST = 'forecast';
+
+// The whole live/forecast decision, in one pure function, exported so the test
+// can table-drive it without a database or a network.
+//
+// `live.liveAvailable` is the ONLY evidence. BestTime echoes its own forecast
+// into venue_live_busyness when it has no live data (see bestTimeService's
+// header), so the presence of a number there proves nothing. The comparison is
+// `=== true` rather than truthiness, and the fallthrough is 'forecast' rather
+// than 'live', because the two mistakes are not symmetric: a vendor forecast
+// mislabelled 'live' is trained at sample weight 1.0 as if it were ground
+// truth, while a live reading mislabelled 'forecast' is merely downweighted to
+// 0.3. When in doubt, doubt.
+//
+// Returns null when there is nothing nameable to store. A row whose value
+// cannot be named is exactly what produced the 457,402 unknowns, so it is
+// dropped rather than written unlabelled.
+function classifyReading(live) {
+  if (!live || typeof live !== 'object') return null;
+  const num = (v) => (typeof v === 'number' && Number.isFinite(v) ? v : null);
+  const liveValue = num(live.liveBusyness);
+  const forecastValue = num(live.forecastedBusyness);
+
+  if (live.liveAvailable === true && liveValue !== null) {
+    // vendorForecast rides along even here — in fact ESPECIALLY here. It is the
+    // counterfactual: what BestTime would have said if it had had no live data.
+    // WITHIN-CITY-EVAL.md asks how far the model's labels sit from the vendor's
+    // own prediction and cannot answer, because we were handed both numbers in
+    // the same response and threw one away. Storing it costs no extra call.
+    return { source: LABEL_LIVE, busyness: liveValue, vendorForecast: forecastValue };
+  }
+  if (forecastValue !== null) {
+    // On a forecast row the two are the same number by construction, which is
+    // an invariant the test pins: a 'forecast' row whose vendor_forecast_pct
+    // disagrees with its busyness_pct would mean this mapping had drifted.
+    return { source: LABEL_FORECAST, busyness: forecastValue, vendorForecast: forecastValue };
+  }
+  return null;
+}
+
+const clampPct = (v) => (v == null ? null : Math.max(0, Math.min(100, v)));
+
 if (!process.env.DATABASE_URL && process.env.PGHOST) {
   const host = process.env.PGHOST;
   const port = process.env.PGPORT || 5432;
@@ -62,7 +135,23 @@ async function ensureHolidayColumns() {
   // and before this column existed both were exported as is_realtime=1 and
   // trained at sample weight 1.0 — a vendor forecast carrying more confidence
   // than any other label in the corpus. NULL on rows collected before this.
+  //
+  // Round 19: migration 025 now owns both of these columns, so a database that
+  // has booted the server already has them and this is a no-op. The ALTERs stay
+  // because these scripts are also pointed at databases that have not booted it
+  // — the same reason hour_axis is re-declared below. What changed is that the
+  // column is no longer REACHABLE ONLY from here: when it existed nowhere but
+  // in this file, train/export_training_data.js's optional-column probe would
+  // find it missing and emit `NULL AS label_source`, silently exporting every
+  // realtime row as 'unknown'. That is the failure this whole round is about,
+  // and a column that only a hand-run collector creates can always re-enter it.
   await pool.query(`ALTER TABLE ml_training_data ADD COLUMN IF NOT EXISTS label_source VARCHAR(10)`);
+  // Round 19: BestTime's own forecast for the same moment, stored on EVERY
+  // realtime row whatever its label_source. On a 'forecast' row it equals
+  // busyness_pct by construction; on a 'live' row it is the counterfactual, and
+  // it is what makes a 'live' claim falsifiable after the fact instead of an
+  // unbacked assertion. NULL on rows collected before this.
+  await pool.query(`ALTER TABLE ml_training_data ADD COLUMN IF NOT EXISTS vendor_forecast_pct SMALLINT`);
   // Which clock this row's `hour` is on. Normally created by migration 023;
   // created here too because these scripts also run against databases that have
   // not booted the current server, and the INSERT below names the column.
@@ -72,6 +161,10 @@ async function ensureHolidayColumns() {
 async function collectRealtime() {
   await ensureHolidayColumns();
   await requireSlotIndex(pool, REALTIME_SLOT_INDEX);
+  // The database's clock, not Node's. The post-run provenance audit below
+  // filters on collected_at, which Postgres fills from NOW(); reading the same
+  // clock means host skew cannot make the audit miss rows this run wrote.
+  const { rows: [{ started_at: runStartedAt }] } = await pool.query('SELECT NOW() AS started_at');
   const { rows: venues } = await pool.query(
     `SELECT * FROM ml_venues WHERE is_active = true AND besttime_venue_id IS NOT NULL ORDER BY city, id`
   );
@@ -148,14 +241,21 @@ async function collectRealtime() {
         continue;
       }
 
-      // Use live busyness if available, else forecasted. Round 10: record
-      // WHICH, so training can stop treating a vendor forecast as ground truth.
-      const usedLive = !!live.liveAvailable && live.liveBusyness != null;
-      const busyness = usedLive ? live.liveBusyness : live.forecastedBusyness;
-      const labelSource = usedLive ? 'live' : 'forecast';
-      if (busyness == null) {
+      // Use live busyness if available, else forecasted — and record WHICH, so
+      // training can stop treating a vendor forecast as ground truth. The
+      // decision itself is classifyReading()'s, not this loop's.
+      const reading = classifyReading(live);
+      if (!reading) {
         skipped++;
         continue;
+      }
+      const { source: labelSource, busyness } = reading;
+      const usedLive = labelSource === LABEL_LIVE;
+      // Belt and braces on the one column this round exists to protect. If the
+      // classifier ever returns a value outside the domain, the run stops here
+      // rather than writing a row nobody can interpret later.
+      if (labelSource !== LABEL_LIVE && labelSource !== LABEL_FORECAST) {
+        throw new Error(`[ML:Realtime] classifyReading returned an unknown label_source: ${labelSource}`);
       }
 
       // Look up the weekly baseline for this venue at the current venue-local
@@ -221,13 +321,14 @@ async function collectRealtime() {
         ['event_type', eventData.event_type],
         ['event_hours_until', eventData.event_hours_until],
         ['baseline_busyness', baseline],
-        ['busyness_pct', Math.max(0, Math.min(100, busyness))],
+        ['busyness_pct', clampPct(busyness)],
         ['observed_date', local.dateStr],
         ['is_holiday_eve', holidayEve],
         ['special_night', special?.name ?? null],
         ['special_night_effect', special?.effect ?? null],
         ['special_night_conf', special?.conf ?? null],
         ['label_source', labelSource],
+        ['vendor_forecast_pct', clampPct(reading.vendorForecast)],
       ];
 
       try {
@@ -271,31 +372,85 @@ async function collectRealtime() {
   console.log(`\n[ML:Realtime] ${aborted ? 'ABORTED EARLY' : 'Done'}. ${totalRows} rows inserted `
     + `(${liveRows} live-observed, ${forecastRows} vendor-forecast). ${skipped} venues skipped`
     + `${duplicateRows > 0 ? `, ${duplicateRows} already recorded for this venue-hour-date` : ''}.`);
+
+  await auditProvenance(runStartedAt, liveRows + forecastRows);
+}
+
+// ---------------------------------------------------------------------------
+// The audit that would have caught this in March.
+//
+// Everything above intends to write a label on every row. Intent is what the
+// corpus already had: this file has "recorded WHICH" in its comments since round
+// 10, and 457,402 rows say otherwise. So the run now READS BACK what it wrote
+// and refuses to report success on an unlabelled row.
+//
+// It is one indexed count (idx_ml_training_collected) over the rows this run
+// committed, and it fails LOUD — throwing propagates to run()'s caller and out
+// through the module's top-level catch as exit 1. A collection that cannot say
+// what its labels are is worse than no collection: it looks like evidence.
+// ---------------------------------------------------------------------------
+const PROVENANCE_REFUSAL =
+  'REFUSED: rows this run wrote have no label_source. Nothing can tell afterwards whether they '
+  + 'hold observed foot traffic or BestTime\'s own forecast of it, which is exactly how the '
+  + '457,402 rows collected before 2026-05-18 became permanently unusable for that question. '
+  + 'Apply migration 025_ml_label_provenance.sql, confirm ml_training_data.label_source exists, '
+  + 'and re-run.';
+
+async function auditProvenance(runStartedAt, expected) {
+  const { rows: [audit] } = await pool.query(
+    `SELECT COUNT(*)::int                                                   AS written,
+            COUNT(*) FILTER (WHERE label_source IS NULL)::int               AS unlabelled,
+            COUNT(*) FILTER (WHERE label_source = 'live')::int              AS live,
+            COUNT(*) FILTER (WHERE label_source = 'forecast')::int          AS forecast
+       FROM ml_training_data
+      WHERE collection_mode = 'realtime' AND collected_at >= $1`,
+    [runStartedAt]
+  );
+
+  if (audit.unlabelled > 0) {
+    console.error(`[ML:Realtime] ${PROVENANCE_REFUSAL}`);
+    throw new Error(`[ML:Realtime] ${audit.unlabelled} of ${audit.written} rows written this run have label_source IS NULL`);
+  }
+  // A mismatch here means the loop's tally and the database disagree about what
+  // was committed — a different bug from an unlabelled row, and just as worth
+  // hearing about.
+  if (audit.written !== expected) {
+    console.error(`[ML:Realtime] WARNING: counted ${expected} inserts but the database holds `
+      + `${audit.written} realtime rows from this run.`);
+  }
+  console.log(`[ML:Realtime] Provenance audit: ${audit.written} rows written, `
+    + `${audit.live} live, ${audit.forecast} forecast, 0 unlabelled.`);
 }
 
 async function run() {
-  await collectRealtime();
-  // Refresh baselines. This used to be a second, hand-written copy of
-  // buildBaselines.js's statement that had drifted from it: no
-  // `collection_mode = 'weekly'` filter at all, so it averaged live realtime
-  // readings and weekly forecast rows — on two different hour axes — into the
-  // same baseline slot, and whichever script ran last decided what a venue's
-  // baseline meant. One definition now, in buildBaselines.js.
+  // try/finally, not a bare sequence: collectRealtime() can now REFUSE (the
+  // provenance audit throws), and the old form skipped pool.end() on any throw,
+  // leaving the process alive on an open pool with nothing left to do.
   try {
-    console.log('[ML:Realtime] Refreshing venue baselines...');
-    const result = await refreshCollectedBaselines(pool);
-    if (!result.ok) {
-      console.error(`[ML:Realtime] Baseline refresh ${REFUSAL_MESSAGE}`);
-    } else {
-      console.log(`[ML:Realtime] Baselines refreshed (${result.upserted} changed, ${result.deleted} stale removed)`);
+    await collectRealtime();
+    // Refresh baselines. This used to be a second, hand-written copy of
+    // buildBaselines.js's statement that had drifted from it: no
+    // `collection_mode = 'weekly'` filter at all, so it averaged live realtime
+    // readings and weekly forecast rows — on two different hour axes — into the
+    // same baseline slot, and whichever script ran last decided what a venue's
+    // baseline meant. One definition now, in buildBaselines.js.
+    try {
+      console.log('[ML:Realtime] Refreshing venue baselines...');
+      const result = await refreshCollectedBaselines(pool);
+      if (!result.ok) {
+        console.error(`[ML:Realtime] Baseline refresh ${REFUSAL_MESSAGE}`);
+      } else {
+        console.log(`[ML:Realtime] Baselines refreshed (${result.upserted} changed, ${result.deleted} stale removed)`);
+      }
+    } catch (err) {
+      console.error('[ML:Realtime] Baseline refresh failed:', err.message);
     }
-  } catch (err) {
-    console.error('[ML:Realtime] Baseline refresh failed:', err.message);
+  } finally {
+    await pool.end().catch(() => {});
   }
-  await pool.end();
 }
 
-module.exports = { run };
+module.exports = { run, classifyReading, LABEL_LIVE, LABEL_FORECAST, PROVENANCE_REFUSAL };
 
 if (require.main === module) {
   run().catch(err => {
