@@ -469,3 +469,11 @@ router.post('/webhook', async (req, res) => {
 });
 
 module.exports = router;
+// One view of "configured", shared rather than duplicated. The cross-file gap
+// described at the top of this file is closed by services/entitlements.js
+// calling this instead of reading the raw variable: two copies of a security
+// rule drift, and the drift is silent by construction here, since the whole
+// point of the preflight is to speak up in a case the other check misreads.
+// Exported off the router object because the router is this module's export;
+// it carries no request state, so a service reading it is a pure call.
+module.exports.configuredSecret = configuredSecret;

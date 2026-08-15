@@ -12,6 +12,8 @@ const {
   findBestTime,
   findPeakTime,
   getLabel,
+  publishedLabel,
+  describePredictionSupport,
   // Round 15: venue-clock scoring, same as routes/crowd.js.
   venueLocalNow,
   weekdayOffset,
@@ -378,7 +380,14 @@ async function executeTool(toolName, toolInput, userId, opts = {}) {
       const result = {
         venue_name: venue.name,
         crowd_score: crowdResult.score,
-        crowd_label: getLabel(crowdResult.score),
+        // Hedged the same way the card is. Birdie saying "Very Busy" while the
+        // card for the same venue says "Usually very busy" is the app arguing
+        // with itself, and the flat word is the one that is not defensible
+        // until the corpus axis is verified (see describePredictionSupport).
+        crowd_label: publishedLabel(
+          crowdResult.score,
+          describePredictionSupport(crowdResult.predictionMethod, 0)
+        ),
         confidence: crowdResult.confidence,
         is_open: venue.isOpen,
         weather: weather ? { temp: weather.temp, conditions: weather.conditions } : null,

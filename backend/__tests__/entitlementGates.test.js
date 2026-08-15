@@ -397,8 +397,13 @@ test('turning the consumer paywall on with no way to grant Pro is announced', as
   const saved = process.env.REVENUECAT_WEBHOOK_SECRET;
   try {
     process.env.PAYWALL_ENABLED = 'true';
-    // Configured correctly: silence.
-    process.env.REVENUECAT_WEBHOOK_SECRET = 'configured';
+    // Configured correctly: silence. The value has to be a realistic length
+    // now: this preflight asks routes/revenuecat.js what counts as configured
+    // rather than testing the variable for truthiness, and that route refuses
+    // anything under 16 characters, since it has no rate limiter and is the
+    // only writer of users.is_premium. The old fixture here was 10 characters,
+    // which the route would refuse, so warning about it is correct.
+    process.env.REVENUECAT_WEBHOOK_SECRET = 'a'.repeat(32); // gitleaks:allow -- synthetic length fixture, not a secret
     const quiet = await capture('warn', async () => paywallEnabled());
     assert.strictEqual(quiet.result, true);
     assert.strictEqual(quiet.lines.length, 0, 'a correctly configured paywall warned anyway');

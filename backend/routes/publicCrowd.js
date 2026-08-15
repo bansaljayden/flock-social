@@ -16,7 +16,7 @@ const mlPredictor = require('../services/mlPredictor');
 const { upstreamSignal } = require('../utils/upstream');
 const { allowGlobalPlacesCall } = require('../utils/placesBudget');
 const { paywallEnabled } = require('../services/entitlements');
-const { recommendBestTime, findPeakTime, getLabel, venueLocalNow, isOpenAt, buildHoursByDay, weekdayOffset } = require('../services/crowdEngine');
+const { recommendBestTime, findPeakTime, getLabel, publishedLabel, describePredictionSupport, venueLocalNow, isOpenAt, buildHoursByDay, weekdayOffset } = require('../services/crowdEngine');
 
 const router = express.Router();
 const API_KEY = process.env.GOOGLE_PLACES_API_KEY;
@@ -211,7 +211,10 @@ async function buildCard(v, weather, clock, preScored) {
     price_level: v.price_level,
     is_open: v.isOpen,
     score: scored.score,
-    label: getLabel(scored.score),
+    // The public demo hedges exactly like the in-app card. This surface is
+    // read by people who have never used the app, so an unhedged word here is
+    // the first claim the product makes and the least defensible one.
+    label: publishedLabel(scored.score, describePredictionSupport(scored.predictionMethod, 0)),
     confidence: scored.confidence,
     best_time: best.text,
     // Which bar the chart should mark. Matched by index, not by label: the
@@ -470,7 +473,7 @@ router.get('/demo/venues',
             // The photo proxy takes a Google photo resource ref, not a place id
             photo_url: p.photos?.[0]?.name ? `/api/venues/photo?ref=${encodeURIComponent(p.photos[0].name)}&maxwidth=160` : null,
             score: scored.score,
-            label: getLabel(scored.score),
+            label: publishedLabel(scored.score, describePredictionSupport(scored.predictionMethod, 0)),
           };
         } catch { return null; } // skip venues the model can't score
       }))).filter(Boolean);
