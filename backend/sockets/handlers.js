@@ -28,8 +28,13 @@ const { TOKEN_ALGORITHMS, tokenVersionOf } = require('../middleware/auth');
 // the type: emitting join_flock with 5 and again with "5" joins one Socket.io
 // room (`flock:5`) but used to create two presence entries, so leaving/
 // disconnecting announced the same person twice and one entry could outlive
-// the other. The raw id the client sent is kept per entry, because it is what
-// goes back out in the payload and App.js compares it with ===.
+// the other. Round 23: join_flock now normalizes the id with asId before
+// anything touches it, so the id stored per entry (and echoed in every
+// presence payload) is the canonical INTEGER — the same shape vote_venue's
+// round 16 note established App.js compares with === against the id the REST
+// API serves. The old rule ("keep the raw id the client sent") only worked for
+// clients that already sent the integer; any other spelling produced an event
+// every client silently discarded, plus a phantom room name and presence key.
 const roomUsers = new Map(); // String(flockId) -> Map(socketId -> { socketId, userId, name, flockId })
 
 // ---------------------------------------------------------------------------
@@ -415,6 +420,22 @@ async function revalidateSession(socket) {
       return 'session_revoked';
     }
 
+    // Round 23: reconcile the presence cache with the ROOM state before
+    // anything that can throw. routes/flocks.js revokes room access directly
+    // when a membership ends (socketsLeave on leave and on delete), which
+    // roomUsers cannot observe — so the departed member's presence entry
+    // outlived the revocation for the life of their connection: later joiners
+    // were handed a roster naming them as online, and their eventual
+    // disconnect announced `member_offline` by name into a flock they had
+    // left. An entry whose socket is no longer in the room it claims is stale.
+    // (join_flock runs the same check against the adapter's room set at read
+    // time; this timer covers the paths where nobody joins again.)
+    for (const [key, users] of roomUsers) {
+      if (users.has(socket.id) && !socket.rooms.has(`flock:${key}`)) {
+        forgetPresence(key, socket.id);
+      }
+    }
+
     const result = await pool.query(
       'SELECT id, email, name, role, profile_image_url, is_banned, token_version FROM users WHERE id = $1',
       [socket.user.id]
@@ -736,9 +757,20 @@ function registerHandlers(io, socket) {
 
   // --- Flock room management ---
 
-  socket.on('join_flock', async (flockId) => {
+  socket.on('join_flock', async (rawFlockId) => {
     if (!allowEvent(socket, 'join_flock', 20, 10_000)) return;
     try {
+      // Round 23: normalized like vote_venue (round 16) instead of used raw.
+      // The raw value reached the membership query, the room name, the presence
+      // key and the echoed payloads, and Postgres trims whitespace when casting
+      // to int — so '7 ' passed membership for flock 7 and then joined the
+      // phantom room 'flock:7 ' under the phantom presence key '7 ', while the
+      // raw spelling went back out in member_joined/room_members where App.js
+      // compares with === against the INTEGER id the REST API serves. An id
+      // that names no possible flock is dropped before it can cost a query.
+      const flockId = asId(rawFlockId);
+      if (flockId === null) return;
+
       // Verify membership before allowing room join
       const membership = await pool.query(
         "SELECT id FROM flock_members WHERE flock_id = $1 AND user_id = $2 AND status = 'accepted'",
@@ -812,14 +844,35 @@ function registerHandlers(io, socket) {
 
       // Send current online members to the joining user — deduped by USER,
       // since one person can hold several sockets (phone + tab, reconnects).
+      //
+      // Round 23: cross-checked against the ROOM'S live socket set first.
+      // routes/flocks.js revokes room access directly when a membership ends
+      // (`io.in('user:X').socketsLeave('flock:Y')` on leave, `io.socketsLeave`
+      // on delete) — which this cache cannot observe, so a departed member's
+      // presence entry survived their revocation for as long as their socket
+      // stayed connected, and every later joiner was handed an "online" roster
+      // naming someone who had left the flock. The adapter's room set is the
+      // authoritative record of who is actually still joined; an entry whose
+      // socket the room no longer holds is stale and is purged, not listed.
+      // Guarded, because stub broadcasters in tests have no adapter rooms —
+      // absence of the room set means "cannot verify", which keeps behaviour,
+      // never "everyone is stale". revalidateSession runs the same
+      // reconciliation on its 60s timer for the paths that never re-join.
+      const present = roomUsers.get(key) || new Map();
+      const liveRoom = io?.sockets?.adapter?.rooms?.get?.(room);
       const seen = new Set();
       const onlineMembers = [];
-      for (const u of (roomUsers.get(key) || new Map()).values()) {
+      for (const [sid, u] of present) {
+        if (liveRoom && sid !== socket.id && !liveRoom.has(sid)) {
+          present.delete(sid);
+          continue;
+        }
         if (seen.has(u.userId)) continue;
         if (invisible.has(u.userId)) continue;
         seen.add(u.userId);
         onlineMembers.push({ userId: u.userId, name: u.name });
       }
+      if (present.size === 0) roomUsers.delete(key);
       socket.emit('room_members', { flockId, members: onlineMembers });
     } catch (err) {
       console.error('join_flock error:', err);
@@ -827,8 +880,16 @@ function registerHandlers(io, socket) {
     }
   });
 
-  socket.on('leave_flock', async (flockId) => {
-    const key = String(flockId);
+  socket.on('leave_flock', async (rawFlockId) => {
+    // Round 23: normalized like join_flock, and SYMMETRICALLY with it — join
+    // only ever enters the canonical room now, so leave must compute the same
+    // canonical name or a client that joined with "7" and left with "7 " would
+    // stay subscribed until the 60s sweep. Detaching stays free and
+    // unconditional (see the round 16 note below); an unparseable id still
+    // runs the raw-string detach so it remains a harmless no-op, and is then
+    // dropped before the announce path, which no junk id may reach.
+    const flockId = asId(rawFlockId);
+    const key = flockId !== null ? String(flockId) : String(rawFlockId);
     const room = `flock:${key}`;
     socket.leave(room);
 
@@ -860,6 +921,7 @@ function registerHandlers(io, socket) {
     // the socket subscribed to `flock:{id}` — which carries the budget ceiling
     // and per-person bill shares. Failing to detach is a worse outcome than
     // the load it would have prevented, so detaching is always free.
+    if (flockId === null) return; // a name no real flock can have — nothing to announce
     if (!allowEvent(socket, 'leave_flock', 30, 10_000)) return;
     let isMember = false;
     try { isMember = await verifyMembership(flockId, user.id); } catch (_) { isMember = false; }
@@ -989,11 +1051,15 @@ function registerHandlers(io, socket) {
       // TypeError into the catch below and came back as the generic "Failed to
       // send message" — a server-fault sentence for a client-shaped mistake.
       // send_dm has always read its payload defensively (`data?.receiverId`).
-      const { flockId, message_type, venue_data, image_url } = data || {};
+      const { message_type, venue_data, image_url } = data || {};
       const message_text = stripHtml(typeof data?.message_text === 'string' ? data.message_text.trim() : '');
 
-      // Validate inputs
-      if (!flockId) {
+      // Validate inputs. Round 23: asId, like vote_venue — the raw value used
+      // to reach the membership query, the insert, and the push payload, so a
+      // non-canonical spelling ('7 ') wrote real rows while anything worse was
+      // a thrown query dressed up as the generic "Failed to send message".
+      const flockId = asId(data?.flockId);
+      if (flockId === null) {
         socket.emit('error', { message: 'That flock could not be found.' });
         return;
       }
@@ -1029,11 +1095,35 @@ function registerHandlers(io, socket) {
       // entirely. Only data-URL images are accepted (no arbitrary remote URLs
       // that could track recipients), and every image is screened fail-closed
       // before it is stored or delivered.
+      //
+      // The FREE image refusals (format, size) stay ahead of the membership
+      // query below, matching the REST twin where the validator chain runs
+      // before any query. Only the BILLED half moves behind membership.
+      if (imageCheck && !imageCheck.ok) {
+        socket.emit('error', { message: imageCheck.message });
+        return;
+      }
+
+      // Verify membership — BEFORE the billed Vision call below, not after it.
+      // Round 23: this query used to sit after image moderation, so a
+      // non-member (including a member kicked mid-session whose socket was
+      // still open) could make this handler spend a PAID Cloud Vision call per
+      // attempt on a flock they could never deliver into — 10/min per socket,
+      // 20/min per account, of someone else's money. The REST twin has always
+      // run membership ahead of moderateImage (routes/messages.js: "a stranger
+      // who cannot deliver the message must not be able to spend money finding
+      // that out" is send_dm's phrasing of the same rule), so the socket was
+      // the one transport where the order was inverted.
+      const membership = await pool.query(
+        "SELECT id FROM flock_members WHERE flock_id = $1 AND user_id = $2 AND status = 'accepted'",
+        [flockId, user.id]
+      );
+      if (membership.rows.length === 0) {
+        socket.emit('error', { message: 'Not a member of this flock' });
+        return;
+      }
+
       if (imageCheck) {
-        if (!imageCheck.ok) {
-          socket.emit('error', { message: imageCheck.message });
-          return;
-        }
         // Round 16: an image send was charged the same single token as a
         // one-word text message, and an image is not the same thing. Each one
         // costs a PAID Google Vision call (utils/moderation.js), a row holding
@@ -1078,17 +1168,8 @@ function registerHandlers(io, socket) {
         return;
       }
 
-      // Verify membership
-      const membership = await pool.query(
-        "SELECT id FROM flock_members WHERE flock_id = $1 AND user_id = $2 AND status = 'accepted'",
-        [flockId, user.id]
-      );
-      if (membership.rows.length === 0) {
-        socket.emit('error', { message: 'Not a member of this flock' });
-        return;
-      }
-
-      // Persist to database
+      // Persist to database (membership was verified above, before the billed
+      // image screen)
       const result = await pool.query(
         `INSERT INTO messages (flock_id, sender_id, message_text, message_type, venue_data, image_url)
          VALUES ($1, $2, $3, $4, $5, $6)
@@ -1158,8 +1239,16 @@ function registerHandlers(io, socket) {
 
   // --- Typing indicators ---
 
-  socket.on('typing', async (flockId) => {
+  // Round 23: both normalized with asId — see vote_venue's round 16 note. The
+  // raw value was echoed to EVERY member's client: Postgres trims whitespace
+  // casting to int, so '7' padded with kilobytes of spaces passed membership
+  // for flock 7 and was then fanned out verbatim at 60 events per 10s — junk
+  // amplification by member count, in a payload App.js discards anyway because
+  // it compares flockId with === against the integer id.
+  socket.on('typing', async (rawFlockId) => {
     if (!allowEvent(socket, 'typing', 60, 10_000)) return;
+    const flockId = asId(rawFlockId);
+    if (flockId === null) return;
     if (!(await verifyMembership(flockId, user.id))) return;
     await emitToFlockExcludingBlocked(io, flockId, user.id, 'user_typing', {
       userId: user.id,
@@ -1168,8 +1257,10 @@ function registerHandlers(io, socket) {
     });
   });
 
-  socket.on('stop_typing', async (flockId) => {
+  socket.on('stop_typing', async (rawFlockId) => {
     if (!allowEvent(socket, 'typing', 60, 10_000)) return;
+    const flockId = asId(rawFlockId);
+    if (flockId === null) return;
     if (!(await verifyMembership(flockId, user.id))) return;
     await emitToFlockExcludingBlocked(io, flockId, user.id, 'user_stopped_typing', {
       userId: user.id,
@@ -1377,11 +1468,12 @@ function registerHandlers(io, socket) {
   socket.on('update_location', async (data) => {
     try {
       if (!allowEvent(socket, 'update_location', 30, 10_000)) return;
-      const { flockId, lat, lng } = data;
+      const { lat, lng } = data || {};
+      const flockId = asId(data?.flockId); // round 23 — see vote_venue
 
       // Round 16: see isLatLng — `typeof NaN === 'number'`, so NaN/Infinity
       // used to reach every member's map as a JSON `null`.
-      if (!flockId || !isLatLng(lat, lng)) return;
+      if (flockId === null || !isLatLng(lat, lng)) return;
       if (!(await verifyMembership(flockId, user.id))) return;
 
       // Exact coordinates never reach blocked users (round 3). Per-member
@@ -1412,8 +1504,8 @@ function registerHandlers(io, socket) {
     // every peer kept a stale pin on the map — a privacy regression introduced
     // by a rate limit meant to prevent load.
     if (!allowEvent(socket, 'stop_sharing_location', 30, 10_000)) return;
-    const flockId = data?.flockId;
-    if (!flockId) return;
+    const flockId = asId(data?.flockId); // round 23 — see vote_venue
+    if (flockId === null) return;
     // Round 13: no membership check — update_location right above has one, but
     // its counterpart let any authenticated user fire `member_stopped_sharing`
     // into any flock room they could guess the id of.
@@ -1495,8 +1587,9 @@ function registerHandlers(io, socket) {
   socket.on('flock_invite', async (data) => {
     try {
       if (!allowEvent(socket, 'flock_invite', 10, 10_000)) return;
-      const { flockId, invitedUserIds } = data;
-      if (!flockId || !Array.isArray(invitedUserIds) || invitedUserIds.length === 0 || invitedUserIds.length > 25) return;
+      const { invitedUserIds } = data || {};
+      const flockId = asId(data?.flockId); // round 23 — see vote_venue
+      if (flockId === null || !Array.isArray(invitedUserIds) || invitedUserIds.length === 0 || invitedUserIds.length > 25) return;
 
       if (!(await verifyMembership(flockId, user.id))) {
         socket.emit('error', { message: 'Not a member of this flock' });
@@ -1511,8 +1604,11 @@ function registerHandlers(io, socket) {
       // an 'invited' membership row — otherwise any member could spoof-flood
       // invite toasts to arbitrary user ids.
       const invitedRows = await pool.query(
+        // Round 23: asId per element, not Number/isInteger — Number.isInteger
+        // is true for 1e20 and for 0, so those reached Postgres as an
+        // out-of-int4-range value (a swallowed error) and an id no user holds.
         `SELECT user_id FROM flock_members WHERE flock_id = $1 AND status = 'invited' AND user_id = ANY($2::int[])`,
-        [flockId, invitedUserIds.map(Number).filter(Number.isInteger)]
+        [flockId, invitedUserIds.map(asId).filter((n) => n !== null)]
       );
       for (const row of invitedRows.rows) {
         const uid = row.user_id;
@@ -2207,8 +2303,8 @@ function registerHandlers(io, socket) {
         // Only report offline when the user has NO other socket in this room.
         const stillHere = [...users.values()].some((u) => u.userId === wasPresent.userId);
         if (!stillHere) {
-          // `flockId` goes back out as the client originally sent it (number vs
-          // string), because App.js compares it with ===.
+          // `flockId` is the canonical integer join_flock stored (round 23),
+          // which is what App.js's === comparisons against REST ids expect.
           departures.push({ key, flockId: wasPresent.flockId !== undefined ? wasPresent.flockId : key });
         }
       }
