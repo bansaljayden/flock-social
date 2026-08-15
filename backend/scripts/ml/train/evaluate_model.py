@@ -11,10 +11,21 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
-import matplotlib
-matplotlib.use('Agg')
-import matplotlib.pyplot as plt
-import seaborn as sns
+# Plotting is a diagnostic, not a deliverable. run_training.sh runs under
+# `set -e`, so an unguarded import here meant a missing plot dependency aborted
+# the whole pipeline at step 4, BEFORE the ship gate that decides whether the
+# model may be promoted. Losing a PNG is acceptable; losing the gate is not.
+try:
+    import matplotlib
+    matplotlib.use('Agg')
+    import matplotlib.pyplot as plt
+    import seaborn as sns
+    PLOTTING_AVAILABLE = True
+except ImportError as _plot_err:  # pragma: no cover - environment dependent
+    PLOTTING_AVAILABLE = False
+    _PLOT_IMPORT_ERROR = _plot_err
+    plt = None
+    sns = None
 
 logging.basicConfig(level=logging.INFO, format='[%(levelname)s] %(message)s')
 logger = logging.getLogger(__name__)
@@ -41,6 +52,9 @@ def compute_metrics(y_true: np.ndarray, y_pred: np.ndarray) -> dict:
 
 def plot_residuals(y_true, y_pred, title, filename):
     """Predicted vs actual scatter plot."""
+    if not PLOTTING_AVAILABLE:
+        logger.warning('Skipping %s: plotting libraries unavailable (%s)', 'plot_residuals', _PLOT_IMPORT_ERROR)
+        return
     fig, ax = plt.subplots(1, 1, figsize=(8, 8))
     ax.scatter(y_true, y_pred, alpha=0.05, s=1, color='#1a2744')
     ax.plot([0, 100], [0, 100], 'r--', linewidth=1, label='Perfect')
@@ -58,6 +72,9 @@ def plot_residuals(y_true, y_pred, title, filename):
 
 def plot_error_distribution(errors, title, filename):
     """Histogram of prediction errors."""
+    if not PLOTTING_AVAILABLE:
+        logger.warning('Skipping %s: plotting libraries unavailable (%s)', 'plot_error_distribution', _PLOT_IMPORT_ERROR)
+        return
     fig, ax = plt.subplots(1, 1, figsize=(10, 6))
     ax.hist(errors, bins=50, color='#1a2744', edgecolor='white', alpha=0.8)
     ax.axvline(x=0, color='red', linestyle='--', linewidth=1)
@@ -72,6 +89,9 @@ def plot_error_distribution(errors, title, filename):
 
 def plot_per_hour(y_true, y_pred, hours, title, filename):
     """Average error by hour of day."""
+    if not PLOTTING_AVAILABLE:
+        logger.warning('Skipping %s: plotting libraries unavailable (%s)', 'plot_per_hour', _PLOT_IMPORT_ERROR)
+        return
     df = pd.DataFrame({'actual': y_true, 'pred': y_pred, 'hour': hours})
     df['error'] = np.abs(df['pred'] - df['actual'])
     hourly = df.groupby('hour')['error'].mean()
@@ -90,6 +110,9 @@ def plot_per_hour(y_true, y_pred, hours, title, filename):
 
 def plot_per_category(y_true, y_pred, categories, title, filename):
     """Average error by venue category."""
+    if not PLOTTING_AVAILABLE:
+        logger.warning('Skipping %s: plotting libraries unavailable (%s)', 'plot_per_category', _PLOT_IMPORT_ERROR)
+        return
     df = pd.DataFrame({'actual': y_true, 'pred': y_pred, 'category': categories})
     df['error'] = np.abs(df['pred'] - df['actual'])
     cat_err = df.groupby('category')['error'].mean().sort_values()
@@ -106,6 +129,9 @@ def plot_per_category(y_true, y_pred, categories, title, filename):
 
 def plot_per_city(y_true, y_pred, cities, title, filename):
     """Average error by city."""
+    if not PLOTTING_AVAILABLE:
+        logger.warning('Skipping %s: plotting libraries unavailable (%s)', 'plot_per_city', _PLOT_IMPORT_ERROR)
+        return
     df = pd.DataFrame({'actual': y_true, 'pred': y_pred, 'city': cities})
     df['error'] = np.abs(df['pred'] - df['actual'])
     city_err = df.groupby('city')['error'].mean().sort_values()
@@ -122,6 +148,9 @@ def plot_per_city(y_true, y_pred, cities, title, filename):
 
 def plot_feature_importance(model, feature_cols, filename, top_n=30):
     """Feature importance bar chart."""
+    if not PLOTTING_AVAILABLE:
+        logger.warning('Skipping %s: plotting libraries unavailable (%s)', 'plot_feature_importance', _PLOT_IMPORT_ERROR)
+        return
     if hasattr(model, 'feature_importances_'):
         importances = model.feature_importances_
     else:
@@ -144,6 +173,9 @@ def plot_feature_importance(model, feature_cols, filename, top_n=30):
 
 def run_shap_analysis(model, X_sample, feature_cols):
     """SHAP analysis on a sample of data."""
+    if not PLOTTING_AVAILABLE:
+        logger.warning('Skipping SHAP analysis: plotting libraries unavailable (%s)', _PLOT_IMPORT_ERROR)
+        return
     try:
         import shap
     except ImportError:
