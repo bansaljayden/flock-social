@@ -15,6 +15,10 @@ import { getCurrentUser, logout, isLoggedIn, getFlocks, getFlock, createFlock as
 import { connectSocket, disconnectSocket, getSocket, joinFlock, leaveFlock, sendMessage as socketSendMessage, startTyping, stopTyping, onNewMessage, onUserTyping, onUserStoppedTyping, emitLocation, stopSharingLocation as socketStopSharing, onLocationUpdate, onMemberStoppedSharing, socketSendDm, onNewDm, dmStartTyping, dmStopTyping, onDmUserTyping, onDmUserStoppedTyping, dmReact, dmRemoveReact, onDmReactionAdded, onDmReactionRemoved, dmVoteVenue, onDmNewVote, dmShareLocation, dmStopSharingLocation, onDmLocationUpdate, onDmMemberStoppedSharing, dmPinVenue, onDmVenuePinned, onFlockInviteReceived, onFlockInviteResponded, onFriendRequestReceived, onFriendRequestResponded, onBudgetUpdated, onBudgetLocked, onBudgetReminder, onBillCreated, onShareSettled, onBillFullySettled, onGhostCommitted, onNewVote, onVenueSelected, onFlockReactionAdded, onFlockReactionRemoved, onFlockDeleted, onFlockUpdated, onFlockMemberLeft, onGuestRsvp } from './services/socket';
 import { requestNotificationPermission, onForegroundMessage, getNotificationStatus, onPushNavigate, unregisterPushToken } from './services/firebase';
 import { resendVerificationEmail } from './services/api';
+// The last two steps of the invite-link trip: redeem the token this person was
+// carrying when they made an account, then open the flock they were invited to.
+// The reasoning, and everything the token has to survive, is in the service.
+import { redeemPendingInvite, openJoinedFlock } from './services/inviteHandoff';
 import { setAvailability, clearAvailability, getMyAvailability, getFriendsAvailability, getSensorCurrent, getSensorHistory, checkInManual, getNfcCheckin, getCalendarEvents, createCalendarEvent, deleteCalendarEvent } from './services/api';
 import { joinVenueRoom, leaveVenueRoom, joinVenueContentRoom, leaveVenueContentRoom, onVenueSensorUpdate, onVenueCheckin, onSessionRevoked, onSocketError, onAvailabilityUpdated, onBlockedBy, onContentRemoved, onContentRestored } from './services/socket';
 import { pullSettings, queueSync } from './services/userSettings';
@@ -24,6 +28,7 @@ import LoginScreen from './components/auth/LoginScreen';
 import SignupScreen from './components/auth/SignupScreen';
 import VenueLoginScreen from './components/auth/VenueLoginScreen';
 import ModerationSheet from './components/ModerationSheet';
+import ErrorBoundary from './components/ErrorBoundary';
 import EmergencySheet from './components/safety/EmergencySheet';
 import PaywallSheet from './components/PaywallSheet';
 import { initPurchases } from './services/purchases';
@@ -3217,6 +3222,34 @@ const PROFILE_SUBSCREEN_TITLES = {
 // the system (r=9 open ring, 45deg slash, size-derived stroke), so the three
 // call sites use it directly and the local copy is gone.
 
+/**
+ * The one thing standing between a crashed screen and a dead app.
+ *
+ * Every screen here is a plain function called as HomeScreen(), not mounted as
+ * <HomeScreen />, so its JSX is built DURING FlockAppInner's own render. An
+ * error boundary written the obvious way —
+ *
+ *   <ErrorBoundary>{renderScreen()}</ErrorBoundary>
+ *
+ * — catches none of it: renderScreen() has already run and already thrown by
+ * the time that element exists, so the throw travels straight past to the root
+ * boundary in index.js and takes the whole app down with it. Handing the
+ * builder to a real child component moves the call inside the boundary's
+ * subtree, which is where React can catch it.
+ *
+ * Module scope, not inside the component, so the type is stable and passing a
+ * new arrow function each render re-renders it rather than remounting it.
+ * The screen builders use no hooks (verified), so running them one component
+ * deeper changes nothing about their behaviour.
+ */
+export const ScreenSlot = ({ render }) => {
+  const out = render();
+  // A screen builder may legitimately answer with nothing (dmDetailScreen is a
+  // && chain; the role-gated screens return null while their redirect effect
+  // runs), and undefined from a component is a React error in its own right.
+  return out === undefined ? null : out;
+};
+
 const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   // Theme — shadows the outer static colors/styles with reactive versions
   const { toggleTheme, isDark, themeMode, isNightModeActive, setAutoMode } = useTheme();
@@ -4172,11 +4205,23 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   const flocksRef = useRef(flocks);
   flocksRef.current = flocks;
 
-  // Fetch flocks from API on mount
+  // Fetch flocks from API on mount.
+  //
+  // An invite redemption runs FIRST, and this is the whole of the invite
+  // handoff inside App.js. Someone who opened /i/<token>, tapped "Join", and
+  // made an account has a token waiting in localStorage (services/
+  // inviteHandoff.js explains why it is stored there and what clears it).
+  // Redeeming it makes them an accepted member; only then is the flock list
+  // worth fetching, and only after that list has landed is it safe to open the
+  // chat — the chat screen reads the flock out of `flocks`, so navigating
+  // first would drop them in an empty room. redeemPendingInvite never rejects
+  // and answers null instantly when there is nothing to redeem, so the ordinary
+  // boot pays one resolved promise for this.
   useEffect(() => {
     setFlocksLoading(true);
-    getFlocks()
-      .then((data) => {
+    redeemPendingInvite()
+      .then((invite) => getFlocks().then((data) => ({ data, invite })))
+      .then(({ data, invite }) => {
         const mapped = (data.flocks || []).map(f => ({
           id: f.id,
           name: f.name,
@@ -4237,6 +4282,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
         }));
         setFlocks(mapped.filter(f => f.memberStatus === 'accepted'));
         setPendingFlockInvites(mapped.filter(f => f.memberStatus === 'invited'));
+        // The list is in state, so the chat has something to render. This is
+        // the last step of the trip that started on the invite link.
+        if (invite) openJoinedFlock(invite);
       })
       .catch(() => setFlocks([]))
       .finally(() => setFlocksLoading(false));
@@ -8153,7 +8201,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
 
   const dmReactions = ['❤️', '👍', '😂', '🔥'];
 
-  const dmDetailScreen = currentScreen === 'dmDetail' && selectedDm && (
+  // A builder, like every other screen here, and not a value. As a value its
+  // whole JSX tree was built on EVERY render of this component, on every
+  // screen, which put it outside the error boundary around the screen switch:
+  // one bad DM payload crashed the app from a screen nobody was looking at.
+  const dmDetailScreen = () => currentScreen === 'dmDetail' && selectedDm && (
     <div key="dm-detail-screen" style={{ display: 'flex', flexDirection: 'column', height: '100%', backgroundColor: 'var(--bg-card-solid)' }}>
       {/* Header */}
       <div style={{ padding: '6px 10px 5px 4px', background: colors.navyBg, flexShrink: 0, boxShadow: '0 2px 10px rgba(0,0,0,0.1)' }}>
@@ -12460,18 +12512,19 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                           // tapped, so it is not offered and it does not count
                           // towards "is there anything to pay through".
                           const methods = (result.methods || []).filter((m) => paymentRoutes(m).actionable);
-                          if (methods.length > 0) {
-                            if (methods.length === 1) {
-                              startPaymentHandoff(methods[0], result);
-                            } else {
-                              setPaymentOptions({ ...result, methods });
-                              setShowPaymentPicker(true);
-                            }
-                          } else {
-                            await settleShare(selectedFlockId);
-                            setBillSplit(prev => ({ ...prev, shares: prev.shares.map(s => String(s.userId) === String(authUser?.id) ? { ...s, settled: true } : s) }));
-                            showToast('Marked as settled');
-                          }
+                          // ONE pay surface, whatever the payee saved. This
+                          // used to branch three ways and two of them were
+                          // wrong. With exactly one handle it launched the
+                          // wallet with nothing on screen naming who or where.
+                          // With none it called settleShare on the spot, so
+                          // tapping "Settle Up" recorded the debt as PAID
+                          // without anybody having paid anything, which is the
+                          // same class of bug as auto-settling on a handoff
+                          // (see startPaymentHandoff). Marking it paid is still
+                          // one tap away, on the button directly below this
+                          // one, where the payer chooses it deliberately.
+                          setPaymentOptions({ ...result, methods });
+                          setShowPaymentPicker(true);
                         } catch (err) {
                           // A failed payment-link lookup is NOT a payment —
                           // never mark the debt settled on an error path
@@ -13945,7 +13998,12 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                   {/* Zelle */}
                   <div style={{ marginBottom: '16px' }}>
                     <label style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: colors.navy, marginBottom: '6px', display: 'block' }}>Zelle</label>
-                    <SearchInputLocal aria-label="Zelle email or phone number" type="text" initialValue={zelleIdentifier} onCommit={setZelleIdentifier} transform={(v) => v.slice(0, 255)} placeholder="email or phone number" style={{ ...styles.input, width: '100%', boxSizing: 'border-box' }} autoComplete="off" />
+                    {/* Trimmed, unlike the other two, which strip whitespace
+                        already through their character filter. An email or a
+                        phone number contains no spaces, and a value of nothing
+                        BUT spaces is truthy to the payment-links route, which
+                        would build a Zelle method whose handle names nobody. */}
+                    <SearchInputLocal aria-label="Zelle email or phone number" type="text" initialValue={zelleIdentifier} onCommit={setZelleIdentifier} transform={(v) => v.trim().slice(0, 255)} placeholder="email or phone number" style={{ ...styles.input, width: '100%', boxSizing: 'border-box' }} autoComplete="off" />
                     <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: '4px 0 0' }}>Enter the email or phone registered with your bank for Zelle</p>
                   </div>
 
@@ -17512,7 +17570,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
     if (currentScreen === 'join') return JoinScreen();
     if (currentScreen === 'detail') return FlockDetailScreen();
     if (currentScreen === 'chatDetail') return ChatDetailScreen();
-    if (currentScreen === 'dmDetail') return dmDetailScreen;
+    if (currentScreen === 'dmDetail') return dmDetailScreen();
     if (currentScreen === 'venueDashboard') {
       if (authUser?.role !== 'venue_owner' && authUser?.role !== 'admin') {
         return null; // useEffect below will redirect
@@ -17533,6 +17591,138 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
       default: return HomeScreen();
     }
   };
+
+  // ---------------------------------------------------------------------
+  // CRASH CONTAINMENT
+  //
+  // Which screen the switch above is currently answering with. Two forms of
+  // the same answer, and they are not interchangeable:
+  //
+  //   screenLabel  goes on the boundary as a log line and a Sentry tag, so it
+  //                has to come from a CLOSED set. A tag carrying a flock id is
+  //                an unbounded tag, which is how a Sentry project's indexes
+  //                get wrecked and how "which screen breaks most" stops being
+  //                a question anyone can ask.
+  //   screenKey    is the reset key, so it has to change on every move a user
+  //                can make out of a crashed screen, including flock A detail
+  //                to flock B detail: the same currentScreen twice.
+  // ---------------------------------------------------------------------
+  const screenLabel = showModeSelection ? 'modeSelection'
+    : showVenueOnboarding ? 'venueOnboarding'
+      : currentScreen === 'main' ? `main:${currentTab}`
+        : currentScreen;
+
+  const screenKey = currentScreen === 'detail' || currentScreen === 'chatDetail'
+    ? `${screenLabel}#${selectedFlockId}`
+    : currentScreen === 'dmDetail' ? `${screenLabel}#${selectedDmId}` : screenLabel;
+
+  // The way out of a crashed screen. The tab bar is drawn by the screens
+  // themselves, so a crash takes it with it and the fallback has to put one
+  // back — but the two dashboard screens hide the tab bar by design, and the
+  // mode chooser and venue onboarding sit in front of it, so a button that
+  // works from all five is the thing that must always be there.
+  const leaveCrashedScreen = () => {
+    // Only reachable from the fallback, i.e. only after that screen has
+    // already failed to render. Dropping the two gate flags here is what stops
+    // a crash in the mode chooser or in venue onboarding from being a trap:
+    // both re-render the same broken screen otherwise.
+    setShowModeSelection(false);
+    setShowVenueOnboarding(false);
+    setCurrentTab('home');
+    setCurrentScreen('main');
+    setProfileScreen('main');
+    setActiveVenue(null);
+    setShowConnectPanel(false);
+  };
+
+  const screenCrashFallback = ({ error, eventId, reset }) => (
+    <>
+      <div
+        role="alert"
+        style={{ flex: 1, minWidth: 0, overflowY: 'auto', backgroundColor: 'var(--bg-primary)', padding: '28px 20px', boxSizing: 'border-box', display: 'flex', flexDirection: 'column', justifyContent: 'center' }}
+      >
+        <div style={{ width: '100%', maxWidth: '340px', margin: '0 auto' }}>
+          <span aria-hidden="true" style={{ display: 'inline-flex', marginBottom: '10px' }}>
+            {Icons.alertCircle('var(--text-tertiary)', 20)}
+          </span>
+          <h2 style={{ fontFamily: 'var(--font-display)', fontSize: 'var(--t-title)', fontWeight: '700', color: 'var(--text-primary)', margin: '0 0 8px' }}>
+            This screen stopped working
+          </h2>
+          <p style={{ fontSize: 'var(--t-label)', lineHeight: 1.55, color: 'var(--text-secondary)', margin: '0 0 18px' }}>
+            Your account, your flocks and your messages are saved on the server. Anything you were typing on this screen is gone.
+          </p>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px' }}>
+            <button
+              type="button"
+              className="hit44"
+              onClick={reset}
+              style={{ flex: '1 1 130px', padding: '13px 16px', borderRadius: '12px', border: 'none', backgroundColor: colors.navyBg, color: 'white', fontSize: 'var(--t-label)', fontWeight: '700', cursor: 'pointer' }}
+            >
+              Try again
+            </button>
+            <button
+              type="button"
+              className="hit44"
+              onClick={() => { reset(); leaveCrashedScreen(); }}
+              style={{ flex: '1 1 130px', padding: '13px 16px', borderRadius: '12px', border: '1px solid var(--border-default)', backgroundColor: 'transparent', color: 'var(--text-secondary)', fontSize: 'var(--t-label)', fontWeight: '600', cursor: 'pointer' }}
+            >
+              Go to Nest
+            </button>
+          </div>
+          <p style={{ fontSize: 'var(--t-meta)', lineHeight: 1.5, color: 'var(--text-tertiary)', margin: '16px 0 0', wordBreak: 'break-word' }}>
+            {(error && error.message) || 'Unknown error'}
+          </p>
+          {eventId && (
+            <p style={{ fontSize: 'var(--t-meta)', lineHeight: 1.5, color: 'var(--text-tertiary)', margin: '4px 0 0', wordBreak: 'break-word' }}>
+              Reference {eventId}
+            </p>
+          )}
+        </div>
+      </div>
+      {BottomNav()}
+    </>
+  );
+
+  // Discover is not part of the switch: its map layer is mounted permanently
+  // and only hidden, so it needs a boundary of its own or a crash in it takes
+  // the app down from behind a screen the user is not even looking at.
+  //
+  // The layout mirrors ExploreScreen's own — a column filling the layer, tab
+  // bar last — because ExploreScreen is the ONLY thing that draws the tab bar
+  // on this tab (the switch answers null for it). A fallback without that last
+  // line strands the user on Discover with no navigation at all.
+  const exploreCrashFallback = ({ error, reset }) => (
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', backgroundColor: 'var(--bg-primary)' }}>
+      <div
+        role="alert"
+        style={{ flex: 1, minWidth: 0, overflowY: 'auto', padding: '28px 20px', boxSizing: 'border-box', display: 'flex', flexDirection: 'column', justifyContent: 'center' }}
+      >
+        <div style={{ width: '100%', maxWidth: '340px', margin: '0 auto' }}>
+          <span aria-hidden="true" style={{ display: 'inline-flex', marginBottom: '10px' }}>
+            {Icons.alertCircle('var(--text-tertiary)', 20)}
+          </span>
+          <h2 style={{ fontFamily: 'var(--font-display)', fontSize: 'var(--t-title)', fontWeight: '700', color: 'var(--text-primary)', margin: '0 0 8px' }}>
+            The map stopped working
+          </h2>
+          <p style={{ fontSize: 'var(--t-label)', lineHeight: 1.55, color: 'var(--text-secondary)', margin: '0 0 18px' }}>
+            Nothing you saved is affected. You can try the map again, or pick another tab.
+          </p>
+          <button
+            type="button"
+            className="hit44"
+            onClick={reset}
+            style={{ padding: '13px 20px', borderRadius: '12px', border: 'none', backgroundColor: colors.navyBg, color: 'white', fontSize: 'var(--t-label)', fontWeight: '700', cursor: 'pointer' }}
+          >
+            Try again
+          </button>
+          <p style={{ fontSize: 'var(--t-meta)', lineHeight: 1.5, color: 'var(--text-tertiary)', margin: '16px 0 0', wordBreak: 'break-word' }}>
+            {(error && error.message) || 'Unknown error'}
+          </p>
+        </div>
+      </div>
+      {BottomNav()}
+    </div>
+  );
 
   return (
     <div style={fullBleed
@@ -17568,11 +17758,20 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
         <div style={styles.content}>
           {/* Persistent map layer — hidden via CSS, never unmounted */}
           <div style={{ position: 'absolute', inset: 0, zIndex: isExploreVisible ? 1 : -1, visibility: isExploreVisible ? 'visible' : 'hidden', pointerEvents: isExploreVisible ? 'auto' : 'none' }}>
-            {ExploreScreen()}
+            <ErrorBoundary label="screen:explore" resetKey={screenKey} fallback={exploreCrashFallback}>
+              <ScreenSlot render={ExploreScreen} />
+            </ErrorBoundary>
           </div>
           {/* Landmark: the app had no main/nav/header at all, so "skip to
               content" and landmark navigation had nothing to land on. */}
-          <main style={{ display: 'contents' }}>{renderScreen()}</main>
+          <main style={{ display: 'contents' }}>
+            {/* One boundary, every screen the switch can answer with. It never
+                unmounts, which is why resetKey exists: without it the first
+                crash would pin its fallback over every screen after it. */}
+            <ErrorBoundary label={`screen:${screenLabel}`} resetKey={screenKey} fallback={screenCrashFallback}>
+              <ScreenSlot render={renderScreen} />
+            </ErrorBoundary>
+          </main>
 
           {/* UGC moderation sheet (report / block) — global so it works from chat + DMs */}
           <ModerationSheet
@@ -18063,34 +18262,126 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
         </div>
       )}
 
-      {/* Payment Picker Modal */}
-      {showPaymentPicker && paymentOptions && (
-        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.5)', zIndex: 9999, display: 'flex', alignItems: 'flex-end', justifyContent: 'center' }} onClick={() => setShowPaymentPicker(false)}>
-          <DialogBehavior onClose={() => setShowPaymentPicker(false)} label={`Pay ${paymentOptions.payTo || 'them'}`} />
-          <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '16px 16px 0 0', padding: '20px', width: '100%', maxWidth: '420px', paddingBottom: 'calc(20px + var(--safe-bottom))' }} onClick={e => e.stopPropagation()}>
-            <h3 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy, margin: '0 0 4px' }}>Pay {paymentOptions.payTo}</h3>
-            <p style={{ fontSize: 'var(--t-label)', color: 'var(--text-secondary)', margin: '0 0 16px' }}>${Number(paymentOptions.amount || 0).toFixed(2)} · {paymentOptions.note}</p>
-            {paymentOptions.methods.map(m => (
-              <button className="hit44" key={m.method} onClick={() => {
-                // Same single entry point as the one-method "Settle Up" path:
-                // it opens the wallet app, watches for the app to actually go
-                // away, and raises the fallback sheet when it does not.
-                startPaymentHandoff(m, paymentOptions);
-                setShowPaymentPicker(false);
-              }} style={{ width: '100%', padding: '14px', marginBottom: '8px', borderRadius: '12px', border: '1px solid var(--border-default)', backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '12px', textAlign: 'left' }}>
-                <span style={{ width: '40px', height: '40px', borderRadius: '10px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 'var(--t-title)', background: m.method === 'venmo' ? 'linear-gradient(135deg, #3D95CE, #008CFF)' : m.method === 'cashapp' ? 'linear-gradient(135deg, #00C244, #00D64B)' : 'linear-gradient(135deg, #6C1CD3, #8A2BE2)', flexShrink: 0 }}>
-                  <span style={{ color: 'white', fontWeight: '600', fontSize: 'var(--t-body)' }}>{m.method === 'venmo' ? 'V' : m.method === 'cashapp' ? '$' : 'Z'}</span>
-                </span>
-                <div>
-                  <div style={{ fontWeight: '600', fontSize: 'var(--t-body)', color: colors.navy }}>{m.label}</div>
-                  <div style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)' }}>{m.method === 'zelle' ? m.handle : `Pay ${m.handle}`}</div>
-                </div>
-              </button>
-            ))}
-            <button className="hit44" onClick={() => setShowPaymentPicker(false)} style={{ width: '100%', padding: '12px', border: 'none', backgroundColor: 'transparent', color: 'var(--text-secondary)', fontSize: 'var(--t-label)', fontWeight: '600', cursor: 'pointer', marginTop: '4px' }}>Cancel</button>
+      {/* THE PAY SURFACE. One sheet, whatever the payee has saved.
+
+          It used to be a stack of 40px rounded squares, each filled with that
+          wallet's brand GRADIENT and holding a single letter (V, $, Z). That
+          is two banned patterns in one control: the icon-in-rounded-square
+          card formula (SLOP-AUDIT A14) and a blue gradient (H2/M). It also
+          only ever appeared when the payee had two or more handles saved, so
+          the two states that matter most (exactly one handle, and none at all)
+          had no design at all.
+
+          What replaces it is what Jayden asked for: a plain link to their
+          Venmo, and if they have not got one, a bird saying so.
+
+          The wallet rows are REAL anchors carrying the audited web link, so a
+          long press copies something true and the row survives its own click
+          handler never running. The click is intercepted so it still goes
+          through startPaymentHandoff, which is the whole audited race: deep
+          link first, and the fallback sheet when the wallet app never comes to
+          the foreground. Nothing about that machinery changed here.
+
+          Zelle is a BUTTON, not an anchor. backend/routes/billing.js builds it
+          with deepLink and webLink null on purpose (Zelle lives inside each
+          bank's own app and has no shared scheme), so there is no destination
+          to put in an href and a link with nowhere to go is the dead control
+          this file has been removing all week. It opens the instructions sheet
+          through the same entry point. */}
+      {showPaymentPicker && paymentOptions && (() => {
+        const methods = paymentOptions.methods || [];
+        const payee = typeof paymentOptions.payTo === 'string' && paymentOptions.payTo.trim()
+          ? paymentOptions.payTo.trim()
+          : null;
+        const close = () => setShowPaymentPicker(false);
+        // A handle with nothing readable in it is not a handle. The route
+        // builds the display string ('@' + username), so a stored value of
+        // nothing but punctuation or spaces arrives here as a bare '@'.
+        const readableHandle = (h) => {
+          const t = typeof h === 'string' ? h.trim() : '';
+          return /[a-zA-Z0-9]/.test(t) ? t : null;
+        };
+        const noHandleLine = payee
+          ? `${payee} has not added a Venmo, Cash App, or Zelle handle.`
+          : 'They have not added a Venmo, Cash App, or Zelle handle.';
+        return (
+        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.5)', zIndex: 9999, display: 'flex', alignItems: 'flex-end', justifyContent: 'center' }} onClick={close}>
+          <DialogBehavior onClose={close} label={`Pay ${payee || 'them'}`} />
+          <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '16px 16px 0 0', padding: '20px', width: '100%', maxWidth: '420px', boxSizing: 'border-box', paddingBottom: 'calc(20px + var(--safe-bottom))' }} onClick={e => e.stopPropagation()}>
+            <h3 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy, margin: '0 0 4px' }}>Pay {payee || 'them'}</h3>
+            {/* The money is the same whether or not there is a link to open. */}
+            <p style={{ fontSize: 'var(--t-label)', color: 'var(--text-secondary)', margin: '0 0 14px' }}>${Number(paymentOptions.amount || 0).toFixed(2)} · {paymentOptions.note}</p>
+            {methods.length > 0 ? methods.map((m, i) => {
+              const r = paymentRoutes(m);
+              // The first saved handle leads. The rest are real rows under it,
+              // quieter and ruled off, rather than a row of equal-weight tiles
+              // that makes the payer read three identical things.
+              const lead = i === 0;
+              const handle = readableHandle(m.handle);
+              const rowStyle = {
+                display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px',
+                width: '100%', boxSizing: 'border-box', padding: lead ? '2px 0 13px' : '13px 0',
+                border: 'none', borderTop: lead ? 'none' : '1px solid var(--divider)',
+                backgroundColor: 'transparent', textAlign: 'left', cursor: 'pointer',
+              };
+              const body = (
+                <>
+                  <span style={{ minWidth: 0 }}>
+                    <span style={{ display: 'block', fontSize: lead ? 'var(--t-body)' : 'var(--t-label)', fontWeight: lead ? '700' : '600', color: colors.navy, textDecoration: r.webUrl ? 'underline' : 'none', textUnderlineOffset: '3px' }}>
+                      {r.webUrl ? `Pay on ${m.label}` : `Pay with ${m.label}`}
+                    </span>
+                    {handle && (
+                      <span style={{ display: 'block', marginTop: '2px', fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', overflowWrap: 'anywhere' }}>{handle}</span>
+                    )}
+                  </span>
+                  <span style={{ flexShrink: 0, display: 'flex', alignItems: 'center' }}>
+                    {r.webUrl ? Icons.externalLink('var(--text-tertiary)', 16) : Icons.chevronRight('var(--text-tertiary)', 16)}
+                  </span>
+                </>
+              );
+              return r.webUrl ? (
+                <a
+                  className="hit44"
+                  key={m.method}
+                  href={r.webUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  onClick={(e) => {
+                    // The href is the honest destination and the fallback of
+                    // last resort. The handler is the better route: try the
+                    // wallet app first, and raise the audited sheet when the
+                    // phone does nothing.
+                    e.preventDefault();
+                    startPaymentHandoff(m, paymentOptions);
+                    close();
+                  }}
+                  style={rowStyle}
+                >
+                  {body}
+                </a>
+              ) : (
+                <button className="hit44" type="button" key={m.method} onClick={() => {
+                  startPaymentHandoff(m, paymentOptions);
+                  close();
+                }} style={rowStyle}>
+                  {body}
+                </button>
+              );
+            }) : (
+              // Nothing to link to, so nothing that looks like a control. The
+              // app cannot make somebody add a handle, so it does not pretend
+              // to offer that; it says the true thing and stops. Marking the
+              // debt paid another way is on the screen behind this sheet.
+              <div style={{ display: 'flex', alignItems: 'center', gap: '14px', padding: '2px 0 4px' }}>
+                <BirdieStill size={64} style={{ flexShrink: 0 }} />
+                <p style={{ margin: 0, fontSize: 'var(--t-label)', color: 'var(--text-secondary)', lineHeight: 1.5 }}>{noHandleLine}</p>
+              </div>
+            )}
+            <button className="hit44" type="button" onClick={close} style={{ width: '100%', padding: '12px', border: 'none', borderTop: '1px solid var(--divider)', backgroundColor: 'transparent', color: 'var(--text-secondary)', fontSize: 'var(--t-label)', fontWeight: '600', cursor: 'pointer', marginTop: '10px' }}>Close</button>
           </div>
         </div>
-      )}
+        );
+      })()}
 
       {/* The wallet app never came to the foreground, or there was never one to
           open. Either way the payer is owed an explanation and a route that
