@@ -133,7 +133,6 @@ router.post('/:flockId/submit',
       let countRow;
       let ceiling;
       let hadNonSkipBefore = false;
-      let othersNonSkipBefore = 0;
       try {
         await client.query('BEGIN');
 
@@ -184,16 +183,14 @@ router.post('/:flockId/submit',
           [ceiling, flockId]
         );
 
-        // Was the ceiling already public before this submission? Pushes fire
-        // only on the CROSSING — every later edit replaying "Budget set!" to
-        // the whole group was notification spam (round 7).
-        const beforeCount = await client.query(
-          `SELECT COUNT(*)::int AS n FROM budget_submissions
-           WHERE flock_id = $1 AND skipped = false AND user_id != $2`,
-          [flockId, userId]
-        );
-        othersNonSkipBefore = beforeCount.rows[0]?.n || 0;
-        // Count submissions
+        // Count submissions. One query answers both questions this route has:
+        // the aggregate counts for the response, and (derived below) whether
+        // the ceiling was already public before this submission. This used to
+        // be TWO statements — the second re-counted non-skips excluding this
+        // user — but this submit only ever changes this user's own row, so
+        // "others' non-skips" is exactly non_skip_count minus this user's
+        // contribution, already known. Reliability pass 2026-08-14: dropped the
+        // redundant query (submit transaction: 9 statements -> 8).
         const countResult = await client.query(
           `SELECT
              COUNT(*) AS total_submissions,
@@ -215,6 +212,10 @@ router.post('/:flockId/submit',
       const submissionCount = parseInt(total_submissions);
       const skipCount = parseInt(skip_count);
       const nonSkipCount = parseInt(non_skip_count);
+      // Other members' non-skip rows, unchanged by this submit: the count above
+      // ran AFTER the upsert inside the same transaction, so it includes this
+      // user's row iff they did not skip — subtract that contribution back out.
+      const othersNonSkipBefore = nonSkipCount - (skipped ? 0 : 1);
 
       // Total members
       const memberResult = await pool.query(
@@ -301,17 +302,17 @@ router.get('/:flockId',
         return res.status(403).json({ error: 'You are not a member of this flock' });
       }
 
-      // Get flock budget config
-      const flockResult = await pool.query(
-        'SELECT budget_enabled, budget_context, budget_locked, budget_ceiling, ghost_mode_enabled FROM flocks WHERE id = $1',
-        [flockId]
-      );
-      if (flockResult.rows.length === 0) {
-        return res.status(404).json({ error: 'Flock not found' });
-      }
-      const flock = flockResult.rows[0];
-
-      // Count submissions
+      // Count submissions FIRST, then read the cached ceiling. The order is
+      // load-bearing for the privacy invariant: these are two autocommit
+      // statements with two snapshots, and the reveal decision (>= 3 non-skips)
+      // is made from THIS count. Read the other way round — ceiling first,
+      // count second — a third submission committing between the two left the
+      // count saying "3, reveal" while the ceiling still held the MIN over the
+      // TWO amounts that existed when it was read; in a three-person flock that
+      // stale MIN hands one member the other's exact number at the precise
+      // moment everyone is watching the crossing. Counting first means a
+      // crossing mid-request errs to "withhold", and a >= 3 count is only ever
+      // paired with a ceiling at least as new as the state it counted.
       const countResult = await pool.query(
         `SELECT
            COUNT(*) AS total_submissions,
@@ -320,6 +321,16 @@ router.get('/:flockId',
          FROM budget_submissions WHERE flock_id = $1`,
         [flockId]
       );
+
+      // Get flock budget config (and the cached ceiling — see the note above).
+      const flockResult = await pool.query(
+        'SELECT budget_enabled, budget_context, budget_locked, budget_ceiling, ghost_mode_enabled FROM flocks WHERE id = $1',
+        [flockId]
+      );
+      if (flockResult.rows.length === 0) {
+        return res.status(404).json({ error: 'Flock not found' });
+      }
+      const flock = flockResult.rows[0];
       const submissionCount = parseInt(countResult.rows[0].total_submissions);
       const nonSkipCount = parseInt(countResult.rows[0].non_skip_count);
       const skipCount = parseInt(countResult.rows[0].skip_count);
