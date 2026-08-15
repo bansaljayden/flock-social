@@ -34,7 +34,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 // cobalt where the subject is Flock users, warm where it is the owner's own
 // space. Neither is ever a functional glyph — Icons.birdie stays the glyph.
 import BirdieBird, { BirdieStill, WARM_BIRD } from './components/ui/BirdieBird';
-import Icons from './components/ui/Icons';
+import Icons, { starSvgString } from './components/ui/Icons';
 import 'maplibre-gl/dist/maplibre-gl.css';
 
 // Animated crowd dial — fills from 0 to target score with counting number.
@@ -1631,8 +1631,10 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
     // when the map container reaches data-zoom-tier="hi".
     const label = document.createElement('div');
     label.className = 'mlb-marker-label';
+    // System star via starSvgString, not a raw glyph: the label is innerHTML
+    // so JSX cannot reach it, but the geometry must still be the icon set's.
     const ratingHtml = venue.rating || venue.stars
-      ? `<span class="mlb-label-rating">★ ${(venue.rating || venue.stars).toFixed ? (venue.rating || venue.stars).toFixed(1) : (venue.rating || venue.stars)}</span>`
+      ? `<span class="mlb-label-rating">${starSvgString(12)} ${(venue.rating || venue.stars).toFixed ? (venue.rating || venue.stars).toFixed(1) : (venue.rating || venue.stars)}</span>`
       : '';
     label.innerHTML = `<span class="mlb-label-name">${(venue.name || '').replace(/[<>]/g, '')}</span>${ratingHtml}`;
     el.appendChild(label);
@@ -2266,6 +2268,9 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
           font-weight: 800;
           font-size: 12px;
           letter-spacing: 0;
+          display: inline-flex;
+          align-items: center;
+          gap: 3px;
         }
 
         /* Show labels only when zoomed in enough to read them. */
@@ -8207,7 +8212,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           </div>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: '5px', paddingLeft: '74px', marginTop: '2px' }}>
-          {dmIsTyping ? <span style={{ fontSize: 'var(--t-meta)', color: '#86EFAC', fontWeight: '500' }}>{dmTypingUser || selectedDm.name} is typing...</span> : dmSharingLocation ? <span style={{ fontSize: 'var(--t-meta)', color: '#34d399', fontWeight: '500', display: 'inline-flex', alignItems: 'center', gap: '4px' }}><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#34d399" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z" /><circle cx="12" cy="10" r="3" /></svg>sharing location</span> : <><span style={{ width: '5px', height: '5px', borderRadius: '3px', backgroundColor: '#22c55e', boxShadow: 'none' }} /><span style={{ fontSize: 'var(--t-meta)', color: 'rgba(255,255,255,0.55)', fontWeight: '500' }}>online</span></>}
+          {dmIsTyping ? <span style={{ fontSize: 'var(--t-meta)', color: '#86EFAC', fontWeight: '500' }}>{dmTypingUser || selectedDm.name} is typing...</span> : dmSharingLocation ? <span style={{ fontSize: 'var(--t-meta)', color: '#34d399', fontWeight: '500', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>{Icons.mapPin('#34d399', 12)}sharing location</span> : <><span style={{ width: '5px', height: '5px', borderRadius: '3px', backgroundColor: '#22c55e', boxShadow: 'none' }} /><span style={{ fontSize: 'var(--t-meta)', color: 'rgba(255,255,255,0.55)', fontWeight: '500' }}>online</span></>}
         </div>
       </div>
 
@@ -8434,7 +8439,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                         )}
                         <div style={{ flex: 1, minWidth: 0 }}>
                           <p style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: colors.navy, margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{venue.name}</p>
-                          <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: '1px 0 0' }}>{venue.type || venue.category}{venue.stars ? ` • ${venue.stars}★` : ''}{venue.price ? ` • ${venue.price}` : ''}</p>
+                          <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: '1px 0 0' }}>{venue.type || venue.category}{venue.stars ? <> • {venue.stars} {Icons.starFilled('currentColor', 12)}</> : ''}{venue.price ? ` • ${venue.price}` : ''}</p>
                         </div>
                         <div style={{ padding: '6px 12px', borderRadius: '10px', backgroundColor: `${colors.navy}08`, color: colors.navy, fontSize: 'var(--t-meta)', fontWeight: '500', flexShrink: 0 }}>
                           {Icons.vote(colors.navy, 12)} Vote
@@ -12665,7 +12670,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                           )}
                           <div style={{ flex: 1, minWidth: 0 }}>
                             <p style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: colors.navy, margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{venue.name}</p>
-                            <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: '1px 0 0' }}>{venue.type || venue.category}{venue.stars ? ` • ${venue.stars}★` : ''}{venue.price ? ` • ${venue.price}` : ''}</p>
+                            <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: '1px 0 0' }}>{venue.type || venue.category}{venue.stars ? <> • {venue.stars} {Icons.starFilled('currentColor', 12)}</> : ''}{venue.price ? ` • ${venue.price}` : ''}</p>
                           </div>
                           <div style={{ padding: '6px 12px', borderRadius: '10px', backgroundColor: `${colors.navy}08`, color: colors.navy, fontSize: 'var(--t-meta)', fontWeight: '500', flexShrink: 0 }}>
                             {Icons.vote(colors.navy, 12)} Vote
@@ -13622,7 +13627,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                     </div>
 
                     {editError && (
-                      <div style={{ backgroundColor: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)', borderRadius: '10px', padding: '10px 14px', marginBottom: '14px', color: colors.red, fontSize: 'var(--t-label)', fontWeight: '600' }}>{editError}</div>
+                      <div role="alert" style={{ backgroundColor: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)', borderRadius: '10px', padding: '10px 14px', marginBottom: '14px', color: colors.red, fontSize: 'var(--t-label)', fontWeight: '600' }}>{editError}</div>
                     )}
                     {editSuccess && (
                       <div style={{ backgroundColor: 'rgba(45,90,135,0.10)', border: '1px solid rgba(45,90,135,0.35)', borderRadius: '10px', padding: '10px 14px', marginBottom: '14px', color: colors.steel, fontSize: 'var(--t-label)', fontWeight: '600' }}>{editSuccess}</div>
@@ -17405,7 +17410,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                   <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '20px' }}>
                     <div id={qrScannerDivId} style={{ width: '100%', maxWidth: '340px', borderRadius: '20px', overflow: 'hidden' }} />
                     {qrScanError && (
-                      <div style={{ marginTop: '16px', padding: '10px 20px', borderRadius: '12px', backgroundColor: 'rgba(239,68,68,0.2)', border: '1px solid rgba(239,68,68,0.4)' }}>
+                      <div role="alert" style={{ marginTop: '16px', padding: '10px 20px', borderRadius: '12px', backgroundColor: 'rgba(239,68,68,0.2)', border: '1px solid rgba(239,68,68,0.4)' }}>
                         <p style={{ fontSize: 'var(--t-label)', color: '#fca5a5', margin: 0, textAlign: 'center' }}>{qrScanError}</p>
                       </div>
                     )}
