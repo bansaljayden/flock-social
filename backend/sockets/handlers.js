@@ -159,9 +159,20 @@ function restampImageMime(imageUrl) {
   const comma = imageUrl.indexOf(',');
   if (comma < 0) return imageUrl;
   // 64 base64 characters decode to 48 bytes; the longest signature test above
-  // needs 12. Buffer.from ignores the ASCII whitespace a line-wrapped payload
-  // may carry, the same way moderateImage's canonical-base64 check does.
-  const head = Buffer.from(imageUrl.slice(comma + 1, comma + 65), 'base64');
+  // needs 12. ASCII whitespace is stripped from the WHOLE payload before the
+  // head is taken, not left for Buffer.from to skip inside a fixed window.
+  // The WHATWG data: URL decoder ignores whitespace anywhere in the payload
+  // (imageToBlob in utils/moderation.js strips it before its canonical check
+  // for exactly that reason), so a payload front-padded with 64+ spaces still
+  // decodes and renders as an image — but a fixed 64-character window read
+  // nothing except the padding, sniffed zero bytes, and waved the sender's
+  // claimed MIME through. The bytes this types are the bytes a browser will
+  // actually decode. One O(n) pass over a <=1MiB string, once per image send;
+  // moderateImage runs the identical strip on the same payload anyway.
+  const head = Buffer.from(
+    imageUrl.slice(comma + 1).replace(/\s+/g, '').slice(0, 64),
+    'base64'
+  );
   const format = sniffImageFormat(head);
   const mime = format && SNIFFED_MIME[format];
   if (!mime) return imageUrl;
