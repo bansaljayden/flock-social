@@ -852,6 +852,20 @@ const Icons = {
     </>
   ),
 
+  // Siren — promoted from the SOS EmergencySheet's local glyph (2026-08-14),
+  // where it sits beside the "Emergency" title. Dome: two verticals joined by
+  // an r=5 circular arc, closed across its own bottom (container rule); a base
+  // plinth; three light rays, one vertical and two at 45 degrees.
+  siren: make(
+    <>
+      <path d="M7 19 7 13A5 5 0 0 1 17 13L17 19Z" />
+      <path d="M4 19 20 19" />
+      <path d="M12 2 12 4.5" />
+      <path d="M5 5 6.75 6.75" />
+      <path d="M19 5 17.25 6.75" />
+    </>
+  ),
+
   sparkles: make(
     <>
       <path d={gull(12, 15, 5)} />

@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import Icons, { sw } from '../ui/Icons';
+import Icons from '../ui/Icons';
 import './EmergencySheet.css';
 
 /*
@@ -18,8 +18,9 @@ import './EmergencySheet.css';
  * while armed; Share Location is a neutral outline; Cancel is plain text.
  *
  * The bell-in-pink-circle header blob is gone. The header is a stroke siren
- * drawn to the house geometry (see SirenGlyph below) beside a left-aligned
- * title, which reads as an alert dialog rather than a decorated card.
+ * drawn to the house geometry (Icons.siren, promoted from this file's local
+ * glyph once Icons.js freed up) beside a left-aligned title, which reads as
+ * an alert dialog rather than a decorated card.
  *
  * A11y. role="alertdialog" (this IS the interruption-for-an-emergency case
  * the role exists for) with aria-labelledby / aria-describedby; the
@@ -42,40 +43,6 @@ const FOCUSABLE =
   'a[href], button:not([disabled]), input:not([disabled]):not([type="hidden"]), ' +
   'select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"]), ' +
   '[contenteditable="true"]';
-
-/*
- * Siren — a local glyph, NOT yet in components/ui/Icons.js (that file is
- * owned by a parallel agent; promote this there later). Drawn to the house
- * geometry: 24 viewBox, stroke-based, round caps and joins, sw(size) stroke
- * weight, segments at 0/45/90, the one curve a circular arc with a whole-unit
- * radius (r=5 dome), container closed onto its own base. Decorative
- * (aria-hidden): it sits beside the "Emergency" title.
- */
-const SirenGlyph = ({ size = 26 }) => (
-  <span className="es-siren" aria-hidden="true">
-    <svg
-      width={size}
-      height={size}
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth={sw(size)}
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-      focusable="false"
-    >
-      {/* Dome: two verticals joined by an r=5 arc, closed across the bottom. */}
-      <path d="M7 19 7 13A5 5 0 0 1 17 13L17 19Z" />
-      {/* Base plinth. */}
-      <path d="M4 19 20 19" />
-      {/* Light rays: one vertical, two at 45 degrees. */}
-      <path d="M12 2 12 4.5" />
-      <path d="M5 5 6.75 6.75" />
-      <path d="M19 5 17.25 6.75" />
-    </svg>
-  </span>
-);
 
 const EmergencySheet = ({
   contactCount,
@@ -198,7 +165,11 @@ const EmergencySheet = ({
         tabIndex={-1}
       >
         <div className="es-head">
-          <SirenGlyph />
+          {/* Decorative siren beside the title. Promoted into the icon system
+              (Icons.siren) 2026-08-14; .es-siren keeps its color and layout. */}
+          <span className="es-siren" aria-hidden="true">
+            {Icons.siren('currentColor', 26)}
+          </span>
           <div>
             <h2 id="es-title" className="es-title">Emergency</h2>
             {/* The described-by text: the accurate contact count, live. */}

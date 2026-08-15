@@ -43,6 +43,10 @@ const SHEET_CSS = fs.readFileSync(
   path.join(__dirname, '..', 'components', 'safety', 'EmergencySheet.css'),
   'utf8'
 );
+const ICONS_SRC = fs.readFileSync(
+  path.join(__dirname, '..', 'components', 'ui', 'Icons.js'),
+  'utf8'
+);
 
 const noop = () => {};
 const baseProps = {
@@ -260,14 +264,22 @@ describe('presentation pins (jsdom computes no layout, so the CSS is the record)
     });
   });
 
-  it('the siren glyph follows the house geometry and the blob is gone', () => {
-    // Local SVG (Icons.js is owned by a parallel agent): round caps/joins,
-    // sw(size)-derived stroke, closed dome container. And the pink-circle
-    // bell blob must not have survived anywhere in the component.
-    expect(SHEET_SRC).toContain('strokeLinecap="round"');
-    expect(SHEET_SRC).toContain('strokeLinejoin="round"');
-    expect(SHEET_SRC).toContain('strokeWidth={sw(size)}');
-    expect(SHEET_SRC).toContain('M7 19 7 13A5 5 0 0 1 17 13L17 19Z');
+  it('the siren glyph is the system icon and the blob is gone', () => {
+    // Promoted into components/ui/Icons.js on 2026-08-14 (the local SVG this
+    // pin used to guard existed only because Icons.js was owned by a parallel
+    // agent at the time). The sheet must draw Icons.siren — no hand-rolled
+    // <svg> left in the component — and the dome geometry pin follows the
+    // drawing to its new home, same path data: two verticals joined by an
+    // r=5 arc, closed across the bottom. Round caps/joins and sw(size)
+    // stroke now come from Icons.js's shared svg() helper, which every make()
+    // glyph renders through. And the pink-circle bell blob must not have
+    // survived anywhere in the component.
+    expect(SHEET_SRC).toContain("Icons.siren('currentColor', 26)");
+    expect(SHEET_SRC).not.toContain('<svg');
+    const i = ICONS_SRC.indexOf('siren: make(');
+    expect(i).toBeGreaterThan(-1);
+    const siren = ICONS_SRC.slice(i, ICONS_SRC.indexOf('),', i));
+    expect(siren).toContain('M7 19 7 13A5 5 0 0 1 17 13L17 19Z');
     expect(SHEET_SRC).not.toMatch(/borderRadius:\s*'32px'/);
     expect(SHEET_CSS).not.toMatch(/border-radius:\s*50%/);
   });
