@@ -173,6 +173,18 @@ const make = (children, opts = {}) => {
 const STAR_D =
   'M12 3 14.23 8.93 20.56 9.22 15.61 13.17 17.29 19.28 12 15.8 6.71 19.28 8.39 13.17 3.44 9.22 9.77 8.93Z';
 
+/**
+ * The filled star as a plain HTML string, for DOM-string contexts where JSX
+ * cannot reach (the MapLibre marker label in App.js is built with innerHTML).
+ * Same STAR_D geometry, size-derived stroke, and round caps/joins as
+ * Icons.starFilled, so a label star can never drift from the system star.
+ */
+const starSvgString = (size = 12) =>
+  `<svg class="flock-icon" width="${size}" height="${size}" viewBox="0 0 24 24" ` +
+  `fill="none" stroke="currentColor" stroke-width="${sw(size)}" ` +
+  `stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">` +
+  `<path d="${STAR_D}" fill="currentColor" stroke="currentColor"/></svg>`;
+
 // pin / pinFilled - one closed contour including the needle, so the two names
 // are one drawing and the fill can transition.
 const PIN_D =
@@ -945,4 +957,4 @@ const Icons = {
 };
 
 export default Icons;
-export { Icons, sw, ring, gull, dot };
+export { Icons, sw, ring, gull, dot, starSvgString };
