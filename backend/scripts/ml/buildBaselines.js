@@ -2,74 +2,171 @@
 // Build venue baselines from collected weekly data
 // Populates ml_venue_baselines table — 168 rows per venue (7 days x 24 hours)
 // Run: node scripts/ml/buildBaselines.js
+//
+// THIS FILE IS THE ONLY DEFINITION OF A `source = 'collected'` BASELINE.
+// It used to be one of two. scripts/ml/collectRealtime.js ended every run with
+// its own hand-written refresh that omitted the `collection_mode = 'weekly'`
+// filter this file has applied since it was written, so it averaged weekly
+// forecast rows and live realtime readings into the same slot — and, once the
+// hour axes of the two collectors diverged (see THE HOUR AXIS in
+// collectWeekly.js), averaged two different clocks into the same slot. Which
+// blend a venue's baseline held depended on which script had run last.
+// collectRealtime.js now calls refreshCollectedBaselines() from here, so there
+// is one statement and it cannot drift again.
+//
+// AXIS. Only rows that DECLARE `hour_axis = 'venue_local'` are averaged.
+// ml_venue_baselines.hour is read by services/mlPredictor.js as a venue wall
+// clock hour, so a row that has not been converted by migration 023 must not
+// contribute — silently producing a baseline off by six hours is what this
+// whole change exists to end. If any weekly row is still undeclared the refresh
+// REFUSES rather than building a partial answer.
 // ---------------------------------------------------------------------------
 
 require('dotenv').config({ path: require('path').join(__dirname, '..', '..', '.env') });
 
 const { Pool } = require('pg');
 
-if (!process.env.DATABASE_URL && process.env.PGHOST) {
-  const host = process.env.PGHOST;
-  const port = process.env.PGPORT || 5432;
-  const user = process.env.PGUSER || 'postgres';
-  const pass = process.env.PGPASSWORD || '';
-  const db = process.env.PGDATABASE || 'railway';
-  process.env.DATABASE_URL = `postgresql://${user}:${pass}@${host}:${port}/${db}`;
+// The axis a baseline-eligible row must declare. Mirrors
+// collectWeekly.HOUR_AXIS_VENUE_LOCAL and the value migration 023 stamps.
+const HOUR_AXIS_VENUE_LOCAL = 'venue_local';
+
+const CREATE_TABLE_SQL = `
+  CREATE TABLE IF NOT EXISTS ml_venue_baselines (
+    google_place_id VARCHAR(255) NOT NULL,
+    day_of_week SMALLINT NOT NULL CHECK (day_of_week BETWEEN 0 AND 6),
+    hour SMALLINT NOT NULL CHECK (hour BETWEEN 0 AND 23),
+    baseline SMALLINT NOT NULL DEFAULT 0,
+    source VARCHAR(20) NOT NULL DEFAULT 'collected',
+    updated_at TIMESTAMPTZ DEFAULT NOW(),
+    PRIMARY KEY (google_place_id, day_of_week, hour)
+  );
+`;
+
+// Is there a weekly row whose hour column is not a venue-local hour (or does
+// not say)? EXISTS, not COUNT: ml_training_data is ~4M rows and this runs at
+// the end of every realtime cron.
+const UNDECLARED_WEEKLY_SQL = `
+  SELECT EXISTS (
+    SELECT 1 FROM ml_training_data
+    WHERE collection_mode = 'weekly'
+      AND (hour_axis IS DISTINCT FROM '${HOUR_AXIS_VENUE_LOCAL}')
+  ) AS undeclared
+`;
+
+// Collected slots that no longer have any backing weekly row. Migration 023
+// PERMUTES the (day_of_week, hour) keys of the corpus, so without this a venue
+// whose weekly coverage has holes keeps stale rows at the keys the old axis
+// used, and mlPredictor happily serves them. Restricted to source='collected':
+// mlPredictor.storeGoogleBaselines writes source='google' rows from Google
+// popular_times, which are on the venue-local axis already and are not ours.
+const DELETE_STALE_SQL = `
+  DELETE FROM ml_venue_baselines b
+  WHERE b.source = 'collected'
+    AND NOT EXISTS (
+      SELECT 1
+      FROM ml_training_data t
+      JOIN ml_venues v ON t.venue_id = v.id
+      WHERE v.google_place_id = b.google_place_id
+        AND t.day_of_week = b.day_of_week
+        AND t.hour = b.hour
+        AND t.collection_mode = 'weekly'
+        AND t.hour_axis = '${HOUR_AXIS_VENUE_LOCAL}'
+        AND t.busyness_pct IS NOT NULL
+    )
+`;
+
+// The baseline itself: per (venue, weekday, venue-local hour) average of the
+// weekly forecast rows. The `WHERE ... IS DISTINCT FROM` on the conflict target
+// suppresses no-op rewrites, so a second run of this file writes literally
+// nothing — re-running it is free and leaves the table byte-identical.
+const UPSERT_SQL = `
+  INSERT INTO ml_venue_baselines (google_place_id, day_of_week, hour, baseline, source, updated_at)
+  SELECT
+    v.google_place_id,
+    t.day_of_week,
+    t.hour,
+    ROUND(AVG(t.busyness_pct))::smallint,
+    'collected',
+    NOW()
+  FROM ml_training_data t
+  JOIN ml_venues v ON t.venue_id = v.id
+  WHERE t.collection_mode = 'weekly'
+    AND t.hour_axis = '${HOUR_AXIS_VENUE_LOCAL}'
+    AND t.busyness_pct IS NOT NULL
+  GROUP BY v.google_place_id, t.day_of_week, t.hour
+  ON CONFLICT (google_place_id, day_of_week, hour)
+  DO UPDATE SET
+    baseline = EXCLUDED.baseline,
+    updated_at = NOW()
+  WHERE ml_venue_baselines.baseline IS DISTINCT FROM EXCLUDED.baseline
+`;
+
+// Rebuild every source='collected' baseline from the corrected weekly corpus.
+// Safe to call any number of times, from anywhere, in any order.
+// Returns { ok, undeclared, deleted, upserted }.
+async function refreshCollectedBaselines(pool) {
+  await pool.query(CREATE_TABLE_SQL);
+  // Both columns are created by migration 023 on a booted server; these scripts
+  // also run against databases that have not booted the current server.
+  await pool.query(`ALTER TABLE ml_training_data ADD COLUMN IF NOT EXISTS hour_axis VARCHAR(16)`);
+
+  const { rows: [{ undeclared }] } = await pool.query(UNDECLARED_WEEKLY_SQL);
+  if (undeclared) {
+    return { ok: false, undeclared: true, deleted: 0, upserted: 0 };
+  }
+
+  const del = await pool.query(DELETE_STALE_SQL);
+  const up = await pool.query(UPSERT_SQL);
+  return { ok: true, undeclared: false, deleted: del.rowCount, upserted: up.rowCount };
 }
 
-const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
-  ssl: { rejectUnauthorized: false },
-});
+const REFUSAL_MESSAGE =
+  'REFUSED: ml_training_data still holds weekly rows that do not declare '
+  + `hour_axis = '${HOUR_AXIS_VENUE_LOCAL}'. Their hour column is a BestTime array index, `
+  + 'six hours off the venue clock — averaging them into ml_venue_baselines is the bug this '
+  + 'guard exists to prevent. Apply migration 023_backfill_ml_weekly_local_hours.sql '
+  + '(it runs on server boot) and re-run.';
 
-async function build() {
-  // Ensure table exists
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS ml_venue_baselines (
-      google_place_id VARCHAR(255) NOT NULL,
-      day_of_week SMALLINT NOT NULL CHECK (day_of_week BETWEEN 0 AND 6),
-      hour SMALLINT NOT NULL CHECK (hour BETWEEN 0 AND 23),
-      baseline SMALLINT NOT NULL DEFAULT 0,
-      source VARCHAR(20) NOT NULL DEFAULT 'collected',
-      updated_at TIMESTAMPTZ DEFAULT NOW(),
-      PRIMARY KEY (google_place_id, day_of_week, hour)
-    );
-  `);
+async function main() {
+  const pool = new Pool({
+    connectionString: process.env.DATABASE_URL,
+    // An explicit PGSSLMODE wins — see config/database.js.
+    ssl: process.env.PGSSLMODE === 'disable' ? false : { rejectUnauthorized: false },
+  });
 
-  // Build baselines from weekly forecast data
-  console.log('[Baselines] Computing from weekly collection data...');
-  const { rowCount } = await pool.query(`
-    INSERT INTO ml_venue_baselines (google_place_id, day_of_week, hour, baseline, source, updated_at)
-    SELECT
-      v.google_place_id,
-      t.day_of_week,
-      t.hour,
-      ROUND(AVG(t.busyness_pct))::smallint,
-      'collected',
-      NOW()
-    FROM ml_training_data t
-    JOIN ml_venues v ON t.venue_id = v.id
-    WHERE t.collection_mode = 'weekly' AND t.busyness_pct IS NOT NULL
-    GROUP BY v.google_place_id, t.day_of_week, t.hour
-    ON CONFLICT (google_place_id, day_of_week, hour)
-    DO UPDATE SET
-      baseline = EXCLUDED.baseline,
-      updated_at = NOW()
-  `);
+  try {
+    console.log('[Baselines] Computing from weekly collection data (venue-local axis)...');
+    const result = await refreshCollectedBaselines(pool);
 
-  console.log(`[Baselines] Upserted ${rowCount} baseline slots`);
+    if (!result.ok) {
+      console.error(`[Baselines] ${REFUSAL_MESSAGE}`);
+      process.exitCode = 1;
+      return;
+    }
 
-  // Stats
-  const { rows: [stats] } = await pool.query(`
-    SELECT COUNT(DISTINCT google_place_id) AS venues, COUNT(*) AS slots
-    FROM ml_venue_baselines
-  `);
-  console.log(`[Baselines] ${stats.venues} venues, ${stats.slots} total slots`);
+    console.log(`[Baselines] Removed ${result.deleted} stale slots, wrote ${result.upserted} changed slots`);
 
-  await pool.end();
+    const { rows: [stats] } = await pool.query(`
+      SELECT COUNT(DISTINCT google_place_id) AS venues, COUNT(*) AS slots
+      FROM ml_venue_baselines
+    `);
+    console.log(`[Baselines] ${stats.venues} venues, ${stats.slots} total slots`);
+  } finally {
+    await pool.end();
+  }
 }
 
-build().catch(err => {
-  console.error('[Baselines] Error:', err);
-  process.exit(1);
-});
+module.exports = {
+  refreshCollectedBaselines,
+  REFUSAL_MESSAGE,
+  HOUR_AXIS_VENUE_LOCAL,
+  DELETE_STALE_SQL,
+  UPSERT_SQL,
+};
+
+if (require.main === module) {
+  main().catch(err => {
+    console.error('[Baselines] Error:', err);
+    process.exit(1);
+  });
+}
