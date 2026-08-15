@@ -1,14 +1,16 @@
 const router = require('express').Router();
 const { body, validationResult } = require('express-validator');
-const { Resend } = require('resend');
 const pool = require('../config/database');
-const { upstreamSignal } = require('../utils/upstream');
+// The confirmation mail goes through the shared service, not a route-owned
+// Resend client. The service owns the settle contract (never throws), the
+// null-key skip, the abort signal, the recipient gate and the pinned
+// production logo host — the route owning a parallel copy of half of that is
+// exactly what services/emailService.js was extracted to end.
+const { sendWaitlistConfirmation } = require('../services/emailService');
 // Shape before content — see validators/shape.js. Every field this route
 // accepts is a single scalar and nothing it takes is ever legitimately
 // structured, so the whole-body gate is the right one here.
 const { requireScalarBody } = require('../validators/shape');
-
-const resend = process.env.RESEND_API_KEY ? new Resend(process.env.RESEND_API_KEY) : null;
 
 // Round 7 budget: 3 signups/hour per IP, 500 confirmation sends/day globally.
 // In-memory is fine on the single-instance deployment.
@@ -62,6 +64,15 @@ function claimWaitlistSend() {
   return true;
 }
 
+// The one refund path for a claim: the service SKIPPED the send, meaning the
+// provider was never consulted (no RESEND_API_KEY), so the claim bought no
+// outbound mail. Handing it back keeps the budget's own rule — spent only when
+// an email is actually sent — true in keyless deployments too. Real failures
+// stay charged: they spent a provider attempt.
+function refundWaitlistSend() {
+  if (dailySends.count > 0) dailySends.count -= 1;
+}
+
 // waitlist table lives in migrations/003 — route-owned DDL raced the
 // migration runner on fresh deployments (see REVIEW-ROUND5).
 
@@ -105,33 +116,15 @@ router.post('/',
       const isNew = result.rows.length > 0;
 
       // Send confirmation email for new signups. The row is already committed
-      // at this point, so a spent mail budget (or a Resend outage below) costs
-      // the confirmation and nothing else.
-      if (isNew && resend && claimWaitlistSend()) {
-        try {
-          await resend.emails.send({
-            from: 'Flock <hello@flockcorp.com>',
-            to: email,
-            subject: "You're on the Flock waitlist",
-            html: `
-              <div style="font-family: -apple-system, BlinkMacSystemFont, sans-serif; max-width: 480px; margin: 0 auto; padding: 40px 24px;">
-                <div style="text-align: center; margin-bottom: 32px;">
-                  <img src="${process.env.PUBLIC_WEB_URL || 'https://www.flockcorp.com'}/flock-logo.png" alt="Flock" width="64" height="64" style="border-radius: 16px;" />
-                </div>
-                <h1 style="font-size: 24px; font-weight: 700; color: #0d2847; margin-bottom: 16px;">You're on the list.</h1>
-                <p style="font-size: 16px; color: #4a5568; line-height: 1.6; margin-bottom: 24px;">
-                  Thanks for signing up for early access to Flock. We're building the app that replaces the broken group chat planning process with something that actually works.
-                </p>
-                <p style="font-size: 16px; color: #4a5568; line-height: 1.6; margin-bottom: 24px;">
-                  We'll let you know as soon as it's ready.
-                </p>
-                <p style="font-size: 14px; color: #a0aec0;">The Flock Team</p>
-              </div>
-            `,
-          }, { signal: upstreamSignal('email') }); // round 12 — see utils/upstream.js
-        } catch (emailErr) {
-          console.error('[Waitlist] Email send failed:', emailErr.message);
-        }
+      // at this point, so a spent mail budget (or a provider failure inside
+      // the service) costs the confirmation and nothing else. No try of its
+      // own: sendWaitlistConfirmation settles, never rejects — that contract
+      // lives in services/emailService.js, along with the abort signal, the
+      // null-key skip and the pinned www logo host this route used to carry
+      // private copies of.
+      if (isNew && claimWaitlistSend()) {
+        const outcome = await sendWaitlistConfirmation({ to: email });
+        if (outcome.skipped) refundWaitlistSend();
       }
 
       res.status(201).json({ success: true, message: isNew ? "You're on the list." : "You're already on the list." });
