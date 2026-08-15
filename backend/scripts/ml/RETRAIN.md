@@ -30,7 +30,7 @@ model no longer trains on rows it will never serve.
 > three shipped fixes (baseline smoothing, vendor-forecast weighting, the
 > leave-one-out baseline) never reached an artifact. **A retrain starts at the
 > export.** `prepare_features.py` now refuses a CSV that is not the current
-> 42-column shape, so this cannot recur silently, but do not try.
+> 44-column shape, so this cannot recur silently, but do not try.
 
 ```bash
 # ── 0. PRESERVE THE INCUMBENT. Do this FIRST; it is unrecoverable afterwards.
@@ -48,8 +48,8 @@ rm -f training_data.csv holdout_data.csv \
       features_train.pkl features_holdout.pkl best_model.pkl
 
 # ── 2. Full pipeline, in this order. Never start in the middle.
-node export_training_data.js                     # 42-column CSVs
-head -1 training_data.csv | tr ',' '\n' | grep -c .   # must print 42
+node export_training_data.js                     # 44-column CSVs
+head -1 training_data.csv | tr ',' '\n' | grep -c .   # must print 44
 python prepare_features.py                       # contract-checked; see below
 python train_model.py                            # LOCO CV -> best_model.pkl
 python evaluate_model.py                         # diagnostics + plots
@@ -80,7 +80,8 @@ It fails loud instead of degrading. Each of these used to be a silent skip:
 
 | It stops when | Because |
 |---|---|
-| the CSV is not the 42-column export | `venue_id` drives baseline smoothing, `label_provenance` drives the vendor-forecast weight; without them both were skipped in silence |
+| the CSV is not the 44-column export | `venue_id` drives baseline smoothing, `label_provenance` drives the vendor-forecast weight; without them both were skipped in silence. Round 20 appended `label_source` and `vendor_forecast_pct` as CARRIED columns (validated and pickled, never features) — a CSV without them would still train, which is why their absence has to be an error: it means the file predates the exporter |
+| `label_source` carries a value outside `{live, forecast}`, or `label_provenance` is not what `(is_realtime, label_source)` implies, or a `forecast` row disagrees with its own `vendor_forecast_pct` | the derived column is a pure function of the raw one, so the two check each other; a mismatch means a row rejoins the weight-1.0 pool as `unknown` with nothing said |
 | a weather description is not in `WEATHER_DESCRIPTION_CODES` | guessing a group is inventing data — add the OpenWeatherMap id |
 | no `weather_condition_code` survives recovery | all ten `weather_*` features would be constant again |
 | any row lacks `month` / `season` | `month=0` with four zero season one-hots cannot occur at inference |
@@ -179,7 +180,7 @@ status board.
 
 | # | Blocking finding | Status |
 |---|---|---|
-| 1 | Stale 40-column CSVs; runbook started after the export | **DONE (python side).** `prepare_features.py` raises `CorpusContractError` on any CSV that is not the 42-column export, naming the missing columns and telling you to re-run the exporter. Runbook above now starts at step 0 (preserve incumbent) then `node export_training_data.js`. Deleting the stale CSVs is step 1 of the runbook. |
+| 1 | Stale 40-column CSVs; runbook started after the export | **DONE (python side).** `prepare_features.py` raises `CorpusContractError` on any CSV that is not the 44-column export, naming the missing columns and telling you to re-run the exporter. Runbook above now starts at step 0 (preserve incumbent) then `node export_training_data.js`. Deleting the stale CSVs is step 1 of the runbook. |
 | 2 | No unique constraint on `ml_training_data`, so `ON CONFLICT DO NOTHING` is a no-op | **DONE.** Migration `024_ml_training_data_unique_slot.sql` collapses the duplicates and adds the key; both collectors now name a real conflict target. The index shape deviates from the one specified here — see "The unique key on `ml_training_data`" below for what changed and why the `COALESCE(observed_date,'1970-01-01')` form would have destroyed data. |
 | 3 | Positional `shift(1)` smoothed an hour against itself on duplicate rows | **DONE.** `smooth_baseline_hours()` collapses to one value per (venue_id, dow, hour), lays them on a complete 7×24 grid so a missing hour is a real gap, blends against the true clock neighbours with the day/week wraps `mlPredictor.getBaseline` uses, and merges back. Measured on a duplicate-heavy fixture: the old code left 9,714 of 14,112 cells holding more than one distinct smoothed baseline; the new code leaves 0. |
 | 4 | `weather_condition_code` NULL on 100% of rows → ten constant features | **DONE (recovery + contract).** `WEATHER_DESCRIPTION_CODES` maps every OpenWeatherMap description to its condition id and `recover_weather_codes()` backfills the column; the 25 descriptions present in the 2026-08-12 corpus are all covered. Unmapped descriptions are reported by name and count and stop the run. **The collector half is now DONE too:** both `collectWeekly.js` and `collectRealtime.js` write `weather.conditionId` into `weather_condition_code`, so recovery is a transitional path for old rows rather than a permanent one. The historical rows are deliberately NOT backfilled in SQL — the exporter already derives them, and a second full-table rewrite would have doubled the deploy's downtime for nothing. |
