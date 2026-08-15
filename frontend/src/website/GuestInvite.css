@@ -2,6 +2,12 @@
    Someone who has never heard of Flock opens this link on a phone, in Safari,
    with no account, and has to understand it and answer in seconds.
 
+   THE VISUAL IDEA (rebuild, 2026-08-14): a printed ticket stub. Letterhead,
+   one headline, a ruled fact rail, a ruled roster, and one navy band that is
+   the only filled thing on the page and therefore unmistakably the action.
+   Type carries it; there is no card stack, no tile grid, no gradient, no
+   shadow, and no icon sitting in a rounded square. The only shapes are rules.
+
    Self-contained on purpose. This page used to borrow PrivacyPolicy.css, which
    meant a legal-page restyle could silently break the one surface the product
    spreads through. Same cream/navy language, own file.
@@ -26,7 +32,7 @@
   --gi-field: #fbf9f3;
   /* The name field's edge, and ONLY the name field's edge. A text input has no
      text of its own, so its border is the whole of the "there is a control
-     here" signal, which puts it under WCAG 1.4.11 (non-text contrast, 3:1) —
+     here" signal, which puts it under WCAG 1.4.11 (non-text contrast, 3:1) -
      unlike the buttons on this page, whose labels identify them on their own.
      --gi-rule measures 1.36:1 against the field fill (#fbf9f3) and 1.36:1
      against the paper behind it, so on a phone in daylight the field was a
@@ -36,13 +42,33 @@
      everywhere else) can never quietly drop the field back under 3:1. */
   --gi-field-edge: #78838f;
 
+  /* The join band. It is the one inverted surface on the page and it carries
+     the only filled button, so its four colours are pinned here rather than
+     borrowed from a neighbour. Light mode reuses the ink/paper pair the
+     contrast suite already measures in both directions (13.5:1); dark mode
+     lifts to #1d293d because navy-on-navy would vanish, and the button becomes
+     the accent, which the suite measures against --gi-accent-ink. */
+  --gi-invite-bg: #16283d;
+  --gi-invite-ink: #f1ede0;
+  --gi-invite-dim: rgba(241, 237, 224, 0.74);   /* ~7.3:1 on the band */
+  --gi-invite-btn: #f1ede0;
+  --gi-invite-btn-ink: #16283d;
+
+  /* The page gutter, named so the join band can break out of the reading
+     column by exactly as much as the page is inset and land on the screen
+     edges at phone widths. */
+  --gi-gutter: clamp(16px, 5vw, 40px);
+
   font-family: 'Hanken Grotesk', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   background: var(--gi-paper);
   color: var(--gi-ink-2);
   -webkit-font-smoothing: antialiased;
   line-height: 1.6;
   min-height: 100vh;
-  padding: clamp(20px, 5vw, 48px) clamp(16px, 5vw, 40px) 72px;
+  padding: clamp(20px, 5vw, 44px) var(--gi-gutter) 72px;
+  /* User-supplied strings land on this page (flock name, venue names, guest
+     names) and it is read at 320px. Nothing may push the page sideways. */
+  overflow-x: hidden;
 }
 
 @supports (min-height: 100dvh) {
@@ -65,6 +91,12 @@
     /* 3.27:1 on the dark field fill, 3.99:1 on the dark paper. Same reasoning
        as the light value above; the alpha rule measured 1.70:1 here. */
     --gi-field-edge: #697891;
+
+    --gi-invite-bg: #1d293d;
+    --gi-invite-ink: #f4efe3;
+    --gi-invite-dim: rgba(244, 239, 227, 0.72);
+    --gi-invite-btn: #8fb4d6;
+    --gi-invite-btn-ink: #0f172a;
   }
   /* Tells the browser to render form controls and scrollbars dark, so the
      name field is not a white slab on a navy page. */
@@ -81,6 +113,9 @@
 .gi-wrap > *,
 .gi-row > *,
 .gi-venue > *,
+.gi-who-row > *,
+.gi-fact > *,
+.gi-join > *,
 .gi-venue-top > * { min-width: 0; }
 
 .gi-wrap {
@@ -88,21 +123,26 @@
   margin: 0 auto;
 }
 
-/* ---------- masthead ---------- */
+/* ---------- letterhead ---------- */
 
 .gi-brand {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   flex-wrap: wrap;
-  gap: 4px 10px;
-  margin-bottom: clamp(24px, 6vw, 40px);
+  gap: 2px 12px;
+  margin: 0 0 clamp(26px, 7vw, 40px);
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--gi-rule);
 }
 
 /* Qualified with `a` so it outranks the generic `.gi a` link styling further
    down. As a bare `.gi-mark` it lost the cascade and the wordmark rendered as
    an underlined accent-blue link. */
 .gi a.gi-mark {
-  font-size: 15px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 15.5px;
   font-weight: 800;
   letter-spacing: -0.02em;
   color: var(--gi-ink);
@@ -110,30 +150,77 @@
   border: 0;
 }
 
+.gi a.gi-mark img { border-radius: 50%; display: block; }
+
 .gi-brand-line {
   margin: 0;
   font-size: 13.5px;
   color: var(--gi-ink-3);
 }
 
-/* ---------- header ---------- */
+/* ---------- the plan ---------- */
 
-.gi-header { margin-bottom: clamp(22px, 5vw, 32px); }
+.gi-header { margin-bottom: clamp(26px, 6vw, 36px); }
+
+/* An eyebrow, not a badge: plain text, no pill, no fill, no border. */
+.gi .gi-eyebrow {
+  margin: 0 0 8px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--gi-accent);
+  overflow-wrap: anywhere;
+}
 
 .gi h1 {
-  font-size: clamp(30px, 8vw, 46px);
-  line-height: 1.06;
-  font-weight: 700;
-  letter-spacing: -0.03em;
+  font-size: clamp(32px, 9.5vw, 52px);
+  line-height: 1.02;
+  font-weight: 800;
+  letter-spacing: -0.035em;
   color: var(--gi-ink);
-  margin: 0 0 10px;
+  margin: 0 0 clamp(18px, 5vw, 26px);
   text-wrap: balance;
   /* A flock named "aaaaaaaaaaaaaaaaaaaaaaaaaaa" is a user-supplied string on a
      320px screen. It wraps, it does not scroll the page sideways. */
   overflow-wrap: anywhere;
 }
 
-.gi-meta {
+/* The fact rail: two ruled rows, one vertical edge, read in a glance. */
+.gi-facts { border-top: 1px solid var(--gi-rule); }
+
+.gi-fact {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 11px 0;
+  border-bottom: 1px solid var(--gi-rule);
+}
+
+.gi-fact-k {
+  /* 4.5rem is the narrowest column that still fits "WHERE" with its glyph, and
+     it is the difference between "Monday, Aug 17 - 11:51 PM" fitting on one
+     line at 320px and wrapping onto two. */
+  flex: 0 0 4.5rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11.5px;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--gi-ink-3);
+}
+
+.gi-fact-v {
+  flex: 1 1 auto;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--gi-ink);
+  overflow-wrap: anywhere;
+}
+
+.gi .gi-meta {
   margin: 0;
   font-size: 15px;
   color: var(--gi-ink-3);
@@ -142,11 +229,10 @@
 
 .gi-meta strong { color: var(--gi-ink-2); font-weight: 600; }
 
-/* ---------- notice strip (called off, already happened, link dead) ---------- */
+/* ---------- notice strip (called off, already happened) ---------- */
 
 .gi-notice {
   border: 1px solid var(--gi-rule);
-  border-left-width: 3px;
   border-radius: 10px;
   background: var(--gi-panel);
   padding: 14px 16px;
@@ -160,19 +246,20 @@
 /* ---------- sections ---------- */
 
 .gi-sec {
-  padding-top: clamp(22px, 5vw, 30px);
-  margin-top: clamp(22px, 5vw, 30px);
+  padding-top: clamp(24px, 6vw, 32px);
+  margin-top: clamp(24px, 6vw, 32px);
   border-top: 1px solid var(--gi-rule-soft);
 }
 
 .gi-sec:first-of-type { border-top: 0; margin-top: 0; padding-top: 0; }
 
 .gi h2 {
-  font-size: 20px;
+  font-size: 13px;
   font-weight: 700;
-  letter-spacing: -0.02em;
-  color: var(--gi-ink);
-  margin: 0 0 12px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--gi-ink-3);
+  margin: 0 0 14px;
 }
 
 /* Guest names, flock titles and venue names all land inside these paragraphs,
@@ -185,7 +272,7 @@
 }
 .gi p:last-child { margin-bottom: 0; }
 
-.gi-sub {
+.gi .gi-sub {
   font-size: 14.5px;
   color: var(--gi-ink-3);
   margin: 0 0 14px;
@@ -196,7 +283,193 @@
   text-decoration: none;
   border-bottom: 1px solid color-mix(in srgb, var(--gi-accent) 40%, transparent);
 }
-.gi a:hover { border-bottom-color: var(--gi-accent); }
+
+/* ---------- the roster ---------- */
+
+/* Three numerals on one ruled row. The fastest possible read of "is this
+   happening", before a single name is scanned. */
+.gi-tally {
+  display: flex;
+  margin: 0 0 6px;
+  border-top: 1px solid var(--gi-rule);
+  border-bottom: 1px solid var(--gi-rule);
+}
+
+.gi .gi-tally-cell {
+  flex: 1 1 0;
+  min-width: 0;
+  margin: 0;
+  padding: 12px 4px 11px;
+  text-align: center;
+}
+
+.gi .gi-tally-cell + .gi-tally-cell { border-left: 1px solid var(--gi-rule-soft); }
+
+.gi-tally-n {
+  display: block;
+  font-size: clamp(24px, 7vw, 30px);
+  font-weight: 800;
+  line-height: 1;
+  letter-spacing: -0.03em;
+  color: var(--gi-ink);
+  font-variant-numeric: tabular-nums;
+}
+
+/* The legend half: the glyph that will stand for this answer in the list,
+   next to the word it means. */
+.gi-tally-k {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  margin-top: 7px;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--gi-ink-3);
+}
+
+/* Two columns wherever two fit, one where they do not. A roster of seven names
+   down a single full-width column leaves most of a phone screen empty and makes
+   the block twice as tall as it needs to be; auto-fill collapses to one column
+   at 320px on its own, with no breakpoint to keep in sync. */
+.gi-who {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(9.5rem, 1fr));
+  column-gap: 20px;
+}
+
+.gi-who-row {
+  display: flex;
+  align-items: baseline;
+  gap: 9px;
+  padding: 9px 0;
+  border-bottom: 1px solid var(--gi-rule-soft);
+}
+
+/* The glyph is one of three answers, and it never carries the meaning alone:
+   the word is on the right of every row and the row's own weight is the third
+   channel. Roughly 6% of readers cannot separate the two tints. */
+.gi-who-mark {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-self: center;
+}
+
+.gi-who-name {
+  flex: 0 1 auto;
+  font-size: 16.5px;
+  font-weight: 600;
+  color: var(--gi-ink);
+  overflow-wrap: anywhere;
+}
+
+.gi-who-kind {
+  flex: 0 0 auto;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--gi-ink-3);
+}
+
+/* Someone who is not coming, or has not said, is still on the list and still
+   readable; they are just not the row your eye stops on. */
+.gi-tone-no .gi-who-name,
+.gi-tone-quiet .gi-who-name { color: var(--gi-ink-3); font-weight: 500; }
+
+.gi .gi-who-more { margin: 12px 0 0; }
+
+/* ---------- the way in ---------- */
+
+/* One inverted band, breaking out of the reading column to the screen edges at
+   phone widths. It is the only filled surface on the page, which is what makes
+   the action inside it unmistakable without a second competing button. */
+.gi-join {
+  display: flex;
+  align-items: flex-end;
+  gap: clamp(8px, 3vw, 22px);
+  margin: clamp(28px, 7vw, 40px) calc(-1 * var(--gi-gutter));
+  padding: clamp(22px, 6vw, 30px) var(--gi-gutter) 0;
+  background: var(--gi-invite-bg);
+  color: var(--gi-invite-ink);
+}
+
+.gi-join-body {
+  flex: 1 1 auto;
+  padding-bottom: clamp(22px, 6vw, 30px);
+}
+
+.gi-join h2 {
+  font-size: clamp(23px, 6.5vw, 30px);
+  font-weight: 800;
+  line-height: 1.1;
+  letter-spacing: -0.03em;
+  text-transform: none;
+  color: var(--gi-invite-ink);
+  margin: 0 0 8px;
+}
+
+.gi .gi-join-lead {
+  font-size: 14.5px;
+  line-height: 1.5;
+  color: var(--gi-invite-dim);
+  margin: 0 0 18px;
+}
+
+.gi-join-btn {
+  display: block;
+  width: 100%;
+  min-height: 54px;
+  padding: 14px 18px;
+  border: 0;
+  border-radius: 12px;
+  background: var(--gi-invite-btn);
+  color: var(--gi-invite-btn-ink);
+  font: inherit;
+  font-size: 16.5px;
+  font-weight: 800;
+  letter-spacing: -0.01em;
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+
+.gi .gi-join-alt {
+  margin: 12px 0 0;
+  font-size: 13.5px;
+  color: var(--gi-invite-dim);
+}
+
+.gi-join-link {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--gi-invite-ink);
+  font: inherit;
+  font-size: 13.5px;
+  font-weight: 700;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+/* The two-layer still bird. The head sits over the body on an identical
+   166x166 canvas, so both fill the same box with no offset maths. */
+.gi-join-bird {
+  position: relative;
+  flex: 0 0 auto;
+  display: block;
+  width: clamp(66px, 21vw, 108px);
+  aspect-ratio: 1 / 1;
+  align-self: flex-end;
+}
+
+.gi-join-bird picture { position: absolute; inset: 0; }
+.gi-join-bird img { width: 100%; height: 100%; display: block; }
 
 /* ---------- name field ---------- */
 
@@ -226,7 +499,40 @@
   min-height: 48px;
 }
 
-.gi-input::placeholder { color: var(--gi-ink-3); opacity: 1; }
+/* ---------------------------------------------------------------------------
+   THE ONE !important ON THIS PAGE, AND WHAT IT IS BEATING.
+
+   src/index.css carries an app-wide rule written as
+
+     input:not([type="checkbox"]):not([type="radio"]):not([type="file"])
+       :not([type="color"]):not([type="range"]):not([type="submit"])
+       :not([type="button"]), textarea, select { ... }
+
+   Seven :not() pseudo-classes make that selector (0,8,1). `.gi-input` is
+   (0,1,0) and could not reach it with any reasonable qualification, so the name
+   field on this page has never once used the tokens above it: it was painted
+   `background-color: var(--bg-tertiary); color: var(--text-primary)` from the
+   APP's theme instead. Those variables are themed off `<html data-theme>`,
+   which index.js only sets on the app branch, so on the invite page they always
+   resolved to their LIGHT values. Measured in a real Chromium against the
+   production build: rgb(232,224,213) on rgb(30,41,59), in dark mode as well as
+   light. That is a cream slab with dark text sitting on a navy page, and it was
+   the least defensible thing in the dark screenshot.
+
+   Raising specificity is not available (matching (0,8,1) would mean copying the
+   seven-:not() chain into this file, which is worse in every way), and the
+   global rule is not this pass's file to change. So: three declarations, marked
+   important, each one restoring a token that is already under test in
+   marketingSiteAccessibility.test.js. The border above is untouched and stays
+   the thing that rule pins.
+   --------------------------------------------------------------------------- */
+.gi input.gi-input {
+  background-color: var(--gi-field) !important;
+  color: var(--gi-ink) !important;
+  caret-color: var(--gi-accent);
+}
+
+.gi input.gi-input::placeholder { color: var(--gi-ink-3) !important; opacity: 1; }
 
 .gi-input[aria-invalid='true'] { border-color: var(--gi-bad); }
 
@@ -241,13 +547,14 @@
 
 .gi-btn {
   /* 48px tall and 44px wide at minimum: a thumb, not a mouse. */
+  flex: 1 1 8rem;
   min-height: 48px;
   min-width: 44px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: 8px;
-  padding: 12px 22px;
+  padding: 12px 18px;
   border-radius: 12px;
   border: 1px solid var(--gi-rule);
   background: transparent;
@@ -259,7 +566,10 @@
   text-decoration: none;
 }
 
-.gi-btn-primary {
+/* The dead-end screens have no join band to be quieter than, so their one
+   action is filled. */
+.gi-btn-strong {
+  flex: 0 0 auto;
   background: var(--gi-ink);
   border-color: var(--gi-ink);
   color: var(--gi-paper);
@@ -278,12 +588,15 @@
    communicated here that is not already visible. Touch gets :active instead,
    which is the only press feedback a phone can give. */
 @media (hover: hover) and (pointer: fine) {
+  .gi a:hover { border-bottom-color: var(--gi-accent); }
   .gi-btn:hover { border-color: var(--gi-ink); }
-  .gi-btn-primary:hover { opacity: 0.92; }
+  .gi-btn-strong:hover { opacity: 0.92; }
+  .gi-join-btn:hover { opacity: 0.92; }
   .gi-venue-btn:hover { border-color: var(--gi-accent); }
 }
 
 .gi-btn:active,
+.gi-join-btn:active,
 .gi-venue-btn:active { opacity: 0.85; }
 
 /* aria-disabled, not :disabled. A focused button that becomes `disabled`
@@ -322,16 +635,27 @@
 }
 .gi-input:focus-visible { border-color: var(--gi-accent); }
 
+/* Inside the band the steel ring would sit on navy in light mode, where it
+   measures under 3:1. The band's own ink is the ring there, drawn inside the
+   control so it cannot be clipped by the band's edge. */
+.gi-join-btn:focus-visible,
+.gi-join-link:focus-visible {
+  outline: 3px solid var(--gi-invite-ink);
+  outline-offset: 3px;
+  border-radius: 10px;
+}
+.gi-join-btn:focus-visible { outline-color: var(--gi-invite-btn-ink); outline-offset: -5px; }
+
 /* ---------- live messages ---------- */
 
-.gi-msg {
+.gi .gi-msg {
   margin: 0 0 4px;
   font-size: 14.5px;
   font-weight: 600;
   color: var(--gi-accent);
 }
 
-.gi-msg-bad { color: var(--gi-bad); }
+.gi .gi-msg-bad { color: var(--gi-bad); }
 
 /* Collapsed, not display:none. A live region that is display:none when the
    page loads is unreliable in VoiceOver and NVDA: some combinations never
@@ -349,20 +673,21 @@
   list-style: none;
   margin: 0;
   padding: 0;
-  display: grid;
-  gap: 8px;
+  border-top: 1px solid var(--gi-rule-soft);
 }
 
 .gi-venues li { margin: 0; }
 
+/* Ruled rows, not a stack of filled cards. The one row that gets a fill is a
+   row that has a state worth filling: your vote, or the group's pick. */
 .gi-venue {
   display: block;
   width: 100%;
   text-align: left;
-  padding: 12px 14px;
-  border-radius: 12px;
-  border: 1px solid var(--gi-rule-soft);
-  background: var(--gi-panel);
+  padding: 12px 12px 13px;
+  border: 0;
+  border-bottom: 1px solid var(--gi-rule-soft);
+  background: transparent;
   color: var(--gi-ink-2);
   font: inherit;
 }
@@ -370,13 +695,15 @@
 .gi-venue-btn {
   min-height: 48px;
   cursor: pointer;
-  border-color: var(--gi-rule);
 }
 
+/* The section already ends in a rule; a second one right above it reads as a
+   mistake. */
+.gi-venues li:last-child .gi-venue { border-bottom: 0; }
+
 .gi-venue[aria-pressed='true'] {
-  border-color: var(--gi-accent);
-  border-width: 2px;
-  padding: 11px 13px;
+  background: var(--gi-panel);
+  border-radius: 10px;
 }
 
 .gi-venue-btn[aria-disabled='true'] { opacity: 0.6; cursor: progress; }
@@ -386,7 +713,7 @@
   justify-content: space-between;
   align-items: baseline;
   gap: 12px;
-  font-size: 15.5px;
+  font-size: 16px;
   font-weight: 600;
   color: var(--gi-ink);
 }
@@ -395,16 +722,18 @@
 
 .gi-venue-count {
   flex-shrink: 0;
-  font-size: 13.5px;
-  font-weight: 600;
+  font-size: 12.5px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
   color: var(--gi-ink-3);
   font-variant-numeric: tabular-nums;
 }
 
 .gi-bar {
   display: block;
-  height: 5px;
-  border-radius: 3px;
+  height: 4px;
+  border-radius: 2px;
   background: var(--gi-rule-soft);
   margin-top: 9px;
   overflow: hidden;
@@ -415,7 +744,7 @@
   height: 100%;
   width: var(--gi-fill, 0%);
   background: var(--gi-accent);
-  border-radius: 3px;
+  border-radius: 2px;
 }
 
 .gi-tags {
@@ -426,21 +755,12 @@
 }
 
 .gi-tag {
-  font-size: 12.5px;
+  font-size: 11px;
   font-weight: 700;
-  letter-spacing: 0.02em;
+  letter-spacing: 0.07em;
   text-transform: uppercase;
   color: var(--gi-accent);
 }
-
-.gi-empty {
-  border: 1px dashed var(--gi-rule);
-  border-radius: 12px;
-  padding: 16px;
-  color: var(--gi-ink-3);
-  font-size: 15px;
-}
-.gi-empty p { font-size: 15px; }
 
 /* ---------- footer ---------- */
 
@@ -463,10 +783,10 @@
   background: var(--gi-rule-soft);
 }
 
-.gi-skel-h1 { height: clamp(34px, 8vw, 48px); max-width: 16rem; margin-bottom: 14px; }
-.gi-skel-meta { height: 15px; max-width: 12rem; margin-bottom: 32px; }
-.gi-skel-block { height: 120px; margin-bottom: 12px; border-radius: 12px; }
-.gi-skel-row { height: 56px; margin-bottom: 8px; border-radius: 12px; }
+.gi-skel-h1 { height: clamp(34px, 9vw, 52px); max-width: 16rem; margin-bottom: 20px; }
+.gi-skel-meta { height: 14px; max-width: 9rem; margin-bottom: 18px; }
+.gi-skel-row { height: 44px; margin-bottom: 8px; border-radius: 8px; }
+.gi-skel-block { height: 150px; margin-top: 24px; border-radius: 12px; }
 
 @media (prefers-reduced-motion: no-preference) {
   .gi-skel { animation: gi-pulse 1.4s ease-in-out infinite; }
