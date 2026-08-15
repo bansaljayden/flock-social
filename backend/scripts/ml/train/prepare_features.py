@@ -50,6 +50,14 @@ class CorpusContractError(RuntimeError):
 # Corpus contract — the exact column list export_training_data.js writes.
 # Audit finding 1: the checked-in CSVs were a 40-column pre-round-10 export
 # (no venue_id, no label_provenance) and this script silently accepted them.
+#
+# Round 20 grew it from 42 to 44: label_source and vendor_forecast_pct, both
+# APPENDED so no existing column changed position. They are CARRIED COLUMNS —
+# read, validated, written into the pickles, and deliberately kept out of the
+# feature set (get_feature_columns excludes both; see the reasoning there and in
+# export_training_data.js's header). A pre-round-20 CSV now fails
+# require_export_columns by name, which is the point: silently training without
+# them is exactly the class of failure this contract exists to stop.
 # ---------------------------------------------------------------------------
 EXPORT_COLUMNS: List[str] = [
     'venue_id',
@@ -68,9 +76,16 @@ EXPORT_COLUMNS: List[str] = [
     'latitude', 'longitude',
     'avg_user_crowd', 'user_feedback_count', 'avg_prediction_error',
     'observed_date', 'label_provenance',
+    'label_source', 'vendor_forecast_pct',
 ]
 
 EXPORTER_PATH = SCRIPT_DIR / 'export_training_data.js'
+
+# The domain migration 025's CHECK constraint pins, plus the empty string the
+# exporter writes for NULL. 'unknown' is NOT here: it is what the EXPORTER says
+# about a row that never declared itself, never a value any collector may write,
+# so seeing it in the raw column means something wrote past the constraint.
+LABEL_SOURCE_VALUES = {'', 'live', 'forecast'}
 
 
 def require_export_columns(df: pd.DataFrame, csv_path: Path, label: str) -> None:
@@ -94,7 +109,12 @@ def require_export_columns(df: pd.DataFrame, csv_path: Path, label: str) -> None
         f'    node export_training_data.js\n'
         f'  Do NOT start a retrain at prepare_features.py. venue_id drives the '
         f'baseline smoothing and label_provenance drives the vendor-forecast '
-        f'sample weight; without them this script used to skip both in silence.'
+        f'sample weight; without them this script used to skip both in silence.\n'
+        f'  label_source and vendor_forecast_pct joined the contract in round 20 '
+        f'(export columns 43 and 44). They are carried, not featurised, so a CSV '
+        f'that lacks them would still TRAIN — which is precisely why their absence '
+        f'has to be an error here: it means the CSV predates the exporter, and a '
+        f'stale CSV is never only missing the columns you noticed.'
     )
 
 
@@ -388,6 +408,193 @@ def enforce_calendar_contract(stats: Dict) -> None:
             '    - backfill them from collected_at in export_training_data.js, or\n'
             '    - set FLOCK_CALENDAR_POLICY=drop to remove every calendar-derived '
             f'feature ({len(CALENDAR_FEATURES)} of them) instead of faking it.'
+        )
+
+
+# ---------------------------------------------------------------------------
+# Round 20: the two CARRIED columns, and why they are carried rather than fed
+# to the model.
+#
+# label_source is the raw column collectRealtime.js writes; label_provenance is
+# the exporter's derivation of it. vendor_forecast_pct is BestTime's own
+# forecast for the row's moment, which the vendor hands over in the same
+# response as the live reading at no extra API call.
+#
+# NEITHER IS A FEATURE. Two reasons, and only the first is about today:
+#
+#   1. Both are empty on 100% of the corpus (457,402 realtime rows collected
+#      2026-03-10..2026-05-18, every one NULL, unrecoverably so — migration
+#      025's header proves the two candidate discriminators are indistinguishable
+#      from chance). A feature built from either would be a CONSTANT column: a
+#      dead slot, of which the last run already carried 11 of 106, advertised in
+#      metadata.feature_names as if it did something. And the fill that would
+#      make it non-constant is the worse half — 0 does not mean "we have no
+#      forecast", it means "the vendor predicted an empty venue".
+#   2. vendor_forecast_pct EQUALS busyness_pct on every 'forecast'-sourced row,
+#      by construction. On the day the corpus does carry it, handing it to the
+#      model would hand the model the label on that whole slice — the same
+#      leakage class as popular_times and the category baselines, and one that
+#      would flatter every metric while teaching nothing. Its legitimate use is
+#      as a RESIDUAL against a slice the model is not scored on, and that is a
+#      decision to make with data in hand, not in advance.
+#
+# So they are read, validated, carried into both pickles beside label_provenance
+# and dropped from the feature set by get_feature_columns. What this function
+# adds that mere carrying does not: the two columns CHECK each other and check
+# the exporter. label_provenance is a pure function of (is_realtime,
+# label_source), so recomputing it here turns a redundant column into a
+# checksum; and the forecast identity above turns a 'live' label from an
+# assertion into something falsifiable, which is the entire reason
+# vendor_forecast_pct is stored at all.
+# ---------------------------------------------------------------------------
+def derive_label_provenance(is_realtime: pd.Series, source: pd.Series) -> pd.Series:
+    """The exact mapping export_training_data.labelProvenance() implements."""
+    named = source.where(source.isin(['live', 'forecast']), 'unknown')
+    return named.where(pd.to_numeric(is_realtime, errors='coerce') == 1, 'weekly')
+
+
+def audit_label_columns(df: pd.DataFrame, label: str) -> Dict:
+    """Validate the carried provenance columns. Reports; never fills."""
+    raw_source = df['label_source']
+    # NOT stripped, and not normalised in any other way. The exporter passes the
+    # database column through verbatim, so ' live' reaching this frame means
+    # something wrote past migration 025's CHECK — and the domain check below
+    # will name the offending value exactly as stored. Stripping it here would
+    # repair the evidence and re-surface the problem as the vaguer
+    # "label_provenance does not match" a few lines down.
+    source = raw_source.astype('string').fillna('')
+    raw_vendor = df['vendor_forecast_pct']
+    vendor = pd.to_numeric(raw_vendor, errors='coerce')
+    busyness = pd.to_numeric(df['busyness_pct'], errors='coerce')
+    realtime = pd.to_numeric(df['is_realtime'], errors='coerce') == 1
+
+    # A value that is present in the CSV but not a number is NOT missing data —
+    # to_numeric would have laundered it into NaN and it would have read as one.
+    unparsable = raw_vendor.notna() & vendor.isna()
+    out_of_range = vendor.notna() & ~vendor.between(0, 100)
+
+    bad_source = sorted(set(source[~source.isin(LABEL_SOURCE_VALUES)].unique().tolist()))
+
+    stated = df['label_provenance'].astype('string').fillna('unknown')
+    expected = derive_label_provenance(df['is_realtime'], source)
+    mismatch = stated != expected
+
+    # The invariant that makes a 'live' label falsifiable: on a forecast row the
+    # two numbers came out of one variable in collectRealtime.classifyReading, so
+    # a disagreement means that mapping drifted and no row's label means what it
+    # says any more.
+    is_fc = (source == 'forecast') & vendor.notna() & busyness.notna()
+    fc_disagree = is_fc & (vendor != busyness)
+
+    # Every count below is scoped to the population the column DESCRIBES.
+    # Both columns are about realtime rows only; a weekly row leaving them empty
+    # is the design, not a gap, and counting it would drag the coverage figure
+    # toward zero forever on a corpus that is 88% weekly. The two off-population
+    # counters exist because the exporter's derived column MASKS that case
+    # (a weekly row reports 'weekly' whatever label_source says) — carrying the
+    # raw column is what lets it be seen at all, and seeing it is the whole
+    # argument for carrying it. They are reported, not raised on: nothing in
+    # training reads them and the derived column is still correct.
+    named = realtime & source.isin(['live', 'forecast'])
+    has_vendor = realtime & vendor.notna()
+    n_rt = int(realtime.sum())
+    stats = {
+        'rows': int(len(df)),
+        'realtime_rows': n_rt,
+        'label_source_named': int(named.sum()),
+        'label_source_empty_on_realtime': int((realtime & (source == '')).sum()),
+        'label_source_on_non_realtime_rows': int((~realtime & (source != '')).sum()),
+        'vendor_forecast_present': int(has_vendor.sum()),
+        'vendor_forecast_on_non_realtime_rows': int((~realtime & vendor.notna()).sum()),
+        'vendor_forecast_present_pct_of_realtime': (
+            round(float(has_vendor.sum()) / n_rt * 100, 2) if n_rt else 0.0),
+        'unexpected_label_source_values': bad_source,
+        'unparsable_vendor_forecast': int(unparsable.sum()),
+        'vendor_forecast_out_of_range': int(out_of_range.sum()),
+        'label_provenance_mismatches': int(mismatch.sum()),
+        'forecast_rows_disagreeing_with_vendor': int(fc_disagree.sum()),
+    }
+    logger.info(
+        '[%s] label provenance: %d of %d realtime rows carry a named label_source, '
+        '%d rows carry a vendor forecast (%.2f%% of realtime).',
+        label, stats['label_source_named'], n_rt, stats['vendor_forecast_present'],
+        stats['vendor_forecast_present_pct_of_realtime'])
+    off_population = (stats['label_source_on_non_realtime_rows']
+                      + stats['vendor_forecast_on_non_realtime_rows'])
+    if off_population:
+        logger.warning(
+            '[%s] %d non-realtime row(s) carry a label_source and %d carry a '
+            'vendor_forecast_pct. Neither column describes a weekly row — it is a '
+            'synthetic typical week, not a moment BestTime was asked about — and the '
+            "exporter reports those rows as label_provenance='weekly' regardless, so "
+            'training is unaffected. Reported because only the raw column can show it.',
+            label, stats['label_source_on_non_realtime_rows'],
+            stats['vendor_forecast_on_non_realtime_rows'])
+    if n_rt and stats['label_source_named'] == 0:
+        logger.warning(
+            '[%s] NO realtime row names its label_source, so every one of them is '
+            'label_provenance="unknown" and trains at sample weight 1.0. That is the '
+            'recorded, unrecoverable state of the pre-2026-08-15 corpus, not a bug to '
+            'fix here — but it means the vendor-forecast downweight still applies to '
+            'zero rows. It changes the moment collectRealtime.js runs again.', label)
+    return stats
+
+
+def enforce_label_contract(stats: Dict, label: str) -> None:
+    """Round 20: a carried column that is wrong must stop the run, not ride along.
+
+    Every condition below means the CSV disagrees with itself or with migration
+    025's CHECK constraint. None of them can be repaired by guessing, and all of
+    them are silent if ignored — an out-of-domain label_source simply reappears
+    as 'unknown' and rejoins the weight-1.0 pool, which is the exact defect round
+    19 was written about.
+    """
+    if stats['unexpected_label_source_values']:
+        raise CorpusContractError(
+            f'[{label}] label_source carries value(s) outside the domain '
+            f'{sorted(LABEL_SOURCE_VALUES)}: '
+            f'{stats["unexpected_label_source_values"]}.\n'
+            "  Migration 025's CHECK forbids these, so a row carrying one proves the "
+            'constraint is not on the database this corpus came from. The exporter '
+            "maps anything it does not recognise to label_provenance='unknown', which "
+            'is weighted 1.0 — a typo would silently promote a vendor forecast to '
+            'ground truth. Fix the writer, or apply 025_ml_label_provenance.sql.'
+        )
+    if stats['unparsable_vendor_forecast']:
+        raise CorpusContractError(
+            f'[{label}] {stats["unparsable_vendor_forecast"]} row(s) carry a '
+            'vendor_forecast_pct that is present but not a number.\n'
+            '  Coercing it would turn a corrupt value into a missing one, which reads '
+            'as "the collector never had the forecast" — a different and much more '
+            'ordinary fact. The exporter writes an EMPTY field for absent, so anything '
+            'non-numeric here came from a writer that is not collectRealtime.js.'
+        )
+    if stats['vendor_forecast_out_of_range']:
+        raise CorpusContractError(
+            f'[{label}] {stats["vendor_forecast_out_of_range"]} row(s) carry a '
+            'vendor_forecast_pct outside 0-100, which migration 025 CHECKs against '
+            'and collectRealtime.js clamps to.'
+        )
+    if stats['label_provenance_mismatches']:
+        raise CorpusContractError(
+            f'[{label}] {stats["label_provenance_mismatches"]} row(s) have a '
+            'label_provenance that is not what (is_realtime, label_source) implies.\n'
+            '  label_provenance is DERIVED from those two by '
+            'export_training_data.labelProvenance(); carrying the raw column beside it '
+            'exists so that derivation is checkable from the CSV alone. A mismatch '
+            'means the exporter and this script disagree about what a row is, and the '
+            'sample weights are assigned from the derived column.'
+        )
+    if stats['forecast_rows_disagreeing_with_vendor']:
+        raise CorpusContractError(
+            f'[{label}] {stats["forecast_rows_disagreeing_with_vendor"]} row(s) are '
+            "label_source='forecast' yet their vendor_forecast_pct differs from their "
+            'busyness_pct.\n'
+            '  On a forecast row those two numbers come from ONE value in '
+            'collectRealtime.classifyReading, so they cannot differ unless that mapping '
+            'has drifted. This is the invariant that makes a "live" label falsifiable '
+            'rather than an unbacked assertion — if it fails, no label in the corpus '
+            'means what it says and the run must not continue.'
         )
 
 
@@ -1075,6 +1282,16 @@ def get_feature_columns(df: pd.DataFrame) -> List[str]:
         # Round 10 additions:
         'venue_id',  # identifier — a feature here is pure venue memorization
         'label_provenance',  # raw string; encodes label regime like sample_weight
+        # Round 20 CARRIED COLUMNS — exported, validated, pickled, never fed to
+        # the model. label_source is the raw form of label_provenance and is
+        # excluded for the same reason (it encodes the label regime). And
+        # vendor_forecast_pct must not become a feature by accident: it is NULL
+        # on 100% of the corpus today (a dead slot, or a lie if filled with 0)
+        # and it EQUALS busyness_pct on every forecast-sourced row, so on the day
+        # it does carry data a raw feature would be handing the model the label.
+        # See the block above derive_label_provenance.
+        'label_source',
+        'vendor_forecast_pct',
     }
     exclude |= DROPPED_FEATURES
     feature_cols = [c for c in df.columns if c not in exclude]
@@ -1126,6 +1343,14 @@ def main():
                                 + holdout_calendar_stats['rows_without_season']),
         'pct_without_month': calendar_stats['pct_without_month'],
     })
+
+    # Round 20: the carried provenance columns check each other and the
+    # exporter, on BOTH frames, before a single feature is built. Nothing here
+    # fills, coerces or repairs — see enforce_label_contract.
+    label_stats = audit_label_columns(train_df, 'train')
+    holdout_label_stats = audit_label_columns(holdout_df, 'holdout')
+    enforce_label_contract(label_stats, 'train')
+    enforce_label_contract(holdout_label_stats, 'holdout')
 
     # Drop rows with null label
     train_df = train_df.dropna(subset=['busyness_pct'])
@@ -1296,8 +1521,14 @@ def main():
     # evaluate_model.py's per-hour and per-category diagnostics are aligned to
     # the SAME rows as the predictions (audit finding 10) instead of being
     # positionally truncated against the raw CSV.
+    # Round 20: label_source and vendor_forecast_pct ride along too, so the
+    # vendor-distance question becomes answerable from the pickles the moment
+    # there is data, without another two-hour export. They are NOT in
+    # feature_cols, so the fillna(0) below cannot reach them and an absent
+    # forecast stays NaN rather than becoming a vendor prediction of 0.
     keep_extra = ['busyness_pct', 'delta_label', 'baseline_busyness', 'city',
-                  'label_provenance', 'venue_category']
+                  'label_provenance', 'venue_category',
+                  'label_source', 'vendor_forecast_pct']
     holdout_df = holdout_df[feature_cols + keep_extra]
 
     logger.info(f'Feature count: {len(feature_cols)}')
@@ -1411,6 +1642,12 @@ def main():
         'hour': train_df['hour'].values.astype(np.int16),
         'venue_category': train_df['venue_category'].astype(str).values,
         'label_provenance': train_df['label_provenance'].astype(str).values,
+        # Round 20 carried columns. float32 with NaN PRESERVED — a row with no
+        # vendor forecast must stay unmeasurable rather than become a 0 that
+        # would read as "the vendor predicted an empty venue".
+        'label_source': train_df['label_source'].astype('string').fillna('').values.astype(str),
+        'vendor_forecast_pct': pd.to_numeric(
+            train_df['vendor_forecast_pct'], errors='coerce').values.astype(np.float32),
         'label_type': 'delta',
         # Round 14: raw material for a per-fold refit of the two category
         # label-means. Not features, not applied to any row here.
@@ -1430,6 +1667,9 @@ def main():
         'venue_category': holdout_df['venue_category'].astype(str).values,
         'label_type': 'delta',
         'label_provenance': holdout_df['label_provenance'].fillna('unknown').astype(str).values,
+        'label_source': holdout_df['label_source'].astype('string').fillna('').values.astype(str),
+        'vendor_forecast_pct': pd.to_numeric(
+            holdout_df['vendor_forecast_pct'], errors='coerce').values.astype(np.float32),
     }
     with open(SCRIPT_DIR / 'features_holdout.pkl', 'wb') as f:
         pickle.dump(holdout_data, f)
@@ -1502,6 +1742,27 @@ def main():
             'calendar_coverage': {
                 'train': calendar_stats,
                 'holdout': holdout_calendar_stats,
+            },
+            # Round 20. Written into the artifact so a model can never claim a
+            # vendor-forecast downweight that applied to zero rows, and so the
+            # run where coverage first stops being zero is dated rather than
+            # inferred. Both columns are CARRIED, not features — the names below
+            # will never appear in feature_names, and that is deliberate.
+            'label_provenance_coverage': {
+                'train': label_stats,
+                'holdout': holdout_label_stats,
+                'carried_not_featurised': ['label_source', 'vendor_forecast_pct'],
+                'why': (
+                    'Both are NULL on 100% of the corpus collected before 2026-08-15 '
+                    'and that is unrecoverable (migration 025). A feature built from '
+                    'either would be a constant dead slot, and filling the NULL with 0 '
+                    'would assert that BestTime predicted an empty venue. Beyond that, '
+                    'vendor_forecast_pct EQUALS busyness_pct on every forecast-sourced '
+                    'row by construction, so a raw feature would leak the label on that '
+                    'slice the moment the data exists. They are exported, validated '
+                    'against each other and shipped in both pickles so the '
+                    'label-versus-vendor distance is answerable as soon as there is '
+                    'data, without another export.'),
             },
             'dropped_features': sorted(DROPPED_FEATURES),
             'dropped_feature_reasons': DROP_REASONS,

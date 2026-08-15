@@ -551,8 +551,9 @@ rm -f train/training_data.csv train/holdout_data.csv \
 
 # 3. Full pipeline. Do NOT start at prepare_features.py.
 cd train
-node export_training_data.js          # 42-column CSVs; verify the header before continuing
-head -1 training_data.csv | tr ',' '\n' | grep -c .   # must print 42
+node export_training_data.js          # 44-column CSVs; verify the header before continuing
+head -1 training_data.csv | tr ',' '\n' | grep -c .   # must print 44 (42 until round 20 appended
+                                                      #  label_source, vendor_forecast_pct)
 python prepare_features.py            # must NOT log "venue_id missing"
 python train_model.py                 # LOCO CV -> best_model.pkl
 python evaluate_model.py              # diagnostics + plots (check MAE-by-hour: no 6h skew)

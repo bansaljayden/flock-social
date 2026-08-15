@@ -473,8 +473,34 @@ response as the live reading and the collector was discarding it. Stored, a
 `live` label becomes falsifiable rather than an unbacked assertion, and the
 distance between the label and the vendor's own prediction — the quantity this
 document wanted and could not get — becomes measurable on every future row at no
-extra API call. It is **not** in the 42-column export contract yet; wiring it
-into `HEADER` and `prepare_features.py` is a separate change.
+extra API call.
+
+**Wired in on 2026-08-15 (round 20).** The export contract is now **44 columns**:
+`label_source` and `vendor_forecast_pct` are appended to `HEADER` and to
+`prepare_features.EXPORT_COLUMNS`, so a pre-round-20 CSV is refused by name. Both
+are **carried columns, not features** — exported, validated and shipped in
+`features_train.pkl` / `features_holdout.pkl`, and excluded from
+`get_feature_columns`. Two reasons, and the second is the one that matters after
+the corpus fills up:
+
+1. Both are empty on 100% of the corpus today, so a feature built from either
+   would be a constant dead slot (the last run already carried 11 of 106), and
+   filling the NULL with 0 would assert that BestTime predicted an empty venue on
+   3,912,357 rows.
+2. `vendor_forecast_pct` **equals** `busyness_pct` on every forecast-sourced row
+   by construction. A raw feature would hand the model the label on that whole
+   slice the moment the data exists — the same leakage class as `popular_times`
+   and the category baselines. Its legitimate use is as a *residual*, on a slice
+   the model is not scored against, and that is a decision to make with data in
+   hand.
+
+Carrying them buys two things immediately. The derived `label_provenance` is a
+pure function of `(is_realtime, label_source)`, so `prepare_features.py`
+recomputes it and refuses when the two disagree — a masked or out-of-domain
+source can no longer arrive as a silent `unknown` at weight 1.0. And a
+`forecast` row whose `vendor_forecast_pct` differs from its own `busyness_pct`
+stops the run, which is what makes a `live` label falsifiable rather than an
+assertion. Pinned by `__tests__/mlExportColumnGrowth.test.js`.
 
 ### Consequence for section 7's spending advice
 
